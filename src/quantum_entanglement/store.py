@@ -31,6 +31,10 @@ class ConcurrencyError(RuntimeError):
     """Raised when a stream changed after the caller read it."""
 
 
+class EventStoreIntegrityError(RuntimeError):
+    """Raised when persisted event-store data violates its durable contract."""
+
+
 class EventStoreJsonError(Exception):
     """Raised when caller JSON cannot be represented by the durable contract."""
 
@@ -53,6 +57,10 @@ _MAX_JSON_KEY_LENGTH = 512
 _MAX_JSON_STRING_LENGTH = 65_536
 _MAX_JSON_INTEGER_BITS = 4_096
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
+
+
+def _reject_json_constant(value: str) -> Any:
+    raise ValueError(f"invalid JSON constant {value}")
 
 
 class _JsonTraversalState:
@@ -309,58 +317,95 @@ class SQLiteEventStore:
             )
         return encoded
 
-    @staticmethod
-    def _row_to_event(row: sqlite3.Row) -> StoredEvent:
-        event = DomainEvent(
-            stream_id=row["stream_id"],
-            event_type=row["event_type"],
-            payload=json.loads(row["payload_json"]),
-            actor_id=row["actor_id"],
-            event_id=row["event_id"],
-            timestamp=row["timestamp"],
-            correlation_id=row["correlation_id"],
-            causation_id=row["causation_id"],
-            idempotency_key=row["idempotency_key"],
-        )
-        return StoredEvent(
-            event=event,
-            sequence=int(row["sequence"]),
-            global_position=int(row["global_position"]),
-        )
+    def _decode_json_object(self, encoded: Any, field_name: str) -> Dict[str, Any]:
+        """Decode one persisted JSON object without trusting SQLite affinity."""
 
-    @staticmethod
-    def _row_to_outbox(row: sqlite3.Row) -> StoredOutboxMessage:
-        message = OutboxMessage(
-            destination=row["destination"],
-            payload=json.loads(row["payload_json"]),
-            headers=json.loads(row["headers_json"]),
-            message_id=row["message_id"],
-            idempotency_key=row["idempotency_key"],
-            available_at=row["available_at"],
-            created_at=row["created_at"],
-        )
-        return StoredOutboxMessage(
-            message=message,
-            triggering_event_id=row["triggering_event_id"],
-            triggering_global_position=int(row["triggering_global_position"]),
-            status=OutboxStatus(row["status"]),
-            attempt_count=int(row["attempt_count"]),
-            lease_token=row["lease_token"],
-            lease_expires_at=row["lease_expires_at"],
-            last_error=row["last_error"],
-            published_at=row["published_at"],
-        )
+        try:
+            if type(encoded) is not str:
+                raise TypeError(f"persisted {field_name} must use SQLite TEXT storage")
+            if len(encoded.encode("utf-8")) > self._max_json_bytes:
+                raise EventStoreJsonTooLargeError(
+                    f"persisted {field_name} exceeds {self._max_json_bytes} encoded bytes"
+                )
+            decoded = json.loads(encoded, parse_constant=_reject_json_constant)
+            copied = self._copy_json_value(
+                decoded,
+                path=f"persisted {field_name}",
+                depth=0,
+                state=_JsonTraversalState(),
+            )
+            if type(copied) is not dict:
+                raise TypeError(f"persisted {field_name} must be a JSON object")
+            return copied
+        except (EventStoreJsonError, TypeError, ValueError, RecursionError) as exc:
+            raise EventStoreIntegrityError(
+                f"persisted {field_name} violates its JSON contract"
+            ) from exc
 
-    @staticmethod
-    def _row_to_inbox(row: sqlite3.Row) -> InboxReceipt:
-        return InboxReceipt(
-            consumer_id=row["consumer_id"],
-            message_id=row["message_id"],
-            received_at=row["received_at"],
-            event_id=row["event_id"],
-            event_global_position=int(row["event_global_position"]),
-            result=json.loads(row["result_json"]),
-        )
+    def _row_to_event(self, row: sqlite3.Row) -> StoredEvent:
+        try:
+            event = DomainEvent(
+                stream_id=row["stream_id"],
+                event_type=row["event_type"],
+                payload=self._decode_json_object(row["payload_json"], "event payload"),
+                actor_id=row["actor_id"],
+                event_id=row["event_id"],
+                timestamp=row["timestamp"],
+                correlation_id=row["correlation_id"],
+                causation_id=row["causation_id"],
+                idempotency_key=row["idempotency_key"],
+            )
+            return StoredEvent(
+                event=event,
+                sequence=int(row["sequence"]),
+                global_position=int(row["global_position"]),
+            )
+        except EventStoreIntegrityError:
+            raise
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise EventStoreIntegrityError("persisted event row is malformed") from exc
+
+    def _row_to_outbox(self, row: sqlite3.Row) -> StoredOutboxMessage:
+        try:
+            message = OutboxMessage(
+                destination=row["destination"],
+                payload=self._decode_json_object(row["payload_json"], "outbox payload"),
+                headers=self._decode_json_object(row["headers_json"], "outbox headers"),
+                message_id=row["message_id"],
+                idempotency_key=row["idempotency_key"],
+                available_at=row["available_at"],
+                created_at=row["created_at"],
+            )
+            return StoredOutboxMessage(
+                message=message,
+                triggering_event_id=row["triggering_event_id"],
+                triggering_global_position=int(row["triggering_global_position"]),
+                status=OutboxStatus(row["status"]),
+                attempt_count=int(row["attempt_count"]),
+                lease_token=row["lease_token"],
+                lease_expires_at=row["lease_expires_at"],
+                last_error=row["last_error"],
+                published_at=row["published_at"],
+            )
+        except EventStoreIntegrityError:
+            raise
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise EventStoreIntegrityError("persisted outbox row is malformed") from exc
+
+    def _row_to_inbox(self, row: sqlite3.Row) -> InboxReceipt:
+        try:
+            return InboxReceipt(
+                consumer_id=row["consumer_id"],
+                message_id=row["message_id"],
+                received_at=row["received_at"],
+                event_id=row["event_id"],
+                event_global_position=int(row["event_global_position"]),
+                result=self._decode_json_object(row["result_json"], "inbox result"),
+            )
+        except EventStoreIntegrityError:
+            raise
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise EventStoreIntegrityError("persisted inbox row is malformed") from exc
 
     @staticmethod
     def _row_to_ambiguity(row: sqlite3.Row) -> OutboxAmbiguity:
@@ -1054,7 +1099,14 @@ class SQLiteEventStore:
             ).fetchone()
             if row is None:
                 return None
-            return int(row["sequence"]), json.loads(row["state_json"])
+            try:
+                return int(row["sequence"]), self._decode_json_object(
+                    row["state_json"], "snapshot state"
+                )
+            except EventStoreIntegrityError:
+                raise
+            except (IndexError, KeyError, TypeError, ValueError) as exc:
+                raise EventStoreIntegrityError("persisted snapshot row is malformed") from exc
 
     def close(self) -> None:
         with self._lock:

@@ -5,6 +5,7 @@ from pathlib import Path
 from quantum_entanglement.delivery import OutboxMessage
 from quantum_entanglement.events import DomainEvent
 from quantum_entanglement.store import (
+    EventStoreIntegrityError,
     EventStoreJsonError,
     EventStoreJsonTooLargeError,
     EventStoreJsonTypeError,
@@ -143,6 +144,74 @@ class SQLiteEventStoreJsonTests(unittest.TestCase):
             with self.assertRaisesRegex(EventStoreJsonTooLargeError, "encoded bytes"):
                 bounded.append(event("event-encoded-limit", {"value": "x" * 64}))
             self.assertEqual(bounded.stream_version("session:json"), 0)
+
+    def test_persisted_event_json_is_decoded_as_bounded_object(self) -> None:
+        self.store.append(event("event-corrupt-json", {"value": "safe"}))
+
+        invalid_values: tuple[object, ...] = (
+            "not-json",
+            "[]",
+            '{"value":NaN}',
+            b'{"value":"wrong-storage-class"}',
+            '{"value":"%s"}' % ("x" * 65_537),
+        )
+        for invalid in invalid_values:
+            with self.subTest(invalid_type=type(invalid).__name__):
+                self.store._connection.execute(
+                    "UPDATE events SET payload_json = ? WHERE event_id = ?",
+                    (invalid, "event-corrupt-json"),
+                )
+                with self.assertRaisesRegex(
+                    EventStoreIntegrityError,
+                    "persisted event payload violates its JSON contract",
+                ):
+                    self.store.read_all()
+
+    def test_persisted_outbox_and_inbox_json_fail_with_stable_integrity_error(self) -> None:
+        self.store.append_with_outbox(
+            event("event-corrupt-outbox", {}),
+            (
+                OutboxMessage(
+                    destination="fake-runtime",
+                    payload={"safe": True},
+                    headers={"trace": "safe"},
+                    message_id="message-corrupt-outbox",
+                    idempotency_key="outbox:corrupt-json",
+                    available_at=T0,
+                    created_at=T0,
+                ),
+            ),
+        )
+        self.store._connection.execute(
+            "UPDATE outbox SET headers_json = ? WHERE message_id = ?",
+            ("null", "message-corrupt-outbox"),
+        )
+        with self.assertRaisesRegex(EventStoreIntegrityError, "persisted outbox headers"):
+            self.store.read_outbox()
+
+        self.store.append_inbox(
+            "consumer-corrupt-json",
+            "message-corrupt-json",
+            event("event-corrupt-inbox", {}),
+            result={"safe": True},
+            received_at=T0,
+        )
+        self.store._connection.execute(
+            "UPDATE inbox_receipts SET result_json = ? WHERE consumer_id = ?",
+            ("{", "consumer-corrupt-json"),
+        )
+        with self.assertRaisesRegex(EventStoreIntegrityError, "persisted inbox result"):
+            self.store.get_inbox_receipt("consumer-corrupt-json", "message-corrupt-json")
+
+    def test_persisted_snapshot_json_uses_the_same_integrity_boundary(self) -> None:
+        self.store.save_snapshot("session:json", 1, {"safe": True}, at=T0)
+        self.store._connection.execute(
+            "UPDATE snapshots SET state_json = ? WHERE stream_id = ?",
+            (b"{}", "session:json"),
+        )
+
+        with self.assertRaisesRegex(EventStoreIntegrityError, "persisted snapshot state"):
+            self.store.load_snapshot("session:json")
 
 
 if __name__ == "__main__":

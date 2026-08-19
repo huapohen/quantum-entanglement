@@ -75,7 +75,7 @@ from .runtime import (
     RunResult,
 )
 from .scheduler import TaskGraph, TaskSpec, TaskTransition, WorkflowPlan
-from .store import ConcurrencyError, SQLiteEventStore
+from .store import ConcurrencyError, EventStoreIntegrityError, SQLiteEventStore
 from .tenancy import (
     CAPABILITY_PROTOCOL_VERSION,
     AccessRequest,
@@ -162,6 +162,7 @@ __all__ = [
     "CapabilityVerificationError",
     "CapabilityVerifier",
     "ConcurrencyError",
+    "EventStoreIntegrityError",
     "BridgeStatus",
     "ChatRoute",
     "ContextBudgetError",
