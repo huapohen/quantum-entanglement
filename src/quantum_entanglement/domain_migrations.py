@@ -160,6 +160,10 @@ class DomainMigrationPlanningError(DomainMigrationBridgeIntegrityError):
     """Raised when a schema state cannot produce an exact bridge-only plan."""
 
 
+class DomainMigrationPlanApplyError(DomainMigrationPlanningError):
+    """Raised when an exact bridge-only plan cannot be applied safely."""
+
+
 class DomainMigrationSidecarSchemaState(str, Enum):
     """Supported sidecar catalog states during the bridge-only rollout."""
 
@@ -583,6 +587,24 @@ def _rollback_sidecar_install(connection: sqlite3.Connection) -> None:
         )
 
 
+def _install_domain_migration_sidecar_locked(
+    connection: sqlite3.Connection,
+) -> DomainMigrationSidecarSchemaState:
+    """Install and validate the exact sidecar while the caller holds a write lock."""
+
+    locked_state = validate_domain_migration_sidecar_schema(connection)
+    if locked_state is DomainMigrationSidecarSchemaState.ABSENT:
+        for statement in DOMAIN_MIGRATION_SIDECAR_DDL:
+            connection.execute(statement)
+
+    installed_state = validate_domain_migration_sidecar_schema(connection)
+    if installed_state is not DomainMigrationSidecarSchemaState.EXACT:
+        raise DomainMigrationSidecarInstallError(
+            "domain migration sidecar installation did not produce the exact schema"
+        )
+    return installed_state
+
+
 def install_domain_migration_sidecar(
     connection: sqlite3.Connection,
 ) -> DomainMigrationSidecarSchemaState:
@@ -616,16 +638,7 @@ def install_domain_migration_sidecar(
                 "domain migration sidecar installation did not acquire a transaction"
             )
 
-        locked_state = validate_domain_migration_sidecar_schema(connection)
-        if locked_state is DomainMigrationSidecarSchemaState.ABSENT:
-            for statement in DOMAIN_MIGRATION_SIDECAR_DDL:
-                connection.execute(statement)
-
-        installed_state = validate_domain_migration_sidecar_schema(connection)
-        if installed_state is not DomainMigrationSidecarSchemaState.EXACT:
-            raise DomainMigrationSidecarInstallError(
-                "domain migration sidecar installation did not produce the exact schema"
-            )
+        _install_domain_migration_sidecar_locked(connection)
         connection.execute("COMMIT")
         owns_transaction = False
     except BaseException:
@@ -1812,6 +1825,62 @@ def _cleanup_failed_legacy_bootstrap(connection: sqlite3.Connection) -> None:
         _rollback_legacy_bootstrap(connection)
 
 
+def _bootstrap_legacy_domain_migration_metadata_locked(
+    connection: sqlite3.Connection,
+    *,
+    clock: Callable[[], str],
+) -> Tuple[DomainMigrationBridgeState, bool]:
+    """Bootstrap exact legacy metadata while the caller owns the write transaction."""
+
+    locked_state = _read_legacy_bootstrap_state(connection, phase="locked")
+    if locked_state.shape is DomainMigrationBridgeShape.LEGACY_PREFIX:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap sidecar disappeared under lock"
+        )
+    if locked_state.shape is DomainMigrationBridgeShape.BRIDGED_PREFIX:
+        return locked_state, False
+    if locked_state.shape is not DomainMigrationBridgeShape.SIDECAR_EMPTY_PREFIX:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap encountered an unsupported state"
+        )
+
+    descriptors = _legacy_bootstrap_descriptors(locked_state)
+    if not descriptors:
+        return locked_state, False
+
+    recorded_at = _sample_legacy_bootstrap_timestamp(clock)
+    expected_state = _expected_legacy_bootstrap_state(
+        locked_state,
+        descriptors,
+        recorded_at=recorded_at,
+    )
+    for descriptor in descriptors:
+        connection.execute(
+            _LEGACY_METADATA_INSERT_SQL,
+            (
+                descriptor.migration_id,
+                descriptor.domain,
+                descriptor.domain_version,
+                "legacy_bootstrap",
+                descriptor.descriptor_sha256,
+                descriptor.owned_object_manifest_sha256,
+                recorded_at,
+            ),
+        )
+    for dependency in expected_state.dependency_rows:
+        connection.execute(
+            _LEGACY_DEPENDENCY_INSERT_SQL,
+            (dependency.migration_id, dependency.depends_on_migration_id),
+        )
+
+    post_write_state = _read_legacy_bootstrap_state(connection, phase="post-write")
+    if post_write_state != expected_state:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap post-write state differs from expectation"
+        )
+    return expected_state, True
+
+
 def bootstrap_legacy_domain_migration_metadata(
     connection: sqlite3.Connection,
     *,
@@ -1859,56 +1928,14 @@ def bootstrap_legacy_domain_migration_metadata(
                 "legacy domain migration bootstrap did not acquire a transaction"
             )
 
-        locked_state = _read_legacy_bootstrap_state(connection, phase="locked")
-        if locked_state.shape is DomainMigrationBridgeShape.LEGACY_PREFIX:
-            raise DomainMigrationLegacyBootstrapError(
-                "legacy domain migration bootstrap sidecar disappeared under lock"
-            )
-        if locked_state.shape is DomainMigrationBridgeShape.BRIDGED_PREFIX:
-            _rollback_legacy_bootstrap(connection)
-            owns_transaction = False
-            return locked_state
-        if locked_state.shape is not DomainMigrationBridgeShape.SIDECAR_EMPTY_PREFIX:
-            raise DomainMigrationLegacyBootstrapError(
-                "legacy domain migration bootstrap encountered an unsupported state"
-            )
-
-        descriptors = _legacy_bootstrap_descriptors(locked_state)
-        if not descriptors:
-            _rollback_legacy_bootstrap(connection)
-            owns_transaction = False
-            return locked_state
-
-        recorded_at = _sample_legacy_bootstrap_timestamp(clock)
-        expected_state = _expected_legacy_bootstrap_state(
-            locked_state,
-            descriptors,
-            recorded_at=recorded_at,
+        expected_state, changed = _bootstrap_legacy_domain_migration_metadata_locked(
+            connection,
+            clock=clock,
         )
-        for descriptor in descriptors:
-            connection.execute(
-                _LEGACY_METADATA_INSERT_SQL,
-                (
-                    descriptor.migration_id,
-                    descriptor.domain,
-                    descriptor.domain_version,
-                    "legacy_bootstrap",
-                    descriptor.descriptor_sha256,
-                    descriptor.owned_object_manifest_sha256,
-                    recorded_at,
-                ),
-            )
-        for dependency in expected_state.dependency_rows:
-            connection.execute(
-                _LEGACY_DEPENDENCY_INSERT_SQL,
-                (dependency.migration_id, dependency.depends_on_migration_id),
-            )
-
-        post_write_state = _read_legacy_bootstrap_state(connection, phase="post-write")
-        if post_write_state != expected_state:
-            raise DomainMigrationLegacyBootstrapError(
-                "legacy domain migration bootstrap post-write state differs from expectation"
-            )
+        if not changed:
+            _rollback_legacy_bootstrap(connection)
+            owns_transaction = False
+            return expected_state
 
         connection.execute("COMMIT")
         if connection.in_transaction:
@@ -2395,3 +2422,288 @@ def plan_bridge_migrations(state: SchemaState) -> BridgeMigrationPlan:
         actions=actions,
         plan_sha256=plan_sha256,
     )
+
+
+def _validate_bridge_migration_plan(plan: object) -> BridgeMigrationPlan:
+    if type(plan) is not BridgeMigrationPlan:
+        raise DomainMigrationPlanApplyError(
+            "bridge migration applier requires an exact BridgeMigrationPlan"
+        )
+    typed_plan = plan
+    if type(typed_plan.release_mode) is not str or typed_plan.release_mode != _BRIDGE_RELEASE_MODE:
+        raise DomainMigrationPlanApplyError("bridge migration plan release mode is unsupported")
+    try:
+        _require_sha256(
+            typed_plan.source_state_sha256,
+            "bridge migration plan source state sha256",
+        )
+        _require_sha256(
+            typed_plan.registry_sha256,
+            "bridge migration plan registry sha256",
+        )
+        _require_sha256(
+            typed_plan.plan_sha256,
+            "bridge migration plan sha256",
+        )
+    except (TypeError, ValueError) as error:
+        raise DomainMigrationPlanApplyError(
+            "bridge migration plan contains a non-canonical digest"
+        ) from error
+    if typed_plan.registry_sha256 != DOMAIN_MIGRATION_REGISTRY.registry_sha256:
+        raise DomainMigrationPlanApplyError(
+            "bridge migration plan registry digest differs from the trusted registry"
+        )
+    if type(typed_plan.source_shape) is not SchemaShape:
+        raise DomainMigrationPlanApplyError("bridge migration plan source shape is unsupported")
+    if type(typed_plan.target_shape) is not SchemaShape:
+        raise DomainMigrationPlanApplyError("bridge migration plan target shape is unsupported")
+    if type(typed_plan.actions) is not tuple:
+        raise DomainMigrationPlanApplyError("bridge migration plan actions must be an exact tuple")
+
+    signatures: List[Tuple[int, BridgeMigrationActionKind, SchemaShape, SchemaShape]] = []
+    for action in typed_plan.actions:
+        if type(action) is not BridgeMigrationAction:
+            raise DomainMigrationPlanApplyError(
+                "bridge migration plan contains an unsupported action model"
+            )
+        if type(action.sequence) is not int:
+            raise DomainMigrationPlanApplyError(
+                "bridge migration plan action sequence is unsupported"
+            )
+        if type(action.kind) is not BridgeMigrationActionKind:
+            raise DomainMigrationPlanApplyError("bridge migration plan action kind is unsupported")
+        if type(action.source_shape) is not SchemaShape:
+            raise DomainMigrationPlanApplyError(
+                "bridge migration plan action source shape is unsupported"
+            )
+        if type(action.result_shape) is not SchemaShape:
+            raise DomainMigrationPlanApplyError(
+                "bridge migration plan action result shape is unsupported"
+            )
+        signatures.append(
+            (
+                action.sequence,
+                action.kind,
+                action.source_shape,
+                action.result_shape,
+            )
+        )
+
+    install_empty = (
+        1,
+        BridgeMigrationActionKind.INSTALL_SIDECAR,
+        SchemaShape.SIDECAR_ABSENT,
+        SchemaShape.EMPTY,
+    )
+    install_legacy = (
+        1,
+        BridgeMigrationActionKind.INSTALL_SIDECAR,
+        SchemaShape.SIDECAR_ABSENT,
+        SchemaShape.LEGACY_PREFIX,
+    )
+    bootstrap = (
+        BridgeMigrationActionKind.BOOTSTRAP_LEGACY_METADATA,
+        SchemaShape.LEGACY_PREFIX,
+        SchemaShape.BRIDGED_PREFIX,
+    )
+    signature_tuple = tuple(signatures)
+    valid_shape = False
+    if typed_plan.source_shape is SchemaShape.SIDECAR_ABSENT:
+        valid_shape = (
+            typed_plan.target_shape is SchemaShape.EMPTY and signature_tuple == (install_empty,)
+        ) or (
+            typed_plan.target_shape is SchemaShape.BRIDGED_PREFIX
+            and signature_tuple
+            == (
+                install_legacy,
+                (2, bootstrap[0], bootstrap[1], bootstrap[2]),
+            )
+        )
+    elif typed_plan.source_shape is SchemaShape.LEGACY_PREFIX:
+        valid_shape = typed_plan.target_shape is SchemaShape.BRIDGED_PREFIX and signature_tuple == (
+            (1, bootstrap[0], bootstrap[1], bootstrap[2]),
+        )
+    elif typed_plan.source_shape in {SchemaShape.EMPTY, SchemaShape.BRIDGED_PREFIX}:
+        valid_shape = typed_plan.target_shape is typed_plan.source_shape and not signature_tuple
+    if not valid_shape:
+        raise DomainMigrationPlanApplyError(
+            "bridge migration plan action sequence or shape transition is unsupported"
+        )
+    return typed_plan
+
+
+def _rollback_bridge_migration_plan_apply(connection: sqlite3.Connection) -> None:
+    try:
+        transaction_is_active = connection.in_transaction
+    except sqlite3.Error as error:
+        raise DomainMigrationPlanApplyError(
+            "bridge migration plan rollback state could not be inspected"
+        ) from error
+    if not transaction_is_active:
+        raise DomainMigrationPlanApplyError("bridge migration plan transaction ended unexpectedly")
+    try:
+        connection.execute("ROLLBACK")
+    except BaseException as error:
+        raise DomainMigrationPlanApplyError("bridge migration plan rollback failed") from error
+    try:
+        transaction_remains_active = connection.in_transaction
+    except sqlite3.Error as error:
+        raise DomainMigrationPlanApplyError(
+            "bridge migration plan rollback state could not be verified"
+        ) from error
+    if transaction_remains_active:
+        raise DomainMigrationPlanApplyError(
+            "bridge migration plan rollback did not release its transaction"
+        )
+
+
+def _inspect_bridge_migration_plan_state(
+    connection: sqlite3.Connection,
+    *,
+    phase: str,
+) -> SchemaState:
+    try:
+        return inspect_schema_state(connection)
+    except DomainMigrationBridgeIntegrityError as error:
+        raise DomainMigrationPlanApplyError(
+            f"bridge migration plan {phase} schema state is not exact"
+        ) from error
+
+
+def _expected_bridge_migration_plan_target_state(
+    source: SchemaState,
+    target_shape: SchemaShape,
+) -> SchemaState:
+    descriptors = _validate_schema_state(source)
+    dependency_edges: Tuple[DomainMigrationDependencyRow, ...] = ()
+    if target_shape is SchemaShape.BRIDGED_PREFIX:
+        dependency_edges = tuple(
+            sorted(
+                DomainMigrationDependencyRow(descriptor.migration_id, dependency)
+                for descriptor in descriptors
+                for dependency in descriptor.dependencies
+            )
+        )
+    elif target_shape is not SchemaShape.EMPTY:
+        raise DomainMigrationPlanApplyError(
+            "bridge migration plan target shape cannot be materialized"
+        )
+    return _build_schema_state(
+        target_shape,
+        descriptors,
+        dependency_edges=dependency_edges,
+    )
+
+
+def apply_bridge_migration_plan(
+    connection: sqlite3.Connection,
+    plan: BridgeMigrationPlan,
+    *,
+    clock: Callable[[], str] = utc_now,
+) -> SchemaState:
+    """Apply one exact source-bound bridge plan in a single writer transaction.
+
+    The plan is re-derived from the locked durable state before any DDL or DML.  Only
+    the sidecar installer and legacy metadata bootstrap kernels are reachable, so native,
+    v4, sparse, caller-supplied SQL, and partial target execution remain impossible.
+    """
+
+    exact_plan = _validate_bridge_migration_plan(plan)
+    if not callable(clock):
+        raise DomainMigrationPlanApplyError("bridge migration plan clock must be callable")
+    try:
+        caller_has_transaction = connection.in_transaction
+    except sqlite3.Error as error:
+        raise DomainMigrationPlanApplyError(
+            "bridge migration plan connection state could not be inspected"
+        ) from error
+    if caller_has_transaction:
+        raise DomainMigrationPlanApplyError(
+            "bridge migration plan requires no active caller transaction"
+        )
+
+    owns_transaction = False
+    expected_state: Optional[SchemaState] = None
+    try:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+        finally:
+            owns_transaction = connection.in_transaction
+        if not owns_transaction:
+            raise DomainMigrationPlanApplyError(
+                "bridge migration plan did not acquire a transaction"
+            )
+
+        locked_state = _inspect_bridge_migration_plan_state(
+            connection,
+            phase="locked",
+        )
+        if locked_state.state_sha256 != exact_plan.source_state_sha256:
+            raise DomainMigrationPlanApplyError(
+                "bridge migration plan source state is stale under the write lock"
+            )
+
+        canonical_plan = plan_bridge_migrations(locked_state)
+        if exact_plan.plan_sha256 != canonical_plan.plan_sha256:
+            raise DomainMigrationPlanApplyError(
+                "bridge migration plan digest differs from the canonical locked plan"
+            )
+        if exact_plan != canonical_plan:
+            raise DomainMigrationPlanApplyError(
+                "bridge migration plan differs from the canonical locked plan"
+            )
+        expected_state = _expected_bridge_migration_plan_target_state(
+            locked_state,
+            exact_plan.target_shape,
+        )
+
+        for action in exact_plan.actions:
+            if action.kind is BridgeMigrationActionKind.INSTALL_SIDECAR:
+                _install_domain_migration_sidecar_locked(connection)
+            elif action.kind is BridgeMigrationActionKind.BOOTSTRAP_LEGACY_METADATA:
+                _bootstrap_state, changed = _bootstrap_legacy_domain_migration_metadata_locked(
+                    connection,
+                    clock=clock,
+                )
+                if not changed:
+                    raise DomainMigrationPlanApplyError(
+                        "bridge migration plan bootstrap action made no state transition"
+                    )
+            else:  # pragma: no cover - Exact model validation is exhaustive.
+                raise DomainMigrationPlanApplyError(
+                    "bridge migration plan action kind is unsupported"
+                )
+
+        post_write_state = _inspect_bridge_migration_plan_state(
+            connection,
+            phase="post-write",
+        )
+        if post_write_state != expected_state:
+            raise DomainMigrationPlanApplyError(
+                "bridge migration plan post-write state differs from expectation"
+            )
+
+        connection.execute("COMMIT")
+        if connection.in_transaction:
+            raise DomainMigrationPlanApplyError(
+                "bridge migration plan commit did not end its transaction"
+            )
+        owns_transaction = False
+    except BaseException:
+        if owns_transaction:
+            _rollback_bridge_migration_plan_apply(connection)
+        raise
+
+    if expected_state is None:  # pragma: no cover - Defensive control-flow guard.
+        raise DomainMigrationPlanApplyError(
+            "bridge migration plan did not construct an expected state"
+        )
+    committed_state = _inspect_bridge_migration_plan_state(
+        connection,
+        phase="committed",
+    )
+    if committed_state != expected_state:
+        raise DomainMigrationPlanApplyError(
+            "committed bridge migration plan state differs from expectation"
+        )
+    return committed_state

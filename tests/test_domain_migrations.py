@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Optional, cast
 from unittest import mock
 
+import quantum_entanglement.domain_migrations as domain_migrations
 from quantum_entanglement.domain_migrations import (
     DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME,
     DOMAIN_MIGRATION_METADATA_TABLE_NAME,
@@ -27,6 +28,7 @@ from quantum_entanglement.domain_migrations import (
     AppliedSchemaMigration,
     BridgeMigrationAction,
     BridgeMigrationActionKind,
+    BridgeMigrationPlan,
     DomainMigrationBridgeIntegrityError,
     DomainMigrationBridgeShape,
     DomainMigrationBridgeState,
@@ -35,6 +37,7 @@ from quantum_entanglement.domain_migrations import (
     DomainMigrationLedgerRow,
     DomainMigrationLegacyBootstrapError,
     DomainMigrationMetadataRow,
+    DomainMigrationPlanApplyError,
     DomainMigrationPlanningError,
     DomainMigrationRegistry,
     DomainMigrationSidecarInstallError,
@@ -44,6 +47,7 @@ from quantum_entanglement.domain_migrations import (
     SchemaDomainHead,
     SchemaShape,
     SchemaState,
+    apply_bridge_migration_plan,
     bootstrap_legacy_domain_migration_metadata,
     inspect_schema_state,
     install_domain_migration_sidecar,
@@ -2550,6 +2554,573 @@ class DomainMigrationSchemaPlannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hard limit"):
             replace(plan, actions=cast(Any, action_rows))
         self.assertEqual(action_rows.yielded, MAX_BRIDGE_PLAN_ACTIONS + 1)
+
+
+class DomainMigrationBridgePlanApplyTests(unittest.TestCase):
+    METADATA_INSERT_MARKER = "INSERT INTO main.qe_schema_migration_metadata"
+    DEPENDENCY_INSERT_MARKER = "INSERT INTO main.qe_schema_migration_dependencies"
+    METADATA_QUERY_MARKER = (
+        "SELECT migration_version, domain, domain_version, metadata_kind, "
+        "descriptor_sha256, owned_schema_sha256, recorded_at "
+        "FROM main.qe_schema_migration_metadata"
+    )
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tempdir.name) / "bridge-plan-apply.sqlite3")
+        self.connection = sqlite3.connect(
+            self.path,
+            isolation_level=None,
+            timeout=1,
+        )
+
+    def tearDown(self) -> None:
+        self.connection.close()
+        self.tempdir.cleanup()
+
+    def create_legacy_prefix(self, connection: sqlite3.Connection, count: int) -> None:
+        if count >= 3:
+            connection.execute(
+                """
+                CREATE TABLE outbox (
+                    message_id TEXT PRIMARY KEY,
+                    lease_token TEXT,
+                    status TEXT NOT NULL
+                )
+                """
+            )
+        versions = tuple(item.migration_id for item in LEGACY_DOMAIN_MIGRATIONS[:count])
+        self.assertEqual(
+            apply_sqlite_migrations(
+                connection,
+                target_versions=versions,
+                clock=lambda: BRIDGE_TIME,
+            ),
+            versions[-1] if versions else 0,
+        )
+
+    def assert_absent_prefix(self, connection: sqlite3.Connection) -> None:
+        self.assertIs(
+            validate_domain_migration_sidecar_schema(connection),
+            DomainMigrationSidecarSchemaState.ABSENT,
+        )
+        self.assertIs(inspect_schema_state(connection).shape, SchemaShape.SIDECAR_ABSENT)
+        self.assertFalse(connection.in_transaction)
+
+    @staticmethod
+    def normalized_calls(recording: RecordingConnection) -> tuple[str, ...]:
+        return tuple(
+            " ".join(statement.strip().rstrip(";").split()) for statement, _ in recording.calls
+        )
+
+    @staticmethod
+    def dependency_registry() -> DomainMigrationRegistry:
+        first, second = DOMAIN_MIGRATION_REGISTRY.descriptors[:2]
+        dependent = replace(second, dependencies=(first.migration_id,))
+        return DomainMigrationRegistry(
+            descriptors=(first, dependent),
+            registry_sha256="f" * 64,
+        )
+
+    def test_absent_empty_plan_installs_exact_sidecar_without_sampling_clock(self) -> None:
+        plan = plan_bridge_migrations(inspect_schema_state(self.connection))
+        recording = RecordingConnection(self.connection)
+        clock = mock.Mock(side_effect=AssertionError("empty plan sampled clock"))
+
+        state = apply_bridge_migration_plan(
+            cast(sqlite3.Connection, recording),
+            plan,
+            clock=clock,
+        )
+
+        self.assertIs(state.shape, SchemaShape.EMPTY)
+        self.assertEqual(state, inspect_schema_state(self.connection))
+        clock.assert_not_called()
+        calls = self.normalized_calls(recording)
+        self.assertEqual(calls.count("BEGIN IMMEDIATE"), 1)
+        self.assertEqual(calls.count("COMMIT"), 1)
+        self.assertEqual(
+            sum(item.startswith("CREATE TABLE qe_schema_migration_") for item in calls),
+            2,
+        )
+        self.assertFalse(any("INSERT INTO main.qe_schema_migration_" in item for item in calls))
+        self.assertEqual(
+            self.connection.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM main.qe_schema_migration_metadata),
+                    (SELECT COUNT(*) FROM main.qe_schema_migration_dependencies)
+                """
+            ).fetchone(),
+            (0, 0),
+        )
+
+    def test_absent_legacy_plan_installs_and_bootstraps_in_one_transaction(self) -> None:
+        self.create_legacy_prefix(self.connection, 2)
+        plan = plan_bridge_migrations(inspect_schema_state(self.connection))
+        recording = RecordingConnection(self.connection)
+        clock_calls = 0
+
+        def clock() -> str:
+            nonlocal clock_calls
+            clock_calls += 1
+            self.assertTrue(self.connection.in_transaction)
+            return BRIDGE_TIME
+
+        state = apply_bridge_migration_plan(
+            cast(sqlite3.Connection, recording),
+            plan,
+            clock=clock,
+        )
+
+        self.assertIs(state.shape, SchemaShape.BRIDGED_PREFIX)
+        self.assertEqual(clock_calls, 1)
+        self.assertEqual(state, inspect_schema_state(self.connection))
+        calls = self.normalized_calls(recording)
+        begin_index = calls.index("BEGIN IMMEDIATE")
+        commit_index = calls.index("COMMIT")
+        write_indexes = tuple(
+            index
+            for index, statement in enumerate(calls)
+            if statement.startswith("CREATE TABLE qe_schema_migration_")
+            or "INSERT INTO main.qe_schema_migration_" in statement
+        )
+        self.assertTrue(write_indexes)
+        self.assertTrue(all(begin_index < index < commit_index for index in write_indexes))
+        self.assertEqual(calls.count("BEGIN IMMEDIATE"), 1)
+        self.assertEqual(calls.count("COMMIT"), 1)
+        self.assertEqual(
+            sum(self.METADATA_INSERT_MARKER in item for item in calls),
+            2,
+        )
+
+    def test_exact_sidecar_legacy_plan_uses_only_bootstrap_kernel(self) -> None:
+        self.create_legacy_prefix(self.connection, 2)
+        install_domain_migration_sidecar(self.connection)
+        plan = plan_bridge_migrations(inspect_schema_state(self.connection))
+        recording = RecordingConnection(self.connection)
+
+        state = apply_bridge_migration_plan(
+            cast(sqlite3.Connection, recording),
+            plan,
+            clock=lambda: BRIDGE_TIME,
+        )
+
+        self.assertIs(state.shape, SchemaShape.BRIDGED_PREFIX)
+        calls = self.normalized_calls(recording)
+        self.assertFalse(any(item.startswith("CREATE TABLE ") for item in calls))
+        self.assertEqual(
+            sum(self.METADATA_INSERT_MARKER in item for item in calls),
+            2,
+        )
+        self.assertEqual(calls.count("BEGIN IMMEDIATE"), 1)
+        self.assertEqual(calls.count("COMMIT"), 1)
+
+    def test_empty_and_bridged_plans_are_locked_zero_write_noops(self) -> None:
+        for target in (SchemaShape.EMPTY, SchemaShape.BRIDGED_PREFIX):
+            with self.subTest(target=target):
+                connection = sqlite3.connect(":memory:", isolation_level=None)
+                try:
+                    if target is SchemaShape.BRIDGED_PREFIX:
+                        self.create_legacy_prefix(connection, 2)
+                    install_domain_migration_sidecar(connection)
+                    if target is SchemaShape.BRIDGED_PREFIX:
+                        bootstrap_legacy_domain_migration_metadata(
+                            connection,
+                            clock=lambda: BRIDGE_TIME,
+                        )
+                    plan = plan_bridge_migrations(inspect_schema_state(connection))
+                    before_changes = connection.total_changes
+                    recording = RecordingConnection(connection)
+                    clock = mock.Mock(side_effect=AssertionError("no-op plan sampled clock"))
+
+                    state = apply_bridge_migration_plan(
+                        cast(sqlite3.Connection, recording),
+                        plan,
+                        clock=clock,
+                    )
+
+                    self.assertIs(state.shape, target)
+                    self.assertEqual(connection.total_changes, before_changes)
+                    clock.assert_not_called()
+                    calls = self.normalized_calls(recording)
+                    self.assertEqual(calls.count("BEGIN IMMEDIATE"), 1)
+                    self.assertEqual(calls.count("COMMIT"), 1)
+                    self.assertFalse(
+                        any(
+                            item.startswith("CREATE TABLE ")
+                            or "INSERT INTO main.qe_schema_migration_" in item
+                            for item in calls
+                        )
+                    )
+                finally:
+                    connection.close()
+
+    def test_stale_source_is_rejected_under_lock_without_mutation(self) -> None:
+        plan = plan_bridge_migrations(inspect_schema_state(self.connection))
+        install_domain_migration_sidecar(self.connection)
+        before_changes = self.connection.total_changes
+        recording = RecordingConnection(self.connection)
+
+        with self.assertRaisesRegex(
+            DomainMigrationPlanApplyError,
+            "source state is stale under the write lock",
+        ):
+            apply_bridge_migration_plan(
+                cast(sqlite3.Connection, recording),
+                plan,
+                clock=lambda: BRIDGE_TIME,
+            )
+
+        self.assertEqual(self.connection.total_changes, before_changes)
+        self.assertIs(inspect_schema_state(self.connection).shape, SchemaShape.EMPTY)
+        calls = self.normalized_calls(recording)
+        self.assertEqual(calls.count("BEGIN IMMEDIATE"), 1)
+        self.assertEqual(calls.count("ROLLBACK"), 1)
+        self.assertNotIn("COMMIT", calls)
+        self.assertFalse(self.connection.in_transaction)
+
+    def test_models_enums_transitions_registry_and_clock_fail_before_begin(self) -> None:
+        plan = plan_bridge_migrations(inspect_schema_state(self.connection))
+
+        class PlanSubclass(BridgeMigrationPlan):
+            pass
+
+        class ActionSubclass(BridgeMigrationAction):
+            pass
+
+        action = plan.actions[0]
+        subclass_plan = PlanSubclass(**cast(Any, vars(plan)))
+        subclass_action = ActionSubclass(**cast(Any, vars(action)))
+        forged_values: tuple[object, ...] = (
+            object(),
+            subclass_plan,
+            replace(plan, release_mode=TextSubclass("bridge_only")),
+            replace(plan, release_mode="native_v4"),
+            replace(plan, registry_sha256="0" * 64),
+            replace(plan, source_shape=cast(Any, "domain_sparse")),
+            replace(plan, target_shape=cast(Any, "native")),
+            replace(plan, source_state_sha256="short"),
+            replace(plan, actions=(subclass_action,)),
+            replace(plan, actions=(replace(action, sequence=cast(Any, True)),)),
+            replace(plan, actions=(replace(action, kind=cast(Any, "install_sidecar")),)),
+            replace(
+                plan,
+                actions=(replace(action, result_shape=SchemaShape.LEGACY_PREFIX),),
+            ),
+        )
+        for forged in forged_values:
+            with self.subTest(forged_type=type(forged).__name__):
+                recording = RecordingConnection(self.connection)
+                with self.assertRaises(DomainMigrationPlanApplyError):
+                    apply_bridge_migration_plan(
+                        cast(sqlite3.Connection, recording),
+                        cast(Any, forged),
+                        clock=lambda: BRIDGE_TIME,
+                    )
+                self.assertEqual(recording.calls, [])
+
+        recording = RecordingConnection(self.connection)
+        with self.assertRaisesRegex(
+            DomainMigrationPlanApplyError,
+            "clock must be callable",
+        ):
+            apply_bridge_migration_plan(
+                cast(sqlite3.Connection, recording),
+                plan,
+                clock=cast(Any, object()),
+            )
+        self.assertEqual(recording.calls, [])
+
+    def test_digest_and_state_incongruent_plans_rollback_before_writes(self) -> None:
+        plan = plan_bridge_migrations(inspect_schema_state(self.connection))
+        dual_actions = (
+            BridgeMigrationAction(
+                sequence=1,
+                kind=BridgeMigrationActionKind.INSTALL_SIDECAR,
+                source_shape=SchemaShape.SIDECAR_ABSENT,
+                result_shape=SchemaShape.LEGACY_PREFIX,
+            ),
+            BridgeMigrationAction(
+                sequence=2,
+                kind=BridgeMigrationActionKind.BOOTSTRAP_LEGACY_METADATA,
+                source_shape=SchemaShape.LEGACY_PREFIX,
+                result_shape=SchemaShape.BRIDGED_PREFIX,
+            ),
+        )
+        forged_plans = (
+            replace(plan, plan_sha256="0" * 64),
+            replace(
+                plan,
+                target_shape=SchemaShape.BRIDGED_PREFIX,
+                actions=dual_actions,
+            ),
+        )
+
+        for forged in forged_plans:
+            with self.subTest(target=forged.target_shape):
+                recording = RecordingConnection(self.connection)
+                with self.assertRaises(DomainMigrationPlanApplyError):
+                    apply_bridge_migration_plan(
+                        cast(sqlite3.Connection, recording),
+                        forged,
+                        clock=lambda: BRIDGE_TIME,
+                    )
+                calls = self.normalized_calls(recording)
+                self.assertEqual(calls.count("BEGIN IMMEDIATE"), 1)
+                self.assertEqual(calls.count("ROLLBACK"), 1)
+                self.assertFalse(
+                    any(
+                        item.startswith("CREATE TABLE ")
+                        or "INSERT INTO main.qe_schema_migration_" in item
+                        for item in calls
+                    )
+                )
+                self.assert_absent_prefix(self.connection)
+
+    def test_active_caller_transaction_is_preserved_with_zero_calls(self) -> None:
+        plan = plan_bridge_migrations(inspect_schema_state(self.connection))
+        self.connection.execute("BEGIN")
+        recording = RecordingConnection(self.connection)
+        clock = mock.Mock(side_effect=AssertionError("caller transaction sampled clock"))
+
+        with self.assertRaisesRegex(
+            DomainMigrationPlanApplyError,
+            "requires no active caller transaction",
+        ):
+            apply_bridge_migration_plan(
+                cast(sqlite3.Connection, recording),
+                plan,
+                clock=clock,
+            )
+
+        self.assertTrue(self.connection.in_transaction)
+        self.assertEqual(recording.calls, [])
+        clock.assert_not_called()
+        self.connection.execute("ROLLBACK")
+
+    def test_invalid_or_raising_clock_rolls_back_both_actions(self) -> None:
+        cases: tuple[object, ...] = (
+            "2026-08-20T00:00:00+00:00",
+            KeyboardInterrupt("injected clock interrupt"),
+        )
+        for case in cases:
+            with self.subTest(case_type=type(case).__name__):
+                connection = sqlite3.connect(":memory:", isolation_level=None)
+                try:
+                    self.create_legacy_prefix(connection, 2)
+                    plan = plan_bridge_migrations(inspect_schema_state(connection))
+                    if isinstance(case, BaseException):
+                        clock = mock.Mock(side_effect=case)
+                        expected_error: type[BaseException] = type(case)
+                    else:
+                        clock = mock.Mock(return_value=case)
+                        expected_error = DomainMigrationLegacyBootstrapError
+
+                    with self.assertRaises(expected_error):
+                        apply_bridge_migration_plan(
+                            connection,
+                            plan,
+                            clock=cast(Any, clock),
+                        )
+
+                    clock.assert_called_once_with()
+                    self.assert_absent_prefix(connection)
+                finally:
+                    connection.close()
+
+    def test_ddl_dml_commit_and_interrupt_failures_rollback_the_dual_plan(self) -> None:
+        cases = (
+            (
+                "CREATE TABLE qe_schema_migration_metadata",
+                sqlite3.OperationalError("injected first DDL failure"),
+            ),
+            (
+                "CREATE TABLE qe_schema_migration_dependencies",
+                KeyboardInterrupt("injected second DDL interrupt"),
+            ),
+            (
+                self.METADATA_INSERT_MARKER,
+                sqlite3.OperationalError("injected metadata DML failure"),
+            ),
+            ("COMMIT", sqlite3.OperationalError("injected commit failure")),
+        )
+        for marker, error in cases:
+            with self.subTest(marker=marker, error_type=type(error).__name__):
+                connection = sqlite3.connect(":memory:", isolation_level=None)
+                try:
+                    self.create_legacy_prefix(connection, 2)
+                    plan = plan_bridge_migrations(inspect_schema_state(connection))
+                    wrapped = MarkerFailureConnection(
+                        connection,
+                        marker=marker,
+                        occurrence=1,
+                        error=error,
+                    )
+
+                    with self.assertRaisesRegex(type(error), "injected"):
+                        apply_bridge_migration_plan(
+                            cast(sqlite3.Connection, wrapped),
+                            plan,
+                            clock=lambda: BRIDGE_TIME,
+                        )
+
+                    self.assertTrue(wrapped.failed)
+                    self.assert_absent_prefix(connection)
+                finally:
+                    connection.close()
+
+        connection = sqlite3.connect(":memory:", isolation_level=None)
+        try:
+            self.create_legacy_prefix(connection, 2)
+            plan = plan_bridge_migrations(inspect_schema_state(connection))
+            post_begin = PostBeginFailureConnection(connection)
+            with self.assertRaisesRegex(KeyboardInterrupt, "post-BEGIN"):
+                apply_bridge_migration_plan(
+                    cast(sqlite3.Connection, post_begin),
+                    plan,
+                    clock=lambda: BRIDGE_TIME,
+                )
+            self.assert_absent_prefix(connection)
+        finally:
+            connection.close()
+
+    def test_dependency_and_final_postcondition_failures_rollback_all_writes(self) -> None:
+        registry = self.dependency_registry()
+        connection = sqlite3.connect(":memory:", isolation_level=None)
+        try:
+            self.create_legacy_prefix(connection, 2)
+            with mock.patch.object(
+                domain_migrations,
+                "DOMAIN_MIGRATION_REGISTRY",
+                registry,
+            ):
+                plan = plan_bridge_migrations(inspect_schema_state(connection))
+                wrapped = MarkerFailureConnection(
+                    connection,
+                    marker=self.DEPENDENCY_INSERT_MARKER,
+                    occurrence=1,
+                    error=sqlite3.OperationalError("injected dependency failure"),
+                )
+                with self.assertRaisesRegex(sqlite3.OperationalError, "dependency"):
+                    apply_bridge_migration_plan(
+                        cast(sqlite3.Connection, wrapped),
+                        plan,
+                        clock=lambda: BRIDGE_TIME,
+                    )
+                self.assert_absent_prefix(connection)
+        finally:
+            connection.close()
+
+        connection = sqlite3.connect(":memory:", isolation_level=None)
+        try:
+            self.create_legacy_prefix(connection, 2)
+            plan = plan_bridge_migrations(inspect_schema_state(connection))
+            wrapped = MarkerFailureConnection(
+                connection,
+                marker=self.METADATA_QUERY_MARKER,
+                occurrence=3,
+                error=sqlite3.OperationalError("injected final postcondition failure"),
+            )
+            with self.assertRaisesRegex(
+                DomainMigrationPlanApplyError,
+                "post-write schema state is not exact",
+            ):
+                apply_bridge_migration_plan(
+                    cast(sqlite3.Connection, wrapped),
+                    plan,
+                    clock=lambda: BRIDGE_TIME,
+                )
+            self.assertTrue(wrapped.failed)
+            self.assert_absent_prefix(connection)
+        finally:
+            connection.close()
+
+    def test_committed_reread_mismatch_fails_closed(self) -> None:
+        plan = plan_bridge_migrations(inspect_schema_state(self.connection))
+        original_inspect = domain_migrations._inspect_bridge_migration_plan_state
+
+        def inspect_with_committed_mismatch(
+            connection: sqlite3.Connection,
+            *,
+            phase: str,
+        ) -> SchemaState:
+            state = original_inspect(connection, phase=phase)
+            if phase == "committed":
+                return replace(state, state_sha256="0" * 64)
+            return state
+
+        with mock.patch.object(
+            domain_migrations,
+            "_inspect_bridge_migration_plan_state",
+            side_effect=inspect_with_committed_mismatch,
+        ):
+            with self.assertRaisesRegex(
+                DomainMigrationPlanApplyError,
+                "committed bridge migration plan state differs",
+            ):
+                apply_bridge_migration_plan(
+                    self.connection,
+                    plan,
+                    clock=lambda: BRIDGE_TIME,
+                )
+
+        self.assertIs(inspect_schema_state(self.connection).shape, SchemaShape.EMPTY)
+        self.assertFalse(self.connection.in_transaction)
+
+    def test_two_concurrent_consumers_have_one_winner_and_one_stale_rejection(self) -> None:
+        self.create_legacy_prefix(self.connection, 2)
+        plan = plan_bridge_migrations(inspect_schema_state(self.connection))
+        barrier = threading.Barrier(2)
+        guard = threading.Lock()
+        results: list[SchemaState] = []
+        failures: list[BaseException] = []
+        clock_calls = 0
+
+        def clock() -> str:
+            nonlocal clock_calls
+            with guard:
+                clock_calls += 1
+            return BRIDGE_TIME
+
+        def worker() -> None:
+            connection = sqlite3.connect(
+                self.path,
+                isolation_level=None,
+                timeout=5,
+            )
+            wrapped = BeginBarrierConnection(connection, barrier)
+            try:
+                result = apply_bridge_migration_plan(
+                    cast(sqlite3.Connection, wrapped),
+                    plan,
+                    clock=clock,
+                )
+                with guard:
+                    results.append(result)
+            except BaseException as error:  # pragma: no cover - Assertions report it.
+                with guard:
+                    failures.append(error)
+            finally:
+                connection.close()
+
+        threads = [
+            threading.Thread(target=worker, daemon=True, name=f"plan-applier-{index}")
+            for index in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(failures), 1)
+        self.assertIsInstance(failures[0], DomainMigrationPlanApplyError)
+        self.assertIn("source state is stale", str(failures[0]))
+        self.assertEqual(clock_calls, 1)
+        self.assertIs(results[0].shape, SchemaShape.BRIDGED_PREFIX)
+        self.assertEqual(results[0], inspect_schema_state(self.connection))
 
 
 class DomainMigrationLegacyBootstrapTests(unittest.TestCase):
