@@ -127,6 +127,19 @@ class SQLiteBackupTests(unittest.TestCase):
         with self.assertRaisesRegex(BackupIntegrityError, "manifest is malformed"):
             verify_sqlite_backup(backup)
 
+    def test_manifest_rejects_non_string_identity_and_oversized_input(self):
+        backup, manifest_path, _created = self.create_backup()
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        value["backupId"] = True
+        manifest_path.write_text(json.dumps(value), encoding="utf-8")
+
+        with self.assertRaisesRegex(BackupIntegrityError, "manifest is malformed"):
+            verify_sqlite_backup(backup)
+
+        manifest_path.write_text("{}" + (" " * (1024 * 1024)), encoding="utf-8")
+        with self.assertRaisesRegex(BackupIntegrityError, "manifest is malformed"):
+            verify_sqlite_backup(backup)
+
     def test_source_and_destination_path_guards(self):
         with self.assertRaises(BackupExistsError):
             create_sqlite_backup(self.source, self.source, clock=lambda: T0)

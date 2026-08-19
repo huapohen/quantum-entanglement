@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple, cast
 from .protocol import new_id, utc_now
 
 _FORMAT = "qe.sqlite-backup/1"
+_MAX_MANIFEST_BYTES = 1024 * 1024
 _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
 )
@@ -45,6 +46,12 @@ class BackupExistsError(BackupError):
 
 class BackupIntegrityError(BackupError):
     """Raised when a database or manifest fails verification."""
+
+
+def _plain_string(value: object, field_name: str) -> str:
+    if type(value) is not str or not value:
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value
 
 
 def _normalize_timestamp(value: str) -> str:
@@ -113,15 +120,22 @@ def _database_evidence(connection: sqlite3.Connection) -> _DatabaseEvidence:
             FROM qe_schema_migrations ORDER BY version
             """
         ).fetchall()
-        migrations = tuple(
-            {
-                "version": int(row["version"]),
-                "filename": str(row["filename"]),
-                "sha256": str(row["sha256"]),
-                "appliedAt": str(row["applied_at"]),
-            }
-            for row in rows
-        )
+        try:
+            migrations = tuple(
+                {
+                    "version": int(row["version"]),
+                    "filename": _plain_string(row["filename"], "migration filename"),
+                    "sha256": _plain_string(row["sha256"], "migration sha256"),
+                    "appliedAt": _normalize_timestamp(
+                        _plain_string(row["applied_at"], "migration appliedAt")
+                    ),
+                }
+                for row in rows
+            )
+        except (TypeError, ValueError) as exc:
+            raise BackupIntegrityError(
+                "SQLite migration ledger is not supported by this binary"
+            ) from exc
     page_count_row = connection.execute("PRAGMA page_count").fetchone()
     page_size_row = connection.execute("PRAGMA page_size").fetchone()
     return _DatabaseEvidence(
@@ -176,34 +190,39 @@ class BackupManifest:
             raise ValueError("backup manifest fields do not match format version 1")
         if value["formatVersion"] != _FORMAT:
             raise ValueError("unsupported backup manifest format")
-        backup_id = str(value["backupId"])
-        if not backup_id.strip():
-            raise ValueError("backupId is required")
-        created_at = _normalize_timestamp(str(value["createdAt"]))
-        database_sha256 = str(value["databaseSha256"])
+        backup_id = _plain_string(value["backupId"], "backupId")
+        if not re.fullmatch(r"backup_[0-9a-f]{32}", backup_id):
+            raise ValueError("backupId does not match format version 1")
+        created_at = _normalize_timestamp(_plain_string(value["createdAt"], "createdAt"))
+        database_sha256 = _plain_string(value["databaseSha256"], "databaseSha256")
         if len(database_sha256) != 64 or re.search(r"[^0-9a-f]", database_sha256):
             raise ValueError("databaseSha256 must be lowercase SHA-256 hex")
         for name in ("byteSize", "pageCount", "pageSize"):
             item = value[name]
-            if not isinstance(item, int) or isinstance(item, bool) or item < 0:
-                raise ValueError(f"{name} must be a non-negative integer")
+            if type(item) is not int or item <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        page_size = value["pageSize"]
+        if page_size < 512 or page_size > 65_536 or page_size & (page_size - 1):
+            raise ValueError("pageSize is not supported by SQLite")
+        if value["byteSize"] != value["pageCount"] * page_size:
+            raise ValueError("backup byteSize does not match its page geometry")
         raw_counts = value["tableCounts"]
-        if not isinstance(raw_counts, dict):
+        if type(raw_counts) is not dict:
             raise TypeError("tableCounts must be a plain dictionary")
         counts: Dict[str, int] = {}
         for name, count in raw_counts.items():
             if name not in _CORE_TABLES:
                 raise ValueError(f"unsupported table count: {name}")
-            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            if type(count) is not int or count < 0:
                 raise ValueError("table counts must be non-negative integers")
             counts[name] = count
         raw_migrations = value["migrations"]
-        if not isinstance(raw_migrations, list):
+        if type(raw_migrations) is not list:
             raise TypeError("migrations must be a list")
         migrations = []
         previous = 0
         for raw in raw_migrations:
-            if not isinstance(raw, dict) or set(raw) != {
+            if type(raw) is not dict or set(raw) != {
                 "version",
                 "filename",
                 "sha256",
@@ -211,12 +230,12 @@ class BackupManifest:
             }:
                 raise ValueError("malformed migration evidence")
             version = raw["version"]
-            if not isinstance(version, int) or isinstance(version, bool) or version <= previous:
+            if type(version) is not int or version <= previous:
                 raise ValueError("migration versions must be positive and ordered")
-            checksum = str(raw["sha256"])
+            checksum = _plain_string(raw["sha256"], "migration sha256")
             if len(checksum) != 64 or re.search(r"[^0-9a-f]", checksum):
                 raise ValueError("migration checksum must be lowercase SHA-256 hex")
-            filename = str(raw["filename"])
+            filename = _plain_string(raw["filename"], "migration filename")
             if not filename.endswith(".up.sql"):
                 raise ValueError("migration filename must end with .up.sql")
             migrations.append(
@@ -224,10 +243,13 @@ class BackupManifest:
                     "version": version,
                     "filename": filename,
                     "sha256": checksum,
-                    "appliedAt": _normalize_timestamp(str(raw["appliedAt"])),
+                    "appliedAt": _normalize_timestamp(
+                        _plain_string(raw["appliedAt"], "migration appliedAt")
+                    ),
                 }
             )
             previous = version
+        normalized_migrations = tuple(migrations)
         return cls(
             format_version=_FORMAT,
             backup_id=backup_id,
@@ -235,9 +257,9 @@ class BackupManifest:
             database_sha256=database_sha256,
             byte_size=int(value["byteSize"]),
             page_count=int(value["pageCount"]),
-            page_size=int(value["pageSize"]),
+            page_size=int(page_size),
             table_counts=counts,
-            migrations=tuple(migrations),
+            migrations=normalized_migrations,
         )
 
 
@@ -324,16 +346,18 @@ def create_sqlite_backup(
 
         with database_temp.open("rb") as database_handle:
             os.fsync(database_handle.fileno())
-        manifest_value = BackupManifest(
-            format_version=_FORMAT,
-            backup_id=new_id("backup"),
-            created_at=_normalize_timestamp(clock()),
-            database_sha256=_sha256_file(database_temp),
-            byte_size=database_temp.stat().st_size,
-            page_count=evidence.page_count,
-            page_size=evidence.page_size,
-            table_counts=evidence.table_counts,
-            migrations=evidence.migrations,
+        manifest_value = BackupManifest.from_dict(
+            BackupManifest(
+                format_version=_FORMAT,
+                backup_id=new_id("backup"),
+                created_at=_normalize_timestamp(clock()),
+                database_sha256=_sha256_file(database_temp),
+                byte_size=database_temp.stat().st_size,
+                page_count=evidence.page_count,
+                page_size=evidence.page_size,
+                table_counts=evidence.table_counts,
+                migrations=evidence.migrations,
+            ).to_dict()
         )
         os.fchmod(manifest_fd, 0o600)
         with os.fdopen(manifest_fd, "w", encoding="utf-8") as manifest_handle:
@@ -394,7 +418,11 @@ def verify_sqlite_backup(
         if path.is_symlink():
             raise BackupIntegrityError(f"{name} file must not be a symbolic link")
     try:
-        raw = json.loads(manifest.read_text(encoding="utf-8"))
+        with manifest.open("rb") as manifest_handle:
+            manifest_bytes = manifest_handle.read(_MAX_MANIFEST_BYTES + 1)
+        if len(manifest_bytes) > _MAX_MANIFEST_BYTES:
+            raise ValueError("backup manifest exceeds the format size limit")
+        raw = json.loads(manifest_bytes.decode("utf-8"))
         parsed = BackupManifest.from_dict(cast(Dict[str, Any], raw))
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise BackupIntegrityError("backup manifest is malformed") from exc
