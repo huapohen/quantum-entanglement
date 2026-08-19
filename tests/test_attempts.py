@@ -81,19 +81,19 @@ class InvocationAttemptStoreTests(unittest.TestCase):
 
     def test_default_in_memory_store_is_usable_without_wal(self):
         with SQLiteInvocationAttemptStore(clock=self.clock) as memory_store:
-            self.assertEqual(memory_store.schema_version(), 1)
+            self.assertEqual(memory_store.schema_version(), 2)
             queued = memory_store.enqueue(job_spec(invocation_id="memory-invocation"))
             self.assertEqual(queued.status, InvocationStatus.QUEUED)
 
     def test_migration_is_versioned_reopenable_and_coexists_with_event_store(self):
-        self.assertEqual(self.store.schema_version(), 1)
+        self.assertEqual(self.store.schema_version(), 2)
         self.store.close()
 
         event_store = SQLiteEventStore(self.path)
         stored = event_store.append(DomainEvent("session:s1", "created", {}, "actor"))
         reopened = SQLiteInvocationAttemptStore(self.path, clock=self.clock)
 
-        self.assertEqual(reopened.schema_version(), 1)
+        self.assertEqual(reopened.schema_version(), 2)
         self.assertEqual(stored.sequence, 1)
         self.assertEqual(len(event_store.read_stream("session:s1")), 1)
         reopened.close()
@@ -119,7 +119,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                 for future in (executor.submit(initialize), executor.submit(initialize))
             ]
 
-        self.assertEqual(versions, [1, 1])
+        self.assertEqual(versions, [2, 2])
 
     def test_migration_checksum_drift_fails_closed(self):
         self.store.close()

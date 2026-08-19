@@ -42,6 +42,7 @@ class Migration:
 
 MIGRATIONS: Sequence[Migration] = (
     Migration(1, "0001_invocation_attempts.up.sql"),
+    Migration(2, "0002_artifacts.up.sql"),
 )
 
 
