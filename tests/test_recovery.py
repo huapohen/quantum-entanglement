@@ -1,7 +1,11 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import quantum_entanglement
+import quantum_entanglement.runtime as runtime_module
+from quantum_entanglement.events import DomainEvent
 from quantum_entanglement.protocol import (
     ActionIntent,
     ActorKind,
@@ -12,7 +16,12 @@ from quantum_entanglement.protocol import (
     RiskLevel,
     TaskStatus,
 )
-from quantum_entanglement.runtime import AgentRegistration, AgentResult, OrchestratorKernel
+from quantum_entanglement.runtime import (
+    AgentRegistration,
+    AgentResult,
+    OrchestratorKernel,
+    SessionRecoveryError,
+)
 from quantum_entanglement.scheduler import TaskSpec, WorkflowPlan
 from quantum_entanglement.store import SQLiteEventStore
 
@@ -150,6 +159,131 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             {item.name for item in completed.artifacts}, {"evidence.md", "publication.md"}
         )
         third.event_store.close()
+
+    async def test_session_recovery_uses_bounded_contiguous_pages(self):
+        calls = 0
+
+        async def handler(invocation):
+            nonlocal calls
+            calls += 1
+            return AgentResult("done")
+
+        plan = WorkflowPlan(
+            "recover-pages",
+            "分页恢复",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-pages",
+        )
+        first = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        first.register_agent(registration("worker", handler))
+        self.assertTrue((await first.run(plan)).completed)
+        first.event_store.close()
+
+        second = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        second.register_agent(registration("worker", handler))
+        original_page_reader = second.event_store.read_stream_page
+        with patch.object(runtime_module, "_RECOVERY_PAGE_LIMIT", 2):
+            with patch.object(
+                second.event_store,
+                "read_stream",
+                side_effect=AssertionError("unbounded recovery read is forbidden"),
+            ):
+                with patch.object(
+                    second.event_store,
+                    "read_stream_page",
+                    wraps=original_page_reader,
+                ) as page_reader:
+                    recovered = await second.run(plan)
+
+        self.assertTrue(recovered.completed)
+        self.assertEqual(calls, 1)
+        calls_by_cursor = [
+            (call.kwargs["after_sequence"], call.kwargs["limit"])
+            for call in page_reader.call_args_list
+        ]
+        self.assertGreater(len(calls_by_cursor), 1)
+        self.assertEqual(calls_by_cursor[0], (0, 2))
+        self.assertTrue(all(limit <= 2 for _cursor, limit in calls_by_cursor))
+        self.assertEqual(
+            [cursor for cursor, _limit in calls_by_cursor],
+            sorted({cursor for cursor, _limit in calls_by_cursor}),
+        )
+        second.event_store.close()
+
+    async def test_session_recovery_probes_exact_limit_and_rejects_overflow(self):
+        async def handler(invocation):
+            return AgentResult("done")
+
+        plan = WorkflowPlan(
+            "recover-limit",
+            "恢复上限",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-limit",
+        )
+        first = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        first.register_agent(registration("worker", handler))
+        self.assertTrue((await first.run(plan)).completed)
+        event_count = len(first.event_store.read_stream("session:recover-limit"))
+        first.event_store.close()
+
+        exact = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        exact.register_agent(registration("worker", handler))
+        with patch.object(runtime_module, "_RECOVERY_PAGE_LIMIT", 2):
+            with patch.object(runtime_module, "_MAX_RECOVERY_EVENTS", event_count):
+                self.assertTrue((await exact.run(plan)).completed)
+        exact.event_store.append(
+            DomainEvent(
+                stream_id="session:recover-limit",
+                event_type="test.extra",
+                actor_id="test",
+                payload={},
+            )
+        )
+        exact.event_store.close()
+
+        overflow = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        overflow.register_agent(registration("worker", handler))
+        with patch.object(runtime_module, "_RECOVERY_PAGE_LIMIT", 2):
+            with patch.object(runtime_module, "_MAX_RECOVERY_EVENTS", event_count):
+                with self.assertRaisesRegex(
+                    SessionRecoveryError,
+                    f"{event_count}-event safety limit",
+                ):
+                    await overflow.run(plan)
+        self.assertNotIn("recover-limit", overflow._plans)
+        self.assertIs(quantum_entanglement.SessionRecoveryError, SessionRecoveryError)
+        overflow.event_store.close()
+
+    async def test_session_recovery_rejects_a_late_sequence_gap_without_partial_state(self):
+        async def handler(invocation):
+            return AgentResult("done")
+
+        plan = WorkflowPlan(
+            "recover-gap",
+            "拒绝缺口",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-gap",
+        )
+        first = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        first.register_agent(registration("worker", handler))
+        self.assertTrue((await first.run(plan)).completed)
+        first.event_store._connection.execute(
+            "DELETE FROM events WHERE stream_id = ? AND sequence = ?",
+            ("session:recover-gap", 3),
+        )
+        first.event_store.close()
+
+        recovered = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        recovered.register_agent(registration("worker", handler))
+        with patch.object(runtime_module, "_RECOVERY_PAGE_LIMIT", 2):
+            with self.assertRaisesRegex(SessionRecoveryError, "not contiguous"):
+                await recovered.run(plan)
+        self.assertNotIn("recover-gap", recovered._plans)
+        self.assertNotIn("recover-gap", recovered._graphs)
+        recovered.event_store.close()
 
 
 if __name__ == "__main__":

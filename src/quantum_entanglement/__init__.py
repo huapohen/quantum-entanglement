@@ -73,6 +73,7 @@ from .runtime import (
     AgentRegistry,
     OrchestratorKernel,
     RunResult,
+    SessionRecoveryError,
 )
 from .scheduler import TaskGraph, TaskSpec, TaskTransition, WorkflowPlan
 from .store import ConcurrencyError, EventStoreIntegrityError, SQLiteEventStore
@@ -242,6 +243,7 @@ __all__ = [
     "AgentRegistry",
     "ApprovalRequest",
     "RunResult",
+    "SessionRecoveryError",
 ]
 
 __version__ = "0.1.0"

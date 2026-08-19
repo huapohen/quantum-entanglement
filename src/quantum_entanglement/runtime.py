@@ -33,6 +33,13 @@ from .protocol import (
 from .scheduler import FAILED_STATUSES, TaskGraph, TaskSpec, TaskTransition, WorkflowPlan
 from .store import SQLiteEventStore
 
+_RECOVERY_PAGE_LIMIT = 1_000
+_MAX_RECOVERY_EVENTS = 1_000_000
+
+
+class SessionRecoveryError(RuntimeError):
+    """Raised when a session history cannot be replayed safely and completely."""
+
 
 @dataclass(frozen=True)
 class AgentRegistration:
@@ -260,12 +267,77 @@ class OrchestratorKernel:
         await self.plugins.emit(HookPoint.PLAN_CREATED, {"plan": plan, "graph": graph})
         return graph
 
+    @staticmethod
+    def _validate_recovery_page(
+        page: Tuple[StoredEvent, ...],
+        *,
+        stream_id: str,
+        after_sequence: int,
+        requested_limit: int,
+    ) -> int:
+        if type(page) is not tuple:
+            raise SessionRecoveryError("session recovery source must return an immutable page")
+        if len(page) > requested_limit:
+            raise SessionRecoveryError("session recovery source exceeded its requested page limit")
+        expected_sequence = after_sequence + 1
+        for stored in page:
+            if type(stored) is not StoredEvent:
+                raise SessionRecoveryError("session recovery source returned an invalid event")
+            if stored.event.stream_id != stream_id:
+                raise SessionRecoveryError("session recovery source crossed a stream boundary")
+            if type(stored.sequence) is not int or stored.sequence != expected_sequence:
+                raise SessionRecoveryError("session recovery stream sequence is not contiguous")
+            expected_sequence += 1
+        return expected_sequence - 1
+
+    def _read_session_events(self, stream_id: str) -> Tuple[StoredEvent, ...]:
+        after_sequence = 0
+        replayed: list[StoredEvent] = []
+        while len(replayed) < _MAX_RECOVERY_EVENTS:
+            page_limit = min(
+                _RECOVERY_PAGE_LIMIT,
+                _MAX_RECOVERY_EVENTS - len(replayed),
+            )
+            page = self.event_store.read_stream_page(
+                stream_id,
+                after_sequence=after_sequence,
+                limit=page_limit,
+            )
+            after_sequence = self._validate_recovery_page(
+                page,
+                stream_id=stream_id,
+                after_sequence=after_sequence,
+                requested_limit=page_limit,
+            )
+            if not page:
+                return tuple(replayed)
+            replayed.extend(page)
+            if len(page) < page_limit:
+                return tuple(replayed)
+
+        probe = self.event_store.read_stream_page(
+            stream_id,
+            after_sequence=after_sequence,
+            limit=1,
+        )
+        self._validate_recovery_page(
+            probe,
+            stream_id=stream_id,
+            after_sequence=after_sequence,
+            requested_limit=1,
+        )
+        if probe:
+            raise SessionRecoveryError(
+                f"session recovery exceeds the {_MAX_RECOVERY_EVENTS}-event safety limit"
+            )
+        return tuple(replayed)
+
     def _recover_session(self, requested_plan: WorkflowPlan) -> None:
         """Rebuild an active workflow projection without replaying side effects."""
 
         if requested_plan.session_id in self._plans:
             return
-        events = self.event_store.read_stream(self._stream_id(requested_plan.session_id))
+        events = self._read_session_events(self._stream_id(requested_plan.session_id))
         created = next(
             (item.event for item in events if item.event.event_type == "workflow.plan.created"),
             None,
