@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 import multiprocessing
 import sqlite3
 import tempfile
@@ -85,7 +86,9 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
         current_runner = artifact_store_module.apply_sqlite_migrations
 
         def previous_runner(connection, *, clock):
-            return current_runner(connection, target_versions=(1, 2), clock=clock)
+            if "target_versions" in inspect.signature(current_runner).parameters:
+                return current_runner(connection, target_versions=(1, 2), clock=clock)
+            return current_runner(connection, clock=clock)
 
         with patch(
             "quantum_entanglement.artifact_store.apply_sqlite_migrations",
