@@ -15,11 +15,17 @@ release. Promotion additionally requires the evidence defined in
 - Security policy and production threat model with adversarial verification plan.
 - GitHub Actions verification on Python 3.9 and 3.12.
 - Weekly Python and GitHub Actions dependency update monitoring.
+- Lease-fenced async outbox Publisher with bounded Connector admission, durable ambiguity
+  reconciliation, and operator runbook.
+- Checksum-verified outbox ambiguity migration with populated legacy-table rebuild and
+  destructive rollback rehearsal.
 
 ### Changed
 
 - README now distinguishes the runnable `0.1.x` experiment from production guarantees and
   identifies unimplemented ACP, MCP, authentication, and crash-recovery boundaries.
+- Outbox lease time is read only after SQLite write-lock acquisition, terminal fencing
+  tokens are cleared, and persistent ambiguity history stores token digests only.
 
 ### In progress — not yet a shipped guarantee
 
