@@ -1,10 +1,11 @@
-# ruff: noqa: UP006, UP035
-"""Trusted, deterministic descriptors for domain-scoped SQLite migrations.
+# ruff: noqa: UP006, UP035, UP045
+"""Trusted descriptors and read-only schema checks for domain-scoped migrations.
 
-This module deliberately contains registry primitives only.  It neither creates the
-domain-migration sidecar nor changes the legacy migration runner.  Registry validation is
-bounded and side-effect free so future planners and bridge code can reject untrusted
-package metadata before opening a transaction.
+This module deliberately contains package metadata and validation primitives only.  It
+never creates the sidecar, writes migration metadata, enables sparse migration plans, or
+changes the legacy migration runner.  Registry and schema validation are bounded and
+side-effect free so future bridge code can reject untrusted state before opening a write
+transaction.
 """
 
 from __future__ import annotations
@@ -13,9 +14,23 @@ import hashlib
 import heapq
 import json
 import re
+import sqlite3
 from dataclasses import dataclass
+from enum import Enum
 from itertools import islice
-from typing import Dict, Iterable, List, Literal, Mapping, Sequence, Set, Tuple, TypeVar, cast
+from typing import (
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    cast,
+)
 
 from .migrations import MIGRATIONS, Migration, _expected_schema_objects, migration_text
 
@@ -30,6 +45,61 @@ MAX_MIGRATION_FILENAME_LENGTH = 255
 MAX_SCHEMA_OBJECT_NAME_LENGTH = 128
 MAX_MIGRATION_ID = (2**63) - 1
 MAX_DOMAIN_VERSION = (2**63) - 1
+MAX_DOMAIN_MIGRATION_SIDECAR_SCHEMA_OBJECTS = 16
+
+DOMAIN_MIGRATION_METADATA_TABLE_NAME = "qe_schema_migration_metadata"
+DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME = "qe_schema_migration_dependencies"
+
+DOMAIN_MIGRATION_METADATA_TABLE_SQL = """
+CREATE TABLE qe_schema_migration_metadata (
+    migration_version INTEGER PRIMARY KEY,
+    domain TEXT NOT NULL,
+    domain_version INTEGER NOT NULL,
+    metadata_kind TEXT NOT NULL,
+    descriptor_sha256 TEXT NOT NULL,
+    owned_schema_sha256 TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    UNIQUE(domain, domain_version),
+    FOREIGN KEY(migration_version)
+        REFERENCES qe_schema_migrations(version) ON DELETE RESTRICT,
+    CHECK(migration_version > 0),
+    CHECK(domain_version > 0),
+    CHECK(
+        length(domain) BETWEEN 1 AND 64
+        AND substr(domain, 1, 1) GLOB '[a-z]'
+        AND domain NOT GLOB '*[^a-z0-9_]*'
+    ),
+    CHECK(metadata_kind IN ('legacy_bootstrap', 'native')),
+    CHECK(
+        length(descriptor_sha256) = 64
+        AND descriptor_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    CHECK(
+        length(owned_schema_sha256) = 64
+        AND owned_schema_sha256 NOT GLOB '*[^0-9a-f]*'
+    )
+);
+""".strip()
+
+DOMAIN_MIGRATION_DEPENDENCIES_TABLE_SQL = """
+CREATE TABLE qe_schema_migration_dependencies (
+    migration_version INTEGER NOT NULL,
+    depends_on_version INTEGER NOT NULL,
+    PRIMARY KEY(migration_version, depends_on_version),
+    FOREIGN KEY(migration_version)
+        REFERENCES qe_schema_migration_metadata(migration_version)
+        ON DELETE RESTRICT,
+    FOREIGN KEY(depends_on_version)
+        REFERENCES qe_schema_migration_metadata(migration_version)
+        ON DELETE RESTRICT,
+    CHECK(migration_version <> depends_on_version)
+);
+""".strip()
+
+DOMAIN_MIGRATION_SIDECAR_DDL = (
+    DOMAIN_MIGRATION_METADATA_TABLE_SQL,
+    DOMAIN_MIGRATION_DEPENDENCIES_TABLE_SQL,
+)
 
 _DOMAIN_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 _FILENAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.up\.sql\Z")
@@ -42,8 +112,25 @@ _LEDGER_OBJECT = ("table", "qe_schema_migrations")
 _OWNED_MANIFEST_FORMAT = "qe.domain-migration-owned-objects/1"
 _DESCRIPTOR_FORMAT = "qe.domain-migration-descriptor/1"
 _REGISTRY_FORMAT = "qe.domain-migration-registry/1"
+_SIDECAR_SCHEMA_FORMAT = "qe.domain-migration-sidecar-schema/1"
+_MAX_SIDECAR_CATALOG_NAME_LENGTH = 128
+_MAX_SIDECAR_CATALOG_SQL_LENGTH = 8192
+
+_METADATA_AUTO_INDEX_NAME = "sqlite_autoindex_qe_schema_migration_metadata_1"
+_DEPENDENCIES_AUTO_INDEX_NAME = "sqlite_autoindex_qe_schema_migration_dependencies_1"
 
 _T = TypeVar("_T")
+
+
+class DomainMigrationSidecarSchemaError(RuntimeError):
+    """Raised when sidecar catalog state is partial, weak, corrupt, or unexpected."""
+
+
+class DomainMigrationSidecarSchemaState(str, Enum):
+    """Supported sidecar catalog states during the bridge-only rollout."""
+
+    ABSENT = "absent"
+    EXACT = "exact"
 
 
 def _bounded_tuple(values: Iterable[_T], *, maximum: int, label: str) -> Tuple[_T, ...]:
@@ -67,6 +154,207 @@ def _canonical_sha256(value: Mapping[str, object]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass(frozen=True)
+class _SidecarSchemaObject:
+    object_type: str
+    name: str
+    table_name: str
+    schema_sql: Optional[str]
+
+
+def _canonical_sidecar_schema_sql(sql: str) -> str:
+    # SQLite removes a leading IF NOT EXISTS clause from sqlite_master itself.  Do not
+    # rewrite text inside quoted identifiers or CHECK values: doing so could hide a
+    # semantic schema change.  Only insignificant whitespace outside quoted regions and
+    # one optional trailing statement terminator are normalized.
+    stripped = sql.strip()
+    if stripped.endswith(";"):
+        stripped = stripped[:-1].rstrip()
+    output: List[str] = []
+    quote_end: Optional[str] = None
+    index = 0
+    while index < len(stripped):
+        character = stripped[index]
+        if quote_end is not None:
+            output.append(character)
+            if character == quote_end:
+                if quote_end != "]" and index + 1 < len(stripped):
+                    if stripped[index + 1] == quote_end:
+                        output.append(stripped[index + 1])
+                        index += 2
+                        continue
+                quote_end = None
+            index += 1
+            continue
+        if character in {"'", '"', "`"}:
+            quote_end = character
+            output.append(character)
+        elif character == "[":
+            quote_end = "]"
+            output.append(character)
+        elif character.isspace():
+            if output and output[-1] != " ":
+                output.append(" ")
+        else:
+            output.append(character)
+        index += 1
+    return "".join(output).strip()
+
+
+_EXPECTED_SIDECAR_SCHEMA_OBJECTS = tuple(
+    sorted(
+        (
+            _SidecarSchemaObject(
+                "index",
+                _DEPENDENCIES_AUTO_INDEX_NAME,
+                DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME,
+                None,
+            ),
+            _SidecarSchemaObject(
+                "index",
+                _METADATA_AUTO_INDEX_NAME,
+                DOMAIN_MIGRATION_METADATA_TABLE_NAME,
+                None,
+            ),
+            _SidecarSchemaObject(
+                "table",
+                DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME,
+                DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME,
+                _canonical_sidecar_schema_sql(DOMAIN_MIGRATION_DEPENDENCIES_TABLE_SQL),
+            ),
+            _SidecarSchemaObject(
+                "table",
+                DOMAIN_MIGRATION_METADATA_TABLE_NAME,
+                DOMAIN_MIGRATION_METADATA_TABLE_NAME,
+                _canonical_sidecar_schema_sql(DOMAIN_MIGRATION_METADATA_TABLE_SQL),
+            ),
+        ),
+        key=lambda item: (item.object_type, item.name, item.table_name),
+    )
+)
+
+DOMAIN_MIGRATION_SIDECAR_SCHEMA_SHA256 = _canonical_sha256(
+    {
+        "format": _SIDECAR_SCHEMA_FORMAT,
+        "objects": [
+            {
+                "name": item.name,
+                "objectType": item.object_type,
+                "schemaSql": item.schema_sql,
+                "tableName": item.table_name,
+            }
+            for item in _EXPECTED_SIDECAR_SCHEMA_OBJECTS
+        ],
+    }
+)
+
+
+def _sidecar_catalog_text(value: object, *, maximum: int) -> str:
+    if type(value) is not str or len(value) > maximum:
+        raise DomainMigrationSidecarSchemaError("domain migration sidecar catalog row is malformed")
+    return value
+
+
+def _parse_sidecar_catalog_row(raw_row: object) -> _SidecarSchemaObject:
+    try:
+        values = _bounded_tuple(
+            cast(Iterable[object], raw_row),
+            maximum=4,
+            label="domain migration sidecar catalog columns",
+        )
+    except (TypeError, ValueError) as error:
+        raise DomainMigrationSidecarSchemaError(
+            "domain migration sidecar catalog row is malformed"
+        ) from error
+    if len(values) != 4:
+        raise DomainMigrationSidecarSchemaError("domain migration sidecar catalog row is malformed")
+    object_type = _sidecar_catalog_text(
+        values[0],
+        maximum=len("trigger"),
+    )
+    name = _sidecar_catalog_text(
+        values[1],
+        maximum=_MAX_SIDECAR_CATALOG_NAME_LENGTH,
+    )
+    table_name = _sidecar_catalog_text(
+        values[2],
+        maximum=_MAX_SIDECAR_CATALOG_NAME_LENGTH,
+    )
+    raw_sql = values[3]
+    if raw_sql is None:
+        schema_sql = None
+    else:
+        sql = _sidecar_catalog_text(
+            raw_sql,
+            maximum=_MAX_SIDECAR_CATALOG_SQL_LENGTH,
+        )
+        schema_sql = _canonical_sidecar_schema_sql(sql)
+    return _SidecarSchemaObject(object_type, name, table_name, schema_sql)
+
+
+def validate_domain_migration_sidecar_schema(
+    connection: sqlite3.Connection,
+) -> DomainMigrationSidecarSchemaState:
+    """Validate exact sidecar catalog congruence without mutating SQLite.
+
+    A legacy database with neither sidecar table is a supported ``ABSENT`` state.  Any
+    partial pair, altered DDL, unexpected index/trigger/view attached to either sidecar,
+    malformed catalog row, or over-limit catalog is rejected.  Unrelated application and
+    legacy migration objects remain outside this validator's ownership boundary.
+    """
+
+    query = """
+        SELECT type, name, tbl_name, sql
+        FROM main.sqlite_master
+        WHERE name IN (?, ?)
+           OR tbl_name IN (?, ?)
+        ORDER BY type, name, tbl_name
+        LIMIT ?
+    """
+    parameters = (
+        DOMAIN_MIGRATION_METADATA_TABLE_NAME,
+        DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME,
+        DOMAIN_MIGRATION_METADATA_TABLE_NAME,
+        DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME,
+        MAX_DOMAIN_MIGRATION_SIDECAR_SCHEMA_OBJECTS + 1,
+    )
+    try:
+        raw_rows = connection.execute(query, parameters).fetchmany(
+            MAX_DOMAIN_MIGRATION_SIDECAR_SCHEMA_OBJECTS + 1
+        )
+    except sqlite3.Error as error:
+        raise DomainMigrationSidecarSchemaError(
+            "domain migration sidecar catalog could not be inspected"
+        ) from error
+    if len(raw_rows) > MAX_DOMAIN_MIGRATION_SIDECAR_SCHEMA_OBJECTS:
+        raise DomainMigrationSidecarSchemaError(
+            "domain migration sidecar schema exceeds the inspection limit"
+        )
+    if not raw_rows:
+        return DomainMigrationSidecarSchemaState.ABSENT
+
+    actual_objects = tuple(
+        sorted(
+            (_parse_sidecar_catalog_row(row) for row in raw_rows),
+            key=lambda item: (item.object_type, item.name, item.table_name),
+        )
+    )
+    actual_tables = {item.name for item in actual_objects if item.object_type == "table"}
+    expected_tables = {
+        DOMAIN_MIGRATION_METADATA_TABLE_NAME,
+        DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME,
+    }
+    if actual_tables != expected_tables:
+        raise DomainMigrationSidecarSchemaError(
+            "domain migration sidecar tables must be both absent or both exact"
+        )
+    if actual_objects != _EXPECTED_SIDECAR_SCHEMA_OBJECTS:
+        raise DomainMigrationSidecarSchemaError(
+            "domain migration sidecar schema differs from the exact packaged definition"
+        )
+    return DomainMigrationSidecarSchemaState.EXACT
 
 
 @dataclass(frozen=True, order=True)

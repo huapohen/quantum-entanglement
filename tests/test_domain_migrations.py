@@ -1,22 +1,30 @@
 import hashlib
 import itertools
+import sqlite3
 import unittest
+from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any
+from typing import Any, Optional, cast
 from unittest import mock
 
 from quantum_entanglement.domain_migrations import (
     DOMAIN_MIGRATION_REGISTRY,
+    DOMAIN_MIGRATION_SIDECAR_DDL,
+    DOMAIN_MIGRATION_SIDECAR_SCHEMA_SHA256,
     LEGACY_DOMAIN_MIGRATIONS,
+    MAX_DOMAIN_MIGRATION_SIDECAR_SCHEMA_OBJECTS,
     MAX_DOMAIN_MIGRATIONS,
     MAX_MIGRATION_DEPENDENCIES,
     MAX_MIGRATION_DOMAINS,
     MAX_OWNED_SCHEMA_OBJECTS,
     DomainMigrationDescriptor,
+    DomainMigrationSidecarSchemaError,
+    DomainMigrationSidecarSchemaState,
     OwnedSchemaObject,
     validate_domain_migration_registry,
+    validate_domain_migration_sidecar_schema,
 )
-from quantum_entanglement.migrations import migration_text
+from quantum_entanglement.migrations import apply_sqlite_migrations, migration_text
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
@@ -32,6 +40,21 @@ class CountingIntegers:
     def __next__(self) -> int:
         self.yielded += 1
         return 1
+
+
+class RecordingConnection:
+    def __init__(self, delegate: sqlite3.Connection) -> None:
+        self.delegate = delegate
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def execute(
+        self,
+        statement: str,
+        parameters: Sequence[object] = (),
+    ) -> sqlite3.Cursor:
+        snapshot = tuple(parameters)
+        self.calls.append((statement, snapshot))
+        return self.delegate.execute(statement, snapshot)
 
 
 class DomainMigrationRegistryTests(unittest.TestCase):
@@ -468,6 +491,260 @@ class DomainMigrationRegistryTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "hard limit.*domains"):
             validate_domain_migration_registry(descriptors)
+
+
+class DomainMigrationSidecarSchemaTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.connection = sqlite3.connect(":memory:", isolation_level=None)
+
+    def tearDown(self) -> None:
+        self.connection.close()
+
+    def create_exact_sidecar(self) -> None:
+        for statement in DOMAIN_MIGRATION_SIDECAR_DDL:
+            self.connection.execute(statement)
+
+    def test_exact_sidecar_is_accepted_without_writes(self) -> None:
+        self.create_exact_sidecar()
+        self.connection.row_factory = sqlite3.Row
+        before_changes = self.connection.total_changes
+
+        state = validate_domain_migration_sidecar_schema(self.connection)
+
+        self.assertIs(state, DomainMigrationSidecarSchemaState.EXACT)
+        self.assertEqual(self.connection.total_changes, before_changes)
+        rows = self.connection.execute(
+            """
+            SELECT type, name, tbl_name, sql
+            FROM main.sqlite_master
+            WHERE name IN (?, ?)
+               OR tbl_name IN (?, ?)
+            ORDER BY type, name, tbl_name
+            """,
+            (
+                "qe_schema_migration_metadata",
+                "qe_schema_migration_dependencies",
+                "qe_schema_migration_metadata",
+                "qe_schema_migration_dependencies",
+            ),
+        ).fetchall()
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(
+            tuple((row[0], row[1], row[2]) for row in rows),
+            (
+                (
+                    "index",
+                    "sqlite_autoindex_qe_schema_migration_dependencies_1",
+                    "qe_schema_migration_dependencies",
+                ),
+                (
+                    "index",
+                    "sqlite_autoindex_qe_schema_migration_metadata_1",
+                    "qe_schema_migration_metadata",
+                ),
+                (
+                    "table",
+                    "qe_schema_migration_dependencies",
+                    "qe_schema_migration_dependencies",
+                ),
+                (
+                    "table",
+                    "qe_schema_migration_metadata",
+                    "qe_schema_migration_metadata",
+                ),
+            ),
+        )
+
+    def test_sidecar_schema_definition_digest_is_golden(self) -> None:
+        self.assertEqual(
+            DOMAIN_MIGRATION_SIDECAR_SCHEMA_SHA256,
+            "6d8c9e2672f3f14f6e1721f3faa29ee6f7656dcd8f028524d19c54ad7e24aabb",
+        )
+
+    def test_legacy_database_without_sidecar_is_a_supported_absent_state(self) -> None:
+        self.assertEqual(
+            apply_sqlite_migrations(self.connection, target_versions=(1,)),
+            1,
+        )
+        before_changes = self.connection.total_changes
+
+        state = validate_domain_migration_sidecar_schema(self.connection)
+
+        self.assertIs(state, DomainMigrationSidecarSchemaState.ABSENT)
+        self.assertEqual(self.connection.total_changes, before_changes)
+
+    def test_sidecar_pair_must_be_both_absent_or_both_exact(self) -> None:
+        self.connection.execute(DOMAIN_MIGRATION_SIDECAR_DDL[0])
+
+        with self.assertRaisesRegex(
+            DomainMigrationSidecarSchemaError,
+            "both absent or both exact",
+        ):
+            validate_domain_migration_sidecar_schema(self.connection)
+
+    def test_weak_sidecar_tables_are_rejected(self) -> None:
+        self.connection.execute(
+            """
+            CREATE TABLE qe_schema_migration_metadata (
+                migration_version INTEGER PRIMARY KEY
+            )
+            """
+        )
+        self.connection.execute(
+            """
+            CREATE TABLE qe_schema_migration_dependencies (
+                migration_version INTEGER,
+                depends_on_version INTEGER
+            )
+            """
+        )
+
+        with self.assertRaisesRegex(
+            DomainMigrationSidecarSchemaError,
+            "differs from the exact packaged definition",
+        ):
+            validate_domain_migration_sidecar_schema(self.connection)
+
+    def test_views_cannot_shadow_sidecar_tables(self) -> None:
+        self.connection.execute(
+            "CREATE VIEW qe_schema_migration_metadata AS SELECT 1 AS migration_version"
+        )
+        self.connection.execute(
+            "CREATE VIEW qe_schema_migration_dependencies AS SELECT 1 AS migration_version"
+        )
+
+        with self.assertRaisesRegex(
+            DomainMigrationSidecarSchemaError,
+            "both absent or both exact",
+        ):
+            validate_domain_migration_sidecar_schema(self.connection)
+
+    def test_unexpected_sidecar_index_is_rejected(self) -> None:
+        self.create_exact_sidecar()
+        self.connection.execute(
+            """
+            CREATE INDEX idx_qe_metadata_unexpected
+            ON qe_schema_migration_metadata(domain)
+            """
+        )
+
+        with self.assertRaisesRegex(
+            DomainMigrationSidecarSchemaError,
+            "differs from the exact packaged definition",
+        ):
+            validate_domain_migration_sidecar_schema(self.connection)
+
+    def test_malformed_catalog_sql_is_rejected_without_echoing_it(self) -> None:
+        self.create_exact_sidecar()
+        malformed = "CREATE TABLE qe_schema_migration_metadata (this is not valid SQL"
+
+        def corrupt_catalog_sql(
+            _cursor: sqlite3.Cursor,
+            row: tuple[object, ...],
+        ) -> tuple[object, ...]:
+            if row[1] == "qe_schema_migration_metadata":
+                return (row[0], row[1], row[2], malformed)
+            return row
+
+        self.connection.row_factory = corrupt_catalog_sql
+        try:
+            with self.assertRaisesRegex(
+                DomainMigrationSidecarSchemaError,
+                "differs from the exact packaged definition",
+            ) as raised:
+                validate_domain_migration_sidecar_schema(self.connection)
+        finally:
+            self.connection.row_factory = None
+        self.assertNotIn(malformed, str(raised.exception))
+
+    def test_sidecar_catalog_has_a_hard_object_limit(self) -> None:
+        self.create_exact_sidecar()
+        expected_object_count = 4
+        extra_count = MAX_DOMAIN_MIGRATION_SIDECAR_SCHEMA_OBJECTS - expected_object_count + 1
+        for index in range(extra_count):
+            self.connection.execute(
+                f"""
+                CREATE INDEX idx_qe_metadata_extra_{index}
+                ON qe_schema_migration_metadata(domain)
+                """
+            )
+
+        with self.assertRaisesRegex(
+            DomainMigrationSidecarSchemaError,
+            "exceeds the inspection limit",
+        ):
+            validate_domain_migration_sidecar_schema(self.connection)
+
+    def test_validator_uses_one_parameterized_catalog_query(self) -> None:
+        self.create_exact_sidecar()
+        recording = RecordingConnection(self.connection)
+
+        state = validate_domain_migration_sidecar_schema(cast(sqlite3.Connection, recording))
+
+        self.assertIs(state, DomainMigrationSidecarSchemaState.EXACT)
+        self.assertEqual(len(recording.calls), 1)
+        statement, parameters = recording.calls[0]
+        self.assertEqual(statement.count("?"), 5)
+        self.assertEqual(len(parameters), 5)
+        for parameter in parameters[:4]:
+            self.assertNotIn(str(parameter), statement)
+
+    def test_validator_remains_read_only_under_a_write_deny_authorizer(self) -> None:
+        self.create_exact_sidecar()
+        denied_actions: list[int] = []
+        write_actions = {
+            sqlite3.SQLITE_ALTER_TABLE,
+            sqlite3.SQLITE_CREATE_INDEX,
+            sqlite3.SQLITE_CREATE_TABLE,
+            sqlite3.SQLITE_CREATE_TRIGGER,
+            sqlite3.SQLITE_CREATE_VIEW,
+            sqlite3.SQLITE_DELETE,
+            sqlite3.SQLITE_DROP_INDEX,
+            sqlite3.SQLITE_DROP_TABLE,
+            sqlite3.SQLITE_DROP_TRIGGER,
+            sqlite3.SQLITE_DROP_VIEW,
+            sqlite3.SQLITE_INSERT,
+            sqlite3.SQLITE_UPDATE,
+        }
+
+        def authorize(
+            action: int,
+            _argument_one: Optional[str],
+            _argument_two: Optional[str],
+            _database_name: Optional[str],
+            _trigger_name: Optional[str],
+        ) -> int:
+            if action in write_actions:
+                denied_actions.append(action)
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        self.connection.set_authorizer(authorize)
+        try:
+            state = validate_domain_migration_sidecar_schema(self.connection)
+        finally:
+            self.connection.set_authorizer(None)
+
+        self.assertIs(state, DomainMigrationSidecarSchemaState.EXACT)
+        self.assertEqual(denied_actions, [])
+
+    def test_temp_sidecar_names_do_not_shadow_main_catalog(self) -> None:
+        for statement in DOMAIN_MIGRATION_SIDECAR_DDL:
+            self.connection.execute(statement.replace("CREATE TABLE", "CREATE TEMP TABLE", 1))
+
+        self.assertIs(
+            validate_domain_migration_sidecar_schema(self.connection),
+            DomainMigrationSidecarSchemaState.ABSENT,
+        )
+
+    def test_catalog_inspection_failures_use_the_stable_schema_error(self) -> None:
+        self.connection.close()
+
+        with self.assertRaisesRegex(
+            DomainMigrationSidecarSchemaError,
+            "catalog could not be inspected",
+        ):
+            validate_domain_migration_sidecar_schema(self.connection)
 
 
 if __name__ == "__main__":
