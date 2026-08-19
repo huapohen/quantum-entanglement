@@ -306,6 +306,20 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         recovered = self.store.recover_expired()
         self.assertEqual(recovered.requeued, ("invocation-1",))
 
+    def test_owned_row_query_rejects_incompatible_connection_factory(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.store._connection.row_factory = None
+        try:
+            with self.assertRaisesRegex(TypeError, "must return sqlite3.Row"):
+                self.store._active_owned_row(
+                    self.store._connection,
+                    lease,
+                    timestamp(1),
+                )
+        finally:
+            self.store._connection.row_factory = sqlite3.Row
+
     def test_lease_clock_is_sampled_only_after_write_transaction_begins(self):
         self.store.enqueue(job_spec())
         original_transaction = self.store._transaction

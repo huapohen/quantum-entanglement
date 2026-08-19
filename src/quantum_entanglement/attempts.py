@@ -720,7 +720,7 @@ class SQLiteInvocationAttemptStore:
         lease: InvocationLease,
         now: str,
     ) -> Optional[sqlite3.Row]:
-        return connection.execute(
+        row = connection.execute(
             """
             SELECT * FROM invocation_jobs
             WHERE invocation_id = ? AND status = 'running'
@@ -735,6 +735,9 @@ class SQLiteInvocationAttemptStore:
                 now,
             ),
         ).fetchone()
+        if row is not None and not isinstance(row, sqlite3.Row):
+            raise TypeError("invocation store connection must return sqlite3.Row values")
+        return row
 
     def heartbeat(
         self,
@@ -932,7 +935,7 @@ class SQLiteInvocationAttemptStore:
 
     def schema_version(self) -> int:
         with self._lock:
-            return current_schema_version(self._connection)
+            return int(current_schema_version(self._connection))
 
     def close(self) -> None:
         with self._lock:
