@@ -292,6 +292,61 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             artifact_write(name="bad\nname")
 
+    def test_metadata_structure_limits_fail_closed_without_recursion(self):
+        allowed = "leaf"
+        for _ in range(63):
+            allowed = [allowed]
+        artifact_write(metadata={"nested": allowed})
+
+        too_deep = "leaf"
+        for _ in range(64):
+            too_deep = [too_deep]
+        with self.assertRaisesRegex(ArtifactTooLargeError, "nested JSON containers"):
+            artifact_write(metadata={"nested": too_deep})
+
+        with self.assertRaisesRegex(ArtifactTooLargeError, "JSON value nodes"):
+            artifact_write(metadata={"wide": [None] * 10_000})
+        with self.assertRaisesRegex(ArtifactTooLargeError, "key exceeds"):
+            artifact_write(metadata={"k" * 513: "value"})
+        with self.assertRaisesRegex(ArtifactTooLargeError, "characters"):
+            artifact_write(metadata={"value": "x" * 65_537})
+        with self.assertRaisesRegex(ArtifactTooLargeError, "integer bits"):
+            artifact_write(metadata={"value": 1 << 4_096})
+
+        cyclic = {}
+        cyclic["self"] = cyclic
+        with self.assertRaisesRegex(ValueError, "reference cycle"):
+            artifact_write(metadata=cyclic)
+
+        connection = sqlite3.connect(self.path)
+        try:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM artifact_versions").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM artifact_blobs").fetchone()[0],
+                0,
+            )
+        finally:
+            connection.close()
+
+    def test_deep_persisted_metadata_is_reported_as_integrity_failure(self):
+        stored = self.store.write(artifact_write())
+        poisoned = '{"nested":' + ("[" * 64) + '"leaf"' + ("]" * 64) + "}"
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "UPDATE artifact_versions SET metadata_json = ? WHERE artifact_id = ?",
+                (poisoned, stored.artifact_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaisesRegex(ArtifactIntegrityError, "data contract"):
+            self.store.get("tenant-a", "workspace-a", stored.artifact_id)
+
     def test_history_is_bounded_and_cursor_based(self):
         for version in range(1, 5):
             self.store.write(

@@ -34,6 +34,11 @@ _RFC3339_PATTERN = re.compile(
 )
 _MAX_IDENTIFIER_LENGTH = 512
 _MAX_MEDIA_TYPE_LENGTH = 255
+_MAX_METADATA_CONTAINER_DEPTH = 64
+_MAX_METADATA_NODES = 10_000
+_MAX_METADATA_KEY_LENGTH = 512
+_MAX_METADATA_STRING_LENGTH = 65_536
+_MAX_METADATA_INTEGER_BITS = 4_096
 
 
 class ArtifactConflictError(RuntimeError):
@@ -79,37 +84,98 @@ def _normalize_timestamp(value: str, name: str = "timestamp") -> str:
 
 
 def _validate_json_value(value: Any, path: str = "metadata") -> None:
-    if value is None or isinstance(value, (str, bool, int)):
-        return
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError(f"{path} contains a non-finite number")
-        return
-    if isinstance(value, list):
-        for index, item in enumerate(value):
-            _validate_json_value(item, f"{path}[{index}]")
-        return
-    if isinstance(value, dict):
-        for key, item in value.items():
+    """Validate bounded JSON without recursing through caller-controlled input."""
+
+    # Each entry is ``(value, path, parent-container depth, is-exit-marker)``.
+    # Exit markers make cycle detection distinguish an active ancestor from a
+    # harmless repeated reference that JSON will encode twice.
+    stack: list[tuple[Any, str, int, bool]] = [(value, path, 0, False)]
+    active_container_ids: set[int] = set()
+    node_count = 0
+
+    while stack:
+        current, current_path, parent_depth, is_exit_marker = stack.pop()
+        if is_exit_marker:
+            active_container_ids.remove(id(current))
+            continue
+
+        node_count += 1
+        if node_count > _MAX_METADATA_NODES:
+            raise ArtifactTooLargeError(f"metadata exceeds {_MAX_METADATA_NODES} JSON value nodes")
+
+        if current is None or isinstance(current, bool):
+            continue
+        if isinstance(current, str):
+            if len(current) > _MAX_METADATA_STRING_LENGTH:
+                raise ArtifactTooLargeError(
+                    f"{current_path} exceeds {_MAX_METADATA_STRING_LENGTH} characters"
+                )
+            continue
+        if isinstance(current, int):
+            if current.bit_length() > _MAX_METADATA_INTEGER_BITS:
+                raise ArtifactTooLargeError(
+                    f"{current_path} exceeds {_MAX_METADATA_INTEGER_BITS} integer bits"
+                )
+            continue
+        if isinstance(current, float):
+            if not math.isfinite(current):
+                raise ValueError(f"{current_path} contains a non-finite number")
+            continue
+        if type(current) not in (list, dict):
+            raise TypeError(f"{current_path} contains unsupported type {type(current).__name__}")
+
+        container_depth = parent_depth + 1
+        if container_depth > _MAX_METADATA_CONTAINER_DEPTH:
+            raise ArtifactTooLargeError(
+                f"metadata exceeds {_MAX_METADATA_CONTAINER_DEPTH} nested JSON containers"
+            )
+        container_id = id(current)
+        if container_id in active_container_ids:
+            raise ValueError(f"{current_path} contains a reference cycle")
+        active_container_ids.add(container_id)
+        stack.append((current, current_path, parent_depth, True))
+
+        if len(current) > _MAX_METADATA_NODES - node_count:
+            raise ArtifactTooLargeError(f"metadata exceeds {_MAX_METADATA_NODES} JSON value nodes")
+        if type(current) is list:
+            try:
+                for index in range(len(current) - 1, -1, -1):
+                    stack.append(
+                        (current[index], f"{current_path}[{index}]", container_depth, False)
+                    )
+            except IndexError as exc:
+                raise ValueError("metadata changed while it was being validated") from exc
+            continue
+
+        try:
+            items = tuple(current.items())
+        except RuntimeError as exc:
+            raise ValueError("metadata changed while it was being validated") from exc
+        for key, item in reversed(items):
             if not isinstance(key, str):
-                raise TypeError(f"{path} keys must be strings")
-            _validate_json_value(item, f"{path}.{key}")
-        return
-    raise TypeError(f"{path} contains unsupported type {type(value).__name__}")
+                raise TypeError(f"{current_path} keys must be strings")
+            if len(key) > _MAX_METADATA_KEY_LENGTH:
+                raise ArtifactTooLargeError(
+                    f"{current_path} key exceeds {_MAX_METADATA_KEY_LENGTH} characters"
+                )
+            stack.append((item, f"{current_path}.{key}", container_depth, False))
 
 
 def _canonical_metadata(metadata: Mapping[str, Any]) -> Tuple[str, Mapping[str, Any]]:
-    if not isinstance(metadata, dict):
+    if type(metadata) is not dict:
         raise TypeError("metadata must be a plain dictionary")
     _validate_json_value(metadata)
-    encoded = json.dumps(
-        metadata,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    decoded = json.loads(encoded)
+    try:
+        encoded = json.dumps(
+            metadata,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        decoded = json.loads(encoded)
+    except RecursionError as exc:  # Defensive against concurrent caller mutation.
+        raise ArtifactTooLargeError("metadata nesting exceeds the structural limit") from exc
     if not isinstance(decoded, dict):  # pragma: no cover - guaranteed by the input guard.
         raise TypeError("metadata must encode a JSON object")
     return encoded, cast(Mapping[str, Any], decoded)
@@ -369,7 +435,7 @@ class SQLiteArtifactStore:
         try:
             content = bytes(row["content"])
             metadata_value = json.loads(row["metadata_json"])
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (KeyError, TypeError, ValueError, RecursionError, json.JSONDecodeError) as exc:
             raise ArtifactIntegrityError("artifact row contains malformed data") from exc
         if not isinstance(metadata_value, dict):
             raise ArtifactIntegrityError("artifact metadata is not a JSON object")
