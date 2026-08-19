@@ -24,13 +24,22 @@ The following commands define the current local baseline:
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -q
 PYTHONPATH=src python3 examples/group_chat_demo.py --compact
-python3 -m compileall -q src tests
-ruff check src tests
+python3 -m compileall -q src tests scripts
+ruff check src tests scripts
 git diff --check
 ```
 
-Until CI exists, the release evidence must record the machine, Python version, commands,
-exit status and test count. CI adoption does not remove the clean-host verification gate.
+The local generator executes this baseline, binds it to source identity and emits redacted
+canonical JSON:
+
+```bash
+python3 scripts/generate_release_evidence.py
+```
+
+See [`LOCAL_RELEASE_EVIDENCE.md`](./LOCAL_RELEASE_EVIDENCE.md) for its exact predicate,
+schema, exit codes, redaction boundary and retention rules. The generator records only what
+it runs and cannot replace clean-host, package, security, recovery, performance or human
+promotion evidence. CI adoption does not remove the clean-host verification gate.
 
 ## Phase release gate
 

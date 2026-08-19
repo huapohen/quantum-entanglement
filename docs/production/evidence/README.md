@@ -12,6 +12,12 @@ Evidence may contain sanitized commands, versions, counts, timings, digests, and
 retained CI artifacts. It must not contain raw credentials, cookies, authorization headers,
 private chat content, customer data, or secret environment values.
 
+Generate the machine-readable local baseline described in
+[`LOCAL_RELEASE_EVIDENCE.md`](../LOCAL_RELEASE_EVIDENCE.md), retain its exact JSON and digest
+as an immutable sidecar, and link it from the completed record below. A JSON value of
+`releasable: true` proves only that fixed local baseline; it does not fill or waive any
+template field, production drill, reviewer decision, or promotion gate.
+
 ## Template
 
 ```markdown
