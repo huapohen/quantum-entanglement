@@ -46,3 +46,6 @@ jobs:
 
       - name: Run deterministic demo
         run: python examples/group_chat_demo.py
+
+      - name: Smoke-test installed command
+        run: qe-demo --compact
