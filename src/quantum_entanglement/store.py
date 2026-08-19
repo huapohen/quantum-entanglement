@@ -107,6 +107,23 @@ class OutboxAmbiguity:
     resolved_at: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class OutboxPageItem:
+    """One outbox record paired with its durable pagination cursor."""
+
+    position: int
+    message: StoredOutboxMessage
+
+
+@dataclass(frozen=True)
+class OutboxAmbiguityPageItem:
+    """One ambiguity record paired with a table-incarnation-local SQLite cursor."""
+
+    rowid: int
+    """Never persist this cursor across VACUUM or an ambiguity-table rebuild."""
+    ambiguity: OutboxAmbiguity
+
+
 class SQLiteEventStore:
     """Small durable event log suitable for the kernel and local-first clients."""
 
@@ -445,6 +462,17 @@ class SQLiteEventStore:
         except (IndexError, KeyError, TypeError, ValueError) as exc:
             raise EventStoreIntegrityError("persisted outbox row is malformed") from exc
 
+    def _row_to_outbox_page_item(self, row: sqlite3.Row) -> OutboxPageItem:
+        try:
+            position = _persisted_integer(
+                row["outbox_position"],
+                "outbox position",
+                minimum=1,
+            )
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise EventStoreIntegrityError("persisted outbox cursor is malformed") from exc
+        return OutboxPageItem(position=position, message=self._row_to_outbox(row))
+
     def _row_to_inbox(self, row: sqlite3.Row) -> InboxReceipt:
         try:
             received_at = _persisted_text(row["received_at"], "inbox received_at", required=True)
@@ -517,6 +545,19 @@ class SQLiteEventStore:
         except (IndexError, KeyError, TypeError, ValueError) as exc:
             raise EventStoreIntegrityError("persisted outbox ambiguity row is malformed") from exc
 
+    def _row_to_ambiguity_page_item(self, row: sqlite3.Row) -> OutboxAmbiguityPageItem:
+        try:
+            rowid = _persisted_integer(
+                row["ambiguity_rowid"],
+                "outbox ambiguity rowid",
+                minimum=1,
+            )
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise EventStoreIntegrityError(
+                "persisted outbox ambiguity cursor is malformed"
+            ) from exc
+        return OutboxAmbiguityPageItem(rowid=rowid, ambiguity=self._row_to_ambiguity(row))
+
     @staticmethod
     def _lease_deadline(now: str, lease_seconds: float) -> str:
         if lease_seconds <= 0:
@@ -541,6 +582,24 @@ class SQLiteEventStore:
         """Read the store-owned clock after the write transaction is acquired."""
 
         return self._normalize_timestamp(self._clock(), "clock")
+
+    @staticmethod
+    def _validate_page_cursor(value: int, field_name: str) -> int:
+        if type(value) is not int:
+            raise TypeError(f"{field_name} must be an integer")
+        if value < 0:
+            raise ValueError(f"{field_name} cannot be negative")
+        if value > _MAX_SQLITE_INTEGER:
+            raise ValueError(f"{field_name} exceeds SQLite's integer range")
+        return value
+
+    @staticmethod
+    def _validate_page_limit(limit: int) -> int:
+        if type(limit) is not int:
+            raise TypeError("limit must be an integer")
+        if not 1 <= limit <= 1_000:
+            raise ValueError("limit must be between 1 and 1000")
+        return limit
 
     @staticmethod
     def _lease_token_digest(lease_token: str) -> str:
@@ -824,6 +883,31 @@ class SQLiteEventStore:
             ).fetchall()
             return tuple(self._row_to_event(row) for row in rows)
 
+    def read_stream_page(
+        self,
+        stream_id: str,
+        after_sequence: int = 0,
+        limit: int = 1_000,
+    ) -> Tuple[StoredEvent, ...]:
+        """Read one bounded stream page ordered by its exclusive sequence cursor."""
+
+        if type(stream_id) is not str:
+            raise TypeError("stream_id must be a string")
+        if not stream_id.strip():
+            raise ValueError("stream_id is required")
+        cursor = self._validate_page_cursor(after_sequence, "after_sequence")
+        page_limit = self._validate_page_limit(limit)
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM events
+                WHERE stream_id = ? AND sequence > ?
+                ORDER BY sequence LIMIT ?
+                """,
+                (stream_id, cursor, page_limit),
+            ).fetchall()
+            return tuple(self._row_to_event(row) for row in rows)
+
     def read_all(self, after_position: int = 0, limit: int = 1000) -> Tuple[StoredEvent, ...]:
         with self._lock:
             rows = self._connection.execute(
@@ -1054,6 +1138,42 @@ class SQLiteEventStore:
                 ).fetchall()
             return tuple(self._row_to_ambiguity(row) for row in rows)
 
+    def read_outbox_ambiguities_page(
+        self,
+        after_rowid: int = 0,
+        open_only: bool = True,
+        limit: int = 1_000,
+    ) -> Tuple[OutboxAmbiguityPageItem, ...]:
+        """Read one bounded page using a table-incarnation-local SQLite cursor.
+
+        ``after_rowid`` must not be persisted across VACUUM or an ambiguity-table
+        rebuild because the current schema has no durable integer position.
+        """
+
+        cursor = self._validate_page_cursor(after_rowid, "after_rowid")
+        page_limit = self._validate_page_limit(limit)
+        if type(open_only) is not bool:
+            raise TypeError("open_only must be a boolean")
+        with self._lock:
+            if open_only:
+                rows = self._connection.execute(
+                    """
+                    SELECT rowid AS ambiguity_rowid, * FROM outbox_ambiguities
+                    WHERE rowid > ? AND resolved_at IS NULL
+                    ORDER BY rowid LIMIT ?
+                    """,
+                    (cursor, page_limit),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    """
+                    SELECT rowid AS ambiguity_rowid, * FROM outbox_ambiguities
+                    WHERE rowid > ? ORDER BY rowid LIMIT ?
+                    """,
+                    (cursor, page_limit),
+                ).fetchall()
+            return tuple(self._row_to_ambiguity_page_item(row) for row in rows)
+
     def resolve_outbox_ambiguity(
         self,
         message_id: str,
@@ -1156,6 +1276,38 @@ class SQLiteEventStore:
                     (status.value,),
                 ).fetchall()
             return tuple(self._row_to_outbox(row) for row in rows)
+
+    def read_outbox_page(
+        self,
+        after_position: int = 0,
+        status: Optional[OutboxStatus] = None,
+        limit: int = 1_000,
+    ) -> Tuple[OutboxPageItem, ...]:
+        """Read one bounded outbox page after an exclusive durable position."""
+
+        cursor = self._validate_page_cursor(after_position, "after_position")
+        page_limit = self._validate_page_limit(limit)
+        if status is not None and type(status) is not OutboxStatus:
+            raise TypeError("status must be an OutboxStatus or None")
+        with self._lock:
+            if status is None:
+                rows = self._connection.execute(
+                    """
+                    SELECT * FROM outbox WHERE outbox_position > ?
+                    ORDER BY outbox_position LIMIT ?
+                    """,
+                    (cursor, page_limit),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    """
+                    SELECT * FROM outbox
+                    WHERE outbox_position > ? AND status = ?
+                    ORDER BY outbox_position LIMIT ?
+                    """,
+                    (cursor, status.value, page_limit),
+                ).fetchall()
+            return tuple(self._row_to_outbox_page_item(row) for row in rows)
 
     def get_inbox_receipt(self, consumer_id: str, message_id: str) -> Optional[InboxReceipt]:
         with self._lock:
