@@ -295,7 +295,9 @@ class HandoffContract:
             authority=Authority.from_dict(value.get("authority", {})),
             parent_task_id=value.get("parentTaskId"),
             token_budget=(int(value["tokenBudget"]) if value.get("tokenBudget") else None),
-            cost_budget=(float(value["costBudget"]) if value.get("costBudget") is not None else None),
+            cost_budget=(
+                float(value["costBudget"]) if value.get("costBudget") is not None else None
+            ),
             deadline=value.get("deadline"),
         )
 
@@ -318,6 +320,17 @@ class ActionIntent:
             "irreversible": self.irreversible,
             "dataClasses": list(self.data_classes),
         }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ActionIntent":
+        return cls(
+            action=str(value["action"]),
+            target=str(value["target"]),
+            risk=RiskLevel(str(value.get("risk", RiskLevel.LOW.value))),
+            external_side_effect=bool(value.get("externalSideEffect", False)),
+            irreversible=bool(value.get("irreversible", False)),
+            data_classes=tuple(str(item) for item in value.get("dataClasses", ())),
+        )
 
 
 @dataclass(frozen=True)
@@ -430,4 +443,3 @@ class CoordinationEnvelope:
             priority=int(value.get("priority", 50)),
             authority=Authority.from_dict(value.get("authority", {})),
         )
-

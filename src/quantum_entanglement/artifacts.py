@@ -73,7 +73,8 @@ class ArtifactLedger:
                 name=output.name,
                 version=version,
                 media_type=output.media_type,
-                uri="artifact://%s/%s/v%d" % (quote(session_id, safe=""), quote(output.name), version),
+                uri="artifact://%s/%s/v%d"
+                % (quote(session_id, safe=""), quote(output.name), version),
                 digest=self._digest(output.content),
                 created_by=agent_id,
                 task_id=task_id,
@@ -137,6 +138,20 @@ class ArtifactLedger:
                 if candidate_session == session_id and versions
             )
 
+    def by_task(self, session_id: str, task_id: str) -> Tuple[ArtifactVersion, ...]:
+        """Return outputs attributed to one task, rebuilt from the append-only ledger."""
+
+        with self._lock:
+            items = [
+                item
+                for (candidate_session, _), versions in self._versions.items()
+                if candidate_session == session_id
+                for item in versions
+                if item.ref.task_id == task_id
+            ]
+            items.sort(key=lambda item: (item.ref.name, item.ref.version))
+            return tuple(items)
+
     def restore(
         self,
         session_id: str,
@@ -161,4 +176,3 @@ class ArtifactLedger:
             ),
             trigger="rollback",
         )
-

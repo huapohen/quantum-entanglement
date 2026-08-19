@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .protocol import (
     ActionIntent,
@@ -86,6 +86,21 @@ class ApprovalRequest:
             "comment": self.comment,
         }
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ApprovalRequest":
+        raw_decision = value.get("decision")
+        return cls(
+            session_id=str(value["sessionId"]),
+            task_id=str(value["taskId"]),
+            intent=ActionIntent.from_dict(value["intent"]),
+            reason=str(value["reason"]),
+            request_id=str(value["requestId"]),
+            created_at=str(value["createdAt"]),
+            decision=(ApprovalDecision(str(raw_decision)) if raw_decision else None),
+            decided_by=(str(value["decidedBy"]) if value.get("decidedBy") else None),
+            comment=(str(value["comment"]) if value.get("comment") else None),
+        )
+
 
 class NeedsYouQueue:
     def __init__(self) -> None:
@@ -106,6 +121,13 @@ class NeedsYouQueue:
             )
             if existing:
                 return existing
+            self._requests[request.request_id] = request
+            return request
+
+    def restore(self, request: ApprovalRequest) -> ApprovalRequest:
+        """Upsert a request reconstructed from the immutable event stream."""
+
+        with self._lock:
             self._requests[request.request_id] = request
             return request
 
@@ -138,4 +160,3 @@ class NeedsYouQueue:
             request.decided_by = actor_id
             request.comment = comment
             return request
-

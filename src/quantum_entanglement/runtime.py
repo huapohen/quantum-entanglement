@@ -174,6 +174,8 @@ class OrchestratorKernel:
         if existing and existing.plan_id != plan.plan_id:
             raise ValueError("one active workflow plan is allowed per session in this MVP")
         if existing:
+            if existing.to_dict() != plan.to_dict():
+                raise ValueError("requested workflow content differs from the active plan")
             return self._graphs[plan.session_id]
         graph = TaskGraph(plan.tasks)
         self._plans[plan.session_id] = plan
@@ -203,6 +205,55 @@ class OrchestratorKernel:
             await self._record_transition(plan.session_id, transition, plan.correlation_id)
         await self.plugins.emit(HookPoint.PLAN_CREATED, {"plan": plan, "graph": graph})
         return graph
+
+    def _recover_session(self, requested_plan: WorkflowPlan) -> None:
+        """Rebuild an active workflow projection without replaying side effects."""
+
+        if requested_plan.session_id in self._plans:
+            return
+        events = self.event_store.read_stream(self._stream_id(requested_plan.session_id))
+        created = next(
+            (item.event for item in events if item.event.event_type == "workflow.plan.created"),
+            None,
+        )
+        if created is None:
+            return
+        stored_plan = WorkflowPlan.from_dict(created.payload)
+        if stored_plan.plan_id != requested_plan.plan_id:
+            raise ValueError(
+                "stored workflow plan %s does not match requested plan %s"
+                % (stored_plan.plan_id, requested_plan.plan_id)
+            )
+        if stored_plan.to_dict() != requested_plan.to_dict():
+            raise ValueError("requested workflow content differs from the stored plan")
+        graph = TaskGraph(stored_plan.tasks)
+        approval_requests: Dict[str, ApprovalRequest] = {}
+        for stored in events:
+            event = stored.event
+            if event.event_type == "task.status.changed":
+                payload = event.payload
+                graph.restore_status(
+                    str(payload["taskId"]),
+                    TaskStatus(str(payload["current"])),
+                    str(payload["reason"]) if payload.get("reason") else None,
+                    int(payload.get("revision", 0)),
+                )
+            elif event.event_type in ("approval.requested", "approval.decided"):
+                request = ApprovalRequest.from_dict(dict(event.payload))
+                approval_requests[request.request_id] = request
+
+        self._plans[requested_plan.session_id] = stored_plan
+        self._graphs[requested_plan.session_id] = graph
+        for request in approval_requests.values():
+            self.approvals.restore(request)
+            if request.decision == ApprovalDecision.APPROVE:
+                self._approved_tasks.add((request.session_id, request.task_id))
+        for task in stored_plan.tasks:
+            refs = tuple(
+                item.ref for item in self.artifacts.by_task(stored_plan.session_id, task.task_id)
+            )
+            if refs:
+                self._task_artifacts[(stored_plan.session_id, task.task_id)] = refs
 
     def _artifact_items(self, plan: WorkflowPlan, task: TaskSpec) -> Tuple[ContextItem, ...]:
         items = []
@@ -286,7 +337,10 @@ class OrchestratorKernel:
         await self.plugins.emit(HookPoint.BEFORE_DISPATCH, dispatch_context)
         approval_key = (plan.session_id, task.task_id)
         decision = self.policy.evaluate(task.action, task.handoff.authority)
-        if approval_key in self._approved_tasks and decision.outcome == PolicyOutcome.NEEDS_APPROVAL:
+        if (
+            approval_key in self._approved_tasks
+            and decision.outcome == PolicyOutcome.NEEDS_APPROVAL
+        ):
             decision = type(decision)(PolicyOutcome.ALLOW, "covered by task-scoped human approval")
         if decision.outcome == PolicyOutcome.DENY:
             running = graph.transition(task.task_id, TaskStatus.RUNNING)
@@ -397,10 +451,14 @@ class OrchestratorKernel:
     async def run(self, plan: WorkflowPlan) -> RunResult:
         lock = self._session_locks.setdefault(plan.session_id, asyncio.Lock())
         async with lock:
+            self._recover_session(plan)
             graph = await self._initialize_plan(plan)
+            active_plan = self._plans[plan.session_id]
             while True:
                 for transition in graph.refresh():
-                    await self._record_transition(plan.session_id, transition, plan.correlation_id)
+                    await self._record_transition(
+                        active_plan.session_id, transition, active_plan.correlation_id
+                    )
                 ready = graph.ready()
                 if not ready:
                     break
@@ -408,10 +466,10 @@ class OrchestratorKernel:
 
                 async def guarded(task: TaskSpec) -> None:
                     async with semaphore:
-                        await self._run_task(plan, graph, task)
+                        await self._run_task(active_plan, graph, task)
 
                 await asyncio.gather(*(guarded(task) for task in ready))
-            return self._result(plan, graph)
+            return self._result(active_plan, graph)
 
     def _result(self, plan: WorkflowPlan, graph: TaskGraph) -> RunResult:
         return RunResult(
