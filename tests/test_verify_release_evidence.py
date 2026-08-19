@@ -226,6 +226,30 @@ class VerifyReleaseEvidenceTests(unittest.TestCase):
             "release evidence verification failed: repository_not_clean\n",
         )
 
+    def test_cli_rejects_even_ignored_evidence_inside_repository(self):
+        inside = self.repository / "ignored-evidence.json"
+        exclude = self.repository / ".git" / "info" / "exclude"
+        exclude.write_text("ignored-evidence.json\n", encoding="utf-8")
+        inside.write_text(canonical_json(self.evidence), encoding="utf-8")
+        self.assertEqual(self._git("status", "--porcelain=v1"), "")
+        stderr = StringIO()
+
+        with redirect_stdout(StringIO()), redirect_stderr(stderr):
+            exit_code = main(
+                (
+                    str(inside),
+                    "--repository-root",
+                    str(self.repository),
+                ),
+                expected_gates=(self.gate,),
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(
+            stderr.getvalue(),
+            "release evidence verification failed: evidence_inside_repository\n",
+        )
+
     def test_cli_rejects_repository_change_during_verification(self):
         self._write_canonical()
         initial = verifier_module.capture_git_snapshot(self.repository)

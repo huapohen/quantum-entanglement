@@ -346,6 +346,16 @@ def verify_file_against_repository(
         root = repository_root.resolve(strict=True)
     except OSError:
         _fail("repository_unavailable")
+    try:
+        resolved_evidence_path = evidence_path.resolve(strict=True)
+    except OSError:
+        _fail("evidence_unreadable")
+    try:
+        resolved_evidence_path.relative_to(root)
+    except ValueError:
+        pass
+    else:
+        _fail("evidence_inside_repository")
     snapshot = capture_git_snapshot(root)
     if snapshot.commit_sha is None or snapshot.tree_sha is None:
         _fail("repository_identity_unavailable")
