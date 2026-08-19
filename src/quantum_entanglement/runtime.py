@@ -35,6 +35,7 @@ from .store import SQLiteEventStore
 
 _RECOVERY_PAGE_LIMIT = 1_000
 _MAX_RECOVERY_EVENTS = 1_000_000
+_MAX_RECOVERY_TEXT_LENGTH = 65_536
 
 
 class SessionRecoveryError(RuntimeError):
@@ -332,6 +333,48 @@ class OrchestratorKernel:
             )
         return tuple(replayed)
 
+    @staticmethod
+    def _apply_recovered_transition(graph: TaskGraph, stored: StoredEvent) -> None:
+        payload = stored.event.payload
+        expected_fields = {"taskId", "previous", "current", "reason", "revision"}
+        if type(payload) is not dict or set(payload) != expected_fields:
+            raise SessionRecoveryError("task transition payload has an invalid shape")
+
+        task_id = payload["taskId"]
+        previous_value = payload["previous"]
+        current_value = payload["current"]
+        reason = payload["reason"]
+        revision = payload["revision"]
+        if type(task_id) is not str or not task_id or len(task_id) > _MAX_RECOVERY_TEXT_LENGTH:
+            raise SessionRecoveryError("task transition taskId is invalid")
+        if type(previous_value) is not str or type(current_value) is not str:
+            raise SessionRecoveryError("task transition status is invalid")
+        if reason is not None and (
+            type(reason) is not str or len(reason) > _MAX_RECOVERY_TEXT_LENGTH
+        ):
+            raise SessionRecoveryError("task transition reason is invalid")
+        if type(revision) is not int or revision < 0:
+            raise SessionRecoveryError("task transition revision is invalid")
+
+        try:
+            previous = TaskStatus(previous_value)
+            current = TaskStatus(current_value)
+            actual_previous = graph.statuses[task_id]
+            actual_revision = graph.revisions[task_id]
+        except (KeyError, ValueError) as exc:
+            raise SessionRecoveryError("task transition references unknown state") from exc
+        if previous != actual_previous:
+            raise SessionRecoveryError("task transition previous status does not match history")
+        expected_revision = actual_revision if current == previous else actual_revision + 1
+        if revision != expected_revision:
+            raise SessionRecoveryError("task transition revision is not contiguous")
+        try:
+            transition = graph.transition(task_id, current, reason)
+        except (KeyError, ValueError) as exc:
+            raise SessionRecoveryError("task transition is not permitted") from exc
+        if transition.revision != revision:
+            raise SessionRecoveryError("task transition revision does not match replay state")
+
     def _recover_session(self, requested_plan: WorkflowPlan) -> None:
         """Rebuild an active workflow projection without replaying side effects."""
 
@@ -357,13 +400,7 @@ class OrchestratorKernel:
         for stored in events:
             event = stored.event
             if event.event_type == "task.status.changed":
-                payload = event.payload
-                graph.restore_status(
-                    str(payload["taskId"]),
-                    TaskStatus(str(payload["current"])),
-                    str(payload["reason"]) if payload.get("reason") else None,
-                    int(payload.get("revision", 0)),
-                )
+                self._apply_recovered_transition(graph, stored)
             elif event.event_type in ("approval.requested", "approval.decided"):
                 request = ApprovalRequest.from_dict(dict(event.payload))
                 approval_requests[request.request_id] = request

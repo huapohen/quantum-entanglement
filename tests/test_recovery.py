@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -284,6 +285,108 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("recover-gap", recovered._plans)
         self.assertNotIn("recover-gap", recovered._graphs)
         recovered.event_store.close()
+
+    async def test_session_recovery_rejects_invalid_task_transition_contracts(self):
+        cases = (
+            ("bool-revision", "revision", True, "revision is invalid"),
+            ("float-revision", "revision", 1.0, "revision is invalid"),
+            ("revision-gap", "revision", 2, "revision is not contiguous"),
+            ("previous-drift", "previous", "ready", "previous status"),
+            ("invalid-edge", "current", "completed", "not permitted"),
+            ("unknown-task", "taskId", "unknown", "unknown state"),
+            ("numeric-reason", "reason", 7, "reason is invalid"),
+            ("bool-status", "current", True, "status is invalid"),
+        )
+
+        async def handler(invocation):
+            return AgentResult("done")
+
+        for index, (label, field, value, message) in enumerate(cases):
+            with self.subTest(label=label):
+                path = str(Path(self.tempdir.name) / f"transition-{index}.sqlite3")
+                session_id = f"transition-{index}"
+                plan = WorkflowPlan(
+                    session_id,
+                    "严格恢复",
+                    "user",
+                    (TaskSpec("task", "worker", handoff(), task_id="task"),),
+                    plan_id=f"plan-transition-{index}",
+                )
+                first = OrchestratorKernel(event_store=SQLiteEventStore(path))
+                first.register_agent(registration("worker", handler))
+                self.assertTrue((await first.run(plan)).completed)
+                row = first.event_store._connection.execute(
+                    """
+                    SELECT global_position, payload_json
+                    FROM events
+                    WHERE stream_id = ? AND event_type = 'task.status.changed'
+                    ORDER BY sequence LIMIT 1
+                    """,
+                    (f"session:{session_id}",),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                payload = json.loads(row["payload_json"])
+                payload[field] = value
+                first.event_store._connection.execute(
+                    "UPDATE events SET payload_json = ? WHERE global_position = ?",
+                    (
+                        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                        row["global_position"],
+                    ),
+                )
+                first.event_store.close()
+
+                candidate = OrchestratorKernel(event_store=SQLiteEventStore(path))
+                candidate.register_agent(registration("worker", handler))
+                with self.assertRaisesRegex(SessionRecoveryError, message):
+                    await candidate.run(plan)
+                self.assertNotIn(session_id, candidate._plans)
+                self.assertNotIn(session_id, candidate._graphs)
+                candidate.event_store.close()
+
+    async def test_late_invalid_transition_shape_never_publishes_partial_recovery(self):
+        async def handler(invocation):
+            return AgentResult("done")
+
+        plan = WorkflowPlan(
+            "transition-late",
+            "晚页损坏",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-transition-late",
+        )
+        first = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        first.register_agent(registration("worker", handler))
+        self.assertTrue((await first.run(plan)).completed)
+        row = first.event_store._connection.execute(
+            """
+            SELECT global_position, payload_json
+            FROM events
+            WHERE stream_id = ? AND event_type = 'task.status.changed'
+            ORDER BY sequence DESC LIMIT 1
+            """,
+            ("session:transition-late",),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        payload = json.loads(row["payload_json"])
+        payload["unexpected"] = "field"
+        first.event_store._connection.execute(
+            "UPDATE events SET payload_json = ? WHERE global_position = ?",
+            (
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                row["global_position"],
+            ),
+        )
+        first.event_store.close()
+
+        candidate = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        candidate.register_agent(registration("worker", handler))
+        with self.assertRaisesRegex(SessionRecoveryError, "invalid shape"):
+            await candidate.run(plan)
+        self.assertNotIn("transition-late", candidate._plans)
+        self.assertNotIn("transition-late", candidate._graphs)
+        self.assertEqual(candidate.approvals.pending("transition-late"), ())
+        candidate.event_store.close()
 
 
 if __name__ == "__main__":
