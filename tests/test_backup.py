@@ -18,6 +18,7 @@ from quantum_entanglement.backup import (
     BackupIntegrityError,
     create_sqlite_backup,
     default_manifest_path,
+    restore_sqlite_backup,
     verify_sqlite_backup,
 )
 
@@ -160,6 +161,56 @@ class SQLiteBackupTests(unittest.TestCase):
 
         self.assertFalse(backup.exists())
         self.assertFalse(manifest.exists())
+
+    def test_verified_backup_restores_to_new_database(self):
+        backup, manifest_path, created = self.create_backup()
+        destination = self.root / "restore" / "state.sqlite3"
+
+        restored = restore_sqlite_backup(
+            backup,
+            destination,
+            manifest_path=manifest_path,
+        )
+
+        self.assertEqual(restored, created)
+        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+        with SQLiteInvocationAttemptStore(str(destination), clock=lambda: T0) as attempts:
+            self.assertIsNotNone(attempts.get("invocation-1"))
+        with SQLiteArtifactStore(str(destination), clock=lambda: T0) as artifacts:
+            item = artifacts.get("tenant-1", "workspace-1", "artifact-1")
+            self.assertIsNotNone(item)
+            self.assertEqual(item.content, b"# Result\n")
+
+    def test_restore_never_overwrites_existing_destination(self):
+        backup, manifest_path, _created = self.create_backup()
+        destination = self.root / "occupied.sqlite3"
+        destination.write_bytes(b"operator data")
+
+        with self.assertRaises(BackupExistsError):
+            restore_sqlite_backup(
+                backup,
+                destination,
+                manifest_path=manifest_path,
+            )
+
+        self.assertEqual(destination.read_bytes(), b"operator data")
+
+    def test_restore_publication_race_cleans_partial_destination(self):
+        backup, manifest_path, _created = self.create_backup()
+        destination = self.root / "raced.sqlite3"
+
+        with patch(
+            "quantum_entanglement.backup.os.link",
+            side_effect=FileExistsError("simulated restore race"),
+        ):
+            with self.assertRaises(BackupExistsError):
+                restore_sqlite_backup(
+                    backup,
+                    destination,
+                    manifest_path=manifest_path,
+                )
+
+        self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":

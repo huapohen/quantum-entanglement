@@ -13,7 +13,7 @@ import hashlib
 import importlib.resources
 import sqlite3
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable, Optional, Sequence
 
 from ..protocol import utc_now
 
@@ -73,6 +73,7 @@ def apply_sqlite_migrations(
     connection: sqlite3.Connection,
     *,
     migrations: Sequence[Migration] = MIGRATIONS,
+    target_versions: Optional[Sequence[int]] = None,
     clock: Callable[[], str] = utc_now,
 ) -> int:
     """Apply the registry and return the current schema version.
@@ -84,6 +85,17 @@ def apply_sqlite_migrations(
     if not callable(clock):
         raise TypeError("clock must be callable")
     _validate_registry(migrations)
+    ordered_versions = tuple(item.version for item in migrations)
+    if target_versions is None:
+        selected_versions = set(ordered_versions)
+    else:
+        requested_versions = tuple(target_versions)
+        if any(type(version) is not int for version in requested_versions):
+            raise TypeError("target migration versions must be integers")
+        expected_prefix = ordered_versions[: len(requested_versions)]
+        if requested_versions != expected_prefix:
+            raise ValueError("target migration versions must be a continuous registry prefix")
+        selected_versions = set(requested_versions)
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS qe_schema_migrations (
@@ -113,6 +125,8 @@ def apply_sqlite_migrations(
             )
 
     for migration in migrations:
+        if migration.version not in selected_versions:
+            continue
         row = connection.execute(
             "SELECT filename, sha256 FROM qe_schema_migrations WHERE version = ?",
             (migration.version,),

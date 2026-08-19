@@ -243,6 +243,15 @@ class BackupManifest:
         )
 
 
+def _verify_evidence(manifest: BackupManifest, evidence: _DatabaseEvidence) -> None:
+    if evidence.page_count != manifest.page_count or evidence.page_size != manifest.page_size:
+        raise BackupIntegrityError("backup page geometry differs from manifest")
+    if dict(evidence.table_counts) != dict(manifest.table_counts):
+        raise BackupIntegrityError("backup table counts differ from manifest")
+    if tuple(evidence.migrations) != tuple(manifest.migrations):
+        raise BackupIntegrityError("backup migration evidence differs from manifest")
+
+
 def default_manifest_path(backup_path: os.PathLike[str] | str) -> Path:
     path = Path(backup_path)
     return path.with_name(path.name + ".manifest.json")
@@ -400,13 +409,80 @@ def verify_sqlite_backup(
         evidence = _database_evidence(connection)
     finally:
         connection.close()
-    if evidence.page_count != parsed.page_count or evidence.page_size != parsed.page_size:
-        raise BackupIntegrityError("backup page geometry differs from manifest")
-    if dict(evidence.table_counts) != dict(parsed.table_counts):
-        raise BackupIntegrityError("backup table counts differ from manifest")
-    if tuple(evidence.migrations) != tuple(parsed.migrations):
-        raise BackupIntegrityError("backup migration evidence differs from manifest")
+    _verify_evidence(parsed, evidence)
     return parsed
+
+
+def restore_sqlite_backup(
+    backup_path: os.PathLike[str] | str,
+    destination_path: os.PathLike[str] | str,
+    *,
+    manifest_path: Optional[os.PathLike[str] | str] = None,
+) -> BackupManifest:
+    """Verify and atomically restore a backup without overwriting any destination."""
+
+    backup = Path(backup_path)
+    manifest_path_value = (
+        Path(manifest_path) if manifest_path is not None else default_manifest_path(backup)
+    )
+    destination = Path(destination_path)
+    if destination.exists() or destination.is_symlink():
+        raise BackupExistsError(f"restore destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    resolved_destination = destination.resolve()
+    if resolved_destination in {backup.resolve(), manifest_path_value.resolve()}:
+        raise BackupError("restore destination must differ from backup and manifest")
+    verified = verify_sqlite_backup(backup, manifest_path=manifest_path_value)
+
+    destination_fd, destination_temp_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".restore-partial",
+        dir=destination.parent,
+    )
+    destination_temp = Path(destination_temp_name)
+    destination_linked = False
+    try:
+        os.fchmod(destination_fd, 0o600)
+        os.close(destination_fd)
+        destination_fd = -1
+        source_connection = _read_only_connection(backup)
+        destination_connection = sqlite3.connect(str(destination_temp))
+        destination_connection.row_factory = sqlite3.Row
+        try:
+            source_connection.backup(destination_connection, pages=256, sleep=0.01)
+            destination_connection.execute("PRAGMA journal_mode=DELETE")
+            destination_connection.commit()
+            restored_evidence = _database_evidence(destination_connection)
+        finally:
+            destination_connection.close()
+            source_connection.close()
+        if _sha256_file(backup) != verified.database_sha256:
+            raise BackupIntegrityError("backup changed while it was being restored")
+        _verify_evidence(verified, restored_evidence)
+        with destination_temp.open("rb") as restored_handle:
+            os.fsync(restored_handle.fileno())
+        try:
+            os.link(destination_temp, destination)
+            destination_linked = True
+        except FileExistsError as exc:
+            raise BackupExistsError(
+                f"restore destination already exists: {destination}"
+            ) from exc
+        _fsync_directory(destination.parent)
+        restored_connection = _read_only_connection(destination)
+        try:
+            _verify_evidence(verified, _database_evidence(restored_connection))
+        finally:
+            restored_connection.close()
+        return verified
+    except BaseException:
+        if destination_linked:
+            destination.unlink()
+        raise
+    finally:
+        if destination_fd >= 0:
+            os.close(destination_fd)
+        destination_temp.unlink(missing_ok=True)
 
 
 __all__ = [
@@ -416,5 +492,6 @@ __all__ = [
     "BackupManifest",
     "create_sqlite_backup",
     "default_manifest_path",
+    "restore_sqlite_backup",
     "verify_sqlite_backup",
 ]
