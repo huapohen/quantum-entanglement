@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from itertools import islice
 from typing import (
+    Callable,
     Dict,
     Iterable,
     List,
@@ -42,6 +43,7 @@ from .migrations import (
     migration_text,
     validate_sqlite_schema,
 )
+from .protocol import utc_now
 
 DomainMigrationKind = Literal["legacy_bootstrap", "native"]
 
@@ -144,6 +146,10 @@ class DomainMigrationSidecarInstallError(DomainMigrationSidecarSchemaError):
 
 class DomainMigrationBridgeIntegrityError(DomainMigrationSidecarSchemaError):
     """Raised when durable legacy and sidecar rows are not registry-congruent."""
+
+
+class DomainMigrationLegacyBootstrapError(DomainMigrationBridgeIntegrityError):
+    """Raised when legacy metadata cannot be bootstrapped atomically and exactly."""
 
 
 class DomainMigrationSidecarSchemaState(str, Enum):
@@ -1518,3 +1524,268 @@ def read_domain_migration_bridge_state(
     if owns_snapshot:
         _rollback_bridge_snapshot(connection)
     return state
+
+
+_LEGACY_METADATA_INSERT_SQL = """
+    INSERT INTO main.qe_schema_migration_metadata (
+        migration_version,
+        domain,
+        domain_version,
+        metadata_kind,
+        descriptor_sha256,
+        owned_schema_sha256,
+        recorded_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+"""
+
+_LEGACY_DEPENDENCY_INSERT_SQL = """
+    INSERT INTO main.qe_schema_migration_dependencies (
+        migration_version,
+        depends_on_version
+    ) VALUES (?, ?)
+"""
+
+
+def _read_legacy_bootstrap_state(
+    connection: sqlite3.Connection,
+    *,
+    phase: str,
+) -> DomainMigrationBridgeState:
+    try:
+        return read_domain_migration_bridge_state(connection)
+    except DomainMigrationBridgeIntegrityError as error:
+        raise DomainMigrationLegacyBootstrapError(
+            f"legacy domain migration bootstrap {phase} state is not exact"
+        ) from error
+
+
+def _legacy_bootstrap_descriptors(
+    state: DomainMigrationBridgeState,
+) -> Tuple[DomainMigrationDescriptor, ...]:
+    descriptors = DOMAIN_MIGRATION_REGISTRY.descriptors[: len(state.ledger_rows)]
+    if tuple(item.migration_id for item in descriptors) != tuple(
+        row.migration_id for row in state.ledger_rows
+    ):
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap state is not a registry prefix"
+        )
+    applied_ids = {item.migration_id for item in descriptors}
+    for descriptor in descriptors:
+        if descriptor.kind != "legacy_bootstrap":
+            raise DomainMigrationLegacyBootstrapError(
+                "legacy domain migration bootstrap refuses non-legacy descriptors"
+            )
+        if any(dependency not in applied_ids for dependency in descriptor.dependencies):
+            raise DomainMigrationLegacyBootstrapError(
+                "legacy domain migration bootstrap dependency is not already applied"
+            )
+    return descriptors
+
+
+def _sample_legacy_bootstrap_timestamp(clock: Callable[[], str]) -> str:
+    raw_timestamp = clock()
+    try:
+        return _durable_timestamp(
+            raw_timestamp,
+            field="legacy domain migration bootstrap clock",
+        )
+    except DomainMigrationBridgeIntegrityError as error:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap clock returned a non-canonical timestamp"
+        ) from error
+
+
+def _expected_legacy_bootstrap_state(
+    source: DomainMigrationBridgeState,
+    descriptors: Sequence[DomainMigrationDescriptor],
+    *,
+    recorded_at: str,
+) -> DomainMigrationBridgeState:
+    metadata_rows = tuple(
+        DomainMigrationMetadataRow(
+            migration_id=descriptor.migration_id,
+            domain=descriptor.domain,
+            domain_version=descriptor.domain_version,
+            kind="legacy_bootstrap",
+            descriptor_sha256=descriptor.descriptor_sha256,
+            owned_schema_sha256=descriptor.owned_object_manifest_sha256,
+            recorded_at=recorded_at,
+        )
+        for descriptor in descriptors
+    )
+    dependency_rows = tuple(
+        sorted(
+            DomainMigrationDependencyRow(descriptor.migration_id, dependency)
+            for descriptor in descriptors
+            for dependency in descriptor.dependencies
+        )
+    )
+    return DomainMigrationBridgeState(
+        shape=DomainMigrationBridgeShape.BRIDGED_PREFIX,
+        legacy_schema_version=source.legacy_schema_version,
+        ledger_rows=source.ledger_rows,
+        metadata_rows=metadata_rows,
+        dependency_rows=dependency_rows,
+        registry_sha256=source.registry_sha256,
+    )
+
+
+def _rollback_legacy_bootstrap(connection: sqlite3.Connection) -> None:
+    try:
+        transaction_is_active = connection.in_transaction
+    except sqlite3.Error as error:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap rollback state could not be inspected"
+        ) from error
+    if not transaction_is_active:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap transaction ended unexpectedly"
+        )
+    try:
+        connection.execute("ROLLBACK")
+    except BaseException as error:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap rollback failed"
+        ) from error
+    try:
+        transaction_remains_active = connection.in_transaction
+    except sqlite3.Error as error:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap rollback state could not be verified"
+        ) from error
+    if transaction_remains_active:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap rollback did not release its transaction"
+        )
+
+
+def _cleanup_failed_legacy_bootstrap(connection: sqlite3.Connection) -> None:
+    try:
+        transaction_is_active = connection.in_transaction
+    except sqlite3.Error as error:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap cleanup state could not be inspected"
+        ) from error
+    if transaction_is_active:
+        _rollback_legacy_bootstrap(connection)
+
+
+def bootstrap_legacy_domain_migration_metadata(
+    connection: sqlite3.Connection,
+    *,
+    clock: Callable[[], str] = utc_now,
+) -> DomainMigrationBridgeState:
+    """Atomically describe an applied legacy prefix in an existing exact sidecar.
+
+    This bridge-only writer never creates schema, applies a migration, repairs drift, or
+    enables native/sparse planning.  It samples one canonical UTC timestamp under a
+    ``BEGIN IMMEDIATE`` lock, writes only trusted legacy metadata and dependency rows,
+    validates the exact post-state before commit, and re-reads it after commit.
+    """
+
+    try:
+        caller_has_transaction = connection.in_transaction
+    except sqlite3.Error as error:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap connection state could not be inspected"
+        ) from error
+    if caller_has_transaction:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap requires no active caller transaction"
+        )
+    if not callable(clock):
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap clock must be callable"
+        )
+
+    preflight = _read_legacy_bootstrap_state(connection, phase="preflight")
+    if preflight.shape is DomainMigrationBridgeShape.LEGACY_PREFIX:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap requires an existing exact sidecar"
+        )
+
+    owns_transaction = False
+    expected_state: Optional[DomainMigrationBridgeState] = None
+    try:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+        finally:
+            # A wrapper may fail after SQLite has acquired the writer lock.
+            owns_transaction = connection.in_transaction
+        if not owns_transaction:
+            raise DomainMigrationLegacyBootstrapError(
+                "legacy domain migration bootstrap did not acquire a transaction"
+            )
+
+        locked_state = _read_legacy_bootstrap_state(connection, phase="locked")
+        if locked_state.shape is DomainMigrationBridgeShape.LEGACY_PREFIX:
+            raise DomainMigrationLegacyBootstrapError(
+                "legacy domain migration bootstrap sidecar disappeared under lock"
+            )
+        if locked_state.shape is DomainMigrationBridgeShape.BRIDGED_PREFIX:
+            _rollback_legacy_bootstrap(connection)
+            owns_transaction = False
+            return locked_state
+        if locked_state.shape is not DomainMigrationBridgeShape.SIDECAR_EMPTY_PREFIX:
+            raise DomainMigrationLegacyBootstrapError(
+                "legacy domain migration bootstrap encountered an unsupported state"
+            )
+
+        descriptors = _legacy_bootstrap_descriptors(locked_state)
+        if not descriptors:
+            _rollback_legacy_bootstrap(connection)
+            owns_transaction = False
+            return locked_state
+
+        recorded_at = _sample_legacy_bootstrap_timestamp(clock)
+        expected_state = _expected_legacy_bootstrap_state(
+            locked_state,
+            descriptors,
+            recorded_at=recorded_at,
+        )
+        for descriptor in descriptors:
+            connection.execute(
+                _LEGACY_METADATA_INSERT_SQL,
+                (
+                    descriptor.migration_id,
+                    descriptor.domain,
+                    descriptor.domain_version,
+                    "legacy_bootstrap",
+                    descriptor.descriptor_sha256,
+                    descriptor.owned_object_manifest_sha256,
+                    recorded_at,
+                ),
+            )
+        for dependency in expected_state.dependency_rows:
+            connection.execute(
+                _LEGACY_DEPENDENCY_INSERT_SQL,
+                (dependency.migration_id, dependency.depends_on_migration_id),
+            )
+
+        post_write_state = _read_legacy_bootstrap_state(connection, phase="post-write")
+        if post_write_state != expected_state:
+            raise DomainMigrationLegacyBootstrapError(
+                "legacy domain migration bootstrap post-write state differs from expectation"
+            )
+
+        connection.execute("COMMIT")
+        if connection.in_transaction:
+            raise DomainMigrationLegacyBootstrapError(
+                "legacy domain migration bootstrap commit did not end its transaction"
+            )
+        owns_transaction = False
+    except BaseException:
+        if owns_transaction:
+            _cleanup_failed_legacy_bootstrap(connection)
+        raise
+
+    if expected_state is None:
+        raise DomainMigrationLegacyBootstrapError(
+            "legacy domain migration bootstrap did not construct an expected state"
+        )
+    committed_state = _read_legacy_bootstrap_state(connection, phase="committed")
+    if committed_state != expected_state:
+        raise DomainMigrationLegacyBootstrapError(
+            "committed legacy domain migration bootstrap state differs from expectation"
+        )
+    return committed_state
