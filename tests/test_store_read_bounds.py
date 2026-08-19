@@ -159,6 +159,16 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
         self.assertEqual(self.store.read_stream_page("stream:target", 5, 2), ())
         self.assertEqual(self.store.read_stream_page("stream:target", 99, 2), ())
 
+    def test_read_all_keeps_bounded_global_position_semantics(self) -> None:
+        self._append_stream("stream:target", 3)
+
+        first = self.store.read_all(after_position=0, limit=2)
+        second = self.store.read_all(after_position=first[-1].global_position, limit=2)
+        self.assertEqual([item.global_position for item in first], [1, 2])
+        self.assertEqual([item.global_position for item in second], [3])
+        self.assertEqual(self.store.read_all(after_position=3, limit=1), ())
+        self.assertEqual(len(self.store.read_all(limit=1_000)), 3)
+
     def test_outbox_pages_expose_durable_positions_and_filter_status(self) -> None:
         self._seed_outbox()
 
@@ -195,6 +205,7 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
 
         cursor_calls: tuple[Callable[[Any], object], ...] = (
             lambda value: self.store.read_stream_page("stream:target", value, 1),
+            lambda value: self.store.read_all(value, 1),
             lambda value: self.store.read_outbox_page(value, None, 1),
             lambda value: self.store.read_outbox_ambiguities_page(value, True, 1),
         )
@@ -212,6 +223,7 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
 
         limit_calls: tuple[Callable[[Any], object], ...] = (
             lambda value: self.store.read_stream_page("stream:target", 0, value),
+            lambda value: self.store.read_all(0, value),
             lambda value: self.store.read_outbox_page(0, None, value),
             lambda value: self.store.read_outbox_ambiguities_page(0, True, value),
         )
@@ -236,6 +248,32 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
                         open_only=invalid  # type: ignore[arg-type]
                     )
 
+    def test_read_all_rejects_invalid_bounds_before_executing_sql(self) -> None:
+        statements: list[str] = []
+        invalid_calls: tuple[tuple[type[BaseException], Callable[[], object]], ...] = (
+            (TypeError, lambda: self.store.read_all(after_position=True)),
+            (TypeError, lambda: self.store.read_all(limit=False)),
+            (
+                TypeError,
+                lambda: self.store.read_all(limit=1.0),  # type: ignore[arg-type]
+            ),
+            (ValueError, lambda: self.store.read_all(after_position=-1)),
+            (ValueError, lambda: self.store.read_all(after_position=1 << 63)),
+            (ValueError, lambda: self.store.read_all(limit=-1)),
+            (ValueError, lambda: self.store.read_all(limit=0)),
+            (ValueError, lambda: self.store.read_all(limit=1_001)),
+        )
+        self.store._connection.set_trace_callback(statements.append)
+        try:
+            for error_type, call in invalid_calls:
+                with self.subTest(error_type=error_type, call=call):
+                    with self.assertRaises(error_type):
+                        call()
+        finally:
+            self.store._connection.set_trace_callback(None)
+
+        self.assertEqual(statements, [])
+
     def test_each_page_query_has_a_sql_limit(self) -> None:
         self._append_stream("stream:target", 3)
         self._seed_ambiguities()
@@ -243,6 +281,7 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
         self.store._connection.set_trace_callback(statements.append)
         try:
             self.store.read_stream_page("stream:target", limit=2)
+            self.store.read_all(limit=2)
             self.store.read_outbox_page(limit=2)
             self.store.read_outbox_ambiguities_page(limit=2)
         finally:
@@ -251,6 +290,12 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
         normalized = [" ".join(statement.upper().split()) for statement in statements]
         self.assertTrue(
             any("FROM EVENTS" in statement and "LIMIT" in statement for statement in normalized)
+        )
+        self.assertTrue(
+            any(
+                "GLOBAL_POSITION >" in statement and "LIMIT" in statement
+                for statement in normalized
+            )
         )
         self.assertTrue(
             any(
