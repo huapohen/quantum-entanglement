@@ -1,53 +1,129 @@
 # SQLite backup and restore runbook
 
-## Supported boundary
+## Release boundary
 
-The Phase 1 backup module creates a transactionally consistent snapshot of the shared
-SQLite database with SQLite's online backup API. It verifies the snapshot, writes a
-canonical manifest, and publishes both files without overwriting an existing path.
-Restore verifies the source again and publishes a new database atomically.
+The backup module provides a fail-closed, single-host SQLite backup primitive:
 
-This runbook supports one service host and one SQLite database. It does not provide
-point-in-time recovery, remote replication, automated retention, encryption, or an RPO/
-RTO claim. Those remain release gates, not assumptions.
+- `create_sqlite_backup()` uses SQLite's online backup API so application writers may
+  remain active while a consistent snapshot is copied out of the live WAL database;
+- `verify_sqlite_backup()` verifies a self-contained backup through stable file
+  descriptors, checks its manifest and SHA-256, and validates SQLite integrity,
+  foreign keys, migration-owned schema objects, migration history, page geometry, and
+  known table counts;
+- `restore_sqlite_backup()` copies the exact verified database bytes to a new path,
+  verifies the copied SHA-256 and SQLite evidence, and never overwrites a destination.
 
-## Why ordinary file copy is unsupported
+The descriptor and inode hardening was delivered in these slices:
 
-The service uses WAL mode and separate connections for events, invocation attempts,
-artifacts, delivery state, and projections. Copying only `state.sqlite3` while writers
-are active can omit committed WAL pages or capture mutually inconsistent files.
+- `4d693f8`: create-time source, temporary-file, parent-directory, and publication
+  inode fencing;
+- `9b48d5a`: stable-descriptor backup and manifest verification;
+- `e60bd3c`: stable-descriptor, exact-byte restore and restore race fencing.
 
-Supported backups use `create_sqlite_backup()`, which asks SQLite to copy one consistent
-read snapshot into a new database. It then changes the snapshot to a single-file DELETE
-journal representation, runs integrity checks, closes it, fsyncs it, and calculates the
-final file digest.
+This is not a complete disaster-recovery service. It does not schedule backups,
+replicate them, sign manifests, manage retention, encrypt files, implement point-in-time
+recovery, or establish a production RPO/RTO. Those remain deployment and release gates.
 
-## Backup files
+## Supported operating assumptions
 
-Each backup consists of:
+The current release boundary is intentionally narrow:
+
+1. One service host owns one local SQLite database.
+2. The database, backup destination, and restore destination use a local filesystem with
+   the POSIX semantics exercised by release tests: regular files, directory file
+   descriptors, `O_EXCL`, `O_NOFOLLOW`, hard links, and directory `fsync`.
+3. Each temporary file and its published filename are in the same directory, so the
+   hard-link publication does not cross filesystems.
+4. Backup and restore directories are writable only by the service account and trusted
+   operators. Use mode `0700` or an equivalently restrictive ACL for these directories.
+5. Database and manifest files are `0600`. That mode is confidentiality by local access
+   control only; it is not encryption.
+6. Published backups are treated as immutable. No backup retention, transfer, antivirus,
+   or indexing process may rewrite them in place.
+7. `/dev/fd` or `/proc/self/fd` is available for immutable SQLite reads through an
+   already-open descriptor.
+
+Do not infer support for Windows, containers with incompatible descriptor mounts,
+network filesystems, FUSE/object-store mounts, clustered filesystems, or storage that
+weakens hard-link or `fsync` semantics. Such environments require their own integration,
+crash-consistency, and fault-injection evidence before production use.
+
+Normal application writes through SQLite are supported during backup creation. External
+pathname manipulation or direct writes to backup files are not normal operation and are
+treated as integrity failures.
+
+## Why an ordinary file copy is unsupported
+
+The live service uses WAL mode and separate connections for events, delivery state,
+invocation attempts, artifacts, and projections. Copying only `state.sqlite3` while the
+service is running can omit committed WAL pages or combine files from different points
+in time.
+
+`create_sqlite_backup()` instead asks SQLite to produce one consistent snapshot. It
+then changes the snapshot to a single-file DELETE-journal representation. A published
+backup is therefore self-contained: verification deliberately opens the stable backup
+descriptor with `immutable=1` and does not admit an adjacent, digest-external `-wal` or
+`-shm` file into the verified state.
+
+## Backup pair and manifest
+
+Every backup is a pair:
 
 ```text
 snapshot.sqlite3
 snapshot.sqlite3.manifest.json
 ```
 
-Both are created with mode `0600`. Neither path may already exist. The implementation
-uses same-directory temporary files and hard-link publication, so a concurrent creator
-cannot be silently overwritten between an existence check and final publication.
+Neither path may already exist, including a dangling symbolic link. The manifest format
+is `qe.sqlite-backup/1` and records:
 
-The manifest format is `qe.sqlite-backup/1` and records:
-
-- opaque backup ID and store-owned UTC timestamp;
-- database SHA-256 and byte size;
+- an opaque backup ID and UTC creation timestamp;
+- database SHA-256 and exact byte size;
 - SQLite page count and page size;
-- counts for known core tables;
-- every applied migration version, filename, checksum, and application timestamp.
+- counts for known tables that exist in the snapshot;
+- each applied migration version, filename, packaged SQL checksum, and application
+  timestamp.
 
-The manifest contains no credentials or raw artifact/event content.
+The manifest does not contain credentials or raw artifact/event content. It is not
+cryptographically authenticated, however, so custody controls must protect the database
+and manifest together.
 
-## Create a backup
+## Create path and inode fencing
 
-Python API:
+Creation performs the following sequence:
+
+1. Open the source database with `O_NOFOLLOW`, retain that descriptor as the expected
+   device/inode identity, and reject non-regular files.
+2. Open and retain descriptors for the backup and manifest parent directories. Reject a
+   symbolic-link parent at this boundary.
+3. Refuse existing target entries, including symbolic links.
+4. Create unpredictable, `0600`, same-directory temporary files with `O_CREAT | O_EXCL`
+   relative to the retained directory descriptors.
+5. Reopen the source pathname through SQLite and use the online backup API. The pathname
+   reopen is required so SQLite can find and coordinate the live source `-wal` and
+   `-shm`. Source pathname-to-inode checks run immediately around this work and again
+   before publication.
+6. Convert the copied database to DELETE journal mode, run integrity and schema evidence
+   checks, close SQLite, `fsync` the database, and calculate its SHA-256 from the retained
+   temporary-file descriptor.
+7. Serialize and `fsync` the manifest through its retained descriptor.
+8. Publish each file with a hard link relative to the retained parent descriptor. Verify
+   that every published entry still has the expected device/inode and `fsync` the parent
+   directories.
+9. Run full public verification, then recheck both published entries and both parent
+   directory identities before returning success.
+10. On failure, unlink a temporary or published entry only if it still has the
+    device/inode created by this attempt. A replacement entry is left untouched for the
+    operator to investigate.
+
+The source descriptor anchors identity but is not the descriptor SQLite reads from;
+CPython's `sqlite3` API cannot both adopt an already-open descriptor and retain the live
+source pathname needed for WAL discovery. This leaves a narrow pathname ABA boundary:
+an actor with directory write permission could theoretically replace the source and put
+the original pathname back between checks. Exclusive directory permissions are therefore
+a production prerequisite, not an optional defense.
+
+### Create command
 
 ```python
 from quantum_entanglement import create_sqlite_backup
@@ -59,36 +135,38 @@ manifest = create_sqlite_backup(
 print(manifest.backup_id)
 ```
 
-Installed command:
-
 ```bash
 qe-admin --compact backup \
   --source /var/lib/quantum-entanglement/state.sqlite3 \
   --destination /var/backups/quantum-entanglement/2026-08-20T020000Z.sqlite3
 ```
 
-Success is JSON on stdout with `ok`, `operation`, `paths`, and the complete manifest.
-Operational failures are JSON on stderr with a stable error code and exit status `1`;
-argument syntax failures retain argparse's exit status `2`.
+The installed admin commands return compact JSON on stdout after success, including the
+operation, paths, and manifest. Operational failures return structured JSON on stderr
+with exit status `1`; argument syntax errors retain argparse's exit status `2`. Capture
+stdout, stderr, and the process exit status as separate evidence streams.
 
-Operational procedure:
+Operational sequence:
 
-1. Check service health and current queue/attempt/DLQ/ambiguity counts.
-2. Ensure the destination filesystem has enough space for at least the live database
-   plus temporary copy and operational reserve.
-3. Choose a new, immutable destination name. Never reuse yesterday's path.
-4. Run the backup under the service account, not as root.
-5. Confirm the API returns successfully.
-6. Run explicit verification again from a separate process.
-7. Record backup ID, digest, size, schema versions, start/end time, and operator in
-   release/operations evidence.
-8. Copy the pair to encrypted off-host storage using the approved transport.
-9. Verify the off-host copy after transfer.
+1. Record service health, the latest durable event/global position, queue age, running
+   attempts, DLQ count, and open ambiguity count.
+2. Confirm restrictive ownership/permissions on the live, backup, and temporary-file
+   directories.
+3. Confirm free space for a complete snapshot, manifest, retained WAL growth during the
+   online copy, and operational reserve.
+4. Choose a new destination name. Never delete or reuse an old target to make a command
+   succeed.
+5. Run the command as the service account, not as root.
+6. Record start time, completion time, source watermark observations, backup ID, byte
+   size, SHA-256, and migration versions.
+7. Verify the pair again from a separate process.
+8. Transfer the pair to approved encrypted, immutable off-host storage.
+9. Verify the transferred pair at its destination and retain that evidence.
 
-The application may continue accepting writes while SQLite copies the snapshot. A long
-backup can retain WAL pages and increase disk use, so monitor free space and duration.
+A long online backup can retain WAL pages and increase live-disk consumption. Monitor
+free space, WAL size, copy duration, and writer latency throughout the operation.
 
-## Verify a backup
+## Stable-descriptor verification
 
 ```python
 from quantum_entanglement import verify_sqlite_backup
@@ -103,25 +181,43 @@ qe-admin --compact verify-backup \
   --backup /var/backups/quantum-entanglement/2026-08-20T020000Z.sqlite3
 ```
 
-Verification fails closed on:
+Verification does not perform a check-then-reopen sequence for backup content. It:
 
-- missing or symbolic-link database/manifest paths;
-- malformed, unknown, or non-canonical manifest structure;
-- size or SHA-256 mismatch;
-- SQLite `integrity_check` failure;
-- any foreign-key violation;
-- page geometry mismatch;
-- core table count mismatch;
-- migration version/filename/checksum/timestamp mismatch.
+1. Opens stable backup/manifest parent directory descriptors.
+2. Opens each regular file once, relative to its retained parent, with `O_NOFOLLOW`.
+3. Reads and parses the bounded manifest from the stable manifest descriptor.
+4. Checks exact byte size and SHA-256 from the stable backup descriptor.
+5. Opens SQLite through `/dev/fd/<n>` or `/proc/self/fd/<n>` using read-only immutable
+   mode, so a pathname replacement or adjacent WAL cannot change the database being
+   checked.
+6. Runs `integrity_check`, `foreign_key_check`, exact packaged migration schema-object
+   validation, ledger/version/checksum validation, page geometry checks, and known table
+   counts.
+7. Rehashes the backup, rereads the manifest, and rechecks file and parent identities
+   before returning.
 
-A successful checksum alone is not sufficient. It can prove that a file still matches
-the manifest, but not that an attacker with write access did not replace both. Production
-off-host storage must add authenticated encryption, immutable retention, and access
-audit.
+Verification fails closed on, among other cases:
 
-## Restore to a new path
+- a missing, non-regular, or symbolic-link database/manifest;
+- a symbolic-link or replaced parent directory;
+- path replacement after either file was opened;
+- in-place content change observed between checks;
+- an unknown, malformed, oversized, or non-canonical manifest;
+- byte-size or SHA-256 drift;
+- invalid SQLite structure or a foreign-key violation;
+- a missing or weakened migration-owned table/index despite a plausible ledger;
+- a future, gapped, renamed, or checksum-drifted migration history;
+- page geometry, known table count, or migration evidence drift.
 
-Restore never overwrites a path. Stop the service and restore to a new filename:
+A successful verification proves that the bytes observed through the stable descriptors
+matched the manifest and passed the implemented SQLite checks. It does not authenticate
+who created the pair, and it cannot prevent a writer from modifying a file after the
+final check. An in-place writer that changes and restores identical content entirely
+between two observations is also a theoretical content ABA boundary.
+
+## Exact-byte restore
+
+Restore always targets a new filename. Keep service traffic stopped while restoring:
 
 ```python
 from quantum_entanglement import restore_sqlite_backup
@@ -138,119 +234,282 @@ qe-admin --compact restore-backup \
   --destination /var/lib/quantum-entanglement/restore-2026-08-20.sqlite3
 ```
 
-The restore function:
+The restore implementation:
 
-1. Rejects an existing/symlink destination.
-2. Verifies the backup and manifest in full.
-3. Uses SQLite backup into a same-directory `0600` temporary database.
-4. Runs integrity, foreign-key, page, count, and migration checks on the restored copy.
-5. Rechecks the source backup digest to detect mutation during restore.
-6. Fsyncs and publishes the destination without overwrite.
-7. Reopens the published destination read-only and verifies it again.
-8. Removes the new destination if post-publication verification fails.
+1. Retains stable descriptors and identities for the backup parent, manifest parent,
+   destination parent, backup file, and manifest file.
+2. Refuses an existing or symbolic-link destination and a symbolic-link destination
+   parent.
+3. Runs full public verification and then proves the paths still refer to the files that
+   restore opened before verification.
+4. Parses the manifest again from the stable descriptor and requires it to equal the
+   public verification result. It rechecks source size, SHA-256, SQLite integrity, schema,
+   migration evidence, geometry, and counts through the stable backup descriptor.
+5. Creates a `0600`, `O_EXCL`, same-directory restore temporary file.
+6. Copies the exact verified backup bytes from the stable backup descriptor. It checks
+   the copy-time byte count and SHA-256, `fsync`s the file, rehashes it, and validates its
+   SQLite evidence.
+7. Rehashes/rereads the source backup and manifest before publication to detect observed
+   in-place mutation during restore.
+8. Publishes the destination with a no-overwrite hard link relative to the retained
+   destination parent, checks the published inode, `fsync`s the directory, and performs
+   final source/manifest/destination content and identity checks.
+9. Removes a temporary or published destination on failure only when its device/inode
+   still matches the file created by this restore. It never deliberately unlinks a
+   replacement operator file.
+
+At publication, the destination database bytes and SHA-256 are exactly equal to the
+verified backup database. Restore no longer reserializes the database with another
+SQLite online-backup pass, so table counts and page geometry are not being used as a
+substitute for full content identity.
+
+## RPO, RTO, and capacity planning
+
+No production RPO or RTO is established by this module.
+
+RPO depends on backup frequency and the durable application watermark captured by the
+SQLite snapshot. The manifest `createdAt` value is generated after the database copy; it
+is not a transaction commit watermark and must not be used alone to calculate lost work.
+Record durable event/global positions immediately before and after backup and compare
+them during a drill.
+
+RTO includes all of the following:
+
+- locating and authorizing the selected backup pair;
+- stable verification, including full-file hashing and SQLite integrity scans;
+- one complete byte copy to the restore filesystem;
+- destination rehashing and SQLite evidence validation;
+- domain-level reconciliation, projection checks, lease fencing, smoke tests, and staged
+  traffic activation.
+
+The fail-closed implementation intentionally performs multiple sequential full-file and
+integrity passes. Do not estimate RTO from database size divided by raw storage bandwidth.
+Benchmark the largest expected database on the actual deployment filesystem and service
+account. Record median, p95, and worst observed create/verify/restore/activation times,
+peak temporary space, source WAL growth, and application latency during online backup.
+
+Until measured otherwise, reserve at least one full destination copy plus WAL growth and
+operational headroom for creation, and one full destination copy plus headroom for
+restore. Hard-link publication does not create a second copy of the restore temporary
+file, but the verified source backup remains separately allocated.
+
+## Fault-injection matrix
+
+The release evidence must distinguish automated coverage from drills still required in
+the deployment environment.
+
+| Fault | Current automated expectation | Production evidence required |
+|---|---|---|
+| Source is a symlink | Create rejects it | Permission and path-policy check |
+| Source pathname is replaced during create | Create aborts before publication | Repeat on deployment filesystem |
+| Backup/manifest parent is a symlink | Operation rejects it | Directory ownership/ACL evidence |
+| Destination already exists or is a dangling symlink | No overwrite | Operator collision drill |
+| Temporary or published create entry is replaced | Abort; cleanup leaves mismatched inode | Alert and forensic procedure |
+| Manifest publication collides | Abort; remove only the owned database link | Concurrent creator drill |
+| Backup/manifest path is replaced during verify | Verify continues on stable FD then fails identity check | Repeat under deployment mount |
+| Backup/manifest is changed in place during verify | Digest/reread check fails | Repeat under deployment mount |
+| Backup parent is replaced during verify | Parent identity check fails | Repeat under deployment mount |
+| Migration ledger is future/gapped/drifted | Backup/verify fails closed | Upgrade/rollback compatibility drill |
+| Migration-owned schema is missing/weakened | Schema congruence check fails | Corruption quarantine exercise |
+| Backup/manifest is replaced after restore verification | Restore detects anchored-inode mismatch | Repeat under deployment mount |
+| Backup/manifest changes in place during copy | Restore aborts; no destination is published | Repeat under deployment mount |
+| Destination appears before hard-link publication | Atomic link fails; operator file remains | Concurrent restore drill |
+| Restore temp or published destination is replaced | Abort; cleanup refuses mismatched inode | Forensic and cleanup drill |
+| Destination parent is replaced or is a symlink | Restore rejects it | Directory isolation drill |
+| Event, in-flight outbox, open ambiguity, running attempt, and artifact coexist | Exact-byte restore preserves all tested rows | Release-candidate domain rehearsal |
+| Disk becomes full | Operation must fail; partial entries require ownership-aware handling | Mandatory ENOSPC drill; not yet automated |
+| Process is killed between file and manifest publication | Pair may be incomplete and must not verify | Mandatory kill-point and orphan cleanup drill |
+| Power loss around file/directory `fsync` | Depends on real filesystem guarantees | Mandatory crash/power-loss storage qualification |
+
+Network filesystem behavior is deliberately absent from the automated guarantee. Do not
+turn a deployment-specific successful test into a general network-filesystem claim.
 
 ## Recovery drill
 
-Run this drill on a disposable host before every Phase 1 release and at the documented
-operations cadence:
+The committed automated rehearsal covers one database containing:
 
-1. Seed a database with:
-   - completed and running invocation attempts;
-   - a pending approval;
-   - multiple artifact versions;
-   - pending, published, DLQ, and ambiguity delivery records;
-   - projection offsets and action receipts once those schemas are present.
-2. Keep normal SQLite connections open and create an online backup.
-3. Record the last accepted command time and backup completion time.
-4. Destroy only the disposable live database.
-5. Restore to a new path.
-6. Open the restored database with the exact release candidate binary.
-7. Run migration checksum validation without applying unplanned migrations.
-8. Run `integrity_check`, foreign-key check, artifact digest scan, event replay, and
-   projection comparison.
-9. Confirm invocation lease recovery fences old owners.
-10. Confirm ambiguous external effects remain quarantined rather than retried blindly.
-11. Compare every manifest count and sample domain object with pre-backup evidence.
-12. Measure observed RPO and RTO and attach logs to the release evidence directory.
+- a domain event;
+- an in-flight transactional outbox message;
+- an open outbox ambiguity record;
+- a running invocation and its attempt row;
+- a durable artifact blob/version.
 
-Do not call the phase complete until the drill includes the actual deployment filesystem,
-service account, backup destination, and expected database size.
+It asserts exact source/destination database bytes before stores reopen the destination,
+then reopens event/delivery, invocation-attempt, and artifact stores and verifies the
+records remain readable.
+
+Before every production release, extend the drill on a disposable deployment-equivalent
+host:
+
+1. Seed representative pending, running, successful, failed, canceled, approval, DLQ,
+   published, ambiguity, artifact-version, inbox-receipt, projection-offset, and
+   action-receipt states that exist in that release.
+2. Record domain counts, artifact digests, event/global positions, projection offsets,
+   active lease epochs, open ambiguity IDs, and the release binary revision.
+3. Keep normal WAL-backed connections active and create the online backup.
+4. Verify the local pair and its off-host copy.
+5. Simulate loss only in the disposable environment.
+6. Restore to a new path with the exact release candidate binary.
+7. Confirm the destination SHA-256 equals the manifest and source backup SHA-256 before
+   opening any read/write store.
+8. Run independent `integrity_check`, foreign-key, schema/migration, artifact digest,
+   event replay, and projection comparison checks.
+9. Confirm pre-restore invocation and delivery owners cannot resume unsafe work. Wait for
+   or explicitly fence all old leases using the release's approved recovery procedure.
+10. Confirm open ambiguities remain quarantined and are not retried automatically.
+11. Run application-level smoke reads without enabling external connectors.
+12. Measure observed RPO and every RTO phase, and attach commands, versions, logs, counts,
+    timings, and operator sign-off to release evidence.
+
+Do not accept a laptop or temporary-filesystem result as production storage evidence.
 
 ## Activation after restore
 
-Restoring bytes is not the same as safely resuming work. Before switching the configured
-database path:
+Restoring valid bytes is only the first recovery phase. Keep ingress, workers, schedulers,
+and external connectors disabled until all steps pass:
 
-1. Keep all API and worker processes stopped.
-2. Confirm no process still holds the old database or WAL files.
-3. Verify the restored database with the release binary.
-4. Compare schema versions with the binary's supported registry.
-5. Rebuild projections into a disposable namespace and compare heads/offsets.
-6. Run artifact scope and digest verification.
-7. Recover expired attempts; never accept a completion from a pre-restore lease token.
-8. Review DLQ and effect-unknown/ambiguity queues.
-9. Start one service instance in read-only/readiness mode.
-10. Run smoke reads for sessions, tasks, artifacts, approvals, and audit records.
-11. Enable writers, then workers, then explicitly approved connectors.
-12. Monitor queue age, errors, WAL growth, and integrity alerts through the recovery
-    observation window.
+1. Stop every process that can open the old database, including ad hoc workers and admin
+   shells. Confirm no process still uses its main, WAL, or shared-memory files.
+2. Preserve the old database, `-wal`, and `-shm` as a read-only forensic set. Never keep
+   only the old main file when WAL may contain committed state.
+3. Verify the selected backup pair with the exact release binary and record its SHA-256,
+   byte size, migration evidence, and domain counts.
+4. Restore to a new filename. Never restore over the configured live path.
+5. Verify the new destination independently and confirm its SHA-256 equals the manifest.
+6. Point an offline diagnostic process at the restored path. Do not apply unplanned
+   migrations during validation.
+7. Run schema/migration checks, artifact verification, event replay, projection rebuild
+   and comparison, queue/DLQ/ambiguity inspection, and audit sampling.
+8. Establish that every lease issued before the snapshot/incident is expired or fenced.
+   Do not accept a completion solely because it carries a token preserved in the backup.
+9. Reconcile each effect-unknown/open ambiguity with external evidence before retrying or
+   marking it published/dead-letter.
+10. Change the configured path through the deployment's audited configuration mechanism.
+11. Start one instance with ingress and connectors still disabled. Run readiness and
+    smoke reads for sessions, tasks, events, artifacts, attempts, outbox, ambiguities,
+    projections, and audit data.
+12. Enable internal writers first, then workers, then explicitly approved external
+    connectors. Observe errors, queue age, duplicate-effect signals, WAL growth, and
+    integrity alerts through the documented recovery window.
 
-The configuration switch itself is an operator-controlled deployment action. The library
-does not rename or replace the live database.
+If any check fails, do not open traffic. Preserve the restored candidate and evidence,
+then follow the rollback decision below.
 
-## Failure handling
+## Rollback and failure handling
+
+Restore is non-destructive: it creates a new path and never renames or replaces the live
+database. Rollback is therefore an operator-controlled configuration decision, not a
+library filesystem action.
+
+Before any traffic is admitted on the restored database, rollback may select the old
+database only if its main/WAL/SHM set is intact and the incident commander confirms that
+it is the authoritative timeline. Stop all processes before changing the configured
+path.
+
+After the restored database has accepted writes or triggered effects, a simple path
+switch can discard new durable work or duplicate external effects. At that point treat
+rollback as incident reconciliation: freeze traffic, preserve both timelines, compare
+event/outbox/ambiguity/audit evidence, and approve a forward repair. Never merge SQLite
+files or edit the migration ledger manually.
 
 | Failure | Required response |
 |---|---|
-| Target already exists | Choose a new destination; never delete automatically |
-| Snapshot integrity failure | Quarantine snapshot and investigate live DB health |
-| Digest/count/schema mismatch | Treat backup as invalid; do not restore |
-| Disk full during creation | Remove only `.partial` files created by this attempt after verifying ownership |
-| Manifest publication race | Implementation removes its newly published DB link and leaves the competing path |
-| Source changes during restore | Restore aborts and removes its new destination |
-| Post-publication verification fails | Restore removes only its newly created destination |
-| Older binary rejects schema | Use the matching binary or tested rollback/backup; do not edit the migration ledger |
+| Target already exists | Choose a new destination; never remove the competing entry automatically |
+| Live snapshot integrity/schema failure | Quarantine the attempted backup and investigate the live database |
+| Digest, content, count, geometry, or migration mismatch | Mark the pair invalid and do not restore it |
+| Disk full during create/restore | Stop retry loops; identify only owned partials by path and inode before cleanup |
+| Pair contains only database or only manifest | Treat it as incomplete; do not synthesize the missing member |
+| Path/inode replacement is detected | Abort, preserve the replacement, and investigate directory access |
+| Post-publication restore check fails | Remove only the destination inode created by that restore |
+| Older binary rejects the migration history | Use the matching tested binary/backup; never edit checksums or ledger rows |
+| Activation validation fails before traffic | Keep traffic closed; preserve candidate and select an evidence-backed rollback path |
+| Validation fails after traffic/effects | Freeze both timelines and perform incident reconciliation; do not blindly switch back |
 
-Never run a destructive down migration on the only backup copy.
+Never run a destructive down migration on the only backup copy, delete the previous
+database before the recovery observation window ends, or clean wildcard `*.partial`
+paths without verifying ownership and inode identity.
 
 ## Security and custody
 
-- The database may contain prompts, event payloads, artifact bytes, identities, audit
-  details, and connector metadata. Treat both files as confidential.
-- `0600` is a local default, not encryption. Store the backup on encrypted media.
-- Do not include API keys in backup names, manifests, logs, or tickets.
-- Transfer database and manifest together over authenticated transport.
-- Apply least privilege to create, read, restore, retain, and delete operations.
-- Record every restore and production activation in the immutable audit process.
-- Use retention/legal-hold policy before deleting any backup.
+- Treat the database as confidential: it may contain prompts, event payloads, artifact
+  bytes, identities, audit details, and connector metadata.
+- Keep database and manifest together on encrypted media and transfer them over an
+  authenticated channel.
+- Add immutable retention, legal hold, and audited deletion outside this library.
+- Restrict directory write access. Stable descriptors prevent ordinary path replacement
+  from changing the opened object, but they do not make same-account direct writes safe.
+- Do not place credentials, tokens, or personal data in filenames, manifests, command
+  transcripts, or release tickets.
+- Record every create, transfer, verification, restore, activation, rollback decision,
+  and deletion in the approved immutable audit system.
 
-## Current limitations and next gates
+The SHA-256 manifest is an integrity comparison, not a signature or MAC. An actor able to
+replace both files can create a new internally consistent pair. Off-host custody must add
+authentication and independent access audit.
 
-- no scheduled backup job yet;
-- no signed or MAC-authenticated manifest;
-- no encryption key metadata or restore-time KMS check;
-- no remote object storage, retention, legal hold, or automatic expiry;
-- no incremental/PITR support;
-- no rate limiting or cancellation for very large backups;
-- no measured production RPO/RTO or large-database benchmark;
-- core table inventory must be extended as projections and action receipts land;
-- no automatic read-only corruption quarantine in the service lifecycle yet.
+## Residual race boundaries
 
-These are explicit blockers for later commercial release stages. The current code is a
-safe, testable Phase 1 primitive, not a complete disaster-recovery product.
+The implementation materially narrows path races but does not claim a hostile
+same-account filesystem sandbox:
 
-## Verification evidence
+- create must reopen the source pathname through SQLite to retain live WAL semantics;
+- device/inode cleanup is a guarded stat-then-unlink sequence, not a kernel-provided
+  compare-and-unlink primitive;
+- an in-place writer can theoretically perform content ABA entirely between two digest
+  observations;
+- any external writer can modify an inode after the function's final check and return;
+- authenticated storage is still required to distinguish an approved pair from a
+  maliciously regenerated database and manifest;
+- crash durability ultimately depends on the actual filesystem, mount, controller, and
+  power-loss semantics.
+
+Use exclusive service-account directories, immutable off-host retention, deployment
+filesystem qualification, and post-operation monitoring to control these boundaries.
+
+## Release evidence
+
+Run at least the following from a clean worktree:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_backup -v
+PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_backup.py' -v
+PYTHONPATH=src python3 -m unittest discover -s tests -q
 ruff check src/quantum_entanglement/backup.py tests/test_backup.py
+ruff format --check src/quantum_entanglement/backup.py tests/test_backup.py
 mypy --strict --python-version 3.9 --follow-imports=skip \
   src/quantum_entanglement/backup.py
 python3 -m compileall -q src tests
 git diff --check
 ```
 
-The committed tests cover live WAL-backed data, manifest/schema/count verification,
-permissions, no-overwrite behavior, database and manifest tampering, symlink/path guards,
-publication races, restore reopening through attempt/artifact stores, and cleanup of only
-newly created paths.
+Attach the following to the stage/release record:
+
+- Git commit and clean-tree status;
+- OS/kernel, Python, SQLite, filesystem/mount, storage, and container/runtime versions;
+- service account, directory owner/group/mode/ACL, and available-space evidence;
+- source and backup byte sizes, manifest, SHA-256, migration evidence, and durable domain
+  watermarks;
+- focused and full test output, including the fault-injection cases;
+- create/verify/restore timings, source WAL growth, peak disk use, and observed workload
+  latency;
+- exact-byte/domain recovery drill output and activation checklist sign-off;
+- off-host transfer verification and retention/authentication evidence;
+- measured RPO/RTO result or an explicit release blocker if no approved target exists.
+
+Do not translate unit-test success into a cross-platform or production RPO/RTO claim.
+
+## Open production gates
+
+- scheduled backup orchestration and alerting;
+- signed or MAC-authenticated manifests;
+- encryption/KMS metadata and restore-time key policy;
+- remote immutable object storage, retention, legal hold, and expiry;
+- incremental backup and point-in-time recovery;
+- cancellation/rate controls and benchmark evidence for the largest supported database;
+- measured, approved RPO/RTO targets and recurring recovery drills;
+- automated ENOSPC, kill-point, and deployment-filesystem power-loss testing;
+- automatic service-level read-only quarantine after corruption detection;
+- qualification for every supported OS/filesystem/runtime combination.
+
+Until those gates are met, describe this implementation as a hardened local SQLite
+backup/restore primitive with tested race defenses, not as a complete commercial
+disaster-recovery system.
