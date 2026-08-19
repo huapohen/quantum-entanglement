@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
+from quantum_entanglement import SQLiteArtifactStore as PublicSQLiteArtifactStore
 from quantum_entanglement.artifact_store import (
     ArtifactConcurrencyError,
     ArtifactConflictError,
@@ -73,6 +74,9 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
     def tearDown(self):
         self.store.close()
         self.tempdir.cleanup()
+
+    def test_store_is_part_of_the_supported_package_api(self):
+        self.assertIs(PublicSQLiteArtifactStore, SQLiteArtifactStore)
 
     def test_content_and_metadata_commit_atomically_with_contiguous_versions(self):
         first = self.store.write(artifact_write(), expected_head_version=0)

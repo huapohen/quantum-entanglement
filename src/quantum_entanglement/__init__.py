@@ -20,6 +20,15 @@ from .agent_runtime import (
     AgentRuntimePort,
     CallableAgentRuntime,
 )
+from .artifact_store import (
+    ArtifactConcurrencyError,
+    ArtifactConflictError,
+    ArtifactIntegrityError,
+    ArtifactTooLargeError,
+    ArtifactWrite,
+    SQLiteArtifactStore,
+    StoredArtifact,
+)
 from .artifacts import ArtifactLedger, ArtifactVersion
 from .chat import ChatRoute, InboundChatMessage, MentionRouter, RoutedChatMessage
 from .context import ContextBudgetError, ContextBundle, ContextCompiler, ContextItem
@@ -74,10 +83,15 @@ __all__ = [
     "ActorKind",
     "ActorRef",
     "ApprovalDecision",
+    "ArtifactConcurrencyError",
+    "ArtifactConflictError",
+    "ArtifactIntegrityError",
     "ArtifactLedger",
     "ArtifactOutput",
     "ArtifactRef",
+    "ArtifactTooLargeError",
     "ArtifactVersion",
+    "ArtifactWrite",
     "Authority",
     "ConcurrencyError",
     "BridgeStatus",
@@ -114,7 +128,9 @@ __all__ = [
     "PolicyOutcome",
     "RiskLevel",
     "RoutedChatMessage",
+    "SQLiteArtifactStore",
     "SQLiteEventStore",
+    "StoredArtifact",
     "StoredEvent",
     "StoredOutboxMessage",
     "TaskGraph",
