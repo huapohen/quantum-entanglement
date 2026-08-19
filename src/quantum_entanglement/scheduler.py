@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any
 
 from .protocol import ActionIntent, HandoffContract, TaskStatus, new_id
-
 
 DONE_STATUSES = (TaskStatus.COMPLETED, TaskStatus.SUPERSEDED)
 FAILED_STATUSES = (TaskStatus.FAILED, TaskStatus.BLOCKED, TaskStatus.CANCELED)
@@ -19,8 +19,8 @@ class TaskSpec:
     agent_id: str
     handoff: HandoffContract
     task_id: str = field(default_factory=lambda: new_id("task"))
-    depends_on: Tuple[str, ...] = ()
-    input_artifacts: Tuple[str, ...] = ()
+    depends_on: tuple[str, ...] = ()
+    input_artifacts: tuple[str, ...] = ()
     action: ActionIntent = field(default_factory=lambda: ActionIntent("analyze", "workspace"))
     priority: int = 50
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -33,7 +33,7 @@ class TaskSpec:
         if self.task_id in self.depends_on:
             raise ValueError("task cannot depend on itself")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "taskId": self.task_id,
             "title": self.title,
@@ -47,7 +47,7 @@ class TaskSpec:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "TaskSpec":
+    def from_dict(cls, value: Mapping[str, Any]) -> TaskSpec:
         return cls(
             title=str(value["title"]),
             agent_id=str(value["agentId"]),
@@ -68,7 +68,7 @@ class TaskTransition:
     task_id: str
     previous: TaskStatus
     current: TaskStatus
-    reason: Optional[str] = None
+    reason: str | None = None
     revision: int = 0
 
 
@@ -101,28 +101,25 @@ class TaskGraph:
     def __init__(self, tasks: Sequence[TaskSpec]) -> None:
         if not tasks:
             raise ValueError("a workflow needs at least one task")
-        self.tasks: Dict[str, TaskSpec] = {}
+        self.tasks: dict[str, TaskSpec] = {}
         for task in tasks:
             if task.task_id in self.tasks:
-                raise ValueError("duplicate task id: %s" % task.task_id)
+                raise ValueError(f"duplicate task id: {task.task_id}")
             self.tasks[task.task_id] = task
         self._validate_dependencies()
         self._validate_acyclic()
-        self.statuses: Dict[str, TaskStatus] = {
+        self.statuses: dict[str, TaskStatus] = {
             task_id: TaskStatus.PENDING for task_id in self.tasks
         }
-        self.reasons: Dict[str, str] = {}
-        self.revisions: Dict[str, int] = {task_id: 0 for task_id in self.tasks}
+        self.reasons: dict[str, str] = {}
+        self.revisions: dict[str, int] = {task_id: 0 for task_id in self.tasks}
 
     def _validate_dependencies(self) -> None:
         known = set(self.tasks)
         for task in self.tasks.values():
             missing = set(task.depends_on) - known
             if missing:
-                raise ValueError(
-                    "task %s has missing dependencies: %s"
-                    % (task.task_id, sorted(missing))
-                )
+                raise ValueError(f"task {task.task_id} has missing dependencies: {sorted(missing)}")
 
     def _validate_acyclic(self) -> None:
         visiting = set()
@@ -130,7 +127,7 @@ class TaskGraph:
 
         def visit(task_id: str) -> None:
             if task_id in visiting:
-                raise ValueError("task graph contains a cycle at %s" % task_id)
+                raise ValueError(f"task graph contains a cycle at {task_id}")
             if task_id in visited:
                 return
             visiting.add(task_id)
@@ -143,13 +140,13 @@ class TaskGraph:
             visit(candidate)
 
     def transition(
-        self, task_id: str, target: TaskStatus, reason: Optional[str] = None
+        self, task_id: str, target: TaskStatus, reason: str | None = None
     ) -> TaskTransition:
         previous = self.statuses[task_id]
         if target == previous:
             return TaskTransition(task_id, previous, target, reason, self.revisions[task_id])
         if target not in self._ALLOWED[previous]:
-            raise ValueError("invalid task transition %s -> %s" % (previous.value, target.value))
+            raise ValueError(f"invalid task transition {previous.value} -> {target.value}")
         self.statuses[task_id] = target
         self.revisions[task_id] += 1
         if reason:
@@ -160,8 +157,8 @@ class TaskGraph:
         self,
         task_id: str,
         status: TaskStatus,
-        reason: Optional[str] = None,
-        revision: Optional[int] = None,
+        reason: str | None = None,
+        revision: int | None = None,
     ) -> None:
         """Set a replayed status without re-validating historical intermediate states."""
 
@@ -175,7 +172,7 @@ class TaskGraph:
         if reason:
             self.reasons[task_id] = reason
 
-    def refresh(self) -> Tuple[TaskTransition, ...]:
+    def refresh(self) -> tuple[TaskTransition, ...]:
         transitions = []
         for task_id, task in self.tasks.items():
             if self.statuses[task_id] != TaskStatus.PENDING:
@@ -191,14 +188,14 @@ class TaskGraph:
                     self.transition(
                         task_id,
                         TaskStatus.BLOCKED,
-                        "dependencies failed: %s" % ", ".join(failed),
+                        "dependencies failed: {}".format(", ".join(failed)),
                     )
                 )
             elif all(status in DONE_STATUSES for status in dependency_states):
                 transitions.append(self.transition(task_id, TaskStatus.READY))
         return tuple(transitions)
 
-    def ready(self, limit: Optional[int] = None) -> Tuple[TaskSpec, ...]:
+    def ready(self, limit: int | None = None) -> tuple[TaskSpec, ...]:
         candidates = [
             task
             for task_id, task in self.tasks.items()
@@ -210,7 +207,7 @@ class TaskGraph:
     def is_terminal(self) -> bool:
         return all(status in TERMINAL_STATUSES for status in self.statuses.values())
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "tasks": [self.tasks[key].to_dict() for key in sorted(self.tasks)],
             "statuses": {key: value.value for key, value in sorted(self.statuses.items())},
@@ -224,9 +221,9 @@ class WorkflowPlan:
     session_id: str
     goal: str
     initiated_by: str
-    tasks: Tuple[TaskSpec, ...]
+    tasks: tuple[TaskSpec, ...]
     plan_id: str = field(default_factory=lambda: new_id("plan"))
-    correlation_id: Optional[str] = None
+    correlation_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.session_id.strip() or not self.goal.strip() or not self.initiated_by.strip():
@@ -234,7 +231,7 @@ class WorkflowPlan:
         if not self.tasks:
             raise ValueError("workflow plan needs tasks")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "planId": self.plan_id,
             "sessionId": self.session_id,
@@ -245,7 +242,7 @@ class WorkflowPlan:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "WorkflowPlan":
+    def from_dict(cls, value: Mapping[str, Any]) -> WorkflowPlan:
         return cls(
             session_id=str(value["sessionId"]),
             goal=str(value["goal"]),
