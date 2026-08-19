@@ -1,5 +1,7 @@
 # Quantum Entanglement
 
+私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
+
 面向 WanWork 方向的“人 + Agent 原生群聊协同”底层实验仓。它不是另一个套壳聊天机器人，
 而是一套可以独立验证的多 Agent 协作内核：确定性任务图负责可计算的编排，事件日志负责
 可恢复与审计，插件负责可替换能力，A2A/ACP/MCP 适配器负责生态互操作，LangGraph 负责
@@ -41,4 +43,3 @@ python3 -m pip install -e '.[langgraph]'
 
 本地 `references/` 中保留静然的 `agent_atore_demo`、DeepSeek Harness、LangGraph、
 LangChain 和 Deep Agents 的浅克隆，便于逐行核对；它们不被复制进本仓库，也不改变原许可证。
-

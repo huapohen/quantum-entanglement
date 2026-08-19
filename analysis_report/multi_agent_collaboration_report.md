@@ -4,6 +4,8 @@
 > 面向方向：WanWork 人与 Agent 协同办公  
 > 报告日期：2026-08-19  
 > 本地单一真相源：`analysis_report/`  
+> 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
+> Notion 镜像：<https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44?pvs=204>
 > 安全边界：飞书/企微全程只读，未发送、回复、评论、@ 或上传任何内容
 
 ## 0. 执行摘要
@@ -28,7 +30,7 @@
 5. **LangGraph + DeepSeek Harness 不是二选一；二者都不应成为全部业务真相源。**
 6. **先做一个结果可见、验收清晰的高价值业务 Agent 团队，再抽象平台。**
 
-本仓库已经用可运行代码验证核心不变量：23 个标准库测试通过；本地 demo 完成 `@Agent` 直达、三 Agent 接力、版本化产出和 25 条因果事件。当前仍是验证性内核，不是生产系统；进程恢复、outbox、多租户、正式 A2A 1.0 SDK 兼容、IM 和 UI 仍是后续工程。
+本仓库已经用可运行代码验证核心不变量：54 个标准库测试通过；本地 demo 完成 `@Agent` 直达、三 Agent 接力、版本化产出和 25 条因果事件。当前已经覆盖事件历史恢复、transactional inbox/outbox 和安全收口后的 Harness runtime port；但仍是验证性内核，不是生产系统，多租户、正式 A2A 1.0 SDK 兼容、MCP/IM、UI，以及真实隔离 Harness factory 的端到端集成仍是后续工程。
 
 ## 1. 研究目标与范围
 
@@ -119,7 +121,7 @@ Agent 可以更换模型、框架、进程或部署位置；平台不依赖它�
 |---|---|---|---|
 | 单人创作/模型平台 | YouMind、千问 | 模型供给、资料到成品 | 多人/多 Agent 责任和任务状态 |
 | 群聊/项目执行 | FloatIM、Multica、Todos | Agent 原生感、任务并发/接力 | 企业治理、跨领域 artifact |
-| 组织/任务网络 | NEAR AI Agent Market、Slock、Mindra、OpenWorker、Gotaa Pi.Agent | 市场、岗位、SaaS 集成、审批 | 群聊体验、开放性和透明 runtime 难兼得 |
+| 组织/任务网络 | NEAR AI Agent Market、Raft（原 Slock）、Mindra、OpenWorker、Gotaa（历史材料） | 市场、岗位、SaaS 集成、审批 | 群聊体验、开放性和透明 runtime 难兼得 |
 | 开发框架/基础设施 | Pi Agent、CodexLoom、Coze 3.0、OpenAgents | runtime、Agent Team、网络 | 完整企业协作产品闭环 |
 
 ### 3.2 14 个产品的关键启示
@@ -129,19 +131,19 @@ Agent 可以更换模型、框架、进程或部署位置；平台不依赖它�
 | YouMind | 资料到成品的 artifact 工作区 | 单人创作状态不足以表达 Agent 团队 |
 | 千问 | 丰富模型/API 供应 | 把协作护城河建立在某个模型平台 |
 | FloatIM | Agent 作为群成员 | 只有头像/发言，没有任务与治理 |
-| Multica | 多 Coding Agent 并行、隔离工作区 | 用 branch/worktree 代替通用 artifact |
+| Multica | 多 Coding Agent 并行、任务 lease/retry、隔离工作区 | 忽略其带 SaaS/嵌入限制的自定义许可证，或用 branch 代替通用 artifact |
 | Todos | 自然语言目标到任务图 | 让模型同时负责依赖和一致性 |
 | NEAR Market | 可发现、执行、验证、争议闭环 | MVP 引入代币/TEE/市场复杂度 |
-| Slock | Agent 作为组织岗位 | 用一个角色 prompt 混合能力/权限/责任 |
+| Raft（原 Slock） | 常驻 Agent、群聊工作区与本地 daemon | 用一个角色 prompt 混合能力/权限/责任 |
 | Mindra | 企业集成、RBAC、审计 | 退化为全确定性的传统自动化 |
 | OpenWorker | 本地执行、BYOM、批准 | 给 Agent 模糊的永久信任 |
-| Pi Agent | MCP、subagent、权限、plan | 把开发者 runtime 当完整协作产品 |
-| Gotaa Pi.Agent | SOP/知识/岗位能力包 | 私有平台锁定与不透明状态 |
+| Pi Agent | 刻意保持极小核心、通过扩展/package 组装能力 | 把扩展能力误写成内置 MCP、subagent、权限、plan 或 todo |
+| Gotaa Pi.Agent | 仅作为历史产品假设保留 | 在子域失效、主域停放时继续把旧截图当当前事实 |
 | CodexLoom | 多 thread Owner/worker 实验 | 把终端线程/共享目录当稳定业务模型 |
-| Coze 3.0 | Agent Team 产品化体验 | 依赖封闭云 runtime |
+| Coze / Coze Studio | 学习托管办公体验与 Apache-2.0 Studio 的 Agent/workflow 装配 | 把托管产品与开源 Studio 当成同一功能边界 |
 | OpenAgents | Agent 网络发现与互操作 | 用外部网络取代企业内部真相源 |
 
-详细逐项分析和待核验项见 `research/04_competitor_landscape.md`。
+详细逐项分析见 `research/04_competitor_landscape.md`；官方来源、固定源码、许可证和宣传/实现差异的逐项核验见 `research/06_competitor_source_validation.md`。后者覆盖 14 个产品与 65 条唯一来源，并严格区分“官方宣称 / 可验证实现 / 推断 / 未知”。
 
 ### 3.3 市场空白
 
@@ -258,6 +260,8 @@ flowchart TB
 
 模型看到的 ContextBundle 必须先写 `context.compiled`，调用 Agent 再写 `task.invocation.started`。当前测试逐 task 比较 sequence，确保前者严格小于后者。
 
+当前 SQLite 实现已经把领域事件与 outbox 消息放入同一事务，并提供 inbox receipt 原子去重、租约领取、fencing token、延迟重试与 dead letter。它保证 at-least-once 投递所需的本地可靠边界；跨数据库与远端 broker 的 exactly-once 仍必须依赖接收方幂等键和外部 action receipt。
+
 ### 5.3 规划与 DAG
 
 LLM 可以生成/修订计划，但平台执行：
@@ -327,7 +331,7 @@ Artifact 是正式交付和 Agent 接力的中心：
 - 下游绑定具体版本；
 - 变更通过依赖图计算影响。
 
-当前 `ArtifactLedger` 已实现版本、同任务幂等和回滚新 head；生产版需数据库唯一约束、blob store、事务 outbox 和大文件 URI。
+当前 `ArtifactLedger` 已实现版本、同任务幂等和回滚新 head；事件存储已经具备事务 outbox，但 ArtifactLedger 仍需迁入持久存储，并补齐 blob/metadata 原子性、数据库唯一约束和大文件 URI。
 
 ### 5.7 Policy
 
@@ -466,6 +470,7 @@ ToolPort
 | `chat.py` | provider-neutral ingress、`@Agent` deterministic route |
 | `adapters/a2a.py` | Agent Card 与 JSON-RPC 边界映射、未知扩展保留 |
 | `langgraph_bridge.py` | 可选 graph start/interrupt/resume，不强依赖 LangGraph |
+| `delivery.py` / `store.py` | transactional inbox/outbox、租约、fencing、重试与 dead letter |
 | `cli.py` / example | 无外部服务的三 Agent 群聊 demo |
 
 ### 9.2 已修复的关键问题
@@ -475,10 +480,12 @@ ToolPort
 3. 状态幂等键使用 transition revision，不会把第二次合法 ready 当成初始 ready 重试。
 4. policy deny 也经过 running→failed 的合法状态路径。
 5. `@Agent` route 不调用 planner，但保留入口 envelope。
+6. 可从 append-only 事件历史恢复 WorkflowPlan、任务状态、批准凭证和依赖 Artifact；已完成任务不会在重启后重复调用 Agent。
+7. 领域事件与 outbox 原子提交，inbox receipt 与入站事件原子提交；过期发布租约可回收，旧发布者不能越过 fencing token 确认消息。
 
 ### 9.3 验证
 
-当前 23 个测试覆盖：
+当前 54 个测试覆盖：
 
 - Envelope round-trip 和授权；
 - handoff 必填与优先级；
@@ -494,6 +501,9 @@ ToolPort
 - A2A Agent Card extension 和 Envelope 映射；
 - `@Agent` direct/planner 路由；
 - LangGraph interrupt/resume bridge config。
+- WorkflowPlan/任务/批准/依赖 Artifact 的崩溃恢复与 exactly-once invocation；
+- transactional outbox/inbox、跨进程互斥领取、租约回收、fencing ACK、重试与 dead letter；
+- AgentRuntimePort、调用幂等冲突、显式隔离 factory、首次启动串行、同 session turn gate、可重试 close 和生命周期的 fake-backed contract；真实官方 SDK/隔离 launcher 仍需端到端验证。
 
 本地 demo 输出：3 个任务全部 completed，3 个 artifact，25 条事件；无模型和外部服务依赖。
 
@@ -501,9 +511,11 @@ ToolPort
 
 ### P0：可靠性与一致性
 
-- 从 event log 恢复 WorkflowPlan/TaskGraph/Approval/Agent invocation；
+已经验证：从 event log 恢复 WorkflowPlan/TaskGraph/Approval/Agent invocation，以及 transactional outbox/inbox 的本地一致性边界。
+
+仍需完成：
+
 - task attempt 与 lease/heartbeat；
-- transactional outbox/inbox；
 - 外部 action receipt 和 compensation；
 - artifact blob/metadata 事务；
 - worker 崩溃、超时、重试和 exactly-once effect 语义；
@@ -523,7 +535,7 @@ ToolPort
 
 - A2A 1.0 官方 SDK contract tests；
 - MCP client/tool/resource adapter；
-- DSH AgentRuntimePort；
+- DSH AgentRuntimePort 已实现；仍需真实隔离 factory、官方 SDK 版本矩阵和进程级 contract tests；
 - LangGraph Postgres checkpointer 集成；
 - stream/cancel/backpressure；
 - remote Agent status reconciliation。
@@ -634,7 +646,7 @@ ToolPort
 | 状态所有权 | 平台 | 采用 |
 | 编排 | LLM planner + deterministic scheduler | 采用 |
 | 简单/复杂流程 | 内置 DAG / LangGraph adapter | 采用 |
-| 单 Agent runtime | 插件 Harness，目标 DSH adapter | 采用，待集成 |
+| 单 Agent runtime | 插件 Harness，目标 DSH adapter | port/adapter 已实现，待真实隔离集成 |
 | 外部 Agent | A2A 1.x | 采用，待官方 SDK 验证 |
 | 工具/数据 | MCP | 采用，待实现 |
 | 内部协议 | Coordination Envelope | 已实现 v0.1 子集 |
@@ -653,6 +665,7 @@ ToolPort
 - `research/03_protocol_landscape.md`
 - `research/04_competitor_landscape.md`
 - `research/05_target_product_and_architecture.md`
+- `research/06_competitor_source_validation.md`
 
 截图证据：
 
@@ -673,7 +686,7 @@ ToolPort
 
 应继续投入，但产品和技术必须同时收敛：
 
-1. 用当前内核先完成 crash recovery/outbox/A2A contract/MCP/DSH adapter；
+1. 以已经完成的 crash recovery、inbox/outbox 与 DSH runtime port 为基础，继续完成 A2A contract、MCP adapter 和真实隔离 Harness factory 的端到端验证；
 2. 与此同时确定一个首发业务闭环，限定 Agent 团队、输入、产出和验收；
 3. UI 先做群聊、任务、artifact、Needs You 四个同源视图；
 4. 把“每个被接受 artifact 的时间、质量和成本”作为评估中心；
