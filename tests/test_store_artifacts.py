@@ -6,6 +6,7 @@ from collections import UserDict
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import quote
 
 import quantum_entanglement
 import quantum_entanglement.artifacts as artifacts_module
@@ -21,35 +22,44 @@ from quantum_entanglement.store import ConcurrencyError, SQLiteEventStore
 T0 = "2026-08-20T00:00:00Z"
 
 
-def replay_event(position, *, name=None, version=1, content=""):
+def replay_event(
+    position,
+    *,
+    name=None,
+    version=1,
+    content="",
+    session_id="session-replay",
+    artifact_id=None,
+    trigger=None,
+):
     if name is None:
         event_type = "test.non-artifact"
         payload = {"position": position}
     else:
         event_type = ArtifactLedger.EVENT_TYPE
         ref = ArtifactRef(
-            artifact_id=f"artifact-{position}",
+            artifact_id=artifact_id or f"artifact-{position}",
             name=name,
             version=version,
             media_type="text/markdown",
-            uri=f"artifact://session-replay/{name}/v{version}",
+            uri=(f"artifact://{quote(session_id, safe='')}/{quote(name)}/v{version}"),
             digest="sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
             created_by="test",
             task_id=f"task-{position}",
             parent_version=version - 1 if version > 1 else None,
         )
         payload = {
-            "sessionId": "session-replay",
+            "sessionId": session_id,
             "taskId": ref.task_id,
             "ref": ref.to_dict(),
             "content": content,
             "metadata": {"position": position},
             "createdAt": T0,
-            "trigger": "create" if version == 1 else "revise",
+            "trigger": trigger or ("create" if version == 1 else "revise"),
         }
     return StoredEvent(
         DomainEvent(
-            stream_id="session:session-replay",
+            stream_id=f"session:{session_id}",
             event_type=event_type,
             actor_id="test",
             event_id=f"event-{position}",
@@ -619,6 +629,131 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
             with self.subTest(case=case):
                 self._assert_payload_rejected(payload)
 
+    def test_replay_requires_each_version_chain_to_start_at_one_and_be_contiguous(self):
+        cases = {
+            "missing-v1": (replay_event(1, name="report.md", version=2),),
+            "gap": (
+                replay_event(1, name="report.md", version=1),
+                replay_event(2, name="report.md", version=3),
+            ),
+            "duplicate-version": (
+                replay_event(1, name="report.md", version=1),
+                replay_event(2, name="report.md", version=1),
+            ),
+            "descending-version": (
+                replay_event(1, name="report.md", version=1),
+                replay_event(2, name="report.md", version=2),
+                replay_event(3, name="report.md", version=1),
+            ),
+        }
+        for case, events in cases.items():
+            with self.subTest(case=case):
+                source = FakeReplayStore({0: events})
+                with self.assertRaisesRegex(ArtifactReplayError, "version chain"):
+                    ArtifactLedger(source)
+
+    def test_replay_rejects_duplicate_artifact_ids_across_the_ledger(self):
+        cases = {
+            "same-chain": (
+                replay_event(1, name="report.md", version=1, artifact_id="artifact-shared"),
+                replay_event(2, name="report.md", version=2, artifact_id="artifact-shared"),
+            ),
+            "different-artifact": (
+                replay_event(1, name="report.md", artifact_id="artifact-shared"),
+                replay_event(2, name="notes.md", artifact_id="artifact-shared"),
+            ),
+            "different-session": (
+                replay_event(
+                    1,
+                    name="report.md",
+                    session_id="session-a",
+                    artifact_id="artifact-shared",
+                ),
+                replay_event(
+                    2,
+                    name="report.md",
+                    session_id="session-b",
+                    artifact_id="artifact-shared",
+                ),
+            ),
+        }
+        for case, events in cases.items():
+            with self.subTest(case=case):
+                source = FakeReplayStore({0: events})
+                with self.assertRaisesRegex(ArtifactReplayError, "duplicate artifact id"):
+                    ArtifactLedger(source)
+
+    def test_replay_requires_the_exact_generated_artifact_uri(self):
+        session_id = "team/a b"
+        name = "folder/报告 v1.md"
+        valid = replay_event(1, name=name, session_id=session_id)
+        canonical_uri = "artifact://team%2Fa%20b/folder/%E6%8A%A5%E5%91%8A%20v1.md/v1"
+        self.assertEqual(valid.event.payload["ref"]["uri"], canonical_uri)
+        accepted = ArtifactLedger(FakeReplayStore({0: (valid,)}))
+        self.assertEqual(accepted.current(session_id, name).ref.uri, canonical_uri)
+
+        variants = {
+            "unescaped-session-slash": canonical_uri.replace("team%2F", "team/", 1),
+            "lowercase-percent-escape": canonical_uri.replace("%2F", "%2f", 1),
+            "plus-for-space": canonical_uri.replace("%20", "+", 1),
+            "encoded-name-slash": canonical_uri.replace("/folder/", "/folder%2F", 1),
+            "raw-unicode": canonical_uri.replace(
+                "%E6%8A%A5%E5%91%8A",
+                "报告",
+                1,
+            ),
+            "noncanonical-version": canonical_uri.removesuffix("/v1") + "/v01",
+            "trailing-slash": canonical_uri + "/",
+        }
+        for case, uri in variants.items():
+            with self.subTest(case=case):
+                payload = copy.deepcopy(valid.event.payload)
+                payload["ref"]["uri"] = uri
+                self._assert_payload_rejected(payload)
+
+    def test_replay_accepts_interleaved_independent_chains_and_custom_triggers(self):
+        shared_name = "folder/报告.md"
+        events = (
+            replay_event(
+                1,
+                name=shared_name,
+                session_id="session/a",
+                content="a1",
+                trigger="publish",
+            ),
+            replay_event(
+                2,
+                name=shared_name,
+                session_id="session-b",
+                content="b1",
+                trigger="rollback",
+            ),
+            replay_event(
+                3,
+                name="notes.txt",
+                session_id="session/a",
+                content="notes",
+                trigger="custom",
+            ),
+            replay_event(
+                4,
+                name=shared_name,
+                session_id="session/a",
+                version=2,
+                content="a2",
+                trigger="rollback",
+            ),
+        )
+
+        ledger = ArtifactLedger(FakeReplayStore({0: events}))
+
+        self.assertEqual(
+            [(item.content, item.trigger) for item in ledger.history("session/a", shared_name)],
+            [("a1", "publish"), ("a2", "rollback")],
+        )
+        self.assertEqual(ledger.current("session-b", shared_name).content, "b1")
+        self.assertEqual(ledger.current("session/a", "notes.txt").trigger, "custom")
+
     def test_rebuild_uses_bounded_keyset_pages_without_losing_artifacts(self):
         events = (
             replay_event(1),
@@ -713,6 +848,82 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
 
                 with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
                     with self.assertRaises(error_type):
+                        ledger._rebuild()
+
+                self.assertIs(ledger._versions, previous_state)
+                self.assertIs(
+                    ledger.history("session-replay", "stable.md"),
+                    previous_history,
+                )
+                self.assertIsNone(ledger.current("session-replay", "candidate.md"))
+
+    def test_late_chain_and_uri_failures_preserve_the_exact_previous_state(self):
+        invalid_uri_payload = copy.deepcopy(
+            replay_event(3, name="candidate.md", version=2).event.payload
+        )
+        invalid_uri_payload["ref"]["uri"] += "/"
+        cases = {
+            "gap": (
+                (
+                    replay_event(1, name="candidate.md", version=1),
+                    replay_event(2),
+                ),
+                (replay_event(3, name="candidate.md", version=3),),
+            ),
+            "duplicate-version": (
+                (
+                    replay_event(1, name="candidate.md", version=1),
+                    replay_event(2),
+                ),
+                (replay_event(3, name="candidate.md", version=1),),
+            ),
+            "descending-version": (
+                (
+                    replay_event(1, name="candidate.md", version=1),
+                    replay_event(2, name="candidate.md", version=2),
+                ),
+                (replay_event(3, name="candidate.md", version=1),),
+            ),
+            "duplicate-artifact-id": (
+                (
+                    replay_event(
+                        1,
+                        name="candidate.md",
+                        version=1,
+                        artifact_id="artifact-shared",
+                    ),
+                    replay_event(2),
+                ),
+                (
+                    replay_event(
+                        3,
+                        name="candidate.md",
+                        version=2,
+                        artifact_id="artifact-shared",
+                    ),
+                ),
+            ),
+            "uri": (
+                (
+                    replay_event(1, name="candidate.md", version=1),
+                    replay_event(2),
+                ),
+                (replay_event_with_payload(3, invalid_uri_payload),),
+            ),
+        }
+        for case, (first_page, late_page) in cases.items():
+            with self.subTest(case=case):
+                source = FakeReplayStore(
+                    {0: (replay_event(1, name="stable.md", content="stable"),)}
+                )
+                with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
+                    ledger = ArtifactLedger(source)
+                previous_state = ledger._versions
+                previous_history = ledger.history("session-replay", "stable.md")
+                source.pages = {0: first_page, 2: late_page}
+
+                with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
+                    with self.assertRaises(ArtifactReplayError):
                         ledger._rebuild()
 
                 self.assertIs(ledger._versions, previous_state)

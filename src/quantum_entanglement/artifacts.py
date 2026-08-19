@@ -85,6 +85,7 @@ class ArtifactLedger:
         after_position = 0
         replayed = 0
         candidate_versions: Dict[Tuple[str, str], Tuple[ArtifactVersion, ...]] = {}
+        candidate_artifact_ids: set[str] = set()
         while replayed < _MAX_REPLAY_EVENTS:
             page_limit = min(_REPLAY_PAGE_LIMIT, _MAX_REPLAY_EVENTS - replayed)
             page = self.event_store.read_all(
@@ -102,7 +103,16 @@ class ArtifactLedger:
                 if stored.event.event_type != self.EVENT_TYPE:
                     continue
                 key, item = self._decode_persisted_version(stored.event.payload)
-                candidate_versions[key] = candidate_versions.get(key, ()) + (item,)
+                history = candidate_versions.get(key, ())
+                expected_version = len(history) + 1
+                if item.ref.version != expected_version:
+                    raise ArtifactReplayError(
+                        "artifact replay version chain must start at version 1 and increase by one"
+                    )
+                if item.ref.artifact_id in candidate_artifact_ids:
+                    raise ArtifactReplayError("artifact replay contains a duplicate artifact id")
+                candidate_artifact_ids.add(item.ref.artifact_id)
+                candidate_versions[key] = history + (item,)
             replayed += len(page)
             if len(page) < page_limit:
                 break
@@ -180,6 +190,8 @@ class ArtifactLedger:
                 raise ValueError("ref.digest is not canonical SHA-256")
             if digest != cls._digest(content):
                 raise ValueError("ref.digest does not match artifact content")
+            if uri != cls._artifact_uri(session_id, name, version):
+                raise ValueError("ref.uri is not the canonical artifact URI")
 
             ref = ArtifactRef(
                 artifact_id=artifact_id,
@@ -386,6 +398,14 @@ class ArtifactLedger:
     def _digest(content: str) -> str:
         return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _artifact_uri(session_id: str, name: str, version: int) -> str:
+        return "artifact://%s/%s/v%d" % (
+            quote(session_id, safe=""),
+            quote(name),
+            version,
+        )
+
     def record(
         self,
         session_id: str,
@@ -438,12 +458,7 @@ class ArtifactLedger:
                     name=captured_name,
                     version=version,
                     media_type=captured_media_type,
-                    uri="artifact://%s/%s/v%d"
-                    % (
-                        quote(captured_session_id, safe=""),
-                        quote(captured_name),
-                        version,
-                    ),
+                    uri=self._artifact_uri(captured_session_id, captured_name, version),
                     digest=self._digest(captured_content),
                     created_by=captured_agent_id,
                     task_id=captured_task_id,
