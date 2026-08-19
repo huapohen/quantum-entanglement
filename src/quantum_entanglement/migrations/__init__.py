@@ -55,6 +55,11 @@ CREATE TABLE qe_schema_migrations (
     applied_at TEXT NOT NULL
 )
 """
+_LEDGER_CREATE_SQL = _LEDGER_SCHEMA_SQL.replace(
+    "CREATE TABLE ",
+    "CREATE TABLE IF NOT EXISTS ",
+    1,
+)
 _CREATE_OBJECT_PATTERN = re.compile(
     r"\bCREATE\s+(?:UNIQUE\s+)?(?P<kind>TABLE|INDEX)\s+"
     r"(?:IF\s+NOT\s+EXISTS\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)",
@@ -157,6 +162,12 @@ def validate_sqlite_schema(
         return 0
     if ledger[0] != "table":
         raise MigrationDriftError("SQLite object 'qe_schema_migrations' is not a table")
+    if ledger[1] is None or _canonical_schema_sql(str(ledger[1])) != _canonical_schema_sql(
+        _LEDGER_SCHEMA_SQL
+    ):
+        raise MigrationDriftError(
+            "migration-owned SQLite table 'qe_schema_migrations' differs from packaged schema"
+        )
 
     rows = connection.execute(
         """
@@ -241,38 +252,8 @@ def apply_sqlite_migrations(
             raise ValueError("target migration versions must be a continuous registry prefix")
         selected_versions = set(requested_versions)
     connection.create_function("qe_sha256", 1, _sqlite_sha256, deterministic=True)
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS qe_schema_migrations (
-            version INTEGER PRIMARY KEY,
-            filename TEXT NOT NULL UNIQUE,
-            sha256 TEXT NOT NULL,
-            applied_at TEXT NOT NULL
-        )
-        """
-    )
-    known = {item.version: item for item in migrations}
-    rows = connection.execute(
-        "SELECT version, filename, sha256 FROM qe_schema_migrations ORDER BY version"
-    ).fetchall()
-    applied_versions = tuple(int(row["version"]) for row in rows)
-    for row in rows:
-        version = int(row["version"])
-        migration = known.get(version)
-        if migration is None:
-            raise MigrationVersionError(
-                f"database schema version {version} is newer than this binary"
-            )
-        sql = migration_text(migration.filename)
-        digest = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-        if row["filename"] != migration.filename or row["sha256"] != digest:
-            raise MigrationDriftError(
-                f"migration {version} checksum or filename differs from the applied schema"
-            )
-    if applied_versions != ordered_versions[: len(applied_versions)]:
-        raise MigrationDriftError(
-            "migration ledger must be a continuous registry prefix starting at one"
-        )
+    connection.execute(_LEDGER_CREATE_SQL)
+    validate_sqlite_schema(connection, migrations=migrations)
 
     for migration in migrations:
         if migration.version not in selected_versions:
@@ -284,15 +265,20 @@ def apply_sqlite_migrations(
             # Recheck only after owning the write lock. Another initializer may
             # have committed this migration after the optimistic precheck.
             row = connection.execute(
-                "SELECT filename, sha256 FROM qe_schema_migrations WHERE version = ?",
+                """
+                SELECT filename, sha256
+                FROM main.qe_schema_migrations
+                WHERE version = ?
+                """,
                 (migration.version,),
             ).fetchone()
             if row is not None:
-                if row["filename"] != migration.filename or row["sha256"] != digest:
+                if row[0] != migration.filename or row[1] != digest:
                     raise MigrationDriftError(
                         f"migration {migration.version} checksum or filename differs "
                         "from the applied schema"
                     )
+                validate_sqlite_schema(connection, migrations=migrations)
                 connection.execute("COMMIT")
                 continue
             applied_at = clock()
@@ -302,26 +288,27 @@ def apply_sqlite_migrations(
                 connection.execute(statement)
             connection.execute(
                 """
-                INSERT INTO qe_schema_migrations (
+                INSERT INTO main.qe_schema_migrations (
                     version, filename, sha256, applied_at
                 ) VALUES (?, ?, ?, ?)
                 """,
                 (migration.version, migration.filename, digest, applied_at),
             )
+            validate_sqlite_schema(connection, migrations=migrations)
             connection.execute("COMMIT")
         except BaseException:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
             raise
 
-    return current_schema_version(connection)
+    return validate_sqlite_schema(connection, migrations=migrations)
 
 
 def current_schema_version(connection: sqlite3.Connection) -> int:
     rows = connection.execute(
-        "SELECT version FROM qe_schema_migrations ORDER BY version"
+        "SELECT version FROM main.qe_schema_migrations ORDER BY version"
     ).fetchall()
-    versions = tuple(int(row["version"]) for row in rows)
+    versions = tuple(int(row[0]) for row in rows)
     if versions != tuple(range(1, len(versions) + 1)):
         raise MigrationDriftError("migration ledger must be a continuous prefix starting at one")
     return versions[-1] if versions else 0

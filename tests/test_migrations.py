@@ -253,6 +253,20 @@ class MigrationRunnerTests(unittest.TestCase):
         )
 
         self.assertEqual(validate_sqlite_schema(self.connection), 1)
+        self.assertEqual(
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=(1, 2),
+                clock=lambda: NOW,
+            ),
+            2,
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT version FROM temp.qe_schema_migrations"
+            ).fetchone()[0],
+            999,
+        )
 
     def test_schema_validator_rejects_non_table_ledger_object(self):
         self.connection.execute(
@@ -261,6 +275,65 @@ class MigrationRunnerTests(unittest.TestCase):
 
         with self.assertRaisesRegex(MigrationDriftError, "is not a table"):
             validate_sqlite_schema(self.connection)
+
+    def test_migration_runner_rejects_weakened_applied_schema(self):
+        apply_sqlite_migrations(
+            self.connection,
+            target_versions=(1, 2),
+            clock=lambda: NOW,
+        )
+        self.connection.execute("DROP TABLE artifact_versions")
+        self.connection.execute("DROP TABLE artifact_blobs")
+        self.connection.execute("CREATE TABLE artifact_blobs(digest TEXT PRIMARY KEY)")
+
+        with self.assertRaisesRegex(MigrationDriftError, "artifact_blobs.*differs"):
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=(1, 2),
+                clock=lambda: NOW,
+            )
+        self.assertEqual(
+            [
+                row[0]
+                for row in self.connection.execute(
+                    "SELECT version FROM main.qe_schema_migrations ORDER BY version"
+                ).fetchall()
+            ],
+            [1, 2],
+        )
+
+    def test_prebuilt_weakened_table_never_receives_migration_checksum(self):
+        self.connection.execute("CREATE TABLE artifact_blobs(digest TEXT PRIMARY KEY)")
+
+        with self.assertRaisesRegex(MigrationDriftError, "artifact_blobs.*differs"):
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=(1, 2),
+                clock=lambda: NOW,
+            )
+
+        self.assertEqual(
+            [
+                row[0]
+                for row in self.connection.execute(
+                    "SELECT version FROM main.qe_schema_migrations ORDER BY version"
+                ).fetchall()
+            ],
+            [1],
+        )
+        self.assertFalse(self.table_exists("artifact_versions"))
+
+    def test_weakened_ledger_schema_is_rejected_before_row_access(self):
+        self.connection.execute(
+            "CREATE TABLE qe_schema_migrations(version INTEGER PRIMARY KEY)"
+        )
+
+        with self.assertRaisesRegex(MigrationDriftError, "qe_schema_migrations.*differs"):
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=(),
+                clock=lambda: NOW,
+            )
 
     def test_statement_splitter_handles_same_line_and_quoted_semicolon(self):
         migration = Migration(1, "0001_compound.up.sql")
