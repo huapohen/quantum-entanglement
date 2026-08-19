@@ -2,17 +2,23 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from collections.abc import Mapping
-from operator import attrgetter
+from collections.abc import Mapping, MutableMapping
+from operator import attrgetter, setitem
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from quantum_entanglement.events import DomainEvent, StoredEvent
 from quantum_entanglement.projections import (
+    MAX_EVENT_PAYLOAD_DEPTH,
+    MAX_EVENT_PAYLOAD_NODES,
     SCHEMA_VERSION_FIELD,
     DurableProjector,
+    EventSchemaDecoderError,
+    EventSchemaRegistrySealedError,
     EventUpcasterRegistry,
     FutureEventSchemaVersionError,
+    InvalidDecoderResultError,
+    InvalidEventPayloadError,
     InvalidEventSchemaVersionError,
     InvalidUpcastResultError,
     MissingUpcasterError,
@@ -23,6 +29,7 @@ from quantum_entanglement.projections import (
     ProjectionTransaction,
     SQLiteProjectionOffsetStore,
     UnknownEventTypeError,
+    UnsealedEventSchemaRegistryError,
     UpcastedEvent,
 )
 from quantum_entanglement.store import SQLiteEventStore
@@ -36,10 +43,25 @@ def stored(payload: Mapping[str, Any], *, event_type: str = "task.created") -> S
     )
 
 
+def decode_mapping(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    return dict(payload)
+
+
+def nested_payload(depth: int) -> Mapping[str, Any]:
+    value: Any = "leaf"
+    for _ in range(depth):
+        value = {"child": value}
+    return cast(Mapping[str, Any], value)
+
+
 class EventUpcasterRegistryTests(unittest.TestCase):
     def test_contiguous_chain_upcasts_legacy_v1_without_mutating_event(self) -> None:
         registry = EventUpcasterRegistry()
-        registry.register_event_type("task.created", current_version=3)
+        registry.register_event_type(
+            "task.created",
+            current_version=3,
+            decoder=decode_mapping,
+        )
 
         def one_to_two(payload: Mapping[str, Any]) -> Mapping[str, Any]:
             return {"title": payload["name"], "metadata": payload["metadata"]}
@@ -50,6 +72,7 @@ class EventUpcasterRegistryTests(unittest.TestCase):
 
         registry.register_upcaster("task.created", from_version=1, upcaster=one_to_two)
         registry.register_upcaster("task.created", from_version=2, upcaster=two_to_three)
+        registry.seal()
         original = stored({"name": "ship", "metadata": {"source": "human"}})
 
         result = registry.upcast(original)
@@ -67,7 +90,17 @@ class EventUpcasterRegistryTests(unittest.TestCase):
 
     def test_current_payload_strips_reserved_schema_metadata(self) -> None:
         registry = EventUpcasterRegistry()
-        registry.register_event_type("task.created", current_version=2)
+        registry.register_event_type(
+            "task.created",
+            current_version=2,
+            decoder=decode_mapping,
+        )
+        registry.register_upcaster(
+            "task.created",
+            from_version=1,
+            upcaster=decode_mapping,
+        )
+        registry.seal()
 
         result = registry.upcast(stored({SCHEMA_VERSION_FIELD: 2, "title": "ship"}))
 
@@ -76,71 +109,370 @@ class EventUpcasterRegistryTests(unittest.TestCase):
 
     def test_unknown_event_type_fails_closed(self) -> None:
         registry = EventUpcasterRegistry()
-        registry.register_event_type("task.created", current_version=1)
+        registry.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=decode_mapping,
+        )
+        registry.seal()
 
         with self.assertRaisesRegex(UnknownEventTypeError, "unregistered event type"):
             registry.upcast(stored({}, event_type="task.deleted"))
 
     def test_future_schema_version_fails_closed(self) -> None:
         registry = EventUpcasterRegistry()
-        registry.register_event_type("task.created", current_version=2)
+        registry.register_event_type(
+            "task.created",
+            current_version=2,
+            decoder=decode_mapping,
+        )
+        registry.register_upcaster(
+            "task.created",
+            from_version=1,
+            upcaster=decode_mapping,
+        )
+        registry.seal()
 
         with self.assertRaisesRegex(FutureEventSchemaVersionError, "newer than supported"):
             registry.upcast(stored({SCHEMA_VERSION_FIELD: 3}))
 
     def test_non_integer_schema_version_fails_closed(self) -> None:
         registry = EventUpcasterRegistry()
-        registry.register_event_type("task.created", current_version=2)
+        registry.register_event_type(
+            "task.created",
+            current_version=2,
+            decoder=decode_mapping,
+        )
+        registry.register_upcaster(
+            "task.created",
+            from_version=1,
+            upcaster=decode_mapping,
+        )
+        registry.seal()
 
         for invalid in (True, 0, "2", None):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(InvalidEventSchemaVersionError):
                     registry.upcast(stored({SCHEMA_VERSION_FIELD: invalid}))
 
-    def test_missing_middle_upcaster_fails_closed(self) -> None:
+    def test_seal_rejects_a_missing_upcaster_chain_before_any_event(self) -> None:
         registry = EventUpcasterRegistry()
-        registry.register_event_type("task.created", current_version=3)
+        registry.register_event_type(
+            "task.created",
+            current_version=3,
+            decoder=decode_mapping,
+        )
         registry.register_upcaster("task.created", from_version=2, upcaster=lambda payload: payload)
 
         with self.assertRaisesRegex(MissingUpcasterError, "v1 -> v2"):
-            registry.upcast(stored({"name": "ship"}))
+            registry.seal()
+
+        self.assertFalse(registry.is_sealed)
+        registry.register_upcaster(
+            "task.created",
+            from_version=1,
+            upcaster=decode_mapping,
+        )
+        registry.seal()
+        self.assertTrue(registry.is_sealed)
 
     def test_upcaster_must_return_mapping_without_reserved_metadata(self) -> None:
         registry = EventUpcasterRegistry()
-        registry.register_event_type("task.created", current_version=2)
+        registry.register_event_type(
+            "task.created",
+            current_version=2,
+            decoder=decode_mapping,
+        )
         registry.register_upcaster(
             "task.created",
             from_version=1,
             upcaster=lambda _payload: [],  # type: ignore[arg-type, return-value]
         )
+        registry.seal()
         with self.assertRaisesRegex(InvalidUpcastResultError, "must return a mapping"):
             registry.upcast(stored({}))
 
         other = EventUpcasterRegistry()
-        other.register_event_type("task.created", current_version=2)
+        other.register_event_type(
+            "task.created",
+            current_version=2,
+            decoder=decode_mapping,
+        )
         other.register_upcaster(
             "task.created",
             from_version=1,
             upcaster=lambda _payload: {SCHEMA_VERSION_FIELD: 2},
         )
+        other.seal()
         with self.assertRaisesRegex(InvalidUpcastResultError, "reserved field"):
             other.upcast(stored({}))
 
     def test_registration_rejects_invalid_or_duplicate_contracts(self) -> None:
         registry = EventUpcasterRegistry()
         with self.assertRaises(ValueError):
-            registry.register_event_type("", current_version=1)
+            registry.register_event_type("", current_version=1, decoder=decode_mapping)
         with self.assertRaises(ValueError):
-            registry.register_event_type("task.created", current_version=True)
+            registry.register_event_type(
+                "task.created",
+                current_version=True,
+                decoder=decode_mapping,
+            )
+        with self.assertRaises(TypeError):
+            registry.register_event_type(
+                "task.created",
+                current_version=1,
+                decoder=None,  # type: ignore[arg-type]
+            )
 
-        registry.register_event_type("task.created", current_version=2)
+        registry.register_event_type(
+            "task.created",
+            current_version=2,
+            decoder=decode_mapping,
+        )
         with self.assertRaises(ValueError):
-            registry.register_event_type("task.created", current_version=2)
+            registry.register_event_type(
+                "task.created",
+                current_version=2,
+                decoder=decode_mapping,
+            )
         with self.assertRaises(UnknownEventTypeError):
             registry.register_upcaster("task.deleted", from_version=1, upcaster=dict)
+        with self.assertRaises(TypeError):
+            registry.register_upcaster(
+                "task.created",
+                from_version=1,
+                upcaster=None,  # type: ignore[arg-type]
+            )
         registry.register_upcaster("task.created", from_version=1, upcaster=dict)
         with self.assertRaises(ValueError):
             registry.register_upcaster("task.created", from_version=1, upcaster=dict)
+
+    def test_sealed_registry_stably_rejects_all_later_registration(self) -> None:
+        registry = EventUpcasterRegistry()
+        registry.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=decode_mapping,
+        )
+        registry.seal()
+        registry.seal()
+
+        with self.assertRaises(EventSchemaRegistrySealedError):
+            registry.register_event_type(
+                "task.deleted",
+                current_version=1,
+                decoder=decode_mapping,
+            )
+        with self.assertRaises(EventSchemaRegistrySealedError):
+            registry.register_upcaster(
+                "task.created",
+                from_version=1,
+                upcaster=decode_mapping,
+            )
+
+    def test_unsealed_registry_rejects_upcast(self) -> None:
+        registry = EventUpcasterRegistry()
+        registry.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=decode_mapping,
+        )
+
+        with self.assertRaisesRegex(UnsealedEventSchemaRegistryError, "must be sealed"):
+            registry.upcast(stored({"title": "ship"}))
+
+    def test_current_decoder_runs_for_direct_and_upcast_payloads(self) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def decoder(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            calls.append(dict(payload))
+            return {"title": str(payload["title"]).strip()}
+
+        registry = EventUpcasterRegistry()
+        registry.register_event_type(
+            "task.created",
+            current_version=2,
+            decoder=decoder,
+        )
+        registry.register_upcaster(
+            "task.created",
+            from_version=1,
+            upcaster=lambda payload: {"title": payload["name"]},
+        )
+        registry.seal()
+
+        upgraded = registry.upcast(stored({"name": " upgraded "}))
+        direct = registry.upcast(stored({SCHEMA_VERSION_FIELD: 2, "title": " direct "}))
+
+        self.assertEqual(calls, [{"title": " upgraded "}, {"title": " direct "}])
+        self.assertEqual(upgraded.payload["title"], "upgraded")
+        self.assertEqual(direct.payload["title"], "direct")
+
+    def test_decoder_input_output_are_isolated_and_result_is_deeply_read_only(self) -> None:
+        decoder_results: list[dict[str, Any]] = []
+
+        def decoder(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            payload["metadata"]["decoderTouched"] = True
+            candidate = {
+                "title": payload["title"],
+                "metadata": payload["metadata"],
+                "labels": ["current"],
+            }
+            decoder_results.append(candidate)
+            return candidate
+
+        registry = EventUpcasterRegistry()
+        registry.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=decoder,
+        )
+        registry.seal()
+        original = stored({"title": "ship", "metadata": {"source": "human"}})
+
+        result = registry.upcast(original)
+        decoder_results[0]["metadata"]["afterReturn"] = True
+        decoder_results[0]["labels"].append("mutated")
+
+        self.assertEqual(original.event.payload["metadata"], {"source": "human"})
+        self.assertEqual(
+            dict(result.payload["metadata"]),
+            {"source": "human", "decoderTouched": True},
+        )
+        self.assertEqual(result.payload["labels"], ("current",))
+        with self.assertRaises(TypeError):
+            setitem(
+                cast(MutableMapping[str, Any], result.payload),
+                "title",
+                "changed",
+            )
+        with self.assertRaises(TypeError):
+            setitem(result.payload["metadata"], "handlerTouched", True)
+
+    def test_payload_depth_and_node_limits_are_inclusive_and_bounded(self) -> None:
+        registry = EventUpcasterRegistry()
+        registry.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=decode_mapping,
+        )
+        registry.seal()
+
+        at_depth_limit = registry.upcast(stored(nested_payload(MAX_EVENT_PAYLOAD_DEPTH)))
+        self.assertEqual(at_depth_limit.schema_version, 1)
+        with self.assertRaises(InvalidEventPayloadError) as too_deep:
+            registry.upcast(stored(nested_payload(MAX_EVENT_PAYLOAD_DEPTH + 1)))
+        self.assertIsNotNone(too_deep.exception.__cause__)
+
+        exact_node_payload = {
+            f"field-{index}": index for index in range(MAX_EVENT_PAYLOAD_NODES - 1)
+        }
+        at_node_limit = registry.upcast(stored(exact_node_payload))
+        self.assertEqual(len(at_node_limit.payload), MAX_EVENT_PAYLOAD_NODES - 1)
+        over_node_payload = {f"field-{index}": index for index in range(MAX_EVENT_PAYLOAD_NODES)}
+        with self.assertRaises(InvalidEventPayloadError) as too_many_nodes:
+            registry.upcast(stored(over_node_payload))
+        self.assertIsNotNone(too_many_nodes.exception.__cause__)
+
+    def test_cyclic_or_unsupported_persisted_payload_is_a_stable_schema_error(self) -> None:
+        registry = EventUpcasterRegistry()
+        registry.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=decode_mapping,
+        )
+        registry.seal()
+        cyclic: dict[str, Any] = {}
+        cyclic["self"] = cyclic
+
+        for payload in (
+            cyclic,
+            {"unsupported": {"set-value"}},
+            {"unsupported": {1: "non-string-key"}},
+            {"unsupported": float("nan")},
+            {"unsupported": float("inf")},
+        ):
+            with self.subTest(payload_type=type(next(iter(payload.values()))).__name__):
+                with self.assertRaises(InvalidEventPayloadError) as raised:
+                    registry.upcast(stored(payload))
+                self.assertIsNotNone(raised.exception.__cause__)
+                self.assertNotIsInstance(raised.exception, RecursionError)
+
+    def test_cyclic_deep_or_unsupported_decoder_result_is_stably_wrapped(self) -> None:
+        def cyclic_decoder(_payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            candidate: dict[str, Any] = {}
+            candidate["self"] = candidate
+            return candidate
+
+        decoders = (
+            cyclic_decoder,
+            lambda _payload: nested_payload(MAX_EVENT_PAYLOAD_DEPTH + 1),
+            lambda _payload: {"unsupported": {"set-value"}},
+        )
+        for index, decoder in enumerate(decoders):
+            with self.subTest(decoder=index):
+                registry = EventUpcasterRegistry()
+                registry.register_event_type(
+                    "task.created",
+                    current_version=1,
+                    decoder=decoder,
+                )
+                registry.seal()
+
+                with self.assertRaises(InvalidDecoderResultError) as raised:
+                    registry.upcast(stored({}))
+                self.assertIsNotNone(raised.exception.__cause__)
+                self.assertNotIsInstance(raised.exception, RecursionError)
+
+    def test_invalid_decoder_results_fail_closed(self) -> None:
+        not_a_mapping = EventUpcasterRegistry()
+        not_a_mapping.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=lambda _payload: [],  # type: ignore[arg-type, return-value]
+        )
+        not_a_mapping.seal()
+        with self.assertRaisesRegex(InvalidDecoderResultError, "must return a mapping"):
+            not_a_mapping.upcast(stored({}))
+
+        reserved = EventUpcasterRegistry()
+        reserved.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=lambda _payload: {SCHEMA_VERSION_FIELD: 1},
+        )
+        reserved.seal()
+        with self.assertRaisesRegex(InvalidDecoderResultError, "reserved field"):
+            reserved.upcast(stored({}))
+
+    def test_decoder_exception_is_wrapped_with_cause_but_base_exception_propagates(self) -> None:
+        def failing_decoder(_payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            raise ValueError("invalid current payload")
+
+        registry = EventUpcasterRegistry()
+        registry.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=failing_decoder,
+        )
+        registry.seal()
+
+        with self.assertRaises(EventSchemaDecoderError) as raised:
+            registry.upcast(stored({}))
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
+
+        def interrupted_decoder(_payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            raise KeyboardInterrupt("decoder interrupted")
+
+        interrupted = EventUpcasterRegistry()
+        interrupted.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=interrupted_decoder,
+        )
+        interrupted.seal()
+        with self.assertRaisesRegex(KeyboardInterrupt, "decoder interrupted"):
+            interrupted.upcast(stored({}))
 
 
 class MutableClock:
@@ -264,12 +596,17 @@ class DurableProjectorTests(unittest.TestCase):
         self.events = SQLiteEventStore(self.path)
         self.offsets = SQLiteProjectionOffsetStore(self.path, clock=self.clock)
         self.registry = EventUpcasterRegistry()
-        self.registry.register_event_type("task.created", current_version=2)
+        self.registry.register_event_type(
+            "task.created",
+            current_version=2,
+            decoder=decode_mapping,
+        )
         self.registry.register_upcaster(
             "task.created",
             from_version=1,
             upcaster=lambda payload: {"title": payload["name"]},
         )
+        self.registry.seal()
         self.events.append(
             DomainEvent(
                 "session:s1",
@@ -316,6 +653,24 @@ class DurableProjectorTests(unittest.TestCase):
             return []
         finally:
             connection.close()
+
+    def test_projector_constructor_rejects_unsealed_registry(self) -> None:
+        unsealed = EventUpcasterRegistry()
+        unsealed.register_event_type(
+            "task.created",
+            current_version=1,
+            decoder=decode_mapping,
+        )
+
+        with self.assertRaisesRegex(UnsealedEventSchemaRegistryError, "must be sealed"):
+            DurableProjector(
+                "unsealed",
+                "worker-a",
+                self.events,
+                self.offsets,
+                unsealed,
+                lambda _transaction, _event: None,
+            )
 
     def test_projector_upcasts_and_checkpoints_a_bounded_batch(self) -> None:
         def handler(transaction: ProjectionTransaction, event: UpcastedEvent) -> None:

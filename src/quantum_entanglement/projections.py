@@ -8,7 +8,7 @@ validated and every required one-version upcast has completed.
 
 from __future__ import annotations
 
-import copy
+import math
 import os
 import sqlite3
 import threading
@@ -25,6 +25,14 @@ from .protocol import utc_now
 SCHEMA_VERSION_FIELD = "_schemaVersion"
 """Reserved payload metadata used until schema version has its own event column."""
 
+MAX_EVENT_PAYLOAD_DEPTH = 64
+"""Maximum value depth, counting the root payload mapping as depth zero."""
+
+MAX_EVENT_PAYLOAD_NODES = 10_000
+"""Maximum values and containers visited while copying one event payload."""
+
+_MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
+
 
 class EventSchemaError(RuntimeError):
     """Base class for events that cannot safely be presented to a projection."""
@@ -36,6 +44,10 @@ class UnknownEventTypeError(EventSchemaError):
 
 class InvalidEventSchemaVersionError(EventSchemaError):
     """Raised when persisted schema-version metadata is not a positive integer."""
+
+
+class InvalidEventPayloadError(EventSchemaError):
+    """Raised when persisted payload structure cannot be decoded safely."""
 
 
 class FutureEventSchemaVersionError(EventSchemaError):
@@ -50,7 +62,36 @@ class InvalidUpcastResultError(EventSchemaError):
     """Raised when an upcaster violates the payload contract."""
 
 
+class InvalidDecoderResultError(EventSchemaError):
+    """Raised when a current-schema decoder violates the payload contract."""
+
+
+class EventSchemaDecoderError(EventSchemaError):
+    """Raised when a current-schema decoder fails on persisted event data."""
+
+
+class EventSchemaRegistrySealedError(EventSchemaError):
+    """Raised when code tries to mutate an already sealed schema registry."""
+
+
+class UnsealedEventSchemaRegistryError(EventSchemaError):
+    """Raised when projection code tries to use an unsealed schema registry."""
+
+
 Upcaster = Callable[[Mapping[str, Any]], Mapping[str, Any]]
+CurrentSchemaDecoder = Callable[[Mapping[str, Any]], Mapping[str, Any]]
+
+
+class _PayloadStructureError(ValueError):
+    """Internal bounded-copy failure wrapped at the relevant schema boundary."""
+
+
+class _PayloadTraversalState:
+    __slots__ = ("active_container_ids", "nodes")
+
+    def __init__(self) -> None:
+        self.active_container_ids: set[int] = set()
+        self.nodes = 0
 
 
 class ProjectionOffsetError(RuntimeError):
@@ -264,17 +305,42 @@ _FRAMEWORK_INDEXES = frozenset(
 
 
 class EventUpcasterRegistry:
-    """Fail-closed registry of current schemas and consecutive upcasters.
+    """Sealed registry of current-schema decoders and consecutive upcasters.
 
     Schema versions start at one.  An upcaster always moves exactly one version
     forward; the registry owns the version counter so upcasters cannot skip a
-    validation boundary.  Legacy payloads without ``SCHEMA_VERSION_FIELD`` are
-    interpreted as version one.
+    validation boundary.  ``seal`` verifies every registered chain before events
+    may be decoded. Legacy payloads without ``SCHEMA_VERSION_FIELD`` are version one.
     """
 
     def __init__(self) -> None:
         self._current_versions: dict[str, int] = {}
+        self._decoders: dict[str, CurrentSchemaDecoder] = {}
         self._upcasters: dict[tuple[str, int], Upcaster] = {}
+        self._sealed = False
+        self._lock = threading.RLock()
+
+    @property
+    def is_sealed(self) -> bool:
+        """Whether registration is closed and every upcaster chain is complete."""
+
+        with self._lock:
+            return self._sealed
+
+    def require_sealed(self) -> None:
+        """Reject use before the registry has validated and sealed its contracts."""
+
+        with self._lock:
+            if not self._sealed:
+                raise UnsealedEventSchemaRegistryError(
+                    "event schema registry must be sealed before projection"
+                )
+
+    def _require_open(self) -> None:
+        if self._sealed:
+            raise EventSchemaRegistrySealedError(
+                "event schema registry is sealed and cannot be mutated"
+            )
 
     @staticmethod
     def _validate_event_type(event_type: str) -> str:
@@ -288,14 +354,25 @@ class EventUpcasterRegistry:
             raise ValueError(f"{field_name} must be a positive integer")
         return version
 
-    def register_event_type(self, event_type: str, *, current_version: int) -> None:
-        """Declare the only schema version this process may project as current."""
+    def register_event_type(
+        self,
+        event_type: str,
+        *,
+        current_version: int,
+        decoder: CurrentSchemaDecoder,
+    ) -> None:
+        """Declare a current version and its mandatory strict payload decoder."""
 
-        event_type = self._validate_event_type(event_type)
-        current_version = self._validate_version(current_version, "current_version")
-        if event_type in self._current_versions:
-            raise ValueError(f"event type is already registered: {event_type}")
-        self._current_versions[event_type] = current_version
+        with self._lock:
+            self._require_open()
+            event_type = self._validate_event_type(event_type)
+            current_version = self._validate_version(current_version, "current_version")
+            if not callable(decoder):
+                raise TypeError("decoder must be callable")
+            if event_type in self._current_versions:
+                raise ValueError(f"event type is already registered: {event_type}")
+            self._current_versions[event_type] = current_version
+            self._decoders[event_type] = decoder
 
     def register_upcaster(
         self,
@@ -306,23 +383,151 @@ class EventUpcasterRegistry:
     ) -> None:
         """Register one deterministic ``N -> N + 1`` payload transformation."""
 
-        event_type = self._validate_event_type(event_type)
-        from_version = self._validate_version(from_version, "from_version")
-        if not callable(upcaster):
-            raise TypeError("upcaster must be callable")
-        current_version = self._current_versions.get(event_type)
-        if current_version is None:
-            raise UnknownEventTypeError(f"unregistered event type: {event_type}")
-        if from_version >= current_version:
-            raise ValueError("from_version must be lower than the current version")
-        key = (event_type, from_version)
-        if key in self._upcasters:
-            raise ValueError(f"upcaster is already registered: {event_type} v{from_version}")
-        self._upcasters[key] = upcaster
+        with self._lock:
+            self._require_open()
+            event_type = self._validate_event_type(event_type)
+            from_version = self._validate_version(from_version, "from_version")
+            if not callable(upcaster):
+                raise TypeError("upcaster must be callable")
+            current_version = self._current_versions.get(event_type)
+            if current_version is None:
+                raise UnknownEventTypeError(f"unregistered event type: {event_type}")
+            if from_version >= current_version:
+                raise ValueError("from_version must be lower than the current version")
+            key = (event_type, from_version)
+            if key in self._upcasters:
+                raise ValueError(f"upcaster is already registered: {event_type} v{from_version}")
+            self._upcasters[key] = upcaster
 
-    @staticmethod
-    def _extract_payload(stored_event: StoredEvent) -> tuple[dict[str, Any], int]:
-        payload = copy.deepcopy(dict(stored_event.event.payload))
+    def seal(self) -> None:
+        """Atomically verify all one-version chains and reject future mutation."""
+
+        with self._lock:
+            if self._sealed:
+                return
+            for event_type, current_version in self._current_versions.items():
+                for version in range(1, current_version):
+                    if (event_type, version) not in self._upcasters:
+                        raise MissingUpcasterError(
+                            "missing consecutive upcaster during registry seal: "
+                            f"{event_type} v{version} -> v{version + 1}"
+                        )
+            self._sealed = True
+
+    @classmethod
+    def _copy_payload_value(
+        cls,
+        value: Any,
+        *,
+        readonly: bool,
+        depth: int,
+        state: _PayloadTraversalState,
+    ) -> Any:
+        if depth > MAX_EVENT_PAYLOAD_DEPTH:
+            raise _PayloadStructureError(f"payload depth exceeds {MAX_EVENT_PAYLOAD_DEPTH}")
+        state.nodes += 1
+        if state.nodes > MAX_EVENT_PAYLOAD_NODES:
+            raise _PayloadStructureError(f"payload node count exceeds {MAX_EVENT_PAYLOAD_NODES}")
+
+        value_type = type(value)
+        if value is None or value_type in (bool, int, str):
+            return value
+        if value_type is float:
+            if not math.isfinite(value):
+                raise _PayloadStructureError("payload numbers must be finite")
+            return value
+
+        if value_type in (dict, _MAPPING_PROXY_TYPE):
+            identity = id(value)
+            if identity in state.active_container_ids:
+                raise _PayloadStructureError("payload containers must not contain cycles")
+            state.active_container_ids.add(identity)
+            try:
+                copied_mapping: dict[str, Any] = {}
+                for key, item in value.items():
+                    if type(key) is not str:
+                        raise _PayloadStructureError("payload mapping keys must be strings")
+                    copied_mapping[key] = cls._copy_payload_value(
+                        item,
+                        readonly=readonly,
+                        depth=depth + 1,
+                        state=state,
+                    )
+            except _PayloadStructureError:
+                raise
+            except Exception as exc:
+                raise _PayloadStructureError("payload mapping traversal failed") from exc
+            finally:
+                state.active_container_ids.discard(identity)
+            if readonly:
+                return MappingProxyType(copied_mapping)
+            return copied_mapping
+
+        if value_type in (list, tuple):
+            identity = id(value)
+            if identity in state.active_container_ids:
+                raise _PayloadStructureError("payload containers must not contain cycles")
+            state.active_container_ids.add(identity)
+            try:
+                copied_items = [
+                    cls._copy_payload_value(
+                        item,
+                        readonly=readonly,
+                        depth=depth + 1,
+                        state=state,
+                    )
+                    for item in value
+                ]
+            except _PayloadStructureError:
+                raise
+            except Exception as exc:
+                raise _PayloadStructureError("payload sequence traversal failed") from exc
+            finally:
+                state.active_container_ids.discard(identity)
+            if readonly or value_type is tuple:
+                return tuple(copied_items)
+            return copied_items
+
+        raise _PayloadStructureError(
+            "payload values must be JSON scalars, dicts, mapping proxies, lists, or tuples; "
+            f"received {value_type.__name__}"
+        )
+
+    @classmethod
+    def _copy_payload_mapping(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        readonly: bool,
+    ) -> Mapping[str, Any]:
+        """Copy one bounded tree of string-keyed built-in JSON-style containers.
+
+        The root is depth zero and counts as one node. Dicts, mapping proxies,
+        lists and tuples are the only containers; cycles and non-string keys fail.
+        """
+
+        copied = cls._copy_payload_value(
+            payload,
+            readonly=readonly,
+            depth=0,
+            state=_PayloadTraversalState(),
+        )
+        if not isinstance(copied, Mapping):  # pragma: no cover - root type is declared
+            raise _PayloadStructureError("event payload root must be a mapping")
+        return copied
+
+    @classmethod
+    def _extract_payload(cls, stored_event: StoredEvent) -> tuple[dict[str, Any], int]:
+        try:
+            copied = cls._copy_payload_mapping(
+                stored_event.event.payload,
+                readonly=False,
+            )
+        except _PayloadStructureError as exc:
+            raise InvalidEventPayloadError(
+                "persisted event payload is structurally invalid"
+            ) from exc
+        payload = dict(copied)
         raw_version = payload.pop(SCHEMA_VERSION_FIELD, 1)
         if isinstance(raw_version, bool) or not isinstance(raw_version, int) or raw_version < 1:
             raise InvalidEventSchemaVersionError(
@@ -330,13 +535,53 @@ class EventUpcasterRegistry:
             )
         return payload, raw_version
 
+    @classmethod
+    def _decode_current_payload(
+        cls,
+        event_type: str,
+        decoder: CurrentSchemaDecoder,
+        payload: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        try:
+            mutable_decoder_input = cls._copy_payload_mapping(payload, readonly=False)
+        except _PayloadStructureError as exc:
+            raise InvalidEventPayloadError(
+                f"current-schema decoder input for {event_type} is structurally invalid"
+            ) from exc
+        decoder_input = MappingProxyType(dict(mutable_decoder_input))
+        try:
+            candidate = decoder(decoder_input)
+        except Exception as exc:
+            raise EventSchemaDecoderError(
+                f"current-schema decoder failed for event type {event_type}"
+            ) from exc
+        if not isinstance(candidate, Mapping):
+            raise InvalidDecoderResultError(
+                f"current-schema decoder for {event_type} must return a mapping"
+            )
+        try:
+            decoded = cls._copy_payload_mapping(candidate, readonly=True)
+        except _PayloadStructureError as exc:
+            raise InvalidDecoderResultError(
+                f"current-schema decoder for {event_type} returned an invalid payload structure"
+            ) from exc
+        if SCHEMA_VERSION_FIELD in decoded:
+            raise InvalidDecoderResultError(
+                f"current-schema decoders must not emit reserved field {SCHEMA_VERSION_FIELD}"
+            )
+        return decoded
+
     def upcast(self, stored_event: StoredEvent) -> UpcastedEvent:
         """Validate and normalize a stored event, rejecting all ambiguous input."""
 
+        self.require_sealed()
         event_type = stored_event.event.event_type
-        current_version = self._current_versions.get(event_type)
-        if current_version is None:
-            raise UnknownEventTypeError(f"unregistered event type: {event_type}")
+        with self._lock:
+            current_version = self._current_versions.get(event_type)
+            if current_version is None:
+                raise UnknownEventTypeError(f"unregistered event type: {event_type}")
+            decoder = self._decoders[event_type]
+            upcasters = self._upcasters
 
         payload, source_version = self._extract_payload(stored_event)
         if source_version > current_version:
@@ -346,26 +591,40 @@ class EventUpcasterRegistry:
 
         version = source_version
         while version < current_version:
-            upcaster = self._upcasters.get((event_type, version))
+            upcaster = upcasters.get((event_type, version))
             if upcaster is None:
                 raise MissingUpcasterError(
                     f"missing consecutive upcaster: {event_type} v{version} -> v{version + 1}"
                 )
-            candidate = upcaster(MappingProxyType(copy.deepcopy(payload)))
+            try:
+                mutable_upcaster_input = self._copy_payload_mapping(payload, readonly=False)
+            except _PayloadStructureError as exc:
+                raise InvalidEventPayloadError(
+                    f"upcaster input for {event_type} v{version} is structurally invalid"
+                ) from exc
+            candidate = upcaster(MappingProxyType(dict(mutable_upcaster_input)))
             if not isinstance(candidate, Mapping):
                 raise InvalidUpcastResultError(
                     f"upcaster {event_type} v{version} must return a mapping"
                 )
-            payload = copy.deepcopy(dict(candidate))
+            try:
+                copied_candidate = self._copy_payload_mapping(candidate, readonly=False)
+            except _PayloadStructureError as exc:
+                raise InvalidUpcastResultError(
+                    f"upcaster {event_type} v{version} returned an invalid payload structure"
+                ) from exc
+            payload = dict(copied_candidate)
             if SCHEMA_VERSION_FIELD in payload:
                 raise InvalidUpcastResultError(
                     f"upcasters must not emit reserved field {SCHEMA_VERSION_FIELD}"
                 )
             version += 1
 
+        decoded_payload = self._decode_current_payload(event_type, decoder, payload)
+
         return UpcastedEvent(
             stored_event=stored_event,
-            payload=MappingProxyType(payload),
+            payload=decoded_payload,
             source_schema_version=source_version,
             schema_version=current_version,
         )
@@ -889,6 +1148,9 @@ class DurableProjector:
         self.owner_id = offset_store._validate_name(owner_id, "owner_id")  # noqa: SLF001
         if not callable(getattr(event_source, "read_all", None)):
             raise TypeError("event_source must provide read_all")
+        if not isinstance(registry, EventUpcasterRegistry):
+            raise TypeError("registry must be an EventUpcasterRegistry")
+        registry.require_sealed()
         if not callable(handler):
             raise TypeError("handler must be callable")
         if lease_seconds <= 0:
