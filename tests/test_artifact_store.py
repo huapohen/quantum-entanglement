@@ -269,6 +269,39 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
             with self.assertRaises(ArtifactIntegrityError):
                 metadata_store.get("tenant-a", "workspace-a", stored.artifact_id)
 
+    def test_read_rejects_persisted_type_coercion_and_noncanonical_time(self):
+        stored = self.store.write(artifact_write(content=b"x"))
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "UPDATE artifact_blobs SET content = ?, byte_size = ? WHERE digest = ?",
+                (7, 1, stored.digest),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(ArtifactIntegrityError) as malformed_blob:
+            self.store.get("tenant-a", "workspace-a", stored.artifact_id)
+        self.assertIsInstance(malformed_blob.exception.__cause__, TypeError)
+
+        time_path = str(Path(self.tempdir.name) / "noncanonical-time.sqlite3")
+        with SQLiteArtifactStore(time_path, clock=lambda: T0) as time_store:
+            stored = time_store.write(artifact_write())
+            connection = sqlite3.connect(time_path)
+            try:
+                connection.execute(
+                    "UPDATE artifact_versions SET created_at = ? WHERE artifact_id = ?",
+                    (T0, stored.artifact_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            with self.assertRaisesRegex(ArtifactIntegrityError, "data contract") as bad_time:
+                time_store.get("tenant-a", "workspace-a", stored.artifact_id)
+            self.assertIsInstance(bad_time.exception.__cause__, ValueError)
+
     def test_limits_and_untrusted_metadata_fail_before_state_change(self):
         limited_path = str(Path(self.tempdir.name) / "limited.sqlite3")
         with SQLiteArtifactStore(

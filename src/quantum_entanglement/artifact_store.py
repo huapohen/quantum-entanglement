@@ -39,6 +39,8 @@ _MAX_METADATA_NODES = 10_000
 _MAX_METADATA_KEY_LENGTH = 512
 _MAX_METADATA_STRING_LENGTH = 65_536
 _MAX_METADATA_INTEGER_BITS = 4_096
+_MAX_SQLITE_INTEGER = 9_223_372_036_854_775_807
+_SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ArtifactConflictError(RuntimeError):
@@ -183,6 +185,30 @@ def _canonical_metadata(metadata: Mapping[str, Any]) -> Tuple[str, Mapping[str, 
 
 def _content_digest(content: bytes) -> str:
     return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def _persisted_integer(
+    value: object,
+    name: str,
+    *,
+    minimum: int = 0,
+) -> int:
+    if type(value) is not int:
+        raise TypeError(f"persisted {name} must be an integer")
+    if not minimum <= value <= _MAX_SQLITE_INTEGER:
+        raise ValueError(f"persisted {name} is outside the supported range")
+    return value
+
+
+def _persisted_text(
+    value: object,
+    name: str,
+    *,
+    max_length: int = _MAX_IDENTIFIER_LENGTH,
+) -> str:
+    if type(value) is not str:
+        raise TypeError(f"persisted {name} must be text")
+    return _required_text(value, name, max_length=max_length)
 
 
 def _request_digest(
@@ -433,61 +459,112 @@ class SQLiteArtifactStore:
     @staticmethod
     def _row_to_artifact(row: sqlite3.Row) -> StoredArtifact:
         try:
-            content = bytes(row["content"])
-            metadata_value = json.loads(row["metadata_json"])
-        except (KeyError, TypeError, ValueError, RecursionError, json.JSONDecodeError) as exc:
+            content_value = row["content"]
+            if type(content_value) is not bytes:
+                raise TypeError("persisted artifact content must be a SQLite BLOB")
+            content = content_value
+            metadata_json = row["metadata_json"]
+            if type(metadata_json) is not str:
+                raise TypeError("persisted artifact metadata_json must be text")
+            metadata_value = json.loads(metadata_json)
+        except (
+            IndexError,
+            KeyError,
+            TypeError,
+            ValueError,
+            RecursionError,
+            json.JSONDecodeError,
+        ) as exc:
             raise ArtifactIntegrityError("artifact row contains malformed data") from exc
         if not isinstance(metadata_value, dict):
             raise ArtifactIntegrityError("artifact metadata is not a JSON object")
         try:
             _validate_json_value(metadata_value)
-            expected_content_digest = _content_digest(content)
-            byte_size = int(row["byte_size"])
-            blob_byte_size = int(row["blob_byte_size"])
-            version = int(row["version"])
-            parent_version = (
-                int(row["parent_version"]) if row["parent_version"] is not None else None
+            artifact_id = _persisted_text(row["artifact_id"], "artifact_id")
+            tenant_id = _persisted_text(row["tenant_id"], "tenant_id")
+            workspace_id = _persisted_text(row["workspace_id"], "workspace_id")
+            session_id = _persisted_text(row["session_id"], "session_id")
+            task_id = _persisted_text(row["task_id"], "task_id")
+            name = _persisted_text(row["name"], "name")
+            media_type = _persisted_text(
+                row["media_type"],
+                "media_type",
+                max_length=_MAX_MEDIA_TYPE_LENGTH,
             )
-            created_at = _normalize_timestamp(row["created_at"], "created_at")
+            created_by = _persisted_text(row["created_by"], "created_by")
+            idempotency_key = _persisted_text(row["idempotency_key"], "idempotency_key")
+            blob_digest = _persisted_text(
+                row["blob_digest"],
+                "blob_digest",
+                max_length=71,
+            )
+            if not blob_digest.startswith("sha256:") or not _SHA256_HEX_PATTERN.fullmatch(
+                blob_digest[7:]
+            ):
+                raise ValueError("persisted blob_digest is not canonical SHA-256")
+            request_digest = _persisted_text(
+                row["request_digest"],
+                "request_digest",
+                max_length=64,
+            )
+            if not _SHA256_HEX_PATTERN.fullmatch(request_digest):
+                raise ValueError("persisted request_digest is not canonical SHA-256")
+            expected_content_digest = _content_digest(content)
+            byte_size = _persisted_integer(row["byte_size"], "byte_size")
+            blob_byte_size = _persisted_integer(row["blob_byte_size"], "blob_byte_size")
+            version = _persisted_integer(row["version"], "version", minimum=1)
+            parent_version = (
+                _persisted_integer(row["parent_version"], "parent_version", minimum=1)
+                if row["parent_version"] is not None
+                else None
+            )
+            raw_created_at = _persisted_text(
+                row["created_at"],
+                "created_at",
+                max_length=32,
+            )
+            created_at = _normalize_timestamp(raw_created_at, "created_at")
+            if raw_created_at != created_at:
+                raise ValueError("persisted created_at is not canonical UTC")
             expected_request_digest = _request_digest(
-                tenant_id=row["tenant_id"],
-                workspace_id=row["workspace_id"],
-                session_id=row["session_id"],
-                task_id=row["task_id"],
-                name=row["name"],
-                media_type=row["media_type"],
-                blob_digest=row["blob_digest"],
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                session_id=session_id,
+                task_id=task_id,
+                name=name,
+                media_type=media_type,
+                blob_digest=blob_digest,
                 byte_size=byte_size,
                 metadata=cast(Mapping[str, Any], metadata_value),
-                created_by=row["created_by"],
+                created_by=created_by,
             )
-        except (KeyError, TypeError, ValueError) as exc:
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
             raise ArtifactIntegrityError("artifact row violates its data contract") from exc
-        if expected_content_digest != row["blob_digest"]:
+        if expected_content_digest != blob_digest:
             raise ArtifactIntegrityError("artifact blob digest verification failed")
         if len(content) != byte_size or len(content) != blob_byte_size:
             raise ArtifactIntegrityError("artifact byte size verification failed")
-        if expected_request_digest != row["request_digest"]:
+        if expected_request_digest != request_digest:
             raise ArtifactIntegrityError("artifact request fingerprint verification failed")
         if version <= 0 or parent_version != (version - 1 if version > 1 else None):
             raise ArtifactIntegrityError("artifact version lineage is invalid")
         return StoredArtifact(
-            artifact_id=row["artifact_id"],
-            tenant_id=row["tenant_id"],
-            workspace_id=row["workspace_id"],
-            session_id=row["session_id"],
-            task_id=row["task_id"],
-            name=row["name"],
+            artifact_id=artifact_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            session_id=session_id,
+            task_id=task_id,
+            name=name,
             version=version,
             parent_version=parent_version,
-            media_type=row["media_type"],
-            digest=row["blob_digest"],
+            media_type=media_type,
+            digest=blob_digest,
             byte_size=byte_size,
             metadata=cast(Mapping[str, Any], metadata_value),
-            created_by=row["created_by"],
+            created_by=created_by,
             created_at=created_at,
-            idempotency_key=row["idempotency_key"],
-            request_digest=row["request_digest"],
+            idempotency_key=idempotency_key,
+            request_digest=request_digest,
             content=content,
         )
 
