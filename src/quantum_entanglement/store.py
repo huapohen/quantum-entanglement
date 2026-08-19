@@ -155,11 +155,17 @@ class SQLiteEventStore:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 yield self._connection
-            except Exception:
-                self._connection.execute("ROLLBACK")
+            except BaseException:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
                 raise
             else:
-                self._connection.execute("COMMIT")
+                try:
+                    self._connection.execute("COMMIT")
+                except BaseException:
+                    if self._connection.in_transaction:
+                        self._connection.execute("ROLLBACK")
+                    raise
 
     @staticmethod
     def _row_to_event(row: sqlite3.Row) -> StoredEvent:
@@ -293,7 +299,10 @@ class SQLiteEventStore:
                 event.idempotency_key,
             ),
         )
-        return StoredEvent(event, sequence, int(cursor.lastrowid)), True
+        global_position = cursor.lastrowid
+        if global_position is None:
+            raise RuntimeError("SQLite did not return an event global position")
+        return StoredEvent(event, sequence, int(global_position)), True
 
     def stream_version(self, stream_id: str) -> int:
         with self._lock:
@@ -505,7 +514,10 @@ class SQLiteEventStore:
                         event.idempotency_key,
                     ),
                 )
-                stored.append(StoredEvent(event, sequence, int(cursor.lastrowid)))
+                global_position = cursor.lastrowid
+                if global_position is None:
+                    raise RuntimeError("SQLite did not return an event global position")
+                stored.append(StoredEvent(event, sequence, int(global_position)))
             return tuple(stored)
 
     def read_stream(self, stream_id: str, after_sequence: int = 0) -> Tuple[StoredEvent, ...]:
