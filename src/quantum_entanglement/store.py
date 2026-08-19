@@ -292,7 +292,12 @@ class SQLiteEventStore:
                 event.event_type,
                 event.actor_id,
                 event.timestamp,
-                json.dumps(dict(event.payload), ensure_ascii=False, sort_keys=True),
+                json.dumps(
+                    dict(event.payload),
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
                 event.correlation_id,
                 event.causation_id,
                 event.idempotency_key,
@@ -383,8 +388,18 @@ class SQLiteEventStore:
                     (
                         message.message_id,
                         message.destination,
-                        json.dumps(dict(message.payload), ensure_ascii=False, sort_keys=True),
-                        json.dumps(dict(message.headers), ensure_ascii=False, sort_keys=True),
+                        json.dumps(
+                            dict(message.payload),
+                            allow_nan=False,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        json.dumps(
+                            dict(message.headers),
+                            allow_nan=False,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
                         message.idempotency_key,
                         stored.event.event_id,
                         stored.global_position,
@@ -461,7 +476,12 @@ class SQLiteEventStore:
                     receipt.received_at,
                     receipt.event_id,
                     receipt.event_global_position,
-                    json.dumps(dict(receipt.result), ensure_ascii=False, sort_keys=True),
+                    json.dumps(
+                        dict(receipt.result),
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
                 ),
             )
             return InboxAppendResult(stored, receipt, False)
@@ -507,7 +527,12 @@ class SQLiteEventStore:
                         event.event_type,
                         event.actor_id,
                         event.timestamp,
-                        json.dumps(dict(event.payload), ensure_ascii=False, sort_keys=True),
+                        json.dumps(
+                            dict(event.payload),
+                            allow_nan=False,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
                         event.correlation_id,
                         event.causation_id,
                         event.idempotency_key,
@@ -885,7 +910,17 @@ class SQLiteEventStore:
                     updated_at = excluded.updated_at
                 WHERE excluded.sequence >= snapshots.sequence
                 """,
-                (stream_id, sequence, json.dumps(state, ensure_ascii=False, sort_keys=True), at),
+                (
+                    stream_id,
+                    sequence,
+                    json.dumps(
+                        state,
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    at,
+                ),
             )
 
     def load_snapshot(self, stream_id: str) -> Optional[Tuple[int, Dict[str, object]]]:
