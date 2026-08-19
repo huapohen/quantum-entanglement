@@ -56,7 +56,9 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.kernel.register_agent(registration("worker", handler))
         plan = WorkflowPlan(
-            "parallel", "并行处理", "user",
+            "parallel",
+            "并行处理",
+            "user",
             (
                 TaskSpec("a", "worker", handoff(), task_id="a"),
                 TaskSpec("b", "worker", handoff(), task_id="b"),
@@ -90,12 +92,12 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.kernel.register_agent(registration("researcher", researcher))
         self.kernel.register_agent(registration("writer", writer))
         plan = WorkflowPlan(
-            "handoff", "交接", "user",
+            "handoff",
+            "交接",
+            "user",
             (
                 TaskSpec("调研", "researcher", handoff(), task_id="research"),
-                TaskSpec(
-                    "写作", "writer", handoff(), task_id="write", depends_on=("research",)
-                ),
+                TaskSpec("写作", "writer", handoff(), task_id="write", depends_on=("research",)),
             ),
         )
 
@@ -107,12 +109,14 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         events = self.kernel.event_store.read_stream("session:handoff")
         for task_id in ("research", "write"):
             context_sequence = next(
-                event.sequence for event in events
+                event.sequence
+                for event in events
                 if event.event.event_type == "context.compiled"
                 and event.event.payload["taskId"] == task_id
             )
             invocation_sequence = next(
-                event.sequence for event in events
+                event.sequence
+                for event in events
                 if event.event.event_type == "task.invocation.started"
                 and event.event.payload["taskId"] == task_id
             )
@@ -128,7 +132,10 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.kernel.register_agent(registration("publisher", publisher))
         task = TaskSpec(
-            "发布", "publisher", handoff(), task_id="publish",
+            "发布",
+            "publisher",
+            handoff(),
+            task_id="publish",
             action=ActionIntent(
                 "publish", "external", risk=RiskLevel.HIGH, external_side_effect=True
             ),
@@ -149,7 +156,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 1)
         self.assertEqual(resumed.needs_you, ())
         status_events = [
-            event.event for event in self.kernel.event_store.read_stream("session:approval")
+            event.event
+            for event in self.kernel.event_store.read_stream("session:approval")
             if event.event.event_type == "task.status.changed"
         ]
         self.assertEqual(
@@ -171,11 +179,16 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.kernel.register_agent(registration("failing", failing))
         self.kernel.register_agent(registration("downstream", downstream))
         plan = WorkflowPlan(
-            "failure", "失败传播", "user",
+            "failure",
+            "失败传播",
+            "user",
             (
                 TaskSpec("上游", "failing", handoff(), task_id="upstream"),
                 TaskSpec(
-                    "下游", "downstream", handoff(), task_id="downstream",
+                    "下游",
+                    "downstream",
+                    handoff(),
+                    task_id="downstream",
                     depends_on=("upstream",),
                 ),
             ),
@@ -197,7 +210,9 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.kernel.register_agent(registration("worker", handler))
         plan = WorkflowPlan(
-            "denied", "禁止操作", "user",
+            "denied",
+            "禁止操作",
+            "user",
             (TaskSpec("x", "worker", handoff(), task_id="x"),),
         )
 
