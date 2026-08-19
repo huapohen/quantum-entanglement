@@ -1,0 +1,155 @@
+# Release evidence
+
+Each promoted version has one immutable evidence record in this directory. Start from the
+template below, replace every placeholder, and commit the completed record with the release
+candidate. A missing, assumed, skipped, or unexplained result is a failed gate.
+
+Use `vMAJOR.MINOR.PATCH.md` as the filename. If a candidate is rejected, retain its evidence
+under `rejected/` with the source commit and rejection reason so later work cannot silently
+reuse the same unproven artifact.
+
+Evidence may contain sanitized commands, versions, counts, timings, digests, and links to
+retained CI artifacts. It must not contain raw credentials, cookies, authorization headers,
+private chat content, customer data, or secret environment values.
+
+## Template
+
+```markdown
+# Release evidence: vX.Y.Z
+
+Decision: `promote | reject | pending`
+
+Evidence captured at: `YYYY-MM-DDTHH:MM:SSZ`
+
+Reviewer: `name or accountable role`
+
+## Source identity
+
+- Repository: `owner/repository`
+- Branch: `main`
+- Source commit: `<full SHA>`
+- Tree SHA: `<full SHA>`
+- Version: `X.Y.Z`
+- Build artifact digests: `<algorithm:digest>`
+- CI run: `<immutable URL>`
+
+## Supported boundary
+
+- Python versions:
+- Operating systems/architectures:
+- Database engines and versions:
+- Deployment topology:
+- Supported protocol/adapter versions:
+- Explicitly unsupported usage:
+
+## Clean build and test environment
+
+- Host/runner image:
+- CPU and memory:
+- Toolchain versions:
+- Dependency lock digest:
+- Environment preparation commands:
+
+## Verification results
+
+| Gate | Exact command or immutable run | Result | Count/metric | Artifact |
+|---|---|---|---|---|
+| Unit tests | | | | |
+| Integration tests | | | | |
+| Fault injection | | | | |
+| Cross-tenant/security | | | | |
+| Protocol contracts | | | | |
+| Static analysis | | | | |
+| Dependency/license scan | | | | |
+| Secret scan | | | | |
+| Package/install smoke | | | | |
+| End-to-end workflow | | | | |
+
+## Migration and compatibility
+
+- Source version/database state:
+- Forward migration command and duration:
+- Schema checksums before/after:
+- Mixed-version compatibility result:
+- Data integrity queries/result:
+- Rollback or restore-and-forward command/result:
+- Breaking API/protocol/configuration changes:
+
+## Backup, restore, and disaster recovery
+
+- Backup command, start/end, size, digest:
+- Restore target and command:
+- Integrity/smoke checks after restore:
+- Pending inbox/outbox/attempt reconciliation result:
+- Revocation and lease freshness result:
+- Measured RPO/RTO:
+
+## Reliability and external-effect safety
+
+- Crash points exercised:
+- Lease takeover/fencing result:
+- Retry/dead-letter result:
+- Duplicate receiver-attempt result:
+- Accepted-but-unconfirmed reconciliation result:
+- Graceful and forced shutdown result:
+- External systems used: `fake only | explicitly authorized list`
+
+## Security
+
+- Threat-model revision:
+- Capability/authorization adversarial result:
+- Cross-tenant property result:
+- SSRF/egress result:
+- Secret-canary scan result:
+- Vulnerability inventory by severity:
+- Security reviewer decision:
+
+## Performance and endurance
+
+- Workload shape and data size:
+- Concurrency and duration:
+- Throughput:
+- Latency p50/p95/p99/max:
+- Queue age and projector lag:
+- CPU, RSS, disk, connection, and model/token cost:
+- Endurance growth/leak result:
+- Capacity limit and overload behavior:
+
+## Deployment and rollback rehearsal
+
+- Install/deploy commands:
+- Readiness/liveness and smoke result:
+- Upgrade command/result:
+- Rollback trigger and exact procedure:
+- Rollback duration and post-checks:
+- Operator runbook revision:
+
+## Known limitations and accepted risks
+
+| ID | Severity | Limitation/risk | Owner | Expiry/version | Mitigation |
+|---|---|---|---|---|---|
+| | | | | | |
+
+## Unresolved issues
+
+- P0: `none | list`
+- P1: `none | list`
+- P2/P3 with owner and target:
+
+## Promotion decision
+
+State which release gates passed, which did not, why the recorded evidence is sufficient,
+and the exact artifact approved for deployment. A promotion requires no unresolved P0/P1.
+```
+
+## Retention and integrity
+
+- Prefer immutable CI URLs and content digests over screenshots alone.
+- Store large logs, SBOMs, profiles, and test reports as retained CI/release artifacts and
+  link them from the evidence file.
+- Record the source and tree SHA before testing; rerun affected gates after any source,
+  dependency, build, migration, or configuration change.
+- Never edit a promoted record to describe a different artifact. Add an amendment that
+  identifies the original record and explains the correction.
+- A remote green check without exact commands, test scope, and artifact identity is not
+  sufficient evidence.
