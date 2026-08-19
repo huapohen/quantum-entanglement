@@ -411,6 +411,67 @@ class OrchestratorKernel:
             raise SessionRecoveryError("workflow plan event envelope is inconsistent")
         return plan
 
+    @staticmethod
+    def _validate_recovered_task_manifest(
+        events: Tuple[StoredEvent, ...],
+        *,
+        plan_event: StoredEvent,
+        plan: WorkflowPlan,
+    ) -> None:
+        task_events = tuple(
+            stored for stored in events if stored.event.event_type == "task.created"
+        )
+        expected_task_ids = tuple(task.task_id for task in plan.tasks)
+        actual_task_ids: list[str] = []
+        expected_by_id = {task.task_id: task for task in plan.tasks}
+        for stored in task_events:
+            payload = stored.event.payload
+            if type(payload) is not dict or type(payload.get("taskId")) is not str:
+                raise SessionRecoveryError("task creation payload is invalid")
+            task_id = payload["taskId"]
+            task = expected_by_id.get(task_id)
+            if task is None:
+                raise SessionRecoveryError("task creation event references an unknown task")
+            try:
+                actual_json = json.dumps(
+                    payload,
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                expected_json = json.dumps(
+                    task.to_dict(),
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            except (OverflowError, RecursionError, TypeError, ValueError) as exc:
+                raise SessionRecoveryError("task creation payload is invalid") from exc
+            if actual_json != expected_json:
+                raise SessionRecoveryError("task creation payload is not canonical")
+
+            event = stored.event
+            if (
+                event.actor_id != plan.initiated_by
+                or event.idempotency_key != f"task-created:{task_id}"
+                or event.correlation_id != (plan.correlation_id or plan.plan_id)
+                or event.causation_id is not None
+            ):
+                raise SessionRecoveryError("task creation event envelope is inconsistent")
+            actual_task_ids.append(task_id)
+
+        if tuple(actual_task_ids) != expected_task_ids:
+            raise SessionRecoveryError("task creation events do not exactly match the plan")
+        if task_events[0].sequence <= plan_event.sequence:
+            raise SessionRecoveryError("task creation events precede the workflow plan")
+        transition_sequences = tuple(
+            stored.sequence for stored in events if stored.event.event_type == "task.status.changed"
+        )
+        if transition_sequences and task_events[-1].sequence >= transition_sequences[0]:
+            raise SessionRecoveryError("task creation events overlap task transition history")
+
     def _recover_session(self, requested_plan: WorkflowPlan) -> None:
         """Rebuild an active workflow projection without replaying side effects."""
 
@@ -427,6 +488,11 @@ class OrchestratorKernel:
         if created is None:
             return
         stored_plan = self._decode_recovered_plan(created)
+        self._validate_recovered_task_manifest(
+            events,
+            plan_event=created,
+            plan=stored_plan,
+        )
         if stored_plan.plan_id != requested_plan.plan_id:
             raise ValueError(
                 "stored workflow plan %s does not match requested plan %s"

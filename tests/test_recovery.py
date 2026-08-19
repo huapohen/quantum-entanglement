@@ -519,6 +519,121 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("plan-duplicate", duplicate._plans)
         duplicate.event_store.close()
 
+    async def test_session_recovery_requires_an_exact_task_creation_manifest(self):
+        cases = (
+            ("missing", "exactly match"),
+            ("payload-coercion", "not canonical"),
+            ("envelope", "event envelope"),
+            ("unknown", "unknown task"),
+            ("overlap", "overlap task transition"),
+        )
+
+        async def handler(invocation):
+            return AgentResult("done")
+
+        for index, (label, message) in enumerate(cases):
+            with self.subTest(label=label):
+                path = str(Path(self.tempdir.name) / f"task-manifest-{index}.sqlite3")
+                session_id = f"task-manifest-{index}"
+                stream_id = f"session:{session_id}"
+                plan = WorkflowPlan(
+                    session_id,
+                    "任务清单",
+                    "user",
+                    (TaskSpec("task", "worker", handoff(), task_id="task"),),
+                    plan_id=f"plan-task-manifest-{index}",
+                )
+                first = OrchestratorKernel(event_store=SQLiteEventStore(path))
+                first.register_agent(registration("worker", handler))
+                self.assertTrue((await first.run(plan)).completed)
+                connection = first.event_store._connection
+                task_row = connection.execute(
+                    """
+                    SELECT sequence, global_position, payload_json
+                    FROM events
+                    WHERE stream_id = ? AND event_type = 'task.created'
+                    """,
+                    (stream_id,),
+                ).fetchone()
+                self.assertIsNotNone(task_row)
+
+                if label == "missing":
+                    connection.execute(
+                        "DELETE FROM events WHERE global_position = ?",
+                        (task_row["global_position"],),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE events SET sequence = sequence + 1000
+                        WHERE stream_id = ? AND sequence > ?
+                        """,
+                        (stream_id, task_row["sequence"]),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE events SET sequence = sequence - 1001
+                        WHERE stream_id = ? AND sequence > ?
+                        """,
+                        (stream_id, task_row["sequence"] + 1000),
+                    )
+                elif label == "payload-coercion":
+                    payload = json.loads(task_row["payload_json"])
+                    payload["priority"] = True
+                    connection.execute(
+                        "UPDATE events SET payload_json = ? WHERE global_position = ?",
+                        (
+                            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                            task_row["global_position"],
+                        ),
+                    )
+                elif label == "envelope":
+                    connection.execute(
+                        "UPDATE events SET actor_id = 'other' WHERE global_position = ?",
+                        (task_row["global_position"],),
+                    )
+                elif label == "unknown":
+                    payload = json.loads(task_row["payload_json"])
+                    payload["taskId"] = "unknown"
+                    connection.execute(
+                        "UPDATE events SET payload_json = ? WHERE global_position = ?",
+                        (
+                            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                            task_row["global_position"],
+                        ),
+                    )
+                else:
+                    transition_row = connection.execute(
+                        """
+                        SELECT sequence, global_position
+                        FROM events
+                        WHERE stream_id = ? AND event_type = 'task.status.changed'
+                        ORDER BY sequence LIMIT 1
+                        """,
+                        (stream_id,),
+                    ).fetchone()
+                    self.assertIsNotNone(transition_row)
+                    connection.execute(
+                        "UPDATE events SET sequence = 1000 WHERE global_position = ?",
+                        (task_row["global_position"],),
+                    )
+                    connection.execute(
+                        "UPDATE events SET sequence = ? WHERE global_position = ?",
+                        (task_row["sequence"], transition_row["global_position"]),
+                    )
+                    connection.execute(
+                        "UPDATE events SET sequence = ? WHERE global_position = ?",
+                        (transition_row["sequence"], task_row["global_position"]),
+                    )
+                first.event_store.close()
+
+                candidate = OrchestratorKernel(event_store=SQLiteEventStore(path))
+                candidate.register_agent(registration("worker", handler))
+                with self.assertRaisesRegex(SessionRecoveryError, message):
+                    await candidate.run(plan)
+                self.assertNotIn(session_id, candidate._plans)
+                self.assertNotIn(session_id, candidate._graphs)
+                candidate.event_store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
