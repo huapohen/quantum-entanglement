@@ -652,9 +652,10 @@ class SQLiteInvocationAttemptStore:
         exhausted = []
         reason = "lease expired before terminal acknowledgement"
         for row in rows:
-            job_id = row["invocation_id"]
-            epoch = int(row["lease_epoch"])
-            attempt_number = int(row["attempts_started"])
+            job = self._row_to_job(row)
+            job_id = job.invocation_id
+            epoch = job.lease_epoch
+            attempt_number = job.attempts_started
             attempt_update = connection.execute(
                 """
                 UPDATE invocation_attempts
@@ -666,7 +667,7 @@ class SQLiteInvocationAttemptStore:
             )
             if attempt_update.rowcount != 1:
                 raise RuntimeError("running invocation has no matching running attempt")
-            if attempt_number >= int(row["max_attempts"]):
+            if attempt_number >= job.max_attempts:
                 update = connection.execute(
                     """
                     UPDATE invocation_jobs
@@ -747,10 +748,13 @@ class SQLiteInvocationAttemptStore:
             ).fetchone()
             if row is None:
                 return None
-            attempt_number = int(row["attempts_started"]) + 1
-            if attempt_number > int(row["max_attempts"]):
+            job = self._row_to_job(row)
+            attempt_number = job.attempts_started + 1
+            if attempt_number > job.max_attempts:
                 raise RuntimeError("queued invocation exceeded max_attempts invariant")
-            epoch = int(row["lease_epoch"]) + 1
+            if job.lease_epoch >= _MAX_SQLITE_INTEGER:
+                raise InvocationIntegrityError("invocation lease epoch is exhausted")
+            epoch = job.lease_epoch + 1
             attempt_id = new_id("attempt")
             lease_token = secrets.token_urlsafe(32)
             token_digest = _lease_token_digest(lease_token)
@@ -771,9 +775,9 @@ class SQLiteInvocationAttemptStore:
                     deadline,
                     normalized_now,
                     normalized_now,
-                    row["invocation_id"],
-                    int(row["attempts_started"]),
-                    int(row["lease_epoch"]),
+                    job.invocation_id,
+                    job.attempts_started,
+                    job.lease_epoch,
                 ),
             )
             if update.rowcount != 1:
@@ -788,7 +792,7 @@ class SQLiteInvocationAttemptStore:
                 """,
                 (
                     attempt_id,
-                    row["invocation_id"],
+                    job.invocation_id,
                     attempt_number,
                     epoch,
                     worker_id,
@@ -799,16 +803,16 @@ class SQLiteInvocationAttemptStore:
                 ),
             )
             return InvocationLease(
-                invocation_id=row["invocation_id"],
-                session_id=row["session_id"],
-                plan_id=row["plan_id"],
-                task_id=row["task_id"],
-                agent_id=row["agent_id"],
-                idempotency_key=row["idempotency_key"],
-                payload_digest=row["payload_digest"],
+                invocation_id=job.invocation_id,
+                session_id=job.session_id,
+                plan_id=job.plan_id,
+                task_id=job.task_id,
+                agent_id=job.agent_id,
+                idempotency_key=job.idempotency_key,
+                payload_digest=job.payload_digest,
                 attempt_id=attempt_id,
                 attempt_number=attempt_number,
-                max_attempts=int(row["max_attempts"]),
+                max_attempts=job.max_attempts,
                 lease_epoch=epoch,
                 worker_id=worker_id,
                 lease_token=lease_token,
@@ -845,12 +849,12 @@ class SQLiteInvocationAttemptStore:
             lease_seconds=lease_seconds,
         )
 
-    @staticmethod
     def _active_owned_row(
+        self,
         connection: sqlite3.Connection,
         lease: InvocationLease,
         now: str,
-    ) -> Optional[sqlite3.Row]:
+    ) -> Optional[InvocationJob]:
         row = connection.execute(
             """
             SELECT * FROM invocation_jobs
@@ -868,7 +872,7 @@ class SQLiteInvocationAttemptStore:
         ).fetchone()
         if row is not None and not isinstance(row, sqlite3.Row):
             raise TypeError("invocation store connection must return sqlite3.Row values")
-        return row
+        return None if row is None else self._row_to_job(row)
 
     def heartbeat(
         self,
@@ -881,10 +885,12 @@ class SQLiteInvocationAttemptStore:
         with self._transaction() as connection:
             normalized_now = self._now()
             proposed_deadline = _lease_deadline(normalized_now, lease_seconds)
-            row = self._active_owned_row(connection, lease, normalized_now)
-            if row is None:
+            job = self._active_owned_row(connection, lease, normalized_now)
+            if job is None:
                 return False
-            deadline = max(row["lease_expires_at"], proposed_deadline)
+            if job.lease_expires_at is None:  # protected by strict running-row decoding.
+                raise InvocationIntegrityError("running invocation has no lease deadline")
+            deadline = max(job.lease_expires_at, proposed_deadline)
             update = connection.execute(
                 """
                 UPDATE invocation_jobs
@@ -937,8 +943,8 @@ class SQLiteInvocationAttemptStore:
             _required(result_ref, "result_ref")
         with self._transaction() as connection:
             normalized_now = self._now()
-            row = self._active_owned_row(connection, lease, normalized_now)
-            if row is None:
+            job = self._active_owned_row(connection, lease, normalized_now)
+            if job is None:
                 return False
             update = connection.execute(
                 """
@@ -996,8 +1002,8 @@ class SQLiteInvocationAttemptStore:
             normalized_now = self._now()
             normalized_retry = _normalize_timestamp(retry_at or normalized_now, "retry_at")
             normalized_retry = max(normalized_now, normalized_retry)
-            row = self._active_owned_row(connection, lease, normalized_now)
-            if row is None:
+            job = self._active_owned_row(connection, lease, normalized_now)
+            if job is None:
                 return False
             attempt_update = connection.execute(
                 """
@@ -1016,7 +1022,7 @@ class SQLiteInvocationAttemptStore:
             )
             if attempt_update.rowcount != 1:
                 raise RuntimeError("owned invocation has no matching running attempt")
-            if int(row["attempts_started"]) >= int(row["max_attempts"]):
+            if job.attempts_started >= job.max_attempts:
                 update = connection.execute(
                     """
                     UPDATE invocation_jobs

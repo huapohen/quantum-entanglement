@@ -453,6 +453,109 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         ):
             self.store.attempts("invocation-1")
 
+    def test_mutations_reject_corrupt_job_scalars_without_state_change(self):
+        self.store.enqueue(job_spec())
+        self.store._connection.execute(
+            "UPDATE invocation_jobs SET lease_epoch = ? WHERE invocation_id = ?",
+            (0.5, "invocation-1"),
+        )
+        before = self.store._connection.execute(
+            "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+            ("invocation-1",),
+        ).fetchone()
+
+        with self.assertRaisesRegex(
+            InvocationIntegrityError,
+            "persisted invocation job is malformed",
+        ):
+            self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        after = self.store._connection.execute(
+            "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+            ("invocation-1",),
+        ).fetchone()
+        self.assertEqual(tuple(after), tuple(before))
+        self.assertEqual(
+            self.store._connection.execute("SELECT COUNT(*) FROM invocation_attempts").fetchone()[
+                0
+            ],
+            0,
+        )
+
+    def test_active_lease_mutations_validate_the_complete_owned_row(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.store._connection.execute(
+            "UPDATE invocation_jobs SET priority = ? WHERE invocation_id = ?",
+            (50.5, "invocation-1"),
+        )
+        before = self.store._connection.execute(
+            "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+            ("invocation-1",),
+        ).fetchone()
+
+        operations = (
+            lambda: self.store.heartbeat(lease, lease_seconds=10),
+            lambda: self.store.complete(lease),
+            lambda: self.store.fail(lease, "must not persist"),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(InvocationIntegrityError):
+                    operation()
+
+        after = self.store._connection.execute(
+            "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+            ("invocation-1",),
+        ).fetchone()
+        self.assertEqual(tuple(after), tuple(before))
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT status FROM invocation_attempts WHERE invocation_id = ?",
+                ("invocation-1",),
+            ).fetchone()[0],
+            AttemptStatus.RUNNING.value,
+        )
+
+    def test_expiry_recovery_validates_rows_before_changing_attempt_state(self):
+        self.store.enqueue(job_spec())
+        self.store.claim("invocation-1", "worker", lease_seconds=1)
+        self.clock.set(timestamp(1))
+        self.store._connection.execute(
+            "UPDATE invocation_jobs SET max_attempts = ? WHERE invocation_id = ?",
+            (3.5, "invocation-1"),
+        )
+        before_job = tuple(
+            self.store._connection.execute(
+                "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+                ("invocation-1",),
+            ).fetchone()
+        )
+        before_attempt = tuple(
+            self.store._connection.execute(
+                "SELECT * FROM invocation_attempts WHERE invocation_id = ?",
+                ("invocation-1",),
+            ).fetchone()
+        )
+
+        with self.assertRaises(InvocationIntegrityError):
+            self.store.recover_expired()
+
+        after_job = tuple(
+            self.store._connection.execute(
+                "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+                ("invocation-1",),
+            ).fetchone()
+        )
+        after_attempt = tuple(
+            self.store._connection.execute(
+                "SELECT * FROM invocation_attempts WHERE invocation_id = ?",
+                ("invocation-1",),
+            ).fetchone()
+        )
+        self.assertEqual(after_job, before_job)
+        self.assertEqual(after_attempt, before_attempt)
+
 
 if __name__ == "__main__":
     unittest.main()
