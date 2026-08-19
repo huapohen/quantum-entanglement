@@ -24,6 +24,9 @@ from quantum_entanglement.backup import (
     restore_sqlite_backup,
     verify_sqlite_backup,
 )
+from quantum_entanglement.delivery import OutboxMessage, OutboxStatus
+from quantum_entanglement.events import DomainEvent
+from quantum_entanglement.store import SQLiteEventStore
 
 T0 = "2026-08-20T00:00:00Z"
 
@@ -504,9 +507,90 @@ class SQLiteBackupTests(unittest.TestCase):
         )
 
         self.assertEqual(restored, created)
+        self.assertEqual(destination.read_bytes(), backup.read_bytes())
         self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
         with SQLiteInvocationAttemptStore(str(destination), clock=lambda: T0) as attempts:
             self.assertIsNotNone(attempts.get("invocation-1"))
+        with SQLiteArtifactStore(str(destination), clock=lambda: T0) as artifacts:
+            item = artifacts.get("tenant-1", "workspace-1", "artifact-1")
+            self.assertIsNotNone(item)
+            self.assertEqual(item.content, b"# Result\n")
+
+    def test_restore_rehearses_outbox_ambiguity_artifact_and_attempt_state(self):
+        events = SQLiteEventStore(str(self.source), clock=lambda: T0)
+        try:
+            _stored_event, stored_messages = events.append_with_outbox(
+                DomainEvent(
+                    stream_id="session:restore-rehearsal",
+                    event_type="task.dispatch.requested",
+                    payload={"taskId": "task-restore"},
+                    actor_id="orchestrator",
+                    timestamp=T0,
+                    idempotency_key="event:restore-rehearsal",
+                ),
+                (
+                    OutboxMessage(
+                        destination="fake-agent-runtime",
+                        payload={"taskId": "task-restore"},
+                        headers={"traceparent": "trace-restore"},
+                        message_id="message-restore",
+                        idempotency_key="outbox:restore-rehearsal",
+                        available_at=T0,
+                        created_at=T0,
+                    ),
+                ),
+                expected_version=0,
+            )
+            self.assertEqual(len(stored_messages), 1)
+            claimed = events.claim_outbox("publisher-restore", limit=1, lease_seconds=60)
+            self.assertEqual(len(claimed), 1)
+            lease_token = claimed[0].lease_token
+            if lease_token is None:
+                self.fail("claimed outbox row has no lease token")
+            self.assertTrue(
+                events.mark_outbox_ambiguous(
+                    "message-restore",
+                    lease_token,
+                    "callback_timeout",
+                    marked_at=T0,
+                )
+            )
+            invocation_lease = self.attempts.claim(
+                "invocation-1",
+                "worker-restore",
+                lease_seconds=60,
+            )
+            self.assertIsNotNone(invocation_lease)
+
+            backup, manifest_path, created = self.create_backup()
+        finally:
+            events.close()
+
+        destination = self.root / "restore-all" / "state.sqlite3"
+        restored = restore_sqlite_backup(
+            backup,
+            destination,
+            manifest_path=manifest_path,
+        )
+
+        self.assertEqual(restored, created)
+        self.assertEqual(destination.read_bytes(), backup.read_bytes())
+        self.assertEqual(restored.table_counts["outbox"], 1)
+        self.assertEqual(restored.table_counts["outbox_ambiguities"], 1)
+        self.assertEqual(restored.table_counts["invocation_attempts"], 1)
+        self.assertEqual(restored.table_counts["artifact_versions"], 1)
+        with SQLiteEventStore(str(destination), clock=lambda: T0) as restored_events:
+            self.assertEqual(len(restored_events.read_stream("session:restore-rehearsal")), 1)
+            outbox = restored_events.get_outbox("message-restore")
+            self.assertIsNotNone(outbox)
+            self.assertEqual(outbox.status, OutboxStatus.IN_FLIGHT)
+            ambiguities = restored_events.read_outbox_ambiguities()
+            self.assertEqual(len(ambiguities), 1)
+            self.assertEqual(ambiguities[0].reason_code, "callback_timeout")
+        with SQLiteInvocationAttemptStore(str(destination), clock=lambda: T0) as attempts:
+            job = attempts.get("invocation-1")
+            self.assertIsNotNone(job)
+            self.assertEqual(len(attempts.attempts("invocation-1")), 1)
         with SQLiteArtifactStore(str(destination), clock=lambda: T0) as artifacts:
             item = artifacts.get("tenant-1", "workspace-1", "artifact-1")
             self.assertIsNotNone(item)
@@ -542,6 +626,228 @@ class SQLiteBackupTests(unittest.TestCase):
                 )
 
         self.assertFalse(destination.exists())
+
+    def test_restore_rejects_backup_replacement_after_verification(self):
+        backup, manifest_path, _created = self.create_backup()
+        destination = self.root / "restore-backup-race.sqlite3"
+        original_backup = self.root / "original-restore-backup.sqlite3"
+        real_verify = backup_module.verify_sqlite_backup
+
+        def replace_backup_after_verification(*args, **kwargs):
+            verified = real_verify(*args, **kwargs)
+            backup.rename(original_backup)
+            backup.write_bytes(b"operator replacement")
+            return verified
+
+        with patch(
+            "quantum_entanglement.backup.verify_sqlite_backup",
+            side_effect=replace_backup_after_verification,
+        ):
+            with self.assertRaisesRegex(BackupIntegrityError, "backup path changed"):
+                restore_sqlite_backup(
+                    backup,
+                    destination,
+                    manifest_path=manifest_path,
+                )
+
+        self.assertEqual(backup.read_bytes(), b"operator replacement")
+        self.assertFalse(destination.exists())
+
+    def test_restore_rejects_manifest_replacement_after_verification(self):
+        backup, manifest_path, _created = self.create_backup()
+        destination = self.root / "restore-manifest-race.sqlite3"
+        original_manifest = self.root / "original-restore.manifest.json"
+        real_verify = backup_module.verify_sqlite_backup
+
+        def replace_manifest_after_verification(*args, **kwargs):
+            verified = real_verify(*args, **kwargs)
+            manifest_path.rename(original_manifest)
+            manifest_path.write_text("{}", encoding="utf-8")
+            return verified
+
+        with patch(
+            "quantum_entanglement.backup.verify_sqlite_backup",
+            side_effect=replace_manifest_after_verification,
+        ):
+            with self.assertRaisesRegex(BackupIntegrityError, "manifest path changed"):
+                restore_sqlite_backup(
+                    backup,
+                    destination,
+                    manifest_path=manifest_path,
+                )
+
+        self.assertEqual(manifest_path.read_text(encoding="utf-8"), "{}")
+        self.assertFalse(destination.exists())
+
+    def test_restore_destination_race_preserves_operator_file(self):
+        backup, manifest_path, _created = self.create_backup()
+        destination = self.root / "restore-destination-race.sqlite3"
+        real_copy_fd = backup_module._copy_fd
+
+        def create_destination_after_copy(source_descriptor, destination_descriptor):
+            result = real_copy_fd(source_descriptor, destination_descriptor)
+            destination.write_bytes(b"operator data")
+            return result
+
+        with patch(
+            "quantum_entanglement.backup._copy_fd",
+            side_effect=create_destination_after_copy,
+        ):
+            with self.assertRaises(BackupExistsError):
+                restore_sqlite_backup(
+                    backup,
+                    destination,
+                    manifest_path=manifest_path,
+                )
+
+        self.assertEqual(destination.read_bytes(), b"operator data")
+
+    def test_restore_cleanup_never_unlinks_replacement_after_publication(self):
+        backup, manifest_path, _created = self.create_backup()
+        destination = self.root / "restore-published-race.sqlite3"
+        real_link = os.link
+
+        def replace_destination_after_link(source, target, **kwargs):
+            result = real_link(source, target, **kwargs)
+            destination.unlink()
+            destination.write_bytes(b"operator replacement")
+            return result
+
+        with patch(
+            "quantum_entanglement.backup.os.link",
+            side_effect=replace_destination_after_link,
+        ):
+            with self.assertRaisesRegex(
+                BackupIntegrityError,
+                "restore destination path changed",
+            ):
+                restore_sqlite_backup(
+                    backup,
+                    destination,
+                    manifest_path=manifest_path,
+                )
+
+        self.assertEqual(destination.read_bytes(), b"operator replacement")
+
+    def test_restore_cleanup_never_unlinks_replaced_temporary_file(self):
+        backup, manifest_path, _created = self.create_backup()
+        destination = self.root / "restore-temp-race" / "state.sqlite3"
+        real_copy_fd = backup_module._copy_fd
+        replacement_temp = None
+
+        def replace_temporary_file_after_copy(source_descriptor, destination_descriptor):
+            nonlocal replacement_temp
+            result = real_copy_fd(source_descriptor, destination_descriptor)
+            candidates = tuple(destination.parent.glob(f".{destination.name}.*.restore-partial"))
+            self.assertEqual(len(candidates), 1)
+            replacement_temp = candidates[0]
+            replacement_temp.unlink()
+            replacement_temp.write_bytes(b"operator temporary file")
+            return result
+
+        with patch(
+            "quantum_entanglement.backup._copy_fd",
+            side_effect=replace_temporary_file_after_copy,
+        ):
+            with self.assertRaisesRegex(BackupIntegrityError, "temporary file path changed"):
+                restore_sqlite_backup(
+                    backup,
+                    destination,
+                    manifest_path=manifest_path,
+                )
+
+        self.assertIsNotNone(replacement_temp)
+        self.assertEqual(replacement_temp.read_bytes(), b"operator temporary file")
+        self.assertFalse(destination.exists())
+
+    def test_restore_detects_backup_in_place_change_during_copy(self):
+        backup, manifest_path, _created = self.create_backup()
+        destination = self.root / "restore-in-place-race.sqlite3"
+        real_copy_fd = backup_module._copy_fd
+
+        def mutate_backup_after_copy(source_descriptor, destination_descriptor):
+            result = real_copy_fd(source_descriptor, destination_descriptor)
+            with backup.open("ab") as handle:
+                handle.write(b"in-place mutation")
+            return result
+
+        with patch(
+            "quantum_entanglement.backup._copy_fd",
+            side_effect=mutate_backup_after_copy,
+        ):
+            with self.assertRaisesRegex(BackupIntegrityError, "backup changed"):
+                restore_sqlite_backup(
+                    backup,
+                    destination,
+                    manifest_path=manifest_path,
+                )
+
+        self.assertFalse(destination.exists())
+
+    def test_restore_detects_manifest_in_place_change_during_copy(self):
+        backup, manifest_path, _created = self.create_backup()
+        destination = self.root / "restore-manifest-in-place-race.sqlite3"
+        real_copy_fd = backup_module._copy_fd
+
+        def mutate_manifest_after_copy(source_descriptor, destination_descriptor):
+            result = real_copy_fd(source_descriptor, destination_descriptor)
+            with manifest_path.open("ab") as handle:
+                handle.write(b"in-place mutation")
+            return result
+
+        with patch(
+            "quantum_entanglement.backup._copy_fd",
+            side_effect=mutate_manifest_after_copy,
+        ):
+            with self.assertRaisesRegex(BackupIntegrityError, "manifest changed"):
+                restore_sqlite_backup(
+                    backup,
+                    destination,
+                    manifest_path=manifest_path,
+                )
+
+        self.assertFalse(destination.exists())
+
+    def test_restore_detects_destination_parent_replacement_during_copy(self):
+        backup, manifest_path, _created = self.create_backup()
+        destination = self.root / "restore-parent-race" / "state.sqlite3"
+        destination_parent = destination.parent
+        original_parent = self.root / "original-restore-parent"
+        real_copy_fd = backup_module._copy_fd
+
+        def replace_destination_parent_after_copy(source_descriptor, destination_descriptor):
+            result = real_copy_fd(source_descriptor, destination_descriptor)
+            destination_parent.rename(original_parent)
+            destination_parent.mkdir()
+            return result
+
+        with patch(
+            "quantum_entanglement.backup._copy_fd",
+            side_effect=replace_destination_parent_after_copy,
+        ):
+            with self.assertRaisesRegex(BackupError, "restore destination directory changed"):
+                restore_sqlite_backup(
+                    backup,
+                    destination,
+                    manifest_path=manifest_path,
+                )
+
+        self.assertFalse(destination.exists())
+        self.assertEqual(tuple(original_parent.iterdir()), ())
+
+    def test_restore_rejects_symlink_destination_parent(self):
+        backup, manifest_path, _created = self.create_backup()
+        real_parent = self.root / "real-restore-parent"
+        real_parent.mkdir()
+        parent_link = self.root / "restore-parent-link"
+        parent_link.symlink_to(real_parent, target_is_directory=True)
+
+        with self.assertRaisesRegex(BackupError, "directory must not be a symbolic link"):
+            restore_sqlite_backup(
+                backup,
+                parent_link / "state.sqlite3",
+                manifest_path=manifest_path,
+            )
 
 
 if __name__ == "__main__":

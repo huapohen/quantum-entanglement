@@ -9,7 +9,6 @@ import os
 import re
 import sqlite3
 import stat
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -118,11 +117,6 @@ def _sha256_fd(descriptor: int) -> str:
     return digest.hexdigest()
 
 
-def _sha256_file(path: Path) -> str:
-    with path.open("rb") as handle:
-        return _sha256_fd(handle.fileno())
-
-
 def _read_fd_limited(descriptor: int, limit: int) -> bytes:
     os.lseek(descriptor, 0, os.SEEK_SET)
     chunks = []
@@ -143,6 +137,22 @@ def _write_all(descriptor: int, value: bytes) -> None:
         if written <= 0:
             raise OSError("write returned no progress")
         view = view[written:]
+
+
+def _copy_fd(source_descriptor: int, destination_descriptor: int) -> Tuple[int, str]:
+    os.lseek(source_descriptor, 0, os.SEEK_SET)
+    os.lseek(destination_descriptor, 0, os.SEEK_SET)
+    os.ftruncate(destination_descriptor, 0)
+    digest = hashlib.sha256()
+    byte_size = 0
+    while True:
+        block = os.read(source_descriptor, 1024 * 1024)
+        if not block:
+            break
+        _write_all(destination_descriptor, block)
+        digest.update(block)
+        byte_size += len(block)
+    return byte_size, digest.hexdigest()
 
 
 def _read_only_connection(path: Path) -> sqlite3.Connection:
@@ -579,20 +589,15 @@ def _unlink_owned_entry(
         return False
     if not stat.S_ISREG(current_stat.st_mode) or not identity.matches(current_stat):
         return False
-    os.unlink(filename, dir_fd=directory_descriptor)
+    try:
+        os.unlink(filename, dir_fd=directory_descriptor)
+    except FileNotFoundError:
+        return False
     return True
 
 
 def _fsync_directory_fd(descriptor: int) -> None:
     os.fsync(descriptor)
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(str(path), os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def create_sqlite_backup(
@@ -971,61 +976,244 @@ def restore_sqlite_backup(
         Path(manifest_path) if manifest_path is not None else default_manifest_path(backup)
     )
     destination = Path(destination_path)
-    if destination.exists() or destination.is_symlink():
-        raise BackupExistsError(f"restore destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    resolved_destination = destination.resolve()
-    if resolved_destination in {backup.resolve(), manifest_path_value.resolve()}:
-        raise BackupError("restore destination must differ from backup and manifest")
-    verified = verify_sqlite_backup(backup, manifest_path=manifest_path_value)
-
-    destination_fd, destination_temp_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.",
-        suffix=".restore-partial",
-        dir=destination.parent,
-    )
-    destination_temp = Path(destination_temp_name)
+    backup_directory_fd = -1
+    manifest_directory_fd = -1
+    destination_directory_fd = -1
+    backup_fd = -1
+    manifest_fd = -1
+    destination_fd = -1
+    destination_temp_name = ""
+    destination_identity: Optional[_FileIdentity] = None
     destination_linked = False
     try:
+        backup_directory_fd, backup_directory_identity = _open_directory(
+            backup.parent,
+            "backup",
+            integrity_error=True,
+        )
+        manifest_directory_fd, manifest_directory_identity = _open_directory(
+            manifest_path_value.parent,
+            "manifest",
+            integrity_error=True,
+        )
+        destination_directory_fd, destination_directory_identity = _open_directory(
+            destination.parent,
+            "restore destination",
+        )
+        backup_fd, backup_identity = _open_regular_readonly_at(
+            backup_directory_fd,
+            backup.name,
+            "backup",
+        )
+        manifest_fd, manifest_identity = _open_regular_readonly_at(
+            manifest_directory_fd,
+            manifest_path_value.name,
+            "manifest",
+        )
+        if backup_identity == manifest_identity:
+            raise BackupIntegrityError("backup and manifest files must be distinct")
+        _ensure_entry_absent(
+            destination_directory_fd,
+            destination.name,
+            "restore destination",
+        )
+
+        verified = verify_sqlite_backup(backup, manifest_path=manifest_path_value)
+        _require_entry_identity(
+            backup_directory_fd,
+            backup.name,
+            backup_identity,
+            "backup",
+        )
+        _require_entry_identity(
+            manifest_directory_fd,
+            manifest_path_value.name,
+            manifest_identity,
+            "manifest",
+        )
+        _require_directory_identity(
+            backup.parent,
+            backup_directory_identity,
+            "backup",
+            integrity_error=True,
+        )
+        _require_directory_identity(
+            manifest_path_value.parent,
+            manifest_directory_identity,
+            "manifest",
+            integrity_error=True,
+        )
+
+        try:
+            manifest_bytes = _read_fd_limited(manifest_fd, _MAX_MANIFEST_BYTES + 1)
+            if len(manifest_bytes) > _MAX_MANIFEST_BYTES:
+                raise ValueError("backup manifest exceeds the format size limit")
+            raw_manifest = json.loads(manifest_bytes.decode("utf-8"))
+            stable_manifest = BackupManifest.from_dict(cast(Dict[str, Any], raw_manifest))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise BackupIntegrityError("backup manifest is malformed") from exc
+        if stable_manifest != verified:
+            raise BackupIntegrityError("manifest changed before restore acquired its stable copy")
+        if int(os.fstat(backup_fd).st_size) != stable_manifest.byte_size:
+            raise BackupIntegrityError("backup byte size differs from manifest")
+        if _sha256_fd(backup_fd) != stable_manifest.database_sha256:
+            raise BackupIntegrityError("backup changed before restore acquired its stable copy")
+        try:
+            source_connection = _read_only_connection_fd(backup_fd)
+            try:
+                _verify_evidence(stable_manifest, _database_evidence(source_connection))
+            finally:
+                source_connection.close()
+        except BackupIntegrityError:
+            raise
+        except sqlite3.DatabaseError as exc:
+            raise BackupIntegrityError("backup is not a valid SQLite database") from exc
+
+        destination_fd, destination_temp_name, destination_identity = _create_owned_temp(
+            destination_directory_fd,
+            prefix=f".{destination.name}.",
+            suffix=".restore-partial",
+        )
         os.fchmod(destination_fd, 0o600)
-        os.close(destination_fd)
-        destination_fd = -1
-        source_connection = _read_only_connection(backup)
-        destination_connection = sqlite3.connect(str(destination_temp))
-        destination_connection.row_factory = sqlite3.Row
+        copied_size, copied_digest = _copy_fd(backup_fd, destination_fd)
+        if copied_size != stable_manifest.byte_size:
+            raise BackupIntegrityError("restored byte size differs from manifest")
+        if copied_digest != stable_manifest.database_sha256:
+            raise BackupIntegrityError("restored SHA-256 differs from manifest")
+        os.fsync(destination_fd)
+        if int(os.fstat(destination_fd).st_size) != stable_manifest.byte_size:
+            raise BackupIntegrityError("restored byte size changed after copy")
+        if _sha256_fd(destination_fd) != stable_manifest.database_sha256:
+            raise BackupIntegrityError("restored SHA-256 changed after copy")
         try:
-            source_connection.backup(destination_connection, pages=256, sleep=0.01)
-            destination_connection.execute("PRAGMA journal_mode=DELETE")
-            destination_connection.commit()
-            restored_evidence = _database_evidence(destination_connection)
-        finally:
-            destination_connection.close()
-            source_connection.close()
-        if _sha256_file(backup) != verified.database_sha256:
+            destination_connection = _read_only_connection_fd(destination_fd)
+            try:
+                restored_evidence = _database_evidence(destination_connection)
+            finally:
+                destination_connection.close()
+        except BackupIntegrityError:
+            raise
+        except sqlite3.DatabaseError as exc:
+            raise BackupIntegrityError("restored copy is not a valid SQLite database") from exc
+        _verify_evidence(stable_manifest, restored_evidence)
+
+        if _sha256_fd(backup_fd) != stable_manifest.database_sha256:
             raise BackupIntegrityError("backup changed while it was being restored")
-        _verify_evidence(verified, restored_evidence)
-        with destination_temp.open("rb") as restored_handle:
-            os.fsync(restored_handle.fileno())
+        if _read_fd_limited(manifest_fd, _MAX_MANIFEST_BYTES + 1) != manifest_bytes:
+            raise BackupIntegrityError("manifest changed while backup was being restored")
+        _require_entry_identity(
+            backup_directory_fd,
+            backup.name,
+            backup_identity,
+            "backup",
+        )
+        _require_entry_identity(
+            manifest_directory_fd,
+            manifest_path_value.name,
+            manifest_identity,
+            "manifest",
+        )
+        _require_entry_identity(
+            destination_directory_fd,
+            destination_temp_name,
+            destination_identity,
+            "restore temporary file",
+        )
+        _require_directory_identity(
+            destination.parent,
+            destination_directory_identity,
+            "restore destination",
+        )
         try:
-            os.link(destination_temp, destination)
+            os.link(
+                destination_temp_name,
+                destination.name,
+                src_dir_fd=destination_directory_fd,
+                dst_dir_fd=destination_directory_fd,
+                follow_symlinks=False,
+            )
             destination_linked = True
         except FileExistsError as exc:
             raise BackupExistsError(f"restore destination already exists: {destination}") from exc
-        _fsync_directory(destination.parent)
-        restored_connection = _read_only_connection(destination)
-        try:
-            _verify_evidence(verified, _database_evidence(restored_connection))
-        finally:
-            restored_connection.close()
-        return verified
+        _require_entry_identity(
+            destination_directory_fd,
+            destination.name,
+            destination_identity,
+            "restore destination",
+        )
+        _fsync_directory_fd(destination_directory_fd)
+        if _sha256_fd(destination_fd) != stable_manifest.database_sha256:
+            raise BackupIntegrityError("published restore SHA-256 differs from manifest")
+        _require_entry_identity(
+            backup_directory_fd,
+            backup.name,
+            backup_identity,
+            "backup",
+        )
+        _require_entry_identity(
+            manifest_directory_fd,
+            manifest_path_value.name,
+            manifest_identity,
+            "manifest",
+        )
+        _require_entry_identity(
+            destination_directory_fd,
+            destination.name,
+            destination_identity,
+            "restore destination",
+        )
+        _require_directory_identity(
+            backup.parent,
+            backup_directory_identity,
+            "backup",
+            integrity_error=True,
+        )
+        _require_directory_identity(
+            manifest_path_value.parent,
+            manifest_directory_identity,
+            "manifest",
+            integrity_error=True,
+        )
+        _require_directory_identity(
+            destination.parent,
+            destination_directory_identity,
+            "restore destination",
+        )
+        if _sha256_fd(backup_fd) != stable_manifest.database_sha256:
+            raise BackupIntegrityError("backup changed before restore completed")
+        if _read_fd_limited(manifest_fd, _MAX_MANIFEST_BYTES + 1) != manifest_bytes:
+            raise BackupIntegrityError("manifest changed before restore completed")
+        if _sha256_fd(destination_fd) != stable_manifest.database_sha256:
+            raise BackupIntegrityError("published restore changed before completion")
+        return stable_manifest
     except BaseException:
-        if destination_linked:
-            destination.unlink()
+        if destination_linked and destination_identity is not None:
+            _unlink_owned_entry(
+                destination_directory_fd,
+                destination.name,
+                destination_identity,
+            )
         raise
     finally:
+        if destination_identity is not None:
+            _unlink_owned_entry(
+                destination_directory_fd,
+                destination_temp_name,
+                destination_identity,
+            )
         if destination_fd >= 0:
             os.close(destination_fd)
-        destination_temp.unlink(missing_ok=True)
+        if backup_fd >= 0:
+            os.close(backup_fd)
+        if manifest_fd >= 0:
+            os.close(manifest_fd)
+        if destination_directory_fd >= 0:
+            os.close(destination_directory_fd)
+        if backup_directory_fd >= 0:
+            os.close(backup_directory_fd)
+        if manifest_directory_fd >= 0:
+            os.close(manifest_directory_fd)
 
 
 __all__ = [
