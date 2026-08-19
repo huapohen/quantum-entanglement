@@ -78,11 +78,8 @@ class ProtocolTests(unittest.TestCase):
     def test_invalid_priority_is_rejected(self):
         actor = ActorRef("u", "User", ActorKind.HUMAN)
         with self.assertRaises(ValueError):
-            CoordinationEnvelope.create(
-                "s", "t", actor, (), EnvelopeKind.CHAT, {}, priority=101
-            )
+            CoordinationEnvelope.create("s", "t", actor, (), EnvelopeKind.CHAT, {}, priority=101)
 
 
 if __name__ == "__main__":
     unittest.main()
-
