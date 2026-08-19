@@ -600,6 +600,141 @@ class SQLiteArtifactStore:
             raise ArtifactIntegrityError("artifact byte size metadata is inconsistent")
         return version, content_length
 
+    @staticmethod
+    def _select_get_preflight_rows(
+        connection: sqlite3.Connection,
+        tenant_id: str,
+        workspace_id: str,
+        artifact_id: str,
+    ) -> Tuple[sqlite3.Row, ...]:
+        cursor = connection.execute(
+            """
+            SELECT version.artifact_id, version.version,
+                   version.blob_digest AS version_blob_digest,
+                   version.byte_size AS version_byte_size,
+                   blob.digest AS joined_blob_digest,
+                   blob.byte_size AS blob_byte_size,
+                   typeof(blob.content) AS blob_storage_type,
+                   length(blob.content) AS blob_content_length
+            FROM artifact_versions AS version
+            LEFT JOIN artifact_blobs AS blob ON blob.digest = version.blob_digest
+            WHERE version.tenant_id = ? AND version.workspace_id = ?
+              AND version.artifact_id = ?
+            LIMIT 2
+            """,
+            (tenant_id, workspace_id, artifact_id),
+        )
+        return tuple(cursor.fetchmany(2))
+
+    @staticmethod
+    def _select_head_preflight_rows(
+        connection: sqlite3.Connection,
+        tenant_id: str,
+        workspace_id: str,
+        session_id: str,
+        name: str,
+    ) -> Tuple[sqlite3.Row, ...]:
+        cursor = connection.execute(
+            """
+            SELECT version.artifact_id, version.version,
+                   version.blob_digest AS version_blob_digest,
+                   version.byte_size AS version_byte_size,
+                   blob.digest AS joined_blob_digest,
+                   blob.byte_size AS blob_byte_size,
+                   typeof(blob.content) AS blob_storage_type,
+                   length(blob.content) AS blob_content_length
+            FROM artifact_versions AS version
+            LEFT JOIN artifact_blobs AS blob ON blob.digest = version.blob_digest
+            WHERE version.tenant_id = ? AND version.workspace_id = ?
+              AND version.session_id = ? AND version.name = ?
+            ORDER BY version.version DESC, version.artifact_id DESC
+            LIMIT 2
+            """,
+            (tenant_id, workspace_id, session_id, name),
+        )
+        return tuple(cursor.fetchmany(2))
+
+    @classmethod
+    def _preflight_record_identity(
+        cls,
+        row: sqlite3.Row,
+    ) -> Tuple[str, int, str, int]:
+        version, content_length = cls._preflight_blob_metadata(row)
+        try:
+            artifact_id = _persisted_text(row["artifact_id"], "artifact_id")
+            version_digest = _persisted_text(
+                row["version_blob_digest"],
+                "blob_digest",
+                max_length=71,
+            )
+            joined_digest = _persisted_text(
+                row["joined_blob_digest"],
+                "joined_blob_digest",
+                max_length=71,
+            )
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise ArtifactIntegrityError("artifact read identity violates its contract") from exc
+        if joined_digest != version_digest:
+            raise ArtifactIntegrityError("artifact version and blob identities are inconsistent")
+        return artifact_id, version, version_digest, content_length
+
+    @staticmethod
+    def _select_materialized_record(
+        connection: sqlite3.Connection,
+        tenant_id: str,
+        workspace_id: str,
+        artifact_id: str,
+        version: int,
+        blob_digest: str,
+    ) -> sqlite3.Row:
+        cursor = connection.execute(
+            """
+            SELECT version.*, blob.content, blob.byte_size AS blob_byte_size
+            FROM artifact_versions AS version
+            JOIN artifact_blobs AS blob ON blob.digest = version.blob_digest
+            WHERE version.tenant_id = ? AND version.workspace_id = ?
+              AND version.artifact_id = ? AND version.version = ?
+              AND version.blob_digest = ?
+            LIMIT 2
+            """,
+            (tenant_id, workspace_id, artifact_id, version, blob_digest),
+        )
+        rows = tuple(cursor.fetchmany(2))
+        if len(rows) != 1:
+            raise ArtifactIntegrityError(
+                "artifact record changed or became ambiguous inside its read snapshot"
+            )
+        return cast(sqlite3.Row, rows[0])
+
+    def _materialize_preflighted_record(
+        self,
+        connection: sqlite3.Connection,
+        tenant_id: str,
+        workspace_id: str,
+        identity: Tuple[str, int, str, int],
+    ) -> StoredArtifact:
+        artifact_id, version, blob_digest, content_length = identity
+        row = self._select_materialized_record(
+            connection,
+            tenant_id,
+            workspace_id,
+            artifact_id,
+            version,
+            blob_digest,
+        )
+        item = self._row_to_artifact(row)
+        if (
+            item.artifact_id != artifact_id
+            or item.version != version
+            or item.digest != blob_digest
+            or item.byte_size != content_length
+            or len(item.content) != content_length
+        ):
+            raise ArtifactIntegrityError(
+                "artifact record changed while its stable snapshot was decoded"
+            )
+        return item
+
     def write(
         self,
         spec: ArtifactWrite,
@@ -740,9 +875,28 @@ class SQLiteArtifactStore:
             (artifact_id, "artifact_id"),
         ):
             _required_text(value, name)
-        with self._lock:
-            row = self._select_record(self._connection, tenant_id, workspace_id, artifact_id)
-            return self._row_to_artifact(row) if row is not None else None
+        with self._read_snapshot() as connection:
+            metadata_rows = self._select_get_preflight_rows(
+                connection,
+                tenant_id,
+                workspace_id,
+                artifact_id,
+            )
+            if not metadata_rows:
+                return None
+            if len(metadata_rows) != 1:
+                raise ArtifactIntegrityError("artifact lookup returned ambiguous records")
+            identity = self._preflight_record_identity(metadata_rows[0])
+            if identity[3] > self._max_content_bytes:
+                raise ArtifactTooLargeError(
+                    "persisted artifact exceeds the configured single-content limit"
+                )
+            return self._materialize_preflighted_record(
+                connection,
+                tenant_id,
+                workspace_id,
+                identity,
+            )
 
     def head(
         self,
@@ -758,22 +912,40 @@ class SQLiteArtifactStore:
             (name, "name"),
         ):
             _required_text(value, field_name)
-        with self._lock:
-            row = cast(
-                Optional[sqlite3.Row],
-                self._connection.execute(
-                    """
-                    SELECT version.*, blob.content, blob.byte_size AS blob_byte_size
-                    FROM artifact_versions AS version
-                    JOIN artifact_blobs AS blob ON blob.digest = version.blob_digest
-                    WHERE version.tenant_id = ? AND version.workspace_id = ?
-                      AND version.session_id = ? AND version.name = ?
-                    ORDER BY version.version DESC LIMIT 1
-                    """,
-                    (tenant_id, workspace_id, session_id, name),
-                ).fetchone(),
+        with self._read_snapshot() as connection:
+            metadata_rows = self._select_head_preflight_rows(
+                connection,
+                tenant_id,
+                workspace_id,
+                session_id,
+                name,
             )
-            return self._row_to_artifact(row) if row is not None else None
+            if not metadata_rows:
+                return None
+            identity = self._preflight_record_identity(metadata_rows[0])
+            if len(metadata_rows) > 1:
+                try:
+                    next_version = _persisted_integer(
+                        metadata_rows[1]["version"],
+                        "version",
+                        minimum=1,
+                    )
+                except (IndexError, KeyError, TypeError, ValueError) as exc:
+                    raise ArtifactIntegrityError(
+                        "artifact head ordering metadata violates its contract"
+                    ) from exc
+                if next_version >= identity[1]:
+                    raise ArtifactIntegrityError("artifact head lookup returned ambiguous records")
+            if identity[3] > self._max_content_bytes:
+                raise ArtifactTooLargeError(
+                    "persisted artifact exceeds the configured single-content limit"
+                )
+            return self._materialize_preflighted_record(
+                connection,
+                tenant_id,
+                workspace_id,
+                identity,
+            )
 
     def history(
         self,

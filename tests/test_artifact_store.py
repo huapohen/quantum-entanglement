@@ -302,6 +302,268 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
                 time_store.get("tenant-a", "workspace-a", stored.artifact_id)
             self.assertIsInstance(bad_time.exception.__cause__, ValueError)
 
+    def test_get_and_head_preflight_oversized_blob_before_materialization(self):
+        path = str(Path(self.tempdir.name) / "single-read-limit.sqlite3")
+        with SQLiteArtifactStore(
+            path,
+            max_content_bytes=4,
+            clock=lambda: T0,
+        ) as limited:
+            stored = limited.write(artifact_write(content=b"x"))
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute("PRAGMA ignore_check_constraints=ON")
+                connection.execute(
+                    "UPDATE artifact_blobs SET content = zeroblob(100), byte_size = 100 "
+                    "WHERE digest = ?",
+                    (stored.digest,),
+                )
+                connection.execute(
+                    "UPDATE artifact_versions SET byte_size = 100 WHERE artifact_id = ?",
+                    (stored.artifact_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            readers = (
+                lambda: limited.get("tenant-a", "workspace-a", stored.artifact_id),
+                lambda: limited.head(
+                    "tenant-a",
+                    "workspace-a",
+                    "session-a",
+                    "report.md",
+                ),
+            )
+            for reader in readers:
+                with self.subTest(reader=reader):
+                    with patch.object(
+                        limited,
+                        "_row_to_artifact",
+                        side_effect=AssertionError("oversized BLOB was materialized"),
+                    ):
+                        with self.assertRaisesRegex(
+                            ArtifactTooLargeError,
+                            "single-content limit",
+                        ):
+                            reader()
+
+    def test_get_and_head_reject_integer_blob_storage_before_decoding(self):
+        stored = self.store.write(artifact_write(content=b"x"))
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute("PRAGMA ignore_check_constraints=ON")
+            connection.execute(
+                "UPDATE artifact_blobs SET content = ?, byte_size = ? WHERE digest = ?",
+                (7, 1, stored.digest),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        readers = (
+            lambda: self.store.get("tenant-a", "workspace-a", stored.artifact_id),
+            lambda: self.store.head(
+                "tenant-a",
+                "workspace-a",
+                "session-a",
+                "report.md",
+            ),
+        )
+        for reader in readers:
+            with self.subTest(reader=reader):
+                with patch.object(
+                    self.store,
+                    "_row_to_artifact",
+                    side_effect=AssertionError("INTEGER content reached the BLOB decoder"),
+                ):
+                    with self.assertRaisesRegex(
+                        ArtifactIntegrityError,
+                        "blob metadata",
+                    ) as malformed:
+                        reader()
+                self.assertIsInstance(malformed.exception.__cause__, TypeError)
+
+    def test_get_and_head_reject_missing_joined_blob_as_integrity_failure(self):
+        stored = self.store.write(artifact_write(content=b"x"))
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute(
+                "DELETE FROM artifact_blobs WHERE digest = ?",
+                (stored.digest,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        readers = (
+            lambda: self.store.get("tenant-a", "workspace-a", stored.artifact_id),
+            lambda: self.store.head(
+                "tenant-a",
+                "workspace-a",
+                "session-a",
+                "report.md",
+            ),
+        )
+        for reader in readers:
+            with self.subTest(reader=reader):
+                with self.assertRaisesRegex(ArtifactIntegrityError, "blob metadata"):
+                    reader()
+
+    def test_get_and_head_return_the_same_stable_version(self):
+        first = self.store.write(artifact_write(content=b"one"))
+        second = self.store.write(
+            artifact_write(
+                artifact_id="artifact-b",
+                task_id="task-b",
+                idempotency_key="artifact:task-b:report",
+                content=b"two",
+            )
+        )
+
+        self.assertEqual(
+            self.store.get("tenant-a", "workspace-a", second.artifact_id),
+            self.store.head("tenant-a", "workspace-a", "session-a", "report.md"),
+        )
+        self.assertEqual(
+            self.store.get("tenant-a", "workspace-a", first.artifact_id),
+            first,
+        )
+
+    def test_single_read_duplicate_and_identity_drift_fail_stably(self):
+        first = self.store.write(artifact_write(content=b"one"))
+        second = self.store.write(
+            artifact_write(
+                artifact_id="artifact-b",
+                task_id="task-b",
+                idempotency_key="artifact:task-b:report",
+                content=b"two",
+            )
+        )
+        real_get_preflight = self.store._select_get_preflight_rows
+        real_head_preflight = self.store._select_head_preflight_rows
+
+        def duplicate_get_rows(*args):
+            rows = real_get_preflight(*args)
+            return rows + rows
+
+        with patch.object(
+            self.store,
+            "_select_get_preflight_rows",
+            side_effect=duplicate_get_rows,
+        ):
+            with self.assertRaisesRegex(ArtifactIntegrityError, "ambiguous"):
+                self.store.get("tenant-a", "workspace-a", first.artifact_id)
+
+        def duplicate_head_row(*args):
+            rows = real_head_preflight(*args)
+            return (rows[0], rows[0])
+
+        with patch.object(
+            self.store,
+            "_select_head_preflight_rows",
+            side_effect=duplicate_head_row,
+        ):
+            with self.assertRaisesRegex(ArtifactIntegrityError, "ambiguous"):
+                self.store.head("tenant-a", "workspace-a", "session-a", "report.md")
+
+        def return_different_record(connection, *_args):
+            row = self.store._select_record(
+                connection,
+                "tenant-a",
+                "workspace-a",
+                second.artifact_id,
+            )
+            if row is None:
+                self.fail("test artifact disappeared")
+            return row
+
+        with patch.object(
+            self.store,
+            "_select_materialized_record",
+            side_effect=return_different_record,
+        ):
+            with self.assertRaisesRegex(ArtifactIntegrityError, "stable snapshot"):
+                self.store.get("tenant-a", "workspace-a", first.artifact_id)
+
+    def test_get_uses_one_snapshot_across_cross_connection_blob_change(self):
+        stored = self.store.write(artifact_write(content=b"data"))
+        writer = sqlite3.connect(self.path, isolation_level=None)
+        real_preflight = self.store._preflight_record_identity
+        changed = False
+
+        def mutate_after_preflight(row):
+            nonlocal changed
+            identity = real_preflight(row)
+            if not changed:
+                changed = True
+                writer.execute(
+                    "UPDATE artifact_blobs SET content = ? WHERE digest = ?",
+                    (b"evil", stored.digest),
+                )
+            return identity
+
+        try:
+            with patch.object(
+                self.store,
+                "_preflight_record_identity",
+                side_effect=mutate_after_preflight,
+            ):
+                observed = self.store.get("tenant-a", "workspace-a", stored.artifact_id)
+            self.assertIsNotNone(observed)
+            self.assertEqual(observed.content, b"data")
+            with self.assertRaisesRegex(ArtifactIntegrityError, "digest verification"):
+                self.store.get("tenant-a", "workspace-a", stored.artifact_id)
+        finally:
+            writer.close()
+
+    def test_head_uses_one_snapshot_when_another_connection_appends(self):
+        first = self.store.write(artifact_write(content=b"one"))
+        writer = SQLiteArtifactStore(self.path, clock=lambda: T0)
+        real_preflight = self.store._preflight_record_identity
+        appended = False
+
+        def append_after_preflight(row):
+            nonlocal appended
+            identity = real_preflight(row)
+            if not appended:
+                appended = True
+                writer.write(
+                    artifact_write(
+                        artifact_id="artifact-racing-head",
+                        task_id="task-racing-head",
+                        idempotency_key="artifact:racing-head",
+                        content=b"two",
+                    ),
+                    expected_head_version=1,
+                )
+            return identity
+
+        try:
+            with patch.object(
+                self.store,
+                "_preflight_record_identity",
+                side_effect=append_after_preflight,
+            ):
+                observed = self.store.head(
+                    "tenant-a",
+                    "workspace-a",
+                    "session-a",
+                    "report.md",
+                )
+            self.assertEqual(observed, first)
+            current = self.store.head(
+                "tenant-a",
+                "workspace-a",
+                "session-a",
+                "report.md",
+            )
+            self.assertIsNotNone(current)
+            self.assertEqual(current.version, 2)
+        finally:
+            writer.close()
+
     def test_limits_and_untrusted_metadata_fail_before_state_change(self):
         limited_path = str(Path(self.tempdir.name) / "limited.sqlite3")
         with SQLiteArtifactStore(
