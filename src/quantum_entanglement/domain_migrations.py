@@ -16,6 +16,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from itertools import islice
 from typing import (
@@ -32,7 +33,15 @@ from typing import (
     cast,
 )
 
-from .migrations import MIGRATIONS, Migration, _expected_schema_objects, migration_text
+from .migrations import (
+    MIGRATIONS,
+    Migration,
+    MigrationDriftError,
+    MigrationVersionError,
+    _expected_schema_objects,
+    migration_text,
+    validate_sqlite_schema,
+)
 
 DomainMigrationKind = Literal["legacy_bootstrap", "native"]
 
@@ -105,6 +114,7 @@ _DOMAIN_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 _FILENAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.up\.sql\Z")
 _SCHEMA_OBJECT_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}\Z")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+_RFC3339_UTC_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 _SCHEMA_OBJECT_TYPES = frozenset(("index", "table", "trigger", "view"))
 _MIGRATION_KINDS = frozenset(("legacy_bootstrap", "native"))
 _LEDGER_OBJECT = ("table", "qe_schema_migrations")
@@ -118,6 +128,8 @@ _MAX_SIDECAR_CATALOG_SQL_LENGTH = 8192
 
 _METADATA_AUTO_INDEX_NAME = "sqlite_autoindex_qe_schema_migration_metadata_1"
 _DEPENDENCIES_AUTO_INDEX_NAME = "sqlite_autoindex_qe_schema_migration_dependencies_1"
+_LEGACY_LEDGER_TABLE_NAME = "qe_schema_migrations"
+_MAX_DURABLE_TIMESTAMP_LENGTH = 32
 
 _T = TypeVar("_T")
 
@@ -130,11 +142,58 @@ class DomainMigrationSidecarInstallError(DomainMigrationSidecarSchemaError):
     """Raised when the bridge-only sidecar installation contract is violated."""
 
 
+class DomainMigrationBridgeIntegrityError(DomainMigrationSidecarSchemaError):
+    """Raised when durable legacy and sidecar rows are not registry-congruent."""
+
+
 class DomainMigrationSidecarSchemaState(str, Enum):
     """Supported sidecar catalog states during the bridge-only rollout."""
 
     ABSENT = "absent"
     EXACT = "exact"
+
+
+class DomainMigrationBridgeShape(str, Enum):
+    """Supported durable row shapes during the bridge-only release."""
+
+    LEGACY_PREFIX = "legacy_prefix"
+    SIDECAR_EMPTY_PREFIX = "sidecar_empty_prefix"
+    BRIDGED_PREFIX = "bridged_prefix"
+
+
+@dataclass(frozen=True)
+class DomainMigrationLedgerRow:
+    migration_id: int
+    filename: str
+    sql_sha256: str
+    applied_at: str
+
+
+@dataclass(frozen=True)
+class DomainMigrationMetadataRow:
+    migration_id: int
+    domain: str
+    domain_version: int
+    kind: DomainMigrationKind
+    descriptor_sha256: str
+    owned_schema_sha256: str
+    recorded_at: str
+
+
+@dataclass(frozen=True, order=True)
+class DomainMigrationDependencyRow:
+    migration_id: int
+    depends_on_migration_id: int
+
+
+@dataclass(frozen=True)
+class DomainMigrationBridgeState:
+    shape: DomainMigrationBridgeShape
+    legacy_schema_version: int
+    ledger_rows: Tuple[DomainMigrationLedgerRow, ...]
+    metadata_rows: Tuple[DomainMigrationMetadataRow, ...]
+    dependency_rows: Tuple[DomainMigrationDependencyRow, ...]
+    registry_sha256: str
 
 
 def _bounded_tuple(values: Iterable[_T], *, maximum: int, label: str) -> Tuple[_T, ...]:
@@ -921,3 +980,541 @@ def _build_legacy_descriptors() -> Tuple[DomainMigrationDescriptor, ...]:
 
 LEGACY_DOMAIN_MIGRATIONS = _build_legacy_descriptors()
 DOMAIN_MIGRATION_REGISTRY = validate_domain_migration_registry(LEGACY_DOMAIN_MIGRATIONS)
+
+
+def _durable_row_values(
+    raw_row: object,
+    *,
+    expected_columns: int,
+    label: str,
+) -> Tuple[object, ...]:
+    try:
+        values = _bounded_tuple(
+            cast(Iterable[object], raw_row),
+            maximum=expected_columns,
+            label=f"{label} columns",
+        )
+    except (TypeError, ValueError) as error:
+        raise DomainMigrationBridgeIntegrityError(
+            f"{label} has a malformed column shape"
+        ) from error
+    if len(values) != expected_columns:
+        raise DomainMigrationBridgeIntegrityError(f"{label} has a malformed column shape")
+    return values
+
+
+def _durable_integer(value: object, *, field: str, maximum: int) -> int:
+    if type(value) is not int:
+        raise DomainMigrationBridgeIntegrityError(
+            f"durable {field} must be an exact SQLite INTEGER"
+        )
+    if value <= 0 or value > maximum:
+        raise DomainMigrationBridgeIntegrityError(
+            f"durable {field} is outside the supported positive integer range"
+        )
+    return value
+
+
+def _durable_text(value: object, *, field: str, maximum: int) -> str:
+    if type(value) is not str:
+        raise DomainMigrationBridgeIntegrityError(
+            f"durable {field} must be an exact SQLite TEXT value"
+        )
+    if not value or len(value) > maximum or value != value.strip():
+        raise DomainMigrationBridgeIntegrityError(f"durable {field} is not bounded canonical text")
+    return value
+
+
+def _durable_sha256(value: object, *, field: str) -> str:
+    digest = _durable_text(value, field=field, maximum=64)
+    if _SHA256_PATTERN.fullmatch(digest) is None:
+        raise DomainMigrationBridgeIntegrityError(
+            f"durable {field} must be a lowercase SHA-256 digest"
+        )
+    return digest
+
+
+def _durable_timestamp(value: object, *, field: str) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > _MAX_DURABLE_TIMESTAMP_LENGTH
+        or value != value.strip()
+        or _RFC3339_UTC_PATTERN.fullmatch(value) is None
+    ):
+        raise DomainMigrationBridgeIntegrityError(
+            f"durable {field} must be a canonical RFC3339 UTC timestamp"
+        )
+    timestamp = value
+    try:
+        parsed = datetime.fromisoformat(timestamp[:-1] + "+00:00")
+    except ValueError as error:
+        raise DomainMigrationBridgeIntegrityError(
+            f"durable {field} must be a canonical RFC3339 UTC timestamp"
+        ) from error
+    normalized = parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    if timestamp != normalized:
+        raise DomainMigrationBridgeIntegrityError(
+            f"durable {field} must be a canonical RFC3339 UTC timestamp"
+        )
+    return timestamp
+
+
+def _read_bounded_bridge_rows(
+    connection: sqlite3.Connection,
+    statement: str,
+    parameters: Tuple[object, ...],
+    *,
+    maximum: int,
+    label: str,
+) -> Tuple[object, ...]:
+    try:
+        cursor = connection.execute(statement, parameters)
+        raw_rows = cursor.fetchmany(maximum + 1)
+        return _bounded_tuple(raw_rows, maximum=maximum, label=label)
+    except DomainMigrationBridgeIntegrityError:
+        raise
+    except (sqlite3.Error, TypeError, ValueError) as error:
+        raise DomainMigrationBridgeIntegrityError(
+            f"{label} could not be read within its hard limit"
+        ) from error
+
+
+def _legacy_ledger_is_present(connection: sqlite3.Connection) -> bool:
+    rows = _read_bounded_bridge_rows(
+        connection,
+        """
+        SELECT type
+        FROM main.sqlite_master
+        WHERE name = ?
+        ORDER BY type
+        LIMIT ?
+        """,
+        (_LEGACY_LEDGER_TABLE_NAME, MAX_DOMAIN_MIGRATIONS + 1),
+        maximum=1,
+        label="legacy migration ledger catalog rows",
+    )
+    if not rows:
+        return False
+    values = _durable_row_values(
+        rows[0],
+        expected_columns=1,
+        label="legacy migration ledger catalog row",
+    )
+    object_type = _durable_text(
+        values[0],
+        field="legacy migration ledger catalog type",
+        maximum=len("table"),
+    )
+    if object_type != "table":
+        raise DomainMigrationBridgeIntegrityError(
+            "legacy migration ledger catalog object is not the exact table type"
+        )
+    return True
+
+
+def _read_legacy_ledger_rows(
+    connection: sqlite3.Connection,
+) -> Tuple[DomainMigrationLedgerRow, ...]:
+    raw_rows = _read_bounded_bridge_rows(
+        connection,
+        """
+        SELECT version, filename, sha256, applied_at
+        FROM main.qe_schema_migrations
+        ORDER BY version
+        LIMIT ?
+        """,
+        (MAX_DOMAIN_MIGRATIONS + 1,),
+        maximum=MAX_DOMAIN_MIGRATIONS,
+        label="legacy migration ledger rows",
+    )
+    decoded: List[DomainMigrationLedgerRow] = []
+    for raw_row in raw_rows:
+        values = _durable_row_values(
+            raw_row,
+            expected_columns=4,
+            label="legacy migration ledger row",
+        )
+        migration_id = _durable_integer(
+            values[0],
+            field="legacy migration ID",
+            maximum=MAX_MIGRATION_ID,
+        )
+        filename = _durable_text(
+            values[1],
+            field="legacy migration filename",
+            maximum=MAX_MIGRATION_FILENAME_LENGTH,
+        )
+        if _FILENAME_PATTERN.fullmatch(filename) is None:
+            raise DomainMigrationBridgeIntegrityError(
+                "durable legacy migration filename is not canonical"
+            )
+        decoded.append(
+            DomainMigrationLedgerRow(
+                migration_id=migration_id,
+                filename=filename,
+                sql_sha256=_durable_sha256(
+                    values[2],
+                    field="legacy migration SQL sha256",
+                ),
+                applied_at=_durable_timestamp(
+                    values[3],
+                    field="legacy migration applied_at",
+                ),
+            )
+        )
+    return tuple(decoded)
+
+
+def _read_metadata_rows(
+    connection: sqlite3.Connection,
+) -> Tuple[DomainMigrationMetadataRow, ...]:
+    raw_rows = _read_bounded_bridge_rows(
+        connection,
+        """
+        SELECT migration_version, domain, domain_version, metadata_kind,
+               descriptor_sha256, owned_schema_sha256, recorded_at
+        FROM main.qe_schema_migration_metadata
+        ORDER BY migration_version
+        LIMIT ?
+        """,
+        (MAX_DOMAIN_MIGRATIONS + 1,),
+        maximum=MAX_DOMAIN_MIGRATIONS,
+        label="domain migration metadata rows",
+    )
+    decoded: List[DomainMigrationMetadataRow] = []
+    for raw_row in raw_rows:
+        values = _durable_row_values(
+            raw_row,
+            expected_columns=7,
+            label="domain migration metadata row",
+        )
+        domain = _durable_text(
+            values[1],
+            field="domain migration domain",
+            maximum=MAX_DOMAIN_LENGTH,
+        )
+        if _DOMAIN_PATTERN.fullmatch(domain) is None:
+            raise DomainMigrationBridgeIntegrityError(
+                "durable domain migration domain is not canonical"
+            )
+        kind = _durable_text(
+            values[3],
+            field="domain migration kind",
+            maximum=len("legacy_bootstrap"),
+        )
+        if kind not in _MIGRATION_KINDS:
+            raise DomainMigrationBridgeIntegrityError(
+                "durable domain migration kind is unsupported"
+            )
+        decoded.append(
+            DomainMigrationMetadataRow(
+                migration_id=_durable_integer(
+                    values[0],
+                    field="domain metadata migration ID",
+                    maximum=MAX_MIGRATION_ID,
+                ),
+                domain=domain,
+                domain_version=_durable_integer(
+                    values[2],
+                    field="domain migration version",
+                    maximum=MAX_DOMAIN_VERSION,
+                ),
+                kind=cast(DomainMigrationKind, kind),
+                descriptor_sha256=_durable_sha256(
+                    values[4],
+                    field="domain migration descriptor sha256",
+                ),
+                owned_schema_sha256=_durable_sha256(
+                    values[5],
+                    field="domain migration owned schema sha256",
+                ),
+                recorded_at=_durable_timestamp(
+                    values[6],
+                    field="domain migration recorded_at",
+                ),
+            )
+        )
+    return tuple(decoded)
+
+
+def _read_dependency_rows(
+    connection: sqlite3.Connection,
+) -> Tuple[DomainMigrationDependencyRow, ...]:
+    raw_rows = _read_bounded_bridge_rows(
+        connection,
+        """
+        SELECT migration_version, depends_on_version
+        FROM main.qe_schema_migration_dependencies
+        ORDER BY migration_version, depends_on_version
+        LIMIT ?
+        """,
+        (MAX_DOMAIN_MIGRATIONS + 1,),
+        maximum=MAX_DOMAIN_MIGRATIONS,
+        label="domain migration dependency rows",
+    )
+    decoded: List[DomainMigrationDependencyRow] = []
+    for raw_row in raw_rows:
+        values = _durable_row_values(
+            raw_row,
+            expected_columns=2,
+            label="domain migration dependency row",
+        )
+        decoded.append(
+            DomainMigrationDependencyRow(
+                migration_id=_durable_integer(
+                    values[0],
+                    field="dependency migration ID",
+                    maximum=MAX_MIGRATION_ID,
+                ),
+                depends_on_migration_id=_durable_integer(
+                    values[1],
+                    field="dependency target migration ID",
+                    maximum=MAX_MIGRATION_ID,
+                ),
+            )
+        )
+    return tuple(decoded)
+
+
+def _validate_legacy_ledger_congruence(
+    rows: Sequence[DomainMigrationLedgerRow],
+) -> Tuple[DomainMigrationDescriptor, ...]:
+    descriptors = DOMAIN_MIGRATION_REGISTRY.descriptors
+    applied_descriptors = descriptors[: len(rows)]
+    actual_ids = tuple(row.migration_id for row in rows)
+    expected_ids = tuple(item.migration_id for item in applied_descriptors)
+    if actual_ids != expected_ids:
+        raise DomainMigrationBridgeIntegrityError(
+            "legacy migration ledger is not a continuous supported registry prefix"
+        )
+    for row, descriptor in zip(rows, applied_descriptors):
+        if row.filename != descriptor.filename or row.sql_sha256 != descriptor.sql_sha256:
+            raise DomainMigrationBridgeIntegrityError(
+                "legacy migration ledger filename or SQL digest differs from the registry"
+            )
+    return applied_descriptors
+
+
+def _reject_unapplied_legacy_owned_objects(
+    connection: sqlite3.Connection,
+    applied_descriptors: Sequence[DomainMigrationDescriptor],
+) -> None:
+    applied_names = {
+        owned.name for descriptor in applied_descriptors for owned in descriptor.owned_objects
+    }
+    known_names = {
+        owned.name
+        for descriptor in DOMAIN_MIGRATION_REGISTRY.descriptors
+        for owned in descriptor.owned_objects
+    }
+    for name in sorted(known_names - applied_names):
+        rows = _read_bounded_bridge_rows(
+            connection,
+            """
+            SELECT type
+            FROM main.sqlite_master
+            WHERE name = ?
+              AND type IN ('table', 'index', 'trigger', 'view')
+            ORDER BY type
+            LIMIT ?
+            """,
+            (name, MAX_DOMAIN_MIGRATIONS + 1),
+            maximum=1,
+            label="unapplied legacy owned schema catalog rows",
+        )
+        if rows:
+            raise DomainMigrationBridgeIntegrityError(
+                "schema object exists for an unapplied legacy registry migration"
+            )
+
+
+def _validate_metadata_congruence(
+    rows: Sequence[DomainMigrationMetadataRow],
+    applied_descriptors: Sequence[DomainMigrationDescriptor],
+) -> None:
+    expected_ids = tuple(item.migration_id for item in applied_descriptors)
+    actual_ids = tuple(row.migration_id for row in rows)
+    if actual_ids != expected_ids:
+        raise DomainMigrationBridgeIntegrityError(
+            "domain migration metadata does not exactly cover the applied ledger prefix"
+        )
+    for row, descriptor in zip(rows, applied_descriptors):
+        if (
+            row.domain != descriptor.domain
+            or row.domain_version != descriptor.domain_version
+            or row.kind != "legacy_bootstrap"
+            or row.descriptor_sha256 != descriptor.descriptor_sha256
+            or row.owned_schema_sha256 != descriptor.owned_object_manifest_sha256
+        ):
+            raise DomainMigrationBridgeIntegrityError(
+                "domain migration metadata differs from the exact registry descriptor"
+            )
+
+
+def _validate_dependency_congruence(
+    rows: Sequence[DomainMigrationDependencyRow],
+    applied_descriptors: Sequence[DomainMigrationDescriptor],
+) -> None:
+    applied_ids = {item.migration_id for item in applied_descriptors}
+    for row in rows:
+        if row.migration_id not in applied_ids or row.depends_on_migration_id not in applied_ids:
+            raise DomainMigrationBridgeIntegrityError(
+                "domain migration dependency refers to an unapplied ledger row"
+            )
+    expected = tuple(
+        sorted(
+            DomainMigrationDependencyRow(descriptor.migration_id, dependency)
+            for descriptor in applied_descriptors
+            for dependency in descriptor.dependencies
+        )
+    )
+    if tuple(rows) != expected:
+        raise DomainMigrationBridgeIntegrityError(
+            "domain migration dependencies differ from the exact registry edges"
+        )
+
+
+def _read_domain_migration_bridge_snapshot(
+    connection: sqlite3.Connection,
+) -> DomainMigrationBridgeState:
+    ledger_present = _legacy_ledger_is_present(connection)
+    ledger_rows = _read_legacy_ledger_rows(connection) if ledger_present else ()
+    applied_descriptors = _validate_legacy_ledger_congruence(ledger_rows)
+    _reject_unapplied_legacy_owned_objects(connection, applied_descriptors)
+
+    try:
+        legacy_schema_version = validate_sqlite_schema(connection)
+    except (MigrationDriftError, MigrationVersionError, sqlite3.Error) as error:
+        raise DomainMigrationBridgeIntegrityError(
+            "legacy migration ledger or owned schema is not exact"
+        ) from error
+    expected_schema_version = ledger_rows[-1].migration_id if ledger_rows else 0
+    if legacy_schema_version != expected_schema_version:
+        raise DomainMigrationBridgeIntegrityError(
+            "legacy migration schema version changed during snapshot validation"
+        )
+
+    try:
+        sidecar_state = validate_domain_migration_sidecar_schema(connection)
+    except DomainMigrationSidecarSchemaError as error:
+        raise DomainMigrationBridgeIntegrityError(
+            "domain migration sidecar schema is not exact"
+        ) from error
+    if sidecar_state is DomainMigrationSidecarSchemaState.ABSENT:
+        return DomainMigrationBridgeState(
+            shape=DomainMigrationBridgeShape.LEGACY_PREFIX,
+            legacy_schema_version=legacy_schema_version,
+            ledger_rows=ledger_rows,
+            metadata_rows=(),
+            dependency_rows=(),
+            registry_sha256=DOMAIN_MIGRATION_REGISTRY.registry_sha256,
+        )
+
+    metadata_rows = _read_metadata_rows(connection)
+    dependency_rows = _read_dependency_rows(connection)
+    if not metadata_rows:
+        if dependency_rows:
+            raise DomainMigrationBridgeIntegrityError(
+                "empty domain migration metadata cannot have dependency rows"
+            )
+        shape = DomainMigrationBridgeShape.SIDECAR_EMPTY_PREFIX
+    else:
+        _validate_metadata_congruence(metadata_rows, applied_descriptors)
+        _validate_dependency_congruence(dependency_rows, applied_descriptors)
+        shape = DomainMigrationBridgeShape.BRIDGED_PREFIX
+
+    return DomainMigrationBridgeState(
+        shape=shape,
+        legacy_schema_version=legacy_schema_version,
+        ledger_rows=ledger_rows,
+        metadata_rows=metadata_rows,
+        dependency_rows=dependency_rows,
+        registry_sha256=DOMAIN_MIGRATION_REGISTRY.registry_sha256,
+    )
+
+
+def _rollback_bridge_snapshot(connection: sqlite3.Connection) -> None:
+    try:
+        snapshot_is_active = connection.in_transaction
+    except sqlite3.Error as error:
+        raise DomainMigrationBridgeIntegrityError(
+            "domain migration read snapshot state could not be inspected during rollback"
+        ) from error
+    if not snapshot_is_active:
+        raise DomainMigrationBridgeIntegrityError(
+            "domain migration read snapshot ended unexpectedly"
+        )
+    try:
+        connection.execute("ROLLBACK")
+    except BaseException as error:
+        raise DomainMigrationBridgeIntegrityError(
+            "domain migration read snapshot rollback failed"
+        ) from error
+    try:
+        snapshot_remains_active = connection.in_transaction
+    except sqlite3.Error as error:
+        raise DomainMigrationBridgeIntegrityError(
+            "domain migration read snapshot state could not be inspected after rollback"
+        ) from error
+    if snapshot_remains_active:
+        raise DomainMigrationBridgeIntegrityError(
+            "domain migration read snapshot rollback did not release its transaction"
+        )
+
+
+def read_domain_migration_bridge_state(
+    connection: sqlite3.Connection,
+) -> DomainMigrationBridgeState:
+    """Read and validate one registry-congruent durable state without repairing it.
+
+    A transaction-free caller gets one deferred read snapshot which is always ended with
+    ``ROLLBACK``.  An existing caller transaction is reused and never committed or rolled
+    back.  The function performs no DDL, DML, bootstrap, repair, or sparse migration write.
+    """
+
+    try:
+        caller_owns_transaction = connection.in_transaction
+    except sqlite3.Error as error:
+        raise DomainMigrationBridgeIntegrityError(
+            "domain migration read snapshot could not be opened"
+        ) from error
+    owns_snapshot = False
+    try:
+        if not caller_owns_transaction:
+            try:
+                try:
+                    connection.execute("BEGIN")
+                finally:
+                    # A wrapper may fail after SQLite has opened the transaction.
+                    # Capture ownership before propagating any BaseException so the
+                    # outer cleanup path cannot leak a read snapshot or lock.
+                    owns_snapshot = connection.in_transaction
+            except sqlite3.Error as error:
+                if owns_snapshot:
+                    _rollback_bridge_snapshot(connection)
+                raise DomainMigrationBridgeIntegrityError(
+                    "domain migration read snapshot could not be opened"
+                ) from error
+            if not connection.in_transaction:
+                raise DomainMigrationBridgeIntegrityError(
+                    "domain migration read snapshot was not opened"
+                )
+            owns_snapshot = True
+
+        try:
+            state = _read_domain_migration_bridge_snapshot(connection)
+        except DomainMigrationBridgeIntegrityError:
+            raise
+        except (sqlite3.Error, TypeError, ValueError, IndexError) as error:
+            raise DomainMigrationBridgeIntegrityError(
+                "domain migration durable state could not be decoded"
+            ) from error
+    except BaseException:
+        if owns_snapshot and connection.in_transaction:
+            _rollback_bridge_snapshot(connection)
+        raise
+
+    if owns_snapshot:
+        _rollback_bridge_snapshot(connection)
+    return state

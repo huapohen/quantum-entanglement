@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional, cast
@@ -22,12 +22,18 @@ from quantum_entanglement.domain_migrations import (
     MAX_MIGRATION_DEPENDENCIES,
     MAX_MIGRATION_DOMAINS,
     MAX_OWNED_SCHEMA_OBJECTS,
+    DomainMigrationBridgeIntegrityError,
+    DomainMigrationBridgeShape,
+    DomainMigrationBridgeState,
     DomainMigrationDescriptor,
+    DomainMigrationLedgerRow,
+    DomainMigrationMetadataRow,
     DomainMigrationSidecarInstallError,
     DomainMigrationSidecarSchemaError,
     DomainMigrationSidecarSchemaState,
     OwnedSchemaObject,
     install_domain_migration_sidecar,
+    read_domain_migration_bridge_state,
     validate_domain_migration_registry,
     validate_domain_migration_sidecar_schema,
 )
@@ -35,6 +41,7 @@ from quantum_entanglement.migrations import apply_sqlite_migrations, migration_t
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
+BRIDGE_TIME = "2026-08-20T00:00:00Z"
 
 
 class CountingIntegers:
@@ -47,6 +54,31 @@ class CountingIntegers:
     def __next__(self) -> int:
         self.yielded += 1
         return 1
+
+
+class CountingRows:
+    def __init__(self, row: object) -> None:
+        self.row = row
+        self.yielded = 0
+
+    def __iter__(self) -> "CountingRows":
+        return self
+
+    def __next__(self) -> object:
+        self.yielded += 1
+        return self.row
+
+
+class TextSubclass(str):
+    pass
+
+
+class FakeRowsCursor:
+    def __init__(self, rows: Iterable[object]) -> None:
+        self.rows: Iterator[object] = iter(rows)
+
+    def fetchmany(self, size: int = 1) -> list[object]:
+        return list(itertools.islice(self.rows, size))
 
 
 class RecordingConnection:
@@ -65,6 +97,29 @@ class RecordingConnection:
     ) -> sqlite3.Cursor:
         snapshot = tuple(parameters)
         self.calls.append((statement, snapshot))
+        return self.delegate.execute(statement, snapshot)
+
+
+class FakeQueryConnection(RecordingConnection):
+    def __init__(
+        self,
+        delegate: sqlite3.Connection,
+        fake_queries: dict[str, Iterable[object]],
+    ) -> None:
+        super().__init__(delegate)
+        self.fake_queries = fake_queries
+
+    def execute(
+        self,
+        statement: str,
+        parameters: Sequence[object] = (),
+    ) -> Any:
+        snapshot = tuple(parameters)
+        self.calls.append((statement, snapshot))
+        normalized = " ".join(statement.split())
+        for marker, rows in self.fake_queries.items():
+            if marker in normalized:
+                return FakeRowsCursor(rows)
         return self.delegate.execute(statement, snapshot)
 
 
@@ -1177,6 +1232,708 @@ class DomainMigrationSidecarInstallerTests(unittest.TestCase):
             DomainMigrationSidecarSchemaState.EXACT,
         )
         self.assert_write_lock_available()
+
+
+class DomainMigrationBridgeStateTests(unittest.TestCase):
+    LEDGER_QUERY_MARKER = (
+        "SELECT version, filename, sha256, applied_at FROM main.qe_schema_migrations"
+    )
+    METADATA_QUERY_MARKER = (
+        "SELECT migration_version, domain, domain_version, metadata_kind, "
+        "descriptor_sha256, owned_schema_sha256, recorded_at "
+        "FROM main.qe_schema_migration_metadata"
+    )
+    DEPENDENCY_QUERY_MARKER = (
+        "SELECT migration_version, depends_on_version FROM main.qe_schema_migration_dependencies"
+    )
+
+    def setUp(self) -> None:
+        self.connection = sqlite3.connect(":memory:", isolation_level=None)
+
+    def tearDown(self) -> None:
+        self.connection.close()
+
+    def create_legacy_prefix(self, count: int) -> None:
+        versions = tuple(item.migration_id for item in LEGACY_DOMAIN_MIGRATIONS[:count])
+        self.assertEqual(
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=versions,
+                clock=lambda: BRIDGE_TIME,
+            ),
+            versions[-1] if versions else 0,
+        )
+
+    def create_exact_sidecar(self) -> None:
+        self.assertIs(
+            install_domain_migration_sidecar(self.connection),
+            DomainMigrationSidecarSchemaState.EXACT,
+        )
+
+    def insert_exact_metadata(self, count: int) -> None:
+        for descriptor in DOMAIN_MIGRATION_REGISTRY.descriptors[:count]:
+            self.connection.execute(
+                """
+                INSERT INTO main.qe_schema_migration_metadata (
+                    migration_version,
+                    domain,
+                    domain_version,
+                    metadata_kind,
+                    descriptor_sha256,
+                    owned_schema_sha256,
+                    recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    descriptor.migration_id,
+                    descriptor.domain,
+                    descriptor.domain_version,
+                    "legacy_bootstrap",
+                    descriptor.descriptor_sha256,
+                    descriptor.owned_object_manifest_sha256,
+                    BRIDGE_TIME,
+                ),
+            )
+
+    @staticmethod
+    def fake_connection(
+        connection: sqlite3.Connection,
+        marker: str,
+        rows: Iterable[object],
+    ) -> sqlite3.Connection:
+        return cast(
+            sqlite3.Connection,
+            FakeQueryConnection(connection, {marker: rows}),
+        )
+
+    def test_all_bridge_shapes_are_immutable_registry_bound_snapshots(self) -> None:
+        empty = read_domain_migration_bridge_state(self.connection)
+        self.assertEqual(
+            empty,
+            DomainMigrationBridgeState(
+                shape=DomainMigrationBridgeShape.LEGACY_PREFIX,
+                legacy_schema_version=0,
+                ledger_rows=(),
+                metadata_rows=(),
+                dependency_rows=(),
+                registry_sha256=DOMAIN_MIGRATION_REGISTRY.registry_sha256,
+            ),
+        )
+
+        self.create_legacy_prefix(2)
+        legacy = read_domain_migration_bridge_state(self.connection)
+        self.assertIs(legacy.shape, DomainMigrationBridgeShape.LEGACY_PREFIX)
+        self.assertEqual(legacy.legacy_schema_version, 2)
+        self.assertEqual(
+            legacy.ledger_rows,
+            tuple(
+                DomainMigrationLedgerRow(
+                    descriptor.migration_id,
+                    descriptor.filename,
+                    descriptor.sql_sha256,
+                    BRIDGE_TIME,
+                )
+                for descriptor in DOMAIN_MIGRATION_REGISTRY.descriptors[:2]
+            ),
+        )
+
+        self.create_exact_sidecar()
+        sidecar_empty = read_domain_migration_bridge_state(self.connection)
+        self.assertIs(
+            sidecar_empty.shape,
+            DomainMigrationBridgeShape.SIDECAR_EMPTY_PREFIX,
+        )
+        self.assertEqual(sidecar_empty.metadata_rows, ())
+        self.assertEqual(sidecar_empty.dependency_rows, ())
+
+        self.insert_exact_metadata(2)
+        bridged = read_domain_migration_bridge_state(self.connection)
+        self.assertIs(bridged.shape, DomainMigrationBridgeShape.BRIDGED_PREFIX)
+        self.assertEqual(
+            bridged.metadata_rows,
+            tuple(
+                DomainMigrationMetadataRow(
+                    descriptor.migration_id,
+                    descriptor.domain,
+                    descriptor.domain_version,
+                    "legacy_bootstrap",
+                    descriptor.descriptor_sha256,
+                    descriptor.owned_object_manifest_sha256,
+                    BRIDGE_TIME,
+                )
+                for descriptor in DOMAIN_MIGRATION_REGISTRY.descriptors[:2]
+            ),
+        )
+        self.assertEqual(bridged.dependency_rows, ())
+        self.assertEqual(
+            bridged.registry_sha256,
+            DOMAIN_MIGRATION_REGISTRY.registry_sha256,
+        )
+        with self.assertRaises((AttributeError, TypeError)):
+            bridged.legacy_schema_version = 3  # type: ignore[misc]
+
+    def test_exact_empty_sidecar_without_a_legacy_ledger_is_supported(self) -> None:
+        self.create_exact_sidecar()
+
+        state = read_domain_migration_bridge_state(self.connection)
+
+        self.assertIs(state.shape, DomainMigrationBridgeShape.SIDECAR_EMPTY_PREFIX)
+        self.assertEqual(state.legacy_schema_version, 0)
+        self.assertEqual(state.ledger_rows, ())
+
+    def test_partial_extra_and_unknown_metadata_are_rejected(self) -> None:
+        self.create_legacy_prefix(2)
+        self.create_exact_sidecar()
+        self.insert_exact_metadata(1)
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "does not exactly cover",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+        self.connection.execute(
+            """
+            INSERT INTO main.qe_schema_migration_metadata (
+                migration_version, domain, domain_version, metadata_kind,
+                descriptor_sha256, owned_schema_sha256, recorded_at
+            ) VALUES (999, 'future', 1, 'legacy_bootstrap', ?, ?, ?)
+            """,
+            (
+                "0" * 64,
+                "1" * 64,
+                BRIDGE_TIME,
+            ),
+        )
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "does not exactly cover",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+    def test_every_registry_controlled_metadata_field_must_match_exactly(self) -> None:
+        self.create_legacy_prefix(1)
+        self.create_exact_sidecar()
+        self.insert_exact_metadata(1)
+        descriptor = DOMAIN_MIGRATION_REGISTRY.descriptors[0]
+        cases = (
+            ("domain", "changed", descriptor.domain),
+            ("domain_version", 2, descriptor.domain_version),
+            ("metadata_kind", "native", "legacy_bootstrap"),
+            ("descriptor_sha256", "0" * 64, descriptor.descriptor_sha256),
+            (
+                "owned_schema_sha256",
+                "0" * 64,
+                descriptor.owned_object_manifest_sha256,
+            ),
+        )
+        for column, drifted, exact in cases:
+            with self.subTest(column=column):
+                self.connection.execute(
+                    f"""
+                    UPDATE main.qe_schema_migration_metadata
+                    SET {column} = ?
+                    WHERE migration_version = 1
+                    """,
+                    (drifted,),
+                )
+                with self.assertRaisesRegex(
+                    DomainMigrationBridgeIntegrityError,
+                    "exact registry descriptor",
+                ):
+                    read_domain_migration_bridge_state(self.connection)
+                self.connection.execute(
+                    f"""
+                    UPDATE main.qe_schema_migration_metadata
+                    SET {column} = ?
+                    WHERE migration_version = 1
+                    """,
+                    (exact,),
+                )
+
+    def test_dependency_drift_and_unapplied_endpoints_are_rejected(self) -> None:
+        self.create_legacy_prefix(2)
+        self.create_exact_sidecar()
+        self.insert_exact_metadata(2)
+        self.connection.execute(
+            """
+            INSERT INTO main.qe_schema_migration_dependencies (
+                migration_version, depends_on_version
+            ) VALUES (2, 1)
+            """
+        )
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "exact registry edges",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+        self.connection.execute("DELETE FROM main.qe_schema_migration_dependencies")
+        self.connection.execute(
+            """
+            INSERT INTO main.qe_schema_migration_dependencies (
+                migration_version, depends_on_version
+            ) VALUES (1, 3)
+            """
+        )
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "unapplied ledger row",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+    def test_empty_metadata_cannot_hide_dependency_rows(self) -> None:
+        self.create_legacy_prefix(1)
+        self.create_exact_sidecar()
+        self.connection.execute(
+            """
+            INSERT INTO main.qe_schema_migration_dependencies (
+                migration_version, depends_on_version
+            ) VALUES (1, 2)
+            """
+        )
+
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "empty.*metadata.*dependency",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+    def test_ledger_holes_future_rows_and_registry_drift_are_rejected(self) -> None:
+        self.create_legacy_prefix(2)
+        self.connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 1")
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "continuous supported registry prefix",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+        self.connection.execute("DELETE FROM main.qe_schema_migrations")
+        first = DOMAIN_MIGRATION_REGISTRY.descriptors[0]
+        self.connection.execute(
+            """
+            INSERT INTO main.qe_schema_migrations (
+                version, filename, sha256, applied_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (first.migration_id, first.filename, first.sql_sha256, BRIDGE_TIME),
+        )
+        self.connection.execute(
+            """
+            INSERT INTO main.qe_schema_migrations (
+                version, filename, sha256, applied_at
+            ) VALUES (999, '0999_future.up.sql', ?, ?)
+            """,
+            ("0" * 64, BRIDGE_TIME),
+        )
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "continuous supported registry prefix",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+        self.connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 999")
+        for column, value in (
+            ("filename", "0001_changed.up.sql"),
+            ("sha256", "0" * 64),
+        ):
+            with self.subTest(column=column):
+                self.connection.execute(
+                    f"UPDATE main.qe_schema_migrations SET {column} = ? WHERE version = 1",
+                    (value,),
+                )
+                with self.assertRaisesRegex(
+                    DomainMigrationBridgeIntegrityError,
+                    "filename or SQL digest",
+                ):
+                    read_domain_migration_bridge_state(self.connection)
+                exact = first.filename if column == "filename" else first.sql_sha256
+                self.connection.execute(
+                    f"UPDATE main.qe_schema_migrations SET {column} = ? WHERE version = 1",
+                    (exact,),
+                )
+
+    def test_weak_ledger_and_owned_schema_drift_use_the_stable_integrity_error(self) -> None:
+        self.connection.execute(
+            """
+            CREATE TABLE qe_schema_migrations (
+                version INTEGER,
+                filename TEXT,
+                sha256 TEXT,
+                applied_at TEXT
+            )
+            """
+        )
+        first = DOMAIN_MIGRATION_REGISTRY.descriptors[0]
+        self.connection.execute(
+            "INSERT INTO qe_schema_migrations VALUES (?, ?, ?, ?)",
+            (first.migration_id, first.filename, first.sql_sha256, BRIDGE_TIME),
+        )
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "ledger or owned schema is not exact",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+        self.connection.execute("DROP TABLE qe_schema_migrations")
+        self.create_legacy_prefix(1)
+        self.connection.execute("DROP INDEX idx_invocation_attempts_job")
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "ledger or owned schema is not exact",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+    def test_known_owned_objects_cannot_exist_without_their_ledger_rows(self) -> None:
+        self.connection.execute("CREATE TABLE invocation_jobs (value TEXT)")
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "unapplied legacy registry migration",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+        self.connection.execute("DROP TABLE invocation_jobs")
+        self.create_legacy_prefix(2)
+        self.connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 2")
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "unapplied legacy registry migration",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+
+    def test_partial_sidecar_is_classified_as_bridge_integrity_failure(self) -> None:
+        self.create_legacy_prefix(1)
+        self.connection.execute(DOMAIN_MIGRATION_SIDECAR_DDL[0])
+
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "sidecar schema is not exact",
+        ):
+            read_domain_migration_bridge_state(self.connection)
+        self.assertFalse(self.connection.in_transaction)
+
+    def test_ledger_and_metadata_timestamps_must_be_canonical_utc(self) -> None:
+        self.create_legacy_prefix(1)
+        self.create_exact_sidecar()
+        self.insert_exact_metadata(1)
+
+        self.connection.execute(
+            "UPDATE main.qe_schema_migrations SET applied_at = ? WHERE version = 1",
+            ("2026-08-20T00:00:00.123456Z",),
+        )
+        self.connection.execute(
+            """
+            UPDATE main.qe_schema_migration_metadata
+            SET recorded_at = ?
+            WHERE migration_version = 1
+            """,
+            ("2026-08-20T00:00:00.654321Z",),
+        )
+        self.assertIs(
+            read_domain_migration_bridge_state(self.connection).shape,
+            DomainMigrationBridgeShape.BRIDGED_PREFIX,
+        )
+
+        invalid_timestamps = (
+            "2026-08-20T00:00:00.000000Z",
+            "2026-08-20T00:00:00.1Z",
+            "2026-08-20T00:00:00+00:00",
+            "2026-02-30T00:00:00Z",
+            " 2026-08-20T00:00:00Z",
+        )
+        for table, column, key_column in (
+            ("qe_schema_migrations", "applied_at", "version"),
+            (
+                "qe_schema_migration_metadata",
+                "recorded_at",
+                "migration_version",
+            ),
+        ):
+            for timestamp in invalid_timestamps:
+                with self.subTest(table=table, timestamp=timestamp):
+                    self.connection.execute(
+                        f"UPDATE main.{table} SET {column} = ? WHERE {key_column} = 1",
+                        (timestamp,),
+                    )
+                    with self.assertRaisesRegex(
+                        DomainMigrationBridgeIntegrityError,
+                        "canonical RFC3339 UTC",
+                    ):
+                        read_domain_migration_bridge_state(self.connection)
+                    self.connection.execute(
+                        f"UPDATE main.{table} SET {column} = ? WHERE {key_column} = 1",
+                        (BRIDGE_TIME,),
+                    )
+
+    def test_fake_ledger_values_are_never_dynamically_coerced(self) -> None:
+        self.create_legacy_prefix(1)
+        descriptor = DOMAIN_MIGRATION_REGISTRY.descriptors[0]
+        valid = (
+            descriptor.migration_id,
+            descriptor.filename,
+            descriptor.sql_sha256,
+            BRIDGE_TIME,
+        )
+        cases = (
+            ("1", valid[1], valid[2], valid[3]),
+            (True, valid[1], valid[2], valid[3]),
+            (1.0, valid[1], valid[2], valid[3]),
+            (0, valid[1], valid[2], valid[3]),
+            (2**63, valid[1], valid[2], valid[3]),
+            (valid[0], TextSubclass(valid[1]), valid[2], valid[3]),
+            (valid[0], "a" * 256, valid[2], valid[3]),
+            (valid[0], valid[1], bytes(valid[2], "ascii"), valid[3]),
+            (valid[0], valid[1], "A" * 64, valid[3]),
+            (valid[0], valid[1], valid[2], TextSubclass(valid[3])),
+            (valid[0], valid[1], valid[2], "2" * 33),
+        )
+        for row in cases:
+            with self.subTest(value_types=tuple(type(item).__name__ for item in row)):
+                fake = self.fake_connection(
+                    self.connection,
+                    self.LEDGER_QUERY_MARKER,
+                    (row,),
+                )
+                with self.assertRaises(DomainMigrationBridgeIntegrityError):
+                    read_domain_migration_bridge_state(fake)
+                self.assertFalse(self.connection.in_transaction)
+
+    def test_fake_metadata_and_dependency_values_require_exact_sqlite_types(self) -> None:
+        self.create_legacy_prefix(1)
+        self.create_exact_sidecar()
+        descriptor = DOMAIN_MIGRATION_REGISTRY.descriptors[0]
+        valid_metadata = (
+            descriptor.migration_id,
+            descriptor.domain,
+            descriptor.domain_version,
+            "legacy_bootstrap",
+            descriptor.descriptor_sha256,
+            descriptor.owned_object_manifest_sha256,
+            BRIDGE_TIME,
+        )
+        metadata_cases = (
+            (True,) + valid_metadata[1:],
+            (valid_metadata[0], bytes(valid_metadata[1], "ascii")) + valid_metadata[2:],
+            (valid_metadata[0], "A_domain") + valid_metadata[2:],
+            (valid_metadata[0], "a" * 65) + valid_metadata[2:],
+            valid_metadata[:2] + ("1",) + valid_metadata[3:],
+            valid_metadata[:2] + (0,) + valid_metadata[3:],
+            valid_metadata[:2] + (2**63,) + valid_metadata[3:],
+            valid_metadata[:3] + (TextSubclass("legacy_bootstrap"),) + valid_metadata[4:],
+            valid_metadata[:3] + ("future",) + valid_metadata[4:],
+            valid_metadata[:4] + (bytes(valid_metadata[4], "ascii"),) + valid_metadata[5:],
+            valid_metadata[:4] + ("A" * 64,) + valid_metadata[5:],
+            valid_metadata[:5] + ("f" * 63,) + valid_metadata[6:],
+            valid_metadata[:-1] + (TextSubclass(BRIDGE_TIME),),
+            valid_metadata[:-1] + ("2" * 33,),
+        )
+        for row in metadata_cases:
+            with self.subTest(value_types=tuple(type(item).__name__ for item in row)):
+                fake = self.fake_connection(
+                    self.connection,
+                    self.METADATA_QUERY_MARKER,
+                    (row,),
+                )
+                with self.assertRaises(DomainMigrationBridgeIntegrityError):
+                    read_domain_migration_bridge_state(fake)
+
+        self.insert_exact_metadata(1)
+        for dependency_row in (
+            (1.0, 2),
+            (1, "2"),
+            (True, 2),
+            (0, 2),
+            (1, 2**63),
+        ):
+            with self.subTest(dependency=dependency_row):
+                fake = self.fake_connection(
+                    self.connection,
+                    self.DEPENDENCY_QUERY_MARKER,
+                    (dependency_row,),
+                )
+                with self.assertRaises(DomainMigrationBridgeIntegrityError):
+                    read_domain_migration_bridge_state(fake)
+
+    def test_fake_row_column_shapes_are_rejected_before_indexing(self) -> None:
+        self.create_legacy_prefix(1)
+        descriptor = DOMAIN_MIGRATION_REGISTRY.descriptors[0]
+        malformed_rows: tuple[object, ...] = (
+            1,
+            (descriptor.migration_id,),
+            (
+                descriptor.migration_id,
+                descriptor.filename,
+                descriptor.sql_sha256,
+                BRIDGE_TIME,
+                "unexpected",
+            ),
+        )
+        for row in malformed_rows:
+            with self.subTest(row_type=type(row).__name__):
+                fake = self.fake_connection(
+                    self.connection,
+                    self.LEDGER_QUERY_MARKER,
+                    (row,),
+                )
+                with self.assertRaisesRegex(
+                    DomainMigrationBridgeIntegrityError,
+                    "malformed column shape",
+                ):
+                    read_domain_migration_bridge_state(fake)
+
+    def test_every_durable_query_is_parameter_bounded_and_fake_rows_stop_at_limit(self) -> None:
+        self.create_legacy_prefix(1)
+        self.create_exact_sidecar()
+        self.insert_exact_metadata(1)
+        recording = RecordingConnection(self.connection)
+
+        state = read_domain_migration_bridge_state(cast(sqlite3.Connection, recording))
+
+        self.assertIs(state.shape, DomainMigrationBridgeShape.BRIDGED_PREFIX)
+        durable_markers = (
+            self.LEDGER_QUERY_MARKER,
+            self.METADATA_QUERY_MARKER,
+            self.DEPENDENCY_QUERY_MARKER,
+        )
+        durable_calls = []
+        for statement, parameters in recording.calls:
+            normalized = " ".join(statement.split())
+            if any(marker in normalized for marker in durable_markers):
+                durable_calls.append((normalized, parameters))
+        self.assertEqual(len(durable_calls), 3)
+        for statement, parameters in durable_calls:
+            self.assertIn("LIMIT ?", statement)
+            self.assertEqual(parameters, (MAX_DOMAIN_MIGRATIONS + 1,))
+
+        descriptor = DOMAIN_MIGRATION_REGISTRY.descriptors[0]
+        rows_and_markers = (
+            (
+                CountingRows(
+                    (
+                        descriptor.migration_id,
+                        descriptor.filename,
+                        descriptor.sql_sha256,
+                        BRIDGE_TIME,
+                    )
+                ),
+                self.LEDGER_QUERY_MARKER,
+            ),
+            (
+                CountingRows(
+                    (
+                        descriptor.migration_id,
+                        descriptor.domain,
+                        descriptor.domain_version,
+                        "legacy_bootstrap",
+                        descriptor.descriptor_sha256,
+                        descriptor.owned_object_manifest_sha256,
+                        BRIDGE_TIME,
+                    )
+                ),
+                self.METADATA_QUERY_MARKER,
+            ),
+            (CountingRows((1, 2)), self.DEPENDENCY_QUERY_MARKER),
+        )
+        for rows, marker in rows_and_markers:
+            with self.subTest(marker=marker):
+                fake = self.fake_connection(self.connection, marker, rows)
+                with self.assertRaisesRegex(
+                    DomainMigrationBridgeIntegrityError,
+                    "hard limit",
+                ):
+                    read_domain_migration_bridge_state(fake)
+                self.assertEqual(rows.yielded, MAX_DOMAIN_MIGRATIONS + 1)
+
+    def test_reader_is_read_only_under_a_write_deny_authorizer(self) -> None:
+        self.create_legacy_prefix(1)
+        self.create_exact_sidecar()
+        self.insert_exact_metadata(1)
+        denied_actions: list[int] = []
+        write_actions = {
+            sqlite3.SQLITE_ALTER_TABLE,
+            sqlite3.SQLITE_CREATE_INDEX,
+            sqlite3.SQLITE_CREATE_TABLE,
+            sqlite3.SQLITE_CREATE_TRIGGER,
+            sqlite3.SQLITE_CREATE_VIEW,
+            sqlite3.SQLITE_DELETE,
+            sqlite3.SQLITE_DROP_INDEX,
+            sqlite3.SQLITE_DROP_TABLE,
+            sqlite3.SQLITE_DROP_TRIGGER,
+            sqlite3.SQLITE_DROP_VIEW,
+            sqlite3.SQLITE_INSERT,
+            sqlite3.SQLITE_UPDATE,
+        }
+
+        def authorize(
+            action: int,
+            _argument_one: Optional[str],
+            _argument_two: Optional[str],
+            _database_name: Optional[str],
+            _trigger_name: Optional[str],
+        ) -> int:
+            if action in write_actions:
+                denied_actions.append(action)
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        before_changes = self.connection.total_changes
+        self.connection.set_authorizer(authorize)
+        try:
+            state = read_domain_migration_bridge_state(self.connection)
+        finally:
+            self.connection.set_authorizer(None)
+
+        self.assertIs(state.shape, DomainMigrationBridgeShape.BRIDGED_PREFIX)
+        self.assertEqual(denied_actions, [])
+        self.assertEqual(self.connection.total_changes, before_changes)
+        self.assertFalse(self.connection.in_transaction)
+
+    def test_owned_snapshot_rolls_back_and_caller_transaction_is_untouched(self) -> None:
+        self.create_legacy_prefix(1)
+        traced: list[str] = []
+        self.connection.set_trace_callback(traced.append)
+        try:
+            read_domain_migration_bridge_state(self.connection)
+        finally:
+            self.connection.set_trace_callback(None)
+        transaction_statements = tuple(
+            " ".join(statement.strip().split()).upper()
+            for statement in traced
+            if statement.strip().upper().startswith(("BEGIN", "COMMIT", "ROLLBACK"))
+        )
+        self.assertEqual(transaction_statements, ("BEGIN", "ROLLBACK"))
+        self.assertFalse(self.connection.in_transaction)
+
+        self.connection.execute("CREATE TABLE caller_state (value TEXT)")
+        self.connection.execute("BEGIN")
+        self.connection.execute("INSERT INTO caller_state VALUES ('pending')")
+        recording = RecordingConnection(self.connection)
+        state = read_domain_migration_bridge_state(cast(sqlite3.Connection, recording))
+        self.assertIs(state.shape, DomainMigrationBridgeShape.LEGACY_PREFIX)
+        self.assertTrue(self.connection.in_transaction)
+        self.assertFalse(
+            any(
+                statement.strip().upper() in {"BEGIN", "COMMIT", "ROLLBACK"}
+                for statement, _parameters in recording.calls
+            )
+        )
+        self.assertEqual(
+            self.connection.execute("SELECT value FROM caller_state").fetchone(),
+            ("pending",),
+        )
+        self.connection.execute("ROLLBACK")
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM caller_state").fetchone(),
+            (0,),
+        )
+
+    def test_closed_connection_uses_the_stable_snapshot_error(self) -> None:
+        self.connection.close()
+
+        with self.assertRaisesRegex(
+            DomainMigrationBridgeIntegrityError,
+            "snapshot could not be opened",
+        ):
+            read_domain_migration_bridge_state(self.connection)
 
 
 if __name__ == "__main__":
