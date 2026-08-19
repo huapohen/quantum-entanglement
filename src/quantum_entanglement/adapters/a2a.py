@@ -7,8 +7,9 @@ It intentionally does not turn A2A task state into the platform's source of trut
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any
 
 from ..protocol import (
     ActorRef,
@@ -23,17 +24,17 @@ class A2ASkill:
     skill_id: str
     name: str
     description: str
-    tags: Tuple[str, ...] = ()
-    examples: Tuple[str, ...] = ()
-    input_modes: Tuple[str, ...] = ()
-    output_modes: Tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+    examples: tuple[str, ...] = ()
+    input_modes: tuple[str, ...] = ()
+    output_modes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.skill_id.strip() or not self.name.strip() or not self.description.strip():
             raise ValueError("A2A skill id, name, and description are required")
 
-    def to_dict(self) -> Dict[str, Any]:
-        value: Dict[str, Any] = {
+    def to_dict(self) -> dict[str, Any]:
+        value: dict[str, Any] = {
             "id": self.skill_id,
             "name": self.name,
             "description": self.description,
@@ -47,7 +48,7 @@ class A2ASkill:
         return value
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "A2ASkill":
+    def from_dict(cls, value: Mapping[str, Any]) -> A2ASkill:
         return cls(
             skill_id=str(value["id"]),
             name=str(value["name"]),
@@ -67,24 +68,36 @@ class A2AAgentCard:
     description: str
     url: str
     version: str
-    skills: Tuple[A2ASkill, ...]
-    protocol_version: Optional[str] = None
-    preferred_transport: Optional[str] = None
+    skills: tuple[A2ASkill, ...]
+    protocol_version: str | None = None
+    preferred_transport: str | None = None
     capabilities: Mapping[str, Any] = field(default_factory=dict)
-    default_input_modes: Tuple[str, ...] = ("text/plain",)
-    default_output_modes: Tuple[str, ...] = ("text/plain",)
+    default_input_modes: tuple[str, ...] = ("text/plain",)
+    default_output_modes: tuple[str, ...] = ("text/plain",)
     security_schemes: Mapping[str, Any] = field(default_factory=dict)
-    security: Tuple[Mapping[str, Any], ...] = ()
-    provider: Optional[Mapping[str, Any]] = None
-    documentation_url: Optional[str] = None
-    icon_url: Optional[str] = None
+    security: tuple[Mapping[str, Any], ...] = ()
+    provider: Mapping[str, Any] | None = None
+    documentation_url: str | None = None
+    icon_url: str | None = None
     extensions: Mapping[str, Any] = field(default_factory=dict)
 
     KNOWN_FIELDS = frozenset(
         {
-            "name", "description", "url", "version", "skills", "protocolVersion",
-            "preferredTransport", "capabilities", "defaultInputModes", "defaultOutputModes",
-            "securitySchemes", "security", "provider", "documentationUrl", "iconUrl",
+            "name",
+            "description",
+            "url",
+            "version",
+            "skills",
+            "protocolVersion",
+            "preferredTransport",
+            "capabilities",
+            "defaultInputModes",
+            "defaultOutputModes",
+            "securitySchemes",
+            "security",
+            "provider",
+            "documentationUrl",
+            "iconUrl",
         }
     )
 
@@ -96,8 +109,8 @@ class A2AAgentCard:
         if not (self.url.startswith("https://") or self.url.startswith("http://")):
             raise ValueError("A2A card url must be HTTP(S)")
 
-    def to_dict(self) -> Dict[str, Any]:
-        value: Dict[str, Any] = dict(self.extensions)
+    def to_dict(self) -> dict[str, Any]:
+        value: dict[str, Any] = dict(self.extensions)
         value.update(
             {
                 "name": self.name,
@@ -125,7 +138,7 @@ class A2AAgentCard:
         return value
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "A2AAgentCard":
+    def from_dict(cls, value: Mapping[str, Any]) -> A2AAgentCard:
         extensions = {key: item for key, item in value.items() if key not in cls.KNOWN_FIELDS}
         return cls(
             name=str(value["name"]),
@@ -133,7 +146,9 @@ class A2AAgentCard:
             url=str(value["url"]),
             version=str(value["version"]),
             skills=tuple(A2ASkill.from_dict(item) for item in value.get("skills", ())),
-            protocol_version=(str(value["protocolVersion"]) if value.get("protocolVersion") else None),
+            protocol_version=(
+                str(value["protocolVersion"]) if value.get("protocolVersion") else None
+            ),
             preferred_transport=(
                 str(value["preferredTransport"]) if value.get("preferredTransport") else None
             ),
@@ -160,9 +175,9 @@ class A2AJsonRpcAdapter:
     def message_send_request(
         self,
         envelope: CoordinationEnvelope,
-        request_id: Optional[str] = None,
+        request_id: str | None = None,
         blocking: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if envelope.kind not in (EnvelopeKind.TASK_ASSIGN, EnvelopeKind.CHAT, EnvelopeKind.HANDOFF):
             raise ValueError("envelope kind cannot be sent as an A2A user message")
         return {
@@ -194,7 +209,7 @@ class A2AJsonRpcAdapter:
         }
 
     @staticmethod
-    def task_get_request(task_id: str, request_id: Optional[str] = None) -> Dict[str, Any]:
+    def task_get_request(task_id: str, request_id: str | None = None) -> dict[str, Any]:
         if not task_id.strip():
             raise ValueError("A2A task id is required")
         return {
@@ -205,7 +220,7 @@ class A2AJsonRpcAdapter:
         }
 
     @staticmethod
-    def task_cancel_request(task_id: str, request_id: Optional[str] = None) -> Dict[str, Any]:
+    def task_cancel_request(task_id: str, request_id: str | None = None) -> dict[str, Any]:
         if not task_id.strip():
             raise ValueError("A2A task id is required")
         return {
@@ -244,6 +259,9 @@ class A2AJsonRpcAdapter:
             payload=payload,
             correlation_id=request.correlation_id,
             causation_id=request.message_id,
-            idempotency_key="a2a-response:%s:%s" % (request.message_id, response.get("id", "none")),
+            idempotency_key="a2a-response:{}:{}".format(
+                request.message_id,
+                response.get("id", "none"),
+            ),
             authority=request.authority,
         )

@@ -1,6 +1,6 @@
 import unittest
 
-from quantum_entanglement.adapters.a2a import A2AAgentCard, A2AJsonRpcAdapter, A2ASkill
+from quantum_entanglement.adapters.a2a import A2AAgentCard, A2AJsonRpcAdapter
 from quantum_entanglement.chat import ChatRoute, InboundChatMessage, MentionRouter
 from quantum_entanglement.langgraph_bridge import BridgeStatus, LangGraphBridge
 from quantum_entanglement.protocol import (
@@ -43,15 +43,22 @@ class A2AAdapterTests(unittest.TestCase):
         local = ActorRef("orchestrator", "Orchestrator", ActorKind.SYSTEM)
         remote = ActorRef("remote", "Remote", ActorKind.AGENT)
         envelope = CoordinationEnvelope.create(
-            "session", "task", local, (remote,), EnvelopeKind.TASK_ASSIGN,
-            {"goal": "research"}, correlation_id="correlation", causation_id="parent",
+            "session",
+            "task",
+            local,
+            (remote,),
+            EnvelopeKind.TASK_ASSIGN,
+            {"goal": "research"},
+            correlation_id="correlation",
+            causation_id="parent",
             idempotency_key="once",
         )
         adapter = A2AJsonRpcAdapter(local)
 
         request = adapter.message_send_request(envelope, blocking=True)
         restored = adapter.result_envelope(
-            envelope, remote,
+            envelope,
+            remote,
             {"jsonrpc": "2.0", "id": envelope.message_id, "result": {"kind": "task", "id": "r1"}},
         )
 
