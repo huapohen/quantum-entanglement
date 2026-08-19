@@ -1,0 +1,47 @@
+{
+  "format": "quantum-entanglement.dependency-locks",
+  "generatedBy": {
+    "name": "uv",
+    "version": "0.9.27"
+  },
+  "locks": [
+    {
+      "input": "requirements/build.in",
+      "inputSha256": "9485d94149196d2d52e72e38d1883c8242e4f74b16baac7fea6f10ab9616abba",
+      "lock": "requirements/build-py312.lock",
+      "lockSha256": "450a13782d614ae17cc34f2ce5a4ed8b093fc8d76a5b517a9a74c1f22e9475d4",
+      "platform": "x86_64-unknown-linux-gnu",
+      "pythonVersion": "3.12",
+      "scope": "build"
+    },
+    {
+      "input": "requirements/dev.in",
+      "inputSha256": "d73facad053647bf29622a452b458daaba16e05c94024947d4bfefb70d496b0a",
+      "lock": "requirements/dev-py39.lock",
+      "lockSha256": "883d6a18f63c467f343e072b15f174bff203f38640eea0aebc46e468d75629da",
+      "platform": "x86_64-unknown-linux-gnu",
+      "pythonVersion": "3.9",
+      "scope": "dev"
+    },
+    {
+      "input": "requirements/dev.in",
+      "inputSha256": "d73facad053647bf29622a452b458daaba16e05c94024947d4bfefb70d496b0a",
+      "lock": "requirements/dev-py312.lock",
+      "lockSha256": "bbfb596985e9104027f2999071a7e3ac8a8d8d107766f559f7a2c4833dd6a588",
+      "platform": "x86_64-unknown-linux-gnu",
+      "pythonVersion": "3.12",
+      "scope": "dev"
+    },
+    {
+      "input": "requirements/release.in",
+      "inputSha256": "01edda1ba0314bea9e568b21766a06c7f0ef1937697a00dcff05c1c49a176c1d",
+      "lock": "requirements/release-py312.lock",
+      "lockSha256": "7b79b203aa298a981fa91746836b3c124a3b299a31127967c564d54c15d22b77",
+      "platform": "x86_64-unknown-linux-gnu",
+      "pythonVersion": "3.12",
+      "scope": "release"
+    }
+  ],
+  "resolutionCutoff": "2026-08-20T00:00:00Z",
+  "schemaVersion": 1
+}
