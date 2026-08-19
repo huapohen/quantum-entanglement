@@ -59,6 +59,18 @@ manifest = create_sqlite_backup(
 print(manifest.backup_id)
 ```
 
+Installed command:
+
+```bash
+qe-admin --compact backup \
+  --source /var/lib/quantum-entanglement/state.sqlite3 \
+  --destination /var/backups/quantum-entanglement/2026-08-20T020000Z.sqlite3
+```
+
+Success is JSON on stdout with `ok`, `operation`, `paths`, and the complete manifest.
+Operational failures are JSON on stderr with a stable error code and exit status `1`;
+argument syntax failures retain argparse's exit status `2`.
+
 Operational procedure:
 
 1. Check service health and current queue/attempt/DLQ/ambiguity counts.
@@ -84,6 +96,11 @@ from quantum_entanglement import verify_sqlite_backup
 manifest = verify_sqlite_backup(
     "/var/backups/quantum-entanglement/2026-08-20T020000Z.sqlite3"
 )
+```
+
+```bash
+qe-admin --compact verify-backup \
+  --backup /var/backups/quantum-entanglement/2026-08-20T020000Z.sqlite3
 ```
 
 Verification fails closed on:
@@ -113,6 +130,12 @@ restore_sqlite_backup(
     "/var/backups/quantum-entanglement/2026-08-20T020000Z.sqlite3",
     "/var/lib/quantum-entanglement/restore-2026-08-20.sqlite3",
 )
+```
+
+```bash
+qe-admin --compact restore-backup \
+  --backup /var/backups/quantum-entanglement/2026-08-20T020000Z.sqlite3 \
+  --destination /var/lib/quantum-entanglement/restore-2026-08-20.sqlite3
 ```
 
 The restore function:
@@ -203,7 +226,7 @@ Never run a destructive down migration on the only backup copy.
 
 ## Current limitations and next gates
 
-- no CLI wrapper or scheduled backup job yet;
+- no scheduled backup job yet;
 - no signed or MAC-authenticated manifest;
 - no encryption key metadata or restore-time KMS check;
 - no remote object storage, retention, legal hold, or automatic expiry;
