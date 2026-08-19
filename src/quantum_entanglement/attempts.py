@@ -39,6 +39,8 @@ _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
 )
 _MAX_ERROR_LENGTH = 4_096
+
+
 class InvocationConflictError(RuntimeError):
     """Raised when an idempotency boundary is reused for different work."""
 
@@ -323,7 +325,14 @@ class SQLiteInvocationAttemptStore:
         return _normalize_timestamp(self._clock(), "clock")
 
     def _apply_migrations(self) -> None:
-        apply_sqlite_migrations(self._connection, clock=self._now)
+        # Attempt-only databases do not own the event-store outbox schema.
+        # All registry entries are still checksum-validated on reopen, while
+        # only migrations whose dependencies this store owns are installed.
+        apply_sqlite_migrations(
+            self._connection,
+            target_versions=(1, 2),
+            clock=self._now,
+        )
 
     @staticmethod
     def _row_to_job(row: sqlite3.Row) -> InvocationJob:

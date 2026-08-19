@@ -43,6 +43,7 @@ class Migration:
 MIGRATIONS: Sequence[Migration] = (
     Migration(1, "0001_invocation_attempts.up.sql"),
     Migration(2, "0002_artifacts.up.sql"),
+    Migration(3, "0003_outbox_ambiguities.up.sql"),
 )
 
 
@@ -82,6 +83,14 @@ def _sql_statements(script: str) -> Sequence[str]:
     return tuple(statements)
 
 
+def _sqlite_sha256(value: object) -> str:
+    """Hash legacy fencing tokens without ever formatting or logging them."""
+
+    if not isinstance(value, str) or not value:
+        raise ValueError("qe_sha256 requires a non-empty text value")
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def apply_sqlite_migrations(
     connection: sqlite3.Connection,
     *,
@@ -109,6 +118,7 @@ def apply_sqlite_migrations(
         if requested_versions != expected_prefix:
             raise ValueError("target migration versions must be a continuous registry prefix")
         selected_versions = set(requested_versions)
+    connection.create_function("qe_sha256", 1, _sqlite_sha256, deterministic=True)
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS qe_schema_migrations (
