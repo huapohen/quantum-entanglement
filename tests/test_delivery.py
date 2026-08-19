@@ -15,6 +15,7 @@ from quantum_entanglement.migrations import (
     apply_sqlite_migrations,
     current_schema_version,
     migration_text,
+    validate_sqlite_schema,
 )
 from quantum_entanglement.store import SQLiteEventStore
 
@@ -186,6 +187,16 @@ class TransactionalDeliveryTests(unittest.TestCase):
             )
         finally:
             upgraded.close()
+
+    def test_schema_validator_covers_outbox_ambiguity_migration(self):
+        self.assertEqual(validate_sqlite_schema(self.store._connection), 3)
+
+        self.store._connection.execute("DROP INDEX idx_outbox_ambiguities_opened")
+        with self.assertRaisesRegex(
+            MigrationDriftError,
+            "idx_outbox_ambiguities_opened.*missing",
+        ):
+            validate_sqlite_schema(self.store._connection)
 
     def test_outbox_migration_rebuilds_legacy_rows_without_plaintext_tokens(self):
         upgrade_path = str(Path(self.tempdir.name) / "upgrade-legacy-outbox.sqlite3")

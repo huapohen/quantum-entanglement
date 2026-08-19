@@ -13,6 +13,7 @@ from quantum_entanglement.migrations import (
     MigrationVersionError,
     apply_sqlite_migrations,
     current_schema_version,
+    validate_sqlite_schema,
 )
 
 NOW = "2026-08-20T00:00:00Z"
@@ -203,6 +204,63 @@ class MigrationRunnerTests(unittest.TestCase):
             "SELECT version FROM qe_schema_migrations ORDER BY version"
         ).fetchall()
         self.assertEqual([row["version"] for row in versions], [2])
+
+    def test_schema_validator_rejects_missing_and_weakened_migration_objects(self):
+        apply_sqlite_migrations(
+            self.connection,
+            target_versions=(1, 2),
+            clock=lambda: NOW,
+        )
+        self.assertEqual(validate_sqlite_schema(self.connection), 2)
+
+        self.connection.execute("DROP TABLE artifact_versions")
+        self.connection.execute("DROP TABLE artifact_blobs")
+        self.connection.execute("CREATE TABLE artifact_blobs(digest TEXT PRIMARY KEY)")
+        with self.assertRaisesRegex(MigrationDriftError, "artifact_blobs.*differs"):
+            validate_sqlite_schema(self.connection)
+
+        second = sqlite3.connect(":memory:", isolation_level=None)
+        second.row_factory = sqlite3.Row
+        try:
+            apply_sqlite_migrations(
+                second,
+                target_versions=(1,),
+                clock=lambda: NOW,
+            )
+            second.execute("DROP TABLE invocation_attempts")
+            with self.assertRaisesRegex(MigrationDriftError, "invocation_attempts.*missing"):
+                validate_sqlite_schema(second)
+        finally:
+            second.close()
+
+    def test_schema_validator_ignores_temporary_ledger_shadowing(self):
+        apply_sqlite_migrations(
+            self.connection,
+            target_versions=(1,),
+            clock=lambda: NOW,
+        )
+        self.connection.execute(
+            """
+            CREATE TEMP TABLE qe_schema_migrations (
+                version INTEGER,
+                filename TEXT,
+                sha256 TEXT
+            )
+            """
+        )
+        self.connection.execute(
+            "INSERT INTO temp.qe_schema_migrations VALUES (999, 'forged.up.sql', 'forged')"
+        )
+
+        self.assertEqual(validate_sqlite_schema(self.connection), 1)
+
+    def test_schema_validator_rejects_non_table_ledger_object(self):
+        self.connection.execute(
+            "CREATE VIEW qe_schema_migrations AS SELECT 1 AS version"
+        )
+
+        with self.assertRaisesRegex(MigrationDriftError, "is not a table"):
+            validate_sqlite_schema(self.connection)
 
     def test_statement_splitter_handles_same_line_and_quoted_semicolon(self):
         migration = Migration(1, "0001_compound.up.sql")

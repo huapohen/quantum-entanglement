@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.resources
+import re
 import sqlite3
 from dataclasses import dataclass
-from typing import Callable, Optional, Sequence
+from typing import Callable, Dict, Optional, Sequence, Tuple
 
 from ..protocol import utc_now
 
@@ -44,6 +45,25 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(1, "0001_invocation_attempts.up.sql"),
     Migration(2, "0002_artifacts.up.sql"),
     Migration(3, "0003_outbox_ambiguities.up.sql"),
+)
+
+_LEDGER_SCHEMA_SQL = """
+CREATE TABLE qe_schema_migrations (
+    version INTEGER PRIMARY KEY,
+    filename TEXT NOT NULL UNIQUE,
+    sha256 TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+)
+"""
+_CREATE_OBJECT_PATTERN = re.compile(
+    r"\bCREATE\s+(?:UNIQUE\s+)?(?P<kind>TABLE|INDEX)\s+"
+    r"(?:IF\s+NOT\s+EXISTS\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+_DROP_OBJECT_PATTERN = re.compile(
+    r"\bDROP\s+(?P<kind>TABLE|INDEX)\s+"
+    r"(?:IF\s+EXISTS\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
 )
 
 
@@ -83,6 +103,106 @@ def _sql_statements(script: str) -> Sequence[str]:
     if buffer.strip():
         raise ValueError("migration SQL ends with an incomplete statement")
     return tuple(statements)
+
+
+def _canonical_schema_sql(sql: str) -> str:
+    without_idempotency_clause = re.sub(
+        r"\bIF\s+NOT\s+EXISTS\b",
+        "",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    return " ".join(without_idempotency_clause.strip().rstrip(";").split())
+
+
+def _expected_schema_objects(
+    migrations: Sequence[Migration],
+    applied_versions: Tuple[int, ...],
+) -> Dict[Tuple[str, str], str]:
+    expected: Dict[Tuple[str, str], str] = {
+        ("table", "qe_schema_migrations"): _canonical_schema_sql(_LEDGER_SCHEMA_SQL)
+    }
+    applied = set(applied_versions)
+    for migration in migrations:
+        if migration.version not in applied:
+            continue
+        for statement in _sql_statements(migration_text(migration.filename)):
+            created = _CREATE_OBJECT_PATTERN.search(statement)
+            if created is not None:
+                key = (created.group("kind").lower(), created.group("name"))
+                expected[key] = _canonical_schema_sql(statement[created.start() :])
+                continue
+            dropped = _DROP_OBJECT_PATTERN.search(statement)
+            if dropped is not None:
+                key = (dropped.group("kind").lower(), dropped.group("name"))
+                expected.pop(key, None)
+    return expected
+
+
+def validate_sqlite_schema(
+    connection: sqlite3.Connection,
+    *,
+    migrations: Sequence[Migration] = MIGRATIONS,
+) -> int:
+    """Validate migration history and exact packaged schema objects without mutation."""
+
+    _validate_registry(migrations)
+    ledger = connection.execute(
+        """
+        SELECT type, sql FROM main.sqlite_master
+        WHERE name = 'qe_schema_migrations'
+        """
+    ).fetchone()
+    if ledger is None:
+        return 0
+    if ledger[0] != "table":
+        raise MigrationDriftError("SQLite object 'qe_schema_migrations' is not a table")
+
+    rows = connection.execute(
+        """
+        SELECT version, filename, sha256
+        FROM main.qe_schema_migrations
+        ORDER BY version
+        """
+    ).fetchall()
+    known = {item.version: item for item in migrations}
+    applied_versions = tuple(int(row[0]) for row in rows)
+    for row in rows:
+        version = int(row[0])
+        migration = known.get(version)
+        if migration is None:
+            raise MigrationVersionError(
+                f"database schema version {version} is newer than this binary"
+            )
+        sql = migration_text(migration.filename)
+        digest = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        if row[1] != migration.filename or row[2] != digest:
+            raise MigrationDriftError(
+                f"migration {version} checksum or filename differs from the applied schema"
+            )
+    ordered_versions = tuple(item.version for item in migrations)
+    if applied_versions != ordered_versions[: len(applied_versions)]:
+        raise MigrationDriftError(
+            "migration ledger must be a continuous registry prefix starting at one"
+        )
+
+    expected_objects = _expected_schema_objects(migrations, applied_versions)
+    for (object_type, name), expected_sql in expected_objects.items():
+        row = connection.execute(
+            """
+            SELECT type, sql FROM main.sqlite_master
+            WHERE type = ? AND name = ?
+            """,
+            (object_type, name),
+        ).fetchone()
+        if row is None or row[1] is None:
+            raise MigrationDriftError(f"migration-owned SQLite {object_type} {name!r} is missing")
+        actual_sql = _canonical_schema_sql(str(row[1]))
+        if actual_sql != expected_sql:
+            raise MigrationDriftError(
+                f"migration-owned SQLite {object_type} {name!r} differs from packaged schema"
+            )
+    return applied_versions[-1] if applied_versions else 0
 
 
 def _sqlite_sha256(value: object) -> str:
@@ -215,4 +335,5 @@ __all__ = [
     "apply_sqlite_migrations",
     "current_schema_version",
     "migration_text",
+    "validate_sqlite_schema",
 ]
