@@ -99,6 +99,17 @@ def default_gates(python_executable: str = sys.executable) -> Tuple[Gate, ...]:
     )
 
 
+def gate_evidence_argv(gate: Gate) -> list[str]:
+    """Derive recorded argv from executed argv without allowing argument substitution."""
+
+    if not gate.argv or any(not token for token in gate.argv):
+        raise ValueError("gate argv must contain only non-blank tokens")
+    evidence_argv = list(gate.argv)
+    if gate.record_executable_basename:
+        evidence_argv[0] = Path(evidence_argv[0]).name
+    return evidence_argv
+
+
 def _child_environment(repository_root: Path, include_repository_source: bool) -> dict[str, str]:
     environment = {
         name: os.environ[name] for name in _ALLOWED_CHILD_ENVIRONMENT if name in os.environ
@@ -205,11 +216,8 @@ def run_gate(
             failure_kind = "nonzero_exit"
     elapsed_ns = max(0, monotonic_ns() - started_ns)
     duration_milliseconds = elapsed_ns // 1_000_000
-    evidence_argv = list(gate.argv)
-    if gate.record_executable_basename:
-        evidence_argv[0] = Path(evidence_argv[0]).name
     return {
-        "argv": evidence_argv,
+        "argv": gate_evidence_argv(gate),
         "durationMilliseconds": duration_milliseconds,
         "exitCode": exit_code,
         "failureKind": failure_kind,
