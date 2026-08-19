@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quantum-entanglement"
+version = "0.1.0"
+description = "Event-sourced multi-agent coordination kernel for human-agent group work"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "huapohen" }]
+keywords = ["agents", "multi-agent", "a2a", "langgraph", "orchestration"]
+dependencies = []
+
+[project.optional-dependencies]
+langgraph = ["langgraph>=1.2.7,<2"]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.8", "mypy>=1.13"]
+
+[project.scripts]
+qe-demo = "quantum_entanglement.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
