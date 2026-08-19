@@ -7,6 +7,7 @@ from quantum_entanglement.events import DomainEvent
 from quantum_entanglement.store import (
     EventStoreJsonError,
     EventStoreJsonTooLargeError,
+    EventStoreJsonTypeError,
     SQLiteEventStore,
 )
 
@@ -119,6 +120,13 @@ class SQLiteEventStoreJsonTests(unittest.TestCase):
 
         self.assertEqual(self.store.stream_version("session:json"), 0)
         self.assertEqual(self.store.read_all(), ())
+
+    def test_unsupported_json_types_preserve_the_type_error_contract(self) -> None:
+        with self.assertRaises(EventStoreJsonTypeError) as raised:
+            self.store.append(event("event-set", {"value": {"unsupported"}}))
+        self.assertIsInstance(raised.exception, TypeError)
+        self.assertNotIsInstance(raised.exception, ValueError)
+        self.assertEqual(self.store.stream_version("session:json"), 0)
 
     def test_encoded_byte_limit_is_configurable_and_checked_before_commit(self) -> None:
         bounded_path = str(Path(self.tempdir.name) / "bounded-json.sqlite3")

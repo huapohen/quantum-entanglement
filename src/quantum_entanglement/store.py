@@ -31,11 +31,19 @@ class ConcurrencyError(RuntimeError):
     """Raised when a stream changed after the caller read it."""
 
 
-class EventStoreJsonError(ValueError):
+class EventStoreJsonError(Exception):
     """Raised when caller JSON cannot be represented by the durable contract."""
 
 
-class EventStoreJsonTooLargeError(EventStoreJsonError):
+class EventStoreJsonValueError(EventStoreJsonError, ValueError):
+    """JSON value has an invalid scalar, cycle, or other value-level defect."""
+
+
+class EventStoreJsonTypeError(EventStoreJsonError, TypeError):
+    """JSON input uses a type outside the durable object contract."""
+
+
+class EventStoreJsonTooLargeError(EventStoreJsonValueError):
     """Raised before a JSON field exceeds a structural or encoded-size limit."""
 
 
@@ -224,19 +232,19 @@ class SQLiteEventStore:
             return value
         if value_type is float:
             if not math.isfinite(value):
-                raise EventStoreJsonError(f"{path} contains a non-finite number")
+                raise EventStoreJsonValueError(f"{path} contains a non-finite number")
             return value
 
         if value_type in (dict, _MAPPING_PROXY_TYPE):
             identity = id(value)
             if identity in state.active_container_ids:
-                raise EventStoreJsonError(f"{path} contains a reference cycle")
+                raise EventStoreJsonValueError(f"{path} contains a reference cycle")
             state.active_container_ids.add(identity)
             copied: Dict[str, Any] = {}
             try:
                 for key, item in value.items():
                     if type(key) is not str:
-                        raise EventStoreJsonError(f"{path} keys must be strings")
+                        raise EventStoreJsonTypeError(f"{path} keys must be strings")
                     if len(key) > _MAX_JSON_KEY_LENGTH:
                         raise EventStoreJsonTooLargeError(
                             f"{path} key exceeds {_MAX_JSON_KEY_LENGTH} characters"
@@ -250,7 +258,7 @@ class SQLiteEventStore:
             except EventStoreJsonError:
                 raise
             except Exception as exc:
-                raise EventStoreJsonError(f"{path} mapping traversal failed") from exc
+                raise EventStoreJsonTypeError(f"{path} mapping traversal failed") from exc
             finally:
                 state.active_container_ids.discard(identity)
             return copied
@@ -258,7 +266,7 @@ class SQLiteEventStore:
         if value_type in (list, tuple):
             identity = id(value)
             if identity in state.active_container_ids:
-                raise EventStoreJsonError(f"{path} contains a reference cycle")
+                raise EventStoreJsonValueError(f"{path} contains a reference cycle")
             state.active_container_ids.add(identity)
             try:
                 return [
@@ -273,11 +281,11 @@ class SQLiteEventStore:
             except EventStoreJsonError:
                 raise
             except Exception as exc:
-                raise EventStoreJsonError(f"{path} sequence traversal failed") from exc
+                raise EventStoreJsonTypeError(f"{path} sequence traversal failed") from exc
             finally:
                 state.active_container_ids.discard(identity)
 
-        raise EventStoreJsonError(f"{path} contains unsupported type {value_type.__name__}")
+        raise EventStoreJsonTypeError(f"{path} contains unsupported type {value_type.__name__}")
 
     def _encode_json_object(self, value: Mapping[str, Any], field_name: str) -> str:
         copied = self._copy_json_value(
@@ -287,7 +295,7 @@ class SQLiteEventStore:
             state=_JsonTraversalState(),
         )
         if type(copied) is not dict:
-            raise EventStoreJsonError(f"{field_name} must be a plain JSON object")
+            raise EventStoreJsonTypeError(f"{field_name} must be a plain JSON object")
         encoded = json.dumps(
             copied,
             allow_nan=False,
