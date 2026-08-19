@@ -120,9 +120,7 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
 
         connection = sqlite3.connect(self.path)
         try:
-            blob_count = connection.execute(
-                "SELECT COUNT(*) FROM artifact_blobs"
-            ).fetchone()[0]
+            blob_count = connection.execute("SELECT COUNT(*) FROM artifact_blobs").fetchone()[0]
             self.assertEqual(blob_count, 1)
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
@@ -138,9 +136,7 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(retried, first)
-        history = self.store.history(
-            "tenant-a", "workspace-a", "session-a", "report.md"
-        )
+        history = self.store.history("tenant-a", "workspace-a", "session-a", "report.md")
         self.assertEqual(len(history), 1)
         with self.assertRaises(ArtifactConflictError):
             self.store.write(replace(spec, artifact_id="new-id", content=b"changed"))
@@ -317,9 +313,7 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
         )
         self.assertEqual([item.version for item in page], [2, 3])
         with self.assertRaises(ValueError):
-            self.store.history(
-                "tenant-a", "workspace-a", "session-a", "report.md", limit=0
-            )
+            self.store.history("tenant-a", "workspace-a", "session-a", "report.md", limit=0)
         with self.assertRaises(ValueError):
             self.store.history(
                 "tenant-a",

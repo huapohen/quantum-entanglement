@@ -75,9 +75,7 @@ def _normalize_timestamp(value: str, name: str = "timestamp") -> str:
         raise ValueError(f"{name} must be an RFC 3339 timestamp") from exc
     if parsed.tzinfo is None:
         raise ValueError(f"{name} must include a timezone")
-    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace(
-        "+00:00", "Z"
-    )
+    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _validate_json_value(value: Any, path: str = "metadata") -> None:
@@ -267,9 +265,7 @@ class SQLiteArtifactStore:
                 # ``target_versions`` was added while domain migrations were split.
                 # Keep a rolling-upgrade bridge so this component remains runnable
                 # with the immediately preceding migration runner commit.
-                migration_parameters = inspect.signature(
-                    apply_sqlite_migrations
-                ).parameters
+                migration_parameters = inspect.signature(apply_sqlite_migrations).parameters
                 if "target_versions" in migration_parameters:
                     apply_sqlite_migrations(
                         self._connection,
@@ -324,13 +320,9 @@ class SQLiteArtifactStore:
                         self._connection.execute("ROLLBACK")
                     raise
 
-    def _prepare(
-        self, spec: ArtifactWrite
-    ) -> Tuple[str, Mapping[str, Any], str, str]:
+    def _prepare(self, spec: ArtifactWrite) -> Tuple[str, Mapping[str, Any], str, str]:
         if len(spec.content) > self._max_content_bytes:
-            raise ArtifactTooLargeError(
-                f"artifact content exceeds {self._max_content_bytes} bytes"
-            )
+            raise ArtifactTooLargeError(f"artifact content exceeds {self._max_content_bytes} bytes")
         metadata_json, metadata = _canonical_metadata(spec.metadata)
         if len(metadata_json.encode("utf-8")) > self._max_metadata_bytes:
             raise ArtifactTooLargeError(
@@ -500,10 +492,7 @@ class SQLiteArtifactStore:
                 (spec.tenant_id, spec.workspace_id, spec.session_id, spec.name),
             ).fetchone()
             current_version = int(head_row["version"])
-            if (
-                expected_head_version is not None
-                and current_version != expected_head_version
-            ):
+            if expected_head_version is not None and current_version != expected_head_version:
                 raise ArtifactConcurrencyError(
                     f"artifact head changed: expected {expected_head_version}, "
                     f"found {current_version}"
@@ -577,9 +566,7 @@ class SQLiteArtifactStore:
         ):
             _required_text(value, name)
         with self._lock:
-            row = self._select_record(
-                self._connection, tenant_id, workspace_id, artifact_id
-            )
+            row = self._select_record(self._connection, tenant_id, workspace_id, artifact_id)
             return self._row_to_artifact(row) if row is not None else None
 
     def head(
