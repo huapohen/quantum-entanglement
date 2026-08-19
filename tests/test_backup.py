@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import stat
 import tempfile
 import unittest
@@ -137,6 +138,70 @@ class SQLiteBackupTests(unittest.TestCase):
             verify_sqlite_backup(backup)
 
         manifest_path.write_text("{}" + (" " * (1024 * 1024)), encoding="utf-8")
+        with self.assertRaisesRegex(BackupIntegrityError, "manifest is malformed"):
+            verify_sqlite_backup(backup)
+
+    def test_future_migration_is_rejected_before_backup_publication(self):
+        connection = sqlite3.connect(self.source)
+        connection.execute(
+            """
+            INSERT INTO qe_schema_migrations(version, filename, sha256, applied_at)
+            VALUES (999, '0999_future.up.sql', ?, ?)
+            """,
+            ("0" * 64, T0),
+        )
+        connection.commit()
+        connection.close()
+        backup = self.root / "future.sqlite3"
+
+        with self.assertRaisesRegex(BackupIntegrityError, "migration ledger"):
+            create_sqlite_backup(self.source, backup, clock=lambda: T0)
+
+        self.assertFalse(backup.exists())
+        self.assertFalse(default_manifest_path(backup).exists())
+
+    def test_migration_ledger_gap_is_rejected_before_backup_publication(self):
+        connection = sqlite3.connect(self.source)
+        connection.execute("DELETE FROM qe_schema_migrations WHERE version = 1")
+        connection.commit()
+        connection.close()
+        backup = self.root / "ledger-gap.sqlite3"
+
+        with self.assertRaisesRegex(BackupIntegrityError, "migration ledger"):
+            create_sqlite_backup(self.source, backup, clock=lambda: T0)
+
+        self.assertFalse(backup.exists())
+        self.assertFalse(default_manifest_path(backup).exists())
+
+    def test_migration_checksum_drift_is_rejected_before_backup_publication(self):
+        connection = sqlite3.connect(self.source)
+        connection.execute(
+            "UPDATE qe_schema_migrations SET sha256 = ? WHERE version = 2",
+            ("0" * 64,),
+        )
+        connection.commit()
+        connection.close()
+        backup = self.root / "checksum-drift.sqlite3"
+
+        with self.assertRaisesRegex(BackupIntegrityError, "migration ledger"):
+            create_sqlite_backup(self.source, backup, clock=lambda: T0)
+
+        self.assertFalse(backup.exists())
+        self.assertFalse(default_manifest_path(backup).exists())
+
+    def test_manifest_cannot_claim_a_future_migration(self):
+        backup, manifest_path, _created = self.create_backup()
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        value["migrations"].append(
+            {
+                "version": 999,
+                "filename": "0999_future.up.sql",
+                "sha256": "0" * 64,
+                "appliedAt": T0,
+            }
+        )
+        manifest_path.write_text(json.dumps(value), encoding="utf-8")
+
         with self.assertRaisesRegex(BackupIntegrityError, "manifest is malformed"):
             verify_sqlite_backup(backup)
 

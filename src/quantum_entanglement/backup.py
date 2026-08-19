@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple, cast
 
+from .migrations import MIGRATIONS, migration_text
 from .protocol import new_id, utc_now
 
 _FORMAT = "qe.sqlite-backup/1"
@@ -52,6 +53,24 @@ def _plain_string(value: object, field_name: str) -> str:
     if type(value) is not str or not value:
         raise ValueError(f"{field_name} must be a non-empty string")
     return value
+
+
+def _validate_migration_evidence(
+    migrations: Tuple[Mapping[str, Any], ...],
+) -> None:
+    if len(migrations) > len(MIGRATIONS):
+        raise ValueError("backup schema is newer than this binary")
+    for index, evidence in enumerate(migrations):
+        expected = MIGRATIONS[index]
+        expected_digest = hashlib.sha256(
+            migration_text(expected.filename).encode("utf-8")
+        ).hexdigest()
+        if evidence["version"] != expected.version:
+            raise ValueError("backup migrations must be a continuous supported prefix")
+        if evidence["filename"] != expected.filename:
+            raise ValueError("backup migration filename is not supported by this binary")
+        if evidence["sha256"] != expected_digest:
+            raise ValueError("backup migration checksum differs from this binary")
 
 
 def _normalize_timestamp(value: str) -> str:
@@ -132,6 +151,7 @@ def _database_evidence(connection: sqlite3.Connection) -> _DatabaseEvidence:
                 }
                 for row in rows
             )
+            _validate_migration_evidence(migrations)
         except (TypeError, ValueError) as exc:
             raise BackupIntegrityError(
                 "SQLite migration ledger is not supported by this binary"
@@ -250,6 +270,7 @@ class BackupManifest:
             )
             previous = version
         normalized_migrations = tuple(migrations)
+        _validate_migration_evidence(normalized_migrations)
         return cls(
             format_version=_FORMAT,
             backup_id=backup_id,
