@@ -18,6 +18,11 @@ as an immutable sidecar, and link it from the completed record below. A JSON val
 `releasable: true` proves only that fixed local baseline; it does not fill or waive any
 template field, production drill, reviewer decision, or promotion gate.
 
+Before linking that sidecar, run `scripts/verify_release_evidence.py` against the exact clean
+source checkout and record the verifier's successful immutable CI run. The CI artifact is
+uploaded even after failure for diagnosis; its existence, filename, or downloadability is
+not proof that verification passed.
+
 ## Template
 
 ```markdown

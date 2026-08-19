@@ -41,6 +41,11 @@ schema, exit codes, redaction boundary and retention rules. The generator record
 it runs and cannot replace clean-host, package, security, recovery, performance or human
 promotion evidence. CI adoption does not remove the clean-host verification gate.
 
+Every retained JSON must pass `scripts/verify_release_evidence.py` against the exact clean
+checkout and expected full commit SHA before it is consumed. Artifact presence alone is not
+a pass: CI deliberately retains failed or partial output for diagnosis. The verifier's
+success also remains local-baseline evidence, not permission to waive another gate.
+
 ## Phase release gate
 
 Every phase release requires a file under `docs/production/evidence/<version>.md` with:
