@@ -22,7 +22,8 @@
 | `research/03_protocol_landscape.md` | 已完成首版 | A2A、ACP、MCP、ANP、AGNTCY 与内部协议边界 |
 | `research/04_competitor_landscape.md` | 已完成首版 | 14 个竞品的编排、协作、通信、上下文与开放性 |
 | `research/05_target_product_and_architecture.md` | 已完成首版 | 产品定义、分层架构、状态/上下文/治理与路线图 |
-| `research/06_competitor_source_validation.md` | 已完成首版 | 14 个竞品、65 条官方来源、许可证与宣传/实现差异核验 |
+| `research/06_competitor_source_validation.md` | 已完成首版 | 14 个竞品、65 条来源记录、许可证与宣传/实现差异核验 |
+| `research/07_current_implementation_status.md` | 已完成首版 | 固定到 clean commit/tree 的 531-test 实现增量、生产边界与 release gates |
 
 ## 已归档截图
 

@@ -8,6 +8,11 @@
 > Notion 镜像：<https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44?pvs=204>
 > 安全边界：飞书/企微全程只读，未发送、回复、评论、@ 或上传任何内容
 
+> **实现状态更新（2026-08-20）：** 第 9–11 节原为 2026-08-19 的实现快照。
+> 当前 clean baseline、531 项测试、142-commit 增量、已实现 primitive 与仍阻断生产的
+> 集成边界，以 [`research/07_current_implementation_status.md`](research/07_current_implementation_status.md)
+> 为准。
+
 ## 0. 执行摘要
 
 我们要做的不是“把多个机器人拉进群”，也不是“一个主 Agent 用不同名字发言”。真正的产品是一个人与 Agent 的协作操作系统：
@@ -30,7 +35,13 @@
 5. **LangGraph + DeepSeek Harness 不是二选一；二者都不应成为全部业务真相源。**
 6. **先做一个结果可见、验收清晰的高价值业务 Agent 团队，再抽象平台。**
 
-本仓库已经用可运行代码验证核心不变量：54 个标准库测试通过；本地 demo 完成 `@Agent` 直达、三 Agent 接力、版本化产出和 25 条因果事件。当前已经覆盖事件历史恢复、transactional inbox/outbox 和安全收口后的 Harness runtime port；但仍是验证性内核，不是生产系统，多租户、正式 A2A 1.0 SDK 兼容、MCP/IM、UI，以及真实隔离 Harness factory 的端到端集成仍是后续工程。
+本仓库已经用可运行代码验证核心不变量。2026-08-20 的 clean baseline 固定为
+`e4cbf040579bf1f33c2b7692d2fbd6944d837952`：531 项测试和 5 个本地 release gate
+通过；本地 demo 完成 `@Agent` 直达、三 Agent 接力、版本化产出和因果事件。当前还新增了
+durable delivery/attempt/artifact/projection、tenant authorization slice、备份恢复、迁移桥、
+canonical release evidence 与双构建制品门禁。它仍是预生产单节点内核，不是可部署的
+商业服务：正式 A2A/MCP、public admission、系统级 action-time authorization、完整 effect
+receipt、IM/UI、生产部署/观测、锁定供应链与端到端事务集成仍未完成。
 
 ## 1. 研究目标与范围
 
@@ -331,7 +342,10 @@ Artifact 是正式交付和 Agent 接力的中心：
 - 下游绑定具体版本；
 - 变更通过依赖图计算影响。
 
-当前 `ArtifactLedger` 已实现版本、同任务幂等和回滚新 head；事件存储已经具备事务 outbox，但 ArtifactLedger 仍需迁入持久存储，并补齐 blob/metadata 原子性、数据库唯一约束和大文件 URI。
+内存 `ArtifactLedger` 已实现版本、同任务幂等和回滚新 head；新增的
+`SQLiteArtifactStore` 已实现 content-addressed blob、metadata 原子提交、scope、版本 CAS 和
+完整性校验。仍需把 Orchestrator 的 artifact/task/result/event 组合成一次可恢复事务，并为
+大文件增加受治理的外部存储边界。
 
 ### 5.7 Policy
 
@@ -485,7 +499,8 @@ ToolPort
 
 ### 9.3 验证
 
-当前 54 个测试覆盖：
+本节以下列表是最初 54-test 快照的能力说明；当前 clean baseline 为 531 项测试，完整
+增量和未覆盖边界见 `research/07_current_implementation_status.md`。原始测试覆盖：
 
 - Envelope round-trip 和授权；
 - handoff 必填与优先级；
@@ -513,13 +528,10 @@ ToolPort
 
 已经验证：从 event log 恢复 WorkflowPlan/TaskGraph/Approval/Agent invocation，以及 transactional outbox/inbox 的本地一致性边界。
 
-仍需完成：
-
-- task attempt 与 lease/heartbeat；
-- 外部 action receipt 和 compensation；
-- artifact blob/metadata 事务；
-- worker 崩溃、超时、重试和 exactly-once effect 语义；
-- projector checkpoint、dead letter 和 schema upcast。
+当前已提交 durable attempt/lease/heartbeat store、artifact blob/metadata 事务和 fenced
+projection/upcaster primitives。仍需完成的是系统组合边界：Orchestrator 接入 durable
+attempt，authorization/tool/effect/action receipt/artifact/task terminal 的端到端事务，
+worker crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOWN 状态。
 
 ### P0：安全
 
@@ -666,6 +678,7 @@ ToolPort
 - `research/04_competitor_landscape.md`
 - `research/05_target_product_and_architecture.md`
 - `research/06_competitor_source_validation.md`
+- `research/07_current_implementation_status.md`
 
 截图证据：
 
