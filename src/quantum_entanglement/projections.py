@@ -1375,16 +1375,17 @@ class DurableProjector:
 
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ValueError("limit must be a positive integer")
+        primary_error: Optional[BaseException] = None
         lease = self.offset_store.claim(
             self.projection_name,
             self.owner_id,
             lease_seconds=self.lease_seconds,
         )
-        scanned = 0
-        applied = 0
-        deduplicated = 0
-        last_position = self.offset_store.load(self.projection_name).last_global_position
         try:
+            scanned = 0
+            applied = 0
+            deduplicated = 0
+            last_position = self.offset_store.load(self.projection_name).last_global_position
             events = self.event_source.read_all(after_position=last_position, limit=limit)
             for stored_event in events:
                 lease = self.offset_store.renew(
@@ -1405,6 +1406,9 @@ class DurableProjector:
                     deduplicated += 1
                 last_position = result.offset.last_global_position
             return ProjectionRunResult(scanned, applied, deduplicated, last_position)
+        except BaseException as exc:
+            primary_error = exc
+            raise
         finally:
             try:
                 self.offset_store.release(lease)
@@ -1412,3 +1416,6 @@ class DurableProjector:
                 # A long handler may outlive its lease. The transactional apply either
                 # committed under the SQLite write lock or rolled back before takeover.
                 pass
+            except BaseException:
+                if primary_error is None:
+                    raise

@@ -6,6 +6,7 @@ from collections.abc import Mapping, MutableMapping
 from operator import attrgetter, setitem
 from pathlib import Path
 from typing import Any, Callable, cast
+from unittest.mock import patch
 
 from quantum_entanglement.events import DomainEvent, StoredEvent
 from quantum_entanglement.projections import (
@@ -1247,6 +1248,123 @@ class DurableProjectorTests(unittest.TestCase):
         self.assertEqual(self.read_view(), [("evt-1", "research")])
         self.assertFalse(any(thread.is_alive() for thread in threads))
 
+    def test_load_and_event_source_base_exceptions_release_the_claimed_lease(self) -> None:
+        load_projector = DurableProjector(
+            "load-interrupt",
+            "worker-a",
+            self.events,
+            self.offsets,
+            self.registry,
+            lambda _transaction, _event: None,
+        )
+        with patch.object(
+            self.offsets,
+            "load",
+            side_effect=KeyboardInterrupt("load interrupted"),
+        ):
+            with self.assertRaisesRegex(KeyboardInterrupt, "load interrupted"):
+                load_projector.run_once(limit=1)
+        load_takeover = self.offsets.claim("load-interrupt", "worker-b")
+        self.assertEqual(load_takeover.owner_epoch, 2)
+        self.offsets.release(load_takeover)
+
+        source_projector = DurableProjector(
+            "source-interrupt",
+            "worker-a",
+            self.events,
+            self.offsets,
+            self.registry,
+            lambda _transaction, _event: None,
+        )
+        with patch.object(
+            self.events,
+            "read_all",
+            side_effect=KeyboardInterrupt("event source interrupted"),
+        ):
+            with self.assertRaisesRegex(KeyboardInterrupt, "event source interrupted"):
+                source_projector.run_once(limit=1)
+        source_takeover = self.offsets.claim("source-interrupt", "worker-b")
+        self.assertEqual(source_takeover.owner_epoch, 2)
+        self.offsets.release(source_takeover)
+
+    def test_release_failure_never_masks_a_primary_base_exception(self) -> None:
+        projector = DurableProjector(
+            "dual-failure",
+            "worker-a",
+            self.events,
+            self.offsets,
+            self.registry,
+            lambda _transaction, _event: None,
+        )
+        with patch.object(
+            self.offsets,
+            "load",
+            side_effect=KeyboardInterrupt("primary interruption"),
+        ):
+            with patch.object(
+                self.offsets,
+                "release",
+                side_effect=RuntimeError("cleanup failed"),
+            ):
+                with self.assertRaisesRegex(KeyboardInterrupt, "primary interruption") as raised:
+                    projector.run_once(limit=1)
+
+        self.assertIsInstance(raised.exception, KeyboardInterrupt)
+        replacement = self.offsets.claim("dual-failure", "worker-a")
+        self.offsets.release(replacement)
+
+    def test_release_failure_without_primary_error_propagates_except_lease_loss(self) -> None:
+        failed_release = DurableProjector(
+            "release-failure",
+            "worker-a",
+            self.events,
+            self.offsets,
+            self.registry,
+            lambda _transaction, _event: None,
+        )
+        with patch.object(
+            self.offsets,
+            "release",
+            side_effect=RuntimeError("release storage failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "release storage failed"):
+                failed_release.run_once(limit=1)
+        replacement = self.offsets.claim("release-failure", "worker-a")
+        self.offsets.release(replacement)
+
+        lost_release = DurableProjector(
+            "release-lost",
+            "worker-a",
+            self.events,
+            self.offsets,
+            self.registry,
+            lambda _transaction, _event: None,
+        )
+        with patch.object(
+            self.offsets,
+            "release",
+            side_effect=ProjectionLeaseLostError("lease already lost"),
+        ):
+            result = lost_release.run_once(limit=1)
+        self.assertEqual(result.applied_count, 1)
+        lost_replacement = self.offsets.claim("release-lost", "worker-a")
+        self.offsets.release(lost_replacement)
+
+    def test_successful_run_releases_lease_for_a_different_owner(self) -> None:
+        result = DurableProjector(
+            "normal-release",
+            "worker-a",
+            self.events,
+            self.offsets,
+            self.registry,
+            lambda _transaction, _event: None,
+        ).run_once(limit=1)
+
+        self.assertEqual(result.applied_count, 1)
+        takeover = self.offsets.claim("normal-release", "worker-b")
+        self.assertEqual(takeover.owner_epoch, 2)
+        self.offsets.release(takeover)
+
     def test_future_schema_never_invokes_handler_or_advances(self) -> None:
         future = self.events.append(
             DomainEvent(
@@ -1280,6 +1398,9 @@ class DurableProjectorTests(unittest.TestCase):
             self.offsets.load("future-view").last_global_position,
             future.global_position - 1,
         )
+        takeover = self.offsets.claim("future-view", "worker-b")
+        self.assertEqual(takeover.owner_id, "worker-b")
+        self.offsets.release(takeover)
 
 
 if __name__ == "__main__":
