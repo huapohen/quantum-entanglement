@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Set, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, Mapping, Optional, Set, Tuple
 
+from .agent_runtime import (
+    AgentHandler,
+    AgentInvocation,
+    AgentResult,
+    AgentRuntimeClosedError,
+    AgentRuntimePort,
+    CallableAgentRuntime,
+)
 from .artifacts import ArtifactLedger
 from .context import ContextBundle, ContextCompiler, ContextItem
 from .events import DomainEvent, StoredEvent
@@ -16,7 +24,6 @@ from .protocol import (
     ActorKind,
     ActorRef,
     ApprovalDecision,
-    ArtifactOutput,
     ArtifactRef,
     CoordinationEnvelope,
     EnvelopeKind,
@@ -27,35 +34,36 @@ from .store import SQLiteEventStore
 
 
 @dataclass(frozen=True)
-class AgentInvocation:
-    task: TaskSpec
-    envelope: CoordinationEnvelope
-    context: ContextBundle
-
-
-@dataclass(frozen=True)
-class AgentResult:
-    narration: str
-    artifacts: Tuple[ArtifactOutput, ...] = ()
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-
-AgentHandler = Callable[[AgentInvocation], Awaitable[AgentResult]]
-
-
-@dataclass(frozen=True)
 class AgentRegistration:
     actor: ActorRef
-    handler: AgentHandler
+    handler: Optional[AgentHandler] = None
     skills: Tuple[str, ...] = ()
     protocol: str = "in-process"
+    runtime: Optional[AgentRuntimePort] = None
+
+    def __post_init__(self) -> None:
+        if (self.handler is None) == (self.runtime is None):
+            raise ValueError("register exactly one of handler or runtime")
+        if self.handler is not None:
+            object.__setattr__(self, "runtime", CallableAgentRuntime(self.handler))
+
+    async def invoke(self, invocation: AgentInvocation) -> AgentResult:
+        runtime = self.runtime
+        if runtime is None:  # Kept defensive even though __post_init__ enforces this.
+            raise RuntimeError("agent registration has no runtime")
+        return await runtime.invoke(invocation)
 
 
 class AgentRegistry:
     def __init__(self) -> None:
         self._agents: Dict[str, AgentRegistration] = {}
+        self._accepting = True
+        self._closed = False
+        self._close_lock = asyncio.Lock()
 
     def register(self, registration: AgentRegistration) -> None:
+        if not self._accepting:
+            raise AgentRuntimeClosedError("agent registry is closing or closed")
         if registration.actor.kind != ActorKind.AGENT:
             raise ValueError("only agent actors can be registered")
         if registration.actor.actor_id in self._agents:
@@ -65,11 +73,36 @@ class AgentRegistry:
     def get(self, agent_id: str) -> AgentRegistration:
         try:
             return self._agents[agent_id]
-        except KeyError:
-            raise KeyError("agent is not registered: %s" % agent_id)
+        except KeyError as exc:
+            raise KeyError("agent is not registered: %s" % agent_id) from exc
 
     async def invoke(self, invocation: AgentInvocation) -> AgentResult:
-        return await self.get(invocation.task.agent_id).handler(invocation)
+        if not self._accepting:
+            raise AgentRuntimeClosedError("agent registry is closing or closed")
+        return await self.get(invocation.task.agent_id).invoke(invocation)
+
+    async def close(self) -> None:
+        """Close each distinct registered runtime once; failed closes remain retryable."""
+
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._accepting = False
+            runtimes = []
+            seen = set()
+            for registration in self._agents.values():
+                runtime = registration.runtime
+                if runtime is not None and id(runtime) not in seen:
+                    seen.add(id(runtime))
+                    runtimes.append(runtime)
+            results = await asyncio.gather(
+                *(runtime.close() for runtime in runtimes),
+                return_exceptions=True,
+            )
+            errors = [result for result in results if isinstance(result, BaseException)]
+            if errors:
+                raise errors[0]
+            self._closed = True
 
 
 @dataclass(frozen=True)
@@ -135,9 +168,30 @@ class OrchestratorKernel:
         # separate from delegated authority prevents the next dispatch from requesting
         # the same approval forever.
         self._approved_tasks: Set[Tuple[str, str]] = set()
+        self._closing = False
+        self._closed = False
 
     def register_agent(self, registration: AgentRegistration) -> None:
+        if self._closing or self._closed:
+            raise AgentRuntimeClosedError("orchestrator kernel is closing or closed")
         self.registry.register(registration)
+
+    async def __aenter__(self) -> "OrchestratorKernel":
+        if self._closing or self._closed:
+            raise AgentRuntimeClosedError("orchestrator kernel is closing or closed")
+        return self
+
+    async def __aexit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        """Close registered agent runtimes without assuming ownership of the event store."""
+
+        if self._closed:
+            return
+        self._closing = True
+        await self.registry.close()
+        self._closed = True
 
     def _stream_id(self, session_id: str) -> str:
         return "session:%s" % session_id
@@ -449,6 +503,8 @@ class OrchestratorKernel:
             await self.plugins.emit(HookPoint.AFTER_DISPATCH, dispatch_context)
 
     async def run(self, plan: WorkflowPlan) -> RunResult:
+        if self._closing or self._closed:
+            raise AgentRuntimeClosedError("orchestrator kernel is closing or closed")
         lock = self._session_locks.setdefault(plan.session_id, asyncio.Lock())
         async with lock:
             self._recover_session(plan)
@@ -464,8 +520,10 @@ class OrchestratorKernel:
                     break
                 semaphore = asyncio.Semaphore(self.max_concurrency)
 
-                async def guarded(task: TaskSpec) -> None:
-                    async with semaphore:
+                async def guarded(
+                    task: TaskSpec, limiter: asyncio.Semaphore = semaphore
+                ) -> None:
+                    async with limiter:
                         await self._run_task(active_plan, graph, task)
 
                 await asyncio.gather(*(guarded(task) for task in ready))
@@ -492,6 +550,8 @@ class OrchestratorKernel:
         actor_id: str,
         comment: Optional[str] = None,
     ) -> ApprovalRequest:
+        if self._closing or self._closed:
+            raise AgentRuntimeClosedError("orchestrator kernel is closing or closed")
         request = self.approvals.decide(request_id, decision, actor_id, comment)
         graph = self._graphs[request.session_id]
         if decision == ApprovalDecision.APPROVE:

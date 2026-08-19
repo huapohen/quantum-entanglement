@@ -1,10 +1,37 @@
 """Quantum Entanglement multi-agent coordination kernel."""
 
+from .adapters import (
+    A2AAgentCard,
+    A2AJsonRpcAdapter,
+    A2ASkill,
+    DeepSeekHarnessConfigurationError,
+    DeepSeekHarnessDependencyError,
+    DeepSeekHarnessProtocolError,
+    DeepSeekHarnessRunError,
+    DeepSeekHarnessRuntime,
+)
+from .agent_runtime import (
+    AgentCancellationUnsupportedError,
+    AgentHandler,
+    AgentInvocation,
+    AgentInvocationConflictError,
+    AgentResult,
+    AgentRuntimeClosedError,
+    AgentRuntimePort,
+    CallableAgentRuntime,
+)
 from .artifacts import ArtifactLedger, ArtifactVersion
-from .adapters import A2AAgentCard, A2AJsonRpcAdapter, A2ASkill
 from .chat import ChatRoute, InboundChatMessage, MentionRouter, RoutedChatMessage
-from .events import DomainEvent, StoredEvent
 from .context import ContextBudgetError, ContextBundle, ContextCompiler, ContextItem
+from .delivery import (
+    InboxAppendResult,
+    InboxReceipt,
+    OutboxMessage,
+    OutboxStatus,
+    StoredOutboxMessage,
+)
+from .events import DomainEvent, StoredEvent
+from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
 from .plugins import HookPoint, KernelPlugin, PluginManager
 from .policy import ApprovalRequest, NeedsYouQueue, PolicyDecision, PolicyEngine, PolicyOutcome
 from .protocol import (
@@ -22,20 +49,25 @@ from .protocol import (
     RiskLevel,
     TaskStatus,
 )
-from .store import ConcurrencyError, SQLiteEventStore
-from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
 from .runtime import (
-    AgentInvocation,
     AgentRegistration,
     AgentRegistry,
-    AgentResult,
     OrchestratorKernel,
     RunResult,
 )
 from .scheduler import TaskGraph, TaskSpec, TaskTransition, WorkflowPlan
+from .store import ConcurrencyError, SQLiteEventStore
 
 __all__ = [
     "ActionIntent",
+    "AgentCancellationUnsupportedError",
+    "AgentHandler",
+    "AgentInvocation",
+    "AgentInvocationConflictError",
+    "AgentResult",
+    "AgentRuntimeClosedError",
+    "AgentRuntimePort",
+    "CallableAgentRuntime",
     "A2AAgentCard",
     "A2AJsonRpcAdapter",
     "A2ASkill",
@@ -56,9 +88,16 @@ __all__ = [
     "ContextItem",
     "ContextRef",
     "CoordinationEnvelope",
+    "DeepSeekHarnessConfigurationError",
+    "DeepSeekHarnessDependencyError",
+    "DeepSeekHarnessProtocolError",
+    "DeepSeekHarnessRunError",
+    "DeepSeekHarnessRuntime",
     "DomainEvent",
     "EnvelopeKind",
     "HandoffContract",
+    "InboxAppendResult",
+    "InboxReceipt",
     "HookPoint",
     "KernelPlugin",
     "InboundChatMessage",
@@ -67,6 +106,8 @@ __all__ = [
     "MentionRouter",
     "NeedsYouQueue",
     "OrchestratorKernel",
+    "OutboxMessage",
+    "OutboxStatus",
     "PluginManager",
     "PolicyDecision",
     "PolicyEngine",
@@ -75,15 +116,14 @@ __all__ = [
     "RoutedChatMessage",
     "SQLiteEventStore",
     "StoredEvent",
+    "StoredOutboxMessage",
     "TaskGraph",
     "TaskSpec",
     "TaskStatus",
     "TaskTransition",
     "WorkflowPlan",
-    "AgentInvocation",
     "AgentRegistration",
     "AgentRegistry",
-    "AgentResult",
     "ApprovalRequest",
     "RunResult",
 ]
