@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import quantum_entanglement
+from quantum_entanglement import tenancy as tenancy_module
 from quantum_entanglement.tenancy import (
     CAPABILITY_PROTOCOL_VERSION,
     AccessRequest,
@@ -262,6 +264,15 @@ class TenancyTests(unittest.TestCase):
         for action in ("*", "resource.*", "resource.document.*"):
             with self.subTest(action=action), self.assertRaises(ValueError):
                 self.request(action=action)
+
+    def test_tenancy_public_api_is_exported_from_package_root(self):
+        for name in tenancy_module.__all__:
+            with self.subTest(name=name):
+                self.assertIn(name, quantum_entanglement.__all__)
+                self.assertIs(
+                    getattr(quantum_entanglement, name),
+                    getattr(tenancy_module, name),
+                )
 
     def test_authorization_expiry_uses_service_clock(self):
         claims = self.claims(expires_at=NOW + timedelta(minutes=1))
