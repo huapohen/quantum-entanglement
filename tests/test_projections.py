@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 from collections.abc import Mapping, MutableMapping
+from copy import copy, deepcopy
 from decimal import Decimal
 from operator import attrgetter, setitem
 from pathlib import Path
@@ -38,6 +39,8 @@ from quantum_entanglement.projections import (
     ProjectionSourceIntegrityError,
     ProjectionStatementResult,
     ProjectionTransaction,
+    ProjectionTransactionClosedError,
+    ProjectionTransactionThreadError,
     SQLiteProjectionOffsetStore,
     UnknownEventTypeError,
     UnsealedEventSchemaRegistryError,
@@ -2441,6 +2444,275 @@ class DurableProjectorTests(unittest.TestCase):
         self.assertEqual(result.applied_count, 1)
         self.assertEqual(observed[0].columns, ("answer",))
         self.assertEqual(observed[0].rows, ((42,),))
+
+    def test_handler_transaction_capability_is_revoked_after_success(self) -> None:
+        escaped: list[ProjectionTransaction] = []
+        escaped_copies: list[ProjectionTransaction] = []
+        escaped_execute: list[Callable[..., ProjectionStatementResult]] = []
+        escaped_executemany: list[Callable[..., ProjectionStatementResult]] = []
+        statement_results: list[ProjectionStatementResult] = []
+
+        def handler(transaction: ProjectionTransaction, _event: UpcastedEvent) -> None:
+            escaped.append(transaction)
+            escaped_copies.extend((copy(transaction), deepcopy(transaction)))
+            escaped_execute.append(transaction.execute)
+            escaped_executemany.append(transaction.executemany)
+            statement_results.append(transaction.execute("SELECT ? AS answer", (42,)))
+
+        run = DurableProjector(
+            "escaped-success",
+            "worker-a",
+            self.events,
+            self.offsets,
+            self.registry,
+            handler,
+        ).run_once(limit=1)
+
+        self.assertEqual(run.applied_count, 1)
+        self.assertIs(escaped_copies[0], escaped[0])
+        self.assertIs(escaped_copies[1], escaped[0])
+        self.assertEqual(statement_results[0].rows, ((42,),))
+
+        statements: list[str] = []
+        self.offsets._connection.set_trace_callback(statements.append)
+        failures: list[BaseException] = []
+
+        def use_from_background_thread() -> None:
+            try:
+                escaped[0].execute("DELETE FROM projection_receipts")
+            except BaseException as exc:  # pragma: no branch - asserted below
+                failures.append(exc)
+
+        try:
+            attempts: tuple[tuple[str, Callable[[], object]], ...] = (
+                (
+                    "capability",
+                    lambda: escaped[0].execute(
+                        "UPDATE projection_offsets SET last_global_position = 777 "
+                        "WHERE projection_name = ?",
+                        ("escaped-success",),
+                    ),
+                ),
+                ("bound-execute", lambda: escaped_execute[0]("DROP TABLE projection_receipts")),
+                (
+                    "bound-executemany",
+                    lambda: escaped_executemany[0](
+                        "UPDATE projection_offsets SET last_global_position = ? "
+                        "WHERE projection_name = ?",
+                        ((777, "escaped-success"),),
+                    ),
+                ),
+                ("shallow-copy", lambda: escaped_copies[0].execute("SELECT 1")),
+                ("deep-copy", lambda: escaped_copies[1].execute("SELECT 1")),
+            )
+            for label, attempt in attempts:
+                with self.subTest(label=label):
+                    with self.assertRaisesRegex(
+                        ProjectionTransactionClosedError,
+                        "no longer active",
+                    ):
+                        attempt()
+
+            thread = threading.Thread(target=use_from_background_thread)
+            thread.start()
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+        finally:
+            self.offsets._connection.set_trace_callback(None)
+
+        self.assertEqual(len(failures), 1)
+        self.assertIs(type(failures[0]), ProjectionTransactionClosedError)
+        self.assertEqual(statements, [])
+        self.assertEqual(self.offsets.load("escaped-success").last_global_position, 1)
+        connection = sqlite3.connect(self.path)
+        try:
+            receipt_table = connection.execute(
+                "SELECT type FROM sqlite_master WHERE name = 'projection_receipts'"
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(receipt_table, ("table",))
+
+    def test_handler_transaction_capability_is_revoked_after_base_exception(self) -> None:
+        escaped: list[ProjectionTransaction] = []
+        escaped_execute: list[Callable[..., ProjectionStatementResult]] = []
+
+        def interrupted_handler(
+            transaction: ProjectionTransaction,
+            _event: UpcastedEvent,
+        ) -> None:
+            escaped.append(transaction)
+            escaped_execute.append(transaction.execute)
+            transaction.execute("CREATE TABLE escaped_failure_view (value INTEGER)")
+            raise KeyboardInterrupt("simulated capability interruption")
+
+        projector = DurableProjector(
+            "escaped-failure",
+            "worker-a",
+            self.events,
+            self.offsets,
+            self.registry,
+            interrupted_handler,
+        )
+        with self.assertRaisesRegex(KeyboardInterrupt, "capability interruption"):
+            projector.run_once(limit=1)
+
+        statements: list[str] = []
+        self.offsets._connection.set_trace_callback(statements.append)
+        try:
+            with self.assertRaises(ProjectionTransactionClosedError):
+                escaped[0].execute("UPDATE projection_offsets SET last_global_position = 777")
+            with self.assertRaises(ProjectionTransactionClosedError):
+                escaped_execute[0]("DROP TABLE projection_receipts")
+        finally:
+            self.offsets._connection.set_trace_callback(None)
+
+        self.assertEqual(statements, [])
+        self.assertEqual(self.offsets.load("escaped-failure").last_global_position, 0)
+        connection = sqlite3.connect(self.path)
+        try:
+            escaped_table = connection.execute(
+                "SELECT type FROM sqlite_master WHERE name = 'escaped_failure_view'"
+            ).fetchone()
+            receipt_count = connection.execute(
+                "SELECT COUNT(*) FROM projection_receipts WHERE projection_name = ?",
+                ("escaped-failure",),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertIsNone(escaped_table)
+        self.assertEqual(receipt_count, 0)
+
+    def test_transaction_capability_construction_failure_restores_restrictions(self) -> None:
+        lease = self.offsets.claim("capability-construction", "worker-a")
+        event = self.registry.upcast(self.events.read_all(limit=1)[0])
+        handler_calls = 0
+
+        def handler(_transaction: ProjectionTransaction, _event: UpcastedEvent) -> None:
+            nonlocal handler_calls
+            handler_calls += 1
+
+        with patch(
+            "quantum_entanglement.projections.ProjectionTransaction",
+            side_effect=KeyboardInterrupt("simulated capability construction interruption"),
+        ):
+            with self.assertRaisesRegex(KeyboardInterrupt, "construction interruption"):
+                self.offsets.apply_event(
+                    lease,
+                    expected_position=0,
+                    event=event,
+                    handler=handler,
+                )
+
+        self.assertEqual(handler_calls, 0)
+        self.assertFalse(self.offsets._connection.in_transaction)
+        self.assertEqual(self.offsets.load("capability-construction").last_global_position, 0)
+        contender = SQLiteProjectionOffsetStore(self.path, clock=self.clock)
+        try:
+            self.assertEqual(contender.load("capability-construction").last_global_position, 0)
+        finally:
+            contender.close()
+
+    def test_revoke_interruption_force_closes_capability_before_authorizer_restore(self) -> None:
+        lease = self.offsets.claim("revoke-interruption", "worker-a")
+        event = self.registry.upcast(self.events.read_all(limit=1)[0])
+        escaped: list[ProjectionTransaction] = []
+
+        def handler(transaction: ProjectionTransaction, _event: UpcastedEvent) -> None:
+            escaped.append(transaction)
+            transaction.execute("CREATE TABLE revoke_interrupted_view (value INTEGER)")
+
+        with patch.object(
+            ProjectionTransaction,
+            "_revoke",
+            side_effect=KeyboardInterrupt("simulated revoke interruption"),
+        ):
+            with self.assertRaisesRegex(KeyboardInterrupt, "revoke interruption"):
+                self.offsets.apply_event(
+                    lease,
+                    expected_position=0,
+                    event=event,
+                    handler=handler,
+                )
+
+        statements: list[str] = []
+        self.offsets._connection.set_trace_callback(statements.append)
+        try:
+            with self.assertRaises(ProjectionTransactionClosedError):
+                escaped[0].execute("DROP TABLE projection_receipts")
+        finally:
+            self.offsets._connection.set_trace_callback(None)
+
+        self.assertEqual(statements, [])
+        self.assertFalse(self.offsets._connection.in_transaction)
+        self.assertEqual(self.offsets.load("revoke-interruption").last_global_position, 0)
+        connection = sqlite3.connect(self.path)
+        try:
+            interrupted_table = connection.execute(
+                "SELECT type FROM sqlite_master WHERE name = 'revoke_interrupted_view'"
+            ).fetchone()
+            receipt_table = connection.execute(
+                "SELECT type FROM sqlite_master WHERE name = 'projection_receipts'"
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertIsNone(interrupted_table)
+        self.assertEqual(receipt_table, ("table",))
+
+    def test_active_handler_transaction_rejects_cross_thread_use_before_sql(self) -> None:
+        escaped: list[ProjectionTransaction] = []
+        background_failures: list[BaseException] = []
+        background_statements: list[str] = []
+        owner_results: list[ProjectionStatementResult] = []
+
+        def handler(transaction: ProjectionTransaction, _event: UpcastedEvent) -> None:
+            escaped.append(transaction)
+
+            def use_from_background_thread() -> None:
+                attempts: tuple[Callable[[], object], ...] = (
+                    lambda: transaction.execute("SELECT 1 AS escaped_background_sql"),
+                    lambda: transaction.executemany(
+                        "INSERT INTO task_view (event_id, title) VALUES (?, ?)",
+                        (("escaped", "background"),),
+                    ),
+                )
+                for attempt in attempts:
+                    try:
+                        attempt()
+                    except BaseException as exc:  # pragma: no cover - assertion reports details
+                        background_failures.append(exc)
+
+            self.offsets._connection.set_trace_callback(background_statements.append)
+            try:
+                thread = threading.Thread(target=use_from_background_thread)
+                thread.start()
+                thread.join(timeout=5)
+                if thread.is_alive():
+                    raise RuntimeError("cross-thread capability call did not terminate")
+            finally:
+                self.offsets._connection.set_trace_callback(None)
+            owner_results.append(transaction.execute("SELECT 42 AS owner_sql"))
+
+        run = DurableProjector(
+            "thread-affine-capability",
+            "worker-a",
+            self.events,
+            self.offsets,
+            self.registry,
+            handler,
+        ).run_once(limit=1)
+
+        self.assertEqual(run.applied_count, 1)
+        self.assertEqual(len(background_failures), 2)
+        self.assertTrue(
+            all(
+                type(failure) is ProjectionTransactionThreadError for failure in background_failures
+            )
+        )
+        self.assertEqual(background_statements, [])
+        self.assertEqual(owner_results[0].rows, ((42,),))
+        with self.assertRaises(ProjectionTransactionClosedError):
+            escaped[0].execute("SELECT 1")
 
     def test_handler_sql_control_statements_are_denied_without_blocking_finalize(self) -> None:
         statements = (

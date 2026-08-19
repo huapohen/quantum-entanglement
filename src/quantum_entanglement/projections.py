@@ -151,6 +151,14 @@ class ProjectionReceiptConflictError(ProjectionOffsetError):
     """Raised when durable deduplication metadata contradicts an event."""
 
 
+class ProjectionTransactionClosedError(RuntimeError):
+    """Raised when a handler uses its transaction capability outside its scope."""
+
+
+class ProjectionTransactionThreadError(RuntimeError):
+    """Raised when a handler transaction is used from a non-owner thread."""
+
+
 class _ProjectionSchemaState(str, Enum):
     """The only projection schema states accepted during startup."""
 
@@ -438,19 +446,21 @@ class EventSource(Protocol):
 
 
 class ProjectionTransaction:
-    """Restricted SQLite surface that never exposes a cursor or connection."""
+    """Restricted, scope-bound SQLite capability for one projection handler."""
 
-    __slots__ = ("__execute_many", "__execute_statement")
+    __slots__ = ("__state",)
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        def execute_statement(sql: str, parameters: Any) -> ProjectionStatementResult:
-            return ProjectionTransaction._copy_result(connection.execute(sql, parameters))
+        self.__state: Optional[tuple[sqlite3.Connection, int]] = (
+            connection,
+            threading.get_ident(),
+        )
 
-        def execute_many(sql: str, parameters: Any) -> ProjectionStatementResult:
-            return ProjectionTransaction._copy_result(connection.executemany(sql, parameters))
+    def __copy__(self) -> ProjectionTransaction:
+        return self
 
-        self.__execute_statement = execute_statement
-        self.__execute_many = execute_many
+    def __deepcopy__(self, _memo: dict[int, Any]) -> ProjectionTransaction:
+        return self
 
     @staticmethod
     def _copy_result(cursor: sqlite3.Cursor) -> ProjectionStatementResult:
@@ -472,10 +482,32 @@ class ProjectionTransaction:
             cursor.close()
 
     def execute(self, sql: str, parameters: Any = ()) -> ProjectionStatementResult:
-        return self.__execute_statement(sql, parameters)
+        state = self.__state
+        if state is None:
+            raise ProjectionTransactionClosedError("projection transaction is no longer active")
+        connection, owner_thread_id = state
+        if threading.get_ident() != owner_thread_id:
+            raise ProjectionTransactionThreadError(
+                "projection transaction may only be used by its handler thread"
+            )
+        return self._copy_result(connection.execute(sql, parameters))
 
     def executemany(self, sql: str, parameters: Any) -> ProjectionStatementResult:
-        return self.__execute_many(sql, parameters)
+        state = self.__state
+        if state is None:
+            raise ProjectionTransactionClosedError("projection transaction is no longer active")
+        connection, owner_thread_id = state
+        if threading.get_ident() != owner_thread_id:
+            raise ProjectionTransactionThreadError(
+                "projection transaction may only be used by its handler thread"
+            )
+        return self._copy_result(connection.executemany(sql, parameters))
+
+    def _revoke(self) -> None:
+        self._ensure_revoked()
+
+    def _ensure_revoked(self) -> None:
+        self.__state = None
 
 
 ProjectionHandler = Callable[[ProjectionTransaction, UpcastedEvent], None]
@@ -1047,13 +1079,22 @@ class SQLiteProjectionOffsetStore:
         connection: sqlite3.Connection,
     ) -> Iterator[ProjectionTransaction]:
         connection.set_authorizer(cls._projection_handler_authorizer)
+        transaction: Optional[ProjectionTransaction] = None
         try:
-            yield ProjectionTransaction(connection)
+            transaction = ProjectionTransaction(connection)
+            yield transaction
         finally:
-            # Python 3.9 cannot reliably clear an authorizer with ``None``.
-            # Reinstalling an explicit allow callback also invalidates cached
-            # statements that were compiled under the restricted callback.
-            connection.set_authorizer(cls._allow_all_authorizer)
+            try:
+                if transaction is not None:
+                    try:
+                        transaction._revoke()
+                    finally:
+                        transaction._ensure_revoked()
+            finally:
+                # Python 3.9 cannot reliably clear an authorizer with ``None``.
+                # Reinstalling an explicit allow callback also invalidates cached
+                # statements that were compiled under the restricted callback.
+                connection.set_authorizer(cls._allow_all_authorizer)
 
     @staticmethod
     def _read_schema_rows(
