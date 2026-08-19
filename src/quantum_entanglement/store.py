@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 
 from .delivery import (
@@ -29,6 +31,30 @@ class ConcurrencyError(RuntimeError):
     """Raised when a stream changed after the caller read it."""
 
 
+class EventStoreJsonError(ValueError):
+    """Raised when caller JSON cannot be represented by the durable contract."""
+
+
+class EventStoreJsonTooLargeError(EventStoreJsonError):
+    """Raised before a JSON field exceeds a structural or encoded-size limit."""
+
+
+_MAX_JSON_DEPTH = 64
+_MAX_JSON_NODES = 10_000
+_MAX_JSON_KEY_LENGTH = 512
+_MAX_JSON_STRING_LENGTH = 65_536
+_MAX_JSON_INTEGER_BITS = 4_096
+_MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
+
+
+class _JsonTraversalState:
+    __slots__ = ("active_container_ids", "nodes")
+
+    def __init__(self) -> None:
+        self.active_container_ids: set[int] = set()
+        self.nodes = 0
+
+
 @dataclass(frozen=True)
 class OutboxAmbiguity:
     """Durable operator-reconciliation record for an uncertain external write."""
@@ -45,9 +71,19 @@ class OutboxAmbiguity:
 class SQLiteEventStore:
     """Small durable event log suitable for the kernel and local-first clients."""
 
-    def __init__(self, path: str = ":memory:", *, clock: Callable[[], str] = utc_now) -> None:
+    def __init__(
+        self,
+        path: str = ":memory:",
+        *,
+        clock: Callable[[], str] = utc_now,
+        max_json_bytes: int = 1024 * 1024,
+    ) -> None:
         if not callable(clock):
             raise TypeError("clock must be callable")
+        if type(max_json_bytes) is not int:
+            raise TypeError("max_json_bytes must be an integer")
+        if max_json_bytes <= 0:
+            raise ValueError("max_json_bytes must be greater than zero")
         self.path = path
         if path != ":memory:":
             parent = os.path.dirname(os.path.abspath(path))
@@ -56,6 +92,7 @@ class SQLiteEventStore:
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._clock = clock
+        self._max_json_bytes = max_json_bytes
         try:
             self._initialize()
         except BaseException:
@@ -154,6 +191,115 @@ class SQLiteEventStore:
                     if self._connection.in_transaction:
                         self._connection.execute("ROLLBACK")
                     raise
+
+    @classmethod
+    def _copy_json_value(
+        cls,
+        value: Any,
+        *,
+        path: str,
+        depth: int,
+        state: _JsonTraversalState,
+    ) -> Any:
+        if depth > _MAX_JSON_DEPTH:
+            raise EventStoreJsonTooLargeError(f"{path} exceeds {_MAX_JSON_DEPTH} levels")
+        state.nodes += 1
+        if state.nodes > _MAX_JSON_NODES:
+            raise EventStoreJsonTooLargeError(f"JSON field exceeds {_MAX_JSON_NODES} value nodes")
+
+        value_type = type(value)
+        if value is None or value_type is bool:
+            return value
+        if value_type is str:
+            if len(value) > _MAX_JSON_STRING_LENGTH:
+                raise EventStoreJsonTooLargeError(
+                    f"{path} exceeds {_MAX_JSON_STRING_LENGTH} characters"
+                )
+            return value
+        if value_type is int:
+            if value.bit_length() > _MAX_JSON_INTEGER_BITS:
+                raise EventStoreJsonTooLargeError(
+                    f"{path} exceeds {_MAX_JSON_INTEGER_BITS} integer bits"
+                )
+            return value
+        if value_type is float:
+            if not math.isfinite(value):
+                raise EventStoreJsonError(f"{path} contains a non-finite number")
+            return value
+
+        if value_type in (dict, _MAPPING_PROXY_TYPE):
+            identity = id(value)
+            if identity in state.active_container_ids:
+                raise EventStoreJsonError(f"{path} contains a reference cycle")
+            state.active_container_ids.add(identity)
+            copied: Dict[str, Any] = {}
+            try:
+                for key, item in value.items():
+                    if type(key) is not str:
+                        raise EventStoreJsonError(f"{path} keys must be strings")
+                    if len(key) > _MAX_JSON_KEY_LENGTH:
+                        raise EventStoreJsonTooLargeError(
+                            f"{path} key exceeds {_MAX_JSON_KEY_LENGTH} characters"
+                        )
+                    copied[key] = cls._copy_json_value(
+                        item,
+                        path=f"{path}.{key}",
+                        depth=depth + 1,
+                        state=state,
+                    )
+            except EventStoreJsonError:
+                raise
+            except Exception as exc:
+                raise EventStoreJsonError(f"{path} mapping traversal failed") from exc
+            finally:
+                state.active_container_ids.discard(identity)
+            return copied
+
+        if value_type in (list, tuple):
+            identity = id(value)
+            if identity in state.active_container_ids:
+                raise EventStoreJsonError(f"{path} contains a reference cycle")
+            state.active_container_ids.add(identity)
+            try:
+                return [
+                    cls._copy_json_value(
+                        item,
+                        path=f"{path}[{index}]",
+                        depth=depth + 1,
+                        state=state,
+                    )
+                    for index, item in enumerate(value)
+                ]
+            except EventStoreJsonError:
+                raise
+            except Exception as exc:
+                raise EventStoreJsonError(f"{path} sequence traversal failed") from exc
+            finally:
+                state.active_container_ids.discard(identity)
+
+        raise EventStoreJsonError(f"{path} contains unsupported type {value_type.__name__}")
+
+    def _encode_json_object(self, value: Mapping[str, Any], field_name: str) -> str:
+        copied = self._copy_json_value(
+            value,
+            path=field_name,
+            depth=0,
+            state=_JsonTraversalState(),
+        )
+        if type(copied) is not dict:
+            raise EventStoreJsonError(f"{field_name} must be a plain JSON object")
+        encoded = json.dumps(
+            copied,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        if len(encoded.encode("utf-8")) > self._max_json_bytes:
+            raise EventStoreJsonTooLargeError(
+                f"{field_name} exceeds {self._max_json_bytes} encoded bytes"
+            )
+        return encoded
 
     @staticmethod
     def _row_to_event(row: sqlite3.Row) -> StoredEvent:
@@ -292,12 +438,7 @@ class SQLiteEventStore:
                 event.event_type,
                 event.actor_id,
                 event.timestamp,
-                json.dumps(
-                    dict(event.payload),
-                    allow_nan=False,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
+                self._encode_json_object(event.payload, "event payload"),
                 event.correlation_id,
                 event.causation_id,
                 event.idempotency_key,
@@ -388,18 +529,8 @@ class SQLiteEventStore:
                     (
                         message.message_id,
                         message.destination,
-                        json.dumps(
-                            dict(message.payload),
-                            allow_nan=False,
-                            ensure_ascii=False,
-                            sort_keys=True,
-                        ),
-                        json.dumps(
-                            dict(message.headers),
-                            allow_nan=False,
-                            ensure_ascii=False,
-                            sort_keys=True,
-                        ),
+                        self._encode_json_object(message.payload, "outbox payload"),
+                        self._encode_json_object(message.headers, "outbox headers"),
                         message.idempotency_key,
                         stored.event.event_id,
                         stored.global_position,
@@ -476,12 +607,7 @@ class SQLiteEventStore:
                     receipt.received_at,
                     receipt.event_id,
                     receipt.event_global_position,
-                    json.dumps(
-                        dict(receipt.result),
-                        allow_nan=False,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
+                    self._encode_json_object(receipt.result, "inbox result"),
                 ),
             )
             return InboxAppendResult(stored, receipt, False)
@@ -527,12 +653,7 @@ class SQLiteEventStore:
                         event.event_type,
                         event.actor_id,
                         event.timestamp,
-                        json.dumps(
-                            dict(event.payload),
-                            allow_nan=False,
-                            ensure_ascii=False,
-                            sort_keys=True,
-                        ),
+                        self._encode_json_object(event.payload, "event payload"),
                         event.correlation_id,
                         event.causation_id,
                         event.idempotency_key,
@@ -913,12 +1034,7 @@ class SQLiteEventStore:
                 (
                     stream_id,
                     sequence,
-                    json.dumps(
-                        state,
-                        allow_nan=False,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
+                    self._encode_json_object(state, "snapshot state"),
                     at,
                 ),
             )
