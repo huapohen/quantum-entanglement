@@ -27,10 +27,11 @@ For a packaged candidate, also retain the canonical out-of-tree distribution man
 described in [`DISTRIBUTION_INTEGRITY.md`](../DISTRIBUTION_INTEGRITY.md). Record the
 manifest digest, both compressed artifact digests, and the immutable successful package CI
 run. Keep content integrity, byte-for-byte reproducibility, SBOM, signed provenance, and
-artifact signature as separate results: none may be inferred from another. In particular,
-the current setuptools sdist is not yet byte-reproducible even with `SOURCE_DATE_EPOCH` set,
-so reproducibility remains an explicit failed or pending GA gate until new retained evidence
-proves otherwise.
+artifact signature as separate results: none may be inferred from another. The same-job
+predicate in [`REPRODUCIBLE_BUILDS.md`](../REPRODUCIBLE_BUILDS.md) requires an exact second
+build and comparison before manifest verification, but it does not prove reproduction with
+a different runner or toolchain. Record floating or missing build locks, cross-environment
+evidence, SBOM, provenance, policy, and signatures explicitly as passed, failed, or pending.
 
 ## Template
 
@@ -51,6 +52,8 @@ Reviewer: `name or accountable role`
 - Tree SHA: `<full SHA>`
 - Version: `X.Y.Z`
 - Build artifact digests: `<algorithm:digest>`
+- Rebuild artifact digests: `<algorithm:digest>`
+- Repeated-build verifier run: `<immutable URL>`
 - Distribution manifest digest: `<sha256:digest>`
 - Distribution manifest verifier run: `<immutable URL>`
 - SBOM digest: `<algorithm:digest | missing>`
@@ -72,6 +75,10 @@ Reviewer: `name or accountable role`
 - Host/runner image:
 - CPU and memory:
 - Toolchain versions:
+- Primary/rebuild source commit and tree:
+- Build frontend/backend versions:
+- SOURCE_DATE_EPOCH:
+- Build and normalization commands:
 - Dependency lock digest:
 - Environment preparation commands:
 

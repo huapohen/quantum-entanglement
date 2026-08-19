@@ -60,6 +60,21 @@ commands, CI behavior, evidence fields, and known limitations. This content-inte
 is not signed provenance, an SBOM, a dependency lock or scan, a trusted build environment,
 or proof of byte-for-byte reproducibility.
 
+## Reproducible build gate
+
+Every packaged candidate must be built twice from the same expected full commit in distinct
+source and output directories. Both builds use the commit timestamp as `SOURCE_DATE_EPOCH`;
+both sdists are canonicalized with `scripts/normalize_sdist.py`; and
+`scripts/verify_reproducible_distributions.py` must prove that the wheel and sdist filenames
+and complete bytes are identical before manifest generation, smoke installation, or upload.
+
+Record both source identities, the exact runner and toolchain, epoch, build/normalization
+commands, both compressed artifact digest sets, comparator result, and immutable successful
+CI run. See [`REPRODUCIBLE_BUILDS.md`](./REPRODUCIBLE_BUILDS.md) for the enforced same-job
+predicate and its boundary. A same-runner pass is not evidence of reproducibility across
+unpinned frontends/backends, different hosts, runner images, platforms, interpreters, or
+compression implementations.
+
 ## Phase release gate
 
 Every phase release requires a file under `docs/production/evidence/<version>.md` with:
@@ -136,12 +151,14 @@ Security findings use the higher of exploit impact and data/authority impact.
 - release-candidate soak with no unresolved P0/P1 issue;
 - formal operational acceptance recorded in the release evidence.
 
-**Current open gate:** setting `SOURCE_DATE_EPOCH` to the commit timestamp has produced
-byte-identical wheels in one controlled repeated-build observation, but setuptools sdists
-still retained checkout modification times and owner/group metadata and were not
-byte-identical. Reproducible wheel and sdist builds therefore remain unproven and block GA.
-Neither a green distribution manifest check nor equal unpacked-content digests closes this
-gate; repeated clean builds with a pinned toolchain must match compressed artifact digests.
+**Current status:** canonical sdist normalization and an independent detached-worktree
+rebuild now close the previously observed setuptools `mtime` and owner/group metadata drift
+within one CI job. At `e4cbf04`, two detached worktrees and two independent local clones
+produced byte-identical wheel/sdist sets and passed strict manifest verification. The
+workflow nevertheless installs an unpinned `build` frontend and permits floating
+`setuptools>=77`; cross-runner/toolchain reproduction, locked and hashed build inputs, SBOM,
+vulnerability/license policy, signed provenance, and artifact signatures remain open GA
+gates. The production supply chain is therefore not complete.
 
 ## Rollback rule
 

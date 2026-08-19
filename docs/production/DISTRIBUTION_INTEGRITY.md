@@ -7,8 +7,9 @@ exact equivalence with the checkout and an externally supplied commit SHA.
 
 This gate answers: **do these two package files contain exactly the source and packaging
 metadata that this clean commit is expected to produce?** It does not establish who built
-or signed them, whether the build toolchain is trustworthy, or whether another build would
-produce byte-identical files.
+or signed them, whether the build toolchain is trustworthy, or by itself whether another
+build would produce byte-identical files. The separate same-job repeated-build predicate is
+defined in [`REPRODUCIBLE_BUILDS.md`](./REPRODUCIBLE_BUILDS.md).
 
 ## Generate and verify
 
@@ -18,6 +19,7 @@ wheel and sdist. Bind build timestamps to the commit before invoking the build f
 ```bash
 export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
 python -m build
+python scripts/normalize_sdist.py --distribution-directory dist
 ```
 
 The manifest must be written outside the checkout. Redirecting it into the repository would
@@ -108,12 +110,16 @@ The `package` workflow performs the implemented gate in this order:
 1. checks out `${{ github.sha }}` without persisted Git credentials;
 2. selects Python 3.12, installs the build frontend, and derives `SOURCE_DATE_EPOCH` from the
    commit timestamp;
-3. builds exactly one wheel and one sdist;
-4. generates the manifest under `runner.temp`, outside the checkout;
-5. verifies it against the archives, clean checkout, runtime, and `${{ github.sha }}`;
-6. checks durable migration package data and smoke-installs the wheel in a new virtual
+3. builds exactly one wheel and one sdist and canonicalizes the sdist container metadata;
+4. creates a detached worktree at `${{ github.sha }}`, rebuilds into a distinct directory,
+   and canonicalizes the second sdist with the same epoch;
+5. requires exact filename and byte equality across both wheel/sdist sets;
+6. generates the manifest under `runner.temp`, outside the checkout;
+7. verifies it against the retained archives, clean checkout, runtime, and
+   `${{ github.sha }}`;
+8. checks durable migration package data and smoke-installs the wheel in a new virtual
    environment;
-7. uploads the two verified distributions and manifest for 14 days.
+9. uploads the two verified distributions and manifest for 14 days.
 
 The package upload does not use `always()`. A failed manifest check or failed smoke test
 therefore cannot be retained by that step as an official distribution artifact. Artifact
@@ -128,7 +134,7 @@ Passing this gate does **not** prove or replace any of the following:
 - an SBOM, dependency lock, dependency or license policy, vulnerability scan, or malware
   analysis;
 - hermetic or offline construction, a pinned build frontend/backend, or a trusted runner;
-- byte-for-byte reproducibility across repeated builds, hosts, platforms, Python versions,
+- cross-runner or cross-toolchain reproducibility across hosts, platforms, Python versions,
   setuptools versions, or compression implementations;
 - source-review, authorization, deployment, migration, recovery, security, performance, or
   human promotion gates.
@@ -138,27 +144,20 @@ The current CI installs `build` from the configured package index and relies on 
 supply chain. Signed provenance, SBOM production, policy scanning, toolchain locking, and
 artifact signing remain separate release work.
 
-## Reproducibility status and GA open gate
+## Reproducibility relationship
 
-The CI's fixed `SOURCE_DATE_EPOCH` reduces timestamp variability but is not evidence of a
-reproducible build. In a repeated local experiment using the same clean source identity and
-setuptools 84:
+The earlier raw-setuptools sdist drift from checkout modification times and owner/group
+metadata is now handled by `scripts/normalize_sdist.py`. The package workflow canonicalizes
+both sdists and requires the normalized wheel/sdist sets to be byte-identical before this
+manifest gate runs. Local detached-worktree and independent-clone observations at
+`e4cbf04` produced identical compressed digests and passed strict manifest verification.
 
-- the two wheels were byte-for-byte identical;
-- the two sdists were **not** byte-for-byte identical;
-- the setuptools sdist retained checkout file modification times and tar owner metadata
-  (`uid`, `gid`, user name, and group name).
-
-This is an observation about that controlled run, not a universal proof that wheel builds
-are reproducible. Equal sdist `contentSha256` values would show equal filenames and file
-payloads but would still omit the differing tar metadata and therefore would not prove byte
-reproducibility. The compressed `sha256` is the relevant exact-file comparison.
-
-Reproducible wheel **and sdist** output remains an open, release-blocking GA gate. It may be
-marked passed only after a clean, isolated, pinned build procedure produces byte-identical
-artifacts in repeated independent builds and retains the commands, environments, and
-compressed digests. Until then, no release record may infer reproducibility from
-`SOURCE_DATE_EPOCH`, a green distribution manifest check, or equal content digests.
+This closes that specific metadata-drift defect under the observed same-job toolchain. It
+does not make `contentSha256` a reproducibility proof, because that digest still excludes
+container metadata; `scripts/verify_reproducible_distributions.py` compares the complete
+files. It also does not establish cross-runner or cross-toolchain reproduction. See
+[`REPRODUCIBLE_BUILDS.md`](./REPRODUCIBLE_BUILDS.md) for the exact predicate, recorded local
+evidence, and remaining GA supply-chain gates.
 
 ## Release evidence
 
@@ -167,8 +166,8 @@ For every candidate package, retain and reference:
 1. the full source commit and tree SHA;
 2. the exact canonical manifest and its SHA-256;
 3. both distribution filenames, byte sizes, compressed SHA-256 values, and content digests;
-4. the immutable CI run in which generation, strict verification, package-data check, and
-   wheel smoke installation all passed;
+4. the immutable CI run in which repeated build, exact comparison, generation, strict
+   verification, package-data check, and wheel smoke installation all passed;
 5. the separate reproducibility result, signed provenance/attestation, SBOM, dependency and
    license policy, vulnerability scan, and signature status, including explicit failures or
    missing evidence.
