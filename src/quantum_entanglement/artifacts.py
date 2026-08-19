@@ -42,8 +42,13 @@ class ArtifactLedger:
         self._rebuild()
 
     def _rebuild(self) -> None:
+        with self._lock:
+            self._rebuild_under_lock()
+
+    def _rebuild_under_lock(self) -> None:
         after_position = 0
         replayed = 0
+        candidate_versions: Dict[Tuple[str, str], Tuple[ArtifactVersion, ...]] = {}
         while replayed < _MAX_REPLAY_EVENTS:
             page_limit = min(_REPLAY_PAGE_LIMIT, _MAX_REPLAY_EVENTS - replayed)
             page = self.event_store.read_all(
@@ -56,7 +61,7 @@ class ArtifactLedger:
                 requested_limit=page_limit,
             )
             if not page:
-                return
+                break
             for stored in page:
                 if stored.event.event_type != self.EVENT_TYPE:
                     continue
@@ -70,21 +75,23 @@ class ArtifactLedger:
                     trigger=str(payload.get("trigger", "create")),
                 )
                 key = (str(payload["sessionId"]), ref.name)
-                self._versions[key] = self._versions.get(key, ()) + (item,)
+                candidate_versions[key] = candidate_versions.get(key, ()) + (item,)
             replayed += len(page)
             if len(page) < page_limit:
-                return
-
-        probe = self.event_store.read_all(after_position=after_position, limit=1)
-        self._validate_replay_page(
-            probe,
-            after_position=after_position,
-            requested_limit=1,
-        )
-        if probe:
-            raise ArtifactReplayError(
-                f"artifact replay exceeds the {_MAX_REPLAY_EVENTS}-event safety limit"
+                break
+        else:
+            probe = self.event_store.read_all(after_position=after_position, limit=1)
+            self._validate_replay_page(
+                probe,
+                after_position=after_position,
+                requested_limit=1,
             )
+            if probe:
+                raise ArtifactReplayError(
+                    f"artifact replay exceeds the {_MAX_REPLAY_EVENTS}-event safety limit"
+                )
+
+        self._versions = candidate_versions
 
     @staticmethod
     def _validate_replay_page(

@@ -59,7 +59,10 @@ class FakeReplayStore(SQLiteEventStore):
 
     def read_all(self, after_position=0, limit=1000):
         self.calls.append((after_position, limit))
-        return self.pages.get(after_position, ())
+        response = self.pages.get(after_position, ())
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 class EventStoreTests(unittest.TestCase):
@@ -129,6 +132,43 @@ class ArtifactLedgerTests(unittest.TestCase):
         self.assertEqual(first.ref.artifact_id, second.ref.artifact_id)
         self.assertEqual(len(self.ledger.history("s1", "result.txt")), 1)
 
+    def test_rebuild_can_repeat_without_duplicating_versions(self):
+        self.ledger.record("s1", "t1", "writer", ArtifactOutput("report.md", "v1"))
+        self.ledger.record("s1", "t2", "writer", ArtifactOutput("report.md", "v2"))
+        expected = self.ledger.history("s1", "report.md")
+
+        self.ledger._rebuild()
+        self.ledger._rebuild()
+
+        self.assertEqual(self.ledger.history("s1", "report.md"), expected)
+        self.assertEqual(len(self.ledger.history("s1", "report.md")), 2)
+
+    def test_idempotent_retry_rebuild_keeps_every_history_unique(self):
+        concurrent = ArtifactLedger(self.store)
+        unrelated = self.ledger.record(
+            "s1",
+            "task-other",
+            "agent",
+            ArtifactOutput("other.txt", "other"),
+        )
+        original = concurrent.record(
+            "s1",
+            "task-target",
+            "agent",
+            ArtifactOutput("result.txt", "same"),
+        )
+
+        retried = self.ledger.record(
+            "s1",
+            "task-target",
+            "agent",
+            ArtifactOutput("result.txt", "same"),
+        )
+
+        self.assertEqual(retried.ref.artifact_id, original.ref.artifact_id)
+        self.assertEqual(self.ledger.history("s1", "other.txt"), (unrelated,))
+        self.assertEqual(self.ledger.history("s1", "result.txt"), (original,))
+
 
 class ArtifactLedgerReplayTests(unittest.TestCase):
     def test_replay_error_is_part_of_the_supported_artifact_api(self):
@@ -164,6 +204,83 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
             ["v1", "v2"],
         )
         self.assertEqual(ledger.current("session-replay", "notes.md").content, "notes")
+
+    def test_successful_rebuild_replaces_stale_state_in_one_step(self):
+        source = FakeReplayStore(
+            {0: (replay_event(1, name="stale.md", version=1, content="stale"),)}
+        )
+        with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
+            ledger = ArtifactLedger(source)
+        stale_state = ledger._versions
+
+        source.pages = {
+            0: (
+                replay_event(1, name="report.md", version=1, content="fresh"),
+                replay_event(2, name="notes.md", version=1, content="notes"),
+            )
+        }
+        with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
+            ledger._rebuild()
+
+        self.assertIsNot(ledger._versions, stale_state)
+        self.assertIsNone(ledger.current("session-replay", "stale.md"))
+        self.assertEqual(ledger.current("session-replay", "report.md").content, "fresh")
+        self.assertEqual(ledger.current("session-replay", "notes.md").content, "notes")
+
+    def test_late_replay_failures_preserve_the_exact_previous_state(self):
+        malformed_payload = StoredEvent(
+            DomainEvent(
+                stream_id="session:session-replay",
+                event_type=ArtifactLedger.EVENT_TYPE,
+                actor_id="test",
+                event_id="event-malformed",
+                timestamp=T0,
+                payload={"sessionId": "session-replay", "content": "broken"},
+            ),
+            sequence=3,
+            global_position=3,
+        )
+        late_failures = {
+            "page": (
+                (replay_event(2),),
+                ArtifactReplayError,
+            ),
+            "source": (
+                RuntimeError("source failed"),
+                RuntimeError,
+            ),
+            "payload-ref": (
+                (malformed_payload,),
+                KeyError,
+            ),
+        }
+        for case, (late_response, error_type) in late_failures.items():
+            with self.subTest(case=case):
+                source = FakeReplayStore(
+                    {0: (replay_event(1, name="stable.md", content="stable"),)}
+                )
+                with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
+                    ledger = ArtifactLedger(source)
+                previous_state = ledger._versions
+                previous_history = ledger.history("session-replay", "stable.md")
+                source.pages = {
+                    0: (
+                        replay_event(1, name="candidate.md", content="candidate"),
+                        replay_event(2),
+                    ),
+                    2: late_response,
+                }
+
+                with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
+                    with self.assertRaises(error_type):
+                        ledger._rebuild()
+
+                self.assertIs(ledger._versions, previous_state)
+                self.assertIs(
+                    ledger.history("session-replay", "stable.md"),
+                    previous_history,
+                )
+                self.assertIsNone(ledger.current("session-replay", "candidate.md"))
 
     def test_replay_rejects_oversized_unordered_and_nonadvancing_pages(self):
         cases = {
