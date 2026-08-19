@@ -556,6 +556,83 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertEqual(after_job, before_job)
         self.assertEqual(after_attempt, before_attempt)
 
+    def test_owned_mutations_reject_attempt_ownership_drift_before_writing(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.store._connection.execute(
+            "UPDATE invocation_attempts SET worker_id = ? WHERE invocation_id = ?",
+            ("different-worker", "invocation-1"),
+        )
+        before_job = tuple(
+            self.store._connection.execute(
+                "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+                ("invocation-1",),
+            ).fetchone()
+        )
+        before_attempt = tuple(
+            self.store._connection.execute(
+                "SELECT * FROM invocation_attempts WHERE invocation_id = ?",
+                ("invocation-1",),
+            ).fetchone()
+        )
+
+        operations = (
+            lambda: self.store.heartbeat(lease, lease_seconds=10),
+            lambda: self.store.complete(lease),
+            lambda: self.store.fail(lease, "must not persist"),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(InvocationIntegrityError, "ownership records disagree"):
+                    operation()
+
+        self.assertEqual(
+            tuple(
+                self.store._connection.execute(
+                    "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+                    ("invocation-1",),
+                ).fetchone()
+            ),
+            before_job,
+        )
+        self.assertEqual(
+            tuple(
+                self.store._connection.execute(
+                    "SELECT * FROM invocation_attempts WHERE invocation_id = ?",
+                    ("invocation-1",),
+                ).fetchone()
+            ),
+            before_attempt,
+        )
+
+    def test_recovery_rejects_missing_owned_attempt_without_partial_state_change(self):
+        self.store.enqueue(job_spec())
+        self.store.claim("invocation-1", "worker", lease_seconds=1)
+        self.store._connection.execute(
+            "DELETE FROM invocation_attempts WHERE invocation_id = ?",
+            ("invocation-1",),
+        )
+        self.clock.set(timestamp(1))
+        before_job = tuple(
+            self.store._connection.execute(
+                "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+                ("invocation-1",),
+            ).fetchone()
+        )
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "exactly one owned attempt"):
+            self.store.recover_expired()
+
+        self.assertEqual(
+            tuple(
+                self.store._connection.execute(
+                    "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+                    ("invocation-1",),
+                ).fetchone()
+            ),
+            before_job,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

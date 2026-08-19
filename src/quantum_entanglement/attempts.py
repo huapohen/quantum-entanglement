@@ -626,6 +626,61 @@ class SQLiteInvocationAttemptStore:
             ).fetchall()
             return tuple(self._row_to_attempt(row) for row in rows)
 
+    @staticmethod
+    def _load_running_attempt(
+        connection: sqlite3.Connection,
+        *,
+        invocation_id: str,
+        attempt_number: int,
+        lease_epoch: int,
+        attempt_id: Optional[str] = None,
+    ) -> InvocationAttempt:
+        parameters: list[Any] = [invocation_id, attempt_number, lease_epoch]
+        attempt_filter = ""
+        if attempt_id is not None:
+            attempt_filter = " AND attempt_id = ?"
+            parameters.append(attempt_id)
+        rows = connection.execute(
+            """
+            SELECT * FROM invocation_attempts
+            WHERE invocation_id = ? AND attempt_number = ?
+              AND lease_epoch = ? AND status = 'running'
+            """
+            + attempt_filter
+            + " LIMIT 2",
+            tuple(parameters),
+        ).fetchall()
+        if len(rows) != 1:
+            raise InvocationIntegrityError(
+                "running invocation does not have exactly one owned attempt"
+            )
+        return SQLiteInvocationAttemptStore._row_to_attempt(rows[0])
+
+    @staticmethod
+    def _validate_running_attempt_owner(
+        attempt: InvocationAttempt,
+        *,
+        invocation_id: str,
+        attempt_number: int,
+        lease_epoch: int,
+        worker_id: str,
+        lease_token_digest: str,
+        lease_expires_at: str,
+        attempt_id: Optional[str] = None,
+    ) -> None:
+        if (
+            attempt.invocation_id != invocation_id
+            or attempt.attempt_number != attempt_number
+            or attempt.lease_epoch != lease_epoch
+            or attempt.worker_id != worker_id
+            or attempt.lease_token_digest != lease_token_digest
+            or attempt.lease_expires_at != lease_expires_at
+            or (attempt_id is not None and attempt.attempt_id != attempt_id)
+        ):
+            raise InvocationIntegrityError(
+                "running invocation and attempt ownership records disagree"
+            )
+
     def _recover_expired_in_transaction(
         self,
         connection: sqlite3.Connection,
@@ -656,6 +711,25 @@ class SQLiteInvocationAttemptStore:
             job_id = job.invocation_id
             epoch = job.lease_epoch
             attempt_number = job.attempts_started
+            if job.lease_owner is None or job.lease_expires_at is None:
+                raise InvocationIntegrityError("running invocation has incomplete lease ownership")
+            attempt = self._load_running_attempt(
+                connection,
+                invocation_id=job_id,
+                attempt_number=attempt_number,
+                lease_epoch=epoch,
+            )
+            self._validate_running_attempt_owner(
+                attempt,
+                invocation_id=job_id,
+                attempt_number=attempt_number,
+                lease_epoch=epoch,
+                worker_id=job.lease_owner,
+                lease_token_digest=_persisted_digest(
+                    row["lease_token_digest"], "invocation lease_token_digest"
+                ),
+                lease_expires_at=job.lease_expires_at,
+            )
             attempt_update = connection.execute(
                 """
                 UPDATE invocation_attempts
@@ -890,6 +964,23 @@ class SQLiteInvocationAttemptStore:
                 return False
             if job.lease_expires_at is None:  # protected by strict running-row decoding.
                 raise InvocationIntegrityError("running invocation has no lease deadline")
+            attempt = self._load_running_attempt(
+                connection,
+                invocation_id=lease.invocation_id,
+                attempt_number=job.attempts_started,
+                lease_epoch=lease.lease_epoch,
+                attempt_id=lease.attempt_id,
+            )
+            self._validate_running_attempt_owner(
+                attempt,
+                invocation_id=lease.invocation_id,
+                attempt_number=job.attempts_started,
+                lease_epoch=lease.lease_epoch,
+                worker_id=lease.worker_id,
+                lease_token_digest=_lease_token_digest(lease.lease_token),
+                lease_expires_at=job.lease_expires_at,
+                attempt_id=lease.attempt_id,
+            )
             deadline = max(job.lease_expires_at, proposed_deadline)
             update = connection.execute(
                 """
@@ -946,6 +1037,25 @@ class SQLiteInvocationAttemptStore:
             job = self._active_owned_row(connection, lease, normalized_now)
             if job is None:
                 return False
+            if job.lease_expires_at is None:
+                raise InvocationIntegrityError("running invocation has no lease deadline")
+            attempt = self._load_running_attempt(
+                connection,
+                invocation_id=lease.invocation_id,
+                attempt_number=job.attempts_started,
+                lease_epoch=lease.lease_epoch,
+                attempt_id=lease.attempt_id,
+            )
+            self._validate_running_attempt_owner(
+                attempt,
+                invocation_id=lease.invocation_id,
+                attempt_number=job.attempts_started,
+                lease_epoch=lease.lease_epoch,
+                worker_id=lease.worker_id,
+                lease_token_digest=_lease_token_digest(lease.lease_token),
+                lease_expires_at=job.lease_expires_at,
+                attempt_id=lease.attempt_id,
+            )
             update = connection.execute(
                 """
                 UPDATE invocation_jobs
@@ -1005,6 +1115,25 @@ class SQLiteInvocationAttemptStore:
             job = self._active_owned_row(connection, lease, normalized_now)
             if job is None:
                 return False
+            if job.lease_expires_at is None:
+                raise InvocationIntegrityError("running invocation has no lease deadline")
+            attempt = self._load_running_attempt(
+                connection,
+                invocation_id=lease.invocation_id,
+                attempt_number=job.attempts_started,
+                lease_epoch=lease.lease_epoch,
+                attempt_id=lease.attempt_id,
+            )
+            self._validate_running_attempt_owner(
+                attempt,
+                invocation_id=lease.invocation_id,
+                attempt_number=job.attempts_started,
+                lease_epoch=lease.lease_epoch,
+                worker_id=lease.worker_id,
+                lease_token_digest=_lease_token_digest(lease.lease_token),
+                lease_expires_at=job.lease_expires_at,
+                attempt_id=lease.attempt_id,
+            )
             attempt_update = connection.execute(
                 """
                 UPDATE invocation_attempts
