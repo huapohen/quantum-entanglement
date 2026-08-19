@@ -1,6 +1,8 @@
 """Quantum Entanglement multi-agent coordination kernel."""
 
 from .artifacts import ArtifactLedger, ArtifactVersion
+from .adapters import A2AAgentCard, A2AJsonRpcAdapter, A2ASkill
+from .chat import ChatRoute, InboundChatMessage, MentionRouter, RoutedChatMessage
 from .events import DomainEvent, StoredEvent
 from .context import ContextBudgetError, ContextBundle, ContextCompiler, ContextItem
 from .plugins import HookPoint, KernelPlugin, PluginManager
@@ -21,6 +23,7 @@ from .protocol import (
     TaskStatus,
 )
 from .store import ConcurrencyError, SQLiteEventStore
+from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
 from .runtime import (
     AgentInvocation,
     AgentRegistration,
@@ -33,6 +36,9 @@ from .scheduler import TaskGraph, TaskSpec, TaskTransition, WorkflowPlan
 
 __all__ = [
     "ActionIntent",
+    "A2AAgentCard",
+    "A2AJsonRpcAdapter",
+    "A2ASkill",
     "ActorKind",
     "ActorRef",
     "ApprovalDecision",
@@ -42,6 +48,8 @@ __all__ = [
     "ArtifactVersion",
     "Authority",
     "ConcurrencyError",
+    "BridgeStatus",
+    "ChatRoute",
     "ContextBudgetError",
     "ContextBundle",
     "ContextCompiler",
@@ -53,6 +61,10 @@ __all__ = [
     "HandoffContract",
     "HookPoint",
     "KernelPlugin",
+    "InboundChatMessage",
+    "LangGraphBridge",
+    "LangGraphResult",
+    "MentionRouter",
     "NeedsYouQueue",
     "OrchestratorKernel",
     "PluginManager",
@@ -60,6 +72,7 @@ __all__ = [
     "PolicyEngine",
     "PolicyOutcome",
     "RiskLevel",
+    "RoutedChatMessage",
     "SQLiteEventStore",
     "StoredEvent",
     "TaskGraph",
