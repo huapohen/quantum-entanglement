@@ -397,6 +397,8 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             job_spec(payload_digest="not-a-digest")
         with self.assertRaises(ValueError):
+            job_spec(max_attempts=1 << 63)
+        with self.assertRaises(ValueError):
             job_spec(available_at="2026-08-20 00:00:00Z")
         with self.assertRaises(ValueError):
             job_spec(available_at="2026-08-20T00:00:00-00:00")

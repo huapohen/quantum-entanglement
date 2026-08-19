@@ -202,8 +202,8 @@ class InvocationJobSpec:
             raise ValueError("priority must be between 0 and 100")
         if not isinstance(self.max_attempts, int) or isinstance(self.max_attempts, bool):
             raise TypeError("max_attempts must be an integer")
-        if self.max_attempts <= 0:
-            raise ValueError("max_attempts must be greater than zero")
+        if not 1 <= self.max_attempts <= _MAX_SQLITE_INTEGER:
+            raise ValueError("max_attempts must fit a positive SQLite integer")
         if self.available_at is not None:
             _normalize_timestamp(self.available_at, "available_at")
 
