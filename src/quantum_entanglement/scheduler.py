@@ -46,6 +46,22 @@ class TaskSpec:
             "metadata": dict(self.metadata),
         }
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "TaskSpec":
+        return cls(
+            title=str(value["title"]),
+            agent_id=str(value["agentId"]),
+            handoff=HandoffContract.from_dict(value["handoff"]),
+            task_id=str(value["taskId"]),
+            depends_on=tuple(str(item) for item in value.get("dependsOn", ())),
+            input_artifacts=tuple(str(item) for item in value.get("inputArtifacts", ())),
+            action=ActionIntent.from_dict(
+                value.get("action", {"action": "analyze", "target": "workspace"})
+            ),
+            priority=int(value.get("priority", 50)),
+            metadata=dict(value.get("metadata", {})),
+        )
+
 
 @dataclass(frozen=True)
 class TaskTransition:
@@ -103,7 +119,10 @@ class TaskGraph:
         for task in self.tasks.values():
             missing = set(task.depends_on) - known
             if missing:
-                raise ValueError("task %s has missing dependencies: %s" % (task.task_id, sorted(missing)))
+                raise ValueError(
+                    "task %s has missing dependencies: %s"
+                    % (task.task_id, sorted(missing))
+                )
 
     def _validate_acyclic(self) -> None:
         visiting = set()
@@ -181,7 +200,9 @@ class TaskGraph:
 
     def ready(self, limit: Optional[int] = None) -> Tuple[TaskSpec, ...]:
         candidates = [
-            task for task_id, task in self.tasks.items() if self.statuses[task_id] == TaskStatus.READY
+            task
+            for task_id, task in self.tasks.items()
+            if self.statuses[task_id] == TaskStatus.READY
         ]
         candidates.sort(key=lambda item: (-item.priority, item.task_id))
         return tuple(candidates[:limit] if limit is not None else candidates)
@@ -222,3 +243,14 @@ class WorkflowPlan:
             "correlationId": self.correlation_id,
             "tasks": [task.to_dict() for task in self.tasks],
         }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "WorkflowPlan":
+        return cls(
+            session_id=str(value["sessionId"]),
+            goal=str(value["goal"]),
+            initiated_by=str(value["initiatedBy"]),
+            tasks=tuple(TaskSpec.from_dict(item) for item in value["tasks"]),
+            plan_id=str(value["planId"]),
+            correlation_id=(str(value["correlationId"]) if value.get("correlationId") else None),
+        )
