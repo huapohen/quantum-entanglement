@@ -30,6 +30,16 @@ from .artifact_store import (
     StoredArtifact,
 )
 from .artifacts import ArtifactLedger, ArtifactVersion
+from .backup import (
+    BackupError,
+    BackupExistsError,
+    BackupIntegrityError,
+    BackupManifest,
+    create_sqlite_backup,
+    default_manifest_path,
+    restore_sqlite_backup,
+    verify_sqlite_backup,
+)
 from .chat import ChatRoute, InboundChatMessage, MentionRouter, RoutedChatMessage
 from .context import ContextBudgetError, ContextBundle, ContextCompiler, ContextItem
 from .delivery import (
@@ -93,6 +103,10 @@ __all__ = [
     "ArtifactVersion",
     "ArtifactWrite",
     "Authority",
+    "BackupError",
+    "BackupExistsError",
+    "BackupIntegrityError",
+    "BackupManifest",
     "ConcurrencyError",
     "BridgeStatus",
     "ChatRoute",
@@ -138,6 +152,10 @@ __all__ = [
     "TaskStatus",
     "TaskTransition",
     "WorkflowPlan",
+    "create_sqlite_backup",
+    "default_manifest_path",
+    "restore_sqlite_backup",
+    "verify_sqlite_backup",
     "AgentRegistration",
     "AgentRegistry",
     "ApprovalRequest",

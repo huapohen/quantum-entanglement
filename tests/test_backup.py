@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from quantum_entanglement import create_sqlite_backup as public_create_sqlite_backup
 from quantum_entanglement.artifact_store import ArtifactWrite, SQLiteArtifactStore
 from quantum_entanglement.attempts import (
     InvocationJobSpec,
@@ -63,6 +64,9 @@ class SQLiteBackupTests(unittest.TestCase):
         self.artifacts.close()
         self.attempts.close()
         self.tempdir.cleanup()
+
+    def test_backup_creation_is_part_of_the_supported_package_api(self):
+        self.assertIs(public_create_sqlite_backup, create_sqlite_backup)
 
     def create_backup(self):
         path = self.root / "backups" / "snapshot.sqlite3"
