@@ -28,6 +28,7 @@ from quantum_entanglement.projections import (
     ProjectionLeaseConflictError,
     ProjectionLeaseLostError,
     ProjectionOffsetConflictError,
+    ProjectionSchemaError,
     ProjectionStatementResult,
     ProjectionTransaction,
     SQLiteProjectionOffsetStore,
@@ -520,6 +521,277 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
         }
         values.update(overrides)
         return cast(sqlite3.Row, values)
+
+    def exact_projection_path(self, label: str) -> str:
+        path = str(Path(self.tempdir.name) / f"{label}.sqlite3")
+        store = SQLiteProjectionOffsetStore(path, clock=self.clock)
+        store.close()
+        return path
+
+    def rewrite_projection_table(
+        self,
+        path: str,
+        table_name: str,
+        transform: Callable[[str], str],
+    ) -> None:
+        connection = sqlite3.connect(path)
+        try:
+            row = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table_name,),
+            ).fetchone()
+            self.assertIsNotNone(row)
+            original_sql = row[0]
+            self.assertIsInstance(original_sql, str)
+            rewritten_sql = transform(cast(str, original_sql))
+            self.assertNotEqual(rewritten_sql, original_sql)
+            connection.execute(f'DROP TABLE "{table_name}"')
+            connection.execute(rewritten_sql)
+            connection.commit()
+        finally:
+            connection.close()
+
+    def test_exact_schema_revalidation_uses_the_read_only_fast_path(self) -> None:
+        statements: list[str] = []
+        self.store._connection.set_trace_callback(statements.append)
+        try:
+            self.store._initialize()
+        finally:
+            self.store._connection.set_trace_callback(None)
+
+        normalized = tuple(statement.lstrip().upper() for statement in statements)
+        self.assertTrue(any(statement.startswith("SELECT") for statement in normalized))
+        self.assertFalse(
+            any(
+                statement.startswith(("BEGIN", "CREATE", "COMMIT", "ROLLBACK"))
+                for statement in normalized
+            )
+        )
+
+    def test_empty_database_initialization_serializes_concurrent_installers(self) -> None:
+        path = str(Path(self.tempdir.name) / "concurrent-empty.sqlite3")
+        barrier = threading.Barrier(2)
+        opened: list[SQLiteProjectionOffsetStore] = []
+        failures: list[BaseException] = []
+
+        def initialize() -> None:
+            try:
+                barrier.wait()
+                opened.append(SQLiteProjectionOffsetStore(path, clock=self.clock))
+            except BaseException as exc:  # pragma: no cover - assertion reports details
+                failures.append(exc)
+
+        threads = tuple(threading.Thread(target=initialize) for _ in range(2))
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        for store in opened:
+            store.close()
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertFalse(failures)
+        self.assertEqual(len(opened), 2)
+        verified = SQLiteProjectionOffsetStore(path, clock=self.clock)
+        verified.close()
+
+    def test_table_replaced_by_view_fails_before_write_and_closes_connection(
+        self,
+    ) -> None:
+        path = str(Path(self.tempdir.name) / "view-shadow.sqlite3")
+        real_connect = sqlite3.connect
+        connection = real_connect(path)
+        try:
+            connection.execute(
+                "CREATE VIEW projection_offsets AS SELECT 'shadow' AS projection_name"
+            )
+            connection.commit()
+            before = tuple(
+                connection.execute(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name"
+                ).fetchall()
+            )
+        finally:
+            connection.close()
+
+        traces: list[str] = []
+
+        class TrackingConnection(sqlite3.Connection):
+            was_closed = False
+
+            def close(self) -> None:
+                self.was_closed = True
+                super().close()
+
+        tracked: list[TrackingConnection] = []
+
+        def tracked_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            kwargs["factory"] = TrackingConnection
+            candidate = cast(TrackingConnection, real_connect(*args, **kwargs))
+            candidate.set_trace_callback(traces.append)
+            tracked.append(candidate)
+            return candidate
+
+        with patch(
+            "quantum_entanglement.projections.sqlite3.connect",
+            side_effect=tracked_connect,
+        ):
+            with self.assertRaises(ProjectionSchemaError):
+                SQLiteProjectionOffsetStore(path, clock=self.clock)
+
+        self.assertEqual(len(tracked), 1)
+        self.assertTrue(tracked[0].was_closed)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            tracked[0].execute("SELECT 1")
+        normalized = tuple(statement.lstrip().upper() for statement in traces)
+        self.assertFalse(any(statement.startswith(("BEGIN", "CREATE")) for statement in normalized))
+
+        connection = real_connect(path)
+        try:
+            after = tuple(
+                connection.execute(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name"
+                ).fetchall()
+            )
+        finally:
+            connection.close()
+        self.assertEqual(after, before)
+
+    def test_column_and_table_constraint_drift_fail_closed(self) -> None:
+        cases: tuple[tuple[str, str, Callable[[str], str]], ...] = (
+            (
+                "missing_column",
+                "projection_offsets",
+                lambda sql: sql.replace(",\n    updated_at TEXT NOT NULL", ""),
+            ),
+            (
+                "added_column",
+                "projection_offsets",
+                lambda sql: sql.replace(
+                    "updated_at TEXT NOT NULL,\n    CHECK",
+                    "updated_at TEXT NOT NULL,\n    untrusted_extra TEXT,\n    CHECK",
+                ),
+            ),
+            (
+                "declared_type",
+                "projection_offsets",
+                lambda sql: sql.replace(
+                    "owner_epoch INTEGER NOT NULL",
+                    "owner_epoch TEXT NOT NULL",
+                ),
+            ),
+            (
+                "not_null",
+                "projection_offsets",
+                lambda sql: sql.replace("owner_id TEXT NOT NULL", "owner_id TEXT"),
+            ),
+            (
+                "default",
+                "projection_offsets",
+                lambda sql: sql.replace("DEFAULT 0", "DEFAULT 1"),
+            ),
+            (
+                "check",
+                "projection_offsets",
+                lambda sql: sql.replace(
+                    "CHECK(owner_epoch > 0)",
+                    "CHECK(owner_epoch >= 0)",
+                ),
+            ),
+            (
+                "primary_key",
+                "projection_offsets",
+                lambda sql: sql.replace("TEXT PRIMARY KEY", "TEXT UNIQUE"),
+            ),
+            (
+                "unique_constraint",
+                "projection_receipts",
+                lambda sql: sql.replace(
+                    "UNIQUE(projection_name, global_position),\n    ",
+                    "",
+                ),
+            ),
+            (
+                "receipt_check",
+                "projection_receipts",
+                lambda sql: sql.replace(
+                    "CHECK(global_position > 0)",
+                    "CHECK(global_position >= 0)",
+                ),
+            ),
+        )
+        for label, table_name, transform in cases:
+            with self.subTest(label=label):
+                path = self.exact_projection_path(label)
+                self.rewrite_projection_table(path, table_name, transform)
+
+                with self.assertRaises(ProjectionSchemaError):
+                    SQLiteProjectionOffsetStore(path, clock=self.clock)
+
+    def test_explicit_index_column_unique_partial_and_object_type_drift_fail_closed(
+        self,
+    ) -> None:
+        statements = (
+            (
+                "columns",
+                "CREATE INDEX idx_projection_receipts_position "
+                "ON projection_receipts(global_position, projection_name)",
+            ),
+            (
+                "unique",
+                "CREATE UNIQUE INDEX idx_projection_receipts_position "
+                "ON projection_receipts(projection_name, global_position)",
+            ),
+            (
+                "partial",
+                "CREATE INDEX idx_projection_receipts_position "
+                "ON projection_receipts(projection_name, global_position) "
+                "WHERE global_position > 0",
+            ),
+            (
+                "view_shadow",
+                "CREATE VIEW idx_projection_receipts_position AS "
+                "SELECT projection_name, global_position FROM projection_receipts",
+            ),
+        )
+        for label, replacement in statements:
+            with self.subTest(label=label):
+                path = self.exact_projection_path(f"index-{label}")
+                connection = sqlite3.connect(path)
+                try:
+                    connection.execute("DROP INDEX idx_projection_receipts_position")
+                    connection.execute(replacement)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                with self.assertRaises(ProjectionSchemaError):
+                    SQLiteProjectionOffsetStore(path, clock=self.clock)
+
+    def test_extra_index_and_trigger_attached_to_owned_tables_fail_closed(self) -> None:
+        statements = (
+            (
+                "extra-index",
+                "CREATE INDEX projection_offsets_owner_extra ON projection_offsets(owner_id)",
+            ),
+            (
+                "extra-trigger",
+                "CREATE TRIGGER projection_offsets_update_extra "
+                "AFTER UPDATE ON projection_offsets BEGIN SELECT 1; END",
+            ),
+        )
+        for label, statement in statements:
+            with self.subTest(label=label):
+                path = self.exact_projection_path(label)
+                connection = sqlite3.connect(path)
+                try:
+                    connection.execute(statement)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                with self.assertRaises(ProjectionSchemaError):
+                    SQLiteProjectionOffsetStore(path, clock=self.clock)
 
     def test_persisted_offset_decoder_rejects_all_coercion_and_noncanonical_data(
         self,

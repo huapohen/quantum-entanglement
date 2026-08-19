@@ -16,6 +16,8 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
+from time import monotonic, sleep
 from types import MappingProxyType
 from typing import Any, Callable, Optional, Protocol
 
@@ -105,6 +107,10 @@ class ProjectionIntegrityError(ProjectionOffsetError):
     """Raised when persisted projection state violates its strict data contract."""
 
 
+class ProjectionSchemaError(ProjectionIntegrityError):
+    """Raised when projection-owned SQLite schema is absent in part or has drifted."""
+
+
 class ProjectionLeaseConflictError(ProjectionOffsetError):
     """Raised when another owner still holds the projection lease."""
 
@@ -119,6 +125,196 @@ class ProjectionOffsetConflictError(ProjectionOffsetError):
 
 class ProjectionReceiptConflictError(ProjectionOffsetError):
     """Raised when durable deduplication metadata contradicts an event."""
+
+
+class _ProjectionSchemaState(str, Enum):
+    """The only projection schema states accepted during startup."""
+
+    ABSENT = "absent"
+    EXACT = "exact"
+
+
+_PROJECTION_OFFSETS_TABLE_NAME = "projection_offsets"
+_PROJECTION_RECEIPTS_TABLE_NAME = "projection_receipts"
+_PROJECTION_RECEIPTS_POSITION_INDEX_NAME = "idx_projection_receipts_position"
+_PROJECTION_OFFSETS_AUTO_INDEX_NAME = "sqlite_autoindex_projection_offsets_1"
+_PROJECTION_RECEIPTS_PRIMARY_INDEX_NAME = "sqlite_autoindex_projection_receipts_1"
+_PROJECTION_RECEIPTS_UNIQUE_INDEX_NAME = "sqlite_autoindex_projection_receipts_2"
+_MAX_PROJECTION_SCHEMA_OBJECTS = 16
+_MAX_PROJECTION_SCHEMA_NAME_LENGTH = 255
+_MAX_PROJECTION_SCHEMA_SQL_LENGTH = 8192
+
+_PROJECTION_OFFSETS_TABLE_SQL = """
+CREATE TABLE projection_offsets (
+    projection_name TEXT PRIMARY KEY,
+    last_global_position INTEGER NOT NULL DEFAULT 0,
+    owner_id TEXT NOT NULL,
+    owner_epoch INTEGER NOT NULL,
+    lease_expires_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(last_global_position >= 0),
+    CHECK(owner_epoch > 0)
+);
+""".strip()
+
+_PROJECTION_RECEIPTS_TABLE_SQL = """
+CREATE TABLE projection_receipts (
+    projection_name TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    global_position INTEGER NOT NULL,
+    applied_at TEXT NOT NULL,
+    PRIMARY KEY(projection_name, event_id),
+    UNIQUE(projection_name, global_position),
+    CHECK(global_position > 0)
+);
+""".strip()
+
+_PROJECTION_RECEIPTS_POSITION_INDEX_SQL = """
+CREATE INDEX idx_projection_receipts_position
+    ON projection_receipts(projection_name, global_position);
+""".strip()
+
+_PROJECTION_SCHEMA_DDL = (
+    _PROJECTION_OFFSETS_TABLE_SQL,
+    _PROJECTION_RECEIPTS_TABLE_SQL,
+    _PROJECTION_RECEIPTS_POSITION_INDEX_SQL,
+)
+
+
+@dataclass(frozen=True)
+class _ProjectionSchemaObject:
+    object_type: str
+    name: str
+    table_name: str
+    schema_sql: Optional[str]
+
+
+def _canonical_projection_schema_sql(sql: str) -> str:
+    """Normalize only insignificant SQL whitespace outside quoted regions."""
+
+    stripped = sql.strip()
+    if stripped.endswith(";"):
+        stripped = stripped[:-1].rstrip()
+    output: list[str] = []
+    quote_end: Optional[str] = None
+    index = 0
+    while index < len(stripped):
+        character = stripped[index]
+        if quote_end is not None:
+            output.append(character)
+            if character == quote_end:
+                if quote_end != "]" and index + 1 < len(stripped):
+                    if stripped[index + 1] == quote_end:
+                        output.append(stripped[index + 1])
+                        index += 2
+                        continue
+                quote_end = None
+            index += 1
+            continue
+        if character in {"'", '"', "`"}:
+            quote_end = character
+            output.append(character)
+        elif character == "[":
+            quote_end = "]"
+            output.append(character)
+        elif character.isspace():
+            if output and output[-1] != " ":
+                output.append(" ")
+        else:
+            output.append(character)
+        index += 1
+    return "".join(output).strip()
+
+
+_EXPECTED_PROJECTION_SCHEMA_OBJECTS = tuple(
+    sorted(
+        (
+            _ProjectionSchemaObject(
+                "index",
+                _PROJECTION_RECEIPTS_POSITION_INDEX_NAME,
+                _PROJECTION_RECEIPTS_TABLE_NAME,
+                _canonical_projection_schema_sql(_PROJECTION_RECEIPTS_POSITION_INDEX_SQL),
+            ),
+            _ProjectionSchemaObject(
+                "index",
+                _PROJECTION_OFFSETS_AUTO_INDEX_NAME,
+                _PROJECTION_OFFSETS_TABLE_NAME,
+                None,
+            ),
+            _ProjectionSchemaObject(
+                "index",
+                _PROJECTION_RECEIPTS_PRIMARY_INDEX_NAME,
+                _PROJECTION_RECEIPTS_TABLE_NAME,
+                None,
+            ),
+            _ProjectionSchemaObject(
+                "index",
+                _PROJECTION_RECEIPTS_UNIQUE_INDEX_NAME,
+                _PROJECTION_RECEIPTS_TABLE_NAME,
+                None,
+            ),
+            _ProjectionSchemaObject(
+                "table",
+                _PROJECTION_OFFSETS_TABLE_NAME,
+                _PROJECTION_OFFSETS_TABLE_NAME,
+                _canonical_projection_schema_sql(_PROJECTION_OFFSETS_TABLE_SQL),
+            ),
+            _ProjectionSchemaObject(
+                "table",
+                _PROJECTION_RECEIPTS_TABLE_NAME,
+                _PROJECTION_RECEIPTS_TABLE_NAME,
+                _canonical_projection_schema_sql(_PROJECTION_RECEIPTS_TABLE_SQL),
+            ),
+        ),
+        key=lambda item: (item.object_type, item.name, item.table_name),
+    )
+)
+
+_EXPECTED_PROJECTION_TABLE_INFO: dict[str, tuple[tuple[Any, ...], ...]] = {
+    _PROJECTION_OFFSETS_TABLE_NAME: (
+        (0, "projection_name", "TEXT", 0, None, 1),
+        (1, "last_global_position", "INTEGER", 1, "0", 0),
+        (2, "owner_id", "TEXT", 1, None, 0),
+        (3, "owner_epoch", "INTEGER", 1, None, 0),
+        (4, "lease_expires_at", "TEXT", 1, None, 0),
+        (5, "updated_at", "TEXT", 1, None, 0),
+    ),
+    _PROJECTION_RECEIPTS_TABLE_NAME: (
+        (0, "projection_name", "TEXT", 1, None, 1),
+        (1, "event_id", "TEXT", 1, None, 2),
+        (2, "global_position", "INTEGER", 1, None, 0),
+        (3, "applied_at", "TEXT", 1, None, 0),
+    ),
+}
+
+_EXPECTED_PROJECTION_INDEX_LISTS: dict[str, tuple[tuple[Any, ...], ...]] = {
+    _PROJECTION_OFFSETS_TABLE_NAME: ((_PROJECTION_OFFSETS_AUTO_INDEX_NAME, 1, "pk", 0),),
+    _PROJECTION_RECEIPTS_TABLE_NAME: tuple(
+        sorted(
+            (
+                (_PROJECTION_RECEIPTS_POSITION_INDEX_NAME, 0, "c", 0),
+                (_PROJECTION_RECEIPTS_PRIMARY_INDEX_NAME, 1, "pk", 0),
+                (_PROJECTION_RECEIPTS_UNIQUE_INDEX_NAME, 1, "u", 0),
+            )
+        )
+    ),
+}
+
+_EXPECTED_PROJECTION_INDEX_INFO: dict[str, tuple[tuple[Any, ...], ...]] = {
+    _PROJECTION_OFFSETS_AUTO_INDEX_NAME: ((0, 0, "projection_name"),),
+    _PROJECTION_RECEIPTS_POSITION_INDEX_NAME: (
+        (0, 0, "projection_name"),
+        (1, 2, "global_position"),
+    ),
+    _PROJECTION_RECEIPTS_PRIMARY_INDEX_NAME: (
+        (0, 0, "projection_name"),
+        (1, 1, "event_id"),
+    ),
+    _PROJECTION_RECEIPTS_UNIQUE_INDEX_NAME: (
+        (0, 0, "projection_name"),
+        (1, 2, "global_position"),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -687,7 +883,7 @@ class SQLiteProjectionOffsetStore:
             self._connection.execute("PRAGMA foreign_keys=ON")
             self._connection.execute(f"PRAGMA busy_timeout={int(busy_timeout_seconds * 1000)}")
             if path != ":memory:":
-                self._connection.execute("PRAGMA journal_mode=WAL")
+                self._enable_wal(self._connection, busy_timeout_seconds)
             self._initialize()
         except BaseException:
             self._connection.close()
@@ -720,6 +916,34 @@ class SQLiteProjectionOffsetStore:
             or normalized in _FRAMEWORK_INDEXES
             or normalized.startswith("qe_")
         )
+
+    @staticmethod
+    def _enable_wal(
+        connection: sqlite3.Connection,
+        timeout_seconds: float,
+    ) -> None:
+        """Enable WAL despite SQLite's non-blocking journal-mode transition race."""
+
+        deadline = monotonic() + timeout_seconds
+        retry_delay = 0.001
+        while True:
+            try:
+                cursor = connection.execute("PRAGMA journal_mode=WAL")
+                try:
+                    row = cursor.fetchone()
+                finally:
+                    cursor.close()
+            except sqlite3.OperationalError as exc:
+                message = str(exc).casefold()
+                remaining = deadline - monotonic()
+                if remaining <= 0 or ("locked" not in message and "busy" not in message):
+                    raise
+                sleep(min(retry_delay, remaining))
+                retry_delay = min(retry_delay * 2, 0.05)
+                continue
+            if row is None or type(row[0]) is not str or row[0].casefold() != "wal":
+                raise ProjectionSchemaError("projection database could not enable WAL mode")
+            return
 
     @classmethod
     def _projection_handler_authorizer(
@@ -756,40 +980,227 @@ class SQLiteProjectionOffsetStore:
             # statements that were compiled under the restricted callback.
             connection.set_authorizer(cls._allow_all_authorizer)
 
+    @staticmethod
+    def _read_schema_rows(
+        connection: sqlite3.Connection,
+        sql: str,
+        parameters: tuple[Any, ...],
+        *,
+        maximum: int,
+        label: str,
+    ) -> tuple[tuple[Any, ...], ...]:
+        try:
+            cursor = connection.execute(sql, parameters)
+            try:
+                raw_rows = cursor.fetchmany(maximum + 1)
+            finally:
+                cursor.close()
+        except sqlite3.Error as exc:
+            raise ProjectionSchemaError(
+                f"projection schema {label} could not be inspected"
+            ) from exc
+        if len(raw_rows) > maximum:
+            raise ProjectionSchemaError(f"projection schema {label} exceeds the inspection limit")
+        try:
+            return tuple(tuple(row) for row in raw_rows)
+        except TypeError as exc:
+            raise ProjectionSchemaError(
+                f"projection schema {label} returned malformed rows"
+            ) from exc
+
+    @staticmethod
+    def _catalog_text(value: object, *, maximum: int) -> str:
+        if type(value) is not str or not value or len(value) > maximum:
+            raise ProjectionSchemaError("projection schema catalog row is malformed")
+        return value
+
+    @classmethod
+    def _parse_schema_object(cls, raw_row: tuple[Any, ...]) -> _ProjectionSchemaObject:
+        if len(raw_row) != 4:
+            raise ProjectionSchemaError("projection schema catalog row is malformed")
+        object_type = cls._catalog_text(raw_row[0], maximum=len("trigger"))
+        name = cls._catalog_text(
+            raw_row[1],
+            maximum=_MAX_PROJECTION_SCHEMA_NAME_LENGTH,
+        )
+        table_name = cls._catalog_text(
+            raw_row[2],
+            maximum=_MAX_PROJECTION_SCHEMA_NAME_LENGTH,
+        )
+        raw_sql = raw_row[3]
+        if raw_sql is None:
+            schema_sql = None
+        else:
+            schema_sql = _canonical_projection_schema_sql(
+                cls._catalog_text(
+                    raw_sql,
+                    maximum=_MAX_PROJECTION_SCHEMA_SQL_LENGTH,
+                )
+            )
+        return _ProjectionSchemaObject(object_type, name, table_name, schema_sql)
+
+    @staticmethod
+    def _stable_pragma_rows(
+        raw_rows: tuple[tuple[Any, ...], ...],
+        *,
+        indexes: tuple[int, ...],
+        label: str,
+    ) -> tuple[tuple[Any, ...], ...]:
+        try:
+            return tuple(tuple(row[index] for index in indexes) for row in raw_rows)
+        except (IndexError, TypeError) as exc:
+            raise ProjectionSchemaError(
+                f"projection schema {label} returned malformed rows"
+            ) from exc
+
+    @classmethod
+    def _validate_schema(cls, connection: sqlite3.Connection) -> _ProjectionSchemaState:
+        """Inspect exact projection-owned catalog and stable PRAGMA fields."""
+
+        catalog_rows = cls._read_schema_rows(
+            connection,
+            """
+            SELECT type, name, tbl_name, sql
+            FROM main.sqlite_master
+            WHERE name IN (?, ?, ?)
+               OR tbl_name IN (?, ?)
+            ORDER BY type, name, tbl_name
+            LIMIT ?
+            """,
+            (
+                _PROJECTION_OFFSETS_TABLE_NAME,
+                _PROJECTION_RECEIPTS_TABLE_NAME,
+                _PROJECTION_RECEIPTS_POSITION_INDEX_NAME,
+                _PROJECTION_OFFSETS_TABLE_NAME,
+                _PROJECTION_RECEIPTS_TABLE_NAME,
+                _MAX_PROJECTION_SCHEMA_OBJECTS + 1,
+            ),
+            maximum=_MAX_PROJECTION_SCHEMA_OBJECTS,
+            label="catalog",
+        )
+        if not catalog_rows:
+            return _ProjectionSchemaState.ABSENT
+
+        actual_objects = tuple(
+            sorted(
+                (cls._parse_schema_object(row) for row in catalog_rows),
+                key=lambda item: (item.object_type, item.name, item.table_name),
+            )
+        )
+        actual_tables = {item.name for item in actual_objects if item.object_type == "table"}
+        expected_tables = {
+            _PROJECTION_OFFSETS_TABLE_NAME,
+            _PROJECTION_RECEIPTS_TABLE_NAME,
+        }
+        if actual_tables != expected_tables:
+            raise ProjectionSchemaError("projection tables must be both absent or both exact")
+        if actual_objects != _EXPECTED_PROJECTION_SCHEMA_OBJECTS:
+            raise ProjectionSchemaError(
+                "projection schema differs from the exact packaged definition"
+            )
+
+        for table_name, expected_rows in _EXPECTED_PROJECTION_TABLE_INFO.items():
+            raw_rows = cls._read_schema_rows(
+                connection,
+                f'PRAGMA main.table_info("{table_name}")',
+                (),
+                maximum=len(expected_rows),
+                label=f"table_info for {table_name}",
+            )
+            actual_rows = cls._stable_pragma_rows(
+                raw_rows,
+                indexes=(0, 1, 2, 3, 4, 5),
+                label=f"table_info for {table_name}",
+            )
+            if actual_rows != expected_rows:
+                raise ProjectionSchemaError(f"projection table {table_name} columns are not exact")
+
+        for table_name, expected_rows in _EXPECTED_PROJECTION_INDEX_LISTS.items():
+            raw_rows = cls._read_schema_rows(
+                connection,
+                f'PRAGMA main.index_list("{table_name}")',
+                (),
+                maximum=len(expected_rows),
+                label=f"index_list for {table_name}",
+            )
+            actual_rows = tuple(
+                sorted(
+                    cls._stable_pragma_rows(
+                        raw_rows,
+                        indexes=(1, 2, 3, 4),
+                        label=f"index_list for {table_name}",
+                    )
+                )
+            )
+            if actual_rows != expected_rows:
+                raise ProjectionSchemaError(f"projection table {table_name} indexes are not exact")
+
+        for index_name, expected_rows in _EXPECTED_PROJECTION_INDEX_INFO.items():
+            raw_rows = cls._read_schema_rows(
+                connection,
+                f'PRAGMA main.index_info("{index_name}")',
+                (),
+                maximum=len(expected_rows),
+                label=f"index_info for {index_name}",
+            )
+            actual_rows = cls._stable_pragma_rows(
+                raw_rows,
+                indexes=(0, 1, 2),
+                label=f"index_info for {index_name}",
+            )
+            if actual_rows != expected_rows:
+                raise ProjectionSchemaError(f"projection index {index_name} columns are not exact")
+
+        return _ProjectionSchemaState.EXACT
+
     def _initialize(self) -> None:
         with self._lock:
-            try:
-                self._connection.executescript(
-                    """
-                BEGIN IMMEDIATE;
-                CREATE TABLE IF NOT EXISTS projection_offsets (
-                    projection_name TEXT PRIMARY KEY,
-                    last_global_position INTEGER NOT NULL DEFAULT 0,
-                    owner_id TEXT NOT NULL,
-                    owner_epoch INTEGER NOT NULL,
-                    lease_expires_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    CHECK(last_global_position >= 0),
-                    CHECK(owner_epoch > 0)
-                );
-                CREATE TABLE IF NOT EXISTS projection_receipts (
-                    projection_name TEXT NOT NULL,
-                    event_id TEXT NOT NULL,
-                    global_position INTEGER NOT NULL,
-                    applied_at TEXT NOT NULL,
-                    PRIMARY KEY(projection_name, event_id),
-                    UNIQUE(projection_name, global_position),
-                    CHECK(global_position > 0)
-                );
-                CREATE INDEX IF NOT EXISTS idx_projection_receipts_position
-                    ON projection_receipts(projection_name, global_position);
-                COMMIT;
-                """
+            if self._connection.in_transaction:
+                raise ProjectionSchemaError(
+                    "projection schema installation requires no active transaction"
                 )
+            preflight = self._validate_schema(self._connection)
+            if preflight is _ProjectionSchemaState.EXACT:
+                return
+
+            owns_transaction = False
+            try:
+                try:
+                    self._connection.execute("BEGIN IMMEDIATE")
+                finally:
+                    # A wrapper may raise after SQLite acquires the lock.  Startup had
+                    # no caller transaction, so every live transaction here is ours.
+                    owns_transaction = self._connection.in_transaction
+                if not self._connection.in_transaction:
+                    raise ProjectionSchemaError(
+                        "projection schema installation did not acquire a transaction"
+                    )
+
+                locked_state = self._validate_schema(self._connection)
+                if locked_state is _ProjectionSchemaState.ABSENT:
+                    for statement in _PROJECTION_SCHEMA_DDL:
+                        self._connection.execute(statement)
+
+                installed_state = self._validate_schema(self._connection)
+                if installed_state is not _ProjectionSchemaState.EXACT:
+                    raise ProjectionSchemaError(
+                        "projection schema installation did not produce the exact schema"
+                    )
+                self._connection.execute("COMMIT")
+                owns_transaction = False
             except BaseException:
-                if self._connection.in_transaction:
-                    self._connection.execute("ROLLBACK")
+                if owns_transaction and self._connection.in_transaction:
+                    try:
+                        self._connection.execute("ROLLBACK")
+                    except BaseException:
+                        # Closing the constructor-owned connection below is the final
+                        # rollback boundary; preserve the original installation error.
+                        self._connection.close()
                 raise
+
+            committed_state = self._validate_schema(self._connection)
+            if committed_state is not _ProjectionSchemaState.EXACT:
+                raise ProjectionSchemaError("committed projection schema is not exact")
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
