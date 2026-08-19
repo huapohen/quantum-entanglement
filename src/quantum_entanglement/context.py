@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, Mapping, Tuple
+from typing import Any
 
 
 class ContextBudgetError(ValueError):
@@ -33,7 +34,7 @@ class ContextItem:
         # Deterministic conservative estimate; providers can replace it with a tokenizer plugin.
         return max(1, (len(self.content.encode("utf-8")) + 3) // 4)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "itemId": self.item_id,
             "category": self.category,
@@ -48,13 +49,13 @@ class ContextItem:
 
 @dataclass(frozen=True)
 class ContextBundle:
-    items: Tuple[ContextItem, ...]
-    omitted_item_ids: Tuple[str, ...]
+    items: tuple[ContextItem, ...]
+    omitted_item_ids: tuple[str, ...]
     token_budget: int
     estimated_tokens: int
     digest: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "items": [item.to_dict() for item in self.items],
             "omittedItemIds": list(self.omitted_item_ids),
@@ -66,7 +67,7 @@ class ContextBundle:
     def render(self) -> str:
         sections = []
         for item in self.items:
-            sections.append("## %s [%s]\n%s" % (item.category, item.item_id, item.content))
+            sections.append(f"## {item.category} [{item.item_id}]\n{item.content}")
         if self.omitted_item_ids:
             sections.append("## omitted\n" + ", ".join(self.omitted_item_ids))
         return "\n\n".join(sections)
@@ -93,8 +94,7 @@ class ContextCompiler:
         required_tokens = sum(item.estimated_tokens for item in candidates if item.required)
         if required_tokens > token_budget:
             raise ContextBudgetError(
-                "required context needs %d tokens but budget is %d"
-                % (required_tokens, token_budget)
+                f"required context needs {required_tokens} tokens but budget is {token_budget}"
             )
         ordered = sorted(
             candidates,
@@ -119,4 +119,3 @@ class ContextCompiler:
         ).encode("utf-8")
         digest = "sha256:" + hashlib.sha256(serialized).hexdigest()
         return ContextBundle(tuple(selected), tuple(omitted), token_budget, used, digest)
-
