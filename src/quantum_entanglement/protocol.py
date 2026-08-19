@@ -8,10 +8,11 @@ metadata when crossing an external protocol boundary.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any
 
 
 def utc_now() -> str:
@@ -23,7 +24,7 @@ def utc_now() -> str:
 def new_id(prefix: str) -> str:
     """Create a sortable-enough opaque identifier with a human-readable prefix."""
 
-    return "%s_%s" % (prefix, uuid.uuid4().hex)
+    return f"{prefix}_{uuid.uuid4().hex}"
 
 
 class ActorKind(str, Enum):
@@ -87,13 +88,13 @@ class ActorRef:
     actor_id: str
     name: str
     kind: ActorKind
-    role: Optional[str] = None
+    role: str | None = None
 
     def __post_init__(self) -> None:
         if not self.actor_id.strip() or not self.name.strip():
             raise ValueError("actor_id and name are required")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "actorId": self.actor_id,
             "name": self.name,
@@ -102,7 +103,7 @@ class ActorRef:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "ActorRef":
+    def from_dict(cls, value: Mapping[str, Any]) -> ActorRef:
         return cls(
             actor_id=str(value["actorId"]),
             name=str(value["name"]),
@@ -115,8 +116,8 @@ class ActorRef:
 class Authority:
     """Delegated authority attached to a handoff, never inferred from identity."""
 
-    allowed_actions: Tuple[str, ...] = ()
-    data_scopes: Tuple[str, ...] = ()
+    allowed_actions: tuple[str, ...] = ()
+    data_scopes: tuple[str, ...] = ()
     max_risk: RiskLevel = RiskLevel.LOW
     external_side_effects: bool = False
 
@@ -128,7 +129,7 @@ class Authority:
             and (not external_side_effect or self.external_side_effects)
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "allowedActions": list(self.allowed_actions),
             "dataScopes": list(self.data_scopes),
@@ -137,7 +138,7 @@ class Authority:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "Authority":
+    def from_dict(cls, value: Mapping[str, Any]) -> Authority:
         return cls(
             allowed_actions=tuple(str(x) for x in value.get("allowedActions", [])),
             data_scopes=tuple(str(x) for x in value.get("dataScopes", [])),
@@ -168,9 +169,9 @@ class ArtifactRef:
     digest: str
     created_by: str
     task_id: str
-    parent_version: Optional[int] = None
+    parent_version: int | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "artifactId": self.artifact_id,
             "name": self.name,
@@ -184,7 +185,7 @@ class ArtifactRef:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "ArtifactRef":
+    def from_dict(cls, value: Mapping[str, Any]) -> ArtifactRef:
         return cls(
             artifact_id=str(value["artifactId"]),
             name=str(value["name"]),
@@ -210,13 +211,13 @@ class ContextRef:
     digest: str
     required: bool = False
     relevance: float = 0.5
-    provenance: Optional[str] = None
+    provenance: str | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.relevance <= 1.0:
             raise ValueError("relevance must be between 0 and 1")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "refId": self.ref_id,
             "category": self.category,
@@ -228,7 +229,7 @@ class ContextRef:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "ContextRef":
+    def from_dict(cls, value: Mapping[str, Any]) -> ContextRef:
         return cls(
             ref_id=str(value["refId"]),
             category=str(value["category"]),
@@ -245,16 +246,16 @@ class HandoffContract:
     """Explicit producer-consumer agreement between two agents."""
 
     goal: str
-    acceptance_criteria: Tuple[str, ...]
-    deliverables: Tuple[str, ...]
-    inputs: Tuple[ArtifactRef, ...] = ()
-    context_refs: Tuple[ContextRef, ...] = ()
-    constraints: Tuple[str, ...] = ()
+    acceptance_criteria: tuple[str, ...]
+    deliverables: tuple[str, ...]
+    inputs: tuple[ArtifactRef, ...] = ()
+    context_refs: tuple[ContextRef, ...] = ()
+    constraints: tuple[str, ...] = ()
     authority: Authority = field(default_factory=Authority)
-    parent_task_id: Optional[str] = None
-    token_budget: Optional[int] = None
-    cost_budget: Optional[float] = None
-    deadline: Optional[str] = None
+    parent_task_id: str | None = None
+    token_budget: int | None = None
+    cost_budget: float | None = None
+    deadline: str | None = None
 
     def __post_init__(self) -> None:
         if not self.goal.strip():
@@ -268,7 +269,7 @@ class HandoffContract:
         if self.cost_budget is not None and self.cost_budget < 0:
             raise ValueError("cost_budget cannot be negative")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "goal": self.goal,
             "acceptanceCriteria": list(self.acceptance_criteria),
@@ -284,7 +285,7 @@ class HandoffContract:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "HandoffContract":
+    def from_dict(cls, value: Mapping[str, Any]) -> HandoffContract:
         return cls(
             goal=str(value["goal"]),
             acceptance_criteria=tuple(str(x) for x in value["acceptanceCriteria"]),
@@ -309,9 +310,9 @@ class ActionIntent:
     risk: RiskLevel = RiskLevel.LOW
     external_side_effect: bool = False
     irreversible: bool = False
-    data_classes: Tuple[str, ...] = ()
+    data_classes: tuple[str, ...] = ()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "action": self.action,
             "target": self.target,
@@ -322,7 +323,7 @@ class ActionIntent:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "ActionIntent":
+    def from_dict(cls, value: Mapping[str, Any]) -> ActionIntent:
         return cls(
             action=str(value["action"]),
             target=str(value["target"]),
@@ -342,16 +343,16 @@ class CoordinationEnvelope:
     session_id: str
     thread_id: str
     sender: ActorRef
-    recipients: Tuple[ActorRef, ...]
+    recipients: tuple[ActorRef, ...]
     kind: EnvelopeKind
     payload: Mapping[str, Any]
     timestamp: str
     correlation_id: str
-    causation_id: Optional[str]
+    causation_id: str | None
     idempotency_key: str
-    traceparent: Optional[str] = None
-    reply_to: Optional[str] = None
-    ttl_seconds: Optional[int] = None
+    traceparent: str | None = None
+    reply_to: str | None = None
+    ttl_seconds: int | None = None
     priority: int = 50
     authority: Authority = field(default_factory=Authority)
 
@@ -359,10 +360,10 @@ class CoordinationEnvelope:
 
     def __post_init__(self) -> None:
         if self.schema_version != self.CURRENT_SCHEMA:
-            raise ValueError("unsupported envelope schema: %s" % self.schema_version)
+            raise ValueError(f"unsupported envelope schema: {self.schema_version}")
         for field_name in ("message_id", "session_id", "thread_id", "idempotency_key"):
             if not str(getattr(self, field_name)).strip():
-                raise ValueError("%s is required" % field_name)
+                raise ValueError(f"{field_name} is required")
         if not 0 <= self.priority <= 100:
             raise ValueError("priority must be between 0 and 100")
         if self.ttl_seconds is not None and self.ttl_seconds <= 0:
@@ -377,12 +378,12 @@ class CoordinationEnvelope:
         recipients: Iterable[ActorRef],
         kind: EnvelopeKind,
         payload: Mapping[str, Any],
-        correlation_id: Optional[str] = None,
-        causation_id: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
-        authority: Optional[Authority] = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+        idempotency_key: str | None = None,
+        authority: Authority | None = None,
         **kwargs: Any,
-    ) -> "CoordinationEnvelope":
+    ) -> CoordinationEnvelope:
         message_id = new_id("msg")
         return cls(
             schema_version=cls.CURRENT_SCHEMA,
@@ -401,7 +402,7 @@ class CoordinationEnvelope:
             **kwargs,
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "schemaVersion": self.schema_version,
             "messageId": self.message_id,
@@ -423,7 +424,7 @@ class CoordinationEnvelope:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "CoordinationEnvelope":
+    def from_dict(cls, value: Mapping[str, Any]) -> CoordinationEnvelope:
         return cls(
             schema_version=str(value["schemaVersion"]),
             message_id=str(value["messageId"]),
