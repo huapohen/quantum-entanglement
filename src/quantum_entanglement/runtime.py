@@ -780,7 +780,10 @@ class OrchestratorKernel:
                 stream_id=self._stream_id(request.session_id),
                 event_type="approval.decided",
                 actor_id=actor_id,
-                correlation_id=self._plans[request.session_id].correlation_id,
+                correlation_id=(
+                    self._plans[request.session_id].correlation_id
+                    or self._plans[request.session_id].plan_id
+                ),
                 causation_id=request.request_id,
                 idempotency_key="approval-decision:%s" % request.request_id,
                 payload=request.to_dict(),

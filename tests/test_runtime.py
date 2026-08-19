@@ -155,10 +155,20 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(rerun.completed)
         self.assertEqual(calls, 1)
         self.assertEqual(resumed.needs_you, ())
+        stored_events = self.kernel.event_store.read_stream("session:approval")
+        approval_events = [
+            stored.event
+            for stored in stored_events
+            if stored.event.event_type in ("approval.requested", "approval.decided")
+        ]
+        self.assertEqual(len(approval_events), 2)
+        self.assertTrue(all(event.correlation_id == plan.plan_id for event in approval_events))
+        self.assertEqual(approval_events[0].causation_id, task.task_id)
+        self.assertEqual(approval_events[1].causation_id, request.request_id)
         status_events = [
-            event.event
-            for event in self.kernel.event_store.read_stream("session:approval")
-            if event.event.event_type == "task.status.changed"
+            stored.event
+            for stored in stored_events
+            if stored.event.event_type == "task.status.changed"
         ]
         self.assertEqual(
             [event.payload["revision"] for event in status_events],
