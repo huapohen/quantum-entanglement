@@ -1,0 +1,116 @@
+# Release gates
+
+No Quantum Entanglement version is promoted because its implementation is "mostly
+complete." Promotion requires recorded evidence for every gate in this document.
+
+## Change gate — every commit
+
+Each commit must be independently reviewable and leave the default branch runnable.
+
+- Scope: one behavior, migration, test group, runbook, or release artifact.
+- Tests: changed behavior has a deterministic test in the same commit when applicable.
+- Compatibility: public API/schema changes state their compatibility impact.
+- Hygiene: `git diff --check` passes and no secret, token, credential or private key is
+  introduced.
+- Documentation: operator- or user-visible behavior is documented with the change.
+- Safety: failure and retry behavior is explicit for any external side effect.
+
+Mechanical formatting may be grouped only when it has no semantic change.
+
+## Continuous verification gate
+
+The following commands define the current local baseline:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests -q
+PYTHONPATH=src python3 examples/group_chat_demo.py --compact
+python3 -m compileall -q src tests
+ruff check src tests
+git diff --check
+```
+
+Until CI exists, the release evidence must record the machine, Python version, commands,
+exit status and test count. CI adoption does not remove the clean-host verification gate.
+
+## Phase release gate
+
+Every phase release requires a file under `docs/production/evidence/<version>.md` with:
+
+1. source commit and repository tree digest;
+2. supported Python, database, operating-system and adapter versions;
+3. exact test, integration, fault, security and performance commands;
+4. pass/fail metrics and links to retained artifacts;
+5. database migration rehearsal and rollback result;
+6. backup/restore and disaster-recovery result when storage is affected;
+7. known limitations, accepted risks and their owner/expiry;
+8. deployment, readiness, smoke-test and rollback steps;
+9. unresolved issue inventory by severity;
+10. reviewer and promotion decision.
+
+Evidence must describe what ran. Architectural expectation is not evidence.
+
+## Severity policy
+
+| Severity | Definition | Promotion rule |
+|---|---|---|
+| P0 | data loss, tenant escape, credential exposure, unauthorized irreversible effect | blocks every release |
+| P1 | unavailable core workflow, unrecoverable queue, incorrect authorization, incompatible upgrade | blocks phase/GA release |
+| P2 | degraded non-critical feature with documented workaround | requires owner and target version |
+| P3 | cosmetic, documentation or low-impact optimization | may ship when recorded |
+
+Security findings use the higher of exploit impact and data/authority impact.
+
+## Reliability gates
+
+- Crash injection at each durable boundary cannot produce a lost accepted command.
+- At-least-once delivery may duplicate transport attempts but not accepted receiver effects.
+- Lease expiry and fencing prevent stale workers from acknowledging newer ownership.
+- Replay from the latest supported backup reconstructs task, approval, artifact and receipt
+  state deterministically.
+- Graceful shutdown stops admission, drains safe work, and relinquishes incomplete leases.
+- Retry limits and dead-letter transitions are bounded, observable and operable.
+
+## Security gates
+
+- Every public operation has an authenticated actor and tenant/workspace scope.
+- Authorization defaults to deny and is evaluated at action time.
+- Delegation can only narrow action, resource, data, tenant and time scope.
+- Cross-tenant, confused-deputy, replay, SSRF and secret-canary tests pass.
+- Logs, traces, events, error responses and artifacts contain no plaintext credential.
+- Threat model has no unresolved P0/P1 issue.
+
+## Protocol and API gates
+
+- Version-pinned contract tests cover success, error, cancellation, retry and unknown fields.
+- Idempotency behavior and status reconciliation are documented.
+- Request body, attachment, concurrency and stream-buffer limits are enforced.
+- Resumable streams prove no gap and no accepted-event duplication across reconnect.
+- Deprecation and compatibility windows are published before breaking changes.
+
+## Performance and operations gates
+
+- Capacity test records workload, data size, concurrency, latency percentiles and resources.
+- Endurance test detects unbounded cache, task, session, connection or file growth.
+- Alerts exist for availability, latency, queue age, dead letters, projector lag, storage,
+  auth denial anomalies and cost.
+- On-call runbooks cover degraded dependency, stuck lease, corrupt projection, restore,
+  credential incident and rollback.
+- Stated SLOs are backed by measured results and an error-budget policy.
+
+## General availability gate
+
+`1.0.0` additionally requires:
+
+- reproducible build, locked dependencies, SBOM and vulnerability-policy pass;
+- reference deployment with least-privilege and network-deny defaults;
+- clean install, upgrade from every supported version, rollback and restore rehearsal;
+- published support, compatibility, deprecation, retention and incident policies;
+- release-candidate soak with no unresolved P0/P1 issue;
+- formal operational acceptance recorded in the release evidence.
+
+## Rollback rule
+
+Promotion stops immediately when a gate regresses. Rollback must prefer a compatible
+application downgrade. If a data migration is not reversible, the release must provide a
+tested restore-and-forward-fix procedure before promotion; "restore from backup" without a
+rehearsal is not an acceptable rollback plan.
