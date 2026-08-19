@@ -1,0 +1,246 @@
+{
+  "format": "quantum-entanglement.notion-sync-manifest",
+  "version": 1,
+  "syncedAt": "2026-08-20T07:53:44+08:00",
+  "syncPolicy": {
+    "localSourceOfTruth": "analysis_report/",
+    "remoteRepresentation": "semantic-mirror",
+    "notionTransformations": [
+      "remove-duplicate-document-h1",
+      "convert-markdown-tables-to-notion-xml",
+      "convert-local-research-links-to-page-mentions",
+      "preserve-existing-child-pages-and-databases",
+      "retain-existing-screenshot-image-blocks"
+    ],
+    "safety": {
+      "feishuAndWeCom": "read-only-no-send-reply-comment-mention-or-upload",
+      "screenshots": "restricted-internal-unredacted-originals",
+      "publicDistributionAllowed": false
+    }
+  },
+  "sourceControl": {
+    "manifestPreparedFromCommit": "132493adfac8bdb286875b69b4249c9efbc75f95",
+    "manifestPreparedFromTree": "dd61a2f64122b94f90cd6e54858a1154be2aba61",
+    "implementationEvidenceCommit": "e4cbf040579bf1f33c2b7692d2fbd6944d837952",
+    "implementationEvidenceTree": "0a879ae5351bdc3747a00cf4277ee6460df62d15",
+    "previousVerifiedResearchSyncCommit": "8bf1522"
+  },
+  "pages": [
+    {
+      "key": "project-home",
+      "pageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
+      "url": "https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/README.md",
+          "sha256": "6a534f25c3bccaf205d03f9058fdbe5d247f3a20c57e6e2fba0f6f4cdf5cbf76"
+        }
+      ],
+      "updateMode": "targeted-preserve-child-pages-and-database",
+      "readback": {
+        "verified": true,
+        "assertions": [
+          "contains-07-page-mention",
+          "contains-531-test-baseline",
+          "contains-full-implementation-commit"
+        ]
+      }
+    },
+    {
+      "key": "comprehensive-report",
+      "pageId": "3c1ead4b-996e-8198-97da-ff4941dcbd44",
+      "url": "https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/multi_agent_collaboration_report.md",
+          "sha256": "41e2389b03cf957136e873b407349ba7ac352265955bb835f798abf095e919a0"
+        }
+      ],
+      "updateMode": "full-semantic-mirror",
+      "readback": {
+        "verified": true,
+        "notionTableCount": 10,
+        "assertions": [
+          "contains-531-test-baseline",
+          "contains-full-implementation-commit",
+          "contains-07-page-mention",
+          "contains-pi-correction",
+          "contains-raft-rename",
+          "contains-gotaa-historical-status"
+        ]
+      }
+    },
+    {
+      "key": "research-00",
+      "pageId": "3c1ead4b-996e-81c9-91e5-f915de1828bd",
+      "url": "https://app.notion.com/p/3c1ead4b996e81c991e5f915de1828bd?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/00_scope_evidence_and_findings.md",
+          "sha256": "adcfc19102d8f4902241255b98c4bd7383150fc1e0d64618fcc9156a86d75630"
+        }
+      ],
+      "updateMode": "unchanged-since-previous-verified-sync",
+      "readback": {
+        "verified": true,
+        "assertions": ["title-and-core-evidence-markers-present"]
+      }
+    },
+    {
+      "key": "research-01",
+      "pageId": "3c1ead4b-996e-813d-b62a-e91daada97d2",
+      "url": "https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/01_jingran_implementation_audit.md",
+          "sha256": "d6f0be032552d97ccc31aee27416e6f976034848b969503d18545ca466829a15"
+        }
+      ],
+      "updateMode": "unchanged-since-previous-verified-sync",
+      "readback": {
+        "verified": true,
+        "assertions": ["title-and-jingran-audit-markers-present"]
+      }
+    },
+    {
+      "key": "research-02",
+      "pageId": "3c1ead4b-996e-81ed-961e-d6ae6ff3a8de",
+      "url": "https://app.notion.com/p/3c1ead4b996e81ed961ed6ae6ff3a8de?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/02_framework_deepdive.md",
+          "sha256": "9ce5c50cf07e50c1e435a4a6ec74cff4c89ea2be7d977381c8389d097830f098"
+        }
+      ],
+      "updateMode": "unchanged-since-previous-verified-sync",
+      "readback": {
+        "verified": true,
+        "assertions": ["langgraph-and-deepseek-harness-markers-present"]
+      }
+    },
+    {
+      "key": "research-03",
+      "pageId": "3c1ead4b-996e-81c4-9a7a-c20751c89cc7",
+      "url": "https://app.notion.com/p/3c1ead4b996e81c49a7ac20751c89cc7?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/03_protocol_landscape.md",
+          "sha256": "e6bfb45a0e67b5f6bb1ae2950360584868d270f0db9c809a1da873fee00b6e28"
+        }
+      ],
+      "updateMode": "unchanged-since-previous-verified-sync",
+      "readback": {
+        "verified": true,
+        "assertions": ["a2a-and-mcp-markers-present"]
+      }
+    },
+    {
+      "key": "research-04",
+      "pageId": "3c1ead4b-996e-811f-a520-ed44582eeb1b",
+      "url": "https://app.notion.com/p/3c1ead4b996e811fa520ed44582eeb1b?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/04_competitor_landscape.md",
+          "sha256": "97169fb99bc1b3c9bb7b551dba5b38591a4fad9a9593b70180de77cfcd631d8b"
+        }
+      ],
+      "updateMode": "full-semantic-mirror",
+      "readback": {
+        "verified": true,
+        "notionTableCount": 3,
+        "assertions": [
+          "contains-pi-correction",
+          "contains-raft-rename",
+          "contains-gotaa-historical-status"
+        ]
+      }
+    },
+    {
+      "key": "research-05",
+      "pageId": "3c1ead4b-996e-818b-abf2-c980e843cb09",
+      "url": "https://app.notion.com/p/3c1ead4b996e818babf2c980e843cb09?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/05_target_product_and_architecture.md",
+          "sha256": "2c4ea390e1d44d1f085dfb4b9a1b8f8e38b4db752e53242150a9060eecdd1809"
+        }
+      ],
+      "updateMode": "unchanged-since-previous-verified-sync",
+      "readback": {
+        "verified": true,
+        "assertions": ["title-and-needs-you-markers-present"]
+      }
+    },
+    {
+      "key": "research-06",
+      "pageId": "3c1ead4b-996e-81f9-b5ed-debebc96d30a",
+      "url": "https://app.notion.com/p/3c1ead4b996e81f9b5eddebebc96d30a?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/06_competitor_source_validation.md",
+          "sha256": "1191fa138e3a7329aabd48c4e70f22cb604182f573653c9265d6a5b14cac95e9"
+        }
+      ],
+      "updateMode": "unchanged-since-previous-verified-sync",
+      "readback": {
+        "verified": true,
+        "assertions": ["65-source-record-and-license-markers-present"]
+      }
+    },
+    {
+      "key": "research-07",
+      "pageId": "3c1ead4b-996e-8166-9cef-cf330b894853",
+      "url": "https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/07_current_implementation_status.md",
+          "sha256": "a6a8c6218681f7abd414848bfeedd15ea2967d8cb33010e400abc14f20d527f9"
+        }
+      ],
+      "updateMode": "created-from-local-semantic-mirror",
+      "readback": {
+        "verified": true,
+        "notionTableCount": 4,
+        "assertions": [
+          "contains-531-test-baseline",
+          "contains-full-implementation-commit",
+          "contains-report-page-mention"
+        ]
+      }
+    },
+    {
+      "key": "screenshot-evidence",
+      "pageId": "3c1ead4b-996e-8101-997f-ecd0302714ba",
+      "url": "https://app.notion.com/p/3c1ead4b996e8101997fecd0302714ba?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/screenshots/README.md",
+          "sha256": "bc6f7def8448cf25ae691428df2e6c2d07636df3ad37c55c20c26d2b9ea59bfb"
+        },
+        {
+          "path": "analysis_report/screenshots/manifest.json",
+          "sha256": "4fbaad11ce373c60562419dc4b1c8693e360d6561df694fe58755a63e7d68280"
+        }
+      ],
+      "updateMode": "targeted-prepend-preserve-images",
+      "readback": {
+        "verified": true,
+        "imageCount": 10,
+        "assertions": [
+          "contains-restricted-internal-classification",
+          "contains-unredacted-original-warning",
+          "contains-manifest-sha256"
+        ]
+      }
+    }
+  ],
+  "verificationSummary": {
+    "pageCount": 11,
+    "updatedOrCreatedThisSync": 5,
+    "unchangedSincePreviousVerifiedSync": 6,
+    "readbackVerified": 11,
+    "screenshotImageCountPreserved": 10,
+    "temporarySignedImageUrlsRecorded": false,
+    "secretsRecorded": false
+  }
+}
