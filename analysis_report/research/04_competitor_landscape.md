@@ -1,6 +1,9 @@
 # 多 Agent 协同产品竞品研究
 
-> 本文先以语雀竞品表与已归档截图建立统一分析框架。开放性、许可证和“是否真实实现”将在官方资料核验后继续校正。
+> 本文先以语雀竞品表与已归档截图建立统一分析框架，现已按 2026-08-19 的官方
+> 资料/源码核验回填关键事实。逐产品证据等级、固定源码、许可证和来源台账见
+> [`06_competitor_source_validation.md`](06_competitor_source_validation.md)。官网宣称、
+> 可验证实现、推断与未知在本文中不得混用。
 
 ## 1. 结论先行
 
@@ -8,8 +11,8 @@
 
 1. **单人工作台/创作层**：YouMind、千问。长于模型与工具供给，弱于多人、多 Agent 的责任和协作状态。
 2. **群聊/项目执行层**：FloatIM、Multica、Todos。最接近“Agent 原生成员 + 任务执行”，但企业治理和跨领域 artifact 往往不足。
-3. **组织/任务网络层**：NEAR AI Agent Market、Slock、Mindra、OpenWorker、Gotaa Pi.Agent。强调 Agent 市场、组织岗位或企业流程，但群聊体验、透明交接和开放互操作不总是同时具备。
-4. **开发框架/协作基础设施层**：Pi Agent、CodexLoom、Coze 3.0、OpenAgents。长于 runtime、Agent 团队或网络协议，但不一定提供完整的企业群聊产品闭环。
+3. **组织/任务网络层**：NEAR AI Agent Market、Raft（原 Slock）、Mindra、OpenWorker，以及仅作历史材料保留的 Gotaa Pi.Agent。强调 Agent 市场、组织岗位或企业流程，但群聊体验、透明交接和开放互操作不总是同时具备。
+4. **开发框架/协作基础设施层**：Pi、CodexLoom、Coze 托管产品/Coze Studio、OpenAgents。长于 runtime、Agent 团队或网络协议，但不一定提供完整的企业群聊产品闭环。
 
 没有一个候选同时完整解决：群聊中的独立 Agent 身份、确定性任务图、可追溯 handoff、artifact 版本、上下文预算、组织授权、人工待办、外部协议互操作与本地/企业部署。因此 WanWork 不应复制某一个竞品，而应把这些能力组合为“人 + Agent 协作操作系统”。
 
@@ -33,18 +36,18 @@
 |---|---:|---|---|---|---|
 | YouMind | 1 | AI 创作工作台 | 从资料收集到多格式成品的 artifact 工作流 | 更像单人创作空间，缺少 Agent 间责任与依赖 | 把“最终可见成果”作为协作主对象 |
 | 千问 | 1 | 企业模型与应用平台 | 丰富模型/API/应用供给，统一企业服务入口 | 模型平台不等于协作平台；状态和交接偏弱 | 模型必须可替换，协作状态不能绑在模型供应商 |
-| FloatIM | 1 | Agent 原生群聊 | Agent 作为群成员；支持协议/本地化方向 | 公开证据仍需核验，任务/产出物治理不清 | 独立身份和原生发言是必选项 |
-| Multica | 1 | Coding Agent 项目管理 | 多 Coding Agent 排队/并行、worktree、团队协作 | 聚焦代码；跨业务 artifact 与企业治理有限 | 借鉴并行调度、隔离工作区和团队进度 |
-| Todos | 1 | 自然语言任务分解与执行 | 目标拆解、Agent 接力、工作树隔离、模型可替换 | 信息和许可证来源需核实；可审计/人工边界不清 | “对话→可计算任务图”比连续聊天重要 |
+| FloatIM | 1 | Agent 原生群聊 | First-Class Agent、本地 runtime、自组织团队是官网宣称 | IACT/Selfware 的 MIT 声明尚无公开规范仓库/LICENSE；产品开源与任务治理未知 | 独立身份和原生发言是必选项，但协议依赖必须有机器可读规范 |
+| Multica | 1 | Coding Agent 项目管理 | task/claim/run、lease/retry、并发 CLI、worktree 与实时投影有源码证据 | 自定义 Multica License 限制第三方托管、商业嵌入和品牌移除；跨业务 artifact 有限 | 借鉴运行状态和隔离工作区，不复制许可证或把 branch 当通用 artifact |
+| Todos | 1 | 自然语言任务分解与执行 | Chief/Agent、版本化 plan/diff、分支并行、AI/human review、Machine/MCP 有官方文档 | 精确 DAG 依赖语义仍待实测；未见产品源码许可证，Terms 保留软件权利 | “对话→可审阅计划→可见执行”比连续聊天重要 |
 | NEAR AI Agent Market | 2 | Agent 任务市场 | 悬赏、执行、验证、结算/争议形成任务闭环 | Web3/TEE/市场机制较重，不适合直接做内部协同默认层 | 可借鉴可验证交付和能力发现，不照搬经济层 |
-| Slock | 2 | 人 + Agent 协作组织 | 把 Agent 当岗位/同事，围绕任务、知识和文件协作 | 关闭性、成熟度和状态模型待核验 | 群聊之外还需要组织角色与职责视图 |
-| Mindra | 2 | 企业多 Agent 云平台 | 大量 SaaS 集成、岗位 Agent、企业 RBAC/审计叙事 | 可能偏 n8n/Zapier 式自动化；开源性存疑 | 工具集成、组织权限重要，但不能牺牲透明运行时 |
-| OpenWorker | 2 | 本地优先任务执行 Agent | 结果导向、25+ 工具、审批、BYOM、本地执行 | 核心与托管 API 的开放边界需核验 | 借鉴本地执行、显式审批和工具权限分级 |
-| Pi Agent | 2 | 开源 Agent 工具/运行时 | MCP、sub-agent、权限提示、plan mode、todo | 更偏开发者 runtime，不是完整群聊协作产品 | 低层 runtime 能力应可插件化接入 |
-| Gotaa Pi.Agent | 2 | 企业岗位 Agent 平台 | SOP、知识库、HR/财务等多岗位与审批治理 | 私有平台耦合、Agent 自主程度和开放协议不明 | “岗位能力包 + 组织权限”是企业落地接口 |
-| CodexLoom | 2 | 多 Codex thread 编排 | Owner/worker、消息总线、隔离 workspace、任务图方向 | 截图指出代码质量/断言/当前完成度风险 | 研究 thread 编排，但不能把终端线程当协作数据模型 |
-| Coze 3.0 | 3.5 | Agent 团队与在线工作台 | Agent→Team、长任务规划、在线 Coding、共享上下文 | 商业闭源；容易被平台模型与云能力锁定 | 学产品体验，不复制封闭运行时 |
-| OpenAgents | 3.5 | 开放 Agent 网络基础设施 | Agent 发现、网络、Studio、协议兼容 | 更偏基础设施，企业群聊/审批/artifact 仍需上层产品 | 外部网络互操作做适配层，不做内部唯一状态源 |
+| Raft（原 Slock） | 2 | 人 + Agent chat workspace | 长期身份/记忆、long-running Agent、本地 daemon 与人类 steer 有官方文档 | 公开仓库主要是文档/外部 Agent，完整产品核心和治理实现未知 | 群聊之外还需要稳定身份、职责和本地 runtime |
+| Mindra | 2 | 企业多 Agent 云平台 | 3,000+ 集成、RBAC/SSO、审计、HITL、SOC 2/GDPR 为官方声明 | 尚无源码或独立审计报告正文验证；可能偏传统自动化 | 工具集成、组织权限重要，但必须区分厂商声明与实现证据 |
+| OpenWorker | 2 | 本地优先任务执行 Agent | MIT 源码可核到 risk class、Inbox 幂等 resolve、audit redaction、MCP approval metadata | action 参数变化是否重批、进程隔离和托管边界仍需实测 | 借鉴本地执行、action-level 审批和工具风险分级 |
+| Pi | 2 | 极小开源 Agent runtime/toolkit | 刻意保持小核心，通过 extension/package 组装能力 | 核心明确不内置 MCP、sub-agent、permission popup、plan mode、todo；默认继承启动者权限 | 学习可扩展极小核心，但 sandbox 和平台授权必须外置 |
+| Gotaa Pi.Agent（历史） | 2 | 历史材料中的岗位 Agent 平台 | 语雀表曾记录 SOP、知识库、岗位和审批命题 | 子域失效、根域停放，当前产品状态/功能均不可验证 | 只保留为产品假设，不把旧截图写成当前事实 |
+| CodexLoom | 2 | 多 Codex thread 编排 | 稳定 Agent ID、Profile/Topic/Message/Artifact/Needs You 对象有源码 | Elastic License 2.0，source-available 非 OSI 开源；组织声明不自动产生权限 | 研究 thread 编排和对象边界，但权限/恢复必须由平台强制 |
+| Coze / Coze Studio | 3.5 | 托管办公产品 + 开源 Agent 开发平台 | 学习托管办公 UX；Studio 的 Agent/workflow/app 核心 Apache-2.0 | 未验证所谓“Agent Team”当前官方边界；托管能力不能归给开源 Studio | 拆开云产品体验与可自部署引擎评价，避免能力偷换 |
+| OpenAgents | 3.5 | Workspace + Launcher + Network SDK | 多 runtime 汇聚、共享 thread/file/browser、跨机器 daemon、A2A adapter 有源码 | action approval、结构化 handoff、版本 artifact 和企业治理仍需上层 | 外部 runtime/网络互操作做适配层，不做内部唯一状态源 |
 
 ## 4. 分产品分析
 
@@ -72,7 +75,9 @@ YouMind 的价值不在“有一个 AI 对话框”，而在从资料采集、�
 
 ### 4.3 FloatIM：Agent 必须像群成员一样存在
 
-语雀表将 FloatIM 描述为 Agent 原生群聊：Agent 不是外部 bot，而是群聊中的生成式成员，并提到 IACT/软件协议与本地部署方向。即使其具体公开实现仍待核验，这个产品命题是本项目最重要的对照。
+FloatIM 官网把 Agent 描述为 First-Class Agent，并声明本地运行、自组织团队及
+IACT/Selfware 的 MIT 方向；本轮没有找到可下载协议规范、仓库或 LICENSE 文件。因此
+“Agent 原生群聊”可写为官方产品命题，但不能进一步写成产品开源或协议已可互操作。
 
 必须进一步超过它的地方：
 
@@ -82,7 +87,10 @@ YouMind 的价值不在“有一个 AI 对话框”，而在从资料采集、�
 
 ### 4.4 Multica：多 Coding Agent 的工程化经验
 
-Multica 关注 Claude Code/Codex/Cursor 等 Coding Agent 的项目管理、任务队列、并发与团队协作。其开源与 Docker/K8s 方向使其适合作为工程执行层参考。
+Multica 关注 Claude Code/Codex/Cursor 等 Coding Agent 的项目管理、task claim/run、
+并发与团队协作。monorepo 可核到 task lifecycle、lease/retry migration、失败分类、
+orphan recovery 与实时投影，工程执行状态证据较强。它是源码公开且可自托管，但自定义
+Multica License 不是 OSI 常见开源许可证，限制第三方托管、商业嵌入和品牌移除。
 
 可借鉴：
 
@@ -94,7 +102,9 @@ Multica 关注 Claude Code/Codex/Cursor 等 Coding Agent 的项目管理、任�
 
 ### 4.5 Todos：把自然语言变成任务图
 
-截图描述的核心机制包括：自然语言目标→分配 todo→按依赖执行→前序完成后触发后序→工作树隔离→模型可替换。它最接近“可计算的事不用模型猜”。
+Todos 官方文档可确认 Chief/Agent、版本化 plan/diff、独立分支、AI/human review、
+Machine、MCP、权限和调度。截图中的“精确 DAG 前序触发后序”仍需实测，不应仅据二手表
+升级为实现事实；其 Terms 也没有给出产品源码开源许可。
 
 WanWork 应采用同类确定性调度，但增加：
 
@@ -110,39 +120,54 @@ NEAR 的差异是将 Agent 能力变成可发现、可悬赏、可执行、可�
 
 适合借鉴：Agent Card/能力发现、验收证据、可验证输出、争议/复核状态。暂不适合照搬：代币经济、TEE、托管与企业群聊 MVP 的复杂度不匹配。
 
-### 4.7 Slock：Agent 作为组织岗位
+### 4.7 Raft（原 Slock）：长期 Agent 与 chat workspace
 
-Slock 强调人和 Agent 的公司式协作：任务、记忆、专长、文件和审阅。它把 Agent 从工具提升到组织角色，是第二层产品的重要方向。
+旧 `slock.ai` 已重定向到 `raft.build`。Raft 当前公开页面/文档强调 chat workspace、
+long-running Agent、持久身份/记忆、本地 daemon 和人类 steer；公开 GitHub 主要覆盖文档
+与 external-agent 边界，不能据此声称完整产品核心已开源。
 
 WanWork 应把岗位拆成四种可治理对象：角色（为什么存在）、能力（能做什么）、授权（允许做什么）、责任（对什么结果负责）。不能用一个 prompt 同时表达四者。
 
 ### 4.8 Mindra：企业集成与治理
 
-截图将 Mindra描述为连接大量企业系统、按岗位构建 Agent 团队的平台，并强调 RBAC、审计、SOC2/GDPR 等治理叙事。其启示是企业协作的最后一公里在系统连接和权限，不在 demo 对话。
+Mindra 官网与 Security 页面明确声明 3,000+ 集成、RBAC/SSO、审计、HITL、policy、
+SOC 2 Type II、GDPR 和 ZDR。它们已不是无来源二手传闻，但仍是厂商声明；本轮没有源码、
+独立审计报告正文或运行证据把它们升级为可验证实现。
 
 风险在于把 Agent 降格为自动化节点：如果所有流程都像 n8n/Zapier，语义协作和动态 handoff 会受限；如果全部交给 LLM，又缺少确定性和合规。目标应是“确定性骨架 + 语义节点”。
 
 ### 4.9 OpenWorker：本地执行与批准模式
 
-OpenWorker 展示了本地优先、BYOM、工具集成、Slack/邮件/日历/Notion/代码平台连接和高风险动作批准的组合。它验证了“能真正操作软件”和“明确的人类许可”必须一起设计。
+OpenWorker 的 MIT 仓库可定位 risk class、Inbox 状态与幂等 resolve、SQLite audit
+redaction、MCP schema/approval metadata；因此审批不只是一句宣传。仍需实测批准后参数
+变化是否强制重批、host 权限隔离以及托管服务边界。
 
 WanWork 应将工具调用分为读取、草稿、内部变更、外部发送、不可逆动作等风险等级；批准的是具体 action intent，而不是模糊的“相信这个 Agent”。
 
-### 4.10 Pi Agent：低层 runtime 积木
+### 4.10 Pi：刻意极小的 runtime 积木
 
-截图可见的能力包括 MCP、sub-agent、permission popup、plan mode 和 todo。它更像开发者运行时，而非多人办公产品。
+旧表把 Pi 写成内置 MCP、sub-agent、permission popup、plan mode 和 todo，事实恰好相反：
+官方 usage/design principles 明确把这些列为非内置能力，需通过 extension、package 或外部
+工具补充。Pi 的真实价值是小核心、可替换 package 和 extension surface。
 
-适合通过 runtime port 接入，不应让其内部 todo 或会话状态成为平台真相源。WanWork 的任务和授权要能跨 Pi、DeepSeek Harness、Codex 或远程 A2A Agent 保持一致。
+适合通过 runtime port 接入，不应让 extension 内部 todo 或会话状态成为平台真相源。
+Pi 默认继承启动者的 filesystem/process/network/credential 权限，生产接入必须由外部
+sandbox 与 WanWork action-time policy 收口。
 
-### 4.11 Gotaa Pi.Agent：岗位知识与 SOP
+### 4.11 Gotaa Pi.Agent：仅保留历史假设
 
-Gotaa Pi.Agent 强调企业知识库、制度/产品/客户资料、SOP、招聘/财务/行政等岗位 Agent，以及工作流、记忆和审批。这说明企业会以“部门/岗位能力包”购买，而不是以抽象 Agent 框架购买。
+语雀历史表曾把 Gotaa Pi.Agent 描述为企业知识库、SOP、招聘/财务/行政岗位 Agent 与
+审批平台；当前 `pi.gottaa.com` 无法解析，根域为 parking lander。本轮无法验证产品当前
+存在性或任何功能，以上只能作为历史产品假设，不能继续使用现在时。
 
 产品上应提供岗位模板，但底层仍分离知识范围、工具授权、运行政策和可观测指标，以便审计和复用。
 
 ### 4.12 CodexLoom：线程团队化及其风险
 
-CodexLoom 把多个 Codex CLI/thread 组织成 Owner 与 worker，尝试共享工作区、消息总线、责任关系、通信和任务图。它是“现有 Coding Agent 之上做团队”的直接实验。
+CodexLoom 把多个 Codex CLI/thread 组织成长期 Agent，并显式建模 Profile、Topic、
+Message、Artifact、Organization/Collaboration 与 Needs You；相关对象可在源码中定位。
+许可证为 Elastic License 2.0，应称 source-available 而非 OSI 开源。组织/协作声明是数据
+结构，不自动授予权限，也不证明消息强制路由。
 
 截图同时标注了项目成熟度和代码质量风险。最重要的教训是：
 
@@ -152,15 +177,20 @@ CodexLoom 把多个 Codex CLI/thread 组织成 Owner 与 worker，尝试共享�
 - Owner prompt 不等于组织治理；
 - 多进程并发必须有幂等、锁、冲突检测和可恢复任务状态。
 
-### 4.13 Coze 3.0：Agent Team 的产品化
+### 4.13 Coze 托管产品与 Coze Studio：必须拆开评价
 
-Coze 3.0 将多个 Agent 项目化为 Team，结合长任务规划、在线 Coding、共享记忆和人工协作。它证明用户可理解“Agent 团队”，也提高了对可视化协作体验的预期。
+当前可验证的是：扣子托管入口以 AI 办公/Space 呈现；`coze-dev/coze-studio` 的 Agent、
+workflow、app 与自部署核心以 Apache-2.0 公开。本轮未找到“Coze 3.0 Agent Team”当前
+官方页面或等价开源实现，因此不能把历史营销名、托管体验和 Studio 能力合并成一个事实。
 
 WanWork 的差异化不应是更多预置 Agent，而应是：开放 runtime、可验证状态、企业授权、群聊原生身份和多协议互操作。
 
 ### 4.14 OpenAgents：外部 Agent 网络
 
-OpenAgents 代表开放 Agent 网络基础设施：自定义 Agent 网络、发现、协作、Studio 与多框架兼容。它适合承载跨组织/跨平台的连接，但不能替代企业内部真相源。
+OpenAgents 当前不只是抽象网络：公开仓库已有 Workspace、Launcher、Network SDK、统一
+workspace 地址、跨机器 daemon、共享 thread/file/browser 和 A2A transport/registry。
+这些是可验证源码边界，但 action-level approval、结构化 task/handoff、版本化 Artifact、
+组织授权与恢复语义仍需 WanWork 上层提供。
 
 WanWork 对外应像网络节点，对内应像协作操作系统：外部消息进入后必须转换为内部 Envelope 并落事件；内部授权和 artifact 不应完全暴露或委托给外部网络。
 
@@ -206,11 +236,17 @@ WanWork 对外应像网络节点，对内应像协作操作系统：外部消息
 5. 默认可审计、可暂停、可恢复、可回滚；
 6. 从一个高价值业务场景切入，而不是先做空平台。
 
-## 7. 下一轮核验清单
+## 7. 已完成核验与下一轮实测
 
-- 逐一核对 14 个产品的官方 URL、最新版本、商业状态和许可证。
-- 对 FloatIM、Todos、Slock、Mindra 的公开实现与宣传差距做重点核验。
-- 运行 Multica、OpenWorker、Pi Agent、CodexLoom、OpenAgents 的最小示例并记录真实状态模型。
-- 对 Coze 3.0 做用户旅程截图：建 Team、派任务、共享上下文、人工介入、产出物管理。
-- 把每个竞品映射到 WanWork 能力矩阵与 MoSCoW 优先级。
+14 项官方入口、公开仓库、许可证与关键宣传/实现差异已完成首轮核验，详见
+`06_competitor_source_validation.md` 的 65 条来源记录（63 个唯一外部 URL + 2 张内部
+语雀截图）。下一轮不再重复首页浏览，而应产生运行证据：
 
+- 隔离启动 Multica，验证 claim/start/heartbeat/fail/retry/orphan recovery，并先完成
+  自定义许可证的法律边界确认；
+- 运行 OpenWorker approval/inbox/audit 测试，验证 action 参数变化后的重新审批；
+- 自托管 OpenAgents Workspace，接入两个 runtime，测试断线恢复、共享文件冲突和 Stop；
+- 启动 Coze Studio，逐项比较托管办公产品与开源引擎的能力差集；
+- 实走 Todos 的 goal → plan review → parallel branch → AI/human review → merge；
+- 对 Raft/FloatIM 只做只读产品旅程，观察群消息与 task/artifact 是否结构化关联；
+- Gotaa 仅在出现新的官方域名、公告或仓库后重新研究，不围绕停放域名猜测。
