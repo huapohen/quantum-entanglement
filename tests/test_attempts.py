@@ -633,6 +633,70 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             before_job,
         )
 
+    def test_attempt_pages_are_bounded_ordered_and_cursor_based(self):
+        self.store.enqueue(job_spec(max_attempts=4))
+        for attempt_index in range(1, 4):
+            lease = self.store.claim("invocation-1", f"worker-{attempt_index}", lease_seconds=10)
+            self.clock.set(timestamp(attempt_index))
+            self.assertTrue(
+                self.store.fail(
+                    lease,
+                    f"failure-{attempt_index}",
+                    retry_at=timestamp(attempt_index),
+                )
+            )
+
+        first = self.store.attempts_page("invocation-1", limit=2)
+        second = self.store.attempts_page(
+            "invocation-1",
+            after_attempt_number=first[-1].attempt_number,
+            limit=2,
+        )
+        self.assertEqual([item.attempt_number for item in first], [1, 2])
+        self.assertEqual([item.attempt_number for item in second], [3])
+        self.assertEqual(self.store.attempts_page("invocation-1", 3, 2), ())
+
+    def test_attempt_page_bounds_reject_bool_negative_and_unbounded_limits(self):
+        for invalid in (True, False, 1.0, "0", None):
+            with self.subTest(cursor=invalid):
+                with self.assertRaises(TypeError):
+                    self.store.attempts_page(
+                        "invocation-1",
+                        invalid,  # type: ignore[arg-type]
+                        1,
+                    )
+        for invalid in (-1, 1 << 63):
+            with self.subTest(cursor=invalid):
+                with self.assertRaises(ValueError):
+                    self.store.attempts_page("invocation-1", invalid, 1)
+        for invalid in (True, False, 1.0, "1", None):
+            with self.subTest(limit=invalid):
+                with self.assertRaises(TypeError):
+                    self.store.attempts_page(
+                        "invocation-1",
+                        0,
+                        invalid,  # type: ignore[arg-type]
+                    )
+        for invalid in (-1, 0, 1_001):
+            with self.subTest(limit=invalid):
+                with self.assertRaises(ValueError):
+                    self.store.attempts_page("invocation-1", 0, invalid)
+
+    def test_attempt_page_query_contains_a_sql_limit(self):
+        statements = []
+        self.store._connection.set_trace_callback(statements.append)
+        try:
+            self.store.attempts_page("invocation-1", limit=7)
+        finally:
+            self.store._connection.set_trace_callback(None)
+
+        self.assertTrue(
+            any(
+                "FROM INVOCATION_ATTEMPTS" in statement.upper() and "LIMIT 7" in statement.upper()
+                for statement in statements
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

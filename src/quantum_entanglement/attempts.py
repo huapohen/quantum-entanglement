@@ -626,6 +626,34 @@ class SQLiteInvocationAttemptStore:
             ).fetchall()
             return tuple(self._row_to_attempt(row) for row in rows)
 
+    def attempts_page(
+        self,
+        invocation_id: str,
+        after_attempt_number: int = 0,
+        limit: int = 1_000,
+    ) -> Tuple[InvocationAttempt, ...]:
+        """Read one bounded attempt page after an exclusive attempt-number cursor."""
+
+        _required(invocation_id, "invocation_id")
+        if type(after_attempt_number) is not int:
+            raise TypeError("after_attempt_number must be an integer")
+        if not 0 <= after_attempt_number <= _MAX_SQLITE_INTEGER:
+            raise ValueError("after_attempt_number is outside SQLite's integer range")
+        if type(limit) is not int:
+            raise TypeError("limit must be an integer")
+        if not 1 <= limit <= 1_000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM invocation_attempts
+                WHERE invocation_id = ? AND attempt_number > ?
+                ORDER BY attempt_number LIMIT ?
+                """,
+                (invocation_id, after_attempt_number, limit),
+            ).fetchall()
+            return tuple(self._row_to_attempt(row) for row in rows)
+
     @staticmethod
     def _load_running_attempt(
         connection: sqlite3.Connection,
