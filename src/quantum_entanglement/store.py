@@ -1,3 +1,4 @@
+# ruff: noqa: UP006, UP031, UP035, UP037, UP045
 """SQLite append-only event store with optimistic concurrency and idempotency."""
 
 from __future__ import annotations
