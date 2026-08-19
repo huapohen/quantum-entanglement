@@ -46,7 +46,9 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             return AgentResult("done", (ArtifactOutput("result.md", "stable"),))
 
         plan = WorkflowPlan(
-            "recover-complete", "完成一次", "user",
+            "recover-complete",
+            "完成一次",
+            "user",
             (TaskSpec("task", "worker", handoff(), task_id="task"),),
             plan_id="plan-stable",
         )
@@ -68,7 +70,10 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(recovered.artifacts[0].name, "result.md")
         altered = WorkflowPlan(
-            "recover-complete", "悄悄改变目标", "user", plan.tasks,
+            "recover-complete",
+            "悄悄改变目标",
+            "user",
+            plan.tasks,
             plan_id="plan-stable",
         )
         with self.assertRaises(ValueError):
@@ -87,14 +92,19 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("publisher must not run before approval")
 
         publish_task = TaskSpec(
-            "publish", "publisher", handoff("publication.md"), task_id="publish",
+            "publish",
+            "publisher",
+            handoff("publication.md"),
+            task_id="publish",
             depends_on=("research",),
             action=ActionIntent(
                 "publish", "external", risk=RiskLevel.HIGH, external_side_effect=True
             ),
         )
         plan = WorkflowPlan(
-            "recover-approval", "研究后发布", "user",
+            "recover-approval",
+            "研究后发布",
+            "user",
             (
                 TaskSpec("research", "researcher", handoff("evidence.md"), task_id="research"),
                 publish_task,

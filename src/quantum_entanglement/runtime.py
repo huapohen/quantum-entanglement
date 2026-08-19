@@ -1,3 +1,4 @@
+# ruff: noqa: UP006, UP031, UP035, UP037, UP045
 """Plugin-based, event-sourced multi-agent execution kernel."""
 
 from __future__ import annotations
@@ -211,8 +212,7 @@ class OrchestratorKernel:
                 event_type="task.status.changed",
                 actor_id=self.SYSTEM_ACTOR.actor_id,
                 correlation_id=correlation_id,
-                idempotency_key="task-status:%s:%d"
-                % (transition.task_id, transition.revision),
+                idempotency_key="task-status:%s:%d" % (transition.task_id, transition.revision),
                 payload={
                     "taskId": transition.task_id,
                     "previous": transition.previous.value,
@@ -520,9 +520,7 @@ class OrchestratorKernel:
                     break
                 semaphore = asyncio.Semaphore(self.max_concurrency)
 
-                async def guarded(
-                    task: TaskSpec, limiter: asyncio.Semaphore = semaphore
-                ) -> None:
+                async def guarded(task: TaskSpec, limiter: asyncio.Semaphore = semaphore) -> None:
                     async with limiter:
                         await self._run_task(active_plan, graph, task)
 
