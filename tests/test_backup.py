@@ -111,6 +111,114 @@ class SQLiteBackupTests(unittest.TestCase):
         with self.assertRaisesRegex(BackupIntegrityError, "byte size"):
             verify_sqlite_backup(backup)
 
+    def test_backup_path_replacement_during_verification_is_rejected(self):
+        backup, _manifest_path, _created = self.create_backup()
+        original_backup = self.root / "original-verified-backup.sqlite3"
+        real_sha256_fd = backup_module._sha256_fd
+        calls = 0
+
+        def replace_after_initial_digest(descriptor):
+            nonlocal calls
+            digest = real_sha256_fd(descriptor)
+            calls += 1
+            if calls == 1:
+                backup.rename(original_backup)
+                backup.write_bytes(b"operator replacement")
+            return digest
+
+        with patch(
+            "quantum_entanglement.backup._sha256_fd",
+            side_effect=replace_after_initial_digest,
+        ):
+            with self.assertRaisesRegex(BackupIntegrityError, "backup path changed"):
+                verify_sqlite_backup(backup)
+
+        self.assertEqual(backup.read_bytes(), b"operator replacement")
+
+    def test_manifest_path_replacement_during_verification_is_rejected(self):
+        backup, manifest_path, _created = self.create_backup()
+        original_manifest = self.root / "original-backup.manifest.json"
+        real_read_fd_limited = backup_module._read_fd_limited
+        calls = 0
+
+        def replace_after_initial_read(descriptor, limit):
+            nonlocal calls
+            value = real_read_fd_limited(descriptor, limit)
+            calls += 1
+            if calls == 1:
+                manifest_path.rename(original_manifest)
+                manifest_path.write_text("{}", encoding="utf-8")
+            return value
+
+        with patch(
+            "quantum_entanglement.backup._read_fd_limited",
+            side_effect=replace_after_initial_read,
+        ):
+            with self.assertRaisesRegex(BackupIntegrityError, "manifest path changed"):
+                verify_sqlite_backup(backup)
+
+        self.assertEqual(manifest_path.read_text(encoding="utf-8"), "{}")
+
+    def test_backup_in_place_change_during_verification_is_rejected(self):
+        backup, _manifest_path, _created = self.create_backup()
+        real_database_evidence = backup_module._database_evidence
+
+        def mutate_after_sqlite_read(connection):
+            evidence = real_database_evidence(connection)
+            with backup.open("ab") as handle:
+                handle.write(b"in-place mutation")
+            return evidence
+
+        with patch(
+            "quantum_entanglement.backup._database_evidence",
+            side_effect=mutate_after_sqlite_read,
+        ):
+            with self.assertRaisesRegex(
+                BackupIntegrityError, "changed while it was being verified"
+            ):
+                verify_sqlite_backup(backup)
+
+    def test_backup_parent_replacement_during_verification_is_rejected(self):
+        backup, _manifest_path, _created = self.create_backup()
+        backup_parent = backup.parent
+        original_parent = self.root / "original-backup-parent"
+        real_sha256_fd = backup_module._sha256_fd
+        calls = 0
+
+        def replace_parent_after_initial_digest(descriptor):
+            nonlocal calls
+            digest = real_sha256_fd(descriptor)
+            calls += 1
+            if calls == 1:
+                backup_parent.rename(original_parent)
+                backup_parent.mkdir()
+            return digest
+
+        with patch(
+            "quantum_entanglement.backup._sha256_fd",
+            side_effect=replace_parent_after_initial_digest,
+        ):
+            with self.assertRaisesRegex(BackupIntegrityError, "backup directory changed"):
+                verify_sqlite_backup(backup)
+
+    def test_verify_rejects_backup_symlink(self):
+        backup, _manifest_path, _created = self.create_backup()
+        regular_backup = self.root / "regular-backup.sqlite3"
+        backup.rename(regular_backup)
+        backup.symlink_to(regular_backup)
+
+        with self.assertRaisesRegex(BackupIntegrityError, "symbolic link"):
+            verify_sqlite_backup(backup)
+
+    def test_verify_rejects_manifest_symlink(self):
+        backup, manifest_path, _created = self.create_backup()
+        regular_manifest = self.root / "regular-backup.manifest.json"
+        manifest_path.rename(regular_manifest)
+        manifest_path.symlink_to(regular_manifest)
+
+        with self.assertRaisesRegex(BackupIntegrityError, "symbolic link"):
+            verify_sqlite_backup(backup)
+
     def test_changed_manifest_counts_are_rejected(self):
         backup, manifest_path, _created = self.create_backup()
         value = json.loads(manifest_path.read_text(encoding="utf-8"))

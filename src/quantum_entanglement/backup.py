@@ -123,6 +123,19 @@ def _sha256_file(path: Path) -> str:
         return _sha256_fd(handle.fileno())
 
 
+def _read_fd_limited(descriptor: int, limit: int) -> bytes:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks = []
+    remaining = limit
+    while remaining > 0:
+        block = os.read(descriptor, min(64 * 1024, remaining))
+        if not block:
+            break
+        chunks.append(block)
+        remaining -= len(block)
+    return b"".join(chunks)
+
+
 def _write_all(descriptor: int, value: bytes) -> None:
     view = memoryview(value)
     while view:
@@ -134,6 +147,20 @@ def _write_all(descriptor: int, value: bytes) -> None:
 
 def _read_only_connection(path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only=ON")
+    connection.execute("PRAGMA foreign_keys=ON")
+    return connection
+
+
+def _read_only_connection_fd(descriptor: int) -> sqlite3.Connection:
+    descriptor_root = Path("/dev/fd")
+    if not descriptor_root.exists():
+        descriptor_root = Path("/proc/self/fd")
+    connection = sqlite3.connect(
+        (descriptor_root / str(descriptor)).as_uri() + "?mode=ro&immutable=1",
+        uri=True,
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only=ON")
     connection.execute("PRAGMA foreign_keys=ON")
@@ -374,30 +401,75 @@ def _open_regular_readonly(
         raise
 
 
-def _open_directory(path: Path, name: str) -> Tuple[int, _FileIdentity]:
+def _open_directory(
+    path: Path,
+    name: str,
+    *,
+    integrity_error: bool = False,
+) -> Tuple[int, _FileIdentity]:
     flags = (
         os.O_RDONLY
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_DIRECTORY", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
+    error_type = BackupIntegrityError if integrity_error else BackupError
     try:
         descriptor = os.open(str(path), flags)
     except OSError as exc:
         if path.is_symlink():
-            raise BackupError(f"{name} directory must not be a symbolic link") from exc
+            raise error_type(f"{name} directory must not be a symbolic link") from exc
         raise
     try:
         opened_stat = os.fstat(descriptor)
         if not stat.S_ISDIR(opened_stat.st_mode):
-            raise BackupError(f"{name} parent must identify a directory")
+            raise error_type(f"{name} parent must identify a directory")
         identity = _FileIdentity.from_stat(opened_stat)
         try:
             current_stat = os.stat(path, follow_symlinks=False)
         except FileNotFoundError as exc:
-            raise BackupError(f"{name} directory changed while it was opened") from exc
+            raise error_type(f"{name} directory changed while it was opened") from exc
         if not stat.S_ISDIR(current_stat.st_mode) or not identity.matches(current_stat):
-            raise BackupError(f"{name} directory changed while it was opened")
+            raise error_type(f"{name} directory changed while it was opened")
+        return descriptor, identity
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _open_regular_readonly_at(
+    directory_descriptor: int,
+    filename: str,
+    name: str,
+) -> Tuple[int, _FileIdentity]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(filename, flags, dir_fd=directory_descriptor)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"{name} file does not exist") from exc
+    except OSError as exc:
+        try:
+            current_stat = os.stat(
+                filename,
+                dir_fd=directory_descriptor,
+                follow_symlinks=False,
+            )
+        except OSError:
+            raise
+        if stat.S_ISLNK(current_stat.st_mode):
+            raise BackupIntegrityError(f"{name} file must not be a symbolic link") from exc
+        raise
+    try:
+        opened_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise BackupIntegrityError(f"{name} path must identify a regular file")
+        identity = _FileIdentity.from_stat(opened_stat)
+        _require_entry_identity(
+            directory_descriptor,
+            filename,
+            identity,
+            name,
+        )
         return descriptor, identity
     except BaseException:
         os.close(descriptor)
@@ -424,13 +496,16 @@ def _require_directory_identity(
     path: Path,
     identity: _FileIdentity,
     name: str,
+    *,
+    integrity_error: bool = False,
 ) -> None:
+    error_type = BackupIntegrityError if integrity_error else BackupError
     try:
         current_stat = os.stat(path, follow_symlinks=False)
     except FileNotFoundError as exc:
-        raise BackupError(f"{name} directory changed during the operation") from exc
+        raise error_type(f"{name} directory changed during the operation") from exc
     if not stat.S_ISDIR(current_stat.st_mode) or not identity.matches(current_stat):
-        raise BackupError(f"{name} directory changed during the operation")
+        raise error_type(f"{name} directory changed during the operation")
 
 
 def _require_entry_identity(
@@ -791,31 +866,96 @@ def verify_sqlite_backup(
 
     backup = Path(backup_path)
     manifest = Path(manifest_path) if manifest_path is not None else default_manifest_path(backup)
-    for path, name in ((backup, "backup"), (manifest, "manifest")):
-        if not path.is_file():
-            raise FileNotFoundError(f"{name} file does not exist: {path}")
-        if path.is_symlink():
-            raise BackupIntegrityError(f"{name} file must not be a symbolic link")
+    backup_directory_fd = -1
+    manifest_directory_fd = -1
+    backup_fd = -1
+    manifest_fd = -1
     try:
-        with manifest.open("rb") as manifest_handle:
-            manifest_bytes = manifest_handle.read(_MAX_MANIFEST_BYTES + 1)
-        if len(manifest_bytes) > _MAX_MANIFEST_BYTES:
-            raise ValueError("backup manifest exceeds the format size limit")
-        raw = json.loads(manifest_bytes.decode("utf-8"))
-        parsed = BackupManifest.from_dict(cast(Dict[str, Any], raw))
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise BackupIntegrityError("backup manifest is malformed") from exc
-    if backup.stat().st_size != parsed.byte_size:
-        raise BackupIntegrityError("backup byte size differs from manifest")
-    if _sha256_file(backup) != parsed.database_sha256:
-        raise BackupIntegrityError("backup SHA-256 differs from manifest")
-    connection = _read_only_connection(backup)
-    try:
-        evidence = _database_evidence(connection)
+        backup_directory_fd, backup_directory_identity = _open_directory(
+            backup.parent,
+            "backup",
+            integrity_error=True,
+        )
+        manifest_directory_fd, manifest_directory_identity = _open_directory(
+            manifest.parent,
+            "manifest",
+            integrity_error=True,
+        )
+        backup_fd, backup_identity = _open_regular_readonly_at(
+            backup_directory_fd,
+            backup.name,
+            "backup",
+        )
+        manifest_fd, manifest_identity = _open_regular_readonly_at(
+            manifest_directory_fd,
+            manifest.name,
+            "manifest",
+        )
+        if backup_identity == manifest_identity:
+            raise BackupIntegrityError("backup and manifest files must be distinct")
+
+        try:
+            manifest_bytes = _read_fd_limited(manifest_fd, _MAX_MANIFEST_BYTES + 1)
+            if len(manifest_bytes) > _MAX_MANIFEST_BYTES:
+                raise ValueError("backup manifest exceeds the format size limit")
+            raw = json.loads(manifest_bytes.decode("utf-8"))
+            parsed = BackupManifest.from_dict(cast(Dict[str, Any], raw))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise BackupIntegrityError("backup manifest is malformed") from exc
+        if int(os.fstat(backup_fd).st_size) != parsed.byte_size:
+            raise BackupIntegrityError("backup byte size differs from manifest")
+        if _sha256_fd(backup_fd) != parsed.database_sha256:
+            raise BackupIntegrityError("backup SHA-256 differs from manifest")
+        try:
+            connection = _read_only_connection_fd(backup_fd)
+            try:
+                evidence = _database_evidence(connection)
+            finally:
+                connection.close()
+        except BackupIntegrityError:
+            raise
+        except sqlite3.DatabaseError as exc:
+            raise BackupIntegrityError("backup is not a valid SQLite database") from exc
+        _verify_evidence(parsed, evidence)
+
+        if _sha256_fd(backup_fd) != parsed.database_sha256:
+            raise BackupIntegrityError("backup changed while it was being verified")
+        if _read_fd_limited(manifest_fd, _MAX_MANIFEST_BYTES + 1) != manifest_bytes:
+            raise BackupIntegrityError("manifest changed while it was being verified")
+        _require_entry_identity(
+            backup_directory_fd,
+            backup.name,
+            backup_identity,
+            "backup",
+        )
+        _require_entry_identity(
+            manifest_directory_fd,
+            manifest.name,
+            manifest_identity,
+            "manifest",
+        )
+        _require_directory_identity(
+            backup.parent,
+            backup_directory_identity,
+            "backup",
+            integrity_error=True,
+        )
+        _require_directory_identity(
+            manifest.parent,
+            manifest_directory_identity,
+            "manifest",
+            integrity_error=True,
+        )
+        return parsed
     finally:
-        connection.close()
-    _verify_evidence(parsed, evidence)
-    return parsed
+        if backup_fd >= 0:
+            os.close(backup_fd)
+        if manifest_fd >= 0:
+            os.close(manifest_fd)
+        if backup_directory_fd >= 0:
+            os.close(backup_directory_fd)
+        if manifest_directory_fd >= 0:
+            os.close(manifest_directory_fd)
 
 
 def restore_sqlite_backup(
