@@ -19,6 +19,33 @@ class PackageManifestWorkflowTests(unittest.TestCase):
         self.assertIn(epoch, self.workflow)
         self.assertLess(self.workflow.index(epoch), self.workflow.index(build))
 
+    def test_source_distribution_is_canonicalized_before_manifest(self):
+        build = "python -m build"
+        normalize = "python scripts/normalize_sdist.py"
+        manifest = "python scripts/distribution_manifest.py generate"
+        self.assertIn(normalize, self.workflow)
+        self.assertLess(self.workflow.index(build), self.workflow.index(normalize))
+        self.assertLess(self.workflow.index(normalize), self.workflow.index(manifest))
+        self.assertIn("--distribution-directory dist", self.workflow)
+
+    def test_reproducibility_is_verified_from_an_independent_checkout(self):
+        worktree = 'git worktree add --detach "$QE_REBUILD_SOURCE" "$QE_EXPECTED_COMMIT"'
+        rebuild = 'python -m build --outdir "$QE_REBUILD_DIRECTORY" "$QE_REBUILD_SOURCE"'
+        compare = "python scripts/verify_reproducible_distributions.py"
+        manifest = "python scripts/distribution_manifest.py generate"
+        self.assertIn("QE_EXPECTED_COMMIT: ${{ github.sha }}", self.workflow)
+        self.assertIn("QE_REBUILD_SOURCE: ${{ runner.temp }}", self.workflow)
+        self.assertIn("QE_REBUILD_DIRECTORY: ${{ runner.temp }}", self.workflow)
+        self.assertIn(worktree, self.workflow)
+        self.assertIn(rebuild, self.workflow)
+        self.assertIn(compare, self.workflow)
+        self.assertIn("--reference-directory dist", self.workflow)
+        self.assertIn('--candidate-directory "$QE_REBUILD_DIRECTORY"', self.workflow)
+        self.assertLess(self.workflow.index(worktree), self.workflow.index(rebuild))
+        self.assertLess(self.workflow.index(rebuild), self.workflow.rindex(compare))
+        self.assertLess(self.workflow.rindex(compare), self.workflow.index(manifest))
+        self.assertNotIn("continue-on-error: true", self.workflow)
+
     def test_manifest_is_generated_outside_checkout_then_strictly_verified(self):
         path = (
             "QE_DISTRIBUTION_MANIFEST_PATH: "

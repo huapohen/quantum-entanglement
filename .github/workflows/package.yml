@@ -38,6 +38,28 @@ jobs:
       - name: Build source and wheel distributions
         run: python -m build
 
+      - name: Canonicalize source distribution
+        run: python scripts/normalize_sdist.py --distribution-directory dist
+
+      - name: Rebuild from an independent source checkout
+        env:
+          QE_EXPECTED_COMMIT: ${{ github.sha }}
+          QE_REBUILD_DIRECTORY: ${{ runner.temp }}/quantum-entanglement-rebuild-dist
+          QE_REBUILD_SOURCE: ${{ runner.temp }}/quantum-entanglement-rebuild-source
+        run: |
+          git worktree add --detach "$QE_REBUILD_SOURCE" "$QE_EXPECTED_COMMIT"
+          python -m build --outdir "$QE_REBUILD_DIRECTORY" "$QE_REBUILD_SOURCE"
+          python scripts/normalize_sdist.py \
+            --distribution-directory "$QE_REBUILD_DIRECTORY"
+
+      - name: Verify byte-reproducible distributions
+        env:
+          QE_REBUILD_DIRECTORY: ${{ runner.temp }}/quantum-entanglement-rebuild-dist
+        run: |
+          python scripts/verify_reproducible_distributions.py \
+            --reference-directory dist \
+            --candidate-directory "$QE_REBUILD_DIRECTORY"
+
       - name: Generate source-bound distribution manifest
         env:
           QE_DISTRIBUTION_MANIFEST_PATH: ${{ runner.temp }}/quantum-entanglement-distribution-manifest.json
