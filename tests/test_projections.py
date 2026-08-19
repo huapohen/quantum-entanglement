@@ -1968,6 +1968,235 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
         self.assertEqual(len(conflicts), 1)
         self.assertFalse(any(thread.is_alive() for thread in threads))
 
+    def test_begin_after_success_failures_roll_back_release_lock_and_allow_retry(self) -> None:
+        class RaiseAfterBeginConnection(sqlite3.Connection):
+            failure: Optional[BaseException] = None
+            armed_probe_failure: Optional[BaseException] = None
+            probe_failure: Optional[BaseException] = None
+
+            @property
+            def in_transaction(self) -> bool:
+                failure = self.probe_failure
+                if failure is not None:
+                    self.probe_failure = None
+                    raise failure
+                return super().in_transaction
+
+            def execute(self, sql: str, parameters: Any = ()) -> sqlite3.Cursor:
+                cursor = super().execute(sql, parameters)
+                failure = self.failure
+                if " ".join(sql.split()).upper() == "BEGIN IMMEDIATE" and failure is not None:
+                    self.failure = None
+                    self.probe_failure = self.armed_probe_failure
+                    self.armed_probe_failure = None
+                    cursor.close()
+                    raise failure
+                return cursor
+
+        real_connect = sqlite3.connect
+        failures: tuple[tuple[str, BaseException, Optional[BaseException]], ...] = (
+            ("exception", RuntimeError("raise after successful BEGIN"), None),
+            ("base-exception", KeyboardInterrupt("interrupt after successful BEGIN"), None),
+            (
+                "begin-and-probe",
+                KeyboardInterrupt("interrupt after successful BEGIN"),
+                RuntimeError("transaction ownership probe failed"),
+            ),
+        )
+        for label, injected_failure, probe_failure in failures:
+            with self.subTest(label=label):
+                path = str(Path(self.tempdir.name) / f"begin-after-success-{label}.sqlite3")
+                opened: list[RaiseAfterBeginConnection] = []
+
+                def tracked_connect(
+                    *args: Any,
+                    _opened: list[RaiseAfterBeginConnection] = opened,
+                    **kwargs: Any,
+                ) -> sqlite3.Connection:
+                    kwargs["factory"] = RaiseAfterBeginConnection
+                    connection = cast(
+                        RaiseAfterBeginConnection,
+                        real_connect(*args, **kwargs),
+                    )
+                    _opened.append(connection)
+                    return connection
+
+                with patch(
+                    "quantum_entanglement.projections.sqlite3.connect",
+                    side_effect=tracked_connect,
+                ):
+                    store = SQLiteProjectionOffsetStore(path, clock=self.clock)
+                try:
+                    self.assertEqual(len(opened), 1)
+                    connection = opened[0]
+                    prior = store.claim(f"prior-{label}", "worker-a")
+                    store.release(prior)
+
+                    traces: list[str] = []
+                    connection.set_trace_callback(traces.append)
+                    connection.failure = injected_failure
+                    connection.armed_probe_failure = probe_failure
+                    try:
+                        store.claim(f"failed-{label}", "worker-a")
+                    except BaseException as raised:
+                        self.assertIs(raised, injected_failure)
+                    else:  # pragma: no cover - assertion reports missing fault injection
+                        self.fail("raise-after-BEGIN fault was not propagated")
+                    finally:
+                        connection.set_trace_callback(None)
+
+                    normalized = tuple(statement.lstrip().upper() for statement in traces)
+                    self.assertIn("BEGIN IMMEDIATE", normalized)
+                    self.assertIn("ROLLBACK", normalized)
+                    self.assertFalse(connection.in_transaction)
+
+                    observer = real_connect(path, isolation_level=None, timeout=0.1)
+                    try:
+                        failed_rows = observer.execute(
+                            "SELECT COUNT(*) FROM projection_offsets WHERE projection_name = ?",
+                            (f"failed-{label}",),
+                        ).fetchone()[0]
+                        observer.execute("BEGIN IMMEDIATE")
+                        observer.execute("ROLLBACK")
+                    finally:
+                        observer.close()
+                    self.assertEqual(failed_rows, 0)
+
+                    retried = store.claim(f"failed-{label}", "worker-b")
+                    self.assertEqual(retried.owner_epoch, 1)
+                    store.release(retried)
+                    self.assertFalse(connection.in_transaction)
+                finally:
+                    store.close()
+
+                reopened = SQLiteProjectionOffsetStore(path, clock=self.clock)
+                try:
+                    reopened_lease = reopened.claim(f"reopened-{label}", "worker-c")
+                    reopened.release(reopened_lease)
+                finally:
+                    reopened.close()
+
+    def test_rollback_failures_close_connection_release_lock_and_preserve_primary(self) -> None:
+        class RaiseDuringRollbackConnection(sqlite3.Connection):
+            primary_failure: Optional[BaseException] = None
+            rollback_failure: Optional[BaseException] = None
+            rollback_after_success = False
+            close_calls = 0
+
+            def execute(self, sql: str, parameters: Any = ()) -> sqlite3.Cursor:
+                normalized = " ".join(sql.split()).upper()
+                rollback_failure = self.rollback_failure
+                if normalized == "ROLLBACK" and rollback_failure is not None:
+                    self.rollback_failure = None
+                    if not self.rollback_after_success:
+                        raise rollback_failure
+
+                cursor = super().execute(sql, parameters)
+                primary_failure = self.primary_failure
+                if normalized.startswith("INSERT INTO PROJECTION_OFFSETS") and primary_failure:
+                    self.primary_failure = None
+                    cursor.close()
+                    raise primary_failure
+                if normalized == "ROLLBACK" and rollback_failure is not None:
+                    cursor.close()
+                    raise rollback_failure
+                return cursor
+
+            def close(self) -> None:
+                self.close_calls += 1
+                super().close()
+
+        real_connect = sqlite3.connect
+        cases: tuple[tuple[str, BaseException, BaseException, bool], ...] = (
+            (
+                "before-success",
+                RuntimeError("primary transaction failure"),
+                KeyboardInterrupt("rollback failed before execution"),
+                False,
+            ),
+            (
+                "after-success",
+                KeyboardInterrupt("primary transaction interrupt"),
+                RuntimeError("rollback failed after execution"),
+                True,
+            ),
+        )
+        for label, primary_failure, rollback_failure, after_success in cases:
+            with self.subTest(label=label):
+                path = str(Path(self.tempdir.name) / f"rollback-failure-{label}.sqlite3")
+                opened: list[RaiseDuringRollbackConnection] = []
+
+                def tracked_connect(
+                    *args: Any,
+                    _opened: list[RaiseDuringRollbackConnection] = opened,
+                    **kwargs: Any,
+                ) -> sqlite3.Connection:
+                    kwargs["factory"] = RaiseDuringRollbackConnection
+                    connection = cast(
+                        RaiseDuringRollbackConnection,
+                        real_connect(*args, **kwargs),
+                    )
+                    _opened.append(connection)
+                    return connection
+
+                with patch(
+                    "quantum_entanglement.projections.sqlite3.connect",
+                    side_effect=tracked_connect,
+                ):
+                    store = SQLiteProjectionOffsetStore(path, clock=self.clock)
+                try:
+                    self.assertEqual(len(opened), 1)
+                    connection = opened[0]
+                    connection.primary_failure = primary_failure
+                    connection.rollback_failure = rollback_failure
+                    connection.rollback_after_success = after_success
+                    traces: list[str] = []
+                    connection.set_trace_callback(traces.append)
+
+                    try:
+                        store.claim(f"rollback-failure-{label}", "worker-a")
+                    except BaseException as raised:
+                        self.assertIs(raised, primary_failure)
+                    else:  # pragma: no cover - assertion reports missing fault injection
+                        self.fail("transaction fault was not propagated")
+
+                    self.assertEqual(connection.close_calls, 1)
+                    normalized = tuple(statement.lstrip().upper() for statement in traces)
+                    self.assertIn("BEGIN IMMEDIATE", normalized)
+                    self.assertTrue(
+                        any(
+                            statement.startswith("INSERT INTO PROJECTION_OFFSETS")
+                            for statement in normalized
+                        )
+                    )
+                    if after_success:
+                        self.assertIn("ROLLBACK", normalized)
+                    else:
+                        self.assertNotIn("ROLLBACK", normalized)
+                    with self.assertRaises(sqlite3.ProgrammingError):
+                        connection.execute("SELECT 1")
+
+                    observer = real_connect(path, isolation_level=None, timeout=0.1)
+                    try:
+                        failed_rows = observer.execute(
+                            "SELECT COUNT(*) FROM projection_offsets WHERE projection_name = ?",
+                            (f"rollback-failure-{label}",),
+                        ).fetchone()[0]
+                        observer.execute("BEGIN IMMEDIATE")
+                        observer.execute("ROLLBACK")
+                    finally:
+                        observer.close()
+                    self.assertEqual(failed_rows, 0)
+                finally:
+                    store.close()
+
+                reopened = SQLiteProjectionOffsetStore(path, clock=self.clock)
+                try:
+                    lease = reopened.claim(f"rollback-failure-{label}", "worker-b")
+                    reopened.release(lease)
+                finally:
+                    reopened.close()
+
 
 class DurableProjectorTests(unittest.TestCase):
     def setUp(self) -> None:

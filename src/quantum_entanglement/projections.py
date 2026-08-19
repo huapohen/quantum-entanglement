@@ -1399,20 +1399,49 @@ class SQLiteProjectionOffsetStore:
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
+            if self._connection.in_transaction:
+                raise ProjectionOffsetError("projection operation requires no active transaction")
+            owns_transaction: bool = False
             try:
-                yield self._connection
-            except BaseException:
-                if self._connection.in_transaction:
-                    self._connection.execute("ROLLBACK")
-                raise
-            else:
                 try:
-                    self._connection.execute("COMMIT")
+                    self._connection.execute("BEGIN IMMEDIATE")
                 except BaseException:
-                    if self._connection.in_transaction:
-                        self._connection.execute("ROLLBACK")
+                    # A wrapper may raise after SQLite acquires the write lock.  If
+                    # the ownership probe also fails, conservatively clean up the
+                    # possible transaction without replacing the BEGIN failure.
+                    owns_transaction = True
+                    try:
+                        owns_transaction = self._connection.in_transaction
+                    except BaseException:
+                        pass
                     raise
+                owns_transaction = True
+                owns_transaction = self._connection.in_transaction
+                if not owns_transaction:
+                    raise ProjectionOffsetError(
+                        "projection operation did not acquire a transaction"
+                    )
+                yield self._connection
+                self._connection.execute("COMMIT")
+                owns_transaction = False
+            except BaseException:
+                if owns_transaction:
+                    transaction_is_open: bool
+                    try:
+                        transaction_is_open = self._connection.in_transaction
+                    except BaseException:
+                        transaction_is_open = True
+                    if transaction_is_open:
+                        try:
+                            self._connection.execute("ROLLBACK")
+                        except BaseException:
+                            # Closing is SQLite's final rollback boundary. Cleanup
+                            # must never replace the operation's primary exception.
+                            try:
+                                self._connection.close()
+                            except BaseException:
+                                pass
+                raise
 
     @staticmethod
     def _validate_name(value: str, field_name: str) -> str:
