@@ -56,11 +56,34 @@ _MAX_JSON_NODES = 10_000
 _MAX_JSON_KEY_LENGTH = 512
 _MAX_JSON_STRING_LENGTH = 65_536
 _MAX_JSON_INTEGER_BITS = 4_096
+_MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
 
 
 def _reject_json_constant(value: str) -> Any:
     raise ValueError(f"invalid JSON constant {value}")
+
+
+def _persisted_integer(value: Any, field_name: str, *, minimum: int = 0) -> int:
+    if type(value) is not int:
+        raise TypeError(f"persisted {field_name} must use SQLite INTEGER storage")
+    if value < minimum or value > _MAX_SQLITE_INTEGER:
+        raise ValueError(f"persisted {field_name} is outside its supported range")
+    return value
+
+
+def _persisted_text(value: Any, field_name: str, *, required: bool = False) -> str:
+    if type(value) is not str:
+        raise TypeError(f"persisted {field_name} must use SQLite TEXT storage")
+    if required and not value.strip():
+        raise ValueError(f"persisted {field_name} must not be blank")
+    return value
+
+
+def _persisted_optional_text(value: Any, field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _persisted_text(value, field_name)
 
 
 class _JsonTraversalState:
@@ -344,21 +367,27 @@ class SQLiteEventStore:
 
     def _row_to_event(self, row: sqlite3.Row) -> StoredEvent:
         try:
+            timestamp = _persisted_text(row["timestamp"], "event timestamp", required=True)
+            self._normalize_timestamp(timestamp, "persisted event timestamp")
             event = DomainEvent(
-                stream_id=row["stream_id"],
-                event_type=row["event_type"],
+                stream_id=_persisted_text(row["stream_id"], "stream_id", required=True),
+                event_type=_persisted_text(row["event_type"], "event_type", required=True),
                 payload=self._decode_json_object(row["payload_json"], "event payload"),
-                actor_id=row["actor_id"],
-                event_id=row["event_id"],
-                timestamp=row["timestamp"],
-                correlation_id=row["correlation_id"],
-                causation_id=row["causation_id"],
-                idempotency_key=row["idempotency_key"],
+                actor_id=_persisted_text(row["actor_id"], "actor_id", required=True),
+                event_id=_persisted_text(row["event_id"], "event_id", required=True),
+                timestamp=timestamp,
+                correlation_id=_persisted_optional_text(row["correlation_id"], "correlation_id"),
+                causation_id=_persisted_optional_text(row["causation_id"], "causation_id"),
+                idempotency_key=_persisted_optional_text(
+                    row["idempotency_key"], "event idempotency_key"
+                ),
             )
             return StoredEvent(
                 event=event,
-                sequence=int(row["sequence"]),
-                global_position=int(row["global_position"]),
+                sequence=_persisted_integer(row["sequence"], "event sequence", minimum=1),
+                global_position=_persisted_integer(
+                    row["global_position"], "event global_position", minimum=1
+                ),
             )
         except EventStoreIntegrityError:
             raise
@@ -367,25 +396,49 @@ class SQLiteEventStore:
 
     def _row_to_outbox(self, row: sqlite3.Row) -> StoredOutboxMessage:
         try:
+            available_at = _persisted_text(
+                row["available_at"], "outbox available_at", required=True
+            )
+            created_at = _persisted_text(row["created_at"], "outbox created_at", required=True)
+            self._normalize_timestamp(available_at, "persisted outbox available_at")
+            self._normalize_timestamp(created_at, "persisted outbox created_at")
+            lease_expires_at = _persisted_optional_text(
+                row["lease_expires_at"], "outbox lease_expires_at"
+            )
+            if lease_expires_at is not None:
+                self._normalize_timestamp(lease_expires_at, "persisted outbox lease_expires_at")
+            published_at = _persisted_optional_text(row["published_at"], "outbox published_at")
+            if published_at is not None:
+                self._normalize_timestamp(published_at, "persisted outbox published_at")
             message = OutboxMessage(
-                destination=row["destination"],
+                destination=_persisted_text(
+                    row["destination"], "outbox destination", required=True
+                ),
                 payload=self._decode_json_object(row["payload_json"], "outbox payload"),
                 headers=self._decode_json_object(row["headers_json"], "outbox headers"),
-                message_id=row["message_id"],
-                idempotency_key=row["idempotency_key"],
-                available_at=row["available_at"],
-                created_at=row["created_at"],
+                message_id=_persisted_text(row["message_id"], "outbox message_id", required=True),
+                idempotency_key=_persisted_text(
+                    row["idempotency_key"], "outbox idempotency_key", required=True
+                ),
+                available_at=available_at,
+                created_at=created_at,
             )
             return StoredOutboxMessage(
                 message=message,
-                triggering_event_id=row["triggering_event_id"],
-                triggering_global_position=int(row["triggering_global_position"]),
-                status=OutboxStatus(row["status"]),
-                attempt_count=int(row["attempt_count"]),
-                lease_token=row["lease_token"],
-                lease_expires_at=row["lease_expires_at"],
-                last_error=row["last_error"],
-                published_at=row["published_at"],
+                triggering_event_id=_persisted_text(
+                    row["triggering_event_id"], "outbox triggering_event_id", required=True
+                ),
+                triggering_global_position=_persisted_integer(
+                    row["triggering_global_position"],
+                    "outbox triggering_global_position",
+                    minimum=1,
+                ),
+                status=OutboxStatus(_persisted_text(row["status"], "outbox status", required=True)),
+                attempt_count=_persisted_integer(row["attempt_count"], "outbox attempt_count"),
+                lease_token=_persisted_optional_text(row["lease_token"], "outbox lease_token"),
+                lease_expires_at=lease_expires_at,
+                last_error=_persisted_optional_text(row["last_error"], "outbox last_error"),
+                published_at=published_at,
             )
         except EventStoreIntegrityError:
             raise
@@ -394,12 +447,16 @@ class SQLiteEventStore:
 
     def _row_to_inbox(self, row: sqlite3.Row) -> InboxReceipt:
         try:
+            received_at = _persisted_text(row["received_at"], "inbox received_at", required=True)
+            self._normalize_timestamp(received_at, "persisted inbox received_at")
             return InboxReceipt(
-                consumer_id=row["consumer_id"],
-                message_id=row["message_id"],
-                received_at=row["received_at"],
-                event_id=row["event_id"],
-                event_global_position=int(row["event_global_position"]),
+                consumer_id=_persisted_text(row["consumer_id"], "inbox consumer_id", required=True),
+                message_id=_persisted_text(row["message_id"], "inbox message_id", required=True),
+                received_at=received_at,
+                event_id=_persisted_text(row["event_id"], "inbox event_id", required=True),
+                event_global_position=_persisted_integer(
+                    row["event_global_position"], "inbox event_global_position", minimum=1
+                ),
                 result=self._decode_json_object(row["result_json"], "inbox result"),
             )
         except EventStoreIntegrityError:
@@ -407,17 +464,58 @@ class SQLiteEventStore:
         except (IndexError, KeyError, TypeError, ValueError) as exc:
             raise EventStoreIntegrityError("persisted inbox row is malformed") from exc
 
-    @staticmethod
-    def _row_to_ambiguity(row: sqlite3.Row) -> OutboxAmbiguity:
-        return OutboxAmbiguity(
-            message_id=row["message_id"],
-            lease_token_digest=row["lease_token_digest"],
-            reason_code=row["reason_code"],
-            attempt_count=int(row["attempt_count"]),
-            marked_at=row["marked_at"],
-            resolution=row["resolution"],
-            resolved_at=row["resolved_at"],
-        )
+    def _row_to_ambiguity(self, row: sqlite3.Row) -> OutboxAmbiguity:
+        try:
+            marked_at = _persisted_text(
+                row["marked_at"], "outbox ambiguity marked_at", required=True
+            )
+            self._normalize_timestamp(marked_at, "persisted outbox ambiguity marked_at")
+            resolved_at = _persisted_optional_text(
+                row["resolved_at"], "outbox ambiguity resolved_at"
+            )
+            if resolved_at is not None:
+                self._normalize_timestamp(resolved_at, "persisted outbox ambiguity resolved_at")
+            resolution = _persisted_optional_text(row["resolution"], "outbox ambiguity resolution")
+            if resolution is not None and resolution not in {
+                "published",
+                "retry",
+                "dead_letter",
+            }:
+                raise ValueError("persisted outbox ambiguity resolution is unsupported")
+            reason_code = _persisted_text(
+                row["reason_code"], "outbox ambiguity reason_code", required=True
+            )
+            if reason_code not in {
+                "callback_timeout",
+                "caller_cancelled",
+                "ack_failed",
+                "lease_expired_after_accept",
+            }:
+                raise ValueError("persisted outbox ambiguity reason_code is unsupported")
+            lease_token_digest = _persisted_text(
+                row["lease_token_digest"],
+                "outbox ambiguity lease_token_digest",
+                required=True,
+            )
+            if len(lease_token_digest) != 64 or any(
+                character not in "0123456789abcdef" for character in lease_token_digest
+            ):
+                raise ValueError("persisted lease_token_digest is not canonical SHA-256")
+            return OutboxAmbiguity(
+                message_id=_persisted_text(
+                    row["message_id"], "outbox ambiguity message_id", required=True
+                ),
+                lease_token_digest=lease_token_digest,
+                reason_code=reason_code,
+                attempt_count=_persisted_integer(
+                    row["attempt_count"], "outbox ambiguity attempt_count", minimum=1
+                ),
+                marked_at=marked_at,
+                resolution=resolution,
+                resolved_at=resolved_at,
+            )
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise EventStoreIntegrityError("persisted outbox ambiguity row is malformed") from exc
 
     @staticmethod
     def _lease_deadline(now: str, lease_seconds: float) -> str:
@@ -1100,9 +1198,9 @@ class SQLiteEventStore:
             if row is None:
                 return None
             try:
-                return int(row["sequence"]), self._decode_json_object(
-                    row["state_json"], "snapshot state"
-                )
+                return _persisted_integer(
+                    row["sequence"], "snapshot sequence"
+                ), self._decode_json_object(row["state_json"], "snapshot state")
             except EventStoreIntegrityError:
                 raise
             except (IndexError, KeyError, TypeError, ValueError) as exc:

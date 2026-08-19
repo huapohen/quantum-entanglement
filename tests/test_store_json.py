@@ -213,6 +213,99 @@ class SQLiteEventStoreJsonTests(unittest.TestCase):
         with self.assertRaisesRegex(EventStoreIntegrityError, "persisted snapshot state"):
             self.store.load_snapshot("session:json")
 
+    def test_persisted_event_scalars_are_not_coerced_by_python(self) -> None:
+        self.store.append(event("event-corrupt-scalars", {"safe": True}))
+        self.store._connection.execute(
+            "UPDATE events SET sequence = ? WHERE event_id = ?",
+            (b"1", "event-corrupt-scalars"),
+        )
+
+        with self.assertRaisesRegex(EventStoreIntegrityError, "persisted event row is malformed"):
+            self.store.read_all()
+
+    def test_persisted_delivery_scalars_are_validated_before_use(self) -> None:
+        self.store.append_with_outbox(
+            event("event-outbox-scalars", {}),
+            (
+                OutboxMessage(
+                    destination="fake-runtime",
+                    payload={},
+                    message_id="message-outbox-scalars",
+                    idempotency_key="outbox:scalars",
+                    available_at=T0,
+                    created_at=T0,
+                ),
+            ),
+        )
+        self.store._connection.execute(
+            "UPDATE outbox SET attempt_count = ? WHERE message_id = ?",
+            (b"0", "message-outbox-scalars"),
+        )
+
+        with self.assertRaisesRegex(EventStoreIntegrityError, "persisted outbox row is malformed"):
+            self.store.read_outbox()
+
+        self.store.append_inbox(
+            "consumer-scalars",
+            "message-scalars",
+            event("event-inbox-scalars", {}),
+            received_at=T0,
+        )
+        self.store._connection.execute(
+            "UPDATE inbox_receipts SET received_at = ? WHERE consumer_id = ?",
+            (b"2026-08-20T00:00:00Z", "consumer-scalars"),
+        )
+
+        with self.assertRaisesRegex(EventStoreIntegrityError, "persisted inbox row is malformed"):
+            self.store.get_inbox_receipt("consumer-scalars", "message-scalars")
+
+    def test_persisted_snapshot_sequence_is_an_exact_integer(self) -> None:
+        self.store.save_snapshot("session:json", 1, {}, at=T0)
+        self.store._connection.execute(
+            "UPDATE snapshots SET sequence = ? WHERE stream_id = ?",
+            (b"1", "session:json"),
+        )
+
+        with self.assertRaisesRegex(
+            EventStoreIntegrityError,
+            "persisted snapshot row is malformed",
+        ):
+            self.store.load_snapshot("session:json")
+
+    def test_persisted_ambiguity_scalars_use_the_same_integrity_error(self) -> None:
+        self.store.append_with_outbox(
+            event("event-ambiguity-scalars", {}),
+            (
+                OutboxMessage(
+                    destination="fake-runtime",
+                    payload={},
+                    message_id="message-ambiguity-scalars",
+                    idempotency_key="ambiguity:scalars",
+                    available_at=T0,
+                    created_at=T0,
+                ),
+            ),
+        )
+        claimed = self.store.claim_outbox("worker-scalars", lease_seconds=30)[0]
+        self.assertTrue(
+            self.store.mark_outbox_ambiguous(
+                claimed.message.message_id,
+                claimed.lease_token,
+                "callback_timeout",
+                marked_at=T0,
+            )
+        )
+        self.store._connection.execute(
+            "UPDATE outbox_ambiguities SET attempt_count = ? WHERE message_id = ?",
+            (b"1", claimed.message.message_id),
+        )
+
+        with self.assertRaisesRegex(
+            EventStoreIntegrityError,
+            "persisted outbox ambiguity row is malformed",
+        ):
+            self.store.read_outbox_ambiguities()
+
 
 if __name__ == "__main__":
     unittest.main()
