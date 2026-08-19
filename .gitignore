@@ -1,0 +1,20 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.db
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Read-only source checkouts used for research; keep them beside the project,
+# but do not vendor their Git history or code into this repository.
+references/
+
