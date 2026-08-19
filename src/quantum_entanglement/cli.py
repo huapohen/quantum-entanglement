@@ -5,11 +5,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from typing import Sequence
+from collections.abc import Sequence
 
+from .agent_runtime import AgentInvocation, AgentResult
 from .chat import InboundChatMessage, MentionRouter
 from .protocol import ActorKind, ActorRef, ArtifactOutput, HandoffContract
-from .runtime import AgentRegistration, AgentResult, OrchestratorKernel
+from .runtime import AgentRegistration, OrchestratorKernel
 from .scheduler import TaskSpec, WorkflowPlan
 
 
@@ -21,7 +22,7 @@ def _handoff(goal: str, deliverable: str) -> HandoffContract:
     )
 
 
-async def run_demo() -> dict:
+async def run_demo() -> dict[str, object]:
     kernel = OrchestratorKernel(max_concurrency=3)
     human = ActorRef("user-1", "产品负责人", ActorKind.HUMAN)
     planner = ActorRef("planner", "协作编排器", ActorKind.AGENT)
@@ -29,21 +30,30 @@ async def run_demo() -> dict:
     architect = ActorRef("architect", "系统架构师", ActorKind.AGENT)
     reviewer = ActorRef("reviewer", "安全审阅员", ActorKind.AGENT)
 
-    async def research(invocation):
+    async def research(_invocation: AgentInvocation) -> AgentResult:
         return AgentResult(
             "协议研究完成",
             (ArtifactOutput("protocol-notes.md", "A2A 管 Agent 互操作；MCP 管工具与数据。"),),
         )
 
-    async def design(invocation):
-        evidence = next(item.content for item in invocation.context.items if item.category == "artifact")
+    async def design(invocation: AgentInvocation) -> AgentResult:
+        evidence = next(
+            item.content for item in invocation.context.items if item.category == "artifact"
+        )
         return AgentResult(
             "架构设计完成",
-            (ArtifactOutput("architecture.md", "事件溯源 + DAG + 插件 Harness。\n\n依据：" + evidence),),
+            (
+                ArtifactOutput(
+                    "architecture.md",
+                    "事件溯源 + DAG + 插件 Harness。\n\n依据：" + evidence,
+                ),
+            ),
         )
 
-    async def review(invocation):
-        design_text = next(item.content for item in invocation.context.items if item.category == "artifact")
+    async def review(invocation: AgentInvocation) -> AgentResult:
+        design_text = next(
+            item.content for item in invocation.context.items if item.category == "artifact"
+        )
         return AgentResult(
             "审阅通过",
             (ArtifactOutput("review.md", "已检查因果、幂等、权限和人工审批。\n\n" + design_text),),
@@ -57,23 +67,36 @@ async def run_demo() -> dict:
         {actor.actor_id: actor for actor in (researcher, architect, reviewer)}, planner
     ).route(
         InboundChatMessage(
-            "local-demo", "message-1", "demo-session", "group-thread", human,
-            "@协议研究员 先研究协议，再交给架构师和审阅员。", (researcher.actor_id,),
+            "local-demo",
+            "message-1",
+            "demo-session",
+            "group-thread",
+            human,
+            "@协议研究员 先研究协议，再交给架构师和审阅员。",
+            (researcher.actor_id,),
         )
     )
 
     tasks = (
         TaskSpec(
-            "研究协议边界", "researcher", _handoff("研究协议边界", "protocol-notes.md"),
+            "研究协议边界",
+            "researcher",
+            _handoff("研究协议边界", "protocol-notes.md"),
             task_id="research",
         ),
         TaskSpec(
-            "设计协作内核", "architect", _handoff("设计内核", "architecture.md"),
-            task_id="design", depends_on=("research",),
+            "设计协作内核",
+            "architect",
+            _handoff("设计内核", "architecture.md"),
+            task_id="design",
+            depends_on=("research",),
         ),
         TaskSpec(
-            "审阅安全不变量", "reviewer", _handoff("审阅方案", "review.md"),
-            task_id="review", depends_on=("design",),
+            "审阅安全不变量",
+            "reviewer",
+            _handoff("审阅方案", "review.md"),
+            task_id="review",
+            depends_on=("design",),
         ),
     )
     try:
