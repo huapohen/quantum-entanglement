@@ -65,8 +65,21 @@ def migration_text(filename: str) -> str:
     )
 
 
-def _quote_sql_literal(value: str) -> str:
-    return value.replace("'", "''")
+def _sql_statements(script: str) -> Sequence[str]:
+    """Split packaged SQL with SQLite's own completeness parser."""
+
+    statements = []
+    buffer = ""
+    for character in script:
+        buffer += character
+        if character == ";" and sqlite3.complete_statement(buffer):
+            statement = buffer.strip()
+            if statement:
+                statements.append(statement)
+            buffer = ""
+    if buffer.strip():
+        raise ValueError("migration SQL ends with an incomplete statement")
+    return tuple(statements)
 
 
 def apply_sqlite_migrations(
@@ -127,41 +140,42 @@ def apply_sqlite_migrations(
     for migration in migrations:
         if migration.version not in selected_versions:
             continue
-        row = connection.execute(
-            "SELECT filename, sha256 FROM qe_schema_migrations WHERE version = ?",
-            (migration.version,),
-        ).fetchone()
         sql = migration_text(migration.filename)
         digest = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-        if row is not None:
-            continue
-        applied_at = clock()
-        if not isinstance(applied_at, str) or not applied_at.strip():
-            raise ValueError("migration clock must return a timestamp string")
-        script = (
-            "BEGIN IMMEDIATE;\n"
-            f"{sql}\n"
-            "INSERT INTO qe_schema_migrations "
-            "(version, filename, sha256, applied_at) VALUES "
-            f"({migration.version}, '{_quote_sql_literal(migration.filename)}', "
-            f"'{_quote_sql_literal(digest)}', '{_quote_sql_literal(applied_at)}');\n"
-            "COMMIT;"
-        )
         try:
-            connection.executescript(script)
-        except sqlite3.IntegrityError:
-            if connection.in_transaction:
-                connection.execute("ROLLBACK")
-            concurrent = connection.execute(
+            connection.execute("BEGIN IMMEDIATE")
+            # Recheck only after owning the write lock. Another initializer may
+            # have committed this migration after the optimistic precheck.
+            row = connection.execute(
                 "SELECT filename, sha256 FROM qe_schema_migrations WHERE version = ?",
                 (migration.version,),
             ).fetchone()
-            if (
-                concurrent is None
-                or concurrent["filename"] != migration.filename
-                or concurrent["sha256"] != digest
-            ):
-                raise
+            if row is not None:
+                if row["filename"] != migration.filename or row["sha256"] != digest:
+                    raise MigrationDriftError(
+                        f"migration {migration.version} checksum or filename differs "
+                        "from the applied schema"
+                    )
+                connection.execute("COMMIT")
+                continue
+            applied_at = clock()
+            if not isinstance(applied_at, str) or not applied_at.strip():
+                raise ValueError("migration clock must return a timestamp string")
+            for statement in _sql_statements(sql):
+                connection.execute(statement)
+            connection.execute(
+                """
+                INSERT INTO qe_schema_migrations (
+                    version, filename, sha256, applied_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (migration.version, migration.filename, digest, applied_at),
+            )
+            connection.execute("COMMIT")
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
 
     return current_schema_version(connection)
 

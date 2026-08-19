@@ -3,9 +3,18 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from quantum_entanglement.attempts import SQLiteInvocationAttemptStore
-from quantum_entanglement.migrations import MigrationVersionError
+from quantum_entanglement.migrations import (
+    MIGRATIONS,
+    Migration,
+    MigrationVersionError,
+    apply_sqlite_migrations,
+    current_schema_version,
+)
+
+NOW = "2026-08-20T00:00:00Z"
 
 
 class SQLiteMigrationTests(unittest.TestCase):
@@ -61,7 +70,7 @@ class SQLiteMigrationTests(unittest.TestCase):
                     INSERT INTO artifact_blobs(digest, content, byte_size, created_at)
                     VALUES (?, ?, ?, ?)
                     """,
-                    ("sha256:" + ("g" * 64), b"data", 4, "2026-08-20T00:00:00Z"),
+                    ("sha256:" + ("g" * 64), b"data", 4, NOW),
                 )
             with self.assertRaises(sqlite3.IntegrityError):
                 connection.execute(
@@ -69,7 +78,7 @@ class SQLiteMigrationTests(unittest.TestCase):
                     INSERT INTO artifact_blobs(digest, content, byte_size, created_at)
                     VALUES (?, ?, ?, ?)
                     """,
-                    ("sha256:" + ("0" * 64), b"data", 3, "2026-08-20T00:00:00Z"),
+                    ("sha256:" + ("0" * 64), b"data", 3, NOW),
                 )
         finally:
             connection.close()
@@ -81,15 +90,240 @@ class SQLiteMigrationTests(unittest.TestCase):
         connection.execute(
             """
             INSERT INTO qe_schema_migrations(version, filename, sha256, applied_at)
-            VALUES (999, '0999_future.up.sql', ?, '2026-08-20T00:00:00Z')
+            VALUES (999, '0999_future.up.sql', ?, ?)
             """,
-            ("0" * 64,),
+            ("0" * 64, NOW),
         )
         connection.commit()
         connection.close()
 
         with self.assertRaises(MigrationVersionError):
             SQLiteInvocationAttemptStore(self.path)
+
+
+class CommitFailingConnection:
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.failed = False
+
+    @property
+    def in_transaction(self):
+        return self.delegate.in_transaction
+
+    def create_function(self, *args, **kwargs):
+        return self.delegate.create_function(*args, **kwargs)
+
+    def execute(self, statement, parameters=()):
+        if statement == "COMMIT" and not self.failed:
+            self.failed = True
+            raise sqlite3.OperationalError("injected commit failure")
+        return self.delegate.execute(statement, parameters)
+
+
+class MigrationRunnerTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tempdir.name) / "migrations.sqlite3")
+        self.connection = sqlite3.connect(self.path, isolation_level=None)
+        self.connection.row_factory = sqlite3.Row
+
+    def tearDown(self):
+        self.connection.close()
+        self.tempdir.cleanup()
+
+    def ledger_count(self):
+        return self.connection.execute("SELECT COUNT(*) FROM qe_schema_migrations").fetchone()[0]
+
+    def table_exists(self, name):
+        return (
+            self.connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (name,),
+            ).fetchone()
+            is not None
+        )
+
+    def test_target_versions_must_be_a_continuous_registry_prefix(self):
+        for invalid in ((2,), (1, 3), (1, 1), (3, 2, 1)):
+            with self.subTest(target_versions=invalid):
+                with self.assertRaisesRegex(ValueError, "continuous registry prefix"):
+                    apply_sqlite_migrations(
+                        self.connection,
+                        target_versions=invalid,
+                        clock=lambda: NOW,
+                    )
+        for invalid_type in ((True,), (1.0,)):
+            with self.subTest(target_versions=invalid_type):
+                with self.assertRaisesRegex(TypeError, "must be integers"):
+                    apply_sqlite_migrations(
+                        self.connection,
+                        target_versions=invalid_type,
+                        clock=lambda: NOW,
+                    )
+        self.assertFalse(self.table_exists("qe_schema_migrations"))
+        self.assertEqual(
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=(),
+                clock=lambda: NOW,
+            ),
+            0,
+        )
+        self.assertEqual(self.ledger_count(), 0)
+        self.assertEqual(tuple(item.version for item in MIGRATIONS[:2]), (1, 2))
+
+    def test_statement_splitter_handles_same_line_and_quoted_semicolon(self):
+        migration = Migration(1, "0001_compound.up.sql")
+        compound = (
+            "CREATE TABLE first_table (value TEXT); "
+            "CREATE TABLE second_table (value TEXT DEFAULT ';');"
+        )
+
+        with mock.patch(
+            "quantum_entanglement.migrations.migration_text",
+            return_value=compound,
+        ):
+            self.assertEqual(
+                apply_sqlite_migrations(
+                    self.connection,
+                    migrations=(migration,),
+                    clock=lambda: NOW,
+                ),
+                1,
+            )
+
+        self.assertTrue(self.table_exists("first_table"))
+        self.assertTrue(self.table_exists("second_table"))
+
+    def test_operational_error_rolls_back_partial_ddl_and_can_retry(self):
+        migration = Migration(1, "0001_injected.up.sql")
+        broken = """
+        CREATE TABLE partial_table (value TEXT);
+        INSERT INTO table_that_does_not_exist (value) VALUES ('failure');
+        """
+        fixed = "CREATE TABLE recovered_table (value TEXT);"
+
+        with mock.patch(
+            "quantum_entanglement.migrations.migration_text",
+            return_value=broken,
+        ):
+            with self.assertRaises(sqlite3.OperationalError):
+                apply_sqlite_migrations(
+                    self.connection,
+                    migrations=(migration,),
+                    clock=lambda: NOW,
+                )
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertFalse(self.table_exists("partial_table"))
+        self.assertEqual(self.ledger_count(), 0)
+
+        with mock.patch(
+            "quantum_entanglement.migrations.migration_text",
+            return_value=fixed,
+        ):
+            self.assertEqual(
+                apply_sqlite_migrations(
+                    self.connection,
+                    migrations=(migration,),
+                    clock=lambda: NOW,
+                ),
+                1,
+            )
+        self.assertTrue(self.table_exists("recovered_table"))
+
+    def test_clock_base_exception_releases_lock_without_schema_or_ledger(self):
+        migration = Migration(1, "0001_clock_failure.up.sql")
+
+        def fail_clock():
+            raise KeyboardInterrupt("injected clock interrupt")
+
+        with mock.patch(
+            "quantum_entanglement.migrations.migration_text",
+            return_value="CREATE TABLE clock_partial (value TEXT);",
+        ):
+            with self.assertRaisesRegex(KeyboardInterrupt, "injected clock interrupt"):
+                apply_sqlite_migrations(
+                    self.connection,
+                    migrations=(migration,),
+                    clock=fail_clock,
+                )
+
+            self.assertFalse(self.connection.in_transaction)
+            self.assertFalse(self.table_exists("clock_partial"))
+            self.assertEqual(self.ledger_count(), 0)
+            self.assertEqual(
+                apply_sqlite_migrations(
+                    self.connection,
+                    migrations=(migration,),
+                    clock=lambda: NOW,
+                ),
+                1,
+            )
+
+    def test_commit_failure_rolls_back_body_and_ledger_then_retries(self):
+        migration = Migration(1, "0001_commit_failure.up.sql")
+        wrapped = CommitFailingConnection(self.connection)
+
+        with mock.patch(
+            "quantum_entanglement.migrations.migration_text",
+            return_value="CREATE TABLE commit_partial (value TEXT);",
+        ):
+            with self.assertRaisesRegex(sqlite3.OperationalError, "commit failure"):
+                apply_sqlite_migrations(
+                    wrapped,
+                    migrations=(migration,),
+                    clock=lambda: NOW,
+                )
+
+            self.assertFalse(self.connection.in_transaction)
+            self.assertFalse(self.table_exists("commit_partial"))
+            self.assertEqual(self.ledger_count(), 0)
+            self.assertEqual(
+                apply_sqlite_migrations(
+                    wrapped,
+                    migrations=(migration,),
+                    clock=lambda: NOW,
+                ),
+                1,
+            )
+            self.assertTrue(self.table_exists("commit_partial"))
+            self.assertEqual(current_schema_version(self.connection), 1)
+
+    def test_authorizer_denied_commit_rolls_back_and_releases_write_lock(self):
+        migration = Migration(1, "0001_denied_commit.up.sql")
+
+        def deny_commit(action_code, operation, _table, _database, _trigger):
+            if action_code == sqlite3.SQLITE_TRANSACTION and str(operation).upper() == "COMMIT":
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        self.connection.set_authorizer(deny_commit)
+        try:
+            with mock.patch(
+                "quantum_entanglement.migrations.migration_text",
+                return_value="CREATE TABLE denied_commit (value TEXT);",
+            ):
+                with self.assertRaisesRegex(sqlite3.DatabaseError, "not authorized"):
+                    apply_sqlite_migrations(
+                        self.connection,
+                        migrations=(migration,),
+                        clock=lambda: NOW,
+                    )
+        finally:
+            # Python 3.9 does not reliably treat None as "disable authorizer".
+            self.connection.set_authorizer(lambda *_args: sqlite3.SQLITE_OK)
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertFalse(self.table_exists("denied_commit"))
+        self.assertEqual(self.ledger_count(), 0)
+        contender = sqlite3.connect(self.path, isolation_level=None, timeout=0.1)
+        try:
+            contender.execute("BEGIN IMMEDIATE")
+            self.assertTrue(contender.in_transaction)
+            contender.execute("ROLLBACK")
+        finally:
+            contender.close()
 
 
 if __name__ == "__main__":
