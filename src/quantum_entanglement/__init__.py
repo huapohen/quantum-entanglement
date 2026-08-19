@@ -29,7 +29,7 @@ from .artifact_store import (
     SQLiteArtifactStore,
     StoredArtifact,
 )
-from .artifacts import ArtifactLedger, ArtifactReplayError, ArtifactVersion
+from .artifacts import ArtifactLedger, ArtifactRecordError, ArtifactReplayError, ArtifactVersion
 from .backup import (
     BackupError,
     BackupExistsError,
@@ -143,6 +143,7 @@ __all__ = [
     "ArtifactIntegrityError",
     "ArtifactLedger",
     "ArtifactOutput",
+    "ArtifactRecordError",
     "ArtifactReplayError",
     "ArtifactRef",
     "ArtifactTooLargeError",

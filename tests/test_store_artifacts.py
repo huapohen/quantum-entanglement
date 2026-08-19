@@ -2,12 +2,18 @@ import copy
 import hashlib
 import tempfile
 import unittest
+from collections import UserDict
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
 import quantum_entanglement
 import quantum_entanglement.artifacts as artifacts_module
-from quantum_entanglement.artifacts import ArtifactLedger, ArtifactReplayError
+from quantum_entanglement.artifacts import (
+    ArtifactLedger,
+    ArtifactRecordError,
+    ArtifactReplayError,
+)
 from quantum_entanglement.events import DomainEvent, StoredEvent
 from quantum_entanglement.protocol import ArtifactOutput, ArtifactRef
 from quantum_entanglement.store import ConcurrencyError, SQLiteEventStore
@@ -206,6 +212,207 @@ class ArtifactLedgerTests(unittest.TestCase):
         rebuilt = ArtifactLedger(self.store)
 
         self.assertEqual(rebuilt.history("s1", "valid.json"), (recorded,))
+
+    def test_record_error_is_part_of_the_supported_artifact_api(self):
+        self.assertIn("ArtifactRecordError", artifacts_module.__all__)
+        self.assertIs(quantum_entanglement.ArtifactRecordError, ArtifactRecordError)
+
+    def test_invalid_record_input_is_rejected_before_sql_or_state_changes(self):
+        baseline = self.ledger.record(
+            "s1",
+            "task-baseline",
+            "agent",
+            ArtifactOutput("stable.json", "stable", metadata={"kept": [1]}),
+        )
+        original_state = self.ledger._versions
+        original_history = self.ledger.history("s1", "stable.json")
+
+        class DictSubclass(dict):
+            pass
+
+        def tampered(field, value):
+            output = ArtifactOutput("stable.json", "candidate")
+            object.__setattr__(output, field, value)
+            return output
+
+        cases = (
+            ("tuple", ArtifactOutput("stable.json", "candidate", metadata={"items": (1, 2)}), ()),
+            (
+                "user-dict",
+                ArtifactOutput("stable.json", "candidate", metadata=UserDict({"ok": True})),
+                (),
+            ),
+            (
+                "dict-subclass",
+                ArtifactOutput("stable.json", "candidate", metadata=DictSubclass(ok=True)),
+                (),
+            ),
+            ("nan", ArtifactOutput("stable.json", "candidate", metadata={"n": float("nan")}), ()),
+            (
+                "positive-infinity",
+                ArtifactOutput("stable.json", "candidate", metadata={"n": float("inf")}),
+                (),
+            ),
+            (
+                "negative-infinity",
+                ArtifactOutput("stable.json", "candidate", metadata={"n": float("-inf")}),
+                (),
+            ),
+            (
+                "metadata-depth",
+                ArtifactOutput("stable.json", "candidate", metadata={"nested": [[[]]]}),
+                (("_MAX_METADATA_DEPTH", 3),),
+            ),
+            (
+                "metadata-nodes",
+                ArtifactOutput("stable.json", "candidate", metadata={"items": [1, 2]}),
+                (("_MAX_METADATA_NODES", 3),),
+            ),
+            (
+                "metadata-string",
+                ArtifactOutput("stable.json", "candidate", metadata={"value": "abcd"}),
+                (("_MAX_METADATA_STRING_LENGTH", 3),),
+            ),
+            (
+                "metadata-bytes",
+                ArtifactOutput("stable.json", "candidate", metadata={"value": "encoded"}),
+                (("_MAX_METADATA_BYTES", 8),),
+            ),
+            (
+                "content-bytes",
+                ArtifactOutput("stable.json", "12345"),
+                (("_MAX_CONTENT_BYTES", 4),),
+            ),
+            ("name-type", tampered("name", 7), ()),
+            ("content-type", tampered("content", ["candidate"]), ()),
+            ("media-type", tampered("media_type", object()), ()),
+            ("output-subclass", type("DerivedOutput", (ArtifactOutput,), {})("x", "y"), ()),
+        )
+
+        traced = []
+        self.store._connection.set_trace_callback(traced.append)
+        try:
+            for case, output, constant_patches in cases:
+                with self.subTest(case=case):
+                    traced.clear()
+                    with ExitStack() as stack:
+                        for constant, maximum in constant_patches:
+                            stack.enter_context(patch.object(artifacts_module, constant, maximum))
+                        with self.assertRaisesRegex(
+                            ArtifactRecordError,
+                            "artifact record input violates its contract",
+                        ):
+                            self.ledger.record("s1", "task-invalid", "agent", output)
+                    self.assertEqual(traced, [])
+                    self.assertIs(self.ledger._versions, original_state)
+                    self.assertIs(
+                        self.ledger.history("s1", "stable.json"),
+                        original_history,
+                    )
+                    self.assertEqual(original_history, (baseline,))
+        finally:
+            self.store._connection.set_trace_callback(None)
+
+    def test_record_snapshots_nested_metadata_for_state_and_event(self):
+        metadata = {
+            "nested": {"values": [1, {"label": "original"}]},
+            "tags": [{"name": "stable"}],
+        }
+        captured_events = []
+        append = self.store.append
+
+        def capture_event(event, expected_version=None):
+            captured_events.append(event)
+            return append(event, expected_version)
+
+        with patch.object(self.store, "append", side_effect=capture_event):
+            recorded = self.ledger.record(
+                "s1",
+                "task-snapshot",
+                "agent",
+                ArtifactOutput("snapshot.json", "body", metadata=metadata),
+            )
+
+        expected = copy.deepcopy(metadata)
+        event_metadata = captured_events[0].payload["metadata"]
+        self.assertEqual(recorded.metadata, expected)
+        self.assertEqual(event_metadata, expected)
+        self.assertIsNot(recorded.metadata, event_metadata)
+        self.assertIsNot(recorded.metadata["nested"], event_metadata["nested"])
+        self.assertIsNot(
+            recorded.metadata["nested"]["values"],
+            event_metadata["nested"]["values"],
+        )
+
+        metadata["nested"]["values"][1]["label"] = "caller-mutated"
+        metadata["tags"].append({"name": "caller-added"})
+        self.assertEqual(recorded.metadata, expected)
+        self.assertEqual(event_metadata, expected)
+
+        recorded.metadata["nested"]["values"].append("item-mutated")
+        recorded.metadata["tags"][0]["name"] = "item-mutated"
+        self.assertEqual(event_metadata, expected)
+        persisted_metadata = self.store.read_all()[0].event.payload["metadata"]
+        self.assertEqual(persisted_metadata, expected)
+
+    def test_record_rejects_invalid_envelope_fields_and_empty_trigger_before_sql(self):
+        output = ArtifactOutput("envelope.json", "body")
+        invalid_calls = (
+            lambda: self.ledger.record(True, "task", "agent", output),
+            lambda: self.ledger.record("s1", False, "agent", output),
+            lambda: self.ledger.record("s1", "task", 7, output),
+            lambda: self.ledger.record("s1", "task", "agent", output, correlation_id=True),
+            lambda: self.ledger.record("s1", "task", "agent", output, causation_id=[]),
+            lambda: self.ledger.record("s1", "task", "agent", output, trigger=""),
+            lambda: self.ledger.record("s1", "task", "agent", output, trigger=False),
+        )
+        statements = []
+        self.store._connection.set_trace_callback(statements.append)
+        try:
+            for invalid_call in invalid_calls:
+                with self.subTest(call=invalid_call):
+                    statements.clear()
+                    with self.assertRaises(ArtifactRecordError):
+                        invalid_call()
+                    self.assertEqual(statements, [])
+                    self.assertEqual(self.ledger.history("s1", "envelope.json"), ())
+        finally:
+            self.store._connection.set_trace_callback(None)
+
+        recorded = self.ledger.record(
+            "s1",
+            "task",
+            "agent",
+            output,
+            correlation_id="correlation",
+            causation_id="causation",
+            trigger="publish",
+        )
+        stored = self.store.read_all(limit=1)[0]
+        self.assertEqual(stored.event.correlation_id, "correlation")
+        self.assertEqual(stored.event.causation_id, "causation")
+        self.assertEqual(recorded.trigger, "publish")
+
+    def test_valid_record_state_exactly_matches_a_fresh_replay(self):
+        recorded = self.ledger.record(
+            "s1",
+            "task-roundtrip",
+            "agent",
+            ArtifactOutput(
+                "roundtrip.json",
+                '{"status":"ready"}',
+                media_type="application/json",
+                metadata={
+                    "nested": {"values": [None, True, 7, -1.5, "协作"]},
+                    "objects": [{"key": "value"}],
+                },
+            ),
+            trigger="publish",
+        )
+
+        replayed = ArtifactLedger(self.store).current("s1", "roundtrip.json")
+
+        self.assertEqual(replayed, recorded)
 
 
 class ArtifactLedgerReplayTests(unittest.TestCase):

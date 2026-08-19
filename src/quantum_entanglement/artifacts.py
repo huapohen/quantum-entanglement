@@ -53,6 +53,10 @@ class ArtifactReplayError(RuntimeError):
     """Raised when persisted artifact replay cannot be completed safely."""
 
 
+class ArtifactRecordError(ValueError):
+    """Raised before an artifact write when caller input violates its contract."""
+
+
 @dataclass(frozen=True)
 class ArtifactVersion:
     ref: ArtifactRef
@@ -392,52 +396,103 @@ class ArtifactLedger:
         causation_id: Optional[str] = None,
         trigger: Optional[str] = None,
     ) -> ArtifactVersion:
-        key = (session_id, output.name)
         with self._lock:
-            history = self._versions.get(key, ())
-            version = len(history) + 1
-            actual_trigger = trigger or ("create" if version == 1 else "revise")
-            ref = ArtifactRef(
-                artifact_id=new_id("art"),
-                name=output.name,
-                version=version,
-                media_type=output.media_type,
-                uri="artifact://%s/%s/v%d"
-                % (quote(session_id, safe=""), quote(output.name), version),
-                digest=self._digest(output.content),
-                created_by=agent_id,
-                task_id=task_id,
-                parent_version=(version - 1 if version > 1 else None),
-            )
-            created_at = utc_now()
-            item = ArtifactVersion(
-                ref=ref,
-                content=output.content,
-                metadata=dict(output.metadata),
-                created_at=created_at,
-                trigger=actual_trigger,
-            )
-            event = DomainEvent(
-                stream_id="session:%s" % session_id,
-                event_type=self.EVENT_TYPE,
-                actor_id=agent_id,
-                correlation_id=correlation_id,
-                causation_id=causation_id,
-                idempotency_key="artifact:%s:%s:%s" % (task_id, output.name, ref.digest),
-                payload={
-                    "sessionId": session_id,
-                    "taskId": task_id,
+            try:
+                if type(output) is not ArtifactOutput:
+                    raise TypeError("output must be an ArtifactOutput")
+                captured_session_id = self._require_text(session_id, "sessionId")
+                captured_task_id = self._require_text(task_id, "taskId")
+                captured_agent_id = self._require_text(agent_id, "agentId")
+                captured_correlation_id = (
+                    None
+                    if correlation_id is None
+                    else self._require_text(correlation_id, "correlationId")
+                )
+                captured_causation_id = (
+                    None
+                    if causation_id is None
+                    else self._require_text(causation_id, "causationId")
+                )
+                captured_name = self._require_text(output.name, "output.name")
+                captured_content = self._require_content(output.content)
+                captured_media_type = self._require_text(
+                    output.media_type,
+                    "output.mediaType",
+                    max_length=_MAX_MEDIA_TYPE_LENGTH,
+                )
+                captured_metadata = self._decode_metadata(output.metadata)
+                captured_trigger = (
+                    None if trigger is None else self._require_text(trigger, "trigger")
+                )
+
+                key = (captured_session_id, captured_name)
+                history = self._versions.get(key, ())
+                version = len(history) + 1
+                actual_trigger = (
+                    captured_trigger
+                    if captured_trigger is not None
+                    else ("create" if version == 1 else "revise")
+                )
+                ref = ArtifactRef(
+                    artifact_id=new_id("art"),
+                    name=captured_name,
+                    version=version,
+                    media_type=captured_media_type,
+                    uri="artifact://%s/%s/v%d"
+                    % (
+                        quote(captured_session_id, safe=""),
+                        quote(captured_name),
+                        version,
+                    ),
+                    digest=self._digest(captured_content),
+                    created_by=captured_agent_id,
+                    task_id=captured_task_id,
+                    parent_version=(version - 1 if version > 1 else None),
+                )
+                created_at = self._require_canonical_utc(utc_now(), "createdAt")
+                payload = {
+                    "sessionId": captured_session_id,
+                    "taskId": captured_task_id,
                     "ref": ref.to_dict(),
-                    "content": output.content,
-                    "metadata": dict(output.metadata),
+                    "content": captured_content,
+                    "metadata": captured_metadata,
                     "createdAt": created_at,
                     "trigger": actual_trigger,
-                },
+                }
+                decoded_key, item = self._decode_persisted_version(payload)
+                if decoded_key != key:
+                    raise RuntimeError("artifact record key changed during validation")
+            except (
+                ArtifactReplayError,
+                AttributeError,
+                KeyError,
+                OverflowError,
+                RecursionError,
+                RuntimeError,
+                TypeError,
+                UnicodeError,
+                ValueError,
+            ) as exc:
+                raise ArtifactRecordError("artifact record input violates its contract") from exc
+
+            event = DomainEvent(
+                stream_id="session:%s" % captured_session_id,
+                event_type=self.EVENT_TYPE,
+                actor_id=captured_agent_id,
+                correlation_id=captured_correlation_id,
+                causation_id=captured_causation_id,
+                idempotency_key="artifact:%s:%s:%s" % (captured_task_id, captured_name, ref.digest),
+                payload=payload,
             )
             stored = self.event_store.append(event)
             # Idempotent retries return the existing event; rebuild the exact existing result.
             if stored.event.event_id != event.event_id:
-                existing_ref = ArtifactRef.from_dict(stored.event.payload["ref"])
+                existing_key, existing_item = self._decode_persisted_version(stored.event.payload)
+                if existing_key != key:
+                    raise ArtifactReplayError(
+                        "idempotent artifact event does not match the requested key"
+                    )
+                existing_ref = existing_item.ref
                 for existing in history:
                     if existing.ref.artifact_id == existing_ref.artifact_id:
                         return existing
@@ -507,4 +562,9 @@ class ArtifactLedger:
         )
 
 
-__all__ = ["ArtifactLedger", "ArtifactReplayError", "ArtifactVersion"]
+__all__ = [
+    "ArtifactLedger",
+    "ArtifactRecordError",
+    "ArtifactReplayError",
+    "ArtifactVersion",
+]
