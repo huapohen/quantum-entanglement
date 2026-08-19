@@ -895,7 +895,7 @@ class SQLiteProjectionOffsetStore:
             path,
             check_same_thread=False,
             isolation_level=None,
-            timeout=busy_timeout_ms / 1000,
+            timeout=self._sqlite_connect_timeout_seconds(busy_timeout_ms),
         )
         self._connection.row_factory = sqlite3.Row
         try:
@@ -956,6 +956,12 @@ class SQLiteProjectionOffsetStore:
         else:
             raise ValueError(_PROJECTION_BUSY_TIMEOUT_SECONDS_ERROR)
         return max(1, math.ceil(normalized_seconds * 1000))
+
+    @staticmethod
+    def _sqlite_connect_timeout_seconds(busy_timeout_ms: int) -> float:
+        """Preserve the normalized milliseconds through SQLite's truncation."""
+
+        return math.nextafter(busy_timeout_ms / 1000, math.inf)
 
     @staticmethod
     def _enable_wal(

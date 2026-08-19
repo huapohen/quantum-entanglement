@@ -690,10 +690,15 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
         path = str(Path(self.tempdir.name) / "normalized-timeout.sqlite3")
         real_connect = sqlite3.connect
         observed_timeouts: list[float] = []
+        initial_busy_timeouts: list[int] = []
 
         def tracked_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
             observed_timeouts.append(cast(float, kwargs["timeout"]))
-            return cast(sqlite3.Connection, real_connect(*args, **kwargs))
+            connection = cast(sqlite3.Connection, real_connect(*args, **kwargs))
+            initial_busy_timeouts.append(
+                cast(int, connection.execute("PRAGMA busy_timeout").fetchone()[0])
+            )
+            return connection
 
         with patch(
             "quantum_entanglement.projections.sqlite3.connect",
@@ -703,17 +708,18 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
                 store = SQLiteProjectionOffsetStore(
                     path,
                     clock=self.clock,
-                    busy_timeout_seconds=0.000001,
+                    busy_timeout_seconds=1.001,
                 )
         try:
             configured_ms = store._connection.execute("PRAGMA busy_timeout").fetchone()[0]
-            self.assertEqual(configured_ms, 1)
+            self.assertEqual(configured_ms, 1001)
         finally:
             store.close()
 
-        self.assertEqual(observed_timeouts, [0.001])
+        self.assertEqual(observed_timeouts, [math.nextafter(1.001, math.inf)])
+        self.assertEqual(initial_busy_timeouts, [1001])
         enable_wal.assert_called_once()
-        self.assertEqual(enable_wal.call_args.args[1], 1)
+        self.assertEqual(enable_wal.call_args.args[1], 1001)
 
     def test_exact_schema_revalidation_uses_the_read_only_fast_path(self) -> None:
         statements: list[str] = []
