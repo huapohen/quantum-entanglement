@@ -921,7 +921,12 @@ class OutboxPublisher:
             name=thread_name,
             daemon=True,
         )
-        thread.start()
+        try:
+            thread.start()
+        except Exception as caught:
+            # Resource exhaustion must become a normal failed attempt. Leaving
+            # this future pending would permanently consume callback capacity.
+            self._settle_connector_future(future, None, caught)
         return future
 
     @staticmethod

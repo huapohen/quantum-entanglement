@@ -6,6 +6,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from quantum_entanglement.delivery import OutboxMessage, OutboxStatus
 from quantum_entanglement.events import DomainEvent
@@ -640,6 +641,31 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(batch.dead_lettered, 1)
         self.assertEqual(stored.status, OutboxStatus.DEAD_LETTER)
         self.assertEqual(stored.last_error, "connector_input_rejected")
+
+    async def test_connector_thread_start_failure_releases_admission_capacity(self):
+        self.enqueue("message-thread-start-failed")
+
+        async def publish(_request):
+            return PublishReceipt.accepted("receipt:must-not-run")
+
+        original_start = threading.Thread.start
+
+        def fail_connector_start(thread):
+            if thread.name.startswith("outbox-connector:"):
+                raise RuntimeError("connector thread capacity exhausted")
+            return original_start(thread)
+
+        publisher = self.publisher(publish, max_attempts=1, max_callback_tasks=1)
+        with mock.patch.object(threading.Thread, "start", fail_connector_start):
+            batch = await publisher.run_once()
+        await asyncio.sleep(0)
+        stored = self.store.get_outbox("message-thread-start-failed")
+
+        self.assertEqual(batch.published, 0)
+        self.assertEqual(batch.dead_lettered, 1)
+        self.assertEqual(stored.status, OutboxStatus.DEAD_LETTER)
+        self.assertEqual(publisher.stats.active_callbacks, 0)
+        self.assertEqual(publisher.abandoned, ())
 
     async def test_default_error_classification_never_persists_exception_canary(self):
         self.enqueue("message-canary")
