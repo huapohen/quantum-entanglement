@@ -7,7 +7,7 @@ from collections.abc import Mapping, MutableMapping
 from decimal import Decimal
 from operator import attrgetter, setitem
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, Callable, Optional, cast
 from unittest.mock import patch
 
 from quantum_entanglement.events import DomainEvent, StoredEvent
@@ -18,6 +18,7 @@ from quantum_entanglement.projections import (
     MAX_PROJECTION_BUSY_TIMEOUT_SECONDS,
     MAX_PROJECTION_IDENTIFIER_LENGTH,
     MAX_PROJECTION_LEASE_SECONDS,
+    MIN_PROJECTION_SQLITE_VERSION,
     SCHEMA_VERSION_FIELD,
     DurableProjector,
     EventSchemaDecoderError,
@@ -547,6 +548,64 @@ class StaticEventSource:
         return cast(tuple[StoredEvent, ...], self.result)
 
 
+class CorruptingSchemaCursor:
+    def __init__(
+        self,
+        cursor: sqlite3.Cursor,
+        row_transform: Callable[[list[tuple[Any, ...]]], object],
+        description_transform: Callable[[object], object],
+        fetch_sizes: list[int],
+    ) -> None:
+        self._cursor = cursor
+        self._row_transform = row_transform
+        self._fetch_sizes = fetch_sizes
+        self.description = description_transform(cursor.description)
+
+    def fetchmany(self, size: int) -> Any:
+        self._fetch_sizes.append(size)
+        rows = [tuple(row) for row in self._cursor.fetchmany(size)]
+        return self._row_transform(rows)
+
+    def close(self) -> None:
+        self._cursor.close()
+
+
+class CorruptingSchemaConnection:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        target: str,
+        row_transform: Callable[[list[tuple[Any, ...]]], object],
+        description_transform: Callable[[object], object],
+    ) -> None:
+        self._connection = connection
+        self._target = target.casefold()
+        self._row_transform = row_transform
+        self._description_transform = description_transform
+        self.statements: list[str] = []
+        self.fetch_sizes: list[int] = []
+
+    @property
+    def in_transaction(self) -> bool:
+        return self._connection.in_transaction
+
+    def execute(self, sql: str, parameters: Any = ()) -> sqlite3.Cursor:
+        self.statements.append(sql)
+        cursor = self._connection.execute(sql, parameters)
+        normalized = " ".join(sql.split()).casefold()
+        if self._target not in normalized:
+            return cursor
+        return cast(
+            sqlite3.Cursor,
+            CorruptingSchemaCursor(
+                cursor,
+                self._row_transform,
+                self._description_transform,
+                self.fetch_sizes,
+            ),
+        )
+
+
 class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -637,6 +696,28 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
                 enable_wal.assert_not_called()
                 self.assertFalse(parent.exists())
                 self.assertFalse(path.exists())
+
+    def test_unsupported_sqlite_fails_before_filesystem_connection_or_sql(self) -> None:
+        parent = Path(self.tempdir.name) / "unsupported-sqlite"
+        path = parent / "projection.sqlite3"
+        unsupported = (
+            MIN_PROJECTION_SQLITE_VERSION[0],
+            MIN_PROJECTION_SQLITE_VERSION[1],
+            MIN_PROJECTION_SQLITE_VERSION[2] - 1,
+        )
+        with patch(
+            "quantum_entanglement.projections.sqlite3.sqlite_version_info",
+            unsupported,
+        ):
+            with patch("quantum_entanglement.projections.os.makedirs") as makedirs:
+                with patch("quantum_entanglement.projections.sqlite3.connect") as connect:
+                    with self.assertRaisesRegex(ProjectionSchemaError, "SQLite 3.8.9 or newer"):
+                        SQLiteProjectionOffsetStore(str(path), clock=self.clock)
+
+        makedirs.assert_not_called()
+        connect.assert_not_called()
+        self.assertFalse(parent.exists())
+        self.assertFalse(path.exists())
 
     def test_busy_timeout_boundaries_round_up_to_milliseconds_and_reopen(self) -> None:
         smallest_positive_float = math.nextafter(0.0, math.inf)
@@ -738,6 +819,399 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
             )
         )
 
+    def test_schema_inspection_rejects_malformed_exact_rows_before_writes(self) -> None:
+        def identity_rows(rows: list[tuple[Any, ...]]) -> object:
+            return rows
+
+        def identity_description(description: object) -> object:
+            return description
+
+        def replace_cell(
+            row_index: int,
+            column_index: int,
+            value: object,
+        ) -> Callable[[list[tuple[Any, ...]]], object]:
+            def transform(rows: list[tuple[Any, ...]]) -> object:
+                changed = list(rows)
+                row = list(changed[row_index])
+                row[column_index] = value
+                changed[row_index] = tuple(row)
+                return changed
+
+            return transform
+
+        def remove_column(rows: list[tuple[Any, ...]]) -> object:
+            return [rows[0][:-1], *rows[1:]]
+
+        def add_column(rows: list[tuple[Any, ...]]) -> object:
+            return [(*rows[0], "unexpected"), *rows[1:]]
+
+        def duplicate_first(rows: list[tuple[Any, ...]]) -> object:
+            return [rows[0], *rows]
+
+        def reverse_rows(rows: list[tuple[Any, ...]]) -> object:
+            return list(reversed(rows))
+
+        def list_row(rows: list[tuple[Any, ...]]) -> object:
+            return [list(rows[0]), *rows[1:]]
+
+        def scalar_row(rows: list[tuple[Any, ...]]) -> object:
+            return ["malformed", *rows[1:]]
+
+        def tuple_batch(rows: list[tuple[Any, ...]]) -> object:
+            return tuple(rows)
+
+        def description_tuple(description: object) -> tuple[Any, ...]:
+            return cast(tuple[Any, ...], description)
+
+        def remove_description_column(description: object) -> object:
+            return description_tuple(description)[:-1]
+
+        def add_description_column(description: object) -> object:
+            return (
+                *description_tuple(description),
+                ("unexpected", None, None, None, None, None, None),
+            )
+
+        def rename_description_column(description: object) -> object:
+            columns = list(description_tuple(description))
+            column = list(cast(tuple[Any, ...], columns[0]))
+            column[0] = "unexpected"
+            columns[0] = tuple(column)
+            return tuple(columns)
+
+        def bytes_description_name(description: object) -> object:
+            columns = list(description_tuple(description))
+            column = list(cast(tuple[Any, ...], columns[0]))
+            column[0] = b"cid"
+            columns[0] = tuple(column)
+            return tuple(columns)
+
+        def short_description_entry(description: object) -> object:
+            columns = list(description_tuple(description))
+            columns[0] = ("cid",)
+            return tuple(columns)
+
+        def list_description(description: object) -> object:
+            return list(description_tuple(description))
+
+        catalog = "from main.sqlite_master"
+        table_info = 'pragma main.table_info("projection_offsets")'
+        index_list = 'pragma main.index_list("projection_receipts")'
+        index_info = 'pragma main.index_info("idx_projection_receipts_position")'
+        index_xinfo = 'pragma main.index_xinfo("idx_projection_receipts_position")'
+        cases: tuple[
+            tuple[
+                str,
+                str,
+                Callable[[list[tuple[Any, ...]]], object],
+                Callable[[object], object],
+                Optional[int],
+            ],
+            ...,
+        ] = (
+            ("catalog-missing-column", catalog, remove_column, identity_description, 17),
+            ("catalog-extra-column", catalog, add_column, identity_description, 17),
+            ("catalog-bytes-name", catalog, replace_cell(0, 1, b"index"), identity_description, 17),
+            ("catalog-none-name", catalog, replace_cell(0, 1, None), identity_description, 17),
+            (
+                "catalog-noncanonical-name",
+                catalog,
+                replace_cell(0, 1, " idx_projection_receipts_position"),
+                identity_description,
+                17,
+            ),
+            ("catalog-bool-sql", catalog, replace_cell(0, 3, True), identity_description, 17),
+            ("catalog-duplicate", catalog, duplicate_first, identity_description, 17),
+            ("catalog-out-of-order", catalog, reverse_rows, identity_description, 17),
+            ("table-missing-column", table_info, remove_column, identity_description, 7),
+            ("table-extra-column", table_info, add_column, identity_description, 7),
+            ("table-bool-cid", table_info, replace_cell(0, 0, False), identity_description, 7),
+            ("table-float-cid", table_info, replace_cell(0, 0, 0.0), identity_description, 7),
+            ("table-string-cid", table_info, replace_cell(0, 0, "0"), identity_description, 7),
+            ("table-negative-cid", table_info, replace_cell(0, 0, -1), identity_description, 7),
+            ("table-huge-cid", table_info, replace_cell(0, 0, 2**100), identity_description, 7),
+            (
+                "table-bytes-name",
+                table_info,
+                replace_cell(0, 1, b"projection_name"),
+                identity_description,
+                7,
+            ),
+            (
+                "table-noncanonical-name",
+                table_info,
+                replace_cell(0, 1, " projection_name"),
+                identity_description,
+                7,
+            ),
+            ("table-none-type", table_info, replace_cell(0, 2, None), identity_description, 7),
+            ("table-bool-not-null", table_info, replace_cell(0, 3, True), identity_description, 7),
+            ("table-duplicate", table_info, duplicate_first, identity_description, 7),
+            ("table-out-of-order", table_info, reverse_rows, identity_description, 7),
+            ("index-list-missing-column", index_list, remove_column, identity_description, 4),
+            ("index-list-extra-column", index_list, add_column, identity_description, 4),
+            ("index-list-bool-seq", index_list, replace_cell(0, 0, False), identity_description, 4),
+            (
+                "index-list-negative-seq",
+                index_list,
+                replace_cell(0, 0, -1),
+                identity_description,
+                4,
+            ),
+            (
+                "index-list-huge-seq",
+                index_list,
+                replace_cell(0, 0, 2**100),
+                identity_description,
+                4,
+            ),
+            (
+                "index-list-bytes-name",
+                index_list,
+                replace_cell(0, 1, b"index"),
+                identity_description,
+                4,
+            ),
+            (
+                "index-list-noncanonical-name",
+                index_list,
+                replace_cell(0, 1, " idx_projection_receipts_position"),
+                identity_description,
+                4,
+            ),
+            (
+                "index-list-none-origin",
+                index_list,
+                replace_cell(0, 3, None),
+                identity_description,
+                4,
+            ),
+            (
+                "index-list-bool-partial",
+                index_list,
+                replace_cell(0, 4, False),
+                identity_description,
+                4,
+            ),
+            ("index-list-duplicate", index_list, duplicate_first, identity_description, 4),
+            ("index-info-missing-column", index_info, remove_column, identity_description, 3),
+            ("index-info-extra-column", index_info, add_column, identity_description, 3),
+            ("index-info-bool-seq", index_info, replace_cell(0, 0, False), identity_description, 3),
+            (
+                "index-info-negative-seq",
+                index_info,
+                replace_cell(0, 0, -1),
+                identity_description,
+                3,
+            ),
+            (
+                "index-info-huge-cid",
+                index_info,
+                replace_cell(0, 1, 2**100),
+                identity_description,
+                3,
+            ),
+            ("index-info-none-name", index_info, replace_cell(0, 2, None), identity_description, 3),
+            (
+                "index-info-noncanonical-name",
+                index_info,
+                replace_cell(0, 2, " projection_name"),
+                identity_description,
+                3,
+            ),
+            ("index-info-duplicate", index_info, duplicate_first, identity_description, 3),
+            ("index-info-out-of-order", index_info, reverse_rows, identity_description, 3),
+            ("index-xinfo-missing-column", index_xinfo, remove_column, identity_description, 4),
+            ("index-xinfo-extra-column", index_xinfo, add_column, identity_description, 4),
+            (
+                "index-xinfo-bool-seq",
+                index_xinfo,
+                replace_cell(0, 0, False),
+                identity_description,
+                4,
+            ),
+            (
+                "index-xinfo-negative-seq",
+                index_xinfo,
+                replace_cell(0, 0, -1),
+                identity_description,
+                4,
+            ),
+            (
+                "index-xinfo-invalid-cid",
+                index_xinfo,
+                replace_cell(0, 1, -2),
+                identity_description,
+                4,
+            ),
+            (
+                "index-xinfo-none-name",
+                index_xinfo,
+                replace_cell(0, 2, None),
+                identity_description,
+                4,
+            ),
+            (
+                "index-xinfo-noncanonical-name",
+                index_xinfo,
+                replace_cell(0, 2, " projection_name"),
+                identity_description,
+                4,
+            ),
+            (
+                "index-xinfo-bool-desc",
+                index_xinfo,
+                replace_cell(0, 3, False),
+                identity_description,
+                4,
+            ),
+            (
+                "index-xinfo-bytes-collation",
+                index_xinfo,
+                replace_cell(0, 4, b"BINARY"),
+                identity_description,
+                4,
+            ),
+            (
+                "index-xinfo-bool-key",
+                index_xinfo,
+                replace_cell(0, 5, True),
+                identity_description,
+                4,
+            ),
+            ("index-xinfo-duplicate", index_xinfo, duplicate_first, identity_description, 4),
+            ("index-xinfo-out-of-order", index_xinfo, reverse_rows, identity_description, 4),
+            ("row-list", table_info, list_row, identity_description, 7),
+            ("row-scalar", table_info, scalar_row, identity_description, 7),
+            ("batch-tuple", table_info, tuple_batch, identity_description, 7),
+            (
+                "description-missing-column",
+                table_info,
+                identity_rows,
+                remove_description_column,
+                None,
+            ),
+            (
+                "description-extra-column",
+                table_info,
+                identity_rows,
+                add_description_column,
+                None,
+            ),
+            (
+                "description-renamed-column",
+                table_info,
+                identity_rows,
+                rename_description_column,
+                None,
+            ),
+            (
+                "description-bytes-name",
+                table_info,
+                identity_rows,
+                bytes_description_name,
+                None,
+            ),
+            (
+                "description-short-entry",
+                table_info,
+                identity_rows,
+                short_description_entry,
+                None,
+            ),
+            (
+                "description-list",
+                table_info,
+                identity_rows,
+                list_description,
+                None,
+            ),
+        )
+
+        for label, target, row_transform, description_transform, expected_fetch_size in cases:
+            with self.subTest(label=label):
+                connection = CorruptingSchemaConnection(
+                    self.store._connection,
+                    target,
+                    row_transform,
+                    description_transform,
+                )
+                candidate = object.__new__(SQLiteProjectionOffsetStore)
+                candidate._lock = threading.RLock()
+                candidate._connection = cast(sqlite3.Connection, connection)
+
+                with self.assertRaises(ProjectionSchemaError):
+                    candidate._initialize()
+
+                if expected_fetch_size is None:
+                    self.assertEqual(connection.fetch_sizes, [])
+                else:
+                    self.assertEqual(connection.fetch_sizes, [expected_fetch_size])
+                normalized = tuple(
+                    statement.lstrip().upper() for statement in connection.statements
+                )
+                self.assertFalse(
+                    any(
+                        statement.startswith(
+                            (
+                                "BEGIN",
+                                "CREATE",
+                                "INSERT",
+                                "UPDATE",
+                                "DELETE",
+                                "REPLACE",
+                                "DROP",
+                                "ALTER",
+                                "COMMIT",
+                                "ROLLBACK",
+                            )
+                        )
+                        for statement in normalized
+                    )
+                )
+                self.assertFalse(connection.in_transaction)
+                self.assertEqual(self.store.load("schema-write-probe").last_global_position, 0)
+
+    def test_index_list_internal_sequence_and_row_order_do_not_define_schema(self) -> None:
+        def identity_description(description: object) -> object:
+            return description
+
+        def reverse_rows(rows: list[tuple[Any, ...]]) -> object:
+            return list(reversed(rows))
+
+        def reassign_internal_sequence(rows: list[tuple[Any, ...]]) -> object:
+            return [(len(rows) - index - 1, *row[1:]) for index, row in enumerate(rows)]
+
+        for label, transform in (
+            ("presentation-order", reverse_rows),
+            ("internal-sequence-assignment", reassign_internal_sequence),
+        ):
+            with self.subTest(label=label):
+                connection = CorruptingSchemaConnection(
+                    self.store._connection,
+                    'pragma main.index_list("projection_receipts")',
+                    transform,
+                    identity_description,
+                )
+                candidate = object.__new__(SQLiteProjectionOffsetStore)
+                candidate._lock = threading.RLock()
+                candidate._connection = cast(sqlite3.Connection, connection)
+
+                candidate._initialize()
+
+                self.assertEqual(connection.fetch_sizes, [4])
+                self.assertFalse(connection.in_transaction)
+                normalized = tuple(
+                    statement.lstrip().upper() for statement in connection.statements
+                )
+                self.assertFalse(
+                    any(
+                        statement.startswith(("BEGIN", "CREATE", "COMMIT", "ROLLBACK"))
+                        for statement in normalized
+                    )
+                )
+
     def test_empty_database_initialization_serializes_concurrent_installers(self) -> None:
         path = str(Path(self.tempdir.name) / "concurrent-empty.sqlite3")
         barrier = threading.Barrier(2)
@@ -826,6 +1300,78 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
         finally:
             connection.close()
         self.assertEqual(after, before)
+
+    def test_case_variant_catalog_collisions_fail_before_transaction_or_write(self) -> None:
+        cases = (
+            ("table", "CREATE TABLE Projection_Offsets (value INTEGER)"),
+            ("view", "CREATE VIEW Projection_Receipts AS SELECT 1 AS value"),
+        )
+        real_connect = sqlite3.connect
+        for label, statement in cases:
+            with self.subTest(label=label):
+                path = str(Path(self.tempdir.name) / f"case-collision-{label}.sqlite3")
+                connection = real_connect(path)
+                try:
+                    connection.execute(statement)
+                    connection.commit()
+                    before = tuple(
+                        connection.execute(
+                            "SELECT type, name, tbl_name, sql "
+                            "FROM sqlite_master ORDER BY type, name, tbl_name"
+                        ).fetchall()
+                    )
+                finally:
+                    connection.close()
+
+                traces: list[str] = []
+
+                def tracked_connect(
+                    *args: Any,
+                    _traces: list[str] = traces,
+                    **kwargs: Any,
+                ) -> sqlite3.Connection:
+                    candidate = cast(sqlite3.Connection, real_connect(*args, **kwargs))
+                    candidate.set_trace_callback(_traces.append)
+                    return candidate
+
+                with patch(
+                    "quantum_entanglement.projections.sqlite3.connect",
+                    side_effect=tracked_connect,
+                ):
+                    with self.assertRaises(ProjectionSchemaError):
+                        SQLiteProjectionOffsetStore(path, clock=self.clock)
+
+                normalized = tuple(sql.lstrip().upper() for sql in traces)
+                self.assertFalse(
+                    any(
+                        sql.startswith(
+                            (
+                                "BEGIN",
+                                "CREATE",
+                                "INSERT",
+                                "UPDATE",
+                                "DELETE",
+                                "REPLACE",
+                                "DROP",
+                                "ALTER",
+                                "COMMIT",
+                                "ROLLBACK",
+                            )
+                        )
+                        for sql in normalized
+                    )
+                )
+                connection = real_connect(path)
+                try:
+                    after = tuple(
+                        connection.execute(
+                            "SELECT type, name, tbl_name, sql "
+                            "FROM sqlite_master ORDER BY type, name, tbl_name"
+                        ).fetchall()
+                    )
+                finally:
+                    connection.close()
+                self.assertEqual(after, before)
 
     def test_column_and_table_constraint_drift_fail_closed(self) -> None:
         cases: tuple[tuple[str, str, Callable[[str], str]], ...] = (

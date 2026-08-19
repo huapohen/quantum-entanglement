@@ -45,6 +45,9 @@ MAX_PROJECTION_LEASE_SECONDS = 86_400
 MAX_PROJECTION_BUSY_TIMEOUT_SECONDS = 300
 """Maximum SQLite lock wait for a projection store, in seconds."""
 
+MIN_PROJECTION_SQLITE_VERSION = (3, 8, 9)
+"""Oldest SQLite release whose ``index_xinfo`` contract this store validates."""
+
 _PROJECTION_LEASE_SECONDS_ERROR = (
     "lease_seconds must be an exact finite int or float greater than zero "
     f"and at most {MAX_PROJECTION_LEASE_SECONDS}"
@@ -310,14 +313,10 @@ _EXPECTED_PROJECTION_TABLE_INFO: dict[str, tuple[tuple[Any, ...], ...]] = {
 
 _EXPECTED_PROJECTION_INDEX_LISTS: dict[str, tuple[tuple[Any, ...], ...]] = {
     _PROJECTION_OFFSETS_TABLE_NAME: ((_PROJECTION_OFFSETS_AUTO_INDEX_NAME, 1, "pk", 0),),
-    _PROJECTION_RECEIPTS_TABLE_NAME: tuple(
-        sorted(
-            (
-                (_PROJECTION_RECEIPTS_POSITION_INDEX_NAME, 0, "c", 0),
-                (_PROJECTION_RECEIPTS_PRIMARY_INDEX_NAME, 1, "pk", 0),
-                (_PROJECTION_RECEIPTS_UNIQUE_INDEX_NAME, 1, "u", 0),
-            )
-        )
+    _PROJECTION_RECEIPTS_TABLE_NAME: (
+        (_PROJECTION_RECEIPTS_POSITION_INDEX_NAME, 0, "c", 0),
+        (_PROJECTION_RECEIPTS_PRIMARY_INDEX_NAME, 1, "pk", 0),
+        (_PROJECTION_RECEIPTS_UNIQUE_INDEX_NAME, 1, "u", 0),
     ),
 }
 
@@ -334,6 +333,29 @@ _EXPECTED_PROJECTION_INDEX_INFO: dict[str, tuple[tuple[Any, ...], ...]] = {
     _PROJECTION_RECEIPTS_UNIQUE_INDEX_NAME: (
         (0, 0, "projection_name"),
         (1, 2, "global_position"),
+    ),
+}
+
+# SQLite exposes the rowid as the one legitimate negative ``cid`` auxiliary row.
+_EXPECTED_PROJECTION_INDEX_XINFO: dict[str, tuple[tuple[Any, ...], ...]] = {
+    _PROJECTION_OFFSETS_AUTO_INDEX_NAME: (
+        (0, 0, "projection_name", 0, "BINARY", 1),
+        (1, -1, None, 0, "BINARY", 0),
+    ),
+    _PROJECTION_RECEIPTS_POSITION_INDEX_NAME: (
+        (0, 0, "projection_name", 0, "BINARY", 1),
+        (1, 2, "global_position", 0, "BINARY", 1),
+        (2, -1, None, 0, "BINARY", 0),
+    ),
+    _PROJECTION_RECEIPTS_PRIMARY_INDEX_NAME: (
+        (0, 0, "projection_name", 0, "BINARY", 1),
+        (1, 1, "event_id", 0, "BINARY", 1),
+        (2, -1, None, 0, "BINARY", 0),
+    ),
+    _PROJECTION_RECEIPTS_UNIQUE_INDEX_NAME: (
+        (0, 0, "projection_name", 0, "BINARY", 1),
+        (1, 2, "global_position", 0, "BINARY", 1),
+        (2, -1, None, 0, "BINARY", 0),
     ),
 }
 
@@ -886,6 +908,7 @@ class SQLiteProjectionOffsetStore:
         if not callable(clock):
             raise TypeError("clock must be callable")
         busy_timeout_ms = self._validate_busy_timeout_seconds(busy_timeout_seconds)
+        self._require_supported_sqlite()
         if path != ":memory:":
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.path = path
@@ -964,6 +987,12 @@ class SQLiteProjectionOffsetStore:
         return math.nextafter(busy_timeout_ms / 1000, math.inf)
 
     @staticmethod
+    def _require_supported_sqlite() -> None:
+        if sqlite3.sqlite_version_info < MIN_PROJECTION_SQLITE_VERSION:
+            minimum = ".".join(str(part) for part in MIN_PROJECTION_SQLITE_VERSION)
+            raise ProjectionSchemaError(f"projection storage requires SQLite {minimum} or newer")
+
+    @staticmethod
     def _enable_wal(
         connection: sqlite3.Connection,
         busy_timeout_ms: int,
@@ -1032,12 +1061,33 @@ class SQLiteProjectionOffsetStore:
         sql: str,
         parameters: tuple[Any, ...],
         *,
+        columns: tuple[str, ...],
         maximum: int,
         label: str,
     ) -> tuple[tuple[Any, ...], ...]:
+        """Read one bounded, explicitly versioned SQLite result shape.
+
+        New columns fail closed until this contract is deliberately reviewed.
+        """
+
         try:
             cursor = connection.execute(sql, parameters)
             try:
+                description = cursor.description
+                if type(description) is not tuple or len(description) != len(columns):
+                    raise ProjectionSchemaError(
+                        f"projection schema {label} returned malformed columns"
+                    )
+                for index, column in enumerate(description):
+                    if (
+                        type(column) is not tuple
+                        or len(column) != 7
+                        or type(column[0]) is not str
+                        or column[0] != columns[index]
+                    ):
+                        raise ProjectionSchemaError(
+                            f"projection schema {label} returned malformed columns"
+                        )
                 raw_rows = cursor.fetchmany(maximum + 1)
             finally:
                 cursor.close()
@@ -1045,14 +1095,19 @@ class SQLiteProjectionOffsetStore:
             raise ProjectionSchemaError(
                 f"projection schema {label} could not be inspected"
             ) from exc
+        if type(raw_rows) is not list:
+            raise ProjectionSchemaError(f"projection schema {label} returned malformed rows")
         if len(raw_rows) > maximum:
             raise ProjectionSchemaError(f"projection schema {label} exceeds the inspection limit")
-        try:
-            return tuple(tuple(row) for row in raw_rows)
-        except TypeError as exc:
-            raise ProjectionSchemaError(
-                f"projection schema {label} returned malformed rows"
-            ) from exc
+        rows: list[tuple[Any, ...]] = []
+        for raw_row in raw_rows:
+            if type(raw_row) is not tuple and type(raw_row) is not sqlite3.Row:
+                raise ProjectionSchemaError(f"projection schema {label} returned malformed rows")
+            row = tuple(raw_row)
+            if len(row) != len(columns):
+                raise ProjectionSchemaError(f"projection schema {label} returned malformed rows")
+            rows.append(row)
+        return tuple(rows)
 
     @staticmethod
     def _catalog_text(value: object, *, maximum: int) -> str:
@@ -1086,18 +1141,66 @@ class SQLiteProjectionOffsetStore:
         return _ProjectionSchemaObject(object_type, name, table_name, schema_sql)
 
     @staticmethod
-    def _stable_pragma_rows(
+    def _require_exact_schema_rows(
         raw_rows: tuple[tuple[Any, ...], ...],
         *,
-        indexes: tuple[int, ...],
+        expected_rows: tuple[tuple[Any, ...], ...],
         label: str,
-    ) -> tuple[tuple[Any, ...], ...]:
-        try:
-            return tuple(tuple(row[index] for index in indexes) for row in raw_rows)
-        except (IndexError, TypeError) as exc:
-            raise ProjectionSchemaError(
-                f"projection schema {label} returned malformed rows"
-            ) from exc
+    ) -> None:
+        if len(raw_rows) != len(expected_rows):
+            raise ProjectionSchemaError(f"projection schema {label} rows are not exact")
+        for raw_row, expected_row in zip(raw_rows, expected_rows):
+            if len(raw_row) != len(expected_row):
+                raise ProjectionSchemaError(f"projection schema {label} rows are not exact")
+            for value, expected_value in zip(raw_row, expected_row):
+                if type(value) is not type(expected_value):
+                    raise ProjectionSchemaError(
+                        f"projection schema {label} values have non-exact types"
+                    )
+            if raw_row != expected_row:
+                raise ProjectionSchemaError(f"projection schema {label} rows are not exact")
+
+    @classmethod
+    def _require_exact_index_list_rows(
+        cls,
+        raw_rows: tuple[tuple[Any, ...], ...],
+        *,
+        expected_rows: tuple[tuple[Any, ...], ...],
+        label: str,
+    ) -> None:
+        """Validate stable index metadata without assigning meaning to SQLite's seq."""
+
+        if len(raw_rows) != len(expected_rows):
+            raise ProjectionSchemaError(f"projection schema {label} rows are not exact")
+        sequence_numbers: set[int] = set()
+        stable_rows: list[tuple[Any, ...]] = []
+        for raw_row in raw_rows:
+            if len(raw_row) != 5:
+                raise ProjectionSchemaError(f"projection schema {label} rows are not exact")
+            sequence_number = raw_row[0]
+            stable_row = raw_row[1:]
+            if type(sequence_number) is not int or not 0 <= sequence_number < len(raw_rows):
+                raise ProjectionSchemaError(
+                    f"projection schema {label} sequence numbers are invalid"
+                )
+            if sequence_number in sequence_numbers:
+                raise ProjectionSchemaError(
+                    f"projection schema {label} sequence numbers are duplicated"
+                )
+            sequence_numbers.add(sequence_number)
+            expected_types = (str, int, str, int)
+            if any(
+                type(value) is not expected for value, expected in zip(stable_row, expected_types)
+            ):
+                raise ProjectionSchemaError(
+                    f"projection schema {label} values have non-exact types"
+                )
+            stable_rows.append(stable_row)
+        cls._require_exact_schema_rows(
+            tuple(sorted(stable_rows)),
+            expected_rows=expected_rows,
+            label=label,
+        )
 
     @classmethod
     def _validate_schema(cls, connection: sqlite3.Connection) -> _ProjectionSchemaState:
@@ -1108,8 +1211,8 @@ class SQLiteProjectionOffsetStore:
             """
             SELECT type, name, tbl_name, sql
             FROM main.sqlite_master
-            WHERE name IN (?, ?, ?)
-               OR tbl_name IN (?, ?)
+            WHERE name COLLATE NOCASE IN (?, ?, ?)
+               OR tbl_name COLLATE NOCASE IN (?, ?)
             ORDER BY type, name, tbl_name
             LIMIT ?
             """,
@@ -1121,18 +1224,14 @@ class SQLiteProjectionOffsetStore:
                 _PROJECTION_RECEIPTS_TABLE_NAME,
                 _MAX_PROJECTION_SCHEMA_OBJECTS + 1,
             ),
+            columns=("type", "name", "tbl_name", "sql"),
             maximum=_MAX_PROJECTION_SCHEMA_OBJECTS,
             label="catalog",
         )
         if not catalog_rows:
             return _ProjectionSchemaState.ABSENT
 
-        actual_objects = tuple(
-            sorted(
-                (cls._parse_schema_object(row) for row in catalog_rows),
-                key=lambda item: (item.object_type, item.name, item.table_name),
-            )
-        )
+        actual_objects = tuple(cls._parse_schema_object(row) for row in catalog_rows)
         actual_tables = {item.name for item in actual_objects if item.object_type == "table"}
         expected_tables = {
             _PROJECTION_OFFSETS_TABLE_NAME,
@@ -1150,52 +1249,60 @@ class SQLiteProjectionOffsetStore:
                 connection,
                 f'PRAGMA main.table_info("{table_name}")',
                 (),
+                columns=("cid", "name", "type", "notnull", "dflt_value", "pk"),
                 maximum=len(expected_rows),
                 label=f"table_info for {table_name}",
             )
-            actual_rows = cls._stable_pragma_rows(
+            cls._require_exact_schema_rows(
                 raw_rows,
-                indexes=(0, 1, 2, 3, 4, 5),
+                expected_rows=expected_rows,
                 label=f"table_info for {table_name}",
             )
-            if actual_rows != expected_rows:
-                raise ProjectionSchemaError(f"projection table {table_name} columns are not exact")
 
         for table_name, expected_rows in _EXPECTED_PROJECTION_INDEX_LISTS.items():
             raw_rows = cls._read_schema_rows(
                 connection,
                 f'PRAGMA main.index_list("{table_name}")',
                 (),
+                columns=("seq", "name", "unique", "origin", "partial"),
                 maximum=len(expected_rows),
                 label=f"index_list for {table_name}",
             )
-            actual_rows = tuple(
-                sorted(
-                    cls._stable_pragma_rows(
-                        raw_rows,
-                        indexes=(1, 2, 3, 4),
-                        label=f"index_list for {table_name}",
-                    )
-                )
+            cls._require_exact_index_list_rows(
+                raw_rows,
+                expected_rows=expected_rows,
+                label=f"index_list for {table_name}",
             )
-            if actual_rows != expected_rows:
-                raise ProjectionSchemaError(f"projection table {table_name} indexes are not exact")
 
         for index_name, expected_rows in _EXPECTED_PROJECTION_INDEX_INFO.items():
             raw_rows = cls._read_schema_rows(
                 connection,
                 f'PRAGMA main.index_info("{index_name}")',
                 (),
+                columns=("seqno", "cid", "name"),
                 maximum=len(expected_rows),
                 label=f"index_info for {index_name}",
             )
-            actual_rows = cls._stable_pragma_rows(
+            cls._require_exact_schema_rows(
                 raw_rows,
-                indexes=(0, 1, 2),
+                expected_rows=expected_rows,
                 label=f"index_info for {index_name}",
             )
-            if actual_rows != expected_rows:
-                raise ProjectionSchemaError(f"projection index {index_name} columns are not exact")
+
+        for index_name, expected_rows in _EXPECTED_PROJECTION_INDEX_XINFO.items():
+            raw_rows = cls._read_schema_rows(
+                connection,
+                f'PRAGMA main.index_xinfo("{index_name}")',
+                (),
+                columns=("seqno", "cid", "name", "desc", "coll", "key"),
+                maximum=len(expected_rows),
+                label=f"index_xinfo for {index_name}",
+            )
+            cls._require_exact_schema_rows(
+                raw_rows,
+                expected_rows=expected_rows,
+                label=f"index_xinfo for {index_name}",
+            )
 
         return _ProjectionSchemaState.EXACT
 
