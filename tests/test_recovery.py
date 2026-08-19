@@ -388,6 +388,137 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidate.approvals.pending("transition-late"), ())
         candidate.event_store.close()
 
+    async def test_session_recovery_rejects_noncanonical_plan_payloads(self):
+        cases = (
+            ("coerced-session", lambda payload: payload.__setitem__("sessionId", True)),
+            ("extra-key", lambda payload: payload.__setitem__("unexpected", None)),
+            ("missing-key", lambda payload: payload.pop("correlationId")),
+            (
+                "coerced-priority",
+                lambda payload: payload["tasks"][0].__setitem__("priority", True),
+            ),
+            (
+                "coerced-authority",
+                lambda payload: payload["tasks"][0]["handoff"]["authority"].__setitem__(
+                    "externalSideEffects", "false"
+                ),
+            ),
+        )
+
+        async def handler(invocation):
+            return AgentResult("done")
+
+        for index, (label, mutate) in enumerate(cases):
+            with self.subTest(label=label):
+                path = str(Path(self.tempdir.name) / f"plan-payload-{index}.sqlite3")
+                session_id = f"plan-payload-{index}"
+                plan = WorkflowPlan(
+                    session_id,
+                    "严格计划",
+                    "user",
+                    (TaskSpec("task", "worker", handoff(), task_id="task"),),
+                    plan_id=f"plan-payload-{index}",
+                )
+                first = OrchestratorKernel(event_store=SQLiteEventStore(path))
+                first.register_agent(registration("worker", handler))
+                self.assertTrue((await first.run(plan)).completed)
+                row = first.event_store._connection.execute(
+                    """
+                    SELECT global_position, payload_json
+                    FROM events
+                    WHERE stream_id = ? AND event_type = 'workflow.plan.created'
+                    """,
+                    (f"session:{session_id}",),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                payload = json.loads(row["payload_json"])
+                mutate(payload)
+                first.event_store._connection.execute(
+                    "UPDATE events SET payload_json = ? WHERE global_position = ?",
+                    (
+                        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                        row["global_position"],
+                    ),
+                )
+                first.event_store.close()
+
+                candidate = OrchestratorKernel(event_store=SQLiteEventStore(path))
+                candidate.register_agent(registration("worker", handler))
+                with self.assertRaisesRegex(SessionRecoveryError, "plan payload"):
+                    await candidate.run(plan)
+                self.assertNotIn(session_id, candidate._plans)
+                candidate.event_store.close()
+
+    async def test_session_recovery_binds_one_plan_to_its_event_envelope(self):
+        async def handler(invocation):
+            return AgentResult("done")
+
+        envelope_cases = (
+            ("actor_id", "other"),
+            ("idempotency_key", "plan:other"),
+            ("correlation_id", "correlation-other"),
+            ("causation_id", "unexpected-cause"),
+        )
+        for index, (column, value) in enumerate(envelope_cases):
+            with self.subTest(column=column):
+                path = str(Path(self.tempdir.name) / f"plan-envelope-{index}.sqlite3")
+                session_id = f"plan-envelope-{index}"
+                plan = WorkflowPlan(
+                    session_id,
+                    "事件绑定",
+                    "user",
+                    (TaskSpec("task", "worker", handoff(), task_id="task"),),
+                    plan_id=f"plan-envelope-{index}",
+                )
+                first = OrchestratorKernel(event_store=SQLiteEventStore(path))
+                first.register_agent(registration("worker", handler))
+                self.assertTrue((await first.run(plan)).completed)
+                first.event_store._connection.execute(
+                    f"""
+                    UPDATE events SET {column} = ?
+                    WHERE stream_id = ? AND event_type = 'workflow.plan.created'
+                    """,
+                    (value, f"session:{session_id}"),
+                )
+                first.event_store.close()
+
+                candidate = OrchestratorKernel(event_store=SQLiteEventStore(path))
+                candidate.register_agent(registration("worker", handler))
+                with self.assertRaisesRegex(SessionRecoveryError, "event envelope"):
+                    await candidate.run(plan)
+                self.assertNotIn(session_id, candidate._plans)
+                candidate.event_store.close()
+
+        duplicate_path = str(Path(self.tempdir.name) / "plan-duplicate.sqlite3")
+        duplicate_plan = WorkflowPlan(
+            "plan-duplicate",
+            "唯一计划",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-original",
+        )
+        seeded = OrchestratorKernel(event_store=SQLiteEventStore(duplicate_path))
+        seeded.register_agent(registration("worker", handler))
+        self.assertTrue((await seeded.run(duplicate_plan)).completed)
+        seeded.event_store.append(
+            DomainEvent(
+                stream_id="session:plan-duplicate",
+                event_type="workflow.plan.created",
+                actor_id="user",
+                correlation_id="plan-original",
+                idempotency_key="plan:duplicate",
+                payload=duplicate_plan.to_dict(),
+            )
+        )
+        seeded.event_store.close()
+
+        duplicate = OrchestratorKernel(event_store=SQLiteEventStore(duplicate_path))
+        duplicate.register_agent(registration("worker", handler))
+        with self.assertRaisesRegex(SessionRecoveryError, "multiple workflow plan"):
+            await duplicate.run(duplicate_plan)
+        self.assertNotIn("plan-duplicate", duplicate._plans)
+        duplicate.event_store.close()
+
 
 if __name__ == "__main__":
     unittest.main()

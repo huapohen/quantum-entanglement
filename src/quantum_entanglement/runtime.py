@@ -375,19 +375,58 @@ class OrchestratorKernel:
         if transition.revision != revision:
             raise SessionRecoveryError("task transition revision does not match replay state")
 
+    @staticmethod
+    def _decode_recovered_plan(stored: StoredEvent) -> WorkflowPlan:
+        payload = stored.event.payload
+        if type(payload) is not dict:
+            raise SessionRecoveryError("workflow plan payload must be a plain object")
+        try:
+            plan = WorkflowPlan.from_dict(payload)
+            original_json = json.dumps(
+                payload,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            decoded_json = json.dumps(
+                plan.to_dict(),
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (KeyError, OverflowError, RecursionError, TypeError, ValueError) as exc:
+            raise SessionRecoveryError("workflow plan payload is invalid") from exc
+        if original_json != decoded_json:
+            raise SessionRecoveryError("workflow plan payload is not canonical")
+
+        event = stored.event
+        if (
+            event.actor_id != plan.initiated_by
+            or event.idempotency_key != f"plan:{plan.plan_id}"
+            or event.correlation_id != (plan.correlation_id or plan.plan_id)
+            or event.causation_id is not None
+        ):
+            raise SessionRecoveryError("workflow plan event envelope is inconsistent")
+        return plan
+
     def _recover_session(self, requested_plan: WorkflowPlan) -> None:
         """Rebuild an active workflow projection without replaying side effects."""
 
         if requested_plan.session_id in self._plans:
             return
         events = self._read_session_events(self._stream_id(requested_plan.session_id))
-        created = next(
-            (item.event for item in events if item.event.event_type == "workflow.plan.created"),
-            None,
-        )
+        created: Optional[StoredEvent] = None
+        for stored in events:
+            if stored.event.event_type != "workflow.plan.created":
+                continue
+            if created is not None:
+                raise SessionRecoveryError("session contains multiple workflow plan events")
+            created = stored
         if created is None:
             return
-        stored_plan = WorkflowPlan.from_dict(created.payload)
+        stored_plan = self._decode_recovered_plan(created)
         if stored_plan.plan_id != requested_plan.plan_id:
             raise ValueError(
                 "stored workflow plan %s does not match requested plan %s"
