@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Awaitable, Callable, Dict, Mapping, Optional, Tuple
+from typing import Callable
 
 from .protocol import ActorKind, ActorRef, CoordinationEnvelope, EnvelopeKind
 
@@ -22,7 +23,7 @@ class InboundChatMessage:
     thread_id: str
     sender: ActorRef
     text: str
-    mentioned_actor_ids: Tuple[str, ...] = ()
+    mentioned_actor_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         required = (
@@ -40,14 +41,14 @@ class InboundChatMessage:
 class RoutedChatMessage:
     route: ChatRoute
     envelope: CoordinationEnvelope
-    direct_agents: Tuple[ActorRef, ...] = ()
+    direct_agents: tuple[ActorRef, ...] = ()
 
 
 class MentionRouter:
     """Direct mentions bypass semantic planning but never bypass event ingestion."""
 
     def __init__(self, roster: Mapping[str, ActorRef], planner: ActorRef) -> None:
-        self.roster: Dict[str, ActorRef] = dict(roster)
+        self.roster: dict[str, ActorRef] = dict(roster)
         self.planner = planner
         if planner.kind not in (ActorKind.AGENT, ActorKind.SYSTEM):
             raise ValueError("planner must be an agent or system actor")
@@ -55,7 +56,7 @@ class MentionRouter:
     def route(self, message: InboundChatMessage) -> RoutedChatMessage:
         unknown = set(message.mentioned_actor_ids) - set(self.roster)
         if unknown:
-            raise KeyError("mentioned actors are not in the session roster: %s" % sorted(unknown))
+            raise KeyError(f"mentioned actors are not in the session roster: {sorted(unknown)}")
         direct = tuple(
             self.roster[actor_id]
             for actor_id in message.mentioned_actor_ids
@@ -77,7 +78,7 @@ class MentionRouter:
                 "mentionedActorIds": list(message.mentioned_actor_ids),
             },
             causation_id=message.external_message_id,
-            idempotency_key="chat:%s:%s" % (message.provider, message.external_message_id),
+            idempotency_key=f"chat:{message.provider}:{message.external_message_id}",
         )
         return RoutedChatMessage(route, envelope, direct)
 
