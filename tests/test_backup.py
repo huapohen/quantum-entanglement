@@ -189,6 +189,53 @@ class SQLiteBackupTests(unittest.TestCase):
         self.assertFalse(backup.exists())
         self.assertFalse(default_manifest_path(backup).exists())
 
+    def test_missing_migration_owned_table_is_rejected_before_backup_publication(self):
+        connection = sqlite3.connect(self.source)
+        connection.execute("DROP TABLE artifact_versions")
+        connection.commit()
+        connection.close()
+        backup = self.root / "missing-artifact-schema.sqlite3"
+
+        with self.assertRaisesRegex(BackupIntegrityError, "schema differs"):
+            create_sqlite_backup(self.source, backup, clock=lambda: T0)
+
+        self.assertFalse(backup.exists())
+        self.assertFalse(default_manifest_path(backup).exists())
+
+    def test_weakened_migration_owned_table_is_rejected_before_backup_publication(self):
+        connection = sqlite3.connect(self.source)
+        table_sql = str(
+            connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("artifact_versions",),
+            ).fetchone()[0]
+        )
+        weakened_sql = table_sql.replace(
+            "request_digest TEXT NOT NULL",
+            "request_digest TEXT",
+        )
+        self.assertNotEqual(weakened_sql, table_sql)
+        columns = ", ".join(
+            f'"{row[1]}"' for row in connection.execute("PRAGMA table_info(artifact_versions)")
+        )
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("ALTER TABLE artifact_versions RENAME TO old_artifact_versions")
+        connection.execute(weakened_sql)
+        connection.execute(
+            f"INSERT INTO artifact_versions ({columns}) SELECT {columns} "
+            "FROM old_artifact_versions"
+        )
+        connection.execute("DROP TABLE old_artifact_versions")
+        connection.commit()
+        connection.close()
+        backup = self.root / "weakened-artifact-schema.sqlite3"
+
+        with self.assertRaisesRegex(BackupIntegrityError, "schema differs"):
+            create_sqlite_backup(self.source, backup, clock=lambda: T0)
+
+        self.assertFalse(backup.exists())
+        self.assertFalse(default_manifest_path(backup).exists())
+
     def test_manifest_cannot_claim_a_future_migration(self):
         backup, manifest_path, _created = self.create_backup()
         value = json.loads(manifest_path.read_text(encoding="utf-8"))

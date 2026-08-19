@@ -14,7 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple, cast
 
-from .migrations import MIGRATIONS, migration_text
+from .migrations import (
+    MIGRATIONS,
+    MigrationDriftError,
+    MigrationVersionError,
+    migration_text,
+    validate_sqlite_schema,
+)
 from .protocol import new_id, utc_now
 
 _FORMAT = "qe.sqlite-backup/1"
@@ -120,6 +126,12 @@ def _database_evidence(connection: sqlite3.Connection) -> _DatabaseEvidence:
         raise BackupIntegrityError(
             f"SQLite foreign_key_check found {len(foreign_key_rows)} violation(s)"
         )
+    try:
+        validate_sqlite_schema(connection)
+    except (MigrationDriftError, MigrationVersionError, sqlite3.DatabaseError) as exc:
+        raise BackupIntegrityError(
+            "SQLite schema differs from its supported migration ledger"
+        ) from exc
     existing_tables = {
         str(row[0])
         for row in connection.execute(
