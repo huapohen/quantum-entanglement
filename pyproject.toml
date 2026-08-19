@@ -23,6 +23,9 @@ qe-demo = "quantum_entanglement.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+quantum_entanglement = ["migrations/*.sql"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py39"
@@ -33,4 +36,3 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
-
