@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -30,8 +32,31 @@ jobs:
       - name: Install build frontend
         run: python -m pip install build
 
+      - name: Bind build timestamps to source commit
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+
       - name: Build source and wheel distributions
         run: python -m build
+
+      - name: Generate source-bound distribution manifest
+        env:
+          QE_DISTRIBUTION_MANIFEST_PATH: ${{ runner.temp }}/quantum-entanglement-distribution-manifest.json
+        run: |
+          python scripts/distribution_manifest.py generate \
+            --repository-root . \
+            --distribution-directory dist \
+            > "$QE_DISTRIBUTION_MANIFEST_PATH"
+
+      - name: Verify distribution manifest and archives
+        env:
+          QE_DISTRIBUTION_MANIFEST_PATH: ${{ runner.temp }}/quantum-entanglement-distribution-manifest.json
+          QE_EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          python scripts/distribution_manifest.py verify \
+            "$QE_DISTRIBUTION_MANIFEST_PATH" \
+            --repository-root . \
+            --distribution-directory dist \
+            --expected-commit "$QE_EXPECTED_COMMIT"
 
       - name: Verify durable migration package data
         run: |
@@ -64,6 +89,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: quantum-entanglement-distributions
-          path: dist/*
+          path: |
+            dist/*
+            ${{ runner.temp }}/quantum-entanglement-distribution-manifest.json
           if-no-files-found: error
           retention-days: 14
