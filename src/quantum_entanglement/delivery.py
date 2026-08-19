@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Mapping, Optional
+from typing import Any
 
 from .events import StoredEvent
 from .protocol import new_id, utc_now
@@ -15,9 +16,9 @@ def _require_rfc3339(value: str, field_name: str) -> None:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (AttributeError, ValueError) as exc:
-        raise ValueError("%s must be an RFC 3339 timestamp" % field_name) from exc
+        raise ValueError(f"{field_name} must be an RFC 3339 timestamp") from exc
     if parsed.tzinfo is None:
-        raise ValueError("%s must include a timezone" % field_name)
+        raise ValueError(f"{field_name} must include a timezone")
 
 
 class OutboxStatus(str, Enum):
@@ -37,7 +38,7 @@ class OutboxMessage:
     payload: Mapping[str, Any]
     headers: Mapping[str, Any] = field(default_factory=dict)
     message_id: str = field(default_factory=lambda: new_id("msg"))
-    idempotency_key: Optional[str] = None
+    idempotency_key: str | None = None
     available_at: str = field(default_factory=utc_now)
     created_at: str = field(default_factory=utc_now)
 
@@ -61,12 +62,12 @@ class StoredOutboxMessage:
     triggering_global_position: int
     status: OutboxStatus
     attempt_count: int = 0
-    lease_token: Optional[str] = None
-    lease_expires_at: Optional[str] = None
-    last_error: Optional[str] = None
-    published_at: Optional[str] = None
+    lease_token: str | None = None
+    lease_expires_at: str | None = None
+    last_error: str | None = None
+    published_at: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "messageId": self.message.message_id,
             "destination": self.message.destination,
