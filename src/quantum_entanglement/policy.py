@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any
 
 from .protocol import (
     ActionIntent,
@@ -34,7 +35,7 @@ class PolicyEngine:
 
     SAFE_READ_ACTIONS = ("read", "search", "list", "summarize", "analyze", "draft")
 
-    def __init__(self, forbidden_actions: Tuple[str, ...] = ()) -> None:
+    def __init__(self, forbidden_actions: tuple[str, ...] = ()) -> None:
         self.forbidden_actions = forbidden_actions
 
     def evaluate(self, intent: ActionIntent, authority: Authority) -> PolicyDecision:
@@ -65,15 +66,15 @@ class ApprovalRequest:
     reason: str
     request_id: str = field(default_factory=lambda: new_id("approval"))
     created_at: str = field(default_factory=utc_now)
-    decision: Optional[ApprovalDecision] = None
-    decided_by: Optional[str] = None
-    comment: Optional[str] = None
+    decision: ApprovalDecision | None = None
+    decided_by: str | None = None
+    comment: str | None = None
 
     @property
     def pending(self) -> bool:
         return self.decision is None
 
-    def to_dict(self) -> Dict[str, object]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "requestId": self.request_id,
             "sessionId": self.session_id,
@@ -87,7 +88,7 @@ class ApprovalRequest:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "ApprovalRequest":
+    def from_dict(cls, value: Mapping[str, Any]) -> ApprovalRequest:
         raw_decision = value.get("decision")
         return cls(
             session_id=str(value["sessionId"]),
@@ -104,7 +105,7 @@ class ApprovalRequest:
 
 class NeedsYouQueue:
     def __init__(self) -> None:
-        self._requests: Dict[str, ApprovalRequest] = {}
+        self._requests: dict[str, ApprovalRequest] = {}
         self._lock = threading.RLock()
 
     def create(self, request: ApprovalRequest) -> ApprovalRequest:
@@ -135,7 +136,7 @@ class NeedsYouQueue:
         with self._lock:
             return self._requests[request_id]
 
-    def pending(self, session_id: Optional[str] = None) -> Tuple[ApprovalRequest, ...]:
+    def pending(self, session_id: str | None = None) -> tuple[ApprovalRequest, ...]:
         with self._lock:
             return tuple(
                 item
@@ -148,7 +149,7 @@ class NeedsYouQueue:
         request_id: str,
         decision: ApprovalDecision,
         actor_id: str,
-        comment: Optional[str] = None,
+        comment: str | None = None,
     ) -> ApprovalRequest:
         with self._lock:
             request = self._requests[request_id]
