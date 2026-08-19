@@ -16,9 +16,7 @@ def handoff(goal="完成任务"):
 class TaskGraphTests(unittest.TestCase):
     def test_initial_ready_transitions_are_explicit_and_revisioned(self):
         first = TaskSpec("先做", "agent-a", handoff(), task_id="first")
-        second = TaskSpec(
-            "后做", "agent-b", handoff(), task_id="second", depends_on=("first",)
-        )
+        second = TaskSpec("后做", "agent-b", handoff(), task_id="second", depends_on=("first",))
         graph = TaskGraph((first, second))
 
         self.assertEqual(graph.statuses["first"], TaskStatus.PENDING)
@@ -42,9 +40,7 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_failure_deterministically_blocks_dependents(self):
         first = TaskSpec("先做", "agent-a", handoff(), task_id="first")
-        second = TaskSpec(
-            "后做", "agent-b", handoff(), task_id="second", depends_on=("first",)
-        )
+        second = TaskSpec("后做", "agent-b", handoff(), task_id="second", depends_on=("first",))
         graph = TaskGraph((first, second))
         graph.refresh()
         graph.transition("first", TaskStatus.RUNNING)
@@ -74,9 +70,7 @@ class ContextCompilerTests(unittest.TestCase):
 
     def test_required_context_is_never_silently_truncated(self):
         with self.assertRaises(ContextBudgetError):
-            ContextCompiler().compile(
-                (ContextItem("goal", "goal", "x" * 100, required=True),), 1
-            )
+            ContextCompiler().compile((ContextItem("goal", "goal", "x" * 100, required=True),), 1)
 
 
 if __name__ == "__main__":
