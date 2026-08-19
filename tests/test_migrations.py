@@ -262,16 +262,12 @@ class MigrationRunnerTests(unittest.TestCase):
             2,
         )
         self.assertEqual(
-            self.connection.execute(
-                "SELECT version FROM temp.qe_schema_migrations"
-            ).fetchone()[0],
+            self.connection.execute("SELECT version FROM temp.qe_schema_migrations").fetchone()[0],
             999,
         )
 
     def test_schema_validator_rejects_non_table_ledger_object(self):
-        self.connection.execute(
-            "CREATE VIEW qe_schema_migrations AS SELECT 1 AS version"
-        )
+        self.connection.execute("CREATE VIEW qe_schema_migrations AS SELECT 1 AS version")
 
         with self.assertRaisesRegex(MigrationDriftError, "is not a table"):
             validate_sqlite_schema(self.connection)
@@ -324,9 +320,7 @@ class MigrationRunnerTests(unittest.TestCase):
         self.assertFalse(self.table_exists("artifact_versions"))
 
     def test_weakened_ledger_schema_is_rejected_before_row_access(self):
-        self.connection.execute(
-            "CREATE TABLE qe_schema_migrations(version INTEGER PRIMARY KEY)"
-        )
+        self.connection.execute("CREATE TABLE qe_schema_migrations(version INTEGER PRIMARY KEY)")
 
         with self.assertRaisesRegex(MigrationDriftError, "qe_schema_migrations.*differs"):
             apply_sqlite_migrations(
