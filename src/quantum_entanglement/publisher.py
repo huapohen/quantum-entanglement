@@ -114,6 +114,8 @@ class PublishReceipt:
     reason_code: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.result, PublishResult):
+            raise TypeError("publish receipt result must be a PublishResult")
         if self.result is PublishResult.ACCEPTED and not (self.receipt_id or "").strip():
             raise ValueError("accepted publish receipt requires receipt_id")
         if self.result is PublishResult.REJECTED and not (self.reason_code or "").strip():

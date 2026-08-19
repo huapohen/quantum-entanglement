@@ -626,6 +626,21 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored.status, OutboxStatus.DEAD_LETTER)
         self.assertEqual(stored.last_error, "invalid_publish_receipt")
 
+    async def test_stringly_typed_receipt_result_is_never_acknowledged(self):
+        self.enqueue("message-string-result")
+
+        async def publish(_request):
+            return PublishReceipt("accepted", receipt_id="receipt:not-enough")
+
+        publisher = self.publisher(publish, max_attempts=1)
+        batch = await publisher.run_once()
+        stored = self.store.get_outbox("message-string-result")
+
+        self.assertEqual(batch.published, 0)
+        self.assertEqual(batch.dead_lettered, 1)
+        self.assertEqual(stored.status, OutboxStatus.DEAD_LETTER)
+        self.assertEqual(stored.last_error, "connector_input_rejected")
+
     async def test_default_error_classification_never_persists_exception_canary(self):
         self.enqueue("message-canary")
         canary = "CANARY_MUST_NOT_BE_PERSISTED"
