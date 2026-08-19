@@ -52,6 +52,8 @@ def _validate_registry(migrations: Sequence[Migration]) -> None:
     filenames = [item.filename for item in migrations]
     if versions != sorted(versions) or len(set(versions)) != len(versions):
         raise ValueError("migration versions must be unique and strictly ordered")
+    if versions != list(range(1, len(versions) + 1)):
+        raise ValueError("migration registry must be a continuous prefix starting at one")
     if len(set(filenames)) != len(filenames):
         raise ValueError("migration filenames must be unique")
 
@@ -133,6 +135,7 @@ def apply_sqlite_migrations(
     rows = connection.execute(
         "SELECT version, filename, sha256 FROM qe_schema_migrations ORDER BY version"
     ).fetchall()
+    applied_versions = tuple(int(row["version"]) for row in rows)
     for row in rows:
         version = int(row["version"])
         migration = known.get(version)
@@ -146,6 +149,10 @@ def apply_sqlite_migrations(
             raise MigrationDriftError(
                 f"migration {version} checksum or filename differs from the applied schema"
             )
+    if applied_versions != ordered_versions[: len(applied_versions)]:
+        raise MigrationDriftError(
+            "migration ledger must be a continuous registry prefix starting at one"
+        )
 
     for migration in migrations:
         if migration.version not in selected_versions:
@@ -191,10 +198,13 @@ def apply_sqlite_migrations(
 
 
 def current_schema_version(connection: sqlite3.Connection) -> int:
-    row = connection.execute(
-        "SELECT COALESCE(MAX(version), 0) AS version FROM qe_schema_migrations"
-    ).fetchone()
-    return int(row["version"])
+    rows = connection.execute(
+        "SELECT version FROM qe_schema_migrations ORDER BY version"
+    ).fetchall()
+    versions = tuple(int(row["version"]) for row in rows)
+    if versions != tuple(range(1, len(versions) + 1)):
+        raise MigrationDriftError("migration ledger must be a continuous prefix starting at one")
+    return versions[-1] if versions else 0
 
 
 __all__ = [

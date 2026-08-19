@@ -9,6 +9,7 @@ from quantum_entanglement.attempts import SQLiteInvocationAttemptStore
 from quantum_entanglement.migrations import (
     MIGRATIONS,
     Migration,
+    MigrationDriftError,
     MigrationVersionError,
     apply_sqlite_migrations,
     current_schema_version,
@@ -171,6 +172,37 @@ class MigrationRunnerTests(unittest.TestCase):
         )
         self.assertEqual(self.ledger_count(), 0)
         self.assertEqual(tuple(item.version for item in MIGRATIONS[:2]), (1, 2))
+
+    def test_registry_and_applied_ledger_must_not_contain_holes(self):
+        with self.assertRaisesRegex(ValueError, "continuous prefix"):
+            apply_sqlite_migrations(
+                self.connection,
+                migrations=(
+                    Migration(1, "0001_first.up.sql"),
+                    Migration(3, "0003_third.up.sql"),
+                ),
+                clock=lambda: NOW,
+            )
+
+        apply_sqlite_migrations(
+            self.connection,
+            target_versions=(1, 2),
+            clock=lambda: NOW,
+        )
+        self.connection.execute("DELETE FROM qe_schema_migrations WHERE version = 1")
+
+        with self.assertRaisesRegex(MigrationDriftError, "continuous registry prefix"):
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=(1, 2),
+                clock=lambda: NOW,
+            )
+        with self.assertRaisesRegex(MigrationDriftError, "continuous prefix"):
+            current_schema_version(self.connection)
+        versions = self.connection.execute(
+            "SELECT version FROM qe_schema_migrations ORDER BY version"
+        ).fetchall()
+        self.assertEqual([row["version"] for row in versions], [2])
 
     def test_statement_splitter_handles_same_line_and_quoted_semicolon(self):
         migration = Migration(1, "0001_compound.up.sql")

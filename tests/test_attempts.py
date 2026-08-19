@@ -134,15 +134,19 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         with self.assertRaises(MigrationDriftError):
             SQLiteInvocationAttemptStore(self.path, clock=self.clock)
 
-        # Restore the recorded checksum by applying the destructive down migration only
-        # against this disposable test database, then let the normal runner rebuild it.
+        # Restore the disposable database in strict reverse dependency order, then
+        # let the normal runner rebuild a continuous ledger.
         connection = sqlite3.connect(self.path)
-        down = (
-            importlib.resources.files("quantum_entanglement.migrations")
-            .joinpath("0001_invocation_attempts.down.sql")
-            .read_text(encoding="utf-8")
-        )
-        connection.executescript(down)
+        for filename in (
+            "0002_artifacts.down.sql",
+            "0001_invocation_attempts.down.sql",
+        ):
+            down = (
+                importlib.resources.files("quantum_entanglement.migrations")
+                .joinpath(filename)
+                .read_text(encoding="utf-8")
+            )
+            connection.executescript(down)
         connection.close()
         self.store = SQLiteInvocationAttemptStore(self.path, clock=self.clock)
 
