@@ -316,12 +316,14 @@ class SQLiteArtifactStore:
         *,
         max_content_bytes: int = 16 * 1024 * 1024,
         max_metadata_bytes: int = 64 * 1024,
+        max_history_bytes: int = 64 * 1024 * 1024,
         busy_timeout_ms: int = 5_000,
         clock: Callable[[], str] = utc_now,
     ) -> None:
         for value, name in (
             (max_content_bytes, "max_content_bytes"),
             (max_metadata_bytes, "max_metadata_bytes"),
+            (max_history_bytes, "max_history_bytes"),
         ):
             if not isinstance(value, int) or isinstance(value, bool):
                 raise TypeError(f"{name} must be an integer")
@@ -336,6 +338,7 @@ class SQLiteArtifactStore:
         self.path = path
         self._max_content_bytes = max_content_bytes
         self._max_metadata_bytes = max_metadata_bytes
+        self._max_history_bytes = max_history_bytes
         self._clock = clock
         if path != ":memory:":
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -411,6 +414,16 @@ class SQLiteArtifactStore:
                     if self._connection.in_transaction:
                         self._connection.execute("ROLLBACK")
                     raise
+
+    @contextmanager
+    def _read_snapshot(self) -> Iterator[sqlite3.Connection]:
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                yield self._connection
+            finally:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
 
     def _prepare(self, spec: ArtifactWrite) -> Tuple[str, Mapping[str, Any], str, str]:
         if len(spec.content) > self._max_content_bytes:
@@ -567,6 +580,25 @@ class SQLiteArtifactStore:
             request_digest=request_digest,
             content=content,
         )
+
+    @staticmethod
+    def _preflight_blob_metadata(row: sqlite3.Row) -> Tuple[int, int]:
+        try:
+            version = _persisted_integer(row["version"], "version", minimum=1)
+            version_size = _persisted_integer(row["version_byte_size"], "byte_size")
+            blob_size = _persisted_integer(row["blob_byte_size"], "blob_byte_size")
+            content_length = _persisted_integer(
+                row["blob_content_length"],
+                "blob_content_length",
+            )
+            storage_type = row["blob_storage_type"]
+            if type(storage_type) is not str or storage_type != "blob":
+                raise TypeError("persisted artifact content must use SQLite BLOB storage")
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise ArtifactIntegrityError("artifact blob metadata violates its contract") from exc
+        if version_size != blob_size or blob_size != content_length:
+            raise ArtifactIntegrityError("artifact byte size metadata is inconsistent")
+        return version, content_length
 
     def write(
         self,
@@ -768,8 +800,36 @@ class SQLiteArtifactStore:
             raise TypeError("limit must be an integer")
         if not 1 <= limit <= 1_000:
             raise ValueError("limit must be between 1 and 1000")
-        with self._lock:
-            rows = self._connection.execute(
+        with self._read_snapshot() as connection:
+            metadata_rows = connection.execute(
+                """
+                SELECT version.version,
+                       version.byte_size AS version_byte_size,
+                       blob.byte_size AS blob_byte_size,
+                       typeof(blob.content) AS blob_storage_type,
+                       length(blob.content) AS blob_content_length
+                FROM artifact_versions AS version
+                JOIN artifact_blobs AS blob ON blob.digest = version.blob_digest
+                WHERE version.tenant_id = ? AND version.workspace_id = ?
+                  AND version.session_id = ? AND version.name = ?
+                  AND version.version > ?
+                ORDER BY version.version ASC LIMIT ?
+                """,
+                (tenant_id, workspace_id, session_id, name, after_version, limit),
+            ).fetchall()
+            expected_versions = []
+            page_bytes = 0
+            for metadata_row in metadata_rows:
+                version, content_length = self._preflight_blob_metadata(metadata_row)
+                page_bytes += content_length
+                if page_bytes > self._max_history_bytes:
+                    raise ArtifactTooLargeError(
+                        "artifact history page exceeds "
+                        f"{self._max_history_bytes} content bytes; request a smaller limit"
+                    )
+                expected_versions.append(version)
+
+            cursor = connection.execute(
                 """
                 SELECT version.*, blob.content, blob.byte_size AS blob_byte_size
                 FROM artifact_versions AS version
@@ -780,28 +840,48 @@ class SQLiteArtifactStore:
                 ORDER BY version.version ASC LIMIT ?
                 """,
                 (tenant_id, workspace_id, session_id, name, after_version, limit),
-            ).fetchall()
-            return tuple(self._row_to_artifact(row) for row in rows)
+            )
+            items = tuple(self._row_to_artifact(row) for row in cursor)
+            if [item.version for item in items] != expected_versions:
+                raise ArtifactIntegrityError("artifact history changed inside its read snapshot")
+            if sum(item.byte_size for item in items) != page_bytes:
+                raise ArtifactIntegrityError("artifact history byte total changed during decoding")
+            return items
 
     def verify_scope(self, tenant_id: str, workspace_id: str) -> int:
         """Verify every artifact visible to one scope and return the checked count."""
 
         _required_text(tenant_id, "tenant_id")
         _required_text(workspace_id, "workspace_id")
-        with self._lock:
-            rows = self._connection.execute(
+        with self._read_snapshot() as connection:
+            cursor = connection.execute(
                 """
-                SELECT version.*, blob.content, blob.byte_size AS blob_byte_size
+                SELECT version.artifact_id, version.version,
+                       version.byte_size AS version_byte_size,
+                       blob.byte_size AS blob_byte_size,
+                       typeof(blob.content) AS blob_storage_type,
+                       length(blob.content) AS blob_content_length
                 FROM artifact_versions AS version
                 JOIN artifact_blobs AS blob ON blob.digest = version.blob_digest
                 WHERE version.tenant_id = ? AND version.workspace_id = ?
                 ORDER BY version.session_id, version.name, version.version
                 """,
                 (tenant_id, workspace_id),
-            ).fetchall()
-            for row in rows:
+            )
+            checked = 0
+            for metadata_row in cursor:
+                _version, content_length = self._preflight_blob_metadata(metadata_row)
+                if content_length > self._max_content_bytes:
+                    raise ArtifactTooLargeError(
+                        "persisted artifact exceeds the configured single-content limit"
+                    )
+                artifact_id = _persisted_text(metadata_row["artifact_id"], "artifact_id")
+                row = self._select_record(connection, tenant_id, workspace_id, artifact_id)
+                if row is None:
+                    raise ArtifactIntegrityError("artifact disappeared inside its read snapshot")
                 self._row_to_artifact(row)
-            return len(rows)
+                checked += 1
+            return checked
 
     def schema_version(self) -> int:
         with self._lock:

@@ -411,6 +411,62 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
                 limit=1_001,
             )
 
+    def test_history_enforces_a_content_byte_budget_before_materializing_blobs(self):
+        path = str(Path(self.tempdir.name) / "bounded-history.sqlite3")
+        with self.assertRaises(ValueError):
+            SQLiteArtifactStore(path, max_history_bytes=0, clock=lambda: T0)
+        with self.assertRaises(TypeError):
+            SQLiteArtifactStore(path, max_history_bytes=True, clock=lambda: T0)
+        with SQLiteArtifactStore(
+            path,
+            max_history_bytes=5,
+            clock=lambda: T0,
+        ) as bounded:
+            for version in (1, 2):
+                bounded.write(
+                    artifact_write(
+                        artifact_id=f"artifact-budget-{version}",
+                        task_id=f"task-budget-{version}",
+                        idempotency_key=f"artifact:budget:{version}",
+                        content=b"abc",
+                    )
+                )
+
+            first = bounded.history(
+                "tenant-a",
+                "workspace-a",
+                "session-a",
+                "report.md",
+                limit=1,
+            )
+            self.assertEqual([item.version for item in first], [1])
+            with self.assertRaisesRegex(ArtifactTooLargeError, "smaller limit"):
+                bounded.history(
+                    "tenant-a",
+                    "workspace-a",
+                    "session-a",
+                    "report.md",
+                    limit=2,
+                )
+            self.assertEqual(bounded.verify_scope("tenant-a", "workspace-a"), 2)
+
+    def test_verify_scope_rejects_blob_metadata_before_loading_corrupt_content(self):
+        stored = self.store.write(artifact_write(content=b"x"))
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute("PRAGMA ignore_check_constraints=ON")
+            connection.execute(
+                "UPDATE artifact_blobs SET content = zeroblob(100), byte_size = 100 "
+                "WHERE digest = ?",
+                (stored.digest,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaisesRegex(ArtifactIntegrityError, "byte size metadata"):
+            self.store.verify_scope("tenant-a", "workspace-a")
+
 
 if __name__ == "__main__":
     unittest.main()
