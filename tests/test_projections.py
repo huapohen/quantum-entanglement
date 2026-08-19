@@ -1,8 +1,10 @@
+import math
 import sqlite3
 import tempfile
 import threading
 import unittest
 from collections.abc import Mapping, MutableMapping
+from decimal import Decimal
 from operator import attrgetter, setitem
 from pathlib import Path
 from typing import Any, Callable, cast
@@ -14,6 +16,7 @@ from quantum_entanglement.projections import (
     MAX_EVENT_PAYLOAD_NODES,
     MAX_PROJECTION_BATCH_SIZE,
     MAX_PROJECTION_IDENTIFIER_LENGTH,
+    MAX_PROJECTION_LEASE_SECONDS,
     SCHEMA_VERSION_FIELD,
     DurableProjector,
     EventSchemaDecoderError,
@@ -58,6 +61,26 @@ def nested_payload(depth: int) -> Mapping[str, Any]:
     for _ in range(depth):
         value = {"child": value}
     return cast(Mapping[str, Any], value)
+
+
+def invalid_projection_lease_seconds() -> tuple[object, ...]:
+    return (
+        True,
+        False,
+        "30",
+        Decimal("30"),
+        None,
+        object(),
+        math.nan,
+        math.inf,
+        -math.inf,
+        0,
+        -0.0,
+        -1,
+        MAX_PROJECTION_LEASE_SECONDS + 1,
+        float(MAX_PROJECTION_LEASE_SECONDS) + 0.5,
+        10**100,
+    )
 
 
 class EventUpcasterRegistryTests(unittest.TestCase):
@@ -1070,6 +1093,108 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
             )
         self.assertEqual(handler_calls, 0)
 
+    def test_lease_duration_boundaries_are_valid_and_normalized_to_float(self) -> None:
+        smallest_positive_float = math.nextafter(0.0, math.inf)
+        cases = (
+            (smallest_positive_float, "2026-08-20T00:00:00.000001Z"),
+            (30, "2026-08-20T00:00:30Z"),
+            (MAX_PROJECTION_LEASE_SECONDS, "2026-08-21T00:00:00Z"),
+        )
+        for index, (lease_seconds, expected_deadline) in enumerate(cases):
+            with self.subTest(lease_seconds=lease_seconds):
+                normalized = self.store._validate_lease_seconds(lease_seconds)
+                self.assertIs(type(normalized), float)
+                self.assertEqual(normalized, float(lease_seconds))
+
+                lease = self.store.claim(
+                    f"valid-lease-{index}",
+                    "worker-a",
+                    lease_seconds=lease_seconds,
+                )
+                self.assertEqual(lease.lease_expires_at, expected_deadline)
+                renewed = self.store.renew(
+                    lease,
+                    lease_seconds=lease_seconds,
+                )
+                self.assertEqual(renewed.lease_expires_at, expected_deadline)
+                self.store.release(renewed)
+
+    def test_invalid_lease_durations_fail_before_sql_clock_and_mutation(self) -> None:
+        active = self.store.claim("active-duration", "worker-a", lease_seconds=30)
+        connection = sqlite3.connect(self.path)
+        try:
+            active_before = connection.execute(
+                "SELECT * FROM projection_offsets WHERE projection_name = ?",
+                ("active-duration",),
+            ).fetchone()
+        finally:
+            connection.close()
+
+        for index, invalid in enumerate(invalid_projection_lease_seconds()):
+            with self.subTest(lease_seconds=invalid):
+                statements: list[str] = []
+                self.store._connection.set_trace_callback(statements.append)
+                try:
+                    with patch.object(self.store, "_clock", wraps=self.clock) as clock:
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            "exact finite int or float",
+                        ):
+                            self.store.claim(
+                                f"invalid-duration-{index}",
+                                "worker-a",
+                                lease_seconds=cast(Any, invalid),
+                            )
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            "exact finite int or float",
+                        ):
+                            self.store.renew(
+                                active,
+                                lease_seconds=cast(Any, invalid),
+                            )
+                    clock.assert_not_called()
+                finally:
+                    self.store._connection.set_trace_callback(None)
+                self.assertEqual(statements, [])
+
+        connection = sqlite3.connect(self.path)
+        try:
+            active_after = connection.execute(
+                "SELECT * FROM projection_offsets WHERE projection_name = ?",
+                ("active-duration",),
+            ).fetchone()
+            invalid_rows = connection.execute(
+                "SELECT COUNT(*) FROM projection_offsets "
+                "WHERE projection_name LIKE 'invalid-duration-%'",
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(active_after, active_before)
+        self.assertEqual(invalid_rows, 0)
+        self.store.release(active)
+
+    def test_lease_deadline_revalidates_and_stabilizes_datetime_overflow(self) -> None:
+        for invalid in (True, Decimal("1"), math.nan, MAX_PROJECTION_LEASE_SECONDS + 1):
+            with self.subTest(lease_seconds=invalid):
+                with self.assertRaisesRegex(ValueError, "exact finite int or float"):
+                    self.store._lease_deadline(
+                        "2026-08-20T00:00:00Z",
+                        invalid,
+                    )
+
+        self.clock.value = "9999-12-31T23:59:59.999999Z"
+        with self.assertRaisesRegex(
+            ValueError,
+            "lease deadline exceeds the supported datetime range",
+        ):
+            self.store.claim("overflow-duration", "worker-a", lease_seconds=1)
+        self.assertFalse(self.store._connection.in_transaction)
+        self.assertEqual(
+            self.store.load("overflow-duration").last_global_position,
+            0,
+        )
+
     def test_offset_survives_close_and_reopen_on_existing_database(self) -> None:
         lease = self.store.claim("task-list", "worker-a", lease_seconds=30)
         advanced = self.store.advance(lease, expected_position=0, new_position=7)
@@ -1337,6 +1462,36 @@ class DurableProjectorTests(unittest.TestCase):
                 lambda _transaction, _event: None,
             )
 
+    def test_projector_constructor_rejects_invalid_lease_before_dependencies(self) -> None:
+        source = StaticEventSource(())
+        statements: list[str] = []
+        self.offsets._connection.set_trace_callback(statements.append)
+        try:
+            for invalid in invalid_projection_lease_seconds():
+                with self.subTest(lease_seconds=invalid):
+                    with patch.object(self.offsets, "claim") as claim:
+                        with patch.object(self.registry, "require_sealed") as require_sealed:
+                            with self.assertRaisesRegex(
+                                ValueError,
+                                "exact finite int or float",
+                            ):
+                                DurableProjector(
+                                    "invalid-constructor-duration",
+                                    "worker-a",
+                                    source,
+                                    self.offsets,
+                                    self.registry,
+                                    lambda _transaction, _event: None,
+                                    lease_seconds=cast(Any, invalid),
+                                )
+                        require_sealed.assert_not_called()
+                    claim.assert_not_called()
+        finally:
+            self.offsets._connection.set_trace_callback(None)
+
+        self.assertEqual(statements, [])
+        self.assertEqual(source.calls, [])
+
     def test_projector_upcasts_and_checkpoints_a_bounded_batch(self) -> None:
         def handler(transaction: ProjectionTransaction, event: UpcastedEvent) -> None:
             self.create_view(transaction)
@@ -1486,7 +1641,10 @@ class DurableProjectorTests(unittest.TestCase):
             self.offsets,
             self.registry,
             handler,
+            lease_seconds=30,
         )
+        self.assertIs(type(projector.lease_seconds), float)
+        self.assertEqual(projector.lease_seconds, 30.0)
         full = projector.run_once(limit=2)
         source.result = ()
         empty = projector.run_once(limit=MAX_PROJECTION_BATCH_SIZE)

@@ -39,6 +39,13 @@ MAX_PROJECTION_IDENTIFIER_LENGTH = 255
 MAX_PROJECTION_BATCH_SIZE = 1000
 """Maximum events a durable projector may admit from one source read."""
 
+MAX_PROJECTION_LEASE_SECONDS = 86_400
+"""Maximum duration of one projection lease, in seconds."""
+
+_PROJECTION_LEASE_SECONDS_ERROR = (
+    "lease_seconds must be an exact finite int or float greater than zero "
+    f"and at most {MAX_PROJECTION_LEASE_SECONDS}"
+)
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
 
 
@@ -1241,6 +1248,18 @@ class SQLiteProjectionOffsetStore:
             raise ValueError(f"{field_name} must be a non-negative 64-bit SQLite integer")
         return value
 
+    @staticmethod
+    def _validate_lease_seconds(value: object) -> float:
+        if type(value) is int:
+            if not 0 < value <= MAX_PROJECTION_LEASE_SECONDS:
+                raise ValueError(_PROJECTION_LEASE_SECONDS_ERROR)
+            return float(value)
+        if type(value) is float:
+            if not math.isfinite(value) or value <= 0 or value > MAX_PROJECTION_LEASE_SECONDS:
+                raise ValueError(_PROJECTION_LEASE_SECONDS_ERROR)
+            return value
+        raise ValueError(_PROJECTION_LEASE_SECONDS_ERROR)
+
     @classmethod
     def _validate_lease(cls, lease: ProjectionLease) -> ProjectionLease:
         if type(lease) is not ProjectionLease:
@@ -1270,12 +1289,19 @@ class SQLiteProjectionOffsetStore:
         return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
     @classmethod
-    def _lease_deadline(cls, now: str, lease_seconds: float) -> str:
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be greater than zero")
-        parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
-        deadline = parsed + timedelta(seconds=lease_seconds)
-        return deadline.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    def _lease_deadline(cls, now: str, lease_seconds: object) -> str:
+        normalized_seconds = cls._validate_lease_seconds(lease_seconds)
+        try:
+            parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            duration = timedelta(seconds=normalized_seconds)
+            if duration <= timedelta(0):
+                # Positive sub-microsecond floats are valid input but must still
+                # produce a live lease at the persistence timestamp's resolution.
+                duration = timedelta.resolution
+            deadline = parsed + duration
+            return deadline.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        except OverflowError as exc:
+            raise ValueError("lease deadline exceeds the supported datetime range") from exc
 
     @staticmethod
     def _is_after(left: str, right: str) -> bool:
@@ -1440,9 +1466,10 @@ class SQLiteProjectionOffsetStore:
 
         projection_name = self._validate_name(projection_name, "projection_name")
         owner_id = self._validate_name(owner_id, "owner_id")
+        normalized_lease_seconds = self._validate_lease_seconds(lease_seconds)
         with self._transaction() as connection:
             now = self._now()
-            deadline = self._lease_deadline(now, lease_seconds)
+            deadline = self._lease_deadline(now, normalized_lease_seconds)
             row = connection.execute(
                 "SELECT * FROM projection_offsets WHERE projection_name = ?",
                 (projection_name,),
@@ -1492,10 +1519,11 @@ class SQLiteProjectionOffsetStore:
     ) -> ProjectionLease:
         """Extend a still-live lease without changing its fencing epoch."""
 
+        normalized_lease_seconds = self._validate_lease_seconds(lease_seconds)
         lease = self._validate_lease(lease)
         with self._transaction() as connection:
             now = self._now()
-            deadline = self._lease_deadline(now, lease_seconds)
+            deadline = self._lease_deadline(now, normalized_lease_seconds)
             row = connection.execute(
                 "SELECT * FROM projection_offsets WHERE projection_name = ?",
                 (lease.projection_name,),
@@ -1769,6 +1797,9 @@ class DurableProjector:
         *,
         lease_seconds: float = 30.0,
     ) -> None:
+        normalized_lease_seconds = offset_store._validate_lease_seconds(  # noqa: SLF001
+            lease_seconds
+        )
         self.projection_name = offset_store._validate_name(  # noqa: SLF001
             projection_name, "projection_name"
         )
@@ -1780,13 +1811,11 @@ class DurableProjector:
         registry.require_sealed()
         if not callable(handler):
             raise TypeError("handler must be callable")
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be greater than zero")
         self.event_source = event_source
         self.offset_store = offset_store
         self.registry = registry
         self.handler = handler
-        self.lease_seconds = lease_seconds
+        self.lease_seconds = normalized_lease_seconds
 
     @staticmethod
     def _validate_source_batch(
