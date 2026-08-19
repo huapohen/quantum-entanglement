@@ -407,6 +407,14 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             with self.subTest(seconds=seconds):
                 with self.assertRaises(ValueError):
                     self.store.claim("invocation-1", "worker", lease_seconds=seconds)
+        for invalid_limit in (True, False, 1.0, "1", None):
+            with self.subTest(recovery_limit=invalid_limit):
+                with self.assertRaises(TypeError):
+                    self.store.recover_expired(limit=invalid_limit)  # type: ignore[arg-type]
+        for invalid_limit in (-1, 0, 1_001):
+            with self.subTest(recovery_limit=invalid_limit):
+                with self.assertRaises(ValueError):
+                    self.store.recover_expired(limit=invalid_limit)
         self.assertEqual(self.store.get("invocation-1").status, InvocationStatus.QUEUED)
 
     def test_persisted_job_types_and_timestamps_fail_closed(self):

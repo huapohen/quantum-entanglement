@@ -806,8 +806,8 @@ class SQLiteInvocationAttemptStore:
 
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise TypeError("limit must be an integer")
-        if limit <= 0:
-            raise ValueError("limit must be greater than zero")
+        if not 1 <= limit <= 1_000:
+            raise ValueError("limit must be between 1 and 1000")
         with self._transaction() as connection:
             normalized_now = self._now()
             return self._recover_expired_in_transaction(
