@@ -58,9 +58,7 @@ def _normalize_timestamp(value: str) -> str:
         raise ValueError("backup clock returned an invalid timestamp") from exc
     if parsed.tzinfo is None:
         raise ValueError("backup timestamp must include a timezone")
-    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace(
-        "+00:00", "Z"
-    )
+    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _sha256_file(path: Path) -> str:
@@ -465,9 +463,7 @@ def restore_sqlite_backup(
             os.link(destination_temp, destination)
             destination_linked = True
         except FileExistsError as exc:
-            raise BackupExistsError(
-                f"restore destination already exists: {destination}"
-            ) from exc
+            raise BackupExistsError(f"restore destination already exists: {destination}") from exc
         _fsync_directory(destination.parent)
         restored_connection = _read_only_connection(destination)
         try:
