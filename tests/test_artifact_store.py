@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from collections import UserDict
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -77,6 +78,31 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
     def tearDown(self):
         self.store.close()
         self.tempdir.cleanup()
+
+    def _write_versions(self, count, *, session_id="session-a", name="report.md", prefix="v"):
+        for version in range(1, count + 1):
+            self.store.write(
+                artifact_write(
+                    artifact_id=f"artifact-{prefix}-{version}",
+                    session_id=session_id,
+                    task_id=f"task-{prefix}-{version}",
+                    name=name,
+                    idempotency_key=f"artifact:{prefix}:{version}",
+                    content=f"{prefix}-{version}".encode(),
+                )
+            )
+
+    def _database_state(self):
+        connection = sqlite3.connect(self.path)
+        try:
+            return (
+                connection.execute(
+                    "SELECT * FROM artifact_versions ORDER BY artifact_id"
+                ).fetchall(),
+                connection.execute("SELECT * FROM artifact_blobs ORDER BY digest").fetchall(),
+            )
+        finally:
+            connection.close()
 
     def test_store_is_part_of_the_supported_package_api(self):
         self.assertIs(PublicSQLiteArtifactStore, SQLiteArtifactStore)
@@ -662,6 +688,26 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
             limit=2,
         )
         self.assertEqual([item.version for item in page], [2, 3])
+        self.assertEqual(
+            self.store.history(
+                "tenant-a",
+                "workspace-a",
+                "session-a",
+                "report.md",
+                after_version=4,
+            ),
+            (),
+        )
+        self.assertEqual(
+            self.store.history(
+                "tenant-a",
+                "workspace-a",
+                "session-a",
+                "report.md",
+                after_version=99,
+            ),
+            (),
+        )
         with self.assertRaises(ValueError):
             self.store.history("tenant-a", "workspace-a", "session-a", "report.md", limit=0)
         with self.assertRaises(ValueError):
@@ -711,6 +757,132 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
                     limit=2,
                 )
             self.assertEqual(bounded.verify_scope("tenant-a", "workspace-a"), 2)
+
+    def test_history_and_scope_reject_a_missing_first_version_without_writing(self):
+        self._write_versions(2, prefix="missing-first")
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "DELETE FROM artifact_versions WHERE artifact_id = ?",
+                ("artifact-missing-first-1",),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        before_state = self._database_state()
+        before_changes = self.store._connection.total_changes
+        readers = (
+            lambda: self.store.history("tenant-a", "workspace-a", "session-a", "report.md"),
+            lambda: self.store.verify_scope("tenant-a", "workspace-a"),
+        )
+        for reader in readers:
+            with self.subTest(reader=reader):
+                with self.assertRaisesRegex(ArtifactIntegrityError, "lineage"):
+                    reader()
+        self.assertEqual(self.store._connection.total_changes, before_changes)
+        self.assertEqual(self._database_state(), before_state)
+
+    def test_history_and_scope_reject_a_middle_gap_before_serving_a_later_cursor(self):
+        self._write_versions(4, prefix="middle-gap")
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "DELETE FROM artifact_versions WHERE artifact_id = ?",
+                ("artifact-middle-gap-2",),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        before_state = self._database_state()
+        before_changes = self.store._connection.total_changes
+        readers = (
+            lambda: self.store.history(
+                "tenant-a",
+                "workspace-a",
+                "session-a",
+                "report.md",
+                after_version=2,
+            ),
+            lambda: self.store.verify_scope("tenant-a", "workspace-a"),
+        )
+        for reader in readers:
+            with self.subTest(reader=reader):
+                with self.assertRaisesRegex(ArtifactIntegrityError, "lineage"):
+                    reader()
+        self.assertEqual(self.store._connection.total_changes, before_changes)
+        self.assertEqual(self._database_state(), before_state)
+
+        # Schema v2 has no durable high-water mark, so a deleted terminal version
+        # is indistinguishable from one that was never persisted and is out of scope.
+
+    def test_lineage_validation_rejects_duplicate_and_order_drift(self):
+        class LineageOnlyConnection:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def execute(self, *_args, **_kwargs):
+                return iter(self.rows)
+
+        def row(session_id, version, parent_version):
+            return {
+                "session_id": session_id,
+                "name": "report.md",
+                "version": version,
+                "parent_version": parent_version,
+            }
+
+        cases = {
+            "duplicate": [row("session-a", 1, None), row("session-a", 1, None)],
+            "version-order": [
+                row("session-a", 1, None),
+                row("session-a", 3, 2),
+                row("session-a", 2, 1),
+            ],
+            "group-order": [
+                row("session-a", 1, None),
+                row("session-b", 1, None),
+                row("session-a", 2, 1),
+            ],
+        }
+        for case, rows in cases.items():
+            with self.subTest(case=case):
+
+                @contextmanager
+                def read_snapshot(lineage_rows=rows):
+                    yield LineageOnlyConnection(lineage_rows)
+
+                with patch.object(self.store, "_read_snapshot", read_snapshot):
+                    with self.assertRaises(ArtifactIntegrityError):
+                        self.store.history(
+                            "tenant-a",
+                            "workspace-a",
+                            "session-a",
+                            "report.md",
+                        )
+
+    def test_scope_lineage_groups_are_isolated_by_session_and_name(self):
+        self._write_versions(2, session_id="session-a", name="a.md", prefix="group-a")
+        self._write_versions(2, session_id="session-b", name="b.md", prefix="group-b")
+        self.assertEqual(self.store.verify_scope("tenant-a", "workspace-a"), 4)
+
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "DELETE FROM artifact_versions WHERE artifact_id = ?",
+                ("artifact-group-b-1",),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        intact = self.store.history("tenant-a", "workspace-a", "session-a", "a.md")
+        self.assertEqual([item.version for item in intact], [1, 2])
+        with self.assertRaises(ArtifactIntegrityError):
+            self.store.history("tenant-a", "workspace-a", "session-b", "b.md")
+        with self.assertRaises(ArtifactIntegrityError):
+            self.store.verify_scope("tenant-a", "workspace-a")
 
     def test_verify_scope_rejects_blob_metadata_before_loading_corrupt_content(self):
         stored = self.store.write(artifact_write(content=b"x"))

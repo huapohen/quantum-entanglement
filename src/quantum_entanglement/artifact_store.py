@@ -19,7 +19,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -601,6 +601,54 @@ class SQLiteArtifactStore:
         return version, content_length
 
     @staticmethod
+    def _validate_version_lineage(
+        rows: Iterable[sqlite3.Row],
+    ) -> Tuple[int, int]:
+        """Validate ordered artifact groups and return row count and final head."""
+
+        current_group: Optional[Tuple[str, str]] = None
+        previous_version = 0
+        checked = 0
+        for row in rows:
+            try:
+                group = (
+                    _persisted_text(row["session_id"], "session_id"),
+                    _persisted_text(row["name"], "name"),
+                )
+                version = _persisted_integer(row["version"], "version", minimum=1)
+                raw_parent_version = row["parent_version"]
+                parent_version = (
+                    None
+                    if raw_parent_version is None
+                    else _persisted_integer(
+                        raw_parent_version,
+                        "parent_version",
+                        minimum=1,
+                    )
+                )
+            except (IndexError, KeyError, TypeError, ValueError) as exc:
+                raise ArtifactIntegrityError(
+                    "artifact version lineage metadata violates its contract"
+                ) from exc
+
+            if group != current_group:
+                if current_group is not None and group <= current_group:
+                    raise ArtifactIntegrityError(
+                        "artifact version groups are not in strict storage order"
+                    )
+                expected_version = 1
+                current_group = group
+            else:
+                expected_version = previous_version + 1
+            expected_parent = expected_version - 1 if expected_version > 1 else None
+            if version != expected_version or parent_version != expected_parent:
+                raise ArtifactIntegrityError("artifact version lineage is not strictly contiguous")
+            previous_version = version
+            checked += 1
+
+        return checked, previous_version if current_group is not None else 0
+
+    @staticmethod
     def _select_get_preflight_rows(
         connection: sqlite3.Connection,
         tenant_id: str,
@@ -973,6 +1021,18 @@ class SQLiteArtifactStore:
         if not 1 <= limit <= 1_000:
             raise ValueError("limit must be between 1 and 1000")
         with self._read_snapshot() as connection:
+            lineage_cursor = connection.execute(
+                """
+                SELECT session_id, name, version, parent_version
+                FROM artifact_versions
+                WHERE tenant_id = ? AND workspace_id = ?
+                  AND session_id = ? AND name = ?
+                ORDER BY session_id, name, version
+                """,
+                (tenant_id, workspace_id, session_id, name),
+            )
+            _lineage_count, head_version = self._validate_version_lineage(lineage_cursor)
+
             metadata_rows = connection.execute(
                 """
                 SELECT version.version,
@@ -981,7 +1041,7 @@ class SQLiteArtifactStore:
                        typeof(blob.content) AS blob_storage_type,
                        length(blob.content) AS blob_content_length
                 FROM artifact_versions AS version
-                JOIN artifact_blobs AS blob ON blob.digest = version.blob_digest
+                LEFT JOIN artifact_blobs AS blob ON blob.digest = version.blob_digest
                 WHERE version.tenant_id = ? AND version.workspace_id = ?
                   AND version.session_id = ? AND version.name = ?
                   AND version.version > ?
@@ -991,8 +1051,12 @@ class SQLiteArtifactStore:
             ).fetchall()
             expected_versions = []
             page_bytes = 0
-            for metadata_row in metadata_rows:
+            for index, metadata_row in enumerate(metadata_rows):
                 version, content_length = self._preflight_blob_metadata(metadata_row)
+                if version != after_version + index + 1:
+                    raise ArtifactIntegrityError(
+                        "artifact history cursor does not continue at the next version"
+                    )
                 page_bytes += content_length
                 if page_bytes > self._max_history_bytes:
                     raise ArtifactTooLargeError(
@@ -1000,6 +1064,11 @@ class SQLiteArtifactStore:
                         f"{self._max_history_bytes} content bytes; request a smaller limit"
                     )
                 expected_versions.append(version)
+
+            if not metadata_rows and after_version < head_version:
+                raise ArtifactIntegrityError(
+                    "artifact history page is missing a version after its cursor"
+                )
 
             cursor = connection.execute(
                 """
@@ -1026,33 +1095,54 @@ class SQLiteArtifactStore:
         _required_text(tenant_id, "tenant_id")
         _required_text(workspace_id, "workspace_id")
         with self._read_snapshot() as connection:
+            lineage_cursor = connection.execute(
+                """
+                SELECT session_id, name, version, parent_version
+                FROM artifact_versions
+                WHERE tenant_id = ? AND workspace_id = ?
+                ORDER BY session_id, name, version
+                """,
+                (tenant_id, workspace_id),
+            )
+            lineage_count, _last_head = self._validate_version_lineage(lineage_cursor)
+
+            checked = 0
             cursor = connection.execute(
                 """
-                SELECT version.artifact_id, version.version,
+                SELECT version.artifact_id, version.session_id, version.name,
+                       version.version, version.parent_version,
                        version.byte_size AS version_byte_size,
                        blob.byte_size AS blob_byte_size,
                        typeof(blob.content) AS blob_storage_type,
                        length(blob.content) AS blob_content_length
                 FROM artifact_versions AS version
-                JOIN artifact_blobs AS blob ON blob.digest = version.blob_digest
+                LEFT JOIN artifact_blobs AS blob ON blob.digest = version.blob_digest
                 WHERE version.tenant_id = ? AND version.workspace_id = ?
                 ORDER BY version.session_id, version.name, version.version
                 """,
                 (tenant_id, workspace_id),
             )
-            checked = 0
             for metadata_row in cursor:
                 _version, content_length = self._preflight_blob_metadata(metadata_row)
                 if content_length > self._max_content_bytes:
                     raise ArtifactTooLargeError(
                         "persisted artifact exceeds the configured single-content limit"
                     )
-                artifact_id = _persisted_text(metadata_row["artifact_id"], "artifact_id")
+                try:
+                    artifact_id = _persisted_text(metadata_row["artifact_id"], "artifact_id")
+                except (IndexError, KeyError, TypeError, ValueError) as exc:
+                    raise ArtifactIntegrityError(
+                        "artifact verification identity violates its contract"
+                    ) from exc
                 row = self._select_record(connection, tenant_id, workspace_id, artifact_id)
                 if row is None:
                     raise ArtifactIntegrityError("artifact disappeared inside its read snapshot")
                 self._row_to_artifact(row)
                 checked += 1
+            if checked != lineage_count:
+                raise ArtifactIntegrityError(
+                    "artifact verification row count changed inside its read snapshot"
+                )
             return checked
 
     def schema_version(self) -> int:
