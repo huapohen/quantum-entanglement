@@ -36,6 +36,9 @@ MAX_EVENT_PAYLOAD_NODES = 10_000
 MAX_PROJECTION_IDENTIFIER_LENGTH = 255
 """Maximum stored length for projection names, owner IDs, and event IDs."""
 
+MAX_PROJECTION_BATCH_SIZE = 1000
+"""Maximum events a durable projector may admit from one source read."""
+
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
 
 
@@ -109,6 +112,10 @@ class ProjectionIntegrityError(ProjectionOffsetError):
 
 class ProjectionSchemaError(ProjectionIntegrityError):
     """Raised when projection-owned SQLite schema is absent in part or has drifted."""
+
+
+class ProjectionSourceIntegrityError(ProjectionIntegrityError):
+    """Raised when an event source violates the bounded contiguous batch contract."""
 
 
 class ProjectionLeaseConflictError(ProjectionOffsetError):
@@ -391,7 +398,7 @@ class EventSource(Protocol):
     """Minimal append-only source contract required by ``DurableProjector``."""
 
     def read_all(self, after_position: int = 0, limit: int = 1000) -> tuple[StoredEvent, ...]:
-        """Return events ordered by increasing global position."""
+        """Return an exact tuple whose positions start after the cursor and are contiguous."""
 
 
 class ProjectionTransaction:
@@ -1781,11 +1788,47 @@ class DurableProjector:
         self.handler = handler
         self.lease_seconds = lease_seconds
 
-    def run_once(self, *, limit: int = 100) -> ProjectionRunResult:
-        """Project at most ``limit`` events and release ownership when still live."""
+    @staticmethod
+    def _validate_source_batch(
+        events: object,
+        *,
+        after_position: int,
+        limit: int,
+    ) -> tuple[StoredEvent, ...]:
+        """Validate a complete source result before any event can be processed."""
 
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
-            raise ValueError("limit must be a positive integer")
+        if type(events) is not tuple:
+            raise ProjectionSourceIntegrityError("event source must return an exact tuple batch")
+        if len(events) > limit:
+            raise ProjectionSourceIntegrityError("event source batch exceeds the requested limit")
+
+        expected_position = after_position + 1
+        for batch_index, candidate in enumerate(events):
+            if type(candidate) is not StoredEvent:
+                raise ProjectionSourceIntegrityError(
+                    f"event source item {batch_index} must be an exact StoredEvent"
+                )
+            position = candidate.global_position
+            if type(position) is not int or not (
+                1 <= position <= SQLiteProjectionOffsetStore._MAX_SQLITE_INTEGER
+            ):
+                raise ProjectionSourceIntegrityError(
+                    f"event source item {batch_index} has an invalid global position"
+                )
+            if position != expected_position:
+                raise ProjectionSourceIntegrityError(
+                    f"event source item {batch_index} is not globally contiguous"
+                )
+            expected_position += 1
+        return events
+
+    def run_once(self, *, limit: int = 100) -> ProjectionRunResult:
+        """Validate then project one bounded batch and release ownership when still live."""
+
+        if type(limit) is not int or not 1 <= limit <= MAX_PROJECTION_BATCH_SIZE:
+            raise ValueError(
+                f"limit must be an exact integer between 1 and {MAX_PROJECTION_BATCH_SIZE}"
+            )
         primary_error: Optional[BaseException] = None
         lease = self.offset_store.claim(
             self.projection_name,
@@ -1797,7 +1840,15 @@ class DurableProjector:
             applied = 0
             deduplicated = 0
             last_position = self.offset_store.load(self.projection_name).last_global_position
-            events = self.event_source.read_all(after_position=last_position, limit=limit)
+            source_result = self.event_source.read_all(
+                after_position=last_position,
+                limit=limit,
+            )
+            events = self._validate_source_batch(
+                source_result,
+                after_position=last_position,
+                limit=limit,
+            )
             for stored_event in events:
                 lease = self.offset_store.renew(
                     lease,

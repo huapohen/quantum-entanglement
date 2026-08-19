@@ -12,6 +12,7 @@ from quantum_entanglement.events import DomainEvent, StoredEvent
 from quantum_entanglement.projections import (
     MAX_EVENT_PAYLOAD_DEPTH,
     MAX_EVENT_PAYLOAD_NODES,
+    MAX_PROJECTION_BATCH_SIZE,
     MAX_PROJECTION_IDENTIFIER_LENGTH,
     SCHEMA_VERSION_FIELD,
     DurableProjector,
@@ -29,6 +30,7 @@ from quantum_entanglement.projections import (
     ProjectionLeaseLostError,
     ProjectionOffsetConflictError,
     ProjectionSchemaError,
+    ProjectionSourceIntegrityError,
     ProjectionStatementResult,
     ProjectionTransaction,
     SQLiteProjectionOffsetStore,
@@ -485,6 +487,20 @@ class MutableClock:
 
     def __call__(self) -> str:
         return self.value
+
+
+class StaticEventSource:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls: list[tuple[int, int]] = []
+
+    def read_all(
+        self,
+        after_position: int = 0,
+        limit: int = 1000,
+    ) -> tuple[StoredEvent, ...]:
+        self.calls.append((after_position, limit))
+        return cast(tuple[StoredEvent, ...], self.result)
 
 
 class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
@@ -1214,6 +1230,95 @@ class DurableProjectorTests(unittest.TestCase):
         finally:
             connection.close()
 
+    @staticmethod
+    def source_event(position: Any, label: str) -> StoredEvent:
+        return StoredEvent(
+            DomainEvent(
+                "session:source",
+                "task.created",
+                {"name": label},
+                "source-test",
+                event_id=f"evt-source-{label}",
+            ),
+            sequence=1,
+            global_position=cast(int, position),
+        )
+
+    def assert_source_batch_rejected(
+        self,
+        label: str,
+        source_result: object,
+        *,
+        limit: int = 10,
+        starting_position: int = 0,
+    ) -> None:
+        projection_name = f"bad-source-{label}"
+        if starting_position > 0:
+            seed_lease = self.offsets.claim(projection_name, "seed-owner")
+            self.offsets.advance(
+                seed_lease,
+                expected_position=0,
+                new_position=starting_position,
+            )
+            self.offsets.release(seed_lease)
+
+        source = StaticEventSource(source_result)
+        handler_calls = 0
+
+        def handler(_transaction: ProjectionTransaction, _event: UpcastedEvent) -> None:
+            nonlocal handler_calls
+            handler_calls += 1
+
+        projector = DurableProjector(
+            projection_name,
+            "worker-a",
+            source,
+            self.offsets,
+            self.registry,
+            handler,
+        )
+        with patch.object(
+            self.offsets,
+            "renew",
+            wraps=self.offsets.renew,
+        ) as renew:
+            with patch.object(
+                self.registry,
+                "upcast",
+                wraps=self.registry.upcast,
+            ) as upcast:
+                with patch.object(
+                    self.offsets,
+                    "apply_event",
+                    wraps=self.offsets.apply_event,
+                ) as apply_event:
+                    with self.assertRaises(ProjectionSourceIntegrityError) as raised:
+                        projector.run_once(limit=limit)
+
+        self.assertIs(type(raised.exception), ProjectionSourceIntegrityError)
+        self.assertEqual(source.calls, [(starting_position, limit)])
+        renew.assert_not_called()
+        upcast.assert_not_called()
+        apply_event.assert_not_called()
+        self.assertEqual(handler_calls, 0)
+        self.assertEqual(
+            self.offsets.load(projection_name).last_global_position,
+            starting_position,
+        )
+        connection = sqlite3.connect(self.path)
+        try:
+            receipt_count = connection.execute(
+                "SELECT COUNT(*) FROM projection_receipts WHERE projection_name = ?",
+                (projection_name,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(receipt_count, 0)
+
+        takeover = self.offsets.claim(projection_name, "worker-b")
+        self.assertEqual(takeover.owner_id, "worker-b")
+        self.offsets.release(takeover)
+
     def test_projector_constructor_rejects_unsealed_registry(self) -> None:
         unsealed = EventUpcasterRegistry()
         unsealed.register_event_type(
@@ -1259,6 +1364,142 @@ class DurableProjectorTests(unittest.TestCase):
         self.assertEqual(first.last_global_position, 1)
         self.assertEqual(second.last_global_position, 2)
         self.assertEqual(self.read_view(), [("evt-1", "research"), ("evt-2", "ship")])
+
+    def test_limit_is_an_exact_bounded_integer_before_claim_source_or_sql(self) -> None:
+        source = StaticEventSource(())
+        projector = DurableProjector(
+            "invalid-limit",
+            "worker-a",
+            source,
+            self.offsets,
+            self.registry,
+            lambda _transaction, _event: None,
+        )
+        statements: list[str] = []
+        self.offsets._connection.set_trace_callback(statements.append)
+        try:
+            invalid_limits: tuple[object, ...] = (
+                True,
+                False,
+                0,
+                -1,
+                1.0,
+                "1",
+                None,
+                MAX_PROJECTION_BATCH_SIZE + 1,
+                2**63,
+            )
+            for invalid_limit in invalid_limits:
+                with self.subTest(limit=invalid_limit):
+                    with patch.object(self.offsets, "claim") as claim:
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            "exact integer between 1 and 1000",
+                        ):
+                            projector.run_once(limit=cast(Any, invalid_limit))
+                    claim.assert_not_called()
+        finally:
+            self.offsets._connection.set_trace_callback(None)
+
+        self.assertEqual(source.calls, [])
+        self.assertEqual(statements, [])
+
+    def test_untrusted_source_batches_are_fully_rejected_before_processing(self) -> None:
+        first = self.source_event(1, "first")
+        second = self.source_event(2, "second")
+        third = self.source_event(3, "third")
+        duplicate = self.source_event(1, "duplicate")
+        descending = self.source_event(1, "descending")
+        bool_position = self.source_event(True, "bool-position")
+        float_position = self.source_event(2.0, "float-position")
+        zero_position = self.source_event(0, "zero-position")
+        negative_position = self.source_event(-1, "negative-position")
+        overflow_position = self.source_event(2**63, "overflow-position")
+        generator = (event for event in (first,))
+        cases: tuple[tuple[str, object, int, int], ...] = (
+            ("oversized", (first, second), 1, 0),
+            ("list", [first], 10, 0),
+            ("generator", generator, 10, 0),
+            ("late-invalid-item", (first, object()), 10, 0),
+            ("first-gap", (second,), 10, 0),
+            ("late-gap", (first, third), 10, 0),
+            ("duplicate", (first, duplicate), 10, 0),
+            ("descending", (first, second, descending), 10, 0),
+            ("bool-position", (bool_position,), 10, 0),
+            ("late-float-position", (first, float_position), 10, 0),
+            ("zero-position", (zero_position,), 10, 0),
+            ("negative-position", (negative_position,), 10, 0),
+            ("overflow-position", (overflow_position,), 10, 0),
+            ("cross-batch-nonadvancing", (first,), 10, 1),
+        )
+        for label, source_result, limit, starting_position in cases:
+            with self.subTest(label=label):
+                self.assert_source_batch_rejected(
+                    label,
+                    source_result,
+                    limit=limit,
+                    starting_position=starting_position,
+                )
+
+        self.assertIs(next(generator), first)
+
+    def test_source_integrity_error_is_not_masked_by_release_failure(self) -> None:
+        source = StaticEventSource([self.source_event(1, "list-release-failure")])
+        projector = DurableProjector(
+            "source-and-release-failure",
+            "worker-a",
+            source,
+            self.offsets,
+            self.registry,
+            lambda _transaction, _event: None,
+        )
+        with patch.object(
+            self.offsets,
+            "release",
+            side_effect=RuntimeError("release failed"),
+        ) as release:
+            with self.assertRaises(ProjectionSourceIntegrityError) as raised:
+                projector.run_once(limit=1)
+
+        self.assertIs(type(raised.exception), ProjectionSourceIntegrityError)
+        release.assert_called_once()
+        replacement = self.offsets.claim("source-and-release-failure", "worker-a")
+        self.offsets.release(replacement)
+
+    def test_exact_empty_and_full_source_batches_remain_compatible(self) -> None:
+        source = StaticEventSource(
+            (
+                self.source_event(1, "valid-first"),
+                self.source_event(2, "valid-second"),
+            )
+        )
+        handler_calls = 0
+
+        def handler(_transaction: ProjectionTransaction, _event: UpcastedEvent) -> None:
+            nonlocal handler_calls
+            handler_calls += 1
+
+        projector = DurableProjector(
+            "valid-source-boundaries",
+            "worker-a",
+            source,
+            self.offsets,
+            self.registry,
+            handler,
+        )
+        full = projector.run_once(limit=2)
+        source.result = ()
+        empty = projector.run_once(limit=MAX_PROJECTION_BATCH_SIZE)
+
+        self.assertEqual((full.scanned_count, full.applied_count), (2, 2))
+        self.assertEqual(full.last_global_position, 2)
+        self.assertEqual((empty.scanned_count, empty.applied_count), (0, 0))
+        self.assertEqual(empty.last_global_position, 2)
+        self.assertEqual(handler_calls, 2)
+        self.assertEqual(
+            source.calls,
+            [(0, 2), (2, MAX_PROJECTION_BATCH_SIZE)],
+        )
 
     def test_handler_failure_rolls_back_view_receipt_and_offset_then_replays(self) -> None:
         failed_once = False
