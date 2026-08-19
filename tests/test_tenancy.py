@@ -1171,6 +1171,70 @@ class TenancyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate revoked ids"):
             RevocationSnapshot.from_dict(duplicate_snapshot)
 
+    def test_collection_admission_limits_fail_closed(self):
+        binding = self.binding(Role.VIEWER)
+        with self.assertRaisesRegex(ValueError, "role_bindings.*256"):
+            self.member(*(binding for _ in range(257)))
+
+        snapshot_payload = self.snapshot().to_dict()
+        snapshot_payload["revokedIds"] = [self.claims().revocation_id.to_dict()] * 10_001
+        with self.assertRaisesRegex(ValueError, "revokedIds.*10000"):
+            RevocationSnapshot.from_dict(snapshot_payload)
+
+        claims = self.claims()
+        envelope = self.envelope((claims,))
+        with self.assertRaisesRegex(ValueError, "claims.*64"):
+            CapabilityEnvelope(
+                protocol_version=envelope.protocol_version,
+                trust_domain=envelope.trust_domain,
+                policy_version=envelope.policy_version,
+                claims=(claims,) * 65,
+                root_proof=envelope.root_proof,
+            )
+
+        verified = self.verify((claims,))
+        yielded = 0
+
+        def excessive_capabilities():
+            nonlocal yielded
+            for _ in range(1_000_000):
+                yielded += 1
+                yield verified
+
+        with self.assertRaisesRegex(ValueError, "verified_capabilities.*64"):
+            self.authorizer.evaluate(
+                self.request(),
+                self.member(),
+                self.snapshot(),
+                excessive_capabilities(),
+            )
+        self.assertEqual(yielded, 65)
+
+        with self.assertRaisesRegex(ValueError, "evidence.*256"):
+            AuthorizationDecision(
+                outcome=AuthorizationOutcome.ALLOW,
+                code=DecisionCode.ALLOW_RBAC,
+                reason="bounded evidence",
+                request=self.request(),
+                evaluated_at=NOW,
+                evidence=tuple(f"evidence-{index}" for index in range(257)),
+            )
+
+        key = self.signing_key("issuer-1")
+        with self.assertRaisesRegex(ValueError, "signing keys.*4096"):
+            self.key_ring.replace_keys(key for _ in range(4_097))
+
+        with self.assertRaisesRegex(ValueError, "role action grants.*256"):
+            TenantAuthorizer(
+                capability_verifier=self.verifier,
+                trust_domain=self.verifier.trust_domain,
+                policy_version=self.verifier.policy_version,
+                revision_guard=self.revision_guard,
+                audience=AUDIENCE,
+                clock=self.clock,
+                role_actions={Role.VIEWER: ("resource.read",) * 257},
+            )
+
     def test_round_trip_and_tamper_detection(self):
         claims = self.claims()
         envelope = self.envelope((claims,))

@@ -32,6 +32,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from itertools import islice
 from typing import Any, Optional, Protocol, Union
 
 _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -42,6 +43,14 @@ _KID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ALGORITHM = re.compile(r"^[A-Z][A-Z0-9_-]{1,31}$")
 _BASE64URL = re.compile(r"^[A-Za-z0-9_-]{16,2048}$")
 _RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$")
+_MAX_ROLE_BINDINGS = 256
+_MAX_REVOCATION_IDS = 10_000
+_MAX_KEY_RECORDS = 4_096
+_MAX_ROOT_TENANTS_PER_KEY = 4_096
+_MAX_CAPABILITY_CHAIN_DEPTH = 64
+_MAX_CAPABILITIES_PER_DECISION = 64
+_MAX_DECISION_EVIDENCE = 256
+_MAX_ROLE_ACTIONS_PER_ROLE = 256
 
 
 def _require_opaque_id(value: str, field_name: str) -> str:
@@ -143,9 +152,16 @@ def _integer(value: Any, field_name: str) -> int:
     return int(value)
 
 
-def _list(value: Any, field_name: str) -> list[Any]:
+def _list(
+    value: Any,
+    field_name: str,
+    *,
+    maximum: Optional[int] = None,
+) -> list[Any]:
     if not isinstance(value, list):
         raise TypeError(f"{field_name} must be an array")
+    if maximum is not None and len(value) > maximum:
+        raise ValueError(f"{field_name} cannot contain more than {maximum} items")
     return value
 
 
@@ -191,13 +207,23 @@ def _proof_message(kid: str, algorithm: str, payload: bytes) -> bytes:
     )
 
 
-def _strict_tuple(value: Iterable[Any], field_name: str) -> tuple[Any, ...]:
+def _strict_tuple(
+    value: Iterable[Any],
+    field_name: str,
+    *,
+    maximum: Optional[int] = None,
+) -> tuple[Any, ...]:
     if isinstance(value, (str, bytes, bytearray, Mapping)):
         raise TypeError(f"{field_name} must be an iterable of typed values")
     try:
-        return tuple(value)
+        if maximum is None:
+            return tuple(value)
+        values = tuple(islice(iter(value), maximum + 1))
     except TypeError as error:
         raise TypeError(f"{field_name} must be iterable") from error
+    if len(values) > maximum:
+        raise ValueError(f"{field_name} cannot contain more than {maximum} items")
+    return values
 
 
 def action_covers(granted: str, requested: str) -> bool:
@@ -501,7 +527,11 @@ class Member:
             raise TypeError("tenant_id must be TenantId")
         if not isinstance(self.status, MemberStatus):
             raise TypeError("status must be MemberStatus")
-        bindings = _strict_tuple(self.role_bindings, "role_bindings")
+        bindings = _strict_tuple(
+            self.role_bindings,
+            "role_bindings",
+            maximum=_MAX_ROLE_BINDINGS,
+        )
         for binding in bindings:
             if not isinstance(binding, RoleBinding):
                 raise TypeError("role_bindings must contain RoleBinding values")
@@ -524,7 +554,11 @@ class Member:
             required=("memberId", "tenantId", "status", "roleBindings"),
             field_name="member",
         )
-        bindings = _list(data["roleBindings"], "member.roleBindings")
+        bindings = _list(
+            data["roleBindings"],
+            "member.roleBindings",
+            maximum=_MAX_ROLE_BINDINGS,
+        )
         return cls(
             member_id=_string(data["memberId"], "member.memberId"),
             tenant_id=TenantId(_string(data["tenantId"], "member.tenantId")),
@@ -585,7 +619,11 @@ class RevocationSnapshot:
         if revision < 0:
             raise ValueError("revision cannot be negative")
         object.__setattr__(self, "captured_at", _as_utc(self.captured_at, "captured_at"))
-        values = _strict_tuple(self.revoked_ids, "revoked_ids")
+        values = _strict_tuple(
+            self.revoked_ids,
+            "revoked_ids",
+            maximum=_MAX_REVOCATION_IDS,
+        )
         normalized = frozenset(values)
         for revocation_id in normalized:
             if not isinstance(revocation_id, RevocationId):
@@ -656,7 +694,11 @@ class RevocationSnapshot:
             required=("tenantId", "revision", "capturedAt", "revokedIds"),
             field_name="revocation snapshot",
         )
-        raw_ids = _list(data["revokedIds"], "revocation snapshot.revokedIds")
+        raw_ids = _list(
+            data["revokedIds"],
+            "revocation snapshot.revokedIds",
+            maximum=_MAX_REVOCATION_IDS,
+        )
         parsed_ids = tuple(RevocationId.from_dict(item) for item in raw_ids)
         if len(frozenset(parsed_ids)) != len(parsed_ids):
             raise ValueError("revocation snapshot cannot contain duplicate revoked ids")
@@ -1296,10 +1338,16 @@ class CapabilitySigningKey:
             raise ValueError("key expires_at must follow not_before")
         if not isinstance(self.status, KeyStatus):
             raise TypeError("key status must be KeyStatus")
-        usages = frozenset(_strict_tuple(self.usages, "key.usages"))
+        usages = frozenset(_strict_tuple(self.usages, "key.usages", maximum=len(KeyUsage)))
         if not usages or any(type(usage) is not KeyUsage for usage in usages):
             raise TypeError("key.usages must contain KeyUsage values")
-        root_tenants = frozenset(_strict_tuple(self.root_tenants, "key.root_tenants"))
+        root_tenants = frozenset(
+            _strict_tuple(
+                self.root_tenants,
+                "key.root_tenants",
+                maximum=_MAX_ROOT_TENANTS_PER_KEY,
+            )
+        )
         if any(type(tenant_id) is not TenantId for tenant_id in root_tenants):
             raise TypeError("key.root_tenants must contain TenantId values")
         if KeyUsage.ROOT in usages and not root_tenants:
@@ -1358,7 +1406,11 @@ class RotatingHMACKeyRing:
     def replace_keys(self, keys: Iterable[CapabilitySigningKey]) -> None:
         """Atomically install a rotation set without permitting key rollback."""
 
-        values = _strict_tuple(keys, "capability signing keys")
+        values = _strict_tuple(
+            keys,
+            "capability signing keys",
+            maximum=_MAX_KEY_RECORDS,
+        )
         normalized: dict[str, CapabilitySigningKey] = {}
         for key in values:
             if type(key) is not CapabilitySigningKey:
@@ -1586,12 +1638,20 @@ class CapabilityEnvelope:
         _require_text(self.protocol_version, "protocol_version", maximum=64)
         _require_text(self.trust_domain, "trust_domain", maximum=256)
         _require_text(self.policy_version, "policy_version", maximum=128)
-        claims = _strict_tuple(self.claims, "capability envelope claims")
+        claims = _strict_tuple(
+            self.claims,
+            "capability envelope claims",
+            maximum=_MAX_CAPABILITY_CHAIN_DEPTH,
+        )
         if not claims or any(not isinstance(item, CapabilityClaims) for item in claims):
             raise TypeError("capability envelope claims must contain CapabilityClaims")
         if not isinstance(self.root_proof, CapabilityProof):
             raise TypeError("root_proof must be CapabilityProof")
-        proofs = _strict_tuple(self.delegation_proofs, "delegation proofs")
+        proofs = _strict_tuple(
+            self.delegation_proofs,
+            "delegation proofs",
+            maximum=_MAX_CAPABILITY_CHAIN_DEPTH - 1,
+        )
         if any(not isinstance(item, CapabilityProof) for item in proofs):
             raise TypeError("delegation_proofs must contain CapabilityProof values")
         if len(proofs) != len(claims) - 1:
@@ -1650,10 +1710,18 @@ class CapabilityEnvelope:
         clock: Optional[ServerClock] = None,
         protocol_version: str = CAPABILITY_PROTOCOL_VERSION,
     ) -> CapabilityEnvelope:
-        values = _strict_tuple(claims, "capability claims")
+        values = _strict_tuple(
+            claims,
+            "capability claims",
+            maximum=_MAX_CAPABILITY_CHAIN_DEPTH,
+        )
         if not values or any(not isinstance(item, CapabilityClaims) for item in values):
             raise TypeError("claims must contain CapabilityClaims")
-        kids = _strict_tuple(delegation_kids, "delegation_kids")
+        kids = _strict_tuple(
+            delegation_kids,
+            "delegation_kids",
+            maximum=_MAX_CAPABILITY_CHAIN_DEPTH - 1,
+        )
         if any(not isinstance(kid, str) for kid in kids):
             raise TypeError("delegation_kids must contain strings")
         if len(kids) != len(values) - 1:
@@ -1720,9 +1788,17 @@ class CapabilityEnvelope:
             ),
             field_name="capability envelope",
         )
-        raw_claims = _list(data["claims"], "capability envelope.claims")
+        raw_claims = _list(
+            data["claims"],
+            "capability envelope.claims",
+            maximum=_MAX_CAPABILITY_CHAIN_DEPTH,
+        )
         raw_root = data["rootProof"]
-        raw_edges = _list(data["delegationProofs"], "capability envelope.delegationProofs")
+        raw_edges = _list(
+            data["delegationProofs"],
+            "capability envelope.delegationProofs",
+            maximum=_MAX_CAPABILITY_CHAIN_DEPTH - 1,
+        )
         if not isinstance(raw_root, dict):
             raise TypeError("capability envelope.rootProof must be an object")
         return cls(
@@ -2119,7 +2195,11 @@ class AuthorizationDecision:
         if not isinstance(self.request, AccessRequest):
             raise TypeError("request must be AccessRequest")
         object.__setattr__(self, "evaluated_at", _as_utc(self.evaluated_at, "evaluated_at"))
-        evidence = _strict_tuple(self.evidence, "evidence")
+        evidence = _strict_tuple(
+            self.evidence,
+            "evidence",
+            maximum=_MAX_DECISION_EVIDENCE,
+        )
         if any(not isinstance(item, str) for item in evidence):
             raise TypeError("evidence must contain strings")
         object.__setattr__(self, "evidence", tuple(sorted(set(evidence))))
@@ -2181,7 +2261,11 @@ class AuthorizationDecision:
             evaluated_at=_parse_time(data["evaluatedAt"], "authorization decision.evaluatedAt"),
             evidence=tuple(
                 _string(item, "authorization decision.evidence item")
-                for item in _list(data["evidence"], "authorization decision.evidence")
+                for item in _list(
+                    data["evidence"],
+                    "authorization decision.evidence",
+                    maximum=_MAX_DECISION_EVIDENCE,
+                )
             ),
             revocation_revision=raw_revision,
         )
@@ -2269,7 +2353,11 @@ class TenantAuthorizer:
         for role, actions in configured.items():
             if not isinstance(role, Role):
                 raise TypeError("role_actions keys must be Role values")
-            grants = _strict_tuple(actions, "role action grants")
+            grants = _strict_tuple(
+                actions,
+                "role action grants",
+                maximum=_MAX_ROLE_ACTIONS_PER_ROLE,
+            )
             if any(not isinstance(action, str) for action in grants):
                 raise TypeError("role action grants must contain strings")
             for action in grants:
@@ -2290,7 +2378,11 @@ class TenantAuthorizer:
         revocations = _snapshot_revocations(revocations)
         if member is not None:
             member = _snapshot_member(member)
-        capabilities = _strict_tuple(verified_capabilities, "verified_capabilities")
+        capabilities = _strict_tuple(
+            verified_capabilities,
+            "verified_capabilities",
+            maximum=_MAX_CAPABILITIES_PER_DECISION,
+        )
         if any(type(item) is not VerifiedCapability for item in capabilities):
             raise TypeError("verified_capabilities must contain VerifiedCapability values")
         now = _clock_now(self._clock)
