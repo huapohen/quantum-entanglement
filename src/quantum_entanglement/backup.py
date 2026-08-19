@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -93,12 +94,42 @@ def _normalize_timestamp(value: str) -> str:
     return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _sha256_file(path: Path) -> str:
+@dataclass(frozen=True)
+class _FileIdentity:
+    device: int
+    inode: int
+
+    @classmethod
+    def from_stat(cls, value: os.stat_result) -> _FileIdentity:
+        return cls(device=int(value.st_dev), inode=int(value.st_ino))
+
+    def matches(self, value: os.stat_result) -> bool:
+        return self.device == int(value.st_dev) and self.inode == int(value.st_ino)
+
+
+def _sha256_fd(descriptor: int) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while True:
+        block = os.read(descriptor, 1024 * 1024)
+        if not block:
+            break
+        digest.update(block)
     return digest.hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    with path.open("rb") as handle:
+        return _sha256_fd(handle.fileno())
+
+
+def _write_all(descriptor: int, value: bytes) -> None:
+    view = memoryview(value)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise OSError("write returned no progress")
+        view = view[written:]
 
 
 def _read_only_connection(path: Path) -> sqlite3.Connection:
@@ -310,19 +341,175 @@ def default_manifest_path(backup_path: os.PathLike[str] | str) -> Path:
     return path.with_name(path.name + ".manifest.json")
 
 
-def _validate_new_targets(source: Path, backup: Path, manifest: Path) -> None:
-    if not source.is_file():
-        raise FileNotFoundError(f"source SQLite database does not exist: {source}")
-    if source.is_symlink():
-        raise BackupError("source SQLite database must not be a symbolic link")
-    for target, name in ((backup, "backup"), (manifest, "manifest")):
-        if target.exists() or target.is_symlink():
-            raise BackupExistsError(f"{name} target already exists: {target}")
-    resolved_source = source.resolve()
-    if backup.resolve() == resolved_source or manifest.resolve() == resolved_source:
-        raise BackupError("backup and manifest paths must differ from the source database")
-    if backup.resolve() == manifest.resolve():
-        raise BackupError("backup and manifest paths must be distinct")
+def _open_regular_readonly(
+    path: Path,
+    name: str,
+    *,
+    integrity_error: bool,
+) -> Tuple[int, _FileIdentity]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    error_type = BackupIntegrityError if integrity_error else BackupError
+    try:
+        descriptor = os.open(str(path), flags)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        if path.is_symlink():
+            raise error_type(f"{name} file must not be a symbolic link") from exc
+        raise
+    try:
+        opened_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise error_type(f"{name} path must identify a regular file")
+        identity = _FileIdentity.from_stat(opened_stat)
+        _require_path_identity(
+            path,
+            identity,
+            name,
+            integrity_error=integrity_error,
+        )
+        return descriptor, identity
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _open_directory(path: Path, name: str) -> Tuple[int, _FileIdentity]:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(str(path), flags)
+    except OSError as exc:
+        if path.is_symlink():
+            raise BackupError(f"{name} directory must not be a symbolic link") from exc
+        raise
+    try:
+        opened_stat = os.fstat(descriptor)
+        if not stat.S_ISDIR(opened_stat.st_mode):
+            raise BackupError(f"{name} parent must identify a directory")
+        identity = _FileIdentity.from_stat(opened_stat)
+        try:
+            current_stat = os.stat(path, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise BackupError(f"{name} directory changed while it was opened") from exc
+        if not stat.S_ISDIR(current_stat.st_mode) or not identity.matches(current_stat):
+            raise BackupError(f"{name} directory changed while it was opened")
+        return descriptor, identity
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _require_path_identity(
+    path: Path,
+    identity: _FileIdentity,
+    name: str,
+    *,
+    integrity_error: bool,
+) -> None:
+    error_type = BackupIntegrityError if integrity_error else BackupError
+    try:
+        current_stat = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise error_type(f"{name} path changed during the operation") from exc
+    if not stat.S_ISREG(current_stat.st_mode) or not identity.matches(current_stat):
+        raise error_type(f"{name} path changed during the operation")
+
+
+def _require_directory_identity(
+    path: Path,
+    identity: _FileIdentity,
+    name: str,
+) -> None:
+    try:
+        current_stat = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise BackupError(f"{name} directory changed during the operation") from exc
+    if not stat.S_ISDIR(current_stat.st_mode) or not identity.matches(current_stat):
+        raise BackupError(f"{name} directory changed during the operation")
+
+
+def _require_entry_identity(
+    directory_descriptor: int,
+    filename: str,
+    identity: _FileIdentity,
+    name: str,
+) -> None:
+    try:
+        current_stat = os.stat(
+            filename,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError as exc:
+        raise BackupIntegrityError(f"{name} path changed during the operation") from exc
+    if not stat.S_ISREG(current_stat.st_mode) or not identity.matches(current_stat):
+        raise BackupIntegrityError(f"{name} path changed during the operation")
+
+
+def _ensure_entry_absent(directory_descriptor: int, filename: str, name: str) -> None:
+    try:
+        os.stat(filename, dir_fd=directory_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    raise BackupExistsError(f"{name} target already exists")
+
+
+def _create_owned_temp(
+    directory_descriptor: int,
+    *,
+    prefix: str,
+    suffix: str,
+) -> Tuple[int, str, _FileIdentity]:
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    for _attempt in range(128):
+        filename = f"{prefix}{new_id('partial')}{suffix}"
+        try:
+            descriptor = os.open(
+                filename,
+                flags,
+                0o600,
+                dir_fd=directory_descriptor,
+            )
+        except FileExistsError:
+            continue
+        opened_stat = os.fstat(descriptor)
+        identity = _FileIdentity.from_stat(opened_stat)
+        return descriptor, filename, identity
+    raise BackupError("could not allocate a unique temporary file")
+
+
+def _unlink_owned_entry(
+    directory_descriptor: int,
+    filename: str,
+    identity: _FileIdentity,
+) -> bool:
+    try:
+        current_stat = os.stat(
+            filename,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(current_stat.st_mode) or not identity.matches(current_stat):
+        return False
+    os.unlink(filename, dir_fd=directory_descriptor)
+    return True
+
+
+def _fsync_directory_fd(descriptor: int) -> None:
+    os.fsync(descriptor)
 
 
 def _fsync_directory(path: Path) -> None:
@@ -349,26 +536,84 @@ def create_sqlite_backup(
     manifest = Path(manifest_path) if manifest_path is not None else default_manifest_path(backup)
     backup.parent.mkdir(parents=True, exist_ok=True)
     manifest.parent.mkdir(parents=True, exist_ok=True)
-    _validate_new_targets(source, backup, manifest)
-
-    database_fd, database_temp_name = tempfile.mkstemp(
-        prefix=f".{backup.name}.", suffix=".partial", dir=backup.parent
-    )
-    manifest_fd, manifest_temp_name = tempfile.mkstemp(
-        prefix=f".{manifest.name}.", suffix=".partial", dir=manifest.parent
-    )
-    database_temp = Path(database_temp_name)
-    manifest_temp = Path(manifest_temp_name)
+    source_fd = -1
+    backup_directory_fd = -1
+    manifest_directory_fd = -1
+    database_fd = -1
+    manifest_fd = -1
+    database_temp_name = ""
+    manifest_temp_name = ""
+    database_identity: Optional[_FileIdentity] = None
+    manifest_identity: Optional[_FileIdentity] = None
     database_linked = False
     manifest_linked = False
     try:
+        source_fd, source_identity = _open_regular_readonly(
+            source,
+            "source SQLite database",
+            integrity_error=False,
+        )
+        backup_directory_fd, backup_directory_identity = _open_directory(
+            backup.parent,
+            "backup",
+        )
+        manifest_directory_fd, manifest_directory_identity = _open_directory(
+            manifest.parent,
+            "manifest",
+        )
+        _ensure_entry_absent(backup_directory_fd, backup.name, "backup")
+        _ensure_entry_absent(manifest_directory_fd, manifest.name, "manifest")
+        if (
+            backup_directory_identity == manifest_directory_identity
+            and backup.name == manifest.name
+        ):
+            raise BackupError("backup and manifest paths must be distinct")
+
+        database_fd, database_temp_name, database_identity = _create_owned_temp(
+            backup_directory_fd,
+            prefix=f".{backup.name}.",
+            suffix=".partial",
+        )
+        manifest_fd, manifest_temp_name, manifest_identity = _create_owned_temp(
+            manifest_directory_fd,
+            prefix=f".{manifest.name}.",
+            suffix=".partial",
+        )
+        database_temp = backup.parent / database_temp_name
         os.fchmod(database_fd, 0o600)
-        os.close(database_fd)
-        database_fd = -1
+        _require_directory_identity(
+            backup.parent,
+            backup_directory_identity,
+            "backup",
+        )
+        _require_entry_identity(
+            backup_directory_fd,
+            database_temp_name,
+            database_identity,
+            "backup temporary file",
+        )
+        _require_path_identity(
+            source,
+            source_identity,
+            "source SQLite database",
+            integrity_error=False,
+        )
         source_connection = _read_only_connection(source)
         destination_connection = sqlite3.connect(str(database_temp))
         destination_connection.row_factory = sqlite3.Row
         try:
+            _require_path_identity(
+                source,
+                source_identity,
+                "source SQLite database",
+                integrity_error=False,
+            )
+            _require_entry_identity(
+                backup_directory_fd,
+                database_temp_name,
+                database_identity,
+                "backup temporary file",
+            )
             source_connection.backup(destination_connection, pages=256, sleep=0.01)
             destination_connection.execute("PRAGMA journal_mode=DELETE")
             destination_connection.commit()
@@ -377,15 +622,32 @@ def create_sqlite_backup(
             destination_connection.close()
             source_connection.close()
 
-        with database_temp.open("rb") as database_handle:
-            os.fsync(database_handle.fileno())
+        _require_path_identity(
+            source,
+            source_identity,
+            "source SQLite database",
+            integrity_error=False,
+        )
+        _require_directory_identity(
+            backup.parent,
+            backup_directory_identity,
+            "backup",
+        )
+        _require_entry_identity(
+            backup_directory_fd,
+            database_temp_name,
+            database_identity,
+            "backup temporary file",
+        )
+        os.fsync(database_fd)
+        database_stat = os.fstat(database_fd)
         manifest_value = BackupManifest.from_dict(
             BackupManifest(
                 format_version=_FORMAT,
                 backup_id=new_id("backup"),
                 created_at=_normalize_timestamp(clock()),
-                database_sha256=_sha256_file(database_temp),
-                byte_size=database_temp.stat().st_size,
+                database_sha256=_sha256_fd(database_fd),
+                byte_size=int(database_stat.st_size),
                 page_count=evidence.page_count,
                 page_size=evidence.page_size,
                 table_counts=evidence.table_counts,
@@ -393,47 +655,131 @@ def create_sqlite_backup(
             ).to_dict()
         )
         os.fchmod(manifest_fd, 0o600)
-        with os.fdopen(manifest_fd, "w", encoding="utf-8") as manifest_handle:
-            manifest_fd = -1
-            json.dump(
+        manifest_bytes = (
+            json.dumps(
                 manifest_value.to_dict(),
-                manifest_handle,
                 allow_nan=False,
                 ensure_ascii=False,
                 separators=(",", ":"),
                 sort_keys=True,
             )
-            manifest_handle.write("\n")
-            manifest_handle.flush()
-            os.fsync(manifest_handle.fileno())
+            + "\n"
+        ).encode("utf-8")
+        _write_all(manifest_fd, manifest_bytes)
+        os.fsync(manifest_fd)
 
+        _require_entry_identity(
+            backup_directory_fd,
+            database_temp_name,
+            database_identity,
+            "backup temporary file",
+        )
         try:
-            os.link(database_temp, backup)
+            os.link(
+                database_temp_name,
+                backup.name,
+                src_dir_fd=backup_directory_fd,
+                dst_dir_fd=backup_directory_fd,
+                follow_symlinks=False,
+            )
             database_linked = True
         except FileExistsError as exc:
             raise BackupExistsError(f"backup target already exists: {backup}") from exc
+        _require_entry_identity(
+            backup_directory_fd,
+            backup.name,
+            database_identity,
+            "published backup",
+        )
+        _require_entry_identity(
+            manifest_directory_fd,
+            manifest_temp_name,
+            manifest_identity,
+            "manifest temporary file",
+        )
         try:
-            os.link(manifest_temp, manifest)
+            os.link(
+                manifest_temp_name,
+                manifest.name,
+                src_dir_fd=manifest_directory_fd,
+                dst_dir_fd=manifest_directory_fd,
+                follow_symlinks=False,
+            )
             manifest_linked = True
         except FileExistsError as exc:
             raise BackupExistsError(f"manifest target already exists: {manifest}") from exc
-        _fsync_directory(backup.parent)
-        if manifest.parent != backup.parent:
-            _fsync_directory(manifest.parent)
-        return verify_sqlite_backup(backup, manifest_path=manifest)
+        _require_entry_identity(
+            manifest_directory_fd,
+            manifest.name,
+            manifest_identity,
+            "published manifest",
+        )
+        _fsync_directory_fd(backup_directory_fd)
+        if backup_directory_identity != manifest_directory_identity:
+            _fsync_directory_fd(manifest_directory_fd)
+        _require_directory_identity(
+            backup.parent,
+            backup_directory_identity,
+            "backup",
+        )
+        _require_directory_identity(
+            manifest.parent,
+            manifest_directory_identity,
+            "manifest",
+        )
+        verified = verify_sqlite_backup(backup, manifest_path=manifest)
+        _require_entry_identity(
+            backup_directory_fd,
+            backup.name,
+            database_identity,
+            "published backup",
+        )
+        _require_entry_identity(
+            manifest_directory_fd,
+            manifest.name,
+            manifest_identity,
+            "published manifest",
+        )
+        _require_directory_identity(
+            backup.parent,
+            backup_directory_identity,
+            "backup",
+        )
+        _require_directory_identity(
+            manifest.parent,
+            manifest_directory_identity,
+            "manifest",
+        )
+        return verified
     except BaseException:
-        if manifest_linked:
-            manifest.unlink()
-        if database_linked:
-            backup.unlink()
+        if manifest_linked and manifest_identity is not None:
+            _unlink_owned_entry(manifest_directory_fd, manifest.name, manifest_identity)
+        if database_linked and database_identity is not None:
+            _unlink_owned_entry(backup_directory_fd, backup.name, database_identity)
         raise
     finally:
+        if manifest_identity is not None:
+            _unlink_owned_entry(
+                manifest_directory_fd,
+                manifest_temp_name,
+                manifest_identity,
+            )
+        if database_identity is not None:
+            _unlink_owned_entry(
+                backup_directory_fd,
+                database_temp_name,
+                database_identity,
+            )
         if database_fd >= 0:
             os.close(database_fd)
         if manifest_fd >= 0:
             os.close(manifest_fd)
-        database_temp.unlink(missing_ok=True)
-        manifest_temp.unlink(missing_ok=True)
+        if source_fd >= 0:
+            os.close(source_fd)
+        if backup_directory_fd >= 0:
+            os.close(backup_directory_fd)
+        if manifest_directory_fd >= 0:
+            os.close(manifest_directory_fd)
 
 
 def verify_sqlite_backup(

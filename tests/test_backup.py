@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import quantum_entanglement.backup as backup_module
 from quantum_entanglement import create_sqlite_backup as public_create_sqlite_backup
 from quantum_entanglement.artifact_store import ArtifactWrite, SQLiteArtifactStore
 from quantum_entanglement.attempts import (
@@ -265,18 +266,60 @@ class SQLiteBackupTests(unittest.TestCase):
             with self.assertRaisesRegex(BackupError, "symbolic link"):
                 create_sqlite_backup(link, self.root / "link-backup.sqlite3")
 
+            backup_parent = self.root / "backup-parent"
+            backup_parent.mkdir()
+            parent_link = self.root / "backup-parent-link"
+            parent_link.symlink_to(backup_parent, target_is_directory=True)
+            with self.assertRaisesRegex(BackupError, "directory must not be a symbolic link"):
+                create_sqlite_backup(
+                    self.source,
+                    parent_link / "backup.sqlite3",
+                    clock=lambda: T0,
+                )
+
+            dangling_backup = self.root / "dangling-backup.sqlite3"
+            dangling_backup.symlink_to(self.root / "absent.sqlite3")
+            with self.assertRaises(BackupExistsError):
+                create_sqlite_backup(self.source, dangling_backup, clock=lambda: T0)
+
+    def test_source_path_replacement_is_rejected_before_publication(self):
+        backup = self.root / "source-race.sqlite3"
+        original_source = self.root / "original-source.sqlite3"
+        real_database_evidence = backup_module._database_evidence
+        replaced = False
+
+        def replace_source_after_copy(connection):
+            nonlocal replaced
+            evidence = real_database_evidence(connection)
+            if not replaced:
+                replaced = True
+                self.source.rename(original_source)
+                self.source.write_bytes(b"replacement database")
+            return evidence
+
+        with patch(
+            "quantum_entanglement.backup._database_evidence",
+            side_effect=replace_source_after_copy,
+        ):
+            with self.assertRaisesRegex(BackupError, "source SQLite database path changed"):
+                create_sqlite_backup(self.source, backup, clock=lambda: T0)
+
+        self.assertEqual(self.source.read_bytes(), b"replacement database")
+        self.assertFalse(backup.exists())
+        self.assertFalse(default_manifest_path(backup).exists())
+
     def test_failed_manifest_link_removes_new_database_link(self):
         backup = self.root / "backup.sqlite3"
         manifest = self.root / "backup.manifest.json"
         real_link = os.link
         calls = 0
 
-        def fail_second_link(source, destination):
+        def fail_second_link(source, destination, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise FileExistsError("simulated manifest publication race")
-            return real_link(source, destination)
+            return real_link(source, destination, **kwargs)
 
         with patch("quantum_entanglement.backup.os.link", side_effect=fail_second_link):
             with self.assertRaises(BackupExistsError):
@@ -288,6 +331,58 @@ class SQLiteBackupTests(unittest.TestCase):
                 )
 
         self.assertFalse(backup.exists())
+        self.assertFalse(manifest.exists())
+
+    def test_failed_publication_never_unlinks_a_replacement_target(self):
+        backup = self.root / "replaced-backup.sqlite3"
+        manifest = self.root / "replaced-backup.manifest.json"
+        real_link = os.link
+        calls = 0
+
+        def replace_backup_before_manifest_failure(source, destination, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                backup.unlink()
+                backup.write_bytes(b"operator replacement")
+                raise FileExistsError("simulated manifest publication race")
+            return real_link(source, destination, **kwargs)
+
+        with patch(
+            "quantum_entanglement.backup.os.link",
+            side_effect=replace_backup_before_manifest_failure,
+        ):
+            with self.assertRaises(BackupExistsError):
+                create_sqlite_backup(
+                    self.source,
+                    backup,
+                    manifest_path=manifest,
+                    clock=lambda: T0,
+                )
+
+        self.assertEqual(backup.read_bytes(), b"operator replacement")
+        self.assertFalse(manifest.exists())
+
+    def test_backup_replaced_during_final_verification_is_rejected(self):
+        backup = self.root / "verify-race.sqlite3"
+        original_backup = self.root / "original-verify-race.sqlite3"
+        manifest = default_manifest_path(backup)
+        real_verify = backup_module.verify_sqlite_backup
+
+        def replace_backup_after_verification(*args, **kwargs):
+            verified = real_verify(*args, **kwargs)
+            backup.rename(original_backup)
+            backup.write_bytes(b"operator replacement")
+            return verified
+
+        with patch(
+            "quantum_entanglement.backup.verify_sqlite_backup",
+            side_effect=replace_backup_after_verification,
+        ):
+            with self.assertRaisesRegex(BackupIntegrityError, "published backup path changed"):
+                create_sqlite_backup(self.source, backup, clock=lambda: T0)
+
+        self.assertEqual(backup.read_bytes(), b"operator replacement")
         self.assertFalse(manifest.exists())
 
     def test_verified_backup_restores_to_new_database(self):
