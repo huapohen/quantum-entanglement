@@ -375,9 +375,7 @@ class AgentRuntimeContractTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_optional_sdk_has_clear_lazy_error(self):
         def missing_factory():
-            raise ModuleNotFoundError(
-                "No module named 'deepseek_harness'", name="deepseek_harness"
-            )
+            raise ModuleNotFoundError("No module named 'deepseek_harness'", name="deepseek_harness")
 
         runtime = DeepSeekHarnessRuntime(missing_factory)
         with self.assertRaisesRegex(DeepSeekHarnessDependencyError, "optional.*Python 3.10"):
