@@ -1,11 +1,12 @@
 import hashlib
+import inspect
 import itertools
 import sqlite3
 import tempfile
 import threading
 import unittest
 from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from typing import Any, Optional, cast
 from unittest import mock
@@ -17,11 +18,15 @@ from quantum_entanglement.domain_migrations import (
     DOMAIN_MIGRATION_SIDECAR_DDL,
     DOMAIN_MIGRATION_SIDECAR_SCHEMA_SHA256,
     LEGACY_DOMAIN_MIGRATIONS,
+    MAX_BRIDGE_PLAN_ACTIONS,
     MAX_DOMAIN_MIGRATION_SIDECAR_SCHEMA_OBJECTS,
     MAX_DOMAIN_MIGRATIONS,
     MAX_MIGRATION_DEPENDENCIES,
     MAX_MIGRATION_DOMAINS,
     MAX_OWNED_SCHEMA_OBJECTS,
+    AppliedSchemaMigration,
+    BridgeMigrationAction,
+    BridgeMigrationActionKind,
     DomainMigrationBridgeIntegrityError,
     DomainMigrationBridgeShape,
     DomainMigrationBridgeState,
@@ -30,13 +35,19 @@ from quantum_entanglement.domain_migrations import (
     DomainMigrationLedgerRow,
     DomainMigrationLegacyBootstrapError,
     DomainMigrationMetadataRow,
+    DomainMigrationPlanningError,
     DomainMigrationRegistry,
     DomainMigrationSidecarInstallError,
     DomainMigrationSidecarSchemaError,
     DomainMigrationSidecarSchemaState,
     OwnedSchemaObject,
+    SchemaDomainHead,
+    SchemaShape,
+    SchemaState,
     bootstrap_legacy_domain_migration_metadata,
+    inspect_schema_state,
     install_domain_migration_sidecar,
+    plan_bridge_migrations,
     read_domain_migration_bridge_state,
     validate_domain_migration_registry,
     validate_domain_migration_sidecar_schema,
@@ -1970,6 +1981,575 @@ class DomainMigrationBridgeStateTests(unittest.TestCase):
             "snapshot could not be opened",
         ):
             read_domain_migration_bridge_state(self.connection)
+
+
+class DomainMigrationSchemaPlannerTests(unittest.TestCase):
+    """Contract tests for the immutable bridge-only state and pure planner."""
+
+    def setUp(self) -> None:
+        self.connection = sqlite3.connect(":memory:", isolation_level=None)
+
+    def tearDown(self) -> None:
+        self.connection.close()
+
+    def create_legacy_prefix(
+        self,
+        connection: sqlite3.Connection,
+        count: int,
+        *,
+        timestamp: str = BRIDGE_TIME,
+    ) -> None:
+        if count >= 3:
+            connection.execute(
+                """
+                CREATE TABLE outbox (
+                    message_id TEXT PRIMARY KEY,
+                    lease_token TEXT,
+                    status TEXT NOT NULL
+                )
+                """
+            )
+        versions = tuple(item.migration_id for item in LEGACY_DOMAIN_MIGRATIONS[:count])
+        self.assertEqual(
+            apply_sqlite_migrations(
+                connection,
+                target_versions=versions,
+                clock=lambda: timestamp,
+            ),
+            versions[-1] if versions else 0,
+        )
+
+    def install_sidecar(self, connection: sqlite3.Connection) -> None:
+        self.assertIs(
+            install_domain_migration_sidecar(connection),
+            DomainMigrationSidecarSchemaState.EXACT,
+        )
+
+    def insert_metadata_prefix(
+        self,
+        connection: sqlite3.Connection,
+        count: int,
+        *,
+        timestamp: str = BRIDGE_TIME,
+    ) -> None:
+        for descriptor in DOMAIN_MIGRATION_REGISTRY.descriptors[:count]:
+            connection.execute(
+                """
+                INSERT INTO main.qe_schema_migration_metadata (
+                    migration_version,
+                    domain,
+                    domain_version,
+                    metadata_kind,
+                    descriptor_sha256,
+                    owned_schema_sha256,
+                    recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    descriptor.migration_id,
+                    descriptor.domain,
+                    descriptor.domain_version,
+                    "legacy_bootstrap",
+                    descriptor.descriptor_sha256,
+                    descriptor.owned_object_manifest_sha256,
+                    timestamp,
+                ),
+            )
+
+    def test_all_exact_shapes_map_to_the_closed_action_set(self) -> None:
+        absent_empty = inspect_schema_state(self.connection)
+        self.assertIs(absent_empty.shape, SchemaShape.SIDECAR_ABSENT)
+        self.assertEqual(absent_empty.sidecar_format, 0)
+        self.assertEqual(absent_empty.applied_migrations, ())
+        absent_empty_plan = plan_bridge_migrations(absent_empty)
+        self.assertEqual(
+            absent_empty_plan.actions,
+            (
+                BridgeMigrationAction(
+                    sequence=1,
+                    kind=BridgeMigrationActionKind.INSTALL_SIDECAR,
+                    source_shape=SchemaShape.SIDECAR_ABSENT,
+                    result_shape=SchemaShape.EMPTY,
+                ),
+            ),
+        )
+        self.assertEqual(
+            (absent_empty.state_sha256, absent_empty_plan.plan_sha256),
+            (
+                "2785ed026a2ac2c5133535fe990d68e7fc34c9a2354ecc9047f5f8a031673304",
+                "d045b4193500762f103ab59b40bd80a2f84c3744b8261db6e19c3c0d62bb15e9",
+            ),
+        )
+
+        self.create_legacy_prefix(self.connection, 2)
+        absent_prefix = inspect_schema_state(self.connection)
+        self.assertIs(absent_prefix.shape, SchemaShape.SIDECAR_ABSENT)
+        self.assertEqual(absent_prefix.sidecar_format, 0)
+        absent_plan = plan_bridge_migrations(absent_prefix)
+        self.assertEqual(
+            tuple(action.kind for action in absent_plan.actions),
+            (
+                BridgeMigrationActionKind.INSTALL_SIDECAR,
+                BridgeMigrationActionKind.BOOTSTRAP_LEGACY_METADATA,
+            ),
+        )
+        self.assertIs(absent_plan.target_shape, SchemaShape.BRIDGED_PREFIX)
+        self.assertEqual(
+            (absent_prefix.state_sha256, absent_plan.plan_sha256),
+            (
+                "66a728dde8607ef393733a4d3aa697e70eaac4eddd7751aeae5bd12e5d8179c1",
+                "97d48db53950361a7581e599f8eaf006d101e10a53061cbd200a5b0037f08a9b",
+            ),
+        )
+
+        self.install_sidecar(self.connection)
+        legacy_prefix = inspect_schema_state(self.connection)
+        self.assertIs(legacy_prefix.shape, SchemaShape.LEGACY_PREFIX)
+        self.assertEqual(legacy_prefix.sidecar_format, 1)
+        legacy_plan = plan_bridge_migrations(legacy_prefix)
+        self.assertEqual(
+            legacy_plan.actions,
+            (
+                BridgeMigrationAction(
+                    sequence=1,
+                    kind=BridgeMigrationActionKind.BOOTSTRAP_LEGACY_METADATA,
+                    source_shape=SchemaShape.LEGACY_PREFIX,
+                    result_shape=SchemaShape.BRIDGED_PREFIX,
+                ),
+            ),
+        )
+        self.assertEqual(
+            (legacy_prefix.state_sha256, legacy_plan.plan_sha256),
+            (
+                "cfb74d395ee8ccd2b039dbfaa4895987e7834b5cc0ca1c23f86c8f5b952b3af8",
+                "b1621ff217b2645b1185ceaa9e26d3f56d8c083d160f459f70cfaf1b58e286d5",
+            ),
+        )
+
+        bootstrap_legacy_domain_migration_metadata(
+            self.connection,
+            clock=lambda: BRIDGE_TIME,
+        )
+        bridged_prefix = inspect_schema_state(self.connection)
+        self.assertIs(bridged_prefix.shape, SchemaShape.BRIDGED_PREFIX)
+        bridged_plan = plan_bridge_migrations(bridged_prefix)
+        self.assertEqual(bridged_plan.actions, ())
+        self.assertEqual(
+            (bridged_prefix.state_sha256, bridged_plan.plan_sha256),
+            (
+                "56063f2ecf214885ee929da6325a2e9b88f7937a594786fb7c1360236fcfd21f",
+                "5c06070f8a10b2d3f79b3ee4ec3bf0bcfb0e6e8603b237a0cefde556e7e1f923",
+            ),
+        )
+
+        empty_connection = sqlite3.connect(":memory:", isolation_level=None)
+        try:
+            self.install_sidecar(empty_connection)
+            empty = inspect_schema_state(empty_connection)
+            self.assertIs(empty.shape, SchemaShape.EMPTY)
+            self.assertEqual(empty.sidecar_format, 1)
+            empty_plan = plan_bridge_migrations(empty)
+            self.assertEqual(empty_plan.actions, ())
+            self.assertIs(empty_plan.target_shape, SchemaShape.EMPTY)
+            self.assertEqual(
+                (empty.state_sha256, empty_plan.plan_sha256),
+                (
+                    "bd546f4b6fed8821344df7f7daae5585ffc47a371e9116ed6d55d5bbf66bc23f",
+                    "a6af0d79a511feecd46928dc296e448e5151e36347b91ff54f477deae858ccd9",
+                ),
+            )
+        finally:
+            empty_connection.close()
+
+    def test_state_is_exact_sorted_registry_bound_and_timestamp_free(self) -> None:
+        self.create_legacy_prefix(self.connection, 2)
+        self.install_sidecar(self.connection)
+        state = inspect_schema_state(self.connection)
+        first, second = DOMAIN_MIGRATION_REGISTRY.descriptors[:2]
+
+        self.assertEqual(state.legacy_schema_version, 2)
+        self.assertEqual(
+            state.applied_migrations,
+            tuple(
+                AppliedSchemaMigration(
+                    migration_id=descriptor.migration_id,
+                    filename=descriptor.filename,
+                    sql_sha256=descriptor.sql_sha256,
+                    domain=descriptor.domain,
+                    domain_version=descriptor.domain_version,
+                    kind=descriptor.kind,
+                    descriptor_sha256=descriptor.descriptor_sha256,
+                    owned_schema_sha256=descriptor.owned_object_manifest_sha256,
+                    metadata_recorded=False,
+                )
+                for descriptor in (first, second)
+            ),
+        )
+        self.assertEqual(
+            state.domain_heads,
+            (
+                SchemaDomainHead(
+                    domain=second.domain,
+                    domain_version=second.domain_version,
+                    migration_id=second.migration_id,
+                    owned_schema_sha256=second.owned_object_manifest_sha256,
+                    metadata_recorded=False,
+                ),
+                SchemaDomainHead(
+                    domain=first.domain,
+                    domain_version=first.domain_version,
+                    migration_id=first.migration_id,
+                    owned_schema_sha256=first.owned_object_manifest_sha256,
+                    metadata_recorded=False,
+                ),
+            ),
+        )
+        self.assertEqual(
+            state.owned_schema_digests,
+            tuple((head.domain, head.owned_schema_sha256) for head in state.domain_heads),
+        )
+        self.assertEqual(state.dependency_edges, ())
+        self.assertEqual(
+            state.registry_sha256,
+            DOMAIN_MIGRATION_REGISTRY.registry_sha256,
+        )
+        self.assertRegex(state.state_sha256, r"\A[0-9a-f]{64}\Z")
+
+        bootstrap_legacy_domain_migration_metadata(
+            self.connection,
+            clock=lambda: "2026-08-20T00:00:01Z",
+        )
+        bridged = inspect_schema_state(self.connection)
+        self.assertTrue(all(item.metadata_recorded for item in bridged.applied_migrations))
+        self.assertTrue(all(head.metadata_recorded for head in bridged.domain_heads))
+        self.assertNotEqual(bridged.state_sha256, state.state_sha256)
+
+    def test_equivalent_timestamps_have_identical_state_and_plan_digests(self) -> None:
+        states: list[SchemaState] = []
+        for timestamp in (
+            "2026-08-20T00:00:00Z",
+            "2026-08-21T12:34:56.123456Z",
+        ):
+            connection = sqlite3.connect(":memory:", isolation_level=None)
+            try:
+                self.create_legacy_prefix(connection, 2, timestamp=timestamp)
+                self.install_sidecar(connection)
+                bootstrap_legacy_domain_migration_metadata(
+                    connection,
+                    clock=mock.Mock(return_value=timestamp),
+                )
+                states.append(inspect_schema_state(connection))
+            finally:
+                connection.close()
+
+        self.assertEqual(states[0], states[1])
+        self.assertEqual(states[0].state_sha256, states[1].state_sha256)
+        self.assertEqual(
+            plan_bridge_migrations(states[0]),
+            plan_bridge_migrations(states[1]),
+        )
+
+    def test_repeated_planning_is_deterministic_immutable_and_contains_no_sql(self) -> None:
+        self.create_legacy_prefix(self.connection, 2)
+        state = inspect_schema_state(self.connection)
+        first = plan_bridge_migrations(state)
+        second = plan_bridge_migrations(inspect_schema_state(self.connection))
+
+        self.assertEqual(first, second)
+        self.assertEqual(first.release_mode, "bridge_only")
+        self.assertEqual(first.source_state_sha256, state.state_sha256)
+        self.assertEqual(first.registry_sha256, state.registry_sha256)
+        self.assertLessEqual(len(first.actions), MAX_BRIDGE_PLAN_ACTIONS)
+        self.assertRegex(first.plan_sha256, r"\A[0-9a-f]{64}\Z")
+        self.assertEqual(
+            tuple(inspect.signature(plan_bridge_migrations).parameters),
+            ("state",),
+        )
+        for action in first.actions:
+            self.assertEqual(
+                set(vars(action)),
+                {"sequence", "kind", "source_shape", "result_shape"},
+            )
+            self.assertIn(action.kind, set(BridgeMigrationActionKind))
+        self.assertEqual(
+            set(BridgeMigrationActionKind),
+            {
+                BridgeMigrationActionKind.INSTALL_SIDECAR,
+                BridgeMigrationActionKind.BOOTSTRAP_LEGACY_METADATA,
+            },
+        )
+        self.assertEqual(
+            set(vars(first)),
+            {
+                "release_mode",
+                "source_state_sha256",
+                "registry_sha256",
+                "source_shape",
+                "target_shape",
+                "actions",
+                "plan_sha256",
+            },
+        )
+        mutations = (
+            (state, "shape", SchemaShape.EMPTY),
+            (first, "actions", ()),
+            (first.actions[0], "sequence", 999),
+        )
+        for target, field_name, value in mutations:
+            with self.assertRaises(FrozenInstanceError):
+                setattr(target, field_name, value)
+
+    def test_inspection_is_read_only_and_planning_performs_no_connection_calls(self) -> None:
+        self.create_legacy_prefix(self.connection, 2)
+        self.install_sidecar(self.connection)
+        bootstrap_legacy_domain_migration_metadata(
+            self.connection,
+            clock=lambda: BRIDGE_TIME,
+        )
+        writes: list[int] = []
+        write_actions = {
+            sqlite3.SQLITE_ALTER_TABLE,
+            sqlite3.SQLITE_CREATE_INDEX,
+            sqlite3.SQLITE_CREATE_TABLE,
+            sqlite3.SQLITE_CREATE_TRIGGER,
+            sqlite3.SQLITE_CREATE_VIEW,
+            sqlite3.SQLITE_DELETE,
+            sqlite3.SQLITE_DROP_INDEX,
+            sqlite3.SQLITE_DROP_TABLE,
+            sqlite3.SQLITE_DROP_TRIGGER,
+            sqlite3.SQLITE_DROP_VIEW,
+            sqlite3.SQLITE_INSERT,
+            sqlite3.SQLITE_UPDATE,
+        }
+
+        def authorize(
+            action: int,
+            _argument_one: Optional[str],
+            _argument_two: Optional[str],
+            _database_name: Optional[str],
+            _trigger_name: Optional[str],
+        ) -> int:
+            if action in write_actions:
+                writes.append(action)
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        recording = RecordingConnection(self.connection)
+        before_changes = self.connection.total_changes
+        self.connection.set_authorizer(authorize)
+        try:
+            state = inspect_schema_state(cast(sqlite3.Connection, recording))
+            calls_after_inspection = tuple(recording.calls)
+            plan = plan_bridge_migrations(state)
+        finally:
+            self.connection.set_authorizer(None)
+
+        self.assertIs(plan.target_shape, SchemaShape.BRIDGED_PREFIX)
+        self.assertEqual(plan.actions, ())
+        self.assertEqual(tuple(recording.calls), calls_after_inspection)
+        self.assertEqual(writes, [])
+        self.assertEqual(self.connection.total_changes, before_changes)
+        self.assertFalse(self.connection.in_transaction)
+
+    def test_partial_conflicting_future_holey_and_drifted_databases_fail_closed(
+        self,
+    ) -> None:
+        cases = (
+            "partial_sidecar",
+            "partial_metadata",
+            "conflicting_domain",
+            "conflicting_descriptor",
+            "conflicting_owned_digest",
+            "future_ledger",
+            "holey_ledger",
+            "owned_schema_drift",
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                connection = sqlite3.connect(":memory:", isolation_level=None)
+                try:
+                    if case == "partial_sidecar":
+                        connection.execute(DOMAIN_MIGRATION_SIDECAR_DDL[0])
+                    elif case == "partial_metadata":
+                        self.create_legacy_prefix(connection, 2)
+                        self.install_sidecar(connection)
+                        self.insert_metadata_prefix(connection, 1)
+                    elif case in {
+                        "conflicting_domain",
+                        "conflicting_descriptor",
+                        "conflicting_owned_digest",
+                    }:
+                        self.create_legacy_prefix(connection, 1)
+                        self.install_sidecar(connection)
+                        self.insert_metadata_prefix(connection, 1)
+                        column, value = {
+                            "conflicting_domain": ("domain", "wrong_domain"),
+                            "conflicting_descriptor": (
+                                "descriptor_sha256",
+                                "0" * 64,
+                            ),
+                            "conflicting_owned_digest": (
+                                "owned_schema_sha256",
+                                "0" * 64,
+                            ),
+                        }[case]
+                        connection.execute(
+                            f"""
+                            UPDATE main.qe_schema_migration_metadata
+                            SET {column} = ?
+                            WHERE migration_version = 1
+                            """,
+                            (value,),
+                        )
+                    elif case == "future_ledger":
+                        self.create_legacy_prefix(connection, 1)
+                        connection.execute(
+                            """
+                            INSERT INTO main.qe_schema_migrations (
+                                version, filename, sha256, applied_at
+                            ) VALUES (999, '0999_future.up.sql', ?, ?)
+                            """,
+                            ("0" * 64, BRIDGE_TIME),
+                        )
+                    elif case == "holey_ledger":
+                        self.create_legacy_prefix(connection, 2)
+                        connection.execute(
+                            "DELETE FROM main.qe_schema_migrations WHERE version = 1"
+                        )
+                    elif case == "owned_schema_drift":
+                        self.create_legacy_prefix(connection, 1)
+                        connection.execute("DROP INDEX idx_invocation_attempts_job")
+
+                    with self.assertRaises(DomainMigrationBridgeIntegrityError):
+                        inspect_schema_state(connection)
+                    self.assertFalse(connection.in_transaction)
+                finally:
+                    connection.close()
+
+    def test_forged_state_models_types_prefixes_and_digests_are_rejected(self) -> None:
+        self.create_legacy_prefix(self.connection, 2)
+        self.install_sidecar(self.connection)
+        state = inspect_schema_state(self.connection)
+        first = state.applied_migrations[0]
+        forged_states = (
+            replace(state, registry_sha256="a" * 64),
+            replace(state, state_sha256="0" * 64),
+            replace(state, shape=SchemaShape.EMPTY),
+            replace(state, shape=cast(Any, "domain_sparse")),
+            replace(state, sidecar_format=cast(Any, True)),
+            replace(
+                state,
+                applied_migrations=(replace(first, migration_id=2),),
+            ),
+            replace(
+                state,
+                applied_migrations=(replace(first, migration_id=999),),
+            ),
+            replace(
+                state,
+                applied_migrations=(replace(first, migration_id=cast(Any, True)),),
+            ),
+            replace(
+                state,
+                applied_migrations=(replace(first, metadata_recorded=cast(Any, 1)),),
+            ),
+            replace(
+                state,
+                applied_migrations=(replace(first, kind="native"),),
+            ),
+            replace(state, domain_heads=cast(Any, (object(),))),
+            replace(state, dependency_edges=cast(Any, (object(),))),
+            replace(state, owned_schema_digests=cast(Any, (("attempts",),))),
+        )
+        for forged in forged_states:
+            with self.subTest(forged=forged):
+                with self.assertRaises(DomainMigrationPlanningError):
+                    plan_bridge_migrations(forged)
+
+        with self.assertRaises(DomainMigrationPlanningError):
+            plan_bridge_migrations(cast(Any, object()))
+
+        native_descriptor = replace(
+            DOMAIN_MIGRATION_REGISTRY.descriptors[0],
+            kind="native",
+        )
+        native_registry = DomainMigrationRegistry(
+            descriptors=(native_descriptor,),
+            registry_sha256=state.registry_sha256,
+        )
+        one_migration_state = replace(
+            state,
+            legacy_schema_version=1,
+            applied_migrations=state.applied_migrations[:1],
+            domain_heads=(
+                next(
+                    head for head in state.domain_heads if head.migration_id == first.migration_id
+                ),
+            ),
+            owned_schema_digests=(
+                (
+                    first.domain,
+                    first.owned_schema_sha256,
+                ),
+            ),
+        )
+        with mock.patch(
+            "quantum_entanglement.domain_migrations.DOMAIN_MIGRATION_REGISTRY",
+            native_registry,
+        ):
+            with self.assertRaisesRegex(
+                DomainMigrationPlanningError,
+                "non-legacy registry",
+            ):
+                plan_bridge_migrations(one_migration_state)
+
+    def test_state_and_plan_collections_stop_at_their_hard_bounds(self) -> None:
+        state = inspect_schema_state(self.connection)
+        descriptor = DOMAIN_MIGRATION_REGISTRY.descriptors[0]
+        migration = AppliedSchemaMigration(
+            migration_id=descriptor.migration_id,
+            filename=descriptor.filename,
+            sql_sha256=descriptor.sql_sha256,
+            domain=descriptor.domain,
+            domain_version=descriptor.domain_version,
+            kind=descriptor.kind,
+            descriptor_sha256=descriptor.descriptor_sha256,
+            owned_schema_sha256=descriptor.owned_object_manifest_sha256,
+            metadata_recorded=False,
+        )
+        head = SchemaDomainHead(
+            domain=descriptor.domain,
+            domain_version=descriptor.domain_version,
+            migration_id=descriptor.migration_id,
+            owned_schema_sha256=descriptor.owned_object_manifest_sha256,
+            metadata_recorded=False,
+        )
+        bound_cases = (
+            ("applied_migrations", MAX_DOMAIN_MIGRATIONS, migration),
+            ("domain_heads", MAX_MIGRATION_DOMAINS, head),
+            (
+                "dependency_edges",
+                MAX_DOMAIN_MIGRATIONS,
+                DomainMigrationDependencyRow(1, 2),
+            ),
+            (
+                "owned_schema_digests",
+                MAX_MIGRATION_DOMAINS,
+                (descriptor.domain, descriptor.owned_object_manifest_sha256),
+            ),
+        )
+        for field_name, maximum, row in bound_cases:
+            with self.subTest(field=field_name):
+                rows = CountingRows(row)
+                with self.assertRaisesRegex(ValueError, "hard limit"):
+                    replace(state, **cast(Any, {field_name: rows}))
+                self.assertEqual(rows.yielded, maximum + 1)
+
+        plan = plan_bridge_migrations(state)
+        action_rows = CountingRows(plan.actions[0])
+        with self.assertRaisesRegex(ValueError, "hard limit"):
+            replace(plan, actions=cast(Any, action_rows))
+        self.assertEqual(action_rows.yielded, MAX_BRIDGE_PLAN_ACTIONS + 1)
 
 
 class DomainMigrationLegacyBootstrapTests(unittest.TestCase):

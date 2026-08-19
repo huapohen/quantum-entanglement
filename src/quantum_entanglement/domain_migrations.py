@@ -1,11 +1,11 @@
 # ruff: noqa: UP006, UP035, UP045
 """Trusted descriptors and read-only schema checks for domain-scoped migrations.
 
-This module contains trusted package metadata, bounded validators, and one bridge-only
-installer for the exact empty sidecar schema.  It never writes migration metadata, enables
-sparse migration plans, or changes the legacy migration runner.  Validation remains
-side-effect free so bridge code can reject untrusted state before opening a write
-transaction.
+This module contains trusted package metadata, bounded validators, exact bridge bootstrap
+operations, and a pure bridge-only planner.  It never enables native or sparse migration
+plans and does not change the legacy migration runner.  Inspection, validation, and
+planning remain side-effect free so bridge code can reject untrusted state before opening
+a write transaction.
 """
 
 from __future__ import annotations
@@ -57,6 +57,7 @@ MAX_SCHEMA_OBJECT_NAME_LENGTH = 128
 MAX_MIGRATION_ID = (2**63) - 1
 MAX_DOMAIN_VERSION = (2**63) - 1
 MAX_DOMAIN_MIGRATION_SIDECAR_SCHEMA_OBJECTS = 16
+MAX_BRIDGE_PLAN_ACTIONS = 2
 
 DOMAIN_MIGRATION_METADATA_TABLE_NAME = "qe_schema_migration_metadata"
 DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME = "qe_schema_migration_dependencies"
@@ -125,6 +126,9 @@ _OWNED_MANIFEST_FORMAT = "qe.domain-migration-owned-objects/1"
 _DESCRIPTOR_FORMAT = "qe.domain-migration-descriptor/1"
 _REGISTRY_FORMAT = "qe.domain-migration-registry/1"
 _SIDECAR_SCHEMA_FORMAT = "qe.domain-migration-sidecar-schema/1"
+_SCHEMA_STATE_FORMAT = "qe.domain-migration-schema-state/1"
+_BRIDGE_PLAN_FORMAT = "qe.domain-migration-bridge-plan/1"
+_BRIDGE_RELEASE_MODE = "bridge_only"
 _MAX_SIDECAR_CATALOG_NAME_LENGTH = 128
 _MAX_SIDECAR_CATALOG_SQL_LENGTH = 8192
 
@@ -152,6 +156,10 @@ class DomainMigrationLegacyBootstrapError(DomainMigrationBridgeIntegrityError):
     """Raised when legacy metadata cannot be bootstrapped atomically and exactly."""
 
 
+class DomainMigrationPlanningError(DomainMigrationBridgeIntegrityError):
+    """Raised when a schema state cannot produce an exact bridge-only plan."""
+
+
 class DomainMigrationSidecarSchemaState(str, Enum):
     """Supported sidecar catalog states during the bridge-only rollout."""
 
@@ -165,6 +173,22 @@ class DomainMigrationBridgeShape(str, Enum):
     LEGACY_PREFIX = "legacy_prefix"
     SIDECAR_EMPTY_PREFIX = "sidecar_empty_prefix"
     BRIDGED_PREFIX = "bridged_prefix"
+
+
+class SchemaShape(str, Enum):
+    """Exact supported database classifications for the bridge-only release."""
+
+    SIDECAR_ABSENT = "sidecar_absent"
+    EMPTY = "empty"
+    LEGACY_PREFIX = "legacy_prefix"
+    BRIDGED_PREFIX = "bridged_prefix"
+
+
+class BridgeMigrationActionKind(str, Enum):
+    """The complete write-action allowlist for the bridge-only release."""
+
+    INSTALL_SIDECAR = "install_sidecar"
+    BOOTSTRAP_LEGACY_METADATA = "bootstrap_legacy_metadata"
 
 
 @dataclass(frozen=True)
@@ -200,6 +224,124 @@ class DomainMigrationBridgeState:
     metadata_rows: Tuple[DomainMigrationMetadataRow, ...]
     dependency_rows: Tuple[DomainMigrationDependencyRow, ...]
     registry_sha256: str
+
+
+@dataclass(frozen=True, order=True)
+class AppliedSchemaMigration:
+    """Timestamp-free registry evidence for one applied legacy migration."""
+
+    migration_id: int
+    filename: str
+    sql_sha256: str
+    domain: str
+    domain_version: int
+    kind: DomainMigrationKind
+    descriptor_sha256: str
+    owned_schema_sha256: str
+    metadata_recorded: bool
+
+
+@dataclass(frozen=True, order=True)
+class SchemaDomainHead:
+    """The latest applied migration coordinate for one domain."""
+
+    domain: str
+    domain_version: int
+    migration_id: int
+    owned_schema_sha256: str
+    metadata_recorded: bool
+
+
+@dataclass(frozen=True)
+class SchemaState:
+    """Canonical immutable bridge-aware schema evidence.
+
+    Timestamps are deliberately absent so equivalent durable history produces the same
+    ``state_sha256``.  Every collection is snapshotted with a hard bound even when a
+    caller bypasses static tuple annotations.
+    """
+
+    sidecar_format: int
+    shape: SchemaShape
+    legacy_schema_version: int
+    applied_migrations: Tuple[AppliedSchemaMigration, ...]
+    domain_heads: Tuple[SchemaDomainHead, ...]
+    dependency_edges: Tuple[DomainMigrationDependencyRow, ...]
+    owned_schema_digests: Tuple[Tuple[str, str], ...]
+    registry_sha256: str
+    state_sha256: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "applied_migrations",
+            _bounded_tuple(
+                self.applied_migrations,
+                maximum=MAX_DOMAIN_MIGRATIONS,
+                label="schema state applied migrations",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "domain_heads",
+            _bounded_tuple(
+                self.domain_heads,
+                maximum=MAX_MIGRATION_DOMAINS,
+                label="schema state domain heads",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "dependency_edges",
+            _bounded_tuple(
+                self.dependency_edges,
+                maximum=MAX_DOMAIN_MIGRATIONS,
+                label="schema state dependency edges",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "owned_schema_digests",
+            _bounded_tuple(
+                self.owned_schema_digests,
+                maximum=MAX_MIGRATION_DOMAINS,
+                label="schema state owned schema digests",
+            ),
+        )
+
+
+@dataclass(frozen=True, order=True)
+class BridgeMigrationAction:
+    """One allowlisted state transition; it intentionally contains no SQL."""
+
+    sequence: int
+    kind: BridgeMigrationActionKind
+    source_shape: SchemaShape
+    result_shape: SchemaShape
+
+
+@dataclass(frozen=True)
+class BridgeMigrationPlan:
+    """Deterministic registry- and source-bound bridge-only action plan."""
+
+    release_mode: str
+    source_state_sha256: str
+    registry_sha256: str
+    source_shape: SchemaShape
+    target_shape: SchemaShape
+    actions: Tuple[BridgeMigrationAction, ...]
+    plan_sha256: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "actions",
+            _bounded_tuple(
+                self.actions,
+                maximum=MAX_BRIDGE_PLAN_ACTIONS,
+                label="bridge migration plan actions",
+            ),
+        )
 
 
 def _bounded_tuple(values: Iterable[_T], *, maximum: int, label: str) -> Tuple[_T, ...]:
@@ -1789,3 +1931,467 @@ def bootstrap_legacy_domain_migration_metadata(
             "committed legacy domain migration bootstrap state differs from expectation"
         )
     return committed_state
+
+
+def _schema_state_digest(
+    *,
+    sidecar_format: int,
+    shape: SchemaShape,
+    legacy_schema_version: int,
+    applied_migrations: Sequence[AppliedSchemaMigration],
+    domain_heads: Sequence[SchemaDomainHead],
+    dependency_edges: Sequence[DomainMigrationDependencyRow],
+    owned_schema_digests: Sequence[Tuple[str, str]],
+    registry_sha256: str,
+) -> str:
+    return _canonical_sha256(
+        {
+            "appliedMigrations": [
+                {
+                    "descriptorSha256": item.descriptor_sha256,
+                    "domain": item.domain,
+                    "domainVersion": item.domain_version,
+                    "filename": item.filename,
+                    "kind": item.kind,
+                    "metadataRecorded": item.metadata_recorded,
+                    "migrationId": item.migration_id,
+                    "ownedSchemaSha256": item.owned_schema_sha256,
+                    "sqlSha256": item.sql_sha256,
+                }
+                for item in applied_migrations
+            ],
+            "dependencyEdges": [
+                {
+                    "dependsOnMigrationId": item.depends_on_migration_id,
+                    "migrationId": item.migration_id,
+                }
+                for item in dependency_edges
+            ],
+            "domainHeads": [
+                {
+                    "domain": item.domain,
+                    "domainVersion": item.domain_version,
+                    "metadataRecorded": item.metadata_recorded,
+                    "migrationId": item.migration_id,
+                    "ownedSchemaSha256": item.owned_schema_sha256,
+                }
+                for item in domain_heads
+            ],
+            "format": _SCHEMA_STATE_FORMAT,
+            "legacySchemaVersion": legacy_schema_version,
+            "ownedSchemaDigests": [
+                {"domain": domain, "ownedSchemaSha256": digest}
+                for domain, digest in owned_schema_digests
+            ],
+            "registrySha256": registry_sha256,
+            "shape": shape.value,
+            "sidecarFormat": sidecar_format,
+        }
+    )
+
+
+def _build_schema_state(
+    shape: SchemaShape,
+    descriptors: Sequence[DomainMigrationDescriptor],
+    *,
+    dependency_edges: Sequence[DomainMigrationDependencyRow],
+) -> SchemaState:
+    metadata_recorded = shape is SchemaShape.BRIDGED_PREFIX
+    applied_migrations = tuple(
+        AppliedSchemaMigration(
+            migration_id=descriptor.migration_id,
+            filename=descriptor.filename,
+            sql_sha256=descriptor.sql_sha256,
+            domain=descriptor.domain,
+            domain_version=descriptor.domain_version,
+            kind=descriptor.kind,
+            descriptor_sha256=descriptor.descriptor_sha256,
+            owned_schema_sha256=descriptor.owned_object_manifest_sha256,
+            metadata_recorded=metadata_recorded,
+        )
+        for descriptor in descriptors
+    )
+    latest_by_domain: Dict[str, AppliedSchemaMigration] = {}
+    for migration in applied_migrations:
+        previous = latest_by_domain.get(migration.domain)
+        if previous is None or migration.domain_version > previous.domain_version:
+            latest_by_domain[migration.domain] = migration
+    domain_heads = tuple(
+        sorted(
+            (
+                SchemaDomainHead(
+                    domain=migration.domain,
+                    domain_version=migration.domain_version,
+                    migration_id=migration.migration_id,
+                    owned_schema_sha256=migration.owned_schema_sha256,
+                    metadata_recorded=migration.metadata_recorded,
+                )
+                for migration in latest_by_domain.values()
+            ),
+            key=lambda item: (
+                item.domain.encode("utf-8"),
+                item.domain_version,
+                item.migration_id,
+            ),
+        )
+    )
+    ordered_edges = tuple(sorted(dependency_edges))
+    owned_schema_digests = tuple((head.domain, head.owned_schema_sha256) for head in domain_heads)
+    sidecar_format = 0 if shape is SchemaShape.SIDECAR_ABSENT else 1
+    legacy_schema_version = descriptors[-1].migration_id if descriptors else 0
+    registry_sha256 = DOMAIN_MIGRATION_REGISTRY.registry_sha256
+    state_sha256 = _schema_state_digest(
+        sidecar_format=sidecar_format,
+        shape=shape,
+        legacy_schema_version=legacy_schema_version,
+        applied_migrations=applied_migrations,
+        domain_heads=domain_heads,
+        dependency_edges=ordered_edges,
+        owned_schema_digests=owned_schema_digests,
+        registry_sha256=registry_sha256,
+    )
+    return SchemaState(
+        sidecar_format=sidecar_format,
+        shape=shape,
+        legacy_schema_version=legacy_schema_version,
+        applied_migrations=applied_migrations,
+        domain_heads=domain_heads,
+        dependency_edges=ordered_edges,
+        owned_schema_digests=owned_schema_digests,
+        registry_sha256=registry_sha256,
+        state_sha256=state_sha256,
+    )
+
+
+def _planning_plain_string(value: object, label: str) -> str:
+    try:
+        return _require_plain_string(value, label)
+    except (TypeError, ValueError) as error:
+        raise DomainMigrationPlanningError(
+            "schema state contains a non-canonical scalar"
+        ) from error
+
+
+def _planning_positive_integer(value: object, label: str, maximum: int) -> int:
+    try:
+        return _require_positive_integer(value, label, maximum)
+    except (TypeError, ValueError) as error:
+        raise DomainMigrationPlanningError(
+            "schema state contains a non-canonical scalar"
+        ) from error
+
+
+def _planning_sha256(value: object, label: str) -> str:
+    try:
+        return _require_sha256(value, label)
+    except (TypeError, ValueError) as error:
+        raise DomainMigrationPlanningError(
+            "schema state contains a non-canonical scalar"
+        ) from error
+
+
+def _validate_schema_state_models(state: SchemaState) -> None:
+    if type(state.sidecar_format) is not int or state.sidecar_format not in {0, 1}:
+        raise DomainMigrationPlanningError("schema state sidecar format is unsupported")
+    if type(state.shape) is not SchemaShape:
+        raise DomainMigrationPlanningError("schema state shape is unsupported")
+    if (
+        type(state.legacy_schema_version) is not int
+        or state.legacy_schema_version < 0
+        or state.legacy_schema_version > MAX_MIGRATION_ID
+    ):
+        raise DomainMigrationPlanningError("schema state legacy version is unsupported")
+    _planning_sha256(state.registry_sha256, "schema state registry sha256")
+    _planning_sha256(state.state_sha256, "schema state sha256")
+
+    for migration in state.applied_migrations:
+        if type(migration) is not AppliedSchemaMigration:
+            raise DomainMigrationPlanningError(
+                "schema state applied migrations have an unsupported model"
+            )
+        _planning_positive_integer(
+            migration.migration_id,
+            "schema state migration ID",
+            MAX_MIGRATION_ID,
+        )
+        _planning_plain_string(migration.filename, "schema state filename")
+        _planning_sha256(migration.sql_sha256, "schema state SQL sha256")
+        domain = _planning_plain_string(migration.domain, "schema state domain")
+        if len(domain) > MAX_DOMAIN_LENGTH or _DOMAIN_PATTERN.fullmatch(domain) is None:
+            raise DomainMigrationPlanningError("schema state domain is not canonical")
+        _planning_positive_integer(
+            migration.domain_version,
+            "schema state domain version",
+            MAX_DOMAIN_VERSION,
+        )
+        kind = _planning_plain_string(migration.kind, "schema state migration kind")
+        if kind != "legacy_bootstrap":
+            raise DomainMigrationPlanningError(
+                "bridge-only planning refuses non-legacy applied migrations"
+            )
+        _planning_sha256(
+            migration.descriptor_sha256,
+            "schema state descriptor sha256",
+        )
+        _planning_sha256(
+            migration.owned_schema_sha256,
+            "schema state owned schema sha256",
+        )
+        if type(migration.metadata_recorded) is not bool:
+            raise DomainMigrationPlanningError(
+                "schema state metadata evidence must be an exact boolean"
+            )
+
+    for head in state.domain_heads:
+        if type(head) is not SchemaDomainHead:
+            raise DomainMigrationPlanningError(
+                "schema state domain heads have an unsupported model"
+            )
+        domain = _planning_plain_string(head.domain, "schema head domain")
+        if len(domain) > MAX_DOMAIN_LENGTH or _DOMAIN_PATTERN.fullmatch(domain) is None:
+            raise DomainMigrationPlanningError("schema head domain is not canonical")
+        _planning_positive_integer(
+            head.domain_version,
+            "schema head domain version",
+            MAX_DOMAIN_VERSION,
+        )
+        _planning_positive_integer(
+            head.migration_id,
+            "schema head migration ID",
+            MAX_MIGRATION_ID,
+        )
+        _planning_sha256(
+            head.owned_schema_sha256,
+            "schema head owned schema sha256",
+        )
+        if type(head.metadata_recorded) is not bool:
+            raise DomainMigrationPlanningError(
+                "schema head metadata evidence must be an exact boolean"
+            )
+
+    for edge in state.dependency_edges:
+        if type(edge) is not DomainMigrationDependencyRow:
+            raise DomainMigrationPlanningError(
+                "schema state dependency edges have an unsupported model"
+            )
+        _planning_positive_integer(
+            edge.migration_id,
+            "schema state dependency migration ID",
+            MAX_MIGRATION_ID,
+        )
+        _planning_positive_integer(
+            edge.depends_on_migration_id,
+            "schema state dependency target ID",
+            MAX_MIGRATION_ID,
+        )
+
+    for digest_row in state.owned_schema_digests:
+        if type(digest_row) is not tuple or len(digest_row) != 2:
+            raise DomainMigrationPlanningError(
+                "schema state owned schema digest rows are malformed"
+            )
+        domain = _planning_plain_string(
+            digest_row[0],
+            "owned schema digest domain",
+        )
+        if len(domain) > MAX_DOMAIN_LENGTH or _DOMAIN_PATTERN.fullmatch(domain) is None:
+            raise DomainMigrationPlanningError("owned schema digest domain is not canonical")
+        _planning_sha256(digest_row[1], "owned schema digest sha256")
+
+
+def _validate_schema_state(
+    state: object,
+) -> Tuple[DomainMigrationDescriptor, ...]:
+    if type(state) is not SchemaState:
+        raise DomainMigrationPlanningError("planner input must be an exact SchemaState")
+    typed_state = state
+    _validate_schema_state_models(typed_state)
+    if typed_state.registry_sha256 != DOMAIN_MIGRATION_REGISTRY.registry_sha256:
+        raise DomainMigrationPlanningError(
+            "schema state registry digest differs from the trusted registry"
+        )
+
+    applied_ids = tuple(item.migration_id for item in typed_state.applied_migrations)
+    descriptors = DOMAIN_MIGRATION_REGISTRY.descriptors[: len(applied_ids)]
+    expected_ids = tuple(item.migration_id for item in descriptors)
+    if applied_ids != expected_ids:
+        raise DomainMigrationPlanningError(
+            "bridge-only schema state must be a continuous legacy registry prefix"
+        )
+    applied_id_set = set(applied_ids)
+    for descriptor in descriptors:
+        if descriptor.kind != "legacy_bootstrap":
+            raise DomainMigrationPlanningError(
+                "bridge-only planning refuses non-legacy registry descriptors"
+            )
+        if any(dependency not in applied_id_set for dependency in descriptor.dependencies):
+            raise DomainMigrationPlanningError(
+                "bridge-only schema state has an unapplied dependency"
+            )
+
+    shape = typed_state.shape
+    if shape is SchemaShape.EMPTY and descriptors:
+        raise DomainMigrationPlanningError("empty schema state cannot have applied migrations")
+    if shape in {SchemaShape.LEGACY_PREFIX, SchemaShape.BRIDGED_PREFIX} and not descriptors:
+        raise DomainMigrationPlanningError(
+            "non-empty schema state must have an applied legacy prefix"
+        )
+    expected_edges: Tuple[DomainMigrationDependencyRow, ...] = ()
+    if shape is SchemaShape.BRIDGED_PREFIX:
+        expected_edges = tuple(
+            sorted(
+                DomainMigrationDependencyRow(descriptor.migration_id, dependency)
+                for descriptor in descriptors
+                for dependency in descriptor.dependencies
+            )
+        )
+    expected_state = _build_schema_state(
+        shape,
+        descriptors,
+        dependency_edges=expected_edges,
+    )
+    if typed_state != expected_state:
+        raise DomainMigrationPlanningError(
+            "schema state differs from its canonical registry-bound representation"
+        )
+    return descriptors
+
+
+def _schema_state_from_bridge_state(
+    bridge_state: DomainMigrationBridgeState,
+) -> SchemaState:
+    descriptors = DOMAIN_MIGRATION_REGISTRY.descriptors[: len(bridge_state.ledger_rows)]
+    if tuple(item.migration_id for item in descriptors) != tuple(
+        row.migration_id for row in bridge_state.ledger_rows
+    ):
+        raise DomainMigrationBridgeIntegrityError(
+            "bridge state cannot be represented as a registry-bound schema state"
+        )
+    if bridge_state.shape is DomainMigrationBridgeShape.LEGACY_PREFIX:
+        shape = SchemaShape.SIDECAR_ABSENT
+        dependency_edges: Tuple[DomainMigrationDependencyRow, ...] = ()
+    elif bridge_state.shape is DomainMigrationBridgeShape.SIDECAR_EMPTY_PREFIX:
+        shape = SchemaShape.LEGACY_PREFIX if descriptors else SchemaShape.EMPTY
+        dependency_edges = ()
+    elif bridge_state.shape is DomainMigrationBridgeShape.BRIDGED_PREFIX:
+        shape = SchemaShape.BRIDGED_PREFIX
+        dependency_edges = bridge_state.dependency_rows
+    else:  # pragma: no cover - Enum exhaustiveness guard.
+        raise DomainMigrationBridgeIntegrityError(
+            "bridge state has an unsupported schema classification"
+        )
+    return _build_schema_state(
+        shape,
+        descriptors,
+        dependency_edges=dependency_edges,
+    )
+
+
+def inspect_schema_state(connection: sqlite3.Connection) -> SchemaState:
+    """Inspect one canonical bridge-aware state without database mutation.
+
+    Partial sidecars, conflicting metadata, future/holey ledgers, dependency conflicts,
+    and owned-schema drift are rejected by the underlying single-snapshot reader rather
+    than represented as runnable states.
+    """
+
+    bridge_state = read_domain_migration_bridge_state(connection)
+    state = _schema_state_from_bridge_state(bridge_state)
+    _validate_schema_state(state)
+    return state
+
+
+def _bridge_plan_digest(
+    *,
+    source: SchemaState,
+    target_shape: SchemaShape,
+    actions: Sequence[BridgeMigrationAction],
+) -> str:
+    return _canonical_sha256(
+        {
+            "actions": [
+                {
+                    "kind": action.kind.value,
+                    "resultShape": action.result_shape.value,
+                    "sequence": action.sequence,
+                    "sourceShape": action.source_shape.value,
+                }
+                for action in actions
+            ],
+            "format": _BRIDGE_PLAN_FORMAT,
+            "registrySha256": source.registry_sha256,
+            "releaseMode": _BRIDGE_RELEASE_MODE,
+            "sourceShape": source.shape.value,
+            "sourceStateSha256": source.state_sha256,
+            "targetShape": target_shape.value,
+        }
+    )
+
+
+def plan_bridge_migrations(state: SchemaState) -> BridgeMigrationPlan:
+    """Return the only safe deterministic migration actions for bridge-only phase 1.
+
+    The API deliberately accepts no domain target, SQL, native enablement, or sparse
+    policy.  Consequently its closed action enum can express only exact sidecar install,
+    exact legacy metadata bootstrap, or a no-op.  A future native/v4 planner requires a
+    separate reviewed release contract.
+    """
+
+    _validate_schema_state(state)
+    actions: Tuple[BridgeMigrationAction, ...]
+    if state.shape is SchemaShape.SIDECAR_ABSENT:
+        installed_shape = (
+            SchemaShape.LEGACY_PREFIX if state.applied_migrations else SchemaShape.EMPTY
+        )
+        install = BridgeMigrationAction(
+            sequence=1,
+            kind=BridgeMigrationActionKind.INSTALL_SIDECAR,
+            source_shape=SchemaShape.SIDECAR_ABSENT,
+            result_shape=installed_shape,
+        )
+        if state.applied_migrations:
+            actions = (
+                install,
+                BridgeMigrationAction(
+                    sequence=2,
+                    kind=BridgeMigrationActionKind.BOOTSTRAP_LEGACY_METADATA,
+                    source_shape=SchemaShape.LEGACY_PREFIX,
+                    result_shape=SchemaShape.BRIDGED_PREFIX,
+                ),
+            )
+            target_shape = SchemaShape.BRIDGED_PREFIX
+        else:
+            actions = (install,)
+            target_shape = SchemaShape.EMPTY
+    elif state.shape is SchemaShape.LEGACY_PREFIX:
+        actions = (
+            BridgeMigrationAction(
+                sequence=1,
+                kind=BridgeMigrationActionKind.BOOTSTRAP_LEGACY_METADATA,
+                source_shape=SchemaShape.LEGACY_PREFIX,
+                result_shape=SchemaShape.BRIDGED_PREFIX,
+            ),
+        )
+        target_shape = SchemaShape.BRIDGED_PREFIX
+    elif state.shape in {SchemaShape.EMPTY, SchemaShape.BRIDGED_PREFIX}:
+        actions = ()
+        target_shape = state.shape
+    else:  # pragma: no cover - Enum exhaustiveness guard.
+        raise DomainMigrationPlanningError(
+            "bridge-only planner encountered an unsupported schema state"
+        )
+
+    plan_sha256 = _bridge_plan_digest(
+        source=state,
+        target_shape=target_shape,
+        actions=actions,
+    )
+    return BridgeMigrationPlan(
+        release_mode=_BRIDGE_RELEASE_MODE,
+        source_state_sha256=state.state_sha256,
+        registry_sha256=state.registry_sha256,
+        source_shape=state.shape,
+        target_shape=target_shape,
+        actions=actions,
+        plan_sha256=plan_sha256,
+    )
