@@ -41,14 +41,11 @@ class DeepSeekHarnessRunError(RuntimeError):
 
 
 class _Harness(Protocol):
-    def start(self) -> None:
-        ...
+    def start(self) -> None: ...
 
-    def run(self, input: str, *, session_id: str) -> Any:
-        ...
+    def run(self, input: str, *, session_id: str) -> Any: ...
 
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
 
 
 HarnessFactory = Callable[[], _Harness]
@@ -156,9 +153,7 @@ class DeepSeekHarnessRuntime:
             "Execute this already-recorded coordination task. Respect the handoff, "
             "authority, constraints, and acceptance criteria. Return a concise final result."
         )
-        return preamble + "\n\n" + "\n\n".join(
-            f"{heading}\n{body}" for heading, body in sections
-        )
+        return preamble + "\n\n" + "\n\n".join(f"{heading}\n{body}" for heading, body in sections)
 
     @staticmethod
     def invocation_fingerprint(invocation: AgentInvocation) -> str:
@@ -206,9 +201,7 @@ class DeepSeekHarnessRuntime:
                 "local wait was canceled, but the DeepSeek Harness turn is still running"
             ) from exc
 
-    async def _invoke_and_record(
-        self, key: str, invocation: AgentInvocation
-    ) -> AgentResult:
+    async def _invoke_and_record(self, key: str, invocation: AgentInvocation) -> AgentResult:
         try:
             result = await self._invoke_once(invocation)
             async with self._state_lock:
@@ -338,9 +331,7 @@ class DeepSeekHarnessRuntime:
                 if self._closed:
                     return
                 self._accepting = False
-                pending: tuple[asyncio.Task[AgentResult], ...] = tuple(
-                    self._inflight.values()
-                )
+                pending: tuple[asyncio.Task[AgentResult], ...] = tuple(self._inflight.values())
             if pending:
                 await asyncio.gather(
                     *(asyncio.shield(task) for task in pending),
