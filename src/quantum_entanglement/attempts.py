@@ -12,7 +12,6 @@ another worker has reclaimed the invocation.
 from __future__ import annotations
 
 import hashlib
-import importlib.resources
 import json
 import math
 import os
@@ -28,6 +27,11 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Optional, Tuple
 
+from .migrations import (
+    MigrationDriftError,
+    apply_sqlite_migrations,
+    current_schema_version,
+)
 from .protocol import new_id, utc_now
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -35,15 +39,8 @@ _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
 )
 _MAX_ERROR_LENGTH = 4_096
-_MIGRATIONS = ((1, "0001_invocation_attempts.up.sql"),)
-
-
 class InvocationConflictError(RuntimeError):
     """Raised when an idempotency boundary is reused for different work."""
-
-
-class MigrationDriftError(RuntimeError):
-    """Raised when a packaged migration differs from the recorded migration."""
 
 
 class InvocationStatus(str, Enum):
@@ -320,68 +317,13 @@ class SQLiteInvocationAttemptStore:
                         self._connection.execute("ROLLBACK")
                     raise
 
-    @staticmethod
-    def _migration_text(filename: str) -> str:
-        package = "quantum_entanglement.migrations"
-        return importlib.resources.files(package).joinpath(filename).read_text(encoding="utf-8")
-
     def _now(self) -> str:
         """Read time from the store-owned clock, never from an individual work request."""
 
         return _normalize_timestamp(self._clock(), "clock")
 
     def _apply_migrations(self) -> None:
-        self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS qe_schema_migrations (
-                version INTEGER PRIMARY KEY,
-                filename TEXT NOT NULL UNIQUE,
-                sha256 TEXT NOT NULL,
-                applied_at TEXT NOT NULL
-            )
-            """
-        )
-        for version, filename in _MIGRATIONS:
-            sql = self._migration_text(filename)
-            digest = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-            row = self._connection.execute(
-                "SELECT filename, sha256 FROM qe_schema_migrations WHERE version = ?",
-                (version,),
-            ).fetchone()
-            if row is not None:
-                if row["filename"] != filename or row["sha256"] != digest:
-                    raise MigrationDriftError(
-                        f"migration {version} checksum or filename differs from the applied schema"
-                    )
-                continue
-            applied_at = self._now()
-            quoted_filename = filename.replace("'", "''")
-            quoted_digest = digest.replace("'", "''")
-            quoted_applied_at = applied_at.replace("'", "''")
-            script = (
-                "BEGIN IMMEDIATE;\n"
-                f"{sql}\n"
-                "INSERT INTO qe_schema_migrations "
-                "(version, filename, sha256, applied_at) VALUES "
-                f"({version}, '{quoted_filename}', '{quoted_digest}', "
-                f"'{quoted_applied_at}');\nCOMMIT;"
-            )
-            try:
-                self._connection.executescript(script)
-            except sqlite3.IntegrityError:
-                if self._connection.in_transaction:
-                    self._connection.execute("ROLLBACK")
-                # A concurrent initializer may have installed the identical migration.
-                concurrent = self._connection.execute(
-                    "SELECT filename, sha256 FROM qe_schema_migrations WHERE version = ?",
-                    (version,),
-                ).fetchone()
-                if (
-                    concurrent is None
-                    or concurrent["filename"] != filename
-                    or concurrent["sha256"] != digest
-                ):
-                    raise
+        apply_sqlite_migrations(self._connection, clock=self._now)
 
     @staticmethod
     def _row_to_job(row: sqlite3.Row) -> InvocationJob:
@@ -981,10 +923,7 @@ class SQLiteInvocationAttemptStore:
 
     def schema_version(self) -> int:
         with self._lock:
-            row = self._connection.execute(
-                "SELECT COALESCE(MAX(version), 0) AS version FROM qe_schema_migrations"
-            ).fetchone()
-            return int(row["version"])
+            return current_schema_version(self._connection)
 
     def close(self) -> None:
         with self._lock:
