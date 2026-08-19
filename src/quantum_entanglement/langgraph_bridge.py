@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+from importlib import import_module
 from typing import Any, Callable
 
 
@@ -63,12 +64,12 @@ class LangGraphBridge:
         if self._command_factory is not None:
             return self._command_factory(value)
         try:
-            from langgraph.types import Command
-        except ImportError as exc:
+            command_type = import_module("langgraph.types").Command
+        except (AttributeError, ImportError) as exc:
             raise RuntimeError(
                 "resuming requires the optional langgraph dependency or a command_factory"
             ) from exc
-        return Command(resume=value)
+        return command_type(resume=value)
 
     async def start(
         self,

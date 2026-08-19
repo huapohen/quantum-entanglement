@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from quantum_entanglement.adapters.a2a import A2AAgentCard, A2AJsonRpcAdapter
 from quantum_entanglement.chat import ChatRoute, InboundChatMessage, MentionRouter
@@ -129,6 +130,16 @@ class FakeGraph:
 
 
 class LangGraphBridgeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_resume_without_optional_dependency_has_stable_error(self):
+        bridge = LangGraphBridge(FakeGraph())
+
+        with patch(
+            "quantum_entanglement.langgraph_bridge.import_module",
+            side_effect=ModuleNotFoundError("optional dependency is absent"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "optional langgraph dependency"):
+                await bridge.resume("thread-1", "approve")
+
     async def test_start_and_resume_use_stable_thread_config(self):
         graph = FakeGraph()
         bridge = LangGraphBridge(graph, command_factory=lambda value: ("resume", value))
