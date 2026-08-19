@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import inspect
 import threading
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Awaitable, Callable, Dict, Mapping, MutableMapping, Optional, Tuple
+from typing import Any, Callable
 
 
 class HookPoint(str, Enum):
@@ -39,22 +40,27 @@ class PluginManager:
     """Deterministic hook ordering and reversible plugin installation."""
 
     def __init__(self) -> None:
-        self._plugins: Dict[str, KernelPlugin] = {}
+        self._plugins: dict[str, KernelPlugin] = {}
         self._lock = threading.RLock()
 
     def install(self, plugin: KernelPlugin) -> None:
         with self._lock:
             if plugin.name in self._plugins:
-                raise ValueError("plugin already installed: %s" % plugin.name)
+                raise ValueError(f"plugin already installed: {plugin.name}")
             self._plugins[plugin.name] = plugin
 
-    def uninstall(self, name: str) -> Optional[KernelPlugin]:
+    def uninstall(self, name: str) -> KernelPlugin | None:
         with self._lock:
             return self._plugins.pop(name, None)
 
-    def installed(self) -> Tuple[KernelPlugin, ...]:
+    def installed(self) -> tuple[KernelPlugin, ...]:
         with self._lock:
-            return tuple(sorted(self._plugins.values(), key=lambda item: (item.priority, item.name)))
+            return tuple(
+                sorted(
+                    self._plugins.values(),
+                    key=lambda item: (item.priority, item.name),
+                )
+            )
 
     async def emit(self, point: HookPoint, context: MutableMapping[str, Any]) -> None:
         for plugin in self.installed():
@@ -64,4 +70,3 @@ class PluginManager:
             result = hook(context)
             if inspect.isawaitable(result):
                 await result
-
