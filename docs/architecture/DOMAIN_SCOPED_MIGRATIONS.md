@@ -1,6 +1,6 @@
 # Domain-scoped SQLite migration sidecar
 
-Status: **architecture proposal; not implemented**
+Status: **phase-1 bridge foundations implemented; release execution still blocked**
 
 Decision scope: preserve the immutable legacy migration history numbered 1-3, introduce a
 domain-aware sidecar and deterministic dependency planner, and make a later artifact v4
@@ -8,10 +8,35 @@ possible without forcing an artifact-only database to execute delivery migration
 
 Last reviewed against source: 2026-08-20
 
-This document is intentionally explicit about the difference between current behavior and
-the proposed behavior. Names, schemas, and APIs under “Proposed” do not exist until code,
-tests, upgrade rehearsals, backup support, and retained release evidence land in atomic
-commits.
+This document distinguishes committed bridge primitives from the remaining release design.
+The implementation status below is authoritative for this checkout; later sections describe
+the complete target and are not proof that an executor, sparse migration, or release gate
+exists.
+
+### Implementation status
+
+Implemented and tested in `src/quantum_entanglement/domain_migrations.py`:
+
+- a bounded trusted registry for immutable legacy migrations 1-3, their domains,
+  dependencies, packaged SQL digests, and owned-schema manifests;
+- exact validation and atomic installation of the two format-1 sidecar tables;
+- single-snapshot classification of absent-sidecar, empty, unbridged legacy-prefix, and
+  bridged-prefix states, with partial/future/holey/drifted states rejected;
+- atomic, idempotent legacy metadata bootstrap for an already installed exact sidecar;
+- immutable, timestamp-free, registry-bound `SchemaState` inspection;
+- a pure deterministic `plan_bridge_migrations` planner whose closed action set contains
+  only `INSTALL_SIDECAR`, `BOOTSTRAP_LEGACY_METADATA`, and no-op.
+
+Not implemented and therefore release-blocking:
+
+- an atomic plan applier that revalidates `source_state_sha256` under its write lock;
+- native/domain-sparse migration writes, artifact v4, or a sparse-aware legacy runner;
+- domain-aware backup manifest v2 and restore reconciliation;
+- mixed-binary rollout evidence, service/admin integration, and a promoted phase-1 release.
+
+The sidecar installer and metadata bootstrap are currently two separately callable atomic
+operations. The planner may describe both, but no code yet executes that two-action plan as
+one revalidated orchestration. Operators must not treat a plan object as applied state.
 
 ## 1. Current implementation: authoritative facts
 
@@ -113,10 +138,10 @@ The sidecar design must provide all of the following:
 
 ## 3. Non-goals
 
-This proposal does not:
+The current bridge foundation does not:
 
-- claim that domain-scoped migrations, either sidecar table, `SchemaState`, backup format
-  v2, or artifact v4 is implemented;
+- claim that native/domain-sparse application, backup format v2, an atomic plan applier,
+  or artifact v4 is implemented;
 - change or renumber legacy migrations 1-3;
 - turn SQLite into a multi-host consensus database;
 - provide PostgreSQL/Alembic/Flyway compatibility or a generic SQL migration framework;
@@ -175,14 +200,14 @@ applied or appears earlier in the same plan. The dependency graph contains migra
 only. Non-migration prerequisites—such as v3's required legacy `outbox` shape—are explicit
 schema preconditions evaluated from `SchemaState`.
 
-## 5. Proposed durable sidecar
+## 5. Implemented format-1 durable sidecar
 
 The existing `qe_schema_migrations` table remains byte-for-byte and schema-for-schema
 unchanged. Two exact-schema sidecar tables augment applied rows.
 
 ### 5.1 `qe_schema_migration_metadata`
 
-Proposed format-1 DDL:
+Implemented format-1 DDL:
 
 ```sql
 CREATE TABLE qe_schema_migration_metadata (
@@ -232,7 +257,7 @@ with a schema later changed by another version in the same domain.
 
 ### 5.2 `qe_schema_migration_dependencies`
 
-Proposed format-1 DDL:
+Implemented format-1 DDL:
 
 ```sql
 CREATE TABLE qe_schema_migration_dependencies (
@@ -269,14 +294,16 @@ registry until application.
 - Every metadata row has exactly one supported ledger row; no orphan or duplicate
   `(domain, domain_version)` exists.
 - Durable dependencies match the registry exactly and form no self-edge or cycle.
-- Sidecar DDL and bootstrap rows commit in one `BEGIN IMMEDIATE` transaction.
+- Sidecar installation and metadata bootstrap each commit atomically in their own
+  `BEGIN IMMEDIATE` transaction; combined plan execution is not yet implemented.
 - Re-running bootstrap validates the winner; it does not “repair” missing or conflicting
   rows silently.
 
-## 6. Proposed packaged registry model
+## 6. Implemented registry foundation and future native model
 
-The future in-code descriptor may be named `DomainMigration`; the name is illustrative,
-not an existing public API.
+The committed `DomainMigrationDescriptor` and `DomainMigrationRegistry` implement the
+bridge-only subset. The simplified `DomainMigration` below remains illustrative of later
+native migration support and is not a public API.
 
 ```python
 @dataclass(frozen=True)
@@ -323,6 +350,11 @@ schema precondition because no ledger migration currently represents base `outbo
 
 ## 7. Legacy bootstrap protocol
 
+The exact sidecar installer and legacy metadata bootstrap described here are implemented
+as separate atomic primitives. The ten-step sequence below is the required contract for
+the still-missing plan applier when it orchestrates both actions; the current planner is
+pure and performs no database writes.
+
 Bootstrap converts supported history into sidecar metadata without changing a legacy SQL
 file, ledger row, application table, or global ID.
 
@@ -352,7 +384,7 @@ history from object names or data.
 
 ### 7.2 Transaction sequence
 
-Under one `BEGIN IMMEDIATE` transaction, the bridge:
+The future atomic plan applier must, under its write lock:
 
 1. validates registry constants before touching SQLite;
 2. verifies `PRAGMA foreign_keys=ON` and reads only `main` objects;
@@ -373,22 +405,24 @@ For a truly empty database, the bridge creates the unchanged legacy ledger schem
 sidecars but records no applied migration. Later domain plans may apply only their closure.
 That sparse behavior must remain disabled during bridge-only phase 1.
 
-## 8. `SchemaState`: replacing one global integer
+## 8. Implemented bridge-only `SchemaState`
 
 `current_schema_version(connection) -> int` cannot represent independent domains. The
-proposed immutable `SchemaState` is the sole input to planning, backup evidence, readiness,
-and restore reconciliation.
+committed immutable `SchemaState` is the sole input to the bridge-only planner. Backup
+evidence, readiness integration, restore reconciliation, and sparse-state representation
+remain future work.
 
-Conceptual fields:
+Committed fields (model names abbreviated in this example):
 
 ```python
 @dataclass(frozen=True)
 class SchemaState:
     sidecar_format: int
     shape: SchemaShape
-    applied_migrations: tuple[AppliedDomainMigration, ...]
-    domain_heads: tuple[tuple[str, int], ...]
-    dependency_edges: tuple[tuple[int, int], ...]
+    legacy_schema_version: int
+    applied_migrations: tuple[AppliedSchemaMigration, ...]
+    domain_heads: tuple[SchemaDomainHead, ...]
+    dependency_edges: tuple[DomainMigrationDependencyRow, ...]
     owned_schema_digests: tuple[tuple[str, str], ...]
     registry_sha256: str
     state_sha256: str
@@ -398,18 +432,21 @@ class SchemaState:
 
 | Shape | Meaning |
 |---|---|
-| `empty` | exact ledger/sidecars exist, no migration rows |
-| `legacy_prefix` | legacy ledger is supported but sidecar has not been bootstrapped |
-| `bridged_prefix` | sidecar exactly maps a legacy continuous prefix |
-| `domain_sparse` | every row is sidecar-described, but global IDs are not necessarily `1..N` |
-| `unsupported` | unknown, drifted, partial, newer, or incongruent state; never a runnable state |
+| `sidecar_absent` | supported exact legacy prefix, including zero rows, without sidecars |
+| `empty` | exact sidecars exist and the legacy ledger has no rows |
+| `legacy_prefix` | exact sidecars exist but metadata has not yet mapped a non-empty legacy prefix |
+| `bridged_prefix` | sidecars exactly map a non-empty legacy continuous prefix |
+
+`domain_sparse` is deliberately absent from the current enum. Unknown, drifted, partial,
+newer, native, and sparse states raise an integrity/planning error instead of becoming a
+runnable `SchemaState`.
 
 Canonicalization rules:
 
 - migrations sort by numeric migration ID;
 - domain heads sort by UTF-8 domain bytes then integer version;
 - dependency edges sort by `(migration_version, depends_on_version)`;
-- object references sort by `(domain, object_type, object_name)`;
+- owned-schema digest rows follow the canonical domain-head order;
 - JSON uses fixed field names, UTF-8, sorted keys, no insignificant whitespace, no NaN;
 - timestamps are excluded from `state_sha256` so a faithful evidence refresh does not
   change semantic state;
@@ -868,32 +905,39 @@ These are release-blocking:
 19. Restore never lowers applied security/data state silently.
 20. Destructive down/restore is explicit, rehearsed, and never an automatic readiness fix.
 
-## 19. Proposed interfaces and compatibility seam
+## 19. Implemented interfaces and compatibility seam
 
-Names below are design candidates only:
+The phase-1 foundation exposes these concrete operations:
 
 ```python
-def bootstrap_domain_migration_sidecar(
+def install_domain_migration_sidecar(connection) -> DomainMigrationSidecarSchemaState: ...
+
+
+def bootstrap_legacy_domain_migration_metadata(
     connection,
     *,
-    registry,
+    clock=utc_now,
+) -> DomainMigrationBridgeState: ...
+
+
+def inspect_schema_state(connection) -> SchemaState: ...
+
+
+def plan_bridge_migrations(state: SchemaState) -> BridgeMigrationPlan: ...
+```
+
+The executor remains a design candidate and must not be inferred from the planner API:
+
+```python
+def apply_bridge_migration_plan(
+    connection,
+    plan: BridgeMigrationPlan,
+    *,
     clock,
 ) -> SchemaState: ...
 
 
-def inspect_schema_state(connection, *, registry) -> SchemaState: ...
-
-
-def plan_sqlite_migrations(
-    state,
-    *,
-    registry,
-    target_domains,
-    allow_sparse,
-) -> MigrationPlan: ...
-
-
-def apply_sqlite_migration_plan(
+def apply_native_domain_migration_plan(
     connection,
     plan,
     *,
@@ -916,9 +960,11 @@ under lock.
 
 ### 20.1 Current baseline commands
 
-These commands verify only the current global-prefix runner and backup behavior:
+These commands verify the legacy runner, committed bridge foundation, and current backup
+behavior; they do not exercise a plan applier or sparse migration:
 
 ```bash
+PYTHONPATH=src python3 -m unittest tests.test_domain_migrations -v
 PYTHONPATH=src python3 -m unittest tests.test_migrations -v
 PYTHONPATH=src python3 -m unittest tests.test_migration_targets -v
 PYTHONPATH=src python3 -m unittest tests.test_backup -v

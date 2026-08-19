@@ -9,6 +9,8 @@ release. Promotion additionally requires the evidence defined in
 
 ### Added
 
+- Bridge-only domain migration foundation: trusted legacy descriptors, exact sidecar
+  install/bootstrap, immutable `SchemaState`, and a digest-bound closed-action planner.
 - Commercial production roadmap from `0.2.0` through `1.0.0`.
 - Per-commit and per-release gates plus an immutable release-evidence template.
 - Ten-dimension production readiness audit and explicit P0/P1/P2 backlog.
