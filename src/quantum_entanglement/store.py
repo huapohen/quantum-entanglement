@@ -7,6 +7,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 
@@ -23,6 +24,19 @@ from .protocol import new_id, utc_now
 
 class ConcurrencyError(RuntimeError):
     """Raised when a stream changed after the caller read it."""
+
+
+@dataclass(frozen=True)
+class OutboxAmbiguity:
+    """Durable operator-reconciliation record for an uncertain external write."""
+
+    message_id: str
+    lease_token: str
+    reason_code: str
+    attempt_count: int
+    marked_at: str
+    resolution: Optional[str] = None
+    resolved_at: Optional[str] = None
 
 
 class SQLiteEventStore:
@@ -96,6 +110,28 @@ class SQLiteEventStore:
                     ON outbox(status, available_at, outbox_position);
                 CREATE INDEX IF NOT EXISTS idx_outbox_trigger
                     ON outbox(triggering_global_position, outbox_position);
+                CREATE TABLE IF NOT EXISTS outbox_ambiguities (
+                    message_id TEXT NOT NULL,
+                    lease_token TEXT NOT NULL,
+                    reason_code TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL,
+                    marked_at TEXT NOT NULL,
+                    resolution TEXT,
+                    resolved_at TEXT,
+                    PRIMARY KEY(message_id, lease_token),
+                    FOREIGN KEY(message_id)
+                        REFERENCES outbox(message_id) ON DELETE RESTRICT,
+                    CHECK(reason_code IN (
+                        'callback_timeout', 'caller_cancelled',
+                        'ack_failed', 'lease_expired_after_accept'
+                    )),
+                    CHECK(resolution IS NULL OR resolution IN (
+                        'published', 'retry', 'dead_letter'
+                    )),
+                    CHECK(attempt_count > 0)
+                );
+                CREATE INDEX IF NOT EXISTS idx_outbox_ambiguities_open
+                    ON outbox_ambiguities(message_id, resolved_at);
                 CREATE TABLE IF NOT EXISTS inbox_receipts (
                     consumer_id TEXT NOT NULL,
                     message_id TEXT NOT NULL,
@@ -178,6 +214,18 @@ class SQLiteEventStore:
         )
 
     @staticmethod
+    def _row_to_ambiguity(row: sqlite3.Row) -> OutboxAmbiguity:
+        return OutboxAmbiguity(
+            message_id=row["message_id"],
+            lease_token=row["lease_token"],
+            reason_code=row["reason_code"],
+            attempt_count=int(row["attempt_count"]),
+            marked_at=row["marked_at"],
+            resolution=row["resolution"],
+            resolved_at=row["resolved_at"],
+        )
+
+    @staticmethod
     def _lease_deadline(now: str, lease_seconds: float) -> str:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be greater than zero")
@@ -186,6 +234,16 @@ class SQLiteEventStore:
             raise ValueError("now must include a timezone")
         deadline = parsed.astimezone(timezone.utc) + timedelta(seconds=lease_seconds)
         return deadline.isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _normalize_timestamp(value: str, field_name: str) -> str:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (AttributeError, ValueError) as exc:
+            raise ValueError(f"{field_name} must be an RFC 3339 timestamp") from exc
+        if parsed.tzinfo is None:
+            raise ValueError(f"{field_name} must include a timezone")
+        return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
     def _append_in_transaction(
         self,
@@ -248,9 +306,7 @@ class SQLiteEventStore:
         """Append one event, returning the existing record for an idempotent retry."""
 
         with self._transaction() as connection:
-            stored, _inserted = self._append_in_transaction(
-                connection, event, expected_version
-            )
+            stored, _inserted = self._append_in_transaction(connection, event, expected_version)
             return stored
 
     def append_with_outbox(
@@ -268,9 +324,7 @@ class SQLiteEventStore:
 
         batch = tuple(messages)
         with self._transaction() as connection:
-            stored, inserted = self._append_in_transaction(
-                connection, event, expected_version
-            )
+            stored, inserted = self._append_in_transaction(connection, event, expected_version)
             if not inserted:
                 rows = connection.execute(
                     """
@@ -376,9 +430,7 @@ class SQLiteEventStore:
                     raise RuntimeError("inbox receipt references a missing event")
                 return InboxAppendResult(self._row_to_event(event_row), receipt, True)
 
-            stored, _inserted = self._append_in_transaction(
-                connection, event, expected_version
-            )
+            stored, _inserted = self._append_in_transaction(connection, event, expected_version)
             receipt = InboxReceipt(
                 consumer_id=consumer_id,
                 message_id=message_id,
@@ -492,10 +544,16 @@ class SQLiteEventStore:
                 """
                 SELECT * FROM outbox
                 WHERE (
-                    status = ? AND julianday(available_at) <= julianday(?)
-                ) OR (
-                    status = ? AND lease_expires_at IS NOT NULL
-                    AND julianday(lease_expires_at) <= julianday(?)
+                    (
+                        status = ? AND julianday(available_at) <= julianday(?)
+                    ) OR (
+                        status = ? AND lease_expires_at IS NOT NULL
+                        AND julianday(lease_expires_at) <= julianday(?)
+                    )
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM outbox_ambiguities ambiguity
+                    WHERE ambiguity.message_id = outbox.message_id
+                    AND ambiguity.resolved_at IS NULL
                 )
                 ORDER BY outbox_position
                 LIMIT ?
@@ -538,35 +596,46 @@ class SQLiteEventStore:
         lease_token: str,
         *,
         published_at: Optional[str] = None,
+        now: Optional[str] = None,
     ) -> bool:
-        """Mark a leased message published; stale workers cannot acknowledge it."""
+        """Atomically ACK a live lease; stale or expired workers always lose."""
 
+        acknowledged_at = self._normalize_timestamp(published_at or utc_now(), "published_at")
+        checked_at = self._normalize_timestamp(now or acknowledged_at, "now")
         with self._transaction() as connection:
-            row = connection.execute(
-                "SELECT status, lease_token FROM outbox WHERE message_id = ?",
-                (message_id,),
-            ).fetchone()
-            if row is None or row["lease_token"] != lease_token:
-                return False
-            if row["status"] == OutboxStatus.PUBLISHED.value:
-                return True
-            if row["status"] != OutboxStatus.IN_FLIGHT.value:
-                return False
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE outbox
                 SET status = ?, lease_expires_at = NULL, published_at = ?, last_error = NULL
                 WHERE message_id = ? AND status = ? AND lease_token = ?
+                AND lease_expires_at IS NOT NULL
+                AND julianday(lease_expires_at) > julianday(?)
+                AND NOT EXISTS (
+                    SELECT 1 FROM outbox_ambiguities ambiguity
+                    WHERE ambiguity.message_id = outbox.message_id
+                    AND ambiguity.resolved_at IS NULL
+                )
                 """,
                 (
                     OutboxStatus.PUBLISHED.value,
-                    published_at or utc_now(),
+                    acknowledged_at,
                     message_id,
                     OutboxStatus.IN_FLIGHT.value,
                     lease_token,
+                    checked_at,
                 ),
             )
-            return True
+            if cursor.rowcount == 1:
+                return True
+            row = connection.execute(
+                "SELECT status, lease_token FROM outbox WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            return bool(
+                row is not None
+                and row["status"] == OutboxStatus.PUBLISHED.value
+                and row["lease_token"] == lease_token
+            )
 
     def reject_outbox(
         self,
@@ -576,10 +645,13 @@ class SQLiteEventStore:
         *,
         retry_at: Optional[str] = None,
         dead_letter: bool = False,
+        now: Optional[str] = None,
     ) -> bool:
-        """NACK a lease for retry or move it to the terminal dead-letter state."""
+        """Atomically NACK a live lease or move it to dead letter."""
 
         status = OutboxStatus.DEAD_LETTER if dead_letter else OutboxStatus.PENDING
+        rejected_at = self._normalize_timestamp(now or utc_now(), "now")
+        available_at = self._normalize_timestamp(retry_at or rejected_at, "retry_at")
         with self._transaction() as connection:
             cursor = connection.execute(
                 """
@@ -587,17 +659,168 @@ class SQLiteEventStore:
                 SET status = ?, available_at = ?, lease_token = NULL,
                     lease_expires_at = NULL, last_error = ?
                 WHERE message_id = ? AND status = ? AND lease_token = ?
+                AND lease_expires_at IS NOT NULL
+                AND julianday(lease_expires_at) > julianday(?)
+                AND NOT EXISTS (
+                    SELECT 1 FROM outbox_ambiguities ambiguity
+                    WHERE ambiguity.message_id = outbox.message_id
+                    AND ambiguity.resolved_at IS NULL
+                )
                 """,
                 (
                     status.value,
-                    retry_at or utc_now(),
+                    available_at,
                     error,
                     message_id,
                     OutboxStatus.IN_FLIGHT.value,
                     lease_token,
+                    rejected_at,
                 ),
             )
             return cursor.rowcount == 1
+
+    def mark_outbox_ambiguous(
+        self,
+        message_id: str,
+        lease_token: str,
+        reason_code: str,
+        *,
+        marked_at: Optional[str] = None,
+    ) -> bool:
+        """Durably quarantine an uncertain external write for operator review."""
+
+        allowed_reasons = {
+            "callback_timeout",
+            "caller_cancelled",
+            "ack_failed",
+            "lease_expired_after_accept",
+        }
+        if reason_code not in allowed_reasons:
+            raise ValueError("unsupported outbox ambiguity reason")
+        recorded_at = self._normalize_timestamp(marked_at or utc_now(), "marked_at")
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT status, lease_token, attempt_count FROM outbox
+                WHERE message_id = ?
+                """,
+                (message_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["status"] != OutboxStatus.IN_FLIGHT.value
+                or row["lease_token"] != lease_token
+            ):
+                return False
+            connection.execute(
+                """
+                INSERT INTO outbox_ambiguities (
+                    message_id, lease_token, reason_code, attempt_count, marked_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(message_id, lease_token) DO NOTHING
+                """,
+                (
+                    message_id,
+                    lease_token,
+                    reason_code,
+                    int(row["attempt_count"]),
+                    recorded_at,
+                ),
+            )
+            return True
+
+    def read_outbox_ambiguities(self, *, open_only: bool = True) -> Tuple[OutboxAmbiguity, ...]:
+        """Read durable reconciliation work in deterministic insertion order."""
+
+        with self._lock:
+            if open_only:
+                rows = self._connection.execute(
+                    """
+                    SELECT * FROM outbox_ambiguities
+                    WHERE resolved_at IS NULL ORDER BY rowid
+                    """
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    "SELECT * FROM outbox_ambiguities ORDER BY rowid"
+                ).fetchall()
+            return tuple(self._row_to_ambiguity(row) for row in rows)
+
+    def resolve_outbox_ambiguity(
+        self,
+        message_id: str,
+        lease_token: str,
+        resolution: str,
+        *,
+        resolved_at: Optional[str] = None,
+        retry_at: Optional[str] = None,
+    ) -> bool:
+        """Apply an operator's evidence-backed resolution and unblock delivery."""
+
+        if resolution not in {"published", "retry", "dead_letter"}:
+            raise ValueError("unsupported outbox ambiguity resolution")
+        decided_at = self._normalize_timestamp(resolved_at or utc_now(), "resolved_at")
+        available_at = self._normalize_timestamp(retry_at or decided_at, "retry_at")
+        with self._transaction() as connection:
+            ambiguity = connection.execute(
+                """
+                SELECT 1 FROM outbox_ambiguities
+                WHERE message_id = ? AND lease_token = ? AND resolved_at IS NULL
+                """,
+                (message_id, lease_token),
+            ).fetchone()
+            outbox = connection.execute(
+                "SELECT status, lease_token FROM outbox WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            if (
+                ambiguity is None
+                or outbox is None
+                or outbox["status"] != OutboxStatus.IN_FLIGHT.value
+                or outbox["lease_token"] != lease_token
+            ):
+                return False
+            if resolution == "published":
+                connection.execute(
+                    """
+                    UPDATE outbox SET status = ?, lease_expires_at = NULL,
+                        published_at = ?, last_error = NULL
+                    WHERE message_id = ? AND status = ? AND lease_token = ?
+                    """,
+                    (
+                        OutboxStatus.PUBLISHED.value,
+                        decided_at,
+                        message_id,
+                        OutboxStatus.IN_FLIGHT.value,
+                        lease_token,
+                    ),
+                )
+            else:
+                target = OutboxStatus.PENDING if resolution == "retry" else OutboxStatus.DEAD_LETTER
+                connection.execute(
+                    """
+                    UPDATE outbox SET status = ?, available_at = ?,
+                        lease_token = NULL, lease_expires_at = NULL,
+                        last_error = ?
+                    WHERE message_id = ? AND status = ? AND lease_token = ?
+                    """,
+                    (
+                        target.value,
+                        available_at,
+                        f"operator_reconciled:{resolution}",
+                        message_id,
+                        OutboxStatus.IN_FLIGHT.value,
+                        lease_token,
+                    ),
+                )
+            connection.execute(
+                """
+                UPDATE outbox_ambiguities SET resolution = ?, resolved_at = ?
+                WHERE message_id = ? AND lease_token = ? AND resolved_at IS NULL
+                """,
+                (resolution, decided_at, message_id, lease_token),
+            )
+            return True
 
     def get_outbox(self, message_id: str) -> Optional[StoredOutboxMessage]:
         with self._lock:
@@ -606,9 +829,7 @@ class SQLiteEventStore:
             ).fetchone()
             return None if row is None else self._row_to_outbox(row)
 
-    def read_outbox(
-        self, status: Optional[OutboxStatus] = None
-    ) -> Tuple[StoredOutboxMessage, ...]:
+    def read_outbox(self, status: Optional[OutboxStatus] = None) -> Tuple[StoredOutboxMessage, ...]:
         with self._lock:
             if status is None:
                 rows = self._connection.execute(
@@ -621,9 +842,7 @@ class SQLiteEventStore:
                 ).fetchall()
             return tuple(self._row_to_outbox(row) for row in rows)
 
-    def get_inbox_receipt(
-        self, consumer_id: str, message_id: str
-    ) -> Optional[InboxReceipt]:
+    def get_inbox_receipt(self, consumer_id: str, message_id: str) -> Optional[InboxReceipt]:
         with self._lock:
             row = self._connection.execute(
                 """

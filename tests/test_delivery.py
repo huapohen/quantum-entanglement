@@ -26,7 +26,7 @@ def message(message_id="message-1", payload=None, available_at=READY):
         payload or {"taskId": "task-1"},
         headers={"traceparent": "trace-1"},
         message_id=message_id,
-        idempotency_key="publish:%s" % message_id,
+        idempotency_key=f"publish:{message_id}",
         available_at=available_at,
         created_at=READY,
     )
@@ -70,18 +70,14 @@ class TransactionalDeliveryTests(unittest.TestCase):
         self.store.append_with_outbox(event("dispatch-1"), (duplicate,), expected_version=0)
 
         with self.assertRaises(sqlite3.IntegrityError):
-            self.store.append_with_outbox(
-                event("dispatch-2"), (duplicate,), expected_version=1
-            )
+            self.store.append_with_outbox(event("dispatch-2"), (duplicate,), expected_version=1)
 
         self.assertEqual(self.store.stream_version("session:s1"), 1)
         self.assertEqual(len(self.store.read_outbox()), 1)
 
     def test_lease_ack_is_owned_and_idempotent(self):
         self.store.append_with_outbox(event("dispatch-1"), (message(),))
-        claimed = self.store.claim_outbox(
-            "publisher-a", limit=1, lease_seconds=10, now=READY
-        )[0]
+        claimed = self.store.claim_outbox("publisher-a", limit=1, lease_seconds=10, now=READY)[0]
 
         self.assertEqual(claimed.status, OutboxStatus.IN_FLIGHT)
         self.assertEqual(claimed.attempt_count, 1)
@@ -108,18 +104,14 @@ class TransactionalDeliveryTests(unittest.TestCase):
 
     def test_expired_lease_is_reclaimed_after_publisher_crash(self):
         self.store.append_with_outbox(event("dispatch-1"), (message(),))
-        first = self.store.claim_outbox(
-            "publisher-a", lease_seconds=10, now=READY
-        )[0]
+        first = self.store.claim_outbox("publisher-a", lease_seconds=10, now=READY)[0]
 
         # Simulate the publisher process dying with the lease still in flight.
         self.store.close()
         self.store = SQLiteEventStore(self.path)
 
         self.assertEqual(
-            self.store.claim_outbox(
-                "publisher-b", lease_seconds=10, now="2026-08-19T00:00:09Z"
-            ),
+            self.store.claim_outbox("publisher-b", lease_seconds=10, now="2026-08-19T00:00:09Z"),
             (),
         )
         reclaimed = self.store.claim_outbox(
@@ -128,6 +120,111 @@ class TransactionalDeliveryTests(unittest.TestCase):
         self.assertNotEqual(first.lease_token, reclaimed.lease_token)
         self.assertEqual(reclaimed.attempt_count, 2)
         self.assertFalse(self.store.acknowledge_outbox("message-1", first.lease_token))
+
+    def test_ack_and_nack_fail_atomically_at_exact_lease_expiry(self):
+        self.store.append_with_outbox(event("dispatch-1"), (message(),))
+        claimed = self.store.claim_outbox("publisher", lease_seconds=10, now=READY)[0]
+        expired_at = "2026-08-19T00:00:10Z"
+
+        self.assertFalse(
+            self.store.acknowledge_outbox(
+                "message-1",
+                claimed.lease_token,
+                published_at=expired_at,
+                now=expired_at,
+            )
+        )
+        self.assertFalse(
+            self.store.reject_outbox(
+                "message-1",
+                claimed.lease_token,
+                "transport_unavailable",
+                now=expired_at,
+            )
+        )
+        self.assertEqual(
+            self.store.get_outbox("message-1").status,
+            OutboxStatus.IN_FLIGHT,
+        )
+
+    def test_takeover_fences_both_old_publisher_ack_and_nack(self):
+        self.store.append_with_outbox(event("dispatch-1"), (message(),))
+        old = self.store.claim_outbox("publisher-old", lease_seconds=10, now=READY)[0]
+        takeover_at = "2026-08-19T00:00:10Z"
+        current = self.store.claim_outbox("publisher-current", lease_seconds=10, now=takeover_at)[0]
+
+        self.assertFalse(
+            self.store.acknowledge_outbox(
+                "message-1",
+                old.lease_token,
+                published_at=takeover_at,
+                now=takeover_at,
+            )
+        )
+        self.assertFalse(
+            self.store.reject_outbox(
+                "message-1",
+                old.lease_token,
+                "stale_worker",
+                now=takeover_at,
+            )
+        )
+        self.assertTrue(
+            self.store.acknowledge_outbox(
+                "message-1",
+                current.lease_token,
+                published_at="2026-08-19T00:00:11Z",
+                now="2026-08-19T00:00:11Z",
+            )
+        )
+
+    def test_open_ambiguity_blocks_takeover_until_operator_resolution(self):
+        self.store.append_with_outbox(event("dispatch-1"), (message(),))
+        claimed = self.store.claim_outbox("publisher", lease_seconds=10, now=READY)[0]
+        self.assertTrue(
+            self.store.mark_outbox_ambiguous(
+                "message-1",
+                claimed.lease_token,
+                "callback_timeout",
+                marked_at="2026-08-19T00:00:10Z",
+            )
+        )
+
+        self.assertFalse(
+            self.store.acknowledge_outbox(
+                "message-1",
+                claimed.lease_token,
+                published_at="2026-08-19T00:00:01Z",
+                now="2026-08-19T00:00:01Z",
+            )
+        )
+        self.assertFalse(
+            self.store.reject_outbox(
+                "message-1",
+                claimed.lease_token,
+                "late_nack",
+                now="2026-08-19T00:00:01Z",
+            )
+        )
+
+        self.assertEqual(
+            self.store.claim_outbox("publisher-takeover", now="2026-08-19T00:01:00Z"),
+            (),
+        )
+        ambiguity = self.store.read_outbox_ambiguities()[0]
+        self.assertEqual(ambiguity.attempt_count, 1)
+        self.assertTrue(
+            self.store.resolve_outbox_ambiguity(
+                "message-1",
+                claimed.lease_token,
+                "retry",
+                resolved_at="2026-08-19T00:01:00Z",
+                retry_at="2026-08-19T00:01:00Z",
+            )
+        )
+        reclaimed = self.store.claim_outbox("publisher-takeover", now="2026-08-19T00:01:00Z")[0]
+        self.assertEqual(reclaimed.attempt_count, 2)
+        self.assertEqual(self.store.read_outbox_ambiguities(), ())
 
     def test_nack_schedules_retry_and_can_dead_letter(self):
         self.store.append_with_outbox(event("dispatch-1"), (message(),))
@@ -138,18 +235,19 @@ class TransactionalDeliveryTests(unittest.TestCase):
                 first.lease_token,
                 "broker unavailable",
                 retry_at="2026-08-19T00:01:00Z",
+                now=READY,
             )
         )
-        self.assertEqual(
-            self.store.claim_outbox("publisher", now="2026-08-19T00:00:59Z"), ()
-        )
+        self.assertEqual(self.store.claim_outbox("publisher", now="2026-08-19T00:00:59Z"), ())
 
-        second = self.store.claim_outbox(
-            "publisher", now="2026-08-19T00:01:00Z"
-        )[0]
+        second = self.store.claim_outbox("publisher", now="2026-08-19T00:01:00Z")[0]
         self.assertTrue(
             self.store.reject_outbox(
-                "message-1", second.lease_token, "permanent", dead_letter=True
+                "message-1",
+                second.lease_token,
+                "permanent",
+                dead_letter=True,
+                now="2026-08-19T00:01:00Z",
             )
         )
         dead = self.store.get_outbox("message-1")
@@ -161,9 +259,7 @@ class TransactionalDeliveryTests(unittest.TestCase):
         self.store.append_with_outbox(event("dispatch-1"), (future,))
 
         self.assertEqual(self.store.claim_outbox("publisher", now=READY), ())
-        self.assertEqual(
-            len(self.store.claim_outbox("publisher", now="2026-08-19T01:00:00Z")), 1
-        )
+        self.assertEqual(len(self.store.claim_outbox("publisher", now="2026-08-19T01:00:00Z")), 1)
 
     def test_invalid_outbox_timestamp_is_rejected_before_it_can_become_stuck(self):
         with self.assertRaisesRegex(ValueError, "available_at must be an RFC 3339"):
@@ -198,9 +294,7 @@ class TransactionalDeliveryTests(unittest.TestCase):
             self.store.append_inbox("a2a-adapter", "external-1", invalid)
 
         self.assertIsNone(self.store.get_inbox_receipt("a2a-adapter", "external-1"))
-        accepted = self.store.append_inbox(
-            "a2a-adapter", "external-1", event("inbound-1")
-        )
+        accepted = self.store.append_inbox("a2a-adapter", "external-1", event("inbound-1"))
         self.assertFalse(accepted.duplicate)
         self.assertEqual(self.store.stream_version("session:s1"), 1)
 
