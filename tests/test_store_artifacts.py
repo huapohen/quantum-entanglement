@@ -315,7 +315,7 @@ class ArtifactLedgerTests(unittest.TestCase):
                             self.ledger.record("s1", "task-invalid", "agent", output)
                     self.assertEqual(traced, [])
                     self.assertIs(self.ledger._versions, original_state)
-                    self.assertIs(
+                    self.assertEqual(
                         self.ledger.history("s1", "stable.json"),
                         original_history,
                     )
@@ -323,7 +323,7 @@ class ArtifactLedgerTests(unittest.TestCase):
         finally:
             self.store._connection.set_trace_callback(None)
 
-    def test_record_snapshots_nested_metadata_for_state_and_event(self):
+    def test_record_deeply_isolates_input_event_return_and_internal_metadata(self):
         metadata = {
             "nested": {"values": [1, {"label": "original"}]},
             "tags": [{"name": "stable"}],
@@ -362,8 +362,99 @@ class ArtifactLedgerTests(unittest.TestCase):
         recorded.metadata["nested"]["values"].append("item-mutated")
         recorded.metadata["tags"][0]["name"] = "item-mutated"
         self.assertEqual(event_metadata, expected)
+        self.assertEqual(self.ledger.current("s1", "snapshot.json").metadata, expected)
+
+        internal = self.ledger._versions[("s1", "snapshot.json")][0]
+        self.assertEqual(self.ledger._snapshot_metadata(internal.metadata), expected)
+        self.assertEqual(type(internal.metadata).__name__, "mappingproxy")
+        self.assertEqual(type(internal.metadata["nested"]).__name__, "mappingproxy")
+        self.assertIs(type(internal.metadata["nested"]["values"]), tuple)
+        self.assertEqual(
+            type(internal.metadata["nested"]["values"][1]).__name__,
+            "mappingproxy",
+        )
+
         persisted_metadata = self.store.read_all()[0].event.payload["metadata"]
         self.assertEqual(persisted_metadata, expected)
+
+    def test_every_public_read_returns_an_independent_plain_json_metadata_snapshot(self):
+        expected = {
+            "nested": {"values": [{"label": "stable"}, 7]},
+            "tags": ["one", "two"],
+        }
+        recorded = self.ledger.record(
+            "s1",
+            "task-snapshot",
+            "agent",
+            ArtifactOutput("snapshot.json", "body", metadata=copy.deepcopy(expected)),
+        )
+
+        readers = (
+            ("record", lambda: recorded),
+            ("current", lambda: self.ledger.current("s1", "snapshot.json")),
+            ("history", lambda: self.ledger.history("s1", "snapshot.json")[0]),
+            ("current-all", lambda: self.ledger.current_all("s1")[0]),
+            ("by-task", lambda: self.ledger.by_task("s1", "task-snapshot")[0]),
+        )
+        for label, read in readers:
+            with self.subTest(reader=label):
+                item = read()
+                self.assertIsNotNone(item)
+                self.assertIs(type(item.metadata), dict)
+                self.assertIs(type(item.metadata["nested"]), dict)
+                self.assertIs(type(item.metadata["nested"]["values"]), list)
+                item.metadata["nested"]["values"][0]["label"] = label
+                item.metadata["nested"]["values"].append({"reader": label})
+                item.metadata["tags"].clear()
+
+                fresh = self.ledger.current("s1", "snapshot.json")
+                self.assertEqual(fresh.metadata, expected)
+                self.assertIsNot(fresh.metadata, item.metadata)
+                self.assertIsNot(fresh.metadata["nested"], item.metadata["nested"])
+                self.assertIsNot(
+                    fresh.metadata["nested"]["values"],
+                    item.metadata["nested"]["values"],
+                )
+
+    def test_restore_and_replay_results_cannot_mutate_ledger_metadata(self):
+        source_metadata = {
+            "nested": {"values": [{"label": "source"}]},
+            "tags": ["stable"],
+        }
+        self.ledger.record(
+            "s1",
+            "task-source",
+            "agent",
+            ArtifactOutput("report.json", "v1", metadata=copy.deepcopy(source_metadata)),
+        )
+        restored = self.ledger.restore(
+            "s1",
+            "report.json",
+            1,
+            "task-restore",
+            "owner",
+        )
+
+        restored.metadata["restoredFrom"] = 999
+        restored.metadata["injected"] = {"values": ["mutated"]}
+        fresh_history = self.ledger.history("s1", "report.json")
+        self.assertEqual(fresh_history[0].metadata, source_metadata)
+        self.assertEqual(fresh_history[1].metadata, {"restoredFrom": 1})
+
+        rebuilt = ArtifactLedger(self.store)
+        replayed_source = rebuilt.history("s1", "report.json")[0]
+        replayed_source.metadata["nested"]["values"][0]["label"] = "replay-mutated"
+        replayed_source.metadata["tags"].append("replay-mutated")
+        replayed_head = rebuilt.current("s1", "report.json")
+        replayed_head.metadata["restoredFrom"] = -1
+
+        rebuilt_history = rebuilt.history("s1", "report.json")
+        self.assertEqual(rebuilt_history[0].metadata, source_metadata)
+        self.assertEqual(rebuilt_history[1].metadata, {"restoredFrom": 1})
+        self.assertEqual(
+            type(rebuilt._versions[("s1", "report.json")][0].metadata).__name__,
+            "mappingproxy",
+        )
 
     def test_record_rejects_invalid_envelope_fields_and_empty_trigger_before_sql(self):
         output = ArtifactOutput("envelope.json", "body")
@@ -851,7 +942,7 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
                         ledger._rebuild()
 
                 self.assertIs(ledger._versions, previous_state)
-                self.assertIs(
+                self.assertEqual(
                     ledger.history("session-replay", "stable.md"),
                     previous_history,
                 )
@@ -927,7 +1018,7 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
                         ledger._rebuild()
 
                 self.assertIs(ledger._versions, previous_state)
-                self.assertIs(
+                self.assertEqual(
                     ledger.history("session-replay", "stable.md"),
                     previous_history,
                 )

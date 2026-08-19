@@ -10,6 +10,7 @@ import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Tuple, cast
 from urllib.parse import quote
 
@@ -147,7 +148,7 @@ class ArtifactLedger:
             content = cls._require_content(payload["content"])
             created_at = cls._require_canonical_utc(payload["createdAt"], "createdAt")
             trigger = cls._require_text(payload.get("trigger", "create"), "trigger")
-            metadata = cls._decode_metadata(payload.get("metadata", {}))
+            metadata = cls._freeze_metadata(cls._decode_metadata(payload.get("metadata", {})))
 
             raw_ref = cls._require_object_shape(
                 payload["ref"],
@@ -309,6 +310,50 @@ class ArtifactLedger:
         if type(decoded) is not dict:
             raise TypeError("metadata must decode to a JSON object")
         return cast(Dict[str, object], decoded)
+
+    @classmethod
+    def _freeze_metadata(cls, value: Dict[str, object]) -> Mapping[str, object]:
+        """Deep-freeze one already validated canonical JSON metadata object."""
+
+        return MappingProxyType(
+            {key: cls._freeze_metadata_value(item) for key, item in value.items()}
+        )
+
+    @classmethod
+    def _freeze_metadata_value(cls, value: object) -> object:
+        if type(value) is dict:
+            mapping = cast(Dict[str, object], value)
+            return MappingProxyType(
+                {key: cls._freeze_metadata_value(item) for key, item in mapping.items()}
+            )
+        if type(value) is list:
+            return tuple(cls._freeze_metadata_value(item) for item in cast(list[object], value))
+        return value
+
+    @classmethod
+    def _snapshot_metadata(cls, value: Mapping[str, object]) -> Dict[str, object]:
+        """Return a plain JSON-compatible deep copy of frozen ledger metadata."""
+
+        return {key: cls._snapshot_metadata_value(item) for key, item in value.items()}
+
+    @classmethod
+    def _snapshot_metadata_value(cls, value: object) -> object:
+        if isinstance(value, Mapping):
+            mapping = cast(Mapping[str, object], value)
+            return {key: cls._snapshot_metadata_value(item) for key, item in mapping.items()}
+        if type(value) is tuple:
+            return [cls._snapshot_metadata_value(item) for item in cast(tuple[object, ...], value)]
+        return value
+
+    @classmethod
+    def _snapshot_version(cls, item: ArtifactVersion) -> ArtifactVersion:
+        return ArtifactVersion(
+            ref=item.ref,
+            content=item.content,
+            metadata=cls._snapshot_metadata(item.metadata),
+            created_at=item.created_at,
+            trigger=item.trigger,
+        )
 
     @staticmethod
     def _validate_metadata_json(value: object) -> None:
@@ -510,29 +555,33 @@ class ArtifactLedger:
                 existing_ref = existing_item.ref
                 for existing in history:
                     if existing.ref.artifact_id == existing_ref.artifact_id:
-                        return existing
+                        return self._snapshot_version(existing)
                 self._rebuild()
-                return next(
-                    existing
-                    for existing in self._versions[key]
-                    if existing.ref.artifact_id == existing_ref.artifact_id
+                return self._snapshot_version(
+                    next(
+                        existing
+                        for existing in self._versions[key]
+                        if existing.ref.artifact_id == existing_ref.artifact_id
+                    )
                 )
             self._versions[key] = history + (item,)
-            return item
+            return self._snapshot_version(item)
 
     def current(self, session_id: str, name: str) -> Optional[ArtifactVersion]:
         with self._lock:
             history = self._versions.get((session_id, name), ())
-            return history[-1] if history else None
+            return self._snapshot_version(history[-1]) if history else None
 
     def history(self, session_id: str, name: str) -> Tuple[ArtifactVersion, ...]:
         with self._lock:
-            return self._versions.get((session_id, name), ())
+            return tuple(
+                self._snapshot_version(item) for item in self._versions.get((session_id, name), ())
+            )
 
     def current_all(self, session_id: str) -> Tuple[ArtifactVersion, ...]:
         with self._lock:
             return tuple(
-                versions[-1]
+                self._snapshot_version(versions[-1])
                 for (candidate_session, _), versions in sorted(self._versions.items())
                 if candidate_session == session_id and versions
             )
@@ -549,7 +598,7 @@ class ArtifactLedger:
                 if item.ref.task_id == task_id
             ]
             items.sort(key=lambda item: (item.ref.name, item.ref.version))
-            return tuple(items)
+            return tuple(self._snapshot_version(item) for item in items)
 
     def restore(
         self,
