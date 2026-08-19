@@ -222,8 +222,7 @@ class SQLiteBackupTests(unittest.TestCase):
         connection.execute("ALTER TABLE artifact_versions RENAME TO old_artifact_versions")
         connection.execute(weakened_sql)
         connection.execute(
-            f"INSERT INTO artifact_versions ({columns}) SELECT {columns} "
-            "FROM old_artifact_versions"
+            f"INSERT INTO artifact_versions ({columns}) SELECT {columns} FROM old_artifact_versions"
         )
         connection.execute("DROP TABLE old_artifact_versions")
         connection.commit()
