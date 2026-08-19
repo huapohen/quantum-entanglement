@@ -93,7 +93,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         stored = event_store.append(DomainEvent("session:s1", "created", {}, "actor"))
         reopened = SQLiteInvocationAttemptStore(self.path, clock=self.clock)
 
-        self.assertEqual(reopened.schema_version(), 2)
+        self.assertEqual(reopened.schema_version(), 3)
         self.assertEqual(stored.sequence, 1)
         self.assertEqual(len(event_store.read_stream("session:s1")), 1)
         reopened.close()
