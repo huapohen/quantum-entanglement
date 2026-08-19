@@ -1,11 +1,65 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from quantum_entanglement.artifacts import ArtifactLedger
-from quantum_entanglement.events import DomainEvent
-from quantum_entanglement.protocol import ArtifactOutput
+import quantum_entanglement
+import quantum_entanglement.artifacts as artifacts_module
+from quantum_entanglement.artifacts import ArtifactLedger, ArtifactReplayError
+from quantum_entanglement.events import DomainEvent, StoredEvent
+from quantum_entanglement.protocol import ArtifactOutput, ArtifactRef
 from quantum_entanglement.store import ConcurrencyError, SQLiteEventStore
+
+T0 = "2026-08-20T00:00:00Z"
+
+
+def replay_event(position, *, name=None, version=1, content=""):
+    if name is None:
+        event_type = "test.non-artifact"
+        payload = {"position": position}
+    else:
+        event_type = ArtifactLedger.EVENT_TYPE
+        ref = ArtifactRef(
+            artifact_id=f"artifact-{position}",
+            name=name,
+            version=version,
+            media_type="text/markdown",
+            uri=f"artifact://session-replay/{name}/v{version}",
+            digest=f"digest-{position}",
+            created_by="test",
+            task_id=f"task-{position}",
+            parent_version=version - 1 if version > 1 else None,
+        )
+        payload = {
+            "sessionId": "session-replay",
+            "ref": ref.to_dict(),
+            "content": content,
+            "metadata": {"position": position},
+            "createdAt": T0,
+            "trigger": "create" if version == 1 else "revise",
+        }
+    return StoredEvent(
+        DomainEvent(
+            stream_id="session:session-replay",
+            event_type=event_type,
+            actor_id="test",
+            event_id=f"event-{position}",
+            timestamp=T0,
+            payload=payload,
+        ),
+        sequence=max(1, position),
+        global_position=position,
+    )
+
+
+class FakeReplayStore(SQLiteEventStore):
+    def __init__(self, pages):
+        self.pages = pages
+        self.calls = []
+
+    def read_all(self, after_position=0, limit=1000):
+        self.calls.append((after_position, limit))
+        return self.pages.get(after_position, ())
 
 
 class EventStoreTests(unittest.TestCase):
@@ -76,6 +130,100 @@ class ArtifactLedgerTests(unittest.TestCase):
         self.assertEqual(len(self.ledger.history("s1", "result.txt")), 1)
 
 
+class ArtifactLedgerReplayTests(unittest.TestCase):
+    def test_replay_error_is_part_of_the_supported_artifact_api(self):
+        self.assertIn("ArtifactReplayError", artifacts_module.__all__)
+        self.assertIs(quantum_entanglement.ArtifactReplayError, ArtifactReplayError)
+
+        source = FakeReplayStore({})
+        ArtifactLedger(source)
+        self.assertEqual(source.calls, [(0, 1_000)])
+
+    def test_rebuild_uses_bounded_keyset_pages_without_losing_artifacts(self):
+        events = (
+            replay_event(1),
+            replay_event(2, name="report.md", version=1, content="v1"),
+            replay_event(3),
+            replay_event(4, name="report.md", version=2, content="v2"),
+            replay_event(5, name="notes.md", version=1, content="notes"),
+        )
+        source = FakeReplayStore(
+            {
+                0: events[:2],
+                2: events[2:4],
+                4: events[4:],
+            }
+        )
+        with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
+            ledger = ArtifactLedger(source)
+
+        self.assertEqual(source.calls, [(0, 2), (2, 2), (4, 2)])
+        self.assertTrue(all(limit <= 1_000 for _cursor, limit in source.calls))
+        self.assertEqual(
+            [item.content for item in ledger.history("session-replay", "report.md")],
+            ["v1", "v2"],
+        )
+        self.assertEqual(ledger.current("session-replay", "notes.md").content, "notes")
+
+    def test_replay_rejects_oversized_unordered_and_nonadvancing_pages(self):
+        cases = {
+            "oversized": (
+                {0: (replay_event(1), replay_event(2))},
+                1,
+                "page limit",
+            ),
+            "unordered": (
+                {0: (replay_event(2), replay_event(1))},
+                2,
+                "strictly increasing",
+            ),
+            "duplicate": (
+                {0: (replay_event(1), replay_event(1))},
+                2,
+                "strictly increasing",
+            ),
+            "nonadvancing": (
+                {0: (replay_event(0),)},
+                1,
+                "strictly increasing",
+            ),
+        }
+        for case, (pages, page_limit, message) in cases.items():
+            with self.subTest(case=case):
+                source = FakeReplayStore(pages)
+                with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", page_limit):
+                    with self.assertRaisesRegex(ArtifactReplayError, message):
+                        ArtifactLedger(source)
+                self.assertTrue(all(limit <= 1_000 for _cursor, limit in source.calls))
+
+    def test_replay_limit_uses_one_record_probe_and_rejects_the_next_event(self):
+        source = FakeReplayStore(
+            {
+                0: (replay_event(1), replay_event(2)),
+                2: (replay_event(3),),
+                3: (replay_event(4),),
+            }
+        )
+        with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
+            with patch.object(artifacts_module, "_MAX_REPLAY_EVENTS", 3):
+                with self.assertRaisesRegex(ArtifactReplayError, "3-event safety limit"):
+                    ArtifactLedger(source)
+
+        self.assertEqual(source.calls, [(0, 2), (2, 1), (3, 1)])
+
+    def test_exact_replay_limit_is_accepted_only_after_an_empty_probe(self):
+        source = FakeReplayStore(
+            {
+                0: (replay_event(1), replay_event(2)),
+                2: (replay_event(3),),
+            }
+        )
+        with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
+            with patch.object(artifacts_module, "_MAX_REPLAY_EVENTS", 3):
+                ArtifactLedger(source)
+
+        self.assertEqual(source.calls, [(0, 2), (2, 1), (3, 1)])
+
+
 if __name__ == "__main__":
     unittest.main()
-

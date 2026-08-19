@@ -1,3 +1,4 @@
+# ruff: noqa: UP006, UP031, UP035, UP045
 """Append-only artifact version ledger backed by collaboration events."""
 
 from __future__ import annotations
@@ -11,6 +12,13 @@ from urllib.parse import quote
 from .events import DomainEvent
 from .protocol import ArtifactOutput, ArtifactRef, new_id, utc_now
 from .store import SQLiteEventStore
+
+_REPLAY_PAGE_LIMIT = 1_000
+_MAX_REPLAY_EVENTS = 1_000_000
+
+
+class ArtifactReplayError(RuntimeError):
+    """Raised when startup replay cannot advance safely within its hard bounds."""
 
 
 @dataclass(frozen=True)
@@ -34,20 +42,72 @@ class ArtifactLedger:
         self._rebuild()
 
     def _rebuild(self) -> None:
-        for stored in self.event_store.read_all(limit=1_000_000):
-            if stored.event.event_type != self.EVENT_TYPE:
-                continue
-            payload = stored.event.payload
-            ref = ArtifactRef.from_dict(payload["ref"])
-            item = ArtifactVersion(
-                ref=ref,
-                content=str(payload["content"]),
-                metadata=dict(payload.get("metadata", {})),
-                created_at=str(payload["createdAt"]),
-                trigger=str(payload.get("trigger", "create")),
+        after_position = 0
+        replayed = 0
+        while replayed < _MAX_REPLAY_EVENTS:
+            page_limit = min(_REPLAY_PAGE_LIMIT, _MAX_REPLAY_EVENTS - replayed)
+            page = self.event_store.read_all(
+                after_position=after_position,
+                limit=page_limit,
             )
-            key = (str(payload["sessionId"]), ref.name)
-            self._versions[key] = self._versions.get(key, ()) + (item,)
+            after_position = self._validate_replay_page(
+                page,
+                after_position=after_position,
+                requested_limit=page_limit,
+            )
+            if not page:
+                return
+            for stored in page:
+                if stored.event.event_type != self.EVENT_TYPE:
+                    continue
+                payload = stored.event.payload
+                ref = ArtifactRef.from_dict(payload["ref"])
+                item = ArtifactVersion(
+                    ref=ref,
+                    content=str(payload["content"]),
+                    metadata=dict(payload.get("metadata", {})),
+                    created_at=str(payload["createdAt"]),
+                    trigger=str(payload.get("trigger", "create")),
+                )
+                key = (str(payload["sessionId"]), ref.name)
+                self._versions[key] = self._versions.get(key, ()) + (item,)
+            replayed += len(page)
+            if len(page) < page_limit:
+                return
+
+        probe = self.event_store.read_all(after_position=after_position, limit=1)
+        self._validate_replay_page(
+            probe,
+            after_position=after_position,
+            requested_limit=1,
+        )
+        if probe:
+            raise ArtifactReplayError(
+                f"artifact replay exceeds the {_MAX_REPLAY_EVENTS}-event safety limit"
+            )
+
+    @staticmethod
+    def _validate_replay_page(
+        page: Tuple[object, ...],
+        *,
+        after_position: int,
+        requested_limit: int,
+    ) -> int:
+        if len(page) > requested_limit:
+            raise ArtifactReplayError("artifact replay source exceeded its requested page limit")
+        previous_position = after_position
+        for stored in page:
+            position = getattr(stored, "global_position", None)
+            if type(position) is not int:
+                raise ArtifactReplayError(
+                    "artifact replay source returned an invalid global position"
+                )
+            if position <= previous_position:
+                raise ArtifactReplayError(
+                    "artifact replay global positions are not strictly increasing"
+                )
+            previous_position = position
+        return previous_position
 
     @staticmethod
     def _digest(content: str) -> str:
@@ -176,3 +236,6 @@ class ArtifactLedger:
             ),
             trigger="rollback",
         )
+
+
+__all__ = ["ArtifactLedger", "ArtifactReplayError", "ArtifactVersion"]
