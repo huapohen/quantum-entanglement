@@ -1,10 +1,10 @@
 # ruff: noqa: UP006, UP035, UP045
 """Trusted descriptors and read-only schema checks for domain-scoped migrations.
 
-This module deliberately contains package metadata and validation primitives only.  It
-never creates the sidecar, writes migration metadata, enables sparse migration plans, or
-changes the legacy migration runner.  Registry and schema validation are bounded and
-side-effect free so future bridge code can reject untrusted state before opening a write
+This module contains trusted package metadata, bounded validators, and one bridge-only
+installer for the exact empty sidecar schema.  It never writes migration metadata, enables
+sparse migration plans, or changes the legacy migration runner.  Validation remains
+side-effect free so bridge code can reject untrusted state before opening a write
 transaction.
 """
 
@@ -124,6 +124,10 @@ _T = TypeVar("_T")
 
 class DomainMigrationSidecarSchemaError(RuntimeError):
     """Raised when sidecar catalog state is partial, weak, corrupt, or unexpected."""
+
+
+class DomainMigrationSidecarInstallError(DomainMigrationSidecarSchemaError):
+    """Raised when the bridge-only sidecar installation contract is violated."""
 
 
 class DomainMigrationSidecarSchemaState(str, Enum):
@@ -355,6 +359,79 @@ def validate_domain_migration_sidecar_schema(
             "domain migration sidecar schema differs from the exact packaged definition"
         )
     return DomainMigrationSidecarSchemaState.EXACT
+
+
+def _rollback_sidecar_install(connection: sqlite3.Connection) -> None:
+    if not connection.in_transaction:
+        return
+    try:
+        connection.execute("ROLLBACK")
+    except BaseException as error:
+        raise DomainMigrationSidecarInstallError(
+            "domain migration sidecar installation rollback failed"
+        ) from error
+    if connection.in_transaction:
+        raise DomainMigrationSidecarInstallError(
+            "domain migration sidecar installation rollback did not release its transaction"
+        )
+
+
+def install_domain_migration_sidecar(
+    connection: sqlite3.Connection,
+) -> DomainMigrationSidecarSchemaState:
+    """Atomically install the exact bridge-only sidecar, or validate an existing one.
+
+    ``EXACT`` is an idempotent read-only fast path.  ``ABSENT`` is rechecked only after
+    obtaining a SQLite write lock, then both tables are created and validated in one
+    transaction.  This function intentionally writes no metadata/dependency rows and does
+    not enable native or sparse migration application.
+    """
+
+    if connection.in_transaction:
+        raise DomainMigrationSidecarInstallError(
+            "domain migration sidecar installation requires no active caller transaction"
+        )
+    preflight = validate_domain_migration_sidecar_schema(connection)
+    if preflight is DomainMigrationSidecarSchemaState.EXACT:
+        return preflight
+
+    owns_transaction = False
+    try:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+        finally:
+            # A connection wrapper can fail after SQLite has acquired the lock.  The
+            # caller was proven transaction-free above, so any live transaction here is
+            # installer-owned and must be cleaned up by the outer handler.
+            owns_transaction = connection.in_transaction
+        if not connection.in_transaction:
+            raise DomainMigrationSidecarInstallError(
+                "domain migration sidecar installation did not acquire a transaction"
+            )
+
+        locked_state = validate_domain_migration_sidecar_schema(connection)
+        if locked_state is DomainMigrationSidecarSchemaState.ABSENT:
+            for statement in DOMAIN_MIGRATION_SIDECAR_DDL:
+                connection.execute(statement)
+
+        installed_state = validate_domain_migration_sidecar_schema(connection)
+        if installed_state is not DomainMigrationSidecarSchemaState.EXACT:
+            raise DomainMigrationSidecarInstallError(
+                "domain migration sidecar installation did not produce the exact schema"
+            )
+        connection.execute("COMMIT")
+        owns_transaction = False
+    except BaseException:
+        if owns_transaction:
+            _rollback_sidecar_install(connection)
+        raise
+
+    committed_state = validate_domain_migration_sidecar_schema(connection)
+    if committed_state is not DomainMigrationSidecarSchemaState.EXACT:
+        raise DomainMigrationSidecarInstallError(
+            "committed domain migration sidecar schema is not exact"
+        )
+    return committed_state
 
 
 @dataclass(frozen=True, order=True)

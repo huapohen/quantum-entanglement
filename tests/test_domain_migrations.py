@@ -1,13 +1,18 @@
 import hashlib
 import itertools
 import sqlite3
+import tempfile
+import threading
 import unittest
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Optional, cast
 from unittest import mock
 
 from quantum_entanglement.domain_migrations import (
+    DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME,
+    DOMAIN_MIGRATION_METADATA_TABLE_NAME,
     DOMAIN_MIGRATION_REGISTRY,
     DOMAIN_MIGRATION_SIDECAR_DDL,
     DOMAIN_MIGRATION_SIDECAR_SCHEMA_SHA256,
@@ -18,9 +23,11 @@ from quantum_entanglement.domain_migrations import (
     MAX_MIGRATION_DOMAINS,
     MAX_OWNED_SCHEMA_OBJECTS,
     DomainMigrationDescriptor,
+    DomainMigrationSidecarInstallError,
     DomainMigrationSidecarSchemaError,
     DomainMigrationSidecarSchemaState,
     OwnedSchemaObject,
+    install_domain_migration_sidecar,
     validate_domain_migration_registry,
     validate_domain_migration_sidecar_schema,
 )
@@ -47,6 +54,10 @@ class RecordingConnection:
         self.delegate = delegate
         self.calls: list[tuple[str, tuple[object, ...]]] = []
 
+    @property
+    def in_transaction(self) -> bool:
+        return self.delegate.in_transaction
+
     def execute(
         self,
         statement: str,
@@ -55,6 +66,64 @@ class RecordingConnection:
         snapshot = tuple(parameters)
         self.calls.append((statement, snapshot))
         return self.delegate.execute(statement, snapshot)
+
+
+class InjectedFailureConnection(RecordingConnection):
+    def __init__(
+        self,
+        delegate: sqlite3.Connection,
+        *,
+        target_statement: str,
+        error: BaseException,
+    ) -> None:
+        super().__init__(delegate)
+        self.target_statement = target_statement.strip().rstrip(";")
+        self.error = error
+        self.failed = False
+
+    def execute(
+        self,
+        statement: str,
+        parameters: Sequence[object] = (),
+    ) -> sqlite3.Cursor:
+        snapshot = tuple(parameters)
+        self.calls.append((statement, snapshot))
+        normalized = statement.strip().rstrip(";")
+        if not self.failed and normalized == self.target_statement:
+            self.failed = True
+            raise self.error
+        return self.delegate.execute(statement, snapshot)
+
+
+class BeginBarrierConnection(RecordingConnection):
+    def __init__(
+        self,
+        delegate: sqlite3.Connection,
+        barrier: threading.Barrier,
+    ) -> None:
+        super().__init__(delegate)
+        self.barrier = barrier
+
+    def execute(
+        self,
+        statement: str,
+        parameters: Sequence[object] = (),
+    ) -> sqlite3.Cursor:
+        if statement.strip().upper() == "BEGIN IMMEDIATE":
+            self.barrier.wait(timeout=5)
+        return super().execute(statement, parameters)
+
+
+class PostBeginFailureConnection(RecordingConnection):
+    def execute(
+        self,
+        statement: str,
+        parameters: Sequence[object] = (),
+    ) -> sqlite3.Cursor:
+        cursor = super().execute(statement, parameters)
+        if statement.strip().upper() == "BEGIN IMMEDIATE":
+            raise KeyboardInterrupt("injected post-BEGIN interrupt")
+        return cursor
 
 
 class DomainMigrationRegistryTests(unittest.TestCase):
@@ -745,6 +814,369 @@ class DomainMigrationSidecarSchemaTests(unittest.TestCase):
             "catalog could not be inspected",
         ):
             validate_domain_migration_sidecar_schema(self.connection)
+
+
+class DomainMigrationSidecarInstallerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tempdir.name) / "sidecar.sqlite3")
+        self.connection = sqlite3.connect(
+            self.path,
+            isolation_level=None,
+            timeout=1,
+        )
+
+    def tearDown(self) -> None:
+        self.connection.close()
+        self.tempdir.cleanup()
+
+    @staticmethod
+    def normalize_statement(statement: str) -> str:
+        return " ".join(statement.strip().rstrip(";").split())
+
+    def create_exact_sidecar(self, connection: sqlite3.Connection) -> None:
+        for statement in DOMAIN_MIGRATION_SIDECAR_DDL:
+            connection.execute(statement)
+
+    def assert_write_lock_available(self) -> None:
+        contender = sqlite3.connect(
+            self.path,
+            isolation_level=None,
+            timeout=0.1,
+        )
+        try:
+            contender.execute("BEGIN IMMEDIATE")
+            self.assertTrue(contender.in_transaction)
+            contender.execute("ROLLBACK")
+        finally:
+            contender.close()
+
+    def test_absent_install_is_atomic_exact_and_then_idempotently_read_only(self) -> None:
+        traced: list[str] = []
+        self.connection.set_trace_callback(traced.append)
+        try:
+            first = install_domain_migration_sidecar(self.connection)
+            first_trace = tuple(traced)
+            traced.clear()
+            second = install_domain_migration_sidecar(self.connection)
+            second_trace = tuple(traced)
+        finally:
+            self.connection.set_trace_callback(None)
+
+        self.assertIs(first, DomainMigrationSidecarSchemaState.EXACT)
+        self.assertIs(second, DomainMigrationSidecarSchemaState.EXACT)
+        writes_and_transactions = tuple(
+            normalized
+            for statement in first_trace
+            if (normalized := self.normalize_statement(statement)).upper()
+            in {"BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"}
+            or normalized.upper().startswith("CREATE TABLE ")
+        )
+        self.assertEqual(
+            writes_and_transactions,
+            (
+                "BEGIN IMMEDIATE",
+                self.normalize_statement(DOMAIN_MIGRATION_SIDECAR_DDL[0]),
+                self.normalize_statement(DOMAIN_MIGRATION_SIDECAR_DDL[1]),
+                "COMMIT",
+            ),
+        )
+        self.assertFalse(
+            any(
+                self.normalize_statement(statement).upper()
+                in {"BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"}
+                or self.normalize_statement(statement).upper().startswith("CREATE TABLE ")
+                for statement in second_trace
+            )
+        )
+        counts = self.connection.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM main.qe_schema_migration_metadata),
+                (SELECT COUNT(*) FROM main.qe_schema_migration_dependencies)
+            """
+        ).fetchone()
+        self.assertIsNotNone(counts)
+        self.assertEqual(tuple(counts), (0, 0))
+
+    def test_installer_authorizer_observes_only_expected_schema_and_catalog_writes(self) -> None:
+        actions: list[tuple[int, Optional[str], Optional[str]]] = []
+
+        def authorize(
+            action: int,
+            argument_one: Optional[str],
+            argument_two: Optional[str],
+            _database_name: Optional[str],
+            _trigger_name: Optional[str],
+        ) -> int:
+            actions.append((action, argument_one, argument_two))
+            return sqlite3.SQLITE_OK
+
+        self.connection.set_authorizer(authorize)
+        try:
+            state = install_domain_migration_sidecar(self.connection)
+        finally:
+            self.connection.set_authorizer(None)
+
+        self.assertIs(state, DomainMigrationSidecarSchemaState.EXACT)
+        self.assertEqual(
+            {
+                argument_one
+                for action, argument_one, _argument_two in actions
+                if action == sqlite3.SQLITE_CREATE_TABLE
+            },
+            {
+                DOMAIN_MIGRATION_METADATA_TABLE_NAME,
+                DOMAIN_MIGRATION_DEPENDENCIES_TABLE_NAME,
+            },
+        )
+        self.assertEqual(
+            [
+                argument_one
+                for action, argument_one, _argument_two in actions
+                if action == sqlite3.SQLITE_TRANSACTION
+            ],
+            ["BEGIN", "COMMIT"],
+        )
+        application_dml = [
+            (action, argument_one)
+            for action, argument_one, _argument_two in actions
+            if action in {sqlite3.SQLITE_DELETE, sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE}
+            and argument_one != "sqlite_master"
+        ]
+        self.assertEqual(application_dml, [])
+
+    def test_active_caller_transaction_is_rejected_and_left_untouched(self) -> None:
+        self.connection.execute("BEGIN")
+        self.connection.execute("CREATE TABLE caller_pending (value TEXT)")
+        traced: list[str] = []
+        self.connection.set_trace_callback(traced.append)
+        try:
+            with self.assertRaisesRegex(
+                DomainMigrationSidecarInstallError,
+                "requires no active caller transaction",
+            ):
+                install_domain_migration_sidecar(self.connection)
+        finally:
+            self.connection.set_trace_callback(None)
+
+        self.assertTrue(self.connection.in_transaction)
+        self.assertEqual(traced, [])
+        self.assertIsNotNone(
+            self.connection.execute(
+                "SELECT 1 FROM main.sqlite_master WHERE type = ? AND name = ?",
+                ("table", "caller_pending"),
+            ).fetchone()
+        )
+        self.connection.execute("ROLLBACK")
+        self.assertIsNone(
+            self.connection.execute(
+                "SELECT 1 FROM main.sqlite_master WHERE type = ? AND name = ?",
+                ("table", "caller_pending"),
+            ).fetchone()
+        )
+
+    def test_partial_schema_fails_before_begin_immediate(self) -> None:
+        self.connection.execute(DOMAIN_MIGRATION_SIDECAR_DDL[0])
+        traced: list[str] = []
+        self.connection.set_trace_callback(traced.append)
+        try:
+            with self.assertRaisesRegex(
+                DomainMigrationSidecarSchemaError,
+                "both absent or both exact",
+            ):
+                install_domain_migration_sidecar(self.connection)
+        finally:
+            self.connection.set_trace_callback(None)
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertFalse(
+            any(self.normalize_statement(item).upper() == "BEGIN IMMEDIATE" for item in traced)
+        )
+
+    def test_weak_schema_fails_before_begin_immediate(self) -> None:
+        self.connection.execute(
+            "CREATE TABLE qe_schema_migration_metadata (migration_version INTEGER)"
+        )
+        self.connection.execute(
+            "CREATE TABLE qe_schema_migration_dependencies (migration_version INTEGER)"
+        )
+        traced: list[str] = []
+        self.connection.set_trace_callback(traced.append)
+        try:
+            with self.assertRaisesRegex(
+                DomainMigrationSidecarSchemaError,
+                "differs from the exact packaged definition",
+            ):
+                install_domain_migration_sidecar(self.connection)
+        finally:
+            self.connection.set_trace_callback(None)
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertFalse(
+            any(self.normalize_statement(item).upper() == "BEGIN IMMEDIATE" for item in traced)
+        )
+
+    def test_future_extra_object_fails_before_begin_immediate(self) -> None:
+        self.create_exact_sidecar(self.connection)
+        self.connection.execute(
+            """
+            CREATE INDEX idx_qe_future_sidecar
+            ON qe_schema_migration_metadata(domain)
+            """
+        )
+        traced: list[str] = []
+        self.connection.set_trace_callback(traced.append)
+        try:
+            with self.assertRaisesRegex(
+                DomainMigrationSidecarSchemaError,
+                "differs from the exact packaged definition",
+            ):
+                install_domain_migration_sidecar(self.connection)
+        finally:
+            self.connection.set_trace_callback(None)
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertFalse(
+            any(self.normalize_statement(item).upper() == "BEGIN IMMEDIATE" for item in traced)
+        )
+
+    def test_second_ddl_failure_rolls_back_first_table_and_releases_lock(self) -> None:
+        wrapped = InjectedFailureConnection(
+            self.connection,
+            target_statement=DOMAIN_MIGRATION_SIDECAR_DDL[1],
+            error=sqlite3.OperationalError("injected dependency DDL failure"),
+        )
+
+        with self.assertRaisesRegex(sqlite3.OperationalError, "dependency DDL failure"):
+            install_domain_migration_sidecar(cast(sqlite3.Connection, wrapped))
+
+        self.assertTrue(wrapped.failed)
+        self.assertFalse(self.connection.in_transaction)
+        self.assertIs(
+            validate_domain_migration_sidecar_schema(self.connection),
+            DomainMigrationSidecarSchemaState.ABSENT,
+        )
+        self.assert_write_lock_available()
+        self.assertIs(
+            install_domain_migration_sidecar(self.connection),
+            DomainMigrationSidecarSchemaState.EXACT,
+        )
+
+    def test_base_exception_rolls_back_partial_ddl_and_releases_lock(self) -> None:
+        wrapped = InjectedFailureConnection(
+            self.connection,
+            target_statement=DOMAIN_MIGRATION_SIDECAR_DDL[1],
+            error=KeyboardInterrupt("injected sidecar interrupt"),
+        )
+
+        with self.assertRaisesRegex(KeyboardInterrupt, "sidecar interrupt"):
+            install_domain_migration_sidecar(cast(sqlite3.Connection, wrapped))
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertIs(
+            validate_domain_migration_sidecar_schema(self.connection),
+            DomainMigrationSidecarSchemaState.ABSENT,
+        )
+        self.assert_write_lock_available()
+
+    def test_post_begin_exception_still_rolls_back_the_acquired_transaction(self) -> None:
+        wrapped = PostBeginFailureConnection(self.connection)
+
+        with self.assertRaisesRegex(KeyboardInterrupt, "post-BEGIN interrupt"):
+            install_domain_migration_sidecar(cast(sqlite3.Connection, wrapped))
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertIs(
+            validate_domain_migration_sidecar_schema(self.connection),
+            DomainMigrationSidecarSchemaState.ABSENT,
+        )
+        self.assertIn(
+            "ROLLBACK",
+            tuple(statement.strip().upper() for statement, _parameters in wrapped.calls),
+        )
+        self.assert_write_lock_available()
+
+    def test_commit_failure_rolls_back_both_tables_and_releases_lock(self) -> None:
+        wrapped = InjectedFailureConnection(
+            self.connection,
+            target_statement="COMMIT",
+            error=sqlite3.OperationalError("injected sidecar commit failure"),
+        )
+
+        with self.assertRaisesRegex(sqlite3.OperationalError, "commit failure"):
+            install_domain_migration_sidecar(cast(sqlite3.Connection, wrapped))
+
+        self.assertTrue(wrapped.failed)
+        self.assertFalse(self.connection.in_transaction)
+        self.assertIs(
+            validate_domain_migration_sidecar_schema(self.connection),
+            DomainMigrationSidecarSchemaState.ABSENT,
+        )
+        self.assertIn(
+            "ROLLBACK",
+            tuple(statement.strip().upper() for statement, _parameters in wrapped.calls),
+        )
+        self.assert_write_lock_available()
+
+    def test_two_absent_preflights_serialize_and_only_one_creates(self) -> None:
+        barrier = threading.Barrier(2)
+        guard = threading.Lock()
+        results: list[DomainMigrationSidecarSchemaState] = []
+        failures: list[BaseException] = []
+        call_logs: list[tuple[str, ...]] = []
+
+        def worker() -> None:
+            connection = sqlite3.connect(
+                self.path,
+                isolation_level=None,
+                timeout=5,
+            )
+            wrapped = BeginBarrierConnection(connection, barrier)
+            try:
+                state = install_domain_migration_sidecar(cast(sqlite3.Connection, wrapped))
+                with guard:
+                    results.append(state)
+            except BaseException as error:  # pragma: no cover - assertion reports details.
+                with guard:
+                    failures.append(error)
+            finally:
+                with guard:
+                    call_logs.append(tuple(statement for statement, _parameters in wrapped.calls))
+                connection.close()
+
+        threads = [
+            threading.Thread(target=worker, daemon=True, name=f"sidecar-installer-{index}")
+            for index in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            results,
+            [
+                DomainMigrationSidecarSchemaState.EXACT,
+                DomainMigrationSidecarSchemaState.EXACT,
+            ],
+        )
+        flattened = tuple(statement for call_log in call_logs for statement in call_log)
+        for statement in DOMAIN_MIGRATION_SIDECAR_DDL:
+            self.assertEqual(flattened.count(statement), 1)
+        self.assertEqual(
+            sum(item.strip().upper() == "BEGIN IMMEDIATE" for item in flattened),
+            2,
+        )
+        self.assertEqual(sum(item.strip().upper() == "COMMIT" for item in flattened), 2)
+        self.assertNotIn("ROLLBACK", tuple(item.strip().upper() for item in flattened))
+        self.assertIs(
+            validate_domain_migration_sidecar_schema(self.connection),
+            DomainMigrationSidecarSchemaState.EXACT,
+        )
+        self.assert_write_lock_available()
 
 
 if __name__ == "__main__":
