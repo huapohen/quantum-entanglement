@@ -15,6 +15,7 @@ from quantum_entanglement.projections import (
     MAX_EVENT_PAYLOAD_DEPTH,
     MAX_EVENT_PAYLOAD_NODES,
     MAX_PROJECTION_BATCH_SIZE,
+    MAX_PROJECTION_BUSY_TIMEOUT_SECONDS,
     MAX_PROJECTION_IDENTIFIER_LENGTH,
     MAX_PROJECTION_LEASE_SECONDS,
     SCHEMA_VERSION_FIELD,
@@ -79,6 +80,26 @@ def invalid_projection_lease_seconds() -> tuple[object, ...]:
         -1,
         MAX_PROJECTION_LEASE_SECONDS + 1,
         float(MAX_PROJECTION_LEASE_SECONDS) + 0.5,
+        10**100,
+    )
+
+
+def invalid_projection_busy_timeout_seconds() -> tuple[object, ...]:
+    return (
+        True,
+        False,
+        "5",
+        Decimal("5"),
+        None,
+        object(),
+        math.nan,
+        math.inf,
+        -math.inf,
+        0,
+        -0.0,
+        -1,
+        MAX_PROJECTION_BUSY_TIMEOUT_SECONDS + 1,
+        float(MAX_PROJECTION_BUSY_TIMEOUT_SECONDS) + 0.5,
         10**100,
     )
 
@@ -589,6 +610,110 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
             connection.commit()
         finally:
             connection.close()
+
+    def test_invalid_busy_timeouts_fail_before_filesystem_connection_or_sql(self) -> None:
+        for index, invalid in enumerate(invalid_projection_busy_timeout_seconds()):
+            with self.subTest(busy_timeout_seconds=invalid):
+                parent = Path(self.tempdir.name) / f"invalid-timeout-{index}"
+                path = parent / "projection.sqlite3"
+                self.assertFalse(parent.exists())
+                with patch("quantum_entanglement.projections.os.makedirs") as makedirs:
+                    with patch("quantum_entanglement.projections.sqlite3.connect") as connect:
+                        with patch.object(
+                            SQLiteProjectionOffsetStore,
+                            "_enable_wal",
+                        ) as enable_wal:
+                            with self.assertRaisesRegex(
+                                ValueError,
+                                "exact finite int or float",
+                            ):
+                                SQLiteProjectionOffsetStore(
+                                    str(path),
+                                    clock=self.clock,
+                                    busy_timeout_seconds=cast(Any, invalid),
+                                )
+                makedirs.assert_not_called()
+                connect.assert_not_called()
+                enable_wal.assert_not_called()
+                self.assertFalse(parent.exists())
+                self.assertFalse(path.exists())
+
+    def test_busy_timeout_boundaries_round_up_to_milliseconds_and_reopen(self) -> None:
+        smallest_positive_float = math.nextafter(0.0, math.inf)
+        cases = (
+            (smallest_positive_float, 1),
+            (0.001, 1),
+            (0.0010000001, 2),
+            (5, 5_000),
+            (MAX_PROJECTION_BUSY_TIMEOUT_SECONDS, 300_000),
+            (float(MAX_PROJECTION_BUSY_TIMEOUT_SECONDS), 300_000),
+        )
+        for index, (timeout_seconds, expected_ms) in enumerate(cases):
+            with self.subTest(busy_timeout_seconds=timeout_seconds):
+                path = str(Path(self.tempdir.name) / f"valid-timeout-{index}.sqlite3")
+                self.assertEqual(
+                    SQLiteProjectionOffsetStore._validate_busy_timeout_seconds(timeout_seconds),
+                    expected_ms,
+                )
+                store = SQLiteProjectionOffsetStore(
+                    path,
+                    clock=self.clock,
+                    busy_timeout_seconds=timeout_seconds,
+                )
+                try:
+                    configured_ms = store._connection.execute("PRAGMA busy_timeout").fetchone()[0]
+                    journal_mode = store._connection.execute("PRAGMA journal_mode").fetchone()[0]
+                    self.assertEqual(configured_ms, expected_ms)
+                    self.assertEqual(journal_mode, "wal")
+                    lease = store.claim(f"timeout-{index}", "worker-a")
+                    store.advance(lease, expected_position=0, new_position=1)
+                    store.release(lease)
+                finally:
+                    store.close()
+
+                reopened = SQLiteProjectionOffsetStore(
+                    path,
+                    clock=self.clock,
+                    busy_timeout_seconds=timeout_seconds,
+                )
+                try:
+                    reopened_ms = reopened._connection.execute("PRAGMA busy_timeout").fetchone()[0]
+                    self.assertEqual(reopened_ms, expected_ms)
+                    self.assertEqual(
+                        reopened.load(f"timeout-{index}").last_global_position,
+                        1,
+                    )
+                finally:
+                    reopened.close()
+
+    def test_busy_timeout_normalization_drives_connect_pragma_and_wal(self) -> None:
+        path = str(Path(self.tempdir.name) / "normalized-timeout.sqlite3")
+        real_connect = sqlite3.connect
+        observed_timeouts: list[float] = []
+
+        def tracked_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            observed_timeouts.append(cast(float, kwargs["timeout"]))
+            return cast(sqlite3.Connection, real_connect(*args, **kwargs))
+
+        with patch(
+            "quantum_entanglement.projections.sqlite3.connect",
+            side_effect=tracked_connect,
+        ):
+            with patch.object(SQLiteProjectionOffsetStore, "_enable_wal") as enable_wal:
+                store = SQLiteProjectionOffsetStore(
+                    path,
+                    clock=self.clock,
+                    busy_timeout_seconds=0.000001,
+                )
+        try:
+            configured_ms = store._connection.execute("PRAGMA busy_timeout").fetchone()[0]
+            self.assertEqual(configured_ms, 1)
+        finally:
+            store.close()
+
+        self.assertEqual(observed_timeouts, [0.001])
+        enable_wal.assert_called_once()
+        self.assertEqual(enable_wal.call_args.args[1], 1)
 
     def test_exact_schema_revalidation_uses_the_read_only_fast_path(self) -> None:
         statements: list[str] = []

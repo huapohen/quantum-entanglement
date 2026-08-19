@@ -42,9 +42,16 @@ MAX_PROJECTION_BATCH_SIZE = 1000
 MAX_PROJECTION_LEASE_SECONDS = 86_400
 """Maximum duration of one projection lease, in seconds."""
 
+MAX_PROJECTION_BUSY_TIMEOUT_SECONDS = 300
+"""Maximum SQLite lock wait for a projection store, in seconds."""
+
 _PROJECTION_LEASE_SECONDS_ERROR = (
     "lease_seconds must be an exact finite int or float greater than zero "
     f"and at most {MAX_PROJECTION_LEASE_SECONDS}"
+)
+_PROJECTION_BUSY_TIMEOUT_SECONDS_ERROR = (
+    "busy_timeout_seconds must be an exact finite int or float greater than zero "
+    f"and at most {MAX_PROJECTION_BUSY_TIMEOUT_SECONDS}"
 )
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
 
@@ -878,8 +885,7 @@ class SQLiteProjectionOffsetStore:
             raise ValueError("path is required")
         if not callable(clock):
             raise TypeError("clock must be callable")
-        if busy_timeout_seconds <= 0:
-            raise ValueError("busy_timeout_seconds must be greater than zero")
+        busy_timeout_ms = self._validate_busy_timeout_seconds(busy_timeout_seconds)
         if path != ":memory:":
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.path = path
@@ -889,15 +895,15 @@ class SQLiteProjectionOffsetStore:
             path,
             check_same_thread=False,
             isolation_level=None,
-            timeout=busy_timeout_seconds,
+            timeout=busy_timeout_ms / 1000,
         )
         self._connection.row_factory = sqlite3.Row
         try:
             self._connection.set_authorizer(self._allow_all_authorizer)
             self._connection.execute("PRAGMA foreign_keys=ON")
-            self._connection.execute(f"PRAGMA busy_timeout={int(busy_timeout_seconds * 1000)}")
+            self._connection.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
             if path != ":memory:":
-                self._enable_wal(self._connection, busy_timeout_seconds)
+                self._enable_wal(self._connection, busy_timeout_ms)
             self._initialize()
         except BaseException:
             self._connection.close()
@@ -932,13 +938,33 @@ class SQLiteProjectionOffsetStore:
         )
 
     @staticmethod
+    def _validate_busy_timeout_seconds(value: object) -> int:
+        """Return a 1-300000ms ceiling for one exact finite positive duration."""
+
+        if type(value) is int:
+            if not 0 < value <= MAX_PROJECTION_BUSY_TIMEOUT_SECONDS:
+                raise ValueError(_PROJECTION_BUSY_TIMEOUT_SECONDS_ERROR)
+            normalized_seconds = float(value)
+        elif type(value) is float:
+            if (
+                not math.isfinite(value)
+                or value <= 0
+                or value > MAX_PROJECTION_BUSY_TIMEOUT_SECONDS
+            ):
+                raise ValueError(_PROJECTION_BUSY_TIMEOUT_SECONDS_ERROR)
+            normalized_seconds = value
+        else:
+            raise ValueError(_PROJECTION_BUSY_TIMEOUT_SECONDS_ERROR)
+        return max(1, math.ceil(normalized_seconds * 1000))
+
+    @staticmethod
     def _enable_wal(
         connection: sqlite3.Connection,
-        timeout_seconds: float,
+        busy_timeout_ms: int,
     ) -> None:
         """Enable WAL despite SQLite's non-blocking journal-mode transition race."""
 
-        deadline = monotonic() + timeout_seconds
+        deadline = monotonic() + (busy_timeout_ms / 1000)
         retry_delay = 0.001
         while True:
             try:
