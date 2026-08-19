@@ -312,7 +312,7 @@ class OrchestratorKernel:
     def _artifact_items(self, plan: WorkflowPlan, task: TaskSpec) -> Tuple[ContextItem, ...]:
         items = []
         seen = set()
-        dependency_refs = []
+        dependency_refs: list[ArtifactRef] = []
         for dependency in task.depends_on:
             dependency_refs.extend(self._task_artifacts.get((plan.session_id, dependency), ()))
         for ref in dependency_refs:
