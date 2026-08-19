@@ -15,6 +15,7 @@ from quantum_entanglement.publisher import (
     PublisherClosedError,
     PublishReceipt,
     PublishRequest,
+    PublishResult,
 )
 from quantum_entanglement.store import SQLiteEventStore
 
@@ -36,6 +37,9 @@ class ManualClock:
 
     def advance(self, seconds):
         self.value += timedelta(seconds=seconds)
+
+    def timestamp(self):
+        return self.value.isoformat().replace("+00:00", "Z")
 
 
 class RecordingStore:
@@ -60,8 +64,8 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         path = str(Path(self.tempdir.name) / "publisher.sqlite3")
-        self.store = SQLiteEventStore(path)
         self.clock = ManualClock()
+        self.store = SQLiteEventStore(path, clock=self.clock.timestamp)
         self.sequence = 0
 
     async def asyncTearDown(self):
@@ -408,7 +412,7 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             self.store.resolve_outbox_ambiguity(
                 ambiguity.message_id,
-                ambiguity.lease_token,
+                ambiguity.lease_token_digest,
                 "retry",
                 resolved_at="2026-08-20T00:00:01Z",
                 retry_at="2026-08-20T00:00:01Z",
@@ -441,7 +445,6 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         batch = await publisher.run_once()
         stored = self.store.get_outbox("message-expired-lease")
 
-        self.assertTrue(requests[0].lease_token)
         self.assertEqual(requests[0].lease_deadline, "2026-08-20T00:00:01Z")
         self.assertEqual(batch.published, 0)
         self.assertEqual(batch.accepted_unconfirmed, 1)
@@ -449,19 +452,35 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(batch.ack_failed, 0)
         self.assertEqual(stored.status, OutboxStatus.IN_FLIGHT)
 
+    async def test_connector_request_never_exposes_internal_fencing_token(self):
+        self.enqueue("message-no-fencing-token")
+        observed = {}
+
+        async def publish(request):
+            observed.update(request.to_dict())
+            self.assertFalse(hasattr(request, "lease_token"))
+            return PublishReceipt.accepted("receipt:no-fencing-token")
+
+        publisher = self.publisher(publish)
+        batch = await publisher.run_once()
+
+        self.assertEqual(batch.published, 1)
+        self.assertNotIn("leaseToken", observed)
+        self.assertNotIn("lease_token", observed)
+        self.assertIsNone(self.store.get_outbox("message-no-fencing-token").lease_token)
+
     async def test_claim_that_is_already_expired_never_invokes_connector(self):
         self.enqueue("message-expired-at-admission")
         calls = 0
 
-        class ExpiringClock:
-            def __init__(self):
-                self.calls = 0
+        class ExpiringClaimStore:
+            def claim_outbox(inner_self, *args, **kwargs):
+                claimed = self.store.claim_outbox(*args, **kwargs)
+                self.clock.advance(2)
+                return claimed
 
-            def __call__(self):
-                self.calls += 1
-                if self.calls == 1:
-                    return READY
-                return READY + timedelta(seconds=2)
+            def __getattr__(inner_self, name):
+                return getattr(self.store, name)
 
         async def publish(_request):
             nonlocal calls
@@ -470,7 +489,7 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
 
         publisher = self.publisher(
             publish,
-            clock=ExpiringClock(),
+            store=ExpiringClaimStore(),
             lease_seconds=1,
             publish_timeout=0.25,
         )
@@ -641,6 +660,34 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(batch.dead_lettered, 1)
         self.assertEqual(stored.status, OutboxStatus.DEAD_LETTER)
         self.assertEqual(stored.last_error, "connector_input_rejected")
+
+    async def test_forged_or_mutated_receipts_fail_closed_at_return_boundary(self):
+        self.enqueue("message-forged-receipt")
+        self.enqueue("message-mutated-receipt")
+
+        forged = object.__new__(PublishReceipt)
+        object.__setattr__(forged, "result", "accepted")
+        object.__setattr__(forged, "receipt_id", "receipt:forged")
+        object.__setattr__(forged, "reason_code", None)
+        mutated = object.__new__(PublishReceipt)
+        object.__setattr__(mutated, "result", PublishResult.ACCEPTED)
+        object.__setattr__(mutated, "receipt_id", "receipt:mutated")
+        object.__setattr__(mutated, "reason_code", "unexpected-field")
+
+        async def publish(request):
+            if request.message_id == "message-forged-receipt":
+                return forged
+            return mutated
+
+        publisher = self.publisher(publish, max_attempts=1)
+        batch = await publisher.run_once()
+
+        self.assertEqual(batch.published, 0)
+        self.assertEqual(batch.dead_lettered, 2)
+        for message_id in ("message-forged-receipt", "message-mutated-receipt"):
+            stored = self.store.get_outbox(message_id)
+            self.assertEqual(stored.status, OutboxStatus.DEAD_LETTER)
+            self.assertEqual(stored.last_error, "invalid_publish_receipt")
 
     async def test_connector_thread_start_failure_releases_admission_capacity(self):
         self.enqueue("message-thread-start-failed")
@@ -892,7 +939,7 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
 
             def __call__(self):
                 self.calls += 1
-                if self.calls == 3:
+                if self.calls == 2:
                     raise RuntimeError("clock failed")
                 return READY
 
@@ -940,8 +987,11 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
 class SynchronousConstructionTests(unittest.TestCase):
     def test_construct_without_loop_then_run_with_asyncio_run(self):
         with tempfile.TemporaryDirectory() as tempdir:
-            store = SQLiteEventStore(str(Path(tempdir) / "sync-construction.sqlite3"))
             timestamp = READY.isoformat().replace("+00:00", "Z")
+            store = SQLiteEventStore(
+                str(Path(tempdir) / "sync-construction.sqlite3"),
+                clock=lambda: timestamp,
+            )
             event = DomainEvent(
                 "session:sync-construction",
                 "message.queued",

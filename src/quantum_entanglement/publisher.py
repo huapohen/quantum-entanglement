@@ -63,7 +63,6 @@ class PublishRequest:
     attempt_count: int
     triggering_event_id: str
     triggering_global_position: int
-    lease_token: str
     lease_deadline: str | None
 
     @classmethod
@@ -79,7 +78,6 @@ class PublishRequest:
             attempt_count=stored.attempt_count,
             triggering_event_id=stored.triggering_event_id,
             triggering_global_position=stored.triggering_global_position,
-            lease_token=stored.lease_token or "",
             lease_deadline=stored.lease_expires_at,
         )
 
@@ -93,7 +91,6 @@ class PublishRequest:
             "attemptCount": self.attempt_count,
             "triggeringEventId": self.triggering_event_id,
             "triggeringGlobalPosition": self.triggering_global_position,
-            "leaseToken": self.lease_token,
             "leaseDeadline": self.lease_deadline,
         }
 
@@ -116,10 +113,16 @@ class PublishReceipt:
     def __post_init__(self) -> None:
         if not isinstance(self.result, PublishResult):
             raise TypeError("publish receipt result must be a PublishResult")
-        if self.result is PublishResult.ACCEPTED and not (self.receipt_id or "").strip():
-            raise ValueError("accepted publish receipt requires receipt_id")
-        if self.result is PublishResult.REJECTED and not (self.reason_code or "").strip():
-            raise ValueError("rejected publish receipt requires reason_code")
+        if self.result is PublishResult.ACCEPTED:
+            if not isinstance(self.receipt_id, str) or not self.receipt_id.strip():
+                raise ValueError("accepted publish receipt requires receipt_id")
+            if self.reason_code is not None:
+                raise ValueError("accepted publish receipt cannot include reason_code")
+        if self.result is PublishResult.REJECTED:
+            if not isinstance(self.reason_code, str) or not self.reason_code.strip():
+                raise ValueError("rejected publish receipt requires reason_code")
+            if self.receipt_id is not None:
+                raise ValueError("rejected publish receipt cannot include receipt_id")
 
     @classmethod
     def accepted(cls, receipt_id: str) -> PublishReceipt:
@@ -719,7 +722,6 @@ class OutboxPublisher:
                         self.worker_id,
                         limit=min(self.batch_size, available_slots),
                         lease_seconds=self.lease_seconds,
-                        now=_timestamp(self._clock()),
                     )
                 except Exception:
                     self._logger.exception("outbox claim failed for worker %s", self.worker_id)
@@ -835,9 +837,8 @@ class OutboxPublisher:
             acknowledged = await self._store_call(
                 self._store.acknowledge_outbox,
                 request.message_id,
-                request.lease_token,
+                stored.lease_token or "",
                 published_at=published_at,
-                now=published_at,
             )
         except asyncio.CancelledError:
             persisted = await self._persist_ambiguity_before_cancel(stored, "caller_cancelled")
@@ -882,11 +883,23 @@ class OutboxPublisher:
             result = future.result()
         except BaseException as caught:
             return True, None, caught
-        if not isinstance(result, PublishReceipt):
+        if type(result) is not PublishReceipt:
             return True, None, _InvalidPublishReceipt()
-        if result.result is PublishResult.REJECTED:
-            return True, result, _ConnectorRejected()
-        return True, result, None
+        try:
+            # Copy into a newly validated snapshot. This rejects instances forged
+            # through object.__new__/object.__setattr__ and closes a mutation race.
+            receipt = PublishReceipt(
+                result=result.result,
+                receipt_id=result.receipt_id,
+                reason_code=result.reason_code,
+            )
+        except (AttributeError, TypeError, ValueError):
+            return True, None, _InvalidPublishReceipt()
+        if receipt.result is PublishResult.REJECTED:
+            return True, receipt, _ConnectorRejected()
+        if receipt.result is not PublishResult.ACCEPTED:
+            return True, None, _InvalidPublishReceipt()
+        return True, receipt, None
 
     def _start_isolated_connector(self, request: PublishRequest) -> asyncio.Future[Any]:
         """Run even blocking async connector code outside the publisher loop."""
@@ -1080,7 +1093,6 @@ class OutboxPublisher:
                 self._format_error_safely(error),
                 retry_at=retry_at,
                 dead_letter=dead_letter,
-                now=self._safe_clock_timestamp(),
             )
         except Exception:
             self._logger.exception(
