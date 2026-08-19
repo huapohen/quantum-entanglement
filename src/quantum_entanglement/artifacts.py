@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import math
+import re
 import threading
 from dataclasses import dataclass
-from typing import Dict, Mapping, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, Mapping, Optional, Tuple, cast
 from urllib.parse import quote
 
 from .events import DomainEvent
@@ -15,10 +19,38 @@ from .store import SQLiteEventStore
 
 _REPLAY_PAGE_LIMIT = 1_000
 _MAX_REPLAY_EVENTS = 1_000_000
+_MAX_IDENTIFIER_LENGTH = 512
+_MAX_MEDIA_TYPE_LENGTH = 255
+_MAX_URI_LENGTH = 4_096
+_MAX_CONTENT_BYTES = 16 * 1024 * 1024
+_MAX_METADATA_BYTES = 1024 * 1024
+_MAX_METADATA_DEPTH = 64
+_MAX_METADATA_NODES = 10_000
+_MAX_METADATA_KEY_LENGTH = 512
+_MAX_METADATA_STRING_LENGTH = 65_536
+_MAX_METADATA_INTEGER_BITS = 4_096
+_MAX_SQLITE_INTEGER = (1 << 63) - 1
+_SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+_CANONICAL_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z$")
+_PAYLOAD_REQUIRED_KEYS = frozenset({"sessionId", "taskId", "ref", "content", "createdAt"})
+_PAYLOAD_OPTIONAL_KEYS = frozenset({"metadata", "trigger"})
+_REF_REQUIRED_KEYS = frozenset(
+    {
+        "artifactId",
+        "name",
+        "version",
+        "mediaType",
+        "uri",
+        "digest",
+        "createdBy",
+        "taskId",
+    }
+)
+_REF_OPTIONAL_KEYS = frozenset({"parentVersion"})
 
 
 class ArtifactReplayError(RuntimeError):
-    """Raised when startup replay cannot advance safely within its hard bounds."""
+    """Raised when persisted artifact replay cannot be completed safely."""
 
 
 @dataclass(frozen=True)
@@ -65,16 +97,7 @@ class ArtifactLedger:
             for stored in page:
                 if stored.event.event_type != self.EVENT_TYPE:
                     continue
-                payload = stored.event.payload
-                ref = ArtifactRef.from_dict(payload["ref"])
-                item = ArtifactVersion(
-                    ref=ref,
-                    content=str(payload["content"]),
-                    metadata=dict(payload.get("metadata", {})),
-                    created_at=str(payload["createdAt"]),
-                    trigger=str(payload.get("trigger", "create")),
-                )
-                key = (str(payload["sessionId"]), ref.name)
+                key, item = self._decode_persisted_version(stored.event.payload)
                 candidate_versions[key] = candidate_versions.get(key, ()) + (item,)
             replayed += len(page)
             if len(page) < page_limit:
@@ -92,6 +115,245 @@ class ArtifactLedger:
                 )
 
         self._versions = candidate_versions
+
+    @classmethod
+    def _decode_persisted_version(
+        cls,
+        raw_payload: object,
+    ) -> Tuple[Tuple[str, str], ArtifactVersion]:
+        try:
+            payload = cls._require_object_shape(
+                raw_payload,
+                required=_PAYLOAD_REQUIRED_KEYS,
+                optional=_PAYLOAD_OPTIONAL_KEYS,
+                field_name="artifact payload",
+            )
+            session_id = cls._require_text(payload["sessionId"], "sessionId")
+            task_id = cls._require_text(payload["taskId"], "taskId")
+            content = cls._require_content(payload["content"])
+            created_at = cls._require_canonical_utc(payload["createdAt"], "createdAt")
+            trigger = cls._require_text(payload.get("trigger", "create"), "trigger")
+            metadata = cls._decode_metadata(payload.get("metadata", {}))
+
+            raw_ref = cls._require_object_shape(
+                payload["ref"],
+                required=_REF_REQUIRED_KEYS,
+                optional=_REF_OPTIONAL_KEYS,
+                field_name="artifact ref",
+            )
+            artifact_id = cls._require_text(raw_ref["artifactId"], "ref.artifactId")
+            name = cls._require_text(raw_ref["name"], "ref.name")
+            version = cls._require_positive_integer(raw_ref["version"], "ref.version")
+            media_type = cls._require_text(
+                raw_ref["mediaType"],
+                "ref.mediaType",
+                max_length=_MAX_MEDIA_TYPE_LENGTH,
+            )
+            uri = cls._require_text(
+                raw_ref["uri"],
+                "ref.uri",
+                max_length=_MAX_URI_LENGTH,
+            )
+            digest = cls._require_text(
+                raw_ref["digest"],
+                "ref.digest",
+                max_length=71,
+            )
+            created_by = cls._require_text(raw_ref["createdBy"], "ref.createdBy")
+            ref_task_id = cls._require_text(raw_ref["taskId"], "ref.taskId")
+            raw_parent = raw_ref.get("parentVersion")
+            parent_version = (
+                None
+                if raw_parent is None
+                else cls._require_positive_integer(raw_parent, "ref.parentVersion")
+            )
+            expected_parent = version - 1 if version > 1 else None
+            if parent_version != expected_parent:
+                raise ValueError("ref.parentVersion does not match ref.version")
+            if ref_task_id != task_id:
+                raise ValueError("payload taskId does not match ref.taskId")
+            if not _SHA256_PATTERN.fullmatch(digest):
+                raise ValueError("ref.digest is not canonical SHA-256")
+            if digest != cls._digest(content):
+                raise ValueError("ref.digest does not match artifact content")
+
+            ref = ArtifactRef(
+                artifact_id=artifact_id,
+                name=name,
+                version=version,
+                media_type=media_type,
+                uri=uri,
+                digest=digest,
+                created_by=created_by,
+                task_id=ref_task_id,
+                parent_version=parent_version,
+            )
+            return (session_id, name), ArtifactVersion(
+                ref=ref,
+                content=content,
+                metadata=metadata,
+                created_at=created_at,
+                trigger=trigger,
+            )
+        except ArtifactReplayError:
+            raise
+        except (
+            KeyError,
+            OverflowError,
+            RecursionError,
+            RuntimeError,
+            TypeError,
+            UnicodeError,
+            ValueError,
+        ) as exc:
+            raise ArtifactReplayError(
+                "persisted artifact.versioned payload violates its contract"
+            ) from exc
+
+    @staticmethod
+    def _require_object_shape(
+        value: object,
+        *,
+        required: frozenset[str],
+        optional: frozenset[str],
+        field_name: str,
+    ) -> Dict[str, Any]:
+        if type(value) is not dict:
+            raise TypeError(f"{field_name} must be a plain object")
+        result = cast(Dict[str, Any], value)
+        keys = frozenset(result)
+        if not required.issubset(keys) or not keys.issubset(required | optional):
+            raise ValueError(f"{field_name} keys do not match its contract")
+        return result
+
+    @staticmethod
+    def _require_text(
+        value: object,
+        field_name: str,
+        *,
+        max_length: int = _MAX_IDENTIFIER_LENGTH,
+    ) -> str:
+        if type(value) is not str:
+            raise TypeError(f"{field_name} must be text")
+        if not value.strip():
+            raise ValueError(f"{field_name} must not be blank")
+        if len(value) > max_length:
+            raise ValueError(f"{field_name} exceeds its length limit")
+        if "\x00" in value or "\r" in value or "\n" in value:
+            raise ValueError(f"{field_name} contains a forbidden control character")
+        return value
+
+    @staticmethod
+    def _require_positive_integer(value: object, field_name: str) -> int:
+        if type(value) is not int:
+            raise TypeError(f"{field_name} must be an integer")
+        if not 1 <= value <= _MAX_SQLITE_INTEGER:
+            raise ValueError(f"{field_name} is outside its supported range")
+        return value
+
+    @staticmethod
+    def _require_content(value: object) -> str:
+        if type(value) is not str:
+            raise TypeError("content must be text")
+        encoded = value.encode("utf-8")
+        if len(encoded) > _MAX_CONTENT_BYTES:
+            raise ValueError("content exceeds its byte limit")
+        return value
+
+    @staticmethod
+    def _require_canonical_utc(value: object, field_name: str) -> str:
+        if type(value) is not str or _CANONICAL_UTC_PATTERN.fullmatch(value) is None:
+            raise ValueError(f"{field_name} must be canonical UTC")
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        canonical = parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        if canonical != value:
+            raise ValueError(f"{field_name} must be canonical UTC")
+        return value
+
+    @classmethod
+    def _decode_metadata(cls, value: object) -> Dict[str, object]:
+        if type(value) is not dict:
+            raise TypeError("metadata must be a plain JSON object")
+        cls._validate_metadata_json(value)
+        encoder = json.JSONEncoder(
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        chunks: list[str] = []
+        encoded_size = 0
+        for chunk in encoder.iterencode(value):
+            encoded_size += len(chunk.encode("utf-8"))
+            if encoded_size > _MAX_METADATA_BYTES:
+                raise ValueError("metadata exceeds its encoded byte limit")
+            chunks.append(chunk)
+        encoded = "".join(chunks)
+        decoded = json.loads(encoded)
+        if type(decoded) is not dict:
+            raise TypeError("metadata must decode to a JSON object")
+        return cast(Dict[str, object], decoded)
+
+    @staticmethod
+    def _validate_metadata_json(value: object) -> None:
+        stack: list[tuple[object, int, bool]] = [(value, 0, False)]
+        active_container_ids: set[int] = set()
+        nodes = 0
+        while stack:
+            current, parent_depth, exiting = stack.pop()
+            if exiting:
+                active_container_ids.discard(id(current))
+                continue
+
+            nodes += 1
+            if nodes > _MAX_METADATA_NODES:
+                raise ValueError("metadata exceeds its JSON node limit")
+            current_type = type(current)
+            if current is None or current_type is bool:
+                continue
+            if current_type is str:
+                if len(cast(str, current)) > _MAX_METADATA_STRING_LENGTH:
+                    raise ValueError("metadata string exceeds its length limit")
+                continue
+            if current_type is int:
+                if cast(int, current).bit_length() > _MAX_METADATA_INTEGER_BITS:
+                    raise ValueError("metadata integer exceeds its bit limit")
+                continue
+            if current_type is float:
+                if not math.isfinite(cast(float, current)):
+                    raise ValueError("metadata contains a non-finite number")
+                continue
+            if current_type not in (dict, list):
+                raise TypeError("metadata contains a non-JSON value")
+
+            depth = parent_depth + 1
+            if depth > _MAX_METADATA_DEPTH:
+                raise ValueError("metadata exceeds its nesting limit")
+            identity = id(current)
+            if identity in active_container_ids:
+                raise ValueError("metadata contains a reference cycle")
+            active_container_ids.add(identity)
+            stack.append((current, parent_depth, True))
+
+            if current_type is list:
+                values = cast(list[object], current)
+                if len(values) > _MAX_METADATA_NODES - nodes:
+                    raise ValueError("metadata exceeds its JSON node limit")
+                items = tuple(values)
+                for item in reversed(items):
+                    stack.append((item, depth, False))
+                continue
+
+            mapping = cast(dict[object, object], current)
+            if len(mapping) > _MAX_METADATA_NODES - nodes:
+                raise ValueError("metadata exceeds its JSON node limit")
+            entries = tuple(mapping.items())
+            for key, item in reversed(entries):
+                if type(key) is not str:
+                    raise TypeError("metadata keys must be text")
+                if len(key) > _MAX_METADATA_KEY_LENGTH:
+                    raise ValueError("metadata key exceeds its length limit")
+                stack.append((item, depth, False))
 
     @staticmethod
     def _validate_replay_page(

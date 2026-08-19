@@ -1,3 +1,5 @@
+import copy
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,13 +27,14 @@ def replay_event(position, *, name=None, version=1, content=""):
             version=version,
             media_type="text/markdown",
             uri=f"artifact://session-replay/{name}/v{version}",
-            digest=f"digest-{position}",
+            digest="sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
             created_by="test",
             task_id=f"task-{position}",
             parent_version=version - 1 if version > 1 else None,
         )
         payload = {
             "sessionId": "session-replay",
+            "taskId": ref.task_id,
             "ref": ref.to_dict(),
             "content": content,
             "metadata": {"position": position},
@@ -44,6 +47,21 @@ def replay_event(position, *, name=None, version=1, content=""):
             event_type=event_type,
             actor_id="test",
             event_id=f"event-{position}",
+            timestamp=T0,
+            payload=payload,
+        ),
+        sequence=max(1, position),
+        global_position=position,
+    )
+
+
+def replay_event_with_payload(position, payload):
+    return StoredEvent(
+        DomainEvent(
+            stream_id="session:session-replay",
+            event_type=ArtifactLedger.EVENT_TYPE,
+            actor_id="test",
+            event_id=f"event-payload-{position}",
             timestamp=T0,
             payload=payload,
         ),
@@ -169,8 +187,42 @@ class ArtifactLedgerTests(unittest.TestCase):
         self.assertEqual(self.ledger.history("s1", "other.txt"), (unrelated,))
         self.assertEqual(self.ledger.history("s1", "result.txt"), (original,))
 
+    def test_valid_record_payload_remains_replay_compatible(self):
+        recorded = self.ledger.record(
+            "s1",
+            "task-valid",
+            "agent-valid",
+            ArtifactOutput(
+                "valid.json",
+                '{"ok":true}',
+                media_type="application/json",
+                metadata={
+                    "nested": {"values": [None, True, 7, 1.5, "text"]},
+                    "unicode": "协作",
+                },
+            ),
+        )
+
+        rebuilt = ArtifactLedger(self.store)
+
+        self.assertEqual(rebuilt.history("s1", "valid.json"), (recorded,))
+
 
 class ArtifactLedgerReplayTests(unittest.TestCase):
+    @staticmethod
+    def _valid_payload():
+        return copy.deepcopy(
+            replay_event(1, name="report.md", version=1, content="body").event.payload
+        )
+
+    def _assert_payload_rejected(self, payload):
+        source = FakeReplayStore({0: (replay_event_with_payload(1, payload),)})
+        with self.assertRaisesRegex(
+            ArtifactReplayError,
+            "persisted artifact.versioned payload violates its contract",
+        ):
+            ArtifactLedger(source)
+
     def test_replay_error_is_part_of_the_supported_artifact_api(self):
         self.assertIn("ArtifactReplayError", artifacts_module.__all__)
         self.assertIs(quantum_entanglement.ArtifactReplayError, ArtifactReplayError)
@@ -178,6 +230,187 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
         source = FakeReplayStore({})
         ArtifactLedger(source)
         self.assertEqual(source.calls, [(0, 1_000)])
+
+    def test_replay_accepts_only_the_documented_optional_payload_keys(self):
+        payload = self._valid_payload()
+        payload.pop("metadata")
+        payload.pop("trigger")
+        payload["ref"].pop("parentVersion")
+        source = FakeReplayStore({0: (replay_event_with_payload(1, payload),)})
+
+        ledger = ArtifactLedger(source)
+
+        item = ledger.current("session-replay", "report.md")
+        self.assertEqual(item.metadata, {})
+        self.assertEqual(item.trigger, "create")
+        self.assertIsNone(item.ref.parent_version)
+
+        shape_cases = {}
+        missing_payload = self._valid_payload()
+        missing_payload.pop("content")
+        shape_cases["missing-payload-key"] = missing_payload
+        extra_payload = self._valid_payload()
+        extra_payload["unexpected"] = True
+        shape_cases["extra-payload-key"] = extra_payload
+        missing_ref = self._valid_payload()
+        missing_ref["ref"].pop("artifactId")
+        shape_cases["missing-ref-key"] = missing_ref
+        extra_ref = self._valid_payload()
+        extra_ref["ref"]["unexpected"] = True
+        shape_cases["extra-ref-key"] = extra_ref
+        shape_cases["non-object-payload"] = []
+        for case, malformed in shape_cases.items():
+            with self.subTest(case=case):
+                self._assert_payload_rejected(malformed)
+
+    def test_replay_rejects_scalar_collection_and_object_coercions(self):
+        coercions = (
+            ("payload", "sessionId", True),
+            ("payload", "taskId", 1.5),
+            ("payload", "content", ["body"]),
+            ("payload", "createdAt", object()),
+            ("payload", "trigger", False),
+            ("payload", "metadata", [("source", "test")]),
+            ("payload", "ref", []),
+            ("ref", "artifactId", True),
+            ("ref", "name", ["report.md"]),
+            ("ref", "version", True),
+            ("ref", "version", 1.0),
+            ("ref", "mediaType", object()),
+            ("ref", "uri", ["artifact://invalid"]),
+            ("ref", "digest", False),
+            ("ref", "createdBy", 7.0),
+            ("ref", "taskId", ["task-1"]),
+            ("ref", "parentVersion", False),
+        )
+        for scope, field, value in coercions:
+            with self.subTest(scope=scope, field=field, value_type=type(value).__name__):
+                payload = self._valid_payload()
+                target = payload if scope == "payload" else payload["ref"]
+                target[field] = value
+                self._assert_payload_rejected(payload)
+
+    def test_replay_rejects_blank_oversized_and_noncanonical_text_fields(self):
+        blank_fields = (
+            ("payload", "sessionId"),
+            ("payload", "taskId"),
+            ("payload", "trigger"),
+            ("ref", "artifactId"),
+            ("ref", "name"),
+            ("ref", "mediaType"),
+            ("ref", "uri"),
+            ("ref", "digest"),
+            ("ref", "createdBy"),
+            ("ref", "taskId"),
+        )
+        for scope, field in blank_fields:
+            with self.subTest(scope=scope, field=field):
+                payload = self._valid_payload()
+                target = payload if scope == "payload" else payload["ref"]
+                target[field] = "  "
+                self._assert_payload_rejected(payload)
+
+        oversized_fields = (
+            ("payload", "sessionId", "s" * 513),
+            ("ref", "mediaType", "m" * 256),
+            ("ref", "uri", "u" * 4_097),
+        )
+        for scope, field, value in oversized_fields:
+            with self.subTest(scope=scope, field=field):
+                payload = self._valid_payload()
+                target = payload if scope == "payload" else payload["ref"]
+                target[field] = value
+                self._assert_payload_rejected(payload)
+
+        for timestamp in (
+            "2026-08-20T00:00:00+00:00",
+            "2026-08-20T08:00:00+08:00",
+            "2026-08-20T00:00:00.1Z",
+            "2026-02-30T00:00:00Z",
+        ):
+            with self.subTest(timestamp=timestamp):
+                payload = self._valid_payload()
+                payload["createdAt"] = timestamp
+                self._assert_payload_rejected(payload)
+
+    def test_replay_enforces_content_metadata_and_json_structure_limits(self):
+        payload = self._valid_payload()
+        payload["content"] = "12345"
+        payload["ref"]["digest"] = "sha256:" + hashlib.sha256(b"12345").hexdigest()
+        with patch.object(artifacts_module, "_MAX_CONTENT_BYTES", 4):
+            self._assert_payload_rejected(payload)
+
+        metadata_cases = {}
+        oversized_string = self._valid_payload()
+        oversized_string["metadata"] = {"value": "abcd"}
+        metadata_cases["string"] = (oversized_string, "_MAX_METADATA_STRING_LENGTH", 3)
+        oversized_key = self._valid_payload()
+        oversized_key["metadata"] = {"abcd": 1}
+        metadata_cases["key"] = (oversized_key, "_MAX_METADATA_KEY_LENGTH", 3)
+        oversized_nodes = self._valid_payload()
+        oversized_nodes["metadata"] = {"items": [1, 2]}
+        metadata_cases["nodes"] = (oversized_nodes, "_MAX_METADATA_NODES", 3)
+        oversized_integer = self._valid_payload()
+        oversized_integer["metadata"] = {"value": 8}
+        metadata_cases["integer"] = (oversized_integer, "_MAX_METADATA_INTEGER_BITS", 3)
+        oversized_encoding = self._valid_payload()
+        oversized_encoding["metadata"] = {"value": "encoded"}
+        metadata_cases["encoded-bytes"] = (oversized_encoding, "_MAX_METADATA_BYTES", 8)
+        for case, (malformed, constant, maximum) in metadata_cases.items():
+            with self.subTest(case=case):
+                with patch.object(artifacts_module, constant, maximum):
+                    self._assert_payload_rejected(malformed)
+
+        deep = self._valid_payload()
+        nested = []
+        deep["metadata"] = {"nested": nested}
+        for _ in range(64):
+            child = []
+            nested.append(child)
+            nested = child
+        self._assert_payload_rejected(deep)
+
+        for nonfinite in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(nonfinite=repr(nonfinite)):
+                payload = self._valid_payload()
+                payload["metadata"] = {"value": nonfinite}
+                self._assert_payload_rejected(payload)
+
+        cyclic = self._valid_payload()
+        cyclic_metadata = {}
+        cyclic_metadata["self"] = cyclic_metadata
+        cyclic["metadata"] = cyclic_metadata
+        self._assert_payload_rejected(cyclic)
+
+        unsupported = self._valid_payload()
+        unsupported["metadata"] = {"tuple": (1, 2)}
+        self._assert_payload_rejected(unsupported)
+
+        non_text_key = self._valid_payload()
+        non_text_key["metadata"] = {1: "value"}
+        self._assert_payload_rejected(non_text_key)
+
+    def test_replay_verifies_ref_lineage_digest_and_task_consistency(self):
+        cases = {}
+        bad_digest = self._valid_payload()
+        bad_digest["ref"]["digest"] = "sha256:" + ("0" * 64)
+        cases["digest-content"] = bad_digest
+        malformed_digest = self._valid_payload()
+        malformed_digest["ref"]["digest"] = "SHA256:" + ("0" * 64)
+        cases["digest-shape"] = malformed_digest
+        task_mismatch = self._valid_payload()
+        task_mismatch["taskId"] = "different-task"
+        cases["task"] = task_mismatch
+        zero_version = self._valid_payload()
+        zero_version["ref"]["version"] = 0
+        cases["version"] = zero_version
+        parent_mismatch = self._valid_payload()
+        parent_mismatch["ref"]["version"] = 2
+        parent_mismatch["ref"]["parentVersion"] = None
+        cases["parent"] = parent_mismatch
+        for case, payload in cases.items():
+            with self.subTest(case=case):
+                self._assert_payload_rejected(payload)
 
     def test_rebuild_uses_bounded_keyset_pages_without_losing_artifacts(self):
         events = (
@@ -251,7 +484,7 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
             ),
             "payload-ref": (
                 (malformed_payload,),
-                KeyError,
+                ArtifactReplayError,
             ),
         }
         for case, (late_response, error_type) in late_failures.items():
