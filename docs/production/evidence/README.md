@@ -23,6 +23,15 @@ source checkout and record the verifier's successful immutable CI run. The CI ar
 uploaded even after failure for diagnosis; its existence, filename, or downloadability is
 not proof that verification passed.
 
+For a packaged candidate, also retain the canonical out-of-tree distribution manifest
+described in [`DISTRIBUTION_INTEGRITY.md`](../DISTRIBUTION_INTEGRITY.md). Record the
+manifest digest, both compressed artifact digests, and the immutable successful package CI
+run. Keep content integrity, byte-for-byte reproducibility, SBOM, signed provenance, and
+artifact signature as separate results: none may be inferred from another. In particular,
+the current setuptools sdist is not yet byte-reproducible even with `SOURCE_DATE_EPOCH` set,
+so reproducibility remains an explicit failed or pending GA gate until new retained evidence
+proves otherwise.
+
 ## Template
 
 ```markdown
@@ -42,6 +51,11 @@ Reviewer: `name or accountable role`
 - Tree SHA: `<full SHA>`
 - Version: `X.Y.Z`
 - Build artifact digests: `<algorithm:digest>`
+- Distribution manifest digest: `<sha256:digest>`
+- Distribution manifest verifier run: `<immutable URL>`
+- SBOM digest: `<algorithm:digest | missing>`
+- Signed provenance/attestation: `<immutable identity and URL | missing>`
+- Artifact signature: `<identity and digest | missing>`
 - CI run: `<immutable URL>`
 
 ## Supported boundary
@@ -73,7 +87,10 @@ Reviewer: `name or accountable role`
 | Static analysis | | | | |
 | Dependency/license scan | | | | |
 | Secret scan | | | | |
+| Distribution content integrity | | | | |
 | Package/install smoke | | | | |
+| Repeated-build reproducibility | | | | |
+| SBOM/provenance/signature | | | | |
 | End-to-end workflow | | | | |
 
 ## Migration and compatibility

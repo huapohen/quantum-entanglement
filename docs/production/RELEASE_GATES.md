@@ -46,6 +46,20 @@ checkout and expected full commit SHA before it is consumed. Artifact presence a
 a pass: CI deliberately retains failed or partial output for diagnosis. The verifier's
 success also remains local-baseline evidence, not permission to waive another gate.
 
+## Distribution integrity gate
+
+Every candidate wheel and sdist must have a canonical manifest generated and strictly
+verified by `scripts/distribution_manifest.py` against the exact clean checkout and expected
+full commit SHA. The verifier must prove the exact distribution set, source bytes, package
+metadata, wheel `RECORD`, bounded safe archive structure, compressed artifact digests, and
+canonical unpacked-content digests. Retain only the verified packages and out-of-tree
+manifest, and record their digests and immutable successful CI run in the phase evidence.
+
+See [`DISTRIBUTION_INTEGRITY.md`](./DISTRIBUTION_INTEGRITY.md) for the enforced contract,
+commands, CI behavior, evidence fields, and known limitations. This content-integrity check
+is not signed provenance, an SBOM, a dependency lock or scan, a trusted build environment,
+or proof of byte-for-byte reproducibility.
+
 ## Phase release gate
 
 Every phase release requires a file under `docs/production/evidence/<version>.md` with:
@@ -121,6 +135,13 @@ Security findings use the higher of exploit impact and data/authority impact.
 - published support, compatibility, deprecation, retention and incident policies;
 - release-candidate soak with no unresolved P0/P1 issue;
 - formal operational acceptance recorded in the release evidence.
+
+**Current open gate:** setting `SOURCE_DATE_EPOCH` to the commit timestamp has produced
+byte-identical wheels in one controlled repeated-build observation, but setuptools sdists
+still retained checkout modification times and owner/group metadata and were not
+byte-identical. Reproducible wheel and sdist builds therefore remain unproven and block GA.
+Neither a green distribution manifest check nor equal unpacked-content digests closes this
+gate; repeated clean builds with a pinned toolchain must match compressed artifact digests.
 
 ## Rollback rule
 
