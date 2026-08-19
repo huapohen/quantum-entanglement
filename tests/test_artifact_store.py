@@ -7,8 +7,10 @@ from collections import UserDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from quantum_entanglement import SQLiteArtifactStore as PublicSQLiteArtifactStore
+from quantum_entanglement import artifact_store as artifact_store_module
 from quantum_entanglement.artifact_store import (
     ArtifactConcurrencyError,
     ArtifactConflictError,
@@ -77,6 +79,20 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
 
     def test_store_is_part_of_the_supported_package_api(self):
         self.assertIs(PublicSQLiteArtifactStore, SQLiteArtifactStore)
+
+    def test_store_starts_with_immediately_previous_migration_runner_signature(self):
+        path = str(Path(self.tempdir.name) / "legacy-runner.sqlite3")
+        current_runner = artifact_store_module.apply_sqlite_migrations
+
+        def previous_runner(connection, *, clock):
+            return current_runner(connection, target_versions=(1, 2), clock=clock)
+
+        with patch(
+            "quantum_entanglement.artifact_store.apply_sqlite_migrations",
+            previous_runner,
+        ):
+            with SQLiteArtifactStore(path, clock=lambda: T0) as compatible:
+                self.assertEqual(compatible.schema_version(), 2)
 
     def test_content_and_metadata_commit_atomically_with_contiguous_versions(self):
         first = self.store.write(artifact_write(), expected_head_version=0)

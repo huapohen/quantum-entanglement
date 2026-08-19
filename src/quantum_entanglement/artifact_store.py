@@ -11,6 +11,7 @@ processes, and every read verifies the stored SHA-256 digest and request fingerp
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -263,11 +264,20 @@ class SQLiteArtifactStore:
                 if path != ":memory:":
                     self._enable_wal(busy_timeout_ms)
                     self._connection.execute("PRAGMA synchronous=FULL")
-                apply_sqlite_migrations(
-                    self._connection,
-                    target_versions=(1, 2),
-                    clock=self._now,
-                )
+                # ``target_versions`` was added while domain migrations were split.
+                # Keep a rolling-upgrade bridge so this component remains runnable
+                # with the immediately preceding migration runner commit.
+                migration_parameters = inspect.signature(
+                    apply_sqlite_migrations
+                ).parameters
+                if "target_versions" in migration_parameters:
+                    apply_sqlite_migrations(
+                        self._connection,
+                        target_versions=(1, 2),
+                        clock=self._now,
+                    )
+                else:  # pragma: no cover - exercised with a compatibility stub.
+                    apply_sqlite_migrations(self._connection, clock=self._now)
         except BaseException:
             self._connection.close()
             raise
