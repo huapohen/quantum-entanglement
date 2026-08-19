@@ -7,9 +7,10 @@ the core package does not require LangGraph at import time.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Mapping, Optional, Tuple
+from typing import Any, Callable
 
 
 class BridgeStatus(str, Enum):
@@ -21,14 +22,14 @@ class BridgeStatus(str, Enum):
 class LangGraphResult:
     status: BridgeStatus
     state: Mapping[str, Any]
-    interrupts: Tuple[Any, ...] = ()
+    interrupts: tuple[Any, ...] = ()
 
 
 class LangGraphBridge:
     def __init__(
         self,
         compiled_graph: Any,
-        command_factory: Optional[Callable[[Any], Any]] = None,
+        command_factory: Callable[[Any], Any] | None = None,
     ) -> None:
         if not hasattr(compiled_graph, "ainvoke"):
             raise TypeError("compiled graph must expose ainvoke")
