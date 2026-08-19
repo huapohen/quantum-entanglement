@@ -5,12 +5,13 @@ import unittest
 from collections.abc import Mapping, MutableMapping
 from operator import attrgetter, setitem
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from quantum_entanglement.events import DomainEvent, StoredEvent
 from quantum_entanglement.projections import (
     MAX_EVENT_PAYLOAD_DEPTH,
     MAX_EVENT_PAYLOAD_NODES,
+    MAX_PROJECTION_IDENTIFIER_LENGTH,
     SCHEMA_VERSION_FIELD,
     DurableProjector,
     EventSchemaDecoderError,
@@ -22,6 +23,7 @@ from quantum_entanglement.projections import (
     InvalidEventSchemaVersionError,
     InvalidUpcastResultError,
     MissingUpcasterError,
+    ProjectionIntegrityError,
     ProjectionLeaseConflictError,
     ProjectionLeaseLostError,
     ProjectionOffsetConflictError,
@@ -493,6 +495,291 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.store.close()
         self.tempdir.cleanup()
+
+    @staticmethod
+    def offset_row(**overrides: object) -> sqlite3.Row:
+        values: dict[str, object] = {
+            "projection_name": "task-list",
+            "last_global_position": 7,
+            "owner_id": "worker-a",
+            "owner_epoch": 2,
+            "lease_expires_at": "2026-08-20T00:00:30Z",
+            "updated_at": "2026-08-20T00:00:00.123456Z",
+        }
+        values.update(overrides)
+        return cast(sqlite3.Row, values)
+
+    @staticmethod
+    def receipt_row(**overrides: object) -> sqlite3.Row:
+        values: dict[str, object] = {
+            "projection_name": "task-list",
+            "event_id": "evt-1",
+            "global_position": 1,
+            "applied_at": "2026-08-20T00:00:00Z",
+        }
+        values.update(overrides)
+        return cast(sqlite3.Row, values)
+
+    def test_persisted_offset_decoder_rejects_all_coercion_and_noncanonical_data(
+        self,
+    ) -> None:
+        decoded = self.store._row_to_offset(self.offset_row())
+        self.assertEqual(decoded.projection_name, "task-list")
+        self.assertEqual(decoded.last_global_position, 7)
+        self.assertEqual(decoded.owner_epoch, 2)
+
+        cases: tuple[tuple[str, object], ...] = (
+            ("projection_name", None),
+            ("projection_name", ""),
+            ("projection_name", " task-list"),
+            ("projection_name", "task-list "),
+            ("projection_name", "p" * (MAX_PROJECTION_IDENTIFIER_LENGTH + 1)),
+            ("last_global_position", True),
+            ("last_global_position", 7.0),
+            ("last_global_position", "7"),
+            ("last_global_position", -1),
+            ("last_global_position", (2**63)),
+            ("owner_id", None),
+            ("owner_id", ""),
+            ("owner_id", " worker-a"),
+            ("owner_id", "worker-a "),
+            ("owner_id", "o" * (MAX_PROJECTION_IDENTIFIER_LENGTH + 1)),
+            ("owner_epoch", True),
+            ("owner_epoch", 2.0),
+            ("owner_epoch", "2"),
+            ("owner_epoch", 0),
+            ("owner_epoch", (2**63)),
+            ("lease_expires_at", None),
+            ("lease_expires_at", "2026-08-20T00:00:30+00:00"),
+            ("lease_expires_at", "2026-08-20T08:00:30+08:00"),
+            ("lease_expires_at", "2026-08-20 00:00:30Z"),
+            ("lease_expires_at", "2026-08-20T00:00:30.000000Z"),
+            ("updated_at", "2026-08-20T00:00:00+00:00"),
+        )
+        for field_name, value in cases:
+            with self.subTest(field_name=field_name, value=value):
+                with self.assertRaises(ProjectionIntegrityError):
+                    self.store._row_to_offset(self.offset_row(**{field_name: value}))
+
+        with self.assertRaisesRegex(ProjectionIntegrityError, "incomplete"):
+            self.store._row_to_offset(cast(sqlite3.Row, {"projection_name": "task-list"}))
+
+    def test_persisted_receipt_decoder_validates_every_field_strictly(self) -> None:
+        decoded = self.store._row_to_receipt(self.receipt_row())
+        self.assertEqual(decoded.global_position, 1)
+        cases: tuple[tuple[str, object], ...] = (
+            ("projection_name", None),
+            ("projection_name", " task-list"),
+            ("event_id", ""),
+            ("event_id", "evt-1 "),
+            ("event_id", "e" * (MAX_PROJECTION_IDENTIFIER_LENGTH + 1)),
+            ("global_position", True),
+            ("global_position", 1.0),
+            ("global_position", "1"),
+            ("global_position", 0),
+            ("global_position", (2**63)),
+            ("applied_at", None),
+            ("applied_at", "2026-08-20T00:00:00+00:00"),
+            ("applied_at", "2026-08-20T08:00:00+08:00"),
+            ("applied_at", "2026-08-20T00:00:00.000000Z"),
+        )
+        for field_name, value in cases:
+            with self.subTest(field_name=field_name, value=value):
+                with self.assertRaises(ProjectionIntegrityError):
+                    self.store._row_to_receipt(self.receipt_row(**{field_name: value}))
+
+    def test_every_offset_operation_rejects_corrupt_persisted_timestamp_before_mutation(
+        self,
+    ) -> None:
+        lease = self.store.claim("task-list", "worker-a", lease_seconds=30)
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "UPDATE projection_offsets SET lease_expires_at = ? WHERE projection_name = ?",
+                ("2026-08-20T00:00:30+00:00", "task-list"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        handler_calls = 0
+
+        def handler(_transaction: ProjectionTransaction, _event: UpcastedEvent) -> None:
+            nonlocal handler_calls
+            handler_calls += 1
+
+        event = UpcastedEvent(
+            stored({"title": "research"}),
+            {"title": "research"},
+            1,
+            1,
+        )
+        operations: tuple[tuple[str, Callable[[], object]], ...] = (
+            ("load", lambda: self.store.load("task-list")),
+            ("claim", lambda: self.store.claim("task-list", "worker-a")),
+            ("renew", lambda: self.store.renew(lease)),
+            (
+                "advance",
+                lambda: self.store.advance(lease, expected_position=0, new_position=1),
+            ),
+            (
+                "apply_event",
+                lambda: self.store.apply_event(
+                    lease,
+                    expected_position=0,
+                    event=event,
+                    handler=handler,
+                ),
+            ),
+            ("release", lambda: self.store.release(lease)),
+        )
+        for operation_name, operation in operations:
+            with self.subTest(operation=operation_name):
+                with self.assertRaises(ProjectionIntegrityError):
+                    operation()
+
+        self.assertEqual(handler_calls, 0)
+        connection = sqlite3.connect(self.path)
+        try:
+            offset = connection.execute(
+                "SELECT last_global_position, lease_expires_at FROM projection_offsets "
+                "WHERE projection_name = ?",
+                ("task-list",),
+            ).fetchone()
+            receipt_count = connection.execute(
+                "SELECT COUNT(*) FROM projection_receipts WHERE projection_name = ?",
+                ("task-list",),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(offset, (0, "2026-08-20T00:00:30+00:00"))
+        self.assertEqual(receipt_count, 0)
+
+    def test_corrupt_receipt_fails_before_deduplication_or_handler(self) -> None:
+        lease = self.store.claim("task-list", "worker-a", lease_seconds=30)
+        event = UpcastedEvent(
+            stored({"title": "research"}),
+            {"title": "research"},
+            1,
+            1,
+        )
+        self.store.apply_event(
+            lease,
+            expected_position=0,
+            event=event,
+            handler=lambda _transaction, _event: None,
+        )
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute("PRAGMA ignore_check_constraints=ON")
+            connection.execute(
+                "UPDATE projection_receipts SET global_position = ? "
+                "WHERE projection_name = ? AND event_id = ?",
+                (1.5, "task-list", "evt-1"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        handler_calls = 0
+
+        def handler(_transaction: ProjectionTransaction, _event: UpcastedEvent) -> None:
+            nonlocal handler_calls
+            handler_calls += 1
+
+        with self.assertRaises(ProjectionIntegrityError):
+            self.store.apply_event(
+                lease,
+                expected_position=1,
+                event=event,
+                handler=handler,
+            )
+        self.assertEqual(handler_calls, 0)
+        self.assertEqual(self.store.load("task-list").last_global_position, 1)
+        connection = sqlite3.connect(self.path)
+        try:
+            receipt = connection.execute(
+                "SELECT typeof(global_position), global_position "
+                "FROM projection_receipts WHERE projection_name = ? AND event_id = ?",
+                ("task-list", "evt-1"),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(receipt, ("real", 1.5))
+
+    def test_identifier_and_position_inputs_fail_before_sqlite_binding(self) -> None:
+        overlong = "x" * (MAX_PROJECTION_IDENTIFIER_LENGTH + 1)
+        for projection_name, owner_id in (
+            (overlong, "worker-a"),
+            (" task-list", "worker-a"),
+            ("task-list", overlong),
+            ("task-list", "worker-a "),
+        ):
+            with self.subTest(projection_name=projection_name, owner_id=owner_id):
+                with self.assertRaises(ValueError):
+                    self.store.claim(projection_name, owner_id)
+
+        lease = self.store.claim("task-list", "worker-a")
+        with self.assertRaisesRegex(ValueError, "64-bit SQLite integer"):
+            self.store.advance(
+                lease,
+                expected_position=0,
+                new_position=(2**63),
+            )
+
+        handler_calls = 0
+
+        def handler(_transaction: ProjectionTransaction, _event: UpcastedEvent) -> None:
+            nonlocal handler_calls
+            handler_calls += 1
+
+        too_far = UpcastedEvent(
+            StoredEvent(
+                DomainEvent(
+                    "session:s1",
+                    "task.created",
+                    {},
+                    "user",
+                    event_id="evt-too-far",
+                ),
+                sequence=1,
+                global_position=(2**63),
+            ),
+            {},
+            1,
+            1,
+        )
+        with self.assertRaisesRegex(ValueError, "64-bit SQLite integer"):
+            self.store.apply_event(
+                lease,
+                expected_position=0,
+                event=too_far,
+                handler=handler,
+            )
+        long_id = UpcastedEvent(
+            StoredEvent(
+                DomainEvent(
+                    "session:s1",
+                    "task.created",
+                    {},
+                    "user",
+                    event_id=overlong,
+                ),
+                sequence=1,
+                global_position=1,
+            ),
+            {},
+            1,
+            1,
+        )
+        with self.assertRaises(ValueError):
+            self.store.apply_event(
+                lease,
+                expected_position=0,
+                event=long_id,
+                handler=handler,
+            )
+        self.assertEqual(handler_calls, 0)
 
     def test_offset_survives_close_and_reopen_on_existing_database(self) -> None:
         lease = self.store.claim("task-list", "worker-a", lease_seconds=30)

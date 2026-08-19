@@ -31,6 +31,9 @@ MAX_EVENT_PAYLOAD_DEPTH = 64
 MAX_EVENT_PAYLOAD_NODES = 10_000
 """Maximum values and containers visited while copying one event payload."""
 
+MAX_PROJECTION_IDENTIFIER_LENGTH = 255
+"""Maximum stored length for projection names, owner IDs, and event IDs."""
+
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
 
 
@@ -98,6 +101,10 @@ class ProjectionOffsetError(RuntimeError):
     """Base class for durable projection ownership or offset failures."""
 
 
+class ProjectionIntegrityError(ProjectionOffsetError):
+    """Raised when persisted projection state violates its strict data contract."""
+
+
 class ProjectionLeaseConflictError(ProjectionOffsetError):
     """Raised when another owner still holds the projection lease."""
 
@@ -152,6 +159,16 @@ class ProjectionApplyResult:
 
     applied: bool
     offset: ProjectionOffset
+
+
+@dataclass(frozen=True)
+class _ProjectionReceipt:
+    """Strictly decoded durable deduplication receipt."""
+
+    projection_name: str
+    event_id: str
+    global_position: int
+    applied_at: str
 
 
 @dataclass(frozen=True)
@@ -794,15 +811,35 @@ class SQLiteProjectionOffsetStore:
 
     @staticmethod
     def _validate_name(value: str, field_name: str) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"{field_name} is required")
+        if type(value) is not str or not value or value != value.strip():
+            raise ValueError(f"{field_name} must be non-empty text without edge whitespace")
+        if len(value) > MAX_PROJECTION_IDENTIFIER_LENGTH:
+            raise ValueError(f"{field_name} exceeds {MAX_PROJECTION_IDENTIFIER_LENGTH} characters")
         return value
 
-    @staticmethod
-    def _validate_position(value: int, field_name: str) -> int:
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise ValueError(f"{field_name} must be a non-negative integer")
+    @classmethod
+    def _validate_position(cls, value: int, field_name: str) -> int:
+        if type(value) is not int or not 0 <= value <= cls._MAX_SQLITE_INTEGER:
+            raise ValueError(f"{field_name} must be a non-negative 64-bit SQLite integer")
         return value
+
+    @classmethod
+    def _validate_lease(cls, lease: ProjectionLease) -> ProjectionLease:
+        if type(lease) is not ProjectionLease:
+            raise TypeError("lease must be a ProjectionLease")
+        cls._validate_name(lease.projection_name, "lease projection_name")
+        cls._validate_name(lease.owner_id, "lease owner_id")
+        if type(lease.owner_epoch) is not int or not (
+            1 <= lease.owner_epoch <= cls._MAX_SQLITE_INTEGER
+        ):
+            raise ValueError("lease owner_epoch must be a positive 64-bit SQLite integer")
+        normalized_deadline = cls._normalize_timestamp(
+            lease.lease_expires_at,
+            "lease lease_expires_at",
+        )
+        if normalized_deadline != lease.lease_expires_at:
+            raise ValueError("lease lease_expires_at must be canonical UTC")
+        return lease
 
     @staticmethod
     def _normalize_timestamp(value: str, field_name: str) -> str:
@@ -832,15 +869,134 @@ class SQLiteProjectionOffsetStore:
         return self._normalize_timestamp(self._clock(), "clock")
 
     @staticmethod
-    def _row_to_offset(row: sqlite3.Row) -> ProjectionOffset:
-        return ProjectionOffset(
-            projection_name=str(row["projection_name"]),
-            last_global_position=int(row["last_global_position"]),
-            owner_id=str(row["owner_id"]),
-            owner_epoch=int(row["owner_epoch"]),
-            lease_expires_at=str(row["lease_expires_at"]),
-            updated_at=str(row["updated_at"]),
+    def _persisted_text(value: object, field_name: str, *, maximum: int) -> str:
+        if type(value) is not str:
+            raise ProjectionIntegrityError(f"persisted {field_name} must be text")
+        if not value or value != value.strip():
+            raise ProjectionIntegrityError(
+                f"persisted {field_name} must be non-empty without edge whitespace"
+            )
+        if len(value) > maximum:
+            raise ProjectionIntegrityError(f"persisted {field_name} exceeds {maximum} characters")
+        return value
+
+    @classmethod
+    def _persisted_identifier(cls, value: object, field_name: str) -> str:
+        return cls._persisted_text(
+            value,
+            field_name,
+            maximum=MAX_PROJECTION_IDENTIFIER_LENGTH,
         )
+
+    @classmethod
+    def _persisted_integer(
+        cls,
+        value: object,
+        field_name: str,
+        *,
+        minimum: int,
+    ) -> int:
+        if type(value) is not int:
+            raise ProjectionIntegrityError(f"persisted {field_name} must be an integer")
+        if not minimum <= value <= cls._MAX_SQLITE_INTEGER:
+            raise ProjectionIntegrityError(
+                f"persisted {field_name} must be between {minimum} and {cls._MAX_SQLITE_INTEGER}"
+            )
+        return value
+
+    @classmethod
+    def _persisted_timestamp(cls, value: object, field_name: str) -> str:
+        timestamp = cls._persisted_text(value, field_name, maximum=32)
+        try:
+            normalized = cls._normalize_timestamp(timestamp, field_name)
+        except ValueError as exc:
+            raise ProjectionIntegrityError(
+                f"persisted {field_name} must be a valid canonical UTC timestamp"
+            ) from exc
+        if timestamp != normalized:
+            raise ProjectionIntegrityError(
+                f"persisted {field_name} must be a canonical UTC timestamp"
+            )
+        return timestamp
+
+    @classmethod
+    def _row_to_offset(cls, row: sqlite3.Row) -> ProjectionOffset:
+        try:
+            projection_name = cls._persisted_identifier(
+                row["projection_name"],
+                "projection_name",
+            )
+            last_global_position = cls._persisted_integer(
+                row["last_global_position"],
+                "last_global_position",
+                minimum=0,
+            )
+            owner_id = cls._persisted_identifier(row["owner_id"], "owner_id")
+            owner_epoch = cls._persisted_integer(
+                row["owner_epoch"],
+                "owner_epoch",
+                minimum=1,
+            )
+            lease_expires_at = cls._persisted_timestamp(
+                row["lease_expires_at"],
+                "lease_expires_at",
+            )
+            updated_at = cls._persisted_timestamp(row["updated_at"], "updated_at")
+        except ProjectionIntegrityError:
+            raise
+        except (IndexError, KeyError, TypeError) as exc:
+            raise ProjectionIntegrityError("persisted projection offset row is incomplete") from exc
+        return ProjectionOffset(
+            projection_name=projection_name,
+            last_global_position=last_global_position,
+            owner_id=owner_id,
+            owner_epoch=owner_epoch,
+            lease_expires_at=lease_expires_at,
+            updated_at=updated_at,
+        )
+
+    @classmethod
+    def _row_to_receipt(cls, row: sqlite3.Row) -> _ProjectionReceipt:
+        try:
+            projection_name = cls._persisted_identifier(
+                row["projection_name"],
+                "receipt projection_name",
+            )
+            event_id = cls._persisted_identifier(row["event_id"], "receipt event_id")
+            global_position = cls._persisted_integer(
+                row["global_position"],
+                "receipt global_position",
+                minimum=1,
+            )
+            applied_at = cls._persisted_timestamp(
+                row["applied_at"],
+                "receipt applied_at",
+            )
+        except ProjectionIntegrityError:
+            raise
+        except (IndexError, KeyError, TypeError) as exc:
+            raise ProjectionIntegrityError(
+                "persisted projection receipt row is incomplete"
+            ) from exc
+        return _ProjectionReceipt(
+            projection_name=projection_name,
+            event_id=event_id,
+            global_position=global_position,
+            applied_at=applied_at,
+        )
+
+    @classmethod
+    def _offset_for_projection(
+        cls,
+        row: sqlite3.Row,
+        projection_name: str,
+    ) -> ProjectionOffset:
+        offset = cls._row_to_offset(row)
+        if offset.projection_name != projection_name:
+            raise ProjectionIntegrityError(
+                "persisted projection offset identity contradicts its lookup"
+            )
+        return offset
 
     def load(self, projection_name: str) -> ProjectionOffset:
         """Read a checkpoint; an unseen projection has the virtual offset zero."""
@@ -853,7 +1009,7 @@ class SQLiteProjectionOffsetStore:
             ).fetchone()
         if row is None:
             return ProjectionOffset(projection_name, 0, None, 0, None, None)
-        return self._row_to_offset(row)
+        return self._offset_for_projection(row, projection_name)
 
     def claim(
         self,
@@ -885,13 +1041,18 @@ class SQLiteProjectionOffsetStore:
                     (projection_name, owner_id, epoch, deadline, now),
                 )
             else:
-                persisted_owner = str(row["owner_id"])
-                persisted_deadline = str(row["lease_expires_at"])
+                offset = self._offset_for_projection(row, projection_name)
+                persisted_owner = offset.owner_id
+                persisted_deadline = offset.lease_expires_at
+                if persisted_owner is None or persisted_deadline is None:
+                    raise ProjectionIntegrityError(
+                        "persisted projection lease metadata is incomplete"
+                    )
                 if self._is_after(persisted_deadline, now) and persisted_owner != owner_id:
                     raise ProjectionLeaseConflictError(
                         f"projection {projection_name} is leased by another owner"
                     )
-                previous_epoch = int(row["owner_epoch"])
+                previous_epoch = offset.owner_epoch
                 if previous_epoch >= self._MAX_SQLITE_INTEGER:
                     raise ProjectionOffsetError("projection owner epoch is exhausted")
                 epoch = previous_epoch + 1
@@ -913,15 +1074,31 @@ class SQLiteProjectionOffsetStore:
     ) -> ProjectionLease:
         """Extend a still-live lease without changing its fencing epoch."""
 
+        lease = self._validate_lease(lease)
         with self._transaction() as connection:
             now = self._now()
             deadline = self._lease_deadline(now, lease_seconds)
+            row = connection.execute(
+                "SELECT * FROM projection_offsets WHERE projection_name = ?",
+                (lease.projection_name,),
+            ).fetchone()
+            if row is None:
+                raise ProjectionLeaseLostError("projection lease does not exist")
+            offset = self._offset_for_projection(row, lease.projection_name)
+            persisted_deadline = offset.lease_expires_at
+            if (
+                offset.owner_id != lease.owner_id
+                or offset.owner_epoch != lease.owner_epoch
+                or persisted_deadline is None
+                or not self._is_after(persisted_deadline, now)
+            ):
+                raise ProjectionLeaseLostError("projection lease is stale or expired")
             cursor = connection.execute(
                 """
                 UPDATE projection_offsets
                 SET lease_expires_at = ?, updated_at = ?
                 WHERE projection_name = ? AND owner_id = ? AND owner_epoch = ?
-                  AND julianday(lease_expires_at) > julianday(?)
+                  AND lease_expires_at = ?
                 """,
                 (
                     deadline,
@@ -929,7 +1106,7 @@ class SQLiteProjectionOffsetStore:
                     lease.projection_name,
                     lease.owner_id,
                     lease.owner_epoch,
-                    now,
+                    persisted_deadline,
                 ),
             )
             if cursor.rowcount != 1:
@@ -950,6 +1127,7 @@ class SQLiteProjectionOffsetStore:
     ) -> ProjectionOffset:
         """Monotonically advance an offset using owner-epoch and position CAS."""
 
+        lease = self._validate_lease(lease)
         expected_position = self._validate_position(expected_position, "expected_position")
         new_position = self._validate_position(new_position, "new_position")
         if new_position <= expected_position:
@@ -962,13 +1140,16 @@ class SQLiteProjectionOffsetStore:
             ).fetchone()
             if row is None:
                 raise ProjectionLeaseLostError("projection lease does not exist")
+            offset = self._offset_for_projection(row, lease.projection_name)
+            persisted_deadline = offset.lease_expires_at
             if (
-                str(row["owner_id"]) != lease.owner_id
-                or int(row["owner_epoch"]) != lease.owner_epoch
-                or not self._is_after(str(row["lease_expires_at"]), now)
+                offset.owner_id != lease.owner_id
+                or offset.owner_epoch != lease.owner_epoch
+                or persisted_deadline is None
+                or not self._is_after(persisted_deadline, now)
             ):
                 raise ProjectionLeaseLostError("projection lease is stale or expired")
-            if int(row["last_global_position"]) != expected_position:
+            if offset.last_global_position != expected_position:
                 raise ProjectionOffsetConflictError("projection offset compare-and-swap conflict")
             connection.execute(
                 """
@@ -992,7 +1173,7 @@ class SQLiteProjectionOffsetStore:
             ).fetchone()
             if updated is None:  # pragma: no cover - protected by the transaction
                 raise ProjectionOffsetError("projection offset disappeared")
-            return self._row_to_offset(updated)
+            return self._offset_for_projection(updated, lease.projection_name)
 
     def apply_event(
         self,
@@ -1009,16 +1190,15 @@ class SQLiteProjectionOffsetStore:
         offset all roll back. Re-presenting an already receipted event is a no-op.
         """
 
+        lease = self._validate_lease(lease)
         expected_position = self._validate_position(expected_position, "expected_position")
         if not callable(handler):
             raise TypeError("handler must be callable")
         stored_event = event.stored_event
         position = stored_event.global_position
-        if isinstance(position, bool) or not isinstance(position, int) or position <= 0:
-            raise ValueError("event global_position must be a positive integer")
-        event_id = stored_event.event.event_id
-        if not isinstance(event_id, str) or not event_id.strip():
-            raise ValueError("event_id is required")
+        if type(position) is not int or not 1 <= position <= self._MAX_SQLITE_INTEGER:
+            raise ValueError("event global_position must be a positive 64-bit SQLite integer")
+        event_id = self._validate_name(stored_event.event.event_id, "event_id")
 
         with self._transaction() as connection:
             now = self._now()
@@ -1028,28 +1208,38 @@ class SQLiteProjectionOffsetStore:
             ).fetchone()
             if row is None:
                 raise ProjectionLeaseLostError("projection lease does not exist")
+            offset = self._offset_for_projection(row, lease.projection_name)
+            persisted_deadline = offset.lease_expires_at
             if (
-                str(row["owner_id"]) != lease.owner_id
-                or int(row["owner_epoch"]) != lease.owner_epoch
-                or not self._is_after(str(row["lease_expires_at"]), now)
+                offset.owner_id != lease.owner_id
+                or offset.owner_epoch != lease.owner_epoch
+                or persisted_deadline is None
+                or not self._is_after(persisted_deadline, now)
             ):
                 raise ProjectionLeaseLostError("projection lease is stale or expired")
 
-            persisted_position = int(row["last_global_position"])
+            persisted_position = offset.last_global_position
             receipt = connection.execute(
                 """
-                SELECT global_position FROM projection_receipts
+                SELECT * FROM projection_receipts
                 WHERE projection_name = ? AND event_id = ?
                 """,
                 (lease.projection_name, event_id),
             ).fetchone()
             if receipt is not None:
-                receipt_position = int(receipt["global_position"])
-                if receipt_position != position or persisted_position < position:
+                decoded_receipt = self._row_to_receipt(receipt)
+                if (
+                    decoded_receipt.projection_name != lease.projection_name
+                    or decoded_receipt.event_id != event_id
+                ):
+                    raise ProjectionIntegrityError(
+                        "persisted projection receipt identity contradicts its lookup"
+                    )
+                if decoded_receipt.global_position != position or persisted_position < position:
                     raise ProjectionReceiptConflictError(
                         "projection receipt contradicts the event log or checkpoint"
                     )
-                return ProjectionApplyResult(False, self._row_to_offset(row))
+                return ProjectionApplyResult(False, offset)
 
             if persisted_position != expected_position:
                 raise ProjectionOffsetConflictError("projection offset compare-and-swap conflict")
@@ -1097,19 +1287,38 @@ class SQLiteProjectionOffsetStore:
             ).fetchone()
             if updated is None:  # pragma: no cover - protected by the transaction
                 raise ProjectionOffsetError("projection offset disappeared")
-            return ProjectionApplyResult(True, self._row_to_offset(updated))
+            return ProjectionApplyResult(
+                True,
+                self._offset_for_projection(updated, lease.projection_name),
+            )
 
     def release(self, lease: ProjectionLease) -> None:
         """Expire a live lease immediately; stale releases fail closed."""
 
+        lease = self._validate_lease(lease)
         with self._transaction() as connection:
             now = self._now()
+            row = connection.execute(
+                "SELECT * FROM projection_offsets WHERE projection_name = ?",
+                (lease.projection_name,),
+            ).fetchone()
+            if row is None:
+                raise ProjectionLeaseLostError("projection lease does not exist")
+            offset = self._offset_for_projection(row, lease.projection_name)
+            persisted_deadline = offset.lease_expires_at
+            if (
+                offset.owner_id != lease.owner_id
+                or offset.owner_epoch != lease.owner_epoch
+                or persisted_deadline is None
+                or not self._is_after(persisted_deadline, now)
+            ):
+                raise ProjectionLeaseLostError("projection lease is stale or expired")
             cursor = connection.execute(
                 """
                 UPDATE projection_offsets
                 SET lease_expires_at = ?, updated_at = ?
                 WHERE projection_name = ? AND owner_id = ? AND owner_epoch = ?
-                  AND julianday(lease_expires_at) > julianday(?)
+                  AND lease_expires_at = ?
                 """,
                 (
                     now,
@@ -1117,7 +1326,7 @@ class SQLiteProjectionOffsetStore:
                     lease.projection_name,
                     lease.owner_id,
                     lease.owner_epoch,
-                    now,
+                    persisted_deadline,
                 ),
             )
             if cursor.rowcount != 1:
