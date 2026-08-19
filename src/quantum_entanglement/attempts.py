@@ -39,10 +39,15 @@ _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
 )
 _MAX_ERROR_LENGTH = 4_096
+_MAX_SQLITE_INTEGER = (1 << 63) - 1
 
 
 class InvocationConflictError(RuntimeError):
     """Raised when an idempotency boundary is reused for different work."""
+
+
+class InvocationIntegrityError(RuntimeError):
+    """Raised when persisted invocation state violates its durable contract."""
 
 
 class InvocationStatus(str, Enum):
@@ -113,6 +118,55 @@ def _stored_error(error: str) -> str:
 
 def _lease_token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _persisted_integer(
+    value: Any,
+    name: str,
+    *,
+    minimum: int = 0,
+    maximum: int = _MAX_SQLITE_INTEGER,
+) -> int:
+    if type(value) is not int:
+        raise TypeError(f"persisted {name} must use SQLite INTEGER storage")
+    if not minimum <= value <= maximum:
+        raise ValueError(f"persisted {name} is outside its supported range")
+    return value
+
+
+def _persisted_text(value: Any, name: str, *, required: bool = True) -> str:
+    if type(value) is not str:
+        raise TypeError(f"persisted {name} must use SQLite TEXT storage")
+    if required and not value.strip():
+        raise ValueError(f"persisted {name} must not be blank")
+    return value
+
+
+def _persisted_optional_text(value: Any, name: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _persisted_text(value, name)
+
+
+def _persisted_timestamp(value: Any, name: str) -> str:
+    timestamp = _persisted_text(value, name)
+    normalized = _normalize_timestamp(timestamp, f"persisted {name}")
+    if timestamp != normalized:
+        raise ValueError(f"persisted {name} is not canonical UTC")
+    return timestamp
+
+
+def _persisted_optional_timestamp(value: Any, name: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _persisted_timestamp(value, name)
+
+
+def _persisted_digest(value: Any, name: str) -> str:
+    digest = _persisted_text(value, name)
+    if not _SHA256_PATTERN.fullmatch(digest):
+        raise ValueError(f"persisted {name} is not canonical SHA-256")
+    return digest
 
 
 @dataclass(frozen=True)
@@ -336,65 +390,142 @@ class SQLiteInvocationAttemptStore:
 
     @staticmethod
     def _row_to_job(row: sqlite3.Row) -> InvocationJob:
-        return InvocationJob(
-            invocation_id=row["invocation_id"],
-            session_id=row["session_id"],
-            plan_id=row["plan_id"],
-            task_id=row["task_id"],
-            agent_id=row["agent_id"],
-            idempotency_key=row["idempotency_key"],
-            payload_digest=row["payload_digest"],
-            priority=int(row["priority"]),
-            status=InvocationStatus(row["status"]),
-            max_attempts=int(row["max_attempts"]),
-            attempts_started=int(row["attempts_started"]),
-            lease_epoch=int(row["lease_epoch"]),
-            requested_available_at=row["requested_available_at"],
-            available_at=row["available_at"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            lease_owner=row["lease_owner"],
-            lease_expires_at=row["lease_expires_at"],
-            result_ref=row["result_ref"],
-            last_error=row["last_error"],
-            finished_at=row["finished_at"],
-        )
+        try:
+            status = InvocationStatus(_persisted_text(row["status"], "invocation status"))
+            max_attempts = _persisted_integer(
+                row["max_attempts"], "invocation max_attempts", minimum=1
+            )
+            attempts_started = _persisted_integer(
+                row["attempts_started"],
+                "invocation attempts_started",
+                maximum=max_attempts,
+            )
+            lease_epoch = _persisted_integer(row["lease_epoch"], "invocation lease_epoch")
+            if lease_epoch < attempts_started:
+                raise ValueError("persisted invocation lease_epoch precedes attempts_started")
+
+            lease_owner = _persisted_optional_text(row["lease_owner"], "invocation lease_owner")
+            raw_lease_digest = row["lease_token_digest"]
+            lease_digest = (
+                None
+                if raw_lease_digest is None
+                else _persisted_digest(raw_lease_digest, "invocation lease_token_digest")
+            )
+            lease_expires_at = _persisted_optional_timestamp(
+                row["lease_expires_at"], "invocation lease_expires_at"
+            )
+            heartbeat_at = _persisted_optional_timestamp(
+                row["heartbeat_at"], "invocation heartbeat_at"
+            )
+            running_lease = (
+                lease_owner is not None
+                and lease_digest is not None
+                and lease_expires_at is not None
+                and heartbeat_at is not None
+            )
+            if (status is InvocationStatus.RUNNING) != running_lease:
+                raise ValueError("persisted invocation lease fields contradict status")
+
+            finished_at = _persisted_optional_timestamp(
+                row["finished_at"], "invocation finished_at"
+            )
+            is_terminal = status in {
+                InvocationStatus.SUCCEEDED,
+                InvocationStatus.FAILED,
+                InvocationStatus.CANCELED,
+            }
+            if is_terminal != (finished_at is not None):
+                raise ValueError("persisted invocation finished_at contradicts status")
+
+            last_error = _persisted_optional_text(row["last_error"], "invocation last_error")
+            if last_error is not None and len(last_error) > _MAX_ERROR_LENGTH:
+                raise ValueError("persisted invocation last_error exceeds its supported length")
+            return InvocationJob(
+                invocation_id=_persisted_text(row["invocation_id"], "invocation_id"),
+                session_id=_persisted_text(row["session_id"], "invocation session_id"),
+                plan_id=_persisted_text(row["plan_id"], "invocation plan_id"),
+                task_id=_persisted_text(row["task_id"], "invocation task_id"),
+                agent_id=_persisted_text(row["agent_id"], "invocation agent_id"),
+                idempotency_key=_persisted_text(
+                    row["idempotency_key"], "invocation idempotency_key"
+                ),
+                payload_digest=_persisted_digest(
+                    row["payload_digest"], "invocation payload_digest"
+                ),
+                priority=_persisted_integer(row["priority"], "invocation priority", maximum=100),
+                status=status,
+                max_attempts=max_attempts,
+                attempts_started=attempts_started,
+                lease_epoch=lease_epoch,
+                requested_available_at=_persisted_optional_timestamp(
+                    row["requested_available_at"], "invocation requested_available_at"
+                ),
+                available_at=_persisted_timestamp(row["available_at"], "invocation available_at"),
+                created_at=_persisted_timestamp(row["created_at"], "invocation created_at"),
+                updated_at=_persisted_timestamp(row["updated_at"], "invocation updated_at"),
+                lease_owner=lease_owner,
+                lease_expires_at=lease_expires_at,
+                result_ref=_persisted_optional_text(row["result_ref"], "invocation result_ref"),
+                last_error=last_error,
+                finished_at=finished_at,
+            )
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise InvocationIntegrityError("persisted invocation job is malformed") from exc
 
     @staticmethod
     def _row_to_attempt(row: sqlite3.Row) -> InvocationAttempt:
-        return InvocationAttempt(
-            attempt_id=row["attempt_id"],
-            invocation_id=row["invocation_id"],
-            attempt_number=int(row["attempt_number"]),
-            lease_epoch=int(row["lease_epoch"]),
-            worker_id=row["worker_id"],
-            lease_token_digest=row["lease_token_digest"],
-            status=AttemptStatus(row["status"]),
-            started_at=row["started_at"],
-            heartbeat_at=row["heartbeat_at"],
-            lease_expires_at=row["lease_expires_at"],
-            finished_at=row["finished_at"],
-            error=row["error"],
-            result_ref=row["result_ref"],
-        )
+        try:
+            status = AttemptStatus(_persisted_text(row["status"], "attempt status"))
+            attempt_number = _persisted_integer(row["attempt_number"], "attempt number", minimum=1)
+            lease_epoch = _persisted_integer(row["lease_epoch"], "attempt lease_epoch", minimum=1)
+            if lease_epoch < attempt_number:
+                raise ValueError("persisted attempt lease_epoch precedes attempt_number")
+            finished_at = _persisted_optional_timestamp(row["finished_at"], "attempt finished_at")
+            if (status is AttemptStatus.RUNNING) != (finished_at is None):
+                raise ValueError("persisted attempt finished_at contradicts status")
+            error = _persisted_optional_text(row["error"], "attempt error")
+            if error is not None and len(error) > _MAX_ERROR_LENGTH:
+                raise ValueError("persisted attempt error exceeds its supported length")
+            return InvocationAttempt(
+                attempt_id=_persisted_text(row["attempt_id"], "attempt_id"),
+                invocation_id=_persisted_text(row["invocation_id"], "attempt invocation_id"),
+                attempt_number=attempt_number,
+                lease_epoch=lease_epoch,
+                worker_id=_persisted_text(row["worker_id"], "attempt worker_id"),
+                lease_token_digest=_persisted_digest(
+                    row["lease_token_digest"], "attempt lease_token_digest"
+                ),
+                status=status,
+                started_at=_persisted_timestamp(row["started_at"], "attempt started_at"),
+                heartbeat_at=_persisted_timestamp(row["heartbeat_at"], "attempt heartbeat_at"),
+                lease_expires_at=_persisted_timestamp(
+                    row["lease_expires_at"], "attempt lease_expires_at"
+                ),
+                finished_at=finished_at,
+                error=error,
+                result_ref=_persisted_optional_text(row["result_ref"], "attempt result_ref"),
+            )
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise InvocationIntegrityError("persisted invocation attempt is malformed") from exc
 
     @staticmethod
     def _existing_matches(row: sqlite3.Row, spec: InvocationJobSpec) -> bool:
+        existing = SQLiteInvocationAttemptStore._row_to_job(row)
         requested_available_at = (
             _normalize_timestamp(spec.available_at, "available_at")
             if spec.available_at is not None
             else None
         )
         return (
-            row["session_id"] == spec.session_id
-            and row["plan_id"] == spec.plan_id
-            and row["task_id"] == spec.task_id
-            and row["agent_id"] == spec.agent_id
-            and row["idempotency_key"] == spec.idempotency_key
-            and row["payload_digest"] == spec.payload_digest
-            and int(row["priority"]) == spec.priority
-            and int(row["max_attempts"]) == spec.max_attempts
-            and row["requested_available_at"] == requested_available_at
+            existing.session_id == spec.session_id
+            and existing.plan_id == spec.plan_id
+            and existing.task_id == spec.task_id
+            and existing.agent_id == spec.agent_id
+            and existing.idempotency_key == spec.idempotency_key
+            and existing.payload_digest == spec.payload_digest
+            and existing.priority == spec.priority
+            and existing.max_attempts == spec.max_attempts
+            and existing.requested_available_at == requested_available_at
         )
 
     def enqueue(self, spec: InvocationJobSpec) -> InvocationJob:
@@ -946,6 +1077,7 @@ __all__ = [
     "AttemptStatus",
     "InvocationAttempt",
     "InvocationConflictError",
+    "InvocationIntegrityError",
     "InvocationJob",
     "InvocationJobSpec",
     "InvocationLease",

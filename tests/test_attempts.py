@@ -14,6 +14,7 @@ from unittest.mock import patch
 from quantum_entanglement.attempts import (
     AttemptStatus,
     InvocationConflictError,
+    InvocationIntegrityError,
     InvocationJobSpec,
     InvocationStatus,
     MigrationDriftError,
@@ -407,6 +408,50 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.store.claim("invocation-1", "worker", lease_seconds=seconds)
         self.assertEqual(self.store.get("invocation-1").status, InvocationStatus.QUEUED)
+
+    def test_persisted_job_types_and_timestamps_fail_closed(self):
+        self.store.enqueue(job_spec())
+        corruptions = (
+            ("priority", 50.5),
+            ("available_at", T0),
+            ("payload_digest", b"0" * 64),
+        )
+        for column, value in corruptions:
+            with self.subTest(column=column):
+                self.store._connection.execute(
+                    f"UPDATE invocation_jobs SET {column} = ? WHERE invocation_id = ?",
+                    (value, "invocation-1"),
+                )
+                with self.assertRaisesRegex(
+                    InvocationIntegrityError,
+                    "persisted invocation job is malformed",
+                ):
+                    self.store.get("invocation-1")
+                self.store._connection.execute(
+                    f"UPDATE invocation_jobs SET {column} = ? WHERE invocation_id = ?",
+                    (
+                        {
+                            "priority": 50,
+                            "available_at": "2026-08-20T00:00:00.000000Z",
+                            "payload_digest": job_spec().payload_digest,
+                        }[column],
+                        "invocation-1",
+                    ),
+                )
+
+    def test_persisted_attempt_types_fail_with_stable_integrity_error(self):
+        self.store.enqueue(job_spec())
+        self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.store._connection.execute(
+            "UPDATE invocation_attempts SET attempt_number = ? WHERE invocation_id = ?",
+            (b"1", "invocation-1"),
+        )
+
+        with self.assertRaisesRegex(
+            InvocationIntegrityError,
+            "persisted invocation attempt is malformed",
+        ):
+            self.store.attempts("invocation-1")
 
 
 if __name__ == "__main__":
