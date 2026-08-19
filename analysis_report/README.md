@@ -27,6 +27,11 @@
 
 ## 已归档截图
 
+完整 SHA-256、尺寸、来源、证据等级和隐私边界见
+[`screenshots/README.md`](screenshots/README.md) 与
+[`screenshots/manifest.json`](screenshots/manifest.json)。十张图均为受限、未脱敏原件，只能
+进入本项目私有仓库和用户私有 Notion，不得公开分发。
+
 | 文件 | 内容 | 采集方式 |
 |---|---|---|
 | `screenshots/00_request_feishu.png` | 用户提供的任务原始截图 | 原始附件副本 |
