@@ -51,6 +51,7 @@ _MAX_FINDINGS_PER_COMPONENT = 256
 _MAX_HASHES_PER_COMPONENT = 512
 _MAX_ALIASES = 64
 _MAX_FIXED_VERSIONS = 64
+_MAX_JSON_INTEGER_DIGITS = 19
 _MAX_INTERVAL_SECONDS = 366 * 24 * 60 * 60
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _GIT_HASH_PATTERN = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -262,6 +263,16 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _parse_json_integer(value: str) -> int:
+    digits = value[1:] if value.startswith("-") else value
+    if not digits or len(digits) > _MAX_JSON_INTEGER_DIGITS:
+        _fail("risk_json_invalid")
+    try:
+        return int(value)
+    except ValueError:
+        _fail("risk_json_invalid")
+
+
 def _parse_canonical_json(value: bytes, *, limit: int, code: str) -> dict[str, object]:
     if not value or len(value) > limit:
         _fail(code)
@@ -270,6 +281,8 @@ def _parse_canonical_json(value: bytes, *, limit: int, code: str) -> dict[str, o
             value,
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=lambda _: _fail("risk_json_invalid"),
+            parse_float=lambda _: _fail("risk_json_invalid"),
+            parse_int=_parse_json_integer,
         )
     except (DependencyRiskError, UnicodeDecodeError, ValueError, RecursionError):
         _fail("risk_json_invalid")

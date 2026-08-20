@@ -90,6 +90,10 @@ class DependencyRiskPolicyTests(unittest.TestCase):
                 b'{"schemaVersion":' + (b"9" * 5000) + b"}\n"
             ),
         )
+        self.assert_code(
+            "risk_json_invalid",
+            lambda: load_dependency_risk_policy_bytes(b'{"schemaVersion":1.0}\n'),
+        )
 
     def test_thresholds_are_known_and_fix_threshold_cannot_be_weaker(self):
         for block_at, block_with_fix in (("urgent", "medium"), ("medium", "high")):
