@@ -195,7 +195,10 @@ history is partial-restore evidence: first claim raises an integrity error and i
 requires that no attempt row exists. The same decoder rejects running or succeeded/failed
 jobs without an attempt, non-succeeded jobs with `result_ref`, partial lease fields on any
 non-running job, and job/attempt causal timestamps that move backward or collapse an active
-lease to zero duration, so the claim API cannot normalize contradictory restored state.
+lease to zero duration. A fresh zero-attempt job cannot carry `last_error`; failed or expired
+attempt errors must be present and exactly match the current queued/failed job, while running or
+succeeded attempts cannot carry an error. The claim and recovery APIs therefore cannot normalize
+contradictory restored state or silently discard a prior-effect warning.
 
 The attempt-store write boundary shares the coordinator's 4,096-byte identity/worker and
 16,384-byte result-reference limits and rejects C0/DEL control characters before opening a
