@@ -728,6 +728,51 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         second.event_store.close()
 
+    async def test_session_recovery_streams_pages_into_candidate_replay(self):
+        async def handler(invocation):
+            return AgentResult("done")
+
+        plan = WorkflowPlan(
+            "recover-streaming",
+            "流式恢复",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-streaming",
+        )
+        first = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        first.register_agent(registration("worker", handler))
+        self.assertTrue((await first.run(plan)).completed)
+        first.event_store.close()
+
+        second = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        second.register_agent(registration("worker", handler))
+        operations = []
+        original_page_reader = second.event_store.read_stream_page
+        original_transition = OrchestratorKernel._apply_recovered_transition
+
+        def read_page(*args, **kwargs):
+            operations.append(("read", kwargs["after_sequence"]))
+            return original_page_reader(*args, **kwargs)
+
+        def apply_transition(*args, **kwargs):
+            operations.append(("apply", args[1].sequence))
+            return original_transition(*args, **kwargs)
+
+        with patch.object(runtime_module, "_RECOVERY_PAGE_LIMIT", 2):
+            with patch.object(second.event_store, "read_stream_page", side_effect=read_page):
+                with patch.object(
+                    OrchestratorKernel,
+                    "_apply_recovered_transition",
+                    side_effect=apply_transition,
+                ):
+                    recovered = await second.run(plan)
+
+        self.assertTrue(recovered.completed)
+        first_apply = next(index for index, item in enumerate(operations) if item[0] == "apply")
+        last_read = max(index for index, item in enumerate(operations) if item[0] == "read")
+        self.assertLess(first_apply, last_read)
+        second.event_store.close()
+
     async def test_session_recovery_probes_exact_limit_and_rejects_overflow(self):
         async def handler(invocation):
             return AgentResult("done")

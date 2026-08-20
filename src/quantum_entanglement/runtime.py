@@ -9,7 +9,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Mapping, Optional, Set, Tuple
+from typing import Any, Dict, Iterator, Mapping, Optional, Set, Tuple
 
 from .agent_runtime import (
     AgentHandler,
@@ -493,15 +493,17 @@ class OrchestratorKernel:
             raise SessionRecoveryError("session recovery event cannot be measured safely") from exc
         return encoded_bytes, nodes
 
-    def _read_session_events(self, stream_id: str) -> Tuple[StoredEvent, ...]:
+    def _iter_session_events(self, stream_id: str) -> Iterator[StoredEvent]:
+        """Yield a verified session history while retaining at most one decoded page."""
+
         after_sequence = 0
-        replayed: list[StoredEvent] = []
+        replayed = 0
         replayed_bytes = 0
         replayed_nodes = 0
-        while len(replayed) < _MAX_RECOVERY_EVENTS:
+        while replayed < _MAX_RECOVERY_EVENTS:
             page_limit = min(
                 _RECOVERY_PAGE_LIMIT,
-                _MAX_RECOVERY_EVENTS - len(replayed),
+                _MAX_RECOVERY_EVENTS - replayed,
             )
             page = self.event_store.read_stream_page(
                 stream_id,
@@ -515,7 +517,7 @@ class OrchestratorKernel:
                 requested_limit=page_limit,
             )
             if not page:
-                return tuple(replayed)
+                return
             for stored in page:
                 event_bytes, event_nodes = self._measure_recovery_event(stored)
                 if event_bytes > _MAX_RECOVERY_BYTES - replayed_bytes:
@@ -529,9 +531,10 @@ class OrchestratorKernel:
                     )
                 replayed_bytes += event_bytes
                 replayed_nodes += event_nodes
-            replayed.extend(page)
+                replayed += 1
+                yield stored
             if len(page) < page_limit:
-                return tuple(replayed)
+                return
 
         probe = self.event_store.read_stream_page(
             stream_id,
@@ -548,7 +551,6 @@ class OrchestratorKernel:
             raise SessionRecoveryError(
                 f"session recovery exceeds the {_MAX_RECOVERY_EVENTS}-event safety limit"
             )
-        return tuple(replayed)
 
     @staticmethod
     def _apply_recovered_transition(
@@ -660,65 +662,50 @@ class OrchestratorKernel:
         return plan
 
     @staticmethod
-    def _validate_recovered_task_manifest(
-        events: Tuple[StoredEvent, ...],
+    def _decode_recovered_task_creation(
+        stored: StoredEvent,
         *,
-        plan_event: StoredEvent,
         plan: WorkflowPlan,
-    ) -> None:
-        task_events = tuple(
-            stored for stored in events if stored.event.event_type == "task.created"
-        )
-        expected_task_ids = tuple(task.task_id for task in plan.tasks)
-        actual_task_ids: list[str] = []
+    ) -> str:
+        payload = stored.event.payload
+        if type(payload) is not dict:
+            raise SessionRecoveryError("task creation payload is invalid")
+        task_id = payload.get("taskId")
+        if type(task_id) is not str:
+            raise SessionRecoveryError("task creation payload is invalid")
         expected_by_id = {task.task_id: task for task in plan.tasks}
-        for stored in task_events:
-            payload = stored.event.payload
-            if type(payload) is not dict or type(payload.get("taskId")) is not str:
-                raise SessionRecoveryError("task creation payload is invalid")
-            task_id = payload["taskId"]
-            task = expected_by_id.get(task_id)
-            if task is None:
-                raise SessionRecoveryError("task creation event references an unknown task")
-            try:
-                actual_json = json.dumps(
-                    payload,
-                    allow_nan=False,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-                expected_json = json.dumps(
-                    task.to_dict(),
-                    allow_nan=False,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-            except (OverflowError, RecursionError, TypeError, ValueError) as exc:
-                raise SessionRecoveryError("task creation payload is invalid") from exc
-            if actual_json != expected_json:
-                raise SessionRecoveryError("task creation payload is not canonical")
+        task = expected_by_id.get(task_id)
+        if task is None:
+            raise SessionRecoveryError("task creation event references an unknown task")
+        try:
+            actual_json = json.dumps(
+                payload,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            expected_json = json.dumps(
+                task.to_dict(),
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (OverflowError, RecursionError, TypeError, ValueError) as exc:
+            raise SessionRecoveryError("task creation payload is invalid") from exc
+        if actual_json != expected_json:
+            raise SessionRecoveryError("task creation payload is not canonical")
 
-            event = stored.event
-            if (
-                event.actor_id != plan.initiated_by
-                or event.idempotency_key != f"task-created:{task_id}"
-                or event.correlation_id != (plan.correlation_id or plan.plan_id)
-                or event.causation_id is not None
-            ):
-                raise SessionRecoveryError("task creation event envelope is inconsistent")
-            actual_task_ids.append(task_id)
-
-        if tuple(actual_task_ids) != expected_task_ids:
-            raise SessionRecoveryError("task creation events do not exactly match the plan")
-        if task_events[0].sequence <= plan_event.sequence:
-            raise SessionRecoveryError("task creation events precede the workflow plan")
-        transition_sequences = tuple(
-            stored.sequence for stored in events if stored.event.event_type == "task.status.changed"
-        )
-        if transition_sequences and task_events[-1].sequence >= transition_sequences[0]:
-            raise SessionRecoveryError("task creation events overlap task transition history")
+        event = stored.event
+        if (
+            event.actor_id != plan.initiated_by
+            or event.idempotency_key != f"task-created:{task_id}"
+            or event.correlation_id != (plan.correlation_id or plan.plan_id)
+            or event.causation_id is not None
+        ):
+            raise SessionRecoveryError("task creation event envelope is inconsistent")
+        return task_id
 
     @staticmethod
     def _decode_recovered_approval(
@@ -856,30 +843,12 @@ class OrchestratorKernel:
 
         if requested_plan.session_id in self._plans:
             return
-        events = self._read_session_events(self._stream_id(requested_plan.session_id))
         created: Optional[StoredEvent] = None
-        for stored in events:
-            if stored.event.event_type != "workflow.plan.created":
-                continue
-            if created is not None:
-                raise SessionRecoveryError("session contains multiple workflow plan events")
-            created = stored
-        if created is None:
-            return
-        stored_plan = self._decode_recovered_plan(created)
-        self._validate_recovered_task_manifest(
-            events,
-            plan_event=created,
-            plan=stored_plan,
-        )
-        if stored_plan.plan_id != requested_plan.plan_id:
-            raise ValueError(
-                "stored workflow plan %s does not match requested plan %s"
-                % (stored_plan.plan_id, requested_plan.plan_id)
-            )
-        if stored_plan.to_dict() != requested_plan.to_dict():
-            raise ValueError("requested workflow content differs from the stored plan")
-        graph = TaskGraph(stored_plan.tasks)
+        stored_plan: Optional[WorkflowPlan] = None
+        graph: Optional[TaskGraph] = None
+        actual_task_ids: list[str] = []
+        saw_transition = False
+        pre_plan_state_event = False
         approval_requests: Dict[str, ApprovalRequest] = {}
         request_ids_by_task: Dict[str, str] = {}
         awaiting_request: Dict[str, int] = {}
@@ -887,9 +856,54 @@ class OrchestratorKernel:
             str,
             Tuple[str, TaskStatus, Optional[str], int],
         ] = {}
-        for stored in events:
+        for stored in self._iter_session_events(self._stream_id(requested_plan.session_id)):
             event = stored.event
+            if event.event_type == "workflow.plan.created":
+                if created is not None:
+                    raise SessionRecoveryError("session contains multiple workflow plan events")
+                created = stored
+                stored_plan = self._decode_recovered_plan(created)
+                if stored_plan.plan_id != requested_plan.plan_id:
+                    raise ValueError(
+                        "stored workflow plan %s does not match requested plan %s"
+                        % (stored_plan.plan_id, requested_plan.plan_id)
+                    )
+                if stored_plan.to_dict() != requested_plan.to_dict():
+                    raise ValueError("requested workflow content differs from the stored plan")
+                if pre_plan_state_event:
+                    raise SessionRecoveryError("session state events precede the workflow plan")
+                graph = TaskGraph(stored_plan.tasks)
+                continue
+
+            if event.event_type == "task.created":
+                if stored_plan is None:
+                    pre_plan_state_event = True
+                    continue
+                task_id = self._decode_recovered_task_creation(stored, plan=stored_plan)
+                if saw_transition:
+                    raise SessionRecoveryError(
+                        "task creation events overlap task transition history"
+                    )
+                actual_task_ids.append(task_id)
+                continue
+
+            if event.event_type not in {
+                "task.status.changed",
+                "approval.requested",
+                "approval.decided",
+            }:
+                continue
+            if stored_plan is None or graph is None:
+                pre_plan_state_event = True
+                continue
+
             if event.event_type == "task.status.changed":
+                saw_transition = True
+                expected_task_ids = tuple(task.task_id for task in stored_plan.tasks)
+                if len(actual_task_ids) >= len(expected_task_ids) and (
+                    tuple(actual_task_ids) != expected_task_ids
+                ):
+                    raise SessionRecoveryError("task creation events do not exactly match the plan")
                 payload = event.payload
                 pending_decision = None
                 if (
@@ -994,6 +1008,13 @@ class OrchestratorKernel:
                     stored.sequence,
                 )
 
+        if created is None:
+            return
+        if stored_plan is None or graph is None:
+            raise SessionRecoveryError("workflow plan recovery state is incomplete")
+        expected_task_ids = tuple(task.task_id for task in stored_plan.tasks)
+        if tuple(actual_task_ids) != expected_task_ids:
+            raise SessionRecoveryError("task creation events do not exactly match the plan")
         if awaiting_request:
             raise SessionRecoveryError("approval waiting transition has no request")
         if awaiting_decision_transition:
