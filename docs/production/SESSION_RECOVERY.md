@@ -20,11 +20,12 @@ corrupt last page therefore have the same fail-closed result: the caller receive
 
 Artifact references are attached only after that validation succeeds. The
 `ArtifactLedger` has its own startup replay contract; it is not made atomic with
-session recovery or task-result publication by this slice. In the integrated
-ledger, an artifact append uses global-position CAS against the observed ledger
-position and can reconcile only the exact idempotency point and event at the
-uniquely expected next position if an append wrapper raises after commit. A
-pre-commit failure never publishes the candidate artifact to the live ledger.
+session recovery or task-result publication by this slice. The baseline ledger
+uses expected session-stream sequence; the integrated advanced ledger preserves
+its stronger global-position CAS and exact idempotency lookup. Both profiles can
+reconcile only the exact event at the uniquely expected next durable position if
+an append wrapper raises after commit. A pre-commit failure never publishes the
+candidate artifact to the live ledger.
 
 ## Bounded page source
 
