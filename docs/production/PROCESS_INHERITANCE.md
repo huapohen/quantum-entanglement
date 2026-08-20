@@ -154,7 +154,8 @@ async cancellation；组件的 clean-rethrow 层也必须保留安全的 process
 
 - current-process identity 稳定与 exact primitive 类型；
 - registered at-fork hook 在 child 第一次 guard 前旋转 identity；
-- hook 之外的独立 PID drift fallback；
+- 动态模块加载时注入 `register_at_fork` 注册失败，并由独立 PID drift fallback 在真实 fork child
+  完成拒绝；
 - 同 PID epoch rotation 与 import reload 使旧 owner 失效；
 - 真实 fork child 拒绝 inherited owner，parent 随后仍可继续使用；
 - fork 时另一个线程持有无关 lock，child 在两秒门限内完成拒绝；
