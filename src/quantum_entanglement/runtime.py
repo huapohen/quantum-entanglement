@@ -839,30 +839,88 @@ class OrchestratorKernel:
     ) -> ApprovalRequest:
         if self._closing or self._closed:
             raise AgentRuntimeClosedError("orchestrator kernel is closing or closed")
-        request = self.approvals.decide(request_id, decision, actor_id, comment)
-        graph = self._graphs[request.session_id]
-        if decision == ApprovalDecision.APPROVE:
-            self._approved_tasks.add((request.session_id, request.task_id))
-            transition = graph.transition(request.task_id, TaskStatus.READY, comment)
-        elif decision == ApprovalDecision.REVISE:
-            self._approved_tasks.discard((request.session_id, request.task_id))
-            transition = graph.transition(request.task_id, TaskStatus.WAITING_INPUT, comment)
-        else:
-            self._approved_tasks.discard((request.session_id, request.task_id))
-            transition = graph.transition(request.task_id, TaskStatus.CANCELED, comment)
-        await self._append(
-            DomainEvent(
-                stream_id=self._stream_id(request.session_id),
-                event_type="approval.decided",
-                actor_id=actor_id,
-                correlation_id=(
-                    self._plans[request.session_id].correlation_id
-                    or self._plans[request.session_id].plan_id
-                ),
-                causation_id=request.request_id,
-                idempotency_key="approval-decision:%s" % request.request_id,
-                payload=request.to_dict(),
+        if type(decision) is not ApprovalDecision:
+            raise TypeError("decision must be an ApprovalDecision")
+        if type(actor_id) is not str or not actor_id or len(actor_id) > _MAX_RECOVERY_TEXT_LENGTH:
+            raise ValueError("actor_id is invalid")
+        if comment is not None and (
+            type(comment) is not str or len(comment) > _MAX_RECOVERY_TEXT_LENGTH
+        ):
+            raise ValueError("comment is invalid")
+
+        initial_request = self.approvals.get(request_id)
+        lock = self._session_locks.setdefault(initial_request.session_id, asyncio.Lock())
+        async with lock:
+            request = self.approvals.get(request_id)
+            if not request.pending:
+                return self.approvals.decide(request_id, decision, actor_id, comment)
+            plan = self._plans[request.session_id]
+            graph = self._graphs[request.session_id]
+            target = {
+                ApprovalDecision.APPROVE: TaskStatus.READY,
+                ApprovalDecision.REVISE: TaskStatus.WAITING_INPUT,
+                ApprovalDecision.REJECT: TaskStatus.CANCELED,
+            }[decision]
+            if graph.statuses[request.task_id] != TaskStatus.WAITING_APPROVAL:
+                raise RuntimeError("approval task is not waiting for a decision")
+            transition = TaskTransition(
+                request.task_id,
+                TaskStatus.WAITING_APPROVAL,
+                target,
+                comment,
+                graph.revisions[request.task_id] + 1,
             )
-        )
-        await self._record_transition(request.session_id, transition, None)
-        return request
+            decided_request = ApprovalRequest(
+                session_id=request.session_id,
+                task_id=request.task_id,
+                intent=request.intent,
+                reason=request.reason,
+                request_id=request.request_id,
+                created_at=request.created_at,
+                decision=decision,
+                decided_by=actor_id,
+                comment=comment,
+            )
+            correlation_id = plan.correlation_id or plan.plan_id
+            stream_id = self._stream_id(request.session_id)
+            expected_version = self.event_store.stream_version(stream_id)
+            stored_events = self.event_store.append_many(
+                stream_id,
+                (
+                    DomainEvent(
+                        stream_id=stream_id,
+                        event_type="approval.decided",
+                        actor_id=actor_id,
+                        correlation_id=correlation_id,
+                        causation_id=request.request_id,
+                        idempotency_key="approval-decision:%s" % request.request_id,
+                        payload=decided_request.to_dict(),
+                    ),
+                    self._transition_event(
+                        request.session_id,
+                        transition,
+                        correlation_id,
+                        causation_id=request.request_id,
+                    ),
+                ),
+                expected_version=expected_version,
+            )
+            committed_request = self.approvals.decide(
+                request_id,
+                decision,
+                actor_id,
+                comment,
+            )
+            if committed_request.to_dict() != decided_request.to_dict():
+                raise RuntimeError("persisted approval decision differs from memory")
+            applied_transition = graph.transition(request.task_id, target, comment)
+            if applied_transition != transition:
+                raise RuntimeError("persisted approval transition differs from memory")
+            approval_key = (request.session_id, request.task_id)
+            if decision == ApprovalDecision.APPROVE:
+                self._approved_tasks.add(approval_key)
+            else:
+                self._approved_tasks.discard(approval_key)
+
+        await self._emit_appended_batch(stored_events)
+        return committed_request
