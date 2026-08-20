@@ -1,8 +1,10 @@
 import copy
 import gc
 import pickle
+import threading
 import unittest
 from collections import UserDict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -36,10 +38,12 @@ class FakeAuthenticator:
     def __init__(self, make_binding, *, failure=None):
         self.make_binding = make_binding
         self.failure = failure
+        self.calls = 0
         self.credential_matches = False
         self.retained_view = None
 
     def authenticate(self, claims, credential, *, audience, at):
+        self.calls += 1
         self.credential_matches = bytes(credential) == b"bounded-credential-canary"
         self.retained_view = credential
         if self.failure is not None:
@@ -450,17 +454,53 @@ class RequestContextIssuanceTests(unittest.TestCase):
             pickle.dumps(issuer)
 
     def test_active_context_capacity_is_bounded_and_dead_handles_are_pruned(self):
-        issuer, _ = self.make_issuer(max_active_contexts=1)
+        issuer, authenticator = self.make_issuer(max_active_contexts=1)
         first = issuer.issue(self.claims, self.credential())
 
         self.assert_code(
             "request_context_capacity_exceeded",
             lambda: issuer.issue(self.claims, self.credential()),
         )
+        self.assertEqual(authenticator.calls, 1)
         del first
         gc.collect()
         replacement = issuer.issue(self.claims, self.credential())
         self.assertIsInstance(replacement, RequestContext)
+
+    def test_pending_authentication_reserves_capacity_before_adapter_call(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingAuthenticator(FakeAuthenticator):
+            def authenticate(self, claims, credential, *, audience, at):
+                self.calls += 1
+                entered.set()
+                if not release.wait(5):
+                    raise RuntimeError("test authentication timeout")
+                return self.make_binding(claims=claims, audience=audience, at=at)
+
+        authenticator = BlockingAuthenticator(self.binding)
+        issuer = RequestContextIssuer(
+            authenticator=authenticator,
+            authenticator_id="fake-authenticator",
+            audience="qe-runtime",
+            clock=self.clock,
+            max_active_contexts=1,
+        )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(issuer.issue, self.claims, self.credential())
+            self.assertTrue(entered.wait(2))
+            second = self.credential()
+            try:
+                self.assert_code(
+                    "request_context_capacity_exceeded",
+                    lambda: issuer.issue(self.claims, second),
+                )
+                self.assertTrue(second.closed)
+                self.assertEqual(authenticator.calls, 1)
+            finally:
+                release.set()
+            self.assertIsInstance(pending.result(timeout=2), RequestContext)
 
     def test_close_invalidates_issuer_and_still_consumes_new_credentials(self):
         issuer, _ = self.make_issuer()

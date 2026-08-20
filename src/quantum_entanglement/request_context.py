@@ -399,6 +399,7 @@ class RequestContextIssuer:
         "__max_active_contexts",
         "__max_clock_skew",
         "__max_context_ttl",
+        "__pending",
     )
 
     def __init__(
@@ -442,6 +443,7 @@ class RequestContextIssuer:
         ] = {}
         self.__lock = threading.RLock()
         self.__closed = False
+        self.__pending = 0
 
     def issue(
         self,
@@ -452,12 +454,18 @@ class RequestContextIssuer:
 
         if type(credential) is not SecretMaterial:
             raise TypeError("credential must be an exact SecretMaterial")
+        reserved = False
         try:
             expected = self._snapshot_claims(claims)
             now = self._clock_now()
             with self.__lock:
                 if self.__closed:
                     raise RequestContextError("request_context_issuer_closed")
+                self._prune(now)
+                if len(self.__active) + self.__pending >= self.__max_active_contexts:
+                    raise RequestContextError("request_context_capacity_exceeded")
+                self.__pending += 1
+                reserved = True
             adapter_claims = CallerRequestContext.from_dict(expected.to_dict())
             try:
                 credential_view = credential.view()
@@ -475,7 +483,12 @@ class RequestContextIssuer:
             trusted = self._validate_binding(binding, expected, now)
             return self._register(trusted, now)
         finally:
-            credential.close()
+            try:
+                if reserved:
+                    with self.__lock:
+                        self.__pending -= 1
+            finally:
+                credential.close()
 
     def prepare_reauthorization(
         self,
