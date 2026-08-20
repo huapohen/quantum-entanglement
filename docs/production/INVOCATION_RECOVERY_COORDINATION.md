@@ -177,11 +177,13 @@ durable recovery source across processes or restarts.
 opens one deferred read transaction, decodes at most one job, and streams at most 1,001 attempt
 rows in attempt-number order. Recovery supports at most 1,000 attempts and rejects the 1,001st
 row without allocating an unbounded history. Every row is fully decoded and validated; attempt
-numbers must be contiguous, lease epochs must be strictly increasing, heartbeat/lease/finish
-timestamps must preserve start causality, only a succeeded attempt may carry `result_ref`, and
-every non-current attempt must be `FAILED` or `EXPIRED`. Only the current attempt is retained
-for the returned snapshot. The snapshot then cross-checks current attempt identity, epoch,
-owner, token digest, heartbeat, lease deadline, terminal status, and result reference.
+numbers must be contiguous, lease epochs must be strictly increasing, every attempt must start
+no earlier than its job or its predecessor's finish, and heartbeat/lease/finish timestamps must
+preserve causal order. An owned success/failure finishes before its deadline, while expiry
+finishes at or after it. Only a succeeded attempt may carry `result_ref`, and every non-current
+attempt must be `FAILED` or `EXPIRED`. Only the current attempt is retained for the returned
+snapshot. The snapshot then cross-checks current attempt identity, epoch, owner, token digest,
+heartbeat, lease deadline, finish, terminal status, and result reference.
 Concurrent WAL writers may advance the live job while this read is in progress, but every row
 returned to the coordinator comes from the same pre-advance database snapshot.
 
@@ -189,13 +191,17 @@ A job with zero attempts must also have lease epoch zero. A nonzero epoch with n
 partial-restore or tampering evidence, not proof that the invocation is fresh. The persisted
 job decoder and recovery snapshot reject it, while first-claim selection and its final CAS both
 require epoch zero as defense in depth. The same decoder rejects running or succeeded/failed
-jobs without an attempt, non-succeeded jobs with `result_ref`, and job update/finish timestamps
-that precede creation, so the claim API cannot normalize contradictory restored state.
+jobs without an attempt, non-succeeded jobs with `result_ref`, partial lease fields on any
+non-running job, and job/attempt causal timestamps that move backward or collapse an active
+lease to zero duration, so the claim API cannot normalize contradictory restored state.
 
 The attempt-store write boundary shares the coordinator's 4,096-byte identity/worker and
 16,384-byte result-reference limits and rejects C0/DEL control characters before opening a
 write transaction. Exact-boundary worker and result values round-trip through the atomic
 snapshot; one-byte-over and control-character inputs leave the job and attempt unchanged.
+Ownership mutations also compare the transaction-sampled clock with the selected job/attempt
+activity floor. A regressed sample raises `InvocationClockRegressionError` and rolls back instead
+of corrupting timestamps, normalizing restored state, or masquerading as a stale lease.
 
 ## Pure decision API
 
@@ -210,8 +216,9 @@ write path. Callers must provide:
 
 The boundary revalidates frozen objects on every call because Python callers can mutate a
 frozen dataclass with low-level reflection. It validates bounded UTF-8 text, control
-characters, canonical digests/timestamps, job and attempt counters/statuses, cross-row lease
-ownership, all seven binding fields, and receipt attempt ID/number/epoch/token digest. It
+characters, canonical digests/timestamps and their causal order, job and attempt
+counters/statuses, cross-row lease ownership/finish, all seven binding fields, and receipt
+attempt ID/number/epoch/token digest. It
 accepts the schema-compatible `lease_epoch >= attempts_started` relationship only when a
 zero-attempt job also has epoch zero, and does not reject a requested availability timestamp
 merely because it predates enqueue time.
