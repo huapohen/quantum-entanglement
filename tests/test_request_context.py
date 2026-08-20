@@ -399,6 +399,28 @@ class RequestContextIssuanceTests(unittest.TestCase):
         self.assertNotIn(canary, str(raised.exception))
         self.assertIsNone(raised.exception.__cause__)
 
+    def test_credential_wipe_failure_is_redacted_and_never_returns_a_context(self):
+        canary = "wipe-failure-secret-canary"
+
+        class FailingWipeBuffer(bytearray):
+            def __setitem__(self, key, value):
+                raise RuntimeError(canary)
+
+        issuer, _ = self.make_issuer()
+        credential = self.credential()
+        object.__setattr__(
+            credential,
+            "_SecretMaterial__buffer",
+            FailingWipeBuffer(b"bounded-credential-canary"),
+        )
+
+        with self.assertRaises(RequestContextError) as raised:
+            issuer.issue(self.claims, credential)
+
+        self.assertEqual(raised.exception.code, "request_context_credential_close_failed")
+        self.assertNotIn(canary, str(raised.exception))
+        self.assertIsNone(raised.exception.__cause__)
+
     def test_every_caller_scope_and_configured_binding_mismatch_fails_closed(self):
         mismatches = (
             {"authenticator_id": "other-authenticator"},
