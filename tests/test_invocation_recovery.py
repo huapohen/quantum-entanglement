@@ -328,6 +328,33 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
                 with self.assertRaisesRegex(InvocationRecoveryIntegrityError, message):
                     self.assess(binding, snapshot, forged)
 
+    def test_receipt_stream_allows_every_valid_session_identity_length(self) -> None:
+        for session_bytes in (4_088, 4_089, 4_096):
+            with self.subTest(session_bytes=session_bytes):
+                session_id = "s" * session_bytes
+                binding = InvocationBinding(
+                    invocation_id="invocation-boundary",
+                    session_id=session_id,
+                    plan_id="plan-boundary",
+                    task_id="task-boundary",
+                    agent_id="agent-boundary",
+                    idempotency_key="invoke:task-boundary",
+                    payload_digest="0" * 64,
+                )
+                receipt = InvocationResultReceipt(
+                    binding=binding,
+                    attempt_id="attempt-boundary",
+                    attempt_number=1,
+                    lease_epoch=1,
+                    lease_token_digest="1" * 64,
+                    result_ref="result:boundary",
+                    manifest_digest="2" * 64,
+                    receipt_id="receipt:boundary",
+                    stream_id=f"session:{session_id}",
+                    stream_sequence=1,
+                )
+                self.assertEqual(receipt.stream_id, f"session:{session_id}")
+
     def test_snapshot_shape_and_cross_row_ownership_are_revalidated(self) -> None:
         queued_spec = self.enqueue("malformed")
         queued = self.snapshot(queued_spec)
