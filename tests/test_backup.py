@@ -79,6 +79,29 @@ class SQLiteBackupTests(unittest.TestCase):
         manifest = create_sqlite_backup(self.source, path, clock=lambda: T0)
         return path, default_manifest_path(path), manifest
 
+    def seed_projection_receipt(self):
+        projections = SQLiteProjectionOffsetStore(str(self.source), clock=lambda: T0)
+        try:
+            projections.claim("restore-read-model", "worker-1", lease_seconds=60)
+        finally:
+            projections.close()
+        with sqlite3.connect(self.source) as connection:
+            connection.execute(
+                """
+                INSERT INTO projection_receipts (
+                    projection_name, event_id, global_position, applied_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                ("restore-read-model", "event-1", 1, T0),
+            )
+            connection.execute(
+                """
+                UPDATE projection_offsets SET last_global_position = ?
+                WHERE projection_name = ?
+                """,
+                (1, "restore-read-model"),
+            )
+
     def test_online_backup_captures_wal_state_and_verifies_manifest(self):
         backup, manifest_path, created = self.create_backup()
         verified = verify_sqlite_backup(backup)
@@ -239,6 +262,27 @@ class SQLiteBackupTests(unittest.TestCase):
         backup, manifest_path, _created = self.create_backup()
         value = json.loads(manifest_path.read_text(encoding="utf-8"))
         value["tableCounts"]["artifact_versions"] = 999
+        manifest_path.write_text(json.dumps(value), encoding="utf-8")
+
+        with self.assertRaisesRegex(BackupIntegrityError, "table counts"):
+            verify_sqlite_backup(backup)
+
+    def test_projection_receipt_count_tampering_is_rejected(self):
+        self.seed_projection_receipt()
+        backup, manifest_path, created = self.create_backup()
+        self.assertEqual(created.table_counts["projection_receipts"], 1)
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        value["tableCounts"]["projection_receipts"] = 2
+        manifest_path.write_text(json.dumps(value), encoding="utf-8")
+
+        with self.assertRaisesRegex(BackupIntegrityError, "table counts"):
+            verify_sqlite_backup(backup)
+
+    def test_projection_receipt_count_omission_is_rejected(self):
+        self.seed_projection_receipt()
+        backup, manifest_path, _created = self.create_backup()
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        value["tableCounts"].pop("projection_receipts")
         manifest_path.write_text(json.dumps(value), encoding="utf-8")
 
         with self.assertRaisesRegex(BackupIntegrityError, "table counts"):
