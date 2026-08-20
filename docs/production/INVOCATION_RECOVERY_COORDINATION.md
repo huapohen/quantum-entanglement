@@ -169,12 +169,13 @@ durable recovery source across processes or restarts.
 opens one deferred read transaction, decodes at most one job, and streams at most 1,001 attempt
 rows in attempt-number order. Recovery supports at most 1,000 attempts and rejects the 1,001st
 row without allocating an unbounded history. Every row is fully decoded and validated; attempt
-numbers must be contiguous, lease epochs must be strictly increasing, and every non-current
-attempt must be `FAILED` or `EXPIRED`. Only the current attempt is retained for the returned
-snapshot. The snapshot then cross-checks current attempt identity, epoch, owner, token digest,
-heartbeat, lease deadline, terminal status, and result reference. Concurrent WAL writers may
-advance the live job while this read is in progress, but every row returned to the coordinator
-comes from the same pre-advance database snapshot.
+numbers must be contiguous, lease epochs must be strictly increasing, heartbeat/lease/finish
+timestamps must preserve start causality, only a succeeded attempt may carry `result_ref`, and
+every non-current attempt must be `FAILED` or `EXPIRED`. Only the current attempt is retained
+for the returned snapshot. The snapshot then cross-checks current attempt identity, epoch,
+owner, token digest, heartbeat, lease deadline, terminal status, and result reference.
+Concurrent WAL writers may advance the live job while this read is in progress, but every row
+returned to the coordinator comes from the same pre-advance database snapshot.
 
 ## Pure decision API
 
