@@ -2,14 +2,22 @@
   "accessClassification": "restricted-internal",
   "archivedAt": "2026-08-19T14:20:11+08:00",
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
+  "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
   "items": [
     {
       "byteSize": 807190,
+      "captureDate": null,
+      "captureDateEvidence": "No embedded or independently retained capture timestamp; exact capture date is unknown",
       "contentScope": "User-authored task screenshot supplied with the request",
       "derivation": "original-attachment-copy",
       "evidenceClass": "C-internal-primary-request",
+      "evidenceLimitations": [
+        "Proves only the pixels in the user-supplied attachment, not the completeness or authenticity of the underlying Feishu conversation",
+        "No independently verifiable capture timestamp or source-page revision is retained"
+      ],
       "filename": "00_request_feishu.png",
+      "firstArchivedAt": "2026-08-19T14:20:11+08:00",
       "height": 1192,
       "mediaType": "image/png",
       "notForPublicDistribution": true,
@@ -21,10 +29,17 @@
     },
     {
       "byteSize": 108794,
+      "captureDate": null,
+      "captureDateEvidence": "No embedded or independently retained capture timestamp; exact capture date is unknown",
       "contentScope": "Current task context in the named Feishu group",
       "derivation": "direct-readonly-capture",
       "evidenceClass": "C-internal-collaboration-context",
+      "evidenceLimitations": [
+        "Viewport-only read-only capture; it does not prove the full thread, current message state, authorship, deletion history, or tenant audit record",
+        "No stable Feishu message URL, message identifier, export, or independently verifiable capture timestamp is retained"
+      ],
       "filename": "01_feishu_current_context.jpeg",
+      "firstArchivedAt": "2026-08-19T14:20:11+08:00",
       "height": 601,
       "mediaType": "image/jpeg",
       "notForPublicDistribution": true,
@@ -36,10 +51,17 @@
     },
     {
       "byteSize": 137289,
+      "captureDate": null,
+      "captureDateEvidence": "No embedded or independently retained capture timestamp; exact capture date is unknown",
       "contentScope": "WanWork and business-before-platform context dated Aug 16-19",
       "derivation": "direct-readonly-capture",
       "evidenceClass": "C-internal-collaboration-context",
+      "evidenceLimitations": [
+        "Viewport-only read-only capture; visible August labels are conversation content and are not proof of screenshot capture time",
+        "No stable Feishu message URL, message identifier, export, or independently verifiable capture timestamp is retained"
+      ],
       "filename": "02_feishu_history_aug16_19.jpeg",
+      "firstArchivedAt": "2026-08-19T14:20:11+08:00",
       "height": 601,
       "mediaType": "image/jpeg",
       "notForPublicDistribution": true,
@@ -51,10 +73,17 @@
     },
     {
       "byteSize": 106720,
+      "captureDate": null,
+      "captureDateEvidence": "No embedded or independently retained capture timestamp; exact capture date is unknown",
       "contentScope": "DeepSeek Harness and everything-as-plugin direction dated Aug 15",
       "derivation": "direct-readonly-capture",
       "evidenceClass": "C-internal-collaboration-context",
+      "evidenceLimitations": [
+        "Viewport-only read-only capture; the visible August 15 label is conversation content and is not proof of screenshot capture time",
+        "No stable Feishu message URL, message identifier, export, or independently verifiable capture timestamp is retained"
+      ],
       "filename": "03_feishu_dph_direction_aug15.jpeg",
+      "firstArchivedAt": "2026-08-19T14:20:11+08:00",
       "height": 601,
       "mediaType": "image/jpeg",
       "notForPublicDistribution": true,
@@ -66,10 +95,17 @@
     },
     {
       "byteSize": 270869,
+      "captureDate": null,
+      "captureDateEvidence": "No embedded or independently retained capture timestamp; exact capture date is unknown",
       "contentScope": "Multi-Agent product research overview",
       "derivation": "direct-readonly-capture",
       "evidenceClass": "C-internal-research-table",
+      "evidenceLimitations": [
+        "Viewport-only capture of an editable private page; it does not prove the whole page, revision identity, later edits, or the truth of table claims",
+        "The URL identifies the source page and anchor but no immutable Yuque revision or export digest is retained"
+      ],
       "filename": "04_yuque_multi_agent_overview.jpeg",
+      "firstArchivedAt": "2026-08-19T14:20:11+08:00",
       "height": 768,
       "mediaType": "image/jpeg",
       "notForPublicDistribution": true,
@@ -81,10 +117,17 @@
     },
     {
       "byteSize": 285750,
+      "captureDate": null,
+      "captureDateEvidence": "No embedded or independently retained capture timestamp; exact capture date is unknown",
       "contentScope": "Product research table rows 3-8",
       "derivation": "direct-readonly-capture",
       "evidenceClass": "C-internal-research-table",
+      "evidenceLimitations": [
+        "Viewport-only capture of selected rows; adjacent rows, hidden columns, links, and page revision are not preserved",
+        "Table assertions remain secondary research until validated against official product or source-code evidence"
+      ],
       "filename": "05_yuque_products_rows_3_8.jpeg",
+      "firstArchivedAt": "2026-08-19T14:20:11+08:00",
       "height": 768,
       "mediaType": "image/jpeg",
       "notForPublicDistribution": true,
@@ -96,10 +139,17 @@
     },
     {
       "byteSize": 274477,
+      "captureDate": null,
+      "captureDateEvidence": "No embedded or independently retained capture timestamp; exact capture date is unknown",
       "contentScope": "Product research table rows 7-11",
       "derivation": "direct-readonly-capture",
       "evidenceClass": "C-internal-research-table",
+      "evidenceLimitations": [
+        "Viewport-only capture of selected rows; adjacent rows, hidden columns, links, and page revision are not preserved",
+        "Table assertions remain secondary research until validated against official product or source-code evidence"
+      ],
       "filename": "06_yuque_products_rows_7_11.jpeg",
+      "firstArchivedAt": "2026-08-19T14:20:11+08:00",
       "height": 768,
       "mediaType": "image/jpeg",
       "notForPublicDistribution": true,
@@ -111,10 +161,17 @@
     },
     {
       "byteSize": 277154,
+      "captureDate": null,
+      "captureDateEvidence": "No embedded or independently retained capture timestamp; exact capture date is unknown",
       "contentScope": "Product research table rows 12-16",
       "derivation": "direct-readonly-capture",
       "evidenceClass": "C-internal-research-table",
+      "evidenceLimitations": [
+        "Viewport-only capture of selected rows; adjacent rows, hidden columns, links, and page revision are not preserved",
+        "Table assertions remain secondary research until validated against official product or source-code evidence"
+      ],
       "filename": "07_yuque_products_rows_12_16.jpeg",
+      "firstArchivedAt": "2026-08-19T14:20:11+08:00",
       "height": 768,
       "mediaType": "image/jpeg",
       "notForPublicDistribution": true,
@@ -126,10 +183,17 @@
     },
     {
       "byteSize": 202256,
+      "captureDate": null,
+      "captureDateEvidence": "No embedded or independently retained capture timestamp; exact capture date is unknown",
       "contentScope": "IM provider capability comparison",
       "derivation": "direct-readonly-capture",
       "evidenceClass": "C-internal-research-table",
+      "evidenceLimitations": [
+        "Viewport-only comparison table; selection criteria, hidden context, live pricing, and provider revisions are not preserved",
+        "Capability claims require independent vendor documentation and implementation validation before architecture or procurement use"
+      ],
       "filename": "08_yuque_im_provider_comparison.jpeg",
+      "firstArchivedAt": "2026-08-19T14:20:11+08:00",
       "height": 768,
       "mediaType": "image/jpeg",
       "notForPublicDistribution": true,
@@ -141,10 +205,17 @@
     },
     {
       "byteSize": 258785,
+      "captureDate": null,
+      "captureDateEvidence": "No embedded or independently retained capture timestamp; exact capture date is unknown",
       "contentScope": "Technical option comparison",
       "derivation": "direct-readonly-capture",
       "evidenceClass": "C-internal-research-table",
+      "evidenceLimitations": [
+        "Viewport-only technical-options table; assumptions, benchmarks, linked detail, and page revision are not preserved",
+        "The comparison is a planning input rather than runtime, interoperability, security, cost, or production-readiness evidence"
+      ],
       "filename": "09_yuque_technical_options.jpeg",
+      "firstArchivedAt": "2026-08-19T14:20:11+08:00",
       "height": 768,
       "mediaType": "image/jpeg",
       "notForPublicDistribution": true,
@@ -156,5 +227,5 @@
     }
   ],
   "redactionStatus": "unredacted-restricted-originals",
-  "schemaVersion": 1
+  "schemaVersion": 2
 }
