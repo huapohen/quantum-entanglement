@@ -40,6 +40,9 @@ _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
 )
 _MAX_ERROR_LENGTH = 4_096
+_MAX_IDENTITY_BYTES = 4_096
+_MAX_REFERENCE_BYTES = 16_384
+_MAX_ERROR_BYTES = 16_384
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 
 
@@ -80,9 +83,22 @@ def invocation_payload_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _required(value: str, name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
+def _required(
+    value: str,
+    name: str,
+    *,
+    maximum_bytes: int = _MAX_IDENTITY_BYTES,
+) -> str:
+    if type(value) is not str or not value.strip():
         raise ValueError(f"{name} is required")
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeError as exc:
+        raise ValueError(f"{name} must be valid UTF-8") from exc
+    if len(encoded) > maximum_bytes:
+        raise ValueError(f"{name} exceeds its byte limit")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ValueError(f"{name} contains a control character")
     return value
 
 
@@ -113,7 +129,7 @@ def _lease_deadline(now: str, lease_seconds: float) -> str:
 
 
 def _stored_error(error: str) -> str:
-    value = _required(error, "error").strip()
+    value = _required(error, "error", maximum_bytes=_MAX_ERROR_BYTES).strip()
     return value[:_MAX_ERROR_LENGTH]
 
 
@@ -135,18 +151,37 @@ def _persisted_integer(
     return value
 
 
-def _persisted_text(value: Any, name: str, *, required: bool = True) -> str:
+def _persisted_text(
+    value: Any,
+    name: str,
+    *,
+    required: bool = True,
+    maximum_bytes: int = _MAX_IDENTITY_BYTES,
+) -> str:
     if type(value) is not str:
         raise TypeError(f"persisted {name} must use SQLite TEXT storage")
     if required and not value.strip():
         raise ValueError(f"persisted {name} must not be blank")
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeError as exc:
+        raise ValueError(f"persisted {name} must be valid UTF-8") from exc
+    if len(encoded) > maximum_bytes:
+        raise ValueError(f"persisted {name} exceeds its byte limit")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ValueError(f"persisted {name} contains a control character")
     return value
 
 
-def _persisted_optional_text(value: Any, name: str) -> Optional[str]:
+def _persisted_optional_text(
+    value: Any,
+    name: str,
+    *,
+    maximum_bytes: int = _MAX_IDENTITY_BYTES,
+) -> Optional[str]:
     if value is None:
         return None
-    return _persisted_text(value, name)
+    return _persisted_text(value, name, maximum_bytes=maximum_bytes)
 
 
 def _persisted_timestamp(value: Any, name: str) -> str:
@@ -474,7 +509,11 @@ class SQLiteInvocationAttemptStore:
             ):
                 raise ValueError("persisted terminal invocation has no started attempt")
 
-            last_error = _persisted_optional_text(row["last_error"], "invocation last_error")
+            last_error = _persisted_optional_text(
+                row["last_error"],
+                "invocation last_error",
+                maximum_bytes=_MAX_ERROR_BYTES,
+            )
             if last_error is not None and len(last_error) > _MAX_ERROR_LENGTH:
                 raise ValueError("persisted invocation last_error exceeds its supported length")
             requested_available_at = _persisted_optional_timestamp(
@@ -487,7 +526,11 @@ class SQLiteInvocationAttemptStore:
                 raise ValueError("persisted invocation updated_at precedes creation")
             if finished_at is not None and finished_at < created_at:
                 raise ValueError("persisted invocation finished_at precedes creation")
-            result_ref = _persisted_optional_text(row["result_ref"], "invocation result_ref")
+            result_ref = _persisted_optional_text(
+                row["result_ref"],
+                "invocation result_ref",
+                maximum_bytes=_MAX_REFERENCE_BYTES,
+            )
             if result_ref is not None and status is not InvocationStatus.SUCCEEDED:
                 raise ValueError("persisted non-succeeded invocation carries a result_ref")
             return InvocationJob(
@@ -533,7 +576,11 @@ class SQLiteInvocationAttemptStore:
             finished_at = _persisted_optional_timestamp(row["finished_at"], "attempt finished_at")
             if (status is AttemptStatus.RUNNING) != (finished_at is None):
                 raise ValueError("persisted attempt finished_at contradicts status")
-            error = _persisted_optional_text(row["error"], "attempt error")
+            error = _persisted_optional_text(
+                row["error"],
+                "attempt error",
+                maximum_bytes=_MAX_ERROR_BYTES,
+            )
             if error is not None and len(error) > _MAX_ERROR_LENGTH:
                 raise ValueError("persisted attempt error exceeds its supported length")
             started_at = _persisted_timestamp(row["started_at"], "attempt started_at")
@@ -545,7 +592,11 @@ class SQLiteInvocationAttemptStore:
                 raise ValueError("persisted attempt timestamps violate start causality")
             if finished_at is not None and finished_at < started_at:
                 raise ValueError("persisted attempt finished_at precedes its start")
-            result_ref = _persisted_optional_text(row["result_ref"], "attempt result_ref")
+            result_ref = _persisted_optional_text(
+                row["result_ref"],
+                "attempt result_ref",
+                maximum_bytes=_MAX_REFERENCE_BYTES,
+            )
             if result_ref is not None and status is not AttemptStatus.SUCCEEDED:
                 raise ValueError("persisted non-succeeded attempt carries a result_ref")
             return InvocationAttempt(
@@ -1266,7 +1317,7 @@ class SQLiteInvocationAttemptStore:
         """CAS an active lease to success, rejecting stale or expired workers."""
 
         if result_ref is not None:
-            _required(result_ref, "result_ref")
+            _required(result_ref, "result_ref", maximum_bytes=_MAX_REFERENCE_BYTES)
         with self._transaction() as connection:
             normalized_now = self._now()
             job = self._active_owned_row(connection, lease, normalized_now)

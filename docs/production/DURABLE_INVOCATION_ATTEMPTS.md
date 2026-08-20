@@ -83,6 +83,13 @@ connector that can mutate a fenced resource should receive the integer fencing t
 reject an epoch below the resource's last accepted epoch. If a connector cannot enforce
 fencing, it must enforce the stable invocation idempotency key and is still at-least-once.
 
+All identity and worker text is valid UTF-8 without C0/DEL control characters and is capped at
+4,096 encoded bytes. Result references use the same character rule and a 16,384-byte cap.
+Failure text is validated against a 16,384-byte input cap and then retained at no more than
+4,096 characters. Enqueue/claim/complete/fail boundaries and persisted-row decoders enforce
+the same rules, so a successful public write cannot create state that recovery rejects solely
+because of text shape.
+
 ## Clock boundary
 
 Individual claim, heartbeat, recovery and terminal calls cannot supply a timestamp. They
