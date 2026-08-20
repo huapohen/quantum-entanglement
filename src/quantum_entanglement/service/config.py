@@ -15,9 +15,11 @@ import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+from itertools import islice
 from pathlib import Path
 
 _INTEGER = re.compile(r"^(?:0|[1-9][0-9]*)$")
+_MAX_ENVIRONMENT_ITEMS = 4_096
 _CONFIG_KEYS = frozenset(
     {
         "QE_BIND_HOST",
@@ -116,19 +118,30 @@ class ServiceConfig:
 
         if not isinstance(environ, Mapping):
             raise TypeError("environment must be a mapping")
-        for key, value in environ.items():
+        try:
+            items = tuple(islice(iter(environ.items()), _MAX_ENVIRONMENT_ITEMS + 1))
+        except Exception:
+            raise ConfigurationError("configuration_snapshot_failed") from None
+        if len(items) > _MAX_ENVIRONMENT_ITEMS:
+            raise ConfigurationError("configuration_snapshot_too_large")
+
+        snapshot: dict[str, str] = {}
+        for key, value in items:
             if type(key) is not str or type(value) is not str:
                 raise ConfigurationError("configuration_type_invalid")
+            if key in snapshot:
+                raise ConfigurationError("configuration_duplicate_field")
+            snapshot[key] = value
         unknown = sorted(
-            key for key in environ if key.startswith("QE_") and key not in _CONFIG_KEYS
+            key for key in snapshot if key.startswith("QE_") and key not in _CONFIG_KEYS
         )
         if unknown:
             raise ConfigurationError("configuration_unknown_field")
-        missing = sorted(_CONFIG_KEYS - environ.keys())
+        missing = sorted(_CONFIG_KEYS - snapshot.keys())
         if missing:
             raise ConfigurationError("configuration_missing_field", missing[0])
 
-        values = {key: cls._validate_raw_value(key, environ[key]) for key in _CONFIG_KEYS}
+        values = {key: cls._validate_raw_value(key, snapshot[key]) for key in _CONFIG_KEYS}
         try:
             runtime_mode = RuntimeMode(values["QE_RUNTIME_MODE"])
         except ValueError:

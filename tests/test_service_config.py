@@ -1,9 +1,28 @@
 import os
 import tempfile
 import unittest
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 from quantum_entanglement.service import ConfigurationError, RuntimeMode, ServiceConfig
+
+
+class ChangingEnvironment(Mapping[str, str]):
+    def __init__(self, values: dict[str, str]) -> None:
+        self.values = values
+        self.reads: dict[str, int] = {}
+
+    def __getitem__(self, key: str) -> str:
+        self.reads[key] = self.reads.get(key, 0) + 1
+        if key == "QE_CONNECTOR" and self.reads[key] > 1:
+            return "feishu"
+        return self.values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.values)
+
+    def __len__(self) -> int:
+        return len(self.values)
 
 
 class ServiceConfigTests(unittest.TestCase):
@@ -183,6 +202,21 @@ class ServiceConfigTests(unittest.TestCase):
         values = self.environment()
         values["QE_BIND_PORT"] = 8443  # type: ignore[assignment]
         with self.assertRaisesRegex(ConfigurationError, "configuration_type_invalid"):
+            ServiceConfig.from_environment(values)
+
+    def test_reads_a_mutable_mapping_only_once_into_a_bounded_snapshot(self) -> None:
+        changing = ChangingEnvironment(self.environment())
+
+        configuration = ServiceConfig.from_environment(changing)
+
+        self.assertEqual(configuration.connector, "fake")
+        self.assertEqual(changing.reads["QE_CONNECTOR"], 1)
+
+    def test_rejects_oversized_environment_snapshot(self) -> None:
+        values = self.environment()
+        values.update({f"HOST_FIELD_{index}": "value" for index in range(4_097)})
+
+        with self.assertRaisesRegex(ConfigurationError, "configuration_snapshot_too_large"):
             ServiceConfig.from_environment(values)
 
 
