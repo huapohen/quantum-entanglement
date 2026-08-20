@@ -714,6 +714,90 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             )
         )
 
+    def test_recovery_snapshot_is_bounded_and_cross_validates_current_attempt(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        statements = []
+        self.store._connection.set_trace_callback(statements.append)
+        try:
+            snapshot = self.store.recovery_snapshot_for_task("session-1", "task-1")
+        finally:
+            self.store._connection.set_trace_callback(None)
+
+        self.assertEqual(snapshot.job.status, InvocationStatus.RUNNING)
+        self.assertEqual(snapshot.current_attempt.attempt_id, lease.attempt_id)
+        self.assertEqual(snapshot.attempt_count, 1)
+        normalized = tuple(" ".join(statement.upper().split()) for statement in statements)
+        self.assertIn("BEGIN", normalized)
+        self.assertIn("COMMIT", normalized)
+        decoded_queries = tuple(
+            statement
+            for statement in normalized
+            if statement.startswith("SELECT * FROM INVOCATION_")
+        )
+        self.assertTrue(decoded_queries)
+        self.assertTrue(all("LIMIT 2" in statement for statement in decoded_queries))
+
+    def test_recovery_snapshot_remains_consistent_while_wal_writer_advances_heartbeat(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        second_clock = MutableClock(timestamp(5))
+        second = SQLiteInvocationAttemptStore(self.path, clock=second_clock)
+        original = SQLiteInvocationAttemptStore._row_to_job
+        advanced = False
+
+        def advance_after_job_read(row):
+            nonlocal advanced
+            job = original(row)
+            if not advanced:
+                advanced = True
+                self.assertTrue(second.heartbeat(lease, lease_seconds=20))
+            return job
+
+        try:
+            with patch.object(
+                SQLiteInvocationAttemptStore,
+                "_row_to_job",
+                side_effect=advance_after_job_read,
+            ):
+                snapshot = self.store.recovery_snapshot_for_task("session-1", "task-1")
+        finally:
+            second.close()
+
+        self.assertTrue(advanced)
+        self.assertEqual(snapshot.job.heartbeat_at, "2026-08-20T00:00:00.000000Z")
+        self.assertEqual(
+            snapshot.current_attempt.heartbeat_at,
+            "2026-08-20T00:00:00.000000Z",
+        )
+        self.assertEqual(
+            self.store.get("invocation-1").heartbeat_at,
+            "2026-08-20T00:00:05.000000Z",
+        )
+
+    def test_recovery_snapshot_rejects_cross_row_drift_without_mutation(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        before = tuple(self.store._connection.iterdump())
+        self.store._connection.execute(
+            """
+            UPDATE invocation_attempts SET heartbeat_at = ?
+            WHERE attempt_id = ?
+            """,
+            ("2026-08-20T00:00:01.000000Z", lease.attempt_id),
+        )
+        drifted = tuple(self.store._connection.iterdump())
+        with self.assertRaisesRegex(InvocationIntegrityError, "ownership differs"):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
+        self.assertEqual(tuple(self.store._connection.iterdump()), drifted)
+        self.assertNotEqual(before, drifted)
+
+    def test_recovery_snapshot_distinguishes_a_missing_job(self):
+        snapshot = self.store.recovery_snapshot_for_task("session-1", "missing-task")
+        self.assertIsNone(snapshot.job)
+        self.assertIsNone(snapshot.current_attempt)
+        self.assertEqual(snapshot.attempt_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
