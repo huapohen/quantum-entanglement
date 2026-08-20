@@ -94,7 +94,9 @@ All identity and worker text is valid UTF-8 without C0/DEL control characters an
 Failure text is validated against a 16,384-byte input cap and then retained at no more than
 4,096 characters. Enqueue/claim/complete/fail boundaries and persisted-row decoders enforce
 the same rules, so a successful public write cannot create state that recovery rejects solely
-because of text shape.
+because of text shape. A zero-attempt job cannot carry `last_error`. Every current failed or
+expired attempt carries an error exactly equal to the owning queued/failed job's `last_error`;
+running and succeeded attempts cannot carry an error.
 
 ## Clock boundary
 
