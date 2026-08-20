@@ -154,8 +154,9 @@ def require_current_process(
 
     The factory normally creates a module-private signal. A component that can call this
     helper while another exception is active must cleanly translate that signal after
-    leaving its ``except`` block; ``raise ... from None`` suppresses display but cannot
-    erase Python's active exception context.
+    leaving its ``except`` block, then detach ``__context__`` on the exact newly-created
+    public error before re-raising it. ``raise ... from None`` suppresses display but cannot
+    erase Python's active exception context by itself.
     """
 
     owner_pid: object = None

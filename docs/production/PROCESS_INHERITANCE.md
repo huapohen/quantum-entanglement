@@ -76,7 +76,20 @@ Python 在 active `except`/`__exit__` 中抛出新异常时，即使使用 `rais
 异常放进新异常的 `__context__`，只是在默认格式化时隐藏。foundation 不能把解释器的 active
 exception state 清空。因此组件应把 factory 产物视为 module-private mismatch signal；任何可能
 位于 active-exception 区域的 lifecycle path 都必须捕获并丢弃该 signal，退出 `except` 后清空
-frame locals，再创建最终 public error。不得把 helper 的直接异常无条件描述为 context-free。
+frame locals，再创建最终 public error。因为外层 `__exit__` 仍可能使原异常保持 active，最终层还
+必须立即捕获这个 exact fresh public error，显式把 `__context__` 设为 `None` 后 bare re-raise：
+
+```python
+try:
+    raise StoreLifecycleError("store_process_mismatch") from None
+except StoreLifecycleError as public_error:
+    public_error.__context__ = None
+    raise
+```
+
+这只能用于刚刚在该 trampoline 内新建的 exact public error；不得清洗后重抛 provider/caller 提供
+的异常。内部 signal 的 traceback frames 和原异常图还必须在发布前丢弃/清理。不得把 helper 的
+直接异常无条件描述为 context-free。
 
 ## 3. 组件接入不变量
 
