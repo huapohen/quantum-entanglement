@@ -1,8 +1,10 @@
+import asyncio
 import copy
 import pickle
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -19,6 +21,7 @@ from quantum_entanglement.request_context import (
     AuthenticatedRequestBinding,
     CallerRequestContext,
     ReauthorizationBasis,
+    RequestContext,
     RequestContextIssuer,
 )
 from quantum_entanglement.service.secrets import SecretMaterial
@@ -48,8 +51,48 @@ NOW = datetime(2026, 8, 20, 8, 0, 0, tzinfo=timezone.utc)
 EVIDENCE = "ab" * 32
 
 
-class HostileBoundaryFailure(BaseException):
+class HostileMutationFailure(BaseException):
     pass
+
+
+class HostileBoundaryFailure(BaseException):
+    """Fault carrying secrets through every normal exception surface.
+
+    Once constructed it rejects attribute reads and writes with a second hostile
+    exception.  Production boundary code therefore cannot safely inspect or detach
+    this object; tests use the base implementation directly for post-call auditing.
+    """
+
+    _blocked_reads = frozenset(
+        ("args", "__notes__", "__dict__", "__cause__", "__context__", "__traceback__")
+    )
+
+    def __init__(self, canary):
+        super().__init__(f"{canary}:args")
+        self.payload = f"{canary}:custom-attribute"
+        self.mutation_attempts = []
+        self.add_note(f"{canary}:note")
+        self.__cause__ = ValueError(f"{canary}:stored-cause")
+        self.__context__ = RuntimeError(f"{canary}:stored-context")
+        self.armed = True
+
+    def __getattribute__(self, name):
+        if name in type(self)._blocked_reads and BaseException.__getattribute__(
+            self, "__dict__"
+        ).get("armed", False):
+            payload = BaseException.__getattribute__(self, "__dict__")["payload"]
+            raise HostileMutationFailure(f"{payload}:getter:{name}")
+        return BaseException.__getattribute__(self, name)
+
+    def __setattr__(self, name, value):
+        state = BaseException.__getattribute__(self, "__dict__")
+        if state.get("armed", False):
+            state["mutation_attempts"].append(name)
+            try:
+                raise ValueError(f"{state['payload']}:setter-cause:{name}")
+            except ValueError as cause:
+                raise HostileMutationFailure(f"{state['payload']}:setter:{name}") from cause
+        BaseException.__setattr__(self, name, value)
 
 
 class FakeCurrentStateProvider:
@@ -678,6 +721,81 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                     (AccessRequest, CurrentAuthorizationState, ReauthorizationBasis),
                 )
 
+    def assert_original_control_traceback_is_scrubbed(self, original, *canaries):
+        trace = original.__traceback__
+        self.assertIsNotNone(trace)
+        while trace is not None:
+            for value in list(trace.tb_frame.f_locals.values()):
+                self.assertIsNot(value, original)
+                self.assertNotIsInstance(
+                    value,
+                    (
+                        AccessRequest,
+                        AuthorizedOperation,
+                        CurrentAuthorizationState,
+                        ReauthorizationBasis,
+                        RequestContext,
+                    ),
+                )
+                if isinstance(value, str):
+                    for canary in canaries:
+                        self.assertNotIn(canary, value)
+            trace = trace.tb_next
+
+    def assert_hostile_original_is_contained(self, original, canary):
+        state = BaseException.__getattribute__(original, "__dict__")
+        self.assertEqual(state["mutation_attempts"], [])
+        for field in HostileBoundaryFailure._blocked_reads:
+            with self.subTest(field=field), self.assertRaises(HostileMutationFailure):
+                getattr(original, field)
+
+        raw_surfaces = (
+            BaseException.__getattribute__(original, "args"),
+            BaseException.__getattribute__(original, "__notes__"),
+            state,
+            BaseException.__getattribute__(original, "__cause__"),
+            BaseException.__getattribute__(original, "__context__"),
+        )
+        self.assertIn(canary, repr(raw_surfaces))
+
+        trace = BaseException.__getattribute__(original, "__traceback__")
+        self.assertIsNotNone(trace)
+        while trace is not None:
+            frame = trace.tb_frame
+            for value in list(frame.f_locals.values()):
+                self.assertIsNot(value, original)
+                self.assertNotIsInstance(
+                    value,
+                    (
+                        AccessRequest,
+                        AuthorizedOperation,
+                        CurrentAuthorizationState,
+                        ReauthorizationBasis,
+                        RequestContext,
+                    ),
+                )
+                if isinstance(value, str):
+                    self.assertNotIn(canary, value)
+            trace = trace.tb_next
+
+    def assert_clean_public_failure(self, error, original, canary, *, method):
+        self.assertIs(type(error), OperationAuthorizationError)
+        self.assertIsNot(error, original)
+        rendered = repr(
+            (
+                error.args,
+                getattr(error, "__notes__", ()),
+                error.__dict__,
+                error.__cause__,
+                error.__context__,
+                str(error),
+                repr(error),
+            )
+        )
+        self.assertNotIn(canary, rendered)
+        self.assert_detached_traceback(error, canary, expected_method=method)
+        self.assert_hostile_original_is_contained(original, canary)
+
     def test_explicit_allow_issues_one_time_non_replayable_opaque_operation(self):
         operation = self.composer.authorize(self.context, self.request)
 
@@ -1006,6 +1124,52 @@ class ProtectedOperationComposerTests(unittest.TestCase):
             lambda: self.composer.consume(operation, self.context, self.request),
         )
 
+    def test_final_consume_reauthorization_rejects_every_context_binding_drift(self):
+        substitutions = (
+            {"context_id": "context-substituted"},
+            {"authenticator_id": "authenticator-substituted"},
+            {"audience": "other-runtime"},
+            {"request_id": "request-substituted"},
+            {"principal_id": "principal-substituted"},
+            {"subject_id": "subject-substituted"},
+            {"tenant_id": TenantId("tenant-b")},
+            {"workspace_id": WorkspaceId("workspace-b")},
+            {"identity_revision": "identity-substituted"},
+            {"scope_revision": "scope-substituted"},
+            {"evidence_fingerprint": "cd" * 32},
+            {"authenticated_at": NOW + timedelta(microseconds=1)},
+            {"context_issued_at": NOW + timedelta(microseconds=1)},
+            {"context_expires_at": NOW + timedelta(minutes=6)},
+        )
+        real_prepare = RequestContextIssuer.prepare_reauthorization
+
+        for changes in substitutions:
+            with self.subTest(changes=changes):
+                operation = self.composer.authorize(self.context, self.request)
+                calls = 0
+
+                def drift_final_basis(issuer, context, request, selected=changes):
+                    nonlocal calls
+                    calls += 1
+                    basis = real_prepare(issuer, context, request)
+                    return replace(basis, **selected) if calls == 2 else basis
+
+                with patch.object(
+                    RequestContextIssuer,
+                    "prepare_reauthorization",
+                    drift_final_basis,
+                ):
+                    self.assert_code(
+                        "protected_operation_context_rejected",
+                        lambda selected=operation: self.composer.consume(
+                            selected,
+                            self.context,
+                            self.request,
+                        ),
+                    )
+                self.assertEqual(calls, 2)
+                self.composer.consume(operation, self.context, self.request)
+
     def test_provider_observation_must_be_fresh_and_not_from_the_future(self):
         cases = (
             (
@@ -1079,110 +1243,198 @@ class ProtectedOperationComposerTests(unittest.TestCase):
         self.assertNotIn("canary", repr(error))
 
     def test_hostile_base_exception_from_dependencies_is_contained(self):
-        class HostileProvider:
-            def load_current_state(self, basis, request):
-                provider_secret = "provider-base-exception-secret-canary"
-                try:
-                    raise ValueError(provider_secret)
-                except ValueError as cause:
-                    raise HostileBoundaryFailure("provider-base-chain-canary") from cause
-
-        provider_composer = self.make_composer(provider=HostileProvider())
+        provider_canary = "provider-hostile-surface-secret-canary"
+        provider_fault = HostileBoundaryFailure(provider_canary)
+        provider = FakeCurrentStateProvider(self.current_state, failure=provider_fault)
+        provider_composer = self.make_composer(provider=provider)
         provider_error = self.capture_error(
             "protected_operation_state_unavailable",
             lambda: provider_composer.authorize(self.context, self.request),
         )
-        self.assert_detached_traceback(
+        self.assert_clean_public_failure(
             provider_error,
-            "provider-base-exception-secret-canary",
-            "provider-base-chain-canary",
+            provider_fault,
+            provider_canary,
+            method="authorize",
         )
 
+        authorizer_canary = "authorizer-hostile-surface-secret-canary"
+        authorizer_fault = HostileBoundaryFailure(authorizer_canary)
+
         def hostile_authorizer(*args, **kwargs):
-            authorizer_secret = "authorizer-base-exception-secret-canary"
-            try:
-                raise ValueError(authorizer_secret)
-            except ValueError as cause:
-                raise HostileBoundaryFailure("authorizer-base-chain-canary") from cause
+            raise authorizer_fault
 
         with patch.object(TenantAuthorizer, "evaluate", hostile_authorizer):
             authorizer_error = self.capture_error(
                 "protected_operation_authorizer_failed",
                 lambda: self.composer.authorize(self.context, self.request),
             )
-        self.assert_detached_traceback(
+        self.assert_clean_public_failure(
             authorizer_error,
-            "authorizer-base-exception-secret-canary",
-            "authorizer-base-chain-canary",
+            authorizer_fault,
+            authorizer_canary,
+            method="authorize",
         )
+
+        clock_canary = "clock-hostile-surface-secret-canary"
+        clock_fault = HostileBoundaryFailure(clock_canary)
 
         class HostileClock:
             def now(self):
-                clock_secret = "clock-base-exception-secret-canary"
-                try:
-                    raise ValueError(clock_secret)
-                except ValueError as cause:
-                    raise HostileBoundaryFailure("clock-base-chain-canary") from cause
+                raise clock_fault
 
         clock_composer = self.make_composer(clock=HostileClock())
         clock_error = self.capture_error(
             "protected_operation_clock_unavailable",
             lambda: clock_composer.authorize(self.context, self.request),
         )
-        self.assert_detached_traceback(
+        self.assert_clean_public_failure(
             clock_error,
-            "clock-base-exception-secret-canary",
-            "clock-base-chain-canary",
+            clock_fault,
+            clock_canary,
+            method="authorize",
         )
 
     def test_consume_and_retire_contain_hostile_base_exceptions(self):
         operation = self.composer.authorize(self.context, self.request)
-        self.provider.failure = HostileBoundaryFailure("consume-provider-base-secret-canary")
+        provider_canary = "consume-provider-hostile-secret-canary"
+        provider_fault = HostileBoundaryFailure(provider_canary)
+        self.provider.failure = provider_fault
         consume_error = self.capture_error(
             "protected_operation_state_unavailable",
             lambda: self.composer.consume(operation, self.context, self.request),
         )
-        self.assert_detached_traceback(
+        self.assert_clean_public_failure(
             consume_error,
-            "consume-provider-base-secret-canary",
-            expected_method="consume",
+            provider_fault,
+            provider_canary,
+            method="consume",
         )
         self.provider.failure = None
 
+        authorizer_canary = "consume-authorizer-hostile-secret-canary"
+        authorizer_fault = HostileBoundaryFailure(authorizer_canary)
+
         def hostile_consume_authorizer(*args, **kwargs):
-            raise HostileBoundaryFailure("consume-authorizer-base-secret-canary")
+            raise authorizer_fault
 
         with patch.object(TenantAuthorizer, "evaluate", hostile_consume_authorizer):
             authorizer_error = self.capture_error(
                 "protected_operation_authorizer_failed",
                 lambda: self.composer.consume(operation, self.context, self.request),
             )
-        self.assert_detached_traceback(
+        self.assert_clean_public_failure(
             authorizer_error,
-            "consume-authorizer-base-secret-canary",
-            expected_method="consume",
+            authorizer_fault,
+            authorizer_canary,
+            method="consume",
         )
 
+        retire_canary = "retire-registry-hostile-secret-canary"
+        retire_fault = HostileBoundaryFailure(retire_canary)
+
         def hostile_retire(registry, selected_operation):
-            raise HostileBoundaryFailure("retire-base-exception-secret-canary")
+            raise retire_fault
 
         with patch.object(_AuthorizedOperationRegistry, "retire", hostile_retire):
             retire_error = self.capture_error(
                 "protected_operation_internal_failure",
                 lambda: self.composer.retire(operation),
             )
-        self.assert_detached_traceback(
+        self.assert_clean_public_failure(
             retire_error,
-            "retire-base-exception-secret-canary",
-            expected_method="retire",
+            retire_fault,
+            retire_canary,
+            method="retire",
         )
         self.composer.retire(operation)
+
+    def test_registry_and_action_time_clock_hostile_faults_are_contained(self):
+        issue_canary = "authorize-registry-issue-hostile-secret-canary"
+        issue_fault = HostileBoundaryFailure(issue_canary)
+        issue_composer = self.make_composer()
+
+        def hostile_issue(*args, **kwargs):
+            raise issue_fault
+
+        with patch.object(_AuthorizedOperationRegistry, "issue", hostile_issue):
+            issue_error = self.capture_error(
+                "protected_operation_internal_failure",
+                lambda: issue_composer.authorize(self.context, self.request),
+            )
+        self.assert_clean_public_failure(
+            issue_error,
+            issue_fault,
+            issue_canary,
+            method="authorize",
+        )
+
+        for method_name in ("check_request", "consume_request"):
+            with self.subTest(method=method_name):
+                operation = self.composer.authorize(self.context, self.request)
+                registry_canary = f"consume-registry-{method_name}-hostile-secret-canary"
+                registry_fault = HostileBoundaryFailure(registry_canary)
+
+                def hostile_registry_call(*args, selected=registry_fault, **kwargs):
+                    raise selected
+
+                with patch.object(
+                    _AuthorizedOperationRegistry,
+                    method_name,
+                    hostile_registry_call,
+                ):
+                    registry_error = self.capture_error(
+                        "protected_operation_internal_failure",
+                        lambda selected=operation: self.composer.consume(
+                            selected,
+                            self.context,
+                            self.request,
+                        ),
+                    )
+                self.assert_clean_public_failure(
+                    registry_error,
+                    registry_fault,
+                    registry_canary,
+                    method="consume",
+                )
+                self.composer.consume(operation, self.context, self.request)
+
+        class SwitchableClock(FixedClock):
+            def __init__(self):
+                super().__init__()
+                self.failure = None
+
+            def now(self):
+                if self.failure is not None:
+                    raise self.failure
+                return super().now()
+
+        operation_clock = SwitchableClock()
+        clock_composer = self.make_composer(clock=operation_clock)
+        clock_operation = clock_composer.authorize(self.context, self.request)
+        clock_canary = "consume-clock-hostile-secret-canary"
+        clock_fault = HostileBoundaryFailure(clock_canary)
+        operation_clock.failure = clock_fault
+
+        clock_error = self.capture_error(
+            "protected_operation_clock_unavailable",
+            lambda: clock_composer.consume(clock_operation, self.context, self.request),
+        )
+        self.assert_clean_public_failure(
+            clock_error,
+            clock_fault,
+            clock_canary,
+            method="consume",
+        )
+        operation_clock.failure = None
+        clock_composer.consume(clock_operation, self.context, self.request)
 
     def test_exact_control_signals_are_reissued_without_third_party_state(self):
         for original in (
             KeyboardInterrupt("keyboard-control-secret-canary"),
             SystemExit("system-control-secret-canary"),
             GeneratorExit("generator-control-secret-canary"),
+            asyncio.CancelledError("cancelled-control-secret-canary"),
         ):
             provider = FakeCurrentStateProvider(self.current_state, failure=original)
             composer = self.make_composer(provider=provider)
@@ -1193,6 +1445,7 @@ class ProtectedOperationComposerTests(unittest.TestCase):
             )
 
             self.assertIsNot(signal, original)
+            self.assertEqual(signal.args, ())
             rendered = " ".join((str(signal), repr(signal)))
             self.assertNotIn("secret-canary", rendered)
             self.assert_detached_control_traceback(
@@ -1201,7 +1454,92 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                 "keyboard-control-secret-canary",
                 "system-control-secret-canary",
                 "generator-control-secret-canary",
+                "cancelled-control-secret-canary",
             )
+            self.assert_original_control_traceback_is_scrubbed(
+                original,
+                "keyboard-control-secret-canary",
+                "system-control-secret-canary",
+                "generator-control-secret-canary",
+                "cancelled-control-secret-canary",
+            )
+
+    def test_exact_control_signals_survive_consume_and_retire_boundaries(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+        for method_name in ("consume", "retire"):
+            for signal_type in signal_types:
+                with self.subTest(method=method_name, signal=signal_type.__name__):
+                    operation = self.composer.authorize(self.context, self.request)
+                    canary = f"{method_name}-{signal_type.__name__}-control-secret-canary"
+                    original = signal_type(canary)
+                    if method_name == "consume":
+                        self.provider.failure = original
+                        signal = self.capture_control_signal(
+                            signal_type,
+                            lambda selected=operation: self.composer.consume(
+                                selected,
+                                self.context,
+                                self.request,
+                            ),
+                        )
+                        self.provider.failure = None
+                        self.composer.consume(operation, self.context, self.request)
+                    else:
+
+                        def hostile_retire(*args, selected=original, **kwargs):
+                            raise selected
+
+                        with patch.object(
+                            _AuthorizedOperationRegistry,
+                            "retire",
+                            hostile_retire,
+                        ):
+                            signal = self.capture_control_signal(
+                                signal_type,
+                                lambda selected=operation: self.composer.retire(selected),
+                            )
+                        self.composer.retire(operation)
+
+                    self.assertIsNot(signal, original)
+                    self.assertEqual(signal.args, ())
+                    self.assertNotIn(canary, " ".join((str(signal), repr(signal))))
+                    self.assert_detached_control_traceback(signal, method_name, canary)
+                    self.assert_original_control_traceback_is_scrubbed(original, canary)
+
+    def test_control_signal_subclasses_fail_closed_as_dependency_errors(self):
+        class KeyboardInterruptSubclass(KeyboardInterrupt):
+            pass
+
+        class SystemExitSubclass(SystemExit):
+            pass
+
+        class GeneratorExitSubclass(GeneratorExit):
+            pass
+
+        class CancelledErrorSubclass(asyncio.CancelledError):
+            pass
+
+        for signal_type in (
+            KeyboardInterruptSubclass,
+            SystemExitSubclass,
+            GeneratorExitSubclass,
+            CancelledErrorSubclass,
+        ):
+            with self.subTest(signal=signal_type.__name__):
+                canary = f"{signal_type.__name__}-subclass-secret-canary"
+                original = signal_type(canary)
+                provider = FakeCurrentStateProvider(self.current_state, failure=original)
+                composer = self.make_composer(provider=provider)
+
+                error = self.capture_error(
+                    "protected_operation_state_unavailable",
+                    lambda selected=composer: selected.authorize(self.context, self.request),
+                )
+
+                self.assertIs(type(error), OperationAuthorizationError)
+                self.assertNotIn(canary, " ".join((str(error), repr(error))))
+                self.assert_detached_traceback(error, canary)
+                self.assert_original_control_traceback_is_scrubbed(original, canary)
 
     def test_consume_scope_failure_detaches_actor_and_resource_values(self):
         operation = self.composer.authorize(self.context, self.request)

@@ -8,14 +8,17 @@ this module may turn a fresh, matching state into an opaque operation handle.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import secrets
+import sys
 import threading
 import traceback
 import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import NoReturn, Optional, Protocol, SupportsIndex
+from functools import partial
+from typing import Callable, NoReturn, Optional, Protocol, SupportsIndex, TypeVar
 
 from .request_context import ReauthorizationBasis, RequestContext, RequestContextIssuer
 from .tenancy import (
@@ -39,6 +42,7 @@ _MAX_VERIFIED_CAPABILITIES = 64
 _KEYBOARD_INTERRUPT = "keyboard_interrupt"
 _SYSTEM_EXIT = "system_exit"
 _GENERATOR_EXIT = "generator_exit"
+_CANCELLED_ERROR = "cancelled_error"
 
 
 def _control_signal_kind(error: BaseException) -> Optional[str]:
@@ -48,26 +52,21 @@ def _control_signal_kind(error: BaseException) -> Optional[str]:
         return _SYSTEM_EXIT
     if type(error) is GeneratorExit:
         return _GENERATOR_EXIT
+    if type(error) is asyncio.CancelledError:
+        return _CANCELLED_ERROR
     return None
 
 
 def _raise_control_signal(kind: str) -> NoReturn:
     if kind == _KEYBOARD_INTERRUPT:
-        raise KeyboardInterrupt()
+        raise KeyboardInterrupt() from None
     if kind == _SYSTEM_EXIT:
-        raise SystemExit(1)
+        raise SystemExit() from None
     if kind == _GENERATOR_EXIT:
-        raise GeneratorExit()
+        raise GeneratorExit() from None
+    if kind == _CANCELLED_ERROR:
+        raise asyncio.CancelledError() from None
     raise RuntimeError("invalid internal control signal")
-
-
-def _detach_failure(error: BaseException) -> None:
-    internal_traceback = error.__traceback__
-    error.__cause__ = None
-    error.__context__ = None
-    error.__traceback__ = None
-    if internal_traceback is not None:
-        traceback.clear_frames(internal_traceback)
 
 
 def _require_opaque_id(value: str, field_name: str) -> str:
@@ -219,6 +218,101 @@ class OperationAuthorizationError(RuntimeError):
         _require_opaque_id(code, "operation authorization error code")
         self.code = code
         super().__init__(code)
+
+
+_PUBLIC_OPERATION_FAILURE_CODES = frozenset(
+    (
+        "protected_operation_authorizer_failed",
+        "protected_operation_binding_invalid",
+        "protected_operation_capacity_exceeded",
+        "protected_operation_clock_unavailable",
+        "protected_operation_composer_closed",
+        "protected_operation_context_expired",
+        "protected_operation_context_rejected",
+        "protected_operation_context_time_invalid",
+        "protected_operation_decision_invalid",
+        "protected_operation_decision_time_invalid",
+        "protected_operation_denied",
+        "protected_operation_expired",
+        "protected_operation_expiry_invalid",
+        "protected_operation_id_unavailable",
+        "protected_operation_identity_revision_stale",
+        "protected_operation_internal_failure",
+        "protected_operation_registry_closed",
+        "protected_operation_request_invalid",
+        "protected_operation_scope_mismatch",
+        "protected_operation_scope_revision_stale",
+        "protected_operation_state_invalid",
+        "protected_operation_state_mismatch",
+        "protected_operation_state_stale",
+        "protected_operation_state_time_invalid",
+        "protected_operation_state_unavailable",
+        "protected_operation_tampered",
+        "protected_operation_time_regressed",
+        "protected_operation_untrusted",
+        "protected_operation_workspace_required",
+    )
+)
+
+
+@dataclass(frozen=True, repr=False)
+class _BoundaryFailure:
+    """Trusted descriptor that never retains a caught third-party exception."""
+
+    operation_code: Optional[str]
+    control_signal: Optional[str]
+
+
+_BoundaryValue = TypeVar("_BoundaryValue")
+
+
+def _invoke_boundary(
+    callback: Callable[[], _BoundaryValue],
+) -> tuple[Optional[_BoundaryValue], Optional[_BoundaryFailure]]:
+    """Call one boundary and collapse a raw fault before returning to its caller.
+
+    The raw exception exists only in this inner frame.  Completed callback and
+    dependency frames are cleared through the interpreter-owned traceback, so no
+    hostile exception attribute is read or mutated.  Before this frame returns,
+    its callback and traceback references are explicitly discarded as well.
+    """
+
+    pending_callback = [callback]
+    del callback
+    value: Optional[_BoundaryValue] = None
+    failure: Optional[_BoundaryFailure] = None
+    try:
+        value = pending_callback.pop()()
+    except BaseException as error:
+        control_signal = _control_signal_kind(error)
+        operation_code: Optional[str] = None
+        if type(error) is OperationAuthorizationError:
+            try:
+                candidate = object.__getattribute__(error, "code")
+            except AttributeError:
+                candidate = None
+            if type(candidate) is str and candidate in _PUBLIC_OPERATION_FAILURE_CODES:
+                operation_code = candidate
+        internal_traceback = sys.exc_info()[2]
+        if internal_traceback is not None:
+            traceback.clear_frames(internal_traceback)
+        failure = _BoundaryFailure(
+            operation_code=operation_code,
+            control_signal=control_signal,
+        )
+        del internal_traceback
+        return value, failure
+    return value, None
+
+
+def _raise_dependency_failure(failure: _BoundaryFailure, code: str) -> NoReturn:
+    """Propagate only a clean control signal or one caller-selected stable code."""
+
+    control_signal = failure.control_signal
+    del failure
+    if control_signal is not None:
+        _raise_control_signal(control_signal)
+    raise OperationAuthorizationError(code) from None
 
 
 @dataclass(frozen=True, repr=False)
@@ -557,15 +651,10 @@ class _AuthorizedOperationRegistry:
         raise TypeError("AuthorizedOperationRegistry cannot be serialized")
 
     def _clock_now(self) -> datetime:
-        normalized: Optional[datetime] = None
-        failed = False
-        try:
-            normalized = _as_utc(self.__clock.now(), "clock.now()")
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            failed = True
-        if failed or normalized is None:
+        normalized, failure = _invoke_boundary(lambda: _as_utc(self.__clock.now(), "clock.now()"))
+        if failure is not None:
+            _raise_dependency_failure(failure, "protected_operation_clock_unavailable")
+        if normalized is None:
             raise OperationAuthorizationError("protected_operation_clock_unavailable")
         previous = self.__last_observed_at
         if previous is not None and normalized < previous:
@@ -579,8 +668,8 @@ class _AuthorizedOperationRegistry:
     def _snapshot_binding(binding: _OperationBinding) -> _OperationBinding:
         if type(binding) is not _OperationBinding:
             raise OperationAuthorizationError("protected_operation_binding_invalid")
-        try:
-            return _OperationBinding(
+        trusted, failure = _invoke_boundary(
+            lambda: _OperationBinding(
                 context_id=binding.context_id,
                 authenticator_id=binding.authenticator_id,
                 audience=binding.audience,
@@ -596,10 +685,12 @@ class _AuthorizedOperationRegistry:
                 identity_revision=binding.identity_revision,
                 scope_revision=binding.scope_revision,
             )
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            raise OperationAuthorizationError("protected_operation_binding_invalid") from None
+        )
+        if failure is not None:
+            _raise_dependency_failure(failure, "protected_operation_binding_invalid")
+        if trusted is None:
+            raise OperationAuthorizationError("protected_operation_binding_invalid")
+        return trusted
 
     def _new_snapshot(
         self,
@@ -630,15 +721,12 @@ class _AuthorizedOperationRegistry:
 
     def _new_operation_id(self) -> str:
         existing = {record[1].operation_id for record in self.__active.values()}
-        try:
-            for _ in range(4):
-                candidate = f"op_{secrets.token_hex(32)}"
-                if candidate not in existing:
-                    return candidate
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            pass
+        for _ in range(4):
+            candidate, failure = _invoke_boundary(lambda: f"op_{secrets.token_hex(32)}")
+            if failure is not None:
+                _raise_dependency_failure(failure, "protected_operation_id_unavailable")
+            if candidate is not None and candidate not in existing:
+                return candidate
         raise OperationAuthorizationError("protected_operation_id_unavailable")
 
     def _trusted_snapshot(self, operation: AuthorizedOperation) -> _OperationSnapshot:
@@ -658,11 +746,10 @@ class _AuthorizedOperationRegistry:
         operation: AuthorizedOperation,
         snapshot: _OperationSnapshot,
     ) -> bool:
-        try:
-            actual = operation._bound_values()
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
+        actual, failure = _invoke_boundary(lambda: operation._bound_values())
+        if failure is not None:
+            if failure.control_signal is not None:
+                _raise_control_signal(failure.control_signal)
             return False
         expected = (
             snapshot.operation_id,
@@ -859,20 +946,19 @@ class ProtectedOperationComposer:
     ) -> AuthorizedOperation:
         """Return one bounded opaque handle only after an explicit ALLOW decision."""
 
-        try:
-            return self._authorize(context, request)
-        except OperationAuthorizationError as error:
-            failure_code = error.code
-            control_signal = None
-            _detach_failure(error)
-        except BaseException as error:
-            failure_code = "protected_operation_internal_failure"
-            control_signal = _control_signal_kind(error)
-            _detach_failure(error)
-        del self, context, request
+        operation, failure = _invoke_boundary(partial(self._authorize, context, request))
+        if failure is None and type(operation) is AuthorizedOperation:
+            return operation
+        failure_code = (
+            failure.operation_code
+            if failure is not None and failure.operation_code is not None
+            else "protected_operation_internal_failure"
+        )
+        control_signal = failure.control_signal if failure is not None else None
+        del self, context, request, operation, failure
         if control_signal is not None:
             _raise_control_signal(control_signal)
-        raise OperationAuthorizationError(failure_code)
+        raise OperationAuthorizationError(failure_code) from None
 
     def _authorize(
         self,
@@ -880,26 +966,26 @@ class ProtectedOperationComposer:
         request: AccessRequest,
     ) -> AuthorizedOperation:
         self._ensure_open()
-        basis: Optional[ReauthorizationBasis] = None
-        admission_failed = False
-        try:
-            basis = self.__issuer.prepare_reauthorization(context, request)
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            admission_failed = True
-        if admission_failed or type(basis) is not ReauthorizationBasis:
+        basis, admission_failure = _invoke_boundary(
+            lambda: self.__issuer.prepare_reauthorization(context, request)
+        )
+        if admission_failure is not None:
+            _raise_dependency_failure(
+                admission_failure,
+                "protected_operation_context_rejected",
+            )
+        if type(basis) is not ReauthorizationBasis:
             raise OperationAuthorizationError("protected_operation_context_rejected")
 
-        trusted_request: Optional[AccessRequest] = None
-        request_invalid = False
-        try:
-            trusted_request = _snapshot_access_request(request)
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            request_invalid = True
-        if request_invalid or trusted_request is None:
+        trusted_request, request_failure = _invoke_boundary(
+            lambda: _snapshot_access_request(request)
+        )
+        if request_failure is not None:
+            _raise_dependency_failure(
+                request_failure,
+                "protected_operation_request_invalid",
+            )
+        if trusted_request is None:
             raise OperationAuthorizationError("protected_operation_request_invalid")
         workspace = trusted_request.resource.workspace_id
         if basis.workspace_id is None or workspace is None:
@@ -928,20 +1014,19 @@ class ProtectedOperationComposer:
     ) -> None:
         """Atomically validate exact operation scope and retire the handle before an effect."""
 
-        try:
-            return self._consume(operation, context, request)
-        except OperationAuthorizationError as error:
-            failure_code = error.code
-            control_signal = None
-            _detach_failure(error)
-        except BaseException as error:
-            failure_code = "protected_operation_internal_failure"
-            control_signal = _control_signal_kind(error)
-            _detach_failure(error)
-        del self, operation, context, request
+        result, failure = _invoke_boundary(partial(self._consume, operation, context, request))
+        if failure is None:
+            return result
+        failure_code = (
+            failure.operation_code
+            if failure.operation_code is not None
+            else "protected_operation_internal_failure"
+        )
+        control_signal = failure.control_signal
+        del self, operation, context, request, result, failure
         if control_signal is not None:
             _raise_control_signal(control_signal)
-        raise OperationAuthorizationError(failure_code)
+        raise OperationAuthorizationError(failure_code) from None
 
     def _consume(
         self,
@@ -950,42 +1035,40 @@ class ProtectedOperationComposer:
         request: AccessRequest,
     ) -> None:
         self._ensure_open()
-        basis: Optional[ReauthorizationBasis] = None
-        admission_failed = False
-        try:
-            basis = self.__issuer.prepare_reauthorization(context, request)
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            admission_failed = True
-        if admission_failed or type(basis) is not ReauthorizationBasis:
+        basis, admission_failure = _invoke_boundary(
+            lambda: self.__issuer.prepare_reauthorization(context, request)
+        )
+        if admission_failure is not None:
+            _raise_dependency_failure(
+                admission_failure,
+                "protected_operation_context_rejected",
+            )
+        if type(basis) is not ReauthorizationBasis:
             raise OperationAuthorizationError("protected_operation_context_rejected")
-        trusted_request: Optional[AccessRequest] = None
-        request_invalid = False
-        try:
-            trusted_request = _snapshot_access_request(request)
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            request_invalid = True
-        if request_invalid or trusted_request is None:
+        trusted_request, request_failure = _invoke_boundary(
+            lambda: _snapshot_access_request(request)
+        )
+        if request_failure is not None:
+            _raise_dependency_failure(
+                request_failure,
+                "protected_operation_request_invalid",
+            )
+        if trusted_request is None:
             raise OperationAuthorizationError("protected_operation_request_invalid")
         if not self._basis_matches_request(basis, trusted_request):
             raise OperationAuthorizationError("protected_operation_context_rejected")
         self.__registry.check_request(operation, basis, trusted_request)
         self._evaluate_current_authorization(basis, trusted_request)
-        refreshed_basis: Optional[ReauthorizationBasis] = None
-        refresh_failed = False
-        try:
-            refreshed_basis = self.__issuer.prepare_reauthorization(context, trusted_request)
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            refresh_failed = True
-        if (
-            refresh_failed
-            or type(refreshed_basis) is not ReauthorizationBasis
-            or not self._same_context_basis(basis, refreshed_basis)
+        refreshed_basis, refresh_failure = _invoke_boundary(
+            lambda: self.__issuer.prepare_reauthorization(context, trusted_request)
+        )
+        if refresh_failure is not None:
+            _raise_dependency_failure(
+                refresh_failure,
+                "protected_operation_context_rejected",
+            )
+        if type(refreshed_basis) is not ReauthorizationBasis or not self._same_context_basis(
+            basis, refreshed_basis
         ):
             raise OperationAuthorizationError("protected_operation_context_rejected")
         self.__registry.consume_request(operation, refreshed_basis, trusted_request)
@@ -993,22 +1076,23 @@ class ProtectedOperationComposer:
     def retire(self, operation: AuthorizedOperation) -> None:
         """Invalidate one exact issued handle without disclosing registry membership."""
 
-        try:
-            self._ensure_open()
-            self.__registry.retire(operation)
-            return
-        except OperationAuthorizationError as error:
-            failure_code = error.code
-            control_signal = None
-            _detach_failure(error)
-        except BaseException as error:
-            failure_code = "protected_operation_internal_failure"
-            control_signal = _control_signal_kind(error)
-            _detach_failure(error)
-        del self, operation
+        result, failure = _invoke_boundary(partial(self._retire, operation))
+        if failure is None:
+            return result
+        failure_code = (
+            failure.operation_code
+            if failure.operation_code is not None
+            else "protected_operation_internal_failure"
+        )
+        control_signal = failure.control_signal
+        del self, operation, result, failure
         if control_signal is not None:
             _raise_control_signal(control_signal)
-        raise OperationAuthorizationError(failure_code)
+        raise OperationAuthorizationError(failure_code) from None
+
+    def _retire(self, operation: AuthorizedOperation) -> None:
+        self._ensure_open()
+        self.__registry.retire(operation)
 
     def close(self) -> None:
         """Invalidate all handles and reject future composition. Idempotent."""
@@ -1047,26 +1131,22 @@ class ProtectedOperationComposer:
         if basis.context_expires_at <= before_load:
             raise OperationAuthorizationError("protected_operation_context_expired")
 
-        loaded_state: Optional[CurrentAuthorizationState] = None
-        provider_failed = False
-        try:
-            loaded_state = self.__provider.load_current_state(basis, request)
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            provider_failed = True
-        if provider_failed:
-            raise OperationAuthorizationError("protected_operation_state_unavailable")
+        loaded_state, provider_failure = _invoke_boundary(
+            lambda: self.__provider.load_current_state(basis, request)
+        )
+        if provider_failure is not None:
+            _raise_dependency_failure(
+                provider_failure,
+                "protected_operation_state_unavailable",
+            )
 
-        state: Optional[CurrentAuthorizationState] = None
-        state_invalid = False
-        try:
-            state = self._snapshot_state(loaded_state)
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            state_invalid = True
-        if state_invalid or state is None:
+        state, state_failure = _invoke_boundary(lambda: self._snapshot_state(loaded_state))
+        if state_failure is not None:
+            _raise_dependency_failure(
+                state_failure,
+                "protected_operation_state_invalid",
+            )
+        if state is None:
             raise OperationAuthorizationError("protected_operation_state_invalid")
         self._validate_state_binding(state, basis)
         if state.observed_at > before_load + self.__max_clock_skew:
@@ -1074,31 +1154,27 @@ class ProtectedOperationComposer:
         if before_load - state.observed_at >= self.__max_state_age:
             raise OperationAuthorizationError("protected_operation_state_stale")
 
-        raw_decision: Optional[AuthorizationDecision] = None
-        authorizer_failed = False
-        try:
-            raw_decision = self.__authorizer.evaluate(
+        raw_decision, authorizer_failure = _invoke_boundary(
+            lambda: self.__authorizer.evaluate(
                 request,
                 state.member,
                 state.revocations,
                 state.verified_capabilities,
             )
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            authorizer_failed = True
-        if authorizer_failed:
-            raise OperationAuthorizationError("protected_operation_authorizer_failed")
+        )
+        if authorizer_failure is not None:
+            _raise_dependency_failure(
+                authorizer_failure,
+                "protected_operation_authorizer_failed",
+            )
 
-        decision: Optional[AuthorizationDecision] = None
-        decision_invalid = False
-        try:
-            decision = self._snapshot_decision(raw_decision)
-        except BaseException as error:
-            if _control_signal_kind(error) is not None:
-                raise
-            decision_invalid = True
-        if decision_invalid or decision is None or decision.request != request:
+        decision, decision_failure = _invoke_boundary(lambda: self._snapshot_decision(raw_decision))
+        if decision_failure is not None:
+            _raise_dependency_failure(
+                decision_failure,
+                "protected_operation_decision_invalid",
+            )
+        if decision is None or decision.request != request:
             raise OperationAuthorizationError("protected_operation_decision_invalid")
 
         after_decision = self.__registry.observe_now()
