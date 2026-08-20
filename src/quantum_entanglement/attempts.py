@@ -546,6 +546,13 @@ class SQLiteInvocationAttemptStore:
             )
             if last_error is not None and len(last_error) > _MAX_ERROR_LENGTH:
                 raise ValueError("persisted invocation last_error exceeds its supported length")
+            if attempts_started == 0 and last_error is not None:
+                raise ValueError("persisted zero-attempt invocation carries a last_error")
+            if (
+                status is InvocationStatus.FAILED
+                or (status is InvocationStatus.QUEUED and attempts_started > 0)
+            ) and last_error is None:
+                raise ValueError("persisted failed invocation state lacks a last_error")
             requested_available_at = _persisted_optional_timestamp(
                 row["requested_available_at"], "invocation requested_available_at"
             )
@@ -624,6 +631,10 @@ class SQLiteInvocationAttemptStore:
             )
             if error is not None and len(error) > _MAX_ERROR_LENGTH:
                 raise ValueError("persisted attempt error exceeds its supported length")
+            if status in {AttemptStatus.RUNNING, AttemptStatus.SUCCEEDED} and error is not None:
+                raise ValueError("persisted active/succeeded attempt carries an error")
+            if status in {AttemptStatus.FAILED, AttemptStatus.EXPIRED} and error is None:
+                raise ValueError("persisted failed/expired attempt lacks an error")
             started_at = _persisted_timestamp(row["started_at"], "attempt started_at")
             heartbeat_at = _persisted_timestamp(row["heartbeat_at"], "attempt heartbeat_at")
             lease_expires_at = _persisted_timestamp(
@@ -838,11 +849,15 @@ class SQLiteInvocationAttemptStore:
         elif job.status is InvocationStatus.FAILED:
             if current_attempt.status not in {AttemptStatus.FAILED, AttemptStatus.EXPIRED}:
                 raise InvocationIntegrityError("failed invocation has an incompatible attempt")
+            if current_attempt.error != job.last_error:
+                raise InvocationIntegrityError("failed invocation error differs from its attempt")
         elif job.status is InvocationStatus.QUEUED:
             if current_attempt.status not in {AttemptStatus.FAILED, AttemptStatus.EXPIRED}:
                 raise InvocationIntegrityError(
                     "queued invocation has an incompatible prior attempt"
                 )
+            if current_attempt.error != job.last_error:
+                raise InvocationIntegrityError("queued invocation error differs from its attempt")
         elif job.status is InvocationStatus.CANCELED:
             if current_attempt.status is not AttemptStatus.CANCELED:
                 raise InvocationIntegrityError("canceled invocation has an incompatible attempt")
@@ -1183,7 +1198,10 @@ class SQLiteInvocationAttemptStore:
             ).fetchone()
             if prior_attempt is not None:
                 raise InvocationIntegrityError("first-claim candidate has attempt history")
-            claimable_where = candidate_where + " AND lease_epoch = 0 AND result_ref IS NULL"
+            claimable_where = (
+                candidate_where
+                + " AND lease_epoch = 0 AND result_ref IS NULL AND last_error IS NULL"
+            )
             row = connection.execute(
                 f"""
                 SELECT * FROM invocation_jobs WHERE {claimable_where}
@@ -1214,7 +1232,8 @@ class SQLiteInvocationAttemptStore:
                     lease_owner = ?, lease_token_digest = ?, lease_expires_at = ?,
                     heartbeat_at = ?, updated_at = ?, finished_at = NULL
                 WHERE invocation_id = ? AND status = 'queued'
-                  AND attempts_started = 0 AND lease_epoch = 0 AND result_ref IS NULL
+                  AND attempts_started = 0 AND lease_epoch = 0
+                  AND result_ref IS NULL AND last_error IS NULL
                   AND NOT EXISTS (
                       SELECT 1 FROM invocation_attempts
                       WHERE invocation_attempts.invocation_id = invocation_jobs.invocation_id
