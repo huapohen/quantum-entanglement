@@ -81,6 +81,7 @@ def _fork_issuer_public_path_probe(connection, issuer, context, claims, request)
         ("retire", lambda: issuer.retire(context)),
         ("close", issuer.close),
         ("enter", issuer.__enter__),
+        ("exit", lambda: issuer.__exit__(None, None, None)),
     )
     try:
         connection.send(
@@ -264,6 +265,50 @@ class RequestContextIssuanceTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), code)
         self.assertIsNone(raised.exception.__cause__)
         self.assertIsNone(raised.exception.__context__)
+
+    def capture_error(self, code, callback):
+        captured = None
+        try:
+            callback()
+        except RequestContextError as error:
+            captured = error
+        else:
+            self.fail(f"expected RequestContextError with code {code}")
+        self.assertEqual(captured.code, code)
+        self.assertIsNone(captured.__cause__)
+        self.assertIsNone(captured.__context__)
+        return captured
+
+    def assert_detached_process_error(self, error, expected_method, *forbidden):
+        self.assertEqual(error.args, ("request_context_process_mismatch",))
+        self.assertEqual(getattr(error, "__notes__", ()), ())
+        self.assertEqual(getattr(error, "__dict__", {}), {})
+        library_frames = []
+        trace = error.__traceback__
+        while trace is not None:
+            if trace.tb_frame.f_code.co_filename.endswith("/request_context.py"):
+                library_frames.append(trace.tb_frame)
+            trace = trace.tb_next
+        self.assertEqual(
+            [frame.f_code.co_name for frame in library_frames],
+            [expected_method],
+        )
+        for frame in library_frames:
+            for value in list(frame.f_locals.values()):
+                for selected in forbidden:
+                    self.assertIsNot(value, selected)
+                self.assertNotIsInstance(
+                    value,
+                    (
+                        AccessRequest,
+                        CallerRequestContext,
+                        RequestContext,
+                        RequestContextIssuer,
+                        SecretMaterial,
+                    ),
+                )
+                if isinstance(value, str):
+                    self.assertNotIn("secret-canary", value)
 
     def receive_process_payload(self, process, connection, *, timeout=5):
         payload = None
@@ -738,6 +783,50 @@ class RequestContextIssuanceTests(unittest.TestCase):
         self.assertEqual(process_pid, os.getpid())
         self.assertIsNot(process_epoch, stale_epoch)
 
+    def test_every_process_mismatch_failure_detaches_issuer_and_request_state(self):
+        issuer, authenticator = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+        request = self.access_request()
+        credential = SecretMaterial(b"process-mismatch-secret-canary")
+        exit_error = RuntimeError("process-mismatch-exit-secret-canary")
+        owner_epoch = object.__getattribute__(issuer, "_RequestContextIssuer__owner_epoch")
+        object.__setattr__(issuer, "_RequestContextIssuer__owner_epoch", object())
+        calls = (
+            ("issue", lambda: issuer.issue(self.claims, credential)),
+            (
+                "prepare_reauthorization",
+                lambda: issuer.prepare_reauthorization(context, request),
+            ),
+            ("retire", lambda: issuer.retire(context)),
+            ("close", issuer.close),
+            ("__enter__", issuer.__enter__),
+            ("__exit__", lambda: issuer.__exit__(RuntimeError, exit_error, None)),
+        )
+        try:
+            for expected_method, call in calls:
+                with self.subTest(method=expected_method):
+                    error = self.capture_error("request_context_process_mismatch", call)
+                    self.assert_detached_process_error(
+                        error,
+                        expected_method,
+                        issuer,
+                        authenticator,
+                        self.clock,
+                        self.claims,
+                        context,
+                        request,
+                        credential,
+                        exit_error,
+                    )
+        finally:
+            object.__setattr__(issuer, "_RequestContextIssuer__owner_epoch", owner_epoch)
+
+        self.assertTrue(credential.closed)
+        self.assertEqual(
+            issuer.prepare_reauthorization(context, request).context_id,
+            context.context_id,
+        )
+
     @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
     def test_real_fork_rejects_every_inherited_issuer_path_and_parent_remains_usable(self):
         issuer, _ = self.make_issuer()
@@ -758,7 +847,7 @@ class RequestContextIssuanceTests(unittest.TestCase):
         self.assertTrue(payload["credentialClosed"])
         self.assertEqual(
             set(payload["results"]),
-            {"issue", "prepare_reauthorization", "retire", "close", "enter"},
+            {"issue", "prepare_reauthorization", "retire", "close", "enter", "exit"},
         )
         for name, result in payload["results"].items():
             with self.subTest(path=name):

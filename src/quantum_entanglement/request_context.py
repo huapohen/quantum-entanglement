@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import sys
 import threading
 import traceback
 import weakref
@@ -225,6 +226,24 @@ class RequestContextError(RuntimeError):
         _require_opaque_id(code, "request context error code")
         self.code = code
         super().__init__(code)
+
+
+def _collapse_request_context_error(error: RequestContextError) -> str:
+    """Snapshot one bounded code and clear every completed internal failure frame."""
+
+    failure_code = "request_context_internal_failure"
+    if type(error) is RequestContextError:
+        try:
+            candidate = object.__getattribute__(error, "code")
+        except AttributeError:
+            candidate = None
+        if type(candidate) is str and _OPAQUE_ID.fullmatch(candidate) is not None:
+            failure_code = candidate
+    internal_traceback = sys.exc_info()[2]
+    if internal_traceback is not None:
+        traceback.clear_frames(internal_traceback)
+    del internal_traceback
+    return failure_code
 
 
 @dataclass(frozen=True)
@@ -496,16 +515,7 @@ class RequestContextIssuer:
         try:
             return self._issue(claims, credential)
         except RequestContextError as error:
-            failure_code = error.code
-            internal_traceback = error.__traceback__
-            error.__cause__ = None
-            error.__context__ = None
-            error.__traceback__ = None
-            if internal_traceback is not None:
-                # Python 3.9 skips the currently executing ``issue`` frame and clears
-                # completed private frames, including any credential memoryview local.
-                traceback.clear_frames(internal_traceback)
-            del internal_traceback
+            failure_code = _collapse_request_context_error(error)
         # Re-issue the bounded error after the internal exception and traceback have
         # left scope. A wipe failure may leave the private issue frame's memoryview
         # readable, so merely clearing ``__context__`` would not be a complete boundary.
@@ -571,6 +581,20 @@ class RequestContextIssuer:
     ) -> ReauthorizationBasis:
         """Validate exact local context/request scope and return non-authorizing evidence."""
 
+        try:
+            return self._prepare_reauthorization(context, request)
+        except RequestContextError as error:
+            failure_code = _collapse_request_context_error(error)
+        del self, context, request
+        raise RequestContextError(failure_code) from None
+
+    def _prepare_reauthorization(
+        self,
+        context: RequestContext,
+        request: AccessRequest,
+    ) -> ReauthorizationBasis:
+        """Private preparation path whose completed failure frames are always cleared."""
+
         self._ensure_process()
         trusted_request = self._snapshot_access_request(request)
         with self.__lock:
@@ -624,6 +648,16 @@ class RequestContextIssuer:
     def retire(self, context: RequestContext) -> None:
         """Invalidate one exact issued handle without disclosing registry membership."""
 
+        try:
+            return self._retire(context)
+        except RequestContextError as error:
+            failure_code = _collapse_request_context_error(error)
+        del self, context
+        raise RequestContextError(failure_code) from None
+
+    def _retire(self, context: RequestContext) -> None:
+        """Private retirement path whose completed failure frames are always cleared."""
+
         self._ensure_process()
         with self.__lock:
             if self.__closed:
@@ -634,20 +668,43 @@ class RequestContextIssuer:
     def close(self) -> None:
         """Invalidate every issued context. The operation is idempotent."""
 
+        try:
+            return self._close()
+        except RequestContextError as error:
+            failure_code = _collapse_request_context_error(error)
+        del self
+        raise RequestContextError(failure_code) from None
+
+    def _close(self) -> None:
+        """Private close path whose completed failure frames are always cleared."""
+
         self._ensure_process()
         with self.__lock:
             self.__closed = True
             self.__active.clear()
 
     def __enter__(self) -> RequestContextIssuer:
+        try:
+            return self._enter()
+        except RequestContextError as error:
+            failure_code = _collapse_request_context_error(error)
+        del self
+        raise RequestContextError(failure_code) from None
+
+    def _enter(self) -> RequestContextIssuer:
         self._ensure_process()
         with self.__lock:
             if self.__closed:
                 raise RequestContextError("request_context_issuer_closed")
         return self
 
-    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
-        self.close()
+    def __exit__(self, exc_type: object, exc_value: object, trace: object) -> None:
+        try:
+            return self._close()
+        except RequestContextError as error:
+            failure_code = _collapse_request_context_error(error)
+        del self, exc_type, exc_value, trace
+        raise RequestContextError(failure_code) from None
 
     def __repr__(self) -> str:
         return "RequestContextIssuer(<configured>)"
