@@ -174,11 +174,15 @@ class Redactor:
             for index, (key, item) in enumerate(items):
                 if remaining_nodes[0] == 0:
                     break
-                if type(key) is not str or _SAFE_KEY.fullmatch(key) is None:
+                valid_key = type(key) is str and _SAFE_KEY.fullmatch(key) is not None
+                if not valid_key:
                     safe_key = f"invalidField{index}"
                 else:
                     safe_key = key
-                if self._is_sensitive_key(safe_key):
+                # An invalid key cannot be inspected or represented faithfully within
+                # the bounded schema. Redact its value instead of relabeling it and then
+                # accidentally treating an obscured credential field as non-sensitive.
+                if not valid_key or self._is_sensitive_key(safe_key):
                     remaining_nodes[0] -= 1
                     output[safe_key] = "<redacted>"
                 else:

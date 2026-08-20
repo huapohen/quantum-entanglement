@@ -139,12 +139,20 @@ class RedactorTests(unittest.TestCase):
         canary = b"binary-secret-canary"
 
         rendered = json.dumps(
-            Redactor().sanitize({"valid": canary, "bad\nkey": "log-forge"}),
+            Redactor().sanitize(
+                {
+                    "valid": canary,
+                    "bad\nkey": "invalid-key-secret-canary",
+                    "api key": "opaque-api-key-canary",
+                }
+            ),
             sort_keys=True,
         )
 
         self.assertNotIn(canary.decode("ascii"), rendered)
         self.assertNotIn("bad\\nkey", rendered)
+        self.assertNotIn("invalid-key-secret-canary", rendered)
+        self.assertNotIn("opaque-api-key-canary", rendered)
         self.assertIn("invalidField", rendered)
 
     def test_policy_rejects_unbounded_or_coerced_limits(self) -> None:
