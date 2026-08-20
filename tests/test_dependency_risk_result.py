@@ -77,6 +77,7 @@ class DependencyRiskResultTests(unittest.TestCase):
                 ],
             },
             "project": {"name": "quantum-entanglement", "version": "0.1.0"},
+            "promotionPolicySha256": "6" * 64,
             "sboms": [
                 {
                     "byteSize": 2200,
@@ -146,6 +147,7 @@ class DependencyRiskResultTests(unittest.TestCase):
         self.assertEqual(result.lock_inventory.package_record_count, 74)
         self.assertEqual(result.sboms[0].kind, "runtime")
         self.assertEqual(result.scanner.sha256, "0" * 64)
+        self.assertEqual(result.promotion_policy_sha256, "6" * 64)
         self.assertEqual(result.database.integrity_status, "verified")
         self.assertEqual(len(result.components), 2)
         self.assertEqual(len(result.sha256), 64)

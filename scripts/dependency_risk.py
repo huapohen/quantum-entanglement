@@ -7,12 +7,29 @@ import json
 import os
 import re
 import stat
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn, cast
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
+
+from scripts.distribution_manifest import (
+    DistributionManifestError,
+    load_distribution_manifest,
+    verify_distribution_manifest_file,
+)
+from scripts.sbom import (
+    SbomError,
+    generate_sbom_documents,
+    validate_sbom_bytes,
+    verify_sbom_directory,
+)
+from scripts.verify_dependency_locks import (
+    DependencyLockError,
+    LockTarget,
+    verify_dependency_locks,
+)
 
 POLICY_FORMAT = "quantum-entanglement.dependency-risk-policy"
 POLICY_SCHEMA_VERSION = 1
@@ -22,6 +39,8 @@ DEFAULT_POLICY_PATH = Path("requirements/dependency-risk-policy.json")
 
 _MAX_POLICY_BYTES = 1024 * 1024
 _MAX_RESULT_BYTES = 16 * 1024 * 1024
+_MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+_MAX_DATABASE_BYTES = 64 * 1024 * 1024
 _MAX_STRING_BYTES = 4096
 _MAX_EXCEPTIONS = 256
 _MAX_ALLOWED_IDENTITIES = 128
@@ -117,6 +136,7 @@ _RESULT_KEYS = frozenset(
         "format",
         "lockInventory",
         "project",
+        "promotionPolicySha256",
         "sboms",
         "scan",
         "scanner",
@@ -903,6 +923,7 @@ class DependencyRiskResult:
     completed_at: datetime
     scan_status: str
     components: tuple[ComponentScan, ...]
+    promotion_policy_sha256: str
     sha256: str
 
 
@@ -1277,6 +1298,9 @@ def load_dependency_risk_result_bytes(value: bytes) -> DependencyRiskResult:
         completed_at=completed_at,
         scan_status=cast(str, scan_status),
         components=_component_scans(scan["components"]),
+        promotion_policy_sha256=_digest(
+            document["promotionPolicySha256"], "risk_result_policy_invalid"
+        ),
         sha256=sha256_bytes(value),
     )
 
@@ -1342,3 +1366,475 @@ def license_finding_sha256(component: ComponentScan) -> str:
             )
         )
     )
+
+
+@dataclass(frozen=True)
+class ExpectedComponent:
+    purl: str
+    artifact_sha256: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RiskEvidenceContext:
+    project_name: str
+    project_version: str
+    commit_sha: str
+    tree_sha: str
+    artifacts: tuple[ArtifactBinding, ...]
+    distribution_manifest: FileBinding
+    lock_inventory: LockInventoryBinding
+    sboms: tuple[SbomBinding, ...]
+    components: tuple[ExpectedComponent, ...]
+
+
+@dataclass(frozen=True)
+class RiskVerificationSummary:
+    component_count: int
+    finding_count: int
+    applied_exception_count: int
+    policy_sha256: str
+    result_sha256: str
+    database_sha256: str
+    lock_inventory_sha256: str
+    evaluation_time: str
+
+
+def _timestamp_text(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _manifest_artifacts(manifest: Mapping[str, object]) -> tuple[ArtifactBinding, ...]:
+    raw_artifacts = manifest.get("artifacts")
+    if type(raw_artifacts) is not list:
+        _fail("risk_source_evidence_invalid")
+    records: list[ArtifactBinding] = []
+    for item in cast(list[object], raw_artifacts):
+        if type(item) is not dict:
+            _fail("risk_source_evidence_invalid")
+        record = cast(dict[str, object], item)
+        kind = record.get("kind")
+        filename = record.get("filename")
+        byte_size = record.get("byteSize")
+        digest = record.get("sha256")
+        if kind not in ("sdist", "wheel"):
+            _fail("risk_source_evidence_invalid")
+        records.append(
+            ArtifactBinding(
+                kind=cast(str, kind),
+                filename=_safe_filename(filename, "risk_source_evidence_invalid"),
+                byte_size=_positive_integer(
+                    byte_size, "risk_source_evidence_invalid", maximum=2**63 - 1
+                ),
+                sha256=_digest(digest, "risk_source_evidence_invalid"),
+            )
+        )
+    if [record.kind for record in records] != ["sdist", "wheel"]:
+        _fail("risk_source_evidence_invalid")
+    return tuple(records)
+
+
+def _target_binding(target: LockTarget) -> LockTargetBinding:
+    return LockTargetBinding(
+        scope=target.scope,
+        python_version=target.python_version,
+        platform=target.platform,
+        input_sha256=target.input_sha256,
+        lock_sha256=target.lock_sha256,
+    )
+
+
+def _lock_inventory(
+    repository_root: Path, targets: Sequence[LockTarget]
+) -> LockInventoryBinding:
+    policy_bytes = _read_regular(
+        repository_root / "requirements" / "lock-policy.json",
+        1024 * 1024,
+        "risk_lock_evidence_invalid",
+    )
+    policy_digest = sha256_bytes(policy_bytes)
+    bindings = tuple(_target_binding(target) for target in targets)
+    document = {
+        "format": "quantum-entanglement.dependency-lock-inventory-binding",
+        "lockPolicySha256": policy_digest,
+        "schemaVersion": 1,
+        "targets": [
+            {
+                "inputSha256": target.input_sha256,
+                "lockSha256": target.lock_sha256,
+                "platform": target.platform,
+                "pythonVersion": target.python_version,
+                "scope": target.scope,
+            }
+            for target in bindings
+        ],
+    }
+    return LockInventoryBinding(
+        inventory_sha256=sha256_bytes(canonical_json(document)),
+        lock_policy_sha256=policy_digest,
+        package_record_count=sum(len(target.packages) for target in targets),
+        target_count=len(targets),
+        targets=bindings,
+    )
+
+
+def _component_property(component: Mapping[str, object], name: str) -> str:
+    raw_properties = component.get("properties")
+    if type(raw_properties) is not list:
+        _fail("risk_sbom_component_invalid")
+    matches: list[str] = []
+    for item in cast(list[object], raw_properties):
+        if type(item) is not dict:
+            _fail("risk_sbom_component_invalid")
+        record = cast(dict[str, object], item)
+        if record.get("name") == name and type(record.get("value")) is str:
+            matches.append(cast(str, record["value"]))
+    if len(matches) != 1:
+        _fail("risk_sbom_component_invalid")
+    return matches[0]
+
+
+def _expected_components(
+    documents: Mapping[str, bytes], artifacts: Sequence[ArtifactBinding]
+) -> tuple[ExpectedComponent, ...]:
+    runtime_bytes = documents.get("quantum-entanglement-runtime.cdx.json")
+    build_bytes = documents.get("quantum-entanglement-build.cdx.json")
+    if runtime_bytes is None or build_bytes is None:
+        _fail("risk_sbom_component_invalid")
+    runtime = validate_sbom_bytes(runtime_bytes, kind="runtime")
+    build = validate_sbom_bytes(build_bytes, kind="build")
+    runtime_metadata = cast(dict[str, object], runtime["metadata"])
+    runtime_root = cast(dict[str, object], runtime_metadata["component"])
+    runtime_purl = canonical_pypi_purl(
+        runtime_root.get("purl"), "risk_sbom_component_invalid"
+    )
+    components: list[ExpectedComponent] = [
+        ExpectedComponent(
+            purl=runtime_purl,
+            artifact_sha256=tuple(sorted(artifact.sha256 for artifact in artifacts)),
+        )
+    ]
+    raw_components = build.get("components")
+    if type(raw_components) is not list:
+        _fail("risk_sbom_component_invalid")
+    for item in cast(list[object], raw_components):
+        if type(item) is not dict:
+            _fail("risk_sbom_component_invalid")
+        component = cast(dict[str, object], item)
+        purl = canonical_pypi_purl(component.get("purl"), "risk_sbom_component_invalid")
+        raw_hashes = _component_property(
+            component, "quantum-entanglement:lock:artifact-sha256"
+        ).split(",")
+        hashes = tuple(_digest(value, "risk_sbom_component_invalid") for value in raw_hashes)
+        if hashes != tuple(sorted(hashes)) or len(set(hashes)) != len(hashes):
+            _fail("risk_sbom_component_invalid")
+        components.append(ExpectedComponent(purl=purl, artifact_sha256=hashes))
+    components.sort(key=lambda item: item.purl)
+    if len({component.purl for component in components}) != len(components):
+        _fail("risk_sbom_component_invalid")
+    return tuple(components)
+
+
+def collect_risk_evidence_context(
+    repository_root: Path,
+    distribution_directory: Path,
+    distribution_manifest: Path,
+    sbom_directory: Path,
+    *,
+    expected_commit: str,
+) -> RiskEvidenceContext:
+    """Rebuild the authoritative source/lock/SBOM subject for offline risk verification."""
+
+    try:
+        verify_distribution_manifest_file(
+            distribution_manifest,
+            repository_root,
+            distribution_directory,
+            expected_commit_sha=expected_commit,
+        )
+        manifest_bytes = _read_regular(
+            distribution_manifest, _MAX_MANIFEST_BYTES, "risk_manifest_evidence_invalid"
+        )
+        manifest = load_distribution_manifest(distribution_manifest)
+        targets = verify_dependency_locks(repository_root)
+        documents = generate_sbom_documents(repository_root, manifest, targets)
+        verified_documents = verify_sbom_directory(
+            sbom_directory, documents, repository_root=repository_root
+        )
+    except (DistributionManifestError, DependencyLockError, SbomError):
+        _fail("risk_source_evidence_invalid")
+
+    raw_project = manifest.get("project")
+    raw_source = manifest.get("source")
+    if type(raw_project) is not dict or type(raw_source) is not dict:
+        _fail("risk_source_evidence_invalid")
+    project = cast(dict[str, object], raw_project)
+    source = cast(dict[str, object], raw_source)
+    project_name = _safe_string(project.get("name"), "risk_source_evidence_invalid")
+    project_version = _safe_string(project.get("version"), "risk_source_evidence_invalid")
+    commit_sha = _git_digest(source.get("commitSha"), "risk_source_evidence_invalid")
+    tree_sha = _git_digest(source.get("treeSha"), "risk_source_evidence_invalid")
+    artifacts = _manifest_artifacts(manifest)
+    sboms = tuple(
+        SbomBinding(
+            kind="runtime" if filename.endswith("-runtime.cdx.json") else "build",
+            filename=filename,
+            byte_size=len(verified_documents[filename]),
+            sha256=sha256_bytes(verified_documents[filename]),
+        )
+        for filename in (
+            "quantum-entanglement-runtime.cdx.json",
+            "quantum-entanglement-build.cdx.json",
+        )
+    )
+    context = RiskEvidenceContext(
+        project_name=project_name,
+        project_version=project_version,
+        commit_sha=commit_sha,
+        tree_sha=tree_sha,
+        artifacts=artifacts,
+        distribution_manifest=FileBinding(
+            byte_size=len(manifest_bytes), sha256=sha256_bytes(manifest_bytes)
+        ),
+        lock_inventory=_lock_inventory(repository_root, targets),
+        sboms=sboms,
+        components=_expected_components(documents, artifacts),
+    )
+
+    try:
+        verify_distribution_manifest_file(
+            distribution_manifest,
+            repository_root,
+            distribution_directory,
+            expected_commit_sha=expected_commit,
+        )
+        if (
+            _read_regular(
+                distribution_manifest,
+                _MAX_MANIFEST_BYTES,
+                "risk_manifest_evidence_invalid",
+            )
+            != manifest_bytes
+            or verify_dependency_locks(repository_root) != targets
+        ):
+            _fail("risk_source_evidence_changed")
+        verify_sbom_directory(sbom_directory, documents, repository_root=repository_root)
+    except (DistributionManifestError, DependencyLockError, SbomError):
+        _fail("risk_source_evidence_changed")
+    return context
+
+
+def require_outside_repository_file(path: Path, repository_root: Path, code: str) -> None:
+    """Require one existing evidence file to resolve outside the source checkout."""
+
+    try:
+        resolved_path = path.resolve(strict=True)
+        resolved_root = repository_root.resolve(strict=True)
+    except OSError:
+        _fail(code)
+    try:
+        resolved_path.relative_to(resolved_root)
+    except ValueError:
+        return
+    _fail(code)
+
+
+def read_database_snapshot(
+    path: Path, *, repository_root: Path, expected: DatabaseEvidence
+) -> bytes:
+    """Read and bind the approved offline database snapshot without trusting its path."""
+
+    require_outside_repository_file(path, repository_root, "risk_database_file_invalid")
+    value = _read_regular(path, _MAX_DATABASE_BYTES, "risk_database_file_invalid")
+    if (
+        path.name != expected.filename
+        or len(value) != expected.byte_size
+        or sha256_bytes(value) != expected.sha256
+    ):
+        _fail("risk_database_drift")
+    return value
+
+
+def _context_matches(result: DependencyRiskResult, context: RiskEvidenceContext) -> None:
+    if (
+        result.project_name != context.project_name
+        or result.project_version != context.project_version
+        or result.commit_sha != context.commit_sha
+        or result.tree_sha != context.tree_sha
+    ):
+        _fail("risk_source_drift")
+    if (
+        result.artifacts != context.artifacts
+        or result.distribution_manifest != context.distribution_manifest
+    ):
+        _fail("risk_manifest_drift")
+    if result.lock_inventory != context.lock_inventory:
+        _fail("risk_lock_drift")
+    if result.sboms != context.sboms:
+        _fail("risk_sbom_drift")
+
+
+def _approved_identity(policy: DependencyRiskPolicy, result: DependencyRiskResult) -> None:
+    if result.scanner not in policy.allowed_scanners:
+        _fail("risk_scanner_unapproved")
+    approved = ApprovedDatabase(
+        source=result.database.source,
+        revision=result.database.revision,
+        sha256=result.database.sha256,
+    )
+    if approved not in policy.approved_databases:
+        _fail("risk_database_unapproved")
+    if result.database.integrity_status != "verified":
+        _fail("risk_database_integrity_unverified")
+
+
+def _verify_time_window(
+    policy: DependencyRiskPolicy,
+    result: DependencyRiskResult,
+    evaluation_time: datetime,
+) -> None:
+    if result.completed_at > evaluation_time:
+        _fail("risk_result_from_future")
+    if result.completed_at >= result.database.expires_at:
+        _fail("risk_result_stale")
+    database_age = int((evaluation_time - result.database.fetched_at).total_seconds())
+    result_age = int((evaluation_time - result.completed_at).total_seconds())
+    validity = int((result.database.expires_at - result.database.fetched_at).total_seconds())
+    if (
+        database_age < 0
+        or evaluation_time >= result.database.expires_at
+        or database_age > policy.maximum_database_age_seconds
+        or validity > policy.maximum_database_validity_seconds
+    ):
+        _fail("risk_database_stale")
+    if result_age < 0 or result_age > policy.maximum_result_age_seconds:
+        _fail("risk_result_stale")
+
+
+def _verify_component_coverage(
+    result: DependencyRiskResult, context: RiskEvidenceContext
+) -> None:
+    observed = tuple(
+        ExpectedComponent(purl=component.purl, artifact_sha256=component.artifact_sha256)
+        for component in result.components
+    )
+    if observed != context.components:
+        _fail("risk_component_coverage_mismatch")
+    if result.scan_status != "complete" or any(
+        component.scan_status != "complete" for component in result.components
+    ):
+        _fail("risk_scan_incomplete")
+
+
+def _exception_key(exception: RiskException) -> tuple[str, str, str | None, str]:
+    return exception.kind, exception.purl, exception.subject, exception.finding_sha256
+
+
+def verify_dependency_risk(
+    policy: DependencyRiskPolicy,
+    result: DependencyRiskResult,
+    context: RiskEvidenceContext,
+    *,
+    database_snapshot: bytes,
+    evaluation_time: datetime,
+) -> RiskVerificationSummary:
+    """Apply the exact offline promotion policy to source-bound scanner evidence."""
+
+    _context_matches(result, context)
+    if result.promotion_policy_sha256 != policy.sha256:
+        _fail("risk_policy_drift")
+    if (
+        len(database_snapshot) != result.database.byte_size
+        or sha256_bytes(database_snapshot) != result.database.sha256
+    ):
+        _fail("risk_database_drift")
+    if not policy.promotion_enabled:
+        _fail("risk_promotion_disabled")
+    _approved_identity(policy, result)
+    _verify_time_window(policy, result, evaluation_time)
+    _verify_component_coverage(result, context)
+
+    exception_by_key: dict[tuple[str, str, str | None, str], RiskException] = {}
+    for exception in policy.exceptions:
+        if exception.database_sha256 != result.database.sha256:
+            _fail("risk_exception_database_mismatch")
+        if evaluation_time < exception.issued_at:
+            _fail("risk_exception_inactive")
+        if evaluation_time >= exception.expires_at:
+            _fail("risk_exception_expired")
+        exception_by_key[_exception_key(exception)] = exception
+
+    violations: list[tuple[str, str, str | None, str]] = []
+    finding_count = 0
+    for component in result.components:
+        if component.license.status == "unknown":
+            violations.append(
+                ("license", component.purl, None, license_finding_sha256(component))
+            )
+        elif component.license.expression not in policy.allowed_license_expressions:
+            violations.append(
+                (
+                    "license",
+                    component.purl,
+                    component.license.expression,
+                    license_finding_sha256(component),
+                )
+            )
+        for finding in component.vulnerabilities:
+            finding_count += 1
+            if finding.severity == "unknown":
+                _fail("risk_severity_unknown")
+            if finding.fix_status == "unknown":
+                _fail("risk_fix_status_unknown")
+            severity_rank = _SEVERITY_RANK[finding.severity]
+            denied = severity_rank >= _SEVERITY_RANK[policy.block_at_or_above]
+            denied_with_fix = (
+                finding.fix_status == "available"
+                and severity_rank
+                >= _SEVERITY_RANK[policy.block_when_fix_available_at_or_above]
+            )
+            if denied or denied_with_fix:
+                violations.append(
+                    (
+                        "vulnerability",
+                        component.purl,
+                        finding.finding_id,
+                        vulnerability_finding_sha256(component, finding),
+                    )
+                )
+
+    used_exception_ids: set[str] = set()
+    for violation in violations:
+        exception = exception_by_key.get(violation)
+        if exception is None:
+            _fail("risk_policy_denied")
+        used_exception_ids.add(exception.exception_id)
+    if used_exception_ids != {exception.exception_id for exception in policy.exceptions}:
+        _fail("risk_exception_unused")
+
+    return RiskVerificationSummary(
+        component_count=len(result.components),
+        finding_count=finding_count,
+        applied_exception_count=len(used_exception_ids),
+        policy_sha256=policy.sha256,
+        result_sha256=result.sha256,
+        database_sha256=result.database.sha256,
+        lock_inventory_sha256=result.lock_inventory.inventory_sha256,
+        evaluation_time=_timestamp_text(evaluation_time),
+    )
+
+
+def verification_summary_document(summary: RiskVerificationSummary) -> dict[str, object]:
+    """Return the fixed redacted success record emitted by the promotion CLI."""
+
+    return {
+        "appliedExceptionCount": summary.applied_exception_count,
+        "componentCount": summary.component_count,
+        "databaseSha256": summary.database_sha256,
+        "decision": "promote",
+        "evaluationTime": summary.evaluation_time,
+        "findingCount": summary.finding_count,
+        "lockInventorySha256": summary.lock_inventory_sha256,
+        "policySha256": summary.policy_sha256,
+        "resultSha256": summary.result_sha256,
+        "verified": True,
+    }
