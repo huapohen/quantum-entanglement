@@ -65,8 +65,8 @@ while failed, expired, or partially restored ownership state cannot be reclaimed
 The returned `InvocationLease` contains two different controls:
 
 - `lease_token`: a random, opaque ownership capability used only for store CAS;
-- `lease_epoch` / `fencing_token`: a monotonically increasing integer for downstream
-  resources that support fencing.
+- `lease_epoch` / `fencing_token`: a monotonically increasing integer scoped to this
+  invocation, for receivers that retain fencing state per invocation.
 
 Heartbeat, completion and failure require the same invocation ID, worker ID, opaque token,
 epoch, heartbeat and deadline in both the job and current-attempt rows, plus a deadline strictly
@@ -80,9 +80,14 @@ store only its SHA-256 digest. Never add the raw token to events, logs, traces, 
 error messages. Read observations expose the digest and canonical heartbeat timestamp so a
 single-snapshot recovery coordinator can verify job/attempt ownership without receiving the
 raw capability. A
-connector that can mutate a fenced resource should receive the integer fencing token and
-reject an epoch below the resource's last accepted epoch. If a connector cannot enforce
-fencing, it must enforce the stable invocation idempotency key and is still at-least-once.
+connector should receive the composite `(invocation_id, fencing_token)` and reject an older
+epoch only against state retained for that same invocation. Epochs are not globally or
+resource-scoped: two different first-attempt invocations both receive epoch 1. This mechanism
+therefore fences stale workers for one logical invocation but cannot order two different
+invocations that mutate the same shared resource. Such a connector needs a separate
+resource-scoped monotonic fence allocator and downstream CAS, neither of which is implemented
+here. If a connector cannot enforce per-invocation fencing, it must enforce the stable
+invocation idempotency key and is still at-least-once.
 
 All identity and worker text is valid UTF-8 without C0/DEL control characters and is capped at
 4,096 encoded bytes. Result references use the same character rule and a 16,384-byte cap.
@@ -142,7 +147,8 @@ A worker integration should use this sequence:
 4. Start a heartbeat loop before calling the Agent. Set the heartbeat interval to no more
    than one third of the lease duration and keep the Agent timeout below the lease.
 5. Pass the stable idempotency key and fencing token to capable connectors; neither mechanism
-   by itself authorizes retry in the current implementation.
+   by itself authorizes retry in the current implementation. Pass the invocation ID with the
+   epoch; never interpret the integer as a global or shared-resource fencing token.
 6. If heartbeat returns false, cancel local result acceptance. A late Agent result is stale
    and must not write artifacts, action receipts or task status.
 7. On failure, call `fail` with a redacted reason. A scheduled `retry_at` may place the job in
