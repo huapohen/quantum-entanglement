@@ -1101,6 +1101,44 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertIn("ORDER BY ATTEMPT_NUMBER LIMIT 1001", decoded_queries[1])
         self.assertFalse(any("COUNT(*) AS ATTEMPT_COUNT" in statement for statement in normalized))
 
+    def test_recovery_snapshot_rejects_attempt_started_before_job(self):
+        self.store.enqueue(job_spec())
+        self.clock.set(timestamp(5))
+        self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.store._connection.execute(
+            "UPDATE invocation_attempts SET started_at = ? WHERE invocation_id = ?",
+            ("2026-08-19T23:59:59.000000Z", "invocation-1"),
+        )
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "starts before its job"):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
+
+    def test_recovery_snapshot_rejects_job_attempt_finish_divergence(self):
+        self.store.enqueue(job_spec(max_attempts=1))
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.clock.set(timestamp(5))
+        self.assertTrue(self.store.fail(lease, "terminal"))
+        self.store._connection.execute(
+            """
+            UPDATE invocation_jobs SET updated_at = ?, finished_at = ?
+            WHERE invocation_id = ?
+            """,
+            (persisted_timestamp(6), persisted_timestamp(6), "invocation-1"),
+        )
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "finish differs"):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
+
+    def test_recovery_snapshot_rejects_backward_attempt_history(self):
+        self.store.enqueue(job_spec(max_attempts=2))
+        first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)
+        self.clock.set(timestamp(1))
+        self.assertTrue(self.store.fail(first, "retry", retry_at=T0))
+        self._seed_second_running_attempt()
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "moves backward in time"):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
+
     def test_recovery_snapshot_decodes_and_rejects_unsafe_historical_attempts(self):
         self.store.enqueue(job_spec(max_attempts=2))
         first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)
