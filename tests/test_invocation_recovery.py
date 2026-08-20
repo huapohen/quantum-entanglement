@@ -17,6 +17,8 @@ from quantum_entanglement.attempts import (
 )
 from quantum_entanglement.invocation_recovery import (
     InvocationBinding,
+    InvocationRecoveryClosedError,
+    InvocationRecoveryCoordinator,
     InvocationRecoveryDecision,
     InvocationRecoveryIntegrityError,
     InvocationResultReceipt,
@@ -397,6 +399,147 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
         object.__setattr__(binding, "payload_digest", "not-a-digest")
         with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "payload_digest"):
             self.assess(binding, self.snapshot(spec))
+
+
+class FakeRecoveryStore:
+    def __init__(
+        self,
+        snapshot: object,
+        *,
+        read_error: Optional[BaseException] = None,
+        close_failures: int = 0,
+    ) -> None:
+        self.snapshot = snapshot
+        self.read_error = read_error
+        self.close_failures = close_failures
+        self.reads = 0
+        self.closes = 0
+
+    def recovery_snapshot_for_task(
+        self,
+        _session_id: str,
+        _task_id: str,
+    ) -> InvocationRecoverySnapshot:
+        self.reads += 1
+        if self.read_error is not None:
+            raise self.read_error
+        return self.snapshot  # type: ignore[return-value]
+
+    def close(self) -> None:
+        self.closes += 1
+        if self.closes <= self.close_failures:
+            raise RuntimeError("close failed")
+
+
+class InvocationRecoveryCoordinatorLifecycleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tempdir.name) / "coordinator.sqlite3")
+        self.store = SQLiteInvocationAttemptStore(self.path, clock=MutableClock())
+        self.spec = job_spec("coordinator")
+        self.binding = binding_for(self.spec)
+
+    def tearDown(self) -> None:
+        self.store.close()
+        self.tempdir.cleanup()
+
+    def test_optional_store_defaults_to_a_blocked_missing_job(self) -> None:
+        coordinator = InvocationRecoveryCoordinator()
+        self.assertEqual(
+            coordinator.assess(TaskStatus.RUNNING, self.binding),
+            InvocationRecoveryDecision.BLOCKED_MISSING_JOB,
+        )
+        coordinator.close()
+        self.assertTrue(coordinator.closed)
+        with self.assertRaisesRegex(InvocationRecoveryClosedError, "closed"):
+            coordinator.assess(TaskStatus.RUNNING, self.binding)
+
+    def test_borrowed_store_remains_open_after_coordinator_shutdown(self) -> None:
+        self.store.enqueue(self.spec)
+        coordinator = InvocationRecoveryCoordinator(self.store)
+        self.assertEqual(
+            coordinator.assess(TaskStatus.RUNNING, self.binding),
+            InvocationRecoveryDecision.FIRST_CLAIM_READY,
+        )
+        coordinator.close()
+        coordinator.close()
+        self.assertIsNotNone(self.store.get(self.spec.invocation_id))
+        with self.assertRaises(InvocationRecoveryClosedError):
+            coordinator.__enter__()
+
+    def test_owned_store_closes_once_and_context_manager_uses_the_same_rule(self) -> None:
+        fake = FakeRecoveryStore(InvocationRecoverySnapshot(None, None, 0))
+        coordinator = InvocationRecoveryCoordinator(fake, owns_store=True)
+        with coordinator as entered:
+            self.assertIs(entered, coordinator)
+            self.assertFalse(coordinator.closed)
+        self.assertTrue(coordinator.closed)
+        self.assertEqual(fake.closes, 1)
+        coordinator.close()
+        self.assertEqual(fake.closes, 1)
+
+    def test_failed_owned_store_close_is_retryable(self) -> None:
+        fake = FakeRecoveryStore(
+            InvocationRecoverySnapshot(None, None, 0),
+            close_failures=1,
+        )
+        coordinator = InvocationRecoveryCoordinator(fake, owns_store=True)
+        with self.assertRaisesRegex(RuntimeError, "close failed"):
+            coordinator.close()
+        self.assertFalse(coordinator.closed)
+        coordinator.close()
+        self.assertTrue(coordinator.closed)
+        self.assertEqual(fake.closes, 2)
+
+    def test_store_failures_are_not_coerced_into_missing_job(self) -> None:
+        fake = FakeRecoveryStore(
+            InvocationRecoverySnapshot(None, None, 0),
+            read_error=RuntimeError("storage offline"),
+        )
+        coordinator = InvocationRecoveryCoordinator(fake)
+        with self.assertRaisesRegex(RuntimeError, "storage offline"):
+            coordinator.assess(TaskStatus.RUNNING, self.binding)
+        self.assertEqual(fake.reads, 1)
+        self.assertFalse(coordinator.closed)
+
+    def test_invalid_inputs_fail_before_any_store_read(self) -> None:
+        fake = FakeRecoveryStore(InvocationRecoverySnapshot(None, None, 0))
+        coordinator = InvocationRecoveryCoordinator(fake)
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "RUNNING task"):
+            coordinator.assess(TaskStatus.COMPLETED, self.binding)
+
+        mutated_binding = replace(self.binding)
+        object.__setattr__(mutated_binding, "payload_digest", "invalid")
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "payload_digest"):
+            coordinator.assess(TaskStatus.RUNNING, mutated_binding)
+
+        self.store.enqueue(self.spec)
+        lease = self.store.claim(self.spec.invocation_id, "worker", lease_seconds=30)
+        snapshot = self.store.recovery_snapshot_for_task(
+            self.spec.session_id,
+            self.spec.task_id,
+        )
+        receipt = receipt_for(self.binding, snapshot)
+        object.__setattr__(receipt, "stream_sequence", 0)
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "stream_sequence"):
+            coordinator.assess(TaskStatus.RUNNING, self.binding, receipt)
+        self.assertIsNotNone(lease)
+        self.assertEqual(fake.reads, 0)
+
+    def test_malformed_store_result_is_an_integrity_error(self) -> None:
+        fake = FakeRecoveryStore("not-a-snapshot")
+        coordinator = InvocationRecoveryCoordinator(fake)
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "snapshot"):
+            coordinator.assess(TaskStatus.RUNNING, self.binding)
+        self.assertEqual(fake.reads, 1)
+
+    def test_constructor_requires_explicit_valid_ownership(self) -> None:
+        with self.assertRaisesRegex(TypeError, "owns_store"):
+            InvocationRecoveryCoordinator(owns_store=1)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "requires"):
+            InvocationRecoveryCoordinator(owns_store=True)
+        with self.assertRaisesRegex(TypeError, "must provide"):
+            InvocationRecoveryCoordinator(object())  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":
