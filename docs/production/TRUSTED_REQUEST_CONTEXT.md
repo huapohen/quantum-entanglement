@@ -1,6 +1,7 @@
 # Trusted request-context issuance foundation
 
-Status: design contract; implementation and release evidence pending
+Status: implemented and tested process-local primitive; **not an authenticated service or
+Gate A completion claim**
 
 Last reviewed: 2026-08-20
 
@@ -8,6 +9,10 @@ This document defines the minimum admission primitive that may distinguish calle
 scope claims from a request context issued after a configured authenticator has verified
 them. It is a Gate A foundation, not an authenticated service, an OIDC/JWT implementation,
 or proof that repositories enforce tenant/workspace scope.
+
+The implementation is `src/quantum_entanglement/request_context.py` and its public symbols
+are exported from `quantum_entanglement`. No current runtime, protocol adapter, CLI, or
+repository automatically invokes it; composition remains an explicit follow-on gate.
 
 ## 1. Existing boundary and finding
 
@@ -69,7 +74,26 @@ The issuer must call the authenticator itself. It must not expose an overload th
 pre-built authentication result from a caller. Authentication-result and reauthorization
 evidence values remain data when received from anywhere else.
 
-## 4. Required issued fields and invariants
+## 4. Implemented API and exact meaning
+
+| Type or operation | Implemented guarantee | Must not be inferred |
+|---|---|---|
+| `CallerRequestContext` | Strict exact-dict parser for request/subject/tenant/workspace claims; unknown fields and coercion fail | Authentication, membership, or authorization |
+| `AuthenticatedRequestBinding` | Bounded canonical adapter-return shape with provider principal, exact scope, revisions, evidence fingerprint, and lifetime | A caller-constructible token or portable attestation |
+| `RequestAuthenticator` | Synchronous injected port called only by the issuer with a read-only credential view and service audience/time | OIDC, JWT, mTLS, JWKS, session, or membership implementation |
+| `RequestContextIssuer.issue` | Reserves bounded capacity, consumes and closes one exact `SecretMaterial`, calls the configured authenticator, validates exact binding/time, and registers one context | Replay defense, full request authorization, or durable session issuance |
+| `RequestContext` | Opaque, non-copyable, non-pickleable handle whose exact object and field snapshot are registered by one issuer | A bearer token, serialized credential, cross-process identity, or authority by property access |
+| `prepare_reauthorization` | Same-issuer object check, tamper/expiry/clock check, exact `AccessRequest` request/subject/tenant/workspace match, and a bounded basis for current-state lookup | Current reauthentication, current membership, RBAC allow, approval, or effect permission |
+| `ReauthorizationBasis` | Preserves principal/subject/scope, identity/scope revisions, evidence fingerprint and observation/expiry times; representation is redacted | A trusted input when constructed or received independently |
+| `retire` / `close` | Invalidate one exact handle or every handle; contexts never survive issuer replacement | Distributed revocation or durable logout |
+
+Successful authentication resamples service time after the adapter returns. A slow adapter
+cannot issue a result that expired while it was running, and clock regression beyond the
+configured skew fails closed. Active plus in-flight contexts share one hard capacity bound,
+so a full issuer rejects before another authenticator call. Dead and expired entries are
+pruned before capacity is reserved.
+
+## 5. Required issued fields and invariants
 
 An issued context preserves only bounded non-secret facts:
 
@@ -94,7 +118,12 @@ root must use the preserved identity/revisions/evidence to obtain current authen
 and membership state, then run `TenantAuthorizer` for the concrete action/resource and bind
 that decision to the effect transaction and durable receipt.
 
-## 5. Credential, configuration, and logging rules
+The basis returned by `prepare_reauthorization` is deliberately constructible data. A
+future trusted identity/membership adapter may use it as lookup input, but no policy or
+effect component may treat possession of the basis as proof. The current code does not yet
+define that adapter or compare current provider/membership revisions.
+
+## 6. Credential, configuration, and logging rules
 
 - No ambient environment variable, API key, cookie, or token is read by this primitive.
 - The authenticator is injected explicitly by the composition root. This phase provides
@@ -106,8 +135,42 @@ that decision to the effect transaction and durable receipt.
   not contain the credential, raw attestation, tenant, workspace, subject, or principal.
 - Stable failure codes are suitable for bounded metrics. Raw scope identifiers must not be
   metric labels.
+- `evidence_fingerprint` must identify verified provider evidence with domain separation;
+  do not directly hash a bearer token, password, or low-entropy credential and then retain
+  that digest as evidence.
 
-## 6. Migration, rollback, and compatibility
+Python cannot guarantee erasure of the transport's original buffer, copies made by an
+authenticator, interpreter temporaries, swap, crash dumps, or administrator-readable
+memory. The credential lease narrows normal ownership; it is not a hardware secret enclave.
+
+## 7. Minimal composition shape
+
+The following shape is intentionally adapter-neutral. `authenticate` must be implemented by
+a reviewed trusted adapter; a test fake returning a binding is not a production identity
+provider.
+
+```python
+from quantum_entanglement import CallerRequestContext, RequestContextIssuer
+
+
+def admit(*, issuer, raw_scope, credential_lease):
+    claims = CallerRequestContext.from_dict(raw_scope)  # canonical, still untrusted
+    return issuer.issue(claims, credential_lease)
+
+
+def prepare_identity_refresh(*, issuer, context, access_request):
+    basis = issuer.prepare_reauthorization(context, access_request)
+    # A future trusted adapter must fetch current provider identity and exact
+    # membership/policy revision here. `basis` itself cannot allow the action.
+    return basis
+```
+
+The composition root owns issuer lifetime. Stop admission first, call `close` to invalidate
+live handles and fence pending registrations, then wait for the surrounding calls to fail
+or finish their credential cleanup. Closing during an authenticator call prevents that call
+from registering a context; this primitive does not provide a drain/wait API.
+
+## 8. Migration, rollback, and compatibility
 
 This foundation is additive. Existing direct Python callers continue to construct
 `AccessRequest`, but they remain inside the trusted-development boundary and do not become
@@ -126,7 +189,32 @@ context. Stop admission, drain or fence protected work, destroy the issuer (inva
 live contexts), deploy the prior code, and keep the service in its prior non-production
 boundary. Never deserialize or grandfather a context across rollback/restart.
 
-## 7. Residual Gate A blockers
+## 9. Verification
+
+Run the dedicated and source gates from the repository root:
+
+```bash
+PYTHONPATH=src /usr/bin/python3 -m unittest tests.test_request_context -v
+ruff check src/quantum_entanglement/request_context.py tests/test_request_context.py
+ruff format --check src/quantum_entanglement/request_context.py tests/test_request_context.py
+PYTHONPATH=src mypy --strict src/quantum_entanglement/request_context.py
+python3 -m compileall -q \
+  src/quantum_entanglement/request_context.py tests/test_request_context.py
+git diff --check
+```
+
+The negative suite covers strict parsing, scope/result mismatch, future/stale/overlong
+authentication, slow-authenticator expiry, clock regression/failure, credential wiping,
+redacted adapter failure, capacity and in-flight reservation, foreign issuer, direct
+construction, copy/pickle, exact request/subject/tenant/workspace matching, tenant-wide
+non-wildcard behavior, reflective mutation quarantine, expiry, retirement, and issuer
+shutdown.
+
+The implementation history starts at `fa0c422`; public export is `ba072c3`. Exact full-suite
+and release evidence must be regenerated after this documentation commit is part of the
+candidate tree. Test counts in this runbook are observations, never promotion criteria.
+
+## 10. Residual Gate A blockers
 
 Even after this primitive is implemented and its tests pass, Gate A remains closed until at
 least all repositories enforce tenant/workspace scope, legacy data has a rehearsed
@@ -134,3 +222,16 @@ migration/rollback path, current identity and membership revision adapters are c
 action time, and retained release evidence proves the complete boundary. Gates B-E remain
 closed as defined by `SERVICE_BOUNDARY.md`.
 
+Specific residual limitations of this slice are:
+
+- no real authenticator, identity provider, session store, authenticated transport, or API;
+- no action-time identity/membership refresh adapter and no revision comparison;
+- no mandatory connection between `RequestContextIssuer`, `TenantAuthorizer`, runtime,
+  approval, artifact, outbox, attempt, or effect-receipt paths;
+- no tenant/workspace scope on every repository or legacy-data migration rehearsal;
+- no cryptographic/distributed context, restart continuity, cross-process sharing, or
+  defense against arbitrary code already executing inside the trusted Python process;
+- no host-clock high-water store or rollback protection beyond per-operation skew checks;
+- no body/decompression/rate/per-tenant quota admission boundary; and
+- no proof that a future authenticator's evidence, identity mapping, membership freshness,
+  key custody, failure behavior, or observability is correct.
