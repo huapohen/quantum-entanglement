@@ -37,6 +37,13 @@ Both batches use an expected stream version. The in-memory graph, approval
 queue, and task-scoped approved set change only after the corresponding batch
 commits.
 
+If the `append_many` call raises after its SQLite transaction actually
+committed, the kernel reads exactly the expected sequence range and compares
+every event field through canonical JSON. It accepts the result only when the
+whole contiguous batch is byte-semantically identical to the attempted batch.
+A missing, partial, reordered, or changed batch retains the original failure
+and publishes no in-memory authority.
+
 ## Authority snapshot isolation
 
 `ApprovalRequest` is frozen. The queue also deep-copies its `ActionIntent` on
@@ -105,14 +112,24 @@ Recovery does not silently repair or delete the stored history.
 | Request batch fails | no in-memory waiting state or approval is granted |
 | Before decision batch commit | task and request remain pending |
 | Decision batch fails | no decision, transition, or in-memory authority is granted |
+| Batch commits but wrapper raises | exact durable batch is reconciled before memory is published |
 | Decision batch succeeds | decision and transition are contiguous and recover together |
 | Two decisions in one process | per-session lock serializes the batches |
-| Hook fails after commit | durable batch remains committed; caller sees hook failure |
+| Hook fails after commit | command remains successful; failure is logged; later batch events still run |
+| Concurrent hooks on one stream | hook entry follows durable stream sequence |
 | Corrupt or incomplete history | restart fails closed before publishing projection state |
 
-The hook-after-commit case deliberately separates durable state from plugin
-notification. A production service still needs a durable subscriber/projector
-retry path so a hook exception cannot become an unobservable operational gap.
+`EVENT_APPENDED` is an in-process, best-effort observation point. A hook
+exception cannot turn an already committed command into an apparent command
+failure, and it cannot truncate later event callbacks in the same batch. One
+kernel instance serializes callbacks for a stream by durable sequence. A hook
+must not wait for a future callback on that same stream because strict ordering
+would create a dependency cycle.
+
+The exception and sequence guarantees do not make hooks durable. A process
+crash, cancellation, or indefinitely blocked hook can still cause an
+observation gap. Anything required for correctness or external delivery must
+use a replayable projector or the transactional outbox, not this hook.
 
 ## Compatibility boundary
 
@@ -138,10 +155,11 @@ PYTHONPATH=src python3 -m unittest \
   tests.test_recovery -v
 ```
 
-The adversarial matrix covers detached-snapshot mutation, injected
-`append_many` failure, concurrent decision batches, payload coercion, event
-envelope tampering, missing request/decision/transition records, incorrect
-decision outcomes, and recovery without partial publication.
+The adversarial matrix covers detached-snapshot mutation, pre-commit and
+post-commit `append_many` failure, a throwing post-commit hook, concurrent
+decision and callback ordering, payload coercion, event-envelope tampering,
+missing request/decision/transition records, incorrect decision outcomes, and
+recovery without partial publication.
 
 The phase must also pass the repository-wide unit, demo, compile, lint, and diff
 gates from [`RELEASE_GATES.md`](./RELEASE_GATES.md) in an exact clean checkout.
