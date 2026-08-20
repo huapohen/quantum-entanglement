@@ -595,6 +595,55 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertEqual(tuple(self.store._connection.iterdump()), before)
         self.assertEqual(len(self.store.attempts("invocation-1")), 0)
 
+    def test_first_claim_rejects_any_preexisting_attempt_history(self):
+        for attempt_number in (1, 2):
+            with self.subTest(attempt_number=attempt_number):
+                self.store.enqueue(job_spec())
+                self.store._connection.execute(
+                    """
+                    INSERT INTO invocation_attempts (
+                        attempt_id, invocation_id, attempt_number, lease_epoch,
+                        worker_id, lease_token_digest, status, started_at,
+                        heartbeat_at, lease_expires_at, finished_at, error
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'failed', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"orphan-attempt-{attempt_number}",
+                        "invocation-1",
+                        attempt_number,
+                        attempt_number,
+                        "orphan-worker",
+                        f"{attempt_number}" * 64,
+                        persisted_timestamp(0),
+                        persisted_timestamp(0),
+                        persisted_timestamp(10),
+                        persisted_timestamp(5),
+                        "orphan failure",
+                    ),
+                )
+                poisoned = tuple(self.store._connection.iterdump())
+
+                for operation in (
+                    lambda: self.store.claim("invocation-1", "worker", lease_seconds=10),
+                    lambda: self.store.claim_next("worker", lease_seconds=10),
+                ):
+                    with self.subTest(operation=operation):
+                        with self.assertRaisesRegex(
+                            InvocationIntegrityError,
+                            "first-claim candidate has attempt history",
+                        ):
+                            operation()
+                        self.assertEqual(tuple(self.store._connection.iterdump()), poisoned)
+
+                self.store._connection.execute(
+                    "DELETE FROM invocation_attempts WHERE invocation_id = ?",
+                    ("invocation-1",),
+                )
+                self.store._connection.execute(
+                    "DELETE FROM invocation_jobs WHERE invocation_id = ?",
+                    ("invocation-1",),
+                )
+
     def test_queued_partial_lease_cannot_be_observed_recovered_or_claimed(self):
         self.store.enqueue(job_spec())
         self.store._connection.execute("PRAGMA ignore_check_constraints = ON")
