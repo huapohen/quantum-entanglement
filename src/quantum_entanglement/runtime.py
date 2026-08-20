@@ -387,31 +387,47 @@ class OrchestratorKernel:
                 raise ValueError("requested workflow content differs from the active plan")
             return self._graphs[plan.session_id]
         graph = TaskGraph(plan.tasks)
-        self._plans[plan.session_id] = plan
-        self._graphs[plan.session_id] = graph
-        await self._append(
+        initial_transitions = graph.refresh()
+        stream_id = self._stream_id(plan.session_id)
+        correlation_id = plan.correlation_id or plan.plan_id
+        initialization_events = (
             DomainEvent(
-                stream_id=self._stream_id(plan.session_id),
+                stream_id=stream_id,
                 event_type="workflow.plan.created",
                 actor_id=plan.initiated_by,
-                correlation_id=plan.correlation_id or plan.plan_id,
+                correlation_id=correlation_id,
                 idempotency_key="plan:%s" % plan.plan_id,
                 payload=plan.to_dict(),
-            )
-        )
-        for task in plan.tasks:
-            await self._append(
+            ),
+            *(
                 DomainEvent(
-                    stream_id=self._stream_id(plan.session_id),
+                    stream_id=stream_id,
                     event_type="task.created",
                     actor_id=plan.initiated_by,
-                    correlation_id=plan.correlation_id or plan.plan_id,
+                    correlation_id=correlation_id,
                     idempotency_key="task-created:%s" % task.task_id,
                     payload=task.to_dict(),
                 )
-            )
-        for transition in graph.refresh():
-            await self._record_transition(plan.session_id, transition, plan.correlation_id)
+                for task in plan.tasks
+            ),
+            *(
+                self._transition_event(
+                    plan.session_id,
+                    transition,
+                    plan.correlation_id,
+                )
+                for transition in initial_transitions
+            ),
+        )
+        expected_version = self.event_store.stream_version(stream_id)
+        stored_events = self._append_many_reconciled(
+            stream_id,
+            initialization_events,
+            expected_version=expected_version,
+        )
+        self._plans[plan.session_id] = plan
+        self._graphs[plan.session_id] = graph
+        await self._emit_appended_batch(stored_events)
         await self.plugins.emit(HookPoint.PLAN_CREATED, {"plan": plan, "graph": graph})
         return graph
 

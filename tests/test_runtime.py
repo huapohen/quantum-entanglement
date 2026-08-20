@@ -40,6 +40,46 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.kernel.event_store.close()
 
+    async def test_failed_plan_initialization_batch_publishes_no_partial_memory(self):
+        calls = 0
+
+        async def worker(invocation):
+            nonlocal calls
+            calls += 1
+            return AgentResult("done")
+
+        self.kernel.register_agent(registration("worker", worker))
+        plan = WorkflowPlan(
+            "plan-initialization-failure",
+            "初始化必须原子",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-initialization-failure",
+        )
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=RuntimeError("injected initialization batch failure"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "injected initialization batch failure",
+            ):
+                await self.kernel.run(plan)
+
+        self.assertNotIn(plan.session_id, self.kernel._plans)
+        self.assertNotIn(plan.session_id, self.kernel._graphs)
+        self.assertEqual(
+            self.kernel.event_store.read_stream(f"session:{plan.session_id}"),
+            (),
+        )
+        self.assertEqual(calls, 0)
+
+        result = await self.kernel.run(plan)
+        self.assertTrue(result.completed)
+        self.assertEqual(calls, 1)
+
     async def test_independent_tasks_run_in_parallel_and_initial_ready_is_recorded(self):
         active = 0
         peak = 0
@@ -195,11 +235,22 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             "user",
             (task,),
         )
+        original_append_many = self.kernel.event_store.append_many
+
+        def fail_approval_request(stream_id, events, expected_version=None):
+            batch = tuple(events)
+            if any(event.event_type == "approval.requested" for event in batch):
+                raise RuntimeError("injected approval batch failure")
+            return original_append_many(
+                stream_id,
+                batch,
+                expected_version=expected_version,
+            )
 
         with patch.object(
             self.kernel.event_store,
             "append_many",
-            side_effect=RuntimeError("injected approval batch failure"),
+            side_effect=fail_approval_request,
         ):
             with self.assertRaisesRegex(RuntimeError, "injected approval batch failure"):
                 await self.kernel.run(plan)
