@@ -164,7 +164,9 @@ bounded by `limit` so an operator can avoid one long write transaction. A claim 
 expired lease for its candidate before making the ownership decision, but the
 combined `attempts_started = 0` and `lease_epoch = 0` eligibility predicate prevents immediate
 or later automatic reclaim. A nonzero epoch without attempt history is a partial-restore
-integrity failure, never a fresh job.
+integrity failure, never a fresh job. The reverse is equally unsafe: a zero-counter job with
+any retained attempt row is not fresh. First claim checks for an empty history inside the same
+write transaction, and the final job CAS repeats that `NOT EXISTS` predicate as defense in depth.
 
 Suggested pilot timing defaults, to be validated by fault and capacity tests rather than
 copied blindly, are a 60-second lease, 15–20 second heartbeat, 30-second runtime timeout, and a
@@ -282,7 +284,8 @@ explicit-failure and expiry quarantine without second claim, fresh-job selection
 higher-priority effect-unknown job, terminal exhaustion, complete bounded recovery-history
 validation, post-lock clock sampling, cross-connection clock-regression rollback, complete
 job/attempt time causality, sub-microsecond lease rejection, strict timestamp parsing, token
-non-disclosure, oversized lease normalization without mutation, and invalid lease inputs:
+non-disclosure, oversized lease normalization without mutation, orphan-history first-claim
+rejection, and invalid lease inputs:
 
 ```bash
 PYTHONPATH=src python3 -m unittest tests.test_attempts -v

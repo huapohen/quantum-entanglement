@@ -190,7 +190,9 @@ returned to the coordinator comes from the same pre-advance database snapshot.
 A job with zero attempts must also have lease epoch zero. A nonzero epoch with no history is
 partial-restore or tampering evidence, not proof that the invocation is fresh. The persisted
 job decoder and recovery snapshot reject it, while first-claim selection and its final CAS both
-require epoch zero as defense in depth. The same decoder rejects running or succeeded/failed
+require epoch zero as defense in depth. Conversely, a zero-counter job with any retained attempt
+history is partial-restore evidence: first claim raises an integrity error and its final CAS also
+requires that no attempt row exists. The same decoder rejects running or succeeded/failed
 jobs without an attempt, non-succeeded jobs with `result_ref`, partial lease fields on any
 non-running job, and job/attempt causal timestamps that move backward or collapse an active
 lease to zero duration, so the claim API cannot normalize contradictory restored state.
