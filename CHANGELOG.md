@@ -23,6 +23,9 @@ release. Promotion additionally requires the evidence defined in
   reconciliation, and operator runbook.
 - Checksum-verified outbox ambiguity migration with populated legacy-table rebuild and
   destructive rollback rehearsal.
+- Lock-free PID plus opaque-epoch process-owner foundation with at-fork rotation, independent
+  PID-drift fallback, non-serializable owner descriptors, nested-fork/parent-continuity tests,
+  and fresh spawn/forkserver construction evidence.
 
 ### Changed
 
@@ -37,6 +40,9 @@ release. Promotion additionally requires the evidence defined in
   graceful shutdown.
 - Durable invocation attempt leasing, heartbeat, recovery, and terminal compare-and-set.
 - Verified capability and multi-tenant authorization boundaries.
+- Per-component process-owner migration for stores, authorization, secrets, plugins, runtimes,
+  connectors, and the final worker composition root; the shared foundation alone is not a
+  fork-safety or secret-isolation guarantee.
 
 ## Pre-release kernel baseline (`0.1.x`, not promoted)
 
