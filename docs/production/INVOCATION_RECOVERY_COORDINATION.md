@@ -231,12 +231,15 @@ The coordination foundation requires deterministic coverage for:
 - every corrected state-matrix row, including first claim versus queued retry;
 - mismatched session, plan, task, Agent, invocation, idempotency key, and payload digest;
 - malformed/forged job scalars and contradictory lease/terminal fields;
-- receipt accepted before attempt CAS, expiry after receipt acceptance, succeeded without a
-  reference, reference without a receipt, and mismatched receipt;
-- stale attempt ID/number/epoch/token digest and exact receipts beside running/queued/failed;
+- valid caller-provided receipts remaining `BLOCKED_RECEIPT_UNVERIFIED` beside
+  running/queued/failed/succeeded jobs, plus malformed and mismatched receipt rejection;
+- stale attempt ID/number/epoch/token digest, unsafe historical attempt status, non-monotonic
+  historical epoch, and the 1,000-attempt recovery bound;
 - missing job versus store failure;
-- owned and borrowed store closure, double close, and use after close;
-- no mutation of either source for every decision and failure path.
+- owned and borrowed store closure, double close, failed-close cleanup retry, and permanent
+  read rejection from the first close request;
+- explicit failure and in-claim expiry fencing without automatic second claim;
+- no mutation of either source for every pure decision and failure path.
 
 Targeted deterministic verification is:
 
@@ -244,6 +247,13 @@ Targeted deterministic verification is:
 PYTHONPATH=src python3 -m unittest \
   tests.test_attempts tests.test_invocation_recovery -v
 ```
+
+At implementation checkpoint `d3b92c3`, 665 repository-wide tests passed under both the
+default Python and Python 3.13. The 34 attempt-store, 25 coordinator, and 20 session-recovery
+tests also passed under Python 3.13 with `ResourceWarning` promoted to an error. Locked Ruff
+0.16.3 lint/format, strict mypy over 31 source modules, `compileall`, dependency-lock
+verification, the deterministic group-chat demo, and canonical local release-evidence
+generation/verification passed. The local evidence is a baseline, not production promotion.
 
 Before runtime integration can be promoted, retained evidence must additionally include
 process-kill tests for enqueue, claim, heartbeat, Agent return, artifact commit, result receipt,

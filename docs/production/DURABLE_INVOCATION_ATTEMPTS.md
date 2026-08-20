@@ -236,8 +236,10 @@ redactor. Runtime adapters must redact credentials and sensitive payloads before
 The deterministic suite covers migration/reopen/coexistence, migration checksum drift,
 idempotent enqueue conflict detection, availability/priority, two-connection atomic claim,
 two-process atomic claim, heartbeat extension, exact-boundary expiry, stale-worker fencing,
-explicit retry, bounded exhaustion, post-lock clock sampling, strict timestamp parsing,
-token non-disclosure and invalid lease inputs:
+explicit-failure and expiry quarantine without second claim, fresh-job selection past a
+higher-priority effect-unknown job, terminal exhaustion, complete bounded recovery-history
+validation, post-lock clock sampling, strict timestamp parsing, token non-disclosure and
+invalid lease inputs:
 
 ```bash
 PYTHONPATH=src python3 -m unittest tests.test_attempts -v

@@ -131,6 +131,12 @@ passing tests. Locked Ruff 0.16.3 lint/format over `src`, `tests`, and `scripts`
 strict mypy over the 30 source modules, `compileall`, the deterministic group-chat
 demo, and `git diff --check` also passed.
 
+At the later invocation-recovery hardening checkpoint `d3b92c3`, the same-process
+cancellation case was included in 665 repository-wide tests passing under both the default
+Python and Python 3.13. All 20 session-recovery tests passed under Python 3.13 with
+`ResourceWarning` promoted to an error. This evidence proves quarantine behavior only; it
+does not claim automated reconciliation or safe Agent retry.
+
 ## Explicit non-guarantees
 
 This slice does not provide:
