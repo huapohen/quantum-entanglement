@@ -1306,6 +1306,20 @@ class OrchestratorKernel:
                 HookPoint.BEFORE_AGENT, {"plan": plan, "task": task, "invocation": invocation}
             )
             result = await self.registry.invoke(invocation)
+        except Exception as exc:
+            await self._commit_transition(
+                plan.session_id,
+                graph,
+                task.task_id,
+                TaskStatus.FAILED,
+                correlation_id,
+                str(exc),
+            )
+        else:
+            # Once the Agent has returned, its external effect may already exist. Any
+            # result-publication failure must escape with the task left RUNNING so the
+            # next call quarantines effect-unknown state instead of claiming the Agent
+            # itself failed.
             await self.plugins.emit(
                 HookPoint.AFTER_AGENT,
                 {"plan": plan, "task": task, "invocation": invocation, "result": result},
@@ -1321,7 +1335,6 @@ class OrchestratorKernel:
                     causation_id=task.task_id,
                 )
                 refs.append(item.ref)
-            self._task_artifacts[(plan.session_id, task.task_id)] = tuple(refs)
             await self._append(
                 DomainEvent(
                     stream_id=self._stream_id(plan.session_id),
@@ -1338,20 +1351,7 @@ class OrchestratorKernel:
                     },
                 )
             )
-        except Exception as exc:
-            await self._commit_transition(
-                plan.session_id,
-                graph,
-                task.task_id,
-                TaskStatus.FAILED,
-                correlation_id,
-                str(exc),
-            )
-        else:
-            # A completion transition failure is not an Agent failure. The Agent and
-            # result publication may already have happened, so leave the durable and
-            # in-memory task RUNNING and let the next run quarantine effect-unknown
-            # state instead of publishing a misleading FAILED transition.
+            self._task_artifacts[(plan.session_id, task.task_id)] = tuple(refs)
             await self._commit_transition(
                 plan.session_id,
                 graph,

@@ -379,6 +379,147 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_result_precommit_failure_quarantines_without_publishing_task_refs(self):
+        calls = 0
+
+        async def worker(invocation):
+            nonlocal calls
+            calls += 1
+            return AgentResult(
+                "done",
+                (ArtifactOutput("result.md", "durable partial result"),),
+            )
+
+        self.kernel.register_agent(registration("worker", worker))
+        plan = WorkflowPlan(
+            "result-precommit",
+            "结果事件提交前失败必须隔离",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+        )
+        original_append_many = self.kernel.event_store.append_many
+
+        def fail_result(stream_id, events, expected_version=None):
+            batch = tuple(events)
+            if any(event.event_type == "task.result.received" for event in batch):
+                raise RuntimeError("injected result precommit failure")
+            return original_append_many(
+                stream_id,
+                batch,
+                expected_version=expected_version,
+            )
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=fail_result,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "result precommit"):
+                await self.kernel.run(plan)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            self.kernel._graphs[plan.session_id].statuses["task"],
+            TaskStatus.RUNNING,
+        )
+        self.assertNotIn((plan.session_id, "task"), self.kernel._task_artifacts)
+        self.assertIsNotNone(self.kernel.artifacts.current(plan.session_id, "result.md"))
+        events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        event_count = len(events)
+        self.assertEqual(
+            sum(stored.event.event_type == "artifact.versioned" for stored in events),
+            1,
+        )
+        self.assertFalse(
+            any(
+                stored.event.event_type == "task.result.received"
+                or (
+                    stored.event.event_type == "task.status.changed"
+                    and stored.event.payload["current"]
+                    in {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value}
+                )
+                for stored in events
+            )
+        )
+
+        with self.assertRaisesRegex(
+            SessionRecoveryError,
+            "durably RUNNING task without supported invocation recovery evidence",
+        ):
+            await self.kernel.run(plan)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            len(self.kernel.event_store.read_stream(f"session:{plan.session_id}")),
+            event_count,
+        )
+
+    async def test_artifact_precommit_failure_after_agent_return_quarantines(self):
+        calls = 0
+
+        async def worker(invocation):
+            nonlocal calls
+            calls += 1
+            return AgentResult(
+                "done",
+                (ArtifactOutput("result.md", "must not publish"),),
+            )
+
+        self.kernel.register_agent(registration("worker", worker))
+        plan = WorkflowPlan(
+            "artifact-precommit",
+            "产物提交前失败必须隔离",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+        )
+        original_append = self.kernel.event_store.append
+
+        def fail_artifact(event, expected_version=None):
+            if event.event_type == "artifact.versioned":
+                raise RuntimeError("injected artifact precommit failure")
+            return original_append(event, expected_version)
+
+        with patch.object(
+            self.kernel.event_store,
+            "append",
+            side_effect=fail_artifact,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "artifact precommit"):
+                await self.kernel.run(plan)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            self.kernel._graphs[plan.session_id].statuses["task"],
+            TaskStatus.RUNNING,
+        )
+        self.assertNotIn((plan.session_id, "task"), self.kernel._task_artifacts)
+        self.assertIsNone(self.kernel.artifacts.current(plan.session_id, "result.md"))
+        events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        event_count = len(events)
+        self.assertFalse(
+            any(
+                stored.event.event_type in {"artifact.versioned", "task.result.received"}
+                or (
+                    stored.event.event_type == "task.status.changed"
+                    and stored.event.payload["current"]
+                    in {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value}
+                )
+                for stored in events
+            )
+        )
+
+        with self.assertRaisesRegex(
+            SessionRecoveryError,
+            "durably RUNNING task without supported invocation recovery evidence",
+        ):
+            await self.kernel.run(plan)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            len(self.kernel.event_store.read_stream(f"session:{plan.session_id}")),
+            event_count,
+        )
+
     async def test_completed_transition_precommit_failure_quarantines_effect_unknown(self):
         calls = 0
 
