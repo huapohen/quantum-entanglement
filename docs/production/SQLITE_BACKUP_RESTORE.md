@@ -194,9 +194,7 @@ free space, WAL size, copy duration, and writer latency throughout the operation
 ```python
 from quantum_entanglement import verify_sqlite_backup
 
-manifest = verify_sqlite_backup(
-    "/var/backups/quantum-entanglement/2026-08-20T020000Z.sqlite3"
-)
+manifest = verify_sqlite_backup("/var/backups/quantum-entanglement/2026-08-20T020000Z.sqlite3")
 ```
 
 ```bash
