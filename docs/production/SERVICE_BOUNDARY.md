@@ -11,8 +11,15 @@ README、演示、测试数量、环境变量或操作便利均不得放宽这�
 
 仓库已经包含事件存储、durable invocation-attempt store、artifact store、inbox/outbox、
 publisher、projection、tenant authorization primitive、SQLite backup/restore、严格配置和文件
-secret provider、依赖锁/SBOM，以及 durable approval/recovery 等真实组件。这些组件尚未被
-可信认证入口、强制 scope repository、action receipt 和统一服务生命周期组合成端到端闭环。
+secret provider、process-local request-context issuance primitive、依赖锁/SBOM，以及 durable
+approval/recovery 等真实组件。这些组件尚未被真实认证入口、action-time identity/membership
+refresh、强制 scope repository、action receipt 和统一服务生命周期组合成端到端闭环。
+
+`RequestContextIssuer` 已能通过注入的 authenticator 签发受 exact
+request/subject/tenant/workspace 约束的进程内 opaque handle，并为 action-time refresh 保留
+revision/evidence；但仓库没有真实 authenticator、authenticated transport 或强制调用路径，
+`ReauthorizationBasis` 也不是授权。详见
+[`TRUSTED_REQUEST_CONTEXT.md`](./TRUSTED_REQUEST_CONTEXT.md)。
 
 事件内嵌的 `ArtifactLedger` 已有逐行 global replay、累计 state-data 门禁、global-position CAS
 和 exact idempotency；其合同见 `ARTIFACT_LEDGER_REPLAY.md`。它仍无 tenant/workspace scope，
@@ -54,7 +61,8 @@ cookie、OIDC credential 或私钥。
 
 以下缺口任一存在，都必须保持 `NON_PRODUCTION`：
 
-1. 没有可信认证入口、版本化服务 API、统一 composition root、health 或 SIGTERM lifecycle；
+1. 没有真实身份提供方/认证 transport、action-time identity/membership refresh、版本化服务
+   API、强制 RequestContext/authorizer composition root、health 或 SIGTERM lifecycle；
 2. events、snapshots、delivery、attempt 和 projection repository 尚未强制 tenant/workspace
    scope，caller-provided identity 仍不可信；
 3. runtime 尚未把 durable invocation attempt 与 `RUNNING` task、result/artifact acceptance
