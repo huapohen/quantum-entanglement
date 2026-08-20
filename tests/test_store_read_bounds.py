@@ -174,6 +174,30 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
         self.assertEqual(self.store.read_all(after_position=3, limit=1), ())
         self.assertEqual(len(self.store.read_all(limit=1_000)), 3)
 
+    def test_idempotent_event_lookup_is_exact_and_validated(self) -> None:
+        self._append_stream("stream:target", 1)
+
+        found = self.store.get_idempotent_event(
+            "stream:target",
+            "event:stream-target:1",
+        )
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found.event.event_id, "event-stream-target-1")
+        self.assertIsNone(
+            self.store.get_idempotent_event("stream:target", "event:stream-target:missing")
+        )
+        self.assertIsNone(self.store.get_idempotent_event("stream:other", "event:stream-target:1"))
+        for stream_id, key, error_type in (
+            (True, "key", TypeError),
+            ("stream", False, TypeError),
+            (" ", "key", ValueError),
+            ("stream", " ", ValueError),
+        ):
+            with self.subTest(stream_id=stream_id, key=key):
+                with self.assertRaises(error_type):
+                    self.store.get_idempotent_event(stream_id, key)  # type: ignore[arg-type]
+
     def test_stream_all_page_decodes_only_rows_the_consumer_requests(self) -> None:
         self._append_stream("stream:target", 3)
         original_decoder = self.store._row_to_event

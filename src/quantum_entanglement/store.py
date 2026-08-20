@@ -667,6 +667,24 @@ class SQLiteEventStore:
             ).fetchone()
             return int(row["version"])
 
+    def get_idempotent_event(
+        self,
+        stream_id: str,
+        idempotency_key: str,
+    ) -> Optional[StoredEvent]:
+        """Return the exact event already admitted for one stream-local retry key."""
+
+        if type(stream_id) is not str or type(idempotency_key) is not str:
+            raise TypeError("stream_id and idempotency_key must be strings")
+        if not stream_id.strip() or not idempotency_key.strip():
+            raise ValueError("stream_id and idempotency_key are required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM events WHERE stream_id = ? AND idempotency_key = ?",
+                (stream_id, idempotency_key),
+            ).fetchone()
+            return None if row is None else self._row_to_event(row)
+
     def append(self, event: DomainEvent, expected_version: Optional[int] = None) -> StoredEvent:
         """Append one event, returning the existing record for an idempotent retry."""
 
