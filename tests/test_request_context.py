@@ -224,6 +224,29 @@ class RequestContextIssuanceTests(unittest.TestCase):
         self.assertIsNone(raised.exception.__cause__)
         self.assertIsNone(raised.exception.__context__)
 
+    def assert_detached_traceback(self, error, *canaries):
+        frames = []
+        traceback = error.__traceback__
+        while traceback is not None:
+            frames.append(traceback.tb_frame)
+            traceback = traceback.tb_next
+
+        library_frames = [
+            frame for frame in frames if frame.f_code.co_filename.endswith("/request_context.py")
+        ]
+        self.assertEqual([frame.f_code.co_name for frame in library_frames], ["issue"])
+        for frame in frames:
+            for value in list(frame.f_locals.values()):
+                self.assertNotIsInstance(value, (SecretMaterial, memoryview))
+                if isinstance(value, BaseException):
+                    self.assertIs(value, error)
+                if isinstance(value, str):
+                    for canary in canaries:
+                        self.assertNotIn(canary, value)
+                if isinstance(value, (bytes, bytearray)):
+                    for canary in canaries:
+                        self.assertNotIn(canary.encode("utf-8"), value)
+
     def access_request(
         self,
         *,
@@ -435,16 +458,43 @@ class RequestContextIssuanceTests(unittest.TestCase):
         self.assertIsNone(raised.exception.__cause__)
         self.assertIsNone(raised.exception.__context__)
 
-    def test_compound_authentication_and_wipe_failure_detaches_both_exceptions(self):
-        canary = "compound-failure-secret-canary"
-
+    def test_wipe_failure_traceback_does_not_retain_internal_secret_frames(self):
         class FailingWipeBuffer(bytearray):
             def __setitem__(self, key, value):
-                raise RuntimeError(canary)
+                raise RuntimeError("traceback-secret-canary")
+
+        issuer, _ = self.make_issuer()
+        credential = self.credential()
+        object.__setattr__(
+            credential,
+            "_SecretMaterial__buffer",
+            FailingWipeBuffer(b"bounded-credential-canary"),
+        )
+
+        captured_error = None
+        try:
+            issuer.issue(self.claims, credential)
+        except RequestContextError as error:
+            captured_error = error
+        else:
+            self.fail("wipe failure unexpectedly returned a context")
+
+        del credential
+        self.assertIsNotNone(captured_error)
+        self.assert_detached_traceback(
+            captured_error,
+            "bounded-credential-canary",
+            "traceback-secret-canary",
+        )
+
+    def test_compound_authentication_and_wipe_failure_detaches_both_exceptions(self):
+        class FailingWipeBuffer(bytearray):
+            def __setitem__(self, key, value):
+                raise RuntimeError("compound-failure-secret-canary")
 
         authenticator = FakeAuthenticator(
             self.binding,
-            failure=RuntimeError(canary),
+            failure=RuntimeError("compound-failure-secret-canary"),
         )
         issuer = RequestContextIssuer(
             authenticator=authenticator,
@@ -459,13 +509,25 @@ class RequestContextIssuanceTests(unittest.TestCase):
             FailingWipeBuffer(b"bounded-credential-canary"),
         )
 
-        with self.assertRaises(RequestContextError) as raised:
+        captured_error = None
+        try:
             issuer.issue(self.claims, credential)
+        except RequestContextError as error:
+            captured_error = error
+        else:
+            self.fail("compound failure unexpectedly returned a context")
 
-        self.assertEqual(raised.exception.code, "request_context_credential_close_failed")
-        self.assertNotIn(canary, str(raised.exception))
-        self.assertIsNone(raised.exception.__cause__)
-        self.assertIsNone(raised.exception.__context__)
+        del credential
+        self.assertIsNotNone(captured_error)
+        self.assertEqual(captured_error.code, "request_context_credential_close_failed")
+        self.assertNotIn("compound-failure-secret-canary", str(captured_error))
+        self.assertIsNone(captured_error.__cause__)
+        self.assertIsNone(captured_error.__context__)
+        self.assert_detached_traceback(
+            captured_error,
+            "bounded-credential-canary",
+            "compound-failure-secret-canary",
+        )
 
     def test_reflectively_corrupted_binding_failure_is_redacted_and_detached(self):
         canary = "binding-validation-secret-canary"

@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import secrets
 import threading
+import traceback
 import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -459,13 +460,21 @@ class RequestContextIssuer:
         try:
             return self._issue(claims, credential)
         except RequestContextError as error:
-            # ``raise ... from None`` suppresses display of an exception context but
-            # still leaves the original exception reachable through ``__context__``.
-            # Detach it at the public boundary so adapter, clock, and wipe failures
-            # cannot be recovered by inspecting the translated error object.
+            failure_code = error.code
+            internal_traceback = error.__traceback__
             error.__cause__ = None
             error.__context__ = None
-            raise
+            error.__traceback__ = None
+            if internal_traceback is not None:
+                # Python 3.9 skips the currently executing ``issue`` frame and clears
+                # completed private frames, including any credential memoryview local.
+                traceback.clear_frames(internal_traceback)
+            del internal_traceback
+        # Re-issue the bounded error after the internal exception and traceback have
+        # left scope. A wipe failure may leave the private issue frame's memoryview
+        # readable, so merely clearing ``__context__`` would not be a complete boundary.
+        del self, claims, credential
+        raise RequestContextError(failure_code)
 
     def _issue(
         self,
