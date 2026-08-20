@@ -68,7 +68,7 @@ class DependencyLockTests(unittest.TestCase):
         self.assertTrue(all(target.packages for target in targets))
         self.assertEqual(
             {package.name for package in targets[-1].roots},
-            {"build", "cyclonedx-bom", "pip", "setuptools"},
+            {"build", "cyclonedx-bom", "pip", "ruff", "setuptools"},
         )
         self.assertTrue(
             all("pip" in {package.name for package in target.roots} for target in targets)
@@ -198,7 +198,7 @@ class DependencyLockTests(unittest.TestCase):
             self.assertEqual(main(["--repository-root", str(self.repository)]), 0)
         self.assertEqual(
             json.loads(stdout.getvalue()),
-            {"lockTargets": 4, "packageRecords": 73, "verified": True},
+            {"lockTargets": 4, "packageRecords": 74, "verified": True},
         )
 
         path = self.repository / "requirements" / "build.in"

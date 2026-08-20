@@ -369,7 +369,7 @@ def _validate_pyproject(repository_root: Path, targets: Sequence[LockTarget]) ->
         _fail("pyproject_lock_mismatch")
     if not set(roots_by_scope["build"].items()).issubset(set(roots_by_scope["release"].items())):
         _fail("pyproject_lock_mismatch")
-    if "cyclonedx-bom" not in roots_by_scope["release"]:
+    if not {"cyclonedx-bom", "ruff"}.issubset(roots_by_scope["release"]):
         _fail("pyproject_lock_mismatch")
     installer_versions = {roots_by_scope[scope].get("pip") for scope in ("build", "dev", "release")}
     if None in installer_versions or len(installer_versions) != 1:

@@ -34,9 +34,9 @@
     },
     {
       "input": "requirements/release.in",
-      "inputSha256": "e14d1796f40a0672e372d3110ef19420bd40efa611fcce795df05886c2da320d",
+      "inputSha256": "fac945b8b8aadcec817067959d412c68dcf4ee2ced7b5990949c776b62a6a22b",
       "lock": "requirements/release-py312.lock",
-      "lockSha256": "252431d6df709de52c97a0d78aad17ad0c9540a24eccd69201878f8a8723c526",
+      "lockSha256": "6e2106162f8425259d783c8d506da74e7b3df595faf6f384c41607f7b53c03df",
       "platform": "x86_64-unknown-linux-gnu",
       "pythonVersion": "3.12",
       "scope": "release"
