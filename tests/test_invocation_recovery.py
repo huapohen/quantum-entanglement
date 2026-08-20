@@ -311,7 +311,7 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
                 with self.assertRaisesRegex(InvocationRecoveryIntegrityError, message):
                     self.assess(binding, snapshot, forged)
 
-    def test_receipt_manifest_and_event_position_are_revalidated(self) -> None:
+    def test_receipt_manifest_and_event_position_shapes_are_revalidated(self) -> None:
         spec, _lease, snapshot = self.running("receipt-shape")
         binding = binding_for(spec)
         receipt = receipt_for(binding, snapshot)
