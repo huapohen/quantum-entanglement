@@ -85,6 +85,8 @@ class ApprovalDecision(str, Enum):
 
 @dataclass(frozen=True)
 class ActorRef:
+    """Routing/display metadata, never proof of an authenticated principal or subject."""
+
     actor_id: str
     name: str
     kind: ActorKind
@@ -114,7 +116,11 @@ class ActorRef:
 
 @dataclass(frozen=True)
 class Authority:
-    """Delegated authority attached to a handoff, never inferred from identity."""
+    """Coordination intent, never authentication or verified effect authority.
+
+    Parsed envelopes and caller-created instances remain untrusted. Protected operations
+    require a separately issued request context and action-time tenant authorization.
+    """
 
     allowed_actions: tuple[str, ...] = ()
     data_scopes: tuple[str, ...] = ()
@@ -336,7 +342,12 @@ class ActionIntent:
 
 @dataclass(frozen=True)
 class CoordinationEnvelope:
-    """Traceable message passed among humans, agents, tools, and the orchestrator."""
+    """Traceable coordination message whose sender and scope remain untrusted input.
+
+    Parsing, routing, replaying, or signing a transport representation is not request-context
+    issuance. Adapters must bind authenticated identity through the admission boundary before
+    using any subject, tenant, workspace, role, or authority field for a protected operation.
+    """
 
     schema_version: str
     message_id: str
