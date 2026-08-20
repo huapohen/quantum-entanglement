@@ -111,6 +111,11 @@ stream position. Those candidate fields are therefore future-contract data, not 
 evidence. Receipt presence on a first-claim queued job is contradictory because no attempt exists
 to own it.
 
+The derived `stream_id` limit includes the UTF-8 byte length of the literal `session:` prefix in
+addition to the complete 4,096-byte `session_id` allowance. A session identity that is valid at
+the attempt-store boundary therefore remains representable in a candidate receipt; the derived
+field must not accidentally impose a smaller identity limit.
+
 `FIRST_CLAIM_READY` means only that the existing durable job has never been attempted and is
 eligible for the attempt-store claim protocol. A queued retry is not equivalent: the prior
 worker may have performed an effect before losing its lease. A future retry-safety proof may
