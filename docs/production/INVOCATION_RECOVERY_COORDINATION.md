@@ -209,6 +209,8 @@ The attempt-store write boundary shares the coordinator's 4,096-byte identity/wo
 16,384-byte result-reference limits and rejects C0/DEL control characters before opening a
 write transaction. Exact-boundary worker and result values round-trip through the atomic
 snapshot; one-byte-over and control-character inputs leave the job and attempt unchanged.
+Failure input is capped at 16,384 UTF-8 bytes and stored observations at 4,096 characters; the
+coordinator revalidates both limits even for a caller-supplied snapshot implementation.
 Ownership mutations also compare the transaction-sampled clock with the selected job/attempt
 activity floor. A regressed sample raises `InvocationClockRegressionError` and rolls back instead
 of corrupting timestamps, normalizing restored state, or masquerading as a stale lease.
