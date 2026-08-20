@@ -8,9 +8,11 @@ import os
 import pickle
 import select
 import signal
+import sys
 import threading
 import time
 import unittest
+import warnings
 from collections.abc import Callable
 from unittest import mock
 
@@ -182,10 +184,19 @@ class ProcessIdentityForkTests(unittest.TestCase):
         thread.start()
         self.assertTrue(lock_held.wait(1.0))
         try:
-            self.assertEqual(
-                _run_fork_child(lambda: _owner_outcome(owner), timeout=2.0),
-                b"rejected",
-            )
+            with warnings.catch_warnings(record=True) as fork_warnings:
+                warnings.simplefilter("always", DeprecationWarning)
+                outcome = _run_fork_child(lambda: _owner_outcome(owner), timeout=2.0)
+            self.assertEqual(outcome, b"rejected")
+            if sys.version_info >= (3, 12):
+                self.assertEqual(len(fork_warnings), 1)
+                self.assertIs(fork_warnings[0].category, DeprecationWarning)
+                self.assertRegex(
+                    str(fork_warnings[0].message),
+                    r"multi-threaded.*fork\(\).*deadlocks",
+                )
+            else:
+                self.assertEqual(fork_warnings, [])
         finally:
             release_lock.set()
             thread.join(2.0)
