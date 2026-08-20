@@ -1,4 +1,9 @@
-# Quantum Entanglement 生产就绪审计
+# Quantum Entanglement 初始生产就绪审计（历史）
+
+> 本文保留最初内核基线的审计证据，不再代表当前实现状态。当前审计请阅读
+> [`CURRENT_READINESS.md`](./CURRENT_READINESS.md)，强制运行边界请阅读
+> [`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md)。本文中的测试数量、缺失组件和源码行号只适用
+> 于下述历史基线，不得用于当前 release promotion。
 
 - 审计基线：`ce50aa8`
 - 审计日期：2026-08-20

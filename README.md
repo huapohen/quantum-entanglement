@@ -23,7 +23,7 @@ migration、SQLite backup/restore、tenant authorization primitive 和 durable a
 与部署闭环组合成生产服务。测试通过不能替代该服务闭环。完整运行边界、差距和发布条件见：
 
 - `docs/production/SERVICE_BOUNDARY.md`
-- `docs/production/READINESS_AUDIT.md`
+- `docs/production/CURRENT_READINESS.md`
 - `docs/production/ROADMAP.md`
 - `docs/production/RELEASE_GATES.md`
 - `docs/production/APPROVAL_DURABILITY.md`
