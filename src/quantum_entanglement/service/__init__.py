@@ -5,6 +5,13 @@ introduced behind tested fail-closed contracts before they are composed into a s
 """
 
 from .config import ConfigurationError, RuntimeMode, ServiceConfig
+from .logging import (
+    LogEventSchema,
+    LogField,
+    LogFieldKind,
+    SafeLogCatalog,
+    SafeLogger,
+)
 from .redaction import RedactionPolicy, Redactor
 from .secrets import (
     FileSecretProvider,
@@ -19,6 +26,9 @@ from .secrets import (
 __all__ = [
     "ConfigurationError",
     "FileSecretProvider",
+    "LogEventSchema",
+    "LogField",
+    "LogFieldKind",
     "RuntimeMode",
     "RedactionPolicy",
     "Redactor",
@@ -28,5 +38,7 @@ __all__ = [
     "SecretProviderError",
     "SecretRef",
     "SecretReferenceError",
+    "SafeLogCatalog",
+    "SafeLogger",
     "ServiceConfig",
 ]
