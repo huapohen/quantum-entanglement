@@ -38,7 +38,7 @@ _CORE_TABLES = (
     "invocation_attempts",
     "artifact_blobs",
     "artifact_versions",
-    "projector_offsets",
+    "projection_offsets",
     "action_receipts",
 )
 
