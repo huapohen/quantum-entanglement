@@ -23,6 +23,10 @@ The project may call itself production-ready only when all of the following are 
 
 Passing unit tests alone is necessary but not sufficient.
 
+The hard runtime boundary for every phase is defined in
+[`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md). A phase name or implemented component does
+not grant permission to exceed that boundary before its promotion evidence is accepted.
+
 ## Commit and release discipline
 
 - One independently reviewable behavior or document change per commit.
@@ -31,7 +35,29 @@ Passing unit tests alone is necessary but not sufficient.
 - Every phase ends in a version bump, changelog, release checklist, and signed-off evidence.
 - The default branch must remain runnable after every commit.
 
-## Phase 0 — validated kernel (`0.1.x`, complete)
+## Current checkpoint (`0.1.x`, not promoted for production)
+
+The repository has moved beyond the original in-memory prototype. Committed components now
+include durable invocation attempts with leasing and fencing, a persistent artifact store,
+an outbox publisher, durable projection offsets/receipts, domain-scoped migrations,
+SQLite backup/restore, tenant authorization primitives, and an approval flow whose request,
+decision, transition, and recovery chain are transactionally validated.
+
+They are not yet a production service. The current P0 dependency chain remains:
+
+1. strict service configuration and secret-handle boundaries;
+2. safe structured logging and redaction before any service exposure;
+3. explicit production schema preflight and migration control;
+4. authenticated request context plus mandatory tenant/workspace scope in every repository;
+5. a versioned, authenticated loopback API with command idempotency;
+6. durable action receipts and a fenced fake connector with reconciliation;
+7. lifecycle/readiness/SIGTERM, complete backup coverage, a least-privilege container, and
+   measured upgrade/restore evidence.
+
+Until that chain is closed, the supported runtime remains a trusted local or isolated-CI
+kernel using synthetic data and fake/no-op/read-only connectors.
+
+## Phase 0 — validated kernel (`0.1.x`, complete as a kernel baseline)
 
 Runnable boundary: dependency-free, single-process coordination kernel and local demo.
 
@@ -40,12 +66,15 @@ Delivered:
 - canonical coordination envelope and append-only event store;
 - deterministic DAG scheduling, context compilation, policy and approval flow;
 - artifact versioning and recovery from event history;
-- transactional inbox/outbox storage primitives;
+- transactional inbox/outbox storage primitives and an outbox publisher;
+- durable invocation attempts, artifact storage, projection state and approval recovery;
+- domain-scoped migrations, tenant authorization primitives and SQLite backup/restore;
 - A2A boundary mapping, LangGraph bridge, mention routing, and isolated Harness port;
-- 54 passing tests and a deterministic three-Agent demo.
+- a deterministic three-Agent demo and an expanding deterministic test suite.
 
-Not a production claim: there is no service API, tenant boundary, persistent artifact blob
-store, distributed execution, operational telemetry, or deployment package yet.
+Not a production claim: there is no authenticated service API, mandatory tenant scope on
+all storage, durable external-action receipt, complete lifecycle/telemetry, or deployment
+package yet.
 
 ## Phase 1 — reliable single-node service (`0.2.0`)
 
@@ -54,13 +83,18 @@ or explicitly approved external connectors.
 
 Required deliverables:
 
-1. Outbox publisher with timeout, retry, jitter, dead-letter and graceful shutdown.
-2. Durable task attempts with lease, heartbeat, timeout and retry policy.
-3. Persistent artifact metadata/blob transaction and integrity verification.
-4. Projector offsets, idempotent replay, schema versions and upcasters.
-5. External action receipts and compensation state machine.
-6. Versioned SQLite migrations, backup/restore command and corruption checks.
-7. Service lifecycle, readiness/liveness checks and structured local audit logs.
+1. **Implemented component:** outbox publisher with timeout, retry, jitter and dead-letter.
+2. **Implemented component:** durable task attempts with lease, heartbeat, fencing and retry.
+3. **Implemented component:** persistent artifact metadata/blob integrity verification.
+4. **Implemented component:** projector offsets/receipts and replay safety.
+5. **Open gate:** durable external action receipts, fencing and reconciliation state machine.
+6. **Partial gate:** versioned SQLite migrations and backup/restore exist; complete manifest
+   coverage, restore quarantine and release rehearsal remain required.
+7. **Open gate:** service lifecycle, readiness/liveness, graceful admission drain and safe
+   structured audit logs.
+
+“Implemented component” is source evidence only. Phase 1 is not promoted until every open
+and partial gate passes the release criteria below from a clean supported environment.
 
 Release gates:
 
