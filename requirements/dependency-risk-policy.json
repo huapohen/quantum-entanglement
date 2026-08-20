@@ -1,7 +1,7 @@
 {
   "evidence": {
-    "allowedDatabaseSources": [],
     "allowedScanners": [],
+    "approvedDatabases": [],
     "maximumDatabaseAgeSeconds": 604800,
     "maximumDatabaseValiditySeconds": 1209600,
     "maximumResultAgeSeconds": 86400
