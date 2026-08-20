@@ -121,6 +121,23 @@ class ServiceConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationError, "configuration_path_permissions"):
             ServiceConfig.from_environment(self.environment())
 
+    def test_rejects_group_or_world_writable_path_ancestor(self) -> None:
+        unsafe_parent = self.data_directory.parent / "unsafe-parent"
+        unsafe_parent.mkdir(mode=0o700)
+        unsafe_data = unsafe_parent / "data"
+        unsafe_data.mkdir(mode=0o700)
+        unsafe_parent.chmod(0o777)
+        self.addCleanup(unsafe_parent.chmod, 0o700)
+        values = self.environment()
+        values["QE_DATA_DIR"] = str(unsafe_data)
+        values["QE_DATABASE_PATH"] = str(unsafe_data / "service.sqlite3")
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "configuration_path_ancestor_permissions",
+        ):
+            ServiceConfig.from_environment(values)
+
     def test_rejects_unsafe_existing_database(self) -> None:
         self.database_path.write_bytes(b"not-a-real-database")
         self.database_path.chmod(0o640)

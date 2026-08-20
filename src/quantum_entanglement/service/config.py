@@ -232,6 +232,13 @@ class ServiceConfig:
                 raise ConfigurationError("configuration_path_unavailable", field) from None
             if stat.S_ISLNK(metadata.st_mode):
                 raise ConfigurationError("configuration_path_symlink", field)
+            is_leaf = index == len(path.parts) - 1
+            if (
+                not is_leaf
+                and stat.S_ISDIR(metadata.st_mode)
+                and stat.S_IMODE(metadata.st_mode) & 0o022
+            ):
+                raise ConfigurationError("configuration_path_ancestor_permissions", field)
 
     @classmethod
     def _validate_directory(cls, path: Path, field: str) -> None:
