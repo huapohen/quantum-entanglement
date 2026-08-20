@@ -117,7 +117,8 @@ Each exception is a reviewed policy record, not scanner-controlled text. It bind
 The maximum exception duration is policy-bounded. Wildcards, package-only scopes, version
 ranges, duplicate scopes, future exceptions, expired exceptions, wrong-database
 exceptions, mismatched fingerprints, and unused exceptions fail closed. Every denial must
-consume exactly one current exception, and every committed exception must be consumed.
+consume exactly one current exception, one exception cannot be reused for a second denial,
+and every committed exception must be consumed.
 
 Exception owner, rationale, ID, component, and finding ID are never printed by the CLI.
 
@@ -155,10 +156,15 @@ The result is not trusted to declare its own universe. Before policy evaluation,
 1. strictly reverifies the distribution manifest against the clean checkout, packages, and
    independently supplied full commit SHA;
 2. strictly reverifies the canonical lock policy and all four lock targets;
-3. regenerates expected runtime/build SBOM bytes from that source/manifest/lock evidence;
-4. byte-verifies the exact two-file SBOM directory;
-5. derives the component universe and expected artifact hashes from those reverified SBOMs;
-6. repeats manifest, lock, and SBOM verification after context collection.
+3. captures the exact committed-checkout promotion-policy bytes in the evidence context;
+4. regenerates expected runtime/build SBOM bytes from that source/manifest/lock evidence;
+5. byte-verifies the exact two-file SBOM directory;
+6. derives the component universe and expected artifact hashes from those reverified SBOMs;
+7. repeats manifest, lock, policy-byte, and SBOM verification after context collection.
+
+The result's policy digest must match both that source context and the independently loaded
+policy used for the decision. A policy file changed after source-context collection cannot
+be substituted merely by placing its new digest in a scanner result.
 
 The required universe currently consists of the runtime root component plus every build
 SBOM component. Runtime artifact coverage is the exact wheel/sdist digest set. Each locked
@@ -218,7 +224,9 @@ Success emits one compact sorted JSON object containing only decision, evaluatio
 counts, and evidence digests. It omits filesystem paths, scanner/database names, purls,
 vulnerability IDs, aliases, licenses, exception IDs, owners, and rationales. Verification
 failure prints only `dependency risk verification failed: <fixed_code>`. Argument failure
-does not echo supplied paths or values.
+does not echo supplied paths or values. Only an exact allowlist of registered failure codes
+may cross the CLI boundary; an unregistered code or unexpected implementation exception is
+collapsed to `risk_internal_error` without a traceback or exception text.
 
 With the currently committed disabled policy, exit `0` is impossible by design.
 
@@ -227,7 +235,7 @@ With the currently committed disabled policy, exit `0` is impossible by design.
 The deterministic unit suite covers:
 
 - duplicate-key, noncanonical, unknown-field, invalid-type, unsafe purl, and bounded-input
-  failures;
+  failures, including oversized integer literals that fail inside the JSON decoder;
 - stale/overlong database windows and stale/future results;
 - missing components and same-purl-name/different-version substitution;
 - source, distribution manifest, lock inventory, SBOM, policy, scanner, database, and raw
@@ -235,8 +243,10 @@ The deterministic unit suite covers:
 - partial top-level/component scans;
 - unknown severity, unknown fix state, unknown/unlisted license;
 - inconsistent fixed-version state and finding/alias collisions;
-- expired, mismatched-fingerprint, overly broad, duplicate, and unused exceptions;
-- fixed CLI `0/1/2` behavior and redacted output.
+- expired, mismatched-fingerprint, overly broad, duplicate, reused, and unused exceptions;
+- source-context policy mutation after collection;
+- fixed CLI `0/1/2` behavior, exact failure-code allowlisting, and redacted unexpected
+  failures.
 
 These tests validate the contract and decision logic with synthetic evidence. They are not
 a real dependency scan.
