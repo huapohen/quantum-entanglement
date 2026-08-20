@@ -465,6 +465,28 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertEqual(tuple(self.store._connection.iterdump()), before)
         self.assertEqual(len(self.store.attempts("invocation-1")), 0)
 
+    def test_queued_partial_lease_cannot_be_observed_recovered_or_claimed(self):
+        self.store.enqueue(job_spec())
+        self.store._connection.execute("PRAGMA ignore_check_constraints = ON")
+        try:
+            self.store._connection.execute(
+                "UPDATE invocation_jobs SET lease_owner = ? WHERE invocation_id = ?",
+                ("orphan-worker", "invocation-1"),
+            )
+        finally:
+            self.store._connection.execute("PRAGMA ignore_check_constraints = OFF")
+        before = tuple(self.store._connection.iterdump())
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.get("invocation-1")
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        self.assertEqual(tuple(self.store._connection.iterdump()), before)
+        self.assertEqual(len(self.store.attempts("invocation-1")), 0)
+
     def test_non_succeeded_result_reference_cannot_cross_first_claim(self):
         self.store.enqueue(job_spec())
         self.store._connection.execute(

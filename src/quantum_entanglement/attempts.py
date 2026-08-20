@@ -489,7 +489,17 @@ class SQLiteInvocationAttemptStore:
                 and lease_expires_at is not None
                 and heartbeat_at is not None
             )
-            if (status is InvocationStatus.RUNNING) != running_lease:
+            cleared_lease = (
+                lease_owner is None
+                and lease_digest is None
+                and lease_expires_at is None
+                and heartbeat_at is None
+            )
+            if status is InvocationStatus.RUNNING:
+                valid_lease_shape = running_lease
+            else:
+                valid_lease_shape = cleared_lease
+            if not valid_lease_shape:
                 raise ValueError("persisted invocation lease fields contradict status")
             if status is InvocationStatus.RUNNING and attempts_started == 0:
                 raise ValueError("persisted running invocation has no started attempt")
