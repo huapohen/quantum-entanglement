@@ -734,6 +734,81 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored.last_error, "connector_failure")
         self.assertNotIn(canary, stored.last_error)
 
+    async def test_custom_error_classifier_must_return_allowlisted_fixed_code(self):
+        self.enqueue("message-classifier-rejected")
+        canary = "connector-secret-canary"
+
+        async def fail(_request):
+            raise RuntimeError("exception-message-secret")
+
+        publisher = self.publisher(
+            fail,
+            max_attempts=1,
+            error_formatter=lambda _error: canary,
+        )
+        with self.assertLogs("quantum_entanglement.publisher", level="ERROR") as captured:
+            await publisher.run_once()
+
+        stored = self.store.get_outbox("message-classifier-rejected")
+        rendered = "\n".join(captured.output)
+        self.assertEqual(stored.last_error, "connector_failure")
+        self.assertIn("qe.publisher.error_classifier_rejected", rendered)
+        self.assertNotIn(canary, rendered)
+        self.assertNotIn("exception-message-secret", rendered)
+
+    async def test_custom_error_classifier_accepts_only_explicit_code(self):
+        self.enqueue("message-classifier-allowed")
+
+        async def fail(_request):
+            raise RuntimeError("not-persisted")
+
+        publisher = self.publisher(
+            fail,
+            max_attempts=1,
+            error_formatter=lambda _error: "provider_quota",
+            error_code_allowlist=("provider_quota",),
+        )
+        await publisher.run_once()
+
+        self.assertEqual(
+            self.store.get_outbox("message-classifier-allowed").last_error,
+            "provider_quota",
+        )
+
+    async def test_error_classifier_result_is_never_coerced_or_rendered(self):
+        self.enqueue("message-classifier-object")
+
+        class ExplosiveCode:
+            def __str__(self):
+                raise AssertionError("classifier result must not be stringified")
+
+            def __repr__(self):
+                raise AssertionError("classifier result must not be rendered")
+
+        async def fail(_request):
+            raise RuntimeError("not-persisted")
+
+        publisher = self.publisher(
+            fail,
+            max_attempts=1,
+            error_formatter=lambda _error: ExplosiveCode(),
+        )
+        with self.assertLogs("quantum_entanglement.publisher", level="ERROR"):
+            await publisher.run_once()
+
+        self.assertEqual(
+            self.store.get_outbox("message-classifier-object").last_error,
+            "connector_failure",
+        )
+
+    def test_error_code_allowlist_is_bounded_and_canonical(self):
+        async def publish(_request):
+            return PublishReceipt.accepted("receipt:unused")
+
+        for invalid in (("Bad-Code",), ("bad\ncode",), ("duplicate", "duplicate")):
+            with self.subTest(invalid=invalid), self.assertRaises((TypeError, ValueError)):
+                self.publisher(publish, error_code_allowlist=invalid)
+
     async def test_stop_is_graceful_and_does_not_claim_another_batch(self):
         self.enqueue("message-in-flight")
         self.enqueue("message-remains")
