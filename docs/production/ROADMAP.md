@@ -154,6 +154,44 @@ Required deliverables:
 GA is blocked by any unresolved P0, security-critical issue, data-loss defect, tenant escape,
 or undocumented irreversible migration.
 
+### Current Phase 5 supply-chain checkpoint (2026-08-20)
+
+The following pre-GA primitives are implemented and enforced for the declared Python/Linux
+CI matrix:
+
+- build, development, and release tool roots and transitive closures use exact versions and
+  SHA-256 hashes;
+- the canonical lock policy binds the four supported scope/Python/platform targets, source
+  inputs, lock files, resolver version, and resolution cutoff;
+- CI verifies locks before installation, uses pip hash/binary-only mode, disables project
+  dependency resolution and build isolation, and pins external actions by commit;
+- the package job builds twice, normalizes sdists, requires byte-identical wheel/sdist sets,
+  and strictly verifies a source-bound distribution manifest;
+- deterministic runtime and build CycloneDX 1.6 SBOMs bind the source commit/tree and exact
+  distributions; internal byte/profile verification and official schema validation run
+  before upload.
+
+This is a partial completion of Phase 5 deliverable 2, not completion of Phase 5. The next
+supply-chain milestones, in release-blocking order, are:
+
+1. replace mutable runner/interpreter/resolver bootstrap identities with immutable verified
+   digests and reproduce packages on an independently provisioned Linux runner;
+2. introduce a reviewed offline wheelhouse or immutable dependency mirror and record its
+   trust/update/compromise-recovery policy;
+3. add vulnerability, malware, maintainer-risk, and license policy gates bound to the exact
+   package and SBOM digests;
+4. cover optional runtime extras, interpreter/OS/container packages, and deployment
+   manifests in resolved SBOM evidence;
+5. issue and verify signed build provenance from a trusted isolated builder, then sign or
+   jointly attest the packages, distribution manifest, and SBOMs;
+6. exercise dependency revocation, emergency rebuild, key compromise, evidence retention,
+   and deployment-time verification runbooks.
+
+The exact implemented contract and remaining boundary are maintained in
+[`DEPENDENCY_LOCKS_AND_SBOM.md`](./DEPENDENCY_LOCKS_AND_SBOM.md). Phase promotion still
+requires immutable retained evidence for the candidate; a green CI run or locally recorded
+digest is not itself a promotion decision.
+
 ## Parallel product track
 
 The kernel becomes commercially useful only through a visible business workflow. In
