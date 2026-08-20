@@ -39,8 +39,8 @@ digest、expected commit 和可信存储来源。
 复核命令：
 
 ```bash
-python3 scripts/generate_release_evidence.py > /outside/checkout/evidence.json
-python3 scripts/verify_release_evidence.py /outside/checkout/evidence.json --repository-root /clean/checkout --expected-commit 206acc1a93c16fe07fde4428d4d7e3b63c69ecc7
+python3.13 scripts/generate_release_evidence.py > /outside/checkout/evidence.json
+python3.13 scripts/verify_release_evidence.py /outside/checkout/evidence.json --repository-root /clean/checkout --expected-commit 206acc1a93c16fe07fde4428d4d7e3b63c69ecc7
 ```
 
 verifier 输出：
@@ -48,6 +48,10 @@ verifier 输出：
 ```text
 release evidence verified
 ```
+
+该 JSON 的固定 gate 由 `python3.13` 生成并记录 executable basename；verifier 会按自身
+解释器重建预期 gate argv，因此必须同样用 `python3.13` 回读。用另一个解释器入口执行会
+按设计返回 `gate_argv_invalid`，不能把该失败误判为 evidence 损坏。
 
 ## 3. 扩展三版本门禁
 
