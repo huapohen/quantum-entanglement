@@ -132,6 +132,64 @@ class ApprovalAtomicityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(rerun.needs_you), 1)
         self.assertEqual(publish_calls, 0)
 
+    async def test_partial_post_commit_batch_is_never_reconciled(self) -> None:
+        self.kernel.register_agent(
+            registration("publisher", lambda invocation: AgentResult("published"))
+        )
+        plan = WorkflowPlan(
+            "decision-partial-post-commit",
+            "部分提交不得被误认成完整审批",
+            "user",
+            (approval_task("publish"),),
+            plan_id="plan-decision-partial-post-commit",
+        )
+        paused = await self.kernel.run(plan)
+        request = paused.needs_you[0]
+        original_append_many = self.kernel.event_store.append_many
+
+        def commit_prefix_then_raise(stream_id, events, expected_version=None):
+            batch = tuple(events)
+            original_append_many(
+                stream_id,
+                batch[:1],
+                expected_version=expected_version,
+            )
+            raise RuntimeError("injected partial post-commit failure")
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=commit_prefix_then_raise,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "injected partial post-commit failure",
+            ):
+                await self.kernel.decide(
+                    request.request_id,
+                    ApprovalDecision.APPROVE,
+                    "owner",
+                )
+
+        self.assertTrue(self.kernel.approvals.get(request.request_id).pending)
+        self.assertEqual(
+            self.kernel._graphs[plan.session_id].statuses["publish"],
+            TaskStatus.WAITING_APPROVAL,
+        )
+        self.assertNotIn((plan.session_id, "publish"), self.kernel._approved_tasks)
+        durable_events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        decision_events = tuple(
+            stored for stored in durable_events if stored.event.event_type == "approval.decided"
+        )
+        self.assertEqual(len(decision_events), 1)
+        self.assertFalse(
+            any(
+                stored.event.event_type == "task.status.changed"
+                and stored.event.payload["previous"] == TaskStatus.WAITING_APPROVAL.value
+                for stored in durable_events
+            )
+        )
+
     async def test_committed_decision_batch_is_reconciled_after_wrapper_failure(self) -> None:
         publish_calls = 0
 
