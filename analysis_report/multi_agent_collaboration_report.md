@@ -8,10 +8,11 @@
 > Notion 镜像：<https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44?pvs=204>
 > 安全边界：飞书/企微全程只读，未发送、回复、评论、@ 或上传任何内容
 
-> **实现状态更新（2026-08-20）：** 第 9–11 节原为 2026-08-19 的实现快照。
-> 当前 clean baseline、531 项测试、142-commit 增量、已实现 primitive 与仍阻断生产的
-> 集成边界，以 [`research/07_current_implementation_status.md`](research/07_current_implementation_status.md)
-> 为准。
+> **实现证据说明（2026-08-20）：** 第 9–11 节及文中的 531 项测试、142-commit 增量只绑定
+> 历史基线 `e4cbf040579bf1f33c2b7692d2fbd6944d837952`。后续实现已经继续演进；这些数字不得
+> 作为当前主线或发布证据。当前生产边界以
+> [`docs/production/CURRENT_READINESS.md`](../docs/production/CURRENT_READINESS.md) 及更新日期
+> 更晚、明确绑定完整 source commit/tree 的证据报告为准。
 
 ## 0. 执行摘要
 
@@ -35,9 +36,9 @@
 5. **LangGraph + DeepSeek Harness 不是二选一；二者都不应成为全部业务真相源。**
 6. **先做一个结果可见、验收清晰的高价值业务 Agent 团队，再抽象平台。**
 
-本仓库已经用可运行代码验证核心不变量。2026-08-20 的 clean baseline 固定为
+本仓库已经用可运行代码验证核心不变量。下述 2026-08-20 历史 clean baseline 固定为
 `e4cbf040579bf1f33c2b7692d2fbd6944d837952`：531 项测试和 5 个本地 release gate
-通过；本地 demo 完成 `@Agent` 直达、三 Agent 接力、版本化产出和因果事件。当前还新增了
+通过；本地 demo 完成 `@Agent` 直达、三 Agent 接力、版本化产出和因果事件。该历史快照还包含
 durable delivery/attempt/artifact/projection、tenant authorization slice、备份恢复、迁移桥、
 canonical release evidence 与双构建制品门禁。它仍是预生产单节点内核，不是可部署的
 商业服务：正式 A2A/MCP、public admission、系统级 action-time authorization、完整 effect
