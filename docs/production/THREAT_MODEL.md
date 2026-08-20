@@ -141,7 +141,7 @@ The following are release-blocking invariants:
 |---|---|---|---|---|
 | TM-01 | Guess another tenant's resource ID | tenant escape, P0 | mandatory tenant key, repository filter, policy check, property tests | gap |
 | TM-02 | Construct an unsigned self-asserted capability | privilege escalation, P0 | verified-capability type, signature/MAC verifier, issuer/audience binding | in progress |
-| TM-03 | Backdate request time to revive an expired grant | unauthorized effect, P0 | injected trusted UTC clock, max TTL, bounded skew | in progress |
+| TM-03 | Backdate request time to revive an expired grant | unauthorized effect, P0 | injected trusted UTC clock, max TTL, bounded skew | partial: request-context issuer has a process-local monotonic high-water; persistent capability/key decisions still lack trusted durable time |
 | TM-04 | Forge a child or omit a revoked ancestor | authority escalation, P0 | full chain validation, ancestor revocation/epoch | in progress |
 | TM-05 | Reuse a capability against another service | confused deputy, P0 | audience and service binding, action/resource exactness | in progress |
 | TM-06 | Prompt-inject an agent into invoking a tool | data/effect compromise, P0 | data/authority separation, consent, action-time policy, allowlist | gap |
