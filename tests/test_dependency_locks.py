@@ -108,9 +108,7 @@ class DependencyLockTests(unittest.TestCase):
             changed_line = next(
                 line
                 for line in value.splitlines()
-                if "sha512" in line
-                or "--index" in line
-                or "--only-binary setuptools" in line
+                if "sha512" in line or "--index" in line or "--only-binary setuptools" in line
             )
             with self.subTest(first_changed_line=changed_line):
                 path.write_text(value, encoding="ascii")
@@ -127,7 +125,7 @@ class DependencyLockTests(unittest.TestCase):
         unsorted = list(lines)
         unsorted[first_hash], unsorted[first_hash + 1] = (
             unsorted[first_hash + 1] + " \\",
-            unsorted[first_hash].removesuffix(" \\")
+            unsorted[first_hash].removesuffix(" \\"),
         )
         duplicate_value = "\n".join(duplicate) + "\n"
         unsorted_value = "\n".join(unsorted) + "\n"

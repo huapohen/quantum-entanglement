@@ -69,9 +69,7 @@ _EXPECTED_TARGETS = (
         "requirements/release-py312.lock",
     ),
 )
-_TOP_LEVEL_KEYS = frozenset(
-    {"format", "generatedBy", "locks", "resolutionCutoff", "schemaVersion"}
-)
+_TOP_LEVEL_KEYS = frozenset({"format", "generatedBy", "locks", "resolutionCutoff", "schemaVersion"})
 _TARGET_KEYS = frozenset(
     {
         "input",

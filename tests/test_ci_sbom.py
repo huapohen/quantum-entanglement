@@ -51,13 +51,11 @@ class PackageSbomWorkflowTests(unittest.TestCase):
         self.assertLess(schema, smoke)
         self.assertLess(smoke, upload)
         self.assertIn(
-            "${{ runner.temp }}/quantum-entanglement-sbom/"
-            "quantum-entanglement-runtime.cdx.json",
+            "${{ runner.temp }}/quantum-entanglement-sbom/quantum-entanglement-runtime.cdx.json",
             self.workflow,
         )
         self.assertIn(
-            "${{ runner.temp }}/quantum-entanglement-sbom/"
-            "quantum-entanglement-build.cdx.json",
+            "${{ runner.temp }}/quantum-entanglement-sbom/quantum-entanglement-build.cdx.json",
             self.workflow,
         )
         self.assertNotIn("if: ${{ always() }}", self.workflow)

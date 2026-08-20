@@ -98,9 +98,7 @@ class SbomTests(unittest.TestCase):
         self.assertIn("pkg:pypi/setuptools@82.0.1", references)
 
         pip_component = next(component for component in components if component["name"] == "pip")
-        pip_properties = {
-            item["name"]: item["value"] for item in pip_component["properties"]
-        }
+        pip_properties = {item["name"]: item["value"] for item in pip_component["properties"]}
         self.assertEqual(
             set(pip_properties["quantum-entanglement:lock:targets"].split(",")),
             {
@@ -126,7 +124,7 @@ class SbomTests(unittest.TestCase):
         repository.mkdir()
         source = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         (repository / "pyproject.toml").write_text(
-            source.replace('dependencies = []', 'dependencies = ["requests==2.32.5"]', 1),
+            source.replace("dependencies = []", 'dependencies = ["requests==2.32.5"]', 1),
             encoding="utf-8",
         )
 

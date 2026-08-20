@@ -58,9 +58,7 @@ _TOOLS_KEYS = frozenset({"components"})
 _COMPONENT_KEYS = frozenset(
     {"bom-ref", "licenses", "name", "properties", "purl", "type", "version"}
 )
-_PACKAGE_COMPONENT_KEYS = frozenset(
-    {"bom-ref", "name", "properties", "purl", "type", "version"}
-)
+_PACKAGE_COMPONENT_KEYS = frozenset({"bom-ref", "name", "properties", "purl", "type", "version"})
 _TOOL_COMPONENT = {
     "bom-ref": "urn:quantum-entanglement:sbom-generator:1",
     "name": "quantum-entanglement-sbom-generator",
@@ -168,9 +166,7 @@ def _directory(path: Path, code: str) -> tuple[Path, tuple[int, int]]:
     return resolved, (after.st_dev, after.st_ino)
 
 
-def _outside_repository(
-    directory: Path, repository_root: Path
-) -> tuple[Path, tuple[int, int]]:
+def _outside_repository(directory: Path, repository_root: Path) -> tuple[Path, tuple[int, int]]:
     resolved_directory, directory_identity = _directory(directory, "sbom_directory_invalid")
     resolved_root, _ = _directory(repository_root, "repository_root_invalid")
     try:
@@ -380,8 +376,7 @@ def _build_document(
     properties = _common_properties(manifest)
     for target in targets:
         prefix = (
-            "quantum-entanglement:lock:"
-            f"{target.scope}:cp{target.python_version}:{target.platform}"
+            f"quantum-entanglement:lock:{target.scope}:cp{target.python_version}:{target.platform}"
         )
         properties.extend(
             (
