@@ -454,6 +454,22 @@ class RequestContextIssuer:
 
         if type(credential) is not SecretMaterial:
             raise TypeError("credential must be an exact SecretMaterial")
+        try:
+            return self._issue(claims, credential)
+        except RequestContextError as error:
+            # ``raise ... from None`` suppresses display of an exception context but
+            # still leaves the original exception reachable through ``__context__``.
+            # Detach it at the public boundary so adapter, clock, and wipe failures
+            # cannot be recovered by inspecting the translated error object.
+            error.__cause__ = None
+            error.__context__ = None
+            raise
+
+    def _issue(
+        self,
+        claims: CallerRequestContext,
+        credential: SecretMaterial,
+    ) -> RequestContext:
         reserved = False
         try:
             expected = self._snapshot_claims(claims)
@@ -467,10 +483,16 @@ class RequestContextIssuer:
                 self.__pending += 1
                 reserved = True
             adapter_claims = CallerRequestContext.from_dict(expected.to_dict())
+            credential_view: Optional[memoryview] = None
+            credential_unavailable = False
             try:
                 credential_view = credential.view()
             except Exception:
-                raise RequestContextError("request_context_credential_unavailable") from None
+                credential_unavailable = True
+            if credential_unavailable or credential_view is None:
+                raise RequestContextError("request_context_credential_unavailable")
+            authentication_failed = False
+            binding: Any = None
             try:
                 binding = self.__authenticator.authenticate(
                     adapter_claims,
@@ -479,7 +501,9 @@ class RequestContextIssuer:
                     at=now,
                 )
             except Exception:
-                raise RequestContextError("request_authentication_failed") from None
+                authentication_failed = True
+            if authentication_failed:
+                raise RequestContextError("request_authentication_failed")
             completed_at = self._clock_now()
             if completed_at + self.__max_clock_skew < now:
                 raise RequestContextError("request_context_time_regressed")
@@ -603,45 +627,65 @@ class RequestContextIssuer:
             raise ValueError(f"{field_name} is outside the supported range")
 
     def _clock_now(self) -> datetime:
+        normalized: Optional[datetime] = None
+        clock_failed = False
         try:
             value = self.__clock.now()
-            return _as_utc(value, "clock.now()")
+            normalized = _as_utc(value, "clock.now()")
         except Exception:
-            raise RequestContextError("request_context_clock_unavailable") from None
+            clock_failed = True
+        if clock_failed or normalized is None:
+            raise RequestContextError("request_context_clock_unavailable")
+        return normalized
 
     @staticmethod
     def _close_credential(credential: SecretMaterial) -> None:
+        close_failed = False
         try:
             credential.close()
         except Exception:
-            raise RequestContextError("request_context_credential_close_failed") from None
+            close_failed = True
+        if close_failed:
+            raise RequestContextError("request_context_credential_close_failed")
 
     @staticmethod
     def _snapshot_claims(claims: CallerRequestContext) -> CallerRequestContext:
         if type(claims) is not CallerRequestContext:
             raise TypeError("claims must be an exact CallerRequestContext")
+        snapshot: Optional[CallerRequestContext] = None
+        invalid = False
         try:
-            return CallerRequestContext.from_dict(claims.to_dict())
-        except (AttributeError, TypeError, ValueError):
-            raise TypeError("claims must be a canonical CallerRequestContext") from None
+            snapshot = CallerRequestContext.from_dict(claims.to_dict())
+        except Exception:
+            invalid = True
+        if invalid or snapshot is None:
+            raise TypeError("claims must be a canonical CallerRequestContext")
+        return snapshot
 
     @staticmethod
     def _snapshot_access_request(request: AccessRequest) -> AccessRequest:
         if type(request) is not AccessRequest:
             raise TypeError("request must be an exact AccessRequest")
+        snapshot: Optional[AccessRequest] = None
+        invalid = False
         try:
-            return AccessRequest.from_dict(request.to_dict())
-        except (AttributeError, TypeError, ValueError):
-            raise TypeError("request must be a canonical AccessRequest") from None
+            snapshot = AccessRequest.from_dict(request.to_dict())
+        except Exception:
+            invalid = True
+        if invalid or snapshot is None:
+            raise TypeError("request must be a canonical AccessRequest")
+        return snapshot
 
     def _validate_binding(
         self,
-        binding: AuthenticatedRequestBinding,
+        binding: Any,
         expected: CallerRequestContext,
         now: datetime,
     ) -> AuthenticatedRequestBinding:
         if type(binding) is not AuthenticatedRequestBinding:
             raise RequestContextError("request_authentication_result_invalid")
+        trusted: Optional[AuthenticatedRequestBinding] = None
+        invalid = False
         try:
             trusted = AuthenticatedRequestBinding(
                 authenticator_id=binding.authenticator_id,
@@ -661,8 +705,10 @@ class RequestContextIssuer:
                 authenticated_at=binding.authenticated_at,
                 expires_at=binding.expires_at,
             )
-        except (AttributeError, TypeError, ValueError):
-            raise RequestContextError("request_authentication_result_invalid") from None
+        except Exception:
+            invalid = True
+        if invalid or trusted is None:
+            raise RequestContextError("request_authentication_result_invalid")
         expected_scope = (
             self.__authenticator_id,
             self.__audience,
