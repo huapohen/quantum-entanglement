@@ -664,45 +664,52 @@ class _AuthorizedOperationRegistry:
         request: AccessRequest,
     ) -> bool:
         workspace = request.resource.workspace_id
-        return workspace is not None and (
-            snapshot.context_id,
-            snapshot.authenticator_id,
-            snapshot.audience,
-            snapshot.request_id,
-            snapshot.principal_id,
-            snapshot.subject_id,
-            snapshot.tenant_value,
-            snapshot.workspace_value,
-            snapshot.identity_revision,
-            snapshot.scope_revision,
-            snapshot.action,
-            snapshot.resource_type,
-            snapshot.resource_id,
-        ) == (
-            basis.context_id,
-            basis.authenticator_id,
-            basis.audience,
-            request.request_id,
-            basis.principal_id,
-            request.subject_id,
-            str(request.tenant_id),
-            str(workspace),
-            basis.identity_revision,
-            basis.scope_revision,
-            request.action,
-            request.resource.resource_type,
-            request.resource.resource_id,
-        ) and (
-            basis.request_id,
-            basis.subject_id,
-            basis.tenant_id,
-            basis.workspace_id,
-        ) == (
-            request.request_id,
-            request.subject_id,
-            request.tenant_id,
-            workspace,
-        ) and request.resource.tenant_id == request.tenant_id
+        return (
+            workspace is not None
+            and (
+                snapshot.context_id,
+                snapshot.authenticator_id,
+                snapshot.audience,
+                snapshot.request_id,
+                snapshot.principal_id,
+                snapshot.subject_id,
+                snapshot.tenant_value,
+                snapshot.workspace_value,
+                snapshot.identity_revision,
+                snapshot.scope_revision,
+                snapshot.action,
+                snapshot.resource_type,
+                snapshot.resource_id,
+            )
+            == (
+                basis.context_id,
+                basis.authenticator_id,
+                basis.audience,
+                request.request_id,
+                basis.principal_id,
+                request.subject_id,
+                str(request.tenant_id),
+                str(workspace),
+                basis.identity_revision,
+                basis.scope_revision,
+                request.action,
+                request.resource.resource_type,
+                request.resource.resource_id,
+            )
+            and (
+                basis.request_id,
+                basis.subject_id,
+                basis.tenant_id,
+                basis.workspace_id,
+            )
+            == (
+                request.request_id,
+                request.subject_id,
+                request.tenant_id,
+                workspace,
+            )
+            and request.resource.tenant_id == request.tenant_id
+        )
 
     def _prune(self, now: datetime) -> None:
         stale = [
@@ -1028,17 +1035,22 @@ class ProtectedOperationComposer:
     @staticmethod
     def _basis_matches_request(basis: ReauthorizationBasis, request: AccessRequest) -> bool:
         workspace = request.resource.workspace_id
-        return workspace is not None and (
-            basis.request_id,
-            basis.subject_id,
-            basis.tenant_id,
-            basis.workspace_id,
-        ) == (
-            request.request_id,
-            request.subject_id,
-            request.tenant_id,
-            workspace,
-        ) and request.resource.tenant_id == request.tenant_id
+        return (
+            workspace is not None
+            and (
+                basis.request_id,
+                basis.subject_id,
+                basis.tenant_id,
+                basis.workspace_id,
+            )
+            == (
+                request.request_id,
+                request.subject_id,
+                request.tenant_id,
+                workspace,
+            )
+            and request.resource.tenant_id == request.tenant_id
+        )
 
     @staticmethod
     def _snapshot_state(value: object) -> CurrentAuthorizationState:
