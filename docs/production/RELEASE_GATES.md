@@ -71,9 +71,31 @@ and complete bytes are identical before manifest generation, smoke installation,
 Record both source identities, the exact runner and toolchain, epoch, build/normalization
 commands, both compressed artifact digest sets, comparator result, and immutable successful
 CI run. See [`REPRODUCIBLE_BUILDS.md`](./REPRODUCIBLE_BUILDS.md) for the enforced same-job
-predicate and its boundary. A same-runner pass is not evidence of reproducibility across
-unpinned frontends/backends, different hosts, runner images, platforms, interpreters, or
-compression implementations.
+predicate and its boundary. The Python frontend/backend inputs are now exact and hash
+checked, but a same-runner pass is not evidence of reproducibility across independently
+provisioned hosts, runner images, platforms, interpreters, bootstrap tools, or compression
+implementations.
+
+## Dependency lock and SBOM gate
+
+Every supported CI Python/platform target must map to one exact lock-policy record. Before
+installation, `scripts/verify_dependency_locks.py` must validate the canonical inventory,
+input/lock digests, direct roots, complete exact-version/hash closure, binary-only policy,
+and agreement with `pyproject.toml`. CI installation must use `--require-hashes` and
+`--only-binary :all:`. Project installation and both package builds must disable build
+isolation/dependency resolution so an implicit environment cannot bypass the verified
+closure.
+
+After exact package reproduction and distribution-manifest verification, generate the
+runtime and build-toolchain CycloneDX 1.6 SBOMs outside the checkout. Require the exact
+two-file set to pass repository structural/graph/source-byte verification and the official
+CycloneDX strict schema before smoke installation or artifact upload. Phase evidence must
+retain both SBOM digests and bind vulnerability/license policy results to those same bytes.
+
+See [`DEPENDENCY_LOCKS_AND_SBOM.md`](./DEPENDENCY_LOCKS_AND_SBOM.md) for the supported target
+matrix, regeneration commands, deterministic SBOM profile, local end-to-end observation,
+failure handling, and explicit trust boundary. Locks and SBOMs are necessary evidence; by
+themselves they are not vulnerability clearance, signed provenance, or a trusted builder.
 
 ## Phase release gate
 
@@ -152,13 +174,21 @@ Security findings use the higher of exploit impact and data/authority impact.
 - formal operational acceptance recorded in the release evidence.
 
 **Current status:** canonical sdist normalization and an independent detached-worktree
-rebuild now close the previously observed setuptools `mtime` and owner/group metadata drift
-within one CI job. At `e4cbf04`, two detached worktrees and two independent local clones
-produced byte-identical wheel/sdist sets and passed strict manifest verification. The
-workflow nevertheless installs an unpinned `build` frontend and permits floating
-`setuptools>=77`; cross-runner/toolchain reproduction, locked and hashed build inputs, SBOM,
-vulnerability/license policy, signed provenance, and artifact signatures remain open GA
-gates. The production supply chain is therefore not complete.
+rebuild close the observed setuptools `mtime` and owner/group metadata drift within one CI
+job. Build, development, and release Python tools are now exact-version and hash locked for
+the declared CPython/x86_64-Linux matrix; CI verifies those locks, installs them in pip hash
+mode, and performs both builds without isolation. At `99fb825`, two detached worktrees
+produced byte-identical locked-toolchain wheel/sdist sets, passed strict manifest
+verification, and produced source-bound runtime/build SBOMs that passed byte verification
+and the CycloneDX 1.6 schema.
+
+The remaining GA supply-chain gaps are independently provisioned immutable-runner
+reproduction, verified interpreter/resolver bootstrap, offline or immutable dependency
+mirror, optional-extra/deployment SBOM coverage, vulnerability/license/malware policy,
+signed provenance, trusted builder identity, and artifact signatures. The implemented
+package job now satisfies the same-job reproduction, distribution-integrity, Python-lock,
+and base/build-SBOM rows for its exact candidate; the production supply chain is still not
+complete.
 
 ## Rollback rule
 
