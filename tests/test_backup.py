@@ -4,6 +4,7 @@ import sqlite3
 import stat
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -86,7 +87,7 @@ class SQLiteBackupTests(unittest.TestCase):
             projections.claim("restore-read-model", "worker-1", lease_seconds=60)
         finally:
             projections.close()
-        with sqlite3.connect(self.source) as connection:
+        with closing(sqlite3.connect(self.source)) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO projection_receipts (
