@@ -105,6 +105,21 @@ class RedactorTests(unittest.TestCase):
         self.assertIn("<redacted:non-finite-number>", rendered)
         self.assertEqual(sanitized["truncatedFields"], 1)
 
+    def test_integers_outside_signed_64_bit_are_replaced(self) -> None:
+        sanitized = Redactor().sanitize(
+            {
+                "minimum": -(2**63),
+                "maximum": 2**63 - 1,
+                "tooSmall": -(2**63) - 1,
+                "tooLarge": 2**100_000,
+            }
+        )
+
+        self.assertEqual(sanitized["minimum"], -(2**63))
+        self.assertEqual(sanitized["maximum"], 2**63 - 1)
+        self.assertEqual(sanitized["tooSmall"], "<redacted:integer-out-of-range>")
+        self.assertEqual(sanitized["tooLarge"], "<redacted:integer-out-of-range>")
+
     def test_bytes_and_invalid_keys_never_render_content(self) -> None:
         canary = b"binary-secret-canary"
 

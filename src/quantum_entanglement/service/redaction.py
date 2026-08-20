@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from typing import Any
 
 _SAFE_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+_MINIMUM_INTEGER = -(2**63)
+_MAXIMUM_INTEGER = 2**63 - 1
 _SENSITIVE_KEYS = frozenset(
     {
         "accesstoken",
@@ -103,8 +105,12 @@ class Redactor:
 
     def _sanitize(self, value: Any, *, depth: int, active: set[int]) -> Any:
         value_type = type(value)
-        if value is None or value_type is bool or value_type is int:
+        if value is None or value_type is bool:
             return value
+        if value_type is int:
+            if _MINIMUM_INTEGER <= value <= _MAXIMUM_INTEGER:
+                return value
+            return "<redacted:integer-out-of-range>"
         if value_type is float:
             return value if math.isfinite(value) else "<redacted:non-finite-number>"
         if value_type is str:
