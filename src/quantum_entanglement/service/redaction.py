@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from itertools import islice
 from typing import Any
 
 _SAFE_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
@@ -133,9 +134,9 @@ class Redactor:
             return "<redacted:cycle>"
         active.add(identity)
         try:
-            items = list(value.items())
+            items = tuple(islice(value.items(), self.policy.maximum_items))
             output: dict[str, Any] = {}
-            for index, (key, item) in enumerate(items[: self.policy.maximum_items]):
+            for index, (key, item) in enumerate(items):
                 if type(key) is not str or _SAFE_KEY.fullmatch(key) is None:
                     safe_key = f"invalidField{index}"
                 else:
@@ -144,8 +145,8 @@ class Redactor:
                     output[safe_key] = "<redacted>"
                 else:
                     output[safe_key] = self._sanitize(item, depth=depth + 1, active=active)
-            if len(items) > self.policy.maximum_items:
-                output["truncatedFields"] = len(items) - self.policy.maximum_items
+            if len(value) > len(items):
+                output["truncatedFields"] = len(value) - len(items)
             return output
         finally:
             active.remove(identity)
