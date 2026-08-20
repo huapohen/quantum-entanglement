@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from quantum_entanglement.attempts import (
     AttemptStatus,
+    InvocationClockRegressionError,
     InvocationConflictError,
     InvocationIntegrityError,
     InvocationJobSpec,
@@ -140,6 +141,74 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         lease = self.store.claim("invocation-1", "worker", lease_seconds=0.000001)
         self.assertIsNotNone(lease)
         self.assertGreater(lease.lease_expires_at, lease.claimed_at)
+
+    def test_claim_rejects_clock_before_job_mutation_floor(self):
+        self.clock.set(timestamp(10))
+        self.store.enqueue(job_spec(available_at=T0))
+        self.clock.set(timestamp(5))
+        before = tuple(self.store._connection.iterdump())
+
+        with self.assertRaisesRegex(
+            InvocationClockRegressionError,
+            "clock precedes durable invocation activity",
+        ):
+            self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        self.assertEqual(tuple(self.store._connection.iterdump()), before)
+        self.assertEqual(len(self.store.attempts("invocation-1")), 0)
+
+        self.clock.set(timestamp(10))
+        self.assertIsNotNone(self.store.claim("invocation-1", "worker", lease_seconds=10))
+
+    def test_owned_mutations_reject_clock_before_activity_floor(self):
+        self.store.enqueue(job_spec())
+        self.clock.set(timestamp(10))
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        before = tuple(self.store._connection.iterdump())
+        self.clock.set(timestamp(5))
+
+        operations = (
+            lambda: self.store.heartbeat(lease, lease_seconds=10),
+            lambda: self.store.complete(lease),
+            lambda: self.store.fail(lease, "must not persist"),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(
+                    InvocationClockRegressionError,
+                    "clock precedes durable invocation activity",
+                ):
+                    operation()
+
+        self.assertEqual(tuple(self.store._connection.iterdump()), before)
+        self.clock.set(timestamp(10))
+        self.assertTrue(self.store.heartbeat(lease, lease_seconds=10))
+
+    def test_second_connection_cannot_mutate_with_a_regressed_clock(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=20)
+        self.clock.set(timestamp(10))
+        self.assertTrue(self.store.heartbeat(lease, lease_seconds=20))
+        before = tuple(self.store._connection.iterdump())
+
+        second = SQLiteInvocationAttemptStore(
+            self.path,
+            clock=MutableClock(timestamp(5)),
+        )
+        try:
+            operations = (
+                lambda: second.heartbeat(lease, lease_seconds=10),
+                lambda: second.complete(lease),
+                lambda: second.fail(lease, "must not persist"),
+            )
+            for operation in operations:
+                with self.subTest(operation=operation):
+                    with self.assertRaises(InvocationClockRegressionError):
+                        operation()
+        finally:
+            second.close()
+
+        self.assertEqual(tuple(self.store._connection.iterdump()), before)
 
     def test_migration_is_versioned_reopenable_and_coexists_with_event_store(self):
         self.assertEqual(self.store.schema_version(), 2)
