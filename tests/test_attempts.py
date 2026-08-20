@@ -142,6 +142,28 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertIsNotNone(lease)
         self.assertGreater(lease.lease_expires_at, lease.claimed_at)
 
+    def test_lease_duration_outside_datetime_range_fails_without_mutation(self):
+        self.store.enqueue(job_spec())
+        queued = tuple(self.store._connection.iterdump())
+
+        for lease_seconds in (1e20, 10**400):
+            with self.subTest(operation="claim", lease_seconds=type(lease_seconds).__name__):
+                with self.assertRaisesRegex(ValueError, "supported datetime range"):
+                    self.store.claim(
+                        "invocation-1",
+                        "worker",
+                        lease_seconds=lease_seconds,
+                    )
+                self.assertEqual(tuple(self.store._connection.iterdump()), queued)
+
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        running = tuple(self.store._connection.iterdump())
+        for lease_seconds in (1e20, 10**400):
+            with self.subTest(operation="heartbeat", lease_seconds=type(lease_seconds).__name__):
+                with self.assertRaisesRegex(ValueError, "supported datetime range"):
+                    self.store.heartbeat(lease, lease_seconds=lease_seconds)
+                self.assertEqual(tuple(self.store._connection.iterdump()), running)
+
     def test_claim_rejects_clock_before_job_mutation_floor(self):
         self.clock.set(timestamp(10))
         self.store.enqueue(job_spec(available_at=T0))

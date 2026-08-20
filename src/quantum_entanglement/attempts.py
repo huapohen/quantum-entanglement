@@ -123,13 +123,18 @@ def _normalize_timestamp(value: str, name: str = "timestamp") -> str:
 def _lease_deadline(now: str, lease_seconds: float) -> str:
     if not isinstance(lease_seconds, (int, float)) or isinstance(lease_seconds, bool):
         raise TypeError("lease_seconds must be a number")
-    if not math.isfinite(float(lease_seconds)) or lease_seconds <= 0:
+    try:
+        seconds = float(lease_seconds)
+    except OverflowError as exc:
+        raise ValueError("lease_seconds exceeds the supported datetime range") from exc
+    if not math.isfinite(seconds) or lease_seconds <= 0:
         raise ValueError("lease_seconds must be finite and greater than zero")
     parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
-    deadline = _normalize_timestamp(
-        (parsed + timedelta(seconds=float(lease_seconds))).isoformat(),
-        "lease deadline",
-    )
+    try:
+        candidate = parsed + timedelta(seconds=seconds)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("lease_seconds exceeds the supported datetime range") from exc
+    deadline = _normalize_timestamp(candidate.isoformat(), "lease deadline")
     if deadline <= now:
         raise ValueError("lease_seconds is below the durable timestamp precision")
     return deadline
