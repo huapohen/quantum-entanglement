@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import quantum_entanglement
+from quantum_entanglement import request_context as request_context_module
 from quantum_entanglement.request_context import (
     AuthenticatedRequestBinding,
     CallerRequestContext,
@@ -83,6 +85,15 @@ class RequestContextValueTests(unittest.TestCase):
 
         self.assertEqual(CallerRequestContext.from_dict(claims.to_dict()), claims)
         self.assertNotIsInstance(claims, AuthenticatedRequestBinding)
+
+    def test_request_context_public_api_is_exported_from_package_root(self):
+        for name in request_context_module.__all__:
+            with self.subTest(name=name):
+                self.assertIn(name, quantum_entanglement.__all__)
+                self.assertIs(
+                    getattr(quantum_entanglement, name),
+                    getattr(request_context_module, name),
+                )
 
     def test_caller_claim_parser_rejects_unknown_missing_and_custom_mapping_fields(self):
         valid = self.claims().to_dict()

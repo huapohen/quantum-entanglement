@@ -68,6 +68,15 @@ from .protocol import (
     RiskLevel,
     TaskStatus,
 )
+from .request_context import (
+    AuthenticatedRequestBinding,
+    CallerRequestContext,
+    ReauthorizationBasis,
+    RequestAuthenticator,
+    RequestContext,
+    RequestContextError,
+    RequestContextIssuer,
+)
 from .runtime import (
     AgentRegistration,
     AgentRegistry,
@@ -136,6 +145,7 @@ __all__ = [
     "ActorKind",
     "ActorRef",
     "ApprovalDecision",
+    "AuthenticatedRequestBinding",
     "AuthorizationDecision",
     "AuthorizationOutcome",
     "ArtifactConcurrencyError",
@@ -164,6 +174,7 @@ __all__ = [
     "CapabilitySigningKey",
     "CapabilityVerificationError",
     "CapabilityVerifier",
+    "CallerRequestContext",
     "ConcurrencyError",
     "EventStoreIntegrityError",
     "BridgeStatus",
@@ -205,6 +216,11 @@ __all__ = [
     "PolicyDecision",
     "PolicyEngine",
     "PolicyOutcome",
+    "ReauthorizationBasis",
+    "RequestAuthenticator",
+    "RequestContext",
+    "RequestContextError",
+    "RequestContextIssuer",
     "RiskLevel",
     "ResourceRef",
     "ResourceScope",
