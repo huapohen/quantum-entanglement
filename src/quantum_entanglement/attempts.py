@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Optional, Tuple
+from typing import Any, NoReturn, Optional, Tuple
 
 from .migrations import (
     MigrationDriftError,
@@ -56,6 +56,53 @@ class InvocationIntegrityError(RuntimeError):
 
 class InvocationClockRegressionError(InvocationIntegrityError):
     """Raised when a mutation clock is earlier than durable invocation activity."""
+
+
+class InvocationCommitAmbiguityError(InvocationIntegrityError):
+    """Raised when a failed commit cannot be reconciled to one exact durable outcome."""
+
+    code = "invocation_commit_ambiguous"
+
+    def __init__(self) -> None:
+        super().__init__("invocation mutation commit could not be reconciled")
+
+
+class InvocationStoreClosedError(RuntimeError):
+    """Raised when a closed invocation store is asked to access durable state."""
+
+    code = "invocation_store_closed"
+
+    def __init__(self) -> None:
+        super().__init__("invocation attempt store is closed")
+
+
+class InvocationStorePoisonedError(InvocationIntegrityError):
+    """Raised after a transaction failure permanently quarantines this store instance."""
+
+    code = "invocation_store_poisoned"
+
+    def __init__(self) -> None:
+        super().__init__("invocation attempt store is poisoned and must be reopened")
+
+
+class _CommitOutcomeUnknown(RuntimeError):
+    """Internal signal that COMMIT returned an error after ending the transaction."""
+
+    def __init__(self, *, may_reconcile: bool) -> None:
+        super().__init__("invocation mutation transaction outcome is unknown")
+        self.may_reconcile = may_reconcile
+
+
+class _ConnectionCloseFailure(RuntimeError):
+    """Sanitized internal cause for a failed connection close acknowledgement."""
+
+
+class _ReadTransactionOutcomeUnknown(RuntimeError):
+    """Sanitized internal cause for an unrecoverable read transaction failure."""
+
+    def __init__(self, poison_nonce: object) -> None:
+        super().__init__("invocation read transaction outcome is unknown")
+        self.poison_nonce = poison_nonce
 
 
 class InvocationStatus(str, Enum):
@@ -388,6 +435,10 @@ class SQLiteInvocationAttemptStore:
         )
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._closed = False
+        self._connection_closed = False
+        self._poisoned = False
+        self._poison_nonce = object()
         try:
             with self._lock:
                 self._connection.execute("PRAGMA foreign_keys=ON")
@@ -400,10 +451,17 @@ class SQLiteInvocationAttemptStore:
             raise
 
     def __enter__(self) -> SQLiteInvocationAttemptStore:
-        return self
+        with self._lock:
+            self._require_usable()
+            return self
 
     def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> None:
-        self.close()
+        try:
+            self.close()
+        except InvocationStoreClosedError:
+            if _exc is not None:
+                return
+            raise
 
     def _enable_wal(self, busy_timeout_ms: int) -> None:
         """Enable WAL while tolerating another process performing the same startup."""
@@ -426,38 +484,172 @@ class SQLiteInvocationAttemptStore:
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
+            self._require_usable()
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 yield self._connection
             except BaseException:
-                self._connection.execute("ROLLBACK")
+                try:
+                    self._rollback_write_transaction(self._connection)
+                except BaseException as rollback_error:
+                    self._poison_store()
+                    raise _CommitOutcomeUnknown(may_reconcile=False) from rollback_error
                 raise
             else:
                 try:
-                    self._connection.execute("COMMIT")
-                except BaseException:
-                    if self._connection.in_transaction:
-                        self._connection.execute("ROLLBACK")
+                    self._commit_write_transaction(self._connection)
+                except BaseException as exc:
+                    try:
+                        transaction_open = self._connection.in_transaction
+                    except BaseException:
+                        self._poison_store()
+                        raise _CommitOutcomeUnknown(may_reconcile=False) from exc
+                    if transaction_open:
+                        try:
+                            self._rollback_write_transaction(self._connection)
+                        except BaseException as rollback_error:
+                            self._poison_store()
+                            raise _CommitOutcomeUnknown(may_reconcile=False) from rollback_error
+                    else:
+                        raise _CommitOutcomeUnknown(may_reconcile=True) from exc
                     raise
+
+    @staticmethod
+    def _commit_write_transaction(connection: sqlite3.Connection) -> None:
+        """Commit one write transaction through a fault-injectable boundary."""
+
+        connection.execute("COMMIT")
+
+    @staticmethod
+    def _rollback_write_transaction(connection: sqlite3.Connection) -> None:
+        """Roll back one write transaction through a fault-injectable boundary."""
+
+        connection.execute("ROLLBACK")
+
+    @staticmethod
+    def _close_connection(connection: sqlite3.Connection) -> None:
+        """Close a connection through a fault-injectable boundary."""
+
+        connection.close()
+
+    def _close_connection_acknowledged(self, connection: sqlite3.Connection) -> bool:
+        """Return a close acknowledgement without retaining an untrusted driver error."""
+
+        try:
+            self._close_connection(connection)
+        except BaseException:
+            return False
+        return True
+
+    @staticmethod
+    def _begin_read_transaction(connection: sqlite3.Connection) -> None:
+        """Begin a read transaction through a fault-injectable boundary."""
+
+        connection.execute("BEGIN")
+
+    @staticmethod
+    def _commit_read_transaction(connection: sqlite3.Connection) -> None:
+        """Commit a read transaction through a fault-injectable boundary."""
+
+        connection.execute("COMMIT")
+
+    @staticmethod
+    def _rollback_read_transaction(connection: sqlite3.Connection) -> None:
+        """Roll back a read transaction through a fault-injectable boundary."""
+
+        connection.execute("ROLLBACK")
+
+    def _poison_store(self) -> None:
+        """Permanently quarantine this instance and best-effort close its connection."""
+
+        self._poisoned = True
+        self._closed = True
+        if not self._connection_closed:
+            self._connection_closed = self._close_connection_acknowledged(self._connection)
+
+    def _require_usable(self) -> None:
+        if self._poisoned:
+            raise InvocationStorePoisonedError()
+        if self._closed:
+            raise InvocationStoreClosedError()
+
+    @staticmethod
+    def _close_failed() -> NoReturn:
+        raise InvocationStoreClosedError() from _ConnectionCloseFailure(
+            "invocation store connection close was not acknowledged"
+        )
+
+    @staticmethod
+    def _unreconciled_commit(error: _CommitOutcomeUnknown) -> NoReturn:
+        error.__cause__ = None
+        error.__context__ = None
+        error.__traceback__ = None
+        raise InvocationCommitAmbiguityError() from error
 
     @contextmanager
     def _read_transaction(self) -> Iterator[sqlite3.Connection]:
         """Pin multiple recovery queries to one SQLite snapshot without taking a write lock."""
 
+        try:
+            with self._read_transaction_inner() as connection:
+                yield connection
+        except _ReadTransactionOutcomeUnknown as error:
+            if type(error) is not _ReadTransactionOutcomeUnknown:
+                raise
+            if error.poison_nonce is not self._poison_nonce or not self._poisoned:
+                raise
+            error.__cause__ = None
+            error.__context__ = None
+            error.__traceback__ = None
+            raise InvocationStorePoisonedError() from error
+
+    @contextmanager
+    def _read_transaction_inner(self) -> Iterator[sqlite3.Connection]:
+        """Own raw SQLite read faults inside a frame that never exposes their chain."""
+
         with self._lock:
-            self._connection.execute("BEGIN")
+            self._require_usable()
+            try:
+                self._begin_read_transaction(self._connection)
+            except BaseException:
+                try:
+                    transaction_open = self._connection.in_transaction
+                except BaseException as state_error:
+                    self._poison_store()
+                    raise _ReadTransactionOutcomeUnknown(self._poison_nonce) from state_error
+                if transaction_open:
+                    try:
+                        self._rollback_read_transaction(self._connection)
+                    except BaseException as rollback_error:
+                        self._poison_store()
+                        raise _ReadTransactionOutcomeUnknown(self._poison_nonce) from rollback_error
+                raise
+
             try:
                 yield self._connection
             except BaseException:
-                self._connection.execute("ROLLBACK")
-                raise
-            else:
                 try:
-                    self._connection.execute("COMMIT")
-                except BaseException:
-                    if self._connection.in_transaction:
-                        self._connection.execute("ROLLBACK")
-                    raise
+                    self._rollback_read_transaction(self._connection)
+                except BaseException as rollback_error:
+                    self._poison_store()
+                    raise _ReadTransactionOutcomeUnknown(self._poison_nonce) from rollback_error
+                raise
+
+            try:
+                self._commit_read_transaction(self._connection)
+            except BaseException:
+                try:
+                    transaction_open = self._connection.in_transaction
+                except BaseException as state_error:
+                    self._poison_store()
+                    raise _ReadTransactionOutcomeUnknown(self._poison_nonce) from state_error
+                if transaction_open:
+                    try:
+                        self._rollback_read_transaction(self._connection)
+                    except BaseException as rollback_error:
+                        self._poison_store()
+                        raise _ReadTransactionOutcomeUnknown(self._poison_nonce) from rollback_error
+                raise
 
     def _now(self) -> str:
         """Read time from the store-owned clock, never from an individual work request."""
@@ -715,12 +907,8 @@ class SQLiteInvocationAttemptStore:
             and existing.requested_available_at == requested_available_at
         )
 
-    def enqueue(self, spec: InvocationJobSpec) -> InvocationJob:
-        """Persist one invocation, returning the original row for an identical retry."""
-
-        with self._transaction() as connection:
-            now = self._now()
-            available_at = _normalize_timestamp(spec.available_at or now, "available_at")
+    def _reconcile_enqueued_job(self, spec: InvocationJobSpec) -> Optional[InvocationJob]:
+        with self._read_transaction() as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM invocation_jobs
@@ -736,52 +924,90 @@ class SQLiteInvocationAttemptStore:
                     spec.idempotency_key,
                 ),
             ).fetchall()
-            if rows:
-                if len(rows) != 1 or not self._existing_matches(rows[0], spec):
-                    raise InvocationConflictError(
-                        "invocation identity or idempotency key is already bound to different work"
-                    )
-                return self._row_to_job(rows[0])
-            connection.execute(
-                """
-                INSERT INTO invocation_jobs (
-                    invocation_id, session_id, plan_id, task_id, agent_id,
-                    idempotency_key, payload_digest, priority, status,
-                    max_attempts, attempts_started, lease_epoch,
-                    requested_available_at, available_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, 0, ?, ?, ?, ?)
-                """,
-                (
-                    spec.invocation_id,
-                    spec.session_id,
-                    spec.plan_id,
-                    spec.task_id,
-                    spec.agent_id,
-                    spec.idempotency_key,
-                    spec.payload_digest,
-                    spec.priority,
-                    spec.max_attempts,
+            if len(rows) != 1 or not self._existing_matches(rows[0], spec):
+                return None
+            return self._row_to_job(rows[0])
+
+    def enqueue(self, spec: InvocationJobSpec) -> InvocationJob:
+        """Persist one invocation, returning the original row for an identical retry."""
+
+        try:
+            with self._transaction() as connection:
+                now = self._now()
+                available_at = _normalize_timestamp(spec.available_at or now, "available_at")
+                rows = connection.execute(
+                    """
+                    SELECT * FROM invocation_jobs
+                    WHERE invocation_id = ?
+                       OR (session_id = ? AND task_id = ?)
+                       OR (session_id = ? AND idempotency_key = ?)
+                    """,
                     (
-                        _normalize_timestamp(spec.available_at, "available_at")
-                        if spec.available_at is not None
-                        else None
+                        spec.invocation_id,
+                        spec.session_id,
+                        spec.task_id,
+                        spec.session_id,
+                        spec.idempotency_key,
                     ),
-                    available_at,
-                    now,
-                    now,
-                ),
-            )
-            row = connection.execute(
-                "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
-                (spec.invocation_id,),
-            ).fetchone()
-            if row is None:  # pragma: no cover - protected by the transaction.
-                raise RuntimeError("enqueued invocation disappeared")
-            return self._row_to_job(row)
+                ).fetchall()
+                if rows:
+                    if len(rows) != 1 or not self._existing_matches(rows[0], spec):
+                        raise InvocationConflictError(
+                            "invocation identity or idempotency key is already bound "
+                            "to different work"
+                        )
+                    return self._row_to_job(rows[0])
+                connection.execute(
+                    """
+                    INSERT INTO invocation_jobs (
+                        invocation_id, session_id, plan_id, task_id, agent_id,
+                        idempotency_key, payload_digest, priority, status,
+                        max_attempts, attempts_started, lease_epoch,
+                        requested_available_at, available_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, 0, ?, ?, ?, ?)
+                    """,
+                    (
+                        spec.invocation_id,
+                        spec.session_id,
+                        spec.plan_id,
+                        spec.task_id,
+                        spec.agent_id,
+                        spec.idempotency_key,
+                        spec.payload_digest,
+                        spec.priority,
+                        spec.max_attempts,
+                        (
+                            _normalize_timestamp(spec.available_at, "available_at")
+                            if spec.available_at is not None
+                            else None
+                        ),
+                        available_at,
+                        now,
+                        now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+                    (spec.invocation_id,),
+                ).fetchone()
+                if row is None:  # pragma: no cover - protected by the transaction.
+                    raise RuntimeError("enqueued invocation disappeared")
+                return self._row_to_job(row)
+        except _CommitOutcomeUnknown as error:
+            if not error.may_reconcile:
+                self._unreconciled_commit(error)
+            try:
+                reconciled = self._reconcile_enqueued_job(spec)
+            except BaseException:
+                reconciled = None
+            if reconciled is None:
+                self._unreconciled_commit(error)
+            return reconciled
 
     def get(self, invocation_id: str) -> Optional[InvocationJob]:
         _required(invocation_id, "invocation_id")
         with self._lock:
+            self._require_usable()
             row = self._connection.execute(
                 "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
                 (invocation_id,),
@@ -792,6 +1018,7 @@ class SQLiteInvocationAttemptStore:
         _required(session_id, "session_id")
         _required(task_id, "task_id")
         with self._lock:
+            self._require_usable()
             row = self._connection.execute(
                 """
                 SELECT * FROM invocation_jobs
@@ -960,6 +1187,7 @@ class SQLiteInvocationAttemptStore:
     def attempts(self, invocation_id: str) -> Tuple[InvocationAttempt, ...]:
         _required(invocation_id, "invocation_id")
         with self._lock:
+            self._require_usable()
             rows = self._connection.execute(
                 """
                 SELECT * FROM invocation_attempts
@@ -987,6 +1215,7 @@ class SQLiteInvocationAttemptStore:
         if not 1 <= limit <= 1_000:
             raise ValueError("limit must be between 1 and 1000")
         with self._lock:
+            self._require_usable()
             rows = self._connection.execute(
                 """
                 SELECT * FROM invocation_attempts
@@ -1053,6 +1282,79 @@ class SQLiteInvocationAttemptStore:
             raise InvocationIntegrityError(
                 "running invocation and attempt ownership records disagree"
             )
+
+    @staticmethod
+    def _require_lease(lease: InvocationLease) -> None:
+        if type(lease) is not InvocationLease:
+            raise TypeError("lease must be an InvocationLease")
+        for field_name in (
+            "invocation_id",
+            "session_id",
+            "plan_id",
+            "task_id",
+            "agent_id",
+            "idempotency_key",
+            "attempt_id",
+            "worker_id",
+        ):
+            _required(getattr(lease, field_name), f"lease {field_name}")
+        if type(lease.payload_digest) is not str or not _SHA256_PATTERN.fullmatch(
+            lease.payload_digest
+        ):
+            raise ValueError("lease payload_digest must be canonical SHA-256")
+        for field_name in ("attempt_number", "max_attempts", "lease_epoch"):
+            value = getattr(lease, field_name)
+            if type(value) is not int or not 1 <= value <= _MAX_SQLITE_INTEGER:
+                raise ValueError(f"lease {field_name} is outside its supported range")
+        _required(lease.lease_token, "lease_token")
+        claimed_at = _normalize_timestamp(lease.claimed_at, "lease claimed_at")
+        expires_at = _normalize_timestamp(lease.lease_expires_at, "lease lease_expires_at")
+        if claimed_at != lease.claimed_at or expires_at != lease.lease_expires_at:
+            raise ValueError("lease timestamps must be canonical UTC")
+        if expires_at <= claimed_at:
+            raise ValueError("lease expiry must follow its claim")
+
+    @staticmethod
+    def _validate_lease_binding(
+        lease: InvocationLease,
+        job: InvocationJob,
+        attempt: InvocationAttempt,
+    ) -> None:
+        if (
+            lease.invocation_id != job.invocation_id
+            or lease.session_id != job.session_id
+            or lease.plan_id != job.plan_id
+            or lease.task_id != job.task_id
+            or lease.agent_id != job.agent_id
+            or lease.idempotency_key != job.idempotency_key
+            or lease.payload_digest != job.payload_digest
+            or lease.attempt_id != attempt.attempt_id
+            or lease.attempt_number != job.attempts_started
+            or lease.attempt_number != attempt.attempt_number
+            or lease.max_attempts != job.max_attempts
+            or lease.lease_epoch != job.lease_epoch
+            or lease.lease_epoch != attempt.lease_epoch
+            or lease.worker_id != attempt.worker_id
+            or lease.claimed_at != attempt.started_at
+        ):
+            raise InvocationIntegrityError(
+                "invocation lease binding differs from durable ownership"
+            )
+
+    def _lease_snapshot(
+        self,
+        lease: InvocationLease,
+    ) -> Optional[Tuple[InvocationJob, InvocationAttempt]]:
+        snapshot = self.recovery_snapshot_for_task(lease.session_id, lease.task_id)
+        if snapshot.job is None or snapshot.current_attempt is None:
+            return None
+        try:
+            self._validate_lease_binding(lease, snapshot.job, snapshot.current_attempt)
+        except InvocationIntegrityError:
+            return None
+        if snapshot.current_attempt.lease_token_digest != _lease_token_digest(lease.lease_token):
+            return None
+        return snapshot.job, snapshot.current_attempt
 
     def _recover_expired_in_transaction(
         self,
@@ -1143,6 +1445,35 @@ class SQLiteInvocationAttemptStore:
                 raise RuntimeError("invocation lease changed during expiration recovery")
         return RecoverySummary(tuple(requeued), tuple(exhausted))
 
+    def _recovered_commit_matches(self, summary: RecoverySummary, recovered_at: str) -> bool:
+        reason = "lease expired before terminal acknowledgement"
+        for invocation_id in summary.requeued + summary.exhausted:
+            job = self.get(invocation_id)
+            attempts = self.attempts(invocation_id)
+            if job is None or not attempts:
+                return False
+            attempt = attempts[-1]
+            if (
+                attempt.attempt_number != job.attempts_started
+                or attempt.lease_epoch != job.lease_epoch
+                or attempt.status is not AttemptStatus.EXPIRED
+                or attempt.finished_at != recovered_at
+                or attempt.error != reason
+                or job.updated_at != recovered_at
+                or job.last_error != reason
+            ):
+                return False
+            if invocation_id in summary.requeued:
+                if (
+                    job.status is not InvocationStatus.QUEUED
+                    or job.available_at != recovered_at
+                    or job.finished_at is not None
+                ):
+                    return False
+            elif job.status is not InvocationStatus.FAILED or job.finished_at != recovered_at:
+                return False
+        return True
+
     def recover_expired(
         self,
         *,
@@ -1154,33 +1485,52 @@ class SQLiteInvocationAttemptStore:
             raise TypeError("limit must be an integer")
         if not 1 <= limit <= 1_000:
             raise ValueError("limit must be between 1 and 1000")
-        with self._transaction() as connection:
-            normalized_now = self._now()
-            return self._recover_expired_in_transaction(
-                connection,
-                normalized_now,
-                limit=limit,
-            )
+        normalized_now: Optional[str] = None
+        summary: Optional[RecoverySummary] = None
+        try:
+            with self._transaction() as connection:
+                normalized_now = self._now()
+                summary = self._recover_expired_in_transaction(
+                    connection,
+                    normalized_now,
+                    limit=limit,
+                )
+                return summary
+        except _CommitOutcomeUnknown as error:
+            if not error.may_reconcile:
+                self._unreconciled_commit(error)
+            if summary is None or normalized_now is None:
+                self._unreconciled_commit(error)
+            if summary.recovered_count == 0:
+                return summary
+            try:
+                matches = self._recovered_commit_matches(summary, normalized_now)
+            except BaseException:
+                matches = False
+            if not matches:
+                self._unreconciled_commit(error)
+            return summary
 
-    def _claim(
+    def _claim_in_transaction(
         self,
         worker_id: str,
         *,
         invocation_id: Optional[str],
         lease_seconds: float,
+        commit_candidate: list[Optional[InvocationLease]],
+        commit_recovery: list[Optional[Tuple[RecoverySummary, str]]],
     ) -> Optional[InvocationLease]:
-        _required(worker_id, "worker_id")
-        if invocation_id is not None:
-            _required(invocation_id, "invocation_id")
         with self._transaction() as connection:
             normalized_now = self._now()
             deadline = _lease_deadline(normalized_now, lease_seconds)
-            self._recover_expired_in_transaction(
+            recovery = self._recover_expired_in_transaction(
                 connection,
                 normalized_now,
                 invocation_id=invocation_id,
                 limit=(None if invocation_id is not None else 1_000),
             )
+            if recovery.recovered_count > 0:
+                commit_recovery[0] = (recovery, normalized_now)
             parameters = [normalized_now]
             candidate_where = "status = 'queued' AND attempts_started = 0 AND available_at <= ?"
             if invocation_id is not None:
@@ -1280,7 +1630,7 @@ class SQLiteInvocationAttemptStore:
                     deadline,
                 ),
             )
-            return InvocationLease(
+            lease = InvocationLease(
                 invocation_id=job.invocation_id,
                 session_id=job.session_id,
                 plan_id=job.plan_id,
@@ -1297,6 +1647,59 @@ class SQLiteInvocationAttemptStore:
                 claimed_at=normalized_now,
                 lease_expires_at=deadline,
             )
+            commit_candidate[0] = lease
+            return lease
+
+    def _claim(
+        self,
+        worker_id: str,
+        *,
+        invocation_id: Optional[str],
+        lease_seconds: float,
+    ) -> Optional[InvocationLease]:
+        _required(worker_id, "worker_id")
+        if invocation_id is not None:
+            _required(invocation_id, "invocation_id")
+        commit_candidate: list[Optional[InvocationLease]] = [None]
+        commit_recovery: list[Optional[Tuple[RecoverySummary, str]]] = [None]
+        try:
+            return self._claim_in_transaction(
+                worker_id,
+                invocation_id=invocation_id,
+                lease_seconds=lease_seconds,
+                commit_candidate=commit_candidate,
+                commit_recovery=commit_recovery,
+            )
+        except _CommitOutcomeUnknown as error:
+            if not error.may_reconcile:
+                self._unreconciled_commit(error)
+            lease = commit_candidate[0]
+            if lease is None:
+                recovered = commit_recovery[0]
+                if recovered is None:
+                    return None
+                summary, recovered_at = recovered
+                try:
+                    matches = self._recovered_commit_matches(summary, recovered_at)
+                except BaseException:
+                    matches = False
+                if not matches:
+                    self._unreconciled_commit(error)
+                return None
+            try:
+                reconciled = self._lease_snapshot(lease)
+            except BaseException:
+                reconciled = None
+            if reconciled is None:
+                self._unreconciled_commit(error)
+            job, attempt = reconciled
+            if (
+                job.status is not InvocationStatus.RUNNING
+                or attempt.status is not AttemptStatus.RUNNING
+                or job.lease_owner != lease.worker_id
+            ):
+                self._unreconciled_commit(error)
+            return lease
 
     def claim_next(
         self,
@@ -1352,14 +1755,13 @@ class SQLiteInvocationAttemptStore:
             raise TypeError("invocation store connection must return sqlite3.Row values")
         return None if row is None else self._row_to_job(row)
 
-    def heartbeat(
+    def _heartbeat_in_transaction(
         self,
         lease: InvocationLease,
         *,
         lease_seconds: float,
+        commit_state: list[Optional[Tuple[str, str]]],
     ) -> bool:
-        """Extend an active lease; returns false once ownership is stale or expired."""
-
         with self._transaction() as connection:
             normalized_now = self._now()
             proposed_deadline = _lease_deadline(normalized_now, lease_seconds)
@@ -1386,6 +1788,7 @@ class SQLiteInvocationAttemptStore:
                 lease_expires_at=job.lease_expires_at,
                 attempt_id=lease.attempt_id,
             )
+            self._validate_lease_binding(lease, job, attempt)
             _require_non_regressing_clock(
                 normalized_now,
                 job.updated_at,
@@ -1431,18 +1834,58 @@ class SQLiteInvocationAttemptStore:
             )
             if attempt_update.rowcount != 1:
                 raise RuntimeError("owned invocation has no matching running attempt")
+            commit_state[0] = (normalized_now, deadline)
             return True
 
-    def complete(
+    def heartbeat(
         self,
         lease: InvocationLease,
         *,
-        result_ref: Optional[str] = None,
+        lease_seconds: float,
     ) -> bool:
-        """CAS an active lease to success, rejecting stale or expired workers."""
+        """Extend an active lease; returns false once ownership is stale or expired."""
 
-        if result_ref is not None:
-            _required(result_ref, "result_ref", maximum_bytes=_MAX_REFERENCE_BYTES)
+        self._require_lease(lease)
+        commit_state: list[Optional[Tuple[str, str]]] = [None]
+        try:
+            return self._heartbeat_in_transaction(
+                lease,
+                lease_seconds=lease_seconds,
+                commit_state=commit_state,
+            )
+        except _CommitOutcomeUnknown as error:
+            if not error.may_reconcile:
+                self._unreconciled_commit(error)
+            expected = commit_state[0]
+            if expected is None:
+                return False
+            try:
+                reconciled = self._lease_snapshot(lease)
+            except BaseException:
+                reconciled = None
+            if reconciled is None:
+                self._unreconciled_commit(error)
+            job, attempt = reconciled
+            heartbeat_at, deadline = expected
+            if (
+                job.status is not InvocationStatus.RUNNING
+                or attempt.status is not AttemptStatus.RUNNING
+                or job.heartbeat_at != heartbeat_at
+                or attempt.heartbeat_at != heartbeat_at
+                or job.updated_at != heartbeat_at
+                or job.lease_expires_at != deadline
+                or attempt.lease_expires_at != deadline
+            ):
+                self._unreconciled_commit(error)
+            return True
+
+    def _complete_in_transaction(
+        self,
+        lease: InvocationLease,
+        *,
+        result_ref: Optional[str],
+        commit_state: list[Optional[str]],
+    ) -> bool:
         with self._transaction() as connection:
             normalized_now = self._now()
             job = self._active_owned_row(connection, lease, normalized_now)
@@ -1468,6 +1911,7 @@ class SQLiteInvocationAttemptStore:
                 lease_expires_at=job.lease_expires_at,
                 attempt_id=lease.attempt_id,
             )
+            self._validate_lease_binding(lease, job, attempt)
             _require_non_regressing_clock(
                 normalized_now,
                 job.updated_at,
@@ -1514,18 +1958,60 @@ class SQLiteInvocationAttemptStore:
             )
             if attempt_update.rowcount != 1:
                 raise RuntimeError("owned invocation has no matching running attempt")
+            commit_state[0] = normalized_now
             return True
 
-    def fail(
+    def complete(
         self,
         lease: InvocationLease,
-        error: str,
         *,
-        retry_at: Optional[str] = None,
+        result_ref: Optional[str] = None,
     ) -> bool:
-        """CAS an active lease to effect-unknown queued or terminal failure."""
+        """CAS an active lease to success, rejecting stale or expired workers."""
 
-        stored_error = _stored_error(error)
+        self._require_lease(lease)
+        if result_ref is not None:
+            _required(result_ref, "result_ref", maximum_bytes=_MAX_REFERENCE_BYTES)
+        commit_state: list[Optional[str]] = [None]
+        try:
+            return self._complete_in_transaction(
+                lease,
+                result_ref=result_ref,
+                commit_state=commit_state,
+            )
+        except _CommitOutcomeUnknown as error:
+            if not error.may_reconcile:
+                self._unreconciled_commit(error)
+            finished_at = commit_state[0]
+            if finished_at is None:
+                return False
+            try:
+                reconciled = self._lease_snapshot(lease)
+            except BaseException:
+                reconciled = None
+            if reconciled is None:
+                self._unreconciled_commit(error)
+            job, attempt = reconciled
+            if (
+                job.status is not InvocationStatus.SUCCEEDED
+                or attempt.status is not AttemptStatus.SUCCEEDED
+                or job.result_ref != result_ref
+                or attempt.result_ref != result_ref
+                or job.updated_at != finished_at
+                or job.finished_at != finished_at
+                or attempt.finished_at != finished_at
+            ):
+                self._unreconciled_commit(error)
+            return True
+
+    def _fail_in_transaction(
+        self,
+        lease: InvocationLease,
+        *,
+        stored_error: str,
+        retry_at: Optional[str],
+        commit_state: list[Optional[Tuple[str, str, InvocationStatus]]],
+    ) -> bool:
         with self._transaction() as connection:
             normalized_now = self._now()
             normalized_retry = _normalize_timestamp(retry_at or normalized_now, "retry_at")
@@ -1553,6 +2039,7 @@ class SQLiteInvocationAttemptStore:
                 lease_expires_at=job.lease_expires_at,
                 attempt_id=lease.attempt_id,
             )
+            self._validate_lease_binding(lease, job, attempt)
             _require_non_regressing_clock(
                 normalized_now,
                 job.updated_at,
@@ -1577,6 +2064,7 @@ class SQLiteInvocationAttemptStore:
             if attempt_update.rowcount != 1:
                 raise RuntimeError("owned invocation has no matching running attempt")
             if job.attempts_started >= job.max_attempts:
+                target_status = InvocationStatus.FAILED
                 update = connection.execute(
                     """
                     UPDATE invocation_jobs
@@ -1599,6 +2087,7 @@ class SQLiteInvocationAttemptStore:
                     ),
                 )
             else:
+                target_status = InvocationStatus.QUEUED
                 update = connection.execute(
                     """
                     UPDATE invocation_jobs
@@ -1622,21 +2111,78 @@ class SQLiteInvocationAttemptStore:
                 )
             if update.rowcount != 1:
                 raise RuntimeError("invocation lease changed during failure CAS")
+            commit_state[0] = (normalized_now, normalized_retry, target_status)
+            return True
+
+    def fail(
+        self,
+        lease: InvocationLease,
+        error: str,
+        *,
+        retry_at: Optional[str] = None,
+    ) -> bool:
+        """CAS an active lease to effect-unknown queued or terminal failure."""
+
+        self._require_lease(lease)
+        stored_error = _stored_error(error)
+        commit_state: list[Optional[Tuple[str, str, InvocationStatus]]] = [None]
+        try:
+            return self._fail_in_transaction(
+                lease,
+                stored_error=stored_error,
+                retry_at=retry_at,
+                commit_state=commit_state,
+            )
+        except _CommitOutcomeUnknown as commit_error:
+            if not commit_error.may_reconcile:
+                self._unreconciled_commit(commit_error)
+            expected = commit_state[0]
+            if expected is None:
+                return False
+            try:
+                reconciled = self._lease_snapshot(lease)
+            except BaseException:
+                reconciled = None
+            if reconciled is None:
+                self._unreconciled_commit(commit_error)
+            job, attempt = reconciled
+            finished_at, normalized_retry, target_status = expected
+            if (
+                job.status is not target_status
+                or attempt.status is not AttemptStatus.FAILED
+                or job.last_error != stored_error
+                or attempt.error != stored_error
+                or job.updated_at != finished_at
+                or attempt.finished_at != finished_at
+                or (
+                    target_status is InvocationStatus.QUEUED
+                    and (job.available_at != normalized_retry or job.finished_at is not None)
+                )
+                or (target_status is InvocationStatus.FAILED and job.finished_at != finished_at)
+            ):
+                self._unreconciled_commit(commit_error)
             return True
 
     def schema_version(self) -> int:
         with self._lock:
+            self._require_usable()
             return int(current_schema_version(self._connection))
 
     def close(self) -> None:
         with self._lock:
-            self._connection.close()
+            self._closed = True
+            if self._connection_closed:
+                return
+            if not self._close_connection_acknowledged(self._connection):
+                self._close_failed()
+            self._connection_closed = True
 
 
 __all__ = [
     "AttemptStatus",
     "InvocationAttempt",
     "InvocationClockRegressionError",
+    "InvocationCommitAmbiguityError",
     "InvocationConflictError",
     "InvocationIntegrityError",
     "InvocationJob",
@@ -1644,6 +2190,8 @@ __all__ = [
     "InvocationLease",
     "InvocationRecoverySnapshot",
     "InvocationStatus",
+    "InvocationStoreClosedError",
+    "InvocationStorePoisonedError",
     "MigrationDriftError",
     "RecoverySummary",
     "SQLiteInvocationAttemptStore",
