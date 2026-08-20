@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Optional, Tuple
+from typing import Any, NoReturn, Optional, Tuple
 
 from .migrations import (
     MigrationDriftError,
@@ -56,6 +56,53 @@ class InvocationIntegrityError(RuntimeError):
 
 class InvocationClockRegressionError(InvocationIntegrityError):
     """Raised when a mutation clock is earlier than durable invocation activity."""
+
+
+class InvocationCommitAmbiguityError(InvocationIntegrityError):
+    """Raised when a failed commit cannot be reconciled to one exact durable outcome."""
+
+    code = "invocation_commit_ambiguous"
+
+    def __init__(self) -> None:
+        super().__init__("invocation mutation commit could not be reconciled")
+
+
+class InvocationStoreClosedError(RuntimeError):
+    """Raised when a closed invocation store is asked to access durable state."""
+
+    code = "invocation_store_closed"
+
+    def __init__(self) -> None:
+        super().__init__("invocation attempt store is closed")
+
+
+class InvocationStorePoisonedError(InvocationIntegrityError):
+    """Raised after a transaction failure permanently quarantines this store instance."""
+
+    code = "invocation_store_poisoned"
+
+    def __init__(self) -> None:
+        super().__init__("invocation attempt store is poisoned and must be reopened")
+
+
+class _CommitOutcomeUnknown(RuntimeError):
+    """Internal signal that COMMIT returned an error after ending the transaction."""
+
+    def __init__(self, *, may_reconcile: bool) -> None:
+        super().__init__("invocation mutation transaction outcome is unknown")
+        self.may_reconcile = may_reconcile
+
+
+class _ConnectionCloseFailure(RuntimeError):
+    """Sanitized internal cause for a failed connection close acknowledgement."""
+
+
+class _ReadTransactionOutcomeUnknown(RuntimeError):
+    """Sanitized internal cause for an unrecoverable read transaction failure."""
+
+    def __init__(self, poison_nonce: object) -> None:
+        super().__init__("invocation read transaction outcome is unknown")
+        self.poison_nonce = poison_nonce
 
 
 class InvocationStatus(str, Enum):
@@ -388,6 +435,10 @@ class SQLiteInvocationAttemptStore:
         )
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._closed = False
+        self._connection_closed = False
+        self._poisoned = False
+        self._poison_nonce = object()
         try:
             with self._lock:
                 self._connection.execute("PRAGMA foreign_keys=ON")
@@ -400,10 +451,17 @@ class SQLiteInvocationAttemptStore:
             raise
 
     def __enter__(self) -> SQLiteInvocationAttemptStore:
-        return self
+        with self._lock:
+            self._require_usable()
+            return self
 
     def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> None:
-        self.close()
+        try:
+            self.close()
+        except InvocationStoreClosedError:
+            if _exc is not None:
+                return
+            raise
 
     def _enable_wal(self, busy_timeout_ms: int) -> None:
         """Enable WAL while tolerating another process performing the same startup."""
@@ -426,38 +484,172 @@ class SQLiteInvocationAttemptStore:
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
+            self._require_usable()
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 yield self._connection
             except BaseException:
-                self._connection.execute("ROLLBACK")
+                try:
+                    self._rollback_write_transaction(self._connection)
+                except BaseException as rollback_error:
+                    self._poison_store()
+                    raise _CommitOutcomeUnknown(may_reconcile=False) from rollback_error
                 raise
             else:
                 try:
-                    self._connection.execute("COMMIT")
-                except BaseException:
-                    if self._connection.in_transaction:
-                        self._connection.execute("ROLLBACK")
+                    self._commit_write_transaction(self._connection)
+                except BaseException as exc:
+                    try:
+                        transaction_open = self._connection.in_transaction
+                    except BaseException:
+                        self._poison_store()
+                        raise _CommitOutcomeUnknown(may_reconcile=False) from exc
+                    if transaction_open:
+                        try:
+                            self._rollback_write_transaction(self._connection)
+                        except BaseException as rollback_error:
+                            self._poison_store()
+                            raise _CommitOutcomeUnknown(may_reconcile=False) from rollback_error
+                    else:
+                        raise _CommitOutcomeUnknown(may_reconcile=True) from exc
                     raise
+
+    @staticmethod
+    def _commit_write_transaction(connection: sqlite3.Connection) -> None:
+        """Commit one write transaction through a fault-injectable boundary."""
+
+        connection.execute("COMMIT")
+
+    @staticmethod
+    def _rollback_write_transaction(connection: sqlite3.Connection) -> None:
+        """Roll back one write transaction through a fault-injectable boundary."""
+
+        connection.execute("ROLLBACK")
+
+    @staticmethod
+    def _close_connection(connection: sqlite3.Connection) -> None:
+        """Close a connection through a fault-injectable boundary."""
+
+        connection.close()
+
+    def _close_connection_acknowledged(self, connection: sqlite3.Connection) -> bool:
+        """Return a close acknowledgement without retaining an untrusted driver error."""
+
+        try:
+            self._close_connection(connection)
+        except BaseException:
+            return False
+        return True
+
+    @staticmethod
+    def _begin_read_transaction(connection: sqlite3.Connection) -> None:
+        """Begin a read transaction through a fault-injectable boundary."""
+
+        connection.execute("BEGIN")
+
+    @staticmethod
+    def _commit_read_transaction(connection: sqlite3.Connection) -> None:
+        """Commit a read transaction through a fault-injectable boundary."""
+
+        connection.execute("COMMIT")
+
+    @staticmethod
+    def _rollback_read_transaction(connection: sqlite3.Connection) -> None:
+        """Roll back a read transaction through a fault-injectable boundary."""
+
+        connection.execute("ROLLBACK")
+
+    def _poison_store(self) -> None:
+        """Permanently quarantine this instance and best-effort close its connection."""
+
+        self._poisoned = True
+        self._closed = True
+        if not self._connection_closed:
+            self._connection_closed = self._close_connection_acknowledged(self._connection)
+
+    def _require_usable(self) -> None:
+        if self._poisoned:
+            raise InvocationStorePoisonedError()
+        if self._closed:
+            raise InvocationStoreClosedError()
+
+    @staticmethod
+    def _close_failed() -> NoReturn:
+        raise InvocationStoreClosedError() from _ConnectionCloseFailure(
+            "invocation store connection close was not acknowledged"
+        )
+
+    @staticmethod
+    def _unreconciled_commit(error: _CommitOutcomeUnknown) -> NoReturn:
+        error.__cause__ = None
+        error.__context__ = None
+        error.__traceback__ = None
+        raise InvocationCommitAmbiguityError() from error
 
     @contextmanager
     def _read_transaction(self) -> Iterator[sqlite3.Connection]:
         """Pin multiple recovery queries to one SQLite snapshot without taking a write lock."""
 
+        try:
+            with self._read_transaction_inner() as connection:
+                yield connection
+        except _ReadTransactionOutcomeUnknown as error:
+            if type(error) is not _ReadTransactionOutcomeUnknown:
+                raise
+            if error.poison_nonce is not self._poison_nonce or not self._poisoned:
+                raise
+            error.__cause__ = None
+            error.__context__ = None
+            error.__traceback__ = None
+            raise InvocationStorePoisonedError() from error
+
+    @contextmanager
+    def _read_transaction_inner(self) -> Iterator[sqlite3.Connection]:
+        """Own raw SQLite read faults inside a frame that never exposes their chain."""
+
         with self._lock:
-            self._connection.execute("BEGIN")
+            self._require_usable()
+            try:
+                self._begin_read_transaction(self._connection)
+            except BaseException:
+                try:
+                    transaction_open = self._connection.in_transaction
+                except BaseException as state_error:
+                    self._poison_store()
+                    raise _ReadTransactionOutcomeUnknown(self._poison_nonce) from state_error
+                if transaction_open:
+                    try:
+                        self._rollback_read_transaction(self._connection)
+                    except BaseException as rollback_error:
+                        self._poison_store()
+                        raise _ReadTransactionOutcomeUnknown(self._poison_nonce) from rollback_error
+                raise
+
             try:
                 yield self._connection
             except BaseException:
-                self._connection.execute("ROLLBACK")
-                raise
-            else:
                 try:
-                    self._connection.execute("COMMIT")
-                except BaseException:
-                    if self._connection.in_transaction:
-                        self._connection.execute("ROLLBACK")
-                    raise
+                    self._rollback_read_transaction(self._connection)
+                except BaseException as rollback_error:
+                    self._poison_store()
+                    raise _ReadTransactionOutcomeUnknown(self._poison_nonce) from rollback_error
+                raise
+
+            try:
+                self._commit_read_transaction(self._connection)
+            except BaseException:
+                try:
+                    transaction_open = self._connection.in_transaction
+                except BaseException as state_error:
+                    self._poison_store()
+                    raise _ReadTransactionOutcomeUnknown(self._poison_nonce) from state_error
+                if transaction_open:
+                    try:
+                        self._rollback_read_transaction(self._connection)
+                    except BaseException as rollback_error:
+                        self._poison_store()
+                        raise _ReadTransactionOutcomeUnknown(self._poison_nonce) from rollback_error
+                raise
 
     def _now(self) -> str:
         """Read time from the store-owned clock, never from an individual work request."""
@@ -782,6 +974,7 @@ class SQLiteInvocationAttemptStore:
     def get(self, invocation_id: str) -> Optional[InvocationJob]:
         _required(invocation_id, "invocation_id")
         with self._lock:
+            self._require_usable()
             row = self._connection.execute(
                 "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
                 (invocation_id,),
@@ -792,6 +985,7 @@ class SQLiteInvocationAttemptStore:
         _required(session_id, "session_id")
         _required(task_id, "task_id")
         with self._lock:
+            self._require_usable()
             row = self._connection.execute(
                 """
                 SELECT * FROM invocation_jobs
@@ -960,6 +1154,7 @@ class SQLiteInvocationAttemptStore:
     def attempts(self, invocation_id: str) -> Tuple[InvocationAttempt, ...]:
         _required(invocation_id, "invocation_id")
         with self._lock:
+            self._require_usable()
             rows = self._connection.execute(
                 """
                 SELECT * FROM invocation_attempts
@@ -987,6 +1182,7 @@ class SQLiteInvocationAttemptStore:
         if not 1 <= limit <= 1_000:
             raise ValueError("limit must be between 1 and 1000")
         with self._lock:
+            self._require_usable()
             rows = self._connection.execute(
                 """
                 SELECT * FROM invocation_attempts
@@ -1626,17 +1822,24 @@ class SQLiteInvocationAttemptStore:
 
     def schema_version(self) -> int:
         with self._lock:
+            self._require_usable()
             return int(current_schema_version(self._connection))
 
     def close(self) -> None:
         with self._lock:
-            self._connection.close()
+            self._closed = True
+            if self._connection_closed:
+                return
+            if not self._close_connection_acknowledged(self._connection):
+                self._close_failed()
+            self._connection_closed = True
 
 
 __all__ = [
     "AttemptStatus",
     "InvocationAttempt",
     "InvocationClockRegressionError",
+    "InvocationCommitAmbiguityError",
     "InvocationConflictError",
     "InvocationIntegrityError",
     "InvocationJob",
@@ -1644,6 +1847,8 @@ __all__ = [
     "InvocationLease",
     "InvocationRecoverySnapshot",
     "InvocationStatus",
+    "InvocationStoreClosedError",
+    "InvocationStorePoisonedError",
     "MigrationDriftError",
     "RecoverySummary",
     "SQLiteInvocationAttemptStore",
