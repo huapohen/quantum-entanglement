@@ -111,6 +111,25 @@ its SHA-256, and the manifest together can still produce a different internally
 consistent pair. Preserve authenticated custody and validate component schemas and
 domain watermarks before activation.
 
+## Inactive exact v2 codec boundary
+
+An isolated pure codec now models and round-trips exact `qe.sqlite-backup/2` documents.
+It binds the current canonical bridge-only `SchemaState`, packaged registry digest,
+applied descriptor/SQL/owned-schema digests, domain heads, dependency edges, owned-object
+DDL topology, and required table-count coordinates. It also enforces canonical JSON
+bytes, duplicate-key rejection, bounded immutable tuple snapshots, and exact scalar
+types.
+
+This does **not** change the operational format. `create_sqlite_backup()`,
+`verify_sqlite_backup()`, `restore_sqlite_backup()`, and `qe-admin` remain v1-only and do
+not import or dispatch to the v2 codec. No v2 writer reads SQLite or writes a manifest;
+no v2 verifier or quarantine restore exists; native and `domain_sparse` migrations remain
+unreachable.
+
+See [Exact SQLite backup manifest v2 codec](../architecture/SQLITE_BACKUP_MANIFEST_V2_CODEC.md)
+for the exact schema, validation rules, compatibility boundary, threats, and staged gates.
+Do not label a canonical codec round-trip as a verified or restorable v2 backup.
+
 ## Create path and inode fencing
 
 Creation performs the following sequence:
