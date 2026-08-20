@@ -72,6 +72,12 @@ require_current_process(owner, error_factory) -> None
 每次返回一个新的、只含固定 machine-readable code 的异常。不得返回缓存异常，也不得预挂
 cause、context、traceback、notes 或任意业务对象。
 
+Python 在 active `except`/`__exit__` 中抛出新异常时，即使使用 `raise ... from None`，仍会把原
+异常放进新异常的 `__context__`，只是在默认格式化时隐藏。foundation 不能把解释器的 active
+exception state 清空。因此组件应把 factory 产物视为 module-private mismatch signal；任何可能
+位于 active-exception 区域的 lifecycle path 都必须捕获并丢弃该 signal，退出 `except` 后清空
+frame locals，再创建最终 public error。不得把 helper 的直接异常无条件描述为 context-free。
+
 ## 3. 组件接入不变量
 
 持有进程本地状态的类按以下模式接入：
@@ -161,7 +167,8 @@ async cancellation；组件的 clean-rethrow 层也必须保留安全的 process
 - fork 时另一个线程持有无关 lock，child 在两秒门限内完成拒绝；
 - child 可 fresh capture，nested grandchild 同时拒绝 parent/child owner；
 - owner/epoch 的 opaque representation、copy/deepcopy/pickle 拒绝；
-- invalid/uninitialized descriptor 只产生无 cause/context 的稳定 mismatch；
+- 在没有 caller active exception 的直接调用中，invalid/uninitialized descriptor 产生无
+  cause/context 的稳定 mismatch；active-exception lifecycle 的最终清理由组件测试证明；
 - spawn 与可用时的 forkserver 进程 fresh capture，不传输 live owner。
 
 平台没有 `os.fork` 时真实 fork suite 明确 skip；这不能记录成 fork 证明。每个接入组件仍需增加

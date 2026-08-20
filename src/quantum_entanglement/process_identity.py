@@ -150,7 +150,13 @@ def require_current_process(
     owner: object,
     error_factory: Callable[[], BaseException],
 ) -> None:
-    """Reject an owner captured outside the exact current PID and process epoch."""
+    """Reject an owner captured outside the exact current PID and process epoch.
+
+    The factory normally creates a module-private signal. A component that can call this
+    helper while another exception is active must cleanly translate that signal after
+    leaving its ``except`` block; ``raise ... from None`` suppresses display but cannot
+    erase Python's active exception context.
+    """
 
     owner_pid: object = None
     owner_epoch: object = None
