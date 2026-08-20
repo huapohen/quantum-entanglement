@@ -250,20 +250,27 @@ local to one composer instance and process.
 
 Public composition failures use `OperationAuthorizationError` with one bounded code. Raw
 provider, authorizer, clock, validation, context, and registry exceptions are never
-returned. The public boundary clears cause/context links, clears completed internal
-traceback frames, deletes actor/request arguments from the remaining public frame, and
-raises a fresh code-only exception. Provider/authorizer exception chains and their frame
-locals are therefore not retained through the public failure.
+returned. Each potentially faulting call runs inside a narrow inner boundary. That boundary
+classifies only exact built-in control-signal types, obtains the interpreter-owned
+traceback through `sys.exc_info`, clears completed callback/dependency frames, and returns
+only a trusted descriptor. It never reads or writes the caught object's `args`, notes,
+custom attributes, cause, context, or traceback attributes. The outer public method deletes
+actor/request/handle arguments and raises a fresh allow-listed code-only exception.
+Provider/authorizer exception graphs and their frame locals are therefore not reachable
+through the public failure, even when a hostile exception rejects attribute reads or
+writes by throwing another secret-bearing exception.
 
 Configured dependencies are treated as hostile exception boundaries, including custom
 classes that inherit directly from `BaseException`. A non-control `BaseException` becomes
 the same stable fail-closed category as an ordinary dependency exception. Exact
-`KeyboardInterrupt`, `SystemExit`, and `GeneratorExit` retain control-flow semantics, but
-the original third-party object, message, cause/context graph, and traceback are discarded;
-the public boundary raises a new message-free signal (`SystemExit` uses safe code `1`). A
-subclass merely shaped like a control signal is treated as a hostile dependency failure.
-This policy applies to `authorize`, `consume`, and `retire` and prevents a dependency from
-smuggling tenant or credential material through a control-shaped exception.
+`KeyboardInterrupt`, `SystemExit`, `GeneratorExit`, and `asyncio.CancelledError` retain
+control-flow semantics, but the original third-party object and all of its message,
+argument, note, custom-attribute, cause/context, and frame-local state stay behind the
+boundary. The public method raises a different exact signal with empty arguments and no
+cause/context chain. A subclass merely shaped like one of these control signals is treated
+as a hostile dependency failure. This policy applies to `authorize`, `consume`, and
+`retire` and prevents a dependency from smuggling tenant or credential material through a
+control-shaped exception while preserving async-worker cancellation.
 
 Representative codes are grouped below. Callers must treat every code as denial and must
 not retry an irreversible effect without a new reviewed idempotency policy.
@@ -330,7 +337,7 @@ authorization reset and must not be used to bypass a clock or integrity alarm.
 | Handle is replayed serially or concurrently | Successful consume atomically removes it; later consume fails | Durable distributed replay ledger for multi-process effects |
 | Context is replaced by a new context for the same actor | Exact context ID/principal/revision snapshot fails | Durable session/revocation semantics if cross-process is required |
 | Service clock rolls backward | Local high-water freezes within skew and fails beyond it | Trusted time monitoring and incident runbook |
-| Dependency throws a custom `BaseException` or control-shaped secret | Non-control failures become stable denial; exact control signals are replaced with fresh secret-free signals | Cancellation/termination integration tests in the real service host |
+| Dependency throws a mutation-hostile `BaseException` or control-shaped secret | Raw exception attrs are never touched; non-control failures become stable denial; exact four-way control signals are replaced with fresh empty-argument signals | Cancellation/termination integration tests in the real service host |
 | Process crashes between consume and effect/receipt | No permissive recovery; handle is process-local | Transactional effect receipt or durable idempotency/reconciliation |
 | Registry is exhausted | Hard capacity; no over-issuance under concurrency | Per-tenant quotas, rate limits, load shedding, capacity evidence |
 | Arbitrary Python code runs in process | Explicitly outside this primitive's isolation claim | Sandboxed workers/plugins and least-privilege deployment |
@@ -372,12 +379,14 @@ The dedicated suite covers exact state types/snapshots, redacted representations
 structural provider injection, workspace requirements, same-ID cross-tenant isolation,
 every actor/scope/revision substitution, provider observation freshness/future time,
 provider and authorizer exception-chain/frame detachment, hostile `BaseException` and safe
-control-signal replacement, explicit deny, malformed decisions, membership downgrade,
-post-issuance identity/scope revision change, post-issuance capability revocation, context
-retirement during refresh, foreign issuer/composer, direct construction, forgery,
-reflective tampering, copy/deepcopy/pickle, operation and composer lifecycle, expiry,
-service-clock rollback, hard concurrent issuance capacity, serial replay, concurrent
-replay, action-time reauthorization, and exact one-time consumption.
+control-signal replacement across all three public operations, exact
+`asyncio.CancelledError` propagation, fail-closed control subclasses, explicit deny,
+malformed decisions, membership downgrade, post-issuance identity/scope revision change,
+post-issuance capability revocation, context retirement during refresh, every final
+reauthorization binding-field drift, foreign issuer/composer, direct construction,
+forgery, reflective tampering, copy/deepcopy/pickle, operation and composer lifecycle,
+expiry, service-clock rollback, hard concurrent issuance capacity, serial replay,
+concurrent replay, action-time reauthorization, and exact one-time consumption.
 
 Test counts are observations, never promotion evidence. A release candidate must run the
 complete baseline in `RELEASE_GATES.md` on the exact clean source tree and retain the
