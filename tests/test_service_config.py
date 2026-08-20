@@ -104,9 +104,10 @@ class ServiceConfigTests(unittest.TestCase):
         for field, value, code in invalid:
             values = self.environment()
             values[field] = value
-            with self.subTest(field=field, value=value), self.assertRaises(
-                ConfigurationError
-            ) as caught:
+            with (
+                self.subTest(field=field, value=value),
+                self.assertRaises(ConfigurationError) as caught,
+            ):
                 ServiceConfig.from_environment(values)
             self.assertEqual(caught.exception.code, code)
 
