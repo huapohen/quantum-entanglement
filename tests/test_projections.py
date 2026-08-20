@@ -2842,6 +2842,33 @@ class DurableProjectorTests(unittest.TestCase):
         finally:
             contender.close()
 
+    def test_authorizer_install_then_raise_still_restores_framework_access(self) -> None:
+        connection = self.offsets._connection
+
+        class InstallThenRaiseConnection:
+            def __init__(self) -> None:
+                self.authorizer_calls = 0
+
+            def set_authorizer(self, callback: object) -> None:
+                self.authorizer_calls += 1
+                connection.set_authorizer(callback)  # type: ignore[arg-type]
+                if self.authorizer_calls == 1:
+                    raise KeyboardInterrupt("simulated post-install interruption")
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(connection, name)
+
+        wrapped = InstallThenRaiseConnection()
+        with self.assertRaisesRegex(KeyboardInterrupt, "post-install interruption"):
+            with self.offsets._handler_transaction(wrapped):  # type: ignore[arg-type]
+                self.fail("authorizer installation failure must not yield a capability")
+
+        self.assertEqual(wrapped.authorizer_calls, 2)
+        row = connection.execute(
+            "SELECT COUNT(*) FROM projection_offsets /* authorizer restored */"
+        ).fetchone()
+        self.assertIsNotNone(row)
+
     def test_revoke_interruption_force_closes_capability_before_authorizer_restore(self) -> None:
         lease = self.offsets.claim("revoke-interruption", "worker-a")
         event = self.registry.upcast(self.events.read_all(limit=1)[0])

@@ -1078,9 +1078,11 @@ class SQLiteProjectionOffsetStore:
         cls,
         connection: sqlite3.Connection,
     ) -> Iterator[ProjectionTransaction]:
-        connection.set_authorizer(cls._projection_handler_authorizer)
         transaction: Optional[ProjectionTransaction] = None
         try:
+            # Keep installation inside the cleanup boundary. A connection wrapper can
+            # install the callback and then raise before returning to Python.
+            connection.set_authorizer(cls._projection_handler_authorizer)
             transaction = ProjectionTransaction(connection)
             yield transaction
         finally:
