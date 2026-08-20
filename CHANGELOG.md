@@ -29,6 +29,13 @@ release. Promotion additionally requires the evidence defined in
 - Outbox lease time is read only after SQLite write-lock acquisition, terminal fencing
   tokens are cleared, and persistent ambiguity history stores token digests only.
 
+### Fixed
+
+- Process-inherited request-context issuers, protected-operation composers, and operation
+  registries now fail closed on creator PID/process-epoch mismatch before inherited locks
+  or authorization dependencies; a forked child cannot adopt an issuer by constructing a
+  fresh composer, while the parent remains usable.
+
 ### In progress — not yet a shipped guarantee
 
 - Reliable outbox publishing with bounded retry, hard callback deadlines, fencing, and
