@@ -30,6 +30,7 @@ _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAX_IDENTITY_BYTES = 4_096
 _MAX_REFERENCE_BYTES = 16_384
 _MAX_ERROR_BYTES = 16_384
+_MAX_ERROR_LENGTH = 4_096
 _SESSION_STREAM_PREFIX = "session:"
 _MAX_SESSION_STREAM_BYTES = _MAX_IDENTITY_BYTES + len(_SESSION_STREAM_PREFIX.encode("utf-8"))
 
@@ -237,6 +238,8 @@ def _validate_job(job: InvocationJob) -> None:
         maximum_bytes=_MAX_REFERENCE_BYTES,
     )
     last_error = _optional_text(job.last_error, "job last_error", maximum_bytes=_MAX_ERROR_BYTES)
+    if last_error is not None and len(last_error) > _MAX_ERROR_LENGTH:
+        raise InvocationRecoveryIntegrityError("job last_error exceeds its supported length")
     if updated_at < created_at:
         raise InvocationRecoveryIntegrityError("job updated_at precedes creation")
     if attempts_started == 0 and last_error is not None:
@@ -301,6 +304,8 @@ def _validate_attempt(attempt: InvocationAttempt) -> None:
     lease_expires_at = _timestamp(attempt.lease_expires_at, "attempt lease_expires_at")
     finished_at = _optional_timestamp(attempt.finished_at, "attempt finished_at")
     error = _optional_text(attempt.error, "attempt error", maximum_bytes=_MAX_ERROR_BYTES)
+    if error is not None and len(error) > _MAX_ERROR_LENGTH:
+        raise InvocationRecoveryIntegrityError("attempt error exceeds its supported length")
     result_ref = _optional_text(
         attempt.result_ref,
         "attempt result_ref",
