@@ -3033,6 +3033,78 @@ class DurableProjectorTests(unittest.TestCase):
         self.assertEqual(result.applied_count, 1)
         self.assertEqual(self.offsets.load("framework-boundary").last_global_position, 1)
 
+    def test_handler_cannot_persist_deferred_schema_programs(self) -> None:
+        deferred_actions = (
+            sqlite3.SQLITE_CREATE_TEMP_TRIGGER,
+            sqlite3.SQLITE_CREATE_TEMP_VIEW,
+            sqlite3.SQLITE_CREATE_TRIGGER,
+            sqlite3.SQLITE_CREATE_VIEW,
+            sqlite3.SQLITE_CREATE_VTABLE,
+            sqlite3.SQLITE_DROP_TEMP_TRIGGER,
+            sqlite3.SQLITE_DROP_TEMP_VIEW,
+            sqlite3.SQLITE_DROP_TRIGGER,
+            sqlite3.SQLITE_DROP_VIEW,
+            sqlite3.SQLITE_DROP_VTABLE,
+        )
+        for action in deferred_actions:
+            with self.subTest(action=action):
+                self.assertEqual(
+                    self.offsets._projection_handler_authorizer(
+                        action,
+                        "handler_object",
+                        "handler_target",
+                        "main",
+                        None,
+                    ),
+                    sqlite3.SQLITE_DENY,
+                )
+
+        statements = (
+            "CREATE VIEW handler_deferred_view AS SELECT 1 AS value",
+            "CREATE TEMP VIEW handler_deferred_temp_view AS SELECT 1 AS value",
+            "CREATE TRIGGER handler_deferred_trigger AFTER INSERT ON handler_schema_target "
+            "BEGIN UPDATE handler_schema_target SET value = NEW.value; END",
+            "CREATE TEMP TRIGGER handler_deferred_temp_trigger "
+            "AFTER INSERT ON handler_schema_target "
+            "BEGIN UPDATE handler_schema_target SET value = NEW.value; END",
+            "CREATE VIRTUAL TABLE handler_deferred_virtual USING fts5(value)",
+        )
+
+        def handler(transaction: ProjectionTransaction, _event: UpcastedEvent) -> None:
+            transaction.execute(
+                "CREATE TABLE IF NOT EXISTS handler_schema_target (value INTEGER NOT NULL)"
+            )
+            for statement in statements:
+                with self.assertRaises(sqlite3.DatabaseError):
+                    transaction.execute(statement)
+
+        result = DurableProjector(
+            "deferred-schema-boundary",
+            "worker-a",
+            self.events,
+            self.offsets,
+            self.registry,
+            handler,
+        ).run_once(limit=1)
+
+        self.assertEqual(result.applied_count, 1)
+        names = {
+            row[0]
+            for row in self.offsets._connection.execute(
+                "SELECT name FROM main.sqlite_master UNION ALL SELECT name FROM temp.sqlite_master"
+            ).fetchall()
+        }
+        self.assertFalse(
+            names
+            & {
+                "handler_deferred_view",
+                "handler_deferred_temp_view",
+                "handler_deferred_trigger",
+                "handler_deferred_temp_trigger",
+                "handler_deferred_virtual",
+            }
+        )
+
     def test_handler_authorizer_is_restored_after_base_exception(self) -> None:
         def interrupted_handler(
             transaction: ProjectionTransaction,

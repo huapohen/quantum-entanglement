@@ -537,19 +537,25 @@ _HANDLER_SCHEMA_ACTIONS = frozenset(
         sqlite3.SQLITE_CREATE_TABLE,
         sqlite3.SQLITE_CREATE_TEMP_INDEX,
         sqlite3.SQLITE_CREATE_TEMP_TABLE,
-        sqlite3.SQLITE_CREATE_TEMP_TRIGGER,
-        sqlite3.SQLITE_CREATE_TEMP_VIEW,
-        sqlite3.SQLITE_CREATE_TRIGGER,
-        sqlite3.SQLITE_CREATE_VIEW,
         sqlite3.SQLITE_DROP_INDEX,
         sqlite3.SQLITE_DROP_TABLE,
         sqlite3.SQLITE_DROP_TEMP_INDEX,
         sqlite3.SQLITE_DROP_TEMP_TABLE,
+        sqlite3.SQLITE_REINDEX,
+    }
+)
+_HANDLER_DEFERRED_SCHEMA_ACTIONS = frozenset(
+    {
+        sqlite3.SQLITE_CREATE_TEMP_TRIGGER,
+        sqlite3.SQLITE_CREATE_TEMP_VIEW,
+        sqlite3.SQLITE_CREATE_TRIGGER,
+        sqlite3.SQLITE_CREATE_VIEW,
+        sqlite3.SQLITE_CREATE_VTABLE,
         sqlite3.SQLITE_DROP_TEMP_TRIGGER,
         sqlite3.SQLITE_DROP_TEMP_VIEW,
         sqlite3.SQLITE_DROP_TRIGGER,
         sqlite3.SQLITE_DROP_VIEW,
-        sqlite3.SQLITE_REINDEX,
+        sqlite3.SQLITE_DROP_VTABLE,
     }
 )
 _FRAMEWORK_TABLES = frozenset(
@@ -1062,6 +1068,11 @@ class SQLiteProjectionOffsetStore:
         _trigger_or_view: Optional[str],
     ) -> int:
         if action_code in _HANDLER_DENIED_ACTIONS:
+            return sqlite3.SQLITE_DENY
+        # Views, triggers, and virtual tables retain executable behavior after the
+        # restricted callback is removed. Projection handlers may not persist or
+        # replace that deferred SQL/program boundary under any object name.
+        if action_code in _HANDLER_DEFERRED_SCHEMA_ACTIONS:
             return sqlite3.SQLITE_DENY
         if action_code in _HANDLER_DATA_ACTIONS and cls._is_framework_table(argument_one):
             return sqlite3.SQLITE_DENY
