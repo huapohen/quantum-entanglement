@@ -14,12 +14,18 @@ from types import MappingProxyType
 from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
 from urllib.parse import quote
 
-from .events import DomainEvent
+from .events import DomainEvent, StoredEvent
 from .protocol import ArtifactOutput, ArtifactRef, new_id, utc_now
-from .store import SQLiteEventStore
+from .store import ConcurrencyError, SQLiteEventStore
 
 _REPLAY_PAGE_LIMIT = 1_000
 _MAX_REPLAY_EVENTS = 1_000_000
+_MAX_REPLAY_ARTIFACT_VERSIONS = 100_000
+_MAX_REPLAY_CONTENT_BYTES = 256 * 1024 * 1024
+_MAX_REPLAY_METADATA_BYTES = 64 * 1024 * 1024
+_MAX_REPLAY_METADATA_NODES = 1_000_000
+_MAX_REPLAY_STATE_DATA_BYTES = 384 * 1024 * 1024
+_MAX_RECORD_ADMISSION_ATTEMPTS = 8
 _MAX_IDENTIFIER_LENGTH = 512
 _MAX_MEDIA_TYPE_LENGTH = 255
 _MAX_URI_LENGTH = 4_096
@@ -67,6 +73,55 @@ class ArtifactVersion:
     trigger: str
 
 
+@dataclass(frozen=True)
+class _DecodedArtifactVersion:
+    key: Tuple[str, str]
+    item: ArtifactVersion
+    content_bytes: int
+    metadata_bytes: int
+    metadata_nodes: int
+    state_data_bytes: int
+
+
+@dataclass(frozen=True)
+class _ArtifactLedgerUsage:
+    artifact_versions: int = 0
+    content_bytes: int = 0
+    metadata_bytes: int = 0
+    metadata_nodes: int = 0
+    state_data_bytes: int = 0
+
+    def include(self, decoded: _DecodedArtifactVersion) -> _ArtifactLedgerUsage:
+        return _ArtifactLedgerUsage(
+            artifact_versions=self.artifact_versions + 1,
+            content_bytes=self.content_bytes + decoded.content_bytes,
+            metadata_bytes=self.metadata_bytes + decoded.metadata_bytes,
+            metadata_nodes=self.metadata_nodes + decoded.metadata_nodes,
+            state_data_bytes=self.state_data_bytes + decoded.state_data_bytes,
+        )
+
+
+@dataclass(frozen=True)
+class _ArtifactRecordRequest:
+    session_id: str
+    task_id: str
+    agent_id: str
+    name: str
+    content: str
+    media_type: str
+    metadata: Dict[str, object]
+    correlation_id: Optional[str]
+    causation_id: Optional[str]
+    trigger: Optional[str]
+
+
+@dataclass(frozen=True)
+class _ArtifactLedgerState:
+    versions: Dict[Tuple[str, str], Tuple[ArtifactVersion, ...]]
+    usage: _ArtifactLedgerUsage
+    replay_position: int
+
+
 class ArtifactLedger:
     """Owns current versions so worker agents can remain stateless."""
 
@@ -74,9 +129,21 @@ class ArtifactLedger:
 
     def __init__(self, event_store: SQLiteEventStore) -> None:
         self.event_store = event_store
-        self._versions: Dict[Tuple[str, str], Tuple[ArtifactVersion, ...]] = {}
+        self._state = _ArtifactLedgerState({}, _ArtifactLedgerUsage(), 0)
         self._lock = threading.RLock()
         self._rebuild()
+
+    @property
+    def _versions(self) -> Dict[Tuple[str, str], Tuple[ArtifactVersion, ...]]:
+        return self._state.versions
+
+    @property
+    def _usage(self) -> _ArtifactLedgerUsage:
+        return self._state.usage
+
+    @property
+    def _replay_position(self) -> int:
+        return self._state.replay_position
 
     def _rebuild(self) -> None:
         with self._lock:
@@ -85,57 +152,80 @@ class ArtifactLedger:
     def _rebuild_under_lock(self) -> None:
         after_position = 0
         replayed = 0
+        candidate_usage = _ArtifactLedgerUsage()
         candidate_versions: Dict[Tuple[str, str], List[ArtifactVersion]] = {}
         candidate_artifact_ids: set[str] = set()
         while replayed < _MAX_REPLAY_EVENTS:
             page_limit = min(_REPLAY_PAGE_LIMIT, _MAX_REPLAY_EVENTS - replayed)
-            page = self.event_store.read_all(
+            page_count = 0
+            with self.event_store.stream_all_page(
                 after_position=after_position,
                 limit=page_limit,
-            )
-            after_position = self._validate_replay_page(
-                page,
-                after_position=after_position,
-                requested_limit=page_limit,
-            )
-            if not page:
-                break
-            for stored in page:
-                if stored.event.event_type != self.EVENT_TYPE:
-                    continue
-                key, item = self._decode_persisted_version(stored.event.payload)
-                history = candidate_versions.setdefault(key, [])
-                expected_version = len(history) + 1
-                if item.ref.version != expected_version:
-                    raise ArtifactReplayError(
-                        "artifact replay version chain must start at version 1 and increase by one"
+            ) as page:
+                for stored in page:
+                    page_count += 1
+                    if page_count > page_limit:
+                        raise ArtifactReplayError(
+                            "artifact replay source exceeded its requested page limit"
+                        )
+                    after_position = self._validate_replay_position(
+                        stored,
+                        after_position=after_position,
                     )
-                if item.ref.artifact_id in candidate_artifact_ids:
-                    raise ArtifactReplayError("artifact replay contains a duplicate artifact id")
-                candidate_artifact_ids.add(item.ref.artifact_id)
-                history.append(item)
-            replayed += len(page)
-            if len(page) < page_limit:
+                    if stored.event.event_type != self.EVENT_TYPE:
+                        continue
+                    decoded = self._decode_persisted_version_with_usage(stored.event.payload)
+                    key = decoded.key
+                    item = decoded.item
+                    history = candidate_versions.setdefault(key, [])
+                    expected_version = len(history) + 1
+                    if item.ref.version != expected_version:
+                        raise ArtifactReplayError(
+                            "artifact replay version chain must start at version 1 "
+                            "and increase by one"
+                        )
+                    if item.ref.artifact_id in candidate_artifact_ids:
+                        raise ArtifactReplayError(
+                            "artifact replay contains a duplicate artifact id"
+                        )
+
+                    next_usage = candidate_usage.include(decoded)
+                    self._validate_replay_usage(next_usage)
+                    candidate_usage = next_usage
+                    candidate_artifact_ids.add(item.ref.artifact_id)
+                    history.append(item)
+            if page_count == 0:
+                break
+            replayed += page_count
+            if page_count < page_limit:
                 break
         else:
-            probe = self.event_store.read_all(after_position=after_position, limit=1)
-            self._validate_replay_page(
-                probe,
-                after_position=after_position,
-                requested_limit=1,
-            )
-            if probe:
-                raise ArtifactReplayError(
-                    f"artifact replay exceeds the {_MAX_REPLAY_EVENTS}-event safety limit"
-                )
+            with self.event_store.stream_all_page(after_position=after_position, limit=1) as probe:
+                for stored in probe:
+                    self._validate_replay_position(stored, after_position=after_position)
+                    raise ArtifactReplayError(
+                        f"artifact replay exceeds the {_MAX_REPLAY_EVENTS}-event safety limit"
+                    )
 
-        self._versions = {key: tuple(history) for key, history in candidate_versions.items()}
+        self._state = _ArtifactLedgerState(
+            versions={key: tuple(history) for key, history in candidate_versions.items()},
+            usage=candidate_usage,
+            replay_position=after_position,
+        )
 
     @classmethod
     def _decode_persisted_version(
         cls,
         raw_payload: object,
     ) -> Tuple[Tuple[str, str], ArtifactVersion]:
+        decoded = cls._decode_persisted_version_with_usage(raw_payload)
+        return decoded.key, decoded.item
+
+    @classmethod
+    def _decode_persisted_version_with_usage(
+        cls,
+        raw_payload: object,
+    ) -> _DecodedArtifactVersion:
         try:
             payload = cls._require_object_shape(
                 raw_payload,
@@ -148,7 +238,10 @@ class ArtifactLedger:
             content = cls._require_content(payload["content"])
             created_at = cls._require_canonical_utc(payload["createdAt"], "createdAt")
             trigger = cls._require_text(payload.get("trigger", "create"), "trigger")
-            metadata = cls._freeze_metadata(cls._decode_metadata(payload.get("metadata", {})))
+            decoded_metadata, metadata_bytes, metadata_nodes = cls._decode_metadata_with_usage(
+                payload.get("metadata", {})
+            )
+            metadata = cls._freeze_metadata(decoded_metadata)
 
             raw_ref = cls._require_object_shape(
                 payload["ref"],
@@ -205,12 +298,36 @@ class ArtifactLedger:
                 task_id=ref_task_id,
                 parent_version=parent_version,
             )
-            return (session_id, name), ArtifactVersion(
+            item = ArtifactVersion(
                 ref=ref,
                 content=content,
                 metadata=metadata,
                 created_at=created_at,
                 trigger=trigger,
+            )
+            descriptor_bytes = sum(
+                len(value.encode("utf-8"))
+                for value in (
+                    session_id,
+                    artifact_id,
+                    name,
+                    media_type,
+                    uri,
+                    digest,
+                    created_by,
+                    ref_task_id,
+                    created_at,
+                    trigger,
+                )
+            )
+            content_bytes = len(content.encode("utf-8"))
+            return _DecodedArtifactVersion(
+                key=(session_id, name),
+                item=item,
+                content_bytes=content_bytes,
+                metadata_bytes=metadata_bytes,
+                metadata_nodes=metadata_nodes,
+                state_data_bytes=descriptor_bytes + content_bytes + metadata_bytes,
             )
         except ArtifactReplayError:
             raise
@@ -289,9 +406,17 @@ class ArtifactLedger:
 
     @classmethod
     def _decode_metadata(cls, value: object) -> Dict[str, object]:
+        decoded, _encoded_bytes, _nodes = cls._decode_metadata_with_usage(value)
+        return decoded
+
+    @classmethod
+    def _decode_metadata_with_usage(
+        cls,
+        value: object,
+    ) -> Tuple[Dict[str, object], int, int]:
         if type(value) is not dict:
             raise TypeError("metadata must be a plain JSON object")
-        cls._validate_metadata_json(value)
+        nodes = cls._validate_metadata_json(value)
         encoder = json.JSONEncoder(
             allow_nan=False,
             ensure_ascii=False,
@@ -309,7 +434,7 @@ class ArtifactLedger:
         decoded = json.loads(encoded)
         if type(decoded) is not dict:
             raise TypeError("metadata must decode to a JSON object")
-        return cast(Dict[str, object], decoded)
+        return cast(Dict[str, object], decoded), encoded_size, nodes
 
     @classmethod
     def _freeze_metadata(cls, value: Dict[str, object]) -> Mapping[str, object]:
@@ -346,6 +471,16 @@ class ArtifactLedger:
         return value
 
     @classmethod
+    def _canonical_metadata_bytes(cls, value: Mapping[str, object]) -> bytes:
+        return json.dumps(
+            cls._snapshot_metadata(value),
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+
+    @classmethod
     def _snapshot_version(cls, item: ArtifactVersion) -> ArtifactVersion:
         return ArtifactVersion(
             ref=item.ref,
@@ -356,7 +491,7 @@ class ArtifactLedger:
         )
 
     @staticmethod
-    def _validate_metadata_json(value: object) -> None:
+    def _validate_metadata_json(value: object) -> int:
         stack: list[tuple[object, int, bool]] = [(value, 0, False)]
         active_container_ids: set[int] = set()
         nodes = 0
@@ -406,7 +541,7 @@ class ArtifactLedger:
                 continue
 
             mapping = cast(dict[object, object], current)
-            if len(mapping) > _MAX_METADATA_NODES - nodes:
+            if len(mapping) > (_MAX_METADATA_NODES - nodes) // 2:
                 raise ValueError("metadata exceeds its JSON node limit")
             entries = tuple(mapping.items())
             for key, item in reversed(entries):
@@ -414,30 +549,43 @@ class ArtifactLedger:
                     raise TypeError("metadata keys must be text")
                 if len(key) > _MAX_METADATA_KEY_LENGTH:
                     raise ValueError("metadata key exceeds its length limit")
+                nodes += 1
                 stack.append((item, depth, False))
+        return nodes
 
     @staticmethod
-    def _validate_replay_page(
-        page: Tuple[object, ...],
-        *,
-        after_position: int,
-        requested_limit: int,
-    ) -> int:
-        if len(page) > requested_limit:
-            raise ArtifactReplayError("artifact replay source exceeded its requested page limit")
-        previous_position = after_position
-        for stored in page:
-            position = getattr(stored, "global_position", None)
-            if type(position) is not int:
+    def _validate_replay_usage(usage: _ArtifactLedgerUsage) -> None:
+        limits = (
+            (
+                usage.artifact_versions,
+                _MAX_REPLAY_ARTIFACT_VERSIONS,
+                "artifact-version count",
+            ),
+            (usage.content_bytes, _MAX_REPLAY_CONTENT_BYTES, "content-byte count"),
+            (usage.metadata_bytes, _MAX_REPLAY_METADATA_BYTES, "metadata-byte count"),
+            (usage.metadata_nodes, _MAX_REPLAY_METADATA_NODES, "metadata-node count"),
+            (
+                usage.state_data_bytes,
+                _MAX_REPLAY_STATE_DATA_BYTES,
+                "state-data byte count",
+            ),
+        )
+        for actual, maximum, label in limits:
+            if actual > maximum:
                 raise ArtifactReplayError(
-                    "artifact replay source returned an invalid global position"
+                    f"artifact replay exceeds the {maximum} {label} safety limit"
                 )
-            if position <= previous_position:
-                raise ArtifactReplayError(
-                    "artifact replay global positions are not strictly increasing"
-                )
-            previous_position = position
-        return previous_position
+
+    @staticmethod
+    def _validate_replay_position(stored: object, *, after_position: int) -> int:
+        position = getattr(stored, "global_position", None)
+        if type(position) is not int:
+            raise ArtifactReplayError("artifact replay source returned an invalid global position")
+        if position <= after_position:
+            raise ArtifactReplayError(
+                "artifact replay global positions are not strictly increasing"
+            )
+        return position
 
     @staticmethod
     def _digest(content: str) -> str:
@@ -450,6 +598,46 @@ class ArtifactLedger:
             quote(name),
             version,
         )
+
+    def _resolve_idempotent_version(
+        self,
+        *,
+        key: Tuple[str, str],
+        history: Tuple[ArtifactVersion, ...],
+        stored: StoredEvent,
+        request: _ArtifactRecordRequest,
+    ) -> ArtifactVersion:
+        if stored.event.event_type != self.EVENT_TYPE:
+            raise ArtifactReplayError("idempotent artifact key belongs to another event type")
+        existing_key, existing_item = self._decode_persisted_version(stored.event.payload)
+        if existing_key != key:
+            raise ArtifactReplayError("idempotent artifact event does not match the requested key")
+        expected_trigger = request.trigger
+        if expected_trigger is None:
+            expected_trigger = "create" if existing_item.ref.version == 1 else "revise"
+        if (
+            stored.event.actor_id != request.agent_id
+            or stored.event.correlation_id != request.correlation_id
+            or stored.event.causation_id != request.causation_id
+            or existing_item.ref.task_id != request.task_id
+            or existing_item.ref.created_by != request.agent_id
+            or existing_item.ref.name != request.name
+            or existing_item.ref.media_type != request.media_type
+            or existing_item.content != request.content
+            or self._canonical_metadata_bytes(existing_item.metadata)
+            != self._canonical_metadata_bytes(request.metadata)
+            or existing_item.trigger != expected_trigger
+        ):
+            raise ArtifactRecordError("idempotent artifact retry changed its request")
+        existing_ref = existing_item.ref
+        for existing in history:
+            if existing.ref.artifact_id == existing_ref.artifact_id:
+                return self._snapshot_version(existing)
+        self._rebuild_under_lock()
+        for existing in self._versions.get(key, ()):
+            if existing.ref.artifact_id == existing_ref.artifact_id:
+                return self._snapshot_version(existing)
+        raise ArtifactReplayError("idempotent artifact event is missing after replay")
 
     def record(
         self,
@@ -489,39 +677,18 @@ class ArtifactLedger:
                 captured_trigger = (
                     None if trigger is None else self._require_text(trigger, "trigger")
                 )
-
-                key = (captured_session_id, captured_name)
-                history = self._versions.get(key, ())
-                version = len(history) + 1
-                actual_trigger = (
-                    captured_trigger
-                    if captured_trigger is not None
-                    else ("create" if version == 1 else "revise")
-                )
-                ref = ArtifactRef(
-                    artifact_id=new_id("art"),
-                    name=captured_name,
-                    version=version,
-                    media_type=captured_media_type,
-                    uri=self._artifact_uri(captured_session_id, captured_name, version),
-                    digest=self._digest(captured_content),
-                    created_by=captured_agent_id,
+                request = _ArtifactRecordRequest(
+                    session_id=captured_session_id,
                     task_id=captured_task_id,
-                    parent_version=(version - 1 if version > 1 else None),
+                    agent_id=captured_agent_id,
+                    name=captured_name,
+                    content=captured_content,
+                    media_type=captured_media_type,
+                    metadata=captured_metadata,
+                    correlation_id=captured_correlation_id,
+                    causation_id=captured_causation_id,
+                    trigger=captured_trigger,
                 )
-                created_at = self._require_canonical_utc(utc_now(), "createdAt")
-                payload = {
-                    "sessionId": captured_session_id,
-                    "taskId": captured_task_id,
-                    "ref": ref.to_dict(),
-                    "content": captured_content,
-                    "metadata": captured_metadata,
-                    "createdAt": created_at,
-                    "trigger": actual_trigger,
-                }
-                decoded_key, item = self._decode_persisted_version(payload)
-                if decoded_key != key:
-                    raise RuntimeError("artifact record key changed during validation")
             except (
                 ArtifactReplayError,
                 AttributeError,
@@ -535,37 +702,121 @@ class ArtifactLedger:
             ) as exc:
                 raise ArtifactRecordError("artifact record input violates its contract") from exc
 
-            event = DomainEvent(
-                stream_id="session:%s" % captured_session_id,
-                event_type=self.EVENT_TYPE,
-                actor_id=captured_agent_id,
-                correlation_id=captured_correlation_id,
-                causation_id=captured_causation_id,
-                idempotency_key="artifact:%s:%s:%s" % (captured_task_id, captured_name, ref.digest),
-                payload=payload,
+            key = (request.session_id, request.name)
+            stream_id = "session:%s" % request.session_id
+            idempotency_key = "artifact:%s:%s:%s" % (
+                request.task_id,
+                request.name,
+                self._digest(request.content),
             )
-            stored = self.event_store.append(event)
-            # Idempotent retries return the existing event; rebuild the exact existing result.
-            if stored.event.event_id != event.event_id:
-                existing_key, existing_item = self._decode_persisted_version(stored.event.payload)
-                if existing_key != key:
-                    raise ArtifactReplayError(
-                        "idempotent artifact event does not match the requested key"
-                    )
-                existing_ref = existing_item.ref
-                for existing in history:
-                    if existing.ref.artifact_id == existing_ref.artifact_id:
-                        return self._snapshot_version(existing)
-                self._rebuild()
-                return self._snapshot_version(
-                    next(
-                        existing
-                        for existing in self._versions[key]
-                        if existing.ref.artifact_id == existing_ref.artifact_id
-                    )
+            for attempt in range(_MAX_RECORD_ADMISSION_ATTEMPTS):
+                history = self._versions.get(key, ())
+                existing = self.event_store.get_idempotent_event(
+                    stream_id,
+                    idempotency_key,
                 )
-            self._versions[key] = history + (item,)
-            return self._snapshot_version(item)
+                if existing is not None:
+                    return self._resolve_idempotent_version(
+                        key=key,
+                        history=history,
+                        stored=existing,
+                        request=request,
+                    )
+
+                version = len(history) + 1
+                actual_trigger = (
+                    request.trigger
+                    if request.trigger is not None
+                    else ("create" if version == 1 else "revise")
+                )
+                try:
+                    ref = ArtifactRef(
+                        artifact_id=new_id("art"),
+                        name=request.name,
+                        version=version,
+                        media_type=request.media_type,
+                        uri=self._artifact_uri(request.session_id, request.name, version),
+                        digest=self._digest(request.content),
+                        created_by=request.agent_id,
+                        task_id=request.task_id,
+                        parent_version=(version - 1 if version > 1 else None),
+                    )
+                    created_at = self._require_canonical_utc(utc_now(), "createdAt")
+                    payload = {
+                        "sessionId": request.session_id,
+                        "taskId": request.task_id,
+                        "ref": ref.to_dict(),
+                        "content": request.content,
+                        "metadata": request.metadata,
+                        "createdAt": created_at,
+                        "trigger": actual_trigger,
+                    }
+                    decoded = self._decode_persisted_version_with_usage(payload)
+                    if decoded.key != key:
+                        raise RuntimeError("artifact record key changed during validation")
+                except (
+                    ArtifactReplayError,
+                    AttributeError,
+                    KeyError,
+                    OverflowError,
+                    RecursionError,
+                    RuntimeError,
+                    TypeError,
+                    UnicodeError,
+                    ValueError,
+                ) as exc:
+                    raise ArtifactRecordError(
+                        "artifact record input violates its contract"
+                    ) from exc
+
+                next_usage = self._usage.include(decoded)
+                try:
+                    self._validate_replay_usage(next_usage)
+                except ArtifactReplayError as exc:
+                    raise ArtifactRecordError(
+                        "artifact record would exceed ledger safety limits"
+                    ) from exc
+
+                event = DomainEvent(
+                    stream_id=stream_id,
+                    event_type=self.EVENT_TYPE,
+                    actor_id=request.agent_id,
+                    correlation_id=request.correlation_id,
+                    causation_id=request.causation_id,
+                    idempotency_key=idempotency_key,
+                    payload=payload,
+                )
+                try:
+                    stored = self.event_store.append(
+                        event,
+                        expected_global_position=self._replay_position,
+                    )
+                except ConcurrencyError as exc:
+                    if attempt + 1 >= _MAX_RECORD_ADMISSION_ATTEMPTS:
+                        raise ArtifactRecordError(
+                            "artifact record admission did not stabilize"
+                        ) from exc
+                    self._rebuild_under_lock()
+                    continue
+
+                # A racing idempotent retry is resolved against its durable request.
+                if stored.event.event_id != event.event_id:
+                    return self._resolve_idempotent_version(
+                        key=key,
+                        history=history,
+                        stored=stored,
+                        request=request,
+                    )
+                next_versions = dict(self._versions)
+                next_versions[key] = history + (decoded.item,)
+                self._state = _ArtifactLedgerState(
+                    versions=next_versions,
+                    usage=next_usage,
+                    replay_position=stored.global_position,
+                )
+                return self._snapshot_version(decoded.item)
+
+            raise AssertionError("artifact admission loop exhausted without a result")
 
     def current(self, session_id: str, name: str) -> Optional[ArtifactVersion]:
         with self._lock:

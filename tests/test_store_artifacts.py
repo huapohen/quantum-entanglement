@@ -1,9 +1,10 @@
 import copy
 import hashlib
+import json
 import tempfile
 import unittest
 from collections import UserDict
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import quote
@@ -86,10 +87,55 @@ def replay_event_with_payload(position, payload):
     )
 
 
+def manual_replay_usage(payload):
+    metadata = payload.get("metadata", {})
+
+    def count_nodes(value):
+        if type(value) is dict:
+            return 1 + len(value) + sum(count_nodes(item) for item in value.values())
+        if type(value) is list:
+            return 1 + sum(count_nodes(item) for item in value)
+        return 1
+
+    metadata_bytes = len(
+        json.dumps(
+            metadata,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+    ref = payload["ref"]
+    descriptor_bytes = sum(
+        len(value.encode("utf-8"))
+        for value in (
+            payload["sessionId"],
+            ref["artifactId"],
+            ref["name"],
+            ref["mediaType"],
+            ref["uri"],
+            ref["digest"],
+            ref["createdBy"],
+            ref["taskId"],
+            payload["createdAt"],
+            payload.get("trigger", "create"),
+        )
+    )
+    content_bytes = len(payload["content"].encode("utf-8"))
+    return {
+        "content_bytes": content_bytes,
+        "metadata_bytes": metadata_bytes,
+        "metadata_nodes": count_nodes(metadata),
+        "state_data_bytes": descriptor_bytes + content_bytes + metadata_bytes,
+    }
+
+
 class FakeReplayStore(SQLiteEventStore):
     def __init__(self, pages):
         self.pages = pages
         self.calls = []
+        self.yielded_positions = []
 
     def read_all(self, after_position=0, limit=1000):
         self.calls.append((after_position, limit))
@@ -97,6 +143,20 @@ class FakeReplayStore(SQLiteEventStore):
         if isinstance(response, BaseException):
             raise response
         return response
+
+    @contextmanager
+    def stream_all_page(self, after_position=0, limit=1000):
+        self.calls.append((after_position, limit))
+        response = self.pages.get(after_position, ())
+        if isinstance(response, BaseException):
+            raise response
+
+        def items():
+            for item in response:
+                self.yielded_positions.append(item.global_position)
+                yield item
+
+        yield items()
 
 
 class EventStoreTests(unittest.TestCase):
@@ -165,6 +225,249 @@ class ArtifactLedgerTests(unittest.TestCase):
 
         self.assertEqual(first.ref.artifact_id, second.ref.artifact_id)
         self.assertEqual(len(self.ledger.history("s1", "result.txt")), 1)
+
+    def test_idempotent_retry_rejects_any_changed_request_field(self):
+        base = {
+            "agent_id": "agent-a",
+            "media_type": "text/plain",
+            "metadata": {"integer": 1, "zero": 0.0, "boolean": True},
+            "correlation_id": "correlation-1",
+            "causation_id": "causation-1",
+            "trigger": "custom",
+        }
+
+        def record(values):
+            return self.ledger.record(
+                "s1",
+                "task-exact",
+                values["agent_id"],
+                ArtifactOutput(
+                    "exact.txt",
+                    "same",
+                    media_type=values["media_type"],
+                    metadata=values["metadata"],
+                ),
+                correlation_id=values["correlation_id"],
+                causation_id=values["causation_id"],
+                trigger=values["trigger"],
+            )
+
+        original = record(base)
+        exact_retry = record(copy.deepcopy(base))
+        self.assertEqual(exact_retry.ref.artifact_id, original.ref.artifact_id)
+
+        changes = {
+            "agent": ("agent_id", "agent-b"),
+            "media-type": ("media_type", "application/json"),
+            "metadata": ("metadata", {"integer": 2, "zero": 0.0, "boolean": True}),
+            "metadata-integer-float": (
+                "metadata",
+                {"integer": 1.0, "zero": 0.0, "boolean": True},
+            ),
+            "metadata-boolean-integer": (
+                "metadata",
+                {"integer": 1, "zero": 0.0, "boolean": 1},
+            ),
+            "metadata-negative-zero": (
+                "metadata",
+                {"integer": 1, "zero": -0.0, "boolean": True},
+            ),
+            "correlation": ("correlation_id", "correlation-2"),
+            "causation": ("causation_id", "causation-2"),
+            "trigger": ("trigger", "rollback"),
+        }
+        for case, (field, changed_value) in changes.items():
+            with self.subTest(case=case):
+                changed = copy.deepcopy(base)
+                changed[field] = changed_value
+                with self.assertRaisesRegex(
+                    ArtifactRecordError,
+                    "changed its request",
+                ):
+                    record(changed)
+
+        self.assertEqual(len(self.store.read_all()), 1)
+
+    def test_default_trigger_retry_uses_the_persisted_version_after_chain_advances(self):
+        first_output = ArtifactOutput("chain.txt", "v1")
+        first = self.ledger.record("s1", "task-1", "agent", first_output)
+        self.ledger.record("s1", "task-2", "agent", ArtifactOutput("chain.txt", "v2"))
+
+        retried = self.ledger.record("s1", "task-1", "agent", first_output)
+
+        self.assertEqual(retried.ref.artifact_id, first.ref.artifact_id)
+        self.assertEqual(retried.trigger, "create")
+        self.assertEqual(len(self.ledger.history("s1", "chain.txt")), 2)
+
+    def test_global_position_cas_prevents_two_ledgers_from_writing_through_quota(self):
+        competing = ArtifactLedger(self.store)
+
+        with patch.object(artifacts_module, "_MAX_REPLAY_ARTIFACT_VERSIONS", 1):
+            accepted = self.ledger.record(
+                "session-a",
+                "task-a",
+                "agent",
+                ArtifactOutput("a.txt", "a"),
+            )
+            with self.assertRaisesRegex(ArtifactRecordError, "ledger safety limits"):
+                competing.record(
+                    "session-b",
+                    "task-b",
+                    "agent",
+                    ArtifactOutput("b.txt", "b"),
+                )
+            rebuilt = ArtifactLedger(self.store)
+
+        self.assertEqual(len(self.store.read_all()), 1)
+        self.assertEqual(rebuilt.history("session-a", "a.txt"), (accepted,))
+        self.assertEqual(rebuilt.history("session-b", "b.txt"), ())
+
+    def test_global_position_cas_is_atomic_across_independent_connections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "shared.sqlite3")
+            first_store = SQLiteEventStore(path)
+            second_store = SQLiteEventStore(path)
+            try:
+                first_ledger = ArtifactLedger(first_store)
+                second_ledger = ArtifactLedger(second_store)
+
+                with patch.object(
+                    artifacts_module,
+                    "_MAX_REPLAY_ARTIFACT_VERSIONS",
+                    1,
+                ):
+                    first_ledger.record(
+                        "session-a",
+                        "task-a",
+                        "agent",
+                        ArtifactOutput("a.txt", "a"),
+                    )
+                    with self.assertRaisesRegex(
+                        ArtifactRecordError,
+                        "ledger safety limits",
+                    ):
+                        second_ledger.record(
+                            "session-b",
+                            "task-b",
+                            "agent",
+                            ArtifactOutput("b.txt", "b"),
+                        )
+                    rebuilt = ArtifactLedger(second_store)
+
+                self.assertEqual(len(first_store.read_all()), 1)
+                self.assertEqual(len(rebuilt.history("session-a", "a.txt")), 1)
+                self.assertEqual(rebuilt.history("session-b", "b.txt"), ())
+            finally:
+                second_store.close()
+                first_store.close()
+
+    def test_record_rebuilds_and_retries_after_global_position_conflict(self):
+        append = self.store.append
+        injected = False
+
+        def append_after_interleaving(
+            event,
+            expected_version=None,
+            *,
+            expected_global_position=None,
+        ):
+            nonlocal injected
+            if not injected:
+                injected = True
+                append(
+                    DomainEvent(
+                        stream_id="session:other",
+                        event_type="test.interleaved",
+                        payload={"ok": True},
+                        actor_id="test",
+                        idempotency_key="interleaved:1",
+                    )
+                )
+            return append(
+                event,
+                expected_version,
+                expected_global_position=expected_global_position,
+            )
+
+        with patch.object(self.store, "append", side_effect=append_after_interleaving):
+            recorded = self.ledger.record(
+                "s1",
+                "task-1",
+                "agent",
+                ArtifactOutput("result.txt", "result"),
+            )
+
+        self.assertEqual(recorded.ref.version, 1)
+        self.assertEqual(self.ledger._replay_position, 2)
+        self.assertEqual(len(self.store.read_all()), 2)
+
+    def test_record_bounds_repeated_global_position_conflicts(self):
+        with patch.object(artifacts_module, "_MAX_RECORD_ADMISSION_ATTEMPTS", 2):
+            with patch.object(
+                self.store,
+                "append",
+                side_effect=ConcurrencyError("synthetic conflict"),
+            ) as append:
+                with self.assertRaisesRegex(
+                    ArtifactRecordError,
+                    "admission did not stabilize",
+                ):
+                    self.ledger.record(
+                        "s1",
+                        "task-1",
+                        "agent",
+                        ArtifactOutput("result.txt", "result"),
+                    )
+
+        self.assertEqual(append.call_count, 2)
+        self.assertEqual(self.store.read_all(), ())
+        self.assertEqual(self.ledger.history("s1", "result.txt"), ())
+
+    def test_record_enforces_replay_limits_but_allows_exact_idempotent_retries(self):
+        cases = (
+            (
+                "artifact-versions",
+                "_MAX_REPLAY_ARTIFACT_VERSIONS",
+                "artifact_versions",
+            ),
+            ("content-bytes", "_MAX_REPLAY_CONTENT_BYTES", "content_bytes"),
+            ("metadata-bytes", "_MAX_REPLAY_METADATA_BYTES", "metadata_bytes"),
+            ("metadata-nodes", "_MAX_REPLAY_METADATA_NODES", "metadata_nodes"),
+            (
+                "state-data-bytes",
+                "_MAX_REPLAY_STATE_DATA_BYTES",
+                "state_data_bytes",
+            ),
+        )
+        for case, constant, usage_field in cases:
+            with self.subTest(case=case):
+                store = SQLiteEventStore()
+                try:
+                    ledger = ArtifactLedger(store)
+                    output = ArtifactOutput(
+                        "bounded.json",
+                        "x",
+                        metadata={"a": 1},
+                    )
+                    first = ledger.record("s1", "task-1", "agent", output)
+                    previous_state = ledger._versions
+                    previous_usage = ledger._usage
+                    maximum = getattr(previous_usage, usage_field)
+
+                    with patch.object(artifacts_module, constant, maximum):
+                        retried = ledger.record("s1", "task-1", "agent", output)
+                        with self.assertRaisesRegex(
+                            ArtifactRecordError,
+                            "ledger safety limits",
+                        ):
+                            ledger.record("s1", "task-2", "agent", output)
+
+                    self.assertEqual(retried.ref.artifact_id, first.ref.artifact_id)
+                    self.assertIs(ledger._versions, previous_state)
+                    self.assertIs(ledger._usage, previous_usage)
+                    self.assertEqual(len(store.read_all()), 1)
+                finally:
+                    store.close()
 
     def test_rebuild_can_repeat_without_duplicating_versions(self):
         self.ledger.record("s1", "t1", "writer", ArtifactOutput("report.md", "v1"))
@@ -331,9 +634,13 @@ class ArtifactLedgerTests(unittest.TestCase):
         captured_events = []
         append = self.store.append
 
-        def capture_event(event, expected_version=None):
+        def capture_event(event, expected_version=None, *, expected_global_position=None):
             captured_events.append(event)
-            return append(event, expected_version)
+            return append(
+                event,
+                expected_version,
+                expected_global_position=expected_global_position,
+            )
 
         with patch.object(self.store, "append", side_effect=capture_event):
             recorded = self.ledger.record(
@@ -898,6 +1205,135 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
         self.assertEqual(history[0].ref.version, 1)
         self.assertEqual(history[-1].ref.version, version_count)
 
+    def test_replay_cumulative_safety_limits_fail_closed_without_state_leakage(self):
+        first = replay_event(
+            1,
+            name="candidate.md",
+            version=1,
+            content="a",
+        )
+        second = replay_event(
+            2,
+            name="candidate.md",
+            version=2,
+            content="b",
+        )
+        first_usage = manual_replay_usage(first.event.payload)
+        cases = (
+            (
+                "artifact-versions",
+                "_MAX_REPLAY_ARTIFACT_VERSIONS",
+                1,
+                "artifact-version count",
+            ),
+            (
+                "content-bytes",
+                "_MAX_REPLAY_CONTENT_BYTES",
+                first_usage["content_bytes"],
+                "content-byte count",
+            ),
+            (
+                "metadata-bytes",
+                "_MAX_REPLAY_METADATA_BYTES",
+                first_usage["metadata_bytes"],
+                "metadata-byte count",
+            ),
+            (
+                "metadata-nodes",
+                "_MAX_REPLAY_METADATA_NODES",
+                first_usage["metadata_nodes"],
+                "metadata-node count",
+            ),
+            (
+                "retained-state-bytes",
+                "_MAX_REPLAY_STATE_DATA_BYTES",
+                first_usage["state_data_bytes"],
+                "state-data byte count",
+            ),
+        )
+        for case, constant, maximum, message in cases:
+            with self.subTest(case=case):
+                source = FakeReplayStore(
+                    {0: (replay_event(1, name="stable.md", content="stable"),)}
+                )
+                ledger = ArtifactLedger(source)
+                previous_state = ledger._versions
+                previous_usage = ledger._usage
+                previous_position = ledger._replay_position
+                previous_history = ledger.history("session-replay", "stable.md")
+                source.pages = {0: (first, second)}
+
+                with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
+                    with patch.object(artifacts_module, constant, maximum):
+                        with self.assertRaisesRegex(ArtifactReplayError, message):
+                            ledger._rebuild()
+
+                self.assertIs(ledger._versions, previous_state)
+                self.assertIs(ledger._usage, previous_usage)
+                self.assertEqual(ledger._replay_position, previous_position)
+                self.assertEqual(
+                    ledger.history("session-replay", "stable.md"),
+                    previous_history,
+                )
+                self.assertIsNone(ledger.current("session-replay", "candidate.md"))
+
+    def test_stream_replay_stops_decoding_at_the_first_budget_failure(self):
+        source = FakeReplayStore(
+            {
+                0: (
+                    replay_event(1, name="candidate.md", content="a"),
+                    replay_event(2, name="other.md", content="b"),
+                )
+            }
+        )
+
+        with patch.object(artifacts_module, "_MAX_REPLAY_CONTENT_BYTES", 0):
+            with self.assertRaisesRegex(ArtifactReplayError, "content-byte count"):
+                ArtifactLedger(source)
+
+        self.assertEqual(source.yielded_positions, [1])
+
+    def test_exact_cumulative_replay_safety_limits_are_accepted(self):
+        events = (
+            replay_event(1, name="exact.md", version=1, content="a"),
+            replay_event(2, name="exact.md", version=2, content="b"),
+        )
+        usages = tuple(manual_replay_usage(item.event.payload) for item in events)
+        limits = {
+            "_MAX_REPLAY_ARTIFACT_VERSIONS": len(usages),
+            "_MAX_REPLAY_CONTENT_BYTES": sum(item["content_bytes"] for item in usages),
+            "_MAX_REPLAY_METADATA_BYTES": sum(item["metadata_bytes"] for item in usages),
+            "_MAX_REPLAY_METADATA_NODES": sum(item["metadata_nodes"] for item in usages),
+            "_MAX_REPLAY_STATE_DATA_BYTES": sum(item["state_data_bytes"] for item in usages),
+        }
+
+        with ExitStack() as patches:
+            for constant, maximum in limits.items():
+                patches.enter_context(patch.object(artifacts_module, constant, maximum))
+            ledger = ArtifactLedger(FakeReplayStore({0: events}))
+
+        self.assertEqual(len(ledger.history("session-replay", "exact.md")), 2)
+
+    def test_replay_usage_counts_keys_and_multibyte_state_data_independently(self):
+        stored = replay_event(
+            1,
+            session_id="团队/a",
+            name="报告.md",
+            content="协作",
+            trigger="发布",
+        )
+        payload = copy.deepcopy(stored.event.payload)
+        payload["metadata"] = {"a": 1, "nested": {"β": [True, None]}}
+        expected = manual_replay_usage(payload)
+
+        decoded = ArtifactLedger._decode_persisted_version_with_usage(payload)
+
+        self.assertEqual(expected["metadata_nodes"], 9)
+        self.assertEqual(decoded.content_bytes, expected["content_bytes"])
+        self.assertEqual(decoded.metadata_bytes, expected["metadata_bytes"])
+        self.assertEqual(decoded.metadata_nodes, expected["metadata_nodes"])
+        self.assertEqual(decoded.state_data_bytes, expected["state_data_bytes"])
+
     def test_successful_rebuild_replaces_stale_state_in_one_step(self):
         source = FakeReplayStore(
             {0: (replay_event(1, name="stale.md", version=1, content="stale"),)}
@@ -905,6 +1341,8 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
         with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
             ledger = ArtifactLedger(source)
         stale_state = ledger._versions
+        stale_usage = ledger._usage
+        stale_position = ledger._replay_position
 
         source.pages = {
             0: (
@@ -916,6 +1354,8 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
             ledger._rebuild()
 
         self.assertIsNot(ledger._versions, stale_state)
+        self.assertIsNot(ledger._usage, stale_usage)
+        self.assertNotEqual(ledger._replay_position, stale_position)
         self.assertIsNone(ledger.current("session-replay", "stale.md"))
         self.assertEqual(ledger.current("session-replay", "report.md").content, "fresh")
         self.assertEqual(ledger.current("session-replay", "notes.md").content, "notes")
@@ -955,6 +1395,8 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
                 with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
                     ledger = ArtifactLedger(source)
                 previous_state = ledger._versions
+                previous_usage = ledger._usage
+                previous_position = ledger._replay_position
                 previous_history = ledger.history("session-replay", "stable.md")
                 source.pages = {
                     0: (
@@ -969,6 +1411,8 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
                         ledger._rebuild()
 
                 self.assertIs(ledger._versions, previous_state)
+                self.assertIs(ledger._usage, previous_usage)
+                self.assertEqual(ledger._replay_position, previous_position)
                 self.assertEqual(
                     ledger.history("session-replay", "stable.md"),
                     previous_history,
@@ -1037,6 +1481,8 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
                 with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", 2):
                     ledger = ArtifactLedger(source)
                 previous_state = ledger._versions
+                previous_usage = ledger._usage
+                previous_position = ledger._replay_position
                 previous_history = ledger.history("session-replay", "stable.md")
                 source.pages = {0: first_page, 2: late_page}
 
@@ -1045,6 +1491,8 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
                         ledger._rebuild()
 
                 self.assertIs(ledger._versions, previous_state)
+                self.assertIs(ledger._usage, previous_usage)
+                self.assertEqual(ledger._replay_position, previous_position)
                 self.assertEqual(
                     ledger.history("session-replay", "stable.md"),
                     previous_history,
