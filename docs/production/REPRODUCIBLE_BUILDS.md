@@ -14,32 +14,43 @@ This document distinguishes three claims that must not be collapsed:
 3. **trusted supply chain**: the source, dependencies, builder identity, provenance, SBOM,
    policy results, and signatures are independently verifiable.
 
-Only the first claim is currently enforced. The second and third remain GA gates.
+The first claim is currently enforced with an exact, hash-checked Python build toolchain.
+The second claim is not yet enforced. The third has source-bound manifest, dependency-lock,
+and SBOM controls, but remains incomplete until the open trust, policy, provenance, and
+signature gates below are closed.
 
 ## Enforced CI predicate
 
 The package job executes the following sequence without `continue-on-error`:
 
 1. Check out `${{ github.sha }}` without persisting Git credentials.
-2. Select Python 3.12 and install the `build` frontend.
+2. Select Python 3.12, strictly verify all lock inputs, and install
+   `requirements/build-py312.lock` with pip hash and binary-only enforcement.
 3. Set `SOURCE_DATE_EPOCH` to the Git commit timestamp.
-4. Build one wheel and one sdist in the primary checkout.
+4. Build one wheel and one sdist in the primary checkout with
+   `python -m build --no-isolation`.
 5. Canonicalize that sdist with `scripts/normalize_sdist.py`.
 6. Create a distinct detached worktree at exactly `${{ github.sha }}` under
    `runner.temp`.
-7. Build a second wheel and sdist into a distinct output directory with the same Python
-   process environment and `SOURCE_DATE_EPOCH`.
+7. Build a second wheel and sdist with `--no-isolation` into a distinct output directory
+   with the same locked Python process environment and `SOURCE_DATE_EPOCH`.
 8. Canonicalize the second sdist with the same normalizer.
 9. Run `scripts/verify_reproducible_distributions.py` and require identical filenames,
    lengths, and bytes for both wheel/sdist sets.
 10. Generate and strictly verify the source-bound distribution manifest for the primary
-    set, smoke-install its wheel, and only then upload the packages and manifest.
+    set.
+11. Install the hash-checked release lock, generate and byte-verify the exact runtime/build
+    SBOM set outside the checkout, and validate both documents against CycloneDX 1.6.
+12. Verify package data, smoke-install the wheel, and only then upload the packages,
+    manifest, and two SBOMs.
 
 The second checkout is independent as a filesystem worktree, not as a Git object database,
-host, runner image, network, interpreter, or dependency resolver. The byte comparator proves
-only what it reads from the two output directories. The workflow supplies the stronger
-source condition by creating the detached worktree from `${{ github.sha }}`; the later
-manifest verification binds the retained primary artifacts back to that same full commit.
+host, runner image, network, interpreter, dependency mirror, or trust root. The build and
+release Python packages are now exact and hash checked, but both builds still reuse the same
+installed environment. The byte comparator proves only what it reads from the two output
+directories. The workflow supplies the stronger source condition by creating the detached
+worktree from `${{ github.sha }}`; the later manifest and SBOM verification bind the
+retained primary artifacts back to that same full commit.
 
 ## Canonical sdist contract
 
@@ -148,45 +159,71 @@ under this one fixed runtime. The observation is committed documentation, not an
 phase-release artifact; a promoted candidate must retain the corresponding CI run, logs,
 digests, and manifest under the release evidence policy.
 
+## Locked-toolchain verification recorded for `99fb825`
+
+On 2026-08-20, the current workflow sequence was repeated locally at
+`99fb8255fec6d7234763b916bc345605e86614e0` with CPython 3.12.12. A fresh environment
+installed `requirements/build-py312.lock` using `--require-hashes --only-binary :all:`.
+Two distinct detached worktrees were built with `python -m build --no-isolation` and
+`SOURCE_DATE_EPOCH=1787186318`; both sdists were normalized and the exact comparator
+returned `byteIdentical: true`.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `quantum_entanglement-0.1.0-py3-none-any.whl` | 158926 | `f5510c79e22a407dfcb475f89004c6a31cf9936c6df2293d04764ddf85937b3b` |
+| `quantum_entanglement-0.1.0.tar.gz` | 269933 | `6747a0128aa19c39e8110571c2194970ea1958c87af0f544e0b707e0fc79a095` |
+
+The source-bound manifest then passed strict verification. The runtime and build SBOMs
+were regenerated, byte-verified, and accepted by the CycloneDX 1.6 strict schema validator.
+All four locks were also independently regenerated with the recorded `uv==0.9.27`, cutoff,
+Python, and Linux target settings and matched the tracked files byte for byte. Exact
+manifest/SBOM digests and the reproduction commands are recorded in
+[`DEPENDENCY_LOCKS_AND_SBOM.md`](./DEPENDENCY_LOCKS_AND_SBOM.md).
+
+This closes the stale **floating Python build frontend/backend** gap for the supported CI
+target. It does not convert a local macOS observation into Linux, immutable-runner, or
+independent-builder evidence.
+
 ## Remaining GA gates
 
 The successful same-toolchain result must not be described as a completed production supply
 chain. At least the following remain open:
 
-- The workflow installs `build` without a version pin, hash, or lock.
-- `pyproject.toml` declares `setuptools>=77`; the isolated build backend and its transitive
-  dependencies are not locked by exact version and digest.
 - Both CI builds run on the same runner, interpreter, environment, network, and job. No
-  cross-runner, clean-host, container-image, operating-system, architecture, Python-version,
-  frontend-version, backend-version, or compression-version matrix is retained.
+  cross-runner, clean-host, immutable-container-image, operating-system, architecture, or
+  independently installed toolchain comparison is retained.
+- `ubuntu-latest`, the CPython distribution, and the `uv` bootstrap binary are not bound to
+  immutable verified digests; the configured package index is not an immutable snapshot.
 - The detached worktree shares the primary checkout's Git object database and trust root.
 - The wheel has no post-build canonicalizer; its equality is observed and enforced only for
   the two builds using the current same-job toolchain.
-- There is no hermetic/offline dependency closure, verified bootstrap chain, SBOM,
-  vulnerability/license policy result, signed provenance, artifact signature, or trusted
-  builder identity.
+- The hashed Python closure is not a hermetic/offline wheelhouse and does not model the
+  interpreter, runner OS packages, or deployment image.
+- Runtime/build SBOMs are produced, but optional runtime extras, vulnerability/license
+  policy, signed provenance, artifact signatures, and trusted builder identity remain open.
 - The normalizer and comparator are repository code in the build trust boundary. Their
   source is bound by the commit but their execution is not independently attested.
 
-GA therefore still requires pinned and hashed build inputs, repeated builds in independently
-provisioned environments, retained cross-environment digest evidence, SBOM and policy
-results, signed provenance, and artifact signing. A green package job satisfies only the
-same-job reproducibility and distribution-integrity rows for that exact candidate.
+GA therefore still requires repeated builds in independently provisioned immutable
+environments, retained cross-environment digest evidence, dependency risk-policy results,
+signed provenance, and artifact signing. A green package job satisfies the same-job
+reproducibility, distribution-integrity, lock, and base/build-SBOM rows for that exact
+candidate; it does not satisfy the complete trusted-supply-chain gate.
 
 ## Release evidence requirements
 
 For each promoted package candidate, retain:
 
 1. the full source commit and tree SHA for both build checkouts;
-2. the runner image, OS/architecture, Python, `build`, setuptools/backend, compression, and
-   normalizer versions or immutable digests;
+2. the runner image, OS/architecture, Python, `build`, setuptools/backend, compression,
+   lock-policy, and normalizer versions or immutable digests;
 3. the exact `SOURCE_DATE_EPOCH` and both build/normalization commands;
 4. the comparator's successful output or immutable log and both sets of compressed artifact
    SHA-256 values;
-5. the canonical distribution manifest, its digest, strict verifier result, package smoke
-   result, and immutable package CI run;
-6. separate results for cross-environment reproduction, dependency lock verification, SBOM,
-   vulnerability/license policy, signed provenance, and artifact signatures.
+5. the canonical distribution manifest, its digest, strict verifier result, both SBOMs and
+   schema results, package smoke result, and immutable package CI run;
+6. separate results for cross-environment reproduction, vulnerability/license policy,
+   signed provenance, and artifact signatures.
 
 A missing, skipped, unexplained, or non-identical repeated build is a failed package gate.
 Do not select one of two mismatching outputs, regenerate only the manifest, or publish an
