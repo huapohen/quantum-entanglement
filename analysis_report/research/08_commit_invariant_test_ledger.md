@@ -2,9 +2,9 @@
 
 更新日期：2026-08-20
 
-实现与报告基线：`7d9d757d02d63f267eda5fa8c8ef3d8fe73ea94a`
+实现验证基线：`e1419125153260506657b54020f6e28d6e59fdab`
 
-基线 tree：`d1ba83d374df95a895fd6e1310a9ef4ae0f8af79`
+基线 tree：`752ffefc5e67d2931c72671f26d36856ec777981`
 
 ## 1. 结论与使用方式
 
@@ -16,7 +16,7 @@
 阅读规则：
 
 - “提交”列只列建立或显著收紧该不变量的关键提交，不声称覆盖其间每个格式、文档或 CI
-  提交；完整历史以 `git log --oneline f7be4e2..7d9d757` 为准。
+  提交；完整历史以 `git log --oneline f7be4e2..e141912` 为准。
 - “测试证据”列给出当前树中真实存在的 test file 和代表性 test method。通过这些测试只
   证明对应测试模型、fixture 和故障注入；不自动证明多节点、真实 IM、云环境或 GA。
 - “残余边界”是保证的一部分。未被接入同一 durable transaction 的 primitives 不能合并
@@ -28,14 +28,15 @@
 
 | 项目 | 实测或 Git 证据 | 限制 |
 |---|---|---|
-| 工作位置 | 独立 worktree `/private/tmp/qe-evidence-ledger-current`；从 main 的 clean `7d9d757` 分出 | 不是 clean clone；复核前 `git status --short` 无输出 |
-| 平台 | Darwin arm64；CPython 3.9.6 | 没有在本次台账工作中重跑 Linux/Python 3.12 matrix |
-| 单元/集成测试 | `PYTHONPATH=src python3 -m unittest discover -s tests -q` → `Ran 583 tests ... OK` | 2026-08-20 在上述 clean commit/tree 本地运行；没有签名或外部留存的 test attestation |
-| 锁定工具门禁 | `verify_dependency_locks.py` → 4 targets/74 records verified；Ruff 0.16.3 lint passed；strict mypy → 27 files clean；compileall 与 `git diff --check` passed | Ruff 0.16.3 `format --check` **failed**：5 个已提交文件 would reformat；因此本基线不能宣称 repository-wide release gates 全绿 |
-| 代码身份 | baseline commit `7d9d757`；tree `d1ba83d...` | 包含审批修复、SBOM、截图 manifest、工程台账和索引；不是对 main 后续变化的浮动声明 |
-| 历史规模 | `f7be4e2..7d9d757` 为 188 commits；122 files；`+52,635/-11` | 行数与提交数是规模证据，不是质量或生产成熟度证据 |
+| 工作位置 | main 的 clean `e141912`；另用两个 detached worktree 构建制品 | 不是独立 clean host；worktree 共享本机与 Git object database |
+| 平台 | Darwin arm64；测试 CPython 3.9.6；制品 CPython 3.12.12 | 没有 independently provisioned Linux runner 复现 |
+| 单元/集成测试 | `PYTHONPATH=src python3 -m unittest discover -s tests -q` → `Ran 625 tests ... OK` | 2026-08-20 在上述 clean commit/tree 本地运行；没有签名 test attestation |
+| 锁定工具门禁 | 4 targets/74 records；Ruff 0.16.3 lint/format；strict mypy 30 files；compileall、demo、`git diff --check` 全部通过 | 证明本地 declared gates；不是安全、性能或真实 connector E2E |
+| 代码身份 | implementation commit `e141912`；tree `752ffefc...` | 后继报告提交不 retroactively 改变该制品/测试身份 |
+| 历史规模 | `f7be4e2..e141912` 为 216 commits；131 files；`+54,956/-11` | 行数与提交数是规模证据，不是质量或生产成熟度证据 |
 | 外部 connector | 仓库测试使用 fake/fixture；没有真实 Feishu/WeCom write connector | 不能声称已验证消息投递、平台回执或第三方限流 |
-| 报告证据链 | `dc9e919` 完善截图 manifest；`c0a6e7e` 新增本台账；`7d9d757` 加入报告索引 | 文档提交只组织和限定证据，不增加 runtime 生产能力 |
+| 发布证据快照 | canonical local JSON 已严格验证；双构建、manifest、两份 SBOM/schema、wheel smoke 通过 | digest 与限制见 `09_e141912_release_evidence.md`；不是签名 provenance |
+| 报告证据链 | `dc9e919` 截图 manifest；`c0a6e7e` 本台账；`149381f` 当前 release evidence 快照 | 文档只组织和限定证据，不增加 runtime 生产能力 |
 
 ## 3. 可追溯不变量台账
 
@@ -44,7 +45,7 @@
 | 关键提交 | 模块 | 已提交不变量 | 直接测试证据 | 残余边界 |
 |---|---|---|---|---|
 | `3e7bf30` | `protocol.py`、`events.py`、`store.py`、`artifacts.py` | Envelope 保留 correlation/causation/authority；event append 有 stream 顺序、幂等键和乐观并发；基础 artifact version append-only | `tests/test_protocol.py::test_envelope_round_trip_preserves_causation_and_authority`；`tests/test_store_artifacts.py::test_append_is_ordered_and_idempotent`、`::test_optimistic_concurrency_rejects_stale_writer` | 内部 envelope 不是正式 A2A/MCP 网络兼容证据；SQLite stream 不是跨服务事务日志 |
-| `088348e` | `runtime.py`、`scheduler.py`、`context.py`、`policy.py`、`plugins.py` | DAG 校验、显式 task transition、依赖阻断、受限并发、Needs You 和 context omission 均成为确定性状态 | `tests/test_runtime.py::test_independent_tasks_run_in_parallel_and_initial_ready_is_recorded`、`::test_failed_task_blocks_downstream_without_model_guessing`；`tests/test_scheduler_context.py::test_cycle_and_missing_dependency_are_rejected`、`::test_required_context_is_never_silently_truncated` | 初始 plan/task/event 发布尚未被证明为一次完整原子初始化；模型 worker、artifact terminal 与 durable attempt 仍未统一事务 |
+| `088348e`、`1887a5a`、`0899bff`、`d49c89d`、`9f54c3c`、`f0ecaa2` | `runtime.py` workflow initialization | DAG 校验、依赖阻断与初始 projection 确定；plan、精确 task manifest、初始 READY transitions 同一 batch；commit-then-raise 以最多 1,000/event page 精确 reconcile；内存只在 durable success 后发布；post-commit observer 失败不反转命令 | `tests/test_runtime.py::test_failed_plan_initialization_batch_publishes_no_partial_memory`、`::test_committed_plan_initialization_is_reconciled_after_wrapper_failure`、`::test_failed_plan_created_hook_does_not_reverse_committed_initialization`；`tests/test_approval_atomicity.py::test_post_commit_reconciliation_reads_multiple_bounded_pages` | 后续 worker invocation、artifact/result、task terminal 与 durable attempt 仍未统一事务；无 distributed admission lock，尚缺 task-count/graph-depth/cumulative-plan budget |
 | `661a638`、`10ccfcc`、`c832bd6`、`4363a8f`、`a921fbd` | `runtime.py` workflow recovery | 恢复会校验 canonical plan、精确 task manifest、task transition 合法性、页连续性与最大事件数；失败时不发布部分恢复 projection | `tests/test_recovery.py::test_completed_plan_is_recovered_without_invoking_agents_again`、`::test_session_recovery_uses_bounded_contiguous_pages`、`::test_late_invalid_transition_shape_never_publishes_partial_recovery`、`::test_session_recovery_requires_an_exact_task_creation_manifest` | 当前先物化最多 100 万事件；没有累计 JSON 字节/对象预算和真正流式 replay；plan/graph/approval queue 的最终发布还不是持久化级原子动作；RUNNING attempt 崩溃收敛未端到端接入 |
 | `d84e6c0` 及后续 `f9814e1` | `agent_runtime.py`、`adapters/deepseek_harness.py` | runtime port 隔离可选 SDK；同一 session 串行；重复 invocation key 只执行一次；close/drain 和不支持 cancel 具有显式语义 | `tests/test_agent_runtime.py::test_duplicate_concurrent_invocations_execute_harness_once`、`::test_turns_for_same_dsh_session_are_serialized`、`::test_close_rejects_new_work_then_drains_and_closes_harness`、`::test_canceling_waiter_reports_remote_turn_is_still_running` | 未证明进程/容器沙箱、网络隔离、远端 cancel 或远端未知结果 reconciliation；runtime 尚未接 durable attempt store |
 
@@ -65,6 +66,7 @@
 | `a9a015c`、`e504a46`、`2be1af3`、`b590051`、`bea3be3` | `migrations/__init__.py` | packaged SQL checksum、连续 ledger、schema validator 与失败原子性共同约束 migration；初始化异常关闭连接 | `tests/test_migrations.py` checksum/order/failure-atomicity 用例；`tests/test_store_initialization.py::test_base_exception_during_initialization_closes_connection` | 只覆盖已登记 SQLite schema；没有跨版本 rolling deployment、在线大表迁移或所有旧 binary compatibility matrix |
 | `c9a890d`、`1332416`、`758c902`、`4d693f8`、`9b48d5a` | `backup.py` backup/verify | WAL 一致快照、canonical bounded manifest、migration/schema 校验、stable descriptor/inode 与不可覆盖 publication 在本地 POSIX 模型中 fail closed | `tests/test_backup.py::test_online_backup_captures_wal_state_and_verifies_manifest`、`::test_backup_path_replacement_during_verification_is_rejected`、`::test_future_migration_is_rejected_before_backup_publication`、`::test_weakened_migration_owned_table_is_rejected_before_backup_publication` | 无加密/KMS、远端保管、调度、保留策略、容量实测和生产 RPO/RTO |
 | `c7f6107`、`e60bd3c` | `backup.py` restore | 仅从 verified backup 恢复到新目标；copy 期间重验 source/manifest/parent；exact bytes；失败不覆盖 operator 文件 | `tests/test_backup.py::test_verified_backup_restores_to_new_database`、`::test_restore_rehearses_outbox_ambiguity_artifact_and_attempt_state`、`::test_restore_detects_backup_in_place_change_during_copy`、`::test_restore_destination_race_preserves_operator_file` | rehearsal 是测试数据库；缺定期 retained drill、全服务恢复后 reconciliation、密钥/外部制品恢复与实测 RTO |
+| `a89cf6e`、`c49bc80`、`2533f25`、`36fa287` | backup state manifest | 修正真实 `projection_offsets` 表名，并把 `projection_receipts`、`qe_revocation_high_water` 纳入存在即必验的 table-count evidence；改数或删键 fail closed | `tests/test_backup.py::test_projection_offset_count_is_manifested_and_verified`、`::test_projection_receipt_count_tampering_is_rejected`、`::test_projection_receipt_count_omission_is_rejected`、`::test_revocation_high_water_count_tampering_is_rejected` | count 不是 row digest、签名 inventory 或 schema ownership proof；恢复激活前仍须比较 receipt positions 与每 tenant revision/digest |
 | `ad99b9b`、`a27e27c`、`f2e4ac0`、`d26c386`、`6a75e10`、`6fdf030`、`60c24f9` | `domain_migrations.py` | registry/sidecar/bridge state 与 plan 使用 canonical digest；planner 只产生封闭动作；apply 在 write lock 内重验 source 并原子安装 sidecar/bootstrap legacy metadata | `tests/test_domain_migrations.py::test_all_exact_shapes_map_to_the_closed_action_set`、`::test_stale_source_is_rejected_under_lock_without_mutation`、`::test_absent_legacy_plan_installs_and_bootstraps_in_one_transaction`、`::test_two_concurrent_consumers_have_one_winner_and_one_stale_rejection` | 当前只实现 bridge-only 路径；native/sparse/v4 与完整 upgrade/downgrade executor/rehearsal 未实现，因而仍 fail closed |
 | `efc0657`、`2299bdf`、`088f077`、`334249e`、`9e25fe3` | `projections.py` schema/lease/upcast | exact SQLite schema 与 catalog collision 校验；lease/epoch/fencing、monotonic offset CAS、sealed upcaster/decoder、bounded source batch | `tests/test_projections.py::test_column_and_table_constraint_drift_fail_closed`、`::test_case_variant_catalog_collisions_fail_before_transaction_or_write`、`::test_concurrent_claims_have_exactly_one_owner`、`::test_projector_upcasts_and_checkpoints_a_bounded_batch` | 仍是单节点 SQLite projection；没有 operator rebuild service、多节点数据库或全部业务 projections |
 | `dc0f245`、`dd9c4ac` | `projections.py` handler capability/ambiguous transaction | handler transaction capability 线程绑定且返回/异常后撤销；handler 不能控制框架 transaction 或访问 framework tables；BEGIN/ROLLBACK after-success 和双故障释放 lock | `tests/test_projections.py::test_handler_transaction_capability_is_revoked_after_success`、`::test_active_handler_transaction_rejects_cross_thread_use_before_sql`、`::test_handler_cannot_access_or_change_framework_tables`、`::test_begin_after_success_failures_roll_back_release_lock_and_allow_retry`、`::test_rollback_failures_close_connection_release_lock_and_preserve_primary` | 尚缺正式回归覆盖：`set_authorizer` 已安装后 Python 包装器抛异常；deferred VIEW/TRIGGER/virtual-table 执行期越权边界仍需专门审计和测试 |
@@ -80,7 +82,14 @@
 | `24eb061`、`95e1100`、`9a85e0f`、`6474eb1`、`6a38a6b` | `runtime.py` approval decision/recovery | decision + WAITING_APPROVAL transition 同 batch；durable append 后才发布 queue/graph/grant；commit-after-wrapper-error 只接受完整、连续、逐字段 canonical 等价 batch；部分 prefix 不得误认 committed；恢复继续校验完整 causal chain | `tests/test_approval_atomicity.py::test_failed_decision_batch_never_grants_in_memory_authority`、`::test_committed_decision_batch_is_reconciled_after_wrapper_failure`、`::test_partial_post_commit_batch_is_never_reconciled`；`tests/test_recovery.py::test_session_recovery_enforces_the_approval_causal_chain`、`::test_session_recovery_rejects_unbound_legacy_decision_correlation` | 完整 batch 的本地原子性不提供 authenticated approver、action digest、policy revision、expiry/revocation 或真实 effect receipt；部分 durable prefix 会 fail closed 并使历史需隔离/修复，不会自动删除 |
 | `5c849e9`、`d0188a0`、`30e86b2` | `runtime.py` post-commit `EVENT_APPENDED` 语义与 durability 文档 | 已提交命令不会因普通 hook exception 被伪装成失败；同 batch 后续 hook 继续；单 kernel 对同 stream 以 durable sequence 串行进入 hook；日志保留失败 sequence；文档明确 hook 仅为 best-effort observation | `tests/test_approval_atomicity.py::test_failed_post_commit_hook_does_not_fail_or_truncate_decision`、`::test_concurrent_decision_batches_remain_contiguous` | hook **不是 durable delivery**：task cancellation、进程崩溃、`BaseException`、无限阻塞或重启都可能形成 observation gap；正确性和外部投递必须使用 replayable projector/transactional outbox，hook 不得等待同 stream 的未来 callback |
 
-### 3.5 Release evidence、distribution 与依赖供应链
+### 3.5 服务配置与密钥边界
+
+| 关键提交 | 模块 | 已提交不变量 | 直接测试证据 | 残余边界 |
+|---|---|---|---|---|
+| `fe17797`、`bd0e975`、`4e8f70c`、`f8e7e50`、`d4421bd` | `service/config.py` | v1 配置字段全量 allowlist；只允许 fake connector 与 literal loopback；production debug 拒绝；数值/路径/owner/mode/祖先边界 fail closed；只枚举有界 keys 且不读取 ambient/unknown values；每个 allowlisted value 只读一次 | `tests/test_service_config.py::test_parses_complete_production_configuration`、`::test_rejects_group_or_world_writable_path_ancestor`、`::test_reads_a_mutable_mapping_only_once_into_a_bounded_snapshot`、`::test_rejects_oversized_or_control_character_environment_keys` | 只是 composition primitive；没有 HTTP/service entrypoint，database open 仍需 descriptor-time revalidation，路径 preflight 存在 TOCTOU 边界 |
+| `1d0f8fe`、`36a9680`、`d6aa239`、`7793ec6` | `service/secrets.py` | opaque `SecretRef`；有界、redacted、不可 copy/pickle 且 close 后擦除 owned buffer 的 `SecretMaterial`；File provider 用 descriptor-relative `O_NOFOLLOW`、owner/mode/link/type/稳定性校验读取 direct child | `tests/test_secret_provider.py::test_rendering_exposes_only_stable_fingerprint`、`::test_context_manager_exposes_read_only_view_then_wipes_it`、`::test_rejects_symlink_and_hard_link`、`::test_provider_errors_and_rendering_do_not_expose_paths_or_values` | Python/SDK 复制无法撤销；file provider 不是 KMS/Vault；没有进程沙箱阻止 Agent/plugin 直接访问 secret root，也未接真实 connector |
+
+### 3.6 Release evidence、distribution 与依赖供应链
 
 | 关键提交 | 模块 | 已提交不变量 | 直接测试证据 | 残余边界 |
 |---|---|---|---|---|
@@ -88,13 +97,14 @@
 | `d0bb6e9`、`c7b4424`、`55f1c5f` | distribution manifest/sdist normalization/reproducibility verifier | wheel/sdist inventory、source bytes、RECORD、metadata、entry point 与 safe archive bounds 可核验；canonical sdist；两个目录的精确制品集合逐字节比较 | `tests/test_distribution_manifest.py::test_valid_wheel_and_sdist_generate_and_verify_source_bound_manifest`、`::test_archive_traversal_and_sdist_links_are_rejected`；`tests/test_normalize_sdist.py::test_different_source_metadata_normalizes_to_identical_bytes`；`tests/test_verify_reproducible_distributions.py::test_content_and_filename_mismatches_fail_closed` | 同 toolchain 可复现不等于跨 runner/编译器/zlib 可复现；没有签名 artifact 或 SLSA provenance |
 | `d872df9`、`37e72d1`、`611d7f4` | lock inventory、build/dev/release lock 与 verifier | lock inventory/source digest、root version、binary/hash policy、path/matrix、pyproject root 一致性 fail closed；installer/backend/build/dev/release inputs 均进入锁定集合 | `tests/test_dependency_locks.py::test_repository_inventory_is_valid_and_source_aligned`、`::test_input_and_lock_digest_drift_are_rejected`、`::test_root_version_must_match_the_resolved_lock`、`::test_pyproject_build_and_dev_roots_cannot_drift` | lock 与下述 SBOM 能证明输入和 inventory 固定，但不证明依赖无漏洞、许可证可接受、下载源长期可用或制品已签名 |
 | `af4d01e`、`99fb825` | `scripts/sbom.py`、package CI | 生成 deterministic canonical CycloneDX 1.6 runtime/build 两份 SBOM；绑定 source commit/tree 和已验证 wheel/sdist digest；build SBOM 覆盖 exact lock component/target/hash；输出必须在 checkout 外的空目录且 document set 精确；CI 先内部严格验证、再走官方 CycloneDX schema validator，全部 gate 后才留存 | `tests/test_sbom.py::test_runtime_sbom_is_deterministic_and_binds_source_and_artifacts`、`::test_build_sbom_covers_every_exact_lock_component_and_target`、`::test_exact_document_set_can_be_written_once_and_verified`、`::test_verifier_rejects_drift_extra_files_symlinks_and_oversize`；`tests/test_ci_sbom.py::test_internal_verification_precedes_official_schema_validation`、`::test_verified_sboms_are_retained_only_after_all_gates_pass` | runtime SBOM 明确只覆盖 base install，当前 base dependency 为零且 optional extras 不在其中；SBOM 是 inventory，不是漏洞/许可证 policy 判定、签名 provenance、artifact signature 或运行时实际装载证明 |
+| `4f10649`、`fff4d53`、`b6ec718`、`1449058`、`02ddf32` | locked format 与供应链 runbooks | 先前 5-file Ruff 0.16.3 format gap 已机械修复；lock/SBOM、reproducible build、release gate 和后续里程碑文档与实现校准 | `tests/test_dependency_locks.py`、`tests/test_sbom.py`、`tests/test_ci_sbom.py`；本基线 locked Ruff format 显示 76 files formatted | 文档和格式修复不新增 vulnerability/license/signature/provenance 能力；remaining milestones 仍是 release blocker |
 | `990bb91`、`8508b45`、`86ee4bc` | `.github/workflows/ci.yml`、`package.yml` | 外部 Actions 固定到完整 commit；测试/evidence/build 安装 hash-locked toolchain；distribution 双构建禁用依赖解析后再比较 | `tests/test_ci_action_pins.py::test_every_external_action_is_pinned_to_a_full_commit`；`tests/test_ci_dependency_locks.py::test_test_job_verifies_then_installs_hash_locked_tools`、`::test_both_distribution_builds_disable_dependency_resolution`；`tests/test_ci_package_manifest.py::test_reproducibility_is_verified_from_an_independent_checkout` | workflow 结构测试不证明 GitHub-hosted runner/Action 发布者/基础镜像未被攻破；在已加入 SBOM 后，仍缺漏洞/license enforcement、签名 provenance 与 artifact signature |
 
 ## 4. 当前阻断项与下一笔证据要求
 
 ### 已关闭的审批阻断：post-commit reconcile 与 hook 顺序
 
-基线 `7d9d757` 已由正式 regression tests 锁住先前发现的三类问题：
+基线 `e141912` 保留正式 regression tests 锁住先前发现的三类问题：
 
 1. request 与 decision 的 `append_many` 在真实 commit 后 wrapper 抛错时，会读取
    `expected_version` 之后的精确 sequence range，并逐事件 canonical 比对；只有完整、连续、
@@ -133,27 +143,25 @@ A2A JSON mapping 单测、本地 backup fixture 和设计文档不能代替这�
 
 ### P1：完整供应链
 
-当前已提交并在 package CI 验证、留存 source-bound CycloneDX runtime/build SBOM。下一阶段
+当前已提交并在 package CI 验证、留存 source-bound CycloneDX runtime/build SBOM。`4f10649`
+已关闭此前 5 文件的 locked formatter gap，`e141912` 本机全仓 format gate 通过。下一阶段
 仍需 vulnerability/license policy、签名 provenance/attestation 与 artifact signature，并
 保留 clean-host/cross-runner reproducibility matrix。SBOM inventory 本身不得写成依赖安全
-或许可证合规结论。当前 clean baseline 的锁定 Ruff 0.16.3 formatter 还会改写
-`scripts/sbom.py`、`scripts/verify_dependency_locks.py`、`tests/test_ci_sbom.py`、
-`tests/test_dependency_locks.py`、`tests/test_sbom.py`；在格式化改动独立提交并重跑全部 gates
-前，不得生成“全部本地 gates 通过”的 release evidence。
+或许可证合规结论。
 
 ## 5. 复核命令
 
 以下命令可以在实现基线或其仅文档后继上重复核对本台账；测试数量只能引用实际输出：
 
 ```bash
-git rev-parse 7d9d757
-git rev-parse 7d9d757^{tree}
-git rev-list --count f7be4e2..7d9d757
-git diff --shortstat f7be4e2..7d9d757
+git rev-parse e141912
+git rev-parse e141912^{tree}
+git rev-list --count f7be4e2..e141912
+git diff --shortstat f7be4e2..e141912
 PYTHONPATH=src python3 -m unittest discover -s tests -q
 git diff --check
 ```
 
 完整发布结论仍必须走 `docs/production/LOCAL_RELEASE_EVIDENCE.md` 定义的 clean-source
-canonical gates 和严格 verifier；本台账本身不是 release evidence，也不授权真实
-Feishu/WeCom 消息发送。
+canonical gates 和严格 verifier；`09_e141912_release_evidence.md` 记录本基线的本地执行、
+制品 digest 和限制。本台账本身不是 release evidence，也不授权真实 Feishu/WeCom 消息发送。
