@@ -12,7 +12,7 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import NoReturn, Protocol, SupportsIndex
 
 _REFERENCE = re.compile(
     r"^(?P<scheme>[a-z][a-z0-9-]{0,31})://"
@@ -124,7 +124,7 @@ class SecretMaterial:
     def __deepcopy__(self, memo: object) -> SecretMaterial:
         raise TypeError("secret material cannot be copied")
 
-    def __reduce_ex__(self, protocol: int) -> object:
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
         raise TypeError("secret material cannot be serialized")
 
     def __del__(self) -> None:
