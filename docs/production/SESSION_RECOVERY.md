@@ -152,6 +152,15 @@ downstream tasks cannot consume a partial result through the live task projectio
 owning task remains quarantined rather than being replayed. This is a safety stop, not automated
 artifact/result reconciliation, a trusted invocation receipt, or an external-effect transaction.
 
+Parallel ready-task batches are drained before `run()` releases the per-session lock. A normal
+sibling exception is collected while every already-started sibling settles; only then is the
+first exception re-raised. Thus one task's post-Agent publication failure cannot leave another
+task mutating the graph or event stream in an orphan background coroutine after the caller has
+observed `run()` return. A sibling may legitimately finish during that drain, while the failed
+publisher remains `RUNNING` and quarantined. If the caller cancels the batch, the kernel cancels
+unfinished local tasks and awaits all of them before unlocking; cancellation still does not prove
+that a remote Agent or connector produced no effect.
+
 This quarantine is an intentional availability tradeoff. It converts the former silent stuck
 projection into an explicit operator-visible integrity boundary, while guaranteeing that
 session recovery neither calls the Agent again nor appends a guessed failure/completion. A
@@ -172,7 +181,8 @@ interleaved streaming application, invalid late pages, no partial publication, r
 quarantine, same-process cancellation quarantine without Agent reinvocation, pre/post-commit
 transition and ordinary-event fault injection, atomic policy denial, non-mutating dependency
 refresh retry, artifact append reconciliation, and post-Agent artifact/result publication
-quarantine without task-reference publication.
+quarantine without task-reference publication. Multi-task coverage also proves a publication
+failure cannot release the session lock while sibling dispatches remain live.
 
 At implementation commit `8049ac3`, the repository-wide suite reported 627
 passing tests. Locked Ruff 0.16.3 lint/format over `src`, `tests`, and `scripts`,
