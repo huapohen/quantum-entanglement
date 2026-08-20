@@ -801,6 +801,32 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
             "connector_failure",
         )
 
+    async def test_cancellation_style_classifier_failure_cannot_strand_lease(self):
+        self.enqueue("message-classifier-cancelled")
+
+        async def fail(_request):
+            raise RuntimeError("connector-secret-canary")
+
+        def cancelled_classifier(_error):
+            raise asyncio.CancelledError("classifier-secret-canary")
+
+        publisher = self.publisher(
+            fail,
+            max_attempts=1,
+            error_formatter=cancelled_classifier,
+        )
+        with self.assertLogs("quantum_entanglement.publisher", level="ERROR") as captured:
+            batch = await publisher.run_once()
+
+        stored = self.store.get_outbox("message-classifier-cancelled")
+        rendered = "\n".join(captured.output)
+        self.assertEqual(batch.dead_lettered, 1)
+        self.assertEqual(stored.status, OutboxStatus.DEAD_LETTER)
+        self.assertEqual(stored.last_error, "connector_failure")
+        self.assertIn("qe.publisher.error_classifier_failed", rendered)
+        self.assertNotIn("connector-secret-canary", rendered)
+        self.assertNotIn("classifier-secret-canary", rendered)
+
     def test_error_code_allowlist_is_bounded_and_canonical(self):
         async def publish(_request):
             return PublishReceipt.accepted("receipt:unused")

@@ -79,7 +79,8 @@ Publisher logs never include connector exception text or tracebacks. The public
 Persisted outbox `last_error` is also constrained. The built-in classifier returns one of a
 small source-defined code set. A custom classifier result is persisted only when it matches
 an explicit constructor-time allowlist; it is never coerced with `str()`. A rejected or
-throwing classifier falls back to `connector_failure` and emits a fixed operational event.
+throwing classifier, including a cancellation-style failure, falls back to
+`connector_failure` and emits a fixed operational event.
 
 ## Explicit prohibitions
 
