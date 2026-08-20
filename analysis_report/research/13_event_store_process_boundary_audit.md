@@ -3,9 +3,9 @@
 ## 0. 结论
 
 `SQLiteEventStore` 不能通过“constructor 存一个 PID，然后在几个常用方法开头判断”安全完成
-process-bound 迁移。当前类有 26 个公开/生命周期入口、一个可重入 transaction context manager、
-一个跨 `yield` 的流式 iterator、一个 store-owned clock callback，以及多个会在拿锁前或 transaction
-中执行 caller/provider 代码的路径。
+process-bound 迁移。当前类有 26 个公开/生命周期入口、一个由 `RLock` 串行化且每次执行
+`BEGIN IMMEDIATE` 的 transaction context manager、一个跨 `yield` 的流式 iterator、一个
+store-owned clock callback，以及多个会在拿锁前或 transaction 中执行 caller/provider 代码的路径。
 
 共享 `process_identity` foundation 已能判断 exact PID + opaque epoch，但本报告审计时
 `SQLiteEventStore` **尚未接入**。真实 fork child 仍可能先等待 inherited `RLock`、触碰 inherited
