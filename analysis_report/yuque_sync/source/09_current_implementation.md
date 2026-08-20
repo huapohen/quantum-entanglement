@@ -147,6 +147,12 @@ build。当前 content manifest 和同 toolchain 双构建只是其中两层。
 evidence 按设计存放在 checkout 外，不提交进 Git；本报告只记录非敏感 source identity、
 固定 gate 和汇总结论。外部 GitHub Actions、Notion 回读、真实部署、性能、安全和 DR
 证据未在本次 clean-clone 本地 gate 中执行，不能从本文推断其通过。
+## 最新安全事务证据
+- [10｜认证化 Invocation 事务恢复证据](https://app.notion.com/p/3c2ead4b996e8105b0cad304ef28dd38)
+- 固定实现 HEAD：`4538159b032d20f55d4f3bf1757589e5310fe701`；tree：`219fc66c8768a3a3c3508a52d6fe17bc07fb77c6`。
+- Python 3.9：883 passed + 1 skipped；Python 3.12/3.13：884 passed；3.13 strict resource/unraisable warning gate 干净。
+- 旧 `554115c..e05357b` 临时事务链明确排除，不在当前安全分支 ancestry。
+- 本增量只提升单节点 invocation storage primitive；本页前文的整体生产边界仍然成立。
 ## Notion 关联来源
 - [综合报告｜人与多 Agent 群聊协同产品：调研、架构与实现](https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44)
 - [商用实施计划｜Quantum Entanglement 0.2 → 1.0](https://app.notion.com/p/3c1ead4b996e81ea9d69d606525f8d93)
@@ -154,4 +160,3 @@ evidence 按设计存放在 checkout 外，不提交进 Git；本报告只记录
 ---
 
 来源：https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853?pvs=204
-
