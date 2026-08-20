@@ -652,36 +652,15 @@ class SQLiteInvocationAttemptStore:
         current_attempt: Optional[InvocationAttempt],
         *,
         attempt_count: int,
-        distinct_attempt_count: int,
-        distinct_epoch_count: int,
-        minimum_attempt_number: Optional[int],
-        maximum_attempt_number: Optional[int],
-        maximum_lease_epoch: Optional[int],
     ) -> None:
         if attempt_count != job.attempts_started:
             raise InvocationIntegrityError(
                 "invocation attempt count does not match attempts_started"
             )
-        if distinct_attempt_count != attempt_count or distinct_epoch_count != attempt_count:
-            raise InvocationIntegrityError("invocation attempt history has duplicate identities")
         if attempt_count == 0:
-            if any(
-                value is not None
-                for value in (
-                    current_attempt,
-                    minimum_attempt_number,
-                    maximum_attempt_number,
-                    maximum_lease_epoch,
-                )
-            ):
+            if current_attempt is not None:
                 raise InvocationIntegrityError("zero-attempt invocation has attempt history")
             return
-        if (
-            minimum_attempt_number != 1
-            or maximum_attempt_number != attempt_count
-            or maximum_lease_epoch != job.lease_epoch
-        ):
-            raise InvocationIntegrityError("invocation attempt history is not contiguous")
         if current_attempt is None:
             raise InvocationIntegrityError("invocation current attempt is missing")
         if (
@@ -729,7 +708,7 @@ class SQLiteInvocationAttemptStore:
         session_id: str,
         task_id: str,
     ) -> InvocationRecoverySnapshot:
-        """Read one job and its current attempt from a single bounded SQLite snapshot."""
+        """Read and validate one bounded attempt history in a single SQLite snapshot."""
 
         _required(session_id, "session_id")
         _required(task_id, "task_id")
@@ -747,88 +726,56 @@ class SQLiteInvocationAttemptStore:
             if not job_rows:
                 return InvocationRecoverySnapshot(None, None, 0)
             job = self._row_to_job(job_rows[0])
-            aggregate = connection.execute(
+            cursor = connection.execute(
                 """
-                SELECT COUNT(*) AS attempt_count,
-                       COUNT(DISTINCT attempt_number) AS distinct_attempt_count,
-                       COUNT(DISTINCT lease_epoch) AS distinct_epoch_count,
-                       MIN(attempt_number) AS minimum_attempt_number,
-                       MAX(attempt_number) AS maximum_attempt_number,
-                       MAX(lease_epoch) AS maximum_lease_epoch
-                FROM invocation_attempts
+                SELECT * FROM invocation_attempts
                 WHERE invocation_id = ?
+                ORDER BY attempt_number
+                LIMIT 1001
                 """,
                 (job.invocation_id,),
-            ).fetchone()
-            if aggregate is None or type(aggregate) is not sqlite3.Row:
-                raise InvocationIntegrityError("invocation attempt aggregate is malformed")
+            )
+            attempt_count = 0
+            previous_lease_epoch = 0
+            current_attempt: Optional[InvocationAttempt] = None
             try:
-                attempt_count = _persisted_integer(
-                    aggregate["attempt_count"],
-                    "invocation attempt count",
-                )
-                distinct_attempt_count = _persisted_integer(
-                    aggregate["distinct_attempt_count"],
-                    "distinct invocation attempt count",
-                )
-                distinct_epoch_count = _persisted_integer(
-                    aggregate["distinct_epoch_count"],
-                    "distinct invocation lease epoch count",
-                )
-                minimum_attempt_number = (
-                    None
-                    if aggregate["minimum_attempt_number"] is None
-                    else _persisted_integer(
-                        aggregate["minimum_attempt_number"],
-                        "minimum attempt number",
-                        minimum=1,
-                    )
-                )
-                maximum_attempt_number = (
-                    None
-                    if aggregate["maximum_attempt_number"] is None
-                    else _persisted_integer(
-                        aggregate["maximum_attempt_number"],
-                        "maximum attempt number",
-                        minimum=1,
-                    )
-                )
-                maximum_lease_epoch = (
-                    None
-                    if aggregate["maximum_lease_epoch"] is None
-                    else _persisted_integer(
-                        aggregate["maximum_lease_epoch"],
-                        "maximum attempt lease_epoch",
-                        minimum=1,
-                    )
-                )
-            except (IndexError, KeyError, TypeError, ValueError) as exc:
-                raise InvocationIntegrityError("invocation attempt aggregate is malformed") from exc
-
-            current_rows: list[sqlite3.Row] = []
-            if job.attempts_started:
-                current_rows = connection.execute(
-                    """
-                    SELECT * FROM invocation_attempts
-                    WHERE invocation_id = ? AND attempt_number = ?
-                    LIMIT 2
-                    """,
-                    (job.invocation_id, job.attempts_started),
-                ).fetchall()
-                if len(current_rows) != 1:
-                    raise InvocationIntegrityError(
-                        "invocation does not have exactly one current attempt"
-                    )
-            current_attempt = self._row_to_attempt(current_rows[0]) if current_rows else None
+                for row in cursor:
+                    attempt_count += 1
+                    if attempt_count > 1_000:
+                        raise InvocationIntegrityError(
+                            "invocation attempt history exceeds the recovery limit"
+                        )
+                    attempt = self._row_to_attempt(row)
+                    if attempt.invocation_id != job.invocation_id:
+                        raise InvocationIntegrityError(
+                            "invocation attempt crosses its job boundary"
+                        )
+                    if attempt.attempt_number != attempt_count:
+                        raise InvocationIntegrityError(
+                            "invocation attempt history is not contiguous"
+                        )
+                    if attempt.lease_epoch <= previous_lease_epoch:
+                        raise InvocationIntegrityError(
+                            "invocation attempt lease epochs are not strictly increasing"
+                        )
+                    previous_lease_epoch = attempt.lease_epoch
+                    if attempt.attempt_number < job.attempts_started:
+                        if attempt.status not in {AttemptStatus.FAILED, AttemptStatus.EXPIRED}:
+                            raise InvocationIntegrityError(
+                                "historical invocation attempt is not safely terminal"
+                            )
+                    elif attempt.attempt_number == job.attempts_started:
+                        current_attempt = attempt
+                    else:
+                        raise InvocationIntegrityError(
+                            "invocation attempt history exceeds attempts_started"
+                        )
+            finally:
+                cursor.close()
             self._validate_recovery_snapshot(
                 job,
                 current_attempt,
                 attempt_count=attempt_count,
-                distinct_attempt_count=distinct_attempt_count,
-                distinct_epoch_count=distinct_epoch_count,
-                minimum_attempt_number=minimum_attempt_number,
-                maximum_attempt_number=maximum_attempt_number,
-                maximum_lease_epoch=maximum_lease_epoch,
             )
             return InvocationRecoverySnapshot(job, current_attempt, attempt_count)
 
