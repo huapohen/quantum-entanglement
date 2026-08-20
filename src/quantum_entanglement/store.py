@@ -970,14 +970,18 @@ class SQLiteEventStore:
             position = cursor
             for _index in range(page_limit):
                 with self._lock:
-                    row = self._connection.execute(
+                    query = self._connection.execute(
                         """
                         SELECT * FROM events
                         WHERE global_position > ?
                         ORDER BY global_position LIMIT 1
                         """,
                         (position,),
-                    ).fetchone()
+                    )
+                    try:
+                        row = query.fetchone()
+                    finally:
+                        query.close()
                 if row is None:
                     return
                 item = self._row_to_event(row)
