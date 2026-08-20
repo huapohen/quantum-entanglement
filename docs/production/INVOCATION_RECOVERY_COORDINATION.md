@@ -203,7 +203,8 @@ non-running job, and job/attempt causal timestamps that move backward or collaps
 lease to zero duration. A fresh zero-attempt job cannot carry `last_error`; failed or expired
 attempt errors must be present and exactly match the current queued/failed job, while running or
 succeeded attempts cannot carry an error. The claim and recovery APIs therefore cannot normalize
-contradictory restored state or silently discard a prior-effect warning.
+contradictory restored state or silently discard a prior-effect warning. An attempted queued job
+must retain attempt budget, while a failed job must have consumed exactly its configured maximum.
 
 The attempt-store write boundary shares the coordinator's 4,096-byte identity/worker and
 16,384-byte result-reference limits and rejects C0/DEL control characters before opening a
