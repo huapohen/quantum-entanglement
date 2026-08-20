@@ -60,6 +60,11 @@ same composer.consume(operation, same context, exact request)
 future effect adapter boundary (not implemented in this slice)
 ```
 
+Before any composer or registry lock, state table, clock, provider, issuer, or authorizer is
+touched, the implementation verifies that the object still belongs to its creating
+process. A composer and its registry capture both the creator PID and a process epoch. A
+forked child receives a new epoch and cannot enter this call path with inherited objects.
+
 Authority is created only at the registry issuance step and only after every preceding
 check succeeds. The provider state and authorizer decision remain ordinary value objects.
 Direct construction, deserialization, subclassing, truthiness, or possession of those
@@ -182,7 +187,9 @@ live handle.
 - active handles have a hard configured capacity and dead/expired entries are pruned;
 - `retire` invalidates one handle and `close` invalidates all handles; and
 - successful `consume` reloads and reauthorizes current state, then compares and removes
-  the handle under the same registry lock.
+  the handle under the same registry lock; and
+- the composer and registry require the exact creator PID and fork epoch before touching
+  an inherited lock or registry record.
 
 The operation ID is a correlation value, not the authority. Reconstructing or replaying an
 ID cannot reconstruct the registered Python object. The registry uses object identity plus
@@ -196,7 +203,46 @@ trusted Python process can inspect private module state, monkey-patch classes, o
 reflection; Python privacy is not a sandbox. Untrusted plugins and effect workers require
 process isolation and a separately reviewed protocol.
 
-### 5.1 Important effect-atomicity limitation
+### 5.1 Fork, spawn, and prefork boundary
+
+POSIX `fork` copies Python memory, including an active handle, registry table, closed flag,
+clock high-water mark, and lock objects. Without an explicit process fence, the parent and
+child could each consume their private copy of one nominally one-time handle. This module
+therefore registers a lock-free `os.register_at_fork(after_in_child=...)` callback when the
+platform provides it. The callback replaces the module process epoch and records the child
+PID without acquiring any application lock. Every composer and registry public path that
+could reach a lock or authorization state compares both values first and returns
+`protected_operation_process_mismatch` on inheritance.
+
+Platforms without `register_at_fork`, or where hook registration is unavailable, use an
+independent safe fallback: every check samples `os.getpid()` and lazily replaces the module
+epoch when the PID differs. The inherited object still carries the parent PID and parent
+epoch, so it remains rejected. This fallback also covers a fork mechanism that bypasses
+Python's registered hook. The check intentionally requires no lock; a child therefore
+fails immediately even if another parent thread owned the composer or registry lock at the
+instant of fork.
+
+`spawn` and `forkserver` do not create a transfer mechanism. `AuthorizedOperation`,
+`ProtectedOperationComposer`, and the registry all reject copy, deep copy, and pickle, and
+real multiprocessing start attempts with any of them fail serialization. Do not add a
+custom reducer, manager proxy, inherited global, forkserver preload, or IPC wrapper for
+these objects.
+
+Prefork deployment has one mandatory construction order:
+
+1. The master process must not create an issuer, provider, authorizer, composer, context,
+   or handle for worker use.
+2. Fork workers first.
+3. Inside each worker, independently create the complete issuer/provider/authorizer/clock/
+   composer composition root and authenticate new request contexts.
+4. Drain and discard every worker-local handle before that worker exits or reloads.
+
+Creating only a new composer around a prefork-inherited issuer/provider is unsupported and
+must fail deployment review even though those adapters are outside this module's process
+fence. A forked child cannot "adopt," close, retire, or migrate inherited handles. The
+parent remains usable and retains its original one-time semantics.
+
+### 5.2 Important effect-atomicity limitation
 
 Fresh action-time authorization and one-time local consumption prevent use after an
 observed membership/revision/revocation change and prevent a second successful composer
@@ -281,7 +327,7 @@ not retry an irreversible effect without a new reviewed idempotency policy.
 | Current state | `protected_operation_state_unavailable`, `protected_operation_state_invalid`, `protected_operation_state_mismatch`, `protected_operation_identity_revision_stale`, `protected_operation_scope_revision_stale`, `protected_operation_state_time_invalid`, `protected_operation_state_stale` |
 | Policy | `protected_operation_authorizer_failed`, `protected_operation_decision_invalid`, `protected_operation_decision_time_invalid`, `protected_operation_denied` |
 | Handle | `protected_operation_untrusted`, `protected_operation_tampered`, `protected_operation_scope_mismatch`, `protected_operation_expired`, `protected_operation_expiry_invalid`, `protected_operation_capacity_exceeded` |
-| Lifecycle/time | `protected_operation_composer_closed`, `protected_operation_registry_closed`, `protected_operation_clock_unavailable`, `protected_operation_time_regressed` |
+| Lifecycle/time | `protected_operation_composer_closed`, `protected_operation_registry_closed`, `protected_operation_process_mismatch`, `protected_operation_clock_unavailable`, `protected_operation_time_regressed` |
 | Containment | `protected_operation_binding_invalid`, `protected_operation_id_unavailable`, `protected_operation_internal_failure` |
 
 Error strings, representations, logs, and metrics must not include tenant, workspace,
@@ -323,6 +369,12 @@ shutdown, stop admission and effects first, fence/drain callers, close the compo
 invalidate outstanding operations, then close the issuer. Recreating either object is an
 authorization reset and must not be used to bypass a clock or integrity alarm.
 
+For prefork or worker-reload hosts, perform that construction and shutdown sequence wholly
+inside each worker. Never initialize the composition root in a master and inherit it into
+workers. `protected_operation_process_mismatch` is a non-retryable local-object error:
+discard the inherited object and rebuild the entire composition root in the current
+process; never catch the code and retry the same handle.
+
 ## 9. Threat and residual-risk matrix
 
 | Threat | Implemented behavior | Residual requirement |
@@ -335,6 +387,7 @@ authorization reset and must not be used to bypass a clock or integrity alarm.
 | Same IDs collide across tenants | Tenant and workspace are part of issuance and consume scope | Tenant/workspace columns and predicates in every repository |
 | Handle is forged, copied, pickled, moved, or mutated | Exact local registry identity, copy/pickle rejection, snapshot quarantine | Process isolation against arbitrary trusted-host code |
 | Handle is replayed serially or concurrently | Successful consume atomically removes it; later consume fails | Durable distributed replay ledger for multi-process effects |
+| Parent and forked child each consume their copied handle | Creator PID plus at-fork process epoch reject the child before inherited locks/state; parent remains one-time | Construct the complete composition root independently inside each worker |
 | Context is replaced by a new context for the same actor | Exact context ID/principal/revision snapshot fails | Durable session/revocation semantics if cross-process is required |
 | Service clock rolls backward | Local high-water freezes within skew and fails beyond it | Trusted time monitoring and incident runbook |
 | Dependency throws a mutation-hostile `BaseException` or control-shaped secret | Raw exception attrs are never touched; non-control failures become stable denial; exact four-way control signals are replaced with fresh empty-argument signals | Cancellation/termination integration tests in the real service host |
@@ -348,6 +401,11 @@ This slice is additive. It adds one module and dedicated tests; it changes no sc
 runtime path, repository, connector, CLI, protocol, or package-root export. Existing direct
 callers continue to work but remain outside the protected composition and gain no new
 production claim.
+
+Rejecting a composer or registry outside its creator process is an intentional fail-closed
+compatibility tightening. Any prefork deployment that previously initialized these
+objects in its master must move construction into the worker. There is no compatibility
+mode for inherited handles.
 
 Rollback is code-only because no persistent state is written. Stop the candidate process,
 close composer/issuer instances, discard all outstanding process-local handles, and deploy
@@ -388,6 +446,12 @@ forgery, reflective tampering, copy/deepcopy/pickle, operation and composer life
 expiry, service-clock rollback, hard concurrent issuance capacity, serial replay,
 concurrent replay, action-time reauthorization, and exact one-time consumption.
 
+The suite also runs real POSIX-fork probes: parent/child double-consume, every inherited
+composer and registry public path, a fork while another thread owns both internal locks,
+and exact parent usability afterward. Actual `spawn` and `forkserver` process starts prove
+that handle, composer, and registry transfer is rejected. A separate fallback test proves
+PID drift refreshes the epoch when no at-fork callback is available.
+
 Test counts are observations, never promotion evidence. A release candidate must run the
 complete baseline in `RELEASE_GATES.md` on the exact clean source tree and retain the
 required evidence.
@@ -416,6 +480,8 @@ remains closed because at least these blockers remain:
    least privilege remain open.
 9. No retained clean-host, migration, fault-injection, performance, security-review, or
    promotion evidence covers this new boundary.
+10. Real prefork service integration has not yet proved worker-local construction,
+    graceful reload/drain, cancellation, and monitoring of process-mismatch failures.
 
 Until those items are closed with independently reviewable commits and exact evidence, the
 maximum permitted use remains local/offline development with synthetic data and fake,
