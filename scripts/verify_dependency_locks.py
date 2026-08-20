@@ -363,11 +363,19 @@ def _validate_pyproject(repository_root: Path, targets: Sequence[LockTarget]) ->
         roots_by_scope["build"].get(name) != version for name, version in build_requires.items()
     ):
         _fail("pyproject_lock_mismatch")
-    if dev_requires != roots_by_scope["dev"]:
+    if set(roots_by_scope["dev"]) != set(dev_requires) | {"pip", "setuptools"}:
+        _fail("pyproject_lock_mismatch")
+    if any(roots_by_scope["dev"].get(name) != version for name, version in dev_requires.items()):
         _fail("pyproject_lock_mismatch")
     if not set(roots_by_scope["build"].items()).issubset(set(roots_by_scope["release"].items())):
         _fail("pyproject_lock_mismatch")
     if "cyclonedx-bom" not in roots_by_scope["release"]:
+        _fail("pyproject_lock_mismatch")
+    installer_versions = {roots_by_scope[scope].get("pip") for scope in ("build", "dev", "release")}
+    if None in installer_versions or len(installer_versions) != 1:
+        _fail("pyproject_lock_mismatch")
+    backend_version = build_requires.get("setuptools")
+    if backend_version is None or roots_by_scope["dev"].get("setuptools") != backend_version:
         _fail("pyproject_lock_mismatch")
 
 
