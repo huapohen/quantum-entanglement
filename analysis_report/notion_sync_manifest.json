@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 1,
-  "syncedAt": "2026-08-20T07:53:44+08:00",
+  "syncedAt": "2026-08-20T23:03:36+08:00",
   "syncPolicy": {
     "localSourceOfTruth": "analysis_report/",
     "remoteRepresentation": "semantic-mirror",
@@ -19,10 +19,16 @@
     }
   },
   "sourceControl": {
-    "manifestPreparedFromCommit": "132493adfac8bdb286875b69b4249c9efbc75f95",
-    "manifestPreparedFromTree": "dd61a2f64122b94f90cd6e54858a1154be2aba61",
+    "manifestPreparedFromCommit": "31dbdbf49473baa24827dea95128b94d070c4d1a",
+    "manifestPreparedFromTree": "d5a97a6da6008176d6e7f5e44956094a8b1fe807",
     "implementationEvidenceCommit": "e4cbf040579bf1f33c2b7692d2fbd6944d837952",
     "implementationEvidenceTree": "0a879ae5351bdc3747a00cf4277ee6460df62d15",
+    "authenticatedTransactionEvidenceCommit": "4538159b032d20f55d4f3bf1757589e5310fe701",
+    "authenticatedTransactionEvidenceTree": "219fc66c8768a3a3c3508a52d6fe17bc07fb77c6",
+    "canonicalTransactionEvidenceCommit": "206acc1a93c16fe07fde4428d4d7e3b63c69ecc7",
+    "canonicalTransactionEvidenceTree": "783d44b57d96f3837dacbe2690da8bbdd003b32d",
+    "canonicalIntegrationCandidateCommit": "8d82dd7e672d94e64c00cf8f31d6aba943d1dca7",
+    "canonicalIntegrationCandidateTree": "094342b4d76741457420c1c556fe0a227ced00a6",
     "previousVerifiedResearchSyncCommit": "8bf1522"
   },
   "pages": [
@@ -33,7 +39,7 @@
       "localFiles": [
         {
           "path": "analysis_report/README.md",
-          "sha256": "6a534f25c3bccaf205d03f9058fdbe5d247f3a20c57e6e2fba0f6f4cdf5cbf76"
+          "sha256": "93c9b8da6fc9c4f07a528027a5e064c718adef0a2a6b00acbced83ccd555f310"
         }
       ],
       "updateMode": "targeted-preserve-child-pages-and-database",
@@ -41,8 +47,10 @@
         "verified": true,
         "assertions": [
           "contains-07-page-mention",
-          "contains-531-test-baseline",
-          "contains-full-implementation-commit"
+          "contains-10-page-mention",
+          "contains-206acc1-release-evidence",
+          "contains-8d82dd7-integration-candidate",
+          "contains-5-of-5-gate-summary"
         ]
       }
     },
@@ -53,10 +61,10 @@
       "localFiles": [
         {
           "path": "analysis_report/multi_agent_collaboration_report.md",
-          "sha256": "41e2389b03cf957136e873b407349ba7ac352265955bb835f798abf095e919a0"
+          "sha256": "3f5fc0101bf40354dea5879af49f9e9392082673badd74456b245ef2a85aa6ed"
         }
       ],
-      "updateMode": "full-semantic-mirror",
+      "updateMode": "targeted-historical-baseline-correction",
       "readback": {
         "verified": true,
         "notionTableCount": 10,
@@ -64,6 +72,8 @@
           "contains-531-test-baseline",
           "contains-full-implementation-commit",
           "contains-07-page-mention",
+          "contains-10-page-mention",
+          "marks-531-test-baseline-as-historical",
           "contains-pi-correction",
           "contains-raft-rename",
           "contains-gotaa-historical-status"
@@ -194,17 +204,48 @@
       "localFiles": [
         {
           "path": "analysis_report/research/07_current_implementation_status.md",
-          "sha256": "a6a8c6218681f7abd414848bfeedd15ea2967d8cb33010e400abc14f20d527f9"
+          "sha256": "7270224ec07dbb856ed2dc4c004a51a0b67b821fe43bc7099a1701e9289518b1"
         }
       ],
-      "updateMode": "created-from-local-semantic-mirror",
+      "updateMode": "targeted-append-transaction-evidence",
       "readback": {
         "verified": true,
         "notionTableCount": 4,
         "assertions": [
           "contains-531-test-baseline",
           "contains-full-implementation-commit",
-          "contains-report-page-mention"
+          "contains-report-page-mention",
+          "contains-4538159-transaction-evidence",
+          "contains-10-page-mention",
+          "contains-884-test-evidence"
+        ]
+      }
+    },
+    {
+      "key": "research-10",
+      "pageId": "3c2ead4b-996e-8105-b0ca-d304ef28dd38",
+      "url": "https://app.notion.com/p/3c2ead4b996e8105b0cad304ef28dd38?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/10_authenticated_invocation_transaction_evidence.md",
+          "sha256": "f788de58e39e01b5801feed9861a4d380ce5b4663c825a7f0e01e2fec9fc674f"
+        },
+        {
+          "path": "analysis_report/research/13_206acc1_transaction_release_evidence.md",
+          "sha256": "9612e9abcda843113b88310289e83ea37c8c87b81205d206cacc49420360f3df"
+        }
+      ],
+      "updateMode": "created-then-targeted-append-release-evidence",
+      "readback": {
+        "verified": true,
+        "notionTableCount": 2,
+        "assertions": [
+          "contains-4538159-transaction-evidence",
+          "contains-206acc1-release-evidence",
+          "contains-8d82dd7-integration-candidate",
+          "contains-5-of-5-gate-summary",
+          "contains-release-evidence-sha256",
+          "contains-project-home-and-07-page-mentions"
         ]
       }
     },
@@ -215,30 +256,32 @@
       "localFiles": [
         {
           "path": "analysis_report/screenshots/README.md",
-          "sha256": "bc6f7def8448cf25ae691428df2e6c2d07636df3ad37c55c20c26d2b9ea59bfb"
+          "sha256": "1c699edb64ad839ea793ce618e459b05b584b45ca9ae1a9bec9bd074f714ebfc"
         },
         {
           "path": "analysis_report/screenshots/manifest.json",
-          "sha256": "4fbaad11ce373c60562419dc4b1c8693e360d6561df694fe58755a63e7d68280"
+          "sha256": "822cc5a62fb7a7da7b36067d3292cd0d956401097f01eefd903bb43cf870f7be"
         }
       ],
-      "updateMode": "targeted-prepend-preserve-images",
+      "updateMode": "targeted-metadata-refresh-preserve-images",
       "readback": {
         "verified": true,
         "imageCount": 10,
         "assertions": [
           "contains-restricted-internal-classification",
           "contains-unredacted-original-warning",
-          "contains-manifest-sha256"
+          "contains-schema-v2-manifest-sha256",
+          "contains-null-capture-date-policy",
+          "contains-first-archived-at-upper-bound"
         ]
       }
     }
   ],
   "verificationSummary": {
-    "pageCount": 11,
+    "pageCount": 12,
     "updatedOrCreatedThisSync": 5,
-    "unchangedSincePreviousVerifiedSync": 6,
-    "readbackVerified": 11,
+    "unchangedSincePreviousVerifiedSync": 7,
+    "readbackVerified": 12,
     "screenshotImageCountPreserved": 10,
     "temporarySignedImageUrlsRecorded": false,
     "secretsRecorded": false
