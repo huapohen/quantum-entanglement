@@ -108,6 +108,8 @@ write transaction. Time spent waiting for SQLite ownership therefore cannot be h
 stale pre-lock timestamp. Inputs use strict RFC 3339 syntax and are normalized to UTC with
 microsecond precision. A positive lease duration that rounds to the same durable timestamp is
 rejected before mutation; every accepted lease deadline is strictly later than its heartbeat.
+A syntactically valid offset timestamp whose UTC conversion would underflow year 1 or overflow
+year 9999 raises a stable `ValueError`; clock and retry mutations roll back without a write.
 A duration too large for floating-point conversion, `timedelta`, or the supported `datetime`
 range raises the same stable `ValueError`. Claim and heartbeat perform no durable write on that
 path; validation after taking the SQLite write lock rolls the transaction back in full.
