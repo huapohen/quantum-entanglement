@@ -22,11 +22,12 @@ Artifact references are attached only after that validation succeeds. The
 `ArtifactLedger` has its own startup replay contract; it is not made atomic with
 session recovery or task-result publication by this slice. See
 `ARTIFACT_LEDGER_REPLAY.md` for its independent streaming, cumulative-budget, and
-write-admission boundary. In the integrated
-ledger, an artifact append uses global-position CAS against the observed ledger
-position and can reconcile only the exact idempotency point and event at the
-uniquely expected next position if an append wrapper raises after commit. A
-pre-commit failure never publishes the candidate artifact to the live ledger.
+write-admission boundary. The earlier foundation profile used expected
+session-stream sequence; the current integrated ledger preserves its stronger
+global-position CAS and exact idempotency lookup. It reconciles only the exact event
+at the uniquely expected next global position if an append wrapper raises after
+commit. A pre-commit failure never publishes the candidate artifact to the live
+ledger.
 
 ## Bounded page source
 
