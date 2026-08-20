@@ -2,7 +2,14 @@
   "schema_version": 1,
   "source": "notion",
   "destination": "yuque_private_space",
-  "sync_status": "blocked_before_destination_write",
+  "sync_status": "awaiting_action_time_confirmation",
+  "yuque_repository": {
+    "name": "Quantum Entanglement｜人 + 多 Agent 协同办公",
+    "repo": "huapohen/rmqgc7",
+    "url": "https://www.yuque.com/huapohen/rmqgc7",
+    "visibility_verified": "private",
+    "visibility_evidence": "当前知识库为私密，仅自己和协作者可访问"
+  },
   "discovered_at": "2026-08-20T17:24:38+08:00",
   "known_object_count": 32,
   "page_or_database_count": 13,
@@ -28,7 +35,6 @@
     "representation": "pending Yuque table/document mirror"
   },
   "blockers": [
-    "The user-specified Chrome browser is not connected to Codex.",
-    "Yuque login state and private visibility cannot be verified until Chrome is connected."
+    "Browser safety action-time confirmation is required before transmitting private Notion content."
   ]
 }
