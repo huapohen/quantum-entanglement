@@ -306,6 +306,21 @@ class DependencyRiskVerifierTests(unittest.TestCase):
         self.assertNotIn(b"security-team", output)
         self.assertNotIn(b"RISK-2026-001", output)
 
+    def test_one_waiver_cannot_be_reused_for_two_denials(self):
+        policy, result, context = self.exception_case()
+        finding = result.components[1].vulnerabilities[0]
+        duplicated = replace(
+            result,
+            components=(
+                result.components[0],
+                replace(result.components[1], vulnerabilities=(finding, finding)),
+            ),
+        )
+        self.assert_code(
+            "risk_exception_reused",
+            lambda: self.verify(policy, duplicated, context),
+        )
+
     def test_expired_mismatched_and_unused_waivers_fail_closed(self):
         policy, result, context = self.exception_case(expires_at="2026-08-20T12:30:00Z")
         self.assert_code("risk_exception_expired", lambda: self.verify(policy, result, context))
