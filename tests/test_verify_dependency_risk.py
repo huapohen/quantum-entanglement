@@ -3,8 +3,10 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
+import scripts.dependency_risk as risk
 import scripts.verify_dependency_risk as risk_cli
 from scripts.dependency_risk import (
     DependencyRiskError,
@@ -83,6 +85,7 @@ class DependencyRiskVerifierTests(unittest.TestCase):
                 )
                 for component in result.components
             ),
+            promotion_policy_sha256=result.promotion_policy_sha256,
         )
 
     @classmethod
@@ -149,6 +152,10 @@ class DependencyRiskVerifierTests(unittest.TestCase):
                     sboms=(replace(context.sboms[0], sha256="c" * 64), context.sboms[1]),
                 ),
             ),
+            (
+                "risk_policy_drift",
+                replace(context, promotion_policy_sha256="c" * 64),
+            ),
         )
         for code, changed_context in cases:
             with self.subTest(code=code):
@@ -156,6 +163,49 @@ class DependencyRiskVerifierTests(unittest.TestCase):
                     code,
                     lambda value=changed_context: self.verify(policy, result, value),
                 )
+
+    def test_policy_change_during_context_collection_fails_closed(self):
+        _, result, expected = self.case()
+        repository_root = Path("/repository")
+        manifest_path = Path("/outside/manifest.json")
+        policy_values = iter((b"first canonical policy\n", b"changed canonical policy\n"))
+
+        def read_regular(path, _limit, _code):
+            if path == manifest_path:
+                return b"canonical manifest\n"
+            if path == repository_root / risk.DEFAULT_POLICY_PATH:
+                return next(policy_values)
+            raise AssertionError("unexpected evidence path")
+
+        documents = {
+            "quantum-entanglement-runtime.cdx.json": b"runtime\n",
+            "quantum-entanglement-build.cdx.json": b"build\n",
+        }
+        manifest = {
+            "project": {"name": result.project_name, "version": result.project_version},
+            "source": {"commitSha": result.commit_sha, "treeSha": result.tree_sha},
+        }
+        with (
+            patch.object(risk, "verify_distribution_manifest_file"),
+            patch.object(risk, "_read_regular", side_effect=read_regular),
+            patch.object(risk, "load_distribution_manifest", return_value=manifest),
+            patch.object(risk, "verify_dependency_locks", return_value=()),
+            patch.object(risk, "generate_sbom_documents", return_value=documents),
+            patch.object(risk, "verify_sbom_directory", return_value=documents),
+            patch.object(risk, "_manifest_artifacts", return_value=expected.artifacts),
+            patch.object(risk, "_lock_inventory", return_value=expected.lock_inventory),
+            patch.object(risk, "_expected_components", return_value=expected.components),
+        ):
+            self.assert_code(
+                "risk_source_evidence_changed",
+                lambda: risk.collect_risk_evidence_context(
+                    repository_root,
+                    Path("/outside/dist"),
+                    manifest_path,
+                    Path("/outside/sbom"),
+                    expected_commit=result.commit_sha,
+                ),
+            )
 
     def test_missing_component_and_same_purl_different_version_fail_coverage(self):
         policy, original, context = self.case()

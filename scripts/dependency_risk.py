@@ -1357,6 +1357,7 @@ class RiskEvidenceContext:
     lock_inventory: LockInventoryBinding
     sboms: tuple[SbomBinding, ...]
     components: tuple[ExpectedComponent, ...]
+    promotion_policy_sha256: str
 
 
 @dataclass(frozen=True)
@@ -1524,6 +1525,11 @@ def collect_risk_evidence_context(
         )
         manifest = load_distribution_manifest(distribution_manifest)
         targets = verify_dependency_locks(repository_root)
+        policy_bytes = _read_regular(
+            repository_root / DEFAULT_POLICY_PATH,
+            _MAX_POLICY_BYTES,
+            "risk_policy_file_invalid",
+        )
         documents = generate_sbom_documents(repository_root, manifest, targets)
         verified_documents = verify_sbom_directory(
             sbom_directory, documents, repository_root=repository_root
@@ -1566,6 +1572,7 @@ def collect_risk_evidence_context(
         lock_inventory=_lock_inventory(repository_root, targets),
         sboms=sboms,
         components=_expected_components(documents, artifacts),
+        promotion_policy_sha256=sha256_bytes(policy_bytes),
     )
 
     try:
@@ -1583,6 +1590,12 @@ def collect_risk_evidence_context(
             )
             != manifest_bytes
             or verify_dependency_locks(repository_root) != targets
+            or _read_regular(
+                repository_root / DEFAULT_POLICY_PATH,
+                _MAX_POLICY_BYTES,
+                "risk_policy_file_invalid",
+            )
+            != policy_bytes
         ):
             _fail("risk_source_evidence_changed")
         verify_sbom_directory(sbom_directory, documents, repository_root=repository_root)
@@ -1639,6 +1652,8 @@ def _context_matches(result: DependencyRiskResult, context: RiskEvidenceContext)
         _fail("risk_lock_drift")
     if result.sboms != context.sboms:
         _fail("risk_sbom_drift")
+    if result.promotion_policy_sha256 != context.promotion_policy_sha256:
+        _fail("risk_policy_drift")
 
 
 def _approved_identity(policy: DependencyRiskPolicy, result: DependencyRiskResult) -> None:
