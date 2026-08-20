@@ -177,6 +177,13 @@ owner, token digest, heartbeat, lease deadline, terminal status, and result refe
 Concurrent WAL writers may advance the live job while this read is in progress, but every row
 returned to the coordinator comes from the same pre-advance database snapshot.
 
+A job with zero attempts must also have lease epoch zero. A nonzero epoch with no history is
+partial-restore or tampering evidence, not proof that the invocation is fresh. The persisted
+job decoder and recovery snapshot reject it, while first-claim selection and its final CAS both
+require epoch zero as defense in depth. The same decoder rejects running or succeeded/failed
+jobs without an attempt, non-succeeded jobs with `result_ref`, and job update/finish timestamps
+that precede creation, so the claim API cannot normalize contradictory restored state.
+
 ## Pure decision API
 
 `invocation_recovery.assess_invocation_recovery` implements the corrected matrix without a

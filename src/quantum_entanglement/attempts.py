@@ -432,8 +432,8 @@ class SQLiteInvocationAttemptStore:
                 maximum=max_attempts,
             )
             lease_epoch = _persisted_integer(row["lease_epoch"], "invocation lease_epoch")
-            if lease_epoch < attempts_started:
-                raise ValueError("persisted invocation lease_epoch precedes attempts_started")
+            if lease_epoch < attempts_started or (attempts_started == 0 and lease_epoch != 0):
+                raise ValueError("persisted invocation lease_epoch contradicts attempts_started")
 
             lease_owner = _persisted_optional_text(row["lease_owner"], "invocation lease_owner")
             raw_lease_digest = row["lease_token_digest"]
@@ -456,6 +456,8 @@ class SQLiteInvocationAttemptStore:
             )
             if (status is InvocationStatus.RUNNING) != running_lease:
                 raise ValueError("persisted invocation lease fields contradict status")
+            if status is InvocationStatus.RUNNING and attempts_started == 0:
+                raise ValueError("persisted running invocation has no started attempt")
 
             finished_at = _persisted_optional_timestamp(
                 row["finished_at"], "invocation finished_at"
@@ -467,10 +469,27 @@ class SQLiteInvocationAttemptStore:
             }
             if is_terminal != (finished_at is not None):
                 raise ValueError("persisted invocation finished_at contradicts status")
+            if status in {InvocationStatus.SUCCEEDED, InvocationStatus.FAILED} and (
+                attempts_started == 0
+            ):
+                raise ValueError("persisted terminal invocation has no started attempt")
 
             last_error = _persisted_optional_text(row["last_error"], "invocation last_error")
             if last_error is not None and len(last_error) > _MAX_ERROR_LENGTH:
                 raise ValueError("persisted invocation last_error exceeds its supported length")
+            requested_available_at = _persisted_optional_timestamp(
+                row["requested_available_at"], "invocation requested_available_at"
+            )
+            available_at = _persisted_timestamp(row["available_at"], "invocation available_at")
+            created_at = _persisted_timestamp(row["created_at"], "invocation created_at")
+            updated_at = _persisted_timestamp(row["updated_at"], "invocation updated_at")
+            if updated_at < created_at:
+                raise ValueError("persisted invocation updated_at precedes creation")
+            if finished_at is not None and finished_at < created_at:
+                raise ValueError("persisted invocation finished_at precedes creation")
+            result_ref = _persisted_optional_text(row["result_ref"], "invocation result_ref")
+            if result_ref is not None and status is not InvocationStatus.SUCCEEDED:
+                raise ValueError("persisted non-succeeded invocation carries a result_ref")
             return InvocationJob(
                 invocation_id=_persisted_text(row["invocation_id"], "invocation_id"),
                 session_id=_persisted_text(row["session_id"], "invocation session_id"),
@@ -488,17 +507,15 @@ class SQLiteInvocationAttemptStore:
                 max_attempts=max_attempts,
                 attempts_started=attempts_started,
                 lease_epoch=lease_epoch,
-                requested_available_at=_persisted_optional_timestamp(
-                    row["requested_available_at"], "invocation requested_available_at"
-                ),
-                available_at=_persisted_timestamp(row["available_at"], "invocation available_at"),
-                created_at=_persisted_timestamp(row["created_at"], "invocation created_at"),
-                updated_at=_persisted_timestamp(row["updated_at"], "invocation updated_at"),
+                requested_available_at=requested_available_at,
+                available_at=available_at,
+                created_at=created_at,
+                updated_at=updated_at,
                 lease_owner=lease_owner,
                 lease_token_digest=lease_digest,
                 lease_expires_at=lease_expires_at,
                 heartbeat_at=heartbeat_at,
-                result_ref=_persisted_optional_text(row["result_ref"], "invocation result_ref"),
+                result_ref=result_ref,
                 last_error=last_error,
                 finished_at=finished_at,
             )
@@ -669,6 +686,8 @@ class SQLiteInvocationAttemptStore:
                 "invocation attempt count does not match attempts_started"
             )
         if attempt_count == 0:
+            if job.lease_epoch != 0:
+                raise InvocationIntegrityError("zero-attempt invocation has a nonzero lease epoch")
             if current_attempt is not None:
                 raise InvocationIntegrityError("zero-attempt invocation has attempt history")
             return
@@ -1012,21 +1031,35 @@ class SQLiteInvocationAttemptStore:
                 limit=(None if invocation_id is not None else 1_000),
             )
             parameters = [normalized_now]
-            where = "status = 'queued' AND attempts_started = 0 AND available_at <= ?"
+            candidate_where = "status = 'queued' AND attempts_started = 0 AND available_at <= ?"
             if invocation_id is not None:
-                where += " AND invocation_id = ?"
+                candidate_where += " AND invocation_id = ?"
                 parameters.append(invocation_id)
+            candidate_row = connection.execute(
+                f"""
+                SELECT * FROM invocation_jobs WHERE {candidate_where}
+                ORDER BY priority DESC, available_at, created_at, invocation_id
+                LIMIT 1
+                """,
+                tuple(parameters),
+            ).fetchone()
+            if candidate_row is None:
+                return None
+            candidate = self._row_to_job(candidate_row)
+            claimable_where = candidate_where + " AND lease_epoch = 0 AND result_ref IS NULL"
             row = connection.execute(
                 f"""
-                SELECT * FROM invocation_jobs WHERE {where}
+                SELECT * FROM invocation_jobs WHERE {claimable_where}
                 ORDER BY priority DESC, available_at, created_at, invocation_id
                 LIMIT 1
                 """,
                 tuple(parameters),
             ).fetchone()
             if row is None:
-                return None
+                raise InvocationIntegrityError("first-claim candidate changed after validation")
             job = self._row_to_job(row)
+            if job != candidate:
+                raise InvocationIntegrityError("first-claim candidate changed after validation")
             attempt_number = job.attempts_started + 1
             if attempt_number > job.max_attempts:
                 raise RuntimeError("queued invocation exceeded max_attempts invariant")
@@ -1043,7 +1076,7 @@ class SQLiteInvocationAttemptStore:
                     lease_owner = ?, lease_token_digest = ?, lease_expires_at = ?,
                     heartbeat_at = ?, updated_at = ?, finished_at = NULL
                 WHERE invocation_id = ? AND status = 'queued'
-                  AND attempts_started = 0 AND lease_epoch = ?
+                  AND attempts_started = 0 AND lease_epoch = 0 AND result_ref IS NULL
                 """,
                 (
                     attempt_number,
@@ -1054,7 +1087,6 @@ class SQLiteInvocationAttemptStore:
                     normalized_now,
                     normalized_now,
                     job.invocation_id,
-                    job.lease_epoch,
                 ),
             )
             if update.rowcount != 1:

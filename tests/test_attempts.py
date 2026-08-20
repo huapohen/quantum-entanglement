@@ -447,6 +447,72 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get("invocation-1").attempts_started, 1)
         self.assertEqual(len(self.store.attempts("invocation-1")), 1)
 
+    def test_orphan_lease_epoch_cannot_be_observed_or_claimed_as_first_attempt(self):
+        self.store.enqueue(job_spec())
+        self.store._connection.execute(
+            "UPDATE invocation_jobs SET lease_epoch = 1 WHERE invocation_id = ?",
+            ("invocation-1",),
+        )
+        before = tuple(self.store._connection.iterdump())
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.get("invocation-1")
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        self.assertEqual(tuple(self.store._connection.iterdump()), before)
+        self.assertEqual(len(self.store.attempts("invocation-1")), 0)
+
+    def test_non_succeeded_result_reference_cannot_cross_first_claim(self):
+        self.store.enqueue(job_spec())
+        self.store._connection.execute(
+            "UPDATE invocation_jobs SET result_ref = ? WHERE invocation_id = ?",
+            ("result:unexpected", "invocation-1"),
+        )
+        before = tuple(self.store._connection.iterdump())
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.get("invocation-1")
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        self.assertEqual(tuple(self.store._connection.iterdump()), before)
+        self.assertEqual(len(self.store.attempts("invocation-1")), 0)
+
+    def test_first_claim_cas_rejects_epoch_change_after_candidate_read(self):
+        self.store.enqueue(job_spec())
+        original = SQLiteInvocationAttemptStore._row_to_job
+        changed = False
+
+        def change_epoch_after_decode(row):
+            nonlocal changed
+            job = original(row)
+            if not changed:
+                changed = True
+                self.store._connection.execute(
+                    "UPDATE invocation_jobs SET lease_epoch = 1 WHERE invocation_id = ?",
+                    ("invocation-1",),
+                )
+            return job
+
+        with patch.object(
+            SQLiteInvocationAttemptStore,
+            "_row_to_job",
+            side_effect=change_epoch_after_decode,
+        ):
+            with self.assertRaisesRegex(InvocationIntegrityError, "candidate changed"):
+                self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        self.assertTrue(changed)
+        self.assertEqual(len(self.store.attempts("invocation-1")), 0)
+        raw = self.store._connection.execute(
+            "SELECT attempts_started, lease_epoch FROM invocation_jobs WHERE invocation_id = ?",
+            ("invocation-1",),
+        ).fetchone()
+        self.assertEqual(tuple(raw), (0, 0))
+
     def test_crashed_final_attempt_is_terminally_exhausted(self):
         self.store.enqueue(job_spec(max_attempts=1))
         lease = self.store.claim("invocation-1", "worker-a", lease_seconds=5)
@@ -517,6 +583,48 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                         "invocation-1",
                     ),
                 )
+
+    def test_persisted_job_cross_field_semantics_fail_closed(self):
+        self.store.enqueue(job_spec())
+        self.store._connection.execute(
+            "UPDATE invocation_jobs SET updated_at = ? WHERE invocation_id = ?",
+            ("2026-08-19T23:59:59.000000Z", "invocation-1"),
+        )
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.get("invocation-1")
+        self.store._connection.execute(
+            "UPDATE invocation_jobs SET updated_at = ? WHERE invocation_id = ?",
+            (persisted_timestamp(0), "invocation-1"),
+        )
+
+        self.store._connection.execute(
+            """
+            UPDATE invocation_jobs SET status = 'failed', finished_at = ?
+            WHERE invocation_id = ?
+            """,
+            (persisted_timestamp(0), "invocation-1"),
+        )
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.get("invocation-1")
+        self.store._connection.execute(
+            """
+            UPDATE invocation_jobs SET status = 'queued', finished_at = NULL
+            WHERE invocation_id = ?
+            """,
+            ("invocation-1",),
+        )
+
+        self.store._connection.execute(
+            """
+            UPDATE invocation_jobs
+            SET status = 'running', lease_owner = 'worker', lease_token_digest = ?,
+                lease_expires_at = ?, heartbeat_at = ?
+            WHERE invocation_id = ?
+            """,
+            ("0" * 64, persisted_timestamp(10), persisted_timestamp(0), "invocation-1"),
+        )
+        with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+            self.store.get("invocation-1")
 
     def test_persisted_attempt_types_fail_with_stable_integrity_error(self):
         self.store.enqueue(job_spec())
