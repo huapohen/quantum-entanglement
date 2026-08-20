@@ -14,13 +14,14 @@ process-bound 迁移。当前类有 26 个公开/生命周期入口、一个可�
 安全接入至少需要同时完成：
 
 1. 每个普通 public entry 的统一 pre-input/pre-lock guard；
-2. iterable/callback 执行后的二次 guard；
-3. `_transaction` 在 BEGIN、exception cleanup、COMMIT 前的 current-owner 检查；
-4. `stream_all_page` 在 context enter 和每次 iterator resume 时重新检查；
-5. mismatch 的 clean rethrow，最终异常 traceback locals 不可达 store/connection/lock/caller；
-6. child 拒绝后 parent transaction、connection、lock、lease 和 iterator 全部连续可用；
-7. 同一数据库文件的 fresh child connection contention/CAS 证明；
-8. worker 拓扑仍坚持 fork/spawn 完成后再构造 connection，guard 不是继承 connection 的许可。
+2. 每个 SQL-bound caller value 在 lock/connection 外 exact-normalize，转换后再次 guard；
+3. iterable/callback 执行后的二次 guard；
+4. `_transaction` 在 BEGIN、exception cleanup、COMMIT 前的 current-owner 检查；
+5. `stream_all_page` 在 context enter 和每次 iterator resume 时重新检查；
+6. mismatch 的 clean rethrow，最终异常 traceback locals 不可达 store/connection/lock/caller；
+7. child 拒绝后 parent transaction、connection、lock、lease 和 iterator 全部连续可用；
+8. 同一数据库文件的 fresh child connection contention/CAS 证明；
+9. worker 拓扑仍坚持 fork/spawn 完成后再构造 connection，guard 不是继承 connection 的许可。
 
 本报告只冻结设计与测试边界，不修改 store 行为，也不关闭任何 Gate。
 
@@ -42,6 +43,9 @@ process-bound 迁移。当前类有 26 个公开/生命周期入口、一个可�
 - “child 的一次 SELECT 成功”不等于 SQLite connection 可继承；
 - “错误文字不含 path/PID”不等于错误图安全；traceback frame locals 也必须审计；
 - “parent/child 都没有报错”不是正确性；child 必须拒绝 inherited instance；
+- Python SQLite 参数绑定会在 `Connection.execute()` 内调用 caller object 的
+  `__conform__(sqlite3.PrepareProtocol)` 或已注册 adapter；只在 execute 前 guard 不能保护仍含
+  raw caller object 的参数 tuple；
 - `fork()` 发生在另一个 parent 线程时，child 只保留调用 fork 的线程；原 store-call 线程不会在
   child 继续，但它持有的 RLock 状态会被复制；
 - signal handler 或任意指令间异步 fork 不属于 helper 可证明边界，部署合同必须禁止
@@ -79,31 +83,31 @@ fork 后的主要分叉：
 
 | 入口 | 当前首次危险触点 | 特殊 fork 缝隙 | 必需接入 |
 |---|---|---|---|
-| `stream_version` | 直接拿 `_lock` | fork while other thread holds lock | outer clean guard + pre-lock guard |
-| `get_idempotent_event` | input `.strip()` 后拿锁 | hostile string subclass；当前未 exact type 时可先执行 caller code | guard 必须早于 input access |
-| `append` | cursor validation 后 `_transaction` | transaction 内 event payload/fields | outer guard + transaction guards |
-| `append_with_outbox` | `tuple(messages)` | iterable 可 fork；transaction 内 payload/property reads | entry guard、tuple 后 guard、exact normalized batch |
-| `append_inbox` | caller `.strip()` | `result` truthiness/dict copy、`utc_now` 和 event encode 在 transaction 中 | pre-input guard、pre-normalize、transaction guards |
-| `append_many` | `tuple(events)` | iterable 可 fork；batch fields 在 transaction 中 | entry/tuple 后 guard、exact normalized batch |
-| `read_stream` | 直接拿锁 | unvalidated caller value | outer clean guard + pre-lock guard |
-| `read_stream_page` | input validation 后拿锁 | validation 当前可先运行 | entry guard + pre-lock guard |
-| `read_all` | 构造/进入 stream context | context manager body是 deferred execution | entry guard；依赖 stream 自身 resume guard |
+| `stream_version` | raw `stream_id` 在锁内传给 SQLite | 参数 adaptation 可执行 caller code | exact `str` snapshot → guard → lock/connection |
+| `get_idempotent_event` | input `.strip()` 后拿锁 | SQL tuple 仍必须只含 exact strings | entry guard、已有 exact validation 后 guard、再拿锁 |
+| `append` | cursor validation 后 `_transaction` | raw event fields/payload、expected values 在 transaction 内 | exact event/int/JSON snapshot → guard → transaction guards |
+| `append_with_outbox` | `tuple(messages)` | iterable 可 fork；raw event/message/payload/header/timestamp fields | materialize → exact event/message batch → guard → transaction |
+| `append_inbox` | caller `.strip()` | raw consumer/message/event/result/timestamp 与 `utc_now` | exact inbox/event/result snapshot → post-callback guard → transaction |
+| `append_many` | `tuple(events)` | iterable 与 event properties 可 fork；raw batch fields 在 transaction 中 | materialize → exact stream/event batch → guard → transaction |
+| `read_stream` | raw values 在锁内传给 SQLite | `stream_id`/`after_sequence` parameter adaptation | exact `str`/`int` snapshots → guard → lock/connection |
+| `read_stream_page` | input validation 后拿锁 | validated values 需在 PID drift 后才进入 SQL | exact validated snapshots → guard → lock/connection |
+| `read_all` | 构造/进入 stream context | context manager body是 deferred execution | entry guard；enter 内 exact cursor/limit → guard；依赖 resume guard |
 | `stream_all_page` call | 只返回 context manager | call-time guard 会在返回后失效 | 不能只装普通 method decorator |
-| `stream_all_page.__enter__` | cursor validation | fork between call and enter | enter-time guard |
-| returned event iterator `next()` | 拿锁并 query | fork after prior yield；child resume inherited closure | 每次 resume、每次拿锁前 guard |
-| `claim_outbox` | caller `.strip()` 后 transaction | store clock callback、`new_id`、lease CAS | entry guard、clock 前后、commit 前 guard |
-| `acknowledge_outbox` | transaction | store clock callback；timestamp normalize | entry/clock 后/commit 前 guard |
-| `reject_outbox` | caller truthiness/status 后 transaction | store clock callback | entry/clock 后/commit 前 guard |
-| `mark_outbox_ambiguous` | caller membership/digest/timestamp | trusted clock function可被替换；transaction mutation | entry guard、transaction pre-BEGIN/pre-COMMIT |
-| `read_outbox_ambiguities` | 直接拿锁 | `open_only` 当前可用 truthiness | entry guard + exact bool validation |
-| `read_outbox_ambiguities_page` | validation 后拿锁 | caller values先执行 | entry guard + pre-lock guard |
-| `resolve_outbox_ambiguity` | caller validation/clock 后 transaction | digest iterable expression、time normalization | entry guard + before transaction guard |
-| `get_outbox` | 直接拿锁 | unvalidated caller value | entry guard + pre-lock guard |
-| `read_outbox` | 直接拿锁 | status property inside lock | entry guard；exact enum validation应在 lock 前 |
-| `read_outbox_page` | validation 后拿锁 | status property inside SQL args | entry guard + pre-lock guard |
-| `get_inbox_receipt` | 直接拿锁 | caller values未 exact normalize | entry guard + pre-lock guard |
-| `save_snapshot` | transaction | JSON copy/encode 在 transaction 中 | entry guard、transaction 前 encode 或 execute 前再 guard |
-| `load_snapshot` | 直接拿锁 | persisted decode 在 lock 内 | entry/pre-lock guard；decode 可在 copied row 上 lock 外完成 |
+| `stream_all_page.__enter__` | cursor validation | fork between call and enter | exact cursor/limit snapshots → enter-time guard |
+| returned event iterator `next()` | 拿锁并 query | fork after prior yield；child resume inherited closure | 每次 resume guard；SQL 只用 internal exact position/limit |
+| `claim_outbox` | caller `.strip()` 后 transaction | raw worker/limit/lease、store clock、`new_id` | exact caller inputs → guard → BEGIN；clock/new ID 后 guard；commit 前 guard |
+| `acknowledge_outbox` | transaction | raw message/token、store clock、timestamp normalize | exact caller inputs → guard → BEGIN；clock/timestamp 后 guard；commit 前 guard |
+| `reject_outbox` | caller truthiness/status 后 transaction | raw message/token/error/bool/timestamp、store clock | exact caller inputs → guard → BEGIN；clock/timestamp 后 guard；commit 前 guard |
+| `mark_outbox_ambiguous` | caller membership/digest/timestamp | raw message/token/reason/timestamp、time callback | exact ambiguity snapshot/digest → guard → transaction guards |
+| `read_outbox_ambiguities` | 直接拿锁 | `open_only` 当前可用 truthiness | entry guard → exact bool snapshot → guard → lock |
+| `read_outbox_ambiguities_page` | validation 后拿锁 | cursor/bool/limit conversion先执行 | exact page snapshots → guard → lock/connection |
+| `resolve_outbox_ambiguity` | caller validation/clock 后 transaction | raw message/digest/resolution/timestamps | exact resolution snapshot → post-conversion guard → transaction |
+| `get_outbox` | raw `message_id` 在锁内传给 SQLite | parameter adaptation 可执行 caller code | exact `str` snapshot → guard → lock/connection |
+| `read_outbox` | 直接拿锁 | status property/SQL value inside lock | exact enum-to-string snapshot → guard → lock/connection |
+| `read_outbox_page` | validation 后拿锁 | status/cursor/limit SQL values | exact enum/string/int snapshots → guard → lock/connection |
+| `get_inbox_receipt` | raw IDs 在锁内传给 SQLite | consumer/message parameter adaptation | exact string snapshots → guard → lock/connection |
+| `save_snapshot` | transaction | raw stream/sequence/time 与 JSON copy/encode | exact IDs/int/time + encoded JSON snapshot → guard → transaction |
+| `load_snapshot` | raw `stream_id` 在锁内传给 SQLite | parameter adaptation；persisted decode 在 lock 内 | exact string → guard → query；copied row 在 lock 外 decode |
 | `close` / `__enter__` / `__exit__` | lock/connection 或直接 return | child close 绝不能 best-effort；exit 不能静默 | 全部同一 stable mismatch + parent continuity |
 
 `__init__` 不是 inherited-instance public call，但仍是 process topology boundary：owner 应在任何
@@ -135,9 +139,36 @@ guard before COMMIT
 ```
 
 如果 transaction 中仍访问 caller-controlled property/mapping，必须先 exact-normalize 为内部 primitive
-snapshot，或在该访问之后、下一次 connection operation 之前重新 guard。
+snapshot；只在 property access 后、下一次 connection operation 前重新 guard 不足以保护仍会触发
+SQLite adaptation 的 raw object。
 
-### 4.2 Clock callback 在 open transaction 中 fork
+### 4.2 SQL parameter adaptation 在 connection 内执行
+
+DB-API 参数 tuple 不是被动数据。对非 exact SQLite primitive，`sqlite3` 可以在
+`Connection.execute()` 已经开始后调用 `value.__conform__(sqlite3.PrepareProtocol)` 或 process-global
+registered adapter。若 adapter 显式 fork，entry guard 和 pre-lock guard 都已经发生，child 会继续
+执行 inherited connection 的 bind/step，无法由 execute 返回后的 guard 补救。
+
+因此每个路径都必须先在 connection/lock 外完成：
+
+```text
+entry guard
+read/copy/validate caller object
+build a closed snapshot containing only exact None/bool/int/float/str/bytes values
+guard after the final conversion or callback
+acquire lock / BEGIN / execute using only that snapshot
+```
+
+`DomainEvent`、`OutboxMessage` 和 frozen dataclass 不是可信 snapshot；它们当前仍可包含 string subclass、
+自定义 mapping/value 或被构造时未 exact-check 的字段。event/message/inbox/outbox/snapshot 写路径必须
+深复制并验证所需字段，read path 的 ID/cursor/status 也必须先复制为 exact primitive。不能把 raw
+event、message、token、error、timestamp、snapshot state 或 enum-like object 放进 SQL 参数 tuple。
+
+exact built-in snapshot 阻止 caller object 自行参与 adaptation。process-global `sqlite3.register_adapter`
+仍是 trusted-host mutable state；生产 composition 必须禁止未审计 adapter 注册，不能把该全局状态
+误写成 process-owner helper 已验证的能力。
+
+### 4.3 Clock callback 在 open transaction 中 fork
 
 `claim_outbox`、ACK、NACK 有意在 `BEGIN IMMEDIATE` 后读取 store-owned clock，保证 lease CAS 使用
 锁后时间。但任意 injected clock 可能带自己的锁或显式 fork：
@@ -159,7 +190,7 @@ UPDATE ...
 `connection.in_transaction`，更不能 ROLLBACK inherited connection。parent 仍独立持有自己的
 transaction copy并继续原调用。
 
-### 4.3 Transaction exception cleanup
+### 4.4 Transaction exception cleanup
 
 当前 `_transaction` 对任意 `BaseException` 读取 `self._connection.in_transaction` 并可能 rollback。
 迁移后需要区分：
@@ -173,7 +204,7 @@ exception
 COMMIT 前也要重新证明 current owner。COMMIT 自身 driver error 的 current-process rollback 语义保持
 现状；process mismatch 不能被包装成 SQLite/rollback error。
 
-### 4.4 流式 context 与 iterator
+### 4.5 流式 context 与 iterator
 
 `@contextmanager` 函数调用时不运行 body。只给函数最外层加普通 decorator，最多能证明“返回
 context manager 的那一刻”，不能证明之后的 `__enter__`。
@@ -280,6 +311,8 @@ EventStoreLifecycleError
 - parent `BEGIN IMMEDIATE` 后由另一线程 fork，child 拒绝且不 inspect/rollback connection；
 - clock callback 内 fork，child 在 callback 后、第一次 SQL 前拒绝；parent commit exactly once；
 - input iterable 内 fork，child 在 materialization 后、BEGIN 前拒绝；
+- 每个 SQL path 用带 `__conform__`/adapter canary 的 hostile value 证明 callback 在 lock/connection 前
+  被拒绝，SQLite adapter 根本没有被调用；
 - transaction body business exception在 current process 仍 rollback 并保留原类型；
 - control signal与 cancellation 不被 mismatch wrapper 吞掉或改成成功退出。
 
