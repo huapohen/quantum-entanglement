@@ -994,6 +994,7 @@ class SQLiteInvocationAttemptStore:
         lease_epoch: int,
         worker_id: str,
         lease_token_digest: str,
+        heartbeat_at: str,
         lease_expires_at: str,
         attempt_id: Optional[str] = None,
     ) -> None:
@@ -1003,6 +1004,7 @@ class SQLiteInvocationAttemptStore:
             or attempt.lease_epoch != lease_epoch
             or attempt.worker_id != worker_id
             or attempt.lease_token_digest != lease_token_digest
+            or attempt.heartbeat_at != heartbeat_at
             or attempt.lease_expires_at != lease_expires_at
             or (attempt_id is not None and attempt.attempt_id != attempt_id)
         ):
@@ -1040,7 +1042,7 @@ class SQLiteInvocationAttemptStore:
             job_id = job.invocation_id
             epoch = job.lease_epoch
             attempt_number = job.attempts_started
-            if job.lease_owner is None or job.lease_expires_at is None:
+            if job.lease_owner is None or job.heartbeat_at is None or job.lease_expires_at is None:
                 raise InvocationIntegrityError("running invocation has incomplete lease ownership")
             attempt = self._load_running_attempt(
                 connection,
@@ -1057,6 +1059,7 @@ class SQLiteInvocationAttemptStore:
                 lease_token_digest=_persisted_digest(
                     row["lease_token_digest"], "invocation lease_token_digest"
                 ),
+                heartbeat_at=job.heartbeat_at,
                 lease_expires_at=job.lease_expires_at,
             )
             attempt_update = connection.execute(
@@ -1303,7 +1306,7 @@ class SQLiteInvocationAttemptStore:
             job = self._active_owned_row(connection, lease, normalized_now)
             if job is None:
                 return False
-            if job.lease_expires_at is None:  # protected by strict running-row decoding.
+            if job.heartbeat_at is None or job.lease_expires_at is None:
                 raise InvocationIntegrityError("running invocation has no lease deadline")
             attempt = self._load_running_attempt(
                 connection,
@@ -1319,6 +1322,7 @@ class SQLiteInvocationAttemptStore:
                 lease_epoch=lease.lease_epoch,
                 worker_id=lease.worker_id,
                 lease_token_digest=_lease_token_digest(lease.lease_token),
+                heartbeat_at=job.heartbeat_at,
                 lease_expires_at=job.lease_expires_at,
                 attempt_id=lease.attempt_id,
             )
@@ -1378,7 +1382,7 @@ class SQLiteInvocationAttemptStore:
             job = self._active_owned_row(connection, lease, normalized_now)
             if job is None:
                 return False
-            if job.lease_expires_at is None:
+            if job.heartbeat_at is None or job.lease_expires_at is None:
                 raise InvocationIntegrityError("running invocation has no lease deadline")
             attempt = self._load_running_attempt(
                 connection,
@@ -1394,6 +1398,7 @@ class SQLiteInvocationAttemptStore:
                 lease_epoch=lease.lease_epoch,
                 worker_id=lease.worker_id,
                 lease_token_digest=_lease_token_digest(lease.lease_token),
+                heartbeat_at=job.heartbeat_at,
                 lease_expires_at=job.lease_expires_at,
                 attempt_id=lease.attempt_id,
             )
@@ -1456,7 +1461,7 @@ class SQLiteInvocationAttemptStore:
             job = self._active_owned_row(connection, lease, normalized_now)
             if job is None:
                 return False
-            if job.lease_expires_at is None:
+            if job.heartbeat_at is None or job.lease_expires_at is None:
                 raise InvocationIntegrityError("running invocation has no lease deadline")
             attempt = self._load_running_attempt(
                 connection,
@@ -1472,6 +1477,7 @@ class SQLiteInvocationAttemptStore:
                 lease_epoch=lease.lease_epoch,
                 worker_id=lease.worker_id,
                 lease_token_digest=_lease_token_digest(lease.lease_token),
+                heartbeat_at=job.heartbeat_at,
                 lease_expires_at=job.lease_expires_at,
                 attempt_id=lease.attempt_id,
             )

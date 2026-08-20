@@ -962,6 +962,31 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             before_attempt,
         )
 
+    def test_owned_mutations_reject_attempt_heartbeat_drift_before_writing(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.store._connection.execute(
+            "UPDATE invocation_attempts SET heartbeat_at = ? WHERE invocation_id = ?",
+            (persisted_timestamp(1), "invocation-1"),
+        )
+        before = tuple(self.store._connection.iterdump())
+
+        operations = (
+            lambda: self.store.heartbeat(lease, lease_seconds=10),
+            lambda: self.store.complete(lease),
+            lambda: self.store.fail(lease, "must not persist"),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(InvocationIntegrityError, "ownership records disagree"):
+                    operation()
+
+        self.clock.set(timestamp(10))
+        with self.assertRaisesRegex(InvocationIntegrityError, "ownership records disagree"):
+            self.store.recover_expired()
+
+        self.assertEqual(tuple(self.store._connection.iterdump()), before)
+
     def test_recovery_rejects_missing_owned_attempt_without_partial_state_change(self):
         self.store.enqueue(job_spec())
         self.store.claim("invocation-1", "worker", lease_seconds=1)
