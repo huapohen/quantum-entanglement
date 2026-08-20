@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 import unittest
@@ -230,6 +231,47 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(plan.session_id, recovered._plans)
         self.assertNotIn(plan.session_id, recovered._graphs)
         recovered.event_store.close()
+
+    async def test_cancelled_in_process_run_is_quarantined_without_reinvocation(self):
+        calls = 0
+        started = asyncio.Event()
+
+        async def handler(invocation):
+            nonlocal calls
+            calls += 1
+            started.set()
+            await asyncio.Event().wait()
+            return AgentResult("must not complete")
+
+        plan = WorkflowPlan(
+            "recover-cancelled-running",
+            "取消后不可重复执行",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-cancelled-running",
+        )
+        kernel = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        kernel.register_agent(registration("worker", handler))
+        running = asyncio.create_task(kernel.run(plan))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        running.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await running
+
+        event_count = len(kernel.event_store.read_stream(f"session:{plan.session_id}"))
+        self.assertEqual(kernel._graphs[plan.session_id].statuses["task"], TaskStatus.RUNNING)
+        with self.assertRaisesRegex(
+            SessionRecoveryError,
+            "durably RUNNING task without supported invocation recovery evidence",
+        ):
+            await kernel.run(plan)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            len(kernel.event_store.read_stream(f"session:{plan.session_id}")),
+            event_count,
+        )
+        kernel.event_store.close()
 
     async def test_approval_and_dependency_artifact_survive_multiple_restarts(self):
         research_calls = 0
