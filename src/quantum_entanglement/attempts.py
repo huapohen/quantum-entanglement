@@ -1174,6 +1174,15 @@ class SQLiteInvocationAttemptStore:
             if candidate_row is None:
                 return None
             candidate = self._row_to_job(candidate_row)
+            prior_attempt = connection.execute(
+                """
+                SELECT 1 FROM invocation_attempts
+                WHERE invocation_id = ? LIMIT 1
+                """,
+                (candidate.invocation_id,),
+            ).fetchone()
+            if prior_attempt is not None:
+                raise InvocationIntegrityError("first-claim candidate has attempt history")
             claimable_where = candidate_where + " AND lease_epoch = 0 AND result_ref IS NULL"
             row = connection.execute(
                 f"""
@@ -1206,6 +1215,10 @@ class SQLiteInvocationAttemptStore:
                     heartbeat_at = ?, updated_at = ?, finished_at = NULL
                 WHERE invocation_id = ? AND status = 'queued'
                   AND attempts_started = 0 AND lease_epoch = 0 AND result_ref IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM invocation_attempts
+                      WHERE invocation_attempts.invocation_id = invocation_jobs.invocation_id
+                  )
                 """,
                 (
                     attempt_number,
@@ -1219,7 +1232,7 @@ class SQLiteInvocationAttemptStore:
                 ),
             )
             if update.rowcount != 1:
-                return None
+                raise InvocationIntegrityError("first-claim CAS rejected contradictory state")
             connection.execute(
                 """
                 INSERT INTO invocation_attempts (
