@@ -164,6 +164,31 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                     self.store.heartbeat(lease, lease_seconds=lease_seconds)
                 self.assertEqual(tuple(self.store._connection.iterdump()), running)
 
+    def test_fencing_epoch_is_scoped_to_one_invocation(self):
+        self.store.enqueue(job_spec())
+        self.store.enqueue(
+            job_spec(
+                session_id="session-2",
+                task_id="task-2",
+                idempotency_key="invoke:task-2",
+                invocation_id="invocation-2",
+            )
+        )
+
+        first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)
+        second = self.store.claim("invocation-2", "worker-2", lease_seconds=10)
+
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        assert first is not None
+        assert second is not None
+        self.assertEqual(first.fencing_token, 1)
+        self.assertEqual(second.fencing_token, 1)
+        self.assertNotEqual(
+            (first.invocation_id, first.fencing_token),
+            (second.invocation_id, second.fencing_token),
+        )
+
     def test_claim_rejects_clock_before_job_mutation_floor(self):
         self.clock.set(timestamp(10))
         self.store.enqueue(job_spec(available_at=T0))
