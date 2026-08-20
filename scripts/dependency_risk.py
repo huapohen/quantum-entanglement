@@ -10,21 +10,31 @@ import stat
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn, cast
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 POLICY_FORMAT = "quantum-entanglement.dependency-risk-policy"
 POLICY_SCHEMA_VERSION = 1
+RESULT_FORMAT = "quantum-entanglement.dependency-risk-result"
+RESULT_SCHEMA_VERSION = 1
 DEFAULT_POLICY_PATH = Path("requirements/dependency-risk-policy.json")
 
 _MAX_POLICY_BYTES = 1024 * 1024
+_MAX_RESULT_BYTES = 16 * 1024 * 1024
 _MAX_STRING_BYTES = 4096
 _MAX_EXCEPTIONS = 256
 _MAX_ALLOWED_IDENTITIES = 128
 _MAX_ALLOWED_LICENSES = 256
+_MAX_COMPONENTS = 512
+_MAX_FINDINGS = 4096
+_MAX_FINDINGS_PER_COMPONENT = 256
+_MAX_HASHES_PER_COMPONENT = 512
+_MAX_ALIASES = 64
+_MAX_FIXED_VERSIONS = 64
 _MAX_INTERVAL_SECONDS = 366 * 24 * 60 * 60
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_GIT_HASH_PATTERN = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$")
 _VERSION_PATTERN = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9.!+_-]{0,126}[A-Za-z0-9])?$"
@@ -37,6 +47,10 @@ _TIMESTAMP_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})Z$")
 _SPDX_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]{0,126}$")
 _SPDX_OPERATORS = frozenset({"AND", "OR", "WITH"})
 _SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+_RESULT_SEVERITIES = frozenset({*_SEVERITY_RANK, "unknown"})
+_FIX_STATUSES = frozenset({"available", "none", "unknown"})
+_SCAN_STATUSES = frozenset({"complete", "partial", "error"})
+_INTEGRITY_STATUSES = frozenset({"verified", "unverified", "failed"})
 
 _POLICY_KEYS = frozenset(
     {
@@ -94,6 +108,53 @@ _LICENSE_EXCEPTION_KEYS = frozenset(
         "purl",
         "rationale",
     }
+)
+_RESULT_KEYS = frozenset(
+    {
+        "artifacts",
+        "database",
+        "distributionManifest",
+        "format",
+        "lockInventory",
+        "project",
+        "sboms",
+        "scan",
+        "scanner",
+        "schemaVersion",
+        "source",
+    }
+)
+_PROJECT_KEYS = frozenset({"name", "version"})
+_SOURCE_KEYS = frozenset({"commitSha", "treeSha"})
+_ARTIFACT_KEYS = frozenset({"byteSize", "filename", "kind", "sha256"})
+_FILE_BINDING_KEYS = frozenset({"byteSize", "sha256"})
+_LOCK_INVENTORY_KEYS = frozenset(
+    {"inventorySha256", "lockPolicySha256", "packageRecordCount", "targetCount", "targets"}
+)
+_LOCK_TARGET_KEYS = frozenset(
+    {"inputSha256", "lockSha256", "platform", "pythonVersion", "scope"}
+)
+_SBOM_KEYS = frozenset({"byteSize", "filename", "kind", "sha256"})
+_RESULT_SCANNER_KEYS = frozenset({"name", "sha256", "version"})
+_DATABASE_KEYS = frozenset(
+    {
+        "byteSize",
+        "expiresAt",
+        "fetchedAt",
+        "filename",
+        "integrityStatus",
+        "revision",
+        "sha256",
+        "source",
+    }
+)
+_SCAN_KEYS = frozenset({"completedAt", "components", "status"})
+_COMPONENT_SCAN_KEYS = frozenset(
+    {"artifactSha256", "license", "purl", "scanStatus", "vulnerabilities"}
+)
+_LICENSE_OBSERVATION_KEYS = frozenset({"expression", "status"})
+_VULNERABILITY_KEYS = frozenset(
+    {"aliases", "fixedVersions", "fixStatus", "id", "severity"}
 )
 
 
@@ -749,3 +810,535 @@ def policy_summary(policy: DependencyRiskPolicy) -> dict[str, object]:
         "schemaVersion": POLICY_SCHEMA_VERSION,
         "verified": True,
     }
+
+
+@dataclass(frozen=True)
+class ArtifactBinding:
+    kind: str
+    filename: str
+    byte_size: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class FileBinding:
+    byte_size: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class LockTargetBinding:
+    scope: str
+    python_version: str
+    platform: str
+    input_sha256: str
+    lock_sha256: str
+
+
+@dataclass(frozen=True)
+class LockInventoryBinding:
+    inventory_sha256: str
+    lock_policy_sha256: str
+    package_record_count: int
+    target_count: int
+    targets: tuple[LockTargetBinding, ...]
+
+
+@dataclass(frozen=True)
+class SbomBinding:
+    kind: str
+    filename: str
+    byte_size: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class DatabaseEvidence:
+    filename: str
+    byte_size: int
+    sha256: str
+    source: str
+    revision: str
+    fetched_at: datetime
+    expires_at: datetime
+    integrity_status: str
+
+
+@dataclass(frozen=True)
+class LicenseObservation:
+    status: str
+    expression: str | None
+
+
+@dataclass(frozen=True)
+class VulnerabilityFinding:
+    finding_id: str
+    aliases: tuple[str, ...]
+    severity: str
+    fix_status: str
+    fixed_versions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ComponentScan:
+    purl: str
+    artifact_sha256: tuple[str, ...]
+    scan_status: str
+    license: LicenseObservation
+    vulnerabilities: tuple[VulnerabilityFinding, ...]
+
+
+@dataclass(frozen=True)
+class DependencyRiskResult:
+    project_name: str
+    project_version: str
+    commit_sha: str
+    tree_sha: str
+    artifacts: tuple[ArtifactBinding, ...]
+    distribution_manifest: FileBinding
+    lock_inventory: LockInventoryBinding
+    sboms: tuple[SbomBinding, ...]
+    scanner: ScannerIdentity
+    database: DatabaseEvidence
+    completed_at: datetime
+    scan_status: str
+    components: tuple[ComponentScan, ...]
+    sha256: str
+
+
+def _exact_keys(value: object, expected: frozenset[str], code: str) -> dict[str, object]:
+    if type(value) is not dict or frozenset(cast(dict[str, object], value)) != expected:
+        _fail(code)
+    return cast(dict[str, object], value)
+
+
+def _digest(value: object, code: str) -> str:
+    digest = _safe_string(value, code, maximum=64)
+    if _HASH_PATTERN.fullmatch(digest) is None:
+        _fail(code)
+    return digest
+
+
+def _git_digest(value: object, code: str) -> str:
+    digest = _safe_string(value, code, maximum=64)
+    if _GIT_HASH_PATTERN.fullmatch(digest) is None:
+        _fail(code)
+    return digest
+
+
+def _safe_filename(value: object, code: str) -> str:
+    filename = _safe_string(value, code, maximum=256)
+    if (
+        not filename.isascii()
+        or PurePosixPath(filename).name != filename
+        or filename in (".", "..")
+        or "\\" in filename
+    ):
+        _fail(code)
+    return filename
+
+
+def _bounded_nonnegative(value: object, code: str, *, maximum: int) -> int:
+    if type(value) is not int or value < 0 or value > maximum:
+        _fail(code)
+    return cast(int, value)
+
+
+def _binding(value: object, code: str) -> FileBinding:
+    record = _exact_keys(value, _FILE_BINDING_KEYS, code)
+    return FileBinding(
+        byte_size=_positive_integer(record["byteSize"], code, maximum=2**63 - 1),
+        sha256=_digest(record["sha256"], code),
+    )
+
+
+def _artifact_bindings(value: object) -> tuple[ArtifactBinding, ...]:
+    if type(value) is not list or len(cast(list[object], value)) != 2:
+        _fail("risk_result_artifact_invalid")
+    records: list[ArtifactBinding] = []
+    for item in cast(list[object], value):
+        record = _exact_keys(item, _ARTIFACT_KEYS, "risk_result_artifact_invalid")
+        kind = record["kind"]
+        if kind not in ("sdist", "wheel"):
+            _fail("risk_result_artifact_invalid")
+        records.append(
+            ArtifactBinding(
+                kind=cast(str, kind),
+                filename=_safe_filename(record["filename"], "risk_result_artifact_invalid"),
+                byte_size=_positive_integer(
+                    record["byteSize"], "risk_result_artifact_invalid", maximum=2**63 - 1
+                ),
+                sha256=_digest(record["sha256"], "risk_result_artifact_invalid"),
+            )
+        )
+    if [record.kind for record in records] != ["sdist", "wheel"]:
+        _fail("risk_result_artifact_invalid")
+    if len({record.filename for record in records}) != len(records):
+        _fail("risk_result_artifact_invalid")
+    return tuple(records)
+
+
+def _python_version_key(value: str) -> tuple[int, ...]:
+    try:
+        parts = tuple(int(part) for part in value.split("."))
+    except ValueError:
+        _fail("risk_result_lock_invalid")
+    if not parts or len(parts) > 3 or any(part < 0 or part > 999 for part in parts):
+        _fail("risk_result_lock_invalid")
+    return parts
+
+
+def _lock_target_bindings(value: object) -> tuple[LockTargetBinding, ...]:
+    if type(value) is not list or not 1 <= len(cast(list[object], value)) <= 32:
+        _fail("risk_result_lock_invalid")
+    targets: list[LockTargetBinding] = []
+    for item in cast(list[object], value):
+        record = _exact_keys(item, _LOCK_TARGET_KEYS, "risk_result_lock_invalid")
+        scope = _identifier(record["scope"], "risk_result_lock_invalid")
+        python_version = _safe_string(
+            record["pythonVersion"], "risk_result_lock_invalid", maximum=16
+        )
+        _python_version_key(python_version)
+        platform = _identifier(record["platform"], "risk_result_lock_invalid")
+        targets.append(
+            LockTargetBinding(
+                scope=scope,
+                python_version=python_version,
+                platform=platform,
+                input_sha256=_digest(record["inputSha256"], "risk_result_lock_invalid"),
+                lock_sha256=_digest(record["lockSha256"], "risk_result_lock_invalid"),
+            )
+        )
+    ordered = sorted(
+        targets,
+        key=lambda item: (item.scope, _python_version_key(item.python_version), item.platform),
+    )
+    if targets != ordered:
+        _fail("risk_result_lock_invalid")
+    identities = {(item.scope, item.python_version, item.platform) for item in targets}
+    if len(identities) != len(targets):
+        _fail("risk_result_lock_invalid")
+    return tuple(targets)
+
+
+def _lock_inventory_binding(value: object) -> LockInventoryBinding:
+    record = _exact_keys(value, _LOCK_INVENTORY_KEYS, "risk_result_lock_invalid")
+    targets = _lock_target_bindings(record["targets"])
+    target_count = _positive_integer(
+        record["targetCount"], "risk_result_lock_invalid", maximum=32
+    )
+    if target_count != len(targets):
+        _fail("risk_result_lock_invalid")
+    return LockInventoryBinding(
+        inventory_sha256=_digest(record["inventorySha256"], "risk_result_lock_invalid"),
+        lock_policy_sha256=_digest(
+            record["lockPolicySha256"], "risk_result_lock_invalid"
+        ),
+        package_record_count=_positive_integer(
+            record["packageRecordCount"], "risk_result_lock_invalid", maximum=8192
+        ),
+        target_count=target_count,
+        targets=targets,
+    )
+
+
+def _sbom_bindings(value: object) -> tuple[SbomBinding, ...]:
+    if type(value) is not list or len(cast(list[object], value)) != 2:
+        _fail("risk_result_sbom_invalid")
+    records: list[SbomBinding] = []
+    for item in cast(list[object], value):
+        record = _exact_keys(item, _SBOM_KEYS, "risk_result_sbom_invalid")
+        kind = record["kind"]
+        if kind not in ("runtime", "build"):
+            _fail("risk_result_sbom_invalid")
+        records.append(
+            SbomBinding(
+                kind=cast(str, kind),
+                filename=_safe_filename(record["filename"], "risk_result_sbom_invalid"),
+                byte_size=_positive_integer(
+                    record["byteSize"], "risk_result_sbom_invalid", maximum=16 * 1024 * 1024
+                ),
+                sha256=_digest(record["sha256"], "risk_result_sbom_invalid"),
+            )
+        )
+    if [record.kind for record in records] != ["runtime", "build"]:
+        _fail("risk_result_sbom_invalid")
+    if len({record.filename for record in records}) != len(records):
+        _fail("risk_result_sbom_invalid")
+    return tuple(records)
+
+
+def _result_scanner(value: object) -> ScannerIdentity:
+    record = _exact_keys(value, _RESULT_SCANNER_KEYS, "risk_result_scanner_invalid")
+    name = _identifier(record["name"], "risk_result_scanner_invalid")
+    version = _safe_string(record["version"], "risk_result_scanner_invalid", maximum=128)
+    if _VERSION_PATTERN.fullmatch(version) is None:
+        _fail("risk_result_scanner_invalid")
+    return ScannerIdentity(
+        name=name,
+        version=version,
+        sha256=_digest(record["sha256"], "risk_result_scanner_invalid"),
+    )
+
+
+def _database_evidence(value: object) -> DatabaseEvidence:
+    record = _exact_keys(value, _DATABASE_KEYS, "risk_result_database_invalid")
+    integrity_status = record["integrityStatus"]
+    if integrity_status not in _INTEGRITY_STATUSES:
+        _fail("risk_result_database_invalid")
+    fetched_at = parse_timestamp(record["fetchedAt"], "risk_result_database_invalid")
+    expires_at = parse_timestamp(record["expiresAt"], "risk_result_database_invalid")
+    if expires_at <= fetched_at:
+        _fail("risk_result_database_invalid")
+    return DatabaseEvidence(
+        filename=_safe_filename(record["filename"], "risk_result_database_invalid"),
+        byte_size=_positive_integer(
+            record["byteSize"], "risk_result_database_invalid", maximum=2**63 - 1
+        ),
+        sha256=_digest(record["sha256"], "risk_result_database_invalid"),
+        source=_canonical_https_url(record["source"], "risk_result_database_invalid"),
+        revision=_identifier(record["revision"], "risk_result_database_invalid"),
+        fetched_at=fetched_at,
+        expires_at=expires_at,
+        integrity_status=cast(str, integrity_status),
+    )
+
+
+def _license_observation(value: object) -> LicenseObservation:
+    record = _exact_keys(value, _LICENSE_OBSERVATION_KEYS, "risk_result_license_invalid")
+    status = record["status"]
+    expression = record["expression"]
+    if status == "known":
+        if expression is None:
+            _fail("risk_result_license_invalid")
+        normalized = canonical_license_expression(expression, "risk_result_license_invalid")
+    elif status == "unknown":
+        if expression is not None:
+            _fail("risk_result_license_invalid")
+        normalized = None
+    else:
+        _fail("risk_result_license_invalid")
+    return LicenseObservation(status=cast(str, status), expression=normalized)
+
+
+def _identifier_list(value: object, code: str, *, maximum: int) -> tuple[str, ...]:
+    if type(value) is not list or len(cast(list[object], value)) > maximum:
+        _fail(code)
+    identifiers = tuple(
+        _identifier(item, code, finding=True) for item in cast(list[object], value)
+    )
+    if identifiers != tuple(sorted(identifiers)) or len(set(identifiers)) != len(identifiers):
+        _fail(code)
+    return identifiers
+
+
+def _version_list(value: object, code: str) -> tuple[str, ...]:
+    if type(value) is not list or len(cast(list[object], value)) > _MAX_FIXED_VERSIONS:
+        _fail(code)
+    versions: list[str] = []
+    for item in cast(list[object], value):
+        version = _safe_string(item, code, maximum=128)
+        if _VERSION_PATTERN.fullmatch(version) is None:
+            _fail(code)
+        versions.append(version)
+    if versions != sorted(versions) or len(set(versions)) != len(versions):
+        _fail(code)
+    return tuple(versions)
+
+
+def _vulnerability_findings(value: object) -> tuple[VulnerabilityFinding, ...]:
+    if type(value) is not list or len(cast(list[object], value)) > _MAX_FINDINGS_PER_COMPONENT:
+        _fail("risk_result_finding_invalid")
+    findings: list[VulnerabilityFinding] = []
+    identities: set[str] = set()
+    for item in cast(list[object], value):
+        record = _exact_keys(item, _VULNERABILITY_KEYS, "risk_result_finding_invalid")
+        finding_id = _identifier(record["id"], "risk_result_finding_invalid", finding=True)
+        aliases = _identifier_list(
+            record["aliases"], "risk_result_finding_invalid", maximum=_MAX_ALIASES
+        )
+        if finding_id in aliases or finding_id in identities or identities.intersection(aliases):
+            _fail("risk_result_finding_duplicate")
+        identities.add(finding_id)
+        identities.update(aliases)
+        severity = record["severity"]
+        fix_status = record["fixStatus"]
+        if severity not in _RESULT_SEVERITIES or fix_status not in _FIX_STATUSES:
+            _fail("risk_result_finding_invalid")
+        fixed_versions = _version_list(
+            record["fixedVersions"], "risk_result_finding_invalid"
+        )
+        if (fix_status == "available") != bool(fixed_versions):
+            _fail("risk_result_finding_invalid")
+        findings.append(
+            VulnerabilityFinding(
+                finding_id=finding_id,
+                aliases=aliases,
+                severity=cast(str, severity),
+                fix_status=cast(str, fix_status),
+                fixed_versions=fixed_versions,
+            )
+        )
+    if findings != sorted(findings, key=lambda item: item.finding_id):
+        _fail("risk_result_finding_invalid")
+    return tuple(findings)
+
+
+def _component_scans(value: object) -> tuple[ComponentScan, ...]:
+    if type(value) is not list or not 1 <= len(cast(list[object], value)) <= _MAX_COMPONENTS:
+        _fail("risk_result_component_invalid")
+    components: list[ComponentScan] = []
+    total_findings = 0
+    for item in cast(list[object], value):
+        record = _exact_keys(item, _COMPONENT_SCAN_KEYS, "risk_result_component_invalid")
+        raw_hashes = record["artifactSha256"]
+        if (
+            type(raw_hashes) is not list
+            or not 1 <= len(cast(list[object], raw_hashes)) <= _MAX_HASHES_PER_COMPONENT
+        ):
+            _fail("risk_result_component_invalid")
+        hashes = tuple(
+            _digest(digest, "risk_result_component_invalid")
+            for digest in cast(list[object], raw_hashes)
+        )
+        if hashes != tuple(sorted(hashes)) or len(set(hashes)) != len(hashes):
+            _fail("risk_result_component_invalid")
+        scan_status = record["scanStatus"]
+        if scan_status not in _SCAN_STATUSES:
+            _fail("risk_result_component_invalid")
+        findings = _vulnerability_findings(record["vulnerabilities"])
+        total_findings += len(findings)
+        if total_findings > _MAX_FINDINGS:
+            _fail("risk_result_finding_invalid")
+        components.append(
+            ComponentScan(
+                purl=canonical_pypi_purl(record["purl"], "risk_result_component_invalid"),
+                artifact_sha256=hashes,
+                scan_status=cast(str, scan_status),
+                license=_license_observation(record["license"]),
+                vulnerabilities=findings,
+            )
+        )
+    if components != sorted(components, key=lambda item: item.purl):
+        _fail("risk_result_component_invalid")
+    if len({component.purl for component in components}) != len(components):
+        _fail("risk_result_component_duplicate")
+    return tuple(components)
+
+
+def load_dependency_risk_result_bytes(value: bytes) -> DependencyRiskResult:
+    """Strictly parse one canonical, versioned, offline scanner result."""
+
+    document = _parse_canonical_json(value, limit=_MAX_RESULT_BYTES, code="risk_result_invalid")
+    if frozenset(document) != _RESULT_KEYS:
+        _fail("risk_result_invalid")
+    if (
+        document["format"] != RESULT_FORMAT
+        or type(document["schemaVersion"]) is not int
+        or document["schemaVersion"] != RESULT_SCHEMA_VERSION
+    ):
+        _fail("risk_result_invalid")
+
+    project = _exact_keys(document["project"], _PROJECT_KEYS, "risk_result_project_invalid")
+    project_name = _safe_string(project["name"], "risk_result_project_invalid", maximum=128)
+    project_version = _safe_string(
+        project["version"], "risk_result_project_invalid", maximum=128
+    )
+    if (
+        _NAME_PATTERN.fullmatch(project_name) is None
+        or _VERSION_PATTERN.fullmatch(project_version) is None
+    ):
+        _fail("risk_result_project_invalid")
+
+    source = _exact_keys(document["source"], _SOURCE_KEYS, "risk_result_source_invalid")
+    scanner = _result_scanner(document["scanner"])
+    database = _database_evidence(document["database"])
+    scan = _exact_keys(document["scan"], _SCAN_KEYS, "risk_result_scan_invalid")
+    scan_status = scan["status"]
+    if scan_status not in _SCAN_STATUSES:
+        _fail("risk_result_scan_invalid")
+    completed_at = parse_timestamp(scan["completedAt"], "risk_result_scan_invalid")
+    if completed_at < database.fetched_at:
+        _fail("risk_result_scan_invalid")
+
+    return DependencyRiskResult(
+        project_name=project_name,
+        project_version=project_version,
+        commit_sha=_git_digest(source["commitSha"], "risk_result_source_invalid"),
+        tree_sha=_git_digest(source["treeSha"], "risk_result_source_invalid"),
+        artifacts=_artifact_bindings(document["artifacts"]),
+        distribution_manifest=_binding(
+            document["distributionManifest"], "risk_result_manifest_invalid"
+        ),
+        lock_inventory=_lock_inventory_binding(document["lockInventory"]),
+        sboms=_sbom_bindings(document["sboms"]),
+        scanner=scanner,
+        database=database,
+        completed_at=completed_at,
+        scan_status=cast(str, scan_status),
+        components=_component_scans(scan["components"]),
+        sha256=sha256_bytes(value),
+    )
+
+
+def load_dependency_risk_result(path: Path) -> DependencyRiskResult:
+    """Read and strictly validate one stable regular scanner result file."""
+
+    return load_dependency_risk_result_bytes(
+        _read_regular(path, _MAX_RESULT_BYTES, "risk_result_file_invalid")
+    )
+
+
+def _finding_document(
+    component: ComponentScan,
+    *,
+    kind: str,
+    subject: str | None,
+    finding: VulnerabilityFinding | None = None,
+) -> dict[str, object]:
+    document: dict[str, object] = {
+        "artifactSha256": list(component.artifact_sha256),
+        "kind": kind,
+        "purl": component.purl,
+        "subject": subject,
+    }
+    if finding is not None:
+        document["vulnerability"] = {
+            "aliases": list(finding.aliases),
+            "fixedVersions": list(finding.fixed_versions),
+            "fixStatus": finding.fix_status,
+            "id": finding.finding_id,
+            "severity": finding.severity,
+        }
+    return document
+
+
+def vulnerability_finding_sha256(
+    component: ComponentScan, finding: VulnerabilityFinding
+) -> str:
+    """Fingerprint one exact component/artifact/vulnerability observation."""
+
+    return sha256_bytes(
+        canonical_json(
+            _finding_document(
+                component,
+                kind="vulnerability",
+                subject=finding.finding_id,
+                finding=finding,
+            )
+        )
+    )
+
+
+def license_finding_sha256(component: ComponentScan) -> str:
+    """Fingerprint one exact component/artifact/license observation."""
+
+    return sha256_bytes(
+        canonical_json(
+            _finding_document(
+                component,
+                kind="license",
+                subject=component.license.expression,
+            )
+        )
+    )
