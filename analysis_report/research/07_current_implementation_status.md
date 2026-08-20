@@ -204,3 +204,28 @@ build。当前 content manifest 和同 toolchain 双构建只是其中两层。
 evidence 按设计存放在 checkout 外，不提交进 Git；本报告只记录非敏感 source identity、
 固定 gate 和汇总结论。外部 GitHub Actions、Notion 回读、真实部署、性能、安全和 DR
 证据未在本次 clean-clone 本地 gate 中执行，不能从本文推断其通过。
+
+## 8. 最新安全事务证据
+
+历史 `e4cbf04` 快照仍保留用于说明实现演进；当前 invocation storage primitive 的增量证据
+另见：
+
+- [`10_authenticated_invocation_transaction_evidence.md`](10_authenticated_invocation_transaction_evidence.md)：
+  行为、反例、运维合同与三版本门禁；
+- [`13_206acc1_transaction_release_evidence.md`](13_206acc1_transaction_release_evidence.md)：
+  canonical-parent source-bound release evidence。
+
+固定行为证据 HEAD 为 `4538159b032d20f55d4f3bf1757589e5310fe701`，tree 为
+`219fc66c8768a3a3c3508a52d6fe17bc07fb77c6`。canonical-parent evidence source 为
+`206acc1a93c16fe07fde4428d4d7e3b63c69ecc7`，tree 为
+`783d44b57d96f3837dacbe2690da8bbdd003b32d`；固定 release gates 5/5，完整
+expected-commit verifier 通过。
+
+扩展门禁为 Python 3.9 的 883 passed + 1 skipped，以及 Python 3.12/3.13 的 884
+passed；Python 3.13 strict resource/unraisable warning gate、Ruff、strict mypy、
+compileall、dependency locks 与 demo 均通过。旧 `554115c..e05357b` 临时事务链明确排除，
+不在当前安全候选 ancestry。
+
+本增量关闭的是单节点 SQLite invocation 写事务的特定异常边界。Gate A、普通 read API
+error firewall、backup manifest v2、trusted external-effect receipt 和端到端状态机仍是开放
+阻断项；因此本页前文的整体生产边界仍然成立。
