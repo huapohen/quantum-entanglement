@@ -227,7 +227,9 @@ class InvocationJob:
     created_at: str
     updated_at: str
     lease_owner: Optional[str]
+    lease_token_digest: Optional[str]
     lease_expires_at: Optional[str]
+    heartbeat_at: Optional[str]
     result_ref: Optional[str]
     last_error: Optional[str]
     finished_at: Optional[str]
@@ -464,7 +466,9 @@ class SQLiteInvocationAttemptStore:
                 created_at=_persisted_timestamp(row["created_at"], "invocation created_at"),
                 updated_at=_persisted_timestamp(row["updated_at"], "invocation updated_at"),
                 lease_owner=lease_owner,
+                lease_token_digest=lease_digest,
                 lease_expires_at=lease_expires_at,
+                heartbeat_at=heartbeat_at,
                 result_ref=_persisted_optional_text(row["result_ref"], "invocation result_ref"),
                 last_error=last_error,
                 finished_at=finished_at,

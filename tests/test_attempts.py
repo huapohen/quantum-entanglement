@@ -271,8 +271,15 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             hashlib.sha256(old.lease_token.encode("utf-8")).hexdigest(),
         )
         self.assertNotEqual(stored_digest, old.lease_token)
+        observed = self.store.get(old.invocation_id)
+        self.assertEqual(observed.lease_token_digest, stored_digest)
+        self.assertEqual(observed.heartbeat_at, "2026-08-20T00:00:00.000000Z")
+        self.assertNotIn(old.lease_token, repr(observed))
         self.clock.set(timestamp(5))
         self.assertTrue(self.store.heartbeat(old, lease_seconds=20))
+        heartbeat_observation = self.store.get(old.invocation_id)
+        self.assertEqual(heartbeat_observation.heartbeat_at, "2026-08-20T00:00:05.000000Z")
+        self.assertEqual(heartbeat_observation.lease_token_digest, stored_digest)
 
         self.clock.set(timestamp(24))
         before_expiry = self.store.recover_expired()
