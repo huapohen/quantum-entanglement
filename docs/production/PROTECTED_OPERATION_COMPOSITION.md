@@ -60,10 +60,12 @@ same composer.consume(operation, same context, exact request)
 future effect adapter boundary (not implemented in this slice)
 ```
 
-Before any composer or registry lock, state table, clock, provider, issuer, or authorizer is
-touched, the implementation verifies that the object still belongs to its creating
-process. A composer and its registry capture both the creator PID and a process epoch. A
-forked child receives a new epoch and cannot enter this call path with inherited objects.
+Before any issuer, composer, or registry lock, state table, clock, provider, authenticator,
+or authorizer is touched, the implementation verifies that each process-local object still
+belongs to its creating process. The issuer, composer, and registry capture both the
+creator PID and a process epoch. A forked child receives new module epochs and cannot enter
+this call path with inherited objects. Composer construction and every authorization path
+also verify that the configured issuer belongs to the current process.
 
 Authority is created only at the registry issuance step and only after every preceding
 check succeeds. The provider state and authorizer decision remain ordinary value objects.
@@ -187,9 +189,11 @@ live handle.
 - active handles have a hard configured capacity and dead/expired entries are pruned;
 - `retire` invalidates one handle and `close` invalidates all handles; and
 - successful `consume` reloads and reauthorizes current state, then compares and removes
-  the handle under the same registry lock; and
+  the handle under the same registry lock;
 - the composer and registry require the exact creator PID and fork epoch before touching
-  an inherited lock or registry record.
+  an inherited lock or registry record; and
+- the canonical issuer independently requires its creator PID and request-context process
+  epoch before issue, reauthorization preparation, retirement, close, or context entry.
 
 The operation ID is a correlation value, not the authority. Reconstructing or replaying an
 ID cannot reconstruct the registered Python object. The registry uses object identity plus
@@ -205,14 +209,17 @@ process isolation and a separately reviewed protocol.
 
 ### 5.1 Fork, spawn, and prefork boundary
 
-POSIX `fork` copies Python memory, including an active handle, registry table, closed flag,
-clock high-water mark, and lock objects. Without an explicit process fence, the parent and
-child could each consume their private copy of one nominally one-time handle. This module
-therefore registers a lock-free `os.register_at_fork(after_in_child=...)` callback when the
-platform provides it. The callback replaces the module process epoch and records the child
-PID without acquiring any application lock. Every composer and registry public path that
-could reach a lock or authorization state compares both values first and returns
-`protected_operation_process_mismatch` on inheritance.
+POSIX `fork` copies Python memory, including an issuer and its contexts, an active operation
+handle, registry tables, closed flags, clock high-water marks, and lock objects. Without an
+explicit process fence, a child could issue or refresh contexts with inherited trusted
+dependencies, build a new composer around that issuer, or let parent and child each consume
+their private copy of one nominally one-time handle. The request-context and operation
+modules therefore register lock-free `os.register_at_fork(after_in_child=...)` callbacks
+when the platform provides them. Each callback replaces its module process epoch and
+records the child PID without acquiring any application lock. Every issuer, composer, and
+registry public path that could reach a lock or authorization state compares both values
+first. Inherited issuer calls return `request_context_process_mismatch`; composition and
+operation calls return `protected_operation_process_mismatch`.
 
 Platforms without `register_at_fork`, or where hook registration is unavailable, use an
 independent safe fallback: every check samples `os.getpid()` and lazily replaces the module
@@ -222,11 +229,11 @@ Python's registered hook. The check intentionally requires no lock; a child ther
 fails immediately even if another parent thread owned the composer or registry lock at the
 instant of fork.
 
-`spawn` and `forkserver` do not create a transfer mechanism. `AuthorizedOperation`,
-`ProtectedOperationComposer`, and the registry all reject copy, deep copy, and pickle, and
-real multiprocessing start attempts with any of them fail serialization. Do not add a
-custom reducer, manager proxy, inherited global, forkserver preload, or IPC wrapper for
-these objects.
+`spawn` and `forkserver` do not create a transfer mechanism. `RequestContextIssuer`,
+`AuthorizedOperation`, `ProtectedOperationComposer`, and the registry reject copy, deep
+copy, and pickle; real multiprocessing start attempts with the operation handle, composer,
+or registry fail serialization. Do not add a custom reducer, manager proxy, inherited
+global, forkserver preload, or IPC wrapper for these objects.
 
 Prefork deployment has one mandatory construction order:
 
@@ -237,10 +244,18 @@ Prefork deployment has one mandatory construction order:
    composer composition root and authenticate new request contexts.
 4. Drain and discard every worker-local handle before that worker exits or reloads.
 
-Creating only a new composer around a prefork-inherited issuer/provider is unsupported and
-must fail deployment review even though those adapters are outside this module's process
-fence. A forked child cannot "adopt," close, retire, or migrate inherited handles. The
-parent remains usable and retains its original one-time semantics.
+Creating only a new composer around a prefork-inherited issuer is actively rejected before
+the inherited provider or authorizer can be reached. Providers and authorizers are still
+outside this primitive's process fence and must also be constructed worker-locally. A
+forked child cannot "adopt," close, retire, or migrate inherited contexts or handles. The
+parent remains usable and retains its original registry and one-time semantics.
+
+This fence invalidates inherited authority objects; it does not erase bytes already copied
+into the child address space. Credential-bearing, signing, connector, or untrusted-plugin
+workers must establish a `spawn`/`exec` topology before loading secrets or capabilities, or
+fetch them afterward from a separately reviewed broker. A forked child that inherited key
+or credential material is not a security sandbox merely because issuer/composer calls now
+fail closed.
 
 ### 5.2 Important effect-atomicity limitation
 
@@ -387,7 +402,7 @@ process; never catch the code and retry the same handle.
 | Same IDs collide across tenants | Tenant and workspace are part of issuance and consume scope | Tenant/workspace columns and predicates in every repository |
 | Handle is forged, copied, pickled, moved, or mutated | Exact local registry identity, copy/pickle rejection, snapshot quarantine | Process isolation against arbitrary trusted-host code |
 | Handle is replayed serially or concurrently | Successful consume atomically removes it; later consume fails | Durable distributed replay ledger for multi-process effects |
-| Parent and forked child each consume their copied handle | Creator PID plus at-fork process epoch reject the child before inherited locks/state; parent remains one-time | Construct the complete composition root independently inside each worker |
+| Parent and forked child reuse an issuer or consume a copied handle | Independent request-context and operation PID/epoch guards reject inherited issuer/composer/registry paths before copied locks/state; a new composer cannot adopt the issuer; parent remains usable and one-time | Construct the complete composition root independently inside each worker |
 | Context is replaced by a new context for the same actor | Exact context ID/principal/revision snapshot fails | Durable session/revocation semantics if cross-process is required |
 | Service clock rolls backward | Local high-water freezes within skew and fails beyond it | Trusted time monitoring and incident runbook |
 | Dependency throws a mutation-hostile `BaseException` or control-shaped secret | Raw exception attrs are never touched; non-control failures become stable denial; exact four-way control signals are replaced with fresh empty-argument signals | Cancellation/termination integration tests in the real service host |
@@ -402,10 +417,10 @@ runtime path, repository, connector, CLI, protocol, or package-root export. Exis
 callers continue to work but remain outside the protected composition and gain no new
 production claim.
 
-Rejecting a composer or registry outside its creator process is an intentional fail-closed
-compatibility tightening. Any prefork deployment that previously initialized these
-objects in its master must move construction into the worker. There is no compatibility
-mode for inherited handles.
+Rejecting an issuer, composer, or registry outside its creator process is an intentional
+fail-closed compatibility tightening. Any prefork deployment that previously initialized
+these objects in its master must move the complete composition root into the worker. There
+is no compatibility mode for inherited contexts or handles.
 
 Rollback is code-only because no persistent state is written. Stop the candidate process,
 close composer/issuer instances, discard all outstanding process-local handles, and deploy
@@ -446,11 +461,13 @@ forgery, reflective tampering, copy/deepcopy/pickle, operation and composer life
 expiry, service-clock rollback, hard concurrent issuance capacity, serial replay,
 concurrent replay, action-time reauthorization, and exact one-time consumption.
 
-The suite also runs real POSIX-fork probes: parent/child double-consume, every inherited
-composer and registry public path, a fork while another thread owns both internal locks,
-and exact parent usability afterward. Actual `spawn` and `forkserver` process starts prove
-that handle, composer, and registry transfer is rejected. A separate fallback test proves
-PID drift refreshes the epoch when no at-fork callback is available.
+The suite also runs real POSIX-fork probes: child issue/prepare/retire/close/enter against an
+inherited issuer, construction of a new composer from that issuer, parent/child
+double-consume, every inherited composer and registry public path, forks while other
+threads own issuer or operation locks, authorization-time issuer revalidation, and exact
+parent usability afterward. Actual `spawn` and `forkserver` process starts prove that
+handle, composer, and registry transfer is rejected. Separate fallback tests prove PID
+drift refreshes both module epochs when no at-fork callback is available.
 
 Test counts are observations, never promotion evidence. A release candidate must run the
 complete baseline in `RELEASE_GATES.md` on the exact clean source tree and retain the
