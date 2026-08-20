@@ -113,6 +113,10 @@ box.
    it does not receive a general session credential when a narrower handle is possible.
 6. Observability exporters receive redacted, bounded, tenant-safe fields rather than raw
    prompts, tokens, authorization headers, or arbitrary artifact bodies.
+7. Worker process topology is established before connection, issuer, provider, runtime and
+   secret initialization. An inherited live instance must reject on PID + process epoch
+   before touching a lock or dependency; a fresh child wrapper cannot legitimize inherited
+   authority.
 
 ## Security invariants
 
@@ -164,6 +168,7 @@ The following are release-blocking invariants:
 | TM-23 | Restore replays obsolete owners or grants | unauthorized stale action, P0 | restored epochs/revocations, recovery mode, reconciliation gate | gap |
 | TM-24 | Metrics label accepts arbitrary tenant/prompt text | secret leak/cardinality DoS, P1 | fixed label vocabulary, hashing/redaction, bounds | gap |
 | TM-25 | Caller chooses subject/tenant/workspace or reuses an issued context across scope | impersonation/tenant escape, P0 | authenticated subject mapping, exact process-local issuance, action-time identity/membership refresh, mandatory authorizer composition | partial |
+| TM-26 | Fork child reuses an inherited store, issuer, key, secret, runtime or connector | duplicate/unauthorized effect, deadlock, corruption or credential exposure, P0 | fork-before-init topology, PID + opaque epoch pre-lock guards, fresh child composition and spawn/exec-before-secret-load evidence | partial: shared identity foundation only; no existing component migrated |
 
 `partial` and `in progress` do not satisfy a release gate. Only a linked implementation,
 adversarial test, and retained evidence may change a row to `verified`.
