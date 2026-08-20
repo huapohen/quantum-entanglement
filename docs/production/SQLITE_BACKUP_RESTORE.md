@@ -19,6 +19,12 @@ The descriptor and inode hardening was delivered in these slices:
   inode fencing;
 - `9b48d5a`: stable-descriptor backup and manifest verification;
 - `e60bd3c`: stable-descriptor, exact-byte restore and restore race fencing.
+- `f440f65`: corrected projection checkpoint evidence to count the real
+  `projection_offsets` table;
+- `a1264a9`: added `projection_receipts` count evidence and fail-closed manifest
+  tamper/omission tests;
+- `a0a855c`: added `qe_revocation_high_water` count evidence and fail-closed manifest
+  tamper/omission tests.
 
 This is not a complete disaster-recovery service. It does not schedule backups,
 replicate them, sign manifests, manage retention, encrypt files, implement point-in-time
@@ -80,13 +86,30 @@ is `qe.sqlite-backup/1` and records:
 - an opaque backup ID and UTC creation timestamp;
 - database SHA-256 and exact byte size;
 - SQLite page count and page size;
-- counts for known tables that exist in the snapshot;
+- counts for known tables that exist in the snapshot, including projection checkpoints,
+  projection receipts, and durable revocation high-water state when those components have
+  initialized their tables;
 - each applied migration version, filename, packaged SQL checksum, and application
   timestamp.
 
 The manifest does not contain credentials or raw artifact/event content. It is not
 cryptographically authenticated, however, so custody controls must protect the database
 and manifest together.
+
+For `projection_offsets`, `projection_receipts`, and `qe_revocation_high_water`, creation
+records a count whenever the table exists in the copied snapshot. Verification derives
+the same evidence from the opened database: changing one of these counts or removing its
+manifest entry while the table remains present fails with a table-count mismatch. This
+closes silent omission of projection idempotency and authorization anti-rollback state
+from a normally created pair.
+
+Format version 1 intentionally remains readable for databases created before one of
+these self-initializing components was enabled, so it does not require a component table
+that is absent from both database and manifest. Counts are not row digests, schema
+ownership proofs, or an authenticated inventory. An actor able to rewrite the database,
+its SHA-256, and the manifest together can still produce a different internally
+consistent pair. Preserve authenticated custody and validate component schemas and
+domain watermarks before activation.
 
 ## Create path and inode fencing
 
@@ -207,7 +230,9 @@ Verification fails closed on, among other cases:
 - invalid SQLite structure or a foreign-key violation;
 - a missing or weakened migration-owned table/index despite a plausible ledger;
 - a future, gapped, renamed, or checksum-drifted migration history;
-- page geometry, known table count, or migration evidence drift.
+- page geometry, known table count, or migration evidence drift, including a changed or
+  omitted projection-receipt or revocation-high-water count for a table present in the
+  backup.
 
 A successful verification proves that the bytes observed through the stable descriptors
 matched the manifest and passed the implemented SQLite checks. It does not authenticate
@@ -311,6 +336,8 @@ the deployment environment.
 | Backup parent is replaced during verify | Parent identity check fails | Repeat under deployment mount |
 | Migration ledger is future/gapped/drifted | Backup/verify fails closed | Upgrade/rollback compatibility drill |
 | Migration-owned schema is missing/weakened | Schema congruence check fails | Corruption quarantine exercise |
+| Projection receipt count is changed or omitted from a normally created manifest | Verification fails with table-count drift | Compare receipt/checkpoint identities and positions after restore |
+| Revocation high-water count is changed or omitted from a normally created manifest | Verification fails with table-count drift | Compare every tenant revision and digest before authorization is enabled |
 | Backup/manifest is replaced after restore verification | Restore detects anchored-inode mismatch | Repeat under deployment mount |
 | Backup/manifest changes in place during copy | Restore aborts; no destination is published | Repeat under deployment mount |
 | Destination appears before hard-link publication | Atomic link fails; operator file remains | Concurrent restore drill |
@@ -338,14 +365,22 @@ It asserts exact source/destination database bytes before stores reopen the dest
 then reopens event/delivery, invocation-attempt, and artifact stores and verifies the
 records remain readable.
 
+Focused manifest tests additionally seed a real projection offset and receipt plus a
+durable tenant revocation high-water row. They assert that backup creation records these
+counts and that verification rejects changed or omitted receipt/high-water entries. Those
+tests verify backup evidence behavior; they do not replace a deployment recovery drill
+that compares row identities, positions, revisions, and digests after restore.
+
 Before every production release, extend the drill on a disposable deployment-equivalent
 host:
 
 1. Seed representative pending, running, successful, failed, canceled, approval, DLQ,
-   published, ambiguity, artifact-version, inbox-receipt, projection-offset, and
-   action-receipt states that exist in that release.
+   published, ambiguity, artifact-version, inbox-receipt, projection-offset,
+   projection-receipt, action-receipt, and tenant revocation-high-water states that exist
+   in that release.
 2. Record domain counts, artifact digests, event/global positions, projection offsets,
-   active lease epochs, open ambiguity IDs, and the release binary revision.
+   projection receipt event IDs/positions, active lease epochs, every tenant revocation
+   revision/state digest, open ambiguity IDs, and the release binary revision.
 3. Keep normal WAL-backed connections active and create the online backup.
 4. Verify the local pair and its off-host copy.
 5. Simulate loss only in the disposable environment.
@@ -353,7 +388,9 @@ host:
 7. Confirm the destination SHA-256 equals the manifest and source backup SHA-256 before
    opening any read/write store.
 8. Run independent `integrity_check`, foreign-key, schema/migration, artifact digest,
-   event replay, and projection comparison checks.
+   event replay, projection checkpoint/receipt comparison, and revocation high-water
+   comparison checks. Reopen the projection and revocation-guard components with the
+   release binary so their owned-schema validators run.
 9. Confirm pre-restore invocation and delivery owners cannot resume unsafe work. Wait for
    or explicitly fence all old leases using the release's approved recovery procedure.
 10. Confirm open ambiguities remain quarantined and are not retried automatically.
@@ -379,7 +416,9 @@ and external connectors disabled until all steps pass:
 6. Point an offline diagnostic process at the restored path. Do not apply unplanned
    migrations during validation.
 7. Run schema/migration checks, artifact verification, event replay, projection rebuild
-   and comparison, queue/DLQ/ambiguity inspection, and audit sampling.
+   and receipt comparison, revocation high-water comparison, queue/DLQ/ambiguity
+   inspection, and audit sampling. Any lower or conflicting tenant revision is an
+   activation blocker.
 8. Establish that every lease issued before the snapshot/incident is expired or fenced.
    Do not accept a completion solely because it carries a token preserved in the backup.
 9. Reconcile each effect-unknown/open ambiguity with external evidence before retrying or
@@ -486,7 +525,8 @@ Attach the following to the stage/release record:
 - Git commit and clean-tree status;
 - OS/kernel, Python, SQLite, filesystem/mount, storage, and container/runtime versions;
 - service account, directory owner/group/mode/ACL, and available-space evidence;
-- source and backup byte sizes, manifest, SHA-256, migration evidence, and durable domain
+- source and backup byte sizes, manifest, SHA-256, migration evidence, projection
+  checkpoint/receipt evidence, revocation revision/state digests, and other durable domain
   watermarks;
 - focused and full test output, including the fault-injection cases;
 - create/verify/restore timings, source WAL growth, peak disk use, and observed workload
