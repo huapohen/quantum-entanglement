@@ -36,6 +36,18 @@ _SENSITIVE_KEYS = frozenset(
         "token",
     }
 )
+_SENSITIVE_KEY_FRAGMENTS = (
+    "accesskey",
+    "apikey",
+    "authorization",
+    "cookie",
+    "credential",
+    "password",
+    "passwd",
+    "privatekey",
+    "secret",
+    "token",
+)
 _TEXT_PATTERNS = (
     (
         re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/-]{4,}=*"),
@@ -168,7 +180,9 @@ class Redactor:
     @staticmethod
     def _is_sensitive_key(value: str) -> bool:
         normalized = re.sub(r"[^a-z0-9]", "", value.lower())
-        return normalized in _SENSITIVE_KEYS
+        return normalized in _SENSITIVE_KEYS or any(
+            fragment in normalized for fragment in _SENSITIVE_KEY_FRAGMENTS
+        )
 
     @staticmethod
     def _safe_type_name(value: BaseException) -> str:

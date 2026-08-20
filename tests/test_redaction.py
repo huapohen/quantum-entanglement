@@ -18,6 +18,10 @@ class RedactorTests(unittest.TestCase):
             "Authorization": "Bearer authorization-canary",
             "nested": {
                 "api_key": "sk-api-key-canary-value",
+                "client_secret": "client-secret-canary",
+                "X-API-Key": "x-api-key-canary",
+                "idToken": "id-token-canary",
+                "session_token_value": "session-token-canary",
                 "payload": {"message": "payload-canary"},
                 "Cookie": "session=cookie-canary",
             },
@@ -29,6 +33,10 @@ class RedactorTests(unittest.TestCase):
         for canary in (
             "authorization-canary",
             "api-key-canary",
+            "client-secret-canary",
+            "x-api-key-canary",
+            "id-token-canary",
+            "session-token-canary",
             "payload-canary",
             "cookie-canary",
             "lease-canary",
