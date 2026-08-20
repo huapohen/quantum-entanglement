@@ -1,5 +1,7 @@
 import asyncio
 import copy
+import multiprocessing
+import os
 import pickle
 import threading
 import unittest
@@ -8,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import quantum_entanglement.operation_authorization as operation_authorization
 from quantum_entanglement.operation_authorization import (
     AuthorizedOperation,
     CurrentAuthorizationState,
@@ -51,6 +54,89 @@ NOW = datetime(2026, 8, 20, 8, 0, 0, tzinfo=timezone.utc)
 EVIDENCE = "ab" * 32
 
 
+def _capture_process_call(callback):
+    try:
+        callback()
+    except OperationAuthorizationError as error:
+        return (
+            "operation_error",
+            error.code,
+            error.__cause__ is None,
+            error.__context__ is None,
+        )
+    except BaseException as error:
+        return ("unexpected_error", type(error).__name__)
+    return ("unexpected_success",)
+
+
+def _fork_consume_probe(connection, composer, operation, context, request):
+    try:
+        connection.send(
+            _capture_process_call(lambda: composer.consume(operation, context, request))
+        )
+    finally:
+        connection.close()
+
+
+def _fork_public_path_probe(
+    connection,
+    composer,
+    registry,
+    operation,
+    binding,
+    basis,
+    context,
+    request,
+):
+    composer_owner_pid = object.__getattribute__(
+        composer,
+        "_ProtectedOperationComposer__owner_pid",
+    )
+    composer_owner_epoch = object.__getattribute__(
+        composer,
+        "_ProtectedOperationComposer__owner_epoch",
+    )
+    current_pid, current_epoch = operation_authorization._current_process_identity()
+    calls = (
+        ("composer_authorize", lambda: composer.authorize(context, request)),
+        ("composer_consume", lambda: composer.consume(operation, context, request)),
+        ("composer_retire", lambda: composer.retire(operation)),
+        ("composer_close", composer.close),
+        ("composer_enter", composer.__enter__),
+        (
+            "registry_issue",
+            lambda: registry.issue(binding, expires_at=NOW + timedelta(seconds=20)),
+        ),
+        ("registry_observe_now", registry.observe_now),
+        ("registry_verify", lambda: registry.verify(operation, binding)),
+        (
+            "registry_check_request",
+            lambda: registry.check_request(operation, basis, request),
+        ),
+        (
+            "registry_consume_request",
+            lambda: registry.consume_request(operation, basis, request),
+        ),
+        ("registry_retire", lambda: registry.retire(operation)),
+        ("registry_close", registry.close),
+    )
+    try:
+        connection.send(
+            {
+                "identityChanged": (
+                    current_pid != composer_owner_pid and current_epoch is not composer_owner_epoch
+                ),
+                "results": {name: _capture_process_call(callback) for name, callback in calls},
+            }
+        )
+    finally:
+        connection.close()
+
+
+def _multiprocessing_transfer_probe(value):
+    raise AssertionError(f"non-transferable value reached child: {type(value).__name__}")
+
+
 class HostileMutationFailure(BaseException):
     pass
 
@@ -71,7 +157,7 @@ class HostileBoundaryFailure(BaseException):
         super().__init__(f"{canary}:args")
         self.payload = f"{canary}:custom-attribute"
         self.mutation_attempts = []
-        self.add_note(f"{canary}:note")
+        self.__notes__ = [f"{canary}:note"]
         self.__cause__ = ValueError(f"{canary}:stored-cause")
         self.__context__ = RuntimeError(f"{canary}:stored-context")
         self.armed = True
@@ -331,6 +417,23 @@ class AuthorizedOperationTests(unittest.TestCase):
             copy.deepcopy(operation)
         with self.assertRaises(TypeError):
             pickle.dumps(operation)
+
+    def test_registry_cannot_be_copied_or_pickled(self):
+        with self.assertRaises(TypeError):
+            copy.copy(self.registry)
+        with self.assertRaises(TypeError):
+            copy.deepcopy(self.registry)
+        with self.assertRaises(TypeError):
+            pickle.dumps(self.registry)
+
+    def test_pid_drift_lazily_refreshes_epoch_without_at_fork_hook(self):
+        stale_epoch = object()
+        with patch.object(operation_authorization, "_PROCESS_PID", os.getpid() + 1):
+            with patch.object(operation_authorization, "_PROCESS_EPOCH", stale_epoch):
+                process_pid, process_epoch = operation_authorization._current_process_identity()
+
+        self.assertEqual(process_pid, os.getpid())
+        self.assertIsNot(process_epoch, stale_epoch)
 
     def test_issuing_registry_verifies_exact_binding(self):
         binding = self.binding()
@@ -1645,6 +1748,218 @@ class ProtectedOperationComposerTests(unittest.TestCase):
             results = list(pool.map(lambda _: consume_once(), range(2)))
 
         self.assertEqual(sorted(results), ["consumed", "protected_operation_untrusted"])
+
+    def receive_process_payload(self, process, connection, *, timeout=5):
+        payload = None
+        try:
+            if connection.poll(timeout):
+                try:
+                    payload = connection.recv()
+                except EOFError:
+                    payload = None
+        finally:
+            connection.close()
+            process.join(1)
+            if process.is_alive():
+                process.terminate()
+                process.join(2)
+        self.assertIsNotNone(payload, "fork child did not respond before the deadlock bound")
+        self.assertEqual(process.exitcode, 0)
+        return payload
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_real_fork_cannot_duplicate_one_time_consume(self):
+        operation = self.composer.authorize(self.context, self.request)
+        fork_context = multiprocessing.get_context("fork")
+        parent_connection, child_connection = fork_context.Pipe(duplex=False)
+        process = fork_context.Process(
+            target=_fork_consume_probe,
+            args=(
+                child_connection,
+                self.composer,
+                operation,
+                self.context,
+                self.request,
+            ),
+        )
+
+        process.start()
+        child_connection.close()
+        self.composer.consume(operation, self.context, self.request)
+        child_result = self.receive_process_payload(process, parent_connection)
+
+        self.assertEqual(
+            child_result,
+            ("operation_error", "protected_operation_process_mismatch", True, True),
+        )
+        self.assert_code(
+            "protected_operation_untrusted",
+            lambda: self.composer.consume(operation, self.context, self.request),
+        )
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_real_fork_rejects_every_inherited_composer_and_registry_path(self):
+        operation = self.composer.authorize(self.context, self.request)
+        registry = object.__getattribute__(
+            self.composer,
+            "_ProtectedOperationComposer__registry",
+        )
+        fork_context = multiprocessing.get_context("fork")
+        parent_connection, child_connection = fork_context.Pipe(duplex=False)
+        process = fork_context.Process(
+            target=_fork_public_path_probe,
+            args=(
+                child_connection,
+                self.composer,
+                registry,
+                operation,
+                object(),
+                object(),
+                self.context,
+                self.request,
+            ),
+        )
+
+        process.start()
+        child_connection.close()
+        payload = self.receive_process_payload(process, parent_connection)
+
+        self.assertTrue(payload["identityChanged"])
+        self.assertEqual(
+            set(payload["results"]),
+            {
+                "composer_authorize",
+                "composer_consume",
+                "composer_retire",
+                "composer_close",
+                "composer_enter",
+                "registry_issue",
+                "registry_observe_now",
+                "registry_verify",
+                "registry_check_request",
+                "registry_consume_request",
+                "registry_retire",
+                "registry_close",
+            },
+        )
+        for name, result in payload["results"].items():
+            with self.subTest(path=name):
+                self.assertEqual(
+                    result,
+                    (
+                        "operation_error",
+                        "protected_operation_process_mismatch",
+                        True,
+                        True,
+                    ),
+                )
+        self.composer.consume(operation, self.context, self.request)
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_fork_while_composer_and_registry_locks_are_held_never_waits_on_them(self):
+        operation = self.composer.authorize(self.context, self.request)
+        registry = object.__getattribute__(
+            self.composer,
+            "_ProtectedOperationComposer__registry",
+        )
+        composer_lock = object.__getattribute__(
+            self.composer,
+            "_ProtectedOperationComposer__lock",
+        )
+        registry_lock = object.__getattribute__(
+            registry,
+            "_AuthorizedOperationRegistry__lock",
+        )
+        locks_held = threading.Event()
+        release_locks = threading.Event()
+
+        def hold_inherited_locks():
+            with composer_lock:
+                with registry_lock:
+                    locks_held.set()
+                    release_locks.wait(10)
+
+        holder = threading.Thread(target=hold_inherited_locks)
+        holder.start()
+        self.assertTrue(locks_held.wait(2))
+        fork_context = multiprocessing.get_context("fork")
+        parent_connection, child_connection = fork_context.Pipe(duplex=False)
+        process = fork_context.Process(
+            target=_fork_public_path_probe,
+            args=(
+                child_connection,
+                self.composer,
+                registry,
+                operation,
+                object(),
+                object(),
+                self.context,
+                self.request,
+            ),
+        )
+
+        try:
+            process.start()
+            child_connection.close()
+            payload = self.receive_process_payload(process, parent_connection)
+        finally:
+            release_locks.set()
+            holder.join(2)
+        self.assertFalse(holder.is_alive())
+        self.assertTrue(payload["identityChanged"])
+        self.assertTrue(
+            all(
+                result
+                == (
+                    "operation_error",
+                    "protected_operation_process_mismatch",
+                    True,
+                    True,
+                )
+                for result in payload["results"].values()
+            )
+        )
+        self.composer.consume(operation, self.context, self.request)
+
+    def test_spawn_and_forkserver_refuse_handle_composer_and_registry_transfer(self):
+        operation = self.composer.authorize(self.context, self.request)
+        registry = object.__getattribute__(
+            self.composer,
+            "_ProtectedOperationComposer__registry",
+        )
+        available = set(multiprocessing.get_all_start_methods())
+        for start_method in ("spawn", "forkserver"):
+            if start_method not in available:
+                continue
+            process_context = multiprocessing.get_context(start_method)
+            for label, value, expected_error in (
+                ("handle", operation, "AuthorizedOperation cannot be serialized"),
+                (
+                    "composer",
+                    self.composer,
+                    "ProtectedOperationComposer cannot be serialized",
+                ),
+                (
+                    "registry",
+                    registry,
+                    "AuthorizedOperationRegistry cannot be serialized",
+                ),
+            ):
+                with self.subTest(start_method=start_method, value=label):
+                    process = process_context.Process(
+                        target=_multiprocessing_transfer_probe,
+                        args=(value,),
+                    )
+                    try:
+                        process.start()
+                    except TypeError as error:
+                        self.assertEqual(str(error), expected_error)
+                        continue
+                    process.join(2)
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(2)
+                    self.fail(f"{start_method} transferred non-serializable {label}")
 
     def test_composer_is_non_transferable_and_its_representation_is_redacted(self):
         rendered = repr(self.composer)

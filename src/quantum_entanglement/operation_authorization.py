@@ -9,6 +9,7 @@ this module may turn a fresh, matching state into an opaque operation handle.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import secrets
 import sys
@@ -43,6 +44,38 @@ _KEYBOARD_INTERRUPT = "keyboard_interrupt"
 _SYSTEM_EXIT = "system_exit"
 _GENERATOR_EXIT = "generator_exit"
 _CANCELLED_ERROR = "cancelled_error"
+_PROCESS_PID = os.getpid()
+_PROCESS_EPOCH = object()
+
+
+def _refresh_process_epoch_after_fork() -> None:
+    """Refresh process identity without consulting any possibly inherited lock."""
+
+    global _PROCESS_EPOCH, _PROCESS_PID
+    _PROCESS_PID = os.getpid()
+    _PROCESS_EPOCH = object()
+
+
+def _current_process_identity() -> tuple[int, object]:
+    """Return a fork-sensitive identity, lazily refreshing when no hook is available."""
+
+    global _PROCESS_EPOCH, _PROCESS_PID
+    process_pid = os.getpid()
+    if process_pid != _PROCESS_PID:
+        # ``register_at_fork`` is not universal. PID drift is an independent
+        # fail-closed fallback and requires no inherited synchronization primitive.
+        _PROCESS_PID = process_pid
+        _PROCESS_EPOCH = object()
+    return process_pid, _PROCESS_EPOCH
+
+
+_register_at_fork = getattr(os, "register_at_fork", None)
+if callable(_register_at_fork):
+    try:
+        _register_at_fork(after_in_child=_refresh_process_epoch_after_fork)
+    except (AttributeError, OSError, RuntimeError, TypeError):
+        # PID drift remains a safe lazy fallback when hook registration is unavailable.
+        pass
 
 
 def _control_signal_kind(error: BaseException) -> Optional[str]:
@@ -238,6 +271,7 @@ _PUBLIC_OPERATION_FAILURE_CODES = frozenset(
         "protected_operation_id_unavailable",
         "protected_operation_identity_revision_stale",
         "protected_operation_internal_failure",
+        "protected_operation_process_mismatch",
         "protected_operation_registry_closed",
         "protected_operation_request_invalid",
         "protected_operation_scope_mismatch",
@@ -253,6 +287,12 @@ _PUBLIC_OPERATION_FAILURE_CODES = frozenset(
         "protected_operation_workspace_required",
     )
 )
+
+
+def _require_process_identity(owner_pid: int, owner_epoch: object) -> None:
+    process_pid, process_epoch = _current_process_identity()
+    if process_pid != owner_pid or process_epoch is not owner_epoch:
+        raise OperationAuthorizationError("protected_operation_process_mismatch")
 
 
 @dataclass(frozen=True, repr=False)
@@ -493,6 +533,8 @@ class _AuthorizedOperationRegistry:
         "__max_active_operations",
         "__max_clock_skew",
         "__max_operation_ttl",
+        "__owner_epoch",
+        "__owner_pid",
     )
 
     def __init__(
@@ -503,6 +545,7 @@ class _AuthorizedOperationRegistry:
         max_clock_skew: timedelta = timedelta(seconds=30),
         max_active_operations: int = 10_000,
     ) -> None:
+        owner_pid, owner_epoch = _current_process_identity()
         if clock is None or not callable(getattr(clock, "now", None)):
             raise TypeError("clock must implement now()")
         self.__max_operation_ttl = _require_duration(
@@ -529,6 +572,8 @@ class _AuthorizedOperationRegistry:
         self.__lock = threading.RLock()
         self.__closed = False
         self.__last_observed_at: Optional[datetime] = None
+        self.__owner_pid = owner_pid
+        self.__owner_epoch = owner_epoch
 
     def issue(
         self,
@@ -536,6 +581,7 @@ class _AuthorizedOperationRegistry:
         *,
         expires_at: datetime,
     ) -> AuthorizedOperation:
+        self._ensure_process()
         trusted = self._snapshot_binding(binding)
         expiry = _as_utc(expires_at, "expires_at")
         with self.__lock:
@@ -555,12 +601,14 @@ class _AuthorizedOperationRegistry:
     def observe_now(self) -> datetime:
         """Advance and return the registry's service-clock high-water mark."""
 
+        self._ensure_process()
         with self.__lock:
             if self.__closed:
                 raise OperationAuthorizationError("protected_operation_registry_closed")
             return self._clock_now()
 
     def verify(self, operation: AuthorizedOperation, expected: _OperationBinding) -> None:
+        self._ensure_process()
         trusted_expected = self._snapshot_binding(expected)
         with self.__lock:
             if self.__closed:
@@ -582,6 +630,7 @@ class _AuthorizedOperationRegistry:
     ) -> None:
         """Verify a live exact actor/request handle without granting or consuming it."""
 
+        self._ensure_process()
         trusted_request = _snapshot_access_request(request)
         if type(basis) is not ReauthorizationBasis:
             raise OperationAuthorizationError("protected_operation_context_rejected")
@@ -607,6 +656,7 @@ class _AuthorizedOperationRegistry:
     ) -> None:
         """Atomically verify exact actor/request scope and retire on success."""
 
+        self._ensure_process()
         trusted_request = _snapshot_access_request(request)
         if type(basis) is not ReauthorizationBasis:
             raise OperationAuthorizationError("protected_operation_context_rejected")
@@ -627,6 +677,7 @@ class _AuthorizedOperationRegistry:
             self._prune(now)
 
     def retire(self, operation: AuthorizedOperation) -> None:
+        self._ensure_process()
         with self.__lock:
             if self.__closed:
                 raise OperationAuthorizationError("protected_operation_registry_closed")
@@ -634,6 +685,7 @@ class _AuthorizedOperationRegistry:
             self.__active.pop(id(operation), None)
 
     def close(self) -> None:
+        self._ensure_process()
         with self.__lock:
             self.__closed = True
             self.__active.clear()
@@ -649,6 +701,9 @@ class _AuthorizedOperationRegistry:
 
     def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
         raise TypeError("AuthorizedOperationRegistry cannot be serialized")
+
+    def _ensure_process(self) -> None:
+        _require_process_identity(self.__owner_pid, self.__owner_epoch)
 
     def _clock_now(self) -> datetime:
         normalized, failure = _invoke_boundary(lambda: _as_utc(self.__clock.now(), "clock.now()"))
@@ -884,6 +939,8 @@ class ProtectedOperationComposer:
         "__max_clock_skew",
         "__max_state_age",
         "__operation_ttl",
+        "__owner_epoch",
+        "__owner_pid",
         "__provider",
         "__registry",
     )
@@ -900,6 +957,7 @@ class ProtectedOperationComposer:
         max_clock_skew: timedelta = timedelta(seconds=30),
         max_active_operations: int = 10_000,
     ) -> None:
+        owner_pid, owner_epoch = _current_process_identity()
         if type(issuer) is not RequestContextIssuer:
             raise TypeError("issuer must be an exact RequestContextIssuer")
         if state_provider is None or not callable(
@@ -938,6 +996,8 @@ class ProtectedOperationComposer:
         self.__authorizer = authorizer
         self.__lock = threading.RLock()
         self.__closed = False
+        self.__owner_pid = owner_pid
+        self.__owner_epoch = owner_epoch
 
     def authorize(
         self,
@@ -1097,6 +1157,7 @@ class ProtectedOperationComposer:
     def close(self) -> None:
         """Invalidate all handles and reject future composition. Idempotent."""
 
+        self._ensure_process()
         with self.__lock:
             self.__closed = True
             self.__registry.close()
@@ -1192,9 +1253,13 @@ class ProtectedOperationComposer:
         return state, decision, after_decision
 
     def _ensure_open(self) -> None:
+        self._ensure_process()
         with self.__lock:
             if self.__closed:
                 raise OperationAuthorizationError("protected_operation_composer_closed")
+
+    def _ensure_process(self) -> None:
+        _require_process_identity(self.__owner_pid, self.__owner_epoch)
 
     @staticmethod
     def _basis_matches_request(basis: ReauthorizationBasis, request: AccessRequest) -> bool:
