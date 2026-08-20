@@ -183,6 +183,28 @@ class SafeLoggerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             LogField("value", LogFieldKind.CODE)
 
+    def test_catalog_snapshots_schemas_and_never_returns_internal_objects(self) -> None:
+        field = LogField(
+            "outcome",
+            LogFieldKind.CODE,
+            allowed_codes=("completed",),
+        )
+        schema = LogEventSchema("qe.test.snapshotted", logging.INFO, (field,))
+        catalog = SafeLogCatalog((schema,))
+        safe_logger = SafeLogger(self.logger, catalog)
+
+        object.__setattr__(field, "allowed_codes", ("secret-canary",))
+        object.__setattr__(schema, "event_code", "secret-canary\nforged")
+        returned = catalog.get("qe.test.snapshotted")
+        assert returned is not None
+        object.__setattr__(returned.fields[0], "allowed_codes", ("secret-canary",))
+
+        self.assertFalse(safe_logger.emit("qe.test.snapshotted", {"outcome": "secret-canary"}))
+        self.assertTrue(safe_logger.emit("qe.test.snapshotted", {"outcome": "completed"}))
+        rendered = self.stream.getvalue()
+        self.assertNotIn("secret-canary", rendered)
+        self.assertIn('"outcome":"completed"', rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
