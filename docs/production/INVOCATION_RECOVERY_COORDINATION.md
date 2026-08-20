@@ -163,6 +163,28 @@ token digest, heartbeat, lease deadline, terminal status, and result reference. 
 writers may advance the live job while this read is in progress, but every row returned to the
 coordinator comes from the same pre-advance database snapshot.
 
+## Pure decision API
+
+`invocation_recovery.assess_invocation_recovery` implements the corrected matrix without a
+write path. Callers must provide:
+
+1. the exact `TaskStatus.RUNNING` projection;
+2. an `InvocationBinding` decoded from committed, versioned invocation-start evidence;
+3. one `InvocationRecoverySnapshot` from the atomic store read above;
+4. an optional `InvocationResultReceipt` decoded from a trusted durable receipt source.
+
+The boundary revalidates frozen objects on every call because Python callers can mutate a
+frozen dataclass with low-level reflection. It validates bounded UTF-8 text, control
+characters, canonical digests/timestamps, job and attempt counters/statuses, cross-row lease
+ownership, all seven binding fields, and receipt attempt ID/number/epoch/token digest. It
+accepts the schema-compatible `lease_epoch >= attempts_started` relationship and does not
+reject a requested availability timestamp merely because it predates enqueue time.
+
+Constructing an `InvocationResultReceipt` object in memory does not make a result durable or
+authentic. The type describes the fields a future trusted receipt decoder must produce. The
+current runtime has no such decoder and must pass no receipt; consequently it cannot receive
+`COMPLETION_READY` from current `task.result.received` events.
+
 ## Integration sequence
 
 The safe delivery order is:
@@ -197,6 +219,13 @@ The coordination foundation requires deterministic coverage for:
 - missing job versus store failure;
 - owned and borrowed store closure, double close, and use after close;
 - no mutation of either source for every decision and failure path.
+
+Targeted deterministic verification is:
+
+```bash
+PYTHONPATH=src python3 -m unittest \
+  tests.test_attempts tests.test_invocation_recovery -v
+```
 
 Before runtime integration can be promoted, retained evidence must additionally include
 process-kill tests for enqueue, claim, heartbeat, Agent return, artifact commit, result receipt,

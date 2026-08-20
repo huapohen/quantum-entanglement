@@ -1,0 +1,403 @@
+# ruff: noqa: UP045
+from __future__ import annotations
+
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from typing import Optional
+
+from quantum_entanglement.attempts import (
+    AttemptStatus,
+    InvocationJobSpec,
+    InvocationRecoverySnapshot,
+    InvocationStatus,
+    SQLiteInvocationAttemptStore,
+    invocation_payload_digest,
+)
+from quantum_entanglement.invocation_recovery import (
+    InvocationBinding,
+    InvocationRecoveryDecision,
+    InvocationRecoveryIntegrityError,
+    InvocationResultReceipt,
+    assess_invocation_recovery,
+)
+from quantum_entanglement.protocol import TaskStatus
+
+T0 = "2026-08-20T00:00:00Z"
+
+
+class MutableClock:
+    def __init__(self, value: str = T0) -> None:
+        self.value = value
+
+    def __call__(self) -> str:
+        return self.value
+
+    def set(self, value: str) -> None:
+        self.value = value
+
+
+def job_spec(
+    label: str,
+    *,
+    max_attempts: int = 3,
+    available_at: Optional[str] = None,
+) -> InvocationJobSpec:
+    return InvocationJobSpec(
+        invocation_id=f"invocation-{label}",
+        session_id="session-1",
+        plan_id="plan-1",
+        task_id=f"task-{label}",
+        agent_id=f"agent-{label}",
+        idempotency_key=f"invoke:task-{label}",
+        payload_digest=invocation_payload_digest(
+            {
+                "schemaVersion": 1,
+                "taskId": f"task-{label}",
+                "contextDigest": f"context-{label}",
+            }
+        ),
+        max_attempts=max_attempts,
+        available_at=available_at,
+    )
+
+
+def binding_for(spec: InvocationJobSpec) -> InvocationBinding:
+    return InvocationBinding(
+        invocation_id=spec.invocation_id,
+        session_id=spec.session_id,
+        plan_id=spec.plan_id,
+        task_id=spec.task_id,
+        agent_id=spec.agent_id,
+        idempotency_key=spec.idempotency_key,
+        payload_digest=spec.payload_digest,
+    )
+
+
+def receipt_for(
+    binding: InvocationBinding,
+    snapshot: InvocationRecoverySnapshot,
+    *,
+    result_ref: str = "result:1",
+) -> InvocationResultReceipt:
+    attempt = snapshot.current_attempt
+    if attempt is None:
+        raise AssertionError("receipt helper requires an attempt")
+    return InvocationResultReceipt(
+        binding=binding,
+        attempt_id=attempt.attempt_id,
+        attempt_number=attempt.attempt_number,
+        lease_epoch=attempt.lease_epoch,
+        lease_token_digest=attempt.lease_token_digest,
+        result_ref=result_ref,
+        manifest_digest=invocation_payload_digest(
+            {"resultRef": result_ref, "artifacts": ["artifact:1"]}
+        ),
+        receipt_id=f"receipt:{attempt.attempt_id}",
+        stream_id=f"session:{binding.session_id}",
+        stream_sequence=12,
+    )
+
+
+class InvocationRecoveryDecisionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tempdir.name) / "attempts.sqlite3")
+        self.clock = MutableClock()
+        self.store = SQLiteInvocationAttemptStore(self.path, clock=self.clock)
+
+    def tearDown(self) -> None:
+        self.store.close()
+        self.tempdir.cleanup()
+
+    def snapshot(self, spec: InvocationJobSpec) -> InvocationRecoverySnapshot:
+        return self.store.recovery_snapshot_for_task(spec.session_id, spec.task_id)
+
+    def enqueue(self, label: str, *, max_attempts: int = 3) -> InvocationJobSpec:
+        spec = job_spec(label, max_attempts=max_attempts)
+        self.store.enqueue(spec)
+        return spec
+
+    def running(
+        self,
+        label: str,
+        *,
+        max_attempts: int = 3,
+    ) -> tuple[InvocationJobSpec, object, InvocationRecoverySnapshot]:
+        spec = self.enqueue(label, max_attempts=max_attempts)
+        lease = self.store.claim(spec.invocation_id, f"worker-{label}", lease_seconds=30)
+        self.assertIsNotNone(lease)
+        return spec, lease, self.snapshot(spec)
+
+    def assess(
+        self,
+        binding: InvocationBinding,
+        snapshot: InvocationRecoverySnapshot,
+        receipt: Optional[InvocationResultReceipt] = None,
+    ) -> InvocationRecoveryDecision:
+        return assess_invocation_recovery(TaskStatus.RUNNING, binding, snapshot, receipt)
+
+    def test_missing_first_claim_retry_and_active_lease_are_distinct(self) -> None:
+        missing_spec = job_spec("missing")
+        self.assertEqual(
+            self.assess(
+                binding_for(missing_spec),
+                InvocationRecoverySnapshot(None, None, 0),
+            ),
+            InvocationRecoveryDecision.BLOCKED_MISSING_JOB,
+        )
+
+        first_spec = self.enqueue("first")
+        self.assertEqual(
+            self.assess(binding_for(first_spec), self.snapshot(first_spec)),
+            InvocationRecoveryDecision.FIRST_CLAIM_READY,
+        )
+
+        retry_spec, retry_lease, _running = self.running("retry")
+        self.assertTrue(self.store.fail(retry_lease, "retryable", retry_at=T0))  # type: ignore[arg-type]
+        retry_snapshot = self.snapshot(retry_spec)
+        self.assertEqual(retry_snapshot.job.status, InvocationStatus.QUEUED)
+        self.assertEqual(
+            self.assess(binding_for(retry_spec), retry_snapshot),
+            InvocationRecoveryDecision.BLOCKED_EFFECT_UNKNOWN,
+        )
+
+        running_spec, _lease, running_snapshot = self.running("active")
+        self.assertEqual(
+            self.assess(binding_for(running_spec), running_snapshot),
+            InvocationRecoveryDecision.WAITING_ACTIVE_LEASE,
+        )
+
+    def test_receipt_before_attempt_cas_is_reconciled_without_reinvocation(self) -> None:
+        spec, lease, running_snapshot = self.running("receipt-split")
+        binding = binding_for(spec)
+        receipt = receipt_for(binding, running_snapshot)
+        self.assertEqual(
+            self.assess(binding, running_snapshot, receipt),
+            InvocationRecoveryDecision.RESULT_ACCEPTED_PENDING_ATTEMPT_CAS,
+        )
+
+        self.assertTrue(self.store.fail(lease, "crash recovery", retry_at=T0))  # type: ignore[arg-type]
+        queued_snapshot = self.snapshot(spec)
+        self.assertEqual(queued_snapshot.job.status, InvocationStatus.QUEUED)
+        self.assertEqual(
+            self.assess(binding, queued_snapshot, receipt),
+            InvocationRecoveryDecision.RESULT_ACCEPTED_JOB_DIVERGED,
+        )
+
+    def test_receipt_survives_terminal_failure_divergence(self) -> None:
+        spec, lease, running_snapshot = self.running("receipt-failed", max_attempts=1)
+        binding = binding_for(spec)
+        receipt = receipt_for(binding, running_snapshot)
+        self.assertTrue(self.store.fail(lease, "terminal"))  # type: ignore[arg-type]
+        failed_snapshot = self.snapshot(spec)
+        self.assertEqual(failed_snapshot.job.status, InvocationStatus.FAILED)
+        self.assertEqual(
+            self.assess(binding, failed_snapshot, receipt),
+            InvocationRecoveryDecision.RESULT_ACCEPTED_JOB_DIVERGED,
+        )
+
+    def test_success_requires_the_exact_durable_result_receipt(self) -> None:
+        spec, lease, running_snapshot = self.running("success")
+        binding = binding_for(spec)
+        receipt = receipt_for(binding, running_snapshot, result_ref="result:success")
+        self.assertTrue(
+            self.store.complete(lease, result_ref=receipt.result_ref)  # type: ignore[arg-type]
+        )
+        succeeded = self.snapshot(spec)
+        self.assertEqual(
+            self.assess(binding, succeeded),
+            InvocationRecoveryDecision.BLOCKED_RESULT_UNCOMMITTED,
+        )
+        self.assertEqual(
+            self.assess(binding, succeeded, receipt),
+            InvocationRecoveryDecision.COMPLETION_READY,
+        )
+
+        mismatched_ref = replace(receipt, result_ref="result:other")
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "result_ref"):
+            self.assess(binding, succeeded, mismatched_ref)
+
+    def test_success_without_result_reference_remains_diverged_even_with_receipt(self) -> None:
+        spec, lease, running_snapshot = self.running("success-no-reference")
+        binding = binding_for(spec)
+        receipt = receipt_for(binding, running_snapshot)
+        self.assertTrue(self.store.complete(lease))  # type: ignore[arg-type]
+        succeeded = self.snapshot(spec)
+        self.assertIsNone(succeeded.job.result_ref)
+        self.assertEqual(
+            self.assess(binding, succeeded),
+            InvocationRecoveryDecision.BLOCKED_RESULT_UNCOMMITTED,
+        )
+        self.assertEqual(
+            self.assess(binding, succeeded, receipt),
+            InvocationRecoveryDecision.RESULT_ACCEPTED_JOB_DIVERGED,
+        )
+
+    def test_failure_without_receipt_preserves_effect_unknown(self) -> None:
+        spec, lease, _running = self.running("failed", max_attempts=1)
+        self.assertTrue(self.store.fail(lease, "terminal"))  # type: ignore[arg-type]
+        self.assertEqual(
+            self.assess(binding_for(spec), self.snapshot(spec)),
+            InvocationRecoveryDecision.TERMINAL_FAILURE_EFFECT_UNKNOWN,
+        )
+
+    def test_orphan_receipt_and_canceled_state_fail_closed(self) -> None:
+        receipt_spec, _lease, running_snapshot = self.running("orphan")
+        binding = binding_for(receipt_spec)
+        receipt = receipt_for(binding, running_snapshot)
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "without invocation job"):
+            self.assess(binding, InvocationRecoverySnapshot(None, None, 0), receipt)
+
+        canceled_spec, canceled_lease, _running = self.running("canceled", max_attempts=1)
+        self.assertTrue(self.store.fail(canceled_lease, "terminal"))  # type: ignore[arg-type]
+        failed = self.snapshot(canceled_spec)
+        canceled_job = replace(
+            failed.job,
+            status=InvocationStatus.CANCELED,
+            last_error=None,
+        )
+        canceled_attempt = replace(
+            failed.current_attempt,
+            status=AttemptStatus.CANCELED,
+            error=None,
+        )
+        canceled = InvocationRecoverySnapshot(canceled_job, canceled_attempt, 1)
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "cancellation receipt"):
+            self.assess(binding_for(canceled_spec), canceled)
+
+    def test_every_job_identity_and_payload_field_is_bound(self) -> None:
+        spec = self.enqueue("binding")
+        binding = binding_for(spec)
+        snapshot = self.snapshot(spec)
+        cases = {
+            "invocation_id": "other-invocation",
+            "session_id": "other-session",
+            "plan_id": "other-plan",
+            "task_id": "other-task",
+            "agent_id": "other-agent",
+            "idempotency_key": "invoke:other",
+            "payload_digest": "0" * 64,
+        }
+        for field, value in cases.items():
+            with self.subTest(field=field):
+                forged = replace(snapshot, job=replace(snapshot.job, **{field: value}))
+                with self.assertRaisesRegex(InvocationRecoveryIntegrityError, field):
+                    self.assess(binding, forged)
+
+    def test_receipt_is_bound_to_current_attempt_and_invocation(self) -> None:
+        spec, _lease, snapshot = self.running("receipt-binding")
+        binding = binding_for(spec)
+        receipt = receipt_for(binding, snapshot)
+        cases = (
+            (replace(receipt, attempt_id="attempt-other"), "attempt_id"),
+            (replace(receipt, attempt_number=2), "attempt_number"),
+            (replace(receipt, lease_epoch=2), "lease_epoch"),
+            (replace(receipt, lease_token_digest="0" * 64), "lease_token_digest"),
+            (
+                replace(
+                    receipt,
+                    binding=replace(binding, plan_id="plan-other"),
+                ),
+                "binding",
+            ),
+        )
+        for forged, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(InvocationRecoveryIntegrityError, message):
+                    self.assess(binding, snapshot, forged)
+
+    def test_receipt_manifest_and_event_position_are_revalidated(self) -> None:
+        spec, _lease, snapshot = self.running("receipt-shape")
+        binding = binding_for(spec)
+        receipt = receipt_for(binding, snapshot)
+        mutations = (
+            ("manifest_digest", "not-a-digest", "manifest_digest"),
+            ("stream_id", "session:other", "stream_id"),
+            ("stream_sequence", 0, "stream_sequence"),
+            ("receipt_id", "receipt\nforged", "control character"),
+        )
+        for field, value, message in mutations:
+            with self.subTest(field=field):
+                forged = replace(receipt)
+                object.__setattr__(forged, field, value)
+                with self.assertRaisesRegex(InvocationRecoveryIntegrityError, message):
+                    self.assess(binding, snapshot, forged)
+
+    def test_snapshot_shape_and_cross_row_ownership_are_revalidated(self) -> None:
+        queued_spec = self.enqueue("malformed")
+        queued = self.snapshot(queued_spec)
+        cases = (
+            (
+                replace(queued, job=replace(queued.job, status="queued")),  # type: ignore[arg-type]
+                "status",
+            ),
+            (replace(queued, job=replace(queued.job, priority=True)), "priority"),
+            (replace(queued, job=replace(queued.job, lease_epoch=1)), "lease_epoch"),
+            (replace(queued, attempt_count=1), "attempt_count"),
+            (
+                replace(queued, job=replace(queued.job, result_ref="result:forged")),
+                "result_ref",
+            ),
+        )
+        for forged, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(InvocationRecoveryIntegrityError, message):
+                    self.assess(binding_for(queued_spec), forged)
+
+        running_spec, _lease, running = self.running("owner-drift")
+        forged_attempt = replace(running.current_attempt, lease_token_digest="0" * 64)
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "ownership differs"):
+            self.assess(
+                binding_for(running_spec),
+                replace(running, current_attempt=forged_attempt),
+            )
+
+    def test_schema_compatible_epoch_gap_is_not_coerced_or_rejected(self) -> None:
+        spec, _lease, snapshot = self.running("epoch-gap")
+        job = replace(snapshot.job, lease_epoch=2)
+        attempt = replace(snapshot.current_attempt, lease_epoch=2)
+        compatible = InvocationRecoverySnapshot(job, attempt, snapshot.attempt_count)
+        self.assertEqual(
+            self.assess(binding_for(spec), compatible),
+            InvocationRecoveryDecision.WAITING_ACTIVE_LEASE,
+        )
+
+    def test_past_requested_availability_remains_a_valid_first_claim(self) -> None:
+        spec = job_spec("past", available_at="2020-01-01T00:00:00Z")
+        self.store.enqueue(spec)
+        self.assertEqual(
+            self.assess(binding_for(spec), self.snapshot(spec)),
+            InvocationRecoveryDecision.FIRST_CLAIM_READY,
+        )
+
+    def test_non_running_task_projection_is_rejected(self) -> None:
+        spec = self.enqueue("wrong-task-state")
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "RUNNING task"):
+            assess_invocation_recovery(
+                TaskStatus.COMPLETED,
+                binding_for(spec),
+                self.snapshot(spec),
+            )
+
+    def test_assessment_never_mutates_snapshot_or_receipt(self) -> None:
+        spec, _lease, snapshot = self.running("immutable")
+        binding = binding_for(spec)
+        receipt = receipt_for(binding, snapshot)
+        snapshot_before = replace(snapshot)
+        receipt_before = replace(receipt)
+        self.assess(binding, snapshot, receipt)
+        self.assertEqual(snapshot, snapshot_before)
+        self.assertEqual(receipt, receipt_before)
+
+    def test_mutated_frozen_inputs_are_revalidated_at_the_boundary(self) -> None:
+        spec = self.enqueue("mutated")
+        binding = binding_for(spec)
+        object.__setattr__(binding, "payload_digest", "not-a-digest")
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "payload_digest"):
+            self.assess(binding, self.snapshot(spec))
+
+
+if __name__ == "__main__":
+    unittest.main()
