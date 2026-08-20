@@ -9,11 +9,15 @@ RequestContextIssuer; constructing either value directly grants no authority.
 from __future__ import annotations
 
 import re
+import secrets
+import threading
+import weakref
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Optional, Protocol
+from datetime import datetime, timedelta, timezone
+from typing import Any, NoReturn, Optional, Protocol, SupportsIndex
 
-from .tenancy import TenantId, WorkspaceId
+from .service.secrets import SecretMaterial
+from .tenancy import ServerClock, SystemClock, TenantId, WorkspaceId
 
 _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -168,8 +172,400 @@ class RequestAuthenticator(Protocol):
         """Verify the credential and bind the exact caller claims or fail closed."""
 
 
+class RequestContextError(RuntimeError):
+    """Redacted request-context failure with one stable machine-readable code."""
+
+    __slots__ = ("code",)
+
+    def __init__(self, code: str) -> None:
+        _require_opaque_id(code, "request context error code")
+        self.code = code
+        super().__init__(code)
+
+
+@dataclass(frozen=True)
+class _ContextSnapshot:
+    context_id: str
+    authenticator_id: str
+    audience: str
+    request_id: str
+    principal_id: str
+    subject_id: str
+    tenant_id: TenantId
+    workspace_id: Optional[WorkspaceId]
+    identity_revision: str
+    scope_revision: str
+    evidence_fingerprint: str
+    authenticated_at: datetime
+    issued_at: datetime
+    expires_at: datetime
+
+
+_CONTEXT_CONSTRUCTION_TOKEN = object()
+
+
+class RequestContext:
+    """Opaque process-local handle; only its issuer can establish that it is trusted."""
+
+    __slots__ = (
+        "__authenticated_at",
+        "__authenticator_id",
+        "__audience",
+        "__context_id",
+        "__evidence_fingerprint",
+        "__expires_at",
+        "__identity_revision",
+        "__issued_at",
+        "__principal_id",
+        "__request_id",
+        "__scope_revision",
+        "__subject_id",
+        "__tenant_id",
+        "__weakref__",
+        "__workspace_id",
+    )
+
+    def __init__(self, snapshot: _ContextSnapshot, token: object) -> None:
+        if token is not _CONTEXT_CONSTRUCTION_TOKEN or type(snapshot) is not _ContextSnapshot:
+            raise TypeError("RequestContext instances are issued by RequestContextIssuer")
+        self.__context_id = snapshot.context_id
+        self.__authenticator_id = snapshot.authenticator_id
+        self.__audience = snapshot.audience
+        self.__request_id = snapshot.request_id
+        self.__principal_id = snapshot.principal_id
+        self.__subject_id = snapshot.subject_id
+        self.__tenant_id = snapshot.tenant_id
+        self.__workspace_id = snapshot.workspace_id
+        self.__identity_revision = snapshot.identity_revision
+        self.__scope_revision = snapshot.scope_revision
+        self.__evidence_fingerprint = snapshot.evidence_fingerprint
+        self.__authenticated_at = snapshot.authenticated_at
+        self.__issued_at = snapshot.issued_at
+        self.__expires_at = snapshot.expires_at
+
+    @property
+    def context_id(self) -> str:
+        return self.__context_id
+
+    @property
+    def authenticator_id(self) -> str:
+        return self.__authenticator_id
+
+    @property
+    def audience(self) -> str:
+        return self.__audience
+
+    @property
+    def request_id(self) -> str:
+        return self.__request_id
+
+    @property
+    def principal_id(self) -> str:
+        return self.__principal_id
+
+    @property
+    def subject_id(self) -> str:
+        return self.__subject_id
+
+    @property
+    def tenant_id(self) -> TenantId:
+        return self.__tenant_id
+
+    @property
+    def workspace_id(self) -> Optional[WorkspaceId]:
+        return self.__workspace_id
+
+    @property
+    def identity_revision(self) -> str:
+        return self.__identity_revision
+
+    @property
+    def scope_revision(self) -> str:
+        return self.__scope_revision
+
+    @property
+    def evidence_fingerprint(self) -> str:
+        return self.__evidence_fingerprint
+
+    @property
+    def authenticated_at(self) -> datetime:
+        return self.__authenticated_at
+
+    @property
+    def issued_at(self) -> datetime:
+        return self.__issued_at
+
+    @property
+    def expires_at(self) -> datetime:
+        return self.__expires_at
+
+    def __str__(self) -> str:
+        return "RequestContext<opaque>"
+
+    def __repr__(self) -> str:
+        return "RequestContext(<opaque>)"
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("RequestContext cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> NoReturn:
+        raise TypeError("RequestContext cannot be copied")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("RequestContext cannot be serialized")
+
+
+class RequestContextIssuer:
+    """Call one trusted authenticator and register bounded process-local contexts."""
+
+    __slots__ = (
+        "__active",
+        "__audience",
+        "__authenticator",
+        "__authenticator_id",
+        "__clock",
+        "__closed",
+        "__lock",
+        "__max_active_contexts",
+        "__max_clock_skew",
+        "__max_context_ttl",
+    )
+
+    def __init__(
+        self,
+        *,
+        authenticator: RequestAuthenticator,
+        authenticator_id: str,
+        audience: str,
+        clock: Optional[ServerClock] = None,
+        max_context_ttl: timedelta = timedelta(minutes=5),
+        max_clock_skew: timedelta = timedelta(seconds=30),
+        max_active_contexts: int = 10_000,
+    ) -> None:
+        _require_opaque_id(authenticator_id, "authenticator_id")
+        _require_text(audience, "audience")
+        self._validate_duration(
+            max_context_ttl,
+            "max_context_ttl",
+            minimum=timedelta(microseconds=1),
+            maximum=timedelta(days=1),
+        )
+        self._validate_duration(
+            max_clock_skew,
+            "max_clock_skew",
+            minimum=timedelta(0),
+            maximum=timedelta(minutes=5),
+        )
+        if isinstance(max_active_contexts, bool) or not isinstance(max_active_contexts, int):
+            raise TypeError("max_active_contexts must be an integer")
+        if not 1 <= max_active_contexts <= 1_000_000:
+            raise ValueError("max_active_contexts is outside the supported range")
+        self.__authenticator = authenticator
+        self.__authenticator_id = authenticator_id
+        self.__audience = audience
+        self.__clock = clock or SystemClock()
+        self.__max_context_ttl = max_context_ttl
+        self.__max_clock_skew = max_clock_skew
+        self.__max_active_contexts = max_active_contexts
+        self.__active: dict[
+            int, tuple[weakref.ReferenceType[RequestContext], _ContextSnapshot]
+        ] = {}
+        self.__lock = threading.RLock()
+        self.__closed = False
+
+    def issue(
+        self,
+        claims: CallerRequestContext,
+        credential: SecretMaterial,
+    ) -> RequestContext:
+        """Authenticate exact caller claims and consume one credential lease."""
+
+        if type(credential) is not SecretMaterial:
+            raise TypeError("credential must be an exact SecretMaterial")
+        try:
+            expected = self._snapshot_claims(claims)
+            now = self._clock_now()
+            with self.__lock:
+                if self.__closed:
+                    raise RequestContextError("request_context_issuer_closed")
+            adapter_claims = CallerRequestContext.from_dict(expected.to_dict())
+            try:
+                credential_view = credential.view()
+            except Exception:
+                raise RequestContextError("request_context_credential_unavailable") from None
+            try:
+                binding = self.__authenticator.authenticate(
+                    adapter_claims,
+                    credential_view,
+                    audience=self.__audience,
+                    at=now,
+                )
+            except Exception:
+                raise RequestContextError("request_authentication_failed") from None
+            trusted = self._validate_binding(binding, expected, now)
+            return self._register(trusted, now)
+        finally:
+            credential.close()
+
+    def close(self) -> None:
+        """Invalidate every issued context. The operation is idempotent."""
+
+        with self.__lock:
+            self.__closed = True
+            self.__active.clear()
+
+    def __enter__(self) -> RequestContextIssuer:
+        with self.__lock:
+            if self.__closed:
+                raise RequestContextError("request_context_issuer_closed")
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self.close()
+
+    def __repr__(self) -> str:
+        return "RequestContextIssuer(<configured>)"
+
+    @staticmethod
+    def _validate_duration(
+        value: timedelta,
+        field_name: str,
+        *,
+        minimum: timedelta,
+        maximum: timedelta,
+    ) -> None:
+        if not isinstance(value, timedelta):
+            raise TypeError(f"{field_name} must be timedelta")
+        if value < minimum or value > maximum:
+            raise ValueError(f"{field_name} is outside the supported range")
+
+    def _clock_now(self) -> datetime:
+        try:
+            value = self.__clock.now()
+            return _as_utc(value, "clock.now()")
+        except Exception:
+            raise RequestContextError("request_context_clock_unavailable") from None
+
+    @staticmethod
+    def _snapshot_claims(claims: CallerRequestContext) -> CallerRequestContext:
+        if type(claims) is not CallerRequestContext:
+            raise TypeError("claims must be an exact CallerRequestContext")
+        try:
+            return CallerRequestContext.from_dict(claims.to_dict())
+        except (AttributeError, TypeError, ValueError):
+            raise TypeError("claims must be a canonical CallerRequestContext") from None
+
+    def _validate_binding(
+        self,
+        binding: AuthenticatedRequestBinding,
+        expected: CallerRequestContext,
+        now: datetime,
+    ) -> AuthenticatedRequestBinding:
+        if type(binding) is not AuthenticatedRequestBinding:
+            raise RequestContextError("request_authentication_result_invalid")
+        try:
+            trusted = AuthenticatedRequestBinding(
+                authenticator_id=binding.authenticator_id,
+                audience=binding.audience,
+                request_id=binding.request_id,
+                principal_id=binding.principal_id,
+                subject_id=binding.subject_id,
+                tenant_id=binding.tenant_id,
+                workspace_id=binding.workspace_id,
+                identity_revision=binding.identity_revision,
+                scope_revision=binding.scope_revision,
+                evidence_fingerprint=binding.evidence_fingerprint,
+                authenticated_at=binding.authenticated_at,
+                expires_at=binding.expires_at,
+            )
+        except (AttributeError, TypeError, ValueError):
+            raise RequestContextError("request_authentication_result_invalid") from None
+        expected_scope = (
+            self.__authenticator_id,
+            self.__audience,
+            expected.request_id,
+            expected.subject_id,
+            expected.tenant_id,
+            expected.workspace_id,
+        )
+        actual_scope = (
+            trusted.authenticator_id,
+            trusted.audience,
+            trusted.request_id,
+            trusted.subject_id,
+            trusted.tenant_id,
+            trusted.workspace_id,
+        )
+        if actual_scope != expected_scope:
+            raise RequestContextError("request_authentication_binding_mismatch")
+        if trusted.authenticated_at > now + self.__max_clock_skew:
+            raise RequestContextError("request_authentication_time_invalid")
+        if trusted.expires_at <= now:
+            raise RequestContextError("request_authentication_expired")
+        if trusted.expires_at - trusted.authenticated_at > self.__max_context_ttl:
+            raise RequestContextError("request_authentication_ttl_exceeded")
+        if trusted.expires_at > now + self.__max_context_ttl:
+            raise RequestContextError("request_authentication_ttl_exceeded")
+        return trusted
+
+    def _register(
+        self,
+        binding: AuthenticatedRequestBinding,
+        now: datetime,
+    ) -> RequestContext:
+        with self.__lock:
+            if self.__closed:
+                raise RequestContextError("request_context_issuer_closed")
+            self._prune(now)
+            if len(self.__active) >= self.__max_active_contexts:
+                raise RequestContextError("request_context_capacity_exceeded")
+            context_id = self._new_context_id()
+            snapshot = _ContextSnapshot(
+                context_id=context_id,
+                authenticator_id=binding.authenticator_id,
+                audience=binding.audience,
+                request_id=binding.request_id,
+                principal_id=binding.principal_id,
+                subject_id=binding.subject_id,
+                tenant_id=binding.tenant_id,
+                workspace_id=binding.workspace_id,
+                identity_revision=binding.identity_revision,
+                scope_revision=binding.scope_revision,
+                evidence_fingerprint=binding.evidence_fingerprint,
+                authenticated_at=binding.authenticated_at,
+                issued_at=now,
+                expires_at=binding.expires_at,
+            )
+            context = RequestContext(snapshot, _CONTEXT_CONSTRUCTION_TOKEN)
+            self.__active[id(context)] = (weakref.ref(context), snapshot)
+            return context
+
+    def _new_context_id(self) -> str:
+        existing = {record[1].context_id for record in self.__active.values()}
+        try:
+            for _ in range(4):
+                candidate = f"ctx_{secrets.token_hex(32)}"
+                if candidate not in existing:
+                    return candidate
+        except Exception:
+            pass
+        raise RequestContextError("request_context_id_unavailable")
+
+    def _prune(self, now: datetime) -> None:
+        stale = [
+            identifier
+            for identifier, (reference, snapshot) in self.__active.items()
+            if reference() is None or snapshot.expires_at <= now
+        ]
+        for identifier in stale:
+            del self.__active[identifier]
+
+
 __all__ = [
     "AuthenticatedRequestBinding",
     "CallerRequestContext",
     "RequestAuthenticator",
+    "RequestContext",
+    "RequestContextError",
+    "RequestContextIssuer",
 ]
