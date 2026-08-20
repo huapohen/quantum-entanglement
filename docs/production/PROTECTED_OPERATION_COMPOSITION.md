@@ -22,7 +22,8 @@ production-adapter contracts remain under review.
 
 ## 1. Exact call path and authority transition
 
-The only supported issuance path is:
+The supported path has a preliminary issuance decision and a mandatory action-time
+decision:
 
 ```text
 RequestContext + AccessRequest
@@ -47,7 +48,14 @@ composer-owned bounded registry -> AuthorizedOperation
         |
         v
 same composer.consume(operation, same context, exact request)
-        |  atomic compare-and-retire inside this process
+        |
+        +-> registry preflight: live, unmodified, unexpired, exact actor/request scope
+        +-> same RequestContextIssuer.prepare_reauthorization
+        +-> CurrentAuthorizationStateProvider.load_current_state again
+        +-> exact identity/scope/revision/freshness comparison again
+        +-> TenantAuthorizer.evaluate again -> explicit ALLOW only
+        +-> same issuer final context check
+        |  atomic compare-and-retire inside this process only after fresh ALLOW
         v
 future effect adapter boundary (not implemented in this slice)
 ```
@@ -57,11 +65,14 @@ check succeeds. The provider state and authorizer decision remain ordinary value
 Direct construction, deserialization, subclassing, truthiness, or possession of those
 values grants nothing.
 
-`consume` repeats same-issuer context validation and compares the exact actor and operation
-scope before atomically removing the handle from the composer registry. A successful
-handle can therefore be consumed once. Failed scope comparisons do not consume it; the
-correct exact actor/request may still consume it before expiry. Two concurrent correct
-consumers are serialized and exactly one succeeds inside one composer process.
+`consume` first proves that the handle is still live and bound to the exact actor/request.
+It then repeats same-issuer context validation, reloads current identity, membership,
+revocation, and capability state, repeats exact revision/freshness comparisons, and invokes
+the exact authorizer again. It performs a final same-issuer context check and atomically
+removes the handle only after that action-time decision is an explicit `ALLOW`. A successful
+handle can therefore be consumed once. Failed scope, state, revision, dependency, or policy
+checks do not consume it and grant no effect permission. Two concurrent correct consumers
+may both perform fresh checks, but exactly one can complete the local consume.
 
 ## 2. Trust and data matrix
 
@@ -75,8 +86,8 @@ consumers are serialized and exactly one succeeds inside one composer process.
 | `Member` / `RevocationSnapshot` | Current-state inputs | Exact canonical snapshots and exact tenant/subject relationships; authorizer rechecks policy and freshness | None by construction |
 | `VerifiedCapability` | Verification cache hint | Exact bounded tuple; `TenantAuthorizer` re-verifies each envelope in its own trust domain | None by construction |
 | `TenantAuthorizer` | Exact configured policy engine | Exact concrete instance; exceptions fail closed; returned decision is canonically rebuilt | Decision only |
-| `AuthorizationDecision` | Policy result | Exact request equality, service-time bound, and explicit `AuthorizationOutcome.ALLOW` | Eligible for local issuance only |
-| `AuthorizedOperation` | Composer-owned local authority | Exact registered object, complete snapshot match, actor/request match, TTL, one-time consume | Permission to enter a future effect boundary once |
+| `AuthorizationDecision` | Policy result | Exact request equality, service-time bound, and explicit `AuthorizationOutcome.ALLOW` | Eligible for local issuance or final consume only inside the current call |
+| `AuthorizedOperation` | Composer-owned preliminary authority | Exact registered object, complete snapshot match, actor/request match, fresh provider/policy re-evaluation, final context check, TTL, one-time consume | Permission to enter a future effect boundary once |
 
 The current-state provider is trusted configuration, but its output is never accepted by
 shape alone. A production adapter must load authoritative state. The test suite supplies
@@ -87,7 +98,8 @@ IdP, session, directory, membership, workspace-policy, or capability-source adap
 
 `CurrentAuthorizationStateProvider.load_current_state(basis, request)` receives a basis
 that the same issuer just prepared and a canonical snapshot of the concrete request. The
-provider must return one exact `CurrentAuthorizationState` containing:
+provider is called during issuance and again during every consume attempt that passes token
+preflight. It must return one exact `CurrentAuthorizationState` containing:
 
 - context identifier, configured authenticator identifier, and audience;
 - exact request identifier, provider principal, mapped subject, tenant, and required
@@ -143,9 +155,11 @@ The handle exposes only its non-authorizing correlation identifier and issuance/
 times. Its tenant, workspace, actor, action, resource, decision, and revision fields are not
 public properties and never appear in `str` or `repr`.
 
-Consumption requires the original issuer to validate a live `RequestContext` again. A new
-context with identical request, subject, tenant, workspace, and revision strings still has
-a different context identifier and cannot consume the handle. A handle for tenant A cannot
+Consumption requires the original issuer to validate a live `RequestContext`, both before
+the current-state lookup and immediately after the action-time policy decision. A context
+retired while the provider or authorizer runs cannot complete consumption. A new context
+with identical request, subject, tenant, workspace, and revision strings still has a
+different context identifier and cannot consume the handle. A handle for tenant A cannot
 be used for tenant B even when request ID, subject ID, workspace string, resource type, and
 resource ID collide exactly. Action, resource type, and resource ID substitutions also
 fail.
@@ -167,7 +181,8 @@ live handle.
   current-state freshness expiry;
 - active handles have a hard configured capacity and dead/expired entries are pruned;
 - `retire` invalidates one handle and `close` invalidates all handles; and
-- successful `consume` compares and removes the handle under the same registry lock.
+- successful `consume` reloads and reauthorizes current state, then compares and removes
+  the handle under the same registry lock.
 
 The operation ID is a correlation value, not the authority. Reconstructing or replaying an
 ID cannot reconstruct the registered Python object. The registry uses object identity plus
@@ -183,8 +198,10 @@ process isolation and a separately reviewed protocol.
 
 ### 5.1 Important effect-atomicity limitation
 
-One-time local consumption prevents a second successful composer consume. It does **not**
-make consumption atomic with a repository transaction or external side effect:
+Fresh action-time authorization and one-time local consumption prevent use after an
+observed membership/revision/revocation change and prevent a second successful composer
+consume. They do **not** make the provider read, final context check, registry consume,
+repository transaction, and external side effect one atomic operation:
 
 ```text
 consume succeeds -> process crashes -> effect may not start
@@ -197,6 +214,12 @@ store, no command receipt, and no recovery reconciliation. Calling a real effect
 idempotent receipt boundary is designed and tested, this composition is permitted only
 with fake, no-op, or read-only effect adapters.
 
+State may also change immediately after the final provider read. A real adapter and effect
+boundary need a durable revision predicate, lock/fence, transactional authorization check,
+or equivalent design that proves the state used by the decision still governs the effect.
+The current double evaluation is fail-closed against changes it observes; it is not a
+cross-store serializable transaction.
+
 ## 6. Time, capacity, and concurrency semantics
 
 The composer registry owns a service clock with a monotonic process-local high-water mark.
@@ -205,10 +228,11 @@ larger rollback fails closed. Clock exceptions and non-aware timestamps become s
 redacted errors. Context preparation uses the issuer's independent high-water, and the
 authorizer uses its configured service clock.
 
-Before authorization, the composer rejects a basis prepared too far in the future or a
-context already expired against composer time. It rejects a stale/future provider
-observation. After policy evaluation, it requires the canonical decision timestamp to be
-within configured clock skew of composer time. Issuance resamples the registry clock while
+Before both issuance evaluation and action-time consume evaluation, the composer rejects a
+basis prepared too far in the future or a context already expired against composer time.
+It rejects a stale/future provider observation. After each policy evaluation, it resamples
+time, rechecks context expiry and provider-state age, and requires the canonical decision
+timestamp to be within configured clock skew. Issuance resamples the registry clock while
 holding the registry lock and refuses a non-positive or overlong expiry.
 
 Capacity is a hard count of live registered handles. Concurrent issuers cannot exceed it:
@@ -217,9 +241,10 @@ the snapshot under one reentrant lock. The expensive provider and policy calls o
 that lock and may still consume compute during saturation. Production still needs admission
 rate limits, per-tenant quotas, dependency concurrency budgets, and overload metrics.
 
-Two concurrent consumers may both prepare a valid context before reaching the registry.
-The compare-and-remove step is serialized, so one succeeds and the other receives a stable
-untrusted-handle failure. This guarantee is local to one composer instance and process.
+Two concurrent consumers may both prepare a valid context, reload state, and receive an
+`ALLOW` before reaching the registry. The final compare-and-remove step is serialized, so
+one succeeds and the other receives a stable untrusted-handle failure. This guarantee is
+local to one composer instance and process.
 
 ## 7. Failure and redaction contract
 
@@ -229,6 +254,16 @@ returned. The public boundary clears cause/context links, clears completed inter
 traceback frames, deletes actor/request arguments from the remaining public frame, and
 raises a fresh code-only exception. Provider/authorizer exception chains and their frame
 locals are therefore not retained through the public failure.
+
+Configured dependencies are treated as hostile exception boundaries, including custom
+classes that inherit directly from `BaseException`. A non-control `BaseException` becomes
+the same stable fail-closed category as an ordinary dependency exception. Exact
+`KeyboardInterrupt`, `SystemExit`, and `GeneratorExit` retain control-flow semantics, but
+the original third-party object, message, cause/context graph, and traceback are discarded;
+the public boundary raises a new message-free signal (`SystemExit` uses safe code `1`). A
+subclass merely shaped like a control signal is treated as a hostile dependency failure.
+This policy applies to `authorize`, `consume`, and `retire` and prevents a dependency from
+smuggling tenant or credential material through a control-shaped exception.
 
 Representative codes are grouped below. Callers must treat every code as denial and must
 not retry an irreversible effect without a new reviewed idempotency policy.
@@ -289,11 +324,13 @@ authorization reset and must not be used to bypass a clock or integrity alarm.
 | Caller constructs state/basis/decision | Values remain non-authorizing; only composer registry issues handles | Keep effect entry points inaccessible without the composer |
 | Provider is unavailable or throws a secret-bearing chain | Stable denial; chain and internal traceback frames detached | Alerting, timeout, circuit, retry, and provider SLO |
 | Provider returns another tenant/workspace or stale revision | Exact comparison and distinct fail-closed codes | Strong-consistency/freshness proof from real stores |
+| Membership, identity/scope revision, or capability revocation changes after issuance | `consume` reloads state and re-runs exact authorizer; observed downgrade/revision/revocation denies before consume | Atomic revision/fence with the future effect transaction |
 | Same IDs collide across tenants | Tenant and workspace are part of issuance and consume scope | Tenant/workspace columns and predicates in every repository |
 | Handle is forged, copied, pickled, moved, or mutated | Exact local registry identity, copy/pickle rejection, snapshot quarantine | Process isolation against arbitrary trusted-host code |
 | Handle is replayed serially or concurrently | Successful consume atomically removes it; later consume fails | Durable distributed replay ledger for multi-process effects |
 | Context is replaced by a new context for the same actor | Exact context ID/principal/revision snapshot fails | Durable session/revocation semantics if cross-process is required |
 | Service clock rolls backward | Local high-water freezes within skew and fails beyond it | Trusted time monitoring and incident runbook |
+| Dependency throws a custom `BaseException` or control-shaped secret | Non-control failures become stable denial; exact control signals are replaced with fresh secret-free signals | Cancellation/termination integration tests in the real service host |
 | Process crashes between consume and effect/receipt | No permissive recovery; handle is process-local | Transactional effect receipt or durable idempotency/reconciliation |
 | Registry is exhausted | Hard capacity; no over-issuance under concurrency | Per-tenant quotas, rate limits, load shedding, capacity evidence |
 | Arbitrary Python code runs in process | Explicitly outside this primitive's isolation claim | Sandboxed workers/plugins and least-privilege deployment |
@@ -334,11 +371,13 @@ git diff --check
 The dedicated suite covers exact state types/snapshots, redacted representations,
 structural provider injection, workspace requirements, same-ID cross-tenant isolation,
 every actor/scope/revision substitution, provider observation freshness/future time,
-provider and authorizer exception-chain/frame detachment, explicit deny, malformed
-decisions, foreign issuer/composer, direct construction, forgery, reflective tampering,
-copy/deepcopy/pickle, operation and composer lifecycle, expiry, service-clock rollback,
-hard concurrent issuance capacity, serial replay, concurrent replay, and exact one-time
-consumption.
+provider and authorizer exception-chain/frame detachment, hostile `BaseException` and safe
+control-signal replacement, explicit deny, malformed decisions, membership downgrade,
+post-issuance identity/scope revision change, post-issuance capability revocation, context
+retirement during refresh, foreign issuer/composer, direct construction, forgery,
+reflective tampering, copy/deepcopy/pickle, operation and composer lifecycle, expiry,
+service-clock rollback, hard concurrent issuance capacity, serial replay, concurrent
+replay, action-time reauthorization, and exact one-time consumption.
 
 Test counts are observations, never promotion evidence. A release candidate must run the
 complete baseline in `RELEASE_GATES.md` on the exact clean source tree and retain the
