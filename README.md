@@ -25,6 +25,7 @@ attempt 的 lease、heartbeat、崩溃接管以及外部副作用确认仍在 `0
 - `docs/production/RELEASE_GATES.md`
 - `docs/production/APPROVAL_DURABILITY.md`
 - `docs/production/WORKFLOW_INITIALIZATION_DURABILITY.md`
+- `docs/production/DEPENDENCY_LOCKS_AND_SBOM.md`
 
 ## 仓库结构
 
