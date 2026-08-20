@@ -1071,6 +1071,52 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         )
         self.assertEqual(tuple(self.store._connection.iterdump()), valid)
 
+    def test_job_status_must_match_its_attempt_budget(self):
+        self.store.enqueue(job_spec(max_attempts=3))
+        first = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.assertTrue(self.store.fail(first, "retry", retry_at=T0))
+        queued = tuple(self.store._connection.iterdump())
+
+        self.store._connection.execute(
+            """
+            UPDATE invocation_jobs
+            SET status = 'failed', finished_at = updated_at
+            WHERE invocation_id = ?
+            """,
+            ("invocation-1",),
+        )
+        with self.assertRaisesRegex(
+            InvocationIntegrityError,
+            "persisted invocation job is malformed",
+        ):
+            self.store.get("invocation-1")
+
+        self.store._connection.execute(
+            """
+            UPDATE invocation_jobs
+            SET status = 'queued', finished_at = NULL, max_attempts = 1
+            WHERE invocation_id = ?
+            """,
+            ("invocation-1",),
+        )
+        exhausted_queued = tuple(self.store._connection.iterdump())
+        with self.assertRaisesRegex(
+            InvocationIntegrityError,
+            "persisted invocation job is malformed",
+        ):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
+        self.assertEqual(tuple(self.store._connection.iterdump()), exhausted_queued)
+
+        self.store._connection.execute(
+            """
+            UPDATE invocation_jobs
+            SET max_attempts = 3
+            WHERE invocation_id = ?
+            """,
+            ("invocation-1",),
+        )
+        self.assertEqual(tuple(self.store._connection.iterdump()), queued)
+
     def test_mutations_reject_corrupt_job_scalars_without_state_change(self):
         self.store.enqueue(job_spec())
         self.store._connection.execute(
@@ -1514,7 +1560,8 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.store._connection.execute(
             """
             UPDATE invocation_jobs
-            SET attempts_started = 1001, lease_epoch = 1001, last_error = 'seeded'
+            SET status = 'failed', attempts_started = 1001, lease_epoch = 1001,
+                last_error = 'seeded', finished_at = updated_at
             WHERE invocation_id = ?
             """,
             ("invocation-1",),
