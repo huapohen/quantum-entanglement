@@ -60,6 +60,13 @@ exits `1` with a fixed, non-sensitive failure code for invalid evidence or repos
 and `2` for invalid CLI usage. It never prints evidence content, filenames from Git status,
 environment values, parser exceptions, or the rejected path.
 
+Run the verifier through the same Python executable basename used to generate the evidence.
+The recorded gate argv intentionally includes that basename, and the verifier reconstructs
+the expected argv from its own interpreter. For example, evidence generated with
+`python3.13 scripts/generate_release_evidence.py` must be consumed with
+`python3.13 scripts/verify_release_evidence.py`; using `python3` when that resolves to a
+different basename fails closed with `gate_argv_invalid`.
+
 The verifier enforces:
 
 - a regular, non-symlink file no larger than 1 MiB;
