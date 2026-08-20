@@ -612,6 +612,7 @@ class SQLiteEventStore:
         connection: sqlite3.Connection,
         event: DomainEvent,
         expected_version: Optional[int],
+        expected_global_position: Optional[int] = None,
     ) -> Tuple[StoredEvent, bool]:
         """Append inside an existing transaction and report whether a row was inserted."""
 
@@ -622,6 +623,14 @@ class SQLiteEventStore:
             ).fetchone()
             if existing is not None:
                 return self._row_to_event(existing), False
+
+        if expected_global_position is not None:
+            global_row = connection.execute(
+                "SELECT COALESCE(MAX(global_position), 0) AS position FROM events"
+            ).fetchone()
+            current_global_position = int(global_row["position"])
+            if expected_global_position != current_global_position:
+                raise ConcurrencyError("global event position changed during admission")
 
         row = connection.execute(
             "SELECT COALESCE(MAX(sequence), 0) AS version FROM events WHERE stream_id = ?",
@@ -685,11 +694,27 @@ class SQLiteEventStore:
             ).fetchone()
             return None if row is None else self._row_to_event(row)
 
-    def append(self, event: DomainEvent, expected_version: Optional[int] = None) -> StoredEvent:
+    def append(
+        self,
+        event: DomainEvent,
+        expected_version: Optional[int] = None,
+        *,
+        expected_global_position: Optional[int] = None,
+    ) -> StoredEvent:
         """Append one event, returning the existing record for an idempotent retry."""
 
+        if expected_global_position is not None:
+            expected_global_position = self._validate_page_cursor(
+                expected_global_position,
+                "expected_global_position",
+            )
         with self._transaction() as connection:
-            stored, _inserted = self._append_in_transaction(connection, event, expected_version)
+            stored, _inserted = self._append_in_transaction(
+                connection,
+                event,
+                expected_version,
+                expected_global_position,
+            )
             return stored
 
     def append_with_outbox(

@@ -11,6 +11,7 @@ from unittest.mock import patch
 from quantum_entanglement.delivery import OutboxMessage, OutboxStatus
 from quantum_entanglement.events import DomainEvent, StoredEvent
 from quantum_entanglement.store import (
+    ConcurrencyError,
     OutboxAmbiguityPageItem,
     OutboxPageItem,
     SQLiteEventStore,
@@ -198,6 +199,43 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
             with self.subTest(stream_id=stream_id, key=key):
                 with self.assertRaises(error_type):
                     self.store.get_idempotent_event(stream_id, key)  # type: ignore[arg-type]
+
+    def test_append_global_position_cas_is_atomic_and_idempotency_precedes_it(self) -> None:
+        first_event = DomainEvent(
+            stream_id="stream:target",
+            event_type="test.event",
+            payload={"index": 1},
+            actor_id="test",
+            event_id="event-cas-1",
+            timestamp=T0,
+            idempotency_key="event:cas:1",
+        )
+        second_event = DomainEvent(
+            stream_id="stream:other",
+            event_type="test.event",
+            payload={"index": 2},
+            actor_id="test",
+            event_id="event-cas-2",
+            timestamp=T0,
+            idempotency_key="event:cas:2",
+        )
+        first = self.store.append(first_event, expected_global_position=0)
+
+        retried = self.store.append(first_event, expected_global_position=0)
+        with self.assertRaisesRegex(ConcurrencyError, "global event position changed"):
+            self.store.append(second_event, expected_global_position=0)
+        second = self.store.append(second_event, expected_global_position=1)
+
+        self.assertEqual(retried.global_position, first.global_position)
+        self.assertEqual(second.global_position, 2)
+        self.assertEqual(len(self.store.read_all()), 2)
+        for invalid in (True, -1, 1 << 63):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises((TypeError, ValueError)):
+                    self.store.append(
+                        DomainEvent("stream:x", "test", {}, "test"),
+                        expected_global_position=invalid,
+                    )
 
     def test_stream_all_page_decodes_only_rows_the_consumer_requests(self) -> None:
         self._append_stream("stream:target", 3)
