@@ -4,6 +4,7 @@ The package is intentionally not a network-service entry point yet. Components a
 introduced behind tested fail-closed contracts before they are composed into a service.
 """
 
+from .config import ConfigurationError, RuntimeMode, ServiceConfig
 from .secrets import (
     FileSecretProvider,
     SecretMaterial,
@@ -15,11 +16,14 @@ from .secrets import (
 )
 
 __all__ = [
+    "ConfigurationError",
     "FileSecretProvider",
+    "RuntimeMode",
     "SecretMaterial",
     "SecretMaterialClosedError",
     "SecretProvider",
     "SecretProviderError",
     "SecretRef",
     "SecretReferenceError",
+    "ServiceConfig",
 ]
