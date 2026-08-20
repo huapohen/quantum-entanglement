@@ -75,10 +75,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             database_snapshot=database_snapshot,
             evaluation_time=evaluation_time,
         )
+        print(
+            json.dumps(
+                verification_summary_document(summary), separators=(",", ":"), sort_keys=True
+            )
+        )
     except DependencyRiskError as exc:
         print(f"dependency risk verification failed: {exc.code}", file=sys.stderr)
         return 1
-    print(json.dumps(verification_summary_document(summary), separators=(",", ":"), sort_keys=True))
+    except Exception:
+        print("dependency risk verification failed: risk_internal_error", file=sys.stderr)
+        return 1
     return 0
 
 
