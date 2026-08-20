@@ -7,6 +7,10 @@ revocation snapshots, and the SQLite revocation revision guard introduced by `49
 exported as public API by `bd29665`; typed authorization collections were bounded by
 `345be30`.
 
+The separate process-local request-context issuance primitive is documented in
+[`TRUSTED_REQUEST_CONTEXT.md`](./TRUSTED_REQUEST_CONTEXT.md). It establishes an admission
+type boundary but is not yet composed with this authorizer or a real identity provider.
+
 Last verified: 2026-08-20
 
 This runbook defines how the authorization slice must be composed, operated, recovered,
@@ -42,7 +46,7 @@ untrusted tenants.
 
 | Missing guarantee | Required production control |
 |---|---|
-| Authentication | OIDC/JWT or mTLS admission that binds an authenticated principal; never accept `subject_id` from an unauthenticated body |
+| Authentication composition | The process-local issuance primitive exists, but a real OIDC/JWT or mTLS adapter, authenticated transport, action-time refresh, and mandatory authorizer composition do not; never accept `subject_id` from an unauthenticated body |
 | Membership freshness | Authoritative membership revision/epoch and action-time lookup; `Member` itself contains no revision or freshness timestamp |
 | Production key custody | KMS/HSM-backed signing and verification plus a durable key registry and persistent retired-`kid` tombstones |
 | Host-clock rollback defense | Trusted time synchronization, rollback detection, and a service-time high-water policy; `SystemClock` is wall-clock time |
@@ -228,9 +232,24 @@ negative tests, and its own release evidence.
 
 ## 4. Identity and membership freshness
 
-`AccessRequest.subject_id` is an identifier, not authentication. The admission layer must
-derive or verify it from an authenticated session or service credential. A body field,
-model output, forwarded header, or unsigned protocol claim is insufficient.
+`AccessRequest.subject_id` is an identifier, not authentication. `ActorRef`, envelope
+sender/authority, a directly constructed `AuthenticatedRequestBinding`, and a directly
+constructed `ReauthorizationBasis` are also insufficient.
+
+The implemented `RequestContextIssuer` calls its configured authenticator, requires the
+result to bind the exact caller request/subject/tenant/workspace/audience, consumes a
+bounded credential lease, and registers one opaque context in the issuing process. Before
+using the context with an `AccessRequest`, the same issuer can check exact object identity,
+tamper/expiry, and exact request scope and return the identity/scope revision evidence
+needed for a current lookup.
+
+That is only a foundation. There is no real identity-provider adapter, authenticated API,
+session repository, action-time refresh adapter, or enforced call from
+`TenantAuthorizer.evaluate`. A future admission composition must derive or verify the
+subject from an authenticated session or service credential, refresh current identity and
+membership revisions for every protected action, and deny on any mismatch or dependency
+failure. A body field, model output, forwarded header, unsigned protocol claim, context
+property, or reauthorization basis is insufficient by itself.
 
 `Member` proves only the data passed into its constructor. It carries neither a membership
 revision nor `captured_at`. Therefore production composition must:
