@@ -1332,13 +1332,6 @@ class OrchestratorKernel:
                     },
                 )
             )
-            await self._commit_transition(
-                plan.session_id,
-                graph,
-                task.task_id,
-                TaskStatus.COMPLETED,
-                correlation_id,
-            )
         except Exception as exc:
             await self._commit_transition(
                 plan.session_id,
@@ -1347,6 +1340,18 @@ class OrchestratorKernel:
                 TaskStatus.FAILED,
                 correlation_id,
                 str(exc),
+            )
+        else:
+            # A completion transition failure is not an Agent failure. The Agent and
+            # result publication may already have happened, so leave the durable and
+            # in-memory task RUNNING and let the next run quarantine effect-unknown
+            # state instead of publishing a misleading FAILED transition.
+            await self._commit_transition(
+                plan.session_id,
+                graph,
+                task.task_id,
+                TaskStatus.COMPLETED,
+                correlation_id,
             )
         finally:
             await self.plugins.emit(HookPoint.AFTER_DISPATCH, dispatch_context)
