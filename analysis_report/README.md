@@ -11,8 +11,10 @@
 - 截图证据库：<https://app.notion.com/p/3c1ead4b996e8101997fecd0302714ba?pvs=204>
 - 竞品信源核验：<https://app.notion.com/p/3c1ead4b996e81f9b5eddebebc96d30a?pvs=204>
 - 当前实现证据：<https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853?pvs=204>
-- 最近完整同步：2026-08-20；综合报告、竞品全景、当前实现证据、项目导航和
-  10 张受限截图均已回读验证。其余 6 个专题页自 2026-08-19 已验证同步后未发生本地变化。
+- 认证事务证据：<https://app.notion.com/p/3c2ead4b996e8105b0cad304ef28dd38?pvs=204>
+- 最近增量同步：2026-08-20；认证事务证据页、当前实现页的事务增量和项目导航均已
+  fetch 回读；`206acc1`、`8d82dd7`、5/5 gates 与 evidence digest 断言全部存在。综合报告、
+  竞品页和 10 张受限截图延续上一次已验证状态。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
 
