@@ -146,8 +146,12 @@ define that adapter or compare current provider/membership revisions.
   context is returned; the implementation cannot claim that a failed underlying wipe
   succeeded. Translated authenticator, clock, result-validation, credential-access, and wipe
   failures have neither a retained `__cause__` nor `__context__`; `from None` alone is not a
-  sufficient redaction boundary. Python also cannot wipe copies retained by a buggy
-  authenticator or by the transport before constructing the lease.
+  sufficient redaction boundary. Before the public issuer returns a stable failure, it also
+  clears completed internal traceback frames and creates a fresh code-only exception after
+  deleting its credential arguments; otherwise a failed wipe could leave the private
+  `memoryview` reachable through `exception.__traceback__.tb_frame.f_locals`. Python also
+  cannot wipe copies retained by a buggy authenticator or by the transport before
+  constructing the lease.
 - Context `repr`, exceptions, evidence, ordinary logs, events, artifacts, and reports must
   not contain the credential, raw attestation, tenant, workspace, subject, or principal.
 - Stable failure codes are suitable for bounded metrics. Raw scope identifiers must not be
@@ -224,10 +228,11 @@ The negative suite covers strict parsing, scope/result mismatch, future/stale/ov
 authentication, slow-authenticator expiry, issuer-local high-water expiry revival, in-skew
 logical-time freeze, failed and concurrent clock samples, UTC upper-bound comparisons,
 credential wiping, detached adapter/clock/result/wipe exception chains, compound
-authentication-plus-wipe failure, capacity and in-flight reservation, foreign issuer,
-direct construction, copy/pickle, exact request/subject/tenant/workspace matching,
-tenant-wide non-wildcard behavior, reflective mutation quarantine, expiry, serialized
-prepare/retire, concurrent close/registration, retirement, and issuer shutdown.
+authentication-plus-wipe failure, direct traceback-frame/local inspection after wipe
+failure, capacity and in-flight reservation, foreign issuer, direct construction,
+copy/pickle, exact request/subject/tenant/workspace matching, tenant-wide non-wildcard
+behavior, reflective mutation quarantine, expiry, serialized prepare/retire, concurrent
+close/registration, retirement, and issuer shutdown.
 
 The implementation history starts at `fa0c422`; public export is `ba072c3`. Exact full-suite
 and release evidence must be regenerated after this documentation commit is part of the
