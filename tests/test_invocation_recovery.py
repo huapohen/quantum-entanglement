@@ -487,7 +487,11 @@ class InvocationRecoveryCoordinatorLifecycleTests(unittest.TestCase):
         coordinator = InvocationRecoveryCoordinator(fake, owns_store=True)
         with self.assertRaisesRegex(RuntimeError, "close failed"):
             coordinator.close()
-        self.assertFalse(coordinator.closed)
+        self.assertTrue(coordinator.closed)
+        with self.assertRaisesRegex(InvocationRecoveryClosedError, "closed"):
+            coordinator.assess(TaskStatus.RUNNING, self.binding)
+        with self.assertRaisesRegex(InvocationRecoveryClosedError, "closed"):
+            coordinator.__enter__()
         coordinator.close()
         self.assertTrue(coordinator.closed)
         self.assertEqual(fake.closes, 2)

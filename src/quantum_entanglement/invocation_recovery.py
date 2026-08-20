@@ -484,6 +484,7 @@ class InvocationRecoveryCoordinator:
         self._store = store
         self._owns_store = owns_store
         self._closed = False
+        self._store_cleanup_complete = not owns_store
         self._lock = threading.RLock()
 
     def __enter__(self) -> InvocationRecoveryCoordinator:
@@ -530,14 +531,16 @@ class InvocationRecoveryCoordinator:
             return assess_invocation_recovery(task_status, binding, snapshot, receipt)
 
     def close(self) -> None:
-        """Close only an explicitly owned store; a failed owned close remains retryable."""
+        """Stop reads immediately and retry owned-store cleanup until it succeeds."""
 
         with self._lock:
-            if self._closed:
-                return
-            if self._owns_store and self._store is not None:
-                self._store.close()
             self._closed = True
+            if self._store_cleanup_complete:
+                return
+            if not self._owns_store or self._store is None:  # pragma: no cover - constructor fence.
+                raise RuntimeError("owned recovery store cleanup invariant failed")
+            self._store.close()
+            self._store_cleanup_complete = True
 
 
 __all__ = [
