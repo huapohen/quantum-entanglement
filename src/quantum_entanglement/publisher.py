@@ -13,6 +13,7 @@ import inspect
 import logging
 import math
 import random
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -73,7 +74,20 @@ _PUBLISHER_LOG_CATALOG = SafeLogCatalog(
         LogEventSchema("qe.publisher.retry_jitter_failed", logging.ERROR),
         LogEventSchema("qe.publisher.retry_jitter_invalid", logging.ERROR),
         LogEventSchema("qe.publisher.error_classifier_failed", logging.ERROR),
+        LogEventSchema("qe.publisher.error_classifier_rejected", logging.ERROR),
     )
+)
+_ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_BUILTIN_ERROR_CODES = frozenset(
+    {
+        "connector_cancelled",
+        "connector_failure",
+        "connector_input_rejected",
+        "connector_rejected",
+        "invalid_publish_receipt",
+        "lease_budget_exhausted",
+        "transport_unavailable",
+    }
 )
 
 
@@ -421,6 +435,7 @@ class OutboxPublisher:
         clock: Callable[[], datetime] = _utc_clock,
         monotonic: Callable[[], float] = time.monotonic,
         error_formatter: Callable[[BaseException], str] | None = None,
+        error_code_allowlist: tuple[str, ...] = (),
         logger: logging.Logger | None = None,
     ) -> None:
         if not worker_id.strip():
@@ -448,6 +463,15 @@ class OutboxPublisher:
             raise TypeError("monotonic must be callable")
         if error_formatter is not None and not callable(error_formatter):
             raise TypeError("error_formatter must be callable")
+        if type(error_code_allowlist) is not tuple or len(error_code_allowlist) > 64:
+            raise TypeError("error_code_allowlist must be a bounded tuple")
+        if any(
+            type(code) is not str or _ERROR_CODE.fullmatch(code) is None
+            for code in error_code_allowlist
+        ):
+            raise ValueError("error_code_allowlist contains an invalid code")
+        if len(set(error_code_allowlist)) != len(error_code_allowlist):
+            raise ValueError("error_code_allowlist contains a duplicate code")
 
         self._store = store
         self._publish = publish
@@ -464,6 +488,7 @@ class OutboxPublisher:
         self._clock = clock
         self._monotonic = monotonic
         self._error_formatter = error_formatter or self._default_error_formatter
+        self._allowed_error_codes = _BUILTIN_ERROR_CODES | frozenset(error_code_allowlist)
         self._logger = SafeLogger(logger or logging.getLogger(__name__), _PUBLISHER_LOG_CATALOG)
 
         self._counters = _Counters()
@@ -1231,8 +1256,11 @@ class OutboxPublisher:
 
     def _format_error_safely(self, error: BaseException) -> str:
         try:
-            rendered = str(self._error_formatter(error)).strip()
+            rendered = self._error_formatter(error)
         except Exception:
             self._logger.emit("qe.publisher.error_classifier_failed")
-            rendered = type(error).__name__
-        return (rendered or type(error).__name__)[:2048]
+            return "connector_failure"
+        if type(rendered) is not str or rendered not in self._allowed_error_codes:
+            self._logger.emit("qe.publisher.error_classifier_rejected")
+            return "connector_failure"
+        return rendered
