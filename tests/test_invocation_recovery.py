@@ -392,6 +392,16 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
                 ),
                 "lease deadline",
             ),
+            (
+                replace(
+                    snapshot,
+                    current_attempt=replace(
+                        snapshot.current_attempt,
+                        started_at=previous,
+                    ),
+                ),
+                "starts before its job",
+            ),
         )
         for forged, message in cases:
             with self.subTest(message=message):
@@ -417,6 +427,39 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
             "finished_at precedes its heartbeat",
         ):
             self.assess(binding_for(terminal_spec), forged_terminal)
+
+        late_attempt = replace(
+            terminal,
+            current_attempt=replace(
+                terminal.current_attempt,
+                finished_at="2026-08-20T00:00:06.000000Z",
+            ),
+        )
+        with self.assertRaisesRegex(
+            InvocationRecoveryIntegrityError,
+            "job update precedes its current attempt",
+        ):
+            self.assess(binding_for(terminal_spec), late_attempt)
+
+        failed_spec, failed_lease, _running = self.running(
+            "terminal-finish-divergence",
+            max_attempts=1,
+        )
+        self.assertTrue(self.store.fail(failed_lease, "terminal"))  # type: ignore[arg-type]
+        failed = self.snapshot(failed_spec)
+        divergent_finish = replace(
+            failed,
+            job=replace(
+                failed.job,
+                updated_at="2026-08-20T00:00:06.000000Z",
+                finished_at="2026-08-20T00:00:06.000000Z",
+            ),
+        )
+        with self.assertRaisesRegex(
+            InvocationRecoveryIntegrityError,
+            "job finish differs from its current attempt",
+        ):
+            self.assess(binding_for(failed_spec), divergent_finish)
 
     def test_schema_compatible_epoch_gap_is_not_coerced_or_rejected(self) -> None:
         spec, _lease, snapshot = self.running("epoch-gap")

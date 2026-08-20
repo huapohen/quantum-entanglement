@@ -790,6 +790,12 @@ class SQLiteInvocationAttemptStore:
             or current_attempt.lease_epoch != job.lease_epoch
         ):
             raise InvocationIntegrityError("invocation current attempt identity is inconsistent")
+        if current_attempt.started_at < job.created_at:
+            raise InvocationIntegrityError("invocation attempt starts before its job")
+        if current_attempt.finished_at is not None and current_attempt.finished_at > job.updated_at:
+            raise InvocationIntegrityError("invocation job update precedes its current attempt")
+        if job.finished_at is not None and job.finished_at != current_attempt.finished_at:
+            raise InvocationIntegrityError("invocation finish differs from its current attempt")
 
         if job.status is InvocationStatus.RUNNING:
             if (
@@ -858,6 +864,7 @@ class SQLiteInvocationAttemptStore:
             )
             attempt_count = 0
             previous_lease_epoch = 0
+            previous_finished_at: Optional[str] = None
             current_attempt: Optional[InvocationAttempt] = None
             try:
                 for row in cursor:
@@ -880,6 +887,14 @@ class SQLiteInvocationAttemptStore:
                             "invocation attempt lease epochs are not strictly increasing"
                         )
                     previous_lease_epoch = attempt.lease_epoch
+                    if (
+                        previous_finished_at is not None
+                        and attempt.started_at < previous_finished_at
+                    ):
+                        raise InvocationIntegrityError(
+                            "invocation attempt history moves backward in time"
+                        )
+                    previous_finished_at = attempt.finished_at
                     if attempt.attempt_number < job.attempts_started:
                         if attempt.status not in {AttemptStatus.FAILED, AttemptStatus.EXPIRED}:
                             raise InvocationIntegrityError(

@@ -350,6 +350,12 @@ def _validate_snapshot(snapshot: InvocationRecoverySnapshot) -> Optional[Invocat
         or current_attempt.lease_epoch != job.lease_epoch
     ):
         raise InvocationRecoveryIntegrityError("current attempt identity differs from the job")
+    if current_attempt.started_at < job.created_at:
+        raise InvocationRecoveryIntegrityError("current attempt starts before its job")
+    if current_attempt.finished_at is not None and current_attempt.finished_at > job.updated_at:
+        raise InvocationRecoveryIntegrityError("job update precedes its current attempt")
+    if job.finished_at is not None and job.finished_at != current_attempt.finished_at:
+        raise InvocationRecoveryIntegrityError("job finish differs from its current attempt")
 
     if job.status is InvocationStatus.RUNNING:
         if (
