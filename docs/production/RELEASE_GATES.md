@@ -46,10 +46,13 @@ no-op or read-only fixtures only.
 The following commands define the current local baseline:
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -q
-PYTHONPATH=src python3 examples/group_chat_demo.py --compact
-python3 -m compileall -q src tests scripts
+python3 scripts/verify_dependency_locks.py --repository-root .
+PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'
 ruff check src tests scripts
+ruff format --check src tests scripts
+PYTHONPATH=src mypy --strict src/quantum_entanglement
+PYTHONPATH=src python3 -m compileall -q src tests scripts examples
+PYTHONPATH=src python3 examples/group_chat_demo.py
 git diff --check
 ```
 
