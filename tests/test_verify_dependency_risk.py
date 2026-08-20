@@ -443,6 +443,24 @@ class DependencyRiskCliTests(unittest.TestCase):
         self.assertNotIn("sensitive", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
 
+    def test_unregistered_failure_code_is_redacted_and_exits_one(self):
+        stderr = StringIO()
+        with (
+            patch.object(
+                risk_cli,
+                "collect_risk_evidence_context",
+                side_effect=DependencyRiskError("sensitive_unregistered_detail"),
+            ),
+            redirect_stderr(stderr),
+        ):
+            exit_code = risk_cli.main(self.arguments())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(
+            stderr.getvalue(),
+            "dependency risk verification failed: risk_internal_error\n",
+        )
+        self.assertNotIn("sensitive", stderr.getvalue())
+
     def test_argument_failure_is_redacted_and_exits_two(self):
         stderr = StringIO()
         with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:

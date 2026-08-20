@@ -27,6 +27,76 @@ from scripts.dependency_risk import (  # noqa: E402
     verify_dependency_risk,
 )
 
+_SAFE_FAILURE_CODES = frozenset(
+    {
+        "evaluation_time_invalid",
+        "license_expression_invalid",
+        "license_expression_noncanonical",
+        "license_expression_unknown",
+        "risk_component_coverage_mismatch",
+        "risk_database_drift",
+        "risk_database_file_invalid",
+        "risk_database_integrity_unverified",
+        "risk_database_stale",
+        "risk_database_unapproved",
+        "risk_exception_database_mismatch",
+        "risk_exception_expired",
+        "risk_exception_inactive",
+        "risk_exception_reused",
+        "risk_exception_unused",
+        "risk_fix_status_unknown",
+        "risk_json_invalid",
+        "risk_json_noncanonical",
+        "risk_lock_drift",
+        "risk_lock_evidence_invalid",
+        "risk_manifest_drift",
+        "risk_manifest_evidence_invalid",
+        "risk_policy_database_invalid",
+        "risk_policy_denied",
+        "risk_policy_drift",
+        "risk_policy_evidence_invalid",
+        "risk_policy_exception_invalid",
+        "risk_policy_exception_owner_invalid",
+        "risk_policy_exception_rationale_invalid",
+        "risk_policy_exception_scope_invalid",
+        "risk_policy_exception_time_invalid",
+        "risk_policy_file_invalid",
+        "risk_policy_incomplete",
+        "risk_policy_invalid",
+        "risk_policy_license_invalid",
+        "risk_policy_scanner_invalid",
+        "risk_policy_vulnerability_invalid",
+        "risk_promotion_disabled",
+        "risk_result_artifact_invalid",
+        "risk_result_component_duplicate",
+        "risk_result_component_invalid",
+        "risk_result_database_invalid",
+        "risk_result_file_invalid",
+        "risk_result_finding_duplicate",
+        "risk_result_finding_invalid",
+        "risk_result_from_future",
+        "risk_result_invalid",
+        "risk_result_license_invalid",
+        "risk_result_lock_invalid",
+        "risk_result_manifest_invalid",
+        "risk_result_policy_invalid",
+        "risk_result_project_invalid",
+        "risk_result_sbom_invalid",
+        "risk_result_scan_invalid",
+        "risk_result_scanner_invalid",
+        "risk_result_source_invalid",
+        "risk_result_stale",
+        "risk_sbom_component_invalid",
+        "risk_sbom_drift",
+        "risk_scan_incomplete",
+        "risk_scanner_unapproved",
+        "risk_severity_unknown",
+        "risk_source_drift",
+        "risk_source_evidence_changed",
+        "risk_source_evidence_invalid",
+    }
+)
+
 
 class _RedactedParser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
@@ -81,7 +151,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
     except DependencyRiskError as exc:
-        print(f"dependency risk verification failed: {exc.code}", file=sys.stderr)
+        code = exc.code if exc.code in _SAFE_FAILURE_CODES else "risk_internal_error"
+        print(f"dependency risk verification failed: {code}", file=sys.stderr)
         return 1
     except Exception:
         print("dependency risk verification failed: risk_internal_error", file=sys.stderr)
