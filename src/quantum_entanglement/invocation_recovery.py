@@ -30,6 +30,8 @@ _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAX_IDENTITY_BYTES = 4_096
 _MAX_REFERENCE_BYTES = 16_384
 _MAX_ERROR_BYTES = 16_384
+_SESSION_STREAM_PREFIX = "session:"
+_MAX_SESSION_STREAM_BYTES = _MAX_IDENTITY_BYTES + len(_SESSION_STREAM_PREFIX.encode("utf-8"))
 
 
 class InvocationRecoveryIntegrityError(RuntimeError):
@@ -419,8 +421,15 @@ def _validate_receipt_shape(receipt: InvocationResultReceipt) -> None:
     _text(receipt.result_ref, "receipt result_ref", maximum_bytes=_MAX_REFERENCE_BYTES)
     _digest(receipt.manifest_digest, "receipt manifest_digest")
     _text(receipt.receipt_id, "receipt receipt_id")
-    expected_stream_id = f"session:{receipt.binding.session_id}"
-    if _text(receipt.stream_id, "receipt stream_id") != expected_stream_id:
+    expected_stream_id = f"{_SESSION_STREAM_PREFIX}{receipt.binding.session_id}"
+    if (
+        _text(
+            receipt.stream_id,
+            "receipt stream_id",
+            maximum_bytes=_MAX_SESSION_STREAM_BYTES,
+        )
+        != expected_stream_id
+    ):
         raise InvocationRecoveryIntegrityError("receipt stream_id differs from its session")
     _integer(receipt.stream_sequence, "receipt stream_sequence", minimum=1)
 
