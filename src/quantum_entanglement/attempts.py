@@ -54,6 +54,10 @@ class InvocationIntegrityError(RuntimeError):
     """Raised when persisted invocation state violates its durable contract."""
 
 
+class InvocationClockRegressionError(InvocationIntegrityError):
+    """Raised when a mutation clock is earlier than durable invocation activity."""
+
+
 class InvocationStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -138,6 +142,13 @@ def _stored_error(error: str) -> str:
 
 def _lease_token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _require_non_regressing_clock(now: str, *durable_times: str) -> None:
+    if any(now < durable_time for durable_time in durable_times):
+        raise InvocationClockRegressionError(
+            "invocation store clock precedes durable invocation activity"
+        )
 
 
 def _persisted_integer(
@@ -1171,6 +1182,7 @@ class SQLiteInvocationAttemptStore:
             job = self._row_to_job(row)
             if job != candidate:
                 raise InvocationIntegrityError("first-claim candidate changed after validation")
+            _require_non_regressing_clock(normalized_now, job.created_at, job.updated_at)
             attempt_number = job.attempts_started + 1
             if attempt_number > job.max_attempts:
                 raise RuntimeError("queued invocation exceeded max_attempts invariant")
@@ -1328,6 +1340,12 @@ class SQLiteInvocationAttemptStore:
                 lease_expires_at=job.lease_expires_at,
                 attempt_id=lease.attempt_id,
             )
+            _require_non_regressing_clock(
+                normalized_now,
+                job.updated_at,
+                attempt.started_at,
+                attempt.heartbeat_at,
+            )
             deadline = max(job.lease_expires_at, proposed_deadline)
             update = connection.execute(
                 """
@@ -1403,6 +1421,12 @@ class SQLiteInvocationAttemptStore:
                 heartbeat_at=job.heartbeat_at,
                 lease_expires_at=job.lease_expires_at,
                 attempt_id=lease.attempt_id,
+            )
+            _require_non_regressing_clock(
+                normalized_now,
+                job.updated_at,
+                attempt.started_at,
+                attempt.heartbeat_at,
             )
             update = connection.execute(
                 """
@@ -1483,6 +1507,12 @@ class SQLiteInvocationAttemptStore:
                 lease_expires_at=job.lease_expires_at,
                 attempt_id=lease.attempt_id,
             )
+            _require_non_regressing_clock(
+                normalized_now,
+                job.updated_at,
+                attempt.started_at,
+                attempt.heartbeat_at,
+            )
             attempt_update = connection.execute(
                 """
                 UPDATE invocation_attempts
@@ -1560,6 +1590,7 @@ class SQLiteInvocationAttemptStore:
 __all__ = [
     "AttemptStatus",
     "InvocationAttempt",
+    "InvocationClockRegressionError",
     "InvocationConflictError",
     "InvocationIntegrityError",
     "InvocationJob",
