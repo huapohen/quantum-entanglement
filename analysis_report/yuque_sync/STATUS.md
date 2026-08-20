@@ -1,6 +1,6 @@
 # Notion → 私人语雀镜像状态
 
-更新时间：2026-08-20 17:24（Asia/Shanghai）
+更新时间：2026-08-20 17:27（Asia/Shanghai）
 
 ## 当前状态
 
@@ -12,15 +12,16 @@
 
 ## 阻断
 
-用户指定必须使用现有 Chrome 登录态操作语雀，但当前 Codex 未连接到 Chrome。
-因此无法核验语雀登录态，也无法在写入前确认目标知识库为私人可见。
+用户指定必须使用现有 Chrome 登录态操作语雀。诊断确认 Chrome 正在运行，
+ChatGPT 浏览器扩展已安装在 `Default` 配置中，但当前处于禁用状态。
+因此 Codex 仍无法连接 Chrome，无法核验语雀登录态，也无法在写入前确认目标知识库为私人可见。
 根据安全约束，未确认私有性前必须停止写入。
 
 ## 恢复步骤
 
-1. 在 Codex 的 **Settings → Computer use** 安装或启用 ChatGPT 浏览器扩展。
-2. 在 Chrome 打开并登录 https://www.yuque.com/dashboard。
-3. 回到本任务回复“已完成”。
+1. 在 Chrome 的扩展管理页启用 **ChatGPT browser extension**。
+2. 保持 Chrome 打开，并确认已登录 https://www.yuque.com/dashboard。
+3. 回到本任务再次回复“已完成”。
 
 恢复后将先核验目标知识库可见性为私有，再创建/复用文档、逐页写入、回读核验并建立每小时幂等检查。
 
