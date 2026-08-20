@@ -271,12 +271,16 @@ def _parse_canonical_json(value: bytes, *, limit: int, code: str) -> dict[str, o
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=lambda _: _fail("risk_json_invalid"),
         )
-    except (DependencyRiskError, json.JSONDecodeError, UnicodeDecodeError, RecursionError):
+    except (DependencyRiskError, UnicodeDecodeError, ValueError, RecursionError):
         _fail("risk_json_invalid")
     if type(document) is not dict:
         _fail(code)
     result = cast(dict[str, object], document)
-    if canonical_json(result) != value:
+    try:
+        normalized = canonical_json(result)
+    except (RecursionError, TypeError, ValueError):
+        _fail("risk_json_invalid")
+    if normalized != value:
         _fail("risk_json_noncanonical")
     return result
 
