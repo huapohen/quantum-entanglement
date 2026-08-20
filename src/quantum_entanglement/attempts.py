@@ -6,7 +6,8 @@ separate, mutable execution projection needed to decide which worker may perform
 invocation now.  Every ownership-changing operation uses ``BEGIN IMMEDIATE`` and a
 compare-and-set over both an opaque lease token and a monotonically increasing lease
 epoch.  An expired worker therefore cannot heartbeat or publish a terminal state after
-another worker has reclaimed the invocation.
+the lease is fenced. Automatic invocation retry remains disabled until durable effect or
+receipt reconciliation can authorize another attempt.
 """
 
 from __future__ import annotations
@@ -967,7 +968,7 @@ class SQLiteInvocationAttemptStore:
         *,
         limit: int = 1_000,
     ) -> RecoverySummary:
-        """Fence expired owners and requeue work, exhausting its bounded retry policy."""
+        """Fence expired owners into an effect-unknown queued or terminal state."""
 
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise TypeError("limit must be an integer")
@@ -1001,7 +1002,7 @@ class SQLiteInvocationAttemptStore:
                 limit=(None if invocation_id is not None else 1_000),
             )
             parameters = [normalized_now]
-            where = "status = 'queued' AND available_at <= ?"
+            where = "status = 'queued' AND attempts_started = 0 AND available_at <= ?"
             if invocation_id is not None:
                 where += " AND invocation_id = ?"
                 parameters.append(invocation_id)
@@ -1032,7 +1033,7 @@ class SQLiteInvocationAttemptStore:
                     lease_owner = ?, lease_token_digest = ?, lease_expires_at = ?,
                     heartbeat_at = ?, updated_at = ?, finished_at = NULL
                 WHERE invocation_id = ? AND status = 'queued'
-                  AND attempts_started = ? AND lease_epoch = ?
+                  AND attempts_started = 0 AND lease_epoch = ?
                 """,
                 (
                     attempt_number,
@@ -1043,7 +1044,6 @@ class SQLiteInvocationAttemptStore:
                     normalized_now,
                     normalized_now,
                     job.invocation_id,
-                    job.attempts_started,
                     job.lease_epoch,
                 ),
             )
@@ -1298,7 +1298,7 @@ class SQLiteInvocationAttemptStore:
         *,
         retry_at: Optional[str] = None,
     ) -> bool:
-        """CAS an active lease to retry or terminal failure under its bounded policy."""
+        """CAS an active lease to effect-unknown queued or terminal failure."""
 
         stored_error = _stored_error(error)
         with self._transaction() as connection:
