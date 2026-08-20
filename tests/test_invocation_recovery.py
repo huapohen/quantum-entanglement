@@ -340,6 +340,10 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
             (replace(queued, job=replace(queued.job, lease_epoch=1)), "lease_epoch"),
             (replace(queued, attempt_count=1), "attempt_count"),
             (
+                replace(queued, job=replace(queued.job, last_error="orphan prior failure")),
+                "zero-attempt job carries a last_error",
+            ),
+            (
                 replace(queued, job=replace(queued.job, result_ref="result:forged")),
                 "result_ref",
             ),
@@ -356,6 +360,19 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
                 binding_for(running_spec),
                 replace(running, current_attempt=forged_attempt),
             )
+
+    def test_failed_snapshot_error_semantics_are_revalidated(self) -> None:
+        spec, lease, _running = self.running("error-binding", max_attempts=1)
+        self.assertTrue(self.store.fail(lease, "expected failure"))  # type: ignore[arg-type]
+        failed = self.snapshot(spec)
+
+        missing = replace(failed.current_attempt, error=None)
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "lacks an error"):
+            self.assess(binding_for(spec), replace(failed, current_attempt=missing))
+
+        mismatched = replace(failed.current_attempt, error="different failure")
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "error differs"):
+            self.assess(binding_for(spec), replace(failed, current_attempt=mismatched))
 
     def test_snapshot_timestamp_causality_is_revalidated(self) -> None:
         spec, _lease, snapshot = self.running("timestamp-causality")
