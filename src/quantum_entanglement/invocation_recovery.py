@@ -236,9 +236,16 @@ def _validate_job(job: InvocationJob) -> None:
         "job result_ref",
         maximum_bytes=_MAX_REFERENCE_BYTES,
     )
-    _optional_text(job.last_error, "job last_error", maximum_bytes=_MAX_ERROR_BYTES)
+    last_error = _optional_text(job.last_error, "job last_error", maximum_bytes=_MAX_ERROR_BYTES)
     if updated_at < created_at:
         raise InvocationRecoveryIntegrityError("job updated_at precedes creation")
+    if attempts_started == 0 and last_error is not None:
+        raise InvocationRecoveryIntegrityError("zero-attempt job carries a last_error")
+    if (
+        job.status is InvocationStatus.FAILED
+        or (job.status is InvocationStatus.QUEUED and attempts_started > 0)
+    ) and last_error is None:
+        raise InvocationRecoveryIntegrityError("failed job state lacks a last_error")
 
     terminal = job.status in {
         InvocationStatus.SUCCEEDED,
@@ -293,7 +300,7 @@ def _validate_attempt(attempt: InvocationAttempt) -> None:
     heartbeat_at = _timestamp(attempt.heartbeat_at, "attempt heartbeat_at")
     lease_expires_at = _timestamp(attempt.lease_expires_at, "attempt lease_expires_at")
     finished_at = _optional_timestamp(attempt.finished_at, "attempt finished_at")
-    _optional_text(attempt.error, "attempt error", maximum_bytes=_MAX_ERROR_BYTES)
+    error = _optional_text(attempt.error, "attempt error", maximum_bytes=_MAX_ERROR_BYTES)
     result_ref = _optional_text(
         attempt.result_ref,
         "attempt result_ref",
@@ -305,6 +312,10 @@ def _validate_attempt(attempt: InvocationAttempt) -> None:
         raise InvocationRecoveryIntegrityError("attempt lease deadline does not follow heartbeat")
     if (attempt.status is AttemptStatus.RUNNING) != (finished_at is None):
         raise InvocationRecoveryIntegrityError("attempt finished_at contradicts its status")
+    if attempt.status in {AttemptStatus.RUNNING, AttemptStatus.SUCCEEDED} and error is not None:
+        raise InvocationRecoveryIntegrityError("active/succeeded attempt carries an error")
+    if attempt.status in {AttemptStatus.FAILED, AttemptStatus.EXPIRED} and error is None:
+        raise InvocationRecoveryIntegrityError("failed/expired attempt lacks an error")
     if finished_at is not None and finished_at < started_at:
         raise InvocationRecoveryIntegrityError("attempt finished_at precedes its start")
     if finished_at is not None and finished_at < heartbeat_at:
@@ -375,6 +386,8 @@ def _validate_snapshot(snapshot: InvocationRecoverySnapshot) -> Optional[Invocat
     elif job.status is InvocationStatus.QUEUED:
         if current_attempt.status not in {AttemptStatus.FAILED, AttemptStatus.EXPIRED}:
             raise InvocationRecoveryIntegrityError("queued job has an incompatible prior attempt")
+        if current_attempt.error != job.last_error:
+            raise InvocationRecoveryIntegrityError("queued job error differs from its attempt")
     elif job.status is InvocationStatus.SUCCEEDED:
         if (
             current_attempt.status is not AttemptStatus.SUCCEEDED
@@ -384,6 +397,8 @@ def _validate_snapshot(snapshot: InvocationRecoverySnapshot) -> Optional[Invocat
     elif job.status is InvocationStatus.FAILED:
         if current_attempt.status not in {AttemptStatus.FAILED, AttemptStatus.EXPIRED}:
             raise InvocationRecoveryIntegrityError("failed job has an incompatible attempt")
+        if current_attempt.error != job.last_error:
+            raise InvocationRecoveryIntegrityError("failed job error differs from its attempt")
     elif job.status is InvocationStatus.CANCELED:
         if current_attempt.status is not AttemptStatus.CANCELED:
             raise InvocationRecoveryIntegrityError("canceled job has an incompatible attempt")
