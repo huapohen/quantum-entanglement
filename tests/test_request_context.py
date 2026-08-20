@@ -259,6 +259,27 @@ class RequestContextIssuanceTests(unittest.TestCase):
         self.assertNotIn("tenant-a", repr(context))
         self.assertNotIn("subject-1", str(context))
 
+    def test_explicit_falsy_service_clock_is_not_replaced(self):
+        class FalsyClock(FixedClock):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def __bool__(self):
+                return False
+
+            def now(self):
+                self.calls += 1
+                return super().now()
+
+        clock = FalsyClock()
+        issuer, _ = self.make_issuer(clock=clock)
+
+        context = issuer.issue(self.claims, self.credential())
+
+        self.assertEqual(clock.calls, 1)
+        self.assertEqual(context.issued_at, NOW)
+
     def test_credential_is_closed_when_claims_clock_or_authenticator_fails(self):
         class FailingClock:
             def now(self):
