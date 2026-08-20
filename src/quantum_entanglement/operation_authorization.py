@@ -355,6 +355,14 @@ def _raise_dependency_failure(failure: _BoundaryFailure, code: str) -> NoReturn:
     raise OperationAuthorizationError(code) from None
 
 
+def _require_current_process_issuer(issuer: RequestContextIssuer) -> None:
+    """Reject an issuer inherited from a different process before touching its state."""
+
+    _, failure = _invoke_boundary(issuer._ensure_process)
+    if failure is not None:
+        _raise_dependency_failure(failure, "protected_operation_process_mismatch")
+
+
 @dataclass(frozen=True, repr=False)
 class _OperationBinding:
     """Canonical internal binding; construction alone grants no authority."""
@@ -960,6 +968,7 @@ class ProtectedOperationComposer:
         owner_pid, owner_epoch = _current_process_identity()
         if type(issuer) is not RequestContextIssuer:
             raise TypeError("issuer must be an exact RequestContextIssuer")
+        _require_current_process_issuer(issuer)
         if state_provider is None or not callable(
             getattr(state_provider, "load_current_state", None)
         ):
@@ -1254,6 +1263,7 @@ class ProtectedOperationComposer:
 
     def _ensure_open(self) -> None:
         self._ensure_process()
+        _require_current_process_issuer(self.__issuer)
         with self.__lock:
             if self.__closed:
                 raise OperationAuthorizationError("protected_operation_composer_closed")

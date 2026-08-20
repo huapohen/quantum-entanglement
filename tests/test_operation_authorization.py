@@ -133,6 +133,28 @@ def _fork_public_path_probe(
         connection.close()
 
 
+def _fork_inherited_issuer_composer_probe(
+    connection,
+    issuer,
+    state_provider,
+    authorizer,
+    clock,
+):
+    try:
+        connection.send(
+            _capture_process_call(
+                lambda: ProtectedOperationComposer(
+                    issuer=issuer,
+                    state_provider=state_provider,
+                    authorizer=authorizer,
+                    clock=clock,
+                )
+            )
+        )
+    finally:
+        connection.close()
+
+
 def _multiprocessing_transfer_probe(value):
     raise AssertionError(f"non-transferable value reached child: {type(value).__name__}")
 
@@ -1069,6 +1091,29 @@ class ProtectedOperationComposerTests(unittest.TestCase):
         )
         self.composer.consume(operation, self.context, self.request)
 
+    def test_authorize_revalidates_issuer_process_before_state_or_authorizer_access(self):
+        owner_epoch = object.__getattribute__(
+            self.issuer,
+            "_RequestContextIssuer__owner_epoch",
+        )
+        object.__setattr__(self.issuer, "_RequestContextIssuer__owner_epoch", object())
+        try:
+            self.assert_code(
+                "protected_operation_process_mismatch",
+                lambda: self.composer.authorize(self.context, self.request),
+            )
+            self.assertEqual(self.provider.calls, [])
+        finally:
+            object.__setattr__(
+                self.issuer,
+                "_RequestContextIssuer__owner_epoch",
+                owner_epoch,
+            )
+
+        operation = self.composer.authorize(self.context, self.request)
+        self.assertIsInstance(operation, AuthorizedOperation)
+        self.composer.consume(operation, self.context, self.request)
+
     def test_token_is_bound_to_the_exact_authenticated_actor_context(self):
         operation = self.composer.authorize(self.context, self.request)
         replacement_context = self.issue_context()
@@ -1795,6 +1840,35 @@ class ProtectedOperationComposerTests(unittest.TestCase):
         self.assert_code(
             "protected_operation_untrusted",
             lambda: self.composer.consume(operation, self.context, self.request),
+        )
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_real_fork_cannot_build_a_fresh_composer_from_an_inherited_issuer(self):
+        fork_context = multiprocessing.get_context("fork")
+        parent_connection, child_connection = fork_context.Pipe(duplex=False)
+        process = fork_context.Process(
+            target=_fork_inherited_issuer_composer_probe,
+            args=(
+                child_connection,
+                self.issuer,
+                self.provider,
+                self.authorizer,
+                self.clock,
+            ),
+        )
+
+        process.start()
+        child_connection.close()
+        payload = self.receive_process_payload(process, parent_connection)
+
+        self.assertEqual(
+            payload,
+            ("operation_error", "protected_operation_process_mismatch", True, True),
+        )
+        replacement = self.make_composer()
+        self.assertIsInstance(
+            replacement.authorize(self.context, self.request),
+            AuthorizedOperation,
         )
 
     @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
