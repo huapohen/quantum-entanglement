@@ -1766,6 +1766,8 @@ def verify_dependency_risk(
         matched_exception = exception_by_key.get(violation)
         if matched_exception is None:
             _fail("risk_policy_denied")
+        if matched_exception.exception_id in used_exception_ids:
+            _fail("risk_exception_reused")
         used_exception_ids.add(matched_exception.exception_id)
     if used_exception_ids != {exception.exception_id for exception in policy.exceptions}:
         _fail("risk_exception_unused")
