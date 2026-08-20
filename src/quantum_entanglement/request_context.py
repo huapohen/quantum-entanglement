@@ -480,8 +480,11 @@ class RequestContextIssuer:
                 )
             except Exception:
                 raise RequestContextError("request_authentication_failed") from None
-            trusted = self._validate_binding(binding, expected, now)
-            return self._register(trusted, now)
+            completed_at = self._clock_now()
+            if completed_at + self.__max_clock_skew < now:
+                raise RequestContextError("request_context_time_regressed")
+            trusted = self._validate_binding(binding, expected, completed_at)
+            return self._register(trusted, completed_at)
         finally:
             try:
                 if reserved:
