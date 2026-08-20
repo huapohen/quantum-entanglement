@@ -193,8 +193,7 @@ def authorize_effect(
     serialized_envelopes,
 ):
     verified = tuple(
-        verifier.verify(CapabilityEnvelope.from_dict(value))
-        for value in serialized_envelopes
+        verifier.verify(CapabilityEnvelope.from_dict(value)) for value in serialized_envelopes
     )
     decision = authorizer.evaluate(
         request,
