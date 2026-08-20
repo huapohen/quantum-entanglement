@@ -122,10 +122,13 @@ def _lease_deadline(now: str, lease_seconds: float) -> str:
     if not math.isfinite(float(lease_seconds)) or lease_seconds <= 0:
         raise ValueError("lease_seconds must be finite and greater than zero")
     parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
-    return _normalize_timestamp(
+    deadline = _normalize_timestamp(
         (parsed + timedelta(seconds=float(lease_seconds))).isoformat(),
         "lease deadline",
     )
+    if deadline <= now:
+        raise ValueError("lease_seconds is below the durable timestamp precision")
+    return deadline
 
 
 def _stored_error(error: str) -> str:
