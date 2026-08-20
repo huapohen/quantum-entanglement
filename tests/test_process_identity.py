@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import importlib
+import importlib.util
 import multiprocessing
 import os
 import pickle
@@ -99,6 +100,38 @@ def _fresh_process_probe(connection: multiprocessing.connection.Connection) -> N
 
 @unittest.skipUnless(hasattr(os, "fork"), "requires POSIX fork")
 class ProcessIdentityForkTests(unittest.TestCase):
+    def test_pid_fallback_survives_at_fork_registration_failure(self) -> None:
+        with mock.patch.object(
+            os,
+            "register_at_fork",
+            side_effect=RuntimeError("synthetic registration failure"),
+        ):
+            spec = importlib.util.spec_from_file_location(
+                "quantum_entanglement._process_identity_registration_failure_probe",
+                process_identity.__file__,
+            )
+            if spec is None or spec.loader is None:
+                self.fail("process identity module spec is unavailable")
+            fallback_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(fallback_module)
+
+        owner = fallback_module.capture_process_owner()
+
+        def child_probe() -> bytes:
+            try:
+                fallback_module.require_current_process(owner, _mismatch_error)
+            except _ProcessMismatchError as exc:
+                if exc.__cause__ is None and exc.__context__ is None:
+                    return b"rejected"
+                return b"unsafe-error"
+            except BaseException:
+                return b"wrong-error"
+            return b"accepted"
+
+        self.assertFalse(fallback_module._AT_FORK_REGISTERED)
+        self.assertEqual(_run_fork_child(child_probe), b"rejected")
+        fallback_module.require_current_process(owner, _mismatch_error)
+
     def test_registered_child_hook_rotates_identity_before_first_guard(self) -> None:
         if not process_identity._AT_FORK_REGISTERED:
             self.skipTest("os.register_at_fork is unavailable or registration failed")
