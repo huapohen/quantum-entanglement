@@ -54,10 +54,18 @@ class ReleaseEvidenceWorkflowTests(unittest.TestCase):
         self.assertIn("github.run_id", self.job)
         self.assertIn("github.run_attempt", self.job)
 
-    def test_job_installs_the_declared_dev_toolchain_before_generation(self):
-        install = self.job.index("python -m pip install '.[dev]'")
+    def test_job_installs_the_locked_release_toolchain_before_generation(self):
+        verify_locks = self.job.index("python scripts/verify_dependency_locks.py")
+        install = self.job.index("-r requirements/release-py312.lock")
+        install_project = self.job.index("--no-build-isolation")
         generate = self.job.index("python scripts/generate_release_evidence.py")
+        self.assertLess(verify_locks, install)
         self.assertLess(install, generate)
+        self.assertLess(install_project, generate)
+        self.assertIn("--require-hashes", self.job)
+        self.assertIn("--only-binary :all:", self.job)
+        self.assertIn("--no-deps", self.job)
+        self.assertNotIn("'.[dev]'", self.job)
         self.assertIn('python-version: "3.12"', self.job)
 
 

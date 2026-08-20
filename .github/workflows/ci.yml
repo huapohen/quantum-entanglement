@@ -20,7 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.12"]
+        include:
+          - python-version: "3.9"
+            lockfile: requirements/dev-py39.lock
+          - python-version: "3.12"
+            lockfile: requirements/dev-py312.lock
 
     steps:
       - name: Check out source
@@ -31,9 +35,26 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: ${{ matrix.lockfile }}
 
-      - name: Install package
-        run: python -m pip install .
+      - name: Verify dependency locks
+        run: python scripts/verify_dependency_locks.py --repository-root .
+
+      - name: Install locked development toolchain
+        run: |
+          python -m pip install \
+            --disable-pip-version-check \
+            --require-hashes \
+            --only-binary :all: \
+            -r "${{ matrix.lockfile }}"
+
+      - name: Install package without dependency resolution
+        run: |
+          python -m pip install \
+            --disable-pip-version-check \
+            --no-build-isolation \
+            --no-deps \
+            .
 
       - name: Verify installed dependencies
         run: python -m pip check
@@ -66,9 +87,26 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: requirements/release-py312.lock
 
-      - name: Install evidence toolchain
-        run: python -m pip install '.[dev]'
+      - name: Verify dependency locks
+        run: python scripts/verify_dependency_locks.py --repository-root .
+
+      - name: Install locked release toolchain
+        run: |
+          python -m pip install \
+            --disable-pip-version-check \
+            --require-hashes \
+            --only-binary :all: \
+            -r requirements/release-py312.lock
+
+      - name: Install package without dependency resolution
+        run: |
+          python -m pip install \
+            --disable-pip-version-check \
+            --no-build-isolation \
+            --no-deps \
+            .
 
       - name: Generate canonical release evidence
         env:
