@@ -291,6 +291,51 @@ class ApprovalAtomicityTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(transitioned.event.correlation_id, plan.correlation_id)
             self.assertEqual(transitioned.event.causation_id, request.request_id)
 
+    async def test_failed_post_commit_hook_does_not_fail_or_truncate_decision(self) -> None:
+        plan = WorkflowPlan(
+            "approval-hook-failure",
+            "审批落盘后插件失败不得改变命令结果",
+            "user",
+            (approval_task("publish"),),
+            plan_id="plan-approval-hook-failure",
+        )
+        paused = await self.kernel.run(plan)
+        request = paused.needs_you[0]
+        delivered_event_types = []
+
+        async def fail_decision_hook(context):
+            event_type = context["storedEvent"].event.event_type
+            delivered_event_types.append(event_type)
+            if event_type == "approval.decided":
+                raise RuntimeError("injected post-commit hook failure")
+
+        self.kernel.plugins.install(
+            KernelPlugin(
+                "fail-decision-hook",
+                {HookPoint.EVENT_APPENDED: fail_decision_hook},
+            )
+        )
+        with self.assertLogs("quantum_entanglement.runtime", level="ERROR") as captured:
+            decided = await self.kernel.decide(
+                request.request_id,
+                ApprovalDecision.APPROVE,
+                "owner",
+            )
+
+        self.assertEqual(decided.decision, ApprovalDecision.APPROVE)
+        self.assertEqual(
+            delivered_event_types,
+            ["approval.decided", "task.status.changed"],
+        )
+        self.assertTrue(
+            any("sequence" in message and "hook failure" in message for message in captured.output)
+        )
+        self.assertEqual(
+            self.kernel._graphs[plan.session_id].statuses["publish"],
+            TaskStatus.READY,
+        )
+        self.assertIn((plan.session_id, "publish"), self.kernel._approved_tasks)
+
 
 if __name__ == "__main__":
     unittest.main()

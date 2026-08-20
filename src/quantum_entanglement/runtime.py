@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -58,6 +59,7 @@ _APPROVAL_DECISION_TARGETS = {
     ApprovalDecision.REVISE: TaskStatus.WAITING_INPUT,
     ApprovalDecision.REJECT: TaskStatus.CANCELED,
 }
+_LOGGER = logging.getLogger(__name__)
 
 
 class SessionRecoveryError(RuntimeError):
@@ -233,7 +235,14 @@ class OrchestratorKernel:
 
     async def _emit_appended_batch(self, stored_events: Tuple[StoredEvent, ...]) -> None:
         for stored in stored_events:
-            await self._emit_appended(stored)
+            try:
+                await self._emit_appended(stored)
+            except Exception:
+                _LOGGER.exception(
+                    "event.appended hook failed after durable commit for stream %s sequence %d",
+                    stored.event.stream_id,
+                    stored.sequence,
+                )
 
     @staticmethod
     def _canonical_event_json(event: DomainEvent) -> str:
@@ -304,7 +313,7 @@ class OrchestratorKernel:
 
     async def _append(self, event: DomainEvent) -> StoredEvent:
         stored = self.event_store.append(event)
-        await self._emit_appended(stored)
+        await self._emit_appended_batch((stored,))
         return stored
 
     def _transition_event(
