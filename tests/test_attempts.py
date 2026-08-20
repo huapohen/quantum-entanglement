@@ -28,6 +28,7 @@ from quantum_entanglement.attempts import (
     InvocationStatus,
     InvocationStoreClosedError,
     InvocationStorePoisonedError,
+    InvocationStoreProcessMismatchError,
     InvocationTransactionError,
     MigrationDriftError,
     SQLiteInvocationAttemptStore,
@@ -144,6 +145,33 @@ def claim_from_process(path, worker_id, ready_queue, start_event, result_queue):
         result_queue.put((worker_id, lease is not None))
     finally:
         store.close()
+
+
+def probe_fork_inherited_attempt_store(store, result_connection):
+    operations = (
+        store.__enter__,
+        partial(store.get, "invocation-1"),
+        partial(store.get_for_task, "session-1", "task-1"),
+        partial(store.recovery_snapshot_for_task, "session-1", "task-1"),
+        partial(store.attempts, "invocation-1"),
+        partial(store.attempts_page, "invocation-1"),
+        partial(store.enqueue, job_spec()),
+        store.recover_expired,
+        partial(store.claim_next, "worker", lease_seconds=5),
+        partial(store.claim, "invocation-1", "worker", lease_seconds=5),
+        store.schema_version,
+        store.close,
+    )
+    outcomes = []
+    for operation in operations:
+        try:
+            operation()
+        except BaseException as error:
+            outcomes.append((type(error).__name__, getattr(error, "code", None)))
+        else:
+            outcomes.append(("returned", None))
+    result_connection.send(tuple(outcomes))
+    result_connection.close()
 
 
 class InvocationAttemptStoreTests(unittest.TestCase):
@@ -369,6 +397,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         expected = {
             "InvocationCommitAmbiguityError": InvocationCommitAmbiguityError,
             "InvocationStoreClosedError": InvocationStoreClosedError,
+            "InvocationStoreProcessMismatchError": InvocationStoreProcessMismatchError,
             "InvocationStorePoisonedError": InvocationStorePoisonedError,
             "InvocationTransactionError": InvocationTransactionError,
         }
@@ -2280,6 +2309,45 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertEqual(sum(won for _worker_id, won in results), 1)
         self.assertEqual(self.store.get("invocation-1").attempts_started, 1)
         self.assertEqual(len(self.store.attempts("invocation-1")), 1)
+
+    def test_fork_inherited_store_is_rejected_before_any_public_access(self):
+        try:
+            context = multiprocessing.get_context("fork")
+        except ValueError:
+            self.skipTest("POSIX fork is unavailable")
+
+        receiver, sender = context.Pipe(duplex=False)
+        process = context.Process(
+            target=probe_fork_inherited_attempt_store,
+            args=(self.store, sender),
+        )
+        process.start()
+        sender.close()
+        try:
+            if not receiver.poll(5):
+                process.terminate()
+                self.fail("fork-inherited store probe did not fail closed")
+            outcomes = receiver.recv()
+        finally:
+            receiver.close()
+            process.join(timeout=5)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+
+        self.assertEqual(process.exitcode, 0)
+        self.assertEqual(
+            outcomes,
+            (
+                (
+                    "InvocationStoreProcessMismatchError",
+                    "invocation_store_process_mismatch",
+                ),
+            )
+            * 12,
+        )
+        self.assertEqual(self.store.schema_version(), 2)
+        self.assertEqual(self.store.enqueue(job_spec()).status, InvocationStatus.QUEUED)
 
     def test_heartbeat_recovery_fences_stale_worker_and_quarantines_retry(self):
         self.store.enqueue(job_spec())

@@ -88,6 +88,15 @@ class InvocationStoreClosedError(RuntimeError):
         super().__init__("invocation attempt store is closed")
 
 
+class InvocationStoreProcessMismatchError(RuntimeError):
+    """Raised when a store inherited through fork is used by the child process."""
+
+    code = "invocation_store_process_mismatch"
+
+    def __init__(self) -> None:
+        super().__init__("invocation attempt store belongs to another process")
+
+
 class InvocationStorePoisonedError(InvocationIntegrityError):
     """Raised after a transaction failure permanently quarantines this store instance."""
 
@@ -330,6 +339,26 @@ _Method = TypeVar("_Method", bound=Callable[..., Any])
 _Value = TypeVar("_Value")
 
 
+def _bind_store_process(method: _Method) -> _Method:
+    """Reject a fork-inherited store before touching its lock or SQLite connection."""
+
+    def process_bound(*args: Any, **kwargs: Any) -> Any:
+        store = args[0]
+        process_matches = store._creator_pid == os.getpid()
+        if not process_matches:
+            del args, kwargs, store
+            raise InvocationStoreProcessMismatchError() from None
+        return method(*args, **kwargs)
+
+    process_bound.__name__ = method.__name__
+    process_bound.__qualname__ = method.__qualname__
+    process_bound.__doc__ = method.__doc__
+    process_bound.__module__ = method.__module__
+    process_bound.__annotations__ = dict(method.__annotations__)
+    process_bound.__signature__ = signature(method)  # type: ignore[attr-defined]
+    return cast(_Method, process_bound)
+
+
 def _sanitize_control_signals(method: _Method) -> _Method:
     """Reissue control flow without retaining public call arguments or raw exceptions."""
 
@@ -341,6 +370,10 @@ def _sanitize_control_signals(method: _Method) -> _Method:
         control_ambiguity = False
         boundary_nonce = object()
         store = args[0]
+        process_matches = store._creator_pid == os.getpid()
+        if not process_matches:
+            del args, kwargs, store
+            raise InvocationStoreProcessMismatchError() from None
         store._push_control_signal_boundary(boundary_nonce)
         try:
             try:
@@ -396,6 +429,10 @@ def _sanitize_close_signals(method: _Method) -> _Method:
         close_failure = False
         boundary_nonce = object()
         store = args[0]
+        process_matches = store._creator_pid == os.getpid()
+        if not process_matches:
+            del args, kwargs, store
+            raise InvocationStoreProcessMismatchError() from None
         store._push_control_signal_boundary(boundary_nonce)
         try:
             try:
@@ -722,11 +759,12 @@ class InvocationRecoverySnapshot:
 
 
 class SQLiteInvocationAttemptStore:
-    """Durable invocation queue shared safely by multiple local processes.
+    """Durable invocation queue shared by process-local stores on one host.
 
-    The store deliberately uses its own SQLite connection.  Pass the same filesystem
-    path as the event store so both projections live in one database.  ``:memory:`` is
-    useful for unit tests but cannot be shared between connections or processes.
+    Each process must construct its own store after process creation; a store or SQLite
+    connection inherited through POSIX fork is rejected. Pass the same filesystem path as
+    the event store so both projections live in one database. ``:memory:`` is useful for
+    unit tests but cannot be shared between connections or processes.
     """
 
     def __init__(
@@ -742,6 +780,7 @@ class SQLiteInvocationAttemptStore:
             raise ValueError("busy_timeout_ms cannot be negative")
         if not callable(clock):
             raise TypeError("clock must be callable")
+        self._creator_pid = os.getpid()
         self.path = path
         self._clock = clock
         if path != ":memory:":
@@ -771,6 +810,7 @@ class SQLiteInvocationAttemptStore:
             self._connection.close()
             raise
 
+    @_bind_store_process
     def __enter__(self) -> SQLiteInvocationAttemptStore:
         with self._lock:
             self._require_usable()
@@ -1000,6 +1040,8 @@ class SQLiteInvocationAttemptStore:
         return close_control
 
     def _require_usable(self) -> None:
+        if self._creator_pid != os.getpid():
+            raise InvocationStoreProcessMismatchError()
         if self._poisoned:
             raise InvocationStorePoisonedError()
         if self._closed:
@@ -1566,6 +1608,7 @@ class SQLiteInvocationAttemptStore:
                 self._unreconciled_commit(error, control_signal=readback_control)
             return self._after_reconciled_commit(error, reconciled)
 
+    @_bind_store_process
     def get(self, invocation_id: str) -> Optional[InvocationJob]:
         _required(invocation_id, "invocation_id")
         with self._lock:
@@ -1576,6 +1619,7 @@ class SQLiteInvocationAttemptStore:
             ).fetchone()
             return self._row_to_job(row) if row is not None else None
 
+    @_bind_store_process
     def get_for_task(self, session_id: str, task_id: str) -> Optional[InvocationJob]:
         _required(session_id, "session_id")
         _required(task_id, "task_id")
@@ -1747,6 +1791,7 @@ class SQLiteInvocationAttemptStore:
             )
             return InvocationRecoverySnapshot(job, current_attempt, attempt_count)
 
+    @_bind_store_process
     def attempts(self, invocation_id: str) -> Tuple[InvocationAttempt, ...]:
         _required(invocation_id, "invocation_id")
         with self._lock:
@@ -1760,6 +1805,7 @@ class SQLiteInvocationAttemptStore:
             ).fetchall()
             return tuple(self._row_to_attempt(row) for row in rows)
 
+    @_bind_store_process
     def attempts_page(
         self,
         invocation_id: str,
@@ -2752,6 +2798,7 @@ class SQLiteInvocationAttemptStore:
                 self._unreconciled_commit(commit_error)
             return self._after_reconciled_commit(commit_error, True)
 
+    @_bind_store_process
     def schema_version(self) -> int:
         with self._lock:
             self._require_usable()
@@ -2787,6 +2834,7 @@ __all__ = [
     "InvocationRecoverySnapshot",
     "InvocationStatus",
     "InvocationStoreClosedError",
+    "InvocationStoreProcessMismatchError",
     "InvocationStorePoisonedError",
     "InvocationTransactionError",
     "MigrationDriftError",
