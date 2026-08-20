@@ -841,6 +841,39 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(InvocationIntegrityError, "historical invocation attempt"):
             self.store.recovery_snapshot_for_task("session-1", "task-1")
 
+    def test_recovery_snapshot_strictly_decodes_historical_attempt_semantics(self):
+        self.store.enqueue(job_spec(max_attempts=2))
+        first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)
+        self.assertTrue(self.store.fail(first, "retry", retry_at=T0))
+        self._seed_second_running_attempt()
+        corruptions = (
+            ("result_ref", "result:unexpected", None),
+            ("heartbeat_at", "2026-08-19T23:59:59.000000Z", persisted_timestamp(0)),
+            ("lease_expires_at", "2026-08-19T23:59:59.000000Z", persisted_timestamp(10)),
+            ("finished_at", "2026-08-19T23:59:59.000000Z", persisted_timestamp(0)),
+        )
+        for column, corrupted, restored in corruptions:
+            with self.subTest(column=column):
+                self.store._connection.execute(
+                    f"""
+                    UPDATE invocation_attempts SET {column} = ?
+                    WHERE invocation_id = ? AND attempt_number = 1
+                    """,
+                    (corrupted, "invocation-1"),
+                )
+                with self.assertRaisesRegex(
+                    InvocationIntegrityError,
+                    "persisted invocation attempt is malformed",
+                ):
+                    self.store.recovery_snapshot_for_task("session-1", "task-1")
+                self.store._connection.execute(
+                    f"""
+                    UPDATE invocation_attempts SET {column} = ?
+                    WHERE invocation_id = ? AND attempt_number = 1
+                    """,
+                    (restored, "invocation-1"),
+                )
+
     def test_recovery_snapshot_rejects_non_monotonic_historical_epoch(self):
         self.store.enqueue(job_spec(max_attempts=2))
         first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)

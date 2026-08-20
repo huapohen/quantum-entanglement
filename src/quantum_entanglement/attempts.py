@@ -519,6 +519,18 @@ class SQLiteInvocationAttemptStore:
             error = _persisted_optional_text(row["error"], "attempt error")
             if error is not None and len(error) > _MAX_ERROR_LENGTH:
                 raise ValueError("persisted attempt error exceeds its supported length")
+            started_at = _persisted_timestamp(row["started_at"], "attempt started_at")
+            heartbeat_at = _persisted_timestamp(row["heartbeat_at"], "attempt heartbeat_at")
+            lease_expires_at = _persisted_timestamp(
+                row["lease_expires_at"], "attempt lease_expires_at"
+            )
+            if heartbeat_at < started_at or lease_expires_at < started_at:
+                raise ValueError("persisted attempt timestamps violate start causality")
+            if finished_at is not None and finished_at < started_at:
+                raise ValueError("persisted attempt finished_at precedes its start")
+            result_ref = _persisted_optional_text(row["result_ref"], "attempt result_ref")
+            if result_ref is not None and status is not AttemptStatus.SUCCEEDED:
+                raise ValueError("persisted non-succeeded attempt carries a result_ref")
             return InvocationAttempt(
                 attempt_id=_persisted_text(row["attempt_id"], "attempt_id"),
                 invocation_id=_persisted_text(row["invocation_id"], "attempt invocation_id"),
@@ -529,14 +541,12 @@ class SQLiteInvocationAttemptStore:
                     row["lease_token_digest"], "attempt lease_token_digest"
                 ),
                 status=status,
-                started_at=_persisted_timestamp(row["started_at"], "attempt started_at"),
-                heartbeat_at=_persisted_timestamp(row["heartbeat_at"], "attempt heartbeat_at"),
-                lease_expires_at=_persisted_timestamp(
-                    row["lease_expires_at"], "attempt lease_expires_at"
-                ),
+                started_at=started_at,
+                heartbeat_at=heartbeat_at,
+                lease_expires_at=lease_expires_at,
                 finished_at=finished_at,
                 error=error,
-                result_ref=_persisted_optional_text(row["result_ref"], "attempt result_ref"),
+                result_ref=result_ref,
             )
         except (IndexError, KeyError, TypeError, ValueError) as exc:
             raise InvocationIntegrityError("persisted invocation attempt is malformed") from exc
