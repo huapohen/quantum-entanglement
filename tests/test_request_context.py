@@ -140,6 +140,21 @@ class RequestContextValueTests(unittest.TestCase):
         self.assertEqual(binding.expires_at, NOW + timedelta(minutes=5))
         self.assertIs(binding.authenticated_at.tzinfo, timezone.utc)
 
+    def test_identity_value_representations_do_not_render_scope_or_evidence(self):
+        claims = self.claims()
+        binding = self.binding()
+        rendered = " ".join((str(claims), repr(claims), str(binding), repr(binding)))
+
+        for canary in (
+            "request-1",
+            "subject-1",
+            "tenant-a",
+            "workspace-a",
+            "principal-1",
+            EVIDENCE,
+        ):
+            self.assertNotIn(canary, rendered)
+
 
 class RequestContextIssuanceTests(unittest.TestCase):
     def setUp(self):

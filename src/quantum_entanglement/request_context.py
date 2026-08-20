@@ -73,7 +73,7 @@ def _string(value: Any, field_name: str) -> str:
     return value
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class CallerRequestContext:
     """Strictly parsed subject/scope claims that remain caller-controlled."""
 
@@ -98,6 +98,12 @@ class CallerRequestContext:
             "workspaceId": str(self.workspace_id) if self.workspace_id is not None else None,
         }
 
+    def __str__(self) -> str:
+        return "CallerRequestContext<untrusted>"
+
+    def __repr__(self) -> str:
+        return "CallerRequestContext(<untrusted>)"
+
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> CallerRequestContext:
         data = _strict_object(
@@ -116,7 +122,7 @@ class CallerRequestContext:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class AuthenticatedRequestBinding:
     """Bounded authenticator output; it is not a free-standing authorization token."""
 
@@ -156,6 +162,12 @@ class AuthenticatedRequestBinding:
             raise ValueError("expires_at must be later than authenticated_at")
         object.__setattr__(self, "authenticated_at", authenticated_at)
         object.__setattr__(self, "expires_at", expires_at)
+
+    def __str__(self) -> str:
+        return "AuthenticatedRequestBinding<adapter-result>"
+
+    def __repr__(self) -> str:
+        return "AuthenticatedRequestBinding(<adapter-result>)"
 
 
 class RequestAuthenticator(Protocol):
