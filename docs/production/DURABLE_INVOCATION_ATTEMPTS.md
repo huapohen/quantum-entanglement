@@ -69,10 +69,11 @@ The returned `InvocationLease` contains two different controls:
   resources that support fencing.
 
 Heartbeat, completion and failure require the same invocation ID, worker ID, opaque token,
-epoch and a deadline strictly later than the store-owned current time. At the exact expiry
-instant, terminal CAS fails. Recovery clears the opaque token and moves the job to a queued
-effect-unknown state (or terminal failure at its configured limit). The old worker can no
-longer heartbeat, complete or fail the job, and no new worker can claim it automatically.
+epoch, heartbeat and deadline in both the job and current-attempt rows, plus a deadline strictly
+later than the store-owned current time. At the exact expiry instant, terminal CAS fails.
+Recovery clears the opaque token and moves the job to a queued effect-unknown state (or terminal
+failure at its configured limit). The old worker can no longer heartbeat, complete or fail the
+job, and no new worker can claim it automatically.
 
 The token is hidden from dataclass `repr`, and both the current job and attempt history
 store only its SHA-256 digest. Never add the raw token to events, logs, traces, metrics or
@@ -99,12 +100,32 @@ request, Agent or connector in production.
 
 Ownership-sensitive calls sample that clock only after `BEGIN IMMEDIATE` has acquired the
 write transaction. Time spent waiting for SQLite ownership therefore cannot be hidden by a
-stale pre-lock timestamp. Inputs use strict RFC 3339 syntax and are normalized to UTC.
+stale pre-lock timestamp. Inputs use strict RFC 3339 syntax and are normalized to UTC with
+microsecond precision. A positive lease duration that rounds to the same durable timestamp is
+rejected before mutation; every accepted lease deadline is strictly later than its heartbeat.
 
-All instances on the supported single host share the same system clock. Operators must
-monitor clock synchronization. A backward clock jump delays recovery; a forward jump can
-expire active work. Multi-host deployment needs a database-authoritative clock and is out
-of scope for the SQLite implementation.
+Before a first claim writes, the sampled time must be no earlier than the selected job's
+creation and last update. Before heartbeat, completion or failure writes, it must be no earlier
+than the fully decoded job update and current attempt start/heartbeat. A violation raises
+`InvocationClockRegressionError`, a subtype of `InvocationIntegrityError`, and the complete
+transaction rolls back. It is intentionally different from a `False` terminal/heartbeat result,
+which means the lease is stale or expired. Equal timestamps remain valid at durable microsecond
+resolution; the store does not silently clamp a regressed sample.
+
+For current running ownership, persisted reads require job creation, attempt start, heartbeat,
+job update and lease deadline to occur in that order, with the deadline strictly later than all
+activity. A terminal attempt must finish at or after its heartbeat. An owned success/failure must
+finish before its lease deadline; expiry must finish at or after it. Recovery additionally
+requires every historical attempt to start no earlier than the job and no earlier than the
+preceding attempt's finish. Job/current-attempt finish timestamps and ownership fields are
+cross-checked.
+
+All instances on the supported single host share the same system clock. Operators must monitor
+clock synchronization. A backward clock jump before durable activity freezes affected ownership
+mutations and delays expiry recovery; a forward jump can expire active work. The persisted floor
+is per invocation, not a database-wide time authority, so it cannot detect a backward jump while
+creating an unrelated new job. Multi-host deployment needs a database-authoritative clock and is
+out of scope for the SQLite implementation.
 
 ## Worker loop contract
 
@@ -248,8 +269,9 @@ idempotent enqueue conflict detection, availability/priority, two-connection ato
 two-process atomic claim, heartbeat extension, exact-boundary expiry, stale-worker fencing,
 explicit-failure and expiry quarantine without second claim, fresh-job selection past a
 higher-priority effect-unknown job, terminal exhaustion, complete bounded recovery-history
-validation, post-lock clock sampling, strict timestamp parsing, token non-disclosure and
-invalid lease inputs:
+validation, post-lock clock sampling, cross-connection clock-regression rollback, complete
+job/attempt time causality, sub-microsecond lease rejection, strict timestamp parsing, token
+non-disclosure and invalid lease inputs:
 
 ```bash
 PYTHONPATH=src python3 -m unittest tests.test_attempts -v
