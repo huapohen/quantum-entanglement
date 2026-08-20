@@ -2,6 +2,7 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
+from quantum_entanglement.events import DomainEvent
 from quantum_entanglement.plugins import HookPoint, KernelPlugin
 from quantum_entanglement.protocol import (
     ActionIntent,
@@ -49,6 +50,53 @@ class ApprovalAtomicityTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         self.kernel.event_store.close()
+
+    async def test_post_commit_reconciliation_reads_multiple_bounded_pages(self) -> None:
+        stream_id = "session:large-reconciliation"
+        events = tuple(
+            DomainEvent(
+                stream_id=stream_id,
+                event_type="test.event",
+                actor_id="tester",
+                idempotency_key=f"large-reconciliation:{index}",
+                payload={"index": index},
+            )
+            for index in range(1_001)
+        )
+        original_append_many = self.kernel.event_store.append_many
+        original_read_page = self.kernel.event_store.read_stream_page
+        page_calls = []
+
+        def commit_then_raise(*args, **kwargs):
+            original_append_many(*args, **kwargs)
+            raise RuntimeError("injected large post-commit failure")
+
+        def record_page(*args, **kwargs):
+            page_calls.append((kwargs["after_sequence"], kwargs["limit"]))
+            return original_read_page(*args, **kwargs)
+
+        with (
+            patch.object(
+                self.kernel.event_store,
+                "append_many",
+                side_effect=commit_then_raise,
+            ),
+            patch.object(
+                self.kernel.event_store,
+                "read_stream_page",
+                side_effect=record_page,
+            ),
+        ):
+            stored = self.kernel._append_many_reconciled(
+                stream_id,
+                events,
+                expected_version=0,
+            )
+
+        self.assertEqual(len(stored), len(events))
+        self.assertEqual(page_calls, [(0, 1_000), (1_000, 1)])
+        self.assertEqual(stored[0].sequence, 1)
+        self.assertEqual(stored[-1].sequence, 1_001)
 
     async def test_committed_request_batch_is_reconciled_after_wrapper_failure(self) -> None:
         self.kernel.register_agent(

@@ -269,27 +269,42 @@ class OrchestratorKernel:
     ) -> Optional[Tuple[StoredEvent, ...]]:
         """Return an exact batch committed before an append wrapper failed."""
 
-        if not events or len(events) > _RECOVERY_PAGE_LIMIT:
+        if not events:
             return None
         try:
-            stored_events: Tuple[StoredEvent, ...] = self.event_store.read_stream_page(
-                stream_id,
-                after_sequence=expected_version,
-                limit=len(events),
-            )
-            if len(stored_events) != len(events):
-                return None
-            for offset, (stored, expected) in enumerate(
-                zip(stored_events, events),
-                start=1,
-            ):
-                if stored.sequence != expected_version + offset:
+            after_sequence = expected_version
+            reconciled: list[StoredEvent] = []
+            while len(reconciled) < len(events):
+                page_limit = min(
+                    _RECOVERY_PAGE_LIMIT,
+                    len(events) - len(reconciled),
+                )
+                page: Tuple[StoredEvent, ...] = self.event_store.read_stream_page(
+                    stream_id,
+                    after_sequence=after_sequence,
+                    limit=page_limit,
+                )
+                if len(page) != page_limit:
                     return None
-                if self._canonical_event_json(stored.event) != self._canonical_event_json(expected):
-                    return None
+                next_sequence = self._validate_recovery_page(
+                    page,
+                    stream_id=stream_id,
+                    after_sequence=after_sequence,
+                    requested_limit=page_limit,
+                )
+                for stored, expected in zip(
+                    page,
+                    events[len(reconciled) : len(reconciled) + page_limit],
+                ):
+                    if self._canonical_event_json(stored.event) != self._canonical_event_json(
+                        expected
+                    ):
+                        return None
+                reconciled.extend(page)
+                after_sequence = next_sequence
         except Exception:
             return None
-        return stored_events
+        return tuple(reconciled)
 
     def _append_many_reconciled(
         self,
