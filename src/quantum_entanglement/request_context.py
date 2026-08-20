@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, NoReturn, Optional, Protocol, SupportsIndex
 
 from .service.secrets import SecretMaterial
-from .tenancy import ServerClock, SystemClock, TenantId, WorkspaceId
+from .tenancy import AccessRequest, ServerClock, SystemClock, TenantId, WorkspaceId
 
 _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -191,8 +191,8 @@ class _ContextSnapshot:
     request_id: str
     principal_id: str
     subject_id: str
-    tenant_id: TenantId
-    workspace_id: Optional[WorkspaceId]
+    tenant_value: str
+    workspace_value: Optional[str]
     identity_revision: str
     scope_revision: str
     evidence_fingerprint: str
@@ -220,9 +220,9 @@ class RequestContext:
         "__request_id",
         "__scope_revision",
         "__subject_id",
-        "__tenant_id",
+        "__tenant_value",
         "__weakref__",
-        "__workspace_id",
+        "__workspace_value",
     )
 
     def __init__(self, snapshot: _ContextSnapshot, token: object) -> None:
@@ -234,8 +234,8 @@ class RequestContext:
         self.__request_id = snapshot.request_id
         self.__principal_id = snapshot.principal_id
         self.__subject_id = snapshot.subject_id
-        self.__tenant_id = snapshot.tenant_id
-        self.__workspace_id = snapshot.workspace_id
+        self.__tenant_value = snapshot.tenant_value
+        self.__workspace_value = snapshot.workspace_value
         self.__identity_revision = snapshot.identity_revision
         self.__scope_revision = snapshot.scope_revision
         self.__evidence_fingerprint = snapshot.evidence_fingerprint
@@ -269,11 +269,11 @@ class RequestContext:
 
     @property
     def tenant_id(self) -> TenantId:
-        return self.__tenant_id
+        return TenantId(self.__tenant_value)
 
     @property
     def workspace_id(self) -> Optional[WorkspaceId]:
-        return self.__workspace_id
+        return WorkspaceId(self.__workspace_value) if self.__workspace_value is not None else None
 
     @property
     def identity_revision(self) -> str:
@@ -313,6 +313,64 @@ class RequestContext:
 
     def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
         raise TypeError("RequestContext cannot be serialized")
+
+
+@dataclass(frozen=True, repr=False)
+class ReauthorizationBasis:
+    """Non-authorizing identity evidence prepared for a current-state lookup."""
+
+    context_id: str
+    authenticator_id: str
+    audience: str
+    request_id: str
+    principal_id: str
+    subject_id: str
+    tenant_id: TenantId
+    workspace_id: Optional[WorkspaceId]
+    identity_revision: str
+    scope_revision: str
+    evidence_fingerprint: str
+    authenticated_at: datetime
+    context_issued_at: datetime
+    context_expires_at: datetime
+    prepared_at: datetime
+
+    def __post_init__(self) -> None:
+        _require_opaque_id(self.context_id, "context_id")
+        _require_opaque_id(self.authenticator_id, "authenticator_id")
+        _require_text(self.audience, "audience")
+        _require_opaque_id(self.request_id, "request_id")
+        _require_opaque_id(self.principal_id, "principal_id")
+        _require_opaque_id(self.subject_id, "subject_id")
+        if type(self.tenant_id) is not TenantId:
+            raise TypeError("tenant_id must be an exact TenantId")
+        if self.workspace_id is not None and type(self.workspace_id) is not WorkspaceId:
+            raise TypeError("workspace_id must be an exact WorkspaceId or None")
+        _require_revision(self.identity_revision, "identity_revision")
+        _require_revision(self.scope_revision, "scope_revision")
+        if (
+            type(self.evidence_fingerprint) is not str
+            or _SHA256.fullmatch(self.evidence_fingerprint) is None
+        ):
+            raise ValueError("evidence_fingerprint must be a lower-case SHA-256 digest")
+        authenticated_at = _as_utc(self.authenticated_at, "authenticated_at")
+        context_issued_at = _as_utc(self.context_issued_at, "context_issued_at")
+        context_expires_at = _as_utc(self.context_expires_at, "context_expires_at")
+        prepared_at = _as_utc(self.prepared_at, "prepared_at")
+        if context_expires_at <= context_issued_at:
+            raise ValueError("context expiry must be later than issuance")
+        if prepared_at >= context_expires_at:
+            raise ValueError("reauthorization basis cannot be prepared after context expiry")
+        object.__setattr__(self, "authenticated_at", authenticated_at)
+        object.__setattr__(self, "context_issued_at", context_issued_at)
+        object.__setattr__(self, "context_expires_at", context_expires_at)
+        object.__setattr__(self, "prepared_at", prepared_at)
+
+    def __str__(self) -> str:
+        return "ReauthorizationBasis<non-authorizing>"
+
+    def __repr__(self) -> str:
+        return "ReauthorizationBasis(<non-authorizing>)"
 
 
 class RequestContextIssuer:
@@ -407,6 +465,74 @@ class RequestContextIssuer:
         finally:
             credential.close()
 
+    def prepare_reauthorization(
+        self,
+        context: RequestContext,
+        request: AccessRequest,
+    ) -> ReauthorizationBasis:
+        """Validate exact local context/request scope and return non-authorizing evidence."""
+
+        trusted_request = self._snapshot_access_request(request)
+        now = self._clock_now()
+        with self.__lock:
+            if self.__closed:
+                raise RequestContextError("request_context_issuer_closed")
+            snapshot = self._trusted_snapshot(context)
+            if now + self.__max_clock_skew < snapshot.issued_at:
+                self.__active.pop(id(context), None)
+                raise RequestContextError("request_context_time_regressed")
+            if snapshot.expires_at <= now:
+                self.__active.pop(id(context), None)
+                raise RequestContextError("request_context_expired")
+            workspace = trusted_request.resource.workspace_id
+            expected_scope = (
+                snapshot.request_id,
+                snapshot.subject_id,
+                snapshot.tenant_value,
+                snapshot.workspace_value,
+            )
+            actual_scope = (
+                trusted_request.request_id,
+                trusted_request.subject_id,
+                str(trusted_request.tenant_id),
+                str(workspace) if workspace is not None else None,
+            )
+            if (
+                trusted_request.resource.tenant_id != trusted_request.tenant_id
+                or actual_scope != expected_scope
+            ):
+                raise RequestContextError("request_context_scope_mismatch")
+            return ReauthorizationBasis(
+                context_id=snapshot.context_id,
+                authenticator_id=snapshot.authenticator_id,
+                audience=snapshot.audience,
+                request_id=snapshot.request_id,
+                principal_id=snapshot.principal_id,
+                subject_id=snapshot.subject_id,
+                tenant_id=TenantId(snapshot.tenant_value),
+                workspace_id=(
+                    WorkspaceId(snapshot.workspace_value)
+                    if snapshot.workspace_value is not None
+                    else None
+                ),
+                identity_revision=snapshot.identity_revision,
+                scope_revision=snapshot.scope_revision,
+                evidence_fingerprint=snapshot.evidence_fingerprint,
+                authenticated_at=snapshot.authenticated_at,
+                context_issued_at=snapshot.issued_at,
+                context_expires_at=snapshot.expires_at,
+                prepared_at=now,
+            )
+
+    def retire(self, context: RequestContext) -> None:
+        """Invalidate one exact issued handle without disclosing registry membership."""
+
+        with self.__lock:
+            if self.__closed:
+                raise RequestContextError("request_context_issuer_closed")
+            self._trusted_snapshot(context)
+            self.__active.pop(id(context), None)
+
     def close(self) -> None:
         """Invalidate every issued context. The operation is idempotent."""
 
@@ -454,6 +580,15 @@ class RequestContextIssuer:
             return CallerRequestContext.from_dict(claims.to_dict())
         except (AttributeError, TypeError, ValueError):
             raise TypeError("claims must be a canonical CallerRequestContext") from None
+
+    @staticmethod
+    def _snapshot_access_request(request: AccessRequest) -> AccessRequest:
+        if type(request) is not AccessRequest:
+            raise TypeError("request must be an exact AccessRequest")
+        try:
+            return AccessRequest.from_dict(request.to_dict())
+        except (AttributeError, TypeError, ValueError):
+            raise TypeError("request must be a canonical AccessRequest") from None
 
     def _validate_binding(
         self,
@@ -527,8 +662,10 @@ class RequestContextIssuer:
                 request_id=binding.request_id,
                 principal_id=binding.principal_id,
                 subject_id=binding.subject_id,
-                tenant_id=binding.tenant_id,
-                workspace_id=binding.workspace_id,
+                tenant_value=str(binding.tenant_id),
+                workspace_value=(
+                    str(binding.workspace_id) if binding.workspace_id is not None else None
+                ),
                 identity_revision=binding.identity_revision,
                 scope_revision=binding.scope_revision,
                 evidence_fingerprint=binding.evidence_fingerprint,
@@ -539,6 +676,57 @@ class RequestContextIssuer:
             context = RequestContext(snapshot, _CONTEXT_CONSTRUCTION_TOKEN)
             self.__active[id(context)] = (weakref.ref(context), snapshot)
             return context
+
+    def _trusted_snapshot(self, context: RequestContext) -> _ContextSnapshot:
+        if type(context) is not RequestContext:
+            raise RequestContextError("request_context_untrusted")
+        record = self.__active.get(id(context))
+        if record is None or record[0]() is not context:
+            raise RequestContextError("request_context_untrusted")
+        snapshot = record[1]
+        if not self._context_matches(context, snapshot):
+            self.__active.pop(id(context), None)
+            raise RequestContextError("request_context_tampered")
+        return snapshot
+
+    @staticmethod
+    def _context_matches(context: RequestContext, snapshot: _ContextSnapshot) -> bool:
+        try:
+            actual = (
+                context.context_id,
+                context.authenticator_id,
+                context.audience,
+                context.request_id,
+                context.principal_id,
+                context.subject_id,
+                str(context.tenant_id),
+                str(context.workspace_id) if context.workspace_id is not None else None,
+                context.identity_revision,
+                context.scope_revision,
+                context.evidence_fingerprint,
+                context.authenticated_at,
+                context.issued_at,
+                context.expires_at,
+            )
+        except Exception:
+            return False
+        expected = (
+            snapshot.context_id,
+            snapshot.authenticator_id,
+            snapshot.audience,
+            snapshot.request_id,
+            snapshot.principal_id,
+            snapshot.subject_id,
+            snapshot.tenant_value,
+            snapshot.workspace_value,
+            snapshot.identity_revision,
+            snapshot.scope_revision,
+            snapshot.evidence_fingerprint,
+            snapshot.authenticated_at,
+            snapshot.issued_at,
+            snapshot.expires_at,
+        )
+        return actual == expected
 
     def _new_context_id(self) -> str:
         existing = {record[1].context_id for record in self.__active.values()}
@@ -568,4 +756,5 @@ __all__ = [
     "RequestContext",
     "RequestContextError",
     "RequestContextIssuer",
+    "ReauthorizationBasis",
 ]

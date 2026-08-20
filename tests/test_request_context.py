@@ -8,12 +8,13 @@ from datetime import datetime, timedelta, timezone
 from quantum_entanglement.request_context import (
     AuthenticatedRequestBinding,
     CallerRequestContext,
+    ReauthorizationBasis,
     RequestContext,
     RequestContextError,
     RequestContextIssuer,
 )
 from quantum_entanglement.service.secrets import SecretMaterial
-from quantum_entanglement.tenancy import TenantId, WorkspaceId
+from quantum_entanglement.tenancy import AccessRequest, ResourceRef, TenantId, WorkspaceId
 
 NOW = datetime(2026, 8, 20, 6, 0, 0, tzinfo=timezone.utc)
 EVIDENCE = "ab" * 32
@@ -189,6 +190,33 @@ class RequestContextIssuanceTests(unittest.TestCase):
             callback()
         self.assertEqual(raised.exception.code, code)
         self.assertEqual(str(raised.exception), code)
+
+    def access_request(
+        self,
+        *,
+        request_id="request-1",
+        subject_id="subject-1",
+        tenant_id=None,
+        resource_tenant=None,
+        workspace_id="default",
+    ):
+        selected_tenant = tenant_id or TenantId("tenant-a")
+        selected_resource_tenant = resource_tenant or selected_tenant
+        selected_workspace = (
+            WorkspaceId("workspace-a") if workspace_id == "default" else workspace_id
+        )
+        return AccessRequest(
+            request_id=request_id,
+            subject_id=subject_id,
+            tenant_id=selected_tenant,
+            action="resource.read",
+            resource=ResourceRef(
+                tenant_id=selected_resource_tenant,
+                workspace_id=selected_workspace,
+                resource_type="document",
+                resource_id="document-1",
+            ),
+        )
 
     def test_issuer_calls_authenticator_and_consumes_credential_lease(self):
         issuer, authenticator = self.make_issuer()
@@ -375,6 +403,126 @@ class RequestContextIssuanceTests(unittest.TestCase):
             lambda: issuer.issue(self.claims, credential),
         )
         self.assertTrue(credential.closed)
+
+    def test_same_issuer_prepares_complete_non_authorizing_reauthentication_basis(self):
+        issuer, _ = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+
+        basis = issuer.prepare_reauthorization(context, self.access_request())
+
+        self.assertIsInstance(basis, ReauthorizationBasis)
+        self.assertEqual(basis.context_id, context.context_id)
+        self.assertEqual(basis.authenticator_id, "fake-authenticator")
+        self.assertEqual(basis.audience, "qe-runtime")
+        self.assertEqual(basis.principal_id, "principal-1")
+        self.assertEqual(basis.subject_id, "subject-1")
+        self.assertEqual(basis.tenant_id, TenantId("tenant-a"))
+        self.assertEqual(basis.workspace_id, WorkspaceId("workspace-a"))
+        self.assertEqual(basis.identity_revision, "identity-7")
+        self.assertEqual(basis.scope_revision, "membership-11")
+        self.assertEqual(basis.evidence_fingerprint, EVIDENCE)
+        self.assertEqual(basis.authenticated_at, NOW)
+        self.assertEqual(basis.context_issued_at, NOW)
+        self.assertEqual(basis.context_expires_at, NOW + timedelta(minutes=5))
+        self.assertEqual(basis.prepared_at, NOW)
+        self.assertIn("non-authorizing", repr(basis))
+        self.assertNotIn("tenant-a", repr(basis))
+
+    def test_context_cannot_cross_request_subject_tenant_or_workspace_scope(self):
+        issuer, _ = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+        mismatches = (
+            self.access_request(request_id="request-2"),
+            self.access_request(subject_id="subject-2"),
+            self.access_request(tenant_id=TenantId("tenant-b")),
+            self.access_request(resource_tenant=TenantId("tenant-b")),
+            self.access_request(workspace_id=WorkspaceId("workspace-b")),
+            self.access_request(workspace_id=None),
+        )
+
+        for request in mismatches:
+            with self.subTest(request=request.to_dict()):
+                self.assert_code(
+                    "request_context_scope_mismatch",
+                    lambda selected=request: issuer.prepare_reauthorization(context, selected),
+                )
+
+    def test_tenant_wide_context_is_not_a_workspace_wildcard(self):
+        tenant_claims = CallerRequestContext(
+            request_id="request-1",
+            subject_id="subject-1",
+            tenant_id=TenantId("tenant-a"),
+            workspace_id=None,
+        )
+        issuer, _ = self.make_issuer()
+        context = issuer.issue(tenant_claims, self.credential())
+
+        basis = issuer.prepare_reauthorization(
+            context,
+            self.access_request(workspace_id=None),
+        )
+        self.assertIsNone(basis.workspace_id)
+        self.assert_code(
+            "request_context_scope_mismatch",
+            lambda: issuer.prepare_reauthorization(context, self.access_request()),
+        )
+
+    def test_context_from_another_issuer_and_uninitialized_forgery_are_rejected(self):
+        issuer, _ = self.make_issuer()
+        other_issuer, _ = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+        forged = object.__new__(RequestContext)
+
+        self.assert_code(
+            "request_context_untrusted",
+            lambda: other_issuer.prepare_reauthorization(context, self.access_request()),
+        )
+        self.assert_code(
+            "request_context_untrusted",
+            lambda: issuer.prepare_reauthorization(forged, self.access_request()),
+        )
+
+    def test_reflective_context_mutation_is_detected_and_quarantined(self):
+        issuer, _ = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+        object.__setattr__(context, "_RequestContext__subject_id", "subject-2")
+
+        self.assert_code(
+            "request_context_tampered",
+            lambda: issuer.prepare_reauthorization(context, self.access_request()),
+        )
+        self.assert_code(
+            "request_context_untrusted",
+            lambda: issuer.prepare_reauthorization(context, self.access_request()),
+        )
+
+    def test_context_expiry_and_service_clock_regression_fail_closed(self):
+        issuer, _ = self.make_issuer()
+        expired = issuer.issue(self.claims, self.credential())
+        self.clock.advance(timedelta(minutes=5))
+        self.assert_code(
+            "request_context_expired",
+            lambda: issuer.prepare_reauthorization(expired, self.access_request()),
+        )
+
+        self.clock.current = NOW
+        current = issuer.issue(self.claims, self.credential())
+        self.clock.current = NOW - timedelta(seconds=31)
+        self.assert_code(
+            "request_context_time_regressed",
+            lambda: issuer.prepare_reauthorization(current, self.access_request()),
+        )
+
+    def test_retired_context_cannot_be_reused(self):
+        issuer, _ = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+
+        issuer.retire(context)
+
+        self.assert_code(
+            "request_context_untrusted",
+            lambda: issuer.prepare_reauthorization(context, self.access_request()),
+        )
 
 
 if __name__ == "__main__":
