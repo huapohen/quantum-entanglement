@@ -35,6 +35,12 @@ release. Promotion additionally requires the evidence defined in
   registries now fail closed on creator PID/process-epoch mismatch before inherited locks
   or authorization dependencies; a forked child cannot adopt an issuer by constructing a
   fresh composer, while the parent remains usable.
+- Public request-context and protected-operation boundary failures now detach completed
+  internal traceback locals and explicitly clear any active caller exception context,
+  including real context-manager body failures, before a code-only error escapes.
+- Exact operation control signals are reissued without dependency exception state;
+  `SystemExit` preserves only `None`, exact booleans, or exact integer status 0 through 255
+  and maps every other status to `1`.
 
 ### In progress — not yet a shipped guarantee
 
