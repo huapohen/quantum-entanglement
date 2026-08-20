@@ -26,6 +26,7 @@ from quantum_entanglement.backup import (
 )
 from quantum_entanglement.delivery import OutboxMessage, OutboxStatus
 from quantum_entanglement.events import DomainEvent
+from quantum_entanglement.projections import SQLiteProjectionOffsetStore
 from quantum_entanglement.store import SQLiteEventStore
 
 T0 = "2026-08-20T00:00:00Z"
@@ -93,6 +94,18 @@ class SQLiteBackupTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(manifest_path.stat().st_mode), 0o600)
         self.assertFalse((backup.parent / (backup.name + "-wal")).exists())
         self.assertFalse((backup.parent / (backup.name + "-shm")).exists())
+
+    def test_projection_offset_count_is_manifested_and_verified(self):
+        projections = SQLiteProjectionOffsetStore(str(self.source), clock=lambda: T0)
+        try:
+            projections.claim("restore-read-model", "worker-1", lease_seconds=60)
+        finally:
+            projections.close()
+
+        _backup, _manifest_path, created = self.create_backup()
+
+        self.assertEqual(created.table_counts["projection_offsets"], 1)
+        self.assertNotIn("projector_offsets", created.table_counts)
 
     def test_existing_target_is_never_overwritten(self):
         backup, manifest_path, first = self.create_backup()
