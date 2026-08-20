@@ -1218,6 +1218,99 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertIs(type(captured), InvocationTransactionError)
         self.assertNotIn(marker, exception_graph_text(captured))
 
+    def test_transaction_state_inspection_faults_fail_closed_without_leakage(self):
+        stages = ("begin", "commit")
+        for index, stage in enumerate(stages):
+            with self.subTest(stage=stage):
+                path = str(Path(self.tempdir.name) / f"state-inspection-{index}.sqlite3")
+                store = SQLiteInvocationAttemptStore(path, clock=MutableClock())
+                driver_marker = f"private {stage} driver state at {path}"
+                inspection_marker = f"private {stage} transaction inspection at {path}"
+                fault_name = (
+                    "_begin_write_transaction" if stage == "begin" else "_commit_write_transaction"
+                )
+                try:
+                    with (
+                        patch.object(
+                            store,
+                            fault_name,
+                            side_effect=HostileFault(driver_marker),
+                        ),
+                        patch.object(
+                            store,
+                            "_write_transaction_open",
+                            side_effect=HostileFault(inspection_marker),
+                        ),
+                    ):
+                        captured = self._capture_base_exception(partial(store.enqueue, job_spec()))
+
+                    self.assertIs(type(captured), InvocationCommitAmbiguityError)
+                    graph = exception_graph_text(captured)
+                    self.assertNotIn(driver_marker, graph)
+                    self.assertNotIn(inspection_marker, graph)
+                    with self.assertRaises(InvocationStorePoisonedError):
+                        store.schema_version()
+                finally:
+                    store.close()
+
+                reopened = SQLiteInvocationAttemptStore(path, clock=MutableClock())
+                try:
+                    self.assertIsNone(reopened.get("invocation-1"))
+                finally:
+                    reopened.close()
+
+    def test_forged_internal_transaction_signals_cannot_cross_public_boundary(self):
+        descriptor = attempts_module._ControlSignalDescriptor(
+            attempts_module._ControlSignalKind.KEYBOARD_INTERRUPT
+        )
+        cases = (
+            (
+                "control",
+                attempts_module._InvocationControlSignal(
+                    descriptor,
+                    object(),
+                    ambiguity=False,
+                ),
+                InvocationTransactionError,
+                False,
+            ),
+            (
+                "commit",
+                attempts_module._CommitOutcomeUnknown(
+                    may_reconcile=True,
+                    boundary_nonce=object(),
+                    control_signal=descriptor,
+                ),
+                InvocationCommitAmbiguityError,
+                True,
+            ),
+        )
+        for index, (name, forged, expected_type, poisoned) in enumerate(cases):
+            with self.subTest(name=name):
+                path = str(Path(self.tempdir.name) / f"forged-signal-{index}.sqlite3")
+                store = SQLiteInvocationAttemptStore(path, clock=MutableClock())
+                marker = f"private forged {name} sentinel at {path}"
+                forged.secret = marker
+
+                @contextmanager
+                def forged_transaction(forged=forged, store=store):
+                    raise forged
+                    yield store._connection
+
+                try:
+                    with patch.object(store, "_transaction", forged_transaction):
+                        captured = self._capture_base_exception(partial(store.enqueue, job_spec()))
+
+                    self.assertIs(type(captured), expected_type)
+                    self.assertNotIn(marker, exception_graph_text(captured))
+                    if poisoned:
+                        with self.assertRaises(InvocationStorePoisonedError):
+                            store.schema_version()
+                    else:
+                        self.assertEqual(store.schema_version(), 2)
+                finally:
+                    store.close()
+
     def test_post_end_rollback_base_exception_is_sanitized(self):
         marker = "private rolled-back transaction details"
 
