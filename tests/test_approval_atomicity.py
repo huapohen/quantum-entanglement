@@ -97,6 +97,57 @@ class ApprovalAtomicityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(rerun.needs_you), 1)
         self.assertEqual(publish_calls, 0)
 
+    async def test_committed_decision_batch_is_reconciled_after_wrapper_failure(self) -> None:
+        publish_calls = 0
+
+        async def publisher(invocation):
+            nonlocal publish_calls
+            publish_calls += 1
+            return AgentResult("published")
+
+        self.kernel.register_agent(registration("publisher", publisher))
+        plan = WorkflowPlan(
+            "decision-post-commit-failure",
+            "提交成功后的包装器异常必须协调",
+            "user",
+            (approval_task("publish"),),
+            plan_id="plan-decision-post-commit-failure",
+        )
+        paused = await self.kernel.run(plan)
+        request = paused.needs_you[0]
+        original_append_many = self.kernel.event_store.append_many
+
+        def commit_then_raise(*args, **kwargs):
+            original_append_many(*args, **kwargs)
+            raise RuntimeError("injected post-commit wrapper failure")
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=commit_then_raise,
+        ):
+            decided = await self.kernel.decide(
+                request.request_id,
+                ApprovalDecision.APPROVE,
+                "owner",
+            )
+
+        self.assertEqual(decided.decision, ApprovalDecision.APPROVE)
+        self.assertEqual(
+            self.kernel._graphs[plan.session_id].statuses["publish"],
+            TaskStatus.READY,
+        )
+        self.assertIn((plan.session_id, "publish"), self.kernel._approved_tasks)
+        durable_events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        self.assertEqual(
+            sum(stored.event.event_type == "approval.decided" for stored in durable_events),
+            1,
+        )
+
+        result = await self.kernel.run(plan)
+        self.assertEqual(result.statuses["publish"], TaskStatus.COMPLETED)
+        self.assertEqual(publish_calls, 1)
+
     async def test_exposed_snapshot_cannot_retarget_live_authority(self) -> None:
         agent_calls = []
 

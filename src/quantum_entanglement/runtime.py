@@ -235,6 +235,73 @@ class OrchestratorKernel:
         for stored in stored_events:
             await self._emit_appended(stored)
 
+    @staticmethod
+    def _canonical_event_json(event: DomainEvent) -> str:
+        return json.dumps(
+            event.to_dict(),
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    def _reconcile_committed_batch(
+        self,
+        stream_id: str,
+        events: Tuple[DomainEvent, ...],
+        *,
+        expected_version: int,
+    ) -> Optional[Tuple[StoredEvent, ...]]:
+        """Return an exact batch committed before an append wrapper failed."""
+
+        if not events or len(events) > _RECOVERY_PAGE_LIMIT:
+            return None
+        try:
+            stored_events: Tuple[StoredEvent, ...] = self.event_store.read_stream_page(
+                stream_id,
+                after_sequence=expected_version,
+                limit=len(events),
+            )
+            if len(stored_events) != len(events):
+                return None
+            for offset, (stored, expected) in enumerate(
+                zip(stored_events, events),
+                start=1,
+            ):
+                if stored.sequence != expected_version + offset:
+                    return None
+                if self._canonical_event_json(stored.event) != self._canonical_event_json(expected):
+                    return None
+        except Exception:
+            return None
+        return stored_events
+
+    def _append_many_reconciled(
+        self,
+        stream_id: str,
+        events: Tuple[DomainEvent, ...],
+        *,
+        expected_version: int,
+    ) -> Tuple[StoredEvent, ...]:
+        """Append atomically, accepting only an exactly provable post-commit failure."""
+
+        try:
+            stored_events: Tuple[StoredEvent, ...] = self.event_store.append_many(
+                stream_id,
+                events,
+                expected_version=expected_version,
+            )
+            return stored_events
+        except Exception:
+            committed = self._reconcile_committed_batch(
+                stream_id,
+                events,
+                expected_version=expected_version,
+            )
+            if committed is None:
+                raise
+            return committed
+
     async def _append(self, event: DomainEvent) -> StoredEvent:
         stored = self.event_store.append(event)
         await self._emit_appended(stored)
@@ -1181,25 +1248,26 @@ class OrchestratorKernel:
             correlation_id = plan.correlation_id or plan.plan_id
             stream_id = self._stream_id(request.session_id)
             expected_version = self.event_store.stream_version(stream_id)
-            stored_events = self.event_store.append_many(
-                stream_id,
-                (
-                    DomainEvent(
-                        stream_id=stream_id,
-                        event_type="approval.decided",
-                        actor_id=actor_id,
-                        correlation_id=correlation_id,
-                        causation_id=request.request_id,
-                        idempotency_key="approval-decision:%s" % request.request_id,
-                        payload=decided_request.to_dict(),
-                    ),
-                    self._transition_event(
-                        request.session_id,
-                        transition,
-                        correlation_id,
-                        causation_id=request.request_id,
-                    ),
+            decision_events = (
+                DomainEvent(
+                    stream_id=stream_id,
+                    event_type="approval.decided",
+                    actor_id=actor_id,
+                    correlation_id=correlation_id,
+                    causation_id=request.request_id,
+                    idempotency_key="approval-decision:%s" % request.request_id,
+                    payload=decided_request.to_dict(),
                 ),
+                self._transition_event(
+                    request.session_id,
+                    transition,
+                    correlation_id,
+                    causation_id=request.request_id,
+                ),
+            )
+            stored_events = self._append_many_reconciled(
+                stream_id,
+                decision_events,
                 expected_version=expected_version,
             )
             committed_request = self.approvals.decide(
