@@ -113,15 +113,41 @@ class SafeLogCatalog:
             raise ValueError("log schema catalog is too large")
         values: dict[str, LogEventSchema] = {}
         for schema in snapshot:
-            if not isinstance(schema, LogEventSchema):
+            if type(schema) is not LogEventSchema:
                 raise TypeError("log catalog entries must be LogEventSchema")
-            if schema.event_code in values:
+            copied = self._copy_schema(schema)
+            if copied.event_code in values:
                 raise ValueError("log event codes must be unique")
-            values[schema.event_code] = schema
+            values[copied.event_code] = copied
         self.__schemas = MappingProxyType(values)
 
     def get(self, event_code: str) -> LogEventSchema | None:
-        return self.__schemas.get(event_code)
+        if type(event_code) is not str:
+            return None
+        schema = self.__schemas.get(event_code)
+        if schema is None:
+            return None
+        return self._copy_schema(schema)
+
+    @staticmethod
+    def _copy_schema(schema: LogEventSchema) -> LogEventSchema:
+        fields: list[LogField] = []
+        for field in schema.fields:
+            if type(field) is not LogField:
+                raise TypeError("log catalog fields must be LogField")
+            fields.append(
+                LogField(
+                    name=field.name,
+                    kind=field.kind,
+                    required=field.required,
+                    allowed_codes=field.allowed_codes,
+                )
+            )
+        return LogEventSchema(
+            event_code=schema.event_code,
+            level=schema.level,
+            fields=tuple(fields),
+        )
 
     def __len__(self) -> int:
         return len(self.__schemas)
