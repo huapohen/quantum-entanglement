@@ -16,14 +16,21 @@ MCP 及真正的跨进程协议互操作仍属于后续阶段。
 4. **协议兼容优先**：内部 Envelope 已携带因果、幂等、权限和追踪字段；当前只提供 A2A
    数据映射，ACP、MCP 和传输层 adapter 尚未实现。
 
-当前 `0.1.x` 是可运行的内核实验基线，不是生产发布。事件历史可以重建已记录状态，但运行中
-attempt 的 lease、heartbeat、崩溃接管以及外部副作用确认仍在 `0.2.0` 门禁内。完整差距、阶段
-边界和发布条件见：
+当前 `0.1.x` 是可运行的内核验证基线，不是生产发布。仓库已经包含 durable invocation
+attempt、lease/heartbeat/fencing、持久 Artifact、outbox publisher、projection、domain-scoped
+migration、SQLite backup/restore、tenant authorization primitive 和 durable approval；这些能力
+尚未由可信认证入口、强制 tenant/workspace repository scope、durable action receipt、生命周期
+与部署闭环组合成生产服务。测试通过不能替代该服务闭环。完整运行边界、差距和发布条件见：
 
+- `docs/production/SERVICE_BOUNDARY.md`
 - `docs/production/READINESS_AUDIT.md`
 - `docs/production/ROADMAP.md`
 - `docs/production/RELEASE_GATES.md`
 - `docs/production/APPROVAL_DURABILITY.md`
+
+当前只允许可信开发者在本机或隔离 CI 中使用合成数据运行；connector 必须是 fake、no-op 或
+只读 fixture。禁止真实飞书/企微发送，禁止公网监听，禁止承载真实客户敏感数据或不可逆外部
+副作用。
 
 ## 仓库结构
 
