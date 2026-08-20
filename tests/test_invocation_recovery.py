@@ -401,6 +401,45 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
         with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "error differs"):
             self.assess(binding_for(spec), replace(failed, current_attempt=mismatched))
 
+    def test_snapshot_error_length_matches_the_attempt_store_contract(self) -> None:
+        spec, lease, _running = self.running("error-length", max_attempts=1)
+        self.assertTrue(self.store.fail(lease, "expected failure"))  # type: ignore[arg-type]
+        failed = self.snapshot(spec)
+
+        for exact in ("e" * 4_096, "界" * 4_096):
+            with self.subTest(boundary="exact", character=exact[0]):
+                candidate = replace(
+                    failed,
+                    job=replace(failed.job, last_error=exact),
+                    current_attempt=replace(failed.current_attempt, error=exact),
+                )
+                self.assertEqual(
+                    self.assess(binding_for(spec), candidate),
+                    InvocationRecoveryDecision.TERMINAL_FAILURE_EFFECT_UNKNOWN,
+                )
+
+        for oversized in ("e" * 4_097, "界" * 4_097):
+            with self.subTest(boundary="character", character=oversized[0]):
+                candidate = replace(
+                    failed,
+                    job=replace(failed.job, last_error=oversized),
+                    current_attempt=replace(failed.current_attempt, error=oversized),
+                )
+                with self.assertRaisesRegex(
+                    InvocationRecoveryIntegrityError,
+                    "exceeds its supported length",
+                ):
+                    self.assess(binding_for(spec), candidate)
+
+        byte_oversized = "界" * 5_462
+        candidate = replace(
+            failed,
+            job=replace(failed.job, last_error=byte_oversized),
+            current_attempt=replace(failed.current_attempt, error=byte_oversized),
+        )
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "exceeds its byte limit"):
+            self.assess(binding_for(spec), candidate)
+
     def test_snapshot_timestamp_causality_is_revalidated(self) -> None:
         spec, _lease, snapshot = self.running("timestamp-causality")
         previous = "2026-08-19T23:59:59.000000Z"
