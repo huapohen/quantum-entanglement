@@ -520,7 +520,11 @@ class RequestContextIssuer:
         # left scope. A wipe failure may leave the private issue frame's memoryview
         # readable, so merely clearing ``__context__`` would not be a complete boundary.
         del self, claims, credential
-        raise RequestContextError(failure_code)
+        try:
+            raise RequestContextError(failure_code) from None
+        except RequestContextError as public_error:
+            public_error.__context__ = None
+            raise
 
     def _issue(
         self,
@@ -586,7 +590,11 @@ class RequestContextIssuer:
         except RequestContextError as error:
             failure_code = _collapse_request_context_error(error)
         del self, context, request
-        raise RequestContextError(failure_code) from None
+        try:
+            raise RequestContextError(failure_code) from None
+        except RequestContextError as public_error:
+            public_error.__context__ = None
+            raise
 
     def _prepare_reauthorization(
         self,
@@ -653,7 +661,11 @@ class RequestContextIssuer:
         except RequestContextError as error:
             failure_code = _collapse_request_context_error(error)
         del self, context
-        raise RequestContextError(failure_code) from None
+        try:
+            raise RequestContextError(failure_code) from None
+        except RequestContextError as public_error:
+            public_error.__context__ = None
+            raise
 
     def _retire(self, context: RequestContext) -> None:
         """Private retirement path whose completed failure frames are always cleared."""
@@ -673,7 +685,11 @@ class RequestContextIssuer:
         except RequestContextError as error:
             failure_code = _collapse_request_context_error(error)
         del self
-        raise RequestContextError(failure_code) from None
+        try:
+            raise RequestContextError(failure_code) from None
+        except RequestContextError as public_error:
+            public_error.__context__ = None
+            raise
 
     def _close(self) -> None:
         """Private close path whose completed failure frames are always cleared."""
@@ -689,7 +705,11 @@ class RequestContextIssuer:
         except RequestContextError as error:
             failure_code = _collapse_request_context_error(error)
         del self
-        raise RequestContextError(failure_code) from None
+        try:
+            raise RequestContextError(failure_code) from None
+        except RequestContextError as public_error:
+            public_error.__context__ = None
+            raise
 
     def _enter(self) -> RequestContextIssuer:
         self._ensure_process()
@@ -704,7 +724,11 @@ class RequestContextIssuer:
         except RequestContextError as error:
             failure_code = _collapse_request_context_error(error)
         del self, exc_type, exc_value, trace
-        raise RequestContextError(failure_code) from None
+        try:
+            raise RequestContextError(failure_code) from None
+        except RequestContextError as public_error:
+            public_error.__context__ = None
+            raise
 
     def __repr__(self) -> str:
         return "RequestContextIssuer(<configured>)"

@@ -789,6 +789,11 @@ class RequestContextIssuanceTests(unittest.TestCase):
         request = self.access_request()
         credential = SecretMaterial(b"process-mismatch-secret-canary")
         exit_error = RuntimeError("process-mismatch-exit-secret-canary")
+        active_error = RuntimeError("process-mismatch-body-secret-canary")
+        active_error.issuer = issuer
+        active_error.authenticator = authenticator
+        active_error.request = request
+        active_error.credential = credential
         owner_epoch = object.__getattribute__(issuer, "_RequestContextIssuer__owner_epoch")
         object.__setattr__(issuer, "_RequestContextIssuer__owner_epoch", object())
         calls = (
@@ -805,7 +810,10 @@ class RequestContextIssuanceTests(unittest.TestCase):
         try:
             for expected_method, call in calls:
                 with self.subTest(method=expected_method):
-                    error = self.capture_error("request_context_process_mismatch", call)
+                    try:
+                        raise active_error
+                    except RuntimeError:
+                        error = self.capture_error("request_context_process_mismatch", call)
                     self.assert_detached_process_error(
                         error,
                         expected_method,
@@ -817,6 +825,7 @@ class RequestContextIssuanceTests(unittest.TestCase):
                         request,
                         credential,
                         exit_error,
+                        active_error,
                     )
         finally:
             object.__setattr__(issuer, "_RequestContextIssuer__owner_epoch", owner_epoch)
