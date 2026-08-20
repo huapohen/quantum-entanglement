@@ -8,13 +8,16 @@ network listener or turn the kernel into a production service.
 
 The caller supplies an explicit immutable snapshot-like mapping to
 `ServiceConfig.from_environment(...)`. The parser does not read `os.environ` itself and
-does not retain the supplied mapping. It consumes at most 4,096 items into a private
-snapshot and reads each item once, so a concurrently changing/custom mapping cannot alter
-one field between validation and construction.
+does not retain the supplied mapping. It enumerates at most 4,096 keys, rejects missing or
+unknown `QE_*` names before value access, then reads each allowlisted value exactly once
+into a private snapshot. It never reads the values of unrelated host names or unknown
+configuration names, so ambient credential values are not copied merely because the
+caller supplied a full host mapping.
 
 - every supported `QE_*` field is required; there are no production defaults;
 - an unknown `QE_*` name fails closed without rendering its name or value;
-- unrelated host variables are ignored and never become configuration attributes;
+- unrelated host variables are ignored without reading their values and never become
+  configuration attributes;
 - keys and values must be strings; values are bounded and reject whitespace, NUL and
   line breaks;
 - booleans accept only lower-case `true` or `false`;

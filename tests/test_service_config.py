@@ -206,12 +206,16 @@ class ServiceConfigTests(unittest.TestCase):
             ServiceConfig.from_environment(values)
 
     def test_reads_a_mutable_mapping_only_once_into_a_bounded_snapshot(self) -> None:
-        changing = ChangingEnvironment(self.environment())
+        values = self.environment()
+        values["AWS_SECRET_ACCESS_KEY"] = "ambient-secret-must-not-be-read"
+        changing = ChangingEnvironment(values)
 
         configuration = ServiceConfig.from_environment(changing)
 
         self.assertEqual(configuration.connector, "fake")
         self.assertEqual(changing.reads["QE_CONNECTOR"], 1)
+        self.assertNotIn("PATH", changing.reads)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", changing.reads)
 
     def test_rejects_oversized_environment_snapshot(self) -> None:
         values = self.environment()
