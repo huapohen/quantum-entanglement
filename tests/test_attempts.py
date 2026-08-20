@@ -127,6 +127,20 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             queued = memory_store.enqueue(job_spec(invocation_id="memory-invocation"))
             self.assertEqual(queued.status, InvocationStatus.QUEUED)
 
+    def test_lease_duration_must_advance_durable_timestamp(self):
+        self.store.enqueue(job_spec())
+        before = tuple(self.store._connection.iterdump())
+
+        with self.assertRaisesRegex(ValueError, "durable timestamp precision"):
+            self.store.claim("invocation-1", "worker", lease_seconds=0.0000001)
+
+        self.assertEqual(tuple(self.store._connection.iterdump()), before)
+        self.assertEqual(len(self.store.attempts("invocation-1")), 0)
+
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=0.000001)
+        self.assertIsNotNone(lease)
+        self.assertGreater(lease.lease_expires_at, lease.claimed_at)
+
     def test_migration_is_versioned_reopenable_and_coexists_with_event_store(self):
         self.assertEqual(self.store.schema_version(), 2)
         self.store.close()
