@@ -99,9 +99,14 @@ binding or integrity mismatch fails before this matrix is consulted.
 | `QUEUED` or `FAILED` | caller-provided receipt for the latest attempt | `BLOCKED_RECEIPT_UNVERIFIED` | future trusted receipt reader | reconcile, retry, or erase the candidate receipt |
 | `CANCELED` | any | unsupported/integrity failure in the current API | future authorized cancellation reconciler | project cancellation without a durable authorized receipt |
 
-A receipt whose invocation binding, result reference, attempt ID/number, lease epoch, manifest,
-or durable position differs is an integrity failure. Receipt presence on a first-claim queued
-job is also contradictory because no attempt exists to own it.
+A caller-provided receipt whose invocation binding, result reference, attempt ID/number, or
+lease epoch/token differs from the supplied job snapshot is an integrity failure. The current
+boundary checks only that `manifest_digest` has canonical SHA-256 shape, `stream_id` has the
+expected session-derived shape, and `stream_sequence` is positive. It has no trusted receipt
+store against which to prove the manifest contents, receipt identity, or actual durable stream
+position. Those candidate fields are therefore future-contract data, not verified evidence.
+Receipt presence on a first-claim queued job is also contradictory because no attempt exists to
+own it.
 
 `FIRST_CLAIM_READY` means only that the existing durable job has never been attempted and is
 eligible for the attempt-store claim protocol. A queued retry is not equivalent: the prior
@@ -124,8 +129,8 @@ retry-safety classifier authorizes a separate, explicit transition.
 | task `RUNNING` committed, process dies before durable enqueue | missing job means safe retry | block as effect/job unknown; never synthesize identity during recovery |
 | job enqueued, process dies before first claim | call Agent from recovery | permit only the first store-owned claim; do not create another job |
 | worker performs effect, dies before receipt | expired lease proves no effect | fence stale ownership and enter effect-unknown reconciliation; do not auto-retry |
-| result receipt commits, process dies before attempt CAS | receipt beside `RUNNING` is corrupt | reconcile the exact current attempt from its accepted result without Agent reinvocation |
-| expiry recovery races an already accepted receipt | queued/failed means receipt can be ignored | return job-diverged reconciliation; receipt wins only after exact attempt/manifest validation |
+| candidate result receipt appears beside `RUNNING` after a crash | an in-memory object proves the result committed | preserve the candidate and return `BLOCKED_RECEIPT_UNVERIFIED`; require a future trusted receipt reader before reconciliation |
+| expiry recovery races a candidate receipt | queued/failed means the candidate can be ignored or trusted | preserve the candidate and return `BLOCKED_RECEIPT_UNVERIFIED`; neither receipt nor job authorizes execution |
 | attempt success commits, receipt is absent/missing | success equals task completion | block; investigate forbidden ordering or partial restore |
 | result event commits, task completion transition does not | replay Agent to finish | idempotently project only from a completion-capable receipt after artifact validation |
 | stale worker publishes after lease recovery | latest response wins | downstream write and receipt must compare the lease epoch/token; reject stale ownership |
