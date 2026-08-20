@@ -1,7 +1,67 @@
+import copy
 import json
+import pickle
 import unittest
 
-from quantum_entanglement.service import SecretRef, SecretReferenceError
+from quantum_entanglement.service import (
+    SecretMaterial,
+    SecretMaterialClosedError,
+    SecretRef,
+    SecretReferenceError,
+)
+
+
+class SecretMaterialTests(unittest.TestCase):
+    def test_context_manager_exposes_read_only_view_then_wipes_it(self) -> None:
+        material = SecretMaterial(b"correct horse battery staple")
+
+        with material as secret_view:
+            self.assertTrue(secret_view.readonly)
+            self.assertEqual(secret_view.tobytes(), b"correct horse battery staple")
+            with self.assertRaises(TypeError):
+                secret_view[0] = 0
+
+        self.assertTrue(material.closed)
+        self.assertEqual(secret_view.tobytes(), bytes(len(secret_view)))
+
+    def test_closed_material_cannot_be_reopened(self) -> None:
+        material = SecretMaterial(b"one-use-value")
+        material.close()
+        material.close()
+
+        with self.assertRaises(SecretMaterialClosedError):
+            material.view()
+        with self.assertRaises(SecretMaterialClosedError):
+            material.__enter__()
+
+    def test_rendering_and_json_never_expose_value(self) -> None:
+        value = b"secret-canary-never-log-this"
+        material = SecretMaterial(value)
+
+        self.assertNotIn(value.decode("ascii"), str(material))
+        self.assertNotIn(value.decode("ascii"), repr(material))
+        with self.assertRaises(TypeError):
+            json.dumps({"secret": material})
+        material.close()
+
+    def test_copy_and_pickle_are_rejected(self) -> None:
+        material = SecretMaterial(b"do-not-copy")
+        self.addCleanup(material.close)
+
+        with self.assertRaises(TypeError):
+            copy.copy(material)
+        with self.assertRaises(TypeError):
+            copy.deepcopy(material)
+        with self.assertRaises(TypeError):
+            pickle.dumps(material)
+
+    def test_rejects_text_empty_and_oversized_material(self) -> None:
+        with self.assertRaises(TypeError):
+            SecretMaterial("plaintext")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            SecretMaterial(b"")
+        with self.assertRaises(ValueError):
+            SecretMaterial(b"x" * (SecretMaterial.MAX_BYTES + 1))
 
 
 class SecretReferenceTests(unittest.TestCase):

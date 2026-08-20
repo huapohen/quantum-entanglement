@@ -4,6 +4,16 @@ The package is intentionally not a network-service entry point yet. Components a
 introduced behind tested fail-closed contracts before they are composed into a service.
 """
 
-from .secrets import SecretRef, SecretReferenceError
+from .secrets import (
+    SecretMaterial,
+    SecretMaterialClosedError,
+    SecretRef,
+    SecretReferenceError,
+)
 
-__all__ = ["SecretRef", "SecretReferenceError"]
+__all__ = [
+    "SecretMaterial",
+    "SecretMaterialClosedError",
+    "SecretRef",
+    "SecretReferenceError",
+]
