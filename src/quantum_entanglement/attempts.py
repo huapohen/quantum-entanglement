@@ -878,6 +878,8 @@ class SQLiteInvocationAttemptStore:
                         raise InvocationIntegrityError(
                             "invocation attempt crosses its job boundary"
                         )
+                    if attempt.started_at < job.created_at:
+                        raise InvocationIntegrityError("invocation attempt starts before its job")
                     if attempt.attempt_number != attempt_count:
                         raise InvocationIntegrityError(
                             "invocation attempt history is not contiguous"
