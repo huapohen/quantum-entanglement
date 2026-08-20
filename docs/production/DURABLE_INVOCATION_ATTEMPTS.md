@@ -11,7 +11,8 @@ transaction described under "Integration boundary".
 ## Supported operating boundary
 
 - one host and one SQLite database file;
-- multiple worker processes or independent SQLite connections on that host;
+- multiple worker processes or independent SQLite connections on that host, provided every
+  process constructs its own store after process creation;
 - one automatically claimable attempt, lease heartbeat, expired-owner fencing and terminal CAS;
 - fail-closed effect-unknown quarantine after any failed or expired attempt;
 - fake or separately approved external connectors only;
@@ -24,6 +25,16 @@ and do not use this store as a multi-host lease coordinator.
 File-backed stores require and enable WAL. The `:memory:` default is supported for isolated
 unit tests only; it does not use WAL and cannot share ownership across connections or
 processes.
+
+Never create a store before POSIX `fork()` and then use or close that inherited object in the
+child. A SQLite connection, Python `RLock`, thread-local control boundary and its nonce are all
+process-local capabilities. Every public store entry point checks the creator PID before touching
+the lock or connection and rejects inherited use with `InvocationStoreProcessMismatchError`, code
+`invocation_store_process_mismatch`. The child must discard the inherited reference without
+calling `close()` and construct a new file-backed store for the same path. The parent retains and
+closes its own instance. Existing multi-process evidence uses `spawn`, where each worker constructs
+its connection, plus a separate `fork` misuse test that proves inherited access fails closed; it
+does not authorize sharing one connection object across processes.
 
 ## Durable model
 
@@ -71,9 +82,11 @@ The returned `InvocationLease` contains two different controls:
 - `lease_epoch` / `fencing_token`: a monotonically increasing integer scoped to this
   invocation, for receivers that retain fencing state per invocation.
 
-Heartbeat, completion and failure require the same invocation ID, worker ID, opaque token,
-epoch, heartbeat and deadline in both the job and current-attempt rows, plus a deadline strictly
-later than the store-owned current time. At the exact expiry instant, terminal CAS fails.
+Heartbeat, completion and failure require the lease's session, plan, task, Agent, idempotency,
+payload, attempt, budget, worker, claim-time and epoch binding to match the durable job and
+current-attempt rows. The opaque token digest, heartbeat and deadline must also agree between
+those two rows, with a deadline strictly later than the store-owned current time. At the exact
+expiry instant, terminal CAS fails.
 Recovery clears the opaque token and moves the job to a queued effect-unknown state (or terminal
 failure at its configured limit). The old worker can no longer heartbeat, complete or fail the
 job, and no new worker can claim it automatically.
@@ -141,6 +154,98 @@ mutations and delays expiry recovery; a forward jump can expire active work. The
 is per invocation, not a database-wide time authority, so it cannot detect a backward jump while
 creating an unrelated new job. Multi-host deployment needs a database-authoritative clock and is
 out of scope for the SQLite implementation.
+
+## Transaction acknowledgement and store lifecycle
+
+A successful SQLite `COMMIT` can be followed by a driver, wrapper, tracing hook, process signal,
+or cancellation error before the caller receives the acknowledgement. Retrying that mutation
+blindly can duplicate ownership or misreport a durable terminal transition as failed. Every
+public write therefore records its exact commit candidate before leaving the transaction and,
+when the transaction has ended but acknowledgement failed, reads durable state back before it
+returns:
+
+| Public operation | Exact durable outcome required for reconciliation |
+|---|---|
+| `enqueue` | exactly one row bound to the same invocation/session task/idempotency identities and immutable job specification |
+| `recover_expired` | the exact recovered invocation set, recovery timestamp, expired attempt state, error, and queued/failed job state |
+| `claim` / `claim_next` | the generated attempt ID, full lease binding, token digest, running state, owner, claim time, and initial deadline |
+| `heartbeat` | the same running owner plus the exact heartbeat timestamp and resulting deadline in both rows |
+| `complete` | succeeded job/attempt, exact result reference, and exact finish/update timestamp |
+| `fail` | failed attempt, exact stored error, expected queued/failed target, retry availability, and finish/update timestamp |
+
+The combined claim transaction can expire an old owner without selecting a new claim. Its
+recovery outcome is reconciled with the same exact rules. A truly no-op claim, recovery, or
+stale-owner CAS may return `None`, an empty summary, or `False` after a lost commit
+acknowledgement because that transaction had no candidate mutation. It may do so only when
+rollback is not itself uncertain. Concurrent state advance can make an otherwise durable
+candidate fail exact readback; that is a safe false negative and returns ambiguity, never a
+false success.
+
+The public failure contract is:
+
+- Every public write (`enqueue`, both claim variants, recovery, heartbeat, completion and
+  failure) has its own non-bypassable control-signal boundary. If BEGIN, the transaction body,
+  or `COMMIT` fails while rollback is confirmed, untrusted ordinary failures become
+  `InvocationTransactionError`, code `invocation_transaction_failed`; their original identity,
+  message, attributes, notes, chain and traceback do not cross the boundary. Exact
+  library-authored validation/integrity failures are reconstructed only when their terminal
+  traceback code object belongs to a frozen module provenance set. Matching a module or function
+  name is not sufficient.
+- Exact `KeyboardInterrupt`, `GeneratorExit`, `asyncio.CancelledError`, and `SystemExit` remain
+  control flow, but a new same-class instance is raised after transaction cleanup. It retains no
+  original arguments, attributes, notes, chain or traceback. `SystemExit` retains only `None`, an
+  exact `bool`, or an exact integer in `0..255`; all other exit-code objects map to `1`. Subclasses
+  of those controls and `BaseExceptionGroup` are untrusted failures, not control flow.
+- If `COMMIT` ended the transaction but its acknowledgement failed, the method returns success
+  only after the exact readback above. An exact control raised by the lost acknowledgement is
+  reissued clean after successful readback. Readback exceptions of any `BaseException` subtype
+  fail closed.
+- An outcome that cannot be reconciled raises
+  `quantum_entanglement.attempts.InvocationCommitAmbiguityError`, with stable code
+  `invocation_commit_ambiguous`. Callers must stop automatic retry for that invocation and move
+  to durable recovery/operator reconciliation.
+- If rollback or transaction-state inspection is not confirmed, the current call raises the
+  same commit ambiguity and the store instance is permanently poisoned. Best-effort close is
+  attempted immediately; all later data/schema APIs raise `InvocationStorePoisonedError` with
+  code `invocation_store_poisoned`. The instance is never automatically unpoisoned. If an exact
+  control signal accompanies this ambiguity, the clean control remains the top-level exception,
+  its direct cause is a traceback-free `InvocationCommitAmbiguityError`, and poisoning still
+  occurs before it crosses the public boundary.
+- An explicitly closed instance raises `InvocationStoreClosedError`, code
+  `invocation_store_closed`. A close acknowledgement failure is translated to that fixed,
+  sanitized error and `close()` can be retried. An exact close control is reissued clean with a
+  traceback-free `InvocationStoreClosedError` as its direct cause, after logical closed state is
+  fixed. During context-manager exit, an already-active body exception or control always has
+  priority; a simultaneous close failure/control is discarded without being attached to the
+  body exception graph. With no body exception, the close result follows the explicit contract.
+- A store used from a PID other than its creator raises
+  `InvocationStoreProcessMismatchError`, code `invocation_store_process_mismatch`, before any
+  inherited lock, connection, poison flag or control-boundary state is read or mutated. This is a
+  programming/deployment error, not transaction ambiguity; create a new child-process instance.
+
+Write and recovery read-transaction rollback failures use the same quarantine rule. Translated
+public errors sever the raw driver exception graph before crossing the boundary; fault messages,
+SQL, database paths, and opaque lease tokens are not retained through `__cause__`, `__context__`,
+exception arguments, notes, or custom driver attributes. Do not log a caught raw exception before
+translation or add raw exceptions back as notes. Production traceback logging must keep
+`capture_locals=False`; enabling local capture can serialize method arguments, store objects, raw
+lease capabilities, database paths or provider state even when the exception graph is clean.
+
+This hardening is deliberately scoped to public writes, reconciliation snapshots, and close.
+Ordinary read APIs such as `get`, `get_for_task`, `attempts`, `attempts_page`, and
+`schema_version` reject a closed/poisoned instance but do not yet provide a general driver-error
+sanitizer for arbitrary SQLite/provider faults. Closing that read-boundary gap is P1 security
+work. Until it lands, callers must treat raw read failures as process-internal, avoid attaching
+them to user-visible responses or telemetry with locals, and terminate/quarantine the affected
+request path. This document does not claim that every read API is sanitized.
+
+For a file-backed database, construct a new store instance after quarantine, run migration and
+integrity verification, then read the job/attempt snapshot. A successful close rolls back an
+open uncommitted SQLite transaction; a failed close can retain a database lock until a later
+explicit close succeeds or the process exits. Never continue business operations through the old
+instance. A process killed after durable `COMMIT` but before Python can run readback produces no
+in-process ambiguity exception at all; restart recovery must discover that state. This component
+still does not prove whether an external Agent/tool effect occurred.
 
 ## Worker loop contract
 
@@ -290,11 +395,20 @@ higher-priority effect-unknown job, terminal exhaustion, complete bounded recove
 validation, post-lock clock sampling, cross-connection clock-regression rollback, complete
 job/attempt time causality, sub-microsecond lease rejection, strict timestamp parsing, token
 non-disclosure, oversized lease normalization without mutation, orphan-history first-claim
-rejection, and invalid lease inputs:
+rejection, invalid lease inputs, committed-then-error reconciliation for every public mutation,
+pre-commit and post-commit `BaseException` behavior, exact readback interruption, no-op safety,
+full lease-binding forgery rejection, read/write rollback poisoning, close retry, hostile driver
+exceptions, exception-graph redaction, persistent reopen, and waiting-thread quarantine:
 
 ```bash
 PYTHONPATH=src python3 -m unittest tests.test_attempts -v
 ```
+
+The current direct suite contains 109 tests (one `BaseExceptionGroup` case is version-gated on
+Python 3.9). The matrix includes exact control-signal cleaning, safe `SystemExit` codes, hostile
+exception objects, control subclasses/groups, forged internal sentinels, transaction-state
+inspection faults, claim readback rejection after concurrent heartbeat/deadline drift, and a real
+POSIX-fork probe covering inherited reads, writes, recovery, context entry and close.
 
 The Phase 1 release still requires process-kill fault injection at every integration
 boundary, a real runtime heartbeat/cancellation test, backup/restore rehearsal and retained
