@@ -272,6 +272,113 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             1,
         )
 
+    async def test_invocation_started_postcommit_failure_is_reconciled_once(self):
+        calls = 0
+
+        async def worker(invocation):
+            nonlocal calls
+            calls += 1
+            return AgentResult("done")
+
+        self.kernel.register_agent(registration("worker", worker))
+        plan = WorkflowPlan(
+            "invocation-started-postcommit",
+            "调用开始事件提交后异常必须协调",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+        )
+        original_append_many = self.kernel.event_store.append_many
+        injected = False
+
+        def commit_invocation_then_raise(stream_id, events, expected_version=None):
+            nonlocal injected
+            batch = tuple(events)
+            stored = original_append_many(
+                stream_id,
+                batch,
+                expected_version=expected_version,
+            )
+            if not injected and any(
+                event.event_type == "task.invocation.started" for event in batch
+            ):
+                injected = True
+                raise RuntimeError("injected invocation postcommit failure")
+            return stored
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=commit_invocation_then_raise,
+        ):
+            result = await self.kernel.run(plan)
+
+        self.assertTrue(injected)
+        self.assertTrue(result.completed)
+        self.assertEqual(calls, 1)
+        events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        self.assertEqual(
+            sum(stored.event.event_type == "task.invocation.started" for stored in events),
+            1,
+        )
+
+    async def test_result_postcommit_failure_is_reconciled_without_false_failure(self):
+        calls = 0
+
+        async def worker(invocation):
+            nonlocal calls
+            calls += 1
+            return AgentResult(
+                "done",
+                (ArtifactOutput("result.md", "stable"),),
+            )
+
+        self.kernel.register_agent(registration("worker", worker))
+        plan = WorkflowPlan(
+            "result-postcommit",
+            "结果事件提交后异常必须协调",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+        )
+        original_append_many = self.kernel.event_store.append_many
+        injected = False
+
+        def commit_result_then_raise(stream_id, events, expected_version=None):
+            nonlocal injected
+            batch = tuple(events)
+            stored = original_append_many(
+                stream_id,
+                batch,
+                expected_version=expected_version,
+            )
+            if not injected and any(event.event_type == "task.result.received" for event in batch):
+                injected = True
+                raise RuntimeError("injected result postcommit failure")
+            return stored
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=commit_result_then_raise,
+        ):
+            result = await self.kernel.run(plan)
+
+        self.assertTrue(injected)
+        self.assertTrue(result.completed)
+        self.assertEqual(calls, 1)
+        self.assertEqual({ref.name for ref in result.artifacts}, {"result.md"})
+        events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        self.assertEqual(
+            sum(stored.event.event_type == "task.result.received" for stored in events),
+            1,
+        )
+        self.assertFalse(
+            any(
+                stored.event.event_type == "task.status.changed"
+                and stored.event.payload["current"] == TaskStatus.FAILED.value
+                for stored in events
+            )
+        )
+
     async def test_completed_transition_precommit_failure_quarantines_effect_unknown(self):
         calls = 0
 
