@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any, Callable
+from unittest.mock import patch
 
 from quantum_entanglement.delivery import OutboxMessage, OutboxStatus
 from quantum_entanglement.events import DomainEvent, StoredEvent
@@ -42,6 +43,10 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
                     idempotency_key=f"event:{key_prefix}:{index}",
                 )
             )
+
+    def _stream_all(self, after_position: int = 0, limit: int = 1_000) -> list[StoredEvent]:
+        with self.store.stream_all_page(after_position, limit) as page:
+            return list(page)
 
     def _seed_outbox(self, count: int = 5) -> None:
         messages = tuple(
@@ -169,6 +174,25 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
         self.assertEqual(self.store.read_all(after_position=3, limit=1), ())
         self.assertEqual(len(self.store.read_all(limit=1_000)), 3)
 
+    def test_stream_all_page_decodes_only_rows_the_consumer_requests(self) -> None:
+        self._append_stream("stream:target", 3)
+        original_decoder = self.store._row_to_event
+        decoded_positions: list[int] = []
+
+        def track_decode(row: Any) -> StoredEvent:
+            item = original_decoder(row)
+            decoded_positions.append(item.global_position)
+            return item
+
+        with patch.object(self.store, "_row_to_event", side_effect=track_decode):
+            with self.store.stream_all_page(limit=3) as page:
+                self.assertEqual(decoded_positions, [])
+                first = next(page)
+                self.assertEqual(first.global_position, 1)
+                self.assertEqual(decoded_positions, [1])
+
+        self.assertEqual(decoded_positions, [1])
+
     def test_outbox_pages_expose_durable_positions_and_filter_status(self) -> None:
         self._seed_outbox()
 
@@ -206,6 +230,7 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
         cursor_calls: tuple[Callable[[Any], object], ...] = (
             lambda value: self.store.read_stream_page("stream:target", value, 1),
             lambda value: self.store.read_all(value, 1),
+            lambda value: self._stream_all(value, 1),
             lambda value: self.store.read_outbox_page(value, None, 1),
             lambda value: self.store.read_outbox_ambiguities_page(value, True, 1),
         )
@@ -224,6 +249,7 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
         limit_calls: tuple[Callable[[Any], object], ...] = (
             lambda value: self.store.read_stream_page("stream:target", 0, value),
             lambda value: self.store.read_all(0, value),
+            lambda value: self._stream_all(0, value),
             lambda value: self.store.read_outbox_page(0, None, value),
             lambda value: self.store.read_outbox_ambiguities_page(0, True, value),
         )
@@ -282,6 +308,7 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
         try:
             self.store.read_stream_page("stream:target", limit=2)
             self.store.read_all(limit=2)
+            self._stream_all(limit=2)
             self.store.read_outbox_page(limit=2)
             self.store.read_outbox_ambiguities_page(limit=2)
         finally:

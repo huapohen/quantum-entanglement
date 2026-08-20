@@ -909,14 +909,28 @@ class SQLiteEventStore:
             return tuple(self._row_to_event(row) for row in rows)
 
     def read_all(self, after_position: int = 0, limit: int = 1000) -> Tuple[StoredEvent, ...]:
+        with self.stream_all_page(after_position=after_position, limit=limit) as events:
+            return tuple(events)
+
+    @contextmanager
+    def stream_all_page(
+        self,
+        after_position: int = 0,
+        limit: int = 1000,
+    ) -> Iterator[Iterator[StoredEvent]]:
+        """Decode one global-position page row by row while holding the store lock."""
+
         cursor = self._validate_page_cursor(after_position, "after_position")
         page_limit = self._validate_page_limit(limit)
         with self._lock:
             rows = self._connection.execute(
                 "SELECT * FROM events WHERE global_position > ? ORDER BY global_position LIMIT ?",
                 (cursor, page_limit),
-            ).fetchall()
-            return tuple(self._row_to_event(row) for row in rows)
+            )
+            try:
+                yield (self._row_to_event(row) for row in rows)
+            finally:
+                rows.close()
 
     def claim_outbox(
         self,
