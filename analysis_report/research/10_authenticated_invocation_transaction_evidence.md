@@ -238,3 +238,27 @@ git diff --check
   通过软件降级恢复使用，必须保持 quarantine 并做 durable reconciliation；
 - 本报告是本地阶段证据，不是 promotion approval。正式发布还要满足
   `docs/production/RELEASE_GATES.md` 的相应 runtime gate。
+
+## 11. Canonical-parent 发布证据
+
+行为与主报告证据基线仍为
+`4538159b032d20f55d4f3bf1757589e5310fe701`；随后在最新 canonical parent 上重放，
+并为固定 source commit 生成 source-bound release evidence：
+
+- evidence source：`206acc1a93c16fe07fde4428d4d7e3b63c69ecc7`；
+- source tree：`783d44b57d96f3837dacbe2690da8bbdd003b32d`；
+- 完整文档候选：`8d82dd7e672d94e64c00cf8f31d6aba943d1dca7`；
+- 候选 tree：`094342b4d76741457420c1c556fe0a227ced00a6`；
+- canonical parent：`3d474e5c566e545119dbb94e1f4e46932396a0c8`；
+- 固定 release gates：5/5 passed；expected-commit verifier：PASS；
+- 外置 JSON：1,738 bytes；SHA-256：
+  `c80388e07eb95b018091ee00b014890dfa50d95f50ffe08e0f260079a76f6caf`。
+
+Python 3.9 为 883 passed、1 skipped；Python 3.12/3.13 为 884 passed；Python 3.13
+strict resource/unraisable warning gate、Ruff、strict mypy、compileall、dependency locks、
+demo 与 `git diff --check` 均通过。完整生成方式、身份谓词和证据边界见
+[`13_206acc1_transaction_release_evidence.md`](13_206acc1_transaction_release_evidence.md)。
+
+`8d82dd7` 在独立只读审查通过前不得移动 canonical；通过后也只能用 old-OID guarded
+fast-forward。以上仍只是 invocation storage primitive 的阶段发布证据，不是整体产品 GA
+或 promotion approval。
