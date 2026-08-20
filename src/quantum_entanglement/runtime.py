@@ -205,29 +205,57 @@ class OrchestratorKernel:
     def _stream_id(self, session_id: str) -> str:
         return "session:%s" % session_id
 
-    async def _append(self, event: DomainEvent) -> StoredEvent:
-        stored = self.event_store.append(event)
+    async def _emit_appended(self, stored: StoredEvent) -> None:
         context: Dict[str, Any] = {"storedEvent": stored, "kernel": self}
         await self.plugins.emit(HookPoint.EVENT_APPENDED, context)
+
+    async def _emit_appended_batch(self, stored_events: Tuple[StoredEvent, ...]) -> None:
+        for stored in stored_events:
+            await self._emit_appended(stored)
+
+    async def _append(self, event: DomainEvent) -> StoredEvent:
+        stored = self.event_store.append(event)
+        await self._emit_appended(stored)
         return stored
 
+    def _transition_event(
+        self,
+        session_id: str,
+        transition: TaskTransition,
+        correlation_id: Optional[str],
+        *,
+        causation_id: Optional[str] = None,
+    ) -> DomainEvent:
+        return DomainEvent(
+            stream_id=self._stream_id(session_id),
+            event_type="task.status.changed",
+            actor_id=self.SYSTEM_ACTOR.actor_id,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            idempotency_key="task-status:%s:%d" % (transition.task_id, transition.revision),
+            payload={
+                "taskId": transition.task_id,
+                "previous": transition.previous.value,
+                "current": transition.current.value,
+                "reason": transition.reason,
+                "revision": transition.revision,
+            },
+        )
+
     async def _record_transition(
-        self, session_id: str, transition: TaskTransition, correlation_id: Optional[str]
+        self,
+        session_id: str,
+        transition: TaskTransition,
+        correlation_id: Optional[str],
+        *,
+        causation_id: Optional[str] = None,
     ) -> None:
         await self._append(
-            DomainEvent(
-                stream_id=self._stream_id(session_id),
-                event_type="task.status.changed",
-                actor_id=self.SYSTEM_ACTOR.actor_id,
-                correlation_id=correlation_id,
-                idempotency_key="task-status:%s:%d" % (transition.task_id, transition.revision),
-                payload={
-                    "taskId": transition.task_id,
-                    "previous": transition.previous.value,
-                    "current": transition.current.value,
-                    "reason": transition.reason,
-                    "revision": transition.revision,
-                },
+            self._transition_event(
+                session_id,
+                transition,
+                correlation_id,
+                causation_id=causation_id,
             )
         )
 
@@ -617,25 +645,72 @@ class OrchestratorKernel:
             await self._record_transition(plan.session_id, failed, correlation_id)
             return
         if decision.outcome == PolicyOutcome.NEEDS_APPROVAL:
-            # Enter RUNNING first so the lifecycle records the attempted dispatch.
-            running = graph.transition(task.task_id, TaskStatus.RUNNING)
-            await self._record_transition(plan.session_id, running, correlation_id)
-            waiting = graph.transition(task.task_id, TaskStatus.WAITING_APPROVAL, decision.reason)
-            await self._record_transition(plan.session_id, waiting, correlation_id)
-            request = self.approvals.create(
-                ApprovalRequest(plan.session_id, task.task_id, task.action, decision.reason)
+            if any(
+                request.task_id == task.task_id
+                for request in self.approvals.pending(plan.session_id)
+            ):
+                raise RuntimeError("task already has a pending approval request")
+            running = TaskTransition(
+                task.task_id,
+                TaskStatus.READY,
+                TaskStatus.RUNNING,
+                None,
+                graph.revisions[task.task_id] + 1,
             )
-            await self._append(
-                DomainEvent(
-                    stream_id=self._stream_id(plan.session_id),
-                    event_type="approval.requested",
-                    actor_id=self.SYSTEM_ACTOR.actor_id,
-                    correlation_id=correlation_id,
-                    causation_id=task.task_id,
-                    idempotency_key="approval-request:%s" % task.task_id,
-                    payload=request.to_dict(),
-                )
+            waiting = TaskTransition(
+                task.task_id,
+                TaskStatus.RUNNING,
+                TaskStatus.WAITING_APPROVAL,
+                decision.reason,
+                graph.revisions[task.task_id] + 2,
             )
+            request = ApprovalRequest(
+                plan.session_id,
+                task.task_id,
+                task.action,
+                decision.reason,
+            )
+            stream_id = self._stream_id(plan.session_id)
+            expected_version = self.event_store.stream_version(stream_id)
+            stored_events = self.event_store.append_many(
+                stream_id,
+                (
+                    self._transition_event(
+                        plan.session_id,
+                        running,
+                        correlation_id,
+                    ),
+                    self._transition_event(
+                        plan.session_id,
+                        waiting,
+                        correlation_id,
+                    ),
+                    DomainEvent(
+                        stream_id=stream_id,
+                        event_type="approval.requested",
+                        actor_id=self.SYSTEM_ACTOR.actor_id,
+                        correlation_id=correlation_id,
+                        causation_id=task.task_id,
+                        idempotency_key="approval-request:%s" % task.task_id,
+                        payload=request.to_dict(),
+                    ),
+                ),
+                expected_version=expected_version,
+            )
+            applied_running = graph.transition(task.task_id, TaskStatus.RUNNING)
+            if applied_running != running:
+                raise RuntimeError("persisted approval dispatch differs from memory")
+            applied_waiting = graph.transition(
+                task.task_id,
+                TaskStatus.WAITING_APPROVAL,
+                decision.reason,
+            )
+            if applied_waiting != waiting:
+                raise RuntimeError("persisted approval transition differs from memory")
+            created_request = self.approvals.create(request)
+            if created_request.to_dict() != request.to_dict():
+                raise RuntimeError("persisted approval request differs from memory")
+            await self._emit_appended_batch(stored_events)
             return
 
         running = graph.transition(task.task_id, TaskStatus.RUNNING)
