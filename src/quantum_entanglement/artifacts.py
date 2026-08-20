@@ -11,7 +11,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Optional, Tuple, cast
+from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
 from urllib.parse import quote
 
 from .events import DomainEvent
@@ -85,7 +85,7 @@ class ArtifactLedger:
     def _rebuild_under_lock(self) -> None:
         after_position = 0
         replayed = 0
-        candidate_versions: Dict[Tuple[str, str], Tuple[ArtifactVersion, ...]] = {}
+        candidate_versions: Dict[Tuple[str, str], List[ArtifactVersion]] = {}
         candidate_artifact_ids: set[str] = set()
         while replayed < _MAX_REPLAY_EVENTS:
             page_limit = min(_REPLAY_PAGE_LIMIT, _MAX_REPLAY_EVENTS - replayed)
@@ -104,7 +104,7 @@ class ArtifactLedger:
                 if stored.event.event_type != self.EVENT_TYPE:
                     continue
                 key, item = self._decode_persisted_version(stored.event.payload)
-                history = candidate_versions.get(key, ())
+                history = candidate_versions.setdefault(key, [])
                 expected_version = len(history) + 1
                 if item.ref.version != expected_version:
                     raise ArtifactReplayError(
@@ -113,7 +113,7 @@ class ArtifactLedger:
                 if item.ref.artifact_id in candidate_artifact_ids:
                     raise ArtifactReplayError("artifact replay contains a duplicate artifact id")
                 candidate_artifact_ids.add(item.ref.artifact_id)
-                candidate_versions[key] = history + (item,)
+                history.append(item)
             replayed += len(page)
             if len(page) < page_limit:
                 break
@@ -129,7 +129,7 @@ class ArtifactLedger:
                     f"artifact replay exceeds the {_MAX_REPLAY_EVENTS}-event safety limit"
                 )
 
-        self._versions = candidate_versions
+        self._versions = {key: tuple(history) for key, history in candidate_versions.items()}
 
     @classmethod
     def _decode_persisted_version(

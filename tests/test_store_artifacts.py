@@ -871,6 +871,33 @@ class ArtifactLedgerReplayTests(unittest.TestCase):
         )
         self.assertEqual(ledger.current("session-replay", "notes.md").content, "notes")
 
+    def test_rebuild_accumulates_a_long_single_chain_and_freezes_it_once(self):
+        version_count = 4_096
+        page_size = 257
+        events = tuple(
+            replay_event(
+                version,
+                name="long-chain.md",
+                version=version,
+                content=f"v{version}",
+            )
+            for version in range(1, version_count + 1)
+        )
+        pages = {
+            offset: events[offset : offset + page_size]
+            for offset in range(0, version_count, page_size)
+        }
+        source = FakeReplayStore(pages)
+
+        with patch.object(artifacts_module, "_REPLAY_PAGE_LIMIT", page_size):
+            ledger = ArtifactLedger(source)
+
+        history = ledger._versions[("session-replay", "long-chain.md")]
+        self.assertIs(type(history), tuple)
+        self.assertEqual(len(history), version_count)
+        self.assertEqual(history[0].ref.version, 1)
+        self.assertEqual(history[-1].ref.version, version_count)
+
     def test_successful_rebuild_replaces_stale_state_in_one_step(self):
         source = FakeReplayStore(
             {0: (replay_event(1, name="stale.md", version=1, content="stale"),)}
