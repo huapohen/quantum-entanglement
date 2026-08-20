@@ -1,8 +1,9 @@
 # Session recovery resource and publication contract
 
-This document defines the recovery boundary implemented by the single-process
-orchestrator at `8049ac3`. It is a bounded, streaming reconstruction contract;
-it is not crash reconciliation for an Agent invocation or an external effect.
+This document defines the recovery boundary introduced at `8049ac3` and the
+subsequent fail-closed publication hardening in the single-process orchestrator.
+It is a bounded, streaming reconstruction contract; it is not crash
+reconciliation for an Agent invocation or an external effect.
 
 ## Durable source and live publication
 
@@ -19,8 +20,13 @@ corrupt last page therefore have the same fail-closed result: the caller receive
 
 Artifact references are attached only after that validation succeeds. The
 `ArtifactLedger` has its own startup replay contract; it is not made atomic with
-session recovery by this slice. See `ARTIFACT_LEDGER_REPLAY.md` for its independent
-streaming, cumulative-budget, and write-admission boundary.
+session recovery or task-result publication by this slice. See
+`ARTIFACT_LEDGER_REPLAY.md` for its independent streaming, cumulative-budget, and
+write-admission boundary. In the integrated
+ledger, an artifact append uses global-position CAS against the observed ledger
+position and can reconcile only the exact idempotency point and event at the
+uniquely expected next position if an append wrapper raises after commit. A
+pre-commit failure never publishes the candidate artifact to the live ledger.
 
 ## Bounded page source
 
@@ -111,7 +117,10 @@ In-memory transition publication now follows durable commit. `TaskGraph.preview_
 and `preview_refresh` validate and describe changes without mutation; the kernel atomically
 appends the exact transition event(s), reconciles an append wrapper that raised after commit,
 then applies the same revision to memory. A pre-commit append failure therefore leaves memory
-at the durable previous state instead of creating a false loaded-`RUNNING` quarantine.
+at the durable previous state instead of creating a false loaded-`RUNNING` quarantine. Ordinary
+single runtime events use the same expected-version path: after an ambiguous append exception,
+the kernel accepts only a byte-canonical match for the exact event at the expected next stream
+position. A missing or different event is not guessed to have committed.
 
 | Transition caller | Durable unit before memory publication |
 |---|---|
@@ -127,6 +136,22 @@ If a terminal transition append fails before commit after an Agent may have run,
 and in-memory state remain `RUNNING`; the next call correctly quarantines it as effect unknown.
 If the wrapper raises after commit, exact event reconciliation publishes the committed state
 once without duplicating the transition.
+
+The Agent call and result publication are separate failure domains. An exception raised while
+constructing context, publishing `task.invocation.started`, running the pre-Agent hook, or
+awaiting the Agent follows the existing caught-failure contract and attempts a durable `FAILED`
+transition. Once the Agent returns, however, an `AFTER_AGENT` hook failure, artifact or
+result-event publication failure, or unreconciled completion-transition exception escapes while
+the task remains durably and in memory `RUNNING`. The next `run()` call quarantines the session
+before another Agent invocation can occur.
+
+Artifacts are currently appended before `task.result.received`, without a shared transaction.
+A crash or pre-commit result-event failure can therefore leave a durable artifact version while
+the result event is absent. The ledger preserves that version, but `_task_artifacts` is not
+published until `task.result.received` is durably committed or exactly reconciled. Consequently,
+downstream tasks cannot consume a partial result through the live task projection, and the
+owning task remains quarantined rather than being replayed. This is a safety stop, not automated
+artifact/result reconciliation, a trusted invocation receipt, or an external-effect transaction.
 
 This quarantine is an intentional availability tradeoff. It converts the former silent stuck
 projection into an explicit operator-visible integrity boundary, while guaranteeing that
@@ -146,7 +171,9 @@ The suite covers exact and exceeded event counts, exact and exceeded cumulative
 byte/node budgets, bounded pages, cursor continuity, stream-boundary violations,
 interleaved streaming application, invalid late pages, no partial publication, restart
 quarantine, same-process cancellation quarantine without Agent reinvocation, pre/post-commit
-transition fault injection, atomic policy denial, and non-mutating dependency refresh retry.
+transition and ordinary-event fault injection, atomic policy denial, non-mutating dependency
+refresh retry, artifact append reconciliation, and post-Agent artifact/result publication
+quarantine without task-reference publication.
 
 At implementation commit `8049ac3`, the repository-wide suite reported 627
 passing tests. Locked Ruff 0.16.3 lint/format over `src`, `tests`, and `scripts`,
@@ -155,9 +182,10 @@ demo, and `git diff --check` also passed.
 
 At the later invocation-recovery hardening checkpoint `d3b92c3`, the same-process
 cancellation case was included in 665 repository-wide tests passing under both the default
-Python and Python 3.13. All 20 session-recovery tests passed under Python 3.13 with
-`ResourceWarning` promoted to an error. This evidence proves quarantine behavior only; it
-does not claim automated reconciliation or safe Agent retry.
+Python and Python 3.13. That historical checkpoint has since been superseded by additional
+clock, append-reconciliation, and publication-fault coverage. The final evidence for this
+slice is recorded only after the current release gates complete. This evidence proves
+quarantine behavior only; it does not claim automated reconciliation or safe Agent retry.
 
 ## Explicit non-guarantees
 
@@ -169,6 +197,7 @@ This slice does not provide:
 - a distributed recovery lock or protection from two orchestrator processes;
 - automatic reconciliation for a task left `RUNNING` after process failure (such a task is
   now explicitly quarantined before projection publication);
+- an atomic transaction spanning artifacts, `task.result.received`, and task completion;
 - durable attempt fencing, heartbeats, action receipts, or effect-unknown handling;
 - an authenticated service endpoint, tenant-complete storage, or safe real connector.
 
