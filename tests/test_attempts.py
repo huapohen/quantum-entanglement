@@ -4,20 +4,27 @@ import multiprocessing
 import sqlite3
 import tempfile
 import threading
+import traceback
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
+import quantum_entanglement.attempts as attempts_module
 from quantum_entanglement.attempts import (
     AttemptStatus,
     InvocationClockRegressionError,
+    InvocationCommitAmbiguityError,
     InvocationConflictError,
     InvocationIntegrityError,
     InvocationJobSpec,
+    InvocationLease,
     InvocationStatus,
+    InvocationStoreClosedError,
+    InvocationStorePoisonedError,
     MigrationDriftError,
     SQLiteInvocationAttemptStore,
     invocation_payload_digest,
@@ -34,6 +41,49 @@ def timestamp(seconds):
 
 def persisted_timestamp(seconds):
     return f"2026-08-20T00:00:{seconds:02d}.000000Z"
+
+
+def exception_graph_text(error):
+    pending = [error]
+    visited = set()
+    details = []
+    while pending and len(visited) < 100:
+        current = pending.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
+        details.extend(
+            (
+                str(current),
+                repr(current),
+                repr(current.args),
+                repr(getattr(current, "__dict__", {})),
+            )
+        )
+        notes = getattr(current, "__notes__", ())
+        details.extend(str(note) for note in notes)
+        for related in (current.__cause__, current.__context__):
+            if related is not None:
+                pending.append(related)
+    return " ".join(details)
+
+
+class HostileFault(RuntimeError):
+    def __init__(self, marker):
+        super().__init__(marker)
+        self.secret = marker
+        self.armed = True
+
+    def __setattr__(self, name, value):
+        if getattr(self, "armed", False) and name in {
+            "args",
+            "__cause__",
+            "__context__",
+            "__notes__",
+            "__traceback__",
+        }:
+            raise RuntimeError(f"hostile mutation attempted: {self.secret}")
+        super().__setattr__(name, value)
 
 
 class MutableClock:
@@ -122,11 +172,59 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             ),
         )
 
+    @contextmanager
+    def _commit_then_raise(self):
+        commit = self.store._commit_write_transaction
+        injected = False
+
+        def committed_failure(connection):
+            nonlocal injected
+            commit(connection)
+            injected = True
+            raise RuntimeError("injected commit acknowledgement failure")
+
+        with patch.object(
+            self.store,
+            "_commit_write_transaction",
+            side_effect=committed_failure,
+        ):
+            yield
+        self.assertTrue(injected)
+
+    @contextmanager
+    def _rollback_then_raise(self):
+        injected = False
+
+        def rolled_back_failure(connection):
+            nonlocal injected
+            connection.execute("ROLLBACK")
+            injected = True
+            raise RuntimeError("injected ambiguous rolled-back commit")
+
+        with patch.object(
+            self.store,
+            "_commit_write_transaction",
+            side_effect=rolled_back_failure,
+        ):
+            yield
+        self.assertTrue(injected)
+
     def test_default_in_memory_store_is_usable_without_wal(self):
         with SQLiteInvocationAttemptStore(clock=self.clock) as memory_store:
             self.assertEqual(memory_store.schema_version(), 2)
             queued = memory_store.enqueue(job_spec(invocation_id="memory-invocation"))
             self.assertEqual(queued.status, InvocationStatus.QUEUED)
+
+    def test_transaction_errors_are_exported_from_the_attempt_module(self):
+        expected = {
+            "InvocationCommitAmbiguityError": InvocationCommitAmbiguityError,
+            "InvocationStoreClosedError": InvocationStoreClosedError,
+            "InvocationStorePoisonedError": InvocationStorePoisonedError,
+        }
+        for name, value in expected.items():
+            with self.subTest(name=name):
+                self.assertIn(name, attempts_module.__all__)
+                self.assertIs(getattr(attempts_module, name), value)
 
     def test_lease_duration_must_advance_durable_timestamp(self):
         self.store.enqueue(job_spec())
@@ -162,6 +260,798 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             with self.subTest(operation="heartbeat", lease_seconds=type(lease_seconds).__name__):
                 with self.assertRaisesRegex(ValueError, "supported datetime range"):
                     self.store.heartbeat(lease, lease_seconds=lease_seconds)
+                self.assertEqual(tuple(self.store._connection.iterdump()), running)
+
+    def test_enqueue_reconciles_committed_acknowledgement_failure(self):
+        with self._commit_then_raise():
+            queued = self.store.enqueue(job_spec())
+
+        self.assertEqual(queued, self.store.get("invocation-1"))
+        self.assertEqual(queued.status, InvocationStatus.QUEUED)
+
+    def test_claim_reconciles_committed_acknowledgement_failure(self):
+        self.store.enqueue(job_spec())
+
+        with self._commit_then_raise():
+            lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        self.assertIsNotNone(lease)
+        assert lease is not None
+        snapshot = self.store.recovery_snapshot_for_task("session-1", "task-1")
+        self.assertEqual(snapshot.job.status, InvocationStatus.RUNNING)
+        self.assertEqual(snapshot.current_attempt.attempt_id, lease.attempt_id)
+        self.assertEqual(
+            snapshot.current_attempt.lease_token_digest,
+            hashlib.sha256(lease.lease_token.encode("utf-8")).hexdigest(),
+        )
+
+    def test_claim_reconciles_committed_base_exception_acknowledgement(self):
+        class CommitAcknowledgementAbort(BaseException):
+            pass
+
+        self.store.enqueue(job_spec())
+        commit = self.store._commit_write_transaction
+
+        def commit_then_abort(connection):
+            commit(connection)
+            raise CommitAcknowledgementAbort("must not escape after durable claim")
+
+        with patch.object(
+            self.store,
+            "_commit_write_transaction",
+            side_effect=commit_then_abort,
+        ):
+            lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        self.assertIsNotNone(lease)
+        self.assertEqual(self.store.get("invocation-1").status, InvocationStatus.RUNNING)
+
+    def test_heartbeat_reconciles_committed_acknowledgement_failure(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.clock.set(timestamp(5))
+
+        with self._commit_then_raise():
+            accepted = self.store.heartbeat(lease, lease_seconds=20)
+
+        self.assertTrue(accepted)
+        snapshot = self.store.recovery_snapshot_for_task("session-1", "task-1")
+        self.assertEqual(snapshot.job.heartbeat_at, persisted_timestamp(5))
+        self.assertEqual(snapshot.current_attempt.heartbeat_at, persisted_timestamp(5))
+        self.assertEqual(snapshot.job.lease_expires_at, persisted_timestamp(25))
+
+    def test_complete_reconciles_committed_acknowledgement_failure(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.clock.set(timestamp(5))
+
+        with self._commit_then_raise():
+            accepted = self.store.complete(lease, result_ref="result:committed")
+
+        self.assertTrue(accepted)
+        snapshot = self.store.recovery_snapshot_for_task("session-1", "task-1")
+        self.assertEqual(snapshot.job.status, InvocationStatus.SUCCEEDED)
+        self.assertEqual(snapshot.job.result_ref, "result:committed")
+        self.assertEqual(snapshot.current_attempt.status, AttemptStatus.SUCCEEDED)
+        self.assertEqual(snapshot.current_attempt.finished_at, persisted_timestamp(5))
+
+    def test_fail_reconciles_committed_acknowledgement_failure(self):
+        self.store.enqueue(job_spec(max_attempts=1))
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.clock.set(timestamp(5))
+
+        with self._commit_then_raise():
+            accepted = self.store.fail(lease, "terminal committed failure")
+
+        self.assertTrue(accepted)
+        snapshot = self.store.recovery_snapshot_for_task("session-1", "task-1")
+        self.assertEqual(snapshot.job.status, InvocationStatus.FAILED)
+        self.assertEqual(snapshot.job.last_error, "terminal committed failure")
+        self.assertEqual(snapshot.current_attempt.status, AttemptStatus.FAILED)
+        self.assertEqual(snapshot.current_attempt.finished_at, persisted_timestamp(5))
+
+    def test_recovery_reconciles_committed_acknowledgement_failure(self):
+        self.store.enqueue(job_spec())
+        self.store.claim("invocation-1", "worker", lease_seconds=5)
+        self.clock.set(timestamp(5))
+
+        with self._commit_then_raise():
+            summary = self.store.recover_expired()
+
+        self.assertEqual(summary.requeued, ("invocation-1",))
+        snapshot = self.store.recovery_snapshot_for_task("session-1", "task-1")
+        self.assertEqual(snapshot.job.status, InvocationStatus.QUEUED)
+        self.assertEqual(snapshot.current_attempt.status, AttemptStatus.EXPIRED)
+        self.assertEqual(snapshot.current_attempt.finished_at, persisted_timestamp(5))
+
+    def test_noop_claim_acknowledgement_failure_returns_none(self):
+        with self._commit_then_raise():
+            lease = self.store.claim_next("worker", lease_seconds=10)
+
+        self.assertIsNone(lease)
+
+    def test_claim_reconciles_expiry_without_a_new_owner(self):
+        self.store.enqueue(job_spec())
+        self.store.claim("invocation-1", "worker-1", lease_seconds=5)
+        self.clock.set(timestamp(5))
+
+        with self._commit_then_raise():
+            lease = self.store.claim("invocation-1", "worker-2", lease_seconds=10)
+
+        self.assertIsNone(lease)
+        snapshot = self.store.recovery_snapshot_for_task("session-1", "task-1")
+        self.assertEqual(snapshot.job.status, InvocationStatus.QUEUED)
+        self.assertEqual(snapshot.current_attempt.status, AttemptStatus.EXPIRED)
+
+    def test_uncommitted_claim_raises_stable_commit_ambiguity(self):
+        self.store.enqueue(job_spec())
+        queued = tuple(self.store._connection.iterdump())
+
+        with self._rollback_then_raise():
+            with self.assertRaisesRegex(
+                InvocationCommitAmbiguityError,
+                "commit could not be reconciled",
+            ) as captured:
+                self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        self.assertEqual(captured.exception.code, "invocation_commit_ambiguous")
+        chain = []
+        current = captured.exception
+        while current is not None:
+            chain.append(str(current))
+            current = current.__cause__ or current.__context__
+        self.assertNotIn("ambiguous rolled-back commit", " ".join(chain))
+        self.assertEqual(tuple(self.store._connection.iterdump()), queued)
+        self.assertEqual(self.store.attempts("invocation-1"), ())
+
+    def test_uncommitted_owned_mutations_never_return_false_success(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        running = tuple(self.store._connection.iterdump())
+
+        for operation in (
+            lambda: self.store.heartbeat(lease, lease_seconds=20),
+            lambda: self.store.complete(lease, result_ref="result:rolled-back"),
+            lambda: self.store.fail(lease, "rolled-back failure"),
+        ):
+            with self.subTest(operation=operation):
+                with self._rollback_then_raise():
+                    with self.assertRaisesRegex(
+                        InvocationCommitAmbiguityError,
+                        "commit could not be reconciled",
+                    ):
+                        operation()
+                self.assertEqual(tuple(self.store._connection.iterdump()), running)
+
+    def test_commit_failure_with_an_open_transaction_rolls_back_original_error(self):
+        empty = tuple(self.store._connection.iterdump())
+
+        with patch.object(
+            self.store,
+            "_commit_write_transaction",
+            side_effect=RuntimeError("injected precommit failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected precommit failure"):
+                self.store.enqueue(job_spec())
+
+        self.assertEqual(tuple(self.store._connection.iterdump()), empty)
+        self.assertIsNone(self.store.get("invocation-1"))
+
+    def test_owned_and_recovery_committed_base_exceptions_reconcile(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=5)
+        assert lease is not None
+        self.clock.set(timestamp(1))
+        heartbeat_commit = self.store._commit_write_transaction
+
+        def committed_heartbeat_interrupt(connection):
+            heartbeat_commit(connection)
+            raise SystemExit("heartbeat acknowledgement interrupted")
+
+        with patch.object(
+            self.store,
+            "_commit_write_transaction",
+            side_effect=committed_heartbeat_interrupt,
+        ):
+            self.assertTrue(self.store.heartbeat(lease, lease_seconds=5))
+
+        heartbeat = self.store.recovery_snapshot_for_task("session-1", "task-1")
+        self.assertEqual(heartbeat.job.heartbeat_at, persisted_timestamp(1))
+        self.assertEqual(heartbeat.job.lease_expires_at, persisted_timestamp(6))
+
+        self.clock.set(timestamp(6))
+        recovery_commit = self.store._commit_write_transaction
+
+        def committed_recovery_interrupt(connection):
+            recovery_commit(connection)
+            raise KeyboardInterrupt("recovery acknowledgement interrupted")
+
+        with patch.object(
+            self.store,
+            "_commit_write_transaction",
+            side_effect=committed_recovery_interrupt,
+        ):
+            summary = self.store.recover_expired()
+
+        self.assertEqual(summary.requeued, ("invocation-1",))
+        recovered = self.store.recovery_snapshot_for_task("session-1", "task-1")
+        self.assertEqual(recovered.job.status, InvocationStatus.QUEUED)
+        self.assertEqual(recovered.current_attempt.status, AttemptStatus.EXPIRED)
+
+    def test_precommit_base_exception_is_preserved_after_confirmed_rollback(self):
+        class PrecommitAbort(BaseException):
+            pass
+
+        failure = PrecommitAbort("precommit cancellation remains observable")
+        empty = tuple(self.store._connection.iterdump())
+        with patch.object(
+            self.store,
+            "_commit_write_transaction",
+            side_effect=failure,
+        ):
+            with self.assertRaises(PrecommitAbort) as captured:
+                self.store.enqueue(job_spec())
+
+        self.assertIs(captured.exception, failure)
+        self.assertEqual(tuple(self.store._connection.iterdump()), empty)
+        self.assertIsNone(self.store.get("invocation-1"))
+
+    def test_post_end_rollback_base_exception_is_sanitized(self):
+        marker = "private rolled-back transaction details"
+
+        def rolled_back_interrupt(connection):
+            connection.execute("ROLLBACK")
+            raise SystemExit(marker)
+
+        with patch.object(
+            self.store,
+            "_commit_write_transaction",
+            side_effect=rolled_back_interrupt,
+        ):
+            with self.assertRaises(InvocationCommitAmbiguityError) as captured:
+                self.store.enqueue(job_spec())
+
+        rendered = "".join(
+            traceback.TracebackException.from_exception(captured.exception).format(chain=True)
+        )
+        self.assertNotIn(marker, rendered)
+        self.assertNotIn(marker, exception_graph_text(captured.exception))
+        self.assertIsNone(self.store.get("invocation-1"))
+        self.assertEqual(self.store.schema_version(), 2)
+
+    def test_readback_base_exception_matrix_fails_closed_without_leakage(self):
+        cases = (
+            "enqueue",
+            "claim",
+            "heartbeat",
+            "complete",
+            "fail",
+            "recover",
+            "claim-recovery-only",
+        )
+        for index, kind in enumerate(cases):
+            with self.subTest(kind=kind):
+                clock = MutableClock()
+                path = str(Path(self.tempdir.name) / f"readback-{index}.sqlite3")
+                store = SQLiteInvocationAttemptStore(path, clock=clock)
+                try:
+                    lease = None
+                    if kind != "enqueue":
+                        maximum = 1 if kind == "fail" else 3
+                        store.enqueue(job_spec(max_attempts=maximum))
+                    if kind in {
+                        "heartbeat",
+                        "complete",
+                        "fail",
+                        "recover",
+                        "claim-recovery-only",
+                    }:
+                        lease = store.claim("invocation-1", "worker", lease_seconds=5)
+                        assert lease is not None
+                    if kind == "enqueue":
+                        operation = partial(store.enqueue, job_spec())
+                        readback_name = "_reconcile_enqueued_job"
+                    elif kind == "claim":
+                        operation = partial(
+                            store.claim,
+                            "invocation-1",
+                            "worker",
+                            lease_seconds=5,
+                        )
+                        readback_name = "_lease_snapshot"
+                    elif kind == "heartbeat":
+                        clock.set(timestamp(1))
+                        operation = partial(store.heartbeat, lease, lease_seconds=5)
+                        readback_name = "_lease_snapshot"
+                    elif kind == "complete":
+                        operation = partial(
+                            store.complete,
+                            lease,
+                            result_ref="result:readback",
+                        )
+                        readback_name = "_lease_snapshot"
+                    elif kind == "fail":
+                        operation = partial(store.fail, lease, "readback failure")
+                        readback_name = "_lease_snapshot"
+                    elif kind == "recover":
+                        clock.set(timestamp(5))
+                        operation = store.recover_expired
+                        readback_name = "_recovered_commit_matches"
+                    else:
+                        clock.set(timestamp(5))
+                        operation = partial(
+                            store.claim,
+                            "invocation-1",
+                            "worker-2",
+                            lease_seconds=5,
+                        )
+                        readback_name = "_recovered_commit_matches"
+
+                    commit_marker = f"private {kind} commit acknowledgement"
+                    readback_marker = f"private {kind} readback interruption"
+                    commit = store._commit_write_transaction
+
+                    def committed_interrupt(connection, commit=commit, marker=commit_marker):
+                        commit(connection)
+                        raise SystemExit(marker)
+
+                    with (
+                        patch.object(
+                            store,
+                            "_commit_write_transaction",
+                            side_effect=committed_interrupt,
+                        ),
+                        patch.object(
+                            store,
+                            readback_name,
+                            side_effect=KeyboardInterrupt(readback_marker),
+                        ),
+                    ):
+                        with self.assertRaises(InvocationCommitAmbiguityError) as captured:
+                            operation()
+
+                    rendered = "".join(
+                        traceback.TracebackException.from_exception(captured.exception).format(
+                            chain=True
+                        )
+                    )
+                    self.assertNotIn(commit_marker, rendered)
+                    self.assertNotIn(readback_marker, rendered)
+                    graph = exception_graph_text(captured.exception)
+                    self.assertNotIn(commit_marker, graph)
+                    self.assertNotIn(readback_marker, graph)
+                    self.assertEqual(store.schema_version(), 2)
+                finally:
+                    store.close()
+
+    def test_rollback_failure_poisons_closes_and_sanitizes_the_store(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        self.assertIsInstance(lease, InvocationLease)
+        assert lease is not None
+        connection = self.store._connection
+        secret_markers = (
+            "sensitive-precommit-path",
+            f"sensitive-rollback-token-{lease.lease_token}",
+        )
+        second_spec = job_spec(
+            invocation_id="invocation-2",
+            session_id="session-2",
+            plan_id="plan-2",
+            task_id="task-2",
+            agent_id="agent-2",
+            idempotency_key="invoke:task-2",
+        )
+
+        with (
+            patch.object(
+                self.store,
+                "_commit_write_transaction",
+                side_effect=KeyboardInterrupt(secret_markers[0]),
+            ),
+            patch.object(
+                self.store,
+                "_rollback_write_transaction",
+                side_effect=SystemExit(secret_markers[1]),
+            ),
+        ):
+            with self.assertRaises(InvocationCommitAmbiguityError) as captured:
+                self.store.enqueue(second_spec)
+
+        rendered = "".join(
+            traceback.TracebackException.from_exception(captured.exception).format(chain=True)
+        )
+        for marker in secret_markers:
+            self.assertNotIn(marker, rendered)
+            self.assertNotIn(marker, exception_graph_text(captured.exception))
+        self.assertEqual(captured.exception.code, "invocation_commit_ambiguous")
+        with self.assertRaises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+
+        rejected_operations = (
+            lambda: self.store.__enter__(),
+            lambda: self.store.enqueue(second_spec),
+            lambda: self.store.get("invocation-1"),
+            lambda: self.store.get_for_task("session-1", "task-1"),
+            lambda: self.store.recovery_snapshot_for_task("session-1", "task-1"),
+            lambda: self.store.attempts("invocation-1"),
+            lambda: self.store.attempts_page("invocation-1"),
+            lambda: self.store.recover_expired(),
+            lambda: self.store.claim_next("worker-2", lease_seconds=10),
+            lambda: self.store.claim("invocation-1", "worker-2", lease_seconds=10),
+            lambda: self.store.heartbeat(lease, lease_seconds=10),
+            lambda: self.store.complete(lease),
+            lambda: self.store.fail(lease, "must be rejected"),
+            lambda: self.store.schema_version(),
+        )
+        for operation in rejected_operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(InvocationStorePoisonedError) as poisoned:
+                    operation()
+                self.assertEqual(poisoned.exception.code, "invocation_store_poisoned")
+
+        self.store.close()
+        self.store.close()
+        reopened = SQLiteInvocationAttemptStore(self.path, clock=self.clock)
+        try:
+            self.assertIsNone(reopened.get("invocation-2"))
+            self.assertEqual(reopened.get("invocation-1").status, InvocationStatus.RUNNING)
+        finally:
+            reopened.close()
+
+    def test_poison_close_failure_is_sanitized_and_close_can_retry(self):
+        markers = ("private-commit-canary", "private-rollback-canary", "private-close-canary")
+        with (
+            patch.object(
+                self.store,
+                "_commit_write_transaction",
+                side_effect=KeyboardInterrupt(markers[0]),
+            ),
+            patch.object(
+                self.store,
+                "_rollback_write_transaction",
+                side_effect=RuntimeError(markers[1]),
+            ),
+            patch.object(
+                self.store,
+                "_close_connection",
+                side_effect=SystemExit(markers[2]),
+            ),
+        ):
+            with self.assertRaises(InvocationCommitAmbiguityError) as captured:
+                self.store.enqueue(job_spec())
+            with self.assertRaises(InvocationStoreClosedError) as close_captured:
+                self.store.close()
+
+            close_graph = exception_graph_text(close_captured.exception)
+            for marker in markers:
+                self.assertNotIn(marker, close_graph)
+            self.assertTrue(self.store._connection.in_transaction)
+            with self.assertRaises(sqlite3.OperationalError):
+                SQLiteInvocationAttemptStore(
+                    self.path,
+                    busy_timeout_ms=0,
+                    clock=self.clock,
+                )
+
+        rendered = "".join(
+            traceback.TracebackException.from_exception(captured.exception).format(chain=True)
+        )
+        for marker in markers:
+            self.assertNotIn(marker, rendered)
+            self.assertNotIn(marker, exception_graph_text(captured.exception))
+        with self.assertRaises(InvocationStorePoisonedError):
+            self.store.get("invocation-1")
+
+        self.store.close()
+        self.store.close()
+        with self.assertRaises(sqlite3.ProgrammingError):
+            self.store._connection.execute("SELECT 1")
+        reopened = SQLiteInvocationAttemptStore(self.path, clock=self.clock)
+        try:
+            self.assertIsNone(reopened.get("invocation-1"))
+        finally:
+            reopened.close()
+
+    def test_rollback_failure_never_hides_behind_a_noop_result(self):
+        def no_setup(_store):
+            return None
+
+        def stale_setup(store):
+            store.enqueue(job_spec())
+            lease = store.claim("invocation-1", "worker", lease_seconds=10)
+            assert lease is not None
+            return replace(lease, lease_token="stale-token")
+
+        cases = (
+            (
+                "no-op claim",
+                no_setup,
+                lambda store, _lease: store.claim_next("worker", lease_seconds=10),
+            ),
+            ("no-op recovery", no_setup, lambda store, _lease: store.recover_expired()),
+            (
+                "stale heartbeat",
+                stale_setup,
+                lambda store, lease: store.heartbeat(lease, lease_seconds=10),
+            ),
+            ("stale complete", stale_setup, lambda store, lease: store.complete(lease)),
+            (
+                "stale fail",
+                stale_setup,
+                lambda store, lease: store.fail(lease, "stale"),
+            ),
+        )
+        for index, (name, setup, operation) in enumerate(cases):
+            with self.subTest(name=name):
+                path = str(Path(self.tempdir.name) / f"rollback-noop-{index}.sqlite3")
+                store = SQLiteInvocationAttemptStore(path, clock=self.clock)
+                lease = setup(store)
+                try:
+                    with (
+                        patch.object(
+                            store,
+                            "_commit_write_transaction",
+                            side_effect=KeyboardInterrupt("hidden precommit"),
+                        ),
+                        patch.object(
+                            store,
+                            "_rollback_write_transaction",
+                            side_effect=RuntimeError("hidden rollback"),
+                        ),
+                    ):
+                        with self.assertRaises(InvocationCommitAmbiguityError):
+                            operation(store, lease)
+                    with self.assertRaises(InvocationStorePoisonedError):
+                        store.schema_version()
+                finally:
+                    store.close()
+
+    def test_explicit_close_is_idempotent_and_stably_rejects_access(self):
+        self.store.close()
+        self.store.close()
+
+        with self.assertRaises(InvocationStoreClosedError) as captured:
+            self.store.schema_version()
+        self.assertEqual(captured.exception.code, "invocation_store_closed")
+
+    def test_close_failure_is_typed_sanitized_and_retryable(self):
+        marker = f"private sqlite close failure SELECT secret FROM ledger AT {self.path}"
+        with patch.object(
+            self.store,
+            "_close_connection",
+            side_effect=HostileFault(marker),
+        ):
+            with self.assertRaises(InvocationStoreClosedError) as captured:
+                self.store.close()
+
+        rendered = "".join(
+            traceback.TracebackException.from_exception(captured.exception).format(chain=True)
+        )
+        self.assertNotIn(marker, rendered)
+        self.assertEqual(captured.exception.code, "invocation_store_closed")
+        with self.assertRaises(InvocationStoreClosedError):
+            self.store.get("invocation-1")
+
+        self.store.close()
+        self.store.close()
+        with self.assertRaises(sqlite3.ProgrammingError):
+            self.store._connection.execute("SELECT 1")
+
+    def test_context_exit_preserves_a_hostile_body_over_a_close_failure(self):
+        body_marker = "private context body"
+        close_marker = "private context close"
+        body_error = HostileFault(body_marker)
+        with patch.object(
+            self.store,
+            "_close_connection",
+            side_effect=HostileFault(close_marker),
+        ):
+            with self.assertRaises(HostileFault) as captured:
+                with self.store:
+                    raise body_error
+
+        self.assertIs(captured.exception, body_error)
+        self.assertEqual(captured.exception.secret, body_marker)
+        self.assertNotIn(close_marker, exception_graph_text(captured.exception))
+        with self.assertRaises(InvocationStoreClosedError):
+            self.store.schema_version()
+        self.store.close()
+
+    def test_read_body_rollback_and_close_faults_poison_without_detail_leakage(self):
+        self.store.enqueue(job_spec())
+        markers = ("private read body", "private read rollback", "private read close")
+        with (
+            patch.object(
+                self.store,
+                "_row_to_job",
+                side_effect=KeyboardInterrupt(markers[0]),
+            ),
+            patch.object(
+                self.store,
+                "_rollback_read_transaction",
+                side_effect=HostileFault(markers[1]),
+            ),
+            patch.object(
+                self.store,
+                "_close_connection",
+                side_effect=SystemExit(markers[2]),
+            ),
+        ):
+            with self.assertRaises(InvocationStorePoisonedError) as captured:
+                self.store.recovery_snapshot_for_task("session-1", "task-1")
+
+        rendered = "".join(
+            traceback.TracebackException.from_exception(captured.exception).format(chain=True)
+        )
+        for marker in markers:
+            self.assertNotIn(marker, rendered)
+            self.assertNotIn(marker, exception_graph_text(captured.exception))
+        with self.assertRaises(InvocationStorePoisonedError):
+            self.store.schema_version()
+        self.store.close()
+
+    def test_reconciliation_read_begin_and_rollback_faults_poison(self):
+        markers = ("private write commit", "private read begin", "private read rollback")
+        write_commit = self.store._commit_write_transaction
+        read_begin = self.store._begin_read_transaction
+
+        def committed_write_failure(connection):
+            write_commit(connection)
+            raise RuntimeError(markers[0])
+
+        def started_read_failure(connection):
+            read_begin(connection)
+            raise KeyboardInterrupt(markers[1])
+
+        with (
+            patch.object(
+                self.store,
+                "_commit_write_transaction",
+                side_effect=committed_write_failure,
+            ),
+            patch.object(
+                self.store,
+                "_begin_read_transaction",
+                side_effect=started_read_failure,
+            ),
+            patch.object(
+                self.store,
+                "_rollback_read_transaction",
+                side_effect=SystemExit(markers[2]),
+            ),
+        ):
+            with self.assertRaises(InvocationCommitAmbiguityError) as captured:
+                self.store.enqueue(job_spec())
+
+        rendered = "".join(
+            traceback.TracebackException.from_exception(captured.exception).format(chain=True)
+        )
+        for marker in markers:
+            self.assertNotIn(marker, rendered)
+            self.assertNotIn(marker, exception_graph_text(captured.exception))
+        with self.assertRaises(InvocationStorePoisonedError):
+            self.store.schema_version()
+        reopened = SQLiteInvocationAttemptStore(self.path, clock=self.clock)
+        try:
+            self.assertEqual(reopened.get("invocation-1").status, InvocationStatus.QUEUED)
+        finally:
+            reopened.close()
+
+    def test_reconciliation_read_commit_and_rollback_faults_poison(self):
+        markers = ("private write ack", "private read commit", "private read rollback")
+        write_commit = self.store._commit_write_transaction
+
+        def committed_write_failure(connection):
+            write_commit(connection)
+            raise RuntimeError(markers[0])
+
+        with (
+            patch.object(
+                self.store,
+                "_commit_write_transaction",
+                side_effect=committed_write_failure,
+            ),
+            patch.object(
+                self.store,
+                "_commit_read_transaction",
+                side_effect=KeyboardInterrupt(markers[1]),
+            ),
+            patch.object(
+                self.store,
+                "_rollback_read_transaction",
+                side_effect=RuntimeError(markers[2]),
+            ),
+        ):
+            with self.assertRaises(InvocationCommitAmbiguityError) as captured:
+                self.store.enqueue(job_spec())
+
+        rendered = "".join(
+            traceback.TracebackException.from_exception(captured.exception).format(chain=True)
+        )
+        for marker in markers:
+            self.assertNotIn(marker, rendered)
+            self.assertNotIn(marker, exception_graph_text(captured.exception))
+        with self.assertRaises(InvocationStorePoisonedError):
+            self.store.get("invocation-1")
+
+    def test_post_end_read_commit_interrupt_is_preserved_without_poison(self):
+        self.store.enqueue(job_spec())
+        read_commit = self.store._commit_read_transaction
+
+        def committed_read_interrupt(connection):
+            read_commit(connection)
+            raise KeyboardInterrupt("read cancellation remains observable")
+
+        with patch.object(
+            self.store,
+            "_commit_read_transaction",
+            side_effect=committed_read_interrupt,
+        ):
+            with self.assertRaisesRegex(KeyboardInterrupt, "cancellation remains observable"):
+                self.store.recovery_snapshot_for_task("session-1", "task-1")
+
+        self.assertEqual(self.store.schema_version(), 2)
+
+    def test_waiting_callers_observe_poison_instead_of_a_closed_connection(self):
+        self.store._lock.acquire()
+        ready = threading.Barrier(3)
+
+        def read_after_barrier():
+            ready.wait(timeout=2)
+            return self.store.get("invocation-1")
+
+        def write_after_barrier():
+            ready.wait(timeout=2)
+            return self.store.enqueue(job_spec())
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                read = executor.submit(read_after_barrier)
+                write = executor.submit(write_after_barrier)
+                ready.wait(timeout=2)
+                self.store._poison_store()
+                self.store._lock.release()
+
+                for future in (read, write):
+                    with self.assertRaises(InvocationStorePoisonedError):
+                        future.result(timeout=2)
+        finally:
+            # RLock does not expose ownership portably; release is needed only if
+            # an assertion or barrier error interrupted the normal handoff above.
+            try:
+                self.store._lock.release()
+            except RuntimeError:
+                pass
+
+    def test_owned_mutations_reject_mixed_lease_binding(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        forged = replace(
+            lease,
+            session_id="other-session",
+            plan_id="other-plan",
+            task_id="other-task",
+            agent_id="other-agent",
+            idempotency_key="invoke:other-task",
+            payload_digest="0" * 64,
+            attempt_number=2,
+            max_attempts=4,
+            claimed_at=persisted_timestamp(1),
+        )
+        running = tuple(self.store._connection.iterdump())
+
+        for operation in (
+            lambda: self.store.heartbeat(forged, lease_seconds=10),
+            lambda: self.store.complete(forged, result_ref="result:forged"),
+            lambda: self.store.fail(forged, "forged failure"),
+        ):
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(
+                    InvocationIntegrityError,
+                    "lease binding differs from durable ownership",
+                ):
+                    operation()
                 self.assertEqual(tuple(self.store._connection.iterdump()), running)
 
     def test_fencing_epoch_is_scoped_to_one_invocation(self):
