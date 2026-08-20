@@ -192,6 +192,45 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             await second.run(altered)
         second.event_store.close()
 
+    async def test_durably_running_task_is_quarantined_without_reinvocation(self):
+        calls = 0
+
+        async def handler(invocation):
+            nonlocal calls
+            calls += 1
+            return AgentResult("must not run")
+
+        plan = WorkflowPlan(
+            "recover-running",
+            "不可重复执行",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-running",
+        )
+        seeded = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        graph = await seeded._initialize_plan(plan)
+        running = graph.transition("task", TaskStatus.RUNNING)
+        await seeded._record_transition(plan.session_id, running, plan.plan_id)
+        event_count = len(seeded.event_store.read_stream("session:recover-running"))
+        seeded.event_store.close()
+
+        recovered = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        recovered.register_agent(registration("worker", handler))
+        with self.assertRaisesRegex(
+            SessionRecoveryError,
+            "durably RUNNING task without supported invocation recovery evidence",
+        ):
+            await recovered.run(plan)
+
+        self.assertEqual(calls, 0)
+        self.assertEqual(
+            len(recovered.event_store.read_stream("session:recover-running")),
+            event_count,
+        )
+        self.assertNotIn(plan.session_id, recovered._plans)
+        self.assertNotIn(plan.session_id, recovered._graphs)
+        recovered.event_store.close()
+
     async def test_approval_and_dependency_artifact_survive_multiple_restarts(self):
         research_calls = 0
 

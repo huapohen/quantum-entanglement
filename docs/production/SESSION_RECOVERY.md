@@ -93,6 +93,21 @@ budgets, and rolling back before `8049ac3` restores session-sized accumulation.
 Such a rollback is safe only for a quarantined, measured database and must not be
 used as a general production workaround.
 
+## Unreconciled invocation quarantine
+
+If complete replay leaves any task durably `RUNNING`, recovery now raises
+`SessionRecoveryError` before publishing the candidate plan, graph, approvals, or artifacts.
+The current invocation-start/result events do not contain the full invocation ID, payload
+digest, attempt ID/number, lease epoch, token digest, and result-receipt identity required by
+`INVOCATION_RECOVERY_COORDINATION.md`. The runtime therefore cannot construct trusted recovery
+evidence from that history.
+
+This quarantine is an intentional availability tradeoff. It converts the former silent stuck
+projection into an explicit operator-visible integrity boundary, while guaranteeing that
+session recovery neither calls the Agent again nor appends a guessed failure/completion. A
+future versioned event decoder, durable receipt source, and receipt-bound projector must land
+before any matrix decision is acted on by `OrchestratorKernel`.
+
 ## Verification evidence
 
 Targeted verification:
@@ -118,7 +133,8 @@ This slice does not provide:
 - a wall-clock, CPU, SQLite-page, or per-tenant recovery quota;
 - atomic publication across session recovery and the separate artifact-ledger replay;
 - a distributed recovery lock or protection from two orchestrator processes;
-- reconciliation for a task left `RUNNING` after process failure;
+- automatic reconciliation for a task left `RUNNING` after process failure (such a task is
+  now explicitly quarantined before projection publication);
 - durable attempt fencing, heartbeats, action receipts, or effect-unknown handling;
 - an authenticated service endpoint, tenant-complete storage, or safe real connector.
 
