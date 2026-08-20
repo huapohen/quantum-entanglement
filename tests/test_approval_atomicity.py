@@ -50,6 +50,41 @@ class ApprovalAtomicityTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         self.kernel.event_store.close()
 
+    async def test_committed_request_batch_is_reconciled_after_wrapper_failure(self) -> None:
+        self.kernel.register_agent(
+            registration("publisher", lambda invocation: AgentResult("published"))
+        )
+        plan = WorkflowPlan(
+            "request-post-commit-failure",
+            "审批请求提交成功后的包装器异常必须协调",
+            "user",
+            (approval_task("publish"),),
+            plan_id="plan-request-post-commit-failure",
+        )
+        original_append_many = self.kernel.event_store.append_many
+
+        def commit_then_raise(*args, **kwargs):
+            original_append_many(*args, **kwargs)
+            raise RuntimeError("injected post-commit wrapper failure")
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=commit_then_raise,
+        ):
+            paused = await self.kernel.run(plan)
+
+        self.assertEqual(paused.statuses["publish"], TaskStatus.WAITING_APPROVAL)
+        self.assertEqual(len(paused.needs_you), 1)
+        request = paused.needs_you[0]
+        self.assertEqual(self.kernel.approvals.get(request.request_id), request)
+        durable_events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        request_events = tuple(
+            stored for stored in durable_events if stored.event.event_type == "approval.requested"
+        )
+        self.assertEqual(len(request_events), 1)
+        self.assertEqual(request_events[0].event.payload, request.to_dict())
+
     async def test_failed_decision_batch_never_grants_in_memory_authority(self) -> None:
         publish_calls = 0
 

@@ -1036,29 +1036,30 @@ class OrchestratorKernel:
             )
             stream_id = self._stream_id(plan.session_id)
             expected_version = self.event_store.stream_version(stream_id)
-            stored_events = self.event_store.append_many(
-                stream_id,
-                (
-                    self._transition_event(
-                        plan.session_id,
-                        running,
-                        correlation_id,
-                    ),
-                    self._transition_event(
-                        plan.session_id,
-                        waiting,
-                        correlation_id,
-                    ),
-                    DomainEvent(
-                        stream_id=stream_id,
-                        event_type="approval.requested",
-                        actor_id=self.SYSTEM_ACTOR.actor_id,
-                        correlation_id=correlation_id,
-                        causation_id=task.task_id,
-                        idempotency_key="approval-request:%s" % task.task_id,
-                        payload=request.to_dict(),
-                    ),
+            request_events = (
+                self._transition_event(
+                    plan.session_id,
+                    running,
+                    correlation_id,
                 ),
+                self._transition_event(
+                    plan.session_id,
+                    waiting,
+                    correlation_id,
+                ),
+                DomainEvent(
+                    stream_id=stream_id,
+                    event_type="approval.requested",
+                    actor_id=self.SYSTEM_ACTOR.actor_id,
+                    correlation_id=correlation_id,
+                    causation_id=task.task_id,
+                    idempotency_key="approval-request:%s" % task.task_id,
+                    payload=request.to_dict(),
+                ),
+            )
+            stored_events = self._append_many_reconciled(
+                stream_id,
+                request_events,
                 expected_version=expected_version,
             )
             applied_running = graph.transition(task.task_id, TaskStatus.RUNNING)
