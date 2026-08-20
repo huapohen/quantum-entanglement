@@ -113,11 +113,12 @@ def _normalize_timestamp(value: str, name: str = "timestamp") -> str:
         raise ValueError(f"{name} must be a strict RFC 3339 timestamp")
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
+        normalized = parsed.astimezone(timezone.utc)
+    except (OverflowError, ValueError) as exc:
         raise ValueError(f"{name} must be an RFC 3339 timestamp") from exc
     if parsed.tzinfo is None:
         raise ValueError(f"{name} must include a timezone")
-    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    return normalized.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _lease_deadline(now: str, lease_seconds: float) -> str:
