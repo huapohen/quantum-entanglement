@@ -40,6 +40,7 @@ _CORE_TABLES = (
     "artifact_versions",
     "projection_offsets",
     "projection_receipts",
+    "qe_revocation_high_water",
     "action_receipts",
 )
 

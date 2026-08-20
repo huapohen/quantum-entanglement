@@ -28,6 +28,7 @@ from quantum_entanglement.delivery import OutboxMessage, OutboxStatus
 from quantum_entanglement.events import DomainEvent
 from quantum_entanglement.projections import SQLiteProjectionOffsetStore
 from quantum_entanglement.store import SQLiteEventStore
+from quantum_entanglement.tenancy import SQLiteRevocationRevisionGuard, TenantId
 
 T0 = "2026-08-20T00:00:00Z"
 
@@ -101,6 +102,10 @@ class SQLiteBackupTests(unittest.TestCase):
                 """,
                 (1, "restore-read-model"),
             )
+
+    def seed_revocation_high_water(self):
+        with SQLiteRevocationRevisionGuard(str(self.source)) as guard:
+            self.assertTrue(guard.check_and_advance(TenantId("tenant-1"), 3, "a" * 64))
 
     def test_online_backup_captures_wal_state_and_verifies_manifest(self):
         backup, manifest_path, created = self.create_backup()
@@ -283,6 +288,27 @@ class SQLiteBackupTests(unittest.TestCase):
         backup, manifest_path, _created = self.create_backup()
         value = json.loads(manifest_path.read_text(encoding="utf-8"))
         value["tableCounts"].pop("projection_receipts")
+        manifest_path.write_text(json.dumps(value), encoding="utf-8")
+
+        with self.assertRaisesRegex(BackupIntegrityError, "table counts"):
+            verify_sqlite_backup(backup)
+
+    def test_revocation_high_water_count_tampering_is_rejected(self):
+        self.seed_revocation_high_water()
+        backup, manifest_path, created = self.create_backup()
+        self.assertEqual(created.table_counts["qe_revocation_high_water"], 1)
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        value["tableCounts"]["qe_revocation_high_water"] = 2
+        manifest_path.write_text(json.dumps(value), encoding="utf-8")
+
+        with self.assertRaisesRegex(BackupIntegrityError, "table counts"):
+            verify_sqlite_backup(backup)
+
+    def test_revocation_high_water_count_omission_is_rejected(self):
+        self.seed_revocation_high_water()
+        backup, manifest_path, _created = self.create_backup()
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        value["tableCounts"].pop("qe_revocation_high_water")
         manifest_path.write_text(json.dumps(value), encoding="utf-8")
 
         with self.assertRaisesRegex(BackupIntegrityError, "table counts"):
