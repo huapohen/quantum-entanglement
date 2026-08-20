@@ -652,6 +652,8 @@ class SQLiteInvocationAttemptStore:
         current_attempt: Optional[InvocationAttempt],
         *,
         attempt_count: int,
+        distinct_attempt_count: int,
+        distinct_epoch_count: int,
         minimum_attempt_number: Optional[int],
         maximum_attempt_number: Optional[int],
         maximum_lease_epoch: Optional[int],
@@ -660,6 +662,8 @@ class SQLiteInvocationAttemptStore:
             raise InvocationIntegrityError(
                 "invocation attempt count does not match attempts_started"
             )
+        if distinct_attempt_count != attempt_count or distinct_epoch_count != attempt_count:
+            raise InvocationIntegrityError("invocation attempt history has duplicate identities")
         if attempt_count == 0:
             if any(
                 value is not None
@@ -746,6 +750,8 @@ class SQLiteInvocationAttemptStore:
             aggregate = connection.execute(
                 """
                 SELECT COUNT(*) AS attempt_count,
+                       COUNT(DISTINCT attempt_number) AS distinct_attempt_count,
+                       COUNT(DISTINCT lease_epoch) AS distinct_epoch_count,
                        MIN(attempt_number) AS minimum_attempt_number,
                        MAX(attempt_number) AS maximum_attempt_number,
                        MAX(lease_epoch) AS maximum_lease_epoch
@@ -760,6 +766,14 @@ class SQLiteInvocationAttemptStore:
                 attempt_count = _persisted_integer(
                     aggregate["attempt_count"],
                     "invocation attempt count",
+                )
+                distinct_attempt_count = _persisted_integer(
+                    aggregate["distinct_attempt_count"],
+                    "distinct invocation attempt count",
+                )
+                distinct_epoch_count = _persisted_integer(
+                    aggregate["distinct_epoch_count"],
+                    "distinct invocation lease epoch count",
                 )
                 minimum_attempt_number = (
                     None
@@ -810,6 +824,8 @@ class SQLiteInvocationAttemptStore:
                 job,
                 current_attempt,
                 attempt_count=attempt_count,
+                distinct_attempt_count=distinct_attempt_count,
+                distinct_epoch_count=distinct_epoch_count,
                 minimum_attempt_number=minimum_attempt_number,
                 maximum_attempt_number=maximum_attempt_number,
                 maximum_lease_epoch=maximum_lease_epoch,

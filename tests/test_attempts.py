@@ -737,6 +737,12 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         )
         self.assertTrue(decoded_queries)
         self.assertTrue(all("LIMIT 2" in statement for statement in decoded_queries))
+        aggregate_queries = tuple(
+            statement for statement in normalized if "COUNT(*) AS ATTEMPT_COUNT" in statement
+        )
+        self.assertEqual(len(aggregate_queries), 1)
+        self.assertIn("COUNT(DISTINCT ATTEMPT_NUMBER)", aggregate_queries[0])
+        self.assertIn("COUNT(DISTINCT LEASE_EPOCH)", aggregate_queries[0])
 
     def test_recovery_snapshot_remains_consistent_while_wal_writer_advances_heartbeat(self):
         self.store.enqueue(job_spec())
