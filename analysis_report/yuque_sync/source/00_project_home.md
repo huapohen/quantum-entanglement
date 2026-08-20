@@ -40,8 +40,8 @@
 - [商用实施计划｜Quantum Entanglement 0.2 → 1.0](https://app.notion.com/p/3c1ead4b996e81ea9d69d606525f8d93)
 - [Quantum Entanglement Production Tasks](https://app.notion.com/p/36464c0e1cff46fa897977dd86b70fd0)
 - [07｜当前实现证据与生产边界](https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853)
+- [10｜认证化 Invocation 事务恢复证据](https://app.notion.com/p/3c2ead4b996e8105b0cad304ef28dd38)
 
 ---
 
 来源：https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204
-
