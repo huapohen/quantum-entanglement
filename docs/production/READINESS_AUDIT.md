@@ -1,5 +1,10 @@
 # Quantum Entanglement 生产就绪审计
 
+> 历史审计：本文固定记录早期 `ce50aa8` 基线，不代表当前主线。当前结论与已关闭/未关闭
+> 缺口以 [`CURRENT_READINESS.md`](./CURRENT_READINESS.md) 和
+> [`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md) 为准；请勿引用本文的旧测试数量、旧表名或
+> “尚无 config/secret/backup”等结论描述当前实现。
+
 - 审计基线：`ce50aa8`
 - 审计日期：2026-08-20
 - 结论口径：审计期间出现的并发未提交代码不计入本审计结论；只有基线中已提交、可复现的内容作为正式证据。
