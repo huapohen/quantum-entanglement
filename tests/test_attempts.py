@@ -1164,6 +1164,22 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(InvocationIntegrityError, "moves backward in time"):
             self.store.recovery_snapshot_for_task("session-1", "task-1")
 
+    def test_recovery_snapshot_rejects_historical_attempt_started_before_job(self):
+        self.store.enqueue(job_spec(max_attempts=2))
+        first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)
+        self.assertTrue(self.store.fail(first, "retry", retry_at=T0))
+        self._seed_second_running_attempt()
+        self.store._connection.execute(
+            """
+            UPDATE invocation_attempts SET started_at = ?
+            WHERE invocation_id = ? AND attempt_number = 1
+            """,
+            ("2026-08-19T23:59:59.000000Z", "invocation-1"),
+        )
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "starts before its job"):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
+
     def test_recovery_snapshot_decodes_and_rejects_unsafe_historical_attempts(self):
         self.store.enqueue(job_spec(max_attempts=2))
         first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)
