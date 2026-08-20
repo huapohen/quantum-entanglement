@@ -1257,7 +1257,7 @@ class OutboxPublisher:
     def _format_error_safely(self, error: BaseException) -> str:
         try:
             rendered = self._error_formatter(error)
-        except Exception:
+        except BaseException:
             self._logger.emit("qe.publisher.error_classifier_failed")
             return "connector_failure"
         if type(rendered) is not str or rendered not in self._allowed_error_codes:
