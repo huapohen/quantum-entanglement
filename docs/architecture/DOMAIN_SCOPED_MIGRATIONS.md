@@ -1,6 +1,6 @@
 # Domain-scoped SQLite migration sidecar
 
-Status: **phase-1 bridge foundations implemented; release execution still blocked**
+Status: **phase-1 bridge planner and atomic applier implemented; release integration still blocked**
 
 Decision scope: preserve the immutable legacy migration history numbered 1-3, introduce a
 domain-aware sidecar and deterministic dependency planner, and make a later artifact v4
@@ -10,8 +10,8 @@ Last reviewed against source: 2026-08-20
 
 This document distinguishes committed bridge primitives from the remaining release design.
 The implementation status below is authoritative for this checkout; later sections describe
-the complete target and are not proof that an executor, sparse migration, or release gate
-exists.
+the complete target and are not proof that a native/sparse executor, store integration, or
+release gate exists.
 
 ### Implementation status
 
@@ -25,18 +25,23 @@ Implemented and tested in `src/quantum_entanglement/domain_migrations.py`:
 - atomic, idempotent legacy metadata bootstrap for an already installed exact sidecar;
 - immutable, timestamp-free, registry-bound `SchemaState` inspection;
 - a pure deterministic `plan_bridge_migrations` planner whose closed action set contains
-  only `INSTALL_SIDECAR`, `BOOTSTRAP_LEGACY_METADATA`, and no-op.
+  only `INSTALL_SIDECAR`, `BOOTSTRAP_LEGACY_METADATA`, and no-op;
+- `apply_bridge_migration_plan`, which validates the complete plan model, obtains one
+  `BEGIN IMMEDIATE` writer transaction, re-derives the canonical plan from the locked
+  `source_state_sha256`, applies only the two allowlisted bridge actions, checks the exact
+  post-write state, commits, and re-reads the committed state before returning.
 
 Not implemented and therefore release-blocking:
 
-- an atomic plan applier that revalidates `source_state_sha256` under its write lock;
 - native/domain-sparse migration writes, artifact v4, or a sparse-aware legacy runner;
 - domain-aware backup manifest v2 and restore reconciliation;
 - mixed-binary rollout evidence, service/admin integration, and a promoted phase-1 release.
 
-The sidecar installer and metadata bootstrap are currently two separately callable atomic
-operations. The planner may describe both, but no code yet executes that two-action plan as
-one revalidated orchestration. Operators must not treat a plan object as applied state.
+The sidecar installer and metadata bootstrap remain separately callable atomic primitives,
+and the bridge applier now composes them into one revalidated transaction. A plan object is
+still inert data: only a successful `apply_bridge_migration_plan` result whose committed
+`SchemaState` is retained as evidence proves that the bridge transition occurred. The applier
+intentionally cannot execute native SQL, write a sparse ledger, or promote a release.
 
 ## 1. Current implementation: authoritative facts
 
@@ -140,8 +145,8 @@ The sidecar design must provide all of the following:
 
 The current bridge foundation does not:
 
-- claim that native/domain-sparse application, backup format v2, an atomic plan applier,
-  or artifact v4 is implemented;
+- claim that native/domain-sparse application, backup format v2, or artifact v4 is
+  implemented;
 - change or renumber legacy migrations 1-3;
 - turn SQLite into a multi-host consensus database;
 - provide PostgreSQL/Alembic/Flyway compatibility or a generic SQL migration framework;
@@ -351,9 +356,9 @@ schema precondition because no ledger migration currently represents base `outbo
 ## 7. Legacy bootstrap protocol
 
 The exact sidecar installer and legacy metadata bootstrap described here are implemented
-as separate atomic primitives. The ten-step sequence below is the required contract for
-the still-missing plan applier when it orchestrates both actions; the current planner is
-pure and performs no database writes.
+as separate atomic primitives. `apply_bridge_migration_plan` implements the ten-step
+orchestration below when the deterministic plan contains either or both actions. The planner
+remains pure and performs no database writes.
 
 Bootstrap converts supported history into sidecar metadata without changing a legacy SQL
 file, ledger row, application table, or global ID.
@@ -384,22 +389,28 @@ history from object names or data.
 
 ### 7.2 Transaction sequence
 
-The future atomic plan applier must, under its write lock:
+The atomic bridge plan applier performs the following under its write lock:
 
-1. validates registry constants before touching SQLite;
-2. verifies `PRAGMA foreign_keys=ON` and reads only `main` objects;
-3. validates the exact legacy ledger and owned objects with current packaged SQL;
-4. rejects unsupported or unledgered state;
-5. creates both exact sidecar tables when both are absent, or validates both when present;
-6. inserts one `legacy_bootstrap` metadata row for each applied legacy ID;
+1. validates every plan scalar, enum, exact tuple, action transition, bound, digest, and
+   release mode before touching SQLite;
+2. begins one `BEGIN IMMEDIATE` transaction and reads only `main` objects;
+3. inspects the locked exact legacy/sidecar state and compares its
+   `source_state_sha256` with the caller's plan;
+4. re-derives the canonical plan from that locked state and requires both value equality
+   and exact `plan_sha256` equality;
+5. creates both exact sidecar tables when the allowlisted action requires it, or validates
+   the existing pair;
+6. inserts one `legacy_bootstrap` metadata row for each applied legacy ID when the
+   allowlisted bootstrap action requires it;
 7. inserts the exact semantic dependency set, which is empty for legacy IDs 1-3;
-8. computes a canonical `SchemaState` and validates all current domain heads and
-   preconditions;
-9. commits; on any `BaseException` or commit failure, rolls back DDL and rows;
-10. re-reads and compares the committed state before reporting readiness.
+8. computes and compares the exact expected post-write `SchemaState` before commit;
+9. commits; on any `BaseException` while it still owns the transaction, rolls back all DDL
+   and rows and verifies that the transaction ended;
+10. re-reads and compares the committed state before returning it.
 
-Two concurrent bridge initializers serialize on SQLite's writer lock. The loser validates
-the committed winner instead of inserting duplicate evidence.
+Two concurrent bridge initializers serialize on SQLite's writer lock. A plan created before
+the winner commits becomes stale and is rejected under the lock; the caller must inspect and
+plan again. An already bridged canonical no-op plan is accepted without DDL or DML.
 
 For a truly empty database, the bridge creates the unchanged legacy ledger schema and both
 sidecars but records no applied migration. Later domain plans may apply only their closure.
@@ -924,17 +935,20 @@ def inspect_schema_state(connection) -> SchemaState: ...
 
 
 def plan_bridge_migrations(state: SchemaState) -> BridgeMigrationPlan: ...
-```
 
-The executor remains a design candidate and must not be inferred from the planner API:
 
-```python
 def apply_bridge_migration_plan(
     connection,
     plan: BridgeMigrationPlan,
     *,
-    clock,
+    clock=utc_now,
 ) -> SchemaState: ...
+```
+
+The native/sparse executor remains a design candidate and must not be inferred from the
+bridge applier API:
+
+```python
 
 
 def apply_native_domain_migration_plan(
@@ -960,8 +974,8 @@ under lock.
 
 ### 20.1 Current baseline commands
 
-These commands verify the legacy runner, committed bridge foundation, and current backup
-behavior; they do not exercise a plan applier or sparse migration:
+These commands verify the legacy runner, committed bridge planner/applier foundation, and
+current backup behavior; they do not exercise a native/sparse migration:
 
 ```bash
 PYTHONPATH=src python3 -m unittest tests.test_domain_migrations -v
@@ -976,21 +990,17 @@ python3 -m compileall -q src tests
 git diff --check
 ```
 
-They are evidence of the baseline to preserve, not evidence that this proposal exists.
+They are evidence of the implemented bridge-only baseline to preserve, not evidence that
+native/sparse migrations, backup v2, or production promotion exist.
 
-### 20.2 Future implementation test groups
+### 20.2 Remaining implementation test groups
 
-Atomic commits must add deterministic tests for:
+The current suite already covers exact sidecar/bootstrap models, deterministic bridge
+planning, locked source revalidation, canonical plan comparison, no-op behavior,
+concurrency, and DDL/DML/commit/rollback fault injection. Remaining atomic commits must add
+deterministic tests for:
 
-- exact sidecar DDL and weak/partial/shadow object rejection;
-- bootstrap from empty and every legacy prefix;
-- unledgered/drifted/newer state rejection;
-- registry uniqueness, domain continuity, dependencies, cycles, ownership, and canonical
-  digest;
-- deterministic plan ordering across process/hash seeds;
 - independent domain selection and sparse ledgers;
-- concurrent planning/application and state-digest recheck;
-- every transaction/commit/BaseException failure boundary;
 - v3 base precondition and legacy upgrade shapes;
 - v4 clean, populated, collision, shared-blob, orphan, rollback, and large-data cases;
 - old/bridge/v4 wheel process matrix;
