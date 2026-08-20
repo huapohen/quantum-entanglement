@@ -210,8 +210,13 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         seeded = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
         graph = await seeded._initialize_plan(plan)
-        running = graph.transition("task", TaskStatus.RUNNING)
-        await seeded._record_transition(plan.session_id, running, plan.plan_id)
+        await seeded._commit_transition(
+            plan.session_id,
+            graph,
+            "task",
+            TaskStatus.RUNNING,
+            plan.plan_id,
+        )
         event_count = len(seeded.event_store.read_stream("session:recover-running"))
         seeded.event_store.close()
 

@@ -373,22 +373,61 @@ class OrchestratorKernel:
             },
         )
 
-    async def _record_transition(
+    async def _commit_planned_transitions(
         self,
         session_id: str,
-        transition: TaskTransition,
+        graph: TaskGraph,
+        transitions: Tuple[TaskTransition, ...],
         correlation_id: Optional[str],
         *,
         causation_id: Optional[str] = None,
     ) -> None:
-        await self._append(
+        """Persist exact transitions atomically before publishing them to memory."""
+
+        if not transitions:
+            return
+        stream_id = self._stream_id(session_id)
+        expected_version = self.event_store.stream_version(stream_id)
+        events = tuple(
             self._transition_event(
                 session_id,
                 transition,
                 correlation_id,
                 causation_id=causation_id,
             )
+            for transition in transitions
         )
+        stored_events = self._append_many_reconciled(
+            stream_id,
+            events,
+            expected_version=expected_version,
+        )
+        for planned in transitions:
+            applied = graph.transition(planned.task_id, planned.current, planned.reason)
+            if applied != planned:
+                raise RuntimeError("persisted task transition differs from memory")
+        await self._emit_appended_batch(stored_events)
+
+    async def _commit_transition(
+        self,
+        session_id: str,
+        graph: TaskGraph,
+        task_id: str,
+        target: TaskStatus,
+        correlation_id: Optional[str],
+        reason: Optional[str] = None,
+        *,
+        causation_id: Optional[str] = None,
+    ) -> TaskTransition:
+        planned = graph.preview_transition(task_id, target, reason)
+        await self._commit_planned_transitions(
+            session_id,
+            graph,
+            (planned,),
+            correlation_id,
+            causation_id=causation_id,
+        )
+        return planned
 
     async def _initialize_plan(self, plan: WorkflowPlan) -> TaskGraph:
         existing = self._plans.get(plan.session_id)
@@ -1133,10 +1172,20 @@ class OrchestratorKernel:
         ):
             decision = type(decision)(PolicyOutcome.ALLOW, "covered by task-scoped human approval")
         if decision.outcome == PolicyOutcome.DENY:
-            running = graph.transition(task.task_id, TaskStatus.RUNNING)
-            await self._record_transition(plan.session_id, running, correlation_id)
-            failed = graph.transition(task.task_id, TaskStatus.FAILED, decision.reason)
-            await self._record_transition(plan.session_id, failed, correlation_id)
+            running = graph.preview_transition(task.task_id, TaskStatus.RUNNING)
+            failed = TaskTransition(
+                task.task_id,
+                TaskStatus.RUNNING,
+                TaskStatus.FAILED,
+                decision.reason,
+                running.revision + 1,
+            )
+            await self._commit_planned_transitions(
+                plan.session_id,
+                graph,
+                (running, failed),
+                correlation_id,
+            )
             return
         if decision.outcome == PolicyOutcome.NEEDS_APPROVAL:
             if any(
@@ -1208,8 +1257,13 @@ class OrchestratorKernel:
             await self._emit_appended_batch(stored_events)
             return
 
-        running = graph.transition(task.task_id, TaskStatus.RUNNING)
-        await self._record_transition(plan.session_id, running, correlation_id)
+        await self._commit_transition(
+            plan.session_id,
+            graph,
+            task.task_id,
+            TaskStatus.RUNNING,
+            correlation_id,
+        )
         try:
             bundle = await self._compile_context(plan, task)
             agent = self.registry.get(task.agent_id)
@@ -1278,11 +1332,22 @@ class OrchestratorKernel:
                     },
                 )
             )
-            completed = graph.transition(task.task_id, TaskStatus.COMPLETED)
-            await self._record_transition(plan.session_id, completed, correlation_id)
+            await self._commit_transition(
+                plan.session_id,
+                graph,
+                task.task_id,
+                TaskStatus.COMPLETED,
+                correlation_id,
+            )
         except Exception as exc:
-            failed = graph.transition(task.task_id, TaskStatus.FAILED, str(exc))
-            await self._record_transition(plan.session_id, failed, correlation_id)
+            await self._commit_transition(
+                plan.session_id,
+                graph,
+                task.task_id,
+                TaskStatus.FAILED,
+                correlation_id,
+                str(exc),
+            )
         finally:
             await self.plugins.emit(HookPoint.AFTER_DISPATCH, dispatch_context)
 
@@ -1298,10 +1363,12 @@ class OrchestratorKernel:
             graph = await self._initialize_plan(plan)
             active_plan = self._plans[plan.session_id]
             while True:
-                for transition in graph.refresh():
-                    await self._record_transition(
-                        active_plan.session_id, transition, active_plan.correlation_id
-                    )
+                await self._commit_planned_transitions(
+                    active_plan.session_id,
+                    graph,
+                    graph.preview_refresh(),
+                    active_plan.correlation_id,
+                )
                 ready = graph.ready()
                 if not ready:
                     break
