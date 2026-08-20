@@ -2100,7 +2100,12 @@ class CapabilityVerifier:
 
 @dataclass(frozen=True)
 class AccessRequest:
-    """Authorization input with no caller-controlled evaluation timestamp."""
+    """Canonical authorization input with no caller-controlled evaluation timestamp.
+
+    Its subject, tenant, and resource are not authenticated by construction. A service
+    composition must first match it to a context validated by the issuing admission
+    boundary; direct trusted-development callers remain inside the non-production boundary.
+    """
 
     request_id: str
     subject_id: str
@@ -2372,7 +2377,11 @@ class TenantAuthorizer:
         revocations: RevocationSnapshot,
         verified_capabilities: Iterable[VerifiedCapability] = (),
     ) -> AuthorizationDecision:
-        """Authorize at one service-clock instant using typed trusted inputs."""
+        """Authorize at one service-clock instant after external request-context binding.
+
+        Membership, revocation state, and verified capabilities are typed trusted inputs.
+        `AccessRequest` is only canonical data; this method does not authenticate it.
+        """
 
         request = _snapshot_access_request(request)
         revocations = _snapshot_revocations(revocations)
