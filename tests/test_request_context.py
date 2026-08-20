@@ -85,9 +85,7 @@ def _fork_issuer_public_path_probe(connection, issuer, context, claims, request)
     try:
         connection.send(
             {
-                "identityChanged": (
-                    current_pid != owner_pid and current_epoch is not owner_epoch
-                ),
+                "identityChanged": (current_pid != owner_pid and current_epoch is not owner_epoch),
                 "results": {name: _capture_issuer_process_call(call) for name, call in calls},
                 "credentialClosed": credential.closed,
             }
