@@ -23,6 +23,9 @@ release. Promotion additionally requires the evidence defined in
   reconciliation, and operator runbook.
 - Checksum-verified outbox ambiguity migration with populated legacy-table rebuild and
   destructive rollback rehearsal.
+- Pure exact `qe.sqlite-backup/2` model/parser/serializer with canonical JSON bytes and
+  bridge-only registry/`SchemaState`/topology binding; operational create, verify, and
+  restore remain v1-only and native/sparse migrations remain unreachable.
 
 ### Changed
 
