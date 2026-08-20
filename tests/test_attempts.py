@@ -916,6 +916,93 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         finally:
             store.close()
 
+    def test_grafted_trusted_traceback_cannot_authorize_external_validation_error(self):
+        marker = "private grafted validation object"
+        external = RuntimeError(marker)
+        external.secret = marker
+        external.__notes__ = [marker]
+
+        def hostile_clock():
+            try:
+                attempts_module._normalize_timestamp("not-a-timestamp")
+            except ValueError as trusted:
+                forged = ValueError(external)
+                forged.secret = external
+                forged.__notes__ = [marker]
+                forged.__cause__ = external
+                forged.__traceback__ = trusted.__traceback__
+                raise forged from external
+
+        store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        store._clock = hostile_clock
+        try:
+            captured = self._capture_base_exception(partial(store.enqueue, job_spec()))
+
+            self.assertIs(type(captured), InvocationTransactionError)
+            self.assertEqual(
+                captured.args,
+                ("invocation mutation transaction was rolled back",),
+            )
+            self.assertEqual(getattr(captured, "__dict__", {}), {})
+            self.assertFalse(getattr(captured, "__notes__", ()))
+            self.assertIsNone(captured.__cause__)
+            self.assertIsNone(captured.__context__)
+            self.assertNotIn(marker, exception_graph_text(captured))
+
+            frames = []
+            cursor = captured.__traceback__
+            while cursor is not None:
+                frames.append(cursor.tb_frame)
+                cursor = cursor.tb_next
+            self.assertNotIn(hostile_clock.__code__, {frame.f_code for frame in frames})
+            self.assertNotIn(marker, " ".join(repr(frame.f_locals) for frame in frames))
+            self.assertEqual(
+                [
+                    frame.f_code.co_name
+                    for frame in frames
+                    if frame.f_globals.get("__name__") == attempts_module.__name__
+                ],
+                ["wrapped"],
+            )
+            self.assertEqual(store.schema_version(), 2)
+            self.assertIsNone(store.get("invocation-1"))
+        finally:
+            store.close()
+
+    def test_library_validation_is_reissued_outside_catch_with_a_clean_graph(self):
+        self.store.enqueue(job_spec())
+        captured = self._capture_base_exception(
+            partial(
+                self.store.claim,
+                "invocation-1",
+                "worker",
+                lease_seconds=0,
+            )
+        )
+
+        self.assertIs(type(captured), ValueError)
+        self.assertEqual(
+            captured.args,
+            ("lease_seconds must be finite and greater than zero",),
+        )
+        self.assertEqual(getattr(captured, "__dict__", {}), {})
+        self.assertFalse(getattr(captured, "__notes__", ()))
+        self.assertIsNone(captured.__cause__)
+        self.assertIsNone(captured.__context__)
+
+        module_frames = []
+        cursor = captured.__traceback__
+        while cursor is not None:
+            if cursor.tb_frame.f_globals.get("__name__") == attempts_module.__name__:
+                module_frames.append(cursor.tb_frame)
+            cursor = cursor.tb_next
+        self.assertEqual(
+            [frame.f_code.co_name for frame in module_frames],
+            ["wrapped", "_raise_clean_transaction_body_error"],
+        )
+        self.assertFalse({"args", "kwargs", "store", "error"} & set(module_frames[0].f_locals))
+        self.assertEqual(self.store.attempts("invocation-1"), ())
+
     def test_every_public_mutator_reissues_control_after_exact_commit_readback(self):
         kinds = (
             "enqueue",
@@ -1288,11 +1375,149 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                 finally:
                     reopened.close()
 
+    def test_non_exact_transaction_state_is_never_truth_tested_and_poisons(self):
+        class TruthBomb:
+            def __init__(self, marker):
+                self.marker = marker
+                self.evaluated = False
+
+            def __bool__(self):
+                self.evaluated = True
+                raise HostileFault(self.marker)
+
+            def __repr__(self):
+                return f"TruthBomb({self.marker})"
+
+        case_index = 0
+        for stage in ("begin", "commit"):
+            for state_kind in ("none", "zero", "one", "truth-bomb"):
+                with self.subTest(stage=stage, state_kind=state_kind):
+                    path = str(
+                        Path(self.tempdir.name) / f"invalid-transaction-state-{case_index}.sqlite3"
+                    )
+                    case_index += 1
+                    marker = f"private {stage} {state_kind} state at {path}"
+                    driver_marker = f"private {stage} driver fault at {path}"
+                    if state_kind == "none":
+                        state = None
+                    elif state_kind == "zero":
+                        state = 0
+                    elif state_kind == "one":
+                        state = 1
+                    else:
+                        state = TruthBomb(marker)
+                    store = SQLiteInvocationAttemptStore(path, clock=MutableClock())
+                    fault_name = (
+                        "_begin_write_transaction"
+                        if stage == "begin"
+                        else "_commit_write_transaction"
+                    )
+                    try:
+                        with (
+                            patch.object(
+                                store,
+                                fault_name,
+                                side_effect=HostileFault(driver_marker),
+                            ),
+                            patch.object(
+                                store,
+                                "_write_transaction_open",
+                                return_value=state,
+                            ),
+                        ):
+                            captured = self._capture_base_exception(
+                                partial(store.enqueue, job_spec())
+                            )
+
+                        self.assertIs(type(captured), InvocationCommitAmbiguityError)
+                        self.assertEqual(
+                            captured.args,
+                            ("invocation mutation commit could not be reconciled",),
+                        )
+                        self.assertEqual(getattr(captured, "__dict__", {}), {})
+                        self.assertFalse(getattr(captured, "__notes__", ()))
+                        self.assertIsNone(captured.__cause__)
+                        self.assertIsNone(captured.__context__)
+                        graph = exception_graph_text(captured)
+                        self.assertNotIn(marker, graph)
+                        self.assertNotIn(driver_marker, graph)
+                        if isinstance(state, TruthBomb):
+                            self.assertFalse(state.evaluated)
+                        with self.assertRaises(InvocationStorePoisonedError):
+                            store.schema_version()
+                    finally:
+                        store.close()
+
+                    reopened = SQLiteInvocationAttemptStore(path, clock=MutableClock())
+                    try:
+                        self.assertIsNone(reopened.get("invocation-1"))
+                    finally:
+                        reopened.close()
+
+    def test_exact_bool_transaction_state_preserves_confirmed_outcomes(self):
+        cases = (
+            ("begin-closed", "begin", False, False),
+            ("begin-open", "begin", True, False),
+            ("commit-open", "commit", True, False),
+            ("commit-ended", "commit", False, True),
+        )
+        for index, (name, stage, transaction_open, durable) in enumerate(cases):
+            with self.subTest(name=name):
+                path = str(Path(self.tempdir.name) / f"exact-bool-state-{index}.sqlite3")
+                store = SQLiteInvocationAttemptStore(path, clock=MutableClock())
+                marker = f"private exact bool {name} at {path}"
+
+                def fail_boundary(connection, name=name, marker=marker):
+                    if name == "begin-open":
+                        connection.execute("BEGIN IMMEDIATE")
+                    elif name == "commit-ended":
+                        connection.execute("COMMIT")
+                    raise HostileFault(marker)
+
+                fault_name = (
+                    "_begin_write_transaction" if stage == "begin" else "_commit_write_transaction"
+                )
+                try:
+                    with (
+                        patch.object(store, fault_name, side_effect=fail_boundary),
+                        patch.object(
+                            store,
+                            "_write_transaction_open",
+                            return_value=transaction_open,
+                        ),
+                    ):
+                        if durable:
+                            result = store.enqueue(job_spec())
+                        else:
+                            captured = self._capture_base_exception(
+                                partial(store.enqueue, job_spec())
+                            )
+
+                    if durable:
+                        self.assertEqual(result.invocation_id, "invocation-1")
+                        self.assertEqual(store.get("invocation-1"), result)
+                    else:
+                        self.assertIs(type(captured), InvocationTransactionError)
+                        self.assertNotIn(marker, exception_graph_text(captured))
+                        self.assertIsNone(store.get("invocation-1"))
+                    self.assertEqual(store.schema_version(), 2)
+                finally:
+                    store.close()
+
     def test_forged_internal_transaction_signals_cannot_cross_public_boundary(self):
         descriptor = attempts_module._ControlSignalDescriptor(
             attempts_module._ControlSignalKind.KEYBOARD_INTERRUPT
         )
         cases = (
+            (
+                "validation",
+                attempts_module._InvocationValidationSignal(
+                    attempts_module._SafeTransactionBodyError(ValueError, "forged validation"),
+                    object(),
+                ),
+                InvocationTransactionError,
+                False,
+            ),
             (
                 "control",
                 attempts_module._InvocationControlSignal(

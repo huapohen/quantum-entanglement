@@ -150,6 +150,15 @@ class _SafeTransactionBodyError:
     message: str
 
 
+class _InvocationValidationSignal(BaseException):
+    """Internal signal carrying one provenance-checked validation failure."""
+
+    def __init__(self, descriptor: _SafeTransactionBodyError, nonce: object) -> None:
+        super().__init__("invocation validation failed")
+        self.descriptor = descriptor
+        self.nonce = nonce
+
+
 class _CommitOutcomeUnknown(RuntimeError):
     """Internal signal that COMMIT returned an error after ending the transaction."""
 
@@ -216,7 +225,7 @@ def _control_signal_descriptor(error: BaseException) -> Optional[_ControlSignalD
 def _safe_transaction_body_error(
     error: BaseException,
 ) -> Optional[_SafeTransactionBodyError]:
-    """Copy only exact library-authored validation and integrity failures."""
+    """Copy exact validation failures only when every Python frame is trusted."""
 
     if type(error) not in {
         InvocationClockRegressionError,
@@ -229,10 +238,10 @@ def _safe_transaction_body_error(
     traceback_cursor = error.__traceback__
     if traceback_cursor is None:
         return None
-    while traceback_cursor.tb_next is not None:
+    while traceback_cursor is not None:
+        if traceback_cursor.tb_frame.f_code not in _TRUSTED_TRANSACTION_BODY_CODES:
+            return None
         traceback_cursor = traceback_cursor.tb_next
-    if traceback_cursor.tb_frame.f_code not in _TRUSTED_TRANSACTION_BODY_CODES:
-        return None
     try:
         message = str(error)
     except BaseException:
@@ -240,8 +249,30 @@ def _safe_transaction_body_error(
     return _SafeTransactionBodyError(cast(Type[Exception], type(error)), message)
 
 
-def _raise_safe_transaction_body_error(error: _SafeTransactionBodyError) -> NoReturn:
-    raise error.error_type(error.message) from None
+def _normalized_safe_transaction_body_error(
+    descriptor: object,
+) -> Optional[_SafeTransactionBodyError]:
+    if type(descriptor) is not _SafeTransactionBodyError:
+        return None
+    allowed_types = (
+        InvocationClockRegressionError,
+        InvocationConflictError,
+        InvocationIntegrityError,
+        TypeError,
+        ValueError,
+    )
+    if not any(descriptor.error_type is allowed for allowed in allowed_types):
+        return None
+    if type(descriptor.message) is not str:
+        return None
+    return _SafeTransactionBodyError(descriptor.error_type, descriptor.message)
+
+
+def _raise_clean_transaction_body_error(descriptor: _SafeTransactionBodyError) -> NoReturn:
+    normalized = _normalized_safe_transaction_body_error(descriptor)
+    if normalized is None:
+        raise InvocationTransactionError() from None
+    raise normalized.error_type(normalized.message) from None
 
 
 def _collect_trusted_module_code_objects() -> frozenset[CodeType]:
@@ -257,6 +288,9 @@ def _collect_trusted_module_code_objects() -> frozenset[CodeType]:
             continue
         visited.add(identity)
         if isinstance(candidate, FunctionType):
+            wrapped = getattr(candidate, "__wrapped__", None)
+            if isinstance(wrapped, FunctionType) and wrapped.__globals__ is globals():
+                pending.append(wrapped)
             if candidate.__globals__ is globals():
                 trusted.add(candidate.__code__)
                 if candidate.__closure__ is not None:
@@ -364,6 +398,7 @@ def _sanitize_control_signals(method: _Method) -> _Method:
 
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         descriptor: Optional[_ControlSignalDescriptor] = None
+        validation_error: Optional[_SafeTransactionBodyError] = None
         invalid_base_exception = False
         transaction_failure = False
         commit_ambiguity = False
@@ -379,7 +414,12 @@ def _sanitize_control_signals(method: _Method) -> _Method:
             try:
                 return method(*args, **kwargs)
             except BaseException as error:
-                if isinstance(error, _InvocationControlSignal):
+                if isinstance(error, _InvocationValidationSignal):
+                    if type(error) is _InvocationValidationSignal and error.nonce is boundary_nonce:
+                        validation_error = _normalized_safe_transaction_body_error(error.descriptor)
+                    if validation_error is None:
+                        invalid_base_exception = True
+                elif isinstance(error, _InvocationControlSignal):
                     if type(error) is _InvocationControlSignal and error.nonce is boundary_nonce:
                         descriptor = _normalized_control_signal_descriptor(error.descriptor)
                         control_ambiguity = error.ambiguity
@@ -405,6 +445,8 @@ def _sanitize_control_signals(method: _Method) -> _Method:
         del args, kwargs, store
         if descriptor is not None:
             _raise_clean_control_signal(descriptor, ambiguity=control_ambiguity)
+        if validation_error is not None:
+            _raise_clean_transaction_body_error(validation_error)
         if invalid_base_exception or transaction_failure:
             raise InvocationTransactionError() from None
         if commit_ambiguity:
@@ -891,7 +933,7 @@ class SQLiteInvocationAttemptStore:
             if body_control is not None:
                 self._raise_invocation_control_signal(body_control)
             if safe_body_error is not None:
-                _raise_safe_transaction_body_error(safe_body_error)
+                self._raise_invocation_validation_signal(safe_body_error)
             raise InvocationTransactionError()
 
     def _start_write_transaction(
@@ -904,16 +946,10 @@ class SQLiteInvocationAttemptStore:
             self._begin_write_transaction(connection)
         except BaseException as error:
             descriptor = _control_signal_descriptor(error)
-            try:
-                transaction_open = self._write_transaction_open(connection)
-            except BaseException as state_error:
-                state_control = _control_signal_descriptor(state_error)
-                close_control = self._poison_store()
-                raise _CommitOutcomeUnknown(
-                    may_reconcile=False,
-                    boundary_nonce=self._active_control_signal_boundary(),
-                    control_signal=close_control or state_control or descriptor,
-                ) from state_error
+            transaction_open = self._inspect_write_transaction_state(
+                connection,
+                prior_control=descriptor,
+            )
             if transaction_open:
                 try:
                     self._rollback_write_transaction(connection)
@@ -938,16 +974,10 @@ class SQLiteInvocationAttemptStore:
             self._commit_write_transaction(connection)
         except BaseException as error:
             descriptor = _control_signal_descriptor(error)
-            try:
-                transaction_open = self._write_transaction_open(connection)
-            except BaseException as state_error:
-                state_control = _control_signal_descriptor(state_error)
-                close_control = self._poison_store()
-                raise _CommitOutcomeUnknown(
-                    may_reconcile=False,
-                    boundary_nonce=self._active_control_signal_boundary(),
-                    control_signal=close_control or state_control or descriptor,
-                ) from state_error
+            transaction_open = self._inspect_write_transaction_state(
+                connection,
+                prior_control=descriptor,
+            )
             if not transaction_open:
                 raise _CommitOutcomeUnknown(
                     may_reconcile=True,
@@ -966,6 +996,33 @@ class SQLiteInvocationAttemptStore:
                 ) from rollback_error
             return False, descriptor
         return True, None
+
+    def _inspect_write_transaction_state(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        prior_control: Optional[_ControlSignalDescriptor],
+    ) -> bool:
+        """Return only an exact driver bool or quarantine the connection."""
+
+        try:
+            transaction_open = self._write_transaction_open(connection)
+        except BaseException as state_error:
+            state_control = _control_signal_descriptor(state_error)
+            close_control = self._poison_store()
+            raise _CommitOutcomeUnknown(
+                may_reconcile=False,
+                boundary_nonce=self._active_control_signal_boundary(),
+                control_signal=close_control or state_control or prior_control,
+            ) from state_error
+        if type(transaction_open) is not bool:
+            close_control = self._poison_store()
+            raise _CommitOutcomeUnknown(
+                may_reconcile=False,
+                boundary_nonce=self._active_control_signal_boundary(),
+                control_signal=close_control or prior_control,
+            ) from None
+        return transaction_open
 
     @staticmethod
     def _begin_write_transaction(connection: sqlite3.Connection) -> None:
@@ -1083,6 +1140,16 @@ class SQLiteInvocationAttemptStore:
             nonce,
             ambiguity=ambiguity,
         ) from None
+
+    def _raise_invocation_validation_signal(
+        self,
+        descriptor: _SafeTransactionBodyError,
+    ) -> NoReturn:
+        normalized = _normalized_safe_transaction_body_error(descriptor)
+        nonce = self._active_control_signal_boundary()
+        if normalized is None or nonce is None:
+            raise InvocationTransactionError()
+        raise _InvocationValidationSignal(normalized, nonce) from None
 
     def _raise_invocation_close_control_signal(
         self,
