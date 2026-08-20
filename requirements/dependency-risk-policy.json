@@ -1,0 +1,24 @@
+{
+  "evidence": {
+    "allowedDatabaseSources": [],
+    "allowedScanners": [],
+    "maximumDatabaseAgeSeconds": 604800,
+    "maximumDatabaseValiditySeconds": 1209600,
+    "maximumResultAgeSeconds": 86400
+  },
+  "exceptions": {
+    "maximumDurationSeconds": 2592000,
+    "minimumRationaleLength": 40,
+    "records": []
+  },
+  "format": "quantum-entanglement.dependency-risk-policy",
+  "licenses": {
+    "allowedExpressions": []
+  },
+  "promotionEnabled": false,
+  "schemaVersion": 1,
+  "vulnerabilities": {
+    "blockAtOrAbove": "high",
+    "blockWhenFixAvailableAtOrAbove": "medium"
+  }
+}
