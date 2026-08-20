@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 1,
-  "syncedAt": "2026-08-20T23:03:36+08:00",
+  "syncedAt": "2026-08-20T23:23:15+08:00",
   "syncPolicy": {
     "localSourceOfTruth": "analysis_report/",
     "remoteRepresentation": "semantic-mirror",
@@ -19,8 +19,8 @@
     }
   },
   "sourceControl": {
-    "manifestPreparedFromCommit": "31dbdbf49473baa24827dea95128b94d070c4d1a",
-    "manifestPreparedFromTree": "d5a97a6da6008176d6e7f5e44956094a8b1fe807",
+    "manifestPreparedFromCommit": "07b0d23db3722cd827ffca33d3898d5486f161e3",
+    "manifestPreparedFromTree": "c1897aee60bdbd9482e172ec6a53f9e8c952bda7",
     "implementationEvidenceCommit": "e4cbf040579bf1f33c2b7692d2fbd6944d837952",
     "implementationEvidenceTree": "0a879ae5351bdc3747a00cf4277ee6460df62d15",
     "authenticatedTransactionEvidenceCommit": "4538159b032d20f55d4f3bf1757589e5310fe701",
@@ -232,7 +232,7 @@
         },
         {
           "path": "analysis_report/research/13_206acc1_transaction_release_evidence.md",
-          "sha256": "9612e9abcda843113b88310289e83ea37c8c87b81205d206cacc49420360f3df"
+          "sha256": "45c063d84a8b50e82f0af089371140fa2445e37b4b5075c65637efe9e8b1bf37"
         }
       ],
       "updateMode": "created-then-targeted-append-release-evidence",
@@ -245,6 +245,7 @@
           "contains-8d82dd7-integration-candidate",
           "contains-5-of-5-gate-summary",
           "contains-release-evidence-sha256",
+          "contains-python3.13-verifier-binding",
           "contains-project-home-and-07-page-mentions"
         ]
       }
