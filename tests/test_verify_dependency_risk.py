@@ -132,18 +132,14 @@ class DependencyRiskVerifierTests(unittest.TestCase):
                 "risk_manifest_drift",
                 replace(
                     context,
-                    distribution_manifest=replace(
-                        context.distribution_manifest, sha256="c" * 64
-                    ),
+                    distribution_manifest=replace(context.distribution_manifest, sha256="c" * 64),
                 ),
             ),
             (
                 "risk_lock_drift",
                 replace(
                     context,
-                    lock_inventory=replace(
-                        context.lock_inventory, inventory_sha256="c" * 64
-                    ),
+                    lock_inventory=replace(context.lock_inventory, inventory_sha256="c" * 64),
                 ),
             ),
             (
@@ -206,17 +202,13 @@ class DependencyRiskVerifierTests(unittest.TestCase):
         finding = document["scan"]["components"][1]["vulnerabilities"][0]
         finding["severity"] = "unknown"
         policy, result, _ = self.case(result_document=document)
-        self.assert_code(
-            "risk_severity_unknown", lambda: self.verify(policy, result, context)
-        )
+        self.assert_code("risk_severity_unknown", lambda: self.verify(policy, result, context))
 
         document = self.result_document()
         finding = document["scan"]["components"][1]["vulnerabilities"][0]
         finding["fixStatus"] = "unknown"
         policy, result, _ = self.case(result_document=document)
-        self.assert_code(
-            "risk_fix_status_unknown", lambda: self.verify(policy, result, context)
-        )
+        self.assert_code("risk_fix_status_unknown", lambda: self.verify(policy, result, context))
 
         document = self.result_document()
         document["scan"]["components"][0]["license"] = {
@@ -241,9 +233,7 @@ class DependencyRiskVerifierTests(unittest.TestCase):
         document = self.enabled_policy_document(self.database_digest())
         document["evidence"]["maximumDatabaseValiditySeconds"] = 86400
         policy, result, context = self.case(policy_document=document)
-        self.assert_code(
-            "risk_database_stale", lambda: self.verify(policy, result, context)
-        )
+        self.assert_code("risk_database_stale", lambda: self.verify(policy, result, context))
 
         document = self.enabled_policy_document(self.database_digest())
         document["evidence"]["maximumResultAgeSeconds"] = 1800
@@ -254,17 +244,13 @@ class DependencyRiskVerifierTests(unittest.TestCase):
         policy, result, context = self.case()
         self.assert_code(
             "risk_database_drift",
-            lambda: self.verify(
-                policy, result, context, database_snapshot=b"different snapshot\n"
-            ),
+            lambda: self.verify(policy, result, context, database_snapshot=b"different snapshot\n"),
         )
 
         document = self.result_document()
         document["scanner"]["sha256"] = "a" * 64
         policy, result, context = self.case(result_document=document)
-        self.assert_code(
-            "risk_scanner_unapproved", lambda: self.verify(policy, result, context)
-        )
+        self.assert_code("risk_scanner_unapproved", lambda: self.verify(policy, result, context))
 
         document = self.result_document()
         document["database"]["integrityStatus"] = "unverified"
@@ -321,12 +307,8 @@ class DependencyRiskVerifierTests(unittest.TestCase):
         self.assertNotIn(b"RISK-2026-001", output)
 
     def test_expired_mismatched_and_unused_waivers_fail_closed(self):
-        policy, result, context = self.exception_case(
-            expires_at="2026-08-20T12:30:00Z"
-        )
-        self.assert_code(
-            "risk_exception_expired", lambda: self.verify(policy, result, context)
-        )
+        policy, result, context = self.exception_case(expires_at="2026-08-20T12:30:00Z")
+        self.assert_code("risk_exception_expired", lambda: self.verify(policy, result, context))
 
         policy, result, context = self.exception_case(wrong_digest=True)
         self.assert_code("risk_policy_denied", lambda: self.verify(policy, result, context))
@@ -352,8 +334,7 @@ class DependencyRiskVerifierTests(unittest.TestCase):
         context = replace(
             context,
             components=tuple(
-                ExpectedComponent(item.purl, item.artifact_sha256)
-                for item in result.components
+                ExpectedComponent(item.purl, item.artifact_sha256) for item in result.components
             ),
         )
         self.assert_code("risk_exception_unused", lambda: self.verify(policy, result, context))
@@ -361,9 +342,7 @@ class DependencyRiskVerifierTests(unittest.TestCase):
     def test_repository_default_policy_cannot_produce_promotion(self):
         policy_document = policy_fixtures.DependencyRiskPolicyTests.policy_document()
         policy, result, context = self.case(policy_document=policy_document)
-        self.assert_code(
-            "risk_promotion_disabled", lambda: self.verify(policy, result, context)
-        )
+        self.assert_code("risk_promotion_disabled", lambda: self.verify(policy, result, context))
 
 
 class DependencyRiskCliTests(unittest.TestCase):
@@ -391,9 +370,7 @@ class DependencyRiskCliTests(unittest.TestCase):
     def test_success_output_is_compact_canonical_and_redacted(self):
         stdout = StringIO()
         with (
-            patch.object(
-                risk_cli, "collect_risk_evidence_context", return_value=self.context
-            ),
+            patch.object(risk_cli, "collect_risk_evidence_context", return_value=self.context),
             patch.object(risk_cli, "load_dependency_risk_policy", return_value=self.policy),
             patch.object(risk_cli, "require_outside_repository_file"),
             patch.object(risk_cli, "load_dependency_risk_result", return_value=self.result),
