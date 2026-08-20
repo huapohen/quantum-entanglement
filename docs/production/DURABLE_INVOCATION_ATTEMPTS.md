@@ -72,7 +72,9 @@ the epoch. The old worker can no longer heartbeat, complete or fail the job.
 
 The token is hidden from dataclass `repr`, and both the current job and attempt history
 store only its SHA-256 digest. Never add the raw token to events, logs, traces, metrics or
-error messages. A
+error messages. Read observations expose the digest and canonical heartbeat timestamp so a
+single-snapshot recovery coordinator can verify job/attempt ownership without receiving the
+raw capability. A
 connector that can mutate a fenced resource should receive the integer fencing token and
 reject an epoch below the resource's last accepted epoch. If a connector cannot enforce
 fencing, it must enforce the stable invocation idempotency key and is still at-least-once.
