@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "source": "notion",
+  "destination": "yuque_private_space",
+  "sync_status": "blocked_before_destination_write",
+  "discovered_at": "2026-08-20T00:00:00+08:00",
+  "known_object_count": 32,
+  "page_or_database_count": 13,
+  "task_row_count": 19,
+  "objects": [
+    {"notion_id":"3c1ead4b-996e-81e2-89c7-dde1d597f630","title":"Quantum Entanglement｜人 + 多 Agent 协同办公","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-8198-97da-ff4941dcbd44","title":"综合报告｜人与多 Agent 群聊协同产品：调研、架构与实现","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-81ea-9d69-d606525f8d93","title":"商用实施计划｜Quantum Entanglement 0.2 → 1.0","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-8166-9cef-cf330b894853","title":"07｜当前实现证据与生产边界","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-8101-997f-ecd0302714ba","title":"证据库｜飞书与语雀调研截图（只读）","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":10,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"36464c0e-1cff-46fa-8979-77dd86b70fd0","title":"Quantum Entanglement Production Tasks","kind":"database","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-81c9-91e5-f915de1828bd","title":"00｜范围、证据与核心发现","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-813d-b62a-e91daada97d2","title":"01｜静然实现源码审计","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-81ed-961e-d6ae6ff3a8de","title":"02｜LangGraph、Harness 与框架深潜","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-81c4-9a7a-c20751c89cc7","title":"03｜Agent 协议全景与选型","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-811f-a520-ed44582eeb1b","title":"04｜多 Agent 竞品全景","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-818b-abf2-c980e843cb09","title":"05｜目标产品与架构蓝图","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"},
+    {"notion_id":"3c1ead4b-996e-81f9-b5ed-debebc96d30a","title":"06｜竞品官方信源、许可证与实现核验","kind":"page","yuque_repo":null,"yuque_slug":null,"yuque_url":null,"normalized_sha256":null,"image_count":0,"last_successful_sync_at":null,"verification":"pending"}
+  ],
+  "task_rows": {
+    "data_source_id": "bef12655-8351-4723-acd7-ae9a0825b294",
+    "count": 19,
+    "representation": "pending Yuque table/document mirror"
+  },
+  "blockers": [
+    "The user-specified Chrome browser is not connected to Codex.",
+    "Yuque login state and private visibility cannot be verified until Chrome is connected."
+  ]
+}
