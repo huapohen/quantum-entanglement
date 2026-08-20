@@ -18,6 +18,7 @@ from quantum_entanglement.runtime import (
     AgentRegistration,
     AgentResult,
     OrchestratorKernel,
+    SessionRecoveryError,
 )
 from quantum_entanglement.scheduler import TaskSpec, WorkflowPlan
 
@@ -269,6 +270,77 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 for stored in events
             ),
             1,
+        )
+
+    async def test_completed_transition_precommit_failure_quarantines_effect_unknown(self):
+        calls = 0
+
+        async def worker(invocation):
+            nonlocal calls
+            calls += 1
+            return AgentResult("done")
+
+        self.kernel.register_agent(registration("worker", worker))
+        plan = WorkflowPlan(
+            "completed-precommit",
+            "完成终态提交失败后必须隔离",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+        )
+        original_append_many = self.kernel.event_store.append_many
+
+        def fail_completed(stream_id, events, expected_version=None):
+            batch = tuple(events)
+            if any(
+                event.event_type == "task.status.changed"
+                and event.payload["current"] == TaskStatus.COMPLETED.value
+                for event in batch
+            ):
+                raise RuntimeError("injected completed precommit failure")
+            return original_append_many(
+                stream_id,
+                batch,
+                expected_version=expected_version,
+            )
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=fail_completed,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "completed precommit"):
+                await self.kernel.run(plan)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            self.kernel._graphs[plan.session_id].statuses["task"],
+            TaskStatus.RUNNING,
+        )
+        events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        event_count = len(events)
+        self.assertEqual(
+            sum(stored.event.event_type == "task.result.received" for stored in events),
+            1,
+        )
+        self.assertFalse(
+            any(
+                stored.event.event_type == "task.status.changed"
+                and stored.event.payload["current"]
+                in {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value}
+                for stored in events
+            )
+        )
+
+        with self.assertRaisesRegex(
+            SessionRecoveryError,
+            "durably RUNNING task without supported invocation recovery evidence",
+        ):
+            await self.kernel.run(plan)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            len(self.kernel.event_store.read_stream(f"session:{plan.session_id}")),
+            event_count,
         )
 
     async def test_independent_tasks_run_in_parallel_and_initial_ready_is_recorded(self):
