@@ -433,7 +433,7 @@ class RequestContextIssuer:
         self.__authenticator = authenticator
         self.__authenticator_id = authenticator_id
         self.__audience = audience
-        self.__clock = clock or SystemClock()
+        self.__clock = clock if clock is not None else SystemClock()
         self.__max_context_ttl = max_context_ttl
         self.__max_clock_skew = max_clock_skew
         self.__max_active_contexts = max_active_contexts
