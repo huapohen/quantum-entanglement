@@ -67,10 +67,17 @@ A completion-capable receipt must be durable and bind at least:
 - the artifact/result manifest digest and the durable event position or equivalent receipt
   identity.
 
-The current `task.result.received` event does not carry that full attempt identity. Therefore
-the existing event schema cannot be treated as a completion-capable invocation receipt. A
-future event/schema migration and atomic result-commit design must be implemented and
-fault-injected before automatic completion projection is enabled.
+The worker contract in `DURABLE_INVOCATION_ATTEMPTS.md` intentionally accepts this receipt
+*before* executing the terminal attempt CAS. A crash can therefore leave an exact receipt
+beside a `RUNNING` job; later lease recovery can leave that same receipt beside a `QUEUED` or
+`FAILED` job. Those are reconciliation states, not automatically integrity failures. Only a
+design that commits receipt, artifact/result state, and attempt success in one proven atomic
+transaction could declare those combinations impossible.
+
+The current `task.result.received` event does not carry the full attempt identity above.
+Therefore the existing event schema cannot be treated as a completion-capable invocation
+receipt. A future event/schema migration and receipt-bound reconciliation CAS must be
+implemented and fault-injected before automatic completion projection is enabled.
 
 ## State matrix for a `RUNNING` task
 
@@ -79,32 +86,46 @@ binding or integrity mismatch fails before this matrix is consulted.
 
 | Durable job observation | Receipt observation | Coordination decision | Permitted next actor | Forbidden behavior |
 |---|---|---|---|---|
-| missing | any | `BLOCKED_MISSING_JOB` | operator/recovery repair workflow | regenerate a job, call the Agent, or infer that no effect occurred |
-| `QUEUED` | absent | `RESUMABLE_QUEUED` | the durable attempt worker may claim under the store CAS | direct orchestrator invocation or creating a duplicate job |
-| `RUNNING` | absent | `WAITING_ACTIVE_LEASE` | current fenced worker, or attempt-store expiry recovery after the lease deadline | stealing/replacing the lease in the coordinator or accepting a stale worker result |
+| missing | absent | `BLOCKED_MISSING_JOB` | operator/recovery repair workflow | regenerate a job, call the Agent, or infer that no effect occurred |
+| missing | present | integrity/partial-restore failure | operator after preserving both sources | ignore the orphan receipt or synthesize its missing job |
+| `QUEUED`, zero attempts | absent | `FIRST_CLAIM_READY` | durable worker using the store CAS | direct orchestrator invocation or duplicate enqueue |
+| `QUEUED`, one or more attempts | absent | `BLOCKED_EFFECT_UNKNOWN` | receipt/effect reconciliation workflow | automatically retry without durable retry-safety proof |
+| `RUNNING` | absent | `WAITING_ACTIVE_LEASE` | current fenced worker; later, store-owned expiry reconciliation | steal the lease or accept a stale worker result |
+| `RUNNING` | exact receipt for current attempt | `RESULT_ACCEPTED_PENDING_ATTEMPT_CAS` | receipt-bound attempt reconciler | invoke the Agent again or discard the accepted result |
 | `SUCCEEDED` with no `result_ref` | absent | `BLOCKED_RESULT_UNCOMMITTED` | operator/reconciliation workflow | project `COMPLETED` or retry the Agent |
-| `SUCCEEDED` with `result_ref` | absent | `BLOCKED_RESULT_UNCOMMITTED` | receipt reconciler | treat the reference itself as a receipt or project `COMPLETED` |
-| `SUCCEEDED` with `result_ref` | exact completion-capable receipt | `COMPLETION_READY` | future idempotent result projector | bypass artifact integrity, causality, or task-transition checks |
-| `FAILED` | absent | `TERMINAL_FAILURE` | future idempotent failure projector/operator | retry beyond the persisted policy or change the payload |
-| `CANCELED` | absent | `TERMINAL_CANCELED` | future idempotent cancellation projector/operator | execute or revive the invocation |
+| `SUCCEEDED` with `result_ref` | missing receipt | `BLOCKED_RESULT_UNCOMMITTED` | receipt reconciler | treat the reference itself as a receipt |
+| `SUCCEEDED` with `result_ref` | exact completion-capable receipt | `COMPLETION_READY` | future idempotent result projector | bypass artifact integrity, causality, or transition checks |
+| `FAILED` | absent | `TERMINAL_FAILURE_EFFECT_UNKNOWN` | failure/effect reconciliation workflow | assume failure proves that no external effect occurred |
+| `QUEUED` or `FAILED` | exact receipt for the latest attempt | `RESULT_ACCEPTED_JOB_DIVERGED` | receipt-bound attempt reconciler | invoke the Agent again or erase the receipt |
+| `CANCELED` | any | unsupported/integrity failure in the current API | future authorized cancellation reconciler | project cancellation without a durable authorized receipt |
 
-Receipt presence for `QUEUED`, `RUNNING`, `FAILED`, or `CANCELED` contradicts the job state and
-is an integrity failure. A receipt whose binding, result reference, attempt number, or lease
-epoch differs is also an integrity failure.
+A receipt whose invocation binding, result reference, attempt ID/number, lease epoch, manifest,
+or durable position differs is an integrity failure. Receipt presence on a first-claim queued
+job is also contradictory because no attempt exists to own it.
 
-`RESUMABLE_QUEUED` means only that the existing durable job is eligible for the attempt-store
-claim protocol. It does not authorize the session recovery path to invoke the Agent directly.
-`WAITING_ACTIVE_LEASE` likewise does not evaluate wall-clock expiry: expiry and requeue must use
-the attempt store's locked `recover_expired` transition so epoch fencing cannot be bypassed.
+`FIRST_CLAIM_READY` means only that the existing durable job has never been attempted and is
+eligible for the attempt-store claim protocol. A queued retry is not equivalent: the prior
+worker may have performed an effect before losing its lease. A future retry-safety proof may
+allow retry only when it durably establishes that the operation is pure, downstream-fenced,
+or receiver-idempotent for the exact invocation key.
+
+`WAITING_ACTIVE_LEASE` does not itself evaluate wall-clock expiry. Expiry must use a locked
+attempt-store transition so epoch fencing cannot be bypassed, but expiry alone is not retry
+authorization. The current store automatically requeues expired work and `claim()` can recover
+and immediately reclaim it in one transaction. That behavior is an unresolved P0 for work
+whose external effect is not proven retry-safe; runtime integration must not call that path
+until it is gated by effect reconciliation or a durable retry-safety classification.
 
 ## Threat matrix
 
 | Threat/failure window | Unsafe interpretation | Required fail-closed response |
 |---|---|---|
 | task `RUNNING` committed, process dies before durable enqueue | missing job means safe retry | block as effect/job unknown; never synthesize identity during recovery |
-| job enqueued, process dies before claim | call Agent from recovery | return queued/resumable; only the store claim protocol may grant ownership |
-| worker performs effect, dies before success CAS | expired lease proves no effect | let the store fence/recover ownership, but keep external effect state explicitly unknown |
-| worker succeeds attempt, process dies before business result commit | attempt success equals task completion | require an exact durable result receipt; otherwise block |
+| job enqueued, process dies before first claim | call Agent from recovery | permit only the first store-owned claim; do not create another job |
+| worker performs effect, dies before receipt | expired lease proves no effect | fence stale ownership and enter effect-unknown reconciliation; do not auto-retry |
+| result receipt commits, process dies before attempt CAS | receipt beside `RUNNING` is corrupt | reconcile the exact current attempt from its accepted result without Agent reinvocation |
+| expiry recovery races an already accepted receipt | queued/failed means receipt can be ignored | return job-diverged reconciliation; receipt wins only after exact attempt/manifest validation |
+| attempt success commits, receipt is absent/missing | success equals task completion | block; investigate forbidden ordering or partial restore |
 | result event commits, task completion transition does not | replay Agent to finish | idempotently project only from a completion-capable receipt after artifact validation |
 | stale worker publishes after lease recovery | latest response wins | downstream write and receipt must compare the lease epoch/token; reject stale ownership |
 | same task ID appears under a changed plan | task lookup is sufficient | compare session, plan, task, Agent, invocation ID, idempotency key, and digest |
@@ -117,8 +138,8 @@ the attempt store's locked `recover_expired` transition so epoch fencing cannot 
 ## Optional store lifecycle
 
 The decision layer may be constructed without an attempt store. In that mode it can validate
-explicit observations, but a `RUNNING` task with no supplied job must remain blocked. When a
-store is supplied:
+an explicit immutable observation, but a `RUNNING` task with no supplied job must remain
+blocked. When a store is supplied:
 
 - ownership is explicit and defaults to caller-owned;
 - `close()` is idempotent;
@@ -127,7 +148,9 @@ store is supplied:
 - all coordinator operations after shutdown fail deterministically;
 - context-manager exit follows the same ownership rule;
 - store exceptions and integrity errors propagate as fail-closed errors, never as a missing
-  job.
+  job;
+- the job, current/latest attempt, attempt count, and lease-token digest are read in one
+  bounded database snapshot so recovery never combines rows from different epochs.
 
 The runtime must not acquire a second implicit in-memory store. An in-memory store is not a
 durable recovery source across processes or restarts.
@@ -136,16 +159,18 @@ durable recovery source across processes or restarts.
 
 The safe delivery order is:
 
-1. land the pure binding, shape, receipt, and state decision model with adversarial tests;
-2. add a read-only coordinator wrapper with explicit optional-store ownership;
-3. define and migrate the invocation-start/result-receipt event schemas;
-4. atomically bind enqueue acceptance to the durable start record, or make their split-brain
+1. land a bounded single-transaction job/attempt recovery snapshot;
+2. land the pure binding, shape, receipt, and corrected state decision model with adversarial
+   tests;
+3. add a read-only coordinator wrapper with explicit optional-store ownership;
+4. define and migrate the invocation-start/result-receipt event schemas;
+5. atomically bind enqueue acceptance to the durable start record, or make their split-brain
    state explicitly repairable without re-execution;
-5. implement a worker that claims, heartbeats, fences downstream resources, and publishes a
+6. implement a worker that claims, heartbeats, fences downstream resources, and publishes a
    completion-capable result receipt;
-6. implement idempotent business projection from verified receipt to artifacts/result/task
-   status;
-7. run process-kill fault injection at every boundary and retain release evidence.
+7. implement receipt-bound attempt reconciliation plus idempotent business projection from
+   verified receipt to artifacts, result, and task status;
+8. run process-kill fault injection at every boundary and retain release evidence.
 
 Steps 1 and 2 are safe foundations. They do not authorize enabling durable attempt execution
 in `OrchestratorKernel`. Skipping directly to automatic replay would turn an observable stuck
@@ -155,11 +180,12 @@ task into a possible duplicate external effect.
 
 The coordination foundation requires deterministic coverage for:
 
-- every state-matrix row;
+- every corrected state-matrix row, including first claim versus queued retry;
 - mismatched session, plan, task, Agent, invocation, idempotency key, and payload digest;
 - malformed/forged job scalars and contradictory lease/terminal fields;
-- succeeded-without-reference, reference-without-receipt, and mismatched receipt;
-- stale attempt number/epoch and a receipt attached to a non-success state;
+- receipt accepted before attempt CAS, expiry after receipt acceptance, succeeded without a
+  reference, reference without a receipt, and mismatched receipt;
+- stale attempt ID/number/epoch/token digest and exact receipts beside running/queued/failed;
 - missing job versus store failure;
 - owned and borrowed store closure, double close, and use after close;
 - no mutation of either source for every decision and failure path.
@@ -173,7 +199,8 @@ sources; and a connector-specific proof for every externally observable effect.
 
 This foundation does not provide:
 
-- an invocation worker, scheduler integration, heartbeat loop, or cancellation propagation;
+- an invocation worker, retry-safety classifier, scheduler integration, heartbeat loop, or
+  cancellation propagation;
 - an atomic event-store/attempt-store/result-store transaction;
 - automatic repair or projection of a recovered `RUNNING` task;
 - exactly-once Agent execution or exactly-once external effects;
