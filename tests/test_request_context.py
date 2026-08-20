@@ -221,6 +221,8 @@ class RequestContextIssuanceTests(unittest.TestCase):
             callback()
         self.assertEqual(raised.exception.code, code)
         self.assertEqual(str(raised.exception), code)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
 
     def access_request(
         self,
@@ -398,6 +400,17 @@ class RequestContextIssuanceTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "request_authentication_failed")
         self.assertNotIn(canary, str(raised.exception))
         self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+
+    def test_closed_credential_failure_detaches_the_raw_exception_context(self):
+        issuer, _ = self.make_issuer()
+        credential = self.credential()
+        credential.close()
+
+        self.assert_code(
+            "request_context_credential_unavailable",
+            lambda: issuer.issue(self.claims, credential),
+        )
 
     def test_credential_wipe_failure_is_redacted_and_never_returns_a_context(self):
         canary = "wipe-failure-secret-canary"
@@ -420,6 +433,58 @@ class RequestContextIssuanceTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "request_context_credential_close_failed")
         self.assertNotIn(canary, str(raised.exception))
         self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+
+    def test_compound_authentication_and_wipe_failure_detaches_both_exceptions(self):
+        canary = "compound-failure-secret-canary"
+
+        class FailingWipeBuffer(bytearray):
+            def __setitem__(self, key, value):
+                raise RuntimeError(canary)
+
+        authenticator = FakeAuthenticator(
+            self.binding,
+            failure=RuntimeError(canary),
+        )
+        issuer = RequestContextIssuer(
+            authenticator=authenticator,
+            authenticator_id="fake-authenticator",
+            audience="qe-runtime",
+            clock=self.clock,
+        )
+        credential = self.credential()
+        object.__setattr__(
+            credential,
+            "_SecretMaterial__buffer",
+            FailingWipeBuffer(b"bounded-credential-canary"),
+        )
+
+        with self.assertRaises(RequestContextError) as raised:
+            issuer.issue(self.claims, credential)
+
+        self.assertEqual(raised.exception.code, "request_context_credential_close_failed")
+        self.assertNotIn(canary, str(raised.exception))
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+
+    def test_reflectively_corrupted_binding_failure_is_redacted_and_detached(self):
+        canary = "binding-validation-secret-canary"
+
+        class ExplosiveScope:
+            def __str__(self):
+                raise RuntimeError(canary)
+
+        def factory(*, claims, audience, at):
+            binding = self.binding(claims=claims, audience=audience, at=at)
+            object.__setattr__(binding, "tenant_id", ExplosiveScope())
+            return binding
+
+        issuer, _ = self.make_issuer(factory)
+
+        self.assert_code(
+            "request_authentication_result_invalid",
+            lambda: issuer.issue(self.claims, self.credential()),
+        )
 
     def test_every_caller_scope_and_configured_binding_mismatch_fails_closed(self):
         mismatches = (
