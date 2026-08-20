@@ -43,6 +43,7 @@ or directly constructing an authentication-result value must never cross that bo
 | Caller reuses a valid context for another request or scope | Context is bound to exact request, subject, tenant, workspace, audience, issuer instance, and object identity | Transactional command replay protection and durable receipt |
 | Caller fabricates a `RequestContext`-shaped object | Only the issuing instance's live registry can validate the exact object and immutable snapshot | Process/code isolation against arbitrary trusted-host code execution |
 | Context is copied, pickled, persisted, or restored | Copy and serialization are rejected; a process restart or issuer replacement invalidates it | Distributed/session credential design if later required |
+| Parent and POSIX-fork child reuse one inherited issuer | Issuer captures creator PID plus a fork epoch; every stateful public path rejects the child before an inherited lock, clock, authenticator, or registry is touched | Construct the complete identity/authorization composition root independently inside every worker |
 | Reflection mutates an issued object | Validation compares every field with the issuer-owned snapshot and fails closed | Sandboxing of malicious in-process plugins |
 | Credential leaks through errors or retained state | Credential enters as a bounded `SecretMaterial` lease, is always closed, is absent from context/error fields, and translated failures detach the raw exception chain | Admission-buffer wiping, safe logs/traces, provider audit |
 | Authenticator throws or returns an unexpected value | Stable redacted failure code; no permissive fallback | Provider health, alerting, retry/rate policy |
@@ -81,9 +82,9 @@ evidence values remain data when received from anywhere else.
 | `CallerRequestContext` | Strict exact-dict parser for request/subject/tenant/workspace claims; unknown fields and coercion fail | Authentication, membership, or authorization |
 | `AuthenticatedRequestBinding` | Bounded canonical adapter-return shape with provider principal, exact scope, revisions, evidence fingerprint, and lifetime | A caller-constructible token or portable attestation |
 | `RequestAuthenticator` | Synchronous injected port called only by the issuer with a read-only credential view and service audience/time | OIDC, JWT, mTLS, JWKS, session, or membership implementation |
-| `RequestContextIssuer.issue` | Reserves bounded capacity, consumes one exact `SecretMaterial`, serializes initial/completion/registration clock snapshots, validates exact binding/time, registers one context, and always attempts credential wipe | Replay defense, full request authorization, durable session issuance, or guaranteed erasure after a wipe primitive fails |
+| `RequestContextIssuer.issue` | Requires the issuer's creator process, reserves bounded capacity, consumes one exact `SecretMaterial`, serializes initial/completion/registration clock snapshots, validates exact binding/time, registers one context, and always attempts credential wipe | Replay defense, full request authorization, durable session issuance, or guaranteed erasure after a wipe primitive fails |
 | `RequestContext` | Opaque, non-copyable, non-pickleable handle whose exact object and field snapshot are registered by one issuer | A bearer token, serialized credential, cross-process identity, or authority by property access |
-| `prepare_reauthorization` | Same-issuer object check, tamper/expiry/clock check, exact `AccessRequest` request/subject/tenant/workspace match, and a bounded basis for current-state lookup | Current reauthentication, current membership, RBAC allow, approval, or effect permission |
+| `prepare_reauthorization` | Same-process/same-issuer object check, tamper/expiry/clock check, exact `AccessRequest` request/subject/tenant/workspace match, and a bounded basis for current-state lookup | Current reauthentication, current membership, RBAC allow, approval, or effect permission |
 | `ReauthorizationBasis` | Preserves principal/subject/scope, identity/scope revisions, evidence fingerprint and observation/expiry times; representation is redacted | A trusted input when constructed or received independently |
 | `retire` / `close` | Invalidate one exact handle or every handle; contexts never survive issuer replacement | Distributed revocation or durable logout |
 
@@ -124,17 +125,40 @@ multi-process decisions. Operators must not recreate an issuer merely to bypass 
 alarm; stop admission, repair trusted time, invalidate old handles, and perform the wider
 authorization-state reconciliation required by the service runbook.
 
+The issuer records both its creator PID and an opaque module process epoch. On platforms
+with `os.register_at_fork`, a lock-free child callback replaces that epoch. A PID-drift
+check independently refreshes it when the hook is unavailable or bypassed. `issue`,
+`prepare_reauthorization`, `retire`, `close`, and context-manager entry compare the owner
+before an inherited issuer lock or dependency can be reached; a child receives the stable
+redacted `request_context_process_mismatch`. A failed child `issue` still closes its local
+credential lease. The parent retains its registry and remains usable.
+
+An issuer cannot be adopted after `fork`, even when no context has yet been issued. Holding
+the parent issuer lock during `fork` does not make child rejection wait on that copied lock.
+Prefork masters must create no worker issuer. Fork first, then construct the authenticator,
+clock, issuer, current-state provider, authorizer, and protected-operation composer inside
+each worker. The supported recovery for a process mismatch is to discard the inherited
+object and rebuild the entire composition root in the current worker; retrying the same
+issuer is forbidden.
+
+The guard does not retract credential or key bytes that were already copied by `fork`.
+Credential-bearing or untrusted workers must be created with `spawn`/`exec` before secret
+load, or obtain material afterward from a separately reviewed broker. An inherited child
+is not an isolation boundary merely because the issuer API rejects it.
+
 Local context validation is not action-time authorization and not a reservation. It proves
 only that this issuer produced this unchanged handle for this exact request scope and that
-its local expiry has not passed. Before every protected operation, the future composition
-root must use the preserved identity/revisions/evidence to obtain current authentication
-and membership state, then run `TenantAuthorizer` for the concrete action/resource and bind
-that decision to the effect transaction and durable receipt.
+its local expiry has not passed. Before every protected operation, the adjacent composition
+foundation uses the preserved identity/revisions/evidence to obtain current authentication
+and membership state, then runs `TenantAuthorizer` for the concrete action/resource. A
+future service integration must additionally bind that decision to the effect transaction
+and durable receipt.
 
 The basis returned by `prepare_reauthorization` is deliberately constructible data. A
-future trusted identity/membership adapter may use it as lookup input, but no policy or
-effect component may treat possession of the basis as proof. The current code does not yet
-define that adapter or compare current provider/membership revisions.
+trusted identity/membership adapter may use it as lookup input, but no policy or effect
+component may treat possession of the basis as proof. The adjacent protected-operation
+foundation defines an injected current-state port and exact revision comparisons, but its
+tests use only fakes; no production identity/membership adapter or effect integration exists.
 
 ## 6. Credential, configuration, and logging rules
 
@@ -149,9 +173,13 @@ define that adapter or compare current provider/membership revisions.
   sufficient redaction boundary. Before the public issuer returns a stable failure, it also
   clears completed internal traceback frames and creates a fresh code-only exception after
   deleting its credential arguments; otherwise a failed wipe could leave the private
-  `memoryview` reachable through `exception.__traceback__.tb_frame.f_locals`. Python also
-  cannot wipe copies retained by a buggy authenticator or by the transport before
-  constructing the lease.
+  `memoryview` reachable through `exception.__traceback__.tb_frame.f_locals`. The public
+  issuer then catches that exact fresh exception, clears the implicitly attached active
+  caller `__context__`, and uses a bare re-raise. This is required when an issuer method is
+  called inside another exception handler or its context-manager exit replaces a body
+  exception: the new stable failure must not retain that body exception, request,
+  authenticator, credential, issuer, or attached state. Python also cannot wipe copies
+  retained by a buggy authenticator or by the transport before constructing the lease.
 - Context `repr`, exceptions, evidence, ordinary logs, events, artifacts, and reports must
   not contain the credential, raw attestation, tenant, workspace, subject, or principal.
 - Stable failure codes are suitable for bounded metrics. Raw scope identifiers must not be
@@ -186,10 +214,11 @@ def prepare_identity_refresh(*, issuer, context, access_request):
     return basis
 ```
 
-The composition root owns issuer lifetime. Stop admission first, call `close` to invalidate
-live handles and fence pending registrations, then wait for the surrounding calls to fail
-or finish their credential cleanup. Closing during an authenticator call prevents that call
-from registering a context; this primitive does not provide a drain/wait API.
+The composition root owns issuer lifetime and must be constructed wholly after any worker
+fork. Stop admission first, call `close` to invalidate live handles and fence pending
+registrations, then wait for the surrounding calls to fail or finish their credential
+cleanup. Closing during an authenticator call prevents that call from registering a
+context; this primitive does not provide a drain/wait API.
 
 ## 8. Migration, rollback, and compatibility
 
@@ -232,7 +261,13 @@ authentication-plus-wipe failure, direct traceback-frame/local inspection after 
 failure, capacity and in-flight reservation, foreign issuer, direct construction,
 copy/pickle, exact request/subject/tenant/workspace matching, tenant-wide non-wildcard
 behavior, reflective mutation quarantine, expiry, serialized prepare/retire, concurrent
-close/registration, retirement, and issuer shutdown.
+close/registration, retirement, and issuer shutdown. Real POSIX-fork tests cover child
+`issue`, `prepare_reauthorization`, `retire`, `close`, and context-manager entry, including
+a fork while another parent thread owns the issuer lock, exact parent usability afterward,
+and the lazy PID-drift fallback. Every issuer process-mismatch public path is also invoked
+while a secret-bearing caller exception is active; traceback inspection proves the new
+code-only failure has no cause/context chain and retains no issuer, authenticator, context,
+request, credential, or context-manager body exception in its library frames.
 
 The implementation history starts at `fa0c422`; public export is `ba072c3`. Exact full-suite
 and release evidence must be regenerated after this documentation commit is part of the
