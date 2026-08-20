@@ -31,6 +31,7 @@
 | 工作位置 | 独立 worktree `/private/tmp/qe-evidence-ledger-current`；从 main 的 clean `7d9d757` 分出 | 不是 clean clone；复核前 `git status --short` 无输出 |
 | 平台 | Darwin arm64；CPython 3.9.6 | 没有在本次台账工作中重跑 Linux/Python 3.12 matrix |
 | 单元/集成测试 | `PYTHONPATH=src python3 -m unittest discover -s tests -q` → `Ran 583 tests ... OK` | 2026-08-20 在上述 clean commit/tree 本地运行；没有签名或外部留存的 test attestation |
+| 锁定工具门禁 | `verify_dependency_locks.py` → 4 targets/74 records verified；Ruff 0.16.3 lint passed；strict mypy → 27 files clean；compileall 与 `git diff --check` passed | Ruff 0.16.3 `format --check` **failed**：5 个已提交文件 would reformat；因此本基线不能宣称 repository-wide release gates 全绿 |
 | 代码身份 | baseline commit `7d9d757`；tree `d1ba83d...` | 包含审批修复、SBOM、截图 manifest、工程台账和索引；不是对 main 后续变化的浮动声明 |
 | 历史规模 | `f7be4e2..7d9d757` 为 188 commits；122 files；`+52,635/-11` | 行数与提交数是规模证据，不是质量或生产成熟度证据 |
 | 外部 connector | 仓库测试使用 fake/fixture；没有真实 Feishu/WeCom write connector | 不能声称已验证消息投递、平台回执或第三方限流 |
@@ -135,7 +136,10 @@ A2A JSON mapping 单测、本地 backup fixture 和设计文档不能代替这�
 当前已提交并在 package CI 验证、留存 source-bound CycloneDX runtime/build SBOM。下一阶段
 仍需 vulnerability/license policy、签名 provenance/attestation 与 artifact signature，并
 保留 clean-host/cross-runner reproducibility matrix。SBOM inventory 本身不得写成依赖安全
-或许可证合规结论。
+或许可证合规结论。当前 clean baseline 的锁定 Ruff 0.16.3 formatter 还会改写
+`scripts/sbom.py`、`scripts/verify_dependency_locks.py`、`tests/test_ci_sbom.py`、
+`tests/test_dependency_locks.py`、`tests/test_sbom.py`；在格式化改动独立提交并重跑全部 gates
+前，不得生成“全部本地 gates 通过”的 release evidence。
 
 ## 5. 复核命令
 
