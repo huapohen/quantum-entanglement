@@ -91,12 +91,12 @@ binding or integrity mismatch fails before this matrix is consulted.
 | `QUEUED`, zero attempts | absent | `FIRST_CLAIM_READY` | durable worker using the store CAS | direct orchestrator invocation or duplicate enqueue |
 | `QUEUED`, one or more attempts | absent | `BLOCKED_EFFECT_UNKNOWN` | receipt/effect reconciliation workflow | automatically retry without durable retry-safety proof |
 | `RUNNING` | absent | `WAITING_ACTIVE_LEASE` | current fenced worker; later, store-owned expiry reconciliation | steal the lease or accept a stale worker result |
-| `RUNNING` | exact receipt for current attempt | `RESULT_ACCEPTED_PENDING_ATTEMPT_CAS` | receipt-bound attempt reconciler | invoke the Agent again or discard the accepted result |
+| `RUNNING` | caller-provided receipt for current attempt | `BLOCKED_RECEIPT_UNVERIFIED` | future trusted receipt reader | reconcile, invoke the Agent again, or discard the candidate receipt |
 | `SUCCEEDED` with no `result_ref` | absent | `BLOCKED_RESULT_UNCOMMITTED` | operator/reconciliation workflow | project `COMPLETED` or retry the Agent |
 | `SUCCEEDED` with `result_ref` | missing receipt | `BLOCKED_RESULT_UNCOMMITTED` | receipt reconciler | treat the reference itself as a receipt |
-| `SUCCEEDED` with `result_ref` | exact completion-capable receipt | `COMPLETION_READY` | future idempotent result projector | bypass artifact integrity, causality, or transition checks |
+| `SUCCEEDED` with `result_ref` | caller-provided matching receipt | `BLOCKED_RECEIPT_UNVERIFIED` | future trusted receipt reader | project completion or treat the in-memory object as durable proof |
 | `FAILED` | absent | `TERMINAL_FAILURE_EFFECT_UNKNOWN` | failure/effect reconciliation workflow | assume failure proves that no external effect occurred |
-| `QUEUED` or `FAILED` | exact receipt for the latest attempt | `RESULT_ACCEPTED_JOB_DIVERGED` | receipt-bound attempt reconciler | invoke the Agent again or erase the receipt |
+| `QUEUED` or `FAILED` | caller-provided receipt for the latest attempt | `BLOCKED_RECEIPT_UNVERIFIED` | future trusted receipt reader | reconcile, retry, or erase the candidate receipt |
 | `CANCELED` | any | unsupported/integrity failure in the current API | future authorized cancellation reconciler | project cancellation without a durable authorized receipt |
 
 A receipt whose invocation binding, result reference, attempt ID/number, lease epoch, manifest,
@@ -180,7 +180,8 @@ write path. Callers must provide:
 1. the exact `TaskStatus.RUNNING` projection;
 2. an `InvocationBinding` decoded from committed, versioned invocation-start evidence;
 3. one `InvocationRecoverySnapshot` from the atomic store read above;
-4. an optional `InvocationResultReceipt` decoded from a trusted durable receipt source.
+4. an optional candidate `InvocationResultReceipt`; the current API has no trusted durable
+   receipt source and therefore never treats this caller-provided object as authoritative.
 
 The boundary revalidates frozen objects on every call because Python callers can mutate a
 frozen dataclass with low-level reflection. It validates bounded UTF-8 text, control
@@ -191,8 +192,12 @@ reject a requested availability timestamp merely because it predates enqueue tim
 
 Constructing an `InvocationResultReceipt` object in memory does not make a result durable or
 authentic. The type describes the fields a future trusted receipt decoder must produce. The
-current runtime has no such decoder and must pass no receipt; consequently it cannot receive
-`COMPLETION_READY` from current `task.result.received` events.
+current API validates candidate shape, invocation binding, attempt identity, and any succeeded
+job result reference, then returns `BLOCKED_RECEIPT_UNVERIFIED`. It exposes no executable
+receipt decision. A future change may add one only together with a durable receipt store,
+authenticated decoder, receipt-bound reconciliation CAS, fault injection, and a new decision
+API that cannot be reached with caller-constructed evidence. Current `task.result.received`
+events are not completion-capable receipts.
 
 ## Integration sequence
 
