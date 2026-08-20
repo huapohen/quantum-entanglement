@@ -62,7 +62,7 @@ class StoredOutboxMessage:
     triggering_global_position: int
     status: OutboxStatus
     attempt_count: int = 0
-    lease_token: str | None = None
+    lease_token: str | None = field(default=None, repr=False)
     lease_expires_at: str | None = None
     last_error: str | None = None
     published_at: str | None = None
@@ -80,7 +80,6 @@ class StoredOutboxMessage:
             "triggeringGlobalPosition": self.triggering_global_position,
             "status": self.status.value,
             "attemptCount": self.attempt_count,
-            "leaseToken": self.lease_token,
             "leaseExpiresAt": self.lease_expires_at,
             "lastError": self.last_error,
             "publishedAt": self.published_at,
