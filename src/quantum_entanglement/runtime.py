@@ -1022,6 +1022,11 @@ class OrchestratorKernel:
         for request in approval_requests.values():
             if request.pending and graph.statuses[request.task_id] != TaskStatus.WAITING_APPROVAL:
                 raise SessionRecoveryError("pending approval is not attached to a waiting task")
+        if any(status is TaskStatus.RUNNING for status in graph.statuses.values()):
+            raise SessionRecoveryError(
+                "session contains a durably RUNNING task without supported "
+                "invocation recovery evidence"
+            )
 
         self._plans[requested_plan.session_id] = stored_plan
         self._graphs[requested_plan.session_id] = graph
