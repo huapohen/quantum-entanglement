@@ -474,10 +474,19 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         original_append = self.kernel.event_store.append
 
-        def fail_artifact(event, expected_version=None):
+        def fail_artifact(
+            event,
+            expected_version=None,
+            *,
+            expected_global_position=None,
+        ):
             if event.event_type == "artifact.versioned":
                 raise RuntimeError("injected artifact precommit failure")
-            return original_append(event, expected_version)
+            return original_append(
+                event,
+                expected_version,
+                expected_global_position=expected_global_position,
+            )
 
         with patch.object(
             self.kernel.event_store,
