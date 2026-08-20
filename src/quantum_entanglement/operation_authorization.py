@@ -19,7 +19,7 @@ import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import partial
-from typing import Callable, NoReturn, Optional, Protocol, SupportsIndex, TypeVar
+from typing import Callable, NoReturn, Optional, Protocol, SupportsIndex, TypeVar, Union
 
 from .request_context import ReauthorizationBasis, RequestContext, RequestContextIssuer
 from .tenancy import (
@@ -46,6 +46,7 @@ _GENERATOR_EXIT = "generator_exit"
 _CANCELLED_ERROR = "cancelled_error"
 _PROCESS_PID = os.getpid()
 _PROCESS_EPOCH = object()
+_SystemExitStatus = Optional[Union[bool, int]]
 
 
 def _refresh_process_epoch_after_fork() -> None:
@@ -78,28 +79,42 @@ if callable(_register_at_fork):
         pass
 
 
-def _control_signal_kind(error: BaseException) -> Optional[str]:
+def _control_signal_snapshot(error: BaseException) -> tuple[Optional[str], _SystemExitStatus]:
     if type(error) is KeyboardInterrupt:
-        return _KEYBOARD_INTERRUPT
+        return _KEYBOARD_INTERRUPT, None
     if type(error) is SystemExit:
-        return _SYSTEM_EXIT
+        status = object.__getattribute__(error, "code")
+        if status is None or type(status) is bool:
+            return _SYSTEM_EXIT, status
+        if type(status) is int and 0 <= status <= 255:
+            return _SYSTEM_EXIT, status
+        return _SYSTEM_EXIT, 1
     if type(error) is GeneratorExit:
-        return _GENERATOR_EXIT
+        return _GENERATOR_EXIT, None
     if type(error) is asyncio.CancelledError:
-        return _CANCELLED_ERROR
-    return None
+        return _CANCELLED_ERROR, None
+    return None, None
 
 
-def _raise_control_signal(kind: str) -> NoReturn:
-    if kind == _KEYBOARD_INTERRUPT:
-        raise KeyboardInterrupt() from None
-    if kind == _SYSTEM_EXIT:
-        raise SystemExit() from None
-    if kind == _GENERATOR_EXIT:
-        raise GeneratorExit() from None
-    if kind == _CANCELLED_ERROR:
-        raise asyncio.CancelledError() from None
-    raise RuntimeError("invalid internal control signal")
+def _raise_control_signal(kind: str, system_exit_status: _SystemExitStatus = None) -> NoReturn:
+    try:
+        if kind == _KEYBOARD_INTERRUPT:
+            raise KeyboardInterrupt() from None
+        if kind == _SYSTEM_EXIT:
+            if system_exit_status is None:
+                raise SystemExit() from None
+            raise SystemExit(system_exit_status) from None
+        if kind == _GENERATOR_EXIT:
+            raise GeneratorExit() from None
+        if kind == _CANCELLED_ERROR:
+            raise asyncio.CancelledError() from None
+        raise RuntimeError("invalid internal control signal")
+    except (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError) as signal:
+        # ``from None`` suppresses display but still retains the caller's actively
+        # handled exception in ``__context__``.  Clear it on the exact fresh signal
+        # and use a bare re-raise so no caller body exception remains reachable.
+        signal.__context__ = None
+        raise
 
 
 def _require_opaque_id(value: str, field_name: str) -> str:
@@ -301,6 +316,7 @@ class _BoundaryFailure:
 
     operation_code: Optional[str]
     control_signal: Optional[str]
+    system_exit_status: _SystemExitStatus
 
 
 _BoundaryValue = TypeVar("_BoundaryValue")
@@ -324,7 +340,7 @@ def _invoke_boundary(
     try:
         value = pending_callback.pop()()
     except BaseException as error:
-        control_signal = _control_signal_kind(error)
+        control_signal, system_exit_status = _control_signal_snapshot(error)
         operation_code: Optional[str] = None
         if type(error) is OperationAuthorizationError:
             try:
@@ -339,6 +355,7 @@ def _invoke_boundary(
         failure = _BoundaryFailure(
             operation_code=operation_code,
             control_signal=control_signal,
+            system_exit_status=system_exit_status,
         )
         del internal_traceback
         return value, failure
@@ -349,10 +366,26 @@ def _raise_dependency_failure(failure: _BoundaryFailure, code: str) -> NoReturn:
     """Propagate only a clean control signal or one caller-selected stable code."""
 
     control_signal = failure.control_signal
+    system_exit_status = failure.system_exit_status
     del failure
     if control_signal is not None:
-        _raise_control_signal(control_signal)
+        _raise_control_signal(control_signal, system_exit_status)
     raise OperationAuthorizationError(code) from None
+
+
+def _operation_failure_details(
+    failure: Optional[_BoundaryFailure],
+    default_code: str,
+) -> tuple[str, Optional[str], _SystemExitStatus]:
+    """Return only bounded primitives suitable for a clean public rethrow frame."""
+
+    if failure is None:
+        return default_code, None, None
+    return (
+        failure.operation_code if failure.operation_code is not None else default_code,
+        failure.control_signal,
+        failure.system_exit_status,
+    )
 
 
 def _require_current_process_issuer(issuer: RequestContextIssuer) -> None:
@@ -589,6 +622,28 @@ class _AuthorizedOperationRegistry:
         *,
         expires_at: datetime,
     ) -> AuthorizedOperation:
+        operation, failure = _invoke_boundary(partial(self._issue, binding, expires_at=expires_at))
+        if failure is None and type(operation) is AuthorizedOperation:
+            return operation
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del self, binding, expires_at, operation, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _issue(
+        self,
+        binding: _OperationBinding,
+        *,
+        expires_at: datetime,
+    ) -> AuthorizedOperation:
         self._ensure_process()
         trusted = self._snapshot_binding(binding)
         expiry = _as_utc(expires_at, "expires_at")
@@ -609,6 +664,25 @@ class _AuthorizedOperationRegistry:
     def observe_now(self) -> datetime:
         """Advance and return the registry's service-clock high-water mark."""
 
+        observed_at, failure = _invoke_boundary(self._observe_now)
+        if failure is None and isinstance(observed_at, datetime):
+            return observed_at
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del self, observed_at, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _observe_now(self) -> datetime:
+        """Private clock path whose completed failure frames are always cleared."""
+
         self._ensure_process()
         with self.__lock:
             if self.__closed:
@@ -616,6 +690,23 @@ class _AuthorizedOperationRegistry:
             return self._clock_now()
 
     def verify(self, operation: AuthorizedOperation, expected: _OperationBinding) -> None:
+        _, failure = _invoke_boundary(partial(self._verify, operation, expected))
+        if failure is None:
+            return
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del self, operation, expected, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _verify(self, operation: AuthorizedOperation, expected: _OperationBinding) -> None:
         self._ensure_process()
         trusted_expected = self._snapshot_binding(expected)
         with self.__lock:
@@ -637,6 +728,30 @@ class _AuthorizedOperationRegistry:
         request: AccessRequest,
     ) -> None:
         """Verify a live exact actor/request handle without granting or consuming it."""
+
+        _, failure = _invoke_boundary(partial(self._check_request, operation, basis, request))
+        if failure is None:
+            return
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del self, operation, basis, request, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _check_request(
+        self,
+        operation: AuthorizedOperation,
+        basis: ReauthorizationBasis,
+        request: AccessRequest,
+    ) -> None:
+        """Private preflight path whose completed failure frames are always cleared."""
 
         self._ensure_process()
         trusted_request = _snapshot_access_request(request)
@@ -664,6 +779,30 @@ class _AuthorizedOperationRegistry:
     ) -> None:
         """Atomically verify exact actor/request scope and retire on success."""
 
+        _, failure = _invoke_boundary(partial(self._consume_request, operation, basis, request))
+        if failure is None:
+            return
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del self, operation, basis, request, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _consume_request(
+        self,
+        operation: AuthorizedOperation,
+        basis: ReauthorizationBasis,
+        request: AccessRequest,
+    ) -> None:
+        """Private consume path whose completed failure frames are always cleared."""
+
         self._ensure_process()
         trusted_request = _snapshot_access_request(request)
         if type(basis) is not ReauthorizationBasis:
@@ -685,6 +824,23 @@ class _AuthorizedOperationRegistry:
             self._prune(now)
 
     def retire(self, operation: AuthorizedOperation) -> None:
+        _, failure = _invoke_boundary(partial(self._retire, operation))
+        if failure is None:
+            return
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del self, operation, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _retire(self, operation: AuthorizedOperation) -> None:
         self._ensure_process()
         with self.__lock:
             if self.__closed:
@@ -693,6 +849,23 @@ class _AuthorizedOperationRegistry:
             self.__active.pop(id(operation), None)
 
     def close(self) -> None:
+        _, failure = _invoke_boundary(self._close)
+        if failure is None:
+            return
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del self, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _close(self) -> None:
         self._ensure_process()
         with self.__lock:
             self.__closed = True
@@ -812,7 +985,10 @@ class _AuthorizedOperationRegistry:
         actual, failure = _invoke_boundary(lambda: operation._bound_values())
         if failure is not None:
             if failure.control_signal is not None:
-                _raise_control_signal(failure.control_signal)
+                _raise_control_signal(
+                    failure.control_signal,
+                    failure.system_exit_status,
+                )
             return False
         expected = (
             snapshot.operation_id,
@@ -968,7 +1144,34 @@ class ProtectedOperationComposer:
         owner_pid, owner_epoch = _current_process_identity()
         if type(issuer) is not RequestContextIssuer:
             raise TypeError("issuer must be an exact RequestContextIssuer")
-        _require_current_process_issuer(issuer)
+        issuer_is_current, issuer_failure = _invoke_boundary(issuer._is_current_process_owner)
+        if issuer_failure is not None or issuer_is_current is not True:
+            _, control_signal, system_exit_status = _operation_failure_details(
+                issuer_failure,
+                "protected_operation_process_mismatch",
+            )
+            del (
+                self,
+                issuer,
+                state_provider,
+                authorizer,
+                clock,
+                operation_ttl,
+                max_state_age,
+                max_clock_skew,
+                max_active_operations,
+                owner_pid,
+                owner_epoch,
+                issuer_is_current,
+                issuer_failure,
+            )
+            if control_signal is not None:
+                _raise_control_signal(control_signal, system_exit_status)
+            try:
+                raise OperationAuthorizationError("protected_operation_process_mismatch") from None
+            except OperationAuthorizationError as public_error:
+                public_error.__context__ = None
+                raise
         if state_provider is None or not callable(
             getattr(state_provider, "load_current_state", None)
         ):
@@ -1018,16 +1221,18 @@ class ProtectedOperationComposer:
         operation, failure = _invoke_boundary(partial(self._authorize, context, request))
         if failure is None and type(operation) is AuthorizedOperation:
             return operation
-        failure_code = (
-            failure.operation_code
-            if failure is not None and failure.operation_code is not None
-            else "protected_operation_internal_failure"
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
         )
-        control_signal = failure.control_signal if failure is not None else None
         del self, context, request, operation, failure
         if control_signal is not None:
-            _raise_control_signal(control_signal)
-        raise OperationAuthorizationError(failure_code) from None
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
 
     def _authorize(
         self,
@@ -1086,16 +1291,18 @@ class ProtectedOperationComposer:
         result, failure = _invoke_boundary(partial(self._consume, operation, context, request))
         if failure is None:
             return result
-        failure_code = (
-            failure.operation_code
-            if failure.operation_code is not None
-            else "protected_operation_internal_failure"
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
         )
-        control_signal = failure.control_signal
         del self, operation, context, request, result, failure
         if control_signal is not None:
-            _raise_control_signal(control_signal)
-        raise OperationAuthorizationError(failure_code) from None
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
 
     def _consume(
         self,
@@ -1148,16 +1355,18 @@ class ProtectedOperationComposer:
         result, failure = _invoke_boundary(partial(self._retire, operation))
         if failure is None:
             return result
-        failure_code = (
-            failure.operation_code
-            if failure.operation_code is not None
-            else "protected_operation_internal_failure"
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
         )
-        control_signal = failure.control_signal
         del self, operation, result, failure
         if control_signal is not None:
-            _raise_control_signal(control_signal)
-        raise OperationAuthorizationError(failure_code) from None
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
 
     def _retire(self, operation: AuthorizedOperation) -> None:
         self._ensure_open()
@@ -1166,17 +1375,67 @@ class ProtectedOperationComposer:
     def close(self) -> None:
         """Invalidate all handles and reject future composition. Idempotent."""
 
+        result, failure = _invoke_boundary(self._close)
+        if failure is None:
+            return result
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del self, result, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _close(self) -> None:
+        """Private close path whose completed failure frames are always cleared."""
+
         self._ensure_process()
         with self.__lock:
             self.__closed = True
             self.__registry.close()
 
     def __enter__(self) -> ProtectedOperationComposer:
+        entered, failure = _invoke_boundary(self._enter)
+        if failure is None and type(entered) is ProtectedOperationComposer:
+            return entered
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del self, entered, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _enter(self) -> ProtectedOperationComposer:
         self._ensure_open()
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, trace: object) -> None:
-        self.close()
+        result, failure = _invoke_boundary(self._close)
+        if failure is None:
+            return result
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del self, exc_type, exc_value, trace, result, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
 
     def __repr__(self) -> str:
         return "ProtectedOperationComposer(<configured>)"

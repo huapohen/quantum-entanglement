@@ -104,6 +104,10 @@ def _fork_public_path_probe(
         ("composer_close", composer.close),
         ("composer_enter", composer.__enter__),
         (
+            "composer_exit",
+            lambda: composer.__exit__(RuntimeError, RuntimeError("fork-exit-canary"), None),
+        ),
+        (
             "registry_issue",
             lambda: registry.issue(binding, expires_at=NOW + timedelta(seconds=20)),
         ),
@@ -612,7 +616,7 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                 CapabilitySigningKey(
                     kid="issuer-1-key",
                     principal_id="issuer-1",
-                    secret=b"\x01" * 32,
+                    secret=b"signing-secret-canary-1234567890",
                     not_before=NOW - timedelta(days=1),
                     expires_at=NOW + timedelta(days=1),
                     status=KeyStatus.ACTIVE,
@@ -825,7 +829,13 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                     (AccessRequest, CurrentAuthorizationState, ReauthorizationBasis),
                 )
 
-    def assert_detached_control_traceback(self, error, expected_method, *canaries):
+    def assert_detached_control_traceback(
+        self,
+        error,
+        expected_method,
+        *canaries,
+        forbidden=(),
+    ):
         trace = error.__traceback__
         library_frames = []
         while trace is not None:
@@ -838,13 +848,74 @@ class ProtectedOperationComposerTests(unittest.TestCase):
         )
         for frame in library_frames:
             for value in list(frame.f_locals.values()):
+                for selected in forbidden:
+                    self.assertIsNot(value, selected)
                 if isinstance(value, str):
                     for canary in canaries:
                         self.assertNotIn(canary, value)
                 self.assertNotIsInstance(
                     value,
-                    (AccessRequest, CurrentAuthorizationState, ReauthorizationBasis),
+                    (
+                        AccessRequest,
+                        AuthorizedOperation,
+                        CurrentAuthorizationState,
+                        FakeCurrentStateProvider,
+                        ProtectedOperationComposer,
+                        ReauthorizationBasis,
+                        RequestContext,
+                        RequestContextIssuer,
+                        RotatingHMACKeyRing,
+                        SecretMaterial,
+                        TenantAuthorizer,
+                        _AuthorizedOperationRegistry,
+                        _OperationBinding,
+                    ),
                 )
+
+    def assert_detached_process_failure(self, error, expected_method, *forbidden):
+        self.assertIs(type(error), OperationAuthorizationError)
+        self.assertEqual(error.code, "protected_operation_process_mismatch")
+        self.assertEqual(error.args, ("protected_operation_process_mismatch",))
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+        self.assertEqual(getattr(error, "__notes__", ()), ())
+        self.assertEqual(getattr(error, "__dict__", {}), {})
+        library_frames = []
+        trace = error.__traceback__
+        while trace is not None:
+            if trace.tb_frame.f_code.co_filename.endswith("/operation_authorization.py"):
+                library_frames.append(trace.tb_frame)
+            trace = trace.tb_next
+        self.assertEqual(
+            [frame.f_code.co_name for frame in library_frames],
+            [expected_method],
+        )
+        for frame in library_frames:
+            for value in list(frame.f_locals.values()):
+                for selected in forbidden:
+                    self.assertIsNot(value, selected)
+                self.assertNotIsInstance(
+                    value,
+                    (
+                        AccessRequest,
+                        AuthorizedOperation,
+                        CurrentAuthorizationState,
+                        FakeCurrentStateProvider,
+                        ProtectedOperationComposer,
+                        ReauthorizationBasis,
+                        RequestContext,
+                        RequestContextIssuer,
+                        RotatingHMACKeyRing,
+                        SecretMaterial,
+                        TenantAuthorizer,
+                        _AuthorizedOperationRegistry,
+                        _OperationBinding,
+                    ),
+                )
+                if isinstance(value, bytes):
+                    self.assertNotIn(b"signing-secret-canary", value)
+                if isinstance(value, str):
+                    self.assertNotIn("secret-canary", value)
 
     def assert_original_control_traceback_is_scrubbed(self, original, *canaries):
         trace = original.__traceback__
@@ -858,8 +929,16 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                         AccessRequest,
                         AuthorizedOperation,
                         CurrentAuthorizationState,
+                        FakeCurrentStateProvider,
+                        ProtectedOperationComposer,
                         ReauthorizationBasis,
                         RequestContext,
+                        RequestContextIssuer,
+                        RotatingHMACKeyRing,
+                        SecretMaterial,
+                        TenantAuthorizer,
+                        _AuthorizedOperationRegistry,
+                        _OperationBinding,
                     ),
                 )
                 if isinstance(value, str):
@@ -1112,6 +1191,224 @@ class ProtectedOperationComposerTests(unittest.TestCase):
 
         operation = self.composer.authorize(self.context, self.request)
         self.assertIsInstance(operation, AuthorizedOperation)
+        self.composer.consume(operation, self.context, self.request)
+
+    def test_fresh_composer_process_failure_detaches_every_constructor_dependency(self):
+        uninitialized = object.__new__(ProtectedOperationComposer)
+        signing_secret = b"signing-secret-canary-1234567890"
+        active_error = RuntimeError("constructor-body-secret-canary")
+        active_error.request = self.request
+        active_error.provider = self.provider
+        active_error.authorizer = self.authorizer
+        active_error.key_ring = self.key_ring
+        owner_epoch = object.__getattribute__(
+            self.issuer,
+            "_RequestContextIssuer__owner_epoch",
+        )
+        object.__setattr__(self.issuer, "_RequestContextIssuer__owner_epoch", object())
+        try:
+            try:
+                raise active_error
+            except RuntimeError:
+                error = self.capture_error(
+                    "protected_operation_process_mismatch",
+                    lambda: ProtectedOperationComposer.__init__(
+                        uninitialized,
+                        issuer=self.issuer,
+                        state_provider=self.provider,
+                        authorizer=self.authorizer,
+                        clock=self.clock,
+                        operation_ttl=timedelta(seconds=20),
+                        max_state_age=timedelta(seconds=30),
+                    ),
+                )
+        finally:
+            object.__setattr__(
+                self.issuer,
+                "_RequestContextIssuer__owner_epoch",
+                owner_epoch,
+            )
+
+        self.assert_detached_process_failure(
+            error,
+            "__init__",
+            uninitialized,
+            self.issuer,
+            self.provider,
+            self.authorizer,
+            self.verifier,
+            self.key_ring,
+            self.clock,
+            signing_secret,
+            active_error,
+        )
+
+    def test_every_composer_process_failure_detaches_all_authorization_state(self):
+        operation = self.composer.authorize(self.context, self.request)
+        registry = object.__getattribute__(
+            self.composer,
+            "_ProtectedOperationComposer__registry",
+        )
+        exit_error = RuntimeError("composer-exit-secret-canary")
+        exit_trace = object()
+        owner_epoch = object.__getattribute__(
+            self.composer,
+            "_ProtectedOperationComposer__owner_epoch",
+        )
+        object.__setattr__(self.composer, "_ProtectedOperationComposer__owner_epoch", object())
+        calls = (
+            ("authorize", lambda: self.composer.authorize(self.context, self.request)),
+            (
+                "consume",
+                lambda: self.composer.consume(operation, self.context, self.request),
+            ),
+            ("retire", lambda: self.composer.retire(operation)),
+            ("close", self.composer.close),
+            ("__enter__", self.composer.__enter__),
+            (
+                "__exit__",
+                lambda: self.composer.__exit__(RuntimeError, exit_error, exit_trace),
+            ),
+        )
+        forbidden = (
+            self.composer,
+            self.issuer,
+            registry,
+            self.provider,
+            self.authorizer,
+            self.verifier,
+            self.key_ring,
+            self.clock,
+            self.context,
+            self.request,
+            operation,
+            exit_error,
+            exit_trace,
+            b"signing-secret-canary-1234567890",
+        )
+        try:
+            for expected_method, call in calls:
+                with self.subTest(method=expected_method):
+                    active_error = RuntimeError(f"composer-{expected_method}-body-secret-canary")
+                    active_error.composer = self.composer
+                    active_error.registry = registry
+                    active_error.request = self.request
+                    active_error.provider = self.provider
+                    active_error.authorizer = self.authorizer
+                    active_error.key_ring = self.key_ring
+                    try:
+                        raise active_error
+                    except RuntimeError:
+                        error = self.capture_error(
+                            "protected_operation_process_mismatch",
+                            call,
+                        )
+                    self.assert_detached_process_failure(
+                        error,
+                        expected_method,
+                        *forbidden,
+                        active_error,
+                    )
+        finally:
+            object.__setattr__(
+                self.composer,
+                "_ProtectedOperationComposer__owner_epoch",
+                owner_epoch,
+            )
+
+        self.composer.consume(operation, self.context, self.request)
+
+    def test_every_registry_process_failure_detaches_all_operation_state(self):
+        operation = self.composer.authorize(self.context, self.request)
+        registry = object.__getattribute__(
+            self.composer,
+            "_ProtectedOperationComposer__registry",
+        )
+        basis = self.issuer.prepare_reauthorization(self.context, self.request)
+        binding = _OperationBinding(
+            context_id=basis.context_id,
+            authenticator_id=basis.authenticator_id,
+            audience=basis.audience,
+            request_id=basis.request_id,
+            principal_id=basis.principal_id,
+            subject_id=basis.subject_id,
+            tenant_id=basis.tenant_id,
+            workspace_id=self.workspace,
+            action=self.request.action,
+            resource_type=self.request.resource.resource_type,
+            resource_id=self.request.resource.resource_id,
+            decision_id="cd" * 32,
+            identity_revision=basis.identity_revision,
+            scope_revision=basis.scope_revision,
+        )
+        expires_at = self.clock.now() + timedelta(seconds=20)
+        owner_epoch = object.__getattribute__(
+            registry,
+            "_AuthorizedOperationRegistry__owner_epoch",
+        )
+        object.__setattr__(registry, "_AuthorizedOperationRegistry__owner_epoch", object())
+        calls = (
+            ("issue", lambda: registry.issue(binding, expires_at=expires_at)),
+            ("observe_now", registry.observe_now),
+            ("verify", lambda: registry.verify(operation, binding)),
+            (
+                "check_request",
+                lambda: registry.check_request(operation, basis, self.request),
+            ),
+            (
+                "consume_request",
+                lambda: registry.consume_request(operation, basis, self.request),
+            ),
+            ("retire", lambda: registry.retire(operation)),
+            ("close", registry.close),
+        )
+        forbidden = (
+            self.composer,
+            self.issuer,
+            registry,
+            self.provider,
+            self.authorizer,
+            self.verifier,
+            self.key_ring,
+            self.clock,
+            self.context,
+            self.request,
+            operation,
+            basis,
+            binding,
+            expires_at,
+            b"signing-secret-canary-1234567890",
+        )
+        try:
+            for expected_method, call in calls:
+                with self.subTest(method=expected_method):
+                    active_error = RuntimeError(f"registry-{expected_method}-body-secret-canary")
+                    active_error.composer = self.composer
+                    active_error.registry = registry
+                    active_error.request = self.request
+                    active_error.provider = self.provider
+                    active_error.authorizer = self.authorizer
+                    active_error.key_ring = self.key_ring
+                    try:
+                        raise active_error
+                    except RuntimeError:
+                        error = self.capture_error(
+                            "protected_operation_process_mismatch",
+                            call,
+                        )
+                    self.assert_detached_process_failure(
+                        error,
+                        expected_method,
+                        *forbidden,
+                        active_error,
+                    )
+        finally:
+            object.__setattr__(
+                registry,
+                "_AuthorizedOperationRegistry__owner_epoch",
+                owner_epoch,
+            )
+
         self.composer.consume(operation, self.context, self.request)
 
     def test_token_is_bound_to_the_exact_authenticated_actor_context(self):
@@ -1593,7 +1890,7 @@ class ProtectedOperationComposerTests(unittest.TestCase):
             )
 
             self.assertIsNot(signal, original)
-            self.assertEqual(signal.args, ())
+            self.assertEqual(signal.args, (1,) if type(original) is SystemExit else ())
             rendered = " ".join((str(signal), repr(signal)))
             self.assertNotIn("secret-canary", rendered)
             self.assert_detached_control_traceback(
@@ -1611,6 +1908,233 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                 "generator-control-secret-canary",
                 "cancelled-control-secret-canary",
             )
+
+    def test_system_exit_status_is_preserved_only_for_bounded_exact_values(self):
+        class IntSubclass(int):
+            pass
+
+        invalid_object = object()
+        cases = (
+            ("none", None, None),
+            ("false", False, False),
+            ("true", True, True),
+            ("zero", 0, 0),
+            ("ordinary", 17, 17),
+            ("maximum", 255, 255),
+            ("negative", -1, 1),
+            ("above-maximum", 256, 1),
+            ("text", "system-exit-status-secret-canary", 1),
+            ("object", invalid_object, 1),
+            ("int-subclass", IntSubclass(17), 1),
+        )
+        for label, status, expected_status in cases:
+            with self.subTest(status=label):
+                original = SystemExit(status)
+                provider = FakeCurrentStateProvider(self.current_state, failure=original)
+                composer = self.make_composer(provider=provider)
+                active_error = RuntimeError(f"system-exit-{label}-body-secret-canary")
+                active_error.composer = composer
+                active_error.request = self.request
+                active_error.provider = provider
+                active_error.authorizer = self.authorizer
+                active_error.key_ring = self.key_ring
+
+                try:
+                    raise active_error
+                except RuntimeError:
+                    signal = self.capture_control_signal(
+                        SystemExit,
+                        lambda selected=composer: selected.authorize(
+                            self.context,
+                            self.request,
+                        ),
+                    )
+
+                self.assertIsNot(signal, original)
+                if expected_status is None:
+                    self.assertIsNone(signal.code)
+                    self.assertEqual(signal.args, ())
+                else:
+                    self.assertIs(type(signal.code), type(expected_status))
+                    self.assertEqual(signal.code, expected_status)
+                    self.assertEqual(signal.args, (expected_status,))
+                self.assertNotIn(
+                    "system-exit-status-secret-canary",
+                    " ".join((str(signal), repr(signal))),
+                )
+                forbidden_status = (
+                    (status,)
+                    if not (
+                        status is None
+                        or type(status) is bool
+                        or (type(status) is int and 0 <= status <= 255)
+                    )
+                    else ()
+                )
+                self.assert_detached_control_traceback(
+                    signal,
+                    "authorize",
+                    "system-exit-status-secret-canary",
+                    forbidden=(
+                        composer,
+                        provider,
+                        self.issuer,
+                        self.authorizer,
+                        self.verifier,
+                        self.key_ring,
+                        self.clock,
+                        self.context,
+                        self.request,
+                        original,
+                        active_error,
+                        *forbidden_status,
+                    ),
+                )
+                self.assert_original_control_traceback_is_scrubbed(
+                    original,
+                    "system-exit-status-secret-canary",
+                )
+
+    def test_lifecycle_boundaries_reissue_clean_exact_control_signals(self):
+        paths = (
+            "constructor",
+            "composer_close",
+            "composer_enter",
+            "composer_exit",
+            "registry_close",
+        )
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+        for path in paths:
+            for signal_type in signal_types:
+                with self.subTest(path=path, signal=signal_type.__name__):
+                    canary = f"{path}-{signal_type.__name__}-lifecycle-secret-canary"
+                    original = SystemExit(17) if signal_type is SystemExit else signal_type(canary)
+                    active_error = RuntimeError(f"{canary}-body")
+                    active_error.request = self.request
+                    active_error.provider = self.provider
+                    active_error.authorizer = self.authorizer
+                    active_error.key_ring = self.key_ring
+                    composer = None
+                    registry = None
+                    uninitialized = None
+                    exit_error = None
+                    exit_trace = None
+
+                    if path == "constructor":
+                        uninitialized = object.__new__(ProtectedOperationComposer)
+
+                        def fail_owner(_issuer, *, selected=original):
+                            raise selected
+
+                        def constructor_callback(selected=uninitialized):
+                            ProtectedOperationComposer.__init__(
+                                selected,
+                                issuer=self.issuer,
+                                state_provider=self.provider,
+                                authorizer=self.authorizer,
+                                clock=self.clock,
+                            )
+
+                        callback = constructor_callback
+                        expected_method = "__init__"
+                        boundary_patch = patch.object(
+                            RequestContextIssuer,
+                            "_is_current_process_owner",
+                            fail_owner,
+                        )
+                    else:
+                        composer = self.make_composer()
+                        registry = object.__getattribute__(
+                            composer,
+                            "_ProtectedOperationComposer__registry",
+                        )
+                        if path == "composer_enter":
+
+                            def fail_owner(_issuer, *, selected=original):
+                                raise selected
+
+                            callback = composer.__enter__
+                            expected_method = "__enter__"
+                            boundary_patch = patch.object(
+                                RequestContextIssuer,
+                                "_is_current_process_owner",
+                                fail_owner,
+                            )
+                        else:
+
+                            def fail_registry_close(_registry, *, selected=original):
+                                raise selected
+
+                            boundary_patch = patch.object(
+                                _AuthorizedOperationRegistry,
+                                "_close",
+                                fail_registry_close,
+                            )
+                            if path == "composer_close":
+                                callback = composer.close
+                                expected_method = "close"
+                            elif path == "composer_exit":
+                                exit_error = active_error
+
+                                def exit_callback(
+                                    selected_composer=composer,
+                                    selected_error=active_error,
+                                ):
+                                    with selected_composer:
+                                        raise selected_error
+
+                                callback = exit_callback
+                                expected_method = "__exit__"
+                            else:
+                                callback = registry.close
+                                expected_method = "close"
+
+                    active_error.composer = composer
+                    active_error.registry = registry
+                    active_error.uninitialized = uninitialized
+                    with boundary_patch:
+                        if path == "composer_exit":
+                            signal = self.capture_control_signal(signal_type, callback)
+                        else:
+                            try:
+                                raise active_error
+                            except RuntimeError:
+                                signal = self.capture_control_signal(signal_type, callback)
+                    if path == "composer_exit":
+                        exit_trace = active_error.__traceback__
+
+                    self.assertIsNot(signal, original)
+                    self.assertEqual(signal.args, (17,) if signal_type is SystemExit else ())
+                    self.assertNotIn(canary, " ".join((str(signal), repr(signal))))
+                    forbidden = tuple(
+                        value
+                        for value in (
+                            composer,
+                            registry,
+                            uninitialized,
+                            self.issuer,
+                            self.provider,
+                            self.authorizer,
+                            self.verifier,
+                            self.key_ring,
+                            self.clock,
+                            self.context,
+                            self.request,
+                            original,
+                            active_error,
+                            exit_error,
+                            exit_trace,
+                            b"signing-secret-canary-1234567890",
+                        )
+                        if value is not None
+                    )
+                    self.assert_detached_control_traceback(
+                        signal,
+                        expected_method,
+                        canary,
+                        forbidden=forbidden,
+                    )
+                    self.assert_original_control_traceback_is_scrubbed(original, canary)
 
     def test_exact_control_signals_survive_consume_and_retire_boundaries(self):
         signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
@@ -1649,7 +2173,7 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                         self.composer.retire(operation)
 
                     self.assertIsNot(signal, original)
-                    self.assertEqual(signal.args, ())
+                    self.assertEqual(signal.args, (1,) if signal_type is SystemExit else ())
                     self.assertNotIn(canary, " ".join((str(signal), repr(signal))))
                     self.assert_detached_control_traceback(signal, method_name, canary)
                     self.assert_original_control_traceback_is_scrubbed(original, canary)
@@ -1907,6 +2431,7 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                 "composer_retire",
                 "composer_close",
                 "composer_enter",
+                "composer_exit",
                 "registry_issue",
                 "registry_observe_now",
                 "registry_verify",
