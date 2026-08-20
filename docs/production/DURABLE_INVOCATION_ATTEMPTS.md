@@ -103,6 +103,9 @@ write transaction. Time spent waiting for SQLite ownership therefore cannot be h
 stale pre-lock timestamp. Inputs use strict RFC 3339 syntax and are normalized to UTC with
 microsecond precision. A positive lease duration that rounds to the same durable timestamp is
 rejected before mutation; every accepted lease deadline is strictly later than its heartbeat.
+A duration too large for floating-point conversion, `timedelta`, or the supported `datetime`
+range raises the same stable `ValueError`. Claim and heartbeat perform no durable write on that
+path; validation after taking the SQLite write lock rolls the transaction back in full.
 
 Before a first claim writes, the sampled time must be no earlier than the selected job's
 creation and last update. Before heartbeat, completion or failure writes, it must be no earlier
@@ -271,7 +274,7 @@ explicit-failure and expiry quarantine without second claim, fresh-job selection
 higher-priority effect-unknown job, terminal exhaustion, complete bounded recovery-history
 validation, post-lock clock sampling, cross-connection clock-regression rollback, complete
 job/attempt time causality, sub-microsecond lease rejection, strict timestamp parsing, token
-non-disclosure and invalid lease inputs:
+non-disclosure, oversized lease normalization without mutation, and invalid lease inputs:
 
 ```bash
 PYTHONPATH=src python3 -m unittest tests.test_attempts -v
