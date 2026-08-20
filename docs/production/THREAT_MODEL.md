@@ -91,14 +91,20 @@ flowchart LR
 
 The current repository implements only part of this flow. Missing boxes are requirements,
 not implied controls. In particular, `0.1.x` has no public admission/authentication service,
-secret store, complete action receipt layer, or production connector.
+secret store, complete action receipt layer, or production connector. A process-local
+`RequestContextIssuer` now distinguishes caller scope claims from one configured
+authenticator result and blocks cross-request/scope handle reuse, but there is no real
+authenticator, authenticated transport, current membership refresh, or mandatory runtime/
+authorizer composition. That primitive does not complete the `Admission + authentication`
+box.
 
 ### Boundary rules
 
 1. Everything entering from a user, protocol peer, webhook, model, plugin, or connector is
    untrusted regardless of whether it is syntactically valid.
 2. Identity and current time used for authorization come from trusted service context, not
-   request claims.
+   request claims. `ActorRef`, envelope sender/authority, `CallerRequestContext`, and a
+   free-standing authentication result or reauthorization basis remain untrusted data.
 3. Tenant, workspace, actor, audience, action, resource, and expiry are checked again at
    the moment of each effect.
 4. Model text never directly grants authority. A prompt, artifact, or tool result cannot
@@ -114,6 +120,8 @@ The following are release-blocking invariants:
 
 - default deny when identity, membership, tenant, workspace, action, resource, audience,
   time, delegation, or revocation evidence is absent or invalid;
+- a protected request uses the same issuer's unchanged live context, exact
+  request/subject/tenant/workspace binding, and current identity/membership revision;
 - no caller-supplied timestamp determines capability validity;
 - only a verifier-produced capability type can enter the authorization evaluator;
 - delegation narrows every scope dimension and validates the full ancestor chain;
@@ -155,6 +163,7 @@ The following are release-blocking invariants:
 | TM-22 | Accidental real Feishu/WeCom write in research/tests | unauthorized communication, P0 | no write connector, fake-only tests, explicit separate authorization | enforced by scope |
 | TM-23 | Restore replays obsolete owners or grants | unauthorized stale action, P0 | restored epochs/revocations, recovery mode, reconciliation gate | gap |
 | TM-24 | Metrics label accepts arbitrary tenant/prompt text | secret leak/cardinality DoS, P1 | fixed label vocabulary, hashing/redaction, bounds | gap |
+| TM-25 | Caller chooses subject/tenant/workspace or reuses an issued context across scope | impersonation/tenant escape, P0 | authenticated subject mapping, exact process-local issuance, action-time identity/membership refresh, mandatory authorizer composition | partial |
 
 `partial` and `in progress` do not satisfy a release gate. Only a linked implementation,
 adversarial test, and retained evidence may change a row to `verified`.
