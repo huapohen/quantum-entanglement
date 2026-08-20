@@ -482,6 +482,17 @@ class TransactionalDeliveryTests(unittest.TestCase):
         self.assertEqual(len(first), 1)
         self.assertEqual(second, ())
 
+    def test_public_outbox_rendering_never_exposes_lease_token(self):
+        self.store.append_with_outbox(event("lease-redaction"), (message(),))
+        claimed = self.store.claim_outbox("publisher-a", lease_seconds=10)[0]
+
+        rendered = claimed.to_dict()
+
+        self.assertIsNotNone(claimed.lease_token)
+        self.assertNotIn("leaseToken", rendered)
+        self.assertNotIn("lease_token", rendered)
+        self.assertNotIn(claimed.lease_token, repr(claimed))
+
     def test_expired_lease_is_reclaimed_after_publisher_crash(self):
         self.store.append_with_outbox(event("dispatch-1"), (message(),))
         first = self.store.claim_outbox("publisher-a", lease_seconds=10)[0]
