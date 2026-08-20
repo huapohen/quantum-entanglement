@@ -204,7 +204,12 @@ Page on any reconciliation persistence failure, sustained Store errors, or
 unbounded oldest ambiguity age. Alert on abandoned-callback capacity saturation,
 dead-letter growth, and repeated lease expiry. Logs use fixed safe categories
 such as `transport_unavailable`, `connector_failure`, and
-`invalid_publish_receipt`; exception text is not persisted by default.
+`invalid_publish_receipt`; exception text is neither logged nor persisted.
+Custom classifiers may return only a constructor-time allowlisted fixed code and
+are never coerced to text. Operational failures use the typed event catalog in
+[`LOGGING_AND_REDACTION.md`](./LOGGING_AND_REDACTION.md), with worker/message
+identifiers hashed and no traceback. Public outbox serialization and repr omit
+the lease token; the Store/Publisher CAS path retains typed internal access.
 
 ## Release verification
 
