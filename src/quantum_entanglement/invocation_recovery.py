@@ -9,10 +9,11 @@ work, calls an Agent, changes a lease, accepts a result, or projects a task stat
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Optional, Protocol
 
 from .attempts import (
     AttemptStatus,
@@ -33,6 +34,10 @@ _MAX_ERROR_BYTES = 16_384
 
 class InvocationRecoveryIntegrityError(RuntimeError):
     """Raised when recovery evidence is malformed, contradictory, or misbound."""
+
+
+class InvocationRecoveryClosedError(RuntimeError):
+    """Raised when a closed recovery coordinator is asked to read durable state."""
 
 
 class InvocationRecoveryDecision(str, Enum):
@@ -82,6 +87,20 @@ class InvocationResultReceipt:
 
     def __post_init__(self) -> None:
         _validate_receipt_shape(self)
+
+
+class InvocationRecoveryStore(Protocol):
+    """Minimal durable snapshot source used by the read-only coordinator."""
+
+    def recovery_snapshot_for_task(
+        self,
+        session_id: str,
+        task_id: str,
+    ) -> InvocationRecoverySnapshot:
+        """Return one transactionally consistent job/attempt snapshot."""
+
+    def close(self) -> None:
+        """Release resources when ownership was explicitly transferred."""
 
 
 def _text(
@@ -454,10 +473,89 @@ def assess_invocation_recovery(
     raise InvocationRecoveryIntegrityError("invocation job status is unsupported")
 
 
+class InvocationRecoveryCoordinator:
+    """Read durable attempt evidence without taking execution or projection authority."""
+
+    def __init__(
+        self,
+        store: Optional[InvocationRecoveryStore] = None,
+        *,
+        owns_store: bool = False,
+    ) -> None:
+        if type(owns_store) is not bool:
+            raise TypeError("owns_store must be a boolean")
+        if owns_store and store is None:
+            raise ValueError("owns_store requires an invocation recovery store")
+        if store is not None:
+            for method_name in ("recovery_snapshot_for_task", "close"):
+                if not callable(getattr(store, method_name, None)):
+                    raise TypeError("store must provide recovery_snapshot_for_task and close")
+        self._store = store
+        self._owns_store = owns_store
+        self._closed = False
+        self._lock = threading.RLock()
+
+    def __enter__(self) -> InvocationRecoveryCoordinator:
+        with self._lock:
+            self._require_open()
+            return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
+        self.close()
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise InvocationRecoveryClosedError("invocation recovery coordinator is closed")
+
+    @property
+    def closed(self) -> bool:
+        with self._lock:
+            return self._closed
+
+    def assess(
+        self,
+        task_status: TaskStatus,
+        binding: InvocationBinding,
+        receipt: Optional[InvocationResultReceipt] = None,
+    ) -> InvocationRecoveryDecision:
+        """Read an optional durable snapshot and apply the pure recovery matrix."""
+
+        with self._lock:
+            self._require_open()
+            if task_status is not TaskStatus.RUNNING:
+                raise InvocationRecoveryIntegrityError(
+                    "invocation recovery requires a RUNNING task"
+                )
+            _validate_binding(binding, "binding")
+            if receipt is not None:
+                _validate_receipt_shape(receipt)
+            if self._store is None:
+                snapshot = InvocationRecoverySnapshot(None, None, 0)
+            else:
+                snapshot = self._store.recovery_snapshot_for_task(
+                    binding.session_id,
+                    binding.task_id,
+                )
+            return assess_invocation_recovery(task_status, binding, snapshot, receipt)
+
+    def close(self) -> None:
+        """Close only an explicitly owned store; a failed owned close remains retryable."""
+
+        with self._lock:
+            if self._closed:
+                return
+            if self._owns_store and self._store is not None:
+                self._store.close()
+            self._closed = True
+
+
 __all__ = [
     "InvocationBinding",
+    "InvocationRecoveryClosedError",
+    "InvocationRecoveryCoordinator",
     "InvocationRecoveryDecision",
     "InvocationRecoveryIntegrityError",
+    "InvocationRecoveryStore",
     "InvocationResultReceipt",
     "assess_invocation_recovery",
 ]
