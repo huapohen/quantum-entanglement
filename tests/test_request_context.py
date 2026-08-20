@@ -292,8 +292,65 @@ class RequestContextIssuanceTests(unittest.TestCase):
 
         context = issuer.issue(self.claims, self.credential())
 
-        self.assertEqual(clock.calls, 1)
+        self.assertEqual(clock.calls, 2)
         self.assertEqual(context.issued_at, NOW)
+
+    def test_authentication_completion_resamples_time_and_rejects_stale_result(self):
+        def slow_factory(*, claims, audience, at):
+            binding = self.binding(claims=claims, audience=audience, at=at)
+            self.clock.advance(timedelta(minutes=6))
+            return binding
+
+        issuer, _ = self.make_issuer(slow_factory)
+        credential = self.credential()
+
+        self.assert_code(
+            "request_authentication_expired",
+            lambda: issuer.issue(self.claims, credential),
+        )
+        self.assertTrue(credential.closed)
+
+    def test_authentication_completion_clock_failure_is_redacted_and_releases_capacity(self):
+        class SecondReadFailsClock(FixedClock):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def now(self):
+                self.calls += 1
+                if self.calls == 2:
+                    raise RuntimeError("completion clock secret")
+                return super().now()
+
+        clock = SecondReadFailsClock()
+        issuer, authenticator = self.make_issuer(clock=clock, max_active_contexts=1)
+        credential = self.credential()
+
+        self.assert_code(
+            "request_context_clock_unavailable",
+            lambda: issuer.issue(self.claims, credential),
+        )
+        self.assertEqual(authenticator.calls, 1)
+        self.assertTrue(credential.closed)
+
+        clock.calls = 0
+        clock.current = NOW
+        with self.assertRaises(RequestContextError):
+            issuer.issue(self.claims, self.credential())
+        self.assertEqual(authenticator.calls, 2)
+
+    def test_authentication_completion_rejects_clock_regression(self):
+        def regressing_factory(*, claims, audience, at):
+            binding = self.binding(claims=claims, audience=audience, at=at)
+            self.clock.current = at - timedelta(seconds=31)
+            return binding
+
+        issuer, _ = self.make_issuer(regressing_factory)
+
+        self.assert_code(
+            "request_context_time_regressed",
+            lambda: issuer.issue(self.claims, self.credential()),
+        )
 
     def test_credential_is_closed_when_claims_clock_or_authenticator_fails(self):
         class FailingClock:
