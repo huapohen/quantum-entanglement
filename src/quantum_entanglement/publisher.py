@@ -22,7 +22,59 @@ from enum import Enum
 from typing import Any
 
 from .delivery import StoredOutboxMessage
+from .service.logging import (
+    LogEventSchema,
+    LogField,
+    LogFieldKind,
+    SafeLogCatalog,
+    SafeLogger,
+)
 from .store import SQLiteEventStore
+
+_PUBLISHER_LOG_CATALOG = SafeLogCatalog(
+    (
+        LogEventSchema("qe.publisher.clock_failed", logging.ERROR),
+        LogEventSchema(
+            "qe.publisher.claim_failed",
+            logging.ERROR,
+            (LogField("worker_id", LogFieldKind.IDENTIFIER_HASH),),
+        ),
+        LogEventSchema(
+            "qe.publisher.ack_failed",
+            logging.CRITICAL,
+            (LogField("message_id", LogFieldKind.IDENTIFIER_HASH),),
+        ),
+        LogEventSchema(
+            "qe.publisher.lease_budget_validation_failed",
+            logging.ERROR,
+            (LogField("message_id", LogFieldKind.IDENTIFIER_HASH),),
+        ),
+        LogEventSchema(
+            "qe.publisher.lease_deadline_missing",
+            logging.ERROR,
+            (LogField("message_id", LogFieldKind.IDENTIFIER_HASH),),
+        ),
+        LogEventSchema(
+            "qe.publisher.lease_deadline_validation_failed",
+            logging.ERROR,
+            (LogField("message_id", LogFieldKind.IDENTIFIER_HASH),),
+        ),
+        LogEventSchema(
+            "qe.publisher.ambiguity_persist_failed",
+            logging.CRITICAL,
+            (LogField("message_id", LogFieldKind.IDENTIFIER_HASH),),
+        ),
+        LogEventSchema(
+            "qe.publisher.rejection_persist_failed",
+            logging.ERROR,
+            (LogField("message_id", LogFieldKind.IDENTIFIER_HASH),),
+        ),
+        LogEventSchema("qe.publisher.retry_timestamp_failed", logging.ERROR),
+        LogEventSchema("qe.publisher.retry_jitter_failed", logging.ERROR),
+        LogEventSchema("qe.publisher.retry_jitter_invalid", logging.ERROR),
+        LogEventSchema("qe.publisher.error_classifier_failed", logging.ERROR),
+    )
+)
 
 
 def _utc_clock() -> datetime:
@@ -412,7 +464,7 @@ class OutboxPublisher:
         self._clock = clock
         self._monotonic = monotonic
         self._error_formatter = error_formatter or self._default_error_formatter
-        self._logger = logger or logging.getLogger(__name__)
+        self._logger = SafeLogger(logger or logging.getLogger(__name__), _PUBLISHER_LOG_CATALOG)
 
         self._counters = _Counters()
         self._bound_loop: asyncio.AbstractEventLoop | None = None
@@ -696,7 +748,7 @@ class OutboxPublisher:
         try:
             return _timestamp(self._clock())
         except Exception:
-            self._logger.exception("publisher clock failed")
+            self._logger.emit("qe.publisher.clock_failed")
             return None
 
     async def run_once(self) -> PublishBatchStats:
@@ -724,7 +776,10 @@ class OutboxPublisher:
                         lease_seconds=self.lease_seconds,
                     )
                 except Exception:
-                    self._logger.exception("outbox claim failed for worker %s", self.worker_id)
+                    self._logger.emit(
+                        "qe.publisher.claim_failed",
+                        {"worker_id": self.worker_id},
+                    )
                     batch = PublishBatchStats(
                         store_errors=1,
                         duration_seconds=max(0.0, self._monotonic() - started),
@@ -845,8 +900,9 @@ class OutboxPublisher:
             self._record_cancelled_attempt(persisted)
             raise
         except Exception:
-            self._logger.exception(
-                "outbox acknowledgement failed for message %s", request.message_id
+            self._logger.emit(
+                "qe.publisher.ack_failed",
+                {"message_id": request.message_id},
             )
             persisted = await self._persist_ambiguity(stored, "ack_failed")
             return _AttemptOutcome(
@@ -998,15 +1054,18 @@ class OutboxPublisher:
                 return None
             return _timestamp(now)
         except Exception:
-            self._logger.exception(
-                "cannot validate callback lease budget for message %s",
-                request.message_id,
+            self._logger.emit(
+                "qe.publisher.lease_budget_validation_failed",
+                {"message_id": request.message_id},
             )
             return None
 
     def _valid_ack_timestamp(self, request: PublishRequest) -> str | None:
         if not request.lease_deadline:
-            self._logger.error("outbox message %s has no lease deadline", request.message_id)
+            self._logger.emit(
+                "qe.publisher.lease_deadline_missing",
+                {"message_id": request.message_id},
+            )
             return None
         try:
             now = self._clock()
@@ -1017,8 +1076,9 @@ class OutboxPublisher:
                 return None
             return _timestamp(now)
         except Exception:
-            self._logger.exception(
-                "cannot validate lease deadline for message %s", request.message_id
+            self._logger.emit(
+                "qe.publisher.lease_deadline_validation_failed",
+                {"message_id": request.message_id},
             )
             return None
 
@@ -1036,9 +1096,9 @@ class OutboxPublisher:
         except asyncio.CancelledError:
             raise
         except Exception:
-            self._logger.exception(
-                "failed to persist outbox ambiguity for message %s",
-                stored.message.message_id,
+            self._logger.emit(
+                "qe.publisher.ambiguity_persist_failed",
+                {"message_id": stored.message.message_id},
             )
             return False
 
@@ -1095,8 +1155,9 @@ class OutboxPublisher:
                 dead_letter=dead_letter,
             )
         except Exception:
-            self._logger.exception(
-                "outbox rejection failed for message %s", stored.message.message_id
+            self._logger.emit(
+                "qe.publisher.rejection_persist_failed",
+                {"message_id": stored.message.message_id},
             )
             return _AttemptOutcome(
                 publish_failures=1,
@@ -1145,7 +1206,7 @@ class OutboxPublisher:
         except Exception:
             # A broken injected clock must not strand the leased row.  Passing
             # None delegates to the store's UTC timestamp for immediate retry.
-            self._logger.exception("outbox retry timestamp failed; scheduling immediately")
+            self._logger.emit("qe.publisher.retry_timestamp_failed")
             return None
 
     def _retry_delay(self, attempt_count: int) -> float:
@@ -1161,10 +1222,10 @@ class OutboxPublisher:
         try:
             jittered = float(self._jitter(capped))
         except Exception:
-            self._logger.exception("outbox retry jitter failed; using capped delay")
+            self._logger.emit("qe.publisher.retry_jitter_failed")
             return capped
         if not math.isfinite(jittered) or jittered < 0:
-            self._logger.error("outbox retry jitter returned an invalid delay; using capped delay")
+            self._logger.emit("qe.publisher.retry_jitter_invalid")
             return capped
         return min(capped, jittered)
 
@@ -1172,6 +1233,6 @@ class OutboxPublisher:
         try:
             rendered = str(self._error_formatter(error)).strip()
         except Exception:
-            self._logger.exception("outbox error formatter failed; using exception type")
+            self._logger.emit("qe.publisher.error_classifier_failed")
             rendered = type(error).__name__
         return (rendered or type(error).__name__)[:2048]
