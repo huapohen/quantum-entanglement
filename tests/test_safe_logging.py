@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -15,6 +16,11 @@ from quantum_entanglement.service import (
 class ExplodingLogger(logging.Logger):
     def handle(self, record: logging.LogRecord) -> None:
         raise RuntimeError("logging backend secret canary")
+
+
+class CancellingLogger(logging.Logger):
+    def handle(self, record: logging.LogRecord) -> None:
+        raise asyncio.CancelledError("logging cancellation secret canary")
 
 
 class SafeLoggerTests(unittest.TestCase):
@@ -155,6 +161,12 @@ class SafeLoggerTests(unittest.TestCase):
 
     def test_logging_backend_failure_never_escapes(self) -> None:
         safe_logger = SafeLogger(ExplodingLogger("exploding"), self.catalog)
+
+        self.assertFalse(safe_logger.emit("qe.test.no_fields"))
+        self.assertFalse(safe_logger.emit("unknown"))
+
+    def test_logging_backend_cancellation_never_changes_business_flow(self) -> None:
+        safe_logger = SafeLogger(CancellingLogger("cancelling"), self.catalog)
 
         self.assertFalse(safe_logger.emit("qe.test.no_fields"))
         self.assertFalse(safe_logger.emit("unknown"))

@@ -7,6 +7,7 @@ handed to the standard logging framework.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging as standard_logging
@@ -196,6 +197,8 @@ class SafeLogger:
             return self._emit_rejected()
         try:
             self.__logger.log(schema.level, record)
+        except asyncio.CancelledError:
+            return False
         except Exception:
             return False
         return True
@@ -203,6 +206,8 @@ class SafeLogger:
     def _emit_rejected(self) -> bool:
         try:
             self.__logger.error(_REJECTED_RECORD)
+        except asyncio.CancelledError:
+            return False
         except Exception:
             return False
         return False

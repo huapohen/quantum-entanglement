@@ -41,10 +41,11 @@ not anonymization: a low-entropy identifier can be guessed, and the stable hash 
 records. Retention and access policy must still treat these logs as operational metadata.
 
 Records are canonical single-line JSON passed to `logging.Logger.log()` with no formatting
-arguments or exception info. A logging backend failure returns `False` and never changes a
-business operation. Durable security audit is a separate future store and may deliberately
-fail a protected action closed; ordinary operational logging must not be confused with that
-audit guarantee.
+arguments or exception info. An ordinary logging backend exception or cancellation-style
+failure returns `False` and never changes a business operation. Process-control signals are
+not swallowed. Durable security audit is a separate future store and may deliberately fail a
+protected action closed; ordinary operational logging must not be confused with that audit
+guarantee.
 
 ## Diagnostic redactor
 
