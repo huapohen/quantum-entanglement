@@ -48,7 +48,7 @@ references/                 本地只读参考仓库（被 .gitignore 排除）
 ## 快速验证
 
 ```bash
-python3 -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m unittest discover -s tests -v
 PYTHONPATH=src python3 examples/group_chat_demo.py
 ```
 
