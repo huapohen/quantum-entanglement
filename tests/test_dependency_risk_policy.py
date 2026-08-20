@@ -141,11 +141,14 @@ class DependencyRiskPolicyTests(unittest.TestCase):
         base = self.policy_document()
         base["exceptions"]["records"] = [self.vulnerability_exception()]
         policy = self.parse(base)
-        self.assertEqual(policy.exceptions[0].scope, (
-            "vulnerability",
-            "pkg:pypi/example@1.0.0",
-            "OSV-2026-1",
-        ))
+        self.assertEqual(
+            policy.exceptions[0].scope,
+            (
+                "vulnerability",
+                "pkg:pypi/example@1.0.0",
+                "OSV-2026-1",
+            ),
+        )
 
         mutations = (
             ("risk_policy_exception_invalid", lambda item: item.update(purl="*")),

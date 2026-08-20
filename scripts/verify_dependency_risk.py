@@ -77,11 +77,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except DependencyRiskError as exc:
         print(f"dependency risk verification failed: {exc.code}", file=sys.stderr)
         return 1
-    print(
-        json.dumps(
-            verification_summary_document(summary), separators=(",", ":"), sort_keys=True
-        )
-    )
+    print(json.dumps(verification_summary_document(summary), separators=(",", ":"), sort_keys=True))
     return 0
 
 

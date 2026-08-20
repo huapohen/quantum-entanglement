@@ -55,13 +55,9 @@ _MAX_INTERVAL_SECONDS = 366 * 24 * 60 * 60
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _GIT_HASH_PATTERN = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$")
-_VERSION_PATTERN = re.compile(
-    r"^[A-Za-z0-9](?:[A-Za-z0-9.!+_-]{0,126}[A-Za-z0-9])?$"
-)
+_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.!+_-]{0,126}[A-Za-z0-9])?$")
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._:@/+_-]{0,126}[A-Za-z0-9])?$")
-_FINDING_ID_PATTERN = re.compile(
-    r"^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$"
-)
+_FINDING_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$")
 _TIMESTAMP_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})Z$")
 _SPDX_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]{0,126}$")
 _SPDX_OPERATORS = frozenset({"AND", "OR", "WITH"})
@@ -93,13 +89,9 @@ _EVIDENCE_POLICY_KEYS = frozenset(
 )
 _SCANNER_KEYS = frozenset({"name", "sha256", "version"})
 _DATABASE_POLICY_KEYS = frozenset({"revision", "sha256", "source"})
-_VULNERABILITY_POLICY_KEYS = frozenset(
-    {"blockAtOrAbove", "blockWhenFixAvailableAtOrAbove"}
-)
+_VULNERABILITY_POLICY_KEYS = frozenset({"blockAtOrAbove", "blockWhenFixAvailableAtOrAbove"})
 _LICENSE_POLICY_KEYS = frozenset({"allowedExpressions"})
-_EXCEPTION_POLICY_KEYS = frozenset(
-    {"maximumDurationSeconds", "minimumRationaleLength", "records"}
-)
+_EXCEPTION_POLICY_KEYS = frozenset({"maximumDurationSeconds", "minimumRationaleLength", "records"})
 _VULNERABILITY_EXCEPTION_KEYS = frozenset(
     {
         "exceptionId",
@@ -151,9 +143,7 @@ _FILE_BINDING_KEYS = frozenset({"byteSize", "sha256"})
 _LOCK_INVENTORY_KEYS = frozenset(
     {"inventorySha256", "lockPolicySha256", "packageRecordCount", "targetCount", "targets"}
 )
-_LOCK_TARGET_KEYS = frozenset(
-    {"inputSha256", "lockSha256", "platform", "pythonVersion", "scope"}
-)
+_LOCK_TARGET_KEYS = frozenset({"inputSha256", "lockSha256", "platform", "pythonVersion", "scope"})
 _SBOM_KEYS = frozenset({"byteSize", "filename", "kind", "sha256"})
 _RESULT_SCANNER_KEYS = frozenset({"name", "sha256", "version"})
 _DATABASE_KEYS = frozenset(
@@ -173,9 +163,7 @@ _COMPONENT_SCAN_KEYS = frozenset(
     {"artifactSha256", "license", "purl", "scanStatus", "vulnerabilities"}
 )
 _LICENSE_OBSERVATION_KEYS = frozenset({"expression", "status"})
-_VULNERABILITY_KEYS = frozenset(
-    {"aliases", "fixedVersions", "fixStatus", "id", "severity"}
-)
+_VULNERABILITY_KEYS = frozenset({"aliases", "fixedVersions", "fixStatus", "id", "severity"})
 
 
 class DependencyRiskError(ValueError):
@@ -556,9 +544,7 @@ def _scanner_identities(value: object) -> tuple[ScannerIdentity, ...]:
         ):
             _fail("risk_policy_scanner_invalid")
         identities.append(ScannerIdentity(name=name, version=version, sha256=digest))
-    if identities != sorted(
-        identities, key=lambda item: (item.name, item.version, item.sha256)
-    ):
+    if identities != sorted(identities, key=lambda item: (item.name, item.version, item.sha256)):
         _fail("risk_policy_scanner_invalid")
     if len({(item.name, item.version, item.sha256) for item in identities}) != len(identities):
         _fail("risk_policy_scanner_invalid")
@@ -582,9 +568,7 @@ def _approved_databases(value: object) -> tuple[ApprovedDatabase, ...]:
         if _HASH_PATTERN.fullmatch(digest) is None:
             _fail("risk_policy_database_invalid")
         databases.append(ApprovedDatabase(source=source, revision=revision, sha256=digest))
-    if databases != sorted(
-        databases, key=lambda item: (item.source, item.revision, item.sha256)
-    ):
+    if databases != sorted(databases, key=lambda item: (item.source, item.revision, item.sha256)):
         _fail("risk_policy_database_invalid")
     if len({(item.source, item.revision, item.sha256) for item in databases}) != len(databases):
         _fail("risk_policy_database_invalid")
@@ -672,9 +656,7 @@ def _risk_exceptions(
             subject = (
                 None
                 if raw_expression is None
-                else canonical_license_expression(
-                    raw_expression, "risk_policy_exception_invalid"
-                )
+                else canonical_license_expression(raw_expression, "risk_policy_exception_invalid")
             )
         exceptions.append(
             RiskException(
@@ -694,9 +676,7 @@ def _risk_exceptions(
         _fail("risk_policy_exception_invalid")
     if len({item.exception_id for item in exceptions}) != len(exceptions):
         _fail("risk_policy_exception_invalid")
-    exact_scopes = {
-        (item.database_sha256, item.finding_sha256, *item.scope) for item in exceptions
-    }
+    exact_scopes = {(item.database_sha256, item.finding_sha256, *item.scope) for item in exceptions}
     if len(exact_scopes) != len(exceptions):
         _fail("risk_policy_exception_scope_invalid")
     return tuple(exceptions)
@@ -1045,16 +1025,12 @@ def _lock_target_bindings(value: object) -> tuple[LockTargetBinding, ...]:
 def _lock_inventory_binding(value: object) -> LockInventoryBinding:
     record = _exact_keys(value, _LOCK_INVENTORY_KEYS, "risk_result_lock_invalid")
     targets = _lock_target_bindings(record["targets"])
-    target_count = _positive_integer(
-        record["targetCount"], "risk_result_lock_invalid", maximum=32
-    )
+    target_count = _positive_integer(record["targetCount"], "risk_result_lock_invalid", maximum=32)
     if target_count != len(targets):
         _fail("risk_result_lock_invalid")
     return LockInventoryBinding(
         inventory_sha256=_digest(record["inventorySha256"], "risk_result_lock_invalid"),
-        lock_policy_sha256=_digest(
-            record["lockPolicySha256"], "risk_result_lock_invalid"
-        ),
+        lock_policy_sha256=_digest(record["lockPolicySha256"], "risk_result_lock_invalid"),
         package_record_count=_positive_integer(
             record["packageRecordCount"], "risk_result_lock_invalid", maximum=8192
         ),
@@ -1145,9 +1121,7 @@ def _license_observation(value: object) -> LicenseObservation:
 def _identifier_list(value: object, code: str, *, maximum: int) -> tuple[str, ...]:
     if type(value) is not list or len(cast(list[object], value)) > maximum:
         _fail(code)
-    identifiers = tuple(
-        _identifier(item, code, finding=True) for item in cast(list[object], value)
-    )
+    identifiers = tuple(_identifier(item, code, finding=True) for item in cast(list[object], value))
     if identifiers != tuple(sorted(identifiers)) or len(set(identifiers)) != len(identifiers):
         _fail(code)
     return identifiers
@@ -1186,9 +1160,7 @@ def _vulnerability_findings(value: object) -> tuple[VulnerabilityFinding, ...]:
         fix_status = record["fixStatus"]
         if severity not in _RESULT_SEVERITIES or fix_status not in _FIX_STATUSES:
             _fail("risk_result_finding_invalid")
-        fixed_versions = _version_list(
-            record["fixedVersions"], "risk_result_finding_invalid"
-        )
+        fixed_versions = _version_list(record["fixedVersions"], "risk_result_finding_invalid")
         if (fix_status == "available") != bool(fixed_versions):
             _fail("risk_result_finding_invalid")
         findings.append(
@@ -1262,9 +1234,7 @@ def load_dependency_risk_result_bytes(value: bytes) -> DependencyRiskResult:
 
     project = _exact_keys(document["project"], _PROJECT_KEYS, "risk_result_project_invalid")
     project_name = _safe_string(project["name"], "risk_result_project_invalid", maximum=128)
-    project_version = _safe_string(
-        project["version"], "risk_result_project_invalid", maximum=128
-    )
+    project_version = _safe_string(project["version"], "risk_result_project_invalid", maximum=128)
     if (
         _NAME_PATTERN.fullmatch(project_name) is None
         or _VERSION_PATTERN.fullmatch(project_version) is None
@@ -1337,9 +1307,7 @@ def _finding_document(
     return document
 
 
-def vulnerability_finding_sha256(
-    component: ComponentScan, finding: VulnerabilityFinding
-) -> str:
+def vulnerability_finding_sha256(component: ComponentScan, finding: VulnerabilityFinding) -> str:
     """Fingerprint one exact component/artifact/vulnerability observation."""
 
     return sha256_bytes(
@@ -1443,9 +1411,7 @@ def _target_binding(target: LockTarget) -> LockTargetBinding:
     )
 
 
-def _lock_inventory(
-    repository_root: Path, targets: Sequence[LockTarget]
-) -> LockInventoryBinding:
+def _lock_inventory(repository_root: Path, targets: Sequence[LockTarget]) -> LockInventoryBinding:
     policy_bytes = _read_regular(
         repository_root / "requirements" / "lock-policy.json",
         1024 * 1024,
@@ -1504,9 +1470,7 @@ def _expected_components(
     build = validate_sbom_bytes(build_bytes, kind="build")
     runtime_metadata = cast(dict[str, object], runtime["metadata"])
     runtime_root = cast(dict[str, object], runtime_metadata["component"])
-    runtime_purl = canonical_pypi_purl(
-        runtime_root.get("purl"), "risk_sbom_component_invalid"
-    )
+    runtime_purl = canonical_pypi_purl(runtime_root.get("purl"), "risk_sbom_component_invalid")
     components: list[ExpectedComponent] = [
         ExpectedComponent(
             purl=runtime_purl,
@@ -1710,9 +1674,7 @@ def _verify_time_window(
         _fail("risk_result_stale")
 
 
-def _verify_component_coverage(
-    result: DependencyRiskResult, context: RiskEvidenceContext
-) -> None:
+def _verify_component_coverage(result: DependencyRiskResult, context: RiskEvidenceContext) -> None:
     observed = tuple(
         ExpectedComponent(purl=component.purl, artifact_sha256=component.artifact_sha256)
         for component in result.components
@@ -1767,9 +1729,7 @@ def verify_dependency_risk(
     finding_count = 0
     for component in result.components:
         if component.license.status == "unknown":
-            violations.append(
-                ("license", component.purl, None, license_finding_sha256(component))
-            )
+            violations.append(("license", component.purl, None, license_finding_sha256(component)))
         elif component.license.expression not in policy.allowed_license_expressions:
             violations.append(
                 (
@@ -1789,8 +1749,7 @@ def verify_dependency_risk(
             denied = severity_rank >= _SEVERITY_RANK[policy.block_at_or_above]
             denied_with_fix = (
                 finding.fix_status == "available"
-                and severity_rank
-                >= _SEVERITY_RANK[policy.block_when_fix_available_at_or_above]
+                and severity_rank >= _SEVERITY_RANK[policy.block_when_fix_available_at_or_above]
             )
             if denied or denied_with_fix:
                 violations.append(
