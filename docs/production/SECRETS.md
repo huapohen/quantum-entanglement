@@ -41,7 +41,9 @@ attempts to close the lease after success, validation rejection, provider except
 failure, capacity rejection, or issuer shutdown rejection. A view retained by the
 authenticator observes the overwritten backing buffer after a successful close. If the
 wipe primitive itself raises, issuance fails with a redacted stable code and returns no
-context; operators must treat the material as not proven erased.
+context; translated credential-access, authenticator and wipe failures also detach their raw
+exception cause/context so an exception-chain inspector cannot recover provider text.
+Operators must still treat the material as not proven erased when the wipe itself fails.
 
 This use does not route an inbound bearer credential through `FileSecretProvider`, does not
 make a provider reference an authenticated identity, and does not define OIDC/JWT/mTLS.
