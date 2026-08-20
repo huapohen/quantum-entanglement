@@ -357,6 +357,67 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
                 replace(running, current_attempt=forged_attempt),
             )
 
+    def test_snapshot_timestamp_causality_is_revalidated(self) -> None:
+        spec, _lease, snapshot = self.running("timestamp-causality")
+        previous = "2026-08-19T23:59:59.000000Z"
+        later = "2026-08-20T00:00:01.000000Z"
+        cases = (
+            (
+                replace(
+                    snapshot,
+                    job=replace(snapshot.job, heartbeat_at=previous),
+                    current_attempt=replace(snapshot.current_attempt, heartbeat_at=previous),
+                ),
+                "heartbeat_at precedes creation",
+            ),
+            (
+                replace(
+                    snapshot,
+                    job=replace(snapshot.job, heartbeat_at=later),
+                    current_attempt=replace(snapshot.current_attempt, heartbeat_at=later),
+                ),
+                "updated_at precedes heartbeat",
+            ),
+            (
+                replace(
+                    snapshot,
+                    job=replace(
+                        snapshot.job,
+                        lease_expires_at=snapshot.job.heartbeat_at,
+                    ),
+                    current_attempt=replace(
+                        snapshot.current_attempt,
+                        lease_expires_at=snapshot.current_attempt.heartbeat_at,
+                    ),
+                ),
+                "lease deadline",
+            ),
+        )
+        for forged, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(InvocationRecoveryIntegrityError, message):
+                    self.assess(binding_for(spec), forged)
+
+        terminal_spec, terminal_lease, _running = self.running("terminal-causality")
+        self.clock.set("2026-08-20T00:00:05Z")
+        self.assertTrue(
+            self.store.heartbeat(terminal_lease, lease_seconds=10)  # type: ignore[arg-type]
+        )
+        self.assertTrue(self.store.fail(terminal_lease, "failed"))  # type: ignore[arg-type]
+        terminal = self.snapshot(terminal_spec)
+        forged_terminal = replace(
+            terminal,
+            current_attempt=replace(
+                terminal.current_attempt,
+                finished_at="2026-08-20T00:00:04.000000Z",
+            ),
+        )
+        with self.assertRaisesRegex(
+            InvocationRecoveryIntegrityError,
+            "finished_at precedes its heartbeat",
+        ):
+            self.assess(binding_for(terminal_spec), forged_terminal)
+
     def test_schema_compatible_epoch_gap_is_not_coerced_or_rejected(self) -> None:
         spec, _lease, snapshot = self.running("epoch-gap")
         job = replace(snapshot.job, lease_epoch=2)

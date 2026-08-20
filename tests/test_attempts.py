@@ -701,6 +701,101 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
             self.store.get("invocation-1")
 
+    def test_persisted_running_job_time_causality_fails_closed(self):
+        self.store.enqueue(job_spec())
+        self.clock.set(timestamp(5))
+        self.store.claim("invocation-1", "worker", lease_seconds=10)
+        original = self.store._connection.execute(
+            """
+            SELECT heartbeat_at, updated_at, lease_expires_at
+            FROM invocation_jobs WHERE invocation_id = ?
+            """,
+            ("invocation-1",),
+        ).fetchone()
+        corruptions = (
+            ("heartbeat_at", "2026-08-19T23:59:59.000000Z"),
+            ("updated_at", persisted_timestamp(4)),
+            ("updated_at", persisted_timestamp(15)),
+            ("lease_expires_at", persisted_timestamp(5)),
+        )
+
+        for column, value in corruptions:
+            with self.subTest(column=column, value=value):
+                self.store._connection.execute(
+                    f"UPDATE invocation_jobs SET {column} = ? WHERE invocation_id = ?",
+                    (value, "invocation-1"),
+                )
+                with self.assertRaisesRegex(InvocationIntegrityError, "persisted invocation job"):
+                    self.store.get("invocation-1")
+                self.store._connection.execute(
+                    """
+                    UPDATE invocation_jobs
+                    SET heartbeat_at = ?, updated_at = ?, lease_expires_at = ?
+                    WHERE invocation_id = ?
+                    """,
+                    (*tuple(original), "invocation-1"),
+                )
+
+    def test_persisted_attempt_time_causality_fails_closed(self):
+        self.store.enqueue(job_spec())
+        self.clock.set(timestamp(5))
+        self.store.claim("invocation-1", "worker", lease_seconds=10)
+        original = self.store._connection.execute(
+            """
+            SELECT status, heartbeat_at, lease_expires_at, finished_at
+            FROM invocation_attempts WHERE invocation_id = ?
+            """,
+            ("invocation-1",),
+        ).fetchone()
+        corruptions = (
+            (
+                "UPDATE invocation_attempts SET heartbeat_at = ? WHERE invocation_id = ?",
+                ("2026-08-19T23:59:59.000000Z", "invocation-1"),
+            ),
+            (
+                "UPDATE invocation_attempts SET lease_expires_at = ? WHERE invocation_id = ?",
+                (persisted_timestamp(5), "invocation-1"),
+            ),
+            (
+                """
+                UPDATE invocation_attempts SET status = 'failed', finished_at = ?
+                WHERE invocation_id = ?
+                """,
+                (persisted_timestamp(4), "invocation-1"),
+            ),
+            (
+                """
+                UPDATE invocation_attempts SET status = 'succeeded', finished_at = ?
+                WHERE invocation_id = ?
+                """,
+                (persisted_timestamp(15), "invocation-1"),
+            ),
+            (
+                """
+                UPDATE invocation_attempts SET status = 'expired', finished_at = ?
+                WHERE invocation_id = ?
+                """,
+                (persisted_timestamp(14), "invocation-1"),
+            ),
+        )
+
+        for statement, parameters in corruptions:
+            with self.subTest(statement=" ".join(statement.split())):
+                self.store._connection.execute(statement, parameters)
+                with self.assertRaisesRegex(
+                    InvocationIntegrityError,
+                    "persisted invocation attempt",
+                ):
+                    self.store.attempts("invocation-1")
+                self.store._connection.execute(
+                    """
+                    UPDATE invocation_attempts
+                    SET status = ?, heartbeat_at = ?, lease_expires_at = ?, finished_at = ?
+                    WHERE invocation_id = ?
+                    """,
+                    (*tuple(original), "invocation-1"),
+                )
+
     def test_persisted_attempt_types_fail_with_stable_integrity_error(self):
         self.store.enqueue(job_spec())
         self.store.claim("invocation-1", "worker", lease_seconds=10)
@@ -1101,7 +1196,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                     "2026-08-20T00:00:00.000000Z",
                     "2026-08-20T00:00:00.000000Z",
                     "2026-08-20T00:00:01.000000Z",
-                    "2026-08-20T00:00:01.000000Z",
+                    "2026-08-20T00:00:00.000000Z",
                 )
                 for number in range(1, 1_002)
             ),

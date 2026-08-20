@@ -539,6 +539,17 @@ class SQLiteInvocationAttemptStore:
                 raise ValueError("persisted invocation updated_at precedes creation")
             if finished_at is not None and finished_at < created_at:
                 raise ValueError("persisted invocation finished_at precedes creation")
+            if finished_at is not None and updated_at < finished_at:
+                raise ValueError("persisted invocation updated_at precedes finish")
+            if status is InvocationStatus.RUNNING:
+                if heartbeat_at is None or lease_expires_at is None:
+                    raise ValueError("persisted running invocation lacks lease timestamps")
+                if heartbeat_at < created_at:
+                    raise ValueError("persisted invocation heartbeat precedes creation")
+                if updated_at < heartbeat_at:
+                    raise ValueError("persisted invocation update precedes heartbeat")
+                if lease_expires_at <= heartbeat_at or lease_expires_at <= updated_at:
+                    raise ValueError("persisted invocation lease is not later than its activity")
             result_ref = _persisted_optional_text(
                 row["result_ref"],
                 "invocation result_ref",
@@ -601,10 +612,26 @@ class SQLiteInvocationAttemptStore:
             lease_expires_at = _persisted_timestamp(
                 row["lease_expires_at"], "attempt lease_expires_at"
             )
-            if heartbeat_at < started_at or lease_expires_at < started_at:
+            if heartbeat_at < started_at:
                 raise ValueError("persisted attempt timestamps violate start causality")
+            if lease_expires_at <= heartbeat_at:
+                raise ValueError("persisted attempt lease does not follow its heartbeat")
             if finished_at is not None and finished_at < started_at:
                 raise ValueError("persisted attempt finished_at precedes its start")
+            if finished_at is not None and finished_at < heartbeat_at:
+                raise ValueError("persisted attempt finished_at precedes its heartbeat")
+            if (
+                status in {AttemptStatus.SUCCEEDED, AttemptStatus.FAILED}
+                and finished_at is not None
+                and finished_at >= lease_expires_at
+            ):
+                raise ValueError("persisted owned attempt finished outside its lease")
+            if (
+                status is AttemptStatus.EXPIRED
+                and finished_at is not None
+                and finished_at < lease_expires_at
+            ):
+                raise ValueError("persisted expired attempt finished before lease expiry")
             result_ref = _persisted_optional_text(
                 row["result_ref"],
                 "attempt result_ref",
