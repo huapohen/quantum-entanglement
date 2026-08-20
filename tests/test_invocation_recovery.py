@@ -440,6 +440,37 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
         with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "exceeds its byte limit"):
             self.assess(binding_for(spec), candidate)
 
+    def test_job_status_must_match_the_attempt_budget(self) -> None:
+        queued_spec, queued_lease, _running = self.running("budget-queued", max_attempts=3)
+        self.assertTrue(  # type: ignore[arg-type]
+            self.store.fail(queued_lease, "retry", retry_at=T0)
+        )
+        queued = self.snapshot(queued_spec)
+        forged_failed = replace(
+            queued,
+            job=replace(
+                queued.job,
+                status=InvocationStatus.FAILED,
+                finished_at=queued.current_attempt.finished_at,
+            ),
+        )
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "remaining attempt budget"):
+            self.assess(binding_for(queued_spec), forged_failed)
+
+        failed_spec, failed_lease, _running = self.running("budget-failed", max_attempts=1)
+        self.assertTrue(self.store.fail(failed_lease, "terminal"))  # type: ignore[arg-type]
+        failed = self.snapshot(failed_spec)
+        forged_queued = replace(
+            failed,
+            job=replace(
+                failed.job,
+                status=InvocationStatus.QUEUED,
+                finished_at=None,
+            ),
+        )
+        with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "exhausted its attempt"):
+            self.assess(binding_for(failed_spec), forged_queued)
+
     def test_snapshot_timestamp_causality_is_revalidated(self) -> None:
         spec, _lease, snapshot = self.running("timestamp-causality")
         previous = "2026-08-19T23:59:59.000000Z"

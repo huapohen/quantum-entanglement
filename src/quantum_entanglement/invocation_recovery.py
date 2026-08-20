@@ -222,6 +222,14 @@ def _validate_job(job: InvocationJob) -> None:
         raise InvocationRecoveryIntegrityError("job lease_epoch contradicts attempts_started")
     if type(job.status) is not InvocationStatus:
         raise InvocationRecoveryIntegrityError("job status has an invalid type")
+    if job.status is InvocationStatus.FAILED and attempts_started != max_attempts:
+        raise InvocationRecoveryIntegrityError("failed job has remaining attempt budget")
+    if (
+        job.status is InvocationStatus.QUEUED
+        and attempts_started > 0
+        and attempts_started >= max_attempts
+    ):
+        raise InvocationRecoveryIntegrityError("queued job exhausted its attempt budget")
 
     _optional_timestamp(job.requested_available_at, "job requested_available_at")
     _timestamp(job.available_at, "job available_at")

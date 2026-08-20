@@ -489,6 +489,14 @@ class SQLiteInvocationAttemptStore:
             lease_epoch = _persisted_integer(row["lease_epoch"], "invocation lease_epoch")
             if lease_epoch < attempts_started or (attempts_started == 0 and lease_epoch != 0):
                 raise ValueError("persisted invocation lease_epoch contradicts attempts_started")
+            if status is InvocationStatus.FAILED and attempts_started != max_attempts:
+                raise ValueError("persisted failed invocation has remaining attempt budget")
+            if (
+                status is InvocationStatus.QUEUED
+                and attempts_started > 0
+                and attempts_started >= max_attempts
+            ):
+                raise ValueError("persisted queued invocation exhausted its attempt budget")
 
             lease_owner = _persisted_optional_text(row["lease_owner"], "invocation lease_owner")
             raw_lease_digest = row["lease_token_digest"]
