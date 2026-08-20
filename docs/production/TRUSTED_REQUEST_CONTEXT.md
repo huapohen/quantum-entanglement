@@ -1,0 +1,136 @@
+# Trusted request-context issuance foundation
+
+Status: design contract; implementation and release evidence pending
+
+Last reviewed: 2026-08-20
+
+This document defines the minimum admission primitive that may distinguish caller-provided
+scope claims from a request context issued after a configured authenticator has verified
+them. It is a Gate A foundation, not an authenticated service, an OIDC/JWT implementation,
+or proof that repositories enforce tenant/workspace scope.
+
+## 1. Existing boundary and finding
+
+The existing domain types intentionally do not authenticate callers:
+
+- `AccessRequest.subject_id`, `tenant_id`, and `resource.workspace_id` are authorization
+  inputs. A transport can construct all of them.
+- `ActorRef`, `CoordinationEnvelope.sender`, `Authority`, and protocol payloads are routing
+  or coordination data. Parsing or round-tripping them creates no identity trust.
+- `Member` has no authoritative identity, membership revision, or freshness timestamp.
+- `TenantAuthorizer` assumes its caller already supplied the correctly bound subject and a
+  current membership record. It does not authenticate a request.
+- `ServiceConfig` has no identity-provider configuration and there is no HTTP admission
+  composition root.
+- `SecretMaterial` is the only current bounded, redacted, explicitly closed material lease.
+  It can contain an inbound credential for the duration of an authenticator call, but this
+  does not make the file secret provider an identity provider.
+
+Code must therefore keep an explicit type and call boundary between untrusted caller scope
+claims and an issued context. Naming a dictionary `request_context`, copying an `ActorRef`,
+or directly constructing an authentication-result value must never cross that boundary.
+
+## 2. Threat and failure matrix
+
+| Threat or ambiguity | Required foundation behavior | Still required outside the foundation |
+|---|---|---|
+| Caller changes subject, tenant, or workspace | Authenticator result must bind the exact caller claim; any mismatch fails closed | Real subject mapping and authoritative membership lookup |
+| Caller reuses a valid context for another request or scope | Context is bound to exact request, subject, tenant, workspace, audience, issuer instance, and object identity | Transactional command replay protection and durable receipt |
+| Caller fabricates a `RequestContext`-shaped object | Only the issuing instance's live registry can validate the exact object and immutable snapshot | Process/code isolation against arbitrary trusted-host code execution |
+| Context is copied, pickled, persisted, or restored | Copy and serialization are rejected; a process restart or issuer replacement invalidates it | Distributed/session credential design if later required |
+| Reflection mutates an issued object | Validation compares every field with the issuer-owned snapshot and fails closed | Sandboxing of malicious in-process plugins |
+| Credential leaks through errors or retained state | Credential enters as a bounded `SecretMaterial` lease, is always closed, and is absent from context/error fields | Admission-buffer wiping, safe logs/traces, provider audit |
+| Authenticator throws or returns an unexpected value | Stable redacted failure code; no permissive fallback | Provider health, alerting, retry/rate policy |
+| Authenticator returns stale/future/overlong evidence | Service-owned clock, skew bound, expiry, and maximum TTL reject it | Host-clock rollback detection and trusted time operations |
+| Identity or membership changes after issuance | Preserve provider identity, identity revision, scope revision, and evidence fingerprint for action-time refresh | Authoritative action-time reauthentication and membership/policy revision comparison |
+| Tenant-wide context becomes a workspace wildcard | Workspace matching is exact; `None` matches only `None` | Explicit separately reviewed tenant-wide operation model |
+| Parsed protocol sender is treated as authenticated | Documentation and API keep `ActorRef` outside the issuance boundary | Adapter contract tests and authenticated protocol/API composition |
+| Context registry is exhausted | Hard active-context bound and dead/expired-entry pruning; overflow fails closed | Per-tenant admission, rate, concurrency, and memory quotas |
+
+The registry makes contexts non-forgeable through the supported public API. It is not a
+cryptographic sandbox. Code that can inspect arbitrary Python process memory, import
+private implementation details, replace the configured authenticator, or execute arbitrary
+reflection already controls the trusted process and remains outside this primitive's threat
+boundary.
+
+## 3. Call and trust matrix
+
+| Caller | Callee | Input trust | Output meaning |
+|---|---|---|---|
+| Transport/protocol adapter | strict caller-claim parser | Untrusted body/header/envelope fields | Canonical but still untrusted scope claims |
+| Admission composition root | request-context issuer | Canonical claims plus one bounded credential lease | No trust until the issuer succeeds |
+| Request-context issuer | configured authenticator | Exact caller claims, service audience/time, read-only credential view | Adapter result trusted only as the immediate return of this configured call |
+| Request-context issuer | issuer-owned registry | Validated adapter result | One live process-local `RequestContext` handle |
+| Protected-operation composition | same issuer instance | Exact context object plus exact `AccessRequest` | Local authenticity/scope check and reauthorization basis only |
+| Identity/membership adapters | action-time policy composition | Current provider and membership observations | Inputs to `TenantAuthorizer`; no automatic allow |
+| `TenantAuthorizer` | effect transaction | Current member, revocation state, verified capability and concrete request | RBAC/capability decision; still not an effect receipt |
+
+The issuer must call the authenticator itself. It must not expose an overload that accepts a
+pre-built authentication result from a caller. Authentication-result and reauthorization
+evidence values remain data when received from anywhere else.
+
+## 4. Required issued fields and invariants
+
+An issued context preserves only bounded non-secret facts:
+
+- random context identifier and exact inbound request identifier;
+- configured authenticator identifier and audience;
+- authenticated provider principal and mapped application subject;
+- exact tenant and exact optional workspace;
+- opaque identity revision and scope/membership-policy revision;
+- SHA-256 evidence fingerprint, never the credential or raw attestation;
+- authenticator observation time, issuer time, and hard expiry.
+
+Every identifier and revision uses a bounded canonical alphabet. Times are timezone-aware
+UTC values. The issuer accepts only exact result/context classes, snapshots all values, and
+uses a service-owned clock. It rejects an expired result, an observation too far in the
+future, a lifetime above the configured maximum, a scope mismatch, or an audience/provider
+mismatch.
+
+Local context validation is not action-time authorization and not a reservation. It proves
+only that this issuer produced this unchanged handle for this exact request scope and that
+its local expiry has not passed. Before every protected operation, the future composition
+root must use the preserved identity/revisions/evidence to obtain current authentication
+and membership state, then run `TenantAuthorizer` for the concrete action/resource and bind
+that decision to the effect transaction and durable receipt.
+
+## 5. Credential, configuration, and logging rules
+
+- No ambient environment variable, API key, cookie, or token is read by this primitive.
+- The authenticator is injected explicitly by the composition root. This phase provides
+  fake test adapters only and defines no `QE_OIDC_*`, JWKS, JWT, mTLS, or HTTP settings.
+- The credential lease is closed on success, validation failure, adapter failure, and
+  unexpected result type. Python cannot wipe copies retained by a buggy authenticator or by
+  the transport before constructing the lease.
+- Context `repr`, exceptions, evidence, ordinary logs, events, artifacts, and reports must
+  not contain the credential, raw attestation, tenant, workspace, subject, or principal.
+- Stable failure codes are suitable for bounded metrics. Raw scope identifiers must not be
+  metric labels.
+
+## 6. Migration, rollback, and compatibility
+
+This foundation is additive. Existing direct Python callers continue to construct
+`AccessRequest`, but they remain inside the trusted-development boundary and do not become
+authenticated. A later service composition must migrate one protected entry point at a
+time:
+
+1. parse caller scope into the explicitly untrusted claim type;
+2. place the inbound credential in a bounded lease;
+3. issue a context through the configured authenticator;
+4. require the same issuer to validate exact request/scope at the operation boundary;
+5. refresh current identity/membership revisions and evaluate policy;
+6. bind allow evidence to an idempotent effect/receipt transaction.
+
+Rollback is code-only because this primitive writes no database schema or persistent
+context. Stop admission, drain or fence protected work, destroy the issuer (invalidating all
+live contexts), deploy the prior code, and keep the service in its prior non-production
+boundary. Never deserialize or grandfather a context across rollback/restart.
+
+## 7. Residual Gate A blockers
+
+Even after this primitive is implemented and its tests pass, Gate A remains closed until at
+least all repositories enforce tenant/workspace scope, legacy data has a rehearsed
+migration/rollback path, current identity and membership revision adapters are composed at
+action time, and retained release evidence proves the complete boundary. Gates B-E remain
+closed as defined by `SERVICE_BOUNDARY.md`.
+
