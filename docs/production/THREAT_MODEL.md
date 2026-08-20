@@ -139,7 +139,7 @@ The following are release-blocking invariants:
 | TM-06 | Prompt-inject an agent into invoking a tool | data/effect compromise, P0 | data/authority separation, consent, action-time policy, allowlist | gap |
 | TM-07 | Replay an accepted command or webhook | duplicate effect, P0 | signed freshness, inbox dedupe, action receipt, receiver idempotency | partial |
 | TM-08 | Stale publisher ACKs after lease takeover | lost or duplicated delivery, P0 | epoch/token fencing through connector and store CAS | in progress |
-| TM-09 | Worker crashes after `invocation.started` | permanent RUNNING or duplicate work, P1/P0 | durable attempt lease, recovery, terminal CAS, action receipt | in progress |
+| TM-09 | Worker crashes after `invocation.started` | permanent RUNNING or duplicate work, P1/P0 | atomic attempt snapshot, fail-closed matrix and quarantine implemented; fenced worker, receipt reconciliation and fault evidence remain | partial |
 | TM-10 | Callback ignores cancellation | shutdown hang, capacity loss, P1 | hard containment, async-only production callback, leak metrics | in progress |
 | TM-11 | Retry poison message forever | queue starvation, cost DoS, P1 | bounded backoff/jitter, dead letter, operator workflow | in progress |
 | TM-12 | URL tool reaches metadata or private network | credential theft, P0 | URL policy, DNS/IP revalidation, redirect limits, egress deny | gap |
