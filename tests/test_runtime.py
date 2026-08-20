@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from unittest.mock import patch
 
 from quantum_entanglement.policy import PolicyEngine
 from quantum_entanglement.protocol import (
@@ -174,6 +175,56 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             [event.payload["revision"] for event in status_events],
             list(range(1, len(status_events) + 1)),
         )
+
+    async def test_failed_approval_request_batch_leaves_no_partial_authority(self):
+        task = TaskSpec(
+            "发布",
+            "publisher",
+            handoff(),
+            task_id="publish-atomic-request",
+            action=ActionIntent(
+                "publish",
+                "external",
+                risk=RiskLevel.HIGH,
+                external_side_effect=True,
+            ),
+        )
+        plan = WorkflowPlan(
+            "approval-request-atomicity",
+            "审批请求必须完整落盘",
+            "user",
+            (task,),
+        )
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=RuntimeError("injected approval batch failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected approval batch failure"):
+                await self.kernel.run(plan)
+
+        self.assertEqual(
+            self.kernel._graphs[plan.session_id].statuses[task.task_id],
+            TaskStatus.READY,
+        )
+        self.assertEqual(self.kernel.approvals.pending(plan.session_id), ())
+        failed_events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        self.assertFalse(
+            any(stored.event.event_type == "approval.requested" for stored in failed_events)
+        )
+        self.assertFalse(
+            any(
+                stored.event.event_type == "task.status.changed"
+                and stored.event.payload["current"]
+                in {TaskStatus.RUNNING.value, TaskStatus.WAITING_APPROVAL.value}
+                for stored in failed_events
+            )
+        )
+
+        paused = await self.kernel.run(plan)
+        self.assertEqual(paused.statuses[task.task_id], TaskStatus.WAITING_APPROVAL)
+        self.assertEqual(len(paused.needs_you), 1)
 
     async def test_failed_task_blocks_downstream_without_model_guessing(self):
         downstream_calls = 0
