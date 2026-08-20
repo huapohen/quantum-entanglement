@@ -8,6 +8,7 @@ RequestContextIssuer; constructing either value directly grants no authority.
 
 from __future__ import annotations
 
+import os
 import re
 import secrets
 import threading
@@ -23,6 +24,36 @@ from .tenancy import AccessRequest, ServerClock, SystemClock, TenantId, Workspac
 _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_PROCESS_PID = os.getpid()
+_PROCESS_EPOCH = object()
+
+
+def _refresh_process_epoch_after_fork() -> None:
+    """Refresh process identity without consulting an inherited synchronization primitive."""
+
+    global _PROCESS_EPOCH, _PROCESS_PID
+    _PROCESS_PID = os.getpid()
+    _PROCESS_EPOCH = object()
+
+
+def _current_process_identity() -> tuple[int, object]:
+    """Return a fork-sensitive identity, with PID drift as a hook-free fallback."""
+
+    global _PROCESS_EPOCH, _PROCESS_PID
+    process_pid = os.getpid()
+    if process_pid != _PROCESS_PID:
+        _PROCESS_PID = process_pid
+        _PROCESS_EPOCH = object()
+    return process_pid, _PROCESS_EPOCH
+
+
+_register_at_fork = getattr(os, "register_at_fork", None)
+if callable(_register_at_fork):
+    try:
+        _register_at_fork(after_in_child=_refresh_process_epoch_after_fork)
+    except (AttributeError, OSError, RuntimeError, TypeError):
+        # Lazy PID drift still provides a fail-closed fallback on unsupported runtimes.
+        pass
 
 
 def _require_opaque_id(value: str, field_name: str) -> str:
@@ -401,6 +432,8 @@ class RequestContextIssuer:
         "__max_active_contexts",
         "__max_clock_skew",
         "__max_context_ttl",
+        "__owner_epoch",
+        "__owner_pid",
         "__pending",
     )
 
@@ -415,6 +448,7 @@ class RequestContextIssuer:
         max_clock_skew: timedelta = timedelta(seconds=30),
         max_active_contexts: int = 10_000,
     ) -> None:
+        owner_pid, owner_epoch = _current_process_identity()
         _require_opaque_id(authenticator_id, "authenticator_id")
         _require_text(audience, "audience")
         self._validate_duration(
@@ -446,6 +480,8 @@ class RequestContextIssuer:
         self.__lock = threading.RLock()
         self.__closed = False
         self.__last_observed_at: Optional[datetime] = None
+        self.__owner_pid = owner_pid
+        self.__owner_epoch = owner_epoch
         self.__pending = 0
 
     def issue(
@@ -483,6 +519,7 @@ class RequestContextIssuer:
     ) -> RequestContext:
         reserved = False
         try:
+            self._ensure_process()
             expected = self._snapshot_claims(claims)
             with self.__lock:
                 if self.__closed:
@@ -513,6 +550,7 @@ class RequestContextIssuer:
                 )
             except Exception:
                 authentication_failed = True
+            self._ensure_process()
             if authentication_failed:
                 raise RequestContextError("request_authentication_failed")
             completed_at = self._clock_now()
@@ -520,7 +558,7 @@ class RequestContextIssuer:
             return self._register(trusted, expected)
         finally:
             try:
-                if reserved:
+                if reserved and self._is_current_process_owner():
                     with self.__lock:
                         self.__pending -= 1
             finally:
@@ -533,6 +571,7 @@ class RequestContextIssuer:
     ) -> ReauthorizationBasis:
         """Validate exact local context/request scope and return non-authorizing evidence."""
 
+        self._ensure_process()
         trusted_request = self._snapshot_access_request(request)
         with self.__lock:
             if self.__closed:
@@ -585,6 +624,7 @@ class RequestContextIssuer:
     def retire(self, context: RequestContext) -> None:
         """Invalidate one exact issued handle without disclosing registry membership."""
 
+        self._ensure_process()
         with self.__lock:
             if self.__closed:
                 raise RequestContextError("request_context_issuer_closed")
@@ -594,11 +634,13 @@ class RequestContextIssuer:
     def close(self) -> None:
         """Invalidate every issued context. The operation is idempotent."""
 
+        self._ensure_process()
         with self.__lock:
             self.__closed = True
             self.__active.clear()
 
     def __enter__(self) -> RequestContextIssuer:
+        self._ensure_process()
         with self.__lock:
             if self.__closed:
                 raise RequestContextError("request_context_issuer_closed")
@@ -619,6 +661,16 @@ class RequestContextIssuer:
     def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
         raise TypeError("RequestContextIssuer cannot be serialized")
 
+    def _is_current_process_owner(self) -> bool:
+        """Return whether this issuer was constructed in the calling process epoch."""
+
+        process_pid, process_epoch = _current_process_identity()
+        return self.__owner_pid == process_pid and self.__owner_epoch is process_epoch
+
+    def _ensure_process(self) -> None:
+        if not self._is_current_process_owner():
+            raise RequestContextError("request_context_process_mismatch")
+
     @staticmethod
     def _validate_duration(
         value: timedelta,
@@ -633,6 +685,7 @@ class RequestContextIssuer:
             raise ValueError(f"{field_name} is outside the supported range")
 
     def _clock_now(self) -> datetime:
+        self._ensure_process()
         with self.__lock:
             normalized: Optional[datetime] = None
             clock_failed = False
@@ -641,6 +694,7 @@ class RequestContextIssuer:
                 normalized = _as_utc(value, "clock.now()")
             except Exception:
                 clock_failed = True
+            self._ensure_process()
             if clock_failed or normalized is None:
                 raise RequestContextError("request_context_clock_unavailable")
             previous = self.__last_observed_at
@@ -758,6 +812,7 @@ class RequestContextIssuer:
         binding: AuthenticatedRequestBinding,
         expected: CallerRequestContext,
     ) -> RequestContext:
+        self._ensure_process()
         with self.__lock:
             if self.__closed:
                 raise RequestContextError("request_context_issuer_closed")
