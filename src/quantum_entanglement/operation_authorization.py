@@ -8,20 +8,28 @@ this module may turn a fresh, matching state into an opaque operation handle.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import secrets
+import sys
 import threading
+import traceback
 import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import NoReturn, Optional, Protocol, SupportsIndex
+from functools import partial
+from typing import Callable, NoReturn, Optional, Protocol, SupportsIndex, TypeVar
 
-from .request_context import ReauthorizationBasis
+from .request_context import ReauthorizationBasis, RequestContext, RequestContextIssuer
 from .tenancy import (
     AccessRequest,
+    AuthorizationDecision,
+    AuthorizationOutcome,
     Member,
     RevocationSnapshot,
     ServerClock,
+    SystemClock,
+    TenantAuthorizer,
     TenantId,
     VerifiedCapability,
     WorkspaceId,
@@ -31,6 +39,34 @@ _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ACTION = re.compile(r"^[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_VERIFIED_CAPABILITIES = 64
+_KEYBOARD_INTERRUPT = "keyboard_interrupt"
+_SYSTEM_EXIT = "system_exit"
+_GENERATOR_EXIT = "generator_exit"
+_CANCELLED_ERROR = "cancelled_error"
+
+
+def _control_signal_kind(error: BaseException) -> Optional[str]:
+    if type(error) is KeyboardInterrupt:
+        return _KEYBOARD_INTERRUPT
+    if type(error) is SystemExit:
+        return _SYSTEM_EXIT
+    if type(error) is GeneratorExit:
+        return _GENERATOR_EXIT
+    if type(error) is asyncio.CancelledError:
+        return _CANCELLED_ERROR
+    return None
+
+
+def _raise_control_signal(kind: str) -> NoReturn:
+    if kind == _KEYBOARD_INTERRUPT:
+        raise KeyboardInterrupt() from None
+    if kind == _SYSTEM_EXIT:
+        raise SystemExit() from None
+    if kind == _GENERATOR_EXIT:
+        raise GeneratorExit() from None
+    if kind == _CANCELLED_ERROR:
+        raise asyncio.CancelledError() from None
+    raise RuntimeError("invalid internal control signal")
 
 
 def _require_opaque_id(value: str, field_name: str) -> str:
@@ -85,6 +121,15 @@ def _snapshot_revocations(revocations: RevocationSnapshot) -> RevocationSnapshot
         return RevocationSnapshot.from_dict(revocations.to_dict())
     except (AttributeError, TypeError, ValueError) as error:
         raise TypeError("revocations must be a canonical RevocationSnapshot") from error
+
+
+def _snapshot_access_request(request: AccessRequest) -> AccessRequest:
+    if type(request) is not AccessRequest:
+        raise TypeError("request must be an exact AccessRequest")
+    try:
+        return AccessRequest.from_dict(request.to_dict())
+    except (AttributeError, TypeError, ValueError) as error:
+        raise TypeError("request must be a canonical AccessRequest") from error
 
 
 @dataclass(frozen=True, repr=False)
@@ -173,6 +218,101 @@ class OperationAuthorizationError(RuntimeError):
         _require_opaque_id(code, "operation authorization error code")
         self.code = code
         super().__init__(code)
+
+
+_PUBLIC_OPERATION_FAILURE_CODES = frozenset(
+    (
+        "protected_operation_authorizer_failed",
+        "protected_operation_binding_invalid",
+        "protected_operation_capacity_exceeded",
+        "protected_operation_clock_unavailable",
+        "protected_operation_composer_closed",
+        "protected_operation_context_expired",
+        "protected_operation_context_rejected",
+        "protected_operation_context_time_invalid",
+        "protected_operation_decision_invalid",
+        "protected_operation_decision_time_invalid",
+        "protected_operation_denied",
+        "protected_operation_expired",
+        "protected_operation_expiry_invalid",
+        "protected_operation_id_unavailable",
+        "protected_operation_identity_revision_stale",
+        "protected_operation_internal_failure",
+        "protected_operation_registry_closed",
+        "protected_operation_request_invalid",
+        "protected_operation_scope_mismatch",
+        "protected_operation_scope_revision_stale",
+        "protected_operation_state_invalid",
+        "protected_operation_state_mismatch",
+        "protected_operation_state_stale",
+        "protected_operation_state_time_invalid",
+        "protected_operation_state_unavailable",
+        "protected_operation_tampered",
+        "protected_operation_time_regressed",
+        "protected_operation_untrusted",
+        "protected_operation_workspace_required",
+    )
+)
+
+
+@dataclass(frozen=True, repr=False)
+class _BoundaryFailure:
+    """Trusted descriptor that never retains a caught third-party exception."""
+
+    operation_code: Optional[str]
+    control_signal: Optional[str]
+
+
+_BoundaryValue = TypeVar("_BoundaryValue")
+
+
+def _invoke_boundary(
+    callback: Callable[[], _BoundaryValue],
+) -> tuple[Optional[_BoundaryValue], Optional[_BoundaryFailure]]:
+    """Call one boundary and collapse a raw fault before returning to its caller.
+
+    The raw exception exists only in this inner frame.  Completed callback and
+    dependency frames are cleared through the interpreter-owned traceback, so no
+    hostile exception attribute is read or mutated.  Before this frame returns,
+    its callback and traceback references are explicitly discarded as well.
+    """
+
+    pending_callback = [callback]
+    del callback
+    value: Optional[_BoundaryValue] = None
+    failure: Optional[_BoundaryFailure] = None
+    try:
+        value = pending_callback.pop()()
+    except BaseException as error:
+        control_signal = _control_signal_kind(error)
+        operation_code: Optional[str] = None
+        if type(error) is OperationAuthorizationError:
+            try:
+                candidate = object.__getattribute__(error, "code")
+            except AttributeError:
+                candidate = None
+            if type(candidate) is str and candidate in _PUBLIC_OPERATION_FAILURE_CODES:
+                operation_code = candidate
+        internal_traceback = sys.exc_info()[2]
+        if internal_traceback is not None:
+            traceback.clear_frames(internal_traceback)
+        failure = _BoundaryFailure(
+            operation_code=operation_code,
+            control_signal=control_signal,
+        )
+        del internal_traceback
+        return value, failure
+    return value, None
+
+
+def _raise_dependency_failure(failure: _BoundaryFailure, code: str) -> NoReturn:
+    """Propagate only a clean control signal or one caller-selected stable code."""
+
+    control_signal = failure.control_signal
+    del failure
+    if control_signal is not None:
+        _raise_control_signal(control_signal)
+    raise OperationAuthorizationError(code) from None
 
 
 @dataclass(frozen=True, repr=False)
@@ -412,6 +552,14 @@ class _AuthorizedOperationRegistry:
             self.__active[id(operation)] = (weakref.ref(operation), snapshot)
             return operation
 
+    def observe_now(self) -> datetime:
+        """Advance and return the registry's service-clock high-water mark."""
+
+        with self.__lock:
+            if self.__closed:
+                raise OperationAuthorizationError("protected_operation_registry_closed")
+            return self._clock_now()
+
     def verify(self, operation: AuthorizedOperation, expected: _OperationBinding) -> None:
         trusted_expected = self._snapshot_binding(expected)
         with self.__lock:
@@ -424,6 +572,58 @@ class _AuthorizedOperationRegistry:
                 raise OperationAuthorizationError("protected_operation_expired")
             if not self._snapshot_matches_binding(snapshot, trusted_expected):
                 raise OperationAuthorizationError("protected_operation_scope_mismatch")
+            self._prune(now)
+
+    def check_request(
+        self,
+        operation: AuthorizedOperation,
+        basis: ReauthorizationBasis,
+        request: AccessRequest,
+    ) -> None:
+        """Verify a live exact actor/request handle without granting or consuming it."""
+
+        trusted_request = _snapshot_access_request(request)
+        if type(basis) is not ReauthorizationBasis:
+            raise OperationAuthorizationError("protected_operation_context_rejected")
+        if trusted_request.resource.workspace_id is None:
+            raise OperationAuthorizationError("protected_operation_workspace_required")
+        with self.__lock:
+            if self.__closed:
+                raise OperationAuthorizationError("protected_operation_registry_closed")
+            now = self._clock_now()
+            snapshot = self._trusted_snapshot(operation)
+            if snapshot.expires_at <= now:
+                self.__active.pop(id(operation), None)
+                raise OperationAuthorizationError("protected_operation_expired")
+            if not self._snapshot_matches_request(snapshot, basis, trusted_request):
+                raise OperationAuthorizationError("protected_operation_scope_mismatch")
+            self._prune(now)
+
+    def consume_request(
+        self,
+        operation: AuthorizedOperation,
+        basis: ReauthorizationBasis,
+        request: AccessRequest,
+    ) -> None:
+        """Atomically verify exact actor/request scope and retire on success."""
+
+        trusted_request = _snapshot_access_request(request)
+        if type(basis) is not ReauthorizationBasis:
+            raise OperationAuthorizationError("protected_operation_context_rejected")
+        workspace = trusted_request.resource.workspace_id
+        if workspace is None:
+            raise OperationAuthorizationError("protected_operation_workspace_required")
+        with self.__lock:
+            if self.__closed:
+                raise OperationAuthorizationError("protected_operation_registry_closed")
+            now = self._clock_now()
+            snapshot = self._trusted_snapshot(operation)
+            if snapshot.expires_at <= now:
+                self.__active.pop(id(operation), None)
+                raise OperationAuthorizationError("protected_operation_expired")
+            if not self._snapshot_matches_request(snapshot, basis, trusted_request):
+                raise OperationAuthorizationError("protected_operation_scope_mismatch")
+            self.__active.pop(id(operation), None)
             self._prune(now)
 
     def retire(self, operation: AuthorizedOperation) -> None:
@@ -451,13 +651,10 @@ class _AuthorizedOperationRegistry:
         raise TypeError("AuthorizedOperationRegistry cannot be serialized")
 
     def _clock_now(self) -> datetime:
-        normalized: Optional[datetime] = None
-        failed = False
-        try:
-            normalized = _as_utc(self.__clock.now(), "clock.now()")
-        except Exception:
-            failed = True
-        if failed or normalized is None:
+        normalized, failure = _invoke_boundary(lambda: _as_utc(self.__clock.now(), "clock.now()"))
+        if failure is not None:
+            _raise_dependency_failure(failure, "protected_operation_clock_unavailable")
+        if normalized is None:
             raise OperationAuthorizationError("protected_operation_clock_unavailable")
         previous = self.__last_observed_at
         if previous is not None and normalized < previous:
@@ -471,8 +668,8 @@ class _AuthorizedOperationRegistry:
     def _snapshot_binding(binding: _OperationBinding) -> _OperationBinding:
         if type(binding) is not _OperationBinding:
             raise OperationAuthorizationError("protected_operation_binding_invalid")
-        try:
-            return _OperationBinding(
+        trusted, failure = _invoke_boundary(
+            lambda: _OperationBinding(
                 context_id=binding.context_id,
                 authenticator_id=binding.authenticator_id,
                 audience=binding.audience,
@@ -488,8 +685,12 @@ class _AuthorizedOperationRegistry:
                 identity_revision=binding.identity_revision,
                 scope_revision=binding.scope_revision,
             )
-        except Exception:
-            raise OperationAuthorizationError("protected_operation_binding_invalid") from None
+        )
+        if failure is not None:
+            _raise_dependency_failure(failure, "protected_operation_binding_invalid")
+        if trusted is None:
+            raise OperationAuthorizationError("protected_operation_binding_invalid")
+        return trusted
 
     def _new_snapshot(
         self,
@@ -520,13 +721,12 @@ class _AuthorizedOperationRegistry:
 
     def _new_operation_id(self) -> str:
         existing = {record[1].operation_id for record in self.__active.values()}
-        try:
-            for _ in range(4):
-                candidate = f"op_{secrets.token_hex(32)}"
-                if candidate not in existing:
-                    return candidate
-        except Exception:
-            pass
+        for _ in range(4):
+            candidate, failure = _invoke_boundary(lambda: f"op_{secrets.token_hex(32)}")
+            if failure is not None:
+                _raise_dependency_failure(failure, "protected_operation_id_unavailable")
+            if candidate is not None and candidate not in existing:
+                return candidate
         raise OperationAuthorizationError("protected_operation_id_unavailable")
 
     def _trusted_snapshot(self, operation: AuthorizedOperation) -> _OperationSnapshot:
@@ -546,9 +746,10 @@ class _AuthorizedOperationRegistry:
         operation: AuthorizedOperation,
         snapshot: _OperationSnapshot,
     ) -> bool:
-        try:
-            actual = operation._bound_values()
-        except Exception:
+        actual, failure = _invoke_boundary(lambda: operation._bound_values())
+        if failure is not None:
+            if failure.control_signal is not None:
+                _raise_control_signal(failure.control_signal)
             return False
         expected = (
             snapshot.operation_id,
@@ -608,6 +809,60 @@ class _AuthorizedOperationRegistry:
             binding.scope_revision,
         )
 
+    @staticmethod
+    def _snapshot_matches_request(
+        snapshot: _OperationSnapshot,
+        basis: ReauthorizationBasis,
+        request: AccessRequest,
+    ) -> bool:
+        workspace = request.resource.workspace_id
+        return (
+            workspace is not None
+            and (
+                snapshot.context_id,
+                snapshot.authenticator_id,
+                snapshot.audience,
+                snapshot.request_id,
+                snapshot.principal_id,
+                snapshot.subject_id,
+                snapshot.tenant_value,
+                snapshot.workspace_value,
+                snapshot.identity_revision,
+                snapshot.scope_revision,
+                snapshot.action,
+                snapshot.resource_type,
+                snapshot.resource_id,
+            )
+            == (
+                basis.context_id,
+                basis.authenticator_id,
+                basis.audience,
+                request.request_id,
+                basis.principal_id,
+                request.subject_id,
+                str(request.tenant_id),
+                str(workspace),
+                basis.identity_revision,
+                basis.scope_revision,
+                request.action,
+                request.resource.resource_type,
+                request.resource.resource_id,
+            )
+            and (
+                basis.request_id,
+                basis.subject_id,
+                basis.tenant_id,
+                basis.workspace_id,
+            )
+            == (
+                request.request_id,
+                request.subject_id,
+                request.tenant_id,
+                workspace,
+            )
+            and request.resource.tenant_id == request.tenant_id
+        )
+
     def _prune(self, now: datetime) -> None:
         stale = [
             identifier
@@ -618,9 +873,476 @@ class _AuthorizedOperationRegistry:
             del self.__active[identifier]
 
 
+class ProtectedOperationComposer:
+    """Compose request admission, current state, and tenant authorization exactly once."""
+
+    __slots__ = (
+        "__authorizer",
+        "__closed",
+        "__issuer",
+        "__lock",
+        "__max_clock_skew",
+        "__max_state_age",
+        "__operation_ttl",
+        "__provider",
+        "__registry",
+    )
+
+    def __init__(
+        self,
+        *,
+        issuer: RequestContextIssuer,
+        state_provider: CurrentAuthorizationStateProvider,
+        authorizer: TenantAuthorizer,
+        clock: Optional[ServerClock] = None,
+        operation_ttl: timedelta = timedelta(seconds=30),
+        max_state_age: timedelta = timedelta(seconds=30),
+        max_clock_skew: timedelta = timedelta(seconds=30),
+        max_active_operations: int = 10_000,
+    ) -> None:
+        if type(issuer) is not RequestContextIssuer:
+            raise TypeError("issuer must be an exact RequestContextIssuer")
+        if state_provider is None or not callable(
+            getattr(state_provider, "load_current_state", None)
+        ):
+            raise TypeError("state_provider must implement load_current_state")
+        if type(authorizer) is not TenantAuthorizer:
+            raise TypeError("authorizer must be an exact TenantAuthorizer")
+        self.__operation_ttl = _require_duration(
+            operation_ttl,
+            "operation_ttl",
+            minimum=timedelta(microseconds=1),
+            maximum=timedelta(minutes=5),
+        )
+        self.__max_state_age = _require_duration(
+            max_state_age,
+            "max_state_age",
+            minimum=timedelta(microseconds=1),
+            maximum=timedelta(minutes=5),
+        )
+        self.__max_clock_skew = _require_duration(
+            max_clock_skew,
+            "max_clock_skew",
+            minimum=timedelta(0),
+            maximum=timedelta(minutes=5),
+        )
+        configured_clock = clock if clock is not None else SystemClock()
+        self.__registry = _AuthorizedOperationRegistry(
+            clock=configured_clock,
+            max_operation_ttl=self.__operation_ttl,
+            max_clock_skew=self.__max_clock_skew,
+            max_active_operations=max_active_operations,
+        )
+        self.__issuer = issuer
+        self.__provider = state_provider
+        self.__authorizer = authorizer
+        self.__lock = threading.RLock()
+        self.__closed = False
+
+    def authorize(
+        self,
+        context: RequestContext,
+        request: AccessRequest,
+    ) -> AuthorizedOperation:
+        """Return one bounded opaque handle only after an explicit ALLOW decision."""
+
+        operation, failure = _invoke_boundary(partial(self._authorize, context, request))
+        if failure is None and type(operation) is AuthorizedOperation:
+            return operation
+        failure_code = (
+            failure.operation_code
+            if failure is not None and failure.operation_code is not None
+            else "protected_operation_internal_failure"
+        )
+        control_signal = failure.control_signal if failure is not None else None
+        del self, context, request, operation, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal)
+        raise OperationAuthorizationError(failure_code) from None
+
+    def _authorize(
+        self,
+        context: RequestContext,
+        request: AccessRequest,
+    ) -> AuthorizedOperation:
+        self._ensure_open()
+        basis, admission_failure = _invoke_boundary(
+            lambda: self.__issuer.prepare_reauthorization(context, request)
+        )
+        if admission_failure is not None:
+            _raise_dependency_failure(
+                admission_failure,
+                "protected_operation_context_rejected",
+            )
+        if type(basis) is not ReauthorizationBasis:
+            raise OperationAuthorizationError("protected_operation_context_rejected")
+
+        trusted_request, request_failure = _invoke_boundary(
+            lambda: _snapshot_access_request(request)
+        )
+        if request_failure is not None:
+            _raise_dependency_failure(
+                request_failure,
+                "protected_operation_request_invalid",
+            )
+        if trusted_request is None:
+            raise OperationAuthorizationError("protected_operation_request_invalid")
+        workspace = trusted_request.resource.workspace_id
+        if basis.workspace_id is None or workspace is None:
+            raise OperationAuthorizationError("protected_operation_workspace_required")
+        if not self._basis_matches_request(basis, trusted_request):
+            raise OperationAuthorizationError("protected_operation_context_rejected")
+
+        state, decision, after_decision = self._evaluate_current_authorization(
+            basis,
+            trusted_request,
+        )
+
+        binding = self._operation_binding(basis, trusted_request, decision)
+        expires_at = min(
+            after_decision + self.__operation_ttl,
+            basis.context_expires_at,
+            state.observed_at + self.__max_state_age,
+        )
+        return self.__registry.issue(binding, expires_at=expires_at)
+
+    def consume(
+        self,
+        operation: AuthorizedOperation,
+        context: RequestContext,
+        request: AccessRequest,
+    ) -> None:
+        """Atomically validate exact operation scope and retire the handle before an effect."""
+
+        result, failure = _invoke_boundary(partial(self._consume, operation, context, request))
+        if failure is None:
+            return result
+        failure_code = (
+            failure.operation_code
+            if failure.operation_code is not None
+            else "protected_operation_internal_failure"
+        )
+        control_signal = failure.control_signal
+        del self, operation, context, request, result, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal)
+        raise OperationAuthorizationError(failure_code) from None
+
+    def _consume(
+        self,
+        operation: AuthorizedOperation,
+        context: RequestContext,
+        request: AccessRequest,
+    ) -> None:
+        self._ensure_open()
+        basis, admission_failure = _invoke_boundary(
+            lambda: self.__issuer.prepare_reauthorization(context, request)
+        )
+        if admission_failure is not None:
+            _raise_dependency_failure(
+                admission_failure,
+                "protected_operation_context_rejected",
+            )
+        if type(basis) is not ReauthorizationBasis:
+            raise OperationAuthorizationError("protected_operation_context_rejected")
+        trusted_request, request_failure = _invoke_boundary(
+            lambda: _snapshot_access_request(request)
+        )
+        if request_failure is not None:
+            _raise_dependency_failure(
+                request_failure,
+                "protected_operation_request_invalid",
+            )
+        if trusted_request is None:
+            raise OperationAuthorizationError("protected_operation_request_invalid")
+        if not self._basis_matches_request(basis, trusted_request):
+            raise OperationAuthorizationError("protected_operation_context_rejected")
+        self.__registry.check_request(operation, basis, trusted_request)
+        self._evaluate_current_authorization(basis, trusted_request)
+        refreshed_basis, refresh_failure = _invoke_boundary(
+            lambda: self.__issuer.prepare_reauthorization(context, trusted_request)
+        )
+        if refresh_failure is not None:
+            _raise_dependency_failure(
+                refresh_failure,
+                "protected_operation_context_rejected",
+            )
+        if type(refreshed_basis) is not ReauthorizationBasis or not self._same_context_basis(
+            basis, refreshed_basis
+        ):
+            raise OperationAuthorizationError("protected_operation_context_rejected")
+        self.__registry.consume_request(operation, refreshed_basis, trusted_request)
+
+    def retire(self, operation: AuthorizedOperation) -> None:
+        """Invalidate one exact issued handle without disclosing registry membership."""
+
+        result, failure = _invoke_boundary(partial(self._retire, operation))
+        if failure is None:
+            return result
+        failure_code = (
+            failure.operation_code
+            if failure.operation_code is not None
+            else "protected_operation_internal_failure"
+        )
+        control_signal = failure.control_signal
+        del self, operation, result, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal)
+        raise OperationAuthorizationError(failure_code) from None
+
+    def _retire(self, operation: AuthorizedOperation) -> None:
+        self._ensure_open()
+        self.__registry.retire(operation)
+
+    def close(self) -> None:
+        """Invalidate all handles and reject future composition. Idempotent."""
+
+        with self.__lock:
+            self.__closed = True
+            self.__registry.close()
+
+    def __enter__(self) -> ProtectedOperationComposer:
+        self._ensure_open()
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, trace: object) -> None:
+        self.close()
+
+    def __repr__(self) -> str:
+        return "ProtectedOperationComposer(<configured>)"
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("ProtectedOperationComposer cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> NoReturn:
+        raise TypeError("ProtectedOperationComposer cannot be copied")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("ProtectedOperationComposer cannot be serialized")
+
+    def _evaluate_current_authorization(
+        self,
+        basis: ReauthorizationBasis,
+        request: AccessRequest,
+    ) -> tuple[CurrentAuthorizationState, AuthorizationDecision, datetime]:
+        before_load = self.__registry.observe_now()
+        if basis.prepared_at > before_load + self.__max_clock_skew:
+            raise OperationAuthorizationError("protected_operation_context_time_invalid")
+        if basis.context_expires_at <= before_load:
+            raise OperationAuthorizationError("protected_operation_context_expired")
+
+        loaded_state, provider_failure = _invoke_boundary(
+            lambda: self.__provider.load_current_state(basis, request)
+        )
+        if provider_failure is not None:
+            _raise_dependency_failure(
+                provider_failure,
+                "protected_operation_state_unavailable",
+            )
+
+        state, state_failure = _invoke_boundary(lambda: self._snapshot_state(loaded_state))
+        if state_failure is not None:
+            _raise_dependency_failure(
+                state_failure,
+                "protected_operation_state_invalid",
+            )
+        if state is None:
+            raise OperationAuthorizationError("protected_operation_state_invalid")
+        self._validate_state_binding(state, basis)
+        if state.observed_at > before_load + self.__max_clock_skew:
+            raise OperationAuthorizationError("protected_operation_state_time_invalid")
+        if before_load - state.observed_at >= self.__max_state_age:
+            raise OperationAuthorizationError("protected_operation_state_stale")
+
+        raw_decision, authorizer_failure = _invoke_boundary(
+            lambda: self.__authorizer.evaluate(
+                request,
+                state.member,
+                state.revocations,
+                state.verified_capabilities,
+            )
+        )
+        if authorizer_failure is not None:
+            _raise_dependency_failure(
+                authorizer_failure,
+                "protected_operation_authorizer_failed",
+            )
+
+        decision, decision_failure = _invoke_boundary(lambda: self._snapshot_decision(raw_decision))
+        if decision_failure is not None:
+            _raise_dependency_failure(
+                decision_failure,
+                "protected_operation_decision_invalid",
+            )
+        if decision is None or decision.request != request:
+            raise OperationAuthorizationError("protected_operation_decision_invalid")
+
+        after_decision = self.__registry.observe_now()
+        if basis.context_expires_at <= after_decision:
+            raise OperationAuthorizationError("protected_operation_context_expired")
+        if after_decision - state.observed_at >= self.__max_state_age:
+            raise OperationAuthorizationError("protected_operation_state_stale")
+        if (
+            decision.evaluated_at > after_decision + self.__max_clock_skew
+            or after_decision - decision.evaluated_at > self.__max_clock_skew
+        ):
+            raise OperationAuthorizationError("protected_operation_decision_time_invalid")
+        if decision.outcome is not AuthorizationOutcome.ALLOW or decision.allowed is not True:
+            raise OperationAuthorizationError("protected_operation_denied")
+        return state, decision, after_decision
+
+    def _ensure_open(self) -> None:
+        with self.__lock:
+            if self.__closed:
+                raise OperationAuthorizationError("protected_operation_composer_closed")
+
+    @staticmethod
+    def _basis_matches_request(basis: ReauthorizationBasis, request: AccessRequest) -> bool:
+        workspace = request.resource.workspace_id
+        return (
+            workspace is not None
+            and (
+                basis.request_id,
+                basis.subject_id,
+                basis.tenant_id,
+                basis.workspace_id,
+            )
+            == (
+                request.request_id,
+                request.subject_id,
+                request.tenant_id,
+                workspace,
+            )
+            and request.resource.tenant_id == request.tenant_id
+        )
+
+    @staticmethod
+    def _same_context_basis(
+        first: ReauthorizationBasis,
+        second: ReauthorizationBasis,
+    ) -> bool:
+        return (
+            first.context_id,
+            first.authenticator_id,
+            first.audience,
+            first.request_id,
+            first.principal_id,
+            first.subject_id,
+            first.tenant_id,
+            first.workspace_id,
+            first.identity_revision,
+            first.scope_revision,
+            first.evidence_fingerprint,
+            first.authenticated_at,
+            first.context_issued_at,
+            first.context_expires_at,
+        ) == (
+            second.context_id,
+            second.authenticator_id,
+            second.audience,
+            second.request_id,
+            second.principal_id,
+            second.subject_id,
+            second.tenant_id,
+            second.workspace_id,
+            second.identity_revision,
+            second.scope_revision,
+            second.evidence_fingerprint,
+            second.authenticated_at,
+            second.context_issued_at,
+            second.context_expires_at,
+        )
+
+    @staticmethod
+    def _snapshot_state(value: object) -> CurrentAuthorizationState:
+        if type(value) is not CurrentAuthorizationState:
+            raise TypeError("state must be an exact CurrentAuthorizationState")
+        state = value
+        return CurrentAuthorizationState(
+            context_id=state.context_id,
+            authenticator_id=state.authenticator_id,
+            audience=state.audience,
+            request_id=state.request_id,
+            principal_id=state.principal_id,
+            subject_id=state.subject_id,
+            tenant_id=TenantId(str(state.tenant_id)),
+            workspace_id=WorkspaceId(str(state.workspace_id)),
+            identity_revision=state.identity_revision,
+            scope_revision=state.scope_revision,
+            observed_at=state.observed_at,
+            member=state.member,
+            revocations=state.revocations,
+            verified_capabilities=state.verified_capabilities,
+        )
+
+    @staticmethod
+    def _validate_state_binding(
+        state: CurrentAuthorizationState,
+        basis: ReauthorizationBasis,
+    ) -> None:
+        if (
+            state.context_id,
+            state.authenticator_id,
+            state.audience,
+            state.request_id,
+            state.principal_id,
+            state.subject_id,
+            state.tenant_id,
+            state.workspace_id,
+        ) != (
+            basis.context_id,
+            basis.authenticator_id,
+            basis.audience,
+            basis.request_id,
+            basis.principal_id,
+            basis.subject_id,
+            basis.tenant_id,
+            basis.workspace_id,
+        ):
+            raise OperationAuthorizationError("protected_operation_state_mismatch")
+        if state.identity_revision != basis.identity_revision:
+            raise OperationAuthorizationError("protected_operation_identity_revision_stale")
+        if state.scope_revision != basis.scope_revision:
+            raise OperationAuthorizationError("protected_operation_scope_revision_stale")
+
+    @staticmethod
+    def _snapshot_decision(value: object) -> AuthorizationDecision:
+        if type(value) is not AuthorizationDecision:
+            raise TypeError("decision must be an exact AuthorizationDecision")
+        decision = value
+        return AuthorizationDecision.from_dict(decision.to_dict())
+
+    @staticmethod
+    def _operation_binding(
+        basis: ReauthorizationBasis,
+        request: AccessRequest,
+        decision: AuthorizationDecision,
+    ) -> _OperationBinding:
+        workspace = request.resource.workspace_id
+        if workspace is None:
+            raise OperationAuthorizationError("protected_operation_workspace_required")
+        return _OperationBinding(
+            context_id=basis.context_id,
+            authenticator_id=basis.authenticator_id,
+            audience=basis.audience,
+            request_id=request.request_id,
+            principal_id=basis.principal_id,
+            subject_id=request.subject_id,
+            tenant_id=request.tenant_id,
+            workspace_id=workspace,
+            action=request.action,
+            resource_type=request.resource.resource_type,
+            resource_id=request.resource.resource_id,
+            decision_id=decision.decision_id,
+            identity_revision=basis.identity_revision,
+            scope_revision=basis.scope_revision,
+        )
+
+
 __all__ = [
     "AuthorizedOperation",
     "CurrentAuthorizationState",
     "CurrentAuthorizationStateProvider",
     "OperationAuthorizationError",
+    "ProtectedOperationComposer",
 ]
