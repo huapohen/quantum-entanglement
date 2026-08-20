@@ -8,7 +8,9 @@ network listener or turn the kernel into a production service.
 
 The caller supplies an explicit immutable snapshot-like mapping to
 `ServiceConfig.from_environment(...)`. The parser does not read `os.environ` itself and
-does not retain the supplied mapping.
+does not retain the supplied mapping. It consumes at most 4,096 items into a private
+snapshot and reads each item once, so a concurrently changing/custom mapping cannot alter
+one field between validation and construction.
 
 - every supported `QE_*` field is required; there are no production defaults;
 - an unknown `QE_*` name fails closed without rendering its name or value;
@@ -70,6 +72,7 @@ same guarantee.
 Configuration failures are intentionally low-information. Representative codes include:
 
 - `configuration_missing_field` / `configuration_unknown_field`;
+- `configuration_snapshot_failed` / `configuration_snapshot_too_large`;
 - `configuration_value_invalid` / `configuration_type_invalid`;
 - `configuration_path_not_canonical` / `configuration_path_symlink`;
 - `configuration_path_permissions` / `configuration_path_ancestor_permissions`;
