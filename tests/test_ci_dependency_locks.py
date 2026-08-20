@@ -39,5 +39,30 @@ class DependencyLockWorkflowTests(unittest.TestCase):
         self.assertNotIn("|| true", self.workflow)
 
 
+class PackageLockWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow_path = Path(__file__).parents[1] / ".github" / "workflows" / "package.yml"
+        cls.workflow = cls.workflow_path.read_text(encoding="utf-8")
+
+    def test_package_job_verifies_and_installs_the_build_lock(self):
+        verify = self.workflow.index("python scripts/verify_dependency_locks.py")
+        install = self.workflow.index("-r requirements/build-py312.lock")
+        build = self.workflow.index("python -m build --no-isolation")
+
+        self.assertLess(verify, install)
+        self.assertLess(install, build)
+        self.assertIn("cache-dependency-path: requirements/build-py312.lock", self.workflow)
+        self.assertIn("--require-hashes", self.workflow)
+        self.assertIn("--only-binary :all:", self.workflow)
+        self.assertNotIn("python -m pip install build", self.workflow)
+
+    def test_both_distribution_builds_disable_dependency_resolution(self):
+        self.assertEqual(self.workflow.count("python -m build"), 2)
+        self.assertEqual(self.workflow.count("--no-isolation"), 2)
+        self.assertNotIn("continue-on-error: true", self.workflow)
+        self.assertNotIn("|| true", self.workflow)
+
+
 if __name__ == "__main__":
     unittest.main()

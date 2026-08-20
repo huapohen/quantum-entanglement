@@ -28,15 +28,24 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: requirements/build-py312.lock
 
-      - name: Install build frontend
-        run: python -m pip install build
+      - name: Verify dependency locks
+        run: python scripts/verify_dependency_locks.py --repository-root .
+
+      - name: Install locked build toolchain
+        run: |
+          python -m pip install \
+            --disable-pip-version-check \
+            --require-hashes \
+            --only-binary :all: \
+            -r requirements/build-py312.lock
 
       - name: Bind build timestamps to source commit
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
       - name: Build source and wheel distributions
-        run: python -m build
+        run: python -m build --no-isolation
 
       - name: Canonicalize source distribution
         run: python scripts/normalize_sdist.py --distribution-directory dist
@@ -48,7 +57,10 @@ jobs:
           QE_REBUILD_SOURCE: ${{ runner.temp }}/quantum-entanglement-rebuild-source
         run: |
           git worktree add --detach "$QE_REBUILD_SOURCE" "$QE_EXPECTED_COMMIT"
-          python -m build --outdir "$QE_REBUILD_DIRECTORY" "$QE_REBUILD_SOURCE"
+          python -m build \
+            --no-isolation \
+            --outdir "$QE_REBUILD_DIRECTORY" \
+            "$QE_REBUILD_SOURCE"
           python scripts/normalize_sdist.py \
             --distribution-directory "$QE_REBUILD_DIRECTORY"
 

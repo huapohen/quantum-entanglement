@@ -33,7 +33,12 @@ class PackageManifestWorkflowTests(unittest.TestCase):
 
     def test_reproducibility_is_verified_from_an_independent_checkout(self):
         worktree = 'git worktree add --detach "$QE_REBUILD_SOURCE" "$QE_EXPECTED_COMMIT"'
-        rebuild = 'python -m build --outdir "$QE_REBUILD_DIRECTORY" "$QE_REBUILD_SOURCE"'
+        rebuild = (
+            "python -m build \\\n"
+            "            --no-isolation \\\n"
+            '            --outdir "$QE_REBUILD_DIRECTORY" \\\n'
+            '            "$QE_REBUILD_SOURCE"'
+        )
         compare = "python scripts/verify_reproducible_distributions.py"
         manifest = "python scripts/distribution_manifest.py generate"
         self.assertIn("QE_EXPECTED_COMMIT: ${{ github.sha }}", self.workflow)
