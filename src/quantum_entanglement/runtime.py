@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional, Set, Tuple
 
 from .agent_runtime import (
@@ -22,6 +24,7 @@ from .events import DomainEvent, StoredEvent
 from .plugins import HookPoint, PluginManager
 from .policy import ApprovalRequest, NeedsYouQueue, PolicyEngine, PolicyOutcome
 from .protocol import (
+    ActionIntent,
     ActorKind,
     ActorRef,
     ApprovalDecision,
@@ -36,6 +39,25 @@ from .store import SQLiteEventStore
 _RECOVERY_PAGE_LIMIT = 1_000
 _MAX_RECOVERY_EVENTS = 1_000_000
 _MAX_RECOVERY_TEXT_LENGTH = 65_536
+_RECOVERY_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z$")
+_APPROVAL_PAYLOAD_FIELDS = frozenset(
+    {
+        "requestId",
+        "sessionId",
+        "taskId",
+        "intent",
+        "reason",
+        "createdAt",
+        "decision",
+        "decidedBy",
+        "comment",
+    }
+)
+_APPROVAL_DECISION_TARGETS = {
+    ApprovalDecision.APPROVE: TaskStatus.READY,
+    ApprovalDecision.REVISE: TaskStatus.WAITING_INPUT,
+    ApprovalDecision.REJECT: TaskStatus.CANCELED,
+}
 
 
 class SessionRecoveryError(RuntimeError):
@@ -362,7 +384,13 @@ class OrchestratorKernel:
         return tuple(replayed)
 
     @staticmethod
-    def _apply_recovered_transition(graph: TaskGraph, stored: StoredEvent) -> None:
+    def _apply_recovered_transition(
+        graph: TaskGraph,
+        stored: StoredEvent,
+        *,
+        plan: WorkflowPlan,
+        approval_request_id: Optional[str] = None,
+    ) -> TaskTransition:
         payload = stored.event.payload
         expected_fields = {"taskId", "previous", "current", "reason", "revision"}
         if type(payload) is not dict or set(payload) != expected_fields:
@@ -396,12 +424,37 @@ class OrchestratorKernel:
         expected_revision = actual_revision if current == previous else actual_revision + 1
         if revision != expected_revision:
             raise SessionRecoveryError("task transition revision is not contiguous")
+
+        event = stored.event
+        expected_correlation = plan.correlation_id or plan.plan_id
+        allowed_causal_envelopes: Set[Tuple[Optional[str], Optional[str]]]
+        if approval_request_id is not None:
+            allowed_causal_envelopes = {
+                (expected_correlation, approval_request_id),
+            }
+        else:
+            if previous == TaskStatus.PENDING:
+                allowed_correlations = {plan.correlation_id}
+            elif previous == TaskStatus.WAITING_APPROVAL:
+                allowed_correlations = {None, expected_correlation}
+            else:
+                allowed_correlations = {expected_correlation}
+            allowed_causal_envelopes = {
+                (correlation_id, None) for correlation_id in allowed_correlations
+            }
+        if (
+            event.actor_id != OrchestratorKernel.SYSTEM_ACTOR.actor_id
+            or (event.correlation_id, event.causation_id) not in allowed_causal_envelopes
+            or event.idempotency_key != f"task-status:{task_id}:{revision}"
+        ):
+            raise SessionRecoveryError("task transition event envelope is inconsistent")
         try:
             transition = graph.transition(task_id, current, reason)
         except (KeyError, ValueError) as exc:
             raise SessionRecoveryError("task transition is not permitted") from exc
         if transition.revision != revision:
             raise SessionRecoveryError("task transition revision does not match replay state")
+        return transition
 
     @staticmethod
     def _decode_recovered_plan(stored: StoredEvent) -> WorkflowPlan:
@@ -500,6 +553,137 @@ class OrchestratorKernel:
         if transition_sequences and task_events[-1].sequence >= transition_sequences[0]:
             raise SessionRecoveryError("task creation events overlap task transition history")
 
+    @staticmethod
+    def _decode_recovered_approval(
+        stored: StoredEvent,
+        *,
+        plan: WorkflowPlan,
+        graph: TaskGraph,
+        decided: bool,
+    ) -> ApprovalRequest:
+        event = stored.event
+        payload = event.payload
+        if type(payload) is not dict or frozenset(payload) != _APPROVAL_PAYLOAD_FIELDS:
+            raise SessionRecoveryError("approval payload has an invalid shape")
+
+        required_text_fields = ("requestId", "sessionId", "taskId", "reason", "createdAt")
+        for field_name in required_text_fields:
+            value = payload[field_name]
+            if type(value) is not str or not value or len(value) > _MAX_RECOVERY_TEXT_LENGTH:
+                raise SessionRecoveryError(f"approval {field_name} is invalid")
+        if type(payload["intent"]) is not dict:
+            raise SessionRecoveryError("approval intent is invalid")
+        raw_comment = payload["comment"]
+        if raw_comment is not None and (
+            type(raw_comment) is not str or len(raw_comment) > _MAX_RECOVERY_TEXT_LENGTH
+        ):
+            raise SessionRecoveryError("approval comment is invalid")
+
+        raw_decision = payload["decision"]
+        raw_decided_by = payload["decidedBy"]
+        if decided:
+            if type(raw_decision) is not str:
+                raise SessionRecoveryError("approval decision is invalid")
+            if (
+                type(raw_decided_by) is not str
+                or not raw_decided_by
+                or len(raw_decided_by) > _MAX_RECOVERY_TEXT_LENGTH
+            ):
+                raise SessionRecoveryError("approval decidedBy is invalid")
+            try:
+                decision = ApprovalDecision(raw_decision)
+            except ValueError as exc:
+                raise SessionRecoveryError("approval decision is invalid") from exc
+        else:
+            if raw_decision is not None or raw_decided_by is not None or raw_comment is not None:
+                raise SessionRecoveryError("approval request already contains a decision")
+            decision = None
+
+        created_at = payload["createdAt"]
+        if _RECOVERY_UTC_PATTERN.fullmatch(created_at) is None:
+            raise SessionRecoveryError("approval createdAt is not canonical UTC")
+        try:
+            parsed_created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            parsed_event_at = datetime.fromisoformat(event.timestamp.replace("Z", "+00:00"))
+        except (TypeError, ValueError) as exc:
+            raise SessionRecoveryError("approval timestamp is invalid") from exc
+        if (
+            parsed_created_at.tzinfo is None
+            or parsed_event_at.tzinfo is None
+            or parsed_created_at.astimezone(timezone.utc) > parsed_event_at.astimezone(timezone.utc)
+        ):
+            raise SessionRecoveryError("approval timestamp violates event causality")
+
+        try:
+            intent = ActionIntent.from_dict(payload["intent"])
+            request = ApprovalRequest(
+                session_id=payload["sessionId"],
+                task_id=payload["taskId"],
+                intent=intent,
+                reason=payload["reason"],
+                request_id=payload["requestId"],
+                created_at=created_at,
+                decision=decision,
+                decided_by=raw_decided_by,
+                comment=raw_comment,
+            )
+            original_json = json.dumps(
+                payload,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            decoded_json = json.dumps(
+                request.to_dict(),
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (KeyError, OverflowError, RecursionError, TypeError, ValueError) as exc:
+            raise SessionRecoveryError("approval payload is invalid") from exc
+        if original_json != decoded_json:
+            raise SessionRecoveryError("approval payload is not canonical")
+
+        task = graph.tasks.get(request.task_id)
+        if task is None:
+            raise SessionRecoveryError("approval references an unknown task")
+        if request.session_id != plan.session_id:
+            raise SessionRecoveryError("approval crosses the workflow session boundary")
+        if request.intent != task.action:
+            raise SessionRecoveryError("approval intent differs from the task action")
+        if decided:
+            expected_actor = request.decided_by
+            expected_causation = request.request_id
+            expected_idempotency = f"approval-decision:{request.request_id}"
+        else:
+            expected_actor = OrchestratorKernel.SYSTEM_ACTOR.actor_id
+            expected_causation = request.task_id
+            expected_idempotency = f"approval-request:{request.task_id}"
+        if (
+            event.actor_id != expected_actor
+            or event.correlation_id != (plan.correlation_id or plan.plan_id)
+            or event.causation_id != expected_causation
+            or event.idempotency_key != expected_idempotency
+        ):
+            raise SessionRecoveryError("approval event envelope is inconsistent")
+        return request
+
+    @staticmethod
+    def _same_approval_request(
+        requested: ApprovalRequest,
+        decided: ApprovalRequest,
+    ) -> bool:
+        return bool(
+            requested.request_id == decided.request_id
+            and requested.session_id == decided.session_id
+            and requested.task_id == decided.task_id
+            and requested.intent == decided.intent
+            and requested.reason == decided.reason
+            and requested.created_at == decided.created_at
+        )
+
     def _recover_session(self, requested_plan: WorkflowPlan) -> None:
         """Rebuild an active workflow projection without replaying side effects."""
 
@@ -530,13 +714,126 @@ class OrchestratorKernel:
             raise ValueError("requested workflow content differs from the stored plan")
         graph = TaskGraph(stored_plan.tasks)
         approval_requests: Dict[str, ApprovalRequest] = {}
+        request_ids_by_task: Dict[str, str] = {}
+        awaiting_request: Dict[str, int] = {}
+        awaiting_decision_transition: Dict[
+            str,
+            Tuple[str, TaskStatus, Optional[str], int],
+        ] = {}
         for stored in events:
             event = stored.event
             if event.event_type == "task.status.changed":
-                self._apply_recovered_transition(graph, stored)
-            elif event.event_type in ("approval.requested", "approval.decided"):
-                request = ApprovalRequest.from_dict(dict(event.payload))
+                payload = event.payload
+                pending_decision = None
+                if (
+                    type(payload) is dict
+                    and payload.get("previous") == TaskStatus.WAITING_APPROVAL.value
+                    and type(payload.get("taskId")) is str
+                ):
+                    pending_decision = awaiting_decision_transition.get(payload["taskId"])
+                transition = self._apply_recovered_transition(
+                    graph,
+                    stored,
+                    plan=stored_plan,
+                    approval_request_id=(pending_decision[0] if pending_decision else None),
+                )
+                task_id = transition.task_id
+                previous = transition.previous
+                current = transition.current
+                reason = transition.reason
+                if previous == TaskStatus.WAITING_APPROVAL:
+                    expected = awaiting_decision_transition.pop(task_id, None)
+                    if expected is None:
+                        raise SessionRecoveryError(
+                            "approval-gated task transitioned without a decision"
+                        )
+                    _request_id, expected_status, expected_reason, _decision_sequence = expected
+                    if (current, reason) != (expected_status, expected_reason):
+                        raise SessionRecoveryError(
+                            "approval decision does not match its task transition"
+                        )
+                    if stored.sequence != _decision_sequence + 1:
+                        raise SessionRecoveryError(
+                            "approval decision is not adjacent to its task transition"
+                        )
+                if current == TaskStatus.WAITING_APPROVAL:
+                    if (
+                        previous == TaskStatus.WAITING_APPROVAL
+                        or task_id in awaiting_request
+                        or task_id in request_ids_by_task
+                    ):
+                        raise SessionRecoveryError(
+                            "approval-gated task has duplicate waiting history"
+                        )
+                    awaiting_request[task_id] = stored.sequence
+            elif event.event_type == "approval.requested":
+                request = self._decode_recovered_approval(
+                    stored,
+                    plan=stored_plan,
+                    graph=graph,
+                    decided=False,
+                )
+                if (
+                    graph.statuses[request.task_id] != TaskStatus.WAITING_APPROVAL
+                    or request.task_id not in awaiting_request
+                ):
+                    raise SessionRecoveryError(
+                        "approval request is not caused by a waiting task transition"
+                    )
+                if (
+                    request.request_id in approval_requests
+                    or request.task_id in request_ids_by_task
+                ):
+                    raise SessionRecoveryError("approval request is not unique")
+                if request.reason != graph.reasons.get(request.task_id):
+                    raise SessionRecoveryError(
+                        "approval request reason differs from the waiting transition"
+                    )
+                waiting_sequence = awaiting_request.pop(request.task_id)
+                if stored.sequence != waiting_sequence + 1:
+                    raise SessionRecoveryError(
+                        "approval request is not adjacent to its waiting transition"
+                    )
                 approval_requests[request.request_id] = request
+                request_ids_by_task[request.task_id] = request.request_id
+            elif event.event_type == "approval.decided":
+                decided_request = self._decode_recovered_approval(
+                    stored,
+                    plan=stored_plan,
+                    graph=graph,
+                    decided=True,
+                )
+                requested = approval_requests.get(decided_request.request_id)
+                if requested is None:
+                    raise SessionRecoveryError("approval decision has no prior request")
+                if requested.decision is not None:
+                    raise SessionRecoveryError("approval request has multiple decisions")
+                if not self._same_approval_request(requested, decided_request):
+                    raise SessionRecoveryError("approval decision changes its request identity")
+                if graph.statuses[decided_request.task_id] != TaskStatus.WAITING_APPROVAL:
+                    raise SessionRecoveryError(
+                        "approval decision targets a task that is not waiting"
+                    )
+                if decided_request.task_id in awaiting_decision_transition:
+                    raise SessionRecoveryError("approval task has an unresolved decision")
+                decision = decided_request.decision
+                if decision is None:
+                    raise SessionRecoveryError("approval decision is missing")
+                approval_requests[decided_request.request_id] = decided_request
+                awaiting_decision_transition[decided_request.task_id] = (
+                    decided_request.request_id,
+                    _APPROVAL_DECISION_TARGETS[decision],
+                    decided_request.comment,
+                    stored.sequence,
+                )
+
+        if awaiting_request:
+            raise SessionRecoveryError("approval waiting transition has no request")
+        if awaiting_decision_transition:
+            raise SessionRecoveryError("approval decision has no matching task transition")
+        for request in approval_requests.values():
+            if request.pending and graph.statuses[request.task_id] != TaskStatus.WAITING_APPROVAL:
+                raise SessionRecoveryError("pending approval is not attached to a waiting task")
 
         self._plans[requested_plan.session_id] = stored_plan
         self._graphs[requested_plan.session_id] = graph

@@ -47,6 +47,108 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.tempdir.cleanup()
 
+    @staticmethod
+    def _approval_plan(session_id):
+        return WorkflowPlan(
+            session_id,
+            "严格审批恢复",
+            "user",
+            (
+                TaskSpec(
+                    "publish",
+                    "publisher",
+                    handoff(),
+                    task_id="publish",
+                    action=ActionIntent(
+                        "publish",
+                        "external",
+                        risk=RiskLevel.HIGH,
+                        external_side_effect=True,
+                    ),
+                ),
+            ),
+            plan_id=f"plan-{session_id}",
+            correlation_id=f"correlation-{session_id}",
+        )
+
+    async def _seed_approval_history(self, path, session_id, *, decided):
+        plan = self._approval_plan(session_id)
+        kernel = OrchestratorKernel(event_store=SQLiteEventStore(path))
+        try:
+            paused = await kernel.run(plan)
+            request = paused.needs_you[0]
+            if decided:
+                await kernel.decide(
+                    request.request_id,
+                    ApprovalDecision.APPROVE,
+                    "owner",
+                    "approved",
+                )
+            return plan
+        finally:
+            kernel.event_store.close()
+
+    @staticmethod
+    def _mutate_event_payload(path, session_id, event_type, mutate):
+        store = SQLiteEventStore(path)
+        try:
+            row = store._connection.execute(
+                """
+                SELECT global_position, payload_json
+                FROM events
+                WHERE stream_id = ? AND event_type = ?
+                ORDER BY sequence
+                LIMIT 1
+                """,
+                (f"session:{session_id}", event_type),
+            ).fetchone()
+            if row is None:
+                raise AssertionError(f"missing seeded {event_type} event")
+            payload = json.loads(row["payload_json"])
+            mutate(payload)
+            store._connection.execute(
+                "UPDATE events SET payload_json = ? WHERE global_position = ?",
+                (
+                    json.dumps(
+                        payload,
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    row["global_position"],
+                ),
+            )
+        finally:
+            store.close()
+
+    @staticmethod
+    def _mutate_event_envelope(path, session_id, event_type, column, value):
+        if column not in {"actor_id", "correlation_id", "causation_id", "idempotency_key"}:
+            raise AssertionError("test requested an unsafe event column")
+        store = SQLiteEventStore(path)
+        try:
+            store._connection.execute(
+                f"""
+                UPDATE events SET {column} = ?
+                WHERE stream_id = ? AND event_type = ?
+                """,
+                (value, f"session:{session_id}", event_type),
+            )
+        finally:
+            store.close()
+
+    def _assert_approval_recovery_rejected(self, path, plan, message):
+        candidate = OrchestratorKernel(event_store=SQLiteEventStore(path))
+        try:
+            with self.assertRaisesRegex(SessionRecoveryError, message):
+                candidate._recover_session(plan)
+            self.assertNotIn(plan.session_id, candidate._plans)
+            self.assertNotIn(plan.session_id, candidate._graphs)
+            self.assertEqual(candidate.approvals.pending(plan.session_id), ())
+        finally:
+            candidate.event_store.close()
+
     async def test_completed_plan_is_recovered_without_invoking_agents_again(self):
         calls = 0
 
@@ -160,6 +262,420 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             {item.name for item in completed.artifacts}, {"evidence.md", "publication.md"}
         )
         third.event_store.close()
+
+    async def test_session_recovery_rejects_noncanonical_approval_payloads(self):
+        cases = (
+            (
+                "request-extra-field",
+                False,
+                "approval.requested",
+                lambda payload: payload.__setitem__("unexpected", None),
+                "invalid shape",
+            ),
+            (
+                "request-coerced-session",
+                False,
+                "approval.requested",
+                lambda payload: payload.__setitem__("sessionId", True),
+                "sessionId is invalid",
+            ),
+            (
+                "request-noncanonical-time",
+                False,
+                "approval.requested",
+                lambda payload: payload.__setitem__(
+                    "createdAt",
+                    "2026-08-20T08:00:00+08:00",
+                ),
+                "not canonical UTC",
+            ),
+            (
+                "request-predecided",
+                False,
+                "approval.requested",
+                lambda payload: payload.__setitem__("decision", "approve"),
+                "already contains a decision",
+            ),
+            (
+                "request-intent-drift",
+                False,
+                "approval.requested",
+                lambda payload: payload["intent"].__setitem__("target", "other"),
+                "intent differs",
+            ),
+            (
+                "request-reason-drift",
+                False,
+                "approval.requested",
+                lambda payload: payload.__setitem__("reason", "forged"),
+                "reason differs",
+            ),
+            (
+                "decision-extra-field",
+                True,
+                "approval.decided",
+                lambda payload: payload.__setitem__("unexpected", None),
+                "invalid shape",
+            ),
+            (
+                "decision-coerced-value",
+                True,
+                "approval.decided",
+                lambda payload: payload.__setitem__("decision", True),
+                "decision is invalid",
+            ),
+            (
+                "decision-comment-type",
+                True,
+                "approval.decided",
+                lambda payload: payload.__setitem__("comment", 7),
+                "comment is invalid",
+            ),
+            (
+                "decision-request-drift",
+                True,
+                "approval.decided",
+                lambda payload: payload.__setitem__("reason", "forged"),
+                "changes its request identity",
+            ),
+            (
+                "decision-future-created-at",
+                True,
+                "approval.decided",
+                lambda payload: payload.__setitem__(
+                    "createdAt",
+                    "9999-12-31T23:59:59.999999Z",
+                ),
+                "timestamp violates event causality",
+            ),
+        )
+        for index, (label, decided, event_type, mutate, message) in enumerate(cases):
+            with self.subTest(label=label):
+                path = str(Path(self.tempdir.name) / f"approval-payload-{index}.sqlite3")
+                session_id = f"approval-payload-{index}"
+                plan = await self._seed_approval_history(
+                    path,
+                    session_id,
+                    decided=decided,
+                )
+                self._mutate_event_payload(path, session_id, event_type, mutate)
+                self._assert_approval_recovery_rejected(path, plan, message)
+
+    async def test_session_recovery_binds_approval_event_envelopes(self):
+        cases = (
+            ("request-actor", False, "approval.requested", "actor_id", "intruder"),
+            (
+                "request-correlation",
+                False,
+                "approval.requested",
+                "correlation_id",
+                "other-correlation",
+            ),
+            (
+                "request-causation",
+                False,
+                "approval.requested",
+                "causation_id",
+                "other-task",
+            ),
+            (
+                "request-idempotency",
+                False,
+                "approval.requested",
+                "idempotency_key",
+                "approval-request:other",
+            ),
+            ("decision-actor", True, "approval.decided", "actor_id", "intruder"),
+            (
+                "decision-correlation",
+                True,
+                "approval.decided",
+                "correlation_id",
+                "other-correlation",
+            ),
+            (
+                "decision-causation",
+                True,
+                "approval.decided",
+                "causation_id",
+                "other-request",
+            ),
+            (
+                "decision-idempotency",
+                True,
+                "approval.decided",
+                "idempotency_key",
+                "approval-decision:other",
+            ),
+        )
+        for index, (label, decided, event_type, column, value) in enumerate(cases):
+            with self.subTest(label=label):
+                path = str(Path(self.tempdir.name) / f"approval-envelope-{index}.sqlite3")
+                session_id = f"approval-envelope-{index}"
+                plan = await self._seed_approval_history(
+                    path,
+                    session_id,
+                    decided=decided,
+                )
+                self._mutate_event_envelope(
+                    path,
+                    session_id,
+                    event_type,
+                    column,
+                    value,
+                )
+                self._assert_approval_recovery_rejected(
+                    path,
+                    plan,
+                    "approval event envelope is inconsistent",
+                )
+
+    async def test_session_recovery_enforces_the_approval_causal_chain(self):
+        cases = (
+            ("missing-request", False, "approval.requested", "no request"),
+            ("orphan-decision", True, "approval.requested", "no prior request"),
+            ("missing-decision", True, "approval.decided", "event envelope"),
+        )
+        for index, (label, decided, deleted_type, message) in enumerate(cases):
+            with self.subTest(label=label):
+                path = str(Path(self.tempdir.name) / f"approval-chain-{index}.sqlite3")
+                session_id = f"approval-chain-{index}"
+                plan = await self._seed_approval_history(
+                    path,
+                    session_id,
+                    decided=decided,
+                )
+                store = SQLiteEventStore(path)
+                try:
+                    store._connection.execute(
+                        """
+                        UPDATE events SET event_type = ?
+                        WHERE stream_id = ? AND event_type = ?
+                        """,
+                        (f"test.removed.{index}", f"session:{session_id}", deleted_type),
+                    )
+                finally:
+                    store.close()
+                self._assert_approval_recovery_rejected(path, plan, message)
+
+        path = str(Path(self.tempdir.name) / "approval-chain-missing-transition.sqlite3")
+        session_id = "approval-chain-missing-transition"
+        plan = await self._seed_approval_history(path, session_id, decided=True)
+        store = SQLiteEventStore(path)
+        try:
+            rows = store._connection.execute(
+                """
+                SELECT global_position, payload_json
+                FROM events
+                WHERE stream_id = ? AND event_type = 'task.status.changed'
+                ORDER BY sequence
+                """,
+                (f"session:{session_id}",),
+            ).fetchall()
+            final_transition = next(
+                row
+                for row in rows
+                if json.loads(row["payload_json"])["previous"] == "waiting_approval"
+            )
+            store._connection.execute(
+                "UPDATE events SET event_type = ? WHERE global_position = ?",
+                ("test.removed.transition", final_transition["global_position"]),
+            )
+        finally:
+            store.close()
+        self._assert_approval_recovery_rejected(
+            path,
+            plan,
+            "no matching task transition",
+        )
+
+        path = str(Path(self.tempdir.name) / "approval-chain-wrong-transition.sqlite3")
+        session_id = "approval-chain-wrong-transition"
+        plan = await self._seed_approval_history(path, session_id, decided=True)
+        store = SQLiteEventStore(path)
+        try:
+            rows = store._connection.execute(
+                """
+                SELECT global_position, payload_json
+                FROM events
+                WHERE stream_id = ? AND event_type = 'task.status.changed'
+                ORDER BY sequence
+                """,
+                (f"session:{session_id}",),
+            ).fetchall()
+            final_transition = next(
+                row
+                for row in rows
+                if json.loads(row["payload_json"])["previous"] == "waiting_approval"
+            )
+            payload = json.loads(final_transition["payload_json"])
+            payload["current"] = "canceled"
+            store._connection.execute(
+                "UPDATE events SET payload_json = ? WHERE global_position = ?",
+                (
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                    final_transition["global_position"],
+                ),
+            )
+        finally:
+            store.close()
+        self._assert_approval_recovery_rejected(
+            path,
+            plan,
+            "does not match its task transition",
+        )
+
+    async def test_session_recovery_rejects_unbound_legacy_decision_correlation(self):
+        session_id = "approval-legacy-correlation"
+        plan = WorkflowPlan(
+            session_id,
+            "兼容旧审批历史",
+            "user",
+            self._approval_plan(session_id).tasks,
+            plan_id=f"plan-{session_id}",
+        )
+        kernel = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        paused = await kernel.run(plan)
+        await kernel.decide(
+            paused.needs_you[0].request_id,
+            ApprovalDecision.APPROVE,
+            "owner",
+        )
+        kernel.event_store._connection.execute(
+            """
+            UPDATE events SET correlation_id = NULL
+            WHERE stream_id = ? AND event_type = 'approval.decided'
+            """,
+            (f"session:{session_id}",),
+        )
+        kernel.event_store.close()
+
+        self._assert_approval_recovery_rejected(
+            self.path,
+            plan,
+            "approval event envelope is inconsistent",
+        )
+
+    async def test_session_recovery_rejects_incomplete_approval_tail_writes(self):
+        request_path = str(Path(self.tempdir.name) / "repair-request.sqlite3")
+        request_plan = await self._seed_approval_history(
+            request_path,
+            "repair-request",
+            decided=False,
+        )
+        request_store = SQLiteEventStore(request_path)
+        request_row = request_store._connection.execute(
+            """
+            SELECT global_position, sequence FROM events
+            WHERE stream_id = ? AND event_type = 'approval.requested'
+            """,
+            ("session:repair-request",),
+        ).fetchone()
+        self.assertIsNotNone(request_row)
+        request_store._connection.execute(
+            "DELETE FROM events WHERE global_position = ?",
+            (request_row["global_position"],),
+        )
+        request_store.close()
+
+        self._assert_approval_recovery_rejected(
+            request_path,
+            request_plan,
+            "waiting transition has no request",
+        )
+        request_check = SQLiteEventStore(request_path)
+        self.assertEqual(
+            request_check.stream_version("session:repair-request"),
+            request_row["sequence"] - 1,
+        )
+        request_check.close()
+
+        transition_path = str(Path(self.tempdir.name) / "repair-transition.sqlite3")
+        transition_plan = await self._seed_approval_history(
+            transition_path,
+            "repair-transition",
+            decided=True,
+        )
+        transition_store = SQLiteEventStore(transition_path)
+        transition_row = transition_store._connection.execute(
+            """
+            SELECT global_position, sequence FROM events
+            WHERE stream_id = ? AND event_type = 'task.status.changed'
+            ORDER BY sequence DESC LIMIT 1
+            """,
+            ("session:repair-transition",),
+        ).fetchone()
+        self.assertIsNotNone(transition_row)
+        transition_store._connection.execute(
+            "DELETE FROM events WHERE global_position = ?",
+            (transition_row["global_position"],),
+        )
+        transition_store.close()
+
+        self._assert_approval_recovery_rejected(
+            transition_path,
+            transition_plan,
+            "decision has no matching task transition",
+        )
+        transition_check = SQLiteEventStore(transition_path)
+        self.assertEqual(
+            transition_check.stream_version("session:repair-transition"),
+            transition_row["sequence"] - 1,
+        )
+        transition_check.close()
+
+    async def test_session_recovery_binds_approval_transition_envelopes(self):
+        cases = (
+            ("actor_id", "intruder"),
+            ("correlation_id", "other-correlation"),
+            ("causation_id", "other-request"),
+            ("idempotency_key", "task-status:other:4"),
+        )
+        for index, (column, value) in enumerate(cases):
+            with self.subTest(column=column):
+                path = str(Path(self.tempdir.name) / f"approval-transition-{index}.sqlite3")
+                session_id = f"approval-transition-{index}"
+                plan = await self._seed_approval_history(path, session_id, decided=True)
+                store = SQLiteEventStore(path)
+                store._connection.execute(
+                    f"""
+                    UPDATE events SET {column} = ?
+                    WHERE global_position = (
+                        SELECT global_position FROM events
+                        WHERE stream_id = ? AND event_type = 'task.status.changed'
+                        ORDER BY sequence DESC LIMIT 1
+                    )
+                    """,
+                    (value, f"session:{session_id}"),
+                )
+                store.close()
+                self._assert_approval_recovery_rejected(
+                    path,
+                    plan,
+                    "task transition event envelope is inconsistent",
+                )
+
+        path = str(Path(self.tempdir.name) / "approval-transition-paired-null.sqlite3")
+        session_id = "approval-transition-paired-null"
+        plan = await self._seed_approval_history(path, session_id, decided=True)
+        store = SQLiteEventStore(path)
+        store._connection.execute(
+            """
+            UPDATE events SET correlation_id = NULL, causation_id = NULL
+            WHERE global_position = (
+                SELECT global_position FROM events
+                WHERE stream_id = ? AND event_type = 'task.status.changed'
+                ORDER BY sequence DESC LIMIT 1
+            )
+            """,
+            (f"session:{session_id}",),
+        )
+        store.close()
+        self._assert_approval_recovery_rejected(
+            path,
+            plan,
+            "task transition event envelope is inconsistent",
+        )
 
     async def test_session_recovery_uses_bounded_contiguous_pages(self):
         calls = 0
