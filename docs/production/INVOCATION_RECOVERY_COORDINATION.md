@@ -184,6 +184,11 @@ require epoch zero as defense in depth. The same decoder rejects running or succ
 jobs without an attempt, non-succeeded jobs with `result_ref`, and job update/finish timestamps
 that precede creation, so the claim API cannot normalize contradictory restored state.
 
+The attempt-store write boundary shares the coordinator's 4,096-byte identity/worker and
+16,384-byte result-reference limits and rejects C0/DEL control characters before opening a
+write transaction. Exact-boundary worker and result values round-trip through the atomic
+snapshot; one-byte-over and control-character inputs leave the job and attempt unchanged.
+
 ## Pure decision API
 
 `invocation_recovery.assess_invocation_recovery` implements the corrected matrix without a
@@ -199,8 +204,9 @@ The boundary revalidates frozen objects on every call because Python callers can
 frozen dataclass with low-level reflection. It validates bounded UTF-8 text, control
 characters, canonical digests/timestamps, job and attempt counters/statuses, cross-row lease
 ownership, all seven binding fields, and receipt attempt ID/number/epoch/token digest. It
-accepts the schema-compatible `lease_epoch >= attempts_started` relationship and does not
-reject a requested availability timestamp merely because it predates enqueue time.
+accepts the schema-compatible `lease_epoch >= attempts_started` relationship only when a
+zero-attempt job also has epoch zero, and does not reject a requested availability timestamp
+merely because it predates enqueue time.
 
 Constructing an `InvocationResultReceipt` object in memory does not make a result durable or
 authentic. The type describes the fields a future trusted receipt decoder must produce. The

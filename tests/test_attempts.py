@@ -539,6 +539,10 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             job_spec(available_at="2026-08-20T00:00:00-00:00")
         with self.assertRaises(ValueError):
             invocation_payload_digest({"notFinite": float("nan")})
+        with self.assertRaises(ValueError):
+            job_spec(agent_id="agent\ncontrol")
+        with self.assertRaises(ValueError):
+            job_spec(task_id="t" * 4_097)
         self.store.enqueue(job_spec())
         for seconds in (0, -1, float("nan"), float("inf")):
             with self.subTest(seconds=seconds):
@@ -553,6 +557,41 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.store.recover_expired(limit=invalid_limit)
         self.assertEqual(self.store.get("invocation-1").status, InvocationStatus.QUEUED)
+
+    def test_write_text_contract_rejects_recovery_poison_before_state_change(self):
+        self.store.enqueue(job_spec())
+        queued = tuple(self.store._connection.iterdump())
+        for worker_id in ("worker\ncontrol", "w" * 4_097):
+            with self.subTest(worker_id_length=len(worker_id)):
+                with self.assertRaises(ValueError):
+                    self.store.claim("invocation-1", worker_id, lease_seconds=10)
+                self.assertEqual(tuple(self.store._connection.iterdump()), queued)
+
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        running = tuple(self.store._connection.iterdump())
+        for result_ref in ("result\ncontrol", "r" * 16_385):
+            with self.subTest(result_ref_length=len(result_ref)):
+                with self.assertRaises(ValueError):
+                    self.store.complete(lease, result_ref=result_ref)
+                self.assertEqual(tuple(self.store._connection.iterdump()), running)
+        for error in ("error\ncontrol", "e" * 16_385):
+            with self.subTest(error_length=len(error)):
+                with self.assertRaises(ValueError):
+                    self.store.fail(lease, error)
+                self.assertEqual(tuple(self.store._connection.iterdump()), running)
+
+    def test_exact_text_boundaries_round_trip_through_recovery_snapshot(self):
+        self.store.enqueue(job_spec())
+        worker_id = "w" * 4_096
+        result_ref = "r" * 16_384
+
+        lease = self.store.claim("invocation-1", worker_id, lease_seconds=10)
+        self.assertTrue(self.store.complete(lease, result_ref=result_ref))
+        snapshot = self.store.recovery_snapshot_for_task("session-1", "task-1")
+
+        self.assertEqual(snapshot.job.result_ref, result_ref)
+        self.assertEqual(snapshot.current_attempt.worker_id, worker_id)
+        self.assertEqual(snapshot.current_attempt.result_ref, result_ref)
 
     def test_persisted_job_types_and_timestamps_fail_closed(self):
         self.store.enqueue(job_spec())
