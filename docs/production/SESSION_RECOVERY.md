@@ -19,7 +19,8 @@ corrupt last page therefore have the same fail-closed result: the caller receive
 
 Artifact references are attached only after that validation succeeds. The
 `ArtifactLedger` has its own startup replay contract; it is not made atomic with
-session recovery by this slice.
+session recovery by this slice. See `ARTIFACT_LEDGER_REPLAY.md` for its independent
+streaming, cumulative-budget, and write-admission boundary.
 
 ## Bounded page source
 
@@ -115,7 +116,7 @@ This slice does not provide:
 
 - snapshots, compacted streams, upcasters, or sublinear recovery time;
 - a wall-clock, CPU, SQLite-page, or per-tenant recovery quota;
-- a bound for the separate global artifact-ledger startup replay;
+- atomic publication across session recovery and the separate artifact-ledger replay;
 - a distributed recovery lock or protection from two orchestrator processes;
 - reconciliation for a task left `RUNNING` after process failure;
 - durable attempt fencing, heartbeats, action receipts, or effect-unknown handling;

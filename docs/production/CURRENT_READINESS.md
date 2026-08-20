@@ -40,6 +40,9 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 - session recovery：每页最多 1,000 events，验证同 stream/连续 sequence，并执行 1,000,000
   event、256 MiB canonical bytes、5,000,000 JSON nodes 累积门禁；边读边重建候选状态，整条
   历史验证完毕后才发布；
+- event-backed `ArtifactLedger`：逐行 global replay，100,000 versions、256 MiB content、64 MiB
+  metadata、1,000,000 metadata nodes、384 MiB state-data 累积门禁；多 ledger 写入以事务内
+  global-position CAS 重建重算，幂等重试严格绑定完整稳定请求；
 - `attempts.py`：单机 SQLite durable job/attempt、lease、heartbeat、retry、expiry、epoch fencing
   和 stale-owner terminal CAS；
 - `artifact_store.py`：tenant/workspace-scoped blob/version、digest、并发版本和恢复检查；
@@ -176,7 +179,8 @@ interpreter/bootstrap、immutable mirror、signed provenance、artifact signatur
 ## 8. 性能、容量与资源隔离
 
 Recovery、payload、artifact、projection、publisher callback、config/secret 和部分列表已经有明确
-单项/累计边界；但服务级容量包络仍未冻结。
+单项/累计边界；`ArtifactLedger` 的 state-data 是逻辑数据预算，不是 RSS 上限，且 live chain
+append、copy-on-write index 与全局冲突重建仍缺容量基准。服务级容量包络仍未冻结。
 
 仍缺 global/tenant/provider quota、API backpressure、bounded admission queue、worker process
 resource limit、artifact blob tiering、snapshot/compaction、数据库增长/retention 和 benchmark/soak。

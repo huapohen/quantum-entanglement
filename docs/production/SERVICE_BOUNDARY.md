@@ -14,6 +14,10 @@ publisher、projection、tenant authorization primitive、SQLite backup/restore�
 secret provider、依赖锁/SBOM，以及 durable approval/recovery 等真实组件。这些组件尚未被
 可信认证入口、强制 scope repository、action receipt 和统一服务生命周期组合成端到端闭环。
 
+事件内嵌的 `ArtifactLedger` 已有逐行 global replay、累计 state-data 门禁、global-position CAS
+和 exact idempotency；其合同见 `ARTIFACT_LEDGER_REPLAY.md`。它仍无 tenant/workspace scope，
+也不是 `SQLiteArtifactStore` 的生产替代品。
+
 ## 允许的运行方式
 
 | 项目 | 当前支持边界 |
