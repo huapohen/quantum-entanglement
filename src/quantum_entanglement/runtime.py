@@ -1389,7 +1389,18 @@ class OrchestratorKernel:
                     async with limiter:
                         await self._run_task(active_plan, graph, task)
 
-                await asyncio.gather(*(guarded(task) for task in ready))
+                batch = tuple(asyncio.create_task(guarded(task)) for task in ready)
+                try:
+                    outcomes = await asyncio.gather(*batch, return_exceptions=True)
+                except BaseException:
+                    for scheduled in batch:
+                        if not scheduled.done():
+                            scheduled.cancel()
+                    await asyncio.gather(*batch, return_exceptions=True)
+                    raise
+                for outcome in outcomes:
+                    if isinstance(outcome, BaseException):
+                        raise outcome
             return self._result(active_plan, graph)
 
     def _result(self, plan: WorkflowPlan, graph: TaskGraph) -> RunResult:
