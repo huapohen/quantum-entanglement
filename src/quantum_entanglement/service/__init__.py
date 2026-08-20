@@ -5,15 +5,21 @@ introduced behind tested fail-closed contracts before they are composed into a s
 """
 
 from .secrets import (
+    FileSecretProvider,
     SecretMaterial,
     SecretMaterialClosedError,
+    SecretProvider,
+    SecretProviderError,
     SecretRef,
     SecretReferenceError,
 )
 
 __all__ = [
+    "FileSecretProvider",
     "SecretMaterial",
     "SecretMaterialClosedError",
+    "SecretProvider",
+    "SecretProviderError",
     "SecretRef",
     "SecretReferenceError",
 ]
