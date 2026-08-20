@@ -58,8 +58,9 @@ is not exposed until the cancellation/action-receipt contract is implemented.
 
 Every first claim executes in `BEGIN IMMEDIATE`, conditionally moves one eligible job to
 `running`, increments `attempts_started` and `lease_epoch`, and inserts its attempt history
-before commit. Eligibility includes `attempts_started = 0`; independent SQLite connections
-therefore serialize the ownership decision, while failed or expired work cannot be reclaimed.
+before commit. Eligibility and the final CAS both require `attempts_started = 0` and
+`lease_epoch = 0`; independent SQLite connections therefore serialize the ownership decision,
+while failed, expired, or partially restored ownership state cannot be reclaimed.
 
 The returned `InvocationLease` contains two different controls:
 
@@ -122,7 +123,9 @@ A worker integration should use this sequence:
 Call `recover_expired()` on startup and periodically while workers are active. Recovery is
 bounded by `limit` so an operator can avoid one long write transaction. A claim also fences an
 expired lease for its candidate before making the ownership decision, but the
-`attempts_started = 0` eligibility predicate prevents immediate or later automatic reclaim.
+combined `attempts_started = 0` and `lease_epoch = 0` eligibility predicate prevents immediate
+or later automatic reclaim. A nonzero epoch without attempt history is a partial-restore
+integrity failure, never a fresh job.
 
 Suggested pilot timing defaults, to be validated by fault and capacity tests rather than
 copied blindly, are a 60-second lease, 15–20 second heartbeat, 30-second runtime timeout, and a
