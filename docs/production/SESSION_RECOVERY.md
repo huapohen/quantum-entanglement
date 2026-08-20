@@ -102,6 +102,11 @@ digest, attempt ID/number, lease epoch, token digest, and result-receipt identit
 `INVOCATION_RECOVERY_COORDINATION.md`. The runtime therefore cannot construct trusted recovery
 evidence from that history.
 
+The same assertion runs on every `OrchestratorKernel.run()` call even when that session is
+already loaded in memory. This covers cancellation and other `BaseException` exits after the
+`RUNNING` transition: the loaded graph remains quarantined, the second call appends no guessed
+transition, and the Agent is not invoked again.
+
 This quarantine is an intentional availability tradeoff. It converts the former silent stuck
 projection into an explicit operator-visible integrity boundary, while guaranteeing that
 session recovery neither calls the Agent again nor appends a guessed failure/completion. A
@@ -118,7 +123,8 @@ PYTHONPATH=src python3 -m unittest tests.test_recovery
 
 The suite covers exact and exceeded event counts, exact and exceeded cumulative
 byte/node budgets, bounded pages, cursor continuity, stream-boundary violations,
-interleaved streaming application, invalid late pages, and no partial publication.
+interleaved streaming application, invalid late pages, no partial publication, restart
+quarantine, and same-process cancellation quarantine without Agent reinvocation.
 
 At implementation commit `8049ac3`, the repository-wide suite reported 627
 passing tests. Locked Ruff 0.16.3 lint/format over `src`, `tests`, and `scripts`,

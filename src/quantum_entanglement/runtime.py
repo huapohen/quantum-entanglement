@@ -838,6 +838,14 @@ class OrchestratorKernel:
             and requested.created_at == decided.created_at
         )
 
+    @staticmethod
+    def _require_no_unreconciled_running_tasks(graph: TaskGraph) -> None:
+        if any(status is TaskStatus.RUNNING for status in graph.statuses.values()):
+            raise SessionRecoveryError(
+                "session contains a durably RUNNING task without supported "
+                "invocation recovery evidence"
+            )
+
     def _recover_session(self, requested_plan: WorkflowPlan) -> None:
         """Rebuild an active workflow projection without replaying side effects."""
 
@@ -1022,11 +1030,7 @@ class OrchestratorKernel:
         for request in approval_requests.values():
             if request.pending and graph.statuses[request.task_id] != TaskStatus.WAITING_APPROVAL:
                 raise SessionRecoveryError("pending approval is not attached to a waiting task")
-        if any(status is TaskStatus.RUNNING for status in graph.statuses.values()):
-            raise SessionRecoveryError(
-                "session contains a durably RUNNING task without supported "
-                "invocation recovery evidence"
-            )
+        self._require_no_unreconciled_running_tasks(graph)
 
         self._plans[requested_plan.session_id] = stored_plan
         self._graphs[requested_plan.session_id] = graph
@@ -1288,6 +1292,9 @@ class OrchestratorKernel:
         lock = self._session_locks.setdefault(plan.session_id, asyncio.Lock())
         async with lock:
             self._recover_session(plan)
+            recovered_graph = self._graphs.get(plan.session_id)
+            if recovered_graph is not None:
+                self._require_no_unreconciled_running_tasks(recovered_graph)
             graph = await self._initialize_plan(plan)
             active_plan = self._plans[plan.session_id]
             while True:
