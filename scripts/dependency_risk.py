@@ -290,7 +290,7 @@ def _safe_string(
 ) -> str:
     if type(value) is not str:
         _fail(code)
-    result = cast(str, value)
+    result = value
     try:
         encoded = result.encode("ascii")
     except UnicodeEncodeError:
@@ -319,7 +319,7 @@ def parse_timestamp(value: object, code: str) -> datetime:
 def _positive_integer(value: object, code: str, *, maximum: int) -> int:
     if type(value) is not int or value <= 0 or value > maximum:
         _fail(code)
-    return cast(int, value)
+    return value
 
 
 def _canonical_https_url(value: object, code: str) -> str:
@@ -766,7 +766,7 @@ def load_dependency_risk_policy_bytes(value: bytes) -> DependencyRiskPolicy:
         minimum_rationale_length=minimum_rationale_length,
     )
 
-    promotion_enabled = cast(bool, document["promotionEnabled"])
+    promotion_enabled = document["promotionEnabled"]
     if promotion_enabled and (
         not allowed_scanners or not approved_databases or not allowed_licenses
     ):
@@ -942,7 +942,7 @@ def _safe_filename(value: object, code: str) -> str:
 def _bounded_nonnegative(value: object, code: str, *, maximum: int) -> int:
     if type(value) is not int or value < 0 or value > maximum:
         _fail(code)
-    return cast(int, value)
+    return value
 
 
 def _binding(value: object, code: str) -> FileBinding:
@@ -1763,10 +1763,10 @@ def verify_dependency_risk(
 
     used_exception_ids: set[str] = set()
     for violation in violations:
-        exception = exception_by_key.get(violation)
-        if exception is None:
+        matched_exception = exception_by_key.get(violation)
+        if matched_exception is None:
             _fail("risk_policy_denied")
-        used_exception_ids.add(exception.exception_id)
+        used_exception_ids.add(matched_exception.exception_id)
     if used_exception_ids != {exception.exception_id for exception in policy.exceptions}:
         _fail("risk_exception_unused")
 

@@ -8,6 +8,7 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NoReturn
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if __package__ in (None, ""):
@@ -28,7 +29,7 @@ from scripts.dependency_risk import (  # noqa: E402
 
 
 class _RedactedParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         del message
         self.exit(2, "dependency risk verification failed: argument_invalid\n")
 
