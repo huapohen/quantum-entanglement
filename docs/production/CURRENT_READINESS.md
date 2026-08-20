@@ -27,12 +27,13 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
    `succeeded | rejected | effect_unknown` receipt 原子绑定。
 
-另有一个跨领域 P0：当前主线尚未统一约束 POSIX `fork`/multiprocessing 继承。多个 SQLite
-store、`RequestContextIssuer`、revocation/key registry、plugin/runtime 和 event-loop 对象持有 live
-connection、锁、secret 或 monotonic 安全状态，却没有在 child 的任何 inherited lock/provider/
-connection access 前统一拒绝。`non-copyable`/`non-pickleable` 不阻止 fork 复制；credential-bearing
+另有一个跨领域 P0：当前主线已经实现统一、无锁的 PID + opaque epoch process identity
+foundation，但尚未把任何现有 SQLite store、`RequestContextIssuer`、revocation/key registry、
+plugin/runtime 或 event-loop 对象迁移到该 guard。这些对象仍可能在 child 触碰 inherited lock/
+provider/connection 前继续运行。`non-copyable`/`non-pickleable` 不阻止 fork 复制；credential-bearing
 或不可信 worker 必须先 spawn/exec，再在 child 内构造 store、issuer、provider 和 event loop，并且
-必须发生在 secret load 之前。完整依赖与测试矩阵见
+必须发生在 secret load 之前。已实现基础合同见
+[`PROCESS_INHERITANCE.md`](./PROCESS_INHERITANCE.md)，完整依赖与测试矩阵见
 [`12_process_inheritance_dependency_audit.md`](../../analysis_report/research/12_process_inheritance_dependency_audit.md)。
 
 测试通过证明对应断言在记录环境中成立，不证明端到端生产安全、容量、SLO、RPO/RTO 或 GA。
@@ -68,8 +69,10 @@ connection access 前统一拒绝。`non-copyable`/`non-pickleable` 不阻止 fo
 - connector 不支持 receiver idempotency/fencing 时只能诚实承诺 at-least-once；
 - 编排 session lock 是进程内锁，多进程/多实例调度仍可能重复调用 Agent；
 - 没有完整 crash-at-every-boundary、kill -9、long-running heartbeat 和 graceful drain E2E。
-- `SQLiteEventStore`、artifact/projection/revocation store 与 recovery coordinator 的已构造实例尚未
-  绑定 creator PID/process epoch；fork child 可能触碰 inherited lock/connection 或复制恢复决策。
+- 共享 process identity helper 已通过真实 fork、nested fork、PID drift、fork-while-unrelated-lock、
+  spawn/forkserver、copy/pickle 和 parent-continuity 测试；但 `SQLiteEventStore`、artifact/projection/
+  revocation store 与 recovery coordinator 的已构造实例仍未绑定 owner，helper 不能替代逐组件
+  public-path 接入和 fork-while-component-lock 证明。
 
 晋级标准：任意 admission、claim、dispatch、receiver accept、result accept、ACK 和响应边界崩溃
 后，只能恢复为未发生、已证明成功、明确拒绝或需要人工/自动 reconcile 的 unknown；不得盲目
