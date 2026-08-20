@@ -92,6 +92,67 @@ jobs:
             --distribution-directory dist \
             --expected-commit "$QE_EXPECTED_COMMIT"
 
+      - name: Install locked SBOM validation toolchain
+        run: |
+          python -m pip install \
+            --disable-pip-version-check \
+            --require-hashes \
+            --only-binary :all: \
+            -r requirements/release-py312.lock
+
+      - name: Generate source-bound CycloneDX SBOMs
+        env:
+          QE_DISTRIBUTION_MANIFEST_PATH: ${{ runner.temp }}/quantum-entanglement-distribution-manifest.json
+          QE_EXPECTED_COMMIT: ${{ github.sha }}
+          QE_SBOM_DIRECTORY: ${{ runner.temp }}/quantum-entanglement-sbom
+        run: |
+          mkdir "$QE_SBOM_DIRECTORY"
+          python scripts/sbom.py generate \
+            --repository-root . \
+            --distribution-directory dist \
+            --distribution-manifest "$QE_DISTRIBUTION_MANIFEST_PATH" \
+            --sbom-directory "$QE_SBOM_DIRECTORY" \
+            --expected-commit "$QE_EXPECTED_COMMIT"
+
+      - name: Verify source-bound CycloneDX SBOMs
+        env:
+          QE_DISTRIBUTION_MANIFEST_PATH: ${{ runner.temp }}/quantum-entanglement-distribution-manifest.json
+          QE_EXPECTED_COMMIT: ${{ github.sha }}
+          QE_SBOM_DIRECTORY: ${{ runner.temp }}/quantum-entanglement-sbom
+        run: |
+          python scripts/sbom.py verify \
+            --repository-root . \
+            --distribution-directory dist \
+            --distribution-manifest "$QE_DISTRIBUTION_MANIFEST_PATH" \
+            --sbom-directory "$QE_SBOM_DIRECTORY" \
+            --expected-commit "$QE_EXPECTED_COMMIT"
+
+      - name: Validate SBOMs against the CycloneDX 1.6 schema
+        env:
+          QE_SBOM_DIRECTORY: ${{ runner.temp }}/quantum-entanglement-sbom
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from cyclonedx.schema import SchemaVersion
+          from cyclonedx.validation.json import JsonStrictValidator
+
+          directory = Path(os.environ["QE_SBOM_DIRECTORY"])
+          filenames = (
+              "quantum-entanglement-runtime.cdx.json",
+              "quantum-entanglement-build.cdx.json",
+          )
+          if {path.name for path in directory.iterdir()} != set(filenames):
+              raise SystemExit("unexpected SBOM document set")
+
+          validator = JsonStrictValidator(SchemaVersion.V1_6)
+          for filename in filenames:
+              document = (directory / filename).read_text(encoding="ascii")
+              if validator.validate_str(document):
+                  raise SystemExit(f"CycloneDX 1.6 schema validation failed: {filename}")
+          PY
+
       - name: Verify durable migration package data
         run: |
           python - <<'PY'
@@ -126,5 +187,7 @@ jobs:
           path: |
             dist/*
             ${{ runner.temp }}/quantum-entanglement-distribution-manifest.json
+            ${{ runner.temp }}/quantum-entanglement-sbom/quantum-entanglement-runtime.cdx.json
+            ${{ runner.temp }}/quantum-entanglement-sbom/quantum-entanglement-build.cdx.json
           if-no-files-found: error
           retention-days: 14
