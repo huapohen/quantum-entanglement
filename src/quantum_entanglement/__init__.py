@@ -41,6 +41,13 @@ from .backup import (
     restore_sqlite_backup,
     verify_sqlite_backup,
 )
+from .backup_manifest_v2 import (
+    BACKUP_MANIFEST_V2_FORMAT,
+    BackupManifestV2,
+    decode_backup_manifest_v2,
+    encode_backup_manifest_v2,
+    parse_backup_manifest_v2,
+)
 from .chat import ChatRoute, InboundChatMessage, MentionRouter, RoutedChatMessage
 from .context import ContextBudgetError, ContextBundle, ContextCompiler, ContextItem
 from .delivery import (
@@ -175,6 +182,8 @@ __all__ = [
     "BackupExistsError",
     "BackupIntegrityError",
     "BackupManifest",
+    "BACKUP_MANIFEST_V2_FORMAT",
+    "BackupManifestV2",
     "CAPABILITY_PROTOCOL_VERSION",
     "CapabilityClaims",
     "CapabilityEnvelope",
@@ -270,8 +279,11 @@ __all__ = [
     "WorkflowPlan",
     "create_sqlite_backup",
     "default_manifest_path",
+    "decode_backup_manifest_v2",
+    "encode_backup_manifest_v2",
     "restore_sqlite_backup",
     "verify_sqlite_backup",
+    "parse_backup_manifest_v2",
     "action_covers",
     "action_is_subset",
     "validate_delegation",
