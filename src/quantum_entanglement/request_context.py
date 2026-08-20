@@ -491,7 +491,7 @@ class RequestContextIssuer:
                     with self.__lock:
                         self.__pending -= 1
             finally:
-                credential.close()
+                self._close_credential(credential)
 
     def prepare_reauthorization(
         self,
@@ -608,6 +608,13 @@ class RequestContextIssuer:
             return _as_utc(value, "clock.now()")
         except Exception:
             raise RequestContextError("request_context_clock_unavailable") from None
+
+    @staticmethod
+    def _close_credential(credential: SecretMaterial) -> None:
+        try:
+            credential.close()
+        except Exception:
+            raise RequestContextError("request_context_credential_close_failed") from None
 
     @staticmethod
     def _snapshot_claims(claims: CallerRequestContext) -> CallerRequestContext:
