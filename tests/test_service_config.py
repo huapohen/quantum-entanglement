@@ -224,6 +224,15 @@ class ServiceConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationError, "configuration_snapshot_too_large"):
             ServiceConfig.from_environment(values)
 
+    def test_rejects_oversized_or_control_character_environment_keys(self) -> None:
+        for key in ("H" * 257, "HOST\nFORGE", ""):
+            values = self.environment()
+            values[key] = "value-must-not-render"
+            with self.subTest(key_length=len(key)), self.assertRaises(ConfigurationError) as caught:
+                ServiceConfig.from_environment(values)
+            self.assertEqual(caught.exception.code, "configuration_key_invalid")
+            self.assertNotIn("value-must-not-render", str(caught.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

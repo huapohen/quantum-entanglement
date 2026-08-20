@@ -16,6 +16,8 @@ caller supplied a full host mapping.
 
 - every supported `QE_*` field is required; there are no production defaults;
 - an unknown `QE_*` name fails closed without rendering its name or value;
+- environment keys are bounded to 256 characters and reject empty or control-character
+  forms before hashing, comparison, or value access;
 - unrelated host variables are ignored without reading their values and never become
   configuration attributes;
 - keys and values must be strings; values are bounded and reject whitespace, NUL and

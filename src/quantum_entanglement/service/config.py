@@ -20,6 +20,7 @@ from pathlib import Path
 
 _INTEGER = re.compile(r"^(?:0|[1-9][0-9]*)$")
 _MAX_ENVIRONMENT_ITEMS = 4_096
+_MAX_ENVIRONMENT_KEY_LENGTH = 256
 _CONFIG_KEYS = frozenset(
     {
         "QE_BIND_HOST",
@@ -129,6 +130,12 @@ class ServiceConfig:
         for key in keys:
             if type(key) is not str:
                 raise ConfigurationError("configuration_type_invalid")
+            if (
+                not key
+                or len(key) > _MAX_ENVIRONMENT_KEY_LENGTH
+                or any(character in key for character in ("\x00", "\r", "\n"))
+            ):
+                raise ConfigurationError("configuration_key_invalid")
             if key in seen:
                 raise ConfigurationError("configuration_duplicate_field")
             seen.add(key)
