@@ -121,6 +121,17 @@ class SafeLoggerTests(unittest.TestCase):
         self.assertNotIn("payload-secret-canary", rendered)
         self.assertEqual(rendered.count("qe.logging.event_rejected"), len(invalid))
 
+    def test_rejects_field_containers_before_an_unbounded_snapshot(self) -> None:
+        fields = {f"untrusted_{index}": "oversized-fields-secret-canary" for index in range(33)}
+
+        self.assertFalse(self.safe_logger.emit("qe.test.no_fields", fields))
+
+        self.assertEqual(
+            self.records(),
+            [{"event": "qe.logging.event_rejected", "fields": {}}],
+        )
+        self.assertNotIn("oversized-fields-secret-canary", self.stream.getvalue())
+
     def test_rejects_exception_and_custom_mapping_without_stringifying(self) -> None:
         class ExplosiveValue:
             def __str__(self) -> str:

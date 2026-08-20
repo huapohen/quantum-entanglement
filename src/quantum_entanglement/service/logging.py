@@ -182,6 +182,8 @@ class SafeLogger:
             if fields is None:
                 snapshot: dict[str, Any] = {}
             elif type(fields) is dict:
+                if len(fields) > _MAX_FIELDS:
+                    return self._emit_rejected()
                 snapshot = fields.copy()
             else:
                 return self._emit_rejected()
