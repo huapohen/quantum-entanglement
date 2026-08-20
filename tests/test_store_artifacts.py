@@ -166,6 +166,72 @@ class ArtifactLedgerTests(unittest.TestCase):
         self.assertEqual(first.ref.artifact_id, second.ref.artifact_id)
         self.assertEqual(len(self.ledger.history("s1", "result.txt")), 1)
 
+    def test_record_reconciles_committed_append_wrapper_failure(self):
+        append = self.store.append
+
+        def commit_then_raise(event, expected_version=None):
+            append(event, expected_version)
+            raise RuntimeError("injected artifact postcommit failure")
+
+        with patch.object(self.store, "append", side_effect=commit_then_raise):
+            recorded = self.ledger.record(
+                "s1",
+                "task-1",
+                "agent",
+                ArtifactOutput("result.txt", "stable"),
+            )
+
+        self.assertEqual(self.ledger.current("s1", "result.txt"), recorded)
+        events = self.store.read_stream("session:s1")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event.event_type, ArtifactLedger.EVENT_TYPE)
+
+    def test_record_precommit_failure_publishes_no_artifact_memory(self):
+        with patch.object(
+            self.store,
+            "append",
+            side_effect=RuntimeError("injected artifact precommit failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "artifact precommit"):
+                self.ledger.record(
+                    "s1",
+                    "task-1",
+                    "agent",
+                    ArtifactOutput("result.txt", "stable"),
+                )
+
+        self.assertIsNone(self.ledger.current("s1", "result.txt"))
+        self.assertEqual(self.store.read_stream("session:s1"), ())
+
+    def test_record_does_not_reconcile_a_different_committed_event(self):
+        append = self.store.append
+
+        def commit_other_then_raise(event, expected_version=None):
+            append(
+                DomainEvent(
+                    stream_id=event.stream_id,
+                    event_type="test.concurrent",
+                    actor_id="other",
+                    payload={"other": True},
+                ),
+                expected_version,
+            )
+            raise RuntimeError("injected different postcommit failure")
+
+        with patch.object(self.store, "append", side_effect=commit_other_then_raise):
+            with self.assertRaisesRegex(RuntimeError, "different postcommit"):
+                self.ledger.record(
+                    "s1",
+                    "task-1",
+                    "agent",
+                    ArtifactOutput("result.txt", "stable"),
+                )
+
+        self.assertIsNone(self.ledger.current("s1", "result.txt"))
+        events = self.store.read_stream("session:s1")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event.event_type, "test.concurrent")
+
     def test_rebuild_can_repeat_without_duplicating_versions(self):
         self.ledger.record("s1", "t1", "writer", ArtifactOutput("report.md", "v1"))
         self.ledger.record("s1", "t2", "writer", ArtifactOutput("report.md", "v2"))

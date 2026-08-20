@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Tuple, cast
 from urllib.parse import quote
 
-from .events import DomainEvent
+from .events import DomainEvent, StoredEvent
 from .protocol import ArtifactOutput, ArtifactRef, new_id, utc_now
 from .store import SQLiteEventStore
 
@@ -439,6 +439,30 @@ class ArtifactLedger:
             previous_position = position
         return previous_position
 
+    def _reconcile_committed_event(
+        self,
+        event: DomainEvent,
+        *,
+        expected_version: int,
+    ) -> Optional[StoredEvent]:
+        """Return the exact event committed before an append wrapper failed."""
+
+        try:
+            page = self.event_store.read_stream_page(
+                event.stream_id,
+                after_sequence=expected_version,
+                limit=1,
+            )
+        except Exception:
+            return None
+        if (
+            len(page) != 1
+            or page[0].sequence != expected_version + 1
+            or page[0].event.to_dict() != event.to_dict()
+        ):
+            return None
+        return page[0]
+
     @staticmethod
     def _digest(content: str) -> str:
         return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -544,7 +568,17 @@ class ArtifactLedger:
                 idempotency_key="artifact:%s:%s:%s" % (captured_task_id, captured_name, ref.digest),
                 payload=payload,
             )
-            stored = self.event_store.append(event)
+            expected_version = self.event_store.stream_version(event.stream_id)
+            try:
+                stored = self.event_store.append(event, expected_version=expected_version)
+            except Exception:
+                committed = self._reconcile_committed_event(
+                    event,
+                    expected_version=expected_version,
+                )
+                if committed is None:
+                    raise
+                stored = committed
             # Idempotent retries return the existing event; rebuild the exact existing result.
             if stored.event.event_id != event.event_id:
                 existing_key, existing_item = self._decode_persisted_version(stored.event.payload)
