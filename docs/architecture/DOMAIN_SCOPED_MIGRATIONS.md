@@ -949,8 +949,6 @@ The native/sparse executor remains a design candidate and must not be inferred f
 bridge applier API:
 
 ```python
-
-
 def apply_native_domain_migration_plan(
     connection,
     plan,
