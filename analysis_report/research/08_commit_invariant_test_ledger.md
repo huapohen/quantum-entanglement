@@ -2,9 +2,9 @@
 
 更新日期：2026-08-20
 
-实现基线：`86ee4bcc9229c1f5d998b33c818c49e9d761b961`
+实现与报告基线：`7d9d757d02d63f267eda5fa8c8ef3d8fe73ea94a`
 
-实现 tree：`9c85d5d43f20ddf645b56c78a72e2c97dc7fd4db`
+基线 tree：`d1ba83d374df95a895fd6e1310a9ef4ae0f8af79`
 
 ## 1. 结论与使用方式
 
@@ -16,7 +16,7 @@
 阅读规则：
 
 - “提交”列只列建立或显著收紧该不变量的关键提交，不声称覆盖其间每个格式、文档或 CI
-  提交；完整历史以 `git log --oneline f7be4e2..86ee4bc` 为准。
+  提交；完整历史以 `git log --oneline f7be4e2..7d9d757` 为准。
 - “测试证据”列给出当前树中真实存在的 test file 和代表性 test method。通过这些测试只
   证明对应测试模型、fixture 和故障注入；不自动证明多节点、真实 IM、云环境或 GA。
 - “残余边界”是保证的一部分。未被接入同一 durable transaction 的 primitives 不能合并
@@ -28,12 +28,13 @@
 
 | 项目 | 实测或 Git 证据 | 限制 |
 |---|---|---|
-| 工作位置 | 独立 worktree `/private/tmp/qe-evidence-ledger`；实现从 `86ee4bc` 分出 | 不是 clean clone；本次报告提交只改 `analysis_report` |
+| 工作位置 | 独立 worktree `/private/tmp/qe-evidence-ledger-current`；从 main 的 clean `7d9d757` 分出 | 不是 clean clone；复核前 `git status --short` 无输出 |
 | 平台 | Darwin arm64；CPython 3.9.6 | 没有在本次台账工作中重跑 Linux/Python 3.12 matrix |
-| 单元/集成测试 | `PYTHONPATH=src python3 -m unittest discover -s tests -q` → `Ran 561 tests ... OK` | 2026-08-20 本地一次运行；没有签名或外部留存的 test attestation |
-| 代码身份 | implementation commit `86ee4bc`；tree `9c85d5d...` | 测试执行时只多出已提交的截图文档，不涉及 `src/tests/scripts` |
-| 历史规模 | `f7be4e2..86ee4bc` 为 177 commits；118 files；`+50,851/-11` | 行数与提交数是规模证据，不是质量或生产成熟度证据 |
+| 单元/集成测试 | `PYTHONPATH=src python3 -m unittest discover -s tests -q` → `Ran 583 tests ... OK` | 2026-08-20 在上述 clean commit/tree 本地运行；没有签名或外部留存的 test attestation |
+| 代码身份 | baseline commit `7d9d757`；tree `d1ba83d...` | 包含审批修复、SBOM、截图 manifest、工程台账和索引；不是对 main 后续变化的浮动声明 |
+| 历史规模 | `f7be4e2..7d9d757` 为 188 commits；122 files；`+52,635/-11` | 行数与提交数是规模证据，不是质量或生产成熟度证据 |
 | 外部 connector | 仓库测试使用 fake/fixture；没有真实 Feishu/WeCom write connector | 不能声称已验证消息投递、平台回执或第三方限流 |
+| 报告证据链 | `dc9e919` 完善截图 manifest；`c0a6e7e` 新增本台账；`7d9d757` 加入报告索引 | 文档提交只组织和限定证据，不增加 runtime 生产能力 |
 
 ## 3. 可追溯不变量台账
 
@@ -74,8 +75,9 @@
 | `49f3858`、`345be30` | `tenancy.py` typed authority | tenant/workspace/member/role 与 capability chain 强类型；默认拒绝；delegation 只能收窄；audience/time/nonce/revocation 有界且可审计 | `tests/test_tenancy.py::test_scope_attenuation_matrix`、`::test_delegation_rejects_every_privilege_amplification_axis`、`::test_cross_tenant_inactive_and_subject_mismatch_denials`、`::test_collection_admission_limits_fail_closed` | 这是 security slice，不是 public admission service；没有 OIDC/service principal、KMS-backed root、membership sync，且未覆盖每个 repository/tool/connector effect |
 | `bd29665` 与 tenancy 后续 hardening | package API、key rotation、SQLite revision guard | public API 固定；trusted root/key usage/algorithm/edge proof 必须匹配；rotation/revocation rollback fail closed；revision guard 跨连接持久化 | `tests/test_tenancy.py::test_tenancy_public_api_is_exported_from_package_root`、`::test_key_rotation_rejects_status_rollback_identity_swap_and_kid_reuse`、`::test_sqlite_revision_guard_serializes_independent_connections`、`::test_authorizer_rejects_rollback_after_sqlite_guard_restart` | 本地签名与 guard 测试不证明生产密钥托管、吊销分发 freshness、break-glass 或跨区域一致性 |
 | `620cc4c` | `policy.py` Needs You queue | `ApprovalRequest` 及 authority/intent 的 caller input、返回值和 restore snapshot 与内部状态隔离 | `tests/test_policy.py::test_caller_and_returned_snapshots_cannot_mutate_internal_authority`、`::test_restore_also_detaches_input_and_output_snapshots`；`tests/test_approval_atomicity.py::test_exposed_snapshot_cannot_retarget_live_authority` | queue 仍在进程内，由 event recovery 重建；无独立 approval service、approver 当前权限复验或 UI |
-| `2ca54aa` | `runtime.py` approval request path | READY→RUNNING→WAITING_APPROVAL 与 `approval.requested` 以同一 `append_many` batch durable；append 失败前不发布内存 waiting/request | `tests/test_runtime.py::test_failed_approval_request_batch_leaves_no_partial_authority`；`tests/test_recovery.py::test_session_recovery_rejects_incomplete_approval_tail_writes` | `append_many` 若数据库 commit 后调用包装器才抛错，当前同实例没有 exact committed-batch reconciliation，仍可能 durable/in-memory 分叉 |
-| `24eb061`、`95e1100`、`9a85e0f` | `runtime.py` approval decision/recovery | decision + WAITING_APPROVAL transition 同 batch；durable append 后才发布 queue/graph/grant；恢复严格绑定 payload、actor、correlation、causation、idempotency、邻接和 task causal chain | `tests/test_approval_atomicity.py::test_failed_decision_batch_never_grants_in_memory_authority`、`::test_concurrent_decision_batches_remain_contiguous`；`tests/test_recovery.py::test_session_recovery_enforces_the_approval_causal_chain`、`::test_session_recovery_rejects_unbound_legacy_decision_correlation` | **仍有生产阻断**：post-commit `EVENT_APPENDED` hook 抛错会把已提交命令表现为调用失败，并阻断 batch 后续 hook；commit-after-wrapper-error 未 reconcile；同 session 并发 batch 的 hook 可不按 durable sequence 到达。现有 561 tests 没有锁住这三种语义 |
+| `2ca54aa`、`a00df20` | `runtime.py` approval request path | READY→RUNNING→WAITING_APPROVAL 与 `approval.requested` 以同一 `append_many` batch durable；append 失败前不发布内存 waiting/request；若 wrapper 在真实 commit 后抛错，只在 expected sequence range 的完整 canonical batch 精确匹配时 reconcile 并发布内存状态 | `tests/test_runtime.py::test_failed_approval_request_batch_leaves_no_partial_authority`；`tests/test_approval_atomicity.py::test_committed_request_batch_is_reconciled_after_wrapper_failure`；`tests/test_recovery.py::test_session_recovery_rejects_incomplete_approval_tail_writes` | exact reconciliation 只解决同一 SQLite stream 可读的完整 batch；进程在 durable commit 与内存发布之间崩溃时仍依赖 restart recovery，不是跨服务 transaction |
+| `24eb061`、`95e1100`、`9a85e0f`、`6474eb1`、`6a38a6b` | `runtime.py` approval decision/recovery | decision + WAITING_APPROVAL transition 同 batch；durable append 后才发布 queue/graph/grant；commit-after-wrapper-error 只接受完整、连续、逐字段 canonical 等价 batch；部分 prefix 不得误认 committed；恢复继续校验完整 causal chain | `tests/test_approval_atomicity.py::test_failed_decision_batch_never_grants_in_memory_authority`、`::test_committed_decision_batch_is_reconciled_after_wrapper_failure`、`::test_partial_post_commit_batch_is_never_reconciled`；`tests/test_recovery.py::test_session_recovery_enforces_the_approval_causal_chain`、`::test_session_recovery_rejects_unbound_legacy_decision_correlation` | 完整 batch 的本地原子性不提供 authenticated approver、action digest、policy revision、expiry/revocation 或真实 effect receipt；部分 durable prefix 会 fail closed 并使历史需隔离/修复，不会自动删除 |
+| `5c849e9`、`d0188a0`、`30e86b2` | `runtime.py` post-commit `EVENT_APPENDED` 语义与 durability 文档 | 已提交命令不会因普通 hook exception 被伪装成失败；同 batch 后续 hook 继续；单 kernel 对同 stream 以 durable sequence 串行进入 hook；日志保留失败 sequence；文档明确 hook 仅为 best-effort observation | `tests/test_approval_atomicity.py::test_failed_post_commit_hook_does_not_fail_or_truncate_decision`、`::test_concurrent_decision_batches_remain_contiguous` | hook **不是 durable delivery**：task cancellation、进程崩溃、`BaseException`、无限阻塞或重启都可能形成 observation gap；正确性和外部投递必须使用 replayable projector/transactional outbox，hook 不得等待同 stream 的未来 callback |
 
 ### 3.5 Release evidence、distribution 与依赖供应链
 
@@ -83,22 +85,30 @@
 |---|---|---|---|---|
 | `f8646e6`、`4fd9d8f`、`74d5ae3` | release evidence generator/verifier | dirty、HEAD/tree 漂移、gate 失败/超时/缺工具/零 gate 全部 fail closed；canonical evidence 绑定 expected commit；checkout 内 evidence 被拒绝 | `tests/test_release_evidence.py::test_clean_source_and_passing_gates_are_releasable`、`::test_gate_created_commit_fails_closed_when_worktree_returns_clean`；`tests/test_verify_release_evidence.py::test_source_dirty_unstable_or_mismatched_identity_is_rejected`、`::test_cli_rejects_even_ignored_evidence_inside_repository` | canonical JSON 不是签名 attestation；仍依赖 CI/操作员正确保留和关联 evidence |
 | `d0bb6e9`、`c7b4424`、`55f1c5f` | distribution manifest/sdist normalization/reproducibility verifier | wheel/sdist inventory、source bytes、RECORD、metadata、entry point 与 safe archive bounds 可核验；canonical sdist；两个目录的精确制品集合逐字节比较 | `tests/test_distribution_manifest.py::test_valid_wheel_and_sdist_generate_and_verify_source_bound_manifest`、`::test_archive_traversal_and_sdist_links_are_rejected`；`tests/test_normalize_sdist.py::test_different_source_metadata_normalizes_to_identical_bytes`；`tests/test_verify_reproducible_distributions.py::test_content_and_filename_mismatches_fail_closed` | 同 toolchain 可复现不等于跨 runner/编译器/zlib 可复现；没有签名 artifact 或 SLSA provenance |
-| `d872df9`、`37e72d1`、`611d7f4` | lock inventory、build/dev/release lock 与 verifier | lock inventory/source digest、root version、binary/hash policy、path/matrix、pyproject root 一致性 fail closed；installer/backend/build/dev/release inputs 均进入锁定集合 | `tests/test_dependency_locks.py::test_repository_inventory_is_valid_and_source_aligned`、`::test_input_and_lock_digest_drift_are_rejected`、`::test_root_version_must_match_the_resolved_lock`、`::test_pyproject_build_and_dev_roots_cannot_drift` | lock 证明输入固定，不证明依赖无漏洞、许可证可接受或下载源长期可用；当前基线没有已提交 SBOM、漏洞/license policy gate |
-| `990bb91`、`8508b45`、`86ee4bc` | `.github/workflows/ci.yml`、`package.yml` | 外部 Actions 固定到完整 commit；测试/evidence/build 安装 hash-locked toolchain；distribution 双构建禁用依赖解析后再比较 | `tests/test_ci_action_pins.py::test_every_external_action_is_pinned_to_a_full_commit`；`tests/test_ci_dependency_locks.py::test_test_job_verifies_then_installs_hash_locked_tools`、`::test_both_distribution_builds_disable_dependency_resolution`；`tests/test_ci_package_manifest.py::test_reproducibility_is_verified_from_an_independent_checkout` | workflow 结构测试不证明 GitHub-hosted runner/Action 发布者/基础镜像未被攻破；还缺 SBOM、漏洞/license enforcement、签名 provenance 与 artifact signature |
+| `d872df9`、`37e72d1`、`611d7f4` | lock inventory、build/dev/release lock 与 verifier | lock inventory/source digest、root version、binary/hash policy、path/matrix、pyproject root 一致性 fail closed；installer/backend/build/dev/release inputs 均进入锁定集合 | `tests/test_dependency_locks.py::test_repository_inventory_is_valid_and_source_aligned`、`::test_input_and_lock_digest_drift_are_rejected`、`::test_root_version_must_match_the_resolved_lock`、`::test_pyproject_build_and_dev_roots_cannot_drift` | lock 与下述 SBOM 能证明输入和 inventory 固定，但不证明依赖无漏洞、许可证可接受、下载源长期可用或制品已签名 |
+| `af4d01e`、`99fb825` | `scripts/sbom.py`、package CI | 生成 deterministic canonical CycloneDX 1.6 runtime/build 两份 SBOM；绑定 source commit/tree 和已验证 wheel/sdist digest；build SBOM 覆盖 exact lock component/target/hash；输出必须在 checkout 外的空目录且 document set 精确；CI 先内部严格验证、再走官方 CycloneDX schema validator，全部 gate 后才留存 | `tests/test_sbom.py::test_runtime_sbom_is_deterministic_and_binds_source_and_artifacts`、`::test_build_sbom_covers_every_exact_lock_component_and_target`、`::test_exact_document_set_can_be_written_once_and_verified`、`::test_verifier_rejects_drift_extra_files_symlinks_and_oversize`；`tests/test_ci_sbom.py::test_internal_verification_precedes_official_schema_validation`、`::test_verified_sboms_are_retained_only_after_all_gates_pass` | runtime SBOM 明确只覆盖 base install，当前 base dependency 为零且 optional extras 不在其中；SBOM 是 inventory，不是漏洞/许可证 policy 判定、签名 provenance、artifact signature 或运行时实际装载证明 |
+| `990bb91`、`8508b45`、`86ee4bc` | `.github/workflows/ci.yml`、`package.yml` | 外部 Actions 固定到完整 commit；测试/evidence/build 安装 hash-locked toolchain；distribution 双构建禁用依赖解析后再比较 | `tests/test_ci_action_pins.py::test_every_external_action_is_pinned_to_a_full_commit`；`tests/test_ci_dependency_locks.py::test_test_job_verifies_then_installs_hash_locked_tools`、`::test_both_distribution_builds_disable_dependency_resolution`；`tests/test_ci_package_manifest.py::test_reproducibility_is_verified_from_an_independent_checkout` | workflow 结构测试不证明 GitHub-hosted runner/Action 发布者/基础镜像未被攻破；在已加入 SBOM 后，仍缺漏洞/license enforcement、签名 provenance 与 artifact signature |
 
 ## 4. 当前阻断项与下一笔证据要求
 
-### P0：不得在修复前宣称 approval command 语义稳定
+### 已关闭的审批阻断：post-commit reconcile 与 hook 顺序
 
-需要新增并保留正式 regression tests，至少覆盖：
+基线 `7d9d757` 已由正式 regression tests 锁住先前发现的三类问题：
 
-1. decision event 的 hook 抛错后，命令不得把 durable success 伪装成可安全重试的失败；同
-   batch 后续 transition hook 仍须有明确投递语义；
-2. `append_many` 真实 commit 后包装器抛错时，按 `expected_version` 读取并逐字段、canonical
-   JSON 比对 exact batch；只在完整连续匹配时 reconcile 为 committed；
-3. 同一 stream 的两个并发 decision batch，其 `EVENT_APPENDED` 可观察顺序必须与 durable
-   sequence 一致；
-4. retry 与 restart 均不得重复授权、漏授权或漏 projection。
+1. request 与 decision 的 `append_many` 在真实 commit 后 wrapper 抛错时，会读取
+   `expected_version` 之后的精确 sequence range，并逐事件 canonical 比对；只有完整、连续、
+   等价 batch 才 reconcile；
+2. partial prefix、缺失、重排或任一字段不同都不会被误判为完整 commit，原异常保留且不
+   发布内存授权；
+3. 普通 post-commit hook exception 不会把 durable success 伪装成命令失败，也不会截断同
+   batch 后续 callback；同一 kernel、同一 stream 的 hook 进入顺序跟随 durable sequence。
+
+这关闭的是可信单进程、单 SQLite store 下的已知一致性缺陷，不是 durable hook 或完整审批
+服务保证。task cancellation、进程崩溃、`BaseException`、重启和无限阻塞仍可能让
+`EVENT_APPENDED` 出现 observation gap；hook failure 日志也不是持久化 delivery receipt。
+任何 correctness-critical projection 或外部 effect 都必须使用 transactional outbox 或
+replayable projector。审批仍缺 authenticated approver、当前成员权限复验、action digest、
+policy/approval revision、expiry/revocation 与真实 receiver acceptance。
 
 ### P0：端到端 effect transaction
 
@@ -122,19 +132,20 @@ A2A JSON mapping 单测、本地 backup fixture 和设计文档不能代替这�
 
 ### P1：完整供应链
 
-锁文件之后还需提交并验证 SBOM、vulnerability/license policy、签名 provenance/
-attestation 与 artifact signature，并保留 clean-host/cross-runner reproducibility matrix。
-任何进行中的未提交脚本或测试都不属于本基线能力。
+当前已提交并在 package CI 验证、留存 source-bound CycloneDX runtime/build SBOM。下一阶段
+仍需 vulnerability/license policy、签名 provenance/attestation 与 artifact signature，并
+保留 clean-host/cross-runner reproducibility matrix。SBOM inventory 本身不得写成依赖安全
+或许可证合规结论。
 
 ## 5. 复核命令
 
 以下命令可以在实现基线或其仅文档后继上重复核对本台账；测试数量只能引用实际输出：
 
 ```bash
-git rev-parse 86ee4bc
-git rev-parse 86ee4bc^{tree}
-git rev-list --count f7be4e2..86ee4bc
-git diff --shortstat f7be4e2..86ee4bc
+git rev-parse 7d9d757
+git rev-parse 7d9d757^{tree}
+git rev-list --count f7be4e2..7d9d757
+git diff --shortstat f7be4e2..7d9d757
 PYTHONPATH=src python3 -m unittest discover -s tests -q
 git diff --check
 ```
