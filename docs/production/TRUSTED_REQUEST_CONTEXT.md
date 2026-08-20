@@ -44,7 +44,7 @@ or directly constructing an authentication-result value must never cross that bo
 | Caller fabricates a `RequestContext`-shaped object | Only the issuing instance's live registry can validate the exact object and immutable snapshot | Process/code isolation against arbitrary trusted-host code execution |
 | Context is copied, pickled, persisted, or restored | Copy and serialization are rejected; a process restart or issuer replacement invalidates it | Distributed/session credential design if later required |
 | Reflection mutates an issued object | Validation compares every field with the issuer-owned snapshot and fails closed | Sandboxing of malicious in-process plugins |
-| Credential leaks through errors or retained state | Credential enters as a bounded `SecretMaterial` lease, is always closed, and is absent from context/error fields | Admission-buffer wiping, safe logs/traces, provider audit |
+| Credential leaks through errors or retained state | Credential enters as a bounded `SecretMaterial` lease, is always closed, is absent from context/error fields, and translated failures detach the raw exception chain | Admission-buffer wiping, safe logs/traces, provider audit |
 | Authenticator throws or returns an unexpected value | Stable redacted failure code; no permissive fallback | Provider health, alerting, retry/rate policy |
 | Authenticator returns stale/future/overlong evidence | Service-owned clock, skew bound, expiry, and maximum TTL reject it | Host-clock rollback detection and trusted time operations |
 | Identity or membership changes after issuance | Preserve provider identity, identity revision, scope revision, and evidence fingerprint for action-time refresh | Authoritative action-time reauthentication and membership/policy revision comparison |
@@ -131,8 +131,10 @@ define that adapter or compare current provider/membership revisions.
 - Credential close/wipe is attempted on success, validation failure, adapter failure, and
   unexpected result type. A wipe exception becomes one redacted stable failure and no
   context is returned; the implementation cannot claim that a failed underlying wipe
-  succeeded. Python also cannot wipe copies retained by a buggy authenticator or by the
-  transport before constructing the lease.
+  succeeded. Translated authenticator, clock, result-validation, credential-access, and wipe
+  failures have neither a retained `__cause__` nor `__context__`; `from None` alone is not a
+  sufficient redaction boundary. Python also cannot wipe copies retained by a buggy
+  authenticator or by the transport before constructing the lease.
 - Context `repr`, exceptions, evidence, ordinary logs, events, artifacts, and reports must
   not contain the credential, raw attestation, tenant, workspace, subject, or principal.
 - Stable failure codes are suitable for bounded metrics. Raw scope identifiers must not be
@@ -207,10 +209,10 @@ git diff --check
 
 The negative suite covers strict parsing, scope/result mismatch, future/stale/overlong
 authentication, slow-authenticator expiry, clock regression/failure, credential wiping,
-redacted adapter/wipe failure, capacity and in-flight reservation, foreign issuer, direct
-construction, copy/pickle, exact request/subject/tenant/workspace matching, tenant-wide
-non-wildcard behavior, reflective mutation quarantine, expiry, retirement, and issuer
-shutdown.
+detached adapter/clock/result/wipe exception chains, compound authentication-plus-wipe
+failure, capacity and in-flight reservation, foreign issuer, direct construction,
+copy/pickle, exact request/subject/tenant/workspace matching, tenant-wide non-wildcard
+behavior, reflective mutation quarantine, expiry, retirement, and issuer shutdown.
 
 The implementation history starts at `fa0c422`; public export is `ba072c3`. Exact full-suite
 and release evidence must be regenerated after this documentation commit is part of the
