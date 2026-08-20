@@ -126,9 +126,12 @@ attempts, and a recovery scan every five seconds.
 ## Integration boundary and unresolved P0
 
 The current `OrchestratorKernel` still invokes registered runtimes directly and only holds
-an in-process session lock. It does not yet call `SQLiteInvocationAttemptStore`. Therefore
-this implementation alone does **not** close the readiness audit finding that a crash after
-`task.invocation.started` can leave the event projection permanently `running`.
+an in-process session lock. It does not yet call `SQLiteInvocationAttemptStore`. A bounded
+single-snapshot job/attempt reader and the fail-closed matrix in
+`INVOCATION_RECOVERY_COORDINATION.md` now exist, and legacy recovery explicitly quarantines a
+durably `RUNNING` task instead of silently publishing a stuck graph. Those foundations do
+**not** close the readiness audit finding: the task remains unavailable until trusted start
+evidence, result receipts, worker fencing, and receipt-bound projection are integrated.
 
 The integration change must make these durable boundaries reconcilable:
 
