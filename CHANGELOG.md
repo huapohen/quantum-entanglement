@@ -33,6 +33,22 @@ release. Promotion additionally requires the evidence defined in
   identifies unimplemented ACP, MCP, authentication, and crash-recovery boundaries.
 - Outbox lease time is read only after SQLite write-lock acquisition, terminal fencing
   tokens are cleared, and persistent ambiguity history stores token digests only.
+- Durable invocation enqueue, claim/recovery, heartbeat, completion, and failure now reconcile
+  lost SQLite commit acknowledgements against exact durable state. Uncertain rollback poisons
+  and closes the store instance; later access and close failures use stable typed, sanitized
+  errors, and owned mutations validate the complete lease/job/attempt binding. Exact process and
+  cancellation controls are reissued from clean public boundaries, unsafe `SystemExit` values are
+  reduced to a fixed code, confirmed rollback uses `InvocationTransactionError`, and hostile,
+  subclassed, grouped, grafted, or forged exceptions cannot carry provider state across those
+  boundaries. Validation provenance covers every Python traceback frame and uses a nonce-bound
+  descriptor that is reissued only after leaving the caught exception graph. Transaction-state
+  inspection accepts exact booleans only and quarantines all other values without truth-testing
+  them.
+- Invocation stores bind to their creator PID and reject every public read, write, recovery,
+  context and close operation after POSIX-fork inheritance, before touching the copied lock or
+  SQLite connection. Multi-process workers must construct one store per child process.
+- Test discovery is isolated from third-party packages named `tests`, and backup fixtures close
+  their SQLite connections so strict `ResourceWarning` release gates stay deterministic.
 
 ### In progress — not yet a shipped guarantee
 
