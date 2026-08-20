@@ -4,6 +4,7 @@ import pickle
 import unittest
 from collections import UserDict
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from quantum_entanglement.request_context import (
     AuthenticatedRequestBinding,
@@ -320,6 +321,28 @@ class RequestContextIssuanceTests(unittest.TestCase):
                         self.claims, self.credential()
                     ),
                 )
+
+    def test_adapter_owned_scope_objects_cannot_change_binding_after_validation(self):
+        returned = None
+
+        def factory(*, claims, audience, at):
+            nonlocal returned
+            returned = self.binding(claims=claims, audience=audience, at=at)
+            return returned
+
+        issuer, _ = self.make_issuer(factory)
+        register = RequestContextIssuer._register
+
+        def mutate_then_register(selected_issuer, binding, now):
+            object.__setattr__(returned.tenant_id, "value", "tenant-b")
+            object.__setattr__(returned.workspace_id, "value", "workspace-b")
+            return register(selected_issuer, binding, now)
+
+        with patch.object(RequestContextIssuer, "_register", mutate_then_register):
+            context = issuer.issue(self.claims, self.credential())
+
+        self.assertEqual(context.tenant_id, TenantId("tenant-a"))
+        self.assertEqual(context.workspace_id, WorkspaceId("workspace-a"))
 
     def test_unexpected_result_future_time_expiry_and_excessive_ttl_fail_closed(self):
         cases = (

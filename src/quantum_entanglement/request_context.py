@@ -605,8 +605,12 @@ class RequestContextIssuer:
                 request_id=binding.request_id,
                 principal_id=binding.principal_id,
                 subject_id=binding.subject_id,
-                tenant_id=binding.tenant_id,
-                workspace_id=binding.workspace_id,
+                tenant_id=TenantId(str(binding.tenant_id)),
+                workspace_id=(
+                    WorkspaceId(str(binding.workspace_id))
+                    if binding.workspace_id is not None
+                    else None
+                ),
                 identity_revision=binding.identity_revision,
                 scope_revision=binding.scope_revision,
                 evidence_fingerprint=binding.evidence_fingerprint,
