@@ -30,6 +30,7 @@ attempt 的 lease、heartbeat、崩溃接管以及外部副作用确认仍在 `0
 - `docs/production/PROJECTION_HANDLER_SECURITY.md`
 - `docs/production/LOGGING_AND_REDACTION.md`
 - `docs/production/DEPENDENCY_LOCKS_AND_SBOM.md`
+- `docs/production/DEPENDENCY_RISK_PROMOTION.md`
 
 ## 仓库结构
 

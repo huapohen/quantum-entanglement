@@ -170,6 +170,9 @@ CI matrix:
 - deterministic runtime and build CycloneDX 1.6 SBOMs bind the source commit/tree and exact
   distributions; internal byte/profile verification and official schema validation run
   before upload.
+- canonical vulnerability/license policy and result contracts plus a strict source-bound
+  offline verifier are implemented, but the committed policy intentionally disables
+  promotion and no real scanner/database/legal-policy approval or scan pass is claimed.
 
 This is a partial completion of Phase 5 deliverable 2, not completion of Phase 5. The next
 supply-chain milestones, in release-blocking order, are:
@@ -178,8 +181,9 @@ supply-chain milestones, in release-blocking order, are:
    digests and reproduce packages on an independently provisioned Linux runner;
 2. introduce a reviewed offline wheelhouse or immutable dependency mirror and record its
    trust/update/compromise-recovery policy;
-3. add vulnerability, malware, maintainer-risk, and license policy gates bound to the exact
-   package and SBOM digests;
+3. select and approve the scanner, database snapshot, and legal license allowlist; activate
+   and retain the implemented vulnerability/license gate for an exact candidate; add
+   malware and maintainer-risk controls separately;
 4. cover optional runtime extras, interpreter/OS/container packages, and deployment
    manifests in resolved SBOM evidence;
 5. issue and verify signed build provenance from a trusted isolated builder, then sign or
@@ -187,10 +191,12 @@ supply-chain milestones, in release-blocking order, are:
 6. exercise dependency revocation, emergency rebuild, key compromise, evidence retention,
    and deployment-time verification runbooks.
 
-The exact implemented contract and remaining boundary are maintained in
-[`DEPENDENCY_LOCKS_AND_SBOM.md`](./DEPENDENCY_LOCKS_AND_SBOM.md). Phase promotion still
-requires immutable retained evidence for the candidate; a green CI run or locally recorded
-digest is not itself a promotion decision.
+The exact implemented contracts and remaining boundaries are maintained in
+[`DEPENDENCY_LOCKS_AND_SBOM.md`](./DEPENDENCY_LOCKS_AND_SBOM.md) and
+[`DEPENDENCY_RISK_PROMOTION.md`](./DEPENDENCY_RISK_PROMOTION.md). Phase promotion still
+requires an enabled reviewed policy and immutable retained evidence for the candidate; a
+green CI run, synthetic contract test, or locally recorded digest is not itself a promotion
+decision.
 
 ## Parallel product track
 
