@@ -56,6 +56,7 @@ audit guarantee.
   body, payload, prompt and artifact keys at every nested level;
 - removes common inline Bearer/Basic credentials, URL userinfo, `sk-...` values and JWTs;
 - replaces bytes/memoryviews rather than decoding them;
+- replaces integers outside the signed 64-bit range rather than rendering unbounded text;
 - detects cycles and enforces depth, item and string bounds;
 - returns the constant `<redaction-failed>` if containment itself raises;
 - always produces values accepted by strict JSON serialization.
