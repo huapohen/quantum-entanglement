@@ -584,6 +584,7 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ack_exception_is_ambiguous_and_durably_quarantined(self):
         self.enqueue("message-ack-exception")
+        canary = "ack-database-secret-canary"
 
         async def publish(_request):
             return PublishReceipt.accepted("receipt:ack-exception")
@@ -591,12 +592,12 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         original_ack = self.store.acknowledge_outbox
 
         def fail_ack(*_args, **_kwargs):
-            raise RuntimeError("database write failed")
+            raise RuntimeError(canary)
 
         self.store.acknowledge_outbox = fail_ack
         try:
             publisher = self.publisher(publish)
-            with self.assertLogs("quantum_entanglement.publisher", level="ERROR"):
+            with self.assertLogs("quantum_entanglement.publisher", level="ERROR") as captured:
                 batch = await publisher.run_once()
         finally:
             self.store.acknowledge_outbox = original_ack
@@ -606,6 +607,11 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(batch.accepted_unconfirmed, 1)
         self.assertEqual(batch.ambiguity_persisted, 1)
         self.assertEqual(len(self.store.read_outbox_ambiguities()), 1)
+        rendered = "\n".join(captured.output)
+        self.assertIn("qe.publisher.ack_failed", rendered)
+        self.assertNotIn(canary, rendered)
+        self.assertNotIn("message-ack-exception", rendered)
+        self.assertNotIn("Traceback", rendered)
 
     async def test_nack_exception_is_reported_without_ambiguous_external_success(self):
         self.enqueue("message-nack-exception")
@@ -909,7 +915,7 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
             calls += 1
             if calls == 1:
                 return 10_000
-            raise RuntimeError("jitter source failed")
+            raise RuntimeError("jitter-secret-canary")
 
         publisher = self.publisher(
             fail,
@@ -917,7 +923,7 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
             max_retry_delay=60,
             jitter=adversarial_jitter,
         )
-        with self.assertLogs("quantum_entanglement.publisher", level="ERROR"):
+        with self.assertLogs("quantum_entanglement.publisher", level="ERROR") as captured:
             batch = await publisher.run_once()
 
         self.assertEqual(batch.retried, 2)
@@ -929,6 +935,7 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
             self.store.get_outbox("message-jitter-error").message.available_at,
             "2026-08-20T00:00:08Z",
         )
+        self.assertNotIn("jitter-secret-canary", "\n".join(captured.output))
 
     async def test_retry_clock_exception_does_not_strand_the_lease(self):
         self.enqueue("message-clock-error")
@@ -969,12 +976,15 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
 
         self.store.close()
         publisher = self.publisher(publish)
-        with self.assertLogs("quantum_entanglement.publisher", level="ERROR"):
+        with self.assertLogs("quantum_entanglement.publisher", level="ERROR") as captured:
             batch = await publisher.run_once()
 
         self.assertEqual(batch.claimed, 0)
         self.assertEqual(batch.store_errors, 1)
         self.assertEqual(publisher.stats.store_errors, 1)
+        rendered = "\n".join(captured.output)
+        self.assertIn("qe.publisher.claim_failed", rendered)
+        self.assertNotIn("publisher-1", rendered)
 
     def test_rejects_a_lease_shorter_than_callback_timeout(self):
         async def publish(_request):
