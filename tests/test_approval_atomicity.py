@@ -236,20 +236,20 @@ class ApprovalAtomicityTests(unittest.IsolatedAsyncioTestCase):
         )
         paused = await self.kernel.run(plan)
         requests = {request.task_id: request for request in paused.needs_you}
+        stream_id = f"session:{plan.session_id}"
+        decision_start_version = self.kernel.event_store.stream_version(stream_id)
         a_decision_emitted = asyncio.Event()
-        b_transition_emitted = asyncio.Event()
+        release_a_decision = asyncio.Event()
+        delivered_sequences = []
 
         async def interleave(context):
-            event = context["storedEvent"].event
+            stored = context["storedEvent"]
+            event = stored.event
+            if stored.sequence > decision_start_version:
+                delivered_sequences.append(stored.sequence)
             if event.event_type == "approval.decided" and event.payload["taskId"] == "a":
                 a_decision_emitted.set()
-                await asyncio.wait_for(b_transition_emitted.wait(), timeout=1)
-            elif (
-                event.event_type == "task.status.changed"
-                and event.payload["taskId"] == "b"
-                and event.payload["previous"] == TaskStatus.WAITING_APPROVAL.value
-            ):
-                b_transition_emitted.set()
+                await asyncio.wait_for(release_a_decision.wait(), timeout=1)
 
         self.kernel.plugins.install(
             KernelPlugin(
@@ -265,14 +265,27 @@ class ApprovalAtomicityTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         await asyncio.wait_for(a_decision_emitted.wait(), timeout=1)
-        await self.kernel.decide(
-            requests["b"].request_id,
-            ApprovalDecision.APPROVE,
-            "owner-b",
+        decide_b = asyncio.create_task(
+            self.kernel.decide(
+                requests["b"].request_id,
+                ApprovalDecision.APPROVE,
+                "owner-b",
+            )
         )
-        await decide_a
+        await asyncio.sleep(0)
+        self.assertEqual(
+            self.kernel.event_store.stream_version(stream_id),
+            decision_start_version + 4,
+        )
+        release_a_decision.set()
+        await asyncio.gather(decide_a, decide_b)
 
-        stored_events = self.kernel.event_store.read_stream("session:approval-interleaved")
+        self.assertEqual(
+            delivered_sequences,
+            list(range(decision_start_version + 1, decision_start_version + 5)),
+        )
+
+        stored_events = self.kernel.event_store.read_stream(stream_id)
         for task_id, request in requests.items():
             decided = next(
                 stored

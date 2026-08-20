@@ -196,6 +196,7 @@ class OrchestratorKernel:
         self._graphs: Dict[str, TaskGraph] = {}
         self._plans: Dict[str, WorkflowPlan] = {}
         self._session_locks: Dict[str, asyncio.Lock] = {}
+        self._event_delivery_locks: Dict[str, asyncio.Lock] = {}
         self._task_artifacts: Dict[Tuple[str, str], Tuple[ArtifactRef, ...]] = {}
         # An approval is a scoped capability for exactly this workflow task. Keeping it
         # separate from delegated authority prevents the next dispatch from requesting
@@ -234,15 +235,20 @@ class OrchestratorKernel:
         await self.plugins.emit(HookPoint.EVENT_APPENDED, context)
 
     async def _emit_appended_batch(self, stored_events: Tuple[StoredEvent, ...]) -> None:
-        for stored in stored_events:
-            try:
-                await self._emit_appended(stored)
-            except Exception:
-                _LOGGER.exception(
-                    "event.appended hook failed after durable commit for stream %s sequence %d",
-                    stored.event.stream_id,
-                    stored.sequence,
-                )
+        if not stored_events:
+            return
+        stream_id = stored_events[0].event.stream_id
+        delivery_lock = self._event_delivery_locks.setdefault(stream_id, asyncio.Lock())
+        async with delivery_lock:
+            for stored in stored_events:
+                try:
+                    await self._emit_appended(stored)
+                except Exception:
+                    _LOGGER.exception(
+                        "event.appended hook failed after durable commit for stream %s sequence %d",
+                        stored.event.stream_id,
+                        stored.sequence,
+                    )
 
     @staticmethod
     def _canonical_event_json(event: DomainEvent) -> str:
