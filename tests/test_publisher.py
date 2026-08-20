@@ -830,6 +830,27 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("connector-secret-canary", rendered)
         self.assertNotIn("classifier-secret-canary", rendered)
 
+    def test_error_classifier_does_not_swallow_process_control_signals(self):
+        async def publish(_request):
+            return PublishReceipt.accepted("receipt:unused")
+
+        for signal in (
+            KeyboardInterrupt("stop"),
+            SystemExit("stop"),
+            GeneratorExit("stop"),
+        ):
+            with self.subTest(signal=type(signal).__name__):
+
+                def interrupted_classifier(_error, raised=signal):
+                    raise raised
+
+                publisher = self.publisher(
+                    publish,
+                    error_formatter=interrupted_classifier,
+                )
+                with self.assertRaises(type(signal)):
+                    publisher._format_error_safely(RuntimeError("not-rendered"))
+
     def test_error_code_allowlist_is_bounded_and_canonical(self):
         async def publish(_request):
             return PublishReceipt.accepted("receipt:unused")
