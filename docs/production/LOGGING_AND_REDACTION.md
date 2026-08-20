@@ -78,6 +78,22 @@ Publisher logs never include connector exception text or tracebacks. The public
 Connector thread names use bounded hashes rather than raw worker or message identifiers so
 thread-aware handlers and process diagnostics do not reintroduce those values.
 
+### Upgrade and serialization boundary
+
+The constrained classifier governs only writes made by the upgraded Publisher. A database
+or backup created by an older binary may still contain arbitrary custom-formatter output in
+`outbox.last_error`. Promotion therefore requires a stopped-writer, backup-first inventory
+that reports counts only, compares non-null values with the built-in plus deployment-specific
+code allowlist, and either quarantines the database or replaces nonconforming history under an
+approved migration. Raw legacy values must never be printed as migration evidence. This stage
+does not provide that destructive data migration and cannot sanitize retained backups.
+
+`StoredOutboxMessage.to_dict()` is not a safe-log or support-export format. It intentionally
+omits the active lease token, but still carries business payload, headers and the persisted
+error code. The same applies to invocation-attempt error fields, which have not yet migrated
+to this classifier. Callers must use typed operational events rather than serializing either
+model into logs.
+
 Persisted outbox `last_error` is also constrained. The built-in classifier returns one of a
 small source-defined code set. A custom classifier result is persisted only when it matches
 an explicit constructor-time allowlist; it is never coerced with `str()`. A rejected or
