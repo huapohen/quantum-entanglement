@@ -75,6 +75,8 @@ Publisher error paths now emit fixed events such as:
 
 Publisher logs never include connector exception text or tracebacks. The public
 `StoredOutboxMessage.to_dict()` and dataclass repr no longer expose the internal lease token.
+Connector thread names use bounded hashes rather than raw worker or message identifiers so
+thread-aware handlers and process diagnostics do not reintroduce those values.
 
 Persisted outbox `last_error` is also constrained. The built-in classifier returns one of a
 small source-defined code set. A custom classifier result is persisted only when it matches

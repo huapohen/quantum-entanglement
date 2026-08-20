@@ -9,6 +9,7 @@ acknowledgement.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import logging
 import math
@@ -110,6 +111,11 @@ def _parse_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("lease deadline must include a timezone")
     return parsed.astimezone(timezone.utc)
+
+
+def _thread_identifier(value: str) -> str:
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return f"sha256:{digest}"
 
 
 @dataclass(frozen=True)
@@ -987,7 +993,13 @@ class OutboxPublisher:
 
         loop = asyncio.get_running_loop()
         future: asyncio.Future[Any] = loop.create_future()
-        thread_name = f"outbox-connector:{self.worker_id}:{request.message_id}"
+        thread_name = ":".join(
+            (
+                "outbox-connector",
+                _thread_identifier(self.worker_id),
+                _thread_identifier(request.message_id),
+            )
+        )
         self._callback_tasks.add(future)
         self._connector_names[future] = thread_name
         future.add_done_callback(self._callback_done)

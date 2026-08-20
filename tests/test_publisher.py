@@ -266,6 +266,9 @@ class OutboxPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(batch.abandoned_callbacks, 1)
         self.assertEqual(len(publisher.abandoned), 1)
         self.assertEqual(publisher.abandoned[0].message_id, "message-stubborn")
+        self.assertTrue(publisher.abandoned[0].task_name.startswith("outbox-connector:sha256:"))
+        self.assertNotIn("publisher-1", publisher.abandoned[0].task_name)
+        self.assertNotIn("message-stubborn", publisher.abandoned[0].task_name)
         self.assertEqual(publisher.stats.leaked_callbacks, 1)
 
         closed = await asyncio.wait_for(publisher.close(), timeout=0.15)
