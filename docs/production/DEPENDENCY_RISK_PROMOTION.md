@@ -251,6 +251,34 @@ The deterministic unit suite covers:
 These tests validate the contract and decision logic with synthetic evidence. They are not
 a real dependency scan.
 
+## Adoption, migration, and rollback
+
+This slice is additive. It creates no application database table, runtime event, network
+connector, or background process, so deploying the current disabled policy requires no
+data migration and does not change an existing coordination workflow. Policy and result
+producers must emit schema version `1` exactly; a verifier that does not understand a future
+schema must reject it rather than reinterpret it as version `1`.
+
+Activation is a separate release change. It must introduce the reviewed identities and
+allowlist, generate real out-of-tree evidence, connect the verifier to a promotion
+orchestrator, and retain the decision digest. That activation change needs its own rollout,
+negative canary, and evidence record; the synthetic success fixtures in this repository
+are not rollout evidence.
+
+Rollback stops promotion before changing verifier code:
+
+1. commit and review `promotionEnabled: false`, or disable the calling promotion stage if
+   the policy repository cannot be changed safely;
+2. retain the rejected/cancelled result, policy digest, database digest, and candidate
+   identity; never rewrite a prior promote decision in place;
+3. revoke a compromised scanner or database snapshot by removing its exact approved
+   identity in the same reviewed policy change;
+4. only remove verifier code after every caller has stopped producing or consuming schema
+   version `1` evidence.
+
+No rollback may turn a failed or unknown decision into success. Re-enabling promotion
+requires a fresh result and fresh evaluation against the newly reviewed policy and snapshot.
+
 ## Activation checklist and remaining blockers
 
 Do not enable `promotionEnabled` until all boxes are satisfied in a reviewed commit:
