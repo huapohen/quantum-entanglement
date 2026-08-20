@@ -28,6 +28,7 @@
 | `research/05_target_product_and_architecture.md` | 已完成首版 | 产品定义、分层架构、状态/上下文/治理与路线图 |
 | `research/06_competitor_source_validation.md` | 已完成首版 | 14 个竞品、65 条来源记录、许可证与宣传/实现差异核验 |
 | `research/07_current_implementation_status.md` | 已完成首版 | 固定到 clean commit/tree 的 531-test 实现增量、生产边界与 release gates |
+| `research/08_commit_invariant_test_ledger.md` | 已完成当前基线 | 固定到 `86ee4bc` 的 commit→模块→不变量→测试证据→残余边界台账；本地实跑 561 tests |
 
 ## 已归档截图
 
