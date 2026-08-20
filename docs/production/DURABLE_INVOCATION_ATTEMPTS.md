@@ -12,8 +12,8 @@ transaction described under "Integration boundary".
 
 - one host and one SQLite database file;
 - multiple worker processes or independent SQLite connections on that host;
-- at-least-once Agent invocation with a stable receiver idempotency key;
-- bounded attempts, lease heartbeat, expired-owner fencing and terminal CAS;
+- one automatically claimable attempt, lease heartbeat, expired-owner fencing and terminal CAS;
+- fail-closed effect-unknown quarantine after any failed or expired attempt;
 - fake or separately approved external connectors only;
 - Python 3.9 or newer and a filesystem on which SQLite WAL locking is reliable.
 
@@ -33,21 +33,22 @@ identical enqueue returns the original row even if the retry generated a new can
 `invocation_id`; changed task, Agent, payload digest, schedule, priority or retry policy is
 rejected with `InvocationConflictError`.
 
-`invocation_attempts` is the append-only execution history. Every successful claim inserts
-one row and consumes one of `max_attempts`. An explicit runtime failure and an expired
-lease both consume that attempt. Attempt rows move once from `running` to `succeeded`,
-`failed` or `expired`; retry creates a new row rather than overwriting history.
+`invocation_attempts` is the append-only execution history. The first successful claim inserts
+one row. An explicit runtime failure and an expired lease both consume that attempt. Attempt
+rows move once from `running` to `succeeded`, `failed` or `expired`. The schema retains
+`max_attempts` and can read legacy multi-attempt histories, but the current claim API never
+creates a later attempt: retry requires durable effect/receipt reconciliation that is not yet
+implemented.
 
 The job state machine is:
 
 ```text
-queued --claim--> running --complete CAS--> succeeded
-   ^                  |
-   |                  +--failure CAS, attempts remain--+
-   |                  +--lease expiry, attempts remain-+
-   |                  |
-   +------------------+
-                      +--failure/expiry at limit--> failed
+queued (zero attempts) --claim--> running --complete CAS--> succeeded
+                                    |
+                                    +--failure/expiry, attempts remain-->
+                                    |     queued (effect unknown; claim blocked)
+                                    |
+                                    +--failure/expiry at limit--> failed
 ```
 
 `succeeded`, `failed` and `canceled` are terminal. Cancellation is reserved in schema but
@@ -55,9 +56,10 @@ is not exposed until the cancellation/action-receipt contract is implemented.
 
 ## Ownership and fencing invariants
 
-Every claim executes in `BEGIN IMMEDIATE`, conditionally moves one eligible job to
+Every first claim executes in `BEGIN IMMEDIATE`, conditionally moves one eligible job to
 `running`, increments `attempts_started` and `lease_epoch`, and inserts its attempt history
-before commit. Independent SQLite connections therefore serialize the ownership decision.
+before commit. Eligibility includes `attempts_started = 0`; independent SQLite connections
+therefore serialize the ownership decision, while failed or expired work cannot be reclaimed.
 
 The returned `InvocationLease` contains two different controls:
 
@@ -67,8 +69,9 @@ The returned `InvocationLease` contains two different controls:
 
 Heartbeat, completion and failure require the same invocation ID, worker ID, opaque token,
 epoch and a deadline strictly later than the store-owned current time. At the exact expiry
-instant, terminal CAS fails. Recovery clears the opaque token and a later claim increments
-the epoch. The old worker can no longer heartbeat, complete or fail the job.
+instant, terminal CAS fails. Recovery clears the opaque token and moves the job to a queued
+effect-unknown state (or terminal failure at its configured limit). The old worker can no
+longer heartbeat, complete or fail the job, and no new worker can claim it automatically.
 
 The token is hidden from dataclass `repr`, and both the current job and attempt history
 store only its SHA-256 digest. Never add the raw token to events, logs, traces, metrics or
@@ -106,22 +109,25 @@ A worker integration should use this sequence:
    `task.invocation.started`; never record the opaque lease token.
 4. Start a heartbeat loop before calling the Agent. Set the heartbeat interval to no more
    than one third of the lease duration and keep the Agent timeout below the lease.
-5. Pass the stable idempotency key on every retry and pass the fencing token to capable
-   connectors.
+5. Pass the stable idempotency key and fencing token to capable connectors; neither mechanism
+   by itself authorizes retry in the current implementation.
 6. If heartbeat returns false, cancel local result acceptance. A late Agent result is stale
    and must not write artifacts, action receipts or task status.
-7. On retryable failure, calculate a bounded retry timestamp and call `fail`. On graceful
-   shutdown, stop admission and fail/requeue unfinished leases with a redacted reason.
+7. On failure, call `fail` with a redacted reason. A scheduled `retry_at` may place the job in
+   queued state for future reconciliation, but `claim` and `claim_next` will not select it. On
+   graceful shutdown, stop admission and quarantine unfinished leases.
 8. On success, first durably accept the result/action receipt at the boundary described
    below, then execute terminal CAS and project task completion.
 
 Call `recover_expired()` on startup and periodically while workers are active. Recovery is
-bounded by `limit` so an operator can avoid one long write transaction. A claim also
-recovers an expired lease for its candidate before making the ownership decision.
+bounded by `limit` so an operator can avoid one long write transaction. A claim also fences an
+expired lease for its candidate before making the ownership decision, but the
+`attempts_started = 0` eligibility predicate prevents immediate or later automatic reclaim.
 
-Suggested pilot defaults, to be validated by fault and capacity tests rather than copied
-blindly, are a 60-second lease, 15–20 second heartbeat, 30-second runtime timeout, three
-attempts, and a recovery scan every five seconds.
+Suggested pilot timing defaults, to be validated by fault and capacity tests rather than
+copied blindly, are a 60-second lease, 15–20 second heartbeat, 30-second runtime timeout, and a
+recovery scan every five seconds. `max_attempts` is compatibility metadata in this slice; a
+value greater than one does not enable retries.
 
 ## Integration boundary and unresolved P0
 
@@ -142,12 +148,14 @@ The integration change must make these durable boundaries reconcilable:
 5. `task.status.changed` to completed or failed.
 
 A crash between result acceptance and attempt completion must reconcile from the accepted
-result without invoking the Agent again. A crash before accepted result may retry with the
-same idempotency key. Calling `complete()` before persisting the result is forbidden because
-it could leave a succeeded attempt with no recoverable result. Calling it after a
-non-idempotent side effect without an action receipt is also forbidden because a crash can
-repeat the effect. The artifact/result transaction and action-receipt state machine are
-separate Phase 1 deliverables and must land before a commercial production claim.
+result without invoking the Agent again. A crash before accepted result may retry only after a
+future durable proof establishes that the operation is pure, downstream-fenced, or
+receiver-idempotent for this exact invocation. Calling `complete()` before persisting the
+result is forbidden because it could leave a succeeded attempt with no recoverable result.
+Calling it after a non-idempotent side effect without an action receipt is also forbidden
+because a crash can repeat the effect. The artifact/result transaction and action-receipt
+state machine are separate Phase 1 deliverables and must land before a commercial production
+claim.
 
 ## Schema migration
 

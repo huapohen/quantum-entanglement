@@ -111,10 +111,11 @@ or receiver-idempotent for the exact invocation key.
 
 `WAITING_ACTIVE_LEASE` does not itself evaluate wall-clock expiry. Expiry must use a locked
 attempt-store transition so epoch fencing cannot be bypassed, but expiry alone is not retry
-authorization. The current store automatically requeues expired work and `claim()` can recover
-and immediately reclaim it in one transaction. That behavior is an unresolved P0 for work
-whose external effect is not proven retry-safe; runtime integration must not call that path
-until it is gated by effect reconciliation or a durable retry-safety classification.
+authorization. The store may move expired work to `QUEUED` when configured attempts remain,
+but `claim()` and `claim_next()` select only `attempts_started = 0`. Their in-transaction expiry
+recovery can fence the stale owner but cannot immediately or later reclaim the attempted job.
+The job remains `BLOCKED_EFFECT_UNKNOWN` until a future durable receipt reconciler or
+retry-safety classifier authorizes a separate, explicit transition.
 
 ## Threat matrix
 

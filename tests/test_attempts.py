@@ -31,6 +31,10 @@ def timestamp(seconds):
     return f"2026-08-20T00:00:{seconds:02d}Z"
 
 
+def persisted_timestamp(seconds):
+    return f"2026-08-20T00:00:{seconds:02d}.000000Z"
+
+
 class MutableClock:
     def __init__(self, value=T0):
         self.value = value
@@ -79,6 +83,43 @@ class InvocationAttemptStoreTests(unittest.TestCase):
     def tearDown(self):
         self.store.close()
         self.tempdir.cleanup()
+
+    def _seed_second_running_attempt(self):
+        token_digest = "2" * 64
+        self.store._connection.execute(
+            """
+            INSERT INTO invocation_attempts (
+                attempt_id, invocation_id, attempt_number, lease_epoch,
+                worker_id, lease_token_digest, status, started_at,
+                heartbeat_at, lease_expires_at
+            ) VALUES (
+                'attempt-2', 'invocation-1', 2, 2,
+                'worker-2', ?, 'running', ?, ?, ?
+            )
+            """,
+            (
+                token_digest,
+                persisted_timestamp(0),
+                persisted_timestamp(0),
+                persisted_timestamp(10),
+            ),
+        )
+        self.store._connection.execute(
+            """
+            UPDATE invocation_jobs
+            SET status = 'running', attempts_started = 2, lease_epoch = 2,
+                lease_owner = 'worker-2', lease_token_digest = ?,
+                lease_expires_at = ?, heartbeat_at = ?, updated_at = ?,
+                finished_at = NULL
+            WHERE invocation_id = 'invocation-1'
+            """,
+            (
+                token_digest,
+                persisted_timestamp(10),
+                persisted_timestamp(0),
+                persisted_timestamp(0),
+            ),
+        )
 
     def test_default_in_memory_store_is_usable_without_wal(self):
         with SQLiteInvocationAttemptStore(clock=self.clock) as memory_store:
@@ -256,7 +297,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get("invocation-1").attempts_started, 1)
         self.assertEqual(len(self.store.attempts("invocation-1")), 1)
 
-    def test_heartbeat_recovery_and_fencing_reject_stale_worker(self):
+    def test_heartbeat_recovery_fences_stale_worker_and_quarantines_retry(self):
         self.store.enqueue(job_spec())
         old = self.store.claim("invocation-1", "worker-a", lease_seconds=10)
         self.assertNotIn(old.lease_token, repr(old))
@@ -290,23 +331,14 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertFalse(self.store.heartbeat(old, lease_seconds=10))
         self.assertFalse(self.store.complete(old, result_ref="event:old"))
 
-        new = self.store.claim("invocation-1", "worker-b", lease_seconds=10)
-        self.assertGreater(new.fencing_token, old.fencing_token)
-        self.assertNotEqual(new.lease_token, old.lease_token)
-        self.clock.set(timestamp(26))
-        self.assertTrue(self.store.complete(new, result_ref="event:new"))
+        self.assertIsNone(self.store.claim("invocation-1", "worker-b", lease_seconds=10))
+        self.assertIsNone(self.store.claim_next("worker-b", lease_seconds=10))
 
         job = self.store.get("invocation-1")
         attempts = self.store.attempts("invocation-1")
-        self.assertEqual(job.status, InvocationStatus.SUCCEEDED)
-        self.assertEqual(job.result_ref, "event:new")
-        self.assertEqual(
-            [item.status for item in attempts],
-            [
-                AttemptStatus.EXPIRED,
-                AttemptStatus.SUCCEEDED,
-            ],
-        )
+        self.assertEqual(job.status, InvocationStatus.QUEUED)
+        self.assertIsNone(job.result_ref)
+        self.assertEqual([item.status for item in attempts], [AttemptStatus.EXPIRED])
         self.assertNotEqual(attempts[0].lease_token_digest, old.lease_token)
 
     def test_terminal_cas_rejects_completion_at_exact_expiry(self):
@@ -317,6 +349,20 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertFalse(self.store.complete(lease))
         recovered = self.store.recover_expired()
         self.assertEqual(recovered.requeued, ("invocation-1",))
+
+    def test_claim_fences_expired_candidate_without_reclaiming_it(self):
+        self.store.enqueue(job_spec(max_attempts=3))
+        expired = self.store.claim("invocation-1", "worker-a", lease_seconds=1)
+        self.clock.set(timestamp(1))
+
+        self.assertIsNone(self.store.claim("invocation-1", "worker-b", lease_seconds=10))
+
+        self.assertEqual(self.store.get("invocation-1").status, InvocationStatus.QUEUED)
+        self.assertEqual(
+            [attempt.status for attempt in self.store.attempts("invocation-1")],
+            [AttemptStatus.EXPIRED],
+        )
+        self.assertFalse(self.store.complete(expired, result_ref="event:stale"))
 
     def test_owned_row_query_rejects_incompatible_connection_factory(self):
         self.store.enqueue(job_spec())
@@ -359,7 +405,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
 
         self.assertEqual(self.store.get("invocation-1").status, InvocationStatus.RUNNING)
 
-    def test_explicit_failure_retries_at_schedule_then_exhausts(self):
+    def test_explicit_failure_schedule_does_not_authorize_retry(self):
         self.store.enqueue(job_spec(max_attempts=2))
         first = self.store.claim("invocation-1", "worker-a", lease_seconds=20)
         self.clock.set(timestamp(1))
@@ -370,20 +416,36 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.clock.set(timestamp(9))
         self.assertIsNone(self.store.claim("invocation-1", "worker-b", lease_seconds=10))
         self.clock.set(timestamp(10))
-        second = self.store.claim("invocation-1", "worker-b", lease_seconds=10)
-        self.assertEqual(second.attempt_number, 2)
-        self.clock.set(timestamp(11))
-        self.assertTrue(self.store.fail(second, "permanent"))
+        self.assertIsNone(self.store.claim("invocation-1", "worker-b", lease_seconds=10))
 
-        failed = self.store.get("invocation-1")
-        self.assertEqual(failed.status, InvocationStatus.FAILED)
-        self.assertEqual(failed.last_error, "permanent")
+        quarantined = self.store.get("invocation-1")
+        self.assertEqual(quarantined.status, InvocationStatus.QUEUED)
+        self.assertEqual(quarantined.last_error, "transient")
         self.clock.set(timestamp(12))
         self.assertIsNone(self.store.claim("invocation-1", "worker-c", lease_seconds=10))
         self.assertEqual(
             [item.status for item in self.store.attempts("invocation-1")],
-            [AttemptStatus.FAILED, AttemptStatus.FAILED],
+            [AttemptStatus.FAILED],
         )
+
+    def test_claim_next_skips_high_priority_effect_unknown_job(self):
+        self.store.enqueue(job_spec(max_attempts=3, priority=100))
+        attempted = self.store.claim("invocation-1", "worker-a", lease_seconds=10)
+        self.assertTrue(self.store.fail(attempted, "unknown effect", retry_at=T0))
+        self.store.enqueue(
+            job_spec(
+                invocation_id="invocation-fresh",
+                task_id="task-fresh",
+                idempotency_key="invoke:fresh",
+                priority=1,
+            )
+        )
+
+        fresh = self.store.claim_next("worker-b", lease_seconds=10)
+
+        self.assertEqual(fresh.invocation_id, "invocation-fresh")
+        self.assertEqual(self.store.get("invocation-1").attempts_started, 1)
+        self.assertEqual(len(self.store.attempts("invocation-1")), 1)
 
     def test_crashed_final_attempt_is_terminally_exhausted(self):
         self.store.enqueue(job_spec(max_attempts=1))
@@ -652,16 +714,37 @@ class InvocationAttemptStoreTests(unittest.TestCase):
 
     def test_attempt_pages_are_bounded_ordered_and_cursor_based(self):
         self.store.enqueue(job_spec(max_attempts=4))
-        for attempt_index in range(1, 4):
-            lease = self.store.claim("invocation-1", f"worker-{attempt_index}", lease_seconds=10)
-            self.clock.set(timestamp(attempt_index))
-            self.assertTrue(
-                self.store.fail(
-                    lease,
-                    f"failure-{attempt_index}",
-                    retry_at=timestamp(attempt_index),
+        self.store._connection.execute(
+            """
+            UPDATE invocation_jobs SET attempts_started = 3, lease_epoch = 3
+            WHERE invocation_id = ?
+            """,
+            ("invocation-1",),
+        )
+        self.store._connection.executemany(
+            """
+            INSERT INTO invocation_attempts (
+                attempt_id, invocation_id, attempt_number, lease_epoch,
+                worker_id, lease_token_digest, status, started_at,
+                heartbeat_at, lease_expires_at, finished_at, error
+            ) VALUES (?, 'invocation-1', ?, ?, ?, ?, 'failed', ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    f"attempt-{number}",
+                    number,
+                    number,
+                    f"worker-{number}",
+                    f"{number:064x}",
+                    persisted_timestamp(0),
+                    persisted_timestamp(0),
+                    persisted_timestamp(10),
+                    persisted_timestamp(number),
+                    f"failure-{number}",
                 )
-            )
+                for number in range(1, 4)
+            ),
+        )
 
         first = self.store.attempts_page("invocation-1", limit=2)
         second = self.store.attempts_page(
@@ -744,8 +827,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.store.enqueue(job_spec(max_attempts=2))
         first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)
         self.assertTrue(self.store.fail(first, "retry", retry_at=T0))
-        second = self.store.claim("invocation-1", "worker-2", lease_seconds=10)
-        self.assertIsNotNone(second)
+        self._seed_second_running_attempt()
 
         self.store._connection.execute(
             """
@@ -763,8 +845,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.store.enqueue(job_spec(max_attempts=2))
         first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)
         self.assertTrue(self.store.fail(first, "retry", retry_at=T0))
-        second = self.store.claim("invocation-1", "worker-2", lease_seconds=10)
-        self.assertIsNotNone(second)
+        self._seed_second_running_attempt()
 
         self.store._connection.execute(
             """
