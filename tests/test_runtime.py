@@ -752,6 +752,86 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(initial_ready, ["a", "b"])
 
+    async def test_parallel_publication_failure_drains_siblings_before_unlock(self):
+        both_started = asyncio.Event()
+        release_slow = asyncio.Event()
+        bad_publication_failed = asyncio.Event()
+        calls = {"bad": 0, "slow": 0}
+        active = 0
+
+        async def worker(invocation):
+            nonlocal active
+            task_id = invocation.task.task_id
+            calls[task_id] += 1
+            active += 1
+            if active == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            if task_id == "slow":
+                await asyncio.wait_for(release_slow.wait(), timeout=1)
+            active -= 1
+            return AgentResult(f"{task_id} done")
+
+        self.kernel.register_agent(registration("worker", worker))
+        plan = WorkflowPlan(
+            "parallel-publication-failure",
+            "并发发布失败必须先收拢同批任务",
+            "user",
+            (
+                TaskSpec("bad", "worker", handoff(), task_id="bad"),
+                TaskSpec("slow", "worker", handoff(), task_id="slow"),
+            ),
+        )
+        original_append_many = self.kernel.event_store.append_many
+
+        def fail_bad_result(stream_id, events, expected_version=None):
+            batch = tuple(events)
+            if any(
+                event.event_type == "task.result.received" and event.payload["taskId"] == "bad"
+                for event in batch
+            ):
+                bad_publication_failed.set()
+                raise RuntimeError("injected parallel result failure")
+            return original_append_many(
+                stream_id,
+                batch,
+                expected_version=expected_version,
+            )
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=fail_bad_result,
+        ):
+            running = asyncio.create_task(self.kernel.run(plan))
+            await asyncio.wait_for(bad_publication_failed.wait(), timeout=1)
+            await asyncio.sleep(0)
+            self.assertFalse(running.done())
+            self.assertEqual(
+                self.kernel._graphs[plan.session_id].statuses,
+                {"bad": TaskStatus.RUNNING, "slow": TaskStatus.RUNNING},
+            )
+
+            release_slow.set()
+            with self.assertRaisesRegex(RuntimeError, "parallel result failure"):
+                await running
+
+        self.assertEqual(calls, {"bad": 1, "slow": 1})
+        self.assertEqual(active, 0)
+        self.assertEqual(
+            self.kernel._graphs[plan.session_id].statuses,
+            {"bad": TaskStatus.RUNNING, "slow": TaskStatus.COMPLETED},
+        )
+        event_count = len(self.kernel.event_store.read_stream(f"session:{plan.session_id}"))
+        await asyncio.sleep(0)
+        self.assertEqual(
+            len(self.kernel.event_store.read_stream(f"session:{plan.session_id}")),
+            event_count,
+        )
+        with self.assertRaisesRegex(SessionRecoveryError, "durably RUNNING task"):
+            await self.kernel.run(plan)
+        self.assertEqual(calls, {"bad": 1, "slow": 1})
+
     async def test_dependency_receives_versioned_artifact_and_context_precedes_invocation(self):
         observed = {}
 
