@@ -9,7 +9,10 @@ class PackageManifestWorkflowTests(unittest.TestCase):
         cls.workflow = cls.workflow_path.read_text(encoding="utf-8")
 
     def test_package_checkout_does_not_persist_git_credentials(self):
-        self.assertIn("uses: actions/checkout@v7", self.workflow)
+        self.assertIn(
+            "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            self.workflow,
+        )
         self.assertIn("persist-credentials: false", self.workflow)
         self.assertNotIn("permissions: write", self.workflow)
 
@@ -70,7 +73,9 @@ class PackageManifestWorkflowTests(unittest.TestCase):
     def test_only_verified_distributions_and_manifest_are_uploaded(self):
         verify = self.workflow.index("python scripts/distribution_manifest.py verify")
         smoke = self.workflow.index("Install and smoke-test wheel")
-        upload = self.workflow.index("uses: actions/upload-artifact@v7")
+        upload = self.workflow.index(
+            "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+        )
         self.assertLess(verify, smoke)
         self.assertLess(smoke, upload)
         self.assertIn("dist/*", self.workflow)

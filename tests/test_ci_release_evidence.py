@@ -14,7 +14,10 @@ class ReleaseEvidenceWorkflowTests(unittest.TestCase):
 
     def test_evidence_job_uses_clean_checkout_without_persisted_credentials(self):
         self.assertIn("name: Canonical release evidence", self.job)
-        self.assertIn("uses: actions/checkout@v7", self.job)
+        self.assertIn(
+            "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            self.job,
+        )
         self.assertIn("persist-credentials: false", self.job)
         self.assertNotIn("permissions: write", self.job)
 
@@ -41,7 +44,9 @@ class ReleaseEvidenceWorkflowTests(unittest.TestCase):
         )
 
     def test_pass_or_fail_evidence_is_retained_after_verification(self):
-        upload = self.job.index("uses: actions/upload-artifact@v7")
+        upload = self.job.index(
+            "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+        )
         self.assertGreater(upload, self.job.index("python scripts/verify_release_evidence.py"))
         self.assertIn("if: ${{ always() }}", self.job)
         self.assertIn("if-no-files-found: error", self.job)
