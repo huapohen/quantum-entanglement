@@ -106,6 +106,27 @@ already loaded in memory. This covers cancellation and other `BaseException` exi
 `RUNNING` transition: the loaded graph remains quarantined, the second call appends no guessed
 transition, and the Agent is not invoked again.
 
+In-memory transition publication now follows durable commit. `TaskGraph.preview_transition`
+and `preview_refresh` validate and describe changes without mutation; the kernel atomically
+appends the exact transition event(s), reconciles an append wrapper that raised after commit,
+then applies the same revision to memory. A pre-commit append failure therefore leaves memory
+at the durable previous state instead of creating a false loaded-`RUNNING` quarantine.
+
+| Transition caller | Durable unit before memory publication |
+|---|---|
+| plan initialization and initial readiness | one existing atomic initialization batch |
+| dependency refresh | one atomic batch of all previewed refresh transitions |
+| policy denial | `READY→RUNNING→FAILED` in one atomic batch |
+| ordinary dispatch | one reconciled `READY→RUNNING` event before context/Agent work |
+| approval request | existing atomic running/waiting/request batch |
+| completion or caught failure | one reconciled terminal event before graph mutation |
+| approval decision | existing atomic decision/transition batch |
+
+If a terminal transition append fails before commit after an Agent may have run, both durable
+and in-memory state remain `RUNNING`; the next call correctly quarantines it as effect unknown.
+If the wrapper raises after commit, exact event reconciliation publishes the committed state
+once without duplicating the transition.
+
 This quarantine is an intentional availability tradeoff. It converts the former silent stuck
 projection into an explicit operator-visible integrity boundary, while guaranteeing that
 session recovery neither calls the Agent again nor appends a guessed failure/completion. A
@@ -123,7 +144,8 @@ PYTHONPATH=src python3 -m unittest tests.test_recovery
 The suite covers exact and exceeded event counts, exact and exceeded cumulative
 byte/node budgets, bounded pages, cursor continuity, stream-boundary violations,
 interleaved streaming application, invalid late pages, no partial publication, restart
-quarantine, and same-process cancellation quarantine without Agent reinvocation.
+quarantine, same-process cancellation quarantine without Agent reinvocation, pre/post-commit
+transition fault injection, atomic policy denial, and non-mutating dependency refresh retry.
 
 At implementation commit `8049ac3`, the repository-wide suite reported 627
 passing tests. Locked Ruff 0.16.3 lint/format over `src`, `tests`, and `scripts`,

@@ -142,16 +142,26 @@ class TaskGraph:
     def transition(
         self, task_id: str, target: TaskStatus, reason: str | None = None
     ) -> TaskTransition:
+        planned = self.preview_transition(task_id, target, reason)
+        if target == planned.previous:
+            return planned
+        self.statuses[task_id] = target
+        self.revisions[task_id] = planned.revision
+        if reason:
+            self.reasons[task_id] = reason
+        return planned
+
+    def preview_transition(
+        self, task_id: str, target: TaskStatus, reason: str | None = None
+    ) -> TaskTransition:
+        """Validate and describe one transition without mutating the projection."""
+
         previous = self.statuses[task_id]
         if target == previous:
             return TaskTransition(task_id, previous, target, reason, self.revisions[task_id])
         if target not in self._ALLOWED[previous]:
             raise ValueError(f"invalid task transition {previous.value} -> {target.value}")
-        self.statuses[task_id] = target
-        self.revisions[task_id] += 1
-        if reason:
-            self.reasons[task_id] = reason
-        return TaskTransition(task_id, previous, target, reason, self.revisions[task_id])
+        return TaskTransition(task_id, previous, target, reason, self.revisions[task_id] + 1)
 
     def restore_status(
         self,
@@ -173,6 +183,16 @@ class TaskGraph:
             self.reasons[task_id] = reason
 
     def refresh(self) -> tuple[TaskTransition, ...]:
+        transitions = self.preview_refresh()
+        for planned in transitions:
+            applied = self.transition(planned.task_id, planned.current, planned.reason)
+            if applied != planned:  # pragma: no cover - deterministic internal invariant.
+                raise RuntimeError("refreshed task transition changed after preview")
+        return transitions
+
+    def preview_refresh(self) -> tuple[TaskTransition, ...]:
+        """Describe deterministic dependency transitions without mutating the graph."""
+
         transitions = []
         for task_id, task in self.tasks.items():
             if self.statuses[task_id] != TaskStatus.PENDING:
@@ -185,14 +205,14 @@ class TaskGraph:
             ]
             if failed:
                 transitions.append(
-                    self.transition(
+                    self.preview_transition(
                         task_id,
                         TaskStatus.BLOCKED,
                         "dependencies failed: {}".format(", ".join(failed)),
                     )
                 )
             elif all(status in DONE_STATUSES for status in dependency_states):
-                transitions.append(self.transition(task_id, TaskStatus.READY))
+                transitions.append(self.preview_transition(task_id, TaskStatus.READY))
         return tuple(transitions)
 
     def ready(self, limit: int | None = None) -> tuple[TaskSpec, ...]:
