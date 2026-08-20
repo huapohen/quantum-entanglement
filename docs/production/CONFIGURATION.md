@@ -52,6 +52,14 @@ plugin name, an empty value, or any unregistered value is rejected. This configu
 does not authorize sending, replying, commenting, mentioning, uploading or creating
 content in any external messaging platform.
 
+Version 1 deliberately has no authenticator, issuer, JWKS, OIDC, JWT, mTLS, session, or
+membership-source fields. `RequestContextIssuer` receives an explicitly injected adapter,
+authenticator identifier and audience in the current process-local foundation; that is a
+testable composition boundary, not an operator-ready identity configuration. Do not
+smuggle a token, cookie, client secret, key, or identity assertion into an existing `QE_*`
+field. Adding a real identity provider requires a new reviewed configuration version,
+opaque secret references, compatibility/rollback notes, and authenticated service tests.
+
 ## Filesystem preflight
 
 The three configured paths must be canonical absolute paths. `:memory:`, relative paths,
