@@ -16,7 +16,7 @@ process-bound 迁移。当前类有 26 个公开/生命周期入口、一个可�
 1. 每个普通 public entry 的统一 pre-input/pre-lock guard；
 2. 每个 SQL-bound caller value 在 lock/connection 外 exact-normalize，转换后再次 guard；
 3. iterable/callback 执行后的二次 guard；
-4. `_transaction` 在 BEGIN、exception cleanup、COMMIT 前的 current-owner 检查；
+4. `_transaction`、`_initialize/apply_sqlite_migrations`、constructor 三层 owner-aware cleanup；
 5. `stream_all_page` 在 context enter 和每次 iterator resume 时重新检查；
 6. mismatch 的 clean rethrow，最终异常 traceback locals 不可达 store/connection/lock/caller；
 7. child 拒绝后 parent transaction、connection、lock、lease 和 iterator 全部连续可用；
@@ -75,7 +75,8 @@ fork 后的主要分叉：
 - clock 可能是带锁、状态或 secret/provider reference 的 inherited callable；
 - iterator closure 复制 `self`、cursor、position 和 page limit；
 - outbox lease/ambiguity decision 可在 parent/child 各自产生冲突；
-- migration constructor failure path可能在 child 错误关闭/回滚 parent-derived connection state。
+- migration constructor failure path 可能在 child 错误 rollback/close connection，或在异常 unwind 时
+  release inherited `RLock`。
 
 ## 3. 公开路径清单
 
@@ -187,22 +188,46 @@ UPDATE ...
 4. 才 normalize/返回。
 
 若第二次证明在 child 失败，`_transaction` 的 exception path 必须先判断 process identity，不能读取
-`connection.in_transaction`，更不能 ROLLBACK inherited connection。parent 仍独立持有自己的
-transaction copy并继续原调用。
+`connection.in_transaction`，更不能 ROLLBACK inherited connection 或由 `with self._lock` 自动
+release inherited `RLock`。parent 仍独立持有自己的 transaction/lock copy 并继续原调用。
 
-### 4.4 Transaction exception cleanup
+### 4.4 Transaction、migration 与 constructor cleanup
 
 当前 `_transaction` 对任意 `BaseException` 读取 `self._connection.in_transaction` 并可能 rollback。
-迁移后需要区分：
+它外层还是 `with self._lock`；即使 exception branch 避免 connection access，离开 `with` 仍会调用
+inherited lock 的 `__exit__`。迁移后不能依赖无条件 context-manager unwind，而要显式记录“本代
+process 是否仍拥有 cleanup authority”：
 
 ```text
 exception
-├── owner current -> inspect transaction -> rollback -> rethrow original
-└── owner mismatch -> do not inspect/rollback/close -> emit private mismatch signal
+├── owner current
+│   ├── inspect transaction -> rollback when required
+│   ├── release current-process RLock
+│   └── rethrow original control/business/driver exception
+└── owner mismatch
+    ├── do not inspect/rollback/commit/close connection
+    ├── do not release or otherwise inspect inherited RLock
+    └── abandon internal frames -> emit private mismatch signal
 ```
 
 COMMIT 前也要重新证明 current owner。COMMIT 自身 driver error 的 current-process rollback 语义保持
 现状；process mismatch 不能被包装成 SQLite/rollback error。
+
+同一分支必须延伸到 initialization：
+
+1. `_initialize` 当前在 `with self._lock` 内调用 `apply_sqlite_migrations`，所以 callback 后 mismatch
+   不能经普通 `with` unwind 自动 release inherited lock；
+2. `apply_sqlite_migrations` 自己的 `except BaseException` 当前先读 `connection.in_transaction` 再
+   ROLLBACK。只在 store constructor 外层检查 owner 已经太晚；migration transaction handler 必须能
+   识别同一个 exact private mismatch signal，或重构为由 owner-aware store transaction 驱动；
+3. constructor 当前对任意 initialization exception 调用 `self._connection.close()`。owner mismatch
+   必须绕过 close，并避免把持有 inherited connection 的 partially initialized wrapper 交给普通
+   finalizer/GC；应把它放进明确的 child quarantine，或让该 child 按部署合同立即 non-ready 并以不跑
+   Python finalizer 的方式退出/exec。简单“丢弃实例”可能触发 connection destructor，不是安全 cleanup。
+
+这三层使用同一 process owner 和 exact private signal。任一中间层不得把 mismatch 改写成 migration、
+SQLite、rollback 或 constructor error；current-process 的普通初始化失败仍按现有语义 rollback、release
+并 close 自己创建的 connection。
 
 ### 4.5 流式 context 与 iterator
 
@@ -266,7 +291,8 @@ connection、lock、clock/provider、caller object、lease token 或 sentinel se
 若 initialization 异常：
 
 - owner current：按现有语义关闭本进程新建 connection；
-- owner mismatch：不得关闭/rollback inherited connection，只丢弃 child 中未完成实例；
+- owner mismatch：不得 inspect/rollback/close inherited connection，也不得 release inherited lock；
+  未完成 wrapper 必须 quarantine，或由 child non-ready 后安全 exit/exec，不能依赖普通 finalizer；
 - control signal：保持类型/安全 exit code，不把它转换为正常成功或普通 lifecycle error。
 
 一个 fresh child store 不能因为自己 owner 是 current 就自动信任 inherited stateful clock/provider。
@@ -309,12 +335,18 @@ EventStoreLifecycleError
 
 - parent 第二线程持 `_lock` 时 fork，child 任意 read/write/close 不等待锁；
 - parent `BEGIN IMMEDIATE` 后由另一线程 fork，child 拒绝且不 inspect/rollback connection；
-- clock callback 内 fork，child 在 callback 后、第一次 SQL 前拒绝；parent commit exactly once；
+- clock callback 内 fork，child 在 callback 后、第一次 SQL 前拒绝，且不 release inherited RLock；
+  parent commit exactly once；
 - input iterable 内 fork，child 在 materialization 后、BEGIN 前拒绝；
 - 每个 SQL path 用带 `__conform__`/adapter canary 的 hostile value 证明 callback 在 lock/connection 前
   被拒绝，SQLite adapter 根本没有被调用；
 - transaction body business exception在 current process 仍 rollback 并保留原类型；
 - control signal与 cancellation 不被 mismatch wrapper 吞掉或改成成功退出。
+
+constructor/migration 另做 retained fault matrix：migration clock 内 fork 后，child 的
+`apply_sqlite_migrations`、`_initialize` 和 constructor 三层均不得读取 transaction state、执行
+ROLLBACK/CLOSE、release inherited lock 或触发 connection finalizer；parent 完成唯一 migration
+decision。child quarantine/exit 路径必须有界，且不能被记录成 fresh child 可继续复用 inherited fd。
 
 ### 8.3 Stream
 
@@ -360,9 +392,10 @@ EventStoreLifecycleError
 
 1. `test`：冻结当前 inherited read/write/close/stream反例与 parent continuity；
 2. `feat`：专用 lifecycle error、private signal、clean ordinary-method wrapper；
-3. `feat`：constructor owner capture 与 initialization failure ownership；
+3. `feat`：constructor owner capture、`_initialize/apply_sqlite_migrations` owner-aware cleanup 与
+   partial-wrapper quarantine；
 4. `feat`：普通 read path pre-lock guards；
-5. `feat`：普通 write path与 `_transaction` BEGIN/rollback/commit guards；
+5. `feat`：普通 write path 与 `_transaction` acquire/BEGIN/rollback/commit/release owner guards；
 6. `feat`：clock callback前后 guard和 open-transaction fork反例；
 7. `feat`：iterable/input normalization后的 guard与 exact internal snapshot；
 8. `feat`：stream context-enter和 iterator-resume clean guards；
@@ -395,7 +428,9 @@ EventStoreLifecycleError
 - 保留 fork-before-init worker topology；
 - 不允许用删除 guard、允许 inherited connection 或捕获 mismatch 后继续 SQL 来“恢复”；
 - 若 fresh worker构造失败，停止 admission并修复 composition，不复用 parent store；
-- open transaction只由 original parent owner决定 commit/rollback，child不参与恢复。
+- open transaction只由 original parent owner决定 commit/rollback，child不参与恢复；
+- constructor/migration 中发现 owner mismatch 时，child 进入 non-ready quarantine 并安全 exit/exec；
+  不通过 GC/finalizer、close 或 lock release 尝试清理 inherited wrapper。
 
 ## 11. 当前可声明与不可声明
 
