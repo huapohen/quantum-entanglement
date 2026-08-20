@@ -1,5 +1,7 @@
 import copy
 import gc
+import multiprocessing
+import os
 import pickle
 import threading
 import unittest
@@ -51,6 +53,46 @@ class FakeAuthenticator:
         if self.failure is not None:
             raise self.failure
         return self.make_binding(claims=claims, audience=audience, at=at)
+
+
+def _capture_issuer_process_call(callback):
+    try:
+        callback()
+    except RequestContextError as error:
+        return (
+            "request_context_error",
+            error.code,
+            error.__cause__ is None,
+            error.__context__ is None,
+        )
+    except BaseException as error:
+        return ("unexpected_error", type(error).__name__)
+    return ("unexpected_success",)
+
+
+def _fork_issuer_public_path_probe(connection, issuer, context, claims, request):
+    owner_pid = object.__getattribute__(issuer, "_RequestContextIssuer__owner_pid")
+    owner_epoch = object.__getattribute__(issuer, "_RequestContextIssuer__owner_epoch")
+    current_pid, current_epoch = request_context_module._current_process_identity()
+    credential = SecretMaterial(b"fork-child-credential-canary")
+    calls = (
+        ("issue", lambda: issuer.issue(claims, credential)),
+        ("prepare_reauthorization", lambda: issuer.prepare_reauthorization(context, request)),
+        ("retire", lambda: issuer.retire(context)),
+        ("close", issuer.close),
+        ("enter", issuer.__enter__),
+        ("exit", lambda: issuer.__exit__(None, None, None)),
+    )
+    try:
+        connection.send(
+            {
+                "identityChanged": (current_pid != owner_pid and current_epoch is not owner_epoch),
+                "results": {name: _capture_issuer_process_call(call) for name, call in calls},
+                "credentialClosed": credential.closed,
+            }
+        )
+    finally:
+        connection.close()
 
 
 class RequestContextValueTests(unittest.TestCase):
@@ -223,6 +265,68 @@ class RequestContextIssuanceTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), code)
         self.assertIsNone(raised.exception.__cause__)
         self.assertIsNone(raised.exception.__context__)
+
+    def capture_error(self, code, callback):
+        captured = None
+        try:
+            callback()
+        except RequestContextError as error:
+            captured = error
+        else:
+            self.fail(f"expected RequestContextError with code {code}")
+        self.assertEqual(captured.code, code)
+        self.assertIsNone(captured.__cause__)
+        self.assertIsNone(captured.__context__)
+        return captured
+
+    def assert_detached_process_error(self, error, expected_method, *forbidden):
+        self.assertEqual(error.args, ("request_context_process_mismatch",))
+        self.assertEqual(getattr(error, "__notes__", ()), ())
+        self.assertEqual(getattr(error, "__dict__", {}), {})
+        library_frames = []
+        trace = error.__traceback__
+        while trace is not None:
+            if trace.tb_frame.f_code.co_filename.endswith("/request_context.py"):
+                library_frames.append(trace.tb_frame)
+            trace = trace.tb_next
+        self.assertEqual(
+            [frame.f_code.co_name for frame in library_frames],
+            [expected_method],
+        )
+        for frame in library_frames:
+            for value in list(frame.f_locals.values()):
+                for selected in forbidden:
+                    self.assertIsNot(value, selected)
+                self.assertNotIsInstance(
+                    value,
+                    (
+                        AccessRequest,
+                        CallerRequestContext,
+                        RequestContext,
+                        RequestContextIssuer,
+                        SecretMaterial,
+                    ),
+                )
+                if isinstance(value, str):
+                    self.assertNotIn("secret-canary", value)
+
+    def receive_process_payload(self, process, connection, *, timeout=5):
+        payload = None
+        try:
+            if connection.poll(timeout):
+                try:
+                    payload = connection.recv()
+                except EOFError:
+                    payload = None
+        finally:
+            connection.close()
+            process.join(1)
+            if process.is_alive():
+                process.terminate()
+                process.join(2)
+        self.assertIsNotNone(payload, "fork child did not respond before the deadlock bound")
+        self.assertEqual(process.exitcode, 0)
+        return payload
 
     def assert_detached_traceback(self, error, *canaries):
         frames = []
@@ -669,6 +773,157 @@ class RequestContextIssuanceTests(unittest.TestCase):
             copy.deepcopy(issuer)
         with self.assertRaises(TypeError):
             pickle.dumps(issuer)
+
+    def test_pid_drift_lazily_refreshes_epoch_without_at_fork_hook(self):
+        stale_epoch = object()
+        with patch.object(request_context_module, "_PROCESS_PID", os.getpid() + 1):
+            with patch.object(request_context_module, "_PROCESS_EPOCH", stale_epoch):
+                process_pid, process_epoch = request_context_module._current_process_identity()
+
+        self.assertEqual(process_pid, os.getpid())
+        self.assertIsNot(process_epoch, stale_epoch)
+
+    def test_every_process_mismatch_failure_detaches_issuer_and_request_state(self):
+        issuer, authenticator = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+        request = self.access_request()
+        credential = SecretMaterial(b"process-mismatch-secret-canary")
+        exit_error = RuntimeError("process-mismatch-exit-secret-canary")
+        active_error = RuntimeError("process-mismatch-body-secret-canary")
+        active_error.issuer = issuer
+        active_error.authenticator = authenticator
+        active_error.request = request
+        active_error.credential = credential
+        owner_epoch = object.__getattribute__(issuer, "_RequestContextIssuer__owner_epoch")
+        object.__setattr__(issuer, "_RequestContextIssuer__owner_epoch", object())
+        calls = (
+            ("issue", lambda: issuer.issue(self.claims, credential)),
+            (
+                "prepare_reauthorization",
+                lambda: issuer.prepare_reauthorization(context, request),
+            ),
+            ("retire", lambda: issuer.retire(context)),
+            ("close", issuer.close),
+            ("__enter__", issuer.__enter__),
+            ("__exit__", lambda: issuer.__exit__(RuntimeError, exit_error, None)),
+        )
+        try:
+            for expected_method, call in calls:
+                with self.subTest(method=expected_method):
+                    try:
+                        raise active_error
+                    except RuntimeError:
+                        error = self.capture_error("request_context_process_mismatch", call)
+                    self.assert_detached_process_error(
+                        error,
+                        expected_method,
+                        issuer,
+                        authenticator,
+                        self.clock,
+                        self.claims,
+                        context,
+                        request,
+                        credential,
+                        exit_error,
+                        active_error,
+                    )
+        finally:
+            object.__setattr__(issuer, "_RequestContextIssuer__owner_epoch", owner_epoch)
+
+        self.assertTrue(credential.closed)
+        self.assertEqual(
+            issuer.prepare_reauthorization(context, request).context_id,
+            context.context_id,
+        )
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_real_fork_rejects_every_inherited_issuer_path_and_parent_remains_usable(self):
+        issuer, _ = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+        request = self.access_request()
+        fork_context = multiprocessing.get_context("fork")
+        parent_connection, child_connection = fork_context.Pipe(duplex=False)
+        process = fork_context.Process(
+            target=_fork_issuer_public_path_probe,
+            args=(child_connection, issuer, context, self.claims, request),
+        )
+
+        process.start()
+        child_connection.close()
+        payload = self.receive_process_payload(process, parent_connection)
+
+        self.assertTrue(payload["identityChanged"])
+        self.assertTrue(payload["credentialClosed"])
+        self.assertEqual(
+            set(payload["results"]),
+            {"issue", "prepare_reauthorization", "retire", "close", "enter", "exit"},
+        )
+        for name, result in payload["results"].items():
+            with self.subTest(path=name):
+                self.assertEqual(
+                    result,
+                    (
+                        "request_context_error",
+                        "request_context_process_mismatch",
+                        True,
+                        True,
+                    ),
+                )
+
+        basis = issuer.prepare_reauthorization(context, request)
+        self.assertEqual(basis.context_id, context.context_id)
+        replacement = issuer.issue(self.claims, self.credential())
+        self.assertIsInstance(replacement, RequestContext)
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_fork_while_issuer_lock_is_held_never_waits_on_the_inherited_lock(self):
+        issuer, _ = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+        request = self.access_request()
+        issuer_lock = object.__getattribute__(issuer, "_RequestContextIssuer__lock")
+        lock_held = threading.Event()
+        release_lock = threading.Event()
+
+        def hold_inherited_lock():
+            with issuer_lock:
+                lock_held.set()
+                release_lock.wait(10)
+
+        holder = threading.Thread(target=hold_inherited_lock)
+        holder.start()
+        self.assertTrue(lock_held.wait(2))
+        fork_context = multiprocessing.get_context("fork")
+        parent_connection, child_connection = fork_context.Pipe(duplex=False)
+        process = fork_context.Process(
+            target=_fork_issuer_public_path_probe,
+            args=(child_connection, issuer, context, self.claims, request),
+        )
+
+        try:
+            process.start()
+            child_connection.close()
+            payload = self.receive_process_payload(process, parent_connection)
+        finally:
+            release_lock.set()
+            holder.join(2)
+        self.assertFalse(holder.is_alive())
+        self.assertTrue(payload["identityChanged"])
+        self.assertTrue(
+            all(
+                result
+                == (
+                    "request_context_error",
+                    "request_context_process_mismatch",
+                    True,
+                    True,
+                )
+                for result in payload["results"].values()
+            )
+        )
+        self.assertEqual(
+            issuer.prepare_reauthorization(context, request).context_id,
+            context.context_id,
+        )
 
     def test_active_context_capacity_is_bounded_and_dead_handles_are_pruned(self):
         issuer, authenticator = self.make_issuer(max_active_contexts=1)
