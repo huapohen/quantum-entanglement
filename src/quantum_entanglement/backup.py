@@ -39,6 +39,7 @@ _CORE_TABLES = (
     "artifact_blobs",
     "artifact_versions",
     "projection_offsets",
+    "projection_receipts",
     "action_receipts",
 )
 
