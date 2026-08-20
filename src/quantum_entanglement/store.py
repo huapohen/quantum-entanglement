@@ -936,19 +936,30 @@ class SQLiteEventStore:
         after_position: int = 0,
         limit: int = 1000,
     ) -> Iterator[Iterator[StoredEvent]]:
-        """Decode one global-position page row by row while holding the store lock."""
+        """Decode one global-position page without holding a lock across a yielded row."""
 
         cursor = self._validate_page_cursor(after_position, "after_position")
         page_limit = self._validate_page_limit(limit)
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT * FROM events WHERE global_position > ? ORDER BY global_position LIMIT ?",
-                (cursor, page_limit),
-            )
-            try:
-                yield (self._row_to_event(row) for row in rows)
-            finally:
-                rows.close()
+
+        def events() -> Iterator[StoredEvent]:
+            position = cursor
+            for _index in range(page_limit):
+                with self._lock:
+                    row = self._connection.execute(
+                        """
+                        SELECT * FROM events
+                        WHERE global_position > ?
+                        ORDER BY global_position LIMIT 1
+                        """,
+                        (position,),
+                    ).fetchone()
+                if row is None:
+                    return
+                item = self._row_to_event(row)
+                position = item.global_position
+                yield item
+
+        yield events()
 
     def claim_outbox(
         self,

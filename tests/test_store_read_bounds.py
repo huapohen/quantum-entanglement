@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 from unittest.mock import patch
@@ -216,6 +217,24 @@ class SQLiteEventStoreBoundedReadTests(unittest.TestCase):
                 self.assertEqual(decoded_positions, [1])
 
         self.assertEqual(decoded_positions, [1])
+
+    def test_stream_all_page_does_not_hold_the_store_lock_across_yields(self) -> None:
+        self._append_stream("stream:target", 2)
+        concurrent = DomainEvent(
+            stream_id="stream:other",
+            event_type="test.event",
+            payload={"index": 1},
+            actor_id="test",
+            event_id="event-concurrent",
+            timestamp=T0,
+            idempotency_key="event:concurrent",
+        )
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with self.store.stream_all_page(limit=2) as page:
+                self.assertEqual(next(page).global_position, 1)
+                stored = executor.submit(self.store.append, concurrent).result(timeout=2)
+                self.assertEqual(stored.event.event_id, "event-concurrent")
 
     def test_outbox_pages_expose_durable_positions_and_filter_status(self) -> None:
         self._seed_outbox()
