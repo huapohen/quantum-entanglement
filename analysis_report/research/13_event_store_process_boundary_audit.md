@@ -254,18 +254,38 @@ traceback frame locals 仍通常包含：
 - transaction connection、SQLite row/cursor；
 - provider exception 或 iterator object。
 
-因此推荐用两层机制：
+因此必须分离 internal signal cleanup 与最终 public raise：
 
 1. foundation guard 只发出 module-private、不可由 caller 正常构造的 mismatch signal；
-2. public wrapper 捕获该 signal，退出 `except`，清空 `self`、positional args、kwargs、result/
-   connection/cursor/provider locals；
-3. 在无 active exception context 的 module-level trampoline 中创建并抛出新的
-   `EventStoreLifecycleError("event_store_process_mismatch") from None`；
+2. public wrapper 只捕获 exact private signal，保存固定 code，detach signal 的 cause/context/
+   traceback，`traceback.clear_frames` 已完成的 internal frames，再退出 `except` 并删除 `self`、
+   positional args、kwargs、result/connection/cursor/provider locals；
+3. module-level trampoline 创建一个 exact fresh
+   `EventStoreLifecycleError("event_store_process_mismatch")`。外层 `except`/`__exit__` 可能仍让原异常
+   active，所以 `raise ... from None` 本身不够；trampoline 必须立即捕获自己刚创建的 exact public
+   error，把 `__context__` 设为 `None`，然后 bare re-raise；
 4. wrapper 只捕获 exact private signal，不捕获 `KeyboardInterrupt`、`SystemExit`、
    `GeneratorExit`、cancellation 或业务异常；
 5. signal 需有构造 token/nonce 和完整 traceback provenance 校验，防止 caller/provider 嫁接一段
    看似可信尾帧；
 6. 对 context manager/iterator 另做同等 clean wrapper，因为普通 method wrapper 已经返回。
+
+最终 trampoline 使用 canonical process-inheritance 合同中的精确模式：
+
+```python
+def _raise_event_store_process_mismatch() -> NoReturn:
+    try:
+        raise EventStoreLifecycleError("event_store_process_mismatch") from None
+    except EventStoreLifecycleError as public_error:
+        # This is the exact fresh error created by this trampoline, not a provider error.
+        public_error.__context__ = None
+        raise
+```
+
+这里必须是 bare `raise`，不能在清空后写 `raise public_error`。该操作只允许清理本 trampoline 刚创建
+的 exact public error；绝不能捕获、修改或重抛 caller/provider/driver/业务异常来伪造 clean graph。
+internal signal 的 traceback 和 wrapper 敏感 locals 也必须在进入 trampoline 前完成清理；只清
+`__context__` 不能移除 traceback frame 中的 store、connection、token 或 provider graph。
 
 必须用对象图遍历测试，而不是只断言错误字符串：从 public exception 的 `args`、attrs、notes、
 cause、context、traceback frame locals、closure、generator/frame 递归检查，不得找到 store、
@@ -348,6 +368,10 @@ constructor/migration 另做 retained fault matrix：migration clock 内 fork �
 ROLLBACK/CLOSE、release inherited lock 或触发 connection finalizer；parent 完成唯一 migration
 decision。child quarantine/exit 路径必须有界，且不能被记录成 fresh child 可继续复用 inherited fd。
 
+error-graph matrix 必须在普通调用、active outer `except` 和 context-manager `__exit__` 三种状态下
+验证最终 exact public error 的 `cause/context/notes` 为空；同时证明第三方异常的 context/traceback
+从未被上述 trampoline 修改。
+
 ### 8.3 Stream
 
 - fork before context enter；
@@ -391,7 +415,8 @@ decision。child quarantine/exit 路径必须有界，且不能被记录成 fres
 保持每笔默认分支可运行，不用一个大提交跨越全部边界：
 
 1. `test`：冻结当前 inherited read/write/close/stream反例与 parent continuity；
-2. `feat`：专用 lifecycle error、private signal、clean ordinary-method wrapper；
+2. `feat`：专用 lifecycle error、private signal、clean ordinary-method wrapper 与 exact fresh-error
+   context-detach trampoline；
 3. `feat`：constructor owner capture、`_initialize/apply_sqlite_migrations` owner-aware cleanup 与
    partial-wrapper quarantine；
 4. `feat`：普通 read path pre-lock guards；
