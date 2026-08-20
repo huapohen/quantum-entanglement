@@ -80,6 +80,51 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.completed)
         self.assertEqual(calls, 1)
 
+    async def test_committed_plan_initialization_is_reconciled_after_wrapper_failure(self):
+        calls = 0
+
+        async def worker(invocation):
+            nonlocal calls
+            calls += 1
+            return AgentResult("done")
+
+        self.kernel.register_agent(registration("worker", worker))
+        plan = WorkflowPlan(
+            "plan-initialization-post-commit",
+            "初始化提交成功后的包装器异常必须协调",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-initialization-post-commit",
+        )
+        original_append_many = self.kernel.event_store.append_many
+
+        def commit_then_raise(*args, **kwargs):
+            original_append_many(*args, **kwargs)
+            raise RuntimeError("injected initialization post-commit failure")
+
+        with patch.object(
+            self.kernel.event_store,
+            "append_many",
+            side_effect=commit_then_raise,
+        ):
+            first = await self.kernel.run(plan)
+
+        second = await self.kernel.run(plan)
+        self.assertTrue(first.completed)
+        self.assertTrue(second.completed)
+        self.assertEqual(calls, 1)
+        self.assertIn(plan.session_id, self.kernel._plans)
+        self.assertIn(plan.session_id, self.kernel._graphs)
+        events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        self.assertEqual(
+            sum(event.event.event_type == "workflow.plan.created" for event in events),
+            1,
+        )
+        self.assertEqual(
+            sum(event.event.event_type == "task.created" for event in events),
+            1,
+        )
+
     async def test_independent_tasks_run_in_parallel_and_initial_ready_is_recorded(self):
         active = 0
         peak = 0
