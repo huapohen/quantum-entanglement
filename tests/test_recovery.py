@@ -773,6 +773,51 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(quantum_entanglement.SessionRecoveryError, SessionRecoveryError)
         overflow.event_store.close()
 
+    async def test_session_recovery_enforces_cumulative_byte_and_node_budgets(self):
+        async def handler(invocation):
+            return AgentResult("done")
+
+        plan = WorkflowPlan(
+            "recover-budget",
+            "恢复预算",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-budget",
+        )
+        first = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        first.register_agent(registration("worker", handler))
+        self.assertTrue((await first.run(plan)).completed)
+        persisted = first.event_store.read_stream("session:recover-budget")
+        measurements = tuple(first._measure_recovery_event(stored) for stored in persisted)
+        required_bytes = sum(item[0] for item in measurements)
+        required_nodes = sum(item[1] for item in measurements)
+        first.event_store.close()
+
+        exact = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        exact.register_agent(registration("worker", handler))
+        with patch.object(runtime_module, "_MAX_RECOVERY_BYTES", required_bytes):
+            with patch.object(runtime_module, "_MAX_RECOVERY_JSON_NODES", required_nodes):
+                self.assertTrue((await exact.run(plan)).completed)
+        exact.event_store.close()
+
+        byte_overflow = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        byte_overflow.register_agent(registration("worker", handler))
+        with patch.object(runtime_module, "_MAX_RECOVERY_BYTES", required_bytes - 1):
+            with self.assertRaisesRegex(SessionRecoveryError, "byte safety limit"):
+                await byte_overflow.run(plan)
+        self.assertNotIn(plan.session_id, byte_overflow._plans)
+        self.assertNotIn(plan.session_id, byte_overflow._graphs)
+        byte_overflow.event_store.close()
+
+        node_overflow = OrchestratorKernel(event_store=SQLiteEventStore(self.path))
+        node_overflow.register_agent(registration("worker", handler))
+        with patch.object(runtime_module, "_MAX_RECOVERY_JSON_NODES", required_nodes - 1):
+            with self.assertRaisesRegex(SessionRecoveryError, "JSON-node safety limit"):
+                await node_overflow.run(plan)
+        self.assertNotIn(plan.session_id, node_overflow._plans)
+        self.assertNotIn(plan.session_id, node_overflow._graphs)
+        node_overflow.event_store.close()
+
     async def test_session_recovery_rejects_a_late_sequence_gap_without_partial_state(self):
         async def handler(invocation):
             return AgentResult("done")

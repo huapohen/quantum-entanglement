@@ -39,6 +39,8 @@ from .store import SQLiteEventStore
 
 _RECOVERY_PAGE_LIMIT = 1_000
 _MAX_RECOVERY_EVENTS = 1_000_000
+_MAX_RECOVERY_BYTES = 256 * 1024 * 1024
+_MAX_RECOVERY_JSON_NODES = 5_000_000
 _MAX_RECOVERY_TEXT_LENGTH = 65_536
 _RECOVERY_UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z$")
 _APPROVAL_PAYLOAD_FIELDS = frozenset(
@@ -467,9 +469,35 @@ class OrchestratorKernel:
             expected_sequence += 1
         return expected_sequence - 1
 
+    @classmethod
+    def _measure_recovery_event(cls, stored: StoredEvent) -> Tuple[int, int]:
+        """Return canonical encoded bytes and an allocation-oriented JSON node count."""
+
+        try:
+            value = stored.event.to_dict()
+            encoded_bytes = len(cls._canonical_event_json(stored.event).encode("utf-8"))
+            nodes = 0
+            pending: list[Any] = [value]
+            while pending:
+                current = pending.pop()
+                nodes += 1
+                if type(current) is dict:
+                    # Count keys as well as values because both consume memory after decode.
+                    nodes += len(current)
+                    pending.extend(current.values())
+                elif type(current) is list:
+                    pending.extend(current)
+                elif current is not None and type(current) not in (bool, int, float, str):
+                    raise TypeError("event contains a non-JSON value")
+        except (OverflowError, RecursionError, TypeError, UnicodeError, ValueError) as exc:
+            raise SessionRecoveryError("session recovery event cannot be measured safely") from exc
+        return encoded_bytes, nodes
+
     def _read_session_events(self, stream_id: str) -> Tuple[StoredEvent, ...]:
         after_sequence = 0
         replayed: list[StoredEvent] = []
+        replayed_bytes = 0
+        replayed_nodes = 0
         while len(replayed) < _MAX_RECOVERY_EVENTS:
             page_limit = min(
                 _RECOVERY_PAGE_LIMIT,
@@ -488,6 +516,19 @@ class OrchestratorKernel:
             )
             if not page:
                 return tuple(replayed)
+            for stored in page:
+                event_bytes, event_nodes = self._measure_recovery_event(stored)
+                if event_bytes > _MAX_RECOVERY_BYTES - replayed_bytes:
+                    raise SessionRecoveryError(
+                        f"session recovery exceeds the {_MAX_RECOVERY_BYTES}-byte safety limit"
+                    )
+                if event_nodes > _MAX_RECOVERY_JSON_NODES - replayed_nodes:
+                    raise SessionRecoveryError(
+                        "session recovery exceeds the "
+                        f"{_MAX_RECOVERY_JSON_NODES}-JSON-node safety limit"
+                    )
+                replayed_bytes += event_bytes
+                replayed_nodes += event_nodes
             replayed.extend(page)
             if len(page) < page_limit:
                 return tuple(replayed)
