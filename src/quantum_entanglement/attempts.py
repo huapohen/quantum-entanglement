@@ -907,12 +907,8 @@ class SQLiteInvocationAttemptStore:
             and existing.requested_available_at == requested_available_at
         )
 
-    def enqueue(self, spec: InvocationJobSpec) -> InvocationJob:
-        """Persist one invocation, returning the original row for an identical retry."""
-
-        with self._transaction() as connection:
-            now = self._now()
-            available_at = _normalize_timestamp(spec.available_at or now, "available_at")
+    def _reconcile_enqueued_job(self, spec: InvocationJobSpec) -> Optional[InvocationJob]:
+        with self._read_transaction() as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM invocation_jobs
@@ -928,48 +924,85 @@ class SQLiteInvocationAttemptStore:
                     spec.idempotency_key,
                 ),
             ).fetchall()
-            if rows:
-                if len(rows) != 1 or not self._existing_matches(rows[0], spec):
-                    raise InvocationConflictError(
-                        "invocation identity or idempotency key is already bound to different work"
-                    )
-                return self._row_to_job(rows[0])
-            connection.execute(
-                """
-                INSERT INTO invocation_jobs (
-                    invocation_id, session_id, plan_id, task_id, agent_id,
-                    idempotency_key, payload_digest, priority, status,
-                    max_attempts, attempts_started, lease_epoch,
-                    requested_available_at, available_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, 0, ?, ?, ?, ?)
-                """,
-                (
-                    spec.invocation_id,
-                    spec.session_id,
-                    spec.plan_id,
-                    spec.task_id,
-                    spec.agent_id,
-                    spec.idempotency_key,
-                    spec.payload_digest,
-                    spec.priority,
-                    spec.max_attempts,
+            if len(rows) != 1 or not self._existing_matches(rows[0], spec):
+                return None
+            return self._row_to_job(rows[0])
+
+    def enqueue(self, spec: InvocationJobSpec) -> InvocationJob:
+        """Persist one invocation, returning the original row for an identical retry."""
+
+        try:
+            with self._transaction() as connection:
+                now = self._now()
+                available_at = _normalize_timestamp(spec.available_at or now, "available_at")
+                rows = connection.execute(
+                    """
+                    SELECT * FROM invocation_jobs
+                    WHERE invocation_id = ?
+                       OR (session_id = ? AND task_id = ?)
+                       OR (session_id = ? AND idempotency_key = ?)
+                    """,
                     (
-                        _normalize_timestamp(spec.available_at, "available_at")
-                        if spec.available_at is not None
-                        else None
+                        spec.invocation_id,
+                        spec.session_id,
+                        spec.task_id,
+                        spec.session_id,
+                        spec.idempotency_key,
                     ),
-                    available_at,
-                    now,
-                    now,
-                ),
-            )
-            row = connection.execute(
-                "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
-                (spec.invocation_id,),
-            ).fetchone()
-            if row is None:  # pragma: no cover - protected by the transaction.
-                raise RuntimeError("enqueued invocation disappeared")
-            return self._row_to_job(row)
+                ).fetchall()
+                if rows:
+                    if len(rows) != 1 or not self._existing_matches(rows[0], spec):
+                        raise InvocationConflictError(
+                            "invocation identity or idempotency key is already bound "
+                            "to different work"
+                        )
+                    return self._row_to_job(rows[0])
+                connection.execute(
+                    """
+                    INSERT INTO invocation_jobs (
+                        invocation_id, session_id, plan_id, task_id, agent_id,
+                        idempotency_key, payload_digest, priority, status,
+                        max_attempts, attempts_started, lease_epoch,
+                        requested_available_at, available_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, 0, ?, ?, ?, ?)
+                    """,
+                    (
+                        spec.invocation_id,
+                        spec.session_id,
+                        spec.plan_id,
+                        spec.task_id,
+                        spec.agent_id,
+                        spec.idempotency_key,
+                        spec.payload_digest,
+                        spec.priority,
+                        spec.max_attempts,
+                        (
+                            _normalize_timestamp(spec.available_at, "available_at")
+                            if spec.available_at is not None
+                            else None
+                        ),
+                        available_at,
+                        now,
+                        now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+                    (spec.invocation_id,),
+                ).fetchone()
+                if row is None:  # pragma: no cover - protected by the transaction.
+                    raise RuntimeError("enqueued invocation disappeared")
+                return self._row_to_job(row)
+        except _CommitOutcomeUnknown as error:
+            if not error.may_reconcile:
+                self._unreconciled_commit(error)
+            try:
+                reconciled = self._reconcile_enqueued_job(spec)
+            except BaseException:
+                reconciled = None
+            if reconciled is None:
+                self._unreconciled_commit(error)
+            return reconciled
 
     def get(self, invocation_id: str) -> Optional[InvocationJob]:
         _required(invocation_id, "invocation_id")
