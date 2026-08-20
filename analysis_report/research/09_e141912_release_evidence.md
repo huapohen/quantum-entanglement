@@ -6,6 +6,10 @@
 
 源码 tree：`752ffefc5e67d2931c72671f26d36856ec777981`
 
+> **历史快照：** 本文全部 gate、digest、制品与路径只绑定 `e141912`。后继源码不能复用
+> 这些结果；任何当前发布判断都必须重新生成并验证 source-bound evidence、制品、manifest
+> 和 SBOM。
+
 ## 1. 结论
 
 该提交在本机 clean checkout 上通过仓库现有的单节点测试、静态检查、格式、类型、编译、
