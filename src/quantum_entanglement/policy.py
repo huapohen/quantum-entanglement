@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
 
@@ -58,7 +58,7 @@ class PolicyEngine:
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class ApprovalRequest:
     session_id: str
     task_id: str
@@ -108,6 +108,22 @@ class NeedsYouQueue:
         self._requests: dict[str, ApprovalRequest] = {}
         self._lock = threading.RLock()
 
+    @staticmethod
+    def _clone_request(request: ApprovalRequest) -> ApprovalRequest:
+        """Detach every authorization-bearing field from caller-owned objects."""
+
+        return ApprovalRequest(
+            session_id=request.session_id,
+            task_id=request.task_id,
+            intent=ActionIntent.from_dict(request.intent.to_dict()),
+            reason=request.reason,
+            request_id=request.request_id,
+            created_at=request.created_at,
+            decision=request.decision,
+            decided_by=request.decided_by,
+            comment=request.comment,
+        )
+
     def create(self, request: ApprovalRequest) -> ApprovalRequest:
         with self._lock:
             existing = next(
@@ -121,25 +137,27 @@ class NeedsYouQueue:
                 None,
             )
             if existing:
-                return existing
-            self._requests[request.request_id] = request
-            return request
+                return self._clone_request(existing)
+            stored = self._clone_request(request)
+            self._requests[stored.request_id] = stored
+            return self._clone_request(stored)
 
     def restore(self, request: ApprovalRequest) -> ApprovalRequest:
         """Upsert a request reconstructed from the immutable event stream."""
 
         with self._lock:
-            self._requests[request.request_id] = request
-            return request
+            stored = self._clone_request(request)
+            self._requests[stored.request_id] = stored
+            return self._clone_request(stored)
 
     def get(self, request_id: str) -> ApprovalRequest:
         with self._lock:
-            return self._requests[request_id]
+            return self._clone_request(self._requests[request_id])
 
     def pending(self, session_id: str | None = None) -> tuple[ApprovalRequest, ...]:
         with self._lock:
             return tuple(
-                item
+                self._clone_request(item)
                 for item in self._requests.values()
                 if item.pending and (session_id is None or item.session_id == session_id)
             )
@@ -155,9 +173,13 @@ class NeedsYouQueue:
             request = self._requests[request_id]
             if not request.pending:
                 if request.decision == decision and request.decided_by == actor_id:
-                    return request
+                    return self._clone_request(request)
                 raise ValueError("approval request is already decided")
-            request.decision = decision
-            request.decided_by = actor_id
-            request.comment = comment
-            return request
+            decided = replace(
+                request,
+                decision=decision,
+                decided_by=actor_id,
+                comment=comment,
+            )
+            self._requests[request_id] = decided
+            return self._clone_request(decided)
