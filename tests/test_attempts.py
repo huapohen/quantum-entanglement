@@ -710,6 +710,34 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                     self.store.recover_expired(limit=invalid_limit)
         self.assertEqual(self.store.get("invocation-1").status, InvocationStatus.QUEUED)
 
+    def test_utc_year_boundary_overflow_is_stable_and_never_mutates(self):
+        out_of_range = (
+            "0001-01-01T00:00:00+14:00",
+            "9999-12-31T23:59:59-14:00",
+        )
+        for available_at in out_of_range:
+            with self.subTest(operation="job_spec", value=available_at):
+                with self.assertRaisesRegex(ValueError, "RFC 3339 timestamp"):
+                    job_spec(available_at=available_at)
+
+        empty = tuple(self.store._connection.iterdump())
+        for clock_value in out_of_range:
+            with self.subTest(operation="clock", value=clock_value):
+                self.clock.set(clock_value)
+                with self.assertRaisesRegex(ValueError, "RFC 3339 timestamp"):
+                    self.store.enqueue(job_spec())
+                self.assertEqual(tuple(self.store._connection.iterdump()), empty)
+
+        self.clock.set(T0)
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        running = tuple(self.store._connection.iterdump())
+        for retry_at in out_of_range:
+            with self.subTest(operation="retry_at", value=retry_at):
+                with self.assertRaisesRegex(ValueError, "RFC 3339 timestamp"):
+                    self.store.fail(lease, "must roll back", retry_at=retry_at)
+                self.assertEqual(tuple(self.store._connection.iterdump()), running)
+
     def test_write_text_contract_rejects_recovery_poison_before_state_change(self):
         self.store.enqueue(job_spec())
         queued = tuple(self.store._connection.iterdump())
