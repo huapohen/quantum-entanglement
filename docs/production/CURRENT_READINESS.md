@@ -169,12 +169,16 @@ Backup manifest 已覆盖真实 `projection_offsets`、`projection_receipts` 和
 当前有四个 exact/hash-locked dependency target（74 package records）、binary-only installation
 policy、canonical sdist normalization、双 detached-worktree reproducible wheel/sdist、strict
 distribution manifest、source commit/tree binding、runtime/build CycloneDX 1.6 SBOM、官方 schema
-验证和 retained local release evidence。
+验证和 retained local release evidence。主线也已有 versioned dependency-risk policy/result、
+exact scanner/database snapshot identity、component/artifact coverage、single-use waiver 和严格离线
+evaluator；当前提交策略明确 `promotionEnabled: false`，approved scanner/database/license allowlist
+均为空，因此不可能产生 promotion success。
 
-仍缺 production promotion 所需的真实 vulnerability/license/malware policy、批准的数据库
-snapshot、optional/deployment/platform SBOM coverage、independent immutable runner、verified
+仍缺 production promotion 所需的真实 scanner adapter、经认证和批准的数据库 snapshot 获取链、
+法律批准 license allowlist、真实扫描结果与 CI 接线；也缺 malware/maintainer-risk policy、
+optional/deployment/platform SBOM coverage、independent immutable runner、verified
 interpreter/bootstrap、immutable mirror、signed provenance、artifact signature 和 trusted builder。
-同一 runner 两次 byte-identical build 不能替代独立环境 reproducibility。
+合成 evaluator 测试或同一 runner 两次 byte-identical build 都不能替代这些证据。
 
 ## 8. 性能、容量与资源隔离
 

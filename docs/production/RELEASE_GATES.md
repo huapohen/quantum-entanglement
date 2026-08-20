@@ -123,6 +123,10 @@ See [`DEPENDENCY_LOCKS_AND_SBOM.md`](./DEPENDENCY_LOCKS_AND_SBOM.md) for the sup
 matrix, regeneration commands, deterministic SBOM profile, local end-to-end observation,
 failure handling, and explicit trust boundary. Locks and SBOMs are necessary evidence; by
 themselves they are not vulnerability clearance, signed provenance, or a trusted builder.
+The source-bound offline risk contract is defined in
+[`DEPENDENCY_RISK_PROMOTION.md`](./DEPENDENCY_RISK_PROMOTION.md). Its committed policy has
+promotion disabled and empty scanner, database, and license approvals, so it is currently
+a fail-closed contract rather than a passed promotion gate.
 
 ## Phase release gate
 
@@ -211,10 +215,10 @@ and the CycloneDX 1.6 schema.
 
 The remaining GA supply-chain gaps are independently provisioned immutable-runner
 reproduction, verified interpreter/resolver bootstrap, offline or immutable dependency
-mirror, optional-extra/deployment SBOM coverage, vulnerability/license/malware policy,
-signed provenance, trusted builder identity, and artifact signatures. The implemented
-package job now satisfies the same-job reproduction, distribution-integrity, Python-lock,
-and base/build-SBOM rows for its exact candidate; the production supply chain is still not
+mirror, optional-extra/deployment SBOM coverage, an approved real scanner/database/license
+policy and result, malware/maintainer-risk controls, CI promotion wiring, signed provenance,
+trusted builder identity, and artifact signatures. The implemented package job and disabled
+offline evaluator satisfy contract rows only; the production supply chain is still not
 complete.
 
 ## Rollback rule

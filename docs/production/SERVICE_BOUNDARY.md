@@ -63,8 +63,9 @@ cookie、OIDC credential 或私钥。
    durable action receipt 原子绑定；
 5. typed safe logging 目前只迁移 publisher，其他自由文本错误、历史数据库和 exporter 尚未
    完成 redaction/canary 门禁；
-6. 依赖风险策略、签名 provenance、artifact signature、可信 builder、容量、故障、安全、
-   可观测性和 soak 仍缺真实 promotion evidence；
+6. dependency-risk evaluator 已 fail closed 且 promotion disabled；真实 scanner/database/legal
+   policy、签名 provenance、artifact signature、可信 builder、容量、故障、安全、可观测性和
+   soak 仍缺真实 promotion evidence；
 7. 没有支持拓扑上的 clean-host 部署、升级、回滚、恢复与 RPO/RTO 演练证据。
 
 测试通过只证明对应断言在记录的环境成立，不能替代上述闭环或人工晋级决定。
