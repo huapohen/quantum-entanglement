@@ -148,15 +148,17 @@ is not an isolation boundary merely because the issuer API rejects it.
 
 Local context validation is not action-time authorization and not a reservation. It proves
 only that this issuer produced this unchanged handle for this exact request scope and that
-its local expiry has not passed. Before every protected operation, the future composition
-root must use the preserved identity/revisions/evidence to obtain current authentication
-and membership state, then run `TenantAuthorizer` for the concrete action/resource and bind
-that decision to the effect transaction and durable receipt.
+its local expiry has not passed. Before every protected operation, the adjacent composition
+foundation uses the preserved identity/revisions/evidence to obtain current authentication
+and membership state, then runs `TenantAuthorizer` for the concrete action/resource. A
+future service integration must additionally bind that decision to the effect transaction
+and durable receipt.
 
 The basis returned by `prepare_reauthorization` is deliberately constructible data. A
-future trusted identity/membership adapter may use it as lookup input, but no policy or
-effect component may treat possession of the basis as proof. The current code does not yet
-define that adapter or compare current provider/membership revisions.
+trusted identity/membership adapter may use it as lookup input, but no policy or effect
+component may treat possession of the basis as proof. The adjacent protected-operation
+foundation defines an injected current-state port and exact revision comparisons, but its
+tests use only fakes; no production identity/membership adapter or effect integration exists.
 
 ## 6. Credential, configuration, and logging rules
 
@@ -171,9 +173,13 @@ define that adapter or compare current provider/membership revisions.
   sufficient redaction boundary. Before the public issuer returns a stable failure, it also
   clears completed internal traceback frames and creates a fresh code-only exception after
   deleting its credential arguments; otherwise a failed wipe could leave the private
-  `memoryview` reachable through `exception.__traceback__.tb_frame.f_locals`. Python also
-  cannot wipe copies retained by a buggy authenticator or by the transport before
-  constructing the lease.
+  `memoryview` reachable through `exception.__traceback__.tb_frame.f_locals`. The public
+  issuer then catches that exact fresh exception, clears the implicitly attached active
+  caller `__context__`, and uses a bare re-raise. This is required when an issuer method is
+  called inside another exception handler or its context-manager exit replaces a body
+  exception: the new stable failure must not retain that body exception, request,
+  authenticator, credential, issuer, or attached state. Python also cannot wipe copies
+  retained by a buggy authenticator or by the transport before constructing the lease.
 - Context `repr`, exceptions, evidence, ordinary logs, events, artifacts, and reports must
   not contain the credential, raw attestation, tenant, workspace, subject, or principal.
 - Stable failure codes are suitable for bounded metrics. Raw scope identifiers must not be
@@ -258,7 +264,10 @@ behavior, reflective mutation quarantine, expiry, serialized prepare/retire, con
 close/registration, retirement, and issuer shutdown. Real POSIX-fork tests cover child
 `issue`, `prepare_reauthorization`, `retire`, `close`, and context-manager entry, including
 a fork while another parent thread owns the issuer lock, exact parent usability afterward,
-and the lazy PID-drift fallback.
+and the lazy PID-drift fallback. Every issuer process-mismatch public path is also invoked
+while a secret-bearing caller exception is active; traceback inspection proves the new
+code-only failure has no cause/context chain and retains no issuer, authenticator, context,
+request, credential, or context-manager body exception in its library frames.
 
 The implementation history starts at `fa0c422`; public export is `ba072c3`. Exact full-suite
 and release evidence must be regenerated after this documentation commit is part of the

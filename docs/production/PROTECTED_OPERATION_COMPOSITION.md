@@ -321,17 +321,32 @@ Provider/authorizer exception graphs and their frame locals are therefore not re
 through the public failure, even when a hostile exception rejects attribute reads or
 writes by throwing another secret-bearing exception.
 
+`raise ... from None` only suppresses presentation of Python's implicit exception chain;
+it does not make the programmatically readable `__context__` field `None`. Every public
+registry/composer rethrow therefore raises its fresh exception inside the same public
+frame, catches that exact fresh object, clears `__context__`, and uses a bare re-raise. This
+also applies to constructor process rejection and context-manager lifecycle failure. A
+failure raised while the caller is already handling another exception—including a real
+`with composer:` body exception—cannot retain that caller exception, its request, provider,
+authorizer, key ring, handle, or other attached state. Completed internal frames are
+cleared, while the remaining library traceback contains only the public entry frame (and
+the bounded control-signal helper for a reissued signal).
+
 Configured dependencies are treated as hostile exception boundaries, including custom
 classes that inherit directly from `BaseException`. A non-control `BaseException` becomes
 the same stable fail-closed category as an ordinary dependency exception. Exact
 `KeyboardInterrupt`, `SystemExit`, `GeneratorExit`, and `asyncio.CancelledError` retain
 control-flow semantics, but the original third-party object and all of its message,
 argument, note, custom-attribute, cause/context, and frame-local state stay behind the
-boundary. The public method raises a different exact signal with empty arguments and no
-cause/context chain. A subclass merely shaped like one of these control signals is treated
-as a hostile dependency failure. This policy applies to `authorize`, `consume`, and
-`retire` and prevents a dependency from smuggling tenant or credential material through a
-control-shaped exception while preserving async-worker cancellation.
+boundary. The public method raises a different exact signal with no cause/context chain.
+Fresh `KeyboardInterrupt`, `GeneratorExit`, and `CancelledError` signals have empty
+arguments. Fresh `SystemExit` preserves only a bounded non-secret status: `None`, exact
+`bool`, or an exact `int` from 0 through 255; negative/out-of-range integers, strings,
+objects, and integer subclasses become exact status `1`. A subclass merely shaped like one
+of these control signals is treated as a hostile dependency failure. This policy applies
+to constructor and registry/composer authorization and lifecycle boundaries, preventing a
+dependency from smuggling tenant or credential material through a control-shaped exception
+while preserving async-worker cancellation and ordinary bounded exit status.
 
 Representative codes are grouped below. Callers must treat every code as denial and must
 not retry an irreversible effect without a new reviewed idempotency policy.
@@ -452,8 +467,9 @@ The dedicated suite covers exact state types/snapshots, redacted representations
 structural provider injection, workspace requirements, same-ID cross-tenant isolation,
 every actor/scope/revision substitution, provider observation freshness/future time,
 provider and authorizer exception-chain/frame detachment, hostile `BaseException` and safe
-control-signal replacement across all three public operations, exact
-`asyncio.CancelledError` propagation, fail-closed control subclasses, explicit deny,
+control-signal replacement across authorization and lifecycle boundaries, the complete
+safe `SystemExit` status matrix, exact `asyncio.CancelledError` propagation, fail-closed
+control subclasses, explicit deny,
 malformed decisions, membership downgrade, post-issuance identity/scope revision change,
 post-issuance capability revocation, context retirement during refresh, every final
 reauthorization binding-field drift, foreign issuer/composer, direct construction,
@@ -461,11 +477,21 @@ forgery, reflective tampering, copy/deepcopy/pickle, operation and composer life
 expiry, service-clock rollback, hard concurrent issuance capacity, serial replay,
 concurrent replay, action-time reauthorization, and exact one-time consumption.
 
+Process-mismatch tests inspect every public composer and registry traceback after a failure
+raised inside an already active secret-bearing caller exception. They prove that the fresh
+constructor cannot retain its issuer/provider/authorizer/key ring, that all public wrappers
+delete request/context/handle/lifecycle arguments, and that `__cause__`, `__context__`,
+notes, dynamic attributes, and completed internal locals are detached. Lifecycle tests
+exercise constructor, composer close/enter/exit, and registry close with all four exact
+control signals; the exit path uses an actual context-manager body exception rather than a
+synthetic direct call.
+
 The suite also runs real POSIX-fork probes: child issue/prepare/retire/close/enter against an
 inherited issuer, construction of a new composer from that issuer, parent/child
-double-consume, every inherited composer and registry public path, forks while other
-threads own issuer or operation locks, authorization-time issuer revalidation, and exact
-parent usability afterward. Actual `spawn` and `forkserver` process starts prove that
+double-consume, every inherited composer and registry public path including composer exit,
+forks while other threads own issuer or operation locks, authorization-time issuer
+revalidation, and exact parent usability afterward. Actual `spawn` and `forkserver` process
+starts prove that
 handle, composer, and registry transfer is rejected. Separate fallback tests prove PID
 drift refreshes both module epochs when no at-fork callback is available.
 
