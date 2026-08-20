@@ -182,9 +182,7 @@ class DependencyRiskResultTests(unittest.TestCase):
         self.assert_code("risk_result_component_invalid", lambda: self.parse(document))
 
         document = self.result_document()
-        document["scan"]["components"].append(
-            copy.deepcopy(document["scan"]["components"][1])
-        )
+        document["scan"]["components"].append(copy.deepcopy(document["scan"]["components"][1]))
         self.assert_code("risk_result_component_duplicate", lambda: self.parse(document))
 
         document = self.result_document()
@@ -250,9 +248,7 @@ class DependencyRiskResultTests(unittest.TestCase):
         self.assert_code("risk_result_finding_duplicate", lambda: self.parse(document))
 
         document = self.result_document()
-        duplicate = copy.deepcopy(
-            document["scan"]["components"][1]["vulnerabilities"][0]
-        )
+        duplicate = copy.deepcopy(document["scan"]["components"][1]["vulnerabilities"][0])
         duplicate["id"] = "OSV-2026-2"
         duplicate["aliases"] = []
         document["scan"]["components"][1]["vulnerabilities"].append(duplicate)
