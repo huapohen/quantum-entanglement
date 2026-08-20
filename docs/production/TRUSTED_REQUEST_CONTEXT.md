@@ -81,7 +81,7 @@ evidence values remain data when received from anywhere else.
 | `CallerRequestContext` | Strict exact-dict parser for request/subject/tenant/workspace claims; unknown fields and coercion fail | Authentication, membership, or authorization |
 | `AuthenticatedRequestBinding` | Bounded canonical adapter-return shape with provider principal, exact scope, revisions, evidence fingerprint, and lifetime | A caller-constructible token or portable attestation |
 | `RequestAuthenticator` | Synchronous injected port called only by the issuer with a read-only credential view and service audience/time | OIDC, JWT, mTLS, JWKS, session, or membership implementation |
-| `RequestContextIssuer.issue` | Reserves bounded capacity, consumes and closes one exact `SecretMaterial`, calls the configured authenticator, validates exact binding/time, and registers one context | Replay defense, full request authorization, or durable session issuance |
+| `RequestContextIssuer.issue` | Reserves bounded capacity, consumes one exact `SecretMaterial`, calls the configured authenticator, validates exact binding/time, registers one context, and always attempts credential wipe | Replay defense, full request authorization, durable session issuance, or guaranteed erasure after a wipe primitive fails |
 | `RequestContext` | Opaque, non-copyable, non-pickleable handle whose exact object and field snapshot are registered by one issuer | A bearer token, serialized credential, cross-process identity, or authority by property access |
 | `prepare_reauthorization` | Same-issuer object check, tamper/expiry/clock check, exact `AccessRequest` request/subject/tenant/workspace match, and a bounded basis for current-state lookup | Current reauthentication, current membership, RBAC allow, approval, or effect permission |
 | `ReauthorizationBasis` | Preserves principal/subject/scope, identity/scope revisions, evidence fingerprint and observation/expiry times; representation is redacted | A trusted input when constructed or received independently |
@@ -128,9 +128,11 @@ define that adapter or compare current provider/membership revisions.
 - No ambient environment variable, API key, cookie, or token is read by this primitive.
 - The authenticator is injected explicitly by the composition root. This phase provides
   fake test adapters only and defines no `QE_OIDC_*`, JWKS, JWT, mTLS, or HTTP settings.
-- The credential lease is closed on success, validation failure, adapter failure, and
-  unexpected result type. Python cannot wipe copies retained by a buggy authenticator or by
-  the transport before constructing the lease.
+- Credential close/wipe is attempted on success, validation failure, adapter failure, and
+  unexpected result type. A wipe exception becomes one redacted stable failure and no
+  context is returned; the implementation cannot claim that a failed underlying wipe
+  succeeded. Python also cannot wipe copies retained by a buggy authenticator or by the
+  transport before constructing the lease.
 - Context `repr`, exceptions, evidence, ordinary logs, events, artifacts, and reports must
   not contain the credential, raw attestation, tenant, workspace, subject, or principal.
 - Stable failure codes are suitable for bounded metrics. Raw scope identifiers must not be
@@ -205,7 +207,7 @@ git diff --check
 
 The negative suite covers strict parsing, scope/result mismatch, future/stale/overlong
 authentication, slow-authenticator expiry, clock regression/failure, credential wiping,
-redacted adapter failure, capacity and in-flight reservation, foreign issuer, direct
+redacted adapter/wipe failure, capacity and in-flight reservation, foreign issuer, direct
 construction, copy/pickle, exact request/subject/tenant/workspace matching, tenant-wide
 non-wildcard behavior, reflective mutation quarantine, expiry, retirement, and issuer
 shutdown.

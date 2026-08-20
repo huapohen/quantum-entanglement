@@ -37,9 +37,11 @@ must never place it in an exception, request model, event, artifact, metric or l
 
 The process-local request-context issuer accepts one exact `SecretMaterial` as its inbound
 credential lease. It exposes only a read-only view to the configured authenticator and
-closes the lease after success, validation rejection, provider exception, clock failure,
-capacity rejection, or issuer shutdown rejection. A view retained by the authenticator
-observes the overwritten backing buffer after close.
+attempts to close the lease after success, validation rejection, provider exception, clock
+failure, capacity rejection, or issuer shutdown rejection. A view retained by the
+authenticator observes the overwritten backing buffer after a successful close. If the
+wipe primitive itself raises, issuance fails with a redacted stable code and returns no
+context; operators must treat the material as not proven erased.
 
 This use does not route an inbound bearer credential through `FileSecretProvider`, does not
 make a provider reference an authenticated identity, and does not define OIDC/JWT/mTLS.
