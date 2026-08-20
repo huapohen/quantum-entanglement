@@ -20,12 +20,14 @@ MCP 及真正的跨进程协议互操作仍属于后续阶段。
 attempt 的 lease、heartbeat、崩溃接管以及外部副作用确认仍在 `0.2.0` 门禁内。完整差距、阶段
 边界和发布条件见：
 
-- `docs/production/READINESS_AUDIT.md`
+- `docs/production/SERVICE_BOUNDARY.md`
+- `docs/production/CURRENT_READINESS.md`
 - `docs/production/ROADMAP.md`
 - `docs/production/RELEASE_GATES.md`
 - `docs/production/APPROVAL_DURABILITY.md`
 - `docs/production/WORKFLOW_INITIALIZATION_DURABILITY.md`
 - `docs/production/SESSION_RECOVERY.md`
+- `docs/production/LOGGING_AND_REDACTION.md`
 - `docs/production/DEPENDENCY_LOCKS_AND_SBOM.md`
 
 ## 仓库结构
