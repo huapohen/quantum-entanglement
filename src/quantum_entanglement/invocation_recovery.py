@@ -247,6 +247,8 @@ def _validate_job(job: InvocationJob) -> None:
         raise InvocationRecoveryIntegrityError("job finished_at contradicts its status")
     if finished_at is not None and finished_at < created_at:
         raise InvocationRecoveryIntegrityError("job finished_at precedes creation")
+    if finished_at is not None and updated_at < finished_at:
+        raise InvocationRecoveryIntegrityError("job updated_at precedes finish")
 
     running_lease = all(
         value is not None for value in (lease_owner, lease_digest, lease_expires_at, heartbeat_at)
@@ -257,6 +259,14 @@ def _validate_job(job: InvocationJob) -> None:
     if job.status is InvocationStatus.RUNNING:
         if not running_lease or attempts_started == 0:
             raise InvocationRecoveryIntegrityError("running job has incomplete lease ownership")
+        if heartbeat_at is None or lease_expires_at is None:
+            raise InvocationRecoveryIntegrityError("running job has incomplete lease timestamps")
+        if heartbeat_at < created_at:
+            raise InvocationRecoveryIntegrityError("job heartbeat_at precedes creation")
+        if updated_at < heartbeat_at:
+            raise InvocationRecoveryIntegrityError("job updated_at precedes heartbeat")
+        if lease_expires_at <= heartbeat_at or lease_expires_at <= updated_at:
+            raise InvocationRecoveryIntegrityError("job lease deadline does not follow activity")
     elif not cleared_lease:
         raise InvocationRecoveryIntegrityError("non-running job retains lease ownership")
     if job.status in {InvocationStatus.SUCCEEDED, InvocationStatus.FAILED} and (
@@ -287,12 +297,28 @@ def _validate_attempt(attempt: InvocationAttempt) -> None:
         "attempt result_ref",
         maximum_bytes=_MAX_REFERENCE_BYTES,
     )
-    if heartbeat_at < started_at or lease_expires_at < started_at:
+    if heartbeat_at < started_at:
         raise InvocationRecoveryIntegrityError("attempt timestamps violate start causality")
+    if lease_expires_at <= heartbeat_at:
+        raise InvocationRecoveryIntegrityError("attempt lease deadline does not follow heartbeat")
     if (attempt.status is AttemptStatus.RUNNING) != (finished_at is None):
         raise InvocationRecoveryIntegrityError("attempt finished_at contradicts its status")
     if finished_at is not None and finished_at < started_at:
         raise InvocationRecoveryIntegrityError("attempt finished_at precedes its start")
+    if finished_at is not None and finished_at < heartbeat_at:
+        raise InvocationRecoveryIntegrityError("attempt finished_at precedes its heartbeat")
+    if (
+        attempt.status in {AttemptStatus.SUCCEEDED, AttemptStatus.FAILED}
+        and finished_at is not None
+        and finished_at >= lease_expires_at
+    ):
+        raise InvocationRecoveryIntegrityError("owned attempt finished outside its lease")
+    if (
+        attempt.status is AttemptStatus.EXPIRED
+        and finished_at is not None
+        and finished_at < lease_expires_at
+    ):
+        raise InvocationRecoveryIntegrityError("expired attempt finished before lease expiry")
     if result_ref is not None and attempt.status is not AttemptStatus.SUCCEEDED:
         raise InvocationRecoveryIntegrityError("only a succeeded attempt may carry a result_ref")
 
