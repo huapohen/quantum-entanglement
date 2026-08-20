@@ -32,7 +32,7 @@ class DependencyRiskPolicyTests(unittest.TestCase):
 
         self.assertFalse(policy.promotion_enabled)
         self.assertEqual(policy.allowed_scanners, ())
-        self.assertEqual(policy.allowed_database_sources, ())
+        self.assertEqual(policy.approved_databases, ())
         self.assertEqual(policy.allowed_license_expressions, ())
         self.assertEqual(policy.block_at_or_above, "high")
         self.assertEqual(policy.block_when_fix_available_at_or_above, "medium")
@@ -57,10 +57,14 @@ class DependencyRiskPolicyTests(unittest.TestCase):
         self.assert_code("risk_policy_incomplete", lambda: self.parse(document))
 
         document["evidence"]["allowedScanners"] = [
-            {"name": "reviewed-scanner", "version": "1.0.0"}
+            {"name": "reviewed-scanner", "sha256": "b" * 64, "version": "1.0.0"}
         ]
-        document["evidence"]["allowedDatabaseSources"] = [
-            "https://advisories.example.invalid/database"
+        document["evidence"]["approvedDatabases"] = [
+            {
+                "revision": "snapshot-2026-08-20",
+                "sha256": "c" * 64,
+                "source": "https://advisories.example.invalid/database",
+            }
         ]
         document["licenses"]["allowedExpressions"] = ["Apache-2.0", "MIT"]
         policy = self.parse(document)
@@ -122,14 +126,15 @@ class DependencyRiskPolicyTests(unittest.TestCase):
     def vulnerability_exception():
         return {
             "exceptionId": "RISK-2026-001",
+            "databaseSha256": "b" * 64,
             "expiresAt": "2026-08-30T00:00:00Z",
+            "findingSha256": "c" * 64,
             "findingId": "OSV-2026-1",
             "issuedAt": "2026-08-20T00:00:00Z",
             "kind": "vulnerability",
             "owner": "security-team",
             "purl": "pkg:pypi/example@1.0.0",
             "rationale": "Temporary exact finding acceptance with a tracked remediation owner.",
-            "resultSha256": "a" * 64,
         }
 
     def test_exception_requires_exact_component_finding_result_and_bounded_approval(self):
@@ -154,7 +159,7 @@ class DependencyRiskPolicyTests(unittest.TestCase):
                 "risk_policy_exception_time_invalid",
                 lambda item: item.update(expiresAt="2027-08-30T00:00:00Z"),
             ),
-            ("risk_policy_exception_invalid", lambda item: item.update(resultSha256="A" * 64)),
+            ("risk_policy_exception_invalid", lambda item: item.update(findingSha256="A" * 64)),
         )
         for code, mutate in mutations:
             with self.subTest(code=code, mutate=mutate):

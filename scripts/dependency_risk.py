@@ -51,14 +51,15 @@ _POLICY_KEYS = frozenset(
 )
 _EVIDENCE_POLICY_KEYS = frozenset(
     {
-        "allowedDatabaseSources",
+        "approvedDatabases",
         "allowedScanners",
         "maximumDatabaseAgeSeconds",
         "maximumDatabaseValiditySeconds",
         "maximumResultAgeSeconds",
     }
 )
-_SCANNER_KEYS = frozenset({"name", "version"})
+_SCANNER_KEYS = frozenset({"name", "sha256", "version"})
+_DATABASE_POLICY_KEYS = frozenset({"revision", "sha256", "source"})
 _VULNERABILITY_POLICY_KEYS = frozenset(
     {"blockAtOrAbove", "blockWhenFixAvailableAtOrAbove"}
 )
@@ -69,27 +70,29 @@ _EXCEPTION_POLICY_KEYS = frozenset(
 _VULNERABILITY_EXCEPTION_KEYS = frozenset(
     {
         "exceptionId",
+        "databaseSha256",
         "expiresAt",
+        "findingSha256",
         "findingId",
         "issuedAt",
         "kind",
         "owner",
         "purl",
         "rationale",
-        "resultSha256",
     }
 )
 _LICENSE_EXCEPTION_KEYS = frozenset(
     {
         "exceptionId",
+        "databaseSha256",
         "expiresAt",
+        "findingSha256",
         "issuedAt",
         "kind",
         "licenseExpression",
         "owner",
         "purl",
         "rationale",
-        "resultSha256",
     }
 )
 
@@ -409,6 +412,14 @@ def canonical_license_expression(value: object, code: str) -> str:
 class ScannerIdentity:
     name: str
     version: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class ApprovedDatabase:
+    source: str
+    revision: str
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -417,7 +428,8 @@ class RiskException:
     kind: str
     purl: str
     subject: str | None
-    result_sha256: str
+    finding_sha256: str
+    database_sha256: str
     owner: str
     rationale: str
     issued_at: datetime
@@ -432,7 +444,7 @@ class RiskException:
 class DependencyRiskPolicy:
     promotion_enabled: bool
     allowed_scanners: tuple[ScannerIdentity, ...]
-    allowed_database_sources: tuple[str, ...]
+    approved_databases: tuple[ApprovedDatabase, ...]
     maximum_database_age_seconds: int
     maximum_database_validity_seconds: int
     maximum_result_age_seconds: int
@@ -455,29 +467,47 @@ def _scanner_identities(value: object) -> tuple[ScannerIdentity, ...]:
         record = cast(dict[str, object], item)
         name = _safe_string(record["name"], "risk_policy_scanner_invalid", maximum=128)
         version = _safe_string(record["version"], "risk_policy_scanner_invalid", maximum=128)
+        digest = _safe_string(record["sha256"], "risk_policy_scanner_invalid", maximum=64)
         if (
             _IDENTIFIER_PATTERN.fullmatch(name) is None
             or _VERSION_PATTERN.fullmatch(version) is None
+            or _HASH_PATTERN.fullmatch(digest) is None
         ):
             _fail("risk_policy_scanner_invalid")
-        identities.append(ScannerIdentity(name=name, version=version))
-    if identities != sorted(identities, key=lambda item: (item.name, item.version)):
+        identities.append(ScannerIdentity(name=name, version=version, sha256=digest))
+    if identities != sorted(
+        identities, key=lambda item: (item.name, item.version, item.sha256)
+    ):
         _fail("risk_policy_scanner_invalid")
-    if len({(item.name, item.version) for item in identities}) != len(identities):
+    if len({(item.name, item.version, item.sha256) for item in identities}) != len(identities):
         _fail("risk_policy_scanner_invalid")
     return tuple(identities)
 
 
-def _database_sources(value: object) -> tuple[str, ...]:
+def _approved_databases(value: object) -> tuple[ApprovedDatabase, ...]:
     if type(value) is not list or len(cast(list[object], value)) > _MAX_ALLOWED_IDENTITIES:
         _fail("risk_policy_database_invalid")
-    sources = tuple(
-        _canonical_https_url(item, "risk_policy_database_invalid")
-        for item in cast(list[object], value)
-    )
-    if sources != tuple(sorted(sources)) or len(set(sources)) != len(sources):
+    databases: list[ApprovedDatabase] = []
+    for item in cast(list[object], value):
+        if (
+            type(item) is not dict
+            or frozenset(cast(dict[str, object], item)) != _DATABASE_POLICY_KEYS
+        ):
+            _fail("risk_policy_database_invalid")
+        record = cast(dict[str, object], item)
+        source = _canonical_https_url(record["source"], "risk_policy_database_invalid")
+        revision = _identifier(record["revision"], "risk_policy_database_invalid")
+        digest = _safe_string(record["sha256"], "risk_policy_database_invalid", maximum=64)
+        if _HASH_PATTERN.fullmatch(digest) is None:
+            _fail("risk_policy_database_invalid")
+        databases.append(ApprovedDatabase(source=source, revision=revision, sha256=digest))
+    if databases != sorted(
+        databases, key=lambda item: (item.source, item.revision, item.sha256)
+    ):
         _fail("risk_policy_database_invalid")
-    return sources
+    if len({(item.source, item.revision, item.sha256) for item in databases}) != len(databases):
+        _fail("risk_policy_database_invalid")
+    return tuple(databases)
 
 
 def _license_expressions(value: object) -> tuple[str, ...]:
@@ -525,10 +555,16 @@ def _risk_exceptions(
             _fail("risk_policy_exception_invalid")
         exception_id = _identifier(record["exceptionId"], "risk_policy_exception_invalid")
         purl = canonical_pypi_purl(record["purl"], "risk_policy_exception_invalid")
-        result_sha256 = _safe_string(
-            record["resultSha256"], "risk_policy_exception_invalid", maximum=64
+        finding_sha256 = _safe_string(
+            record["findingSha256"], "risk_policy_exception_invalid", maximum=64
         )
-        if _HASH_PATTERN.fullmatch(result_sha256) is None:
+        database_sha256 = _safe_string(
+            record["databaseSha256"], "risk_policy_exception_invalid", maximum=64
+        )
+        if (
+            _HASH_PATTERN.fullmatch(finding_sha256) is None
+            or _HASH_PATTERN.fullmatch(database_sha256) is None
+        ):
             _fail("risk_policy_exception_invalid")
         owner = _safe_string(
             record["owner"], "risk_policy_exception_owner_invalid", minimum=3, maximum=128
@@ -565,7 +601,8 @@ def _risk_exceptions(
                 kind=cast(str, kind),
                 purl=purl,
                 subject=subject,
-                result_sha256=result_sha256,
+                finding_sha256=finding_sha256,
+                database_sha256=database_sha256,
                 owner=owner,
                 rationale=rationale,
                 issued_at=issued_at,
@@ -576,7 +613,9 @@ def _risk_exceptions(
         _fail("risk_policy_exception_invalid")
     if len({item.exception_id for item in exceptions}) != len(exceptions):
         _fail("risk_policy_exception_invalid")
-    exact_scopes = {(item.result_sha256, *item.scope) for item in exceptions}
+    exact_scopes = {
+        (item.database_sha256, item.finding_sha256, *item.scope) for item in exceptions
+    }
     if len(exact_scopes) != len(exceptions):
         _fail("risk_policy_exception_scope_invalid")
     return tuple(exceptions)
@@ -601,7 +640,7 @@ def load_dependency_risk_policy_bytes(value: bytes) -> DependencyRiskPolicy:
         _fail("risk_policy_evidence_invalid")
     evidence = cast(dict[str, object], raw_evidence)
     allowed_scanners = _scanner_identities(evidence["allowedScanners"])
-    allowed_sources = _database_sources(evidence["allowedDatabaseSources"])
+    approved_databases = _approved_databases(evidence["approvedDatabases"])
     maximum_database_age = _positive_integer(
         evidence["maximumDatabaseAgeSeconds"],
         "risk_policy_evidence_invalid",
@@ -633,6 +672,11 @@ def load_dependency_risk_policy_bytes(value: bytes) -> DependencyRiskPolicy:
     block_with_fix_text = cast(str, block_with_fix)
     if _SEVERITY_RANK[block_with_fix_text] > _SEVERITY_RANK[block_at_text]:
         _fail("risk_policy_vulnerability_invalid")
+    if (
+        _SEVERITY_RANK[block_at_text] > _SEVERITY_RANK["high"]
+        or _SEVERITY_RANK[block_with_fix_text] > _SEVERITY_RANK["medium"]
+    ):
+        _fail("risk_policy_vulnerability_invalid")
 
     raw_licenses = document["licenses"]
     if type(raw_licenses) is not dict or frozenset(raw_licenses) != _LICENSE_POLICY_KEYS:
@@ -663,14 +707,14 @@ def load_dependency_risk_policy_bytes(value: bytes) -> DependencyRiskPolicy:
 
     promotion_enabled = cast(bool, document["promotionEnabled"])
     if promotion_enabled and (
-        not allowed_scanners or not allowed_sources or not allowed_licenses
+        not allowed_scanners or not approved_databases or not allowed_licenses
     ):
         _fail("risk_policy_incomplete")
 
     return DependencyRiskPolicy(
         promotion_enabled=promotion_enabled,
         allowed_scanners=allowed_scanners,
-        allowed_database_sources=allowed_sources,
+        approved_databases=approved_databases,
         maximum_database_age_seconds=maximum_database_age,
         maximum_database_validity_seconds=maximum_database_validity,
         maximum_result_age_seconds=maximum_result_age,
@@ -696,7 +740,7 @@ def policy_summary(policy: DependencyRiskPolicy) -> dict[str, object]:
     """Return a canonical-safe summary that never exposes exception text or identities."""
 
     return {
-        "allowedDatabaseSourceCount": len(policy.allowed_database_sources),
+        "approvedDatabaseCount": len(policy.approved_databases),
         "allowedLicenseExpressionCount": len(policy.allowed_license_expressions),
         "allowedScannerCount": len(policy.allowed_scanners),
         "exceptionCount": len(policy.exceptions),
