@@ -5,6 +5,7 @@ introduced behind tested fail-closed contracts before they are composed into a s
 """
 
 from .config import ConfigurationError, RuntimeMode, ServiceConfig
+from .redaction import RedactionPolicy, Redactor
 from .secrets import (
     FileSecretProvider,
     SecretMaterial,
@@ -19,6 +20,8 @@ __all__ = [
     "ConfigurationError",
     "FileSecretProvider",
     "RuntimeMode",
+    "RedactionPolicy",
+    "Redactor",
     "SecretMaterial",
     "SecretMaterialClosedError",
     "SecretProvider",
