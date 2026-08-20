@@ -735,14 +735,83 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             for statement in normalized
             if statement.startswith("SELECT * FROM INVOCATION_")
         )
-        self.assertTrue(decoded_queries)
-        self.assertTrue(all("LIMIT 2" in statement for statement in decoded_queries))
-        aggregate_queries = tuple(
-            statement for statement in normalized if "COUNT(*) AS ATTEMPT_COUNT" in statement
+        self.assertEqual(len(decoded_queries), 2)
+        self.assertIn("LIMIT 2", decoded_queries[0])
+        self.assertIn("ORDER BY ATTEMPT_NUMBER LIMIT 1001", decoded_queries[1])
+        self.assertFalse(any("COUNT(*) AS ATTEMPT_COUNT" in statement for statement in normalized))
+
+    def test_recovery_snapshot_decodes_and_rejects_unsafe_historical_attempts(self):
+        self.store.enqueue(job_spec(max_attempts=2))
+        first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)
+        self.assertTrue(self.store.fail(first, "retry", retry_at=T0))
+        second = self.store.claim("invocation-1", "worker-2", lease_seconds=10)
+        self.assertIsNotNone(second)
+
+        self.store._connection.execute(
+            """
+            UPDATE invocation_attempts
+            SET status = 'running', finished_at = NULL
+            WHERE invocation_id = ? AND attempt_number = 1
+            """,
+            ("invocation-1",),
         )
-        self.assertEqual(len(aggregate_queries), 1)
-        self.assertIn("COUNT(DISTINCT ATTEMPT_NUMBER)", aggregate_queries[0])
-        self.assertIn("COUNT(DISTINCT LEASE_EPOCH)", aggregate_queries[0])
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "historical invocation attempt"):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
+
+    def test_recovery_snapshot_rejects_non_monotonic_historical_epoch(self):
+        self.store.enqueue(job_spec(max_attempts=2))
+        first = self.store.claim("invocation-1", "worker-1", lease_seconds=10)
+        self.assertTrue(self.store.fail(first, "retry", retry_at=T0))
+        second = self.store.claim("invocation-1", "worker-2", lease_seconds=10)
+        self.assertIsNotNone(second)
+
+        self.store._connection.execute(
+            """
+            UPDATE invocation_attempts SET lease_epoch = 3
+            WHERE invocation_id = ? AND attempt_number = 1
+            """,
+            ("invocation-1",),
+        )
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "strictly increasing"):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
+
+    def test_recovery_snapshot_rejects_histories_above_the_supported_limit(self):
+        self.store.enqueue(job_spec(max_attempts=1_001))
+        self.store._connection.execute(
+            """
+            UPDATE invocation_jobs
+            SET attempts_started = 1001, lease_epoch = 1001
+            WHERE invocation_id = ?
+            """,
+            ("invocation-1",),
+        )
+        self.store._connection.executemany(
+            """
+            INSERT INTO invocation_attempts (
+                attempt_id, invocation_id, attempt_number, lease_epoch,
+                worker_id, lease_token_digest, status, started_at,
+                heartbeat_at, lease_expires_at, finished_at, error
+            ) VALUES (?, 'invocation-1', ?, ?, 'worker', ?, 'failed', ?, ?, ?, ?, 'seeded')
+            """,
+            (
+                (
+                    f"attempt-{number}",
+                    number,
+                    number,
+                    "0" * 64,
+                    "2026-08-20T00:00:00.000000Z",
+                    "2026-08-20T00:00:00.000000Z",
+                    "2026-08-20T00:00:01.000000Z",
+                    "2026-08-20T00:00:01.000000Z",
+                )
+                for number in range(1, 1_002)
+            ),
+        )
+
+        with self.assertRaisesRegex(InvocationIntegrityError, "recovery limit"):
+            self.store.recovery_snapshot_for_task("session-1", "task-1")
 
     def test_recovery_snapshot_remains_consistent_while_wal_writer_advances_heartbeat(self):
         self.store.enqueue(job_spec())

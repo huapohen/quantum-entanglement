@@ -163,14 +163,15 @@ The runtime must not acquire a second implicit in-memory store. An in-memory sto
 durable recovery source across processes or restarts.
 
 `SQLiteInvocationAttemptStore.recovery_snapshot_for_task` implements the read boundary. It
-opens one deferred read transaction, decodes at most one job and one current attempt, and uses
-aggregate count/min/max values to prove that attempt numbers are contiguous without loading
-the complete history. Distinct attempt-number and lease-epoch counts reject duplicate
-identities even if the live catalog is corrupted after startup. The snapshot also
-cross-checks current attempt identity, epoch, owner,
-token digest, heartbeat, lease deadline, terminal status, and result reference. Concurrent WAL
-writers may advance the live job while this read is in progress, but every row returned to the
-coordinator comes from the same pre-advance database snapshot.
+opens one deferred read transaction, decodes at most one job, and streams at most 1,001 attempt
+rows in attempt-number order. Recovery supports at most 1,000 attempts and rejects the 1,001st
+row without allocating an unbounded history. Every row is fully decoded and validated; attempt
+numbers must be contiguous, lease epochs must be strictly increasing, and every non-current
+attempt must be `FAILED` or `EXPIRED`. Only the current attempt is retained for the returned
+snapshot. The snapshot then cross-checks current attempt identity, epoch, owner, token digest,
+heartbeat, lease deadline, terminal status, and result reference. Concurrent WAL writers may
+advance the live job while this read is in progress, but every row returned to the coordinator
+comes from the same pre-advance database snapshot.
 
 ## Pure decision API
 
