@@ -46,7 +46,7 @@ or directly constructing an authentication-result value must never cross that bo
 | Reflection mutates an issued object | Validation compares every field with the issuer-owned snapshot and fails closed | Sandboxing of malicious in-process plugins |
 | Credential leaks through errors or retained state | Credential enters as a bounded `SecretMaterial` lease, is always closed, is absent from context/error fields, and translated failures detach the raw exception chain | Admission-buffer wiping, safe logs/traces, provider audit |
 | Authenticator throws or returns an unexpected value | Stable redacted failure code; no permissive fallback | Provider health, alerting, retry/rate policy |
-| Authenticator returns stale/future/overlong evidence | Service-owned clock, skew bound, expiry, and maximum TTL reject it | Host-clock rollback detection and trusted time operations |
+| Authenticator returns stale/future/overlong evidence or the host clock rolls back | Service-owned clock, skew bound, expiry, maximum TTL, and one issuer-local monotonic high-water reject revival; an in-skew rollback freezes logical time | Trusted time synchronization/monitoring and durable time policy for persistent authorization |
 | Identity or membership changes after issuance | Preserve provider identity, identity revision, scope revision, and evidence fingerprint for action-time refresh | Authoritative action-time reauthentication and membership/policy revision comparison |
 | Tenant-wide context becomes a workspace wildcard | Workspace matching is exact; `None` matches only `None` | Explicit separately reviewed tenant-wide operation model |
 | Parsed protocol sender is treated as authenticated | Documentation and API keep `ActorRef` outside the issuance boundary | Adapter contract tests and authenticated protocol/API composition |
@@ -81,17 +81,21 @@ evidence values remain data when received from anywhere else.
 | `CallerRequestContext` | Strict exact-dict parser for request/subject/tenant/workspace claims; unknown fields and coercion fail | Authentication, membership, or authorization |
 | `AuthenticatedRequestBinding` | Bounded canonical adapter-return shape with provider principal, exact scope, revisions, evidence fingerprint, and lifetime | A caller-constructible token or portable attestation |
 | `RequestAuthenticator` | Synchronous injected port called only by the issuer with a read-only credential view and service audience/time | OIDC, JWT, mTLS, JWKS, session, or membership implementation |
-| `RequestContextIssuer.issue` | Reserves bounded capacity, consumes one exact `SecretMaterial`, calls the configured authenticator, validates exact binding/time, registers one context, and always attempts credential wipe | Replay defense, full request authorization, durable session issuance, or guaranteed erasure after a wipe primitive fails |
+| `RequestContextIssuer.issue` | Reserves bounded capacity, consumes one exact `SecretMaterial`, serializes initial/completion/registration clock snapshots, validates exact binding/time, registers one context, and always attempts credential wipe | Replay defense, full request authorization, durable session issuance, or guaranteed erasure after a wipe primitive fails |
 | `RequestContext` | Opaque, non-copyable, non-pickleable handle whose exact object and field snapshot are registered by one issuer | A bearer token, serialized credential, cross-process identity, or authority by property access |
 | `prepare_reauthorization` | Same-issuer object check, tamper/expiry/clock check, exact `AccessRequest` request/subject/tenant/workspace match, and a bounded basis for current-state lookup | Current reauthentication, current membership, RBAC allow, approval, or effect permission |
 | `ReauthorizationBasis` | Preserves principal/subject/scope, identity/scope revisions, evidence fingerprint and observation/expiry times; representation is redacted | A trusted input when constructed or received independently |
 | `retire` / `close` | Invalidate one exact handle or every handle; contexts never survive issuer replacement | Distributed revocation or durable logout |
 
-Successful authentication resamples service time after the adapter returns. A slow adapter
-cannot issue a result that expired while it was running, and clock regression beyond the
-configured skew fails closed. Active plus in-flight contexts share one hard capacity bound,
-so a full issuer rejects before another authenticator call. Dead and expired entries are
-pruned before capacity is reserved.
+Successful authentication resamples service time after the adapter returns and again while
+holding the registry lock immediately before registration. Every clock sample, high-water
+mutation, expiry prune, registration, preparation, retirement, and close operation on the
+same issuer is serialized. A slow adapter cannot issue a result that expired while it was
+running. A physical clock regression within the configured skew returns the prior logical
+high-water instead of moving time backward; a larger regression fails closed. Active plus
+in-flight contexts share one hard capacity bound, so a full issuer rejects before another
+authenticator call. Dead and expired entries are pruned against logical time before capacity
+is reserved and cannot reappear after a physical rollback.
 
 ## 5. Required issued fields and invariants
 
@@ -109,7 +113,16 @@ Every identifier and revision uses a bounded canonical alphabet. Times are timez
 UTC values. The issuer accepts only exact result/context classes, snapshots all values, and
 uses a service-owned clock. It rejects an expired result, an observation too far in the
 future, a lifetime above the configured maximum, a scope mismatch, or an audience/provider
-mismatch.
+mismatch. Time comparisons use differences rather than unchecked upper-bound additions, so
+valid UTC values near `datetime.max` fail or succeed by policy instead of leaking an
+`OverflowError`.
+
+The time high-water is intentionally process-local to the issuer. Contexts are also
+process-local and invalid after issuer replacement, so no old handle crosses a reset. This
+does not provide a durable time authority for capability, key, receipt, database, or
+multi-process decisions. Operators must not recreate an issuer merely to bypass a rollback
+alarm; stop admission, repair trusted time, invalidate old handles, and perform the wider
+authorization-state reconciliation required by the service runbook.
 
 Local context validation is not action-time authorization and not a reservation. It proves
 only that this issuer produced this unchanged handle for this exact request scope and that
@@ -208,11 +221,13 @@ git diff --check
 ```
 
 The negative suite covers strict parsing, scope/result mismatch, future/stale/overlong
-authentication, slow-authenticator expiry, clock regression/failure, credential wiping,
-detached adapter/clock/result/wipe exception chains, compound authentication-plus-wipe
-failure, capacity and in-flight reservation, foreign issuer, direct construction,
-copy/pickle, exact request/subject/tenant/workspace matching, tenant-wide non-wildcard
-behavior, reflective mutation quarantine, expiry, retirement, and issuer shutdown.
+authentication, slow-authenticator expiry, issuer-local high-water expiry revival, in-skew
+logical-time freeze, failed and concurrent clock samples, UTC upper-bound comparisons,
+credential wiping, detached adapter/clock/result/wipe exception chains, compound
+authentication-plus-wipe failure, capacity and in-flight reservation, foreign issuer,
+direct construction, copy/pickle, exact request/subject/tenant/workspace matching,
+tenant-wide non-wildcard behavior, reflective mutation quarantine, expiry, serialized
+prepare/retire, concurrent close/registration, retirement, and issuer shutdown.
 
 The implementation history starts at `fa0c422`; public export is `ba072c3`. Exact full-suite
 and release evidence must be regenerated after this documentation commit is part of the
@@ -235,7 +250,8 @@ Specific residual limitations of this slice are:
 - no tenant/workspace scope on every repository or legacy-data migration rehearsal;
 - no cryptographic/distributed context, restart continuity, cross-process sharing, or
   defense against arbitrary code already executing inside the trusted Python process;
-- no host-clock high-water store or rollback protection beyond per-operation skew checks;
+- no trusted infrastructure time/offset SLO or durable high-water policy outside the
+  process-local request-context issuer;
 - no body/decompression/rate/per-tenant quota admission boundary; and
 - no proof that a future authenticator's evidence, identity mapping, membership freshness,
   key custody, failure behavior, or observability is correct.

@@ -49,7 +49,7 @@ untrusted tenants.
 | Authentication composition | The process-local issuance primitive exists, but a real OIDC/JWT or mTLS adapter, authenticated transport, action-time refresh, and mandatory authorizer composition do not; never accept `subject_id` from an unauthenticated body |
 | Membership freshness | Authoritative membership revision/epoch and action-time lookup; `Member` itself contains no revision or freshness timestamp |
 | Production key custody | KMS/HSM-backed signing and verification plus a durable key registry and persistent retired-`kid` tombstones |
-| Host-clock rollback defense | Trusted time synchronization, rollback detection, and a service-time high-water policy; `SystemClock` is wall-clock time |
+| Host-clock rollback defense | `RequestContextIssuer` has only an issuer-local monotonic high-water; authorization still requires trusted time synchronization, rollback detection, and a durable service-time policy because `SystemClock` is wall-clock time |
 | Transport and capacity limits | Compressed/decompressed body, JSON depth, rate, concurrency, and total per-tenant storage/cost quotas before domain construction and across retained state |
 | One-time execution or replay defense | Transactional inbox, idempotency key, effect receipt, and receiver reconciliation; `request_id` and a capability nonce are not an effect receipt |
 | Tamper-evident audit storage | Append-only authenticated audit sink/checkpoint; `decision_id` is SHA-256 content addressing, not a signature or MAC |
@@ -331,7 +331,11 @@ Availability loss is preferable to accepting a proof under uncertain key state.
 Authorization uses `ServerClock`; requests contain no evaluation time. This prevents a
 caller from backdating a request, but `SystemClock` still follows the host wall clock.
 A host/NTP rollback can move an expired capability or key back into its validity interval.
-The current slice has no durable authorization-time high-water mark.
+`RequestContextIssuer` now serializes its own process-local samples, freezes logical time for
+an in-skew rollback, and fails closed beyond skew; its handles do not survive issuer
+replacement. Capability/key authorization and persistent state still have no durable shared
+authorization-time high-water mark, so the request-context control must not be generalized
+to those paths.
 
 Production requirements are therefore:
 
