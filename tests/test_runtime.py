@@ -2,6 +2,7 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
+from quantum_entanglement.plugins import HookPoint, KernelPlugin
 from quantum_entanglement.policy import PolicyEngine
 from quantum_entanglement.protocol import (
     ActionIntent,
@@ -122,6 +123,44 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             sum(event.event.event_type == "task.created" for event in events),
+            1,
+        )
+
+    async def test_failed_plan_created_hook_does_not_reverse_committed_initialization(self):
+        calls = 0
+
+        async def worker(invocation):
+            nonlocal calls
+            calls += 1
+            return AgentResult("done")
+
+        async def fail_plan_created(context):
+            raise RuntimeError("injected plan-created hook failure")
+
+        self.kernel.register_agent(registration("worker", worker))
+        self.kernel.plugins.install(
+            KernelPlugin(
+                "fail-plan-created",
+                {HookPoint.PLAN_CREATED: fail_plan_created},
+            )
+        )
+        plan = WorkflowPlan(
+            "plan-hook-failure",
+            "初始化提交后的观察器失败不得反转命令",
+            "user",
+            (TaskSpec("task", "worker", handoff(), task_id="task"),),
+            plan_id="plan-hook-failure",
+        )
+
+        with self.assertLogs("quantum_entanglement.runtime", level="ERROR") as captured:
+            result = await self.kernel.run(plan)
+
+        self.assertTrue(result.completed)
+        self.assertEqual(calls, 1)
+        self.assertTrue(any("plan.created hook failed" in message for message in captured.output))
+        events = self.kernel.event_store.read_stream(f"session:{plan.session_id}")
+        self.assertEqual(
+            sum(event.event.event_type == "workflow.plan.created" for event in events),
             1,
         )
 

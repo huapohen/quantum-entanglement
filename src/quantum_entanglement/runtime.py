@@ -234,6 +234,16 @@ class OrchestratorKernel:
         context: Dict[str, Any] = {"storedEvent": stored, "kernel": self}
         await self.plugins.emit(HookPoint.EVENT_APPENDED, context)
 
+    async def _emit_post_commit_observation(
+        self,
+        point: HookPoint,
+        context: Dict[str, Any],
+    ) -> None:
+        try:
+            await self.plugins.emit(point, context)
+        except Exception:
+            _LOGGER.exception("%s hook failed after durable commit", point.value)
+
     async def _emit_appended_batch(self, stored_events: Tuple[StoredEvent, ...]) -> None:
         if not stored_events:
             return
@@ -428,7 +438,10 @@ class OrchestratorKernel:
         self._plans[plan.session_id] = plan
         self._graphs[plan.session_id] = graph
         await self._emit_appended_batch(stored_events)
-        await self.plugins.emit(HookPoint.PLAN_CREATED, {"plan": plan, "graph": graph})
+        await self._emit_post_commit_observation(
+            HookPoint.PLAN_CREATED,
+            {"plan": plan, "graph": graph},
+        )
         return graph
 
     @staticmethod
