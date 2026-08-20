@@ -53,6 +53,9 @@ queued (zero attempts) --claim--> running --complete CAS--> succeeded
 
 `succeeded`, `failed` and `canceled` are terminal. Cancellation is reserved in schema but
 is not exposed until the cancellation/action-receipt contract is implemented.
+Persisted decoding enforces the same budget boundary: an attempted `queued` job has remaining
+budget, while a `failed` job has consumed exactly `max_attempts`. Contradictory restored rows
+fail integrity rather than being normalized into another status.
 
 ## Ownership and fencing invariants
 
