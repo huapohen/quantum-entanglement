@@ -172,7 +172,7 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
             InvocationRecoveryDecision.WAITING_ACTIVE_LEASE,
         )
 
-    def test_unverified_receipt_never_authorizes_attempt_reconciliation(self) -> None:
+    def test_running_and_queued_candidate_result_reference_remains_unverified(self) -> None:
         spec, lease, running_snapshot = self.running("receipt-split")
         binding = binding_for(spec)
         receipt = receipt_for(binding, running_snapshot)

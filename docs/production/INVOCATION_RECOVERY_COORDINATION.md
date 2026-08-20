@@ -99,14 +99,17 @@ binding or integrity mismatch fails before this matrix is consulted.
 | `QUEUED` or `FAILED` | caller-provided receipt for the latest attempt | `BLOCKED_RECEIPT_UNVERIFIED` | future trusted receipt reader | reconcile, retry, or erase the candidate receipt |
 | `CANCELED` | any | unsupported/integrity failure in the current API | future authorized cancellation reconciler | project cancellation without a durable authorized receipt |
 
-A caller-provided receipt whose invocation binding, result reference, attempt ID/number, or
-lease epoch/token differs from the supplied job snapshot is an integrity failure. The current
-boundary checks only that `manifest_digest` has canonical SHA-256 shape, `stream_id` has the
-expected session-derived shape, and `stream_sequence` is positive. It has no trusted receipt
-store against which to prove the manifest contents, receipt identity, or actual durable stream
-position. Those candidate fields are therefore future-contract data, not verified evidence.
-Receipt presence on a first-claim queued job is also contradictory because no attempt exists to
-own it.
+A caller-provided receipt whose invocation binding or attempt ID/number/lease epoch/token differs
+from the supplied job snapshot is an integrity failure. Its `result_ref` is compared only when a
+`SUCCEEDED` job itself carries a durable result reference. A candidate beside a `RUNNING`,
+attempted `QUEUED`, or `FAILED` job has no job result reference to compare and is only
+shape-checked before returning `BLOCKED_RECEIPT_UNVERIFIED`. The current boundary also checks
+only that `manifest_digest` has canonical SHA-256 shape, `stream_id` has the expected
+session-derived shape, and `stream_sequence` is positive. It has no trusted receipt store against
+which to prove the result reference, manifest contents, receipt identity, or actual durable
+stream position. Those candidate fields are therefore future-contract data, not verified
+evidence. Receipt presence on a first-claim queued job is contradictory because no attempt exists
+to own it.
 
 `FIRST_CLAIM_READY` means only that the existing durable job has never been attempted and is
 eligible for the attempt-store claim protocol. A queued retry is not equivalent: the prior
