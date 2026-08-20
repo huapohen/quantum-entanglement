@@ -294,7 +294,7 @@ class RequestContextIssuanceTests(unittest.TestCase):
 
         context = issuer.issue(self.claims, self.credential())
 
-        self.assertEqual(clock.calls, 2)
+        self.assertEqual(clock.calls, 3)
         self.assertEqual(context.issued_at, NOW)
 
     def test_authentication_completion_resamples_time_and_rejects_stale_result(self):
@@ -528,10 +528,10 @@ class RequestContextIssuanceTests(unittest.TestCase):
         issuer, _ = self.make_issuer(factory)
         register = RequestContextIssuer._register
 
-        def mutate_then_register(selected_issuer, binding, now):
+        def mutate_then_register(selected_issuer, binding, expected):
             object.__setattr__(returned.tenant_id, "value", "tenant-b")
             object.__setattr__(returned.workspace_id, "value", "workspace-b")
-            return register(selected_issuer, binding, now)
+            return register(selected_issuer, binding, expected)
 
         with patch.object(RequestContextIssuer, "_register", mutate_then_register):
             context = issuer.issue(self.claims, self.credential())
@@ -771,11 +771,233 @@ class RequestContextIssuanceTests(unittest.TestCase):
         )
 
         self.clock.current = NOW
-        current = issuer.issue(self.claims, self.credential())
-        self.clock.current = NOW - timedelta(seconds=31)
+        credential = self.credential()
         self.assert_code(
             "request_context_time_regressed",
-            lambda: issuer.prepare_reauthorization(current, self.access_request()),
+            lambda: issuer.issue(self.claims, credential),
+        )
+        self.assertTrue(credential.closed)
+
+    def test_clock_high_water_prevents_context_expiry_revival(self):
+        issuer, _ = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+        self.clock.current = NOW + timedelta(minutes=4, seconds=59)
+        near_expiry = issuer.prepare_reauthorization(context, self.access_request())
+        self.assertEqual(near_expiry.prepared_at, self.clock.current)
+
+        self.clock.current = NOW
+        self.assert_code(
+            "request_context_time_regressed",
+            lambda: issuer.prepare_reauthorization(context, self.access_request()),
+        )
+
+        self.clock.current = NOW + timedelta(minutes=5)
+        self.assert_code(
+            "request_context_expired",
+            lambda: issuer.prepare_reauthorization(context, self.access_request()),
+        )
+        self.clock.current -= timedelta(seconds=1)
+        self.assert_code(
+            "request_context_untrusted",
+            lambda: issuer.prepare_reauthorization(context, self.access_request()),
+        )
+
+    def test_in_skew_rollback_freezes_the_logical_snapshot_time(self):
+        issuer, _ = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+        self.clock.current = NOW + timedelta(seconds=20)
+        forward = issuer.prepare_reauthorization(context, self.access_request())
+
+        self.clock.current = NOW - timedelta(seconds=10)
+        frozen = issuer.prepare_reauthorization(context, self.access_request())
+
+        self.assertEqual(forward.prepared_at, NOW + timedelta(seconds=20))
+        self.assertEqual(frozen.prepared_at, forward.prepared_at)
+
+    def test_completion_high_water_is_the_issued_snapshot_time(self):
+        class SequenceClock:
+            def __init__(self):
+                self.values = iter(
+                    (
+                        NOW,
+                        NOW + timedelta(seconds=20),
+                        NOW - timedelta(seconds=10),
+                    )
+                )
+
+            def now(self):
+                return next(self.values)
+
+        issuer, _ = self.make_issuer(clock=SequenceClock())
+
+        context = issuer.issue(self.claims, self.credential())
+
+        self.assertEqual(context.authenticated_at, NOW)
+        self.assertEqual(context.issued_at, NOW + timedelta(seconds=20))
+
+    def test_utc_upper_bound_validation_does_not_overflow(self):
+        upper = datetime.max.replace(tzinfo=timezone.utc)
+        clock = FixedClock(upper - timedelta(microseconds=2))
+
+        def upper_binding(*, claims, audience, at):
+            return self.binding(
+                claims=claims,
+                audience=audience,
+                at=upper - timedelta(minutes=5),
+            )
+
+        issuer, _ = self.make_issuer(
+            upper_binding,
+            clock=clock,
+        )
+        context = issuer.issue(self.claims, self.credential())
+        self.assertEqual(context.expires_at, upper)
+
+        issuer.prepare_reauthorization(context, self.access_request())
+        clock.current = upper
+        self.assert_code(
+            "request_context_expired",
+            lambda: issuer.prepare_reauthorization(context, self.access_request()),
+        )
+
+    def test_clock_failure_does_not_lower_or_corrupt_the_high_water(self):
+        class SwitchableClock(FixedClock):
+            def __init__(self):
+                super().__init__()
+                self.failure = False
+
+            def now(self):
+                if self.failure:
+                    raise RuntimeError("clock-state-secret-canary")
+                return super().now()
+
+        clock = SwitchableClock()
+        issuer, _ = self.make_issuer(clock=clock)
+        context = issuer.issue(self.claims, self.credential())
+        clock.current = NOW + timedelta(seconds=20)
+        forward = issuer.prepare_reauthorization(context, self.access_request())
+
+        clock.failure = True
+        self.assert_code(
+            "request_context_clock_unavailable",
+            lambda: issuer.prepare_reauthorization(context, self.access_request()),
+        )
+        clock.failure = False
+        clock.current = NOW
+        frozen = issuer.prepare_reauthorization(context, self.access_request())
+        self.assertEqual(frozen.prepared_at, forward.prepared_at)
+
+    def test_same_issuer_serializes_concurrent_clock_samples(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class OverlapDetectingClock:
+            def __init__(self):
+                self.guard = threading.Lock()
+                self.calls = 0
+                self.active = 0
+                self.overlapped = False
+
+            def now(self):
+                with self.guard:
+                    self.calls += 1
+                    selected_call = self.calls
+                    self.active += 1
+                    self.overlapped = self.overlapped or self.active > 1
+                try:
+                    if selected_call == 1:
+                        entered.set()
+                        if not release.wait(5):
+                            raise RuntimeError("test clock timeout")
+                    return NOW
+                finally:
+                    with self.guard:
+                        self.active -= 1
+
+        clock = OverlapDetectingClock()
+        issuer, _ = self.make_issuer(clock=clock, max_active_contexts=2)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(issuer.issue, self.claims, self.credential())
+            self.assertTrue(entered.wait(2))
+            second = executor.submit(issuer.issue, self.claims, self.credential())
+            release.set()
+            contexts = (first.result(timeout=2), second.result(timeout=2))
+
+        self.assertTrue(all(isinstance(context, RequestContext) for context in contexts))
+        self.assertFalse(clock.overlapped)
+
+    def test_close_is_serialized_with_completion_clock_and_fences_registration(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingCompletionClock(FixedClock):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def now(self):
+                self.calls += 1
+                if self.calls == 2:
+                    entered.set()
+                    if not release.wait(5):
+                        raise RuntimeError("test completion clock timeout")
+                return super().now()
+
+        clock = BlockingCompletionClock()
+        issuer, _ = self.make_issuer(clock=clock)
+        credential = self.credential()
+        context = None
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            pending = executor.submit(issuer.issue, self.claims, credential)
+            self.assertTrue(entered.wait(2))
+            closing = executor.submit(issuer.close)
+            self.assertFalse(closing.done())
+            release.set()
+            try:
+                context = pending.result(timeout=2)
+            except RequestContextError as error:
+                self.assertEqual(error.code, "request_context_issuer_closed")
+                self.assertIsNone(error.__context__)
+            closing.result(timeout=2)
+
+        self.assertTrue(credential.closed)
+        if context is not None:
+            self.assert_code(
+                "request_context_issuer_closed",
+                lambda: issuer.prepare_reauthorization(context, self.access_request()),
+            )
+
+    def test_retire_is_serialized_after_an_in_flight_snapshot(self):
+        issuer, _ = self.make_issuer()
+        context = issuer.issue(self.claims, self.credential())
+        entered = threading.Event()
+        release = threading.Event()
+        trusted_snapshot = RequestContextIssuer._trusted_snapshot
+
+        def blocking_snapshot(selected_issuer, selected_context):
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("test snapshot timeout")
+            return trusted_snapshot(selected_issuer, selected_context)
+
+        with patch.object(RequestContextIssuer, "_trusted_snapshot", blocking_snapshot):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                preparing = executor.submit(
+                    issuer.prepare_reauthorization,
+                    context,
+                    self.access_request(),
+                )
+                self.assertTrue(entered.wait(2))
+                retiring = executor.submit(issuer.retire, context)
+                self.assertFalse(retiring.done())
+                release.set()
+                basis = preparing.result(timeout=2)
+                retiring.result(timeout=2)
+
+        self.assertEqual(basis.context_id, context.context_id)
+        self.assert_code(
+            "request_context_untrusted",
+            lambda: issuer.prepare_reauthorization(context, self.access_request()),
         )
 
     def test_retired_context_cannot_be_reused(self):

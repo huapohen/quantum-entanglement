@@ -395,6 +395,7 @@ class RequestContextIssuer:
         "__authenticator_id",
         "__clock",
         "__closed",
+        "__last_observed_at",
         "__lock",
         "__max_active_contexts",
         "__max_clock_skew",
@@ -443,6 +444,7 @@ class RequestContextIssuer:
         ] = {}
         self.__lock = threading.RLock()
         self.__closed = False
+        self.__last_observed_at: Optional[datetime] = None
         self.__pending = 0
 
     def issue(
@@ -473,10 +475,10 @@ class RequestContextIssuer:
         reserved = False
         try:
             expected = self._snapshot_claims(claims)
-            now = self._clock_now()
             with self.__lock:
                 if self.__closed:
                     raise RequestContextError("request_context_issuer_closed")
+                now = self._clock_now()
                 self._prune(now)
                 if len(self.__active) + self.__pending >= self.__max_active_contexts:
                     raise RequestContextError("request_context_capacity_exceeded")
@@ -505,10 +507,8 @@ class RequestContextIssuer:
             if authentication_failed:
                 raise RequestContextError("request_authentication_failed")
             completed_at = self._clock_now()
-            if completed_at + self.__max_clock_skew < now:
-                raise RequestContextError("request_context_time_regressed")
             trusted = self._validate_binding(binding, expected, completed_at)
-            return self._register(trusted, completed_at)
+            return self._register(trusted, expected)
         finally:
             try:
                 if reserved:
@@ -525,14 +525,11 @@ class RequestContextIssuer:
         """Validate exact local context/request scope and return non-authorizing evidence."""
 
         trusted_request = self._snapshot_access_request(request)
-        now = self._clock_now()
         with self.__lock:
             if self.__closed:
                 raise RequestContextError("request_context_issuer_closed")
+            now = self._clock_now()
             snapshot = self._trusted_snapshot(context)
-            if now + self.__max_clock_skew < snapshot.issued_at:
-                self.__active.pop(id(context), None)
-                raise RequestContextError("request_context_time_regressed")
             if snapshot.expires_at <= now:
                 self.__active.pop(id(context), None)
                 raise RequestContextError("request_context_expired")
@@ -627,16 +624,23 @@ class RequestContextIssuer:
             raise ValueError(f"{field_name} is outside the supported range")
 
     def _clock_now(self) -> datetime:
-        normalized: Optional[datetime] = None
-        clock_failed = False
-        try:
-            value = self.__clock.now()
-            normalized = _as_utc(value, "clock.now()")
-        except Exception:
-            clock_failed = True
-        if clock_failed or normalized is None:
-            raise RequestContextError("request_context_clock_unavailable")
-        return normalized
+        with self.__lock:
+            normalized: Optional[datetime] = None
+            clock_failed = False
+            try:
+                value = self.__clock.now()
+                normalized = _as_utc(value, "clock.now()")
+            except Exception:
+                clock_failed = True
+            if clock_failed or normalized is None:
+                raise RequestContextError("request_context_clock_unavailable")
+            previous = self.__last_observed_at
+            if previous is not None and normalized < previous:
+                if previous - normalized > self.__max_clock_skew:
+                    raise RequestContextError("request_context_time_regressed")
+                return previous
+            self.__last_observed_at = normalized
+            return normalized
 
     @staticmethod
     def _close_credential(credential: SecretMaterial) -> None:
@@ -727,45 +731,50 @@ class RequestContextIssuer:
         )
         if actual_scope != expected_scope:
             raise RequestContextError("request_authentication_binding_mismatch")
-        if trusted.authenticated_at > now + self.__max_clock_skew:
+        if (
+            trusted.authenticated_at > now
+            and trusted.authenticated_at - now > self.__max_clock_skew
+        ):
             raise RequestContextError("request_authentication_time_invalid")
         if trusted.expires_at <= now:
             raise RequestContextError("request_authentication_expired")
         if trusted.expires_at - trusted.authenticated_at > self.__max_context_ttl:
             raise RequestContextError("request_authentication_ttl_exceeded")
-        if trusted.expires_at > now + self.__max_context_ttl:
+        if trusted.expires_at - now > self.__max_context_ttl:
             raise RequestContextError("request_authentication_ttl_exceeded")
         return trusted
 
     def _register(
         self,
         binding: AuthenticatedRequestBinding,
-        now: datetime,
+        expected: CallerRequestContext,
     ) -> RequestContext:
         with self.__lock:
             if self.__closed:
                 raise RequestContextError("request_context_issuer_closed")
+            now = self._clock_now()
             self._prune(now)
             if len(self.__active) >= self.__max_active_contexts:
                 raise RequestContextError("request_context_capacity_exceeded")
+            trusted = self._validate_binding(binding, expected, now)
             context_id = self._new_context_id()
             snapshot = _ContextSnapshot(
                 context_id=context_id,
-                authenticator_id=binding.authenticator_id,
-                audience=binding.audience,
-                request_id=binding.request_id,
-                principal_id=binding.principal_id,
-                subject_id=binding.subject_id,
-                tenant_value=str(binding.tenant_id),
+                authenticator_id=trusted.authenticator_id,
+                audience=trusted.audience,
+                request_id=trusted.request_id,
+                principal_id=trusted.principal_id,
+                subject_id=trusted.subject_id,
+                tenant_value=str(trusted.tenant_id),
                 workspace_value=(
-                    str(binding.workspace_id) if binding.workspace_id is not None else None
+                    str(trusted.workspace_id) if trusted.workspace_id is not None else None
                 ),
-                identity_revision=binding.identity_revision,
-                scope_revision=binding.scope_revision,
-                evidence_fingerprint=binding.evidence_fingerprint,
-                authenticated_at=binding.authenticated_at,
+                identity_revision=trusted.identity_revision,
+                scope_revision=trusted.scope_revision,
+                evidence_fingerprint=trusted.evidence_fingerprint,
+                authenticated_at=trusted.authenticated_at,
                 issued_at=now,
-                expires_at=binding.expires_at,
+                expires_at=trusted.expires_at,
             )
             context = RequestContext(snapshot, _CONTEXT_CONSTRUCTION_TOKEN)
             self.__active[id(context)] = (weakref.ref(context), snapshot)
