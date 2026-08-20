@@ -1,6 +1,80 @@
 # 综合报告｜人与多 Agent 群聊协同产品：调研、架构与实现
 
-> **同步状态**：2026-08-20 已从本地单一真相源 [`analysis_report/multi_agent_collaboration_report.md`](https://github.com/huapohen/quantum-entanglement/blob/main/analysis_report/multi_agent_collaboration_report.md) 全量更新。当前实现基线为 531 项 clean-clone 测试；完整 commit/tree、已实现能力和生产边界以 [07｜当前实现证据与生产边界](https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853) 为准。
+> **同步状态**：2026-08-20 已从本地单一真相源 [`analysis_report/multi_agent_collaboration_report.md`](https://github.com/huapohen/quantum-entanglement/blob/main/analysis_report/multi_agent_collaboration_report.md) 更新。文中的 531 项测试只属于历史基线 `e4cbf040579bf1f33c2b7692d2fbd6944d837952`，不得当作当前主线。当前生产边界见 [07｜当前实现证据与生产边界](https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853)；最新 invocation 事务阶段证据见 [10｜认证化 Invocation 事务恢复证据](https://app.notion.com/p/3c2ead4b996e8105b0cad304ef28dd38)。
+
+## Notion 专题与证据导航
+
+- [00｜范围、证据与核心发现](https://app.notion.com/p/3c1ead4b996e81c991e5f915de1828bd)
+- [01｜静然实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
+- [02｜LangGraph、Harness 与框架深潜](https://app.notion.com/p/3c1ead4b996e81ed961ed6ae6ff3a8de)
+- [03｜Agent 协议全景与选型](https://app.notion.com/p/3c1ead4b996e81c49a7ac20751c89cc7)
+- [04｜多 Agent 竞品全景](https://app.notion.com/p/3c1ead4b996e811fa520ed44582eeb1b)
+- [05｜目标产品与架构蓝图](https://app.notion.com/p/3c1ead4b996e818babf2c980e843cb09)
+- [06｜竞品官方信源、许可证与实现核验](https://app.notion.com/p/3c1ead4b996e81f9b5eddebebc96d30a)
+- [07｜当前实现证据与生产边界](https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853)
+- [10｜认证化 Invocation 事务恢复证据](https://app.notion.com/p/3c2ead4b996e8105b0cad304ef28dd38)
+- [证据库｜飞书与语雀调研截图（只读）](https://app.notion.com/p/3c1ead4b996e8101997fecd0302714ba)
+
+> 项目代号：Quantum Entanglement
+> 面向方向：WanWork 人与 Agent 协同办公
+> 报告日期：2026-08-19
+> 本地单一真相源：`analysis_report/`
+> 私有 GitHub 仓库：[https://github.com/huapohen/quantum-entanglement](https://github.com/huapohen/quantum-entanglement)
+> Notion 镜像：[https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44?pvs=204](https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44)
+> 安全边界：飞书/企微全程只读，未发送、回复、评论、@ 或上传任何内容
+> **实现证据说明（2026-08-20）：** 第 9–11 节及文中的 531 项测试、142-commit 增量只绑定历史基线 `e4cbf040579bf1f33c2b7692d2fbd6944d837952`。后续实现已经继续演进；这些数字不得作为当前主线或发布证据。当前生产边界以 [07｜当前实现证据与生产边界](https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853) 及更新日期更晚、明确绑定完整 source commit/tree 的证据报告为准。
+
+## 0. 执行摘要
+
+我们要做的不是“把多个机器人拉进群”，也不是“一个主 Agent 用不同名字发言”。真正的产品是一个人与 Agent 的协作操作系统：
+
+- 每个 Agent 是有稳定身份、能力、权限、状态和责任的群成员；
+- 模糊目标可以被规划成显式任务图，但依赖、并行、失败和版本由确定性系统计算；
+- Agent 之间通过带验收、输入、产出、预算和授权的 handoff 协作；
+- 正式结果进入 append-only artifact，而不是埋在聊天消息里；
+- 群聊、任务图、artifact、`Needs You` 和审计时间线是同一事件流的不同投影；
+- 外部 Agent 用 A2A，工具/数据用 MCP，内部组织语义用 WanWork Coordination Envelope；
+- LangGraph 负责需要 checkpoint/interrupt 的长期流程，插件式 Harness 负责单个 Agent run，平台领域内核位于二者之上；
+- 人工不是异常分支，而是授权与责任体系中的正式参与者。
+
+本轮研究的最重要决策：
+
+1. **自研内部协作领域协议，但不自创公网 Agent 协议。**
+2. **平台持有状态，Agent 可做可替换的无状态 worker。**
+3. **Agent 必须独立发言，主 Agent 只协调和综合。**
+4. **`@Agent` 绕过 LLM 规划，但绝不绕过日志、政策、上下文和版本。**
+5. **LangGraph + DeepSeek Harness 不是二选一；二者都不应成为全部业务真相源。**
+6. **先做一个结果可见、验收清晰的高价值业务 Agent 团队，再抽象平台。**
+
+本仓库已经用可运行代码验证核心不变量。下述 2026-08-20 历史 clean baseline 固定为 `e4cbf040579bf1f33c2b7692d2fbd6944d837952`：531 项测试和 5 个本地 release gate 通过；本地 demo 完成 `@Agent` 直达、三 Agent 接力、版本化产出和因果事件。该历史快照还包含 durable delivery/attempt/artifact/projection、tenant authorization slice、备份恢复、迁移桥、canonical release evidence 与双构建制品门禁。它仍是预生产单节点内核，不是可部署的商业服务：正式 A2A/MCP、public admission、系统级 action-time authorization、完整 effect receipt、IM/UI、生产部署/观测、锁定供应链与端到端事务集成仍未完成。
+
+## 1. 研究目标与范围
+
+### 1.1 要回答的问题
+
+本报告重点研究：
+
+- 多 Agent 的编排：谁规划、谁调度、何时并行、如何失败传播；
+- 协作：角色、handoff、验收、修订、接管和 Agent 独立身份；
+- 通信：群聊、事件、任务协议、artifact、A2A/ACP/MCP；
+- 上下文：选择、预算、来源、压缩、遗漏和跨 Agent 传递；
+- 状态：平台/Agent/LangGraph/IM 分别持有什么；
+- 人机治理：授权、风险、审批、审计与不可逆动作；
+- 技术组合：静然实现、DeepSeek Harness、LangGraph、LangChain、Deep Agents；
+- 产品路径：如何避免“先建空平台”，先让用户得到真实业务结果。
+
+“日报 Agent”不属于本次业务范围，仅保留“先做可见成果，再平台化”的策略背景。
+
+### 1.2 资料来源
+
+本次使用四类资料：
+
+1. 用户提供的任务截图；
+2. 飞书“10 亿美金俱乐部”与本课题相关的历史消息，只读采集；
+3. 语雀多 Agent 产品、IM 与技术方案表，只读采集；
+4. 本地固定版本源码与官方协议/仓库。
+
+固定源码快照：
 
 | 项目 | commit/version | 用途 |
 | --- | --- | --- |
@@ -514,4 +588,3 @@ worker crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式
 ---
 
 来源：https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44?pvs=204
-
