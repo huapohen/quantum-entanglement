@@ -75,12 +75,14 @@ class RedactionPolicy:
     maximum_depth: int = 6
     maximum_items: int = 64
     maximum_string: int = 256
+    maximum_nodes: int = 1_024
 
     def __post_init__(self) -> None:
         for field, value, upper in (
             ("maximum_depth", self.maximum_depth, 32),
             ("maximum_items", self.maximum_items, 1_024),
             ("maximum_string", self.maximum_string, 4_096),
+            ("maximum_nodes", self.maximum_nodes, 100_000),
         ):
             if isinstance(value, bool) or not isinstance(value, int):
                 raise TypeError(f"{field} must be an integer")
@@ -100,11 +102,26 @@ class Redactor:
         """Return a JSON-safe result; internal failure returns a constant marker."""
 
         try:
-            return self._sanitize(value, depth=0, active=set())
+            return self._sanitize(
+                value,
+                depth=0,
+                active=set(),
+                remaining_nodes=[self.policy.maximum_nodes],
+            )
         except Exception:
             return "<redaction-failed>"
 
-    def _sanitize(self, value: Any, *, depth: int, active: set[int]) -> Any:
+    def _sanitize(
+        self,
+        value: Any,
+        *,
+        depth: int,
+        active: set[int],
+        remaining_nodes: list[int],
+    ) -> Any:
+        if remaining_nodes[0] == 0:
+            return "<redacted:node-budget>"
+        remaining_nodes[0] -= 1
         value_type = type(value)
         if value is None or value_type is bool:
             return value
@@ -123,12 +140,29 @@ class Redactor:
         if depth >= self.policy.maximum_depth:
             return "<redacted:depth-limit>"
         if value_type is dict:
-            return self._sanitize_dict(value, depth=depth, active=active)
+            return self._sanitize_dict(
+                value,
+                depth=depth,
+                active=active,
+                remaining_nodes=remaining_nodes,
+            )
         if value_type is list or value_type is tuple:
-            return self._sanitize_sequence(value, depth=depth, active=active)
+            return self._sanitize_sequence(
+                value,
+                depth=depth,
+                active=active,
+                remaining_nodes=remaining_nodes,
+            )
         return "<redacted:object>"
 
-    def _sanitize_dict(self, value: dict[Any, Any], *, depth: int, active: set[int]) -> Any:
+    def _sanitize_dict(
+        self,
+        value: dict[Any, Any],
+        *,
+        depth: int,
+        active: set[int],
+        remaining_nodes: list[int],
+    ) -> Any:
         identity = id(value)
         if identity in active:
             return "<redacted:cycle>"
@@ -136,17 +170,29 @@ class Redactor:
         try:
             items = tuple(islice(value.items(), self.policy.maximum_items))
             output: dict[str, Any] = {}
+            processed = 0
             for index, (key, item) in enumerate(items):
+                if remaining_nodes[0] == 0:
+                    break
                 if type(key) is not str or _SAFE_KEY.fullmatch(key) is None:
                     safe_key = f"invalidField{index}"
                 else:
                     safe_key = key
                 if self._is_sensitive_key(safe_key):
+                    remaining_nodes[0] -= 1
                     output[safe_key] = "<redacted>"
                 else:
-                    output[safe_key] = self._sanitize(item, depth=depth + 1, active=active)
-            if len(value) > len(items):
-                output["truncatedFields"] = len(value) - len(items)
+                    output[safe_key] = self._sanitize(
+                        item,
+                        depth=depth + 1,
+                        active=active,
+                        remaining_nodes=remaining_nodes,
+                    )
+                processed += 1
+            if len(value) > processed:
+                output["truncatedFields"] = len(value) - processed
+            if remaining_nodes[0] == 0 and processed < len(value):
+                output["redactionBudgetExceeded"] = True
             return output
         finally:
             active.remove(identity)
@@ -157,18 +203,30 @@ class Redactor:
         *,
         depth: int,
         active: set[int],
+        remaining_nodes: list[int],
     ) -> Any:
         identity = id(value)
         if identity in active:
             return "<redacted:cycle>"
         active.add(identity)
         try:
-            output = [
-                self._sanitize(item, depth=depth + 1, active=active)
-                for item in value[: self.policy.maximum_items]
-            ]
-            if len(value) > self.policy.maximum_items:
-                output.append(f"<truncated:{len(value) - self.policy.maximum_items}>")
+            output = []
+            for item in value[: self.policy.maximum_items]:
+                if remaining_nodes[0] == 0:
+                    break
+                output.append(
+                    self._sanitize(
+                        item,
+                        depth=depth + 1,
+                        active=active,
+                        remaining_nodes=remaining_nodes,
+                    )
+                )
+            if len(value) > len(output):
+                if remaining_nodes[0] == 0:
+                    output.append("<redacted:node-budget>")
+                else:
+                    output.append(f"<truncated:{len(value) - len(output)}>")
             return output
         finally:
             active.remove(identity)

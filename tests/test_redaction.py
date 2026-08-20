@@ -89,6 +89,21 @@ class RedactorTests(unittest.TestCase):
         self.assertIn("<redacted:cycle>", rendered)
         self.assertIn("<redacted:depth-limit>", rendered)
 
+    def test_total_node_budget_bounds_wide_nested_diagnostics(self) -> None:
+        redactor = Redactor(
+            RedactionPolicy(
+                maximum_depth=10,
+                maximum_items=64,
+                maximum_nodes=3,
+            )
+        )
+
+        sanitized = redactor.sanitize(["first", "second", "unvisited-canary", ["nested"]])
+        rendered = json.dumps(sanitized)
+
+        self.assertEqual(sanitized, ["first", "second", "<redacted:node-budget>"])
+        self.assertNotIn("unvisited-canary", rendered)
+
     def test_item_string_and_number_limits_fail_closed(self) -> None:
         redactor = Redactor(RedactionPolicy(maximum_depth=2, maximum_items=2, maximum_string=8))
 
@@ -139,6 +154,8 @@ class RedactorTests(unittest.TestCase):
             RedactionPolicy(maximum_items=0)
         with self.assertRaises(ValueError):
             RedactionPolicy(maximum_string=4_097)
+        with self.assertRaises(ValueError):
+            RedactionPolicy(maximum_nodes=100_001)
 
 
 if __name__ == "__main__":
