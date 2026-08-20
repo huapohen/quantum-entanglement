@@ -35,8 +35,10 @@ regression test, the fix, affected-version analysis, and operator guidance are r
 ## Security boundaries
 
 The current repository does not yet provide a production authentication perimeter,
-tenant-complete storage isolation, or a fully verified capability chain. The exact gaps
-are tracked in `docs/production/READINESS_AUDIT.md`.
+tenant-complete storage isolation, or a fully verified capability chain. The mandatory
+runtime boundary is `docs/production/SERVICE_BOUNDARY.md`; current implemented controls and
+open findings are tracked in `docs/production/CURRENT_READINESS.md`. The older
+`READINESS_AUDIT.md` is retained only as a historical baseline.
 
 Repository tests and demos must use synthetic identities, fake connectors, and disposable
 data. They must not send, reply, comment, mention, or upload content to Feishu or WeCom.
