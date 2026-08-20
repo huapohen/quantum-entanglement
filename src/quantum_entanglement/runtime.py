@@ -345,7 +345,13 @@ class OrchestratorKernel:
             return committed
 
     async def _append(self, event: DomainEvent) -> StoredEvent:
-        stored = self.event_store.append(event)
+        expected_version = self.event_store.stream_version(event.stream_id)
+        stored_events = self._append_many_reconciled(
+            event.stream_id,
+            (event,),
+            expected_version=expected_version,
+        )
+        stored = stored_events[0]
         await self._emit_appended_batch((stored,))
         return stored
 
