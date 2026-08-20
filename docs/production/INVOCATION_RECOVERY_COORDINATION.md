@@ -154,10 +154,12 @@ blocked. When a store is supplied:
 
 `InvocationRecoveryCoordinator` implements this lifecycle as a synchronous read-only wrapper.
 The optional store is borrowed unless `owns_store=True` is explicit. Coordinator close is
-idempotent, borrowed stores remain open, owned stores close exactly once, and a failed owned
-close leaves shutdown retryable. Closed coordinators reject reads and re-entry. Task status,
-binding, and receipt shape are validated before the first store call; store read failures
-propagate unchanged and are never converted into `BLOCKED_MISSING_JOB`.
+idempotent, borrowed stores remain open, and owned stores close exactly once after successful
+cleanup. The first close request makes the coordinator permanently unavailable for reads and
+re-entry before invoking owned-store cleanup. If cleanup raises after partially releasing a
+resource, later `close()` calls retry only that cleanup; they never reopen assessment. Task
+status, binding, and receipt shape are validated before the first store call; store read
+failures propagate unchanged and are never converted into `BLOCKED_MISSING_JOB`.
 
 The runtime must not acquire a second implicit in-memory store. An in-memory store is not a
 durable recovery source across processes or restarts.
