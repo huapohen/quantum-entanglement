@@ -47,11 +47,9 @@ class InvocationRecoveryDecision(str, Enum):
     FIRST_CLAIM_READY = "first_claim_ready"
     BLOCKED_EFFECT_UNKNOWN = "blocked_effect_unknown"
     WAITING_ACTIVE_LEASE = "waiting_active_lease"
-    RESULT_ACCEPTED_PENDING_ATTEMPT_CAS = "result_accepted_pending_attempt_cas"
+    BLOCKED_RECEIPT_UNVERIFIED = "blocked_receipt_unverified"
     BLOCKED_RESULT_UNCOMMITTED = "blocked_result_uncommitted"
-    COMPLETION_READY = "completion_ready"
     TERMINAL_FAILURE_EFFECT_UNKNOWN = "terminal_failure_effect_unknown"
-    RESULT_ACCEPTED_JOB_DIVERGED = "result_accepted_job_diverged"
 
 
 @dataclass(frozen=True)
@@ -446,19 +444,12 @@ def assess_invocation_recovery(
 
     if receipt is not None:
         _validate_receipt_match(binding, snapshot, receipt)
-        if job.status is InvocationStatus.RUNNING:
-            return InvocationRecoveryDecision.RESULT_ACCEPTED_PENDING_ATTEMPT_CAS
-        if job.status in {InvocationStatus.QUEUED, InvocationStatus.FAILED}:
-            return InvocationRecoveryDecision.RESULT_ACCEPTED_JOB_DIVERGED
         if job.status is InvocationStatus.SUCCEEDED:
-            if job.result_ref is None:
-                return InvocationRecoveryDecision.RESULT_ACCEPTED_JOB_DIVERGED
-            if job.result_ref != receipt.result_ref:
+            if job.result_ref is not None and job.result_ref != receipt.result_ref:
                 raise InvocationRecoveryIntegrityError(
                     "succeeded invocation result_ref differs from its receipt"
                 )
-            return InvocationRecoveryDecision.COMPLETION_READY
-        raise InvocationRecoveryIntegrityError("result receipt contradicts invocation status")
+        return InvocationRecoveryDecision.BLOCKED_RECEIPT_UNVERIFIED
 
     if job.status is InvocationStatus.QUEUED:
         if job.attempts_started == 0:

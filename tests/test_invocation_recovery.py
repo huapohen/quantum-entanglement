@@ -172,13 +172,13 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
             InvocationRecoveryDecision.WAITING_ACTIVE_LEASE,
         )
 
-    def test_receipt_before_attempt_cas_is_reconciled_without_reinvocation(self) -> None:
+    def test_unverified_receipt_never_authorizes_attempt_reconciliation(self) -> None:
         spec, lease, running_snapshot = self.running("receipt-split")
         binding = binding_for(spec)
         receipt = receipt_for(binding, running_snapshot)
         self.assertEqual(
             self.assess(binding, running_snapshot, receipt),
-            InvocationRecoveryDecision.RESULT_ACCEPTED_PENDING_ATTEMPT_CAS,
+            InvocationRecoveryDecision.BLOCKED_RECEIPT_UNVERIFIED,
         )
 
         self.assertTrue(self.store.fail(lease, "crash recovery", retry_at=T0))  # type: ignore[arg-type]
@@ -186,10 +186,10 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
         self.assertEqual(queued_snapshot.job.status, InvocationStatus.QUEUED)
         self.assertEqual(
             self.assess(binding, queued_snapshot, receipt),
-            InvocationRecoveryDecision.RESULT_ACCEPTED_JOB_DIVERGED,
+            InvocationRecoveryDecision.BLOCKED_RECEIPT_UNVERIFIED,
         )
 
-    def test_receipt_survives_terminal_failure_divergence(self) -> None:
+    def test_unverified_receipt_never_authorizes_terminal_failure_recovery(self) -> None:
         spec, lease, running_snapshot = self.running("receipt-failed", max_attempts=1)
         binding = binding_for(spec)
         receipt = receipt_for(binding, running_snapshot)
@@ -198,10 +198,10 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
         self.assertEqual(failed_snapshot.job.status, InvocationStatus.FAILED)
         self.assertEqual(
             self.assess(binding, failed_snapshot, receipt),
-            InvocationRecoveryDecision.RESULT_ACCEPTED_JOB_DIVERGED,
+            InvocationRecoveryDecision.BLOCKED_RECEIPT_UNVERIFIED,
         )
 
-    def test_success_requires_the_exact_durable_result_receipt(self) -> None:
+    def test_success_remains_blocked_with_an_unverified_result_receipt(self) -> None:
         spec, lease, running_snapshot = self.running("success")
         binding = binding_for(spec)
         receipt = receipt_for(binding, running_snapshot, result_ref="result:success")
@@ -215,14 +215,14 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
         )
         self.assertEqual(
             self.assess(binding, succeeded, receipt),
-            InvocationRecoveryDecision.COMPLETION_READY,
+            InvocationRecoveryDecision.BLOCKED_RECEIPT_UNVERIFIED,
         )
 
         mismatched_ref = replace(receipt, result_ref="result:other")
         with self.assertRaisesRegex(InvocationRecoveryIntegrityError, "result_ref"):
             self.assess(binding, succeeded, mismatched_ref)
 
-    def test_success_without_result_reference_remains_diverged_even_with_receipt(self) -> None:
+    def test_success_without_result_reference_blocks_unverified_receipt(self) -> None:
         spec, lease, running_snapshot = self.running("success-no-reference")
         binding = binding_for(spec)
         receipt = receipt_for(binding, running_snapshot)
@@ -235,7 +235,7 @@ class InvocationRecoveryDecisionTests(unittest.TestCase):
         )
         self.assertEqual(
             self.assess(binding, succeeded, receipt),
-            InvocationRecoveryDecision.RESULT_ACCEPTED_JOB_DIVERGED,
+            InvocationRecoveryDecision.BLOCKED_RECEIPT_UNVERIFIED,
         )
 
     def test_failure_without_receipt_preserves_effect_unknown(self) -> None:
