@@ -17,6 +17,30 @@ Each commit must be independently reviewable and leave the default branch runnab
 
 Mechanical formatting may be grouped only when it has no semantic change.
 
+## Runtime-boundary gate
+
+[`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md) is mandatory. A demo, test count, phase
+label, README statement, environment value or operator convenience cannot relax it.
+Promotion is cumulative:
+
+| Gate | Required promotion evidence | Maximum permitted runtime after promotion |
+|---|---|---|
+| A | strict config/secret/redaction/schema control, trusted request context, mandatory repository scope and legacy rehearsal | offline tenant-scoped kernel with synthetic data |
+| B | authenticated loopback API, command/action receipts, fenced fake connector, resumable stream and lifecycle | isolated authenticated E2E using fake connectors |
+| C | complete backup/restore, least-privilege single-node deployment, upgrade/rollback and measured recovery | controlled private-pilot candidate in the approved topology |
+| D | quota/capacity, OTel/alerts, worker isolation, security review and soak | limited commercial candidate inside measured SLOs |
+| E | PostgreSQL, HA/Kubernetes, continuous immutable DR and recurring rehearsal | multi-instance GA candidate |
+
+All gates are currently closed. Every promotion record must name the exact source/tree,
+supported topology, data class, connector allowlist, measured limits, unresolved findings,
+reviewers and rollback trigger. A later gate cannot waive an earlier gate. Any P0,
+security-critical issue, tenant escape, data-loss defect, credential leak or unauthorized
+irreversible effect immediately withdraws promotion.
+
+No gate in this repository authorizes a real Feishu or WeCom send. Such a connector needs
+new explicit authorization and an independent security review; current tests use fake,
+no-op or read-only fixtures only.
+
 ## Continuous verification gate
 
 The following commands define the current local baseline:
