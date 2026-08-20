@@ -155,6 +155,14 @@ blocked. When a store is supplied:
 The runtime must not acquire a second implicit in-memory store. An in-memory store is not a
 durable recovery source across processes or restarts.
 
+`SQLiteInvocationAttemptStore.recovery_snapshot_for_task` implements the read boundary. It
+opens one deferred read transaction, decodes at most one job and one current attempt, and uses
+aggregate count/min/max values to prove that attempt numbers are contiguous without loading
+the complete history. The snapshot also cross-checks current attempt identity, epoch, owner,
+token digest, heartbeat, lease deadline, terminal status, and result reference. Concurrent WAL
+writers may advance the live job while this read is in progress, but every row returned to the
+coordinator comes from the same pre-advance database snapshot.
+
 ## Integration sequence
 
 The safe delivery order is:
