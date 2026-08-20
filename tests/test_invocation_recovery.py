@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
+import quantum_entanglement
 from quantum_entanglement.attempts import (
     AttemptStatus,
     InvocationJobSpec,
@@ -540,6 +541,22 @@ class InvocationRecoveryCoordinatorLifecycleTests(unittest.TestCase):
             InvocationRecoveryCoordinator(owns_store=True)
         with self.assertRaisesRegex(TypeError, "must provide"):
             InvocationRecoveryCoordinator(object())  # type: ignore[arg-type]
+
+    def test_recovery_contract_is_available_from_the_public_package(self) -> None:
+        expected = {
+            "InvocationBinding": InvocationBinding,
+            "InvocationRecoveryClosedError": InvocationRecoveryClosedError,
+            "InvocationRecoveryCoordinator": InvocationRecoveryCoordinator,
+            "InvocationRecoveryDecision": InvocationRecoveryDecision,
+            "InvocationRecoveryIntegrityError": InvocationRecoveryIntegrityError,
+            "InvocationRecoverySnapshot": InvocationRecoverySnapshot,
+            "InvocationResultReceipt": InvocationResultReceipt,
+            "assess_invocation_recovery": assess_invocation_recovery,
+        }
+        for name, value in expected.items():
+            with self.subTest(name=name):
+                self.assertIn(name, quantum_entanglement.__all__)
+                self.assertIs(getattr(quantum_entanglement, name), value)
 
 
 if __name__ == "__main__":

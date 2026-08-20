@@ -30,6 +30,7 @@ from .artifact_store import (
     StoredArtifact,
 )
 from .artifacts import ArtifactLedger, ArtifactRecordError, ArtifactReplayError, ArtifactVersion
+from .attempts import InvocationRecoverySnapshot
 from .backup import (
     BackupError,
     BackupExistsError,
@@ -50,6 +51,16 @@ from .delivery import (
     StoredOutboxMessage,
 )
 from .events import DomainEvent, StoredEvent
+from .invocation_recovery import (
+    InvocationBinding,
+    InvocationRecoveryClosedError,
+    InvocationRecoveryCoordinator,
+    InvocationRecoveryDecision,
+    InvocationRecoveryIntegrityError,
+    InvocationRecoveryStore,
+    InvocationResultReceipt,
+    assess_invocation_recovery,
+)
 from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
 from .plugins import HookPoint, KernelPlugin, PluginManager
 from .policy import ApprovalRequest, NeedsYouQueue, PolicyDecision, PolicyEngine, PolicyOutcome
@@ -190,6 +201,14 @@ __all__ = [
     "KernelPlugin",
     "InboundChatMessage",
     "InMemoryRevocationRevisionGuard",
+    "InvocationBinding",
+    "InvocationRecoveryClosedError",
+    "InvocationRecoveryCoordinator",
+    "InvocationRecoveryDecision",
+    "InvocationRecoveryIntegrityError",
+    "InvocationRecoverySnapshot",
+    "InvocationRecoveryStore",
+    "InvocationResultReceipt",
     "KeyStatus",
     "KeyUsage",
     "LangGraphBridge",
@@ -240,6 +259,7 @@ __all__ = [
     "action_covers",
     "action_is_subset",
     "validate_delegation",
+    "assess_invocation_recovery",
     "AgentRegistration",
     "AgentRegistry",
     "ApprovalRequest",
