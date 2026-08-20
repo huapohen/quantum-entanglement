@@ -564,6 +564,15 @@ class RequestContextIssuer:
     def __repr__(self) -> str:
         return "RequestContextIssuer(<configured>)"
 
+    def __copy__(self) -> NoReturn:
+        raise TypeError("RequestContextIssuer cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> NoReturn:
+        raise TypeError("RequestContextIssuer cannot be copied")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("RequestContextIssuer cannot be serialized")
+
     @staticmethod
     def _validate_duration(
         value: timedelta,

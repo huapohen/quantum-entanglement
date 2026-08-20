@@ -417,6 +417,17 @@ class RequestContextIssuanceTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             pickle.dumps(context)
 
+    def test_issuer_registry_cannot_be_duplicated_or_serialized(self):
+        issuer, _ = self.make_issuer()
+        issuer.issue(self.claims, self.credential())
+
+        with self.assertRaises(TypeError):
+            copy.copy(issuer)
+        with self.assertRaises(TypeError):
+            copy.deepcopy(issuer)
+        with self.assertRaises(TypeError):
+            pickle.dumps(issuer)
+
     def test_active_context_capacity_is_bounded_and_dead_handles_are_pruned(self):
         issuer, _ = self.make_issuer(max_active_contexts=1)
         first = issuer.issue(self.claims, self.credential())
