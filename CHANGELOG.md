@@ -28,6 +28,9 @@ release. Promotion additionally requires the evidence defined in
   and fresh spawn/forkserver construction evidence.
 - Inert exact SQLite backup-topology registry binding eight current component profiles,
   58 catalog objects, migration descriptors, canonical DDL digests, and acyclic dependencies.
+- Inactive exact SQLite backup manifest v2 model and bounded canonical JSON codec binding
+  current bridge-only `SchemaState`, topology profiles, all catalog objects, and table counts
+  while remaining unreachable from v1 create, verify, restore, and CLI paths.
 
 ### Changed
 
@@ -61,9 +64,9 @@ release. Promotion additionally requires the evidence defined in
 - Per-component process-owner migration for stores, authorization, secrets, plugins, runtimes,
   connectors, and the final worker composition root; the shared foundation alone is not a
   fork-safety or secret-isolation guarantee.
-- Backup manifest v2 codec, stable-snapshot derivation, quarantine verification, exact-byte
-  restore, mixed-version rehearsal, and authenticated custody; the topology registry alone
-  does not make v2 readable or writable.
+- Backup manifest v2 stable-snapshot derivation, writer/publication, quarantine verification,
+  exact-byte restore, mixed-version rehearsal, and authenticated custody; the topology
+  registry and pure codec alone do not make v2 operationally readable or writable.
 
 ## Pre-release kernel baseline (`0.1.x`, not promoted)
 
