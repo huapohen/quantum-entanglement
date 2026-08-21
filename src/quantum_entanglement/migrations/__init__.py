@@ -224,12 +224,20 @@ def _sqlite_sha256(value: object) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _run_process_guard(process_guard: Optional[Callable[[], None]]) -> None:
+    """Run an optional store-owned guard before touching a process-bound connection."""
+
+    if process_guard is not None:
+        process_guard()
+
+
 def apply_sqlite_migrations(
     connection: sqlite3.Connection,
     *,
     migrations: Sequence[Migration] = MIGRATIONS,
     target_versions: Optional[Sequence[int]] = None,
     clock: Callable[[], str] = utc_now,
+    _process_guard: Optional[Callable[[], None]] = None,
 ) -> int:
     """Apply the registry and return the current schema version.
 
@@ -239,6 +247,8 @@ def apply_sqlite_migrations(
 
     if not callable(clock):
         raise TypeError("clock must be callable")
+    if _process_guard is not None and not callable(_process_guard):
+        raise TypeError("_process_guard must be callable or None")
     _validate_registry(migrations)
     ordered_versions = tuple(item.version for item in migrations)
     if target_versions is None:
@@ -251,17 +261,24 @@ def apply_sqlite_migrations(
         if requested_versions != expected_prefix:
             raise ValueError("target migration versions must be a continuous registry prefix")
         selected_versions = set(requested_versions)
+    _run_process_guard(_process_guard)
     connection.create_function("qe_sha256", 1, _sqlite_sha256, deterministic=True)
+    _run_process_guard(_process_guard)
     connection.execute(_LEDGER_CREATE_SQL)
+    _run_process_guard(_process_guard)
     validate_sqlite_schema(connection, migrations=migrations)
+    _run_process_guard(_process_guard)
 
     for migration in migrations:
         if migration.version not in selected_versions:
             continue
         sql = migration_text(migration.filename)
+        _run_process_guard(_process_guard)
         digest = hashlib.sha256(sql.encode("utf-8")).hexdigest()
         try:
+            _run_process_guard(_process_guard)
             connection.execute("BEGIN IMMEDIATE")
+            _run_process_guard(_process_guard)
             # Recheck only after owning the write lock. Another initializer may
             # have committed this migration after the optimistic precheck.
             row = connection.execute(
@@ -272,6 +289,7 @@ def apply_sqlite_migrations(
                 """,
                 (migration.version,),
             ).fetchone()
+            _run_process_guard(_process_guard)
             if row is not None:
                 if row[0] != migration.filename or row[1] != digest:
                     raise MigrationDriftError(
@@ -279,13 +297,20 @@ def apply_sqlite_migrations(
                         "from the applied schema"
                     )
                 validate_sqlite_schema(connection, migrations=migrations)
+                _run_process_guard(_process_guard)
                 connection.execute("COMMIT")
+                _run_process_guard(_process_guard)
                 continue
+            _run_process_guard(_process_guard)
             applied_at = clock()
+            _run_process_guard(_process_guard)
             if not isinstance(applied_at, str) or not applied_at.strip():
                 raise ValueError("migration clock must return a timestamp string")
             for statement in _sql_statements(sql):
+                _run_process_guard(_process_guard)
                 connection.execute(statement)
+                _run_process_guard(_process_guard)
+            _run_process_guard(_process_guard)
             connection.execute(
                 """
                 INSERT INTO main.qe_schema_migrations (
@@ -294,14 +319,22 @@ def apply_sqlite_migrations(
                 """,
                 (migration.version, migration.filename, digest, applied_at),
             )
+            _run_process_guard(_process_guard)
             validate_sqlite_schema(connection, migrations=migrations)
+            _run_process_guard(_process_guard)
             connection.execute("COMMIT")
+            _run_process_guard(_process_guard)
         except BaseException:
+            _run_process_guard(_process_guard)
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
+                _run_process_guard(_process_guard)
             raise
 
-    return validate_sqlite_schema(connection, migrations=migrations)
+    _run_process_guard(_process_guard)
+    version = validate_sqlite_schema(connection, migrations=migrations)
+    _run_process_guard(_process_guard)
+    return version
 
 
 def current_schema_version(connection: sqlite3.Connection) -> int:
