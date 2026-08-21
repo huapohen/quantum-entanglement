@@ -129,11 +129,12 @@ class TransactionalDeliveryTests(unittest.TestCase):
         return outcome["result"]
 
     def create_legacy_v2_store(self, path):
-        def apply_only_v2(connection, *, clock):
+        def apply_only_v2(connection, *, clock, _process_guard=None):
             return apply_sqlite_migrations(
                 connection,
                 migrations=MIGRATIONS[:2],
                 clock=clock,
+                _process_guard=_process_guard,
             )
 
         with mock.patch(
