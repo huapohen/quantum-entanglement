@@ -87,7 +87,7 @@ _MAX_JSON_INTEGER_BITS = 4_096
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
 _EVENT_STORE_PROCESS_SIGNAL_TOKEN = object()
-_EVENT_STORE_CHILD_CONNECTION_QUARANTINE: List[sqlite3.Connection] = []
+_EVENT_STORE_CHILD_GRAPH_QUARANTINE: List[object] = []
 
 
 class _EventStoreProcessMismatchSignal(BaseException):
@@ -152,10 +152,12 @@ def _raise_event_store_process_mismatch() -> NoReturn:
         raise
 
 
-def _quarantine_inherited_event_store_connection(connection: sqlite3.Connection) -> None:
-    """Retain a child-inherited wrapper without close, rollback, or finalization."""
+def _quarantine_inherited_event_store_graph(root: object) -> None:
+    """Retain one inherited graph without invoking its equality, cleanup, or finalizers."""
 
-    _EVENT_STORE_CHILD_CONNECTION_QUARANTINE.append(connection)
+    if any(retained is root for retained in _EVENT_STORE_CHILD_GRAPH_QUARANTINE):
+        return
+    _EVENT_STORE_CHILD_GRAPH_QUARANTINE.append(root)
 
 
 def _is_exact_control_signal(error: BaseException) -> bool:
@@ -178,6 +180,7 @@ def _bind_event_store_process(method: _Method) -> _Method:
             trusted = _consume_event_store_process_signal(error)
             if not trusted:
                 raise
+            _quarantine_inherited_event_store_graph(store)
         del args, kwargs, store
         _raise_event_store_process_mismatch()
 
@@ -336,6 +339,7 @@ class _EventPageIterator:
         except _EventStoreProcessMismatchSignal as error:
             if not _consume_event_store_process_signal(error):
                 raise
+            _quarantine_inherited_event_store_graph(self)
         del self, store
         _raise_event_store_process_mismatch()
 
@@ -345,6 +349,7 @@ class _EventPageIterator:
         except _EventStoreProcessMismatchSignal as error:
             if not _consume_event_store_process_signal(error):
                 raise
+            _quarantine_inherited_event_store_graph(self)
         del self
         _raise_event_store_process_mismatch()
 
@@ -411,6 +416,7 @@ class _EventPageContext:
         except _EventStoreProcessMismatchSignal as error:
             if not _consume_event_store_process_signal(error):
                 raise
+            _quarantine_inherited_event_store_graph(self)
         del self, store
         _raise_event_store_process_mismatch()
 
@@ -427,6 +433,7 @@ class _EventPageContext:
         except _EventStoreProcessMismatchSignal as error:
             if not _consume_event_store_process_signal(error):
                 raise
+            _quarantine_inherited_event_store_graph(self)
         del self, store, exc_type, exc, traceback
         _raise_event_store_process_mismatch()
 
@@ -443,16 +450,47 @@ class _EventPageContext:
 class _EventStoreTransactionContext:
     """Non-transferable wrapper around one private transaction generator."""
 
-    __slots__ = ("_inner",)
+    __slots__ = ("_inner", "_store")
 
-    def __init__(self, inner: ContextManager[sqlite3.Connection]) -> None:
+    def __init__(
+        self,
+        store: "SQLiteEventStore",
+        inner: ContextManager[sqlite3.Connection],
+    ) -> None:
+        self._store = store
         self._inner = inner
 
     def __enter__(self) -> sqlite3.Connection:
-        return self._inner.__enter__()
+        store = self._store
+        try:
+            store._require_current_process()
+        except _EventStoreProcessMismatchSignal as error:
+            if not _consume_event_store_process_signal(error):
+                raise
+            _quarantine_inherited_event_store_graph(self)
+        else:
+            return self._inner.__enter__()
+        del self, store
+        _raise_event_store_process_mismatch()
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> Any:
-        return self._inner.__exit__(exc_type, exc, traceback)
+        if type(exc) is _EventStoreProcessMismatchSignal:
+            # The surrounding public wrapper must consume the originating signal after
+            # its method frame unwinds. Retain this suspended generator instead of
+            # resuming child-inherited transaction cleanup or translating too early.
+            _quarantine_inherited_event_store_graph(self)
+            return False
+        store = self._store
+        try:
+            store._require_current_process()
+        except _EventStoreProcessMismatchSignal as error:
+            if not _consume_event_store_process_signal(error):
+                raise
+            _quarantine_inherited_event_store_graph(self)
+        else:
+            return self._inner.__exit__(exc_type, exc, traceback)
+        del self, store, exc_type, exc, traceback
+        _raise_event_store_process_mismatch()
 
     def __copy__(self) -> NoReturn:
         raise TypeError("event store transactions cannot be copied")
@@ -509,8 +547,7 @@ class SQLiteEventStore:
             trusted = _consume_event_store_process_signal(error)
             if not trusted:
                 raise
-            if connection is not None:
-                _quarantine_inherited_event_store_connection(connection)
+            _quarantine_inherited_event_store_graph(self)
             process_mismatch = True
         except BaseException as initialization_error:
             if self._process_is_current():
@@ -521,8 +558,7 @@ class SQLiteEventStore:
                         if not _is_exact_control_signal(initialization_error):
                             raise
                 raise
-            if connection is not None:
-                _quarantine_inherited_event_store_connection(connection)
+            _quarantine_inherited_event_store_graph(self)
             process_mismatch = True
         if process_mismatch:
             del self, path, clock, max_json_bytes, parent, connection
@@ -546,6 +582,20 @@ class SQLiteEventStore:
                 raise
             return False
         return True
+
+    def __del__(self) -> None:
+        """Resurrect an inherited graph so ordinary child GC cannot finalize its resources."""
+
+        try:
+            if not self._process_is_current():
+                _quarantine_inherited_event_store_graph(self)
+        except BaseException:
+            try:
+                _quarantine_inherited_event_store_graph(self)
+            except BaseException:
+                # Interpreter teardown may already have cleared module globals. The worker
+                # contract therefore still requires mismatch children to use _exit or exec.
+                pass
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
@@ -645,7 +695,7 @@ class SQLiteEventStore:
 
     def _transaction(self) -> ContextManager[sqlite3.Connection]:
         self._require_current_process()
-        return _EventStoreTransactionContext(self._transaction_inner())
+        return _EventStoreTransactionContext(self, self._transaction_inner())
 
     @contextmanager
     def _transaction_inner(self) -> Iterator[sqlite3.Connection]:

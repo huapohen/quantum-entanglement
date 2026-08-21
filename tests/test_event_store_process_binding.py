@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import gc
 import multiprocessing
 import os
 import pickle
@@ -574,6 +575,98 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
         self.assertEqual(self.store.stream_version("stream:owner"), 0)
         self.store.append(event)
         self.assertEqual(self.store.stream_version("stream:owner"), 1)
+
+    def test_inherited_store_gc_quarantines_graph_before_connection_finalizer(self) -> None:
+        parent_pid = os.getpid()
+        real_connect = sqlite3.connect
+        write_fd = -1
+        inherited_path = str(Path(self.tempdir.name) / "inherited-finalizer.sqlite3")
+
+        class FinalizerTrackingConnection(sqlite3.Connection):
+            def __del__(connection_self) -> None:
+                if os.getpid() != parent_pid:
+                    try:
+                        os.write(write_fd, b"connection-finalized:")
+                    except OSError:
+                        pass
+
+        def tracking_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+            return real_connect(*args, **kwargs, factory=FinalizerTrackingConnection)
+
+        with mock.patch.object(store_module.sqlite3, "connect", tracking_connect):
+            inherited = SQLiteEventStore(inherited_path)
+        try:
+            for mode in ("mismatch_then_gc", "gc_without_call"):
+                with self.subTest(mode=mode):
+                    read_fd, write_fd = os.pipe()
+                    inherited_identity = id(inherited)
+                    pid = os.fork()
+                    if pid == 0:
+                        os.close(read_fd)
+                        if mode == "mismatch_then_gc":
+                            for _ in range(2):
+                                outcome = _lifecycle_outcome(
+                                    lambda: inherited.stream_version("stream:gc"),
+                                    (inherited,),
+                                )
+                                if outcome != b"rejected":
+                                    os.write(write_fd, outcome + b":")
+                        del inherited
+                        gc.collect()
+                        retained = sum(
+                            id(root) == inherited_identity
+                            for root in store_module._EVENT_STORE_CHILD_GRAPH_QUARANTINE
+                        )
+                        os.write(write_fd, f"alive:retained={retained}".encode("ascii"))
+                        os.close(write_fd)
+                        os._exit(0)
+
+                    os.close(write_fd)
+                    try:
+                        ready, _, _ = select.select((read_fd,), (), (), 3.0)
+                        self.assertTrue(ready, "inherited-store GC child produced no result")
+                        outcome = os.read(read_fd, 4096)
+                        status = _wait_for_child(pid, 3.0)
+                    finally:
+                        os.close(read_fd)
+                    self.assertTrue(os.WIFEXITED(status), status)
+                    self.assertEqual(os.WEXITSTATUS(status), 0)
+                    self.assertEqual(outcome, b"alive:retained=1")
+        finally:
+            inherited.close()
+
+    def test_transaction_context_enter_and_exit_reject_inherited_graph(self) -> None:
+        unentered = self.store._transaction()
+        self.assertEqual(
+            _run_fork_child(
+                lambda: _lifecycle_outcome(
+                    unentered.__enter__,
+                    (self.store, unentered),
+                )
+            ),
+            b"rejected",
+        )
+        with unentered as connection:
+            self.assertTrue(connection.in_transaction)
+        self.assertFalse(self.store._connection.in_transaction)
+
+        entered = self.store._transaction()
+        connection = entered.__enter__()
+        self.assertTrue(connection.in_transaction)
+        try:
+            self.assertEqual(
+                _run_fork_child(
+                    lambda: _lifecycle_outcome(
+                        lambda: entered.__exit__(None, None, None),
+                        (self.store, entered, connection),
+                    )
+                ),
+                b"rejected",
+            )
+            self.assertTrue(connection.in_transaction)
+        finally:
+            entered.__exit__(None, None, None)
+        self.assertFalse(self.store._connection.in_transaction)
 
     def test_clock_fork_after_begin_rejects_child_without_rollback_or_lock_release(self) -> None:
         event = DomainEvent(
