@@ -27,8 +27,9 @@ release. Promotion additionally requires the evidence defined in
   PID-drift fallback, non-serializable owner descriptors, nested-fork/parent-continuity tests,
   and fresh spawn/forkserver construction evidence.
 - Process-bound `SQLiteEventStore` lifecycle with all ordinary read/write/close/context paths,
-  stream enter and every iterator resume, owner-aware transaction/migration/constructor cleanup,
-  child connection quarantine, and one stable clean lifecycle mismatch error.
+  stream enter and every iterator resume, transaction context enter/exit, owner-aware
+  transaction/migration/constructor cleanup, complete inherited-graph quarantine on mismatch or
+  ordinary child GC, and one stable clean lifecycle mismatch error.
 - Fork-before-initialization, spawn and forkserver fresh-connection evidence for global-position
   contention, idempotent event-plus-outbox admission, outbox lease fencing, ambiguity resolution,
   SQLite integrity, foreign keys and exact migration schema.
@@ -62,7 +63,11 @@ release. Promotion additionally requires the evidence defined in
 - Event-store clock and migration callbacks are guarded before and after execution; fork child
   cleanup never inspects, rolls back, commits, closes or unlocks inherited SQLite state. Exact
   originating process controls take precedence over cleanup controls in current-process failure
-  paths.
+  paths and remain unsuppressed at inherited store/stream/transaction exit boundaries. Nested
+  trusted public mismatches are re-cleaned without authorizing caller-forged lookalikes; a current
+  fresh outer store rolls back and remains usable after a stale dependency fails.
+- Event-store mismatch workers must stop admission and use `os._exit`/exec. Ordinary `sys.exit`
+  or interpreter teardown is not a safe destruction path for a quarantined inherited native graph.
 
 ### In progress — not yet a shipped guarantee
 
