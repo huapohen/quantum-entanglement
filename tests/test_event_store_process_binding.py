@@ -1017,6 +1017,11 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
                     pass
 
     def test_constructor_migration_fork_preserves_originating_control(self) -> None:
+        # The child deliberately collects cycles to exercise inherited finalizers. Collect
+        # unrelated unreachable stores while they still belong to this parent process so
+        # the fork observes only the constructor graph created by this test.
+        gc.collect()
+        self.assertEqual(store_module._EVENT_STORE_CHILD_GRAPH_QUARANTINE, [])
         parent_pid = os.getpid()
         child_pids: list[int] = []
         read_fd, write_fd = os.pipe()
