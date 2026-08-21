@@ -30,6 +30,7 @@ from .artifact_store import (
     StoredArtifact,
 )
 from .artifacts import ArtifactLedger, ArtifactRecordError, ArtifactReplayError, ArtifactVersion
+from .attempts import InvocationRecoverySnapshot
 from .backup import (
     BackupError,
     BackupExistsError,
@@ -50,6 +51,16 @@ from .delivery import (
     StoredOutboxMessage,
 )
 from .events import DomainEvent, StoredEvent
+from .invocation_recovery import (
+    InvocationBinding,
+    InvocationRecoveryClosedError,
+    InvocationRecoveryCoordinator,
+    InvocationRecoveryDecision,
+    InvocationRecoveryIntegrityError,
+    InvocationRecoveryStore,
+    InvocationResultReceipt,
+    assess_invocation_recovery,
+)
 from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
 from .plugins import HookPoint, KernelPlugin, PluginManager
 from .policy import ApprovalRequest, NeedsYouQueue, PolicyDecision, PolicyEngine, PolicyOutcome
@@ -68,6 +79,15 @@ from .protocol import (
     RiskLevel,
     TaskStatus,
 )
+from .request_context import (
+    AuthenticatedRequestBinding,
+    CallerRequestContext,
+    ReauthorizationBasis,
+    RequestAuthenticator,
+    RequestContext,
+    RequestContextError,
+    RequestContextIssuer,
+)
 from .runtime import (
     AgentRegistration,
     AgentRegistry,
@@ -76,7 +96,12 @@ from .runtime import (
     SessionRecoveryError,
 )
 from .scheduler import TaskGraph, TaskSpec, TaskTransition, WorkflowPlan
-from .store import ConcurrencyError, EventStoreIntegrityError, SQLiteEventStore
+from .store import (
+    ConcurrencyError,
+    EventStoreIntegrityError,
+    EventStoreLifecycleError,
+    SQLiteEventStore,
+)
 from .tenancy import (
     CAPABILITY_PROTOCOL_VERSION,
     AccessRequest,
@@ -136,6 +161,7 @@ __all__ = [
     "ActorKind",
     "ActorRef",
     "ApprovalDecision",
+    "AuthenticatedRequestBinding",
     "AuthorizationDecision",
     "AuthorizationOutcome",
     "ArtifactConcurrencyError",
@@ -164,8 +190,10 @@ __all__ = [
     "CapabilitySigningKey",
     "CapabilityVerificationError",
     "CapabilityVerifier",
+    "CallerRequestContext",
     "ConcurrencyError",
     "EventStoreIntegrityError",
+    "EventStoreLifecycleError",
     "BridgeStatus",
     "ChatRoute",
     "ContextBudgetError",
@@ -190,6 +218,14 @@ __all__ = [
     "KernelPlugin",
     "InboundChatMessage",
     "InMemoryRevocationRevisionGuard",
+    "InvocationBinding",
+    "InvocationRecoveryClosedError",
+    "InvocationRecoveryCoordinator",
+    "InvocationRecoveryDecision",
+    "InvocationRecoveryIntegrityError",
+    "InvocationRecoverySnapshot",
+    "InvocationRecoveryStore",
+    "InvocationResultReceipt",
     "KeyStatus",
     "KeyUsage",
     "LangGraphBridge",
@@ -205,6 +241,11 @@ __all__ = [
     "PolicyDecision",
     "PolicyEngine",
     "PolicyOutcome",
+    "ReauthorizationBasis",
+    "RequestAuthenticator",
+    "RequestContext",
+    "RequestContextError",
+    "RequestContextIssuer",
     "RiskLevel",
     "ResourceRef",
     "ResourceScope",
@@ -240,6 +281,7 @@ __all__ = [
     "action_covers",
     "action_is_subset",
     "validate_delegation",
+    "assess_invocation_recovery",
     "AgentRegistration",
     "AgentRegistry",
     "ApprovalRequest",

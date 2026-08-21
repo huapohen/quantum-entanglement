@@ -91,14 +91,20 @@ flowchart LR
 
 The current repository implements only part of this flow. Missing boxes are requirements,
 not implied controls. In particular, `0.1.x` has no public admission/authentication service,
-secret store, complete action receipt layer, or production connector.
+secret store, complete action receipt layer, or production connector. A process-local
+`RequestContextIssuer` now distinguishes caller scope claims from one configured
+authenticator result and blocks cross-request/scope handle reuse, but there is no real
+authenticator, authenticated transport, current membership refresh, or mandatory runtime/
+authorizer composition. That primitive does not complete the `Admission + authentication`
+box.
 
 ### Boundary rules
 
 1. Everything entering from a user, protocol peer, webhook, model, plugin, or connector is
    untrusted regardless of whether it is syntactically valid.
 2. Identity and current time used for authorization come from trusted service context, not
-   request claims.
+   request claims. `ActorRef`, envelope sender/authority, `CallerRequestContext`, and a
+   free-standing authentication result or reauthorization basis remain untrusted data.
 3. Tenant, workspace, actor, audience, action, resource, and expiry are checked again at
    the moment of each effect.
 4. Model text never directly grants authority. A prompt, artifact, or tool result cannot
@@ -107,6 +113,10 @@ secret store, complete action receipt layer, or production connector.
    it does not receive a general session credential when a narrower handle is possible.
 6. Observability exporters receive redacted, bounded, tenant-safe fields rather than raw
    prompts, tokens, authorization headers, or arbitrary artifact bodies.
+7. Worker process topology is established before connection, issuer, provider, runtime and
+   secret initialization. An inherited live instance must reject on PID + process epoch
+   before touching a lock or dependency; a fresh child wrapper cannot legitimize inherited
+   authority.
 
 ## Security invariants
 
@@ -114,6 +124,8 @@ The following are release-blocking invariants:
 
 - default deny when identity, membership, tenant, workspace, action, resource, audience,
   time, delegation, or revocation evidence is absent or invalid;
+- a protected request uses the same issuer's unchanged live context, exact
+  request/subject/tenant/workspace binding, and current identity/membership revision;
 - no caller-supplied timestamp determines capability validity;
 - only a verifier-produced capability type can enter the authorization evaluator;
 - delegation narrows every scope dimension and validates the full ancestor chain;
@@ -133,13 +145,13 @@ The following are release-blocking invariants:
 |---|---|---|---|---|
 | TM-01 | Guess another tenant's resource ID | tenant escape, P0 | mandatory tenant key, repository filter, policy check, property tests | gap |
 | TM-02 | Construct an unsigned self-asserted capability | privilege escalation, P0 | verified-capability type, signature/MAC verifier, issuer/audience binding | in progress |
-| TM-03 | Backdate request time to revive an expired grant | unauthorized effect, P0 | injected trusted UTC clock, max TTL, bounded skew | in progress |
+| TM-03 | Backdate request time to revive an expired grant | unauthorized effect, P0 | injected trusted UTC clock, max TTL, bounded skew | partial: request-context issuer has a process-local monotonic high-water; persistent capability/key decisions still lack trusted durable time |
 | TM-04 | Forge a child or omit a revoked ancestor | authority escalation, P0 | full chain validation, ancestor revocation/epoch | in progress |
 | TM-05 | Reuse a capability against another service | confused deputy, P0 | audience and service binding, action/resource exactness | in progress |
 | TM-06 | Prompt-inject an agent into invoking a tool | data/effect compromise, P0 | data/authority separation, consent, action-time policy, allowlist | gap |
 | TM-07 | Replay an accepted command or webhook | duplicate effect, P0 | signed freshness, inbox dedupe, action receipt, receiver idempotency | partial |
 | TM-08 | Stale publisher ACKs after lease takeover | lost or duplicated delivery, P0 | epoch/token fencing through connector and store CAS | in progress |
-| TM-09 | Worker crashes after `invocation.started` | permanent RUNNING or duplicate work, P1/P0 | durable attempt lease, recovery, terminal CAS, action receipt | in progress |
+| TM-09 | Worker crashes after `invocation.started` | permanent RUNNING or duplicate work, P1/P0 | atomic attempt snapshot, fail-closed matrix and quarantine implemented; fenced worker, receipt reconciliation and fault evidence remain | partial |
 | TM-10 | Callback ignores cancellation | shutdown hang, capacity loss, P1 | hard containment, async-only production callback, leak metrics | in progress |
 | TM-11 | Retry poison message forever | queue starvation, cost DoS, P1 | bounded backoff/jitter, dead letter, operator workflow | in progress |
 | TM-12 | URL tool reaches metadata or private network | credential theft, P0 | URL policy, DNS/IP revalidation, redirect limits, egress deny | gap |
@@ -155,6 +167,8 @@ The following are release-blocking invariants:
 | TM-22 | Accidental real Feishu/WeCom write in research/tests | unauthorized communication, P0 | no write connector, fake-only tests, explicit separate authorization | enforced by scope |
 | TM-23 | Restore replays obsolete owners or grants | unauthorized stale action, P0 | restored epochs/revocations, recovery mode, reconciliation gate | gap |
 | TM-24 | Metrics label accepts arbitrary tenant/prompt text | secret leak/cardinality DoS, P1 | fixed label vocabulary, hashing/redaction, bounds | gap |
+| TM-25 | Caller chooses subject/tenant/workspace or reuses an issued context across scope | impersonation/tenant escape, P0 | authenticated subject mapping, exact process-local issuance, action-time identity/membership refresh, mandatory authorizer composition | partial |
+| TM-26 | Fork child reuses an inherited store, issuer, key, secret, runtime or connector | duplicate/unauthorized effect, deadlock, corruption or credential exposure, P0 | fork-before-init topology, PID + opaque epoch pre-lock guards, fresh child composition and spawn/exec-before-secret-load evidence | partial: shared identity foundation plus `SQLiteEventStore` full-entry candidate; other stores, issuer, key/secret, runtime, connector and composition root remain open |
 
 `partial` and `in progress` do not satisfy a release gate. Only a linked implementation,
 adversarial test, and retained evidence may change a row to `verified`.

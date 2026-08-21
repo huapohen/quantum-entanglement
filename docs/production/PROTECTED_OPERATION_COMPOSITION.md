@@ -1,0 +1,818 @@
+# Protected-operation authorization composition foundation
+
+Status: implemented and tested process-local composition primitive; **fake-only, not wired
+to a repository, not production-ready, and not a Gate A completion claim**
+
+Last reviewed: 2026-08-21
+
+This document defines the narrow boundary implemented in
+`src/quantum_entanglement/operation_authorization.py`. The boundary composes one trusted
+`RequestContextIssuer`, one injected current-state provider, and one exact
+`TenantAuthorizer` into a short-lived, one-time `AuthorizedOperation` handle.
+
+The implementation closes an important false-authorization gap: a canonical
+`AccessRequest`, directly constructed `ReauthorizationBasis`, current-state value, or
+`AuthorizationDecision` can no longer be mistaken for permission by a caller that uses
+this composition. It does **not** connect that permission to any repository or external
+effect. Gate A remains closed.
+
+The module is intentionally not exported from the package root in this slice. Callers must
+opt in through `quantum_entanglement.operation_authorization` while the integration and
+production-adapter contracts remain under review.
+
+## 1. Exact call path and authority transition
+
+The supported path has a preliminary issuance decision and a mandatory action-time
+decision:
+
+```text
+RequestContext + AccessRequest
+        |
+        v
+same RequestContextIssuer.prepare_reauthorization
+        |  ReauthorizationBasis (non-authorizing)
+        v
+configured CurrentAuthorizationStateProvider.load_current_state
+        |  CurrentAuthorizationState (non-authorizing)
+        v
+exact identity/scope/revision/freshness comparison
+        |
+        v
+exact TenantAuthorizer.evaluate
+        |  AuthorizationDecision
+        v
+explicit AuthorizationOutcome.ALLOW only
+        |
+        v
+composer-owned bounded registry -> AuthorizedOperation
+        |
+        v
+same composer.consume(operation, same context, exact request)
+        |
+        +-> same RequestContextIssuer.prepare_reauthorization
+        +-> registry preflight: live, unmodified, unexpired, exact actor/request scope
+        +-> CurrentAuthorizationStateProvider.load_current_state again
+        +-> exact identity/scope/revision/freshness comparison again
+        +-> TenantAuthorizer.evaluate again -> explicit ALLOW only
+        +-> same issuer final context check
+        |  atomic compare-and-retire inside this process only after fresh ALLOW
+        v
+future effect adapter boundary (not implemented in this slice)
+```
+
+Before any issuer, composer, or registry lock, state table, clock, provider, authenticator,
+or authorizer is touched, the implementation verifies that each process-local object still
+belongs to its creating process. The issuer, composer, and registry capture both the
+creator PID and a process epoch. A forked child receives new module epochs and cannot enter
+this call path with inherited objects. Composer construction and every authorization path
+also verify that the configured issuer belongs to the current process.
+
+Authority is created only at the registry issuance step and only after every preceding
+check succeeds. The provider state and authorizer decision remain ordinary value objects.
+Direct construction, deserialization, subclassing, truthiness, or possession of those
+values grants nothing.
+
+`consume` first repeats same-issuer context validation to obtain the exact basis required by
+the registry scope comparison. It then proves that the handle is still live and bound to
+that exact actor/request before reloading current identity, membership, revocation, and
+capability state, repeating exact revision/freshness comparisons, and invoking the exact
+authorizer again. It performs a final same-issuer context check and atomically removes the
+handle only after that action-time decision is an explicit `ALLOW`. A successful handle can
+therefore be consumed once. Failed scope, state, revision, dependency, or policy checks do
+not consume it and grant no effect permission. Two concurrent correct consumers may both
+perform fresh checks, but exactly one can complete the local consume.
+
+## 2. Trust and data matrix
+
+| Value or component | Trust at entry | Implemented check | Authority after check |
+|---|---|---|---|
+| `AccessRequest` | Canonical but caller-controllable | Exact snapshot; request/subject/tenant/workspace matched by the issuer; action/resource later bound to the handle | None |
+| `RequestContext` | Opaque candidate | Same exact issuer registry, object identity, tamper snapshot, request scope, service time, and expiry | Identity/scope evidence only |
+| `ReauthorizationBasis` | Trusted only as the immediate issuer return | Exact concrete type and exact request scope | None; lookup input only |
+| `CurrentAuthorizationStateProvider` | Trusted configured adapter boundary | Must expose `load_current_state`; every exception fails closed | None |
+| `CurrentAuthorizationState` | Trusted adapter data, not a grant | Exact class/types, canonical snapshots, required workspace, bounded capabilities, identity/scope/revision/time match | None |
+| `Member` / `RevocationSnapshot` | Current-state inputs | Exact canonical snapshots and exact tenant/subject relationships; authorizer rechecks policy and freshness | None by construction |
+| `VerifiedCapability` | Verification cache hint | Exact bounded tuple; `TenantAuthorizer` re-verifies each envelope in its own trust domain | None by construction |
+| `TenantAuthorizer` | Exact configured policy engine | Exact concrete instance; exceptions fail closed; returned decision is canonically rebuilt | Decision only |
+| `AuthorizationDecision` | Policy result | Exact request equality, service-time bound, and explicit `AuthorizationOutcome.ALLOW` | Eligible for local issuance or final consume only inside the current call |
+| `AuthorizedOperation` | Composer-owned preliminary authority | Exact registered object, complete snapshot match, actor/request match, fresh provider/policy re-evaluation, final context check, TTL, one-time consume | Permission to enter a future effect boundary once |
+
+The current-state provider is trusted configuration, but its output is never accepted by
+shape alone. A production adapter must load authoritative state. The test suite supplies
+only fakes and deliberately malicious fakes; this repository does not yet contain a real
+IdP, session, directory, membership, workspace-policy, or capability-source adapter.
+
+## 3. Current-state provider contract
+
+`CurrentAuthorizationStateProvider.load_current_state(basis, request)` receives a basis
+that the same issuer just prepared and a canonical snapshot of the concrete request. The
+provider is called during issuance and again during every consume attempt that passes token
+preflight. It must return one exact `CurrentAuthorizationState` containing:
+
+- context identifier, configured authenticator identifier, and audience;
+- exact request identifier, provider principal, mapped subject, tenant, and required
+  workspace;
+- current identity revision and current scope/membership-policy revision;
+- a provider-owned observation timestamp;
+- the current member, or `None` when no current membership exists;
+- a complete exact-tenant revocation snapshot; and
+- at most 64 exact `VerifiedCapability` values.
+
+The composer compares every identity/scope field with the issuer basis. Identity and scope
+revisions are compared exactly, with distinct stable stale-revision failures. A missing
+workspace is rejected; `None` is never treated as a tenant-wide wildcard. The observation
+must not be older than `max_state_age` and must not be farther in the future than
+`max_clock_skew` relative to the composer clock.
+
+A real provider must additionally satisfy requirements that this port cannot prove:
+
+1. Query with an exact `(tenant_id, workspace_id, subject_id)` composite key. Do not query
+   by a globally reused subject, session, resource, or workspace string.
+2. Derive principal-to-subject mapping from the authenticated provider, not request body,
+   model output, forwarded header, or chat metadata.
+3. Read membership status, role bindings, identity revision, scope revision, and
+   revocation state from authoritative stores with one documented consistency model.
+4. Use provider/service observation time. Never copy a client timestamp into
+   `observed_at`.
+5. Return a complete bounded snapshot or fail. Never truncate roles, revocations, or
+   capabilities to make a request fit.
+6. Fail closed on timeout, partial read, replica-lag uncertainty, revision conflict,
+   malformed data, dependency outage, or cancellation before a complete snapshot exists.
+7. Keep credentials, raw assertions, directory responses, and tenant identifiers out of
+   exception messages, trace attributes, metrics labels, and ordinary logs.
+8. Provide contract, consistency, failover, freshness, and tenant-collision tests before
+   being considered for a protected runtime.
+
+Echoing fields from `ReauthorizationBasis` proves only that an adapter can copy data. The
+fake provider in tests does that intentionally and is not a production implementation.
+
+## 4. Exact actor, tenant, action, and resource binding
+
+An issued handle records an immutable registry snapshot of:
+
+- random operation identifier;
+- request-context identifier, authenticator identifier, and audience;
+- request identifier, provider principal, and application subject;
+- exact tenant and exact required workspace;
+- exact concrete action, resource type, and resource identifier;
+- canonical authorization decision digest;
+- exact identity and scope revisions; and
+- service-owned issuance and expiry times.
+
+The handle exposes only its non-authorizing correlation identifier and issuance/expiry
+times. Its tenant, workspace, actor, action, resource, decision, and revision fields are not
+public properties and never appear in `str` or `repr`.
+
+Consumption requires the original issuer to validate a live `RequestContext`, both before
+the current-state lookup and immediately after the action-time policy decision. A context
+retired while the provider or authorizer runs cannot complete consumption. A new context
+with identical request, subject, tenant, workspace, and revision strings still has a
+different context identifier and cannot consume the handle. A handle for tenant A cannot
+be used for tenant B even when request ID, subject ID, workspace string, resource type, and
+resource ID collide exactly. Action, resource type, and resource ID substitutions also
+fail.
+
+The decision digest is bound into the internal snapshot, but it is not a portable receipt
+or signature. An audit or effect system must not accept a digest string in place of the
+live handle.
+
+## 5. Opaque handle and replay boundary
+
+`AuthorizedOperation` is intentionally process-local:
+
+- its public constructor rejects caller construction;
+- only the issuing composer registry accepts the exact object identity;
+- a different composer rejects it even with identical configuration;
+- reflection that changes any stored field is detected and quarantines the handle;
+- `copy`, `deepcopy`, and pickle serialization are rejected;
+- handles expire after the minimum of `operation_ttl`, request-context expiry, and
+  current-state freshness expiry;
+- active handles have a hard configured capacity and dead/expired entries are pruned;
+- `retire` invalidates one handle and `close` invalidates all handles; and
+- successful `consume` reloads and reauthorizes current state, then compares and removes
+  the handle under the same registry lock;
+- the composer and registry require the exact creator PID and fork epoch before touching
+  an inherited lock or registry record; and
+- the canonical issuer independently requires its creator PID and request-context process
+  epoch before issue, reauthorization preparation, retirement, close, or context entry.
+
+The operation ID is a correlation value, not the authority. Reconstructing or replaying an
+ID cannot reconstruct the registered Python object. The registry uses object identity plus
+a complete immutable snapshot, so object-ID reuse after garbage collection does not match
+an earlier weak reference.
+
+This is not a cryptographic bearer token and must never be serialized into HTTP, a queue,
+an event, an artifact, a database field, or a cross-process RPC. A process restart or new
+composer invalidates every outstanding handle. Arbitrary code already executing in the
+trusted Python process can inspect private module state, monkey-patch classes, or use
+reflection; Python privacy is not a sandbox. Untrusted plugins and effect workers require
+process isolation and a separately reviewed protocol.
+
+### 5.1 Fork, spawn, and prefork boundary
+
+POSIX `fork` copies Python memory, including an issuer and its contexts, an active operation
+handle, registry tables, closed flags, clock high-water marks, and lock objects. Without an
+explicit process fence, a child could issue or refresh contexts with inherited trusted
+dependencies, build a new composer around that issuer, or let parent and child each consume
+their private copy of one nominally one-time handle. The request-context and operation
+modules therefore register lock-free `os.register_at_fork(after_in_child=...)` callbacks
+when the platform provides them. Each callback replaces its module process epoch and
+records the child PID without acquiring any application lock. Every issuer, composer, and
+registry public path that could reach a lock or authorization state compares both values
+first. Inherited issuer calls return `request_context_process_mismatch`; composition and
+operation calls return `protected_operation_process_mismatch`.
+
+Platforms without `register_at_fork`, or where hook registration is unavailable, use an
+independent safe fallback: every check samples `os.getpid()` and lazily replaces the module
+epoch when the PID differs. The inherited object still carries the parent PID and parent
+epoch, so it remains rejected. This fallback also covers a fork mechanism that bypasses
+Python's registered hook. The check intentionally requires no lock; a child therefore
+fails immediately even if another parent thread owned the composer or registry lock at the
+instant of fork.
+
+`spawn` and `forkserver` do not create a transfer mechanism. `RequestContextIssuer`,
+`AuthorizedOperation`, `ProtectedOperationComposer`, and the registry reject copy, deep
+copy, and pickle; real multiprocessing start attempts with the operation handle, composer,
+or registry fail serialization. Do not add a custom reducer, manager proxy, inherited
+global, forkserver preload, or IPC wrapper for these objects.
+
+Prefork deployment has one mandatory construction order:
+
+1. The master process must not create an issuer, provider, authorizer, composer, context,
+   or handle for worker use.
+2. Fork workers first.
+3. Inside each worker, independently create the complete issuer/provider/authorizer/clock/
+   composer composition root and authenticate new request contexts.
+4. Drain and discard every worker-local handle before that worker exits or reloads.
+
+Creating only a new composer around a prefork-inherited issuer is actively rejected before
+the inherited provider or authorizer can be reached. Providers and authorizers are still
+outside this primitive's process fence and must also be constructed worker-locally. A
+forked child cannot "adopt," close, retire, or migrate inherited contexts or handles. The
+parent remains usable and retains its original registry and one-time semantics.
+
+This fence invalidates inherited authority objects; it does not erase bytes already copied
+into the child address space. Credential-bearing, signing, connector, or untrusted-plugin
+workers must establish a `spawn`/`exec` topology before loading secrets or capabilities, or
+fetch them afterward from a separately reviewed broker. A forked child that inherited key
+or credential material is not a security sandbox merely because issuer/composer calls now
+fail closed.
+
+### 5.2 Important effect-atomicity limitation
+
+Fresh action-time authorization and one-time local consumption prevent use after an
+observed membership/revision/revocation change and prevent a second successful composer
+consume. They do **not** make the provider read, final context check, registry consume,
+repository transaction, and external side effect one atomic operation:
+
+```text
+consume succeeds -> process crashes -> effect may not start
+consume succeeds -> effect starts -> process crashes -> effect outcome may be unknown
+```
+
+There is no repository call in this slice, no durable operation ledger, no idempotency key
+store, no command receipt, and no recovery reconciliation. Calling a real effect after
+`consume` would therefore create an unclosed crash gap. Until a durable transactional or
+idempotent receipt boundary is designed and tested, this composition is permitted only
+with fake, no-op, or read-only effect adapters.
+
+State may also change immediately after the final provider read. A real adapter and effect
+boundary need a durable revision predicate, lock/fence, transactional authorization check,
+or equivalent design that proves the state used by the decision still governs the effect.
+The current double evaluation is fail-closed against changes it observes; it is not a
+cross-store serializable transaction.
+
+## 6. Time, capacity, and concurrency semantics
+
+The composer registry owns a service clock with a monotonic process-local high-water mark.
+A rollback within configured skew freezes logical time at the previous observation; a
+larger rollback fails closed. Clock exceptions and non-aware timestamps become stable
+redacted errors. Context preparation uses the issuer's independent high-water, and the
+authorizer uses its configured service clock.
+
+Before both issuance evaluation and action-time consume evaluation, the composer rejects a
+basis prepared too far in the future or a context already expired against composer time.
+It rejects a stale/future provider observation. After each policy evaluation, it resamples
+time, rechecks context expiry and provider-state age, and requires the canonical decision
+timestamp to be within configured clock skew. Issuance resamples the registry clock while
+holding the registry lock and refuses a non-positive or overlong expiry.
+
+Capacity is a hard count of live registered handles. Concurrent issuers cannot exceed it:
+the registry checks capacity, allocates the random ID, constructs the handle, and registers
+the snapshot under one reentrant lock. The expensive provider and policy calls occur before
+that lock and may still consume compute during saturation. Production still needs admission
+rate limits, per-tenant quotas, dependency concurrency budgets, and overload metrics.
+
+Two concurrent consumers may both prepare a valid context, reload state, and receive an
+`ALLOW` before reaching the registry. The final compare-and-remove step is serialized, so
+one succeeds and the other receives a stable untrusted-handle failure. This guarantee is
+local to one composer instance and process.
+
+## 7. Failure and redaction contract
+
+Public composition failures use `OperationAuthorizationError` with one bounded code. Raw
+provider, authorizer, clock, validation, context, and registry exceptions are never
+returned. Each potentially faulting call runs inside a narrow inner boundary. That boundary
+classifies only exact built-in control-signal types, obtains the interpreter-owned
+traceback through `sys.exc_info`, clears completed callback/dependency frames, and returns
+only a trusted descriptor. It never reads or writes the caught object's `args`, notes,
+custom attributes, cause, context, or traceback attributes. The outer public method deletes
+actor/request/handle arguments and raises a fresh allow-listed code-only exception.
+Provider/authorizer exception graphs and their frame locals are therefore not reachable
+through the public failure, even when a hostile exception rejects attribute reads or
+writes by throwing another secret-bearing exception.
+
+`raise ... from None` only suppresses presentation of Python's implicit exception chain;
+it does not make the programmatically readable `__context__` field `None`. Every public
+registry/composer replacement rethrow therefore raises its fresh exception inside the same
+public frame, catches that exact fresh object, clears `__context__`, and uses a bare
+re-raise. This also applies to constructor process rejection and context-manager cleanup
+failure. When such a replacement is selected while the caller is already handling an
+ordinary exception—including a real `with composer:` body exception—the public replacement
+cannot retain that caller exception, its request, provider, authorizer, key ring, handle, or
+other attached state. Completed internal frames are cleared, while the remaining library
+traceback contains only the public entry frame (and the bounded control-signal helper for a
+reissued signal).
+
+Configured dependencies are treated as hostile exception boundaries, including custom
+classes that inherit directly from `BaseException`. A non-control `BaseException` becomes
+the same stable fail-closed category as an ordinary dependency exception. Exact
+`KeyboardInterrupt`, `SystemExit`, `GeneratorExit`, and `asyncio.CancelledError` retain
+control-flow semantics, but the original third-party object and all of its message,
+argument, note, custom-attribute, cause/context, and frame-local state stay behind the
+boundary. The public method raises a different exact signal with no cause/context chain.
+Fresh `KeyboardInterrupt`, `GeneratorExit`, and `CancelledError` signals have empty
+arguments. Fresh `SystemExit` preserves only a bounded non-secret status: `None`, exact
+`bool`, or an exact `int` from 0 through 255; negative/out-of-range integers, strings,
+objects, and integer subclasses become exact status `1`. A subclass merely shaped like one
+of these control signals is treated as a hostile dependency failure. This policy applies
+to constructor and registry/composer authorization and lifecycle boundaries, preventing a
+dependency from smuggling tenant or credential material through a control-shaped exception
+while preserving async-worker cancellation and ordinary bounded exit status.
+
+`ProtectedOperationComposer.__exit__` has a narrower rule for a control signal genuinely
+originating in a `with composer:` body. Identity with `sys.exc_info()` is necessary but not
+sufficient: a caller handling an exception can obtain that same triple and pass it to a
+manual class- or instance-level `__exit__` call. Such a call must never gain originating
+control-signal priority, including when made from inside a real composer context.
+
+The supported CPython context-manager path therefore authenticates one structural exit
+lease before it examines `sys.exc_info()`:
+
+1. special lookup of the enter descriptor prepares one opaque lease token bound to the
+   exact composer, current process, and a library-owned thread-local opaque token for the
+   current actual Python thread state, while retaining only a weak reference to the
+   returned enter callback;
+2. the immediately following special lookup of the exit descriptor binds that exact pending
+   token and returns its exit callback;
+3. invocation of the returned enter callback activates the bound token; and
+4. invocation of the returned exit callback performs process and thread-state-token
+   preflight, then atomically commits the active lease token to a
+   consumed-but-not-yet-finalized phase before classifying the body exception.
+
+The module lazily creates one opaque owner token inside a library-owned `threading.local`
+dictionary for each actual Python thread state. The lease strongly retains that token, and
+every pending, binding, activation, consumption, reconciliation, finalization,
+stale-candidate cleanup, and discard path compares the current token with it by `is`. The
+retained old token cannot be deallocated and later regain the same object identity. The
+`threading.local` subclass must not define `__slots__`, because such slots are shared across
+threads instead of belonging to the per-thread dictionary.
+
+Numeric `threading.get_ident()` and native identifiers are never ownership credentials:
+CPython and the operating system may recycle them immediately after an owner terminates.
+`threading.Thread` identity is not a credential either. In particular, a thread created by
+`_thread.start_new_thread` can be represented by a cached `_DummyThread`, and supported
+CPython versions can reuse that same wrapper object for a later alien thread with the same
+identifier. The later actual thread state still receives a new library token. Thread and
+dummy-thread objects, names, equality, liveness, and identifiers therefore cannot grant or
+transfer lease ownership.
+
+On the successful authenticated path, the lease state is therefore
+`prepared -> bound -> active -> consumed -> finalized(None)`; cuts can discard an earlier
+phase. The consume helper atomically writes the `consumed` record while holding the
+composer lock, then retains that record after releasing the lock. Returning `True` is only
+an acknowledgement of that commit: an exact control signal or other failure can arrive
+after the state transition but before `__exit__` receives the return value. Treating that
+acknowledgement cut as an unconsumed lease would lose the genuine body-control identity,
+skip cleanup, and leave issued operations live.
+
+When the consume acknowledgement is unavailable, `__exit__` reads the exact retained
+lease token, owner thread-state token, process, bound/active flags, and consumed flag
+through a separate reconciliation boundary. Reconciliation permits at most two attempts
+and stops on the first definitive `True` or `False`, so one interrupted state read is
+tolerated without creating an unbounded cancellation loop. A definitive non-match is not
+permission to clean up somebody else's lease: a wrong-thread, recycled-identifier, or
+replayed exit callback fails closed without closing the owner composer. If both
+reconciliation attempts are interrupted, authentication remains indeterminate; `__exit__`
+performs one conservative cleanup attempt, finalizes the matching lease if possible, and
+propagates the last bounded failure according to the normal control-signal policy. This
+exhaustion case does not claim that an originating body control was authenticated.
+
+Cleanup and lease finalization run in a structured `finally` after confirmed consumption
+or indeterminate reconciliation. One exit-callback path invokes the close helper at most
+once; it is never retried merely because an interruption arrived after close committed but
+before its return was acknowledged. Finalization retires only the exact consumed lease for
+the actual owner thread state and occurs only after that cleanup attempt. Thus a reconciled
+authentic exit closes the composer exactly once, retires every issued operation, and leaves
+no reusable lease even when consume, reconciliation, close, or finalization return windows
+are interrupted.
+
+Normal class-level and instance-level calls to `__enter__` or `__exit__` do not receive a
+token. Binding the raw exit descriptor without a pending enter candidate cannot mint one.
+An authenticated exit callback is one-time even when saved by a caller, when cleanup fails,
+or while its consumed commit is awaiting acknowledgement. A composer admits at most one
+prepared, bound, active, or consumed context lease: nested and concurrent context entry
+fail closed, only the exact owner may discard a failed enter or exit-binding candidate,
+and a closed composer rejects entry. A foreign thread cannot bind, activate, consume,
+reconcile, finalize, discard, or replay the owner's lease even if its integer identifier
+or cached `Thread`/`_DummyThread` wrapper is identical to the terminated owner's. A forked
+child fails the creator PID/process-epoch preflight before it can touch an inherited
+prepared, bound, active, or consumed lease, or invoke an inherited saved callback after
+finalization. The child cannot clean up the parent's copied state, while the parent can
+reconcile its exact lease and complete cleanup. In particular, a real active exception
+triple in the child cannot hide `protected_operation_process_mismatch`.
+
+If an owner thread terminates without invoking its exit callback, the lease is quarantined;
+there is no owner-death adoption or automatic successor cleanup. A saved enter or exit
+callback invoked by any successor returns a code-only
+`protected_operation_internal_failure` without changing the composer closed flag, registry
+closed flag, lease phase, or issued handles. If the weakly retained enter callback has
+already disappeared, neither a direct raw enter nor lookup of a new enter descriptor may
+classify the successor as the stale candidate's owner, clear the lease, or replace it.
+Subsequent context entry remains fail closed.
+The composition root must invoke the explicit thread-agnostic `composer.close()` lifecycle
+path to close the registry and retire every handle, then discard the old composer. Explicit
+close does not authenticate the successor callback or finalize the orphaned lease, which
+remains unreachable authority inside the closed object until that object is released.
+
+Only after that one-time authentication succeeds directly or through exact-state
+reconciliation does the exit callback match the active exception type, value, and
+traceback by identity against the three interpreter-supplied arguments and require the
+value to have the exact type `KeyboardInterrupt`, `SystemExit`, `GeneratorExit`, or
+`asyncio.CancelledError`. It reads no exception attribute. When this match succeeds,
+cleanup success, an ordinary cleanup failure, any exact cleanup control signal, or an
+interruption in the consume/reconciliation acknowledgement window cannot replace the
+originating signal: `__exit__` returns a false value and Python continues propagating the
+same body object with its caller-owned traceback, status, cause/context, and other state
+unchanged. This is intentionally different from a control signal raised by a configured
+dependency, which is replaced through the bounded policy above. Directly passing a control
+object or even the current active triple to `__exit__`, passing an unrelated active
+exception, reusing a consumed or finalized exit callback, calling it from a foreign
+thread, or passing a control-signal subclass does not gain originating-signal priority.
+The cleanup return value is always ignored and can never suppress a body exception.
+
+When there is no genuine exact originating control signal, ordinary context-manager rules
+are narrowed as follows. Successful cleanup returns a false value, so an ordinary body
+exception continues unchanged. An exact cleanup control signal is reissued as a fresh
+bounded signal and replaces an ordinary body exception. An ordinary cleanup failure is
+converted to a fresh stable code-only `OperationAuthorizationError` and likewise replaces
+an ordinary body exception; its public cause/context chain and completed internal locals
+are detached. Cleanup failure is therefore operationally significant, while process
+termination and cancellation already in progress remain authoritative.
+
+This lease distinguishes ordinary special-method dispatch from ordinary direct calls; it is
+not a sandbox against arbitrary trusted Python code in the same process. Deep reflection
+can retrieve and bind both raw descriptors, preserve their callbacks, or read/call private
+module state in the same prepare/bind/activate/consume order. That sequence is
+observationally indistinguishable from interpreter dispatch without unsupported
+frame/bytecode inspection. Retaining and reconciling a consumed record adds no interpreter
+provenance proof: deep reflection can also invoke those private state transitions and
+reconciliation helpers or replace a retained thread-state token. Exact library-token
+identity closes ordinary identifier and `Thread`/`_DummyThread` wrapper reuse; it is not an
+interpreter-origin proof against arbitrary private state mutation. No frame or bytecode
+inspection is used. Arbitrary in-process reflection
+and mutation remain explicitly outside this primitive's isolation claim. The lookup-order
+behavior is verified on the supported CPython 3.9, 3.12, and 3.13 baselines; another Python
+implementation requires its own compatibility and adversarial evidence before use.
+
+Composer and registry constructors statically bind their exact class initializer before
+entering the boundary; neither resolves `_initialize` through the supplied instance. Every
+public composer and registry wrapper applies the same rule to its private implementation:
+the base-class callable is bound without reading `_authorize`, `_consume`, `_issue`,
+`_close`, or another callback through the supplied instance. A hostile instance lookup can
+therefore fail only after entering the containment boundary. Only an exact
+`ProtectedOperationComposer` and exact internal registry may initialize. A subclass or
+other receiver fails closed inside the boundary rather than gaining a virtual descriptor
+path before containment.
+
+Inside that boundary, provider `load_current_state` and clock `now` lookup deliberately uses
+attribute access without a default. A missing attribute and an `AttributeError` raised by a
+descriptor, proxy, or `__getattribute__` therefore both enter the same inner dependency
+boundary, have their completed frames cleared, and map to
+`protected_operation_state_unavailable` or `protected_operation_clock_unavailable`. A
+non-callable result maps to the same dependency-specific code. An inherited issuer retains
+the distinct `protected_operation_process_mismatch` code; other invalid constructor state
+without an already supported stable code becomes `protected_operation_internal_failure`.
+
+All fallible validation, registry creation, lock creation, and exact internal state assembly
+complete in locals before publication. The composer and registry each expose only one
+`__state` slot; a fully built exact internal state object is published with one
+`object.__setattr__` slot write. If construction is interrupted immediately before or after
+that write, or fails anywhere else, the outer constructor removes the single state slot. An
+externally retained object made with `object.__new__` therefore remains uninitialized rather
+than retaining a partial clock, registry, issuer, provider, authorizer, lock, or active-map
+configuration. Before the public construction failure escapes, the constructor also deletes
+every supplied dependency and configuration argument from its public frame. Exact control
+signals are reissued through the bounded policy above; other failures become fresh code-only
+errors.
+
+Representative codes are grouped below. Callers must treat every code as denial and must
+not retry an irreversible effect without a new reviewed idempotency policy.
+
+| Category | Stable codes |
+|---|---|
+| Context/request | `protected_operation_context_rejected`, `protected_operation_request_invalid`, `protected_operation_workspace_required`, `protected_operation_context_time_invalid`, `protected_operation_context_expired` |
+| Current state | `protected_operation_state_unavailable`, `protected_operation_state_invalid`, `protected_operation_state_mismatch`, `protected_operation_identity_revision_stale`, `protected_operation_scope_revision_stale`, `protected_operation_state_time_invalid`, `protected_operation_state_stale` |
+| Policy | `protected_operation_authorizer_failed`, `protected_operation_decision_invalid`, `protected_operation_decision_time_invalid`, `protected_operation_denied` |
+| Handle | `protected_operation_untrusted`, `protected_operation_tampered`, `protected_operation_scope_mismatch`, `protected_operation_expired`, `protected_operation_expiry_invalid`, `protected_operation_capacity_exceeded` |
+| Lifecycle/time | `protected_operation_composer_closed`, `protected_operation_registry_closed`, `protected_operation_process_mismatch`, `protected_operation_clock_unavailable`, `protected_operation_time_regressed` |
+| Containment | `protected_operation_binding_invalid`, `protected_operation_id_unavailable`, `protected_operation_internal_failure` |
+
+Error strings, representations, logs, and metrics must not include tenant, workspace,
+subject, principal, revisions, raw state, decision evidence, capabilities, credentials, or
+provider exception text. Codes are suitable for bounded metrics; identifiers are not.
+
+## 8. Reference use for tests and future composition
+
+The following shape demonstrates the enforced order. `provider` is intentionally omitted:
+there is no reviewed production adapter in this repository.
+
+```python
+from datetime import timedelta
+
+from quantum_entanglement.operation_authorization import ProtectedOperationComposer
+
+
+composer = ProtectedOperationComposer(
+    issuer=issuer,
+    state_provider=provider,  # reviewed authoritative adapter required
+    authorizer=authorizer,
+    clock=service_clock,
+    operation_ttl=timedelta(seconds=10),
+    max_state_age=timedelta(seconds=15),
+    max_clock_skew=timedelta(seconds=2),
+    max_active_operations=1_000,
+)
+
+operation = composer.authorize(request_context, access_request)
+
+# Fake/no-op/read-only adapter only in the current gate state. A future effect adapter
+# must close the durable consume/effect/receipt crash gap before enabling writes.
+composer.consume(operation, request_context, access_request)
+fake_effect_adapter.execute(access_request)
+```
+
+The composition root owns issuer, provider, authorizer, clock, and composer lifetimes. On
+shutdown, stop admission and effects first, fence/drain callers, close the composer to
+invalidate outstanding operations, then close the issuer. Recreating either object is an
+authorization reset and must not be used to bypass a clock or integrity alarm.
+
+For prefork or worker-reload hosts, perform that construction and shutdown sequence wholly
+inside each worker. Never initialize the composition root in a master and inherit it into
+workers. `protected_operation_process_mismatch` is a non-retryable local-object error:
+discard the inherited object and rebuild the entire composition root in the current
+process; never catch the code and retry the same handle.
+
+## 9. Threat and residual-risk matrix
+
+| Threat | Implemented behavior | Residual requirement |
+|---|---|---|
+| Caller fabricates request identity/scope | Same issuer validates exact request/subject/tenant/workspace | Real authenticated transport and principal mapping |
+| Caller constructs state/basis/decision | Values remain non-authorizing; only composer registry issues handles | Keep effect entry points inaccessible without the composer |
+| Provider is unavailable or throws a secret-bearing chain | Stable denial; chain and internal traceback frames detached | Alerting, timeout, circuit, retry, and provider SLO |
+| Provider returns another tenant/workspace or stale revision | Exact comparison and distinct fail-closed codes | Strong-consistency/freshness proof from real stores |
+| Membership, identity/scope revision, or capability revocation changes after issuance | `consume` reloads state and re-runs exact authorizer; observed downgrade/revision/revocation denies before consume | Atomic revision/fence with the future effect transaction |
+| Same IDs collide across tenants | Tenant and workspace are part of issuance and consume scope | Tenant/workspace columns and predicates in every repository |
+| Handle is forged, copied, pickled, moved, or mutated | Exact local registry identity, copy/pickle rejection, snapshot quarantine | Process isolation against arbitrary trusted-host code |
+| Handle is replayed serially or concurrently | Successful consume atomically removes it; later consume fails | Durable distributed replay ledger for multi-process effects |
+| Parent and forked child reuse an issuer or consume a copied handle | Independent request-context and operation PID/epoch guards reject inherited issuer/composer/registry paths before copied locks/state; a new composer cannot adopt the issuer; parent remains usable and one-time | Construct the complete composition root independently inside each worker |
+| Context is replaced by a new context for the same actor | Exact context ID/principal/revision snapshot fails | Durable session/revocation semantics if cross-process is required |
+| Service clock rolls backward | Local high-water freezes within skew and fails beyond it | Trusted time monitoring and incident runbook |
+| Dependency throws a mutation-hostile `BaseException` or control-shaped secret | Raw exception attrs are never touched; non-control failures become stable denial; exact four-way control signals are replaced with fresh empty-argument signals | Cancellation/termination integration tests in the real service host |
+| Caller passes the current active exception triple to `__exit__`, reuses a saved exit, recycles a terminated owner's thread identifier or cached dummy-thread wrapper, changes threads, or forks with a context lease | Direct calls have no lease; a genuine exit lease strongly retains and identity-compares a library-owned opaque token for the actual owner Python thread state, retains its consumed commit for exact-state reconciliation, and lets only that owner state close/finalize through the callback | Explicitly close and discard a composer orphaned by owner termination; keep arbitrary in-process reflection outside the trust boundary; validate every supported Python runtime |
+| Process crashes between consume and effect/receipt | No permissive recovery; handle is process-local | Transactional effect receipt or durable idempotency/reconciliation |
+| Registry is exhausted | Hard capacity; no over-issuance under concurrency | Per-tenant quotas, rate limits, load shedding, capacity evidence |
+| Arbitrary Python code runs in process | Explicitly outside this primitive's isolation claim | Sandboxed workers/plugins and least-privilege deployment |
+
+## 10. Compatibility, rollback, and operations
+
+This slice is additive. It adds one module and dedicated tests; it changes no schema,
+runtime path, repository, connector, CLI, protocol, or package-root export. Existing direct
+callers continue to work but remain outside the protected composition and gain no new
+production claim.
+
+Rejecting an issuer, composer, or registry outside its creator process is an intentional
+fail-closed compatibility tightening. Any prefork deployment that previously initialized
+these objects in its master must move the complete composition root into the worker. There
+is no compatibility mode for inherited contexts or handles.
+
+Composer and internal registry subclass initialization is also intentionally unsupported.
+Composition roots must construct the exact reviewed classes; extension belongs in the
+provider and future effect-adapter ports, not in subclass overrides of the security boundary.
+
+One composer must not be entered by nested or concurrent `with` statements. Use distinct
+composer instances only when the composition root deliberately needs overlapping context
+lifetimes. Manual `__enter__` and `__exit__` remain fail-closed lifecycle calls for backward
+compatibility, but they are not equivalent to interpreter context-manager dispatch and
+cannot claim originating body-control precedence.
+
+The thread that begins interpreter context dispatch must remain alive through exit. If it
+terminates first, do not retry its saved callback on a replacement worker, even when the
+replacement reports the same integer identifier or `threading.current_thread()` wrapper.
+Stop admission, call `composer.close()` explicitly, discard the orphaned composer and its
+callbacks, and create a new worker-local composition root. There is no lease migration or
+adoption API.
+
+The token identifies an actual Python thread state, not an `asyncio` task or another
+logical execution context sharing that thread. Do not transfer its callbacks between
+coroutines or hold this synchronous context open across a task handoff or `await` that lets
+untrusted same-thread code run. Task-level isolation requires a separately reviewed async
+lifecycle boundary; it is not supplied by this composer.
+
+Rollback is code-only because no persistent state is written. Stop the candidate process,
+close composer/issuer instances, discard all outstanding process-local handles, and deploy
+the prior tree. Never try to preserve, pickle, migrate, or grandfather a handle across
+rollback or restart.
+
+Any attempt to connect this module to a write repository or external connector is a new
+security behavior. It requires its own small commit, threat review, exact tenant/workspace
+repository tests, idempotency/crash tests, operator documentation, and release evidence.
+Nothing in this document authorizes a Feishu or WeCom send.
+
+## 11. Verification
+
+Run the dedicated boundary and adjacent regression tests with the standard-library runner.
+`-S` prevents unrelated site packages from shadowing the repository test package:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src \
+python -S -W error -m unittest \
+  tests/test_operation_authorization.py \
+  tests/test_request_context.py \
+  tests/test_tenancy.py
+ruff check src tests scripts
+ruff format --check src tests scripts
+MYPYPATH=src mypy --strict src
+python -m compileall -q src tests scripts examples
+git diff --check
+```
+
+### 11.1 Observed local thread-local lease evidence
+
+At clean code checkpoint `a60245a358465d3990cef69f8ef39290df527fdd` (tree
+`b75cbd5cc0526ff5fbd691dea63b24a99bc6b1a1`) on 2026-08-21, the following local synthetic
+checks were observed:
+
+| Check | Observed result |
+|---|---|
+| Independent thread-owner review | The final reviewer found no implementation defect at `a60245a` and reported P0/P1/P2 = 0. The overall review remained REJECT with one P3 because this section still described the older `9013d67` checkpoint and 94/179/918 counts. This evidence-only update closes that documentation gap; it does not change the reviewed code or open a production gate |
+| Reviewer consume-return reproducer | The reviewer matrix reproduced 16/16 failures at `0c5d5af`; after `092a68e` and `83bede3`, the same external script reported `0/16 failures` and no failure rows on CPython 3.9.6, 3.12.12, and 3.13.9. This closes the reproducer only; it is not fresh independent approval |
+| Recycled-identifier regressions | Ordinary and raw-alien owner regressions observed real integer identifier reuse on all three interpreters. CPython 3.9 and 3.12 also reused the same `_DummyThread` wrapper, while every successor received a different library TLS token. Prepared/bound/active/consumed callbacks and the stale weak-callback path could not mutate the quarantined lease, composer, registry, or handles; no reuse case was counted as a pass through a skip |
+| Changed authorization file | All 96 operation-authorization tests passed with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9 |
+| Adjacent authorization target | 181 tests passed with warnings as errors per interpreter: 96 operation-authorization, 47 request-context, and 38 tenancy tests |
+| Repository suite | The declared `unittest` baseline ran 920 tests successfully on CPython 3.9.6, 3.12.12, and 3.13.9. The first two were warning-clean under `-W error`; CPython 3.13 still printed two unraisable destructor warnings despite its zero exit; see the caveat below |
+| Static source gates | Locked Ruff 0.16.3 lint/format over 91 files and strict mypy 1.19.1 over 35 source files passed |
+| Supply-chain baseline | Four dependency-lock targets and 74 exact package records verified |
+| Parse, import, and smoke | Three-version `compileall`, package-root/versioned cold import, deterministic 25-event/3-artifact demo, and `git diff --check` passed |
+| Repository integrity | The 40-commit candidate range `b19ab6c..a60245a` is linear with no merge, the checkpoint was clean, and `git diff --check` passed |
+
+The adversarial construction cases cover provider and clock lookup through
+`__getattribute__`, descriptor-raised `AttributeError`, a mutation-hostile custom
+`BaseException`, exact `KeyboardInterrupt`, `SystemExit`,
+`GeneratorExit`, and `asyncio.CancelledError`, unsafe exit-status collapse, hostile subclass
+initializer lookup, exact-type rejection, first/second lock failure, single-slot publication
+cuts immediately before and after the write, ordinary and exact-control interruption,
+post-failure state removal, active caller exceptions, constructor argument deletion,
+completed-frame clearing, normal dependency identity, and default denial. Every composer and
+registry public wrapper is also exercised against hostile instance lookup before the
+boundary; its base implementation callback remains statically bound.
+
+The CPython 3.13 `unittest -W error` full-suite process exited successfully after 920 tests
+but printed two unraisable destructor-time `ResourceWarning` diagnostics for unclosed
+SQLite connections. The Anaconda installation also contains an unrelated site-package
+named `tests`, so the successful 920-test run used `-S` to suppress `site` initialization
+and exclude that unrelated package. Earlier
+per-test forced-GC diagnosis identified the existing
+`test_projection_receipt_count_omission_is_rejected` and
+`test_projection_receipt_count_tampering_is_rejected` backup paths. The changed 96-test
+authorization file and the 181-test adjacent target themselves passed with warnings as
+errors on 3.13. This repair did not change the SQLite path, but the 3.13 repository suite
+must not be represented as warning-clean until that separate issue is fixed and
+independently verified.
+
+These results are a same-host development checkpoint, not retained release evidence,
+clean-host proof, production adapter evidence, independent-review approval, or Gate A
+promotion. The reviewer found the thread-local-token implementation acceptable and raised
+only the evidence-documentation P3 described above. This document-only repair still requires
+an incremental reviewer check, and the blockers in section 12 remain unchanged.
+
+The dedicated suite covers exact state types/snapshots, redacted representations,
+structural provider injection, hostile provider/clock descriptor lookup during construction,
+descriptor-raised `AttributeError`, static initializer binding, exact subclass rejection,
+single-state-slot publication and rollback, static public-wrapper binding, constructor
+argument/frame detachment, workspace requirements, same-ID cross-tenant isolation, every
+actor/scope/revision substitution, provider observation freshness/future time,
+provider and authorizer exception-chain/frame detachment, hostile `BaseException` and safe
+control-signal replacement across construction, authorization, and lifecycle boundaries,
+the complete safe `SystemExit` status matrix, exact `asyncio.CancelledError` propagation,
+fail-closed control subclasses, explicit deny,
+malformed decisions, membership downgrade, post-issuance identity/scope revision change,
+post-issuance capability revocation, context retirement during refresh, every final
+reauthorization binding-field drift, foreign issuer/composer, direct construction,
+forgery, reflective tampering, copy/deepcopy/pickle, operation and composer lifecycle,
+expiry, service-clock rollback, hard concurrent issuance capacity, serial replay,
+concurrent replay, action-time reauthorization, and exact one-time consumption.
+
+Process-mismatch tests inspect every public composer and registry traceback after a failure
+raised inside an already active secret-bearing caller exception. They prove that the public
+constructor failure cannot retain its issuer/provider/authorizer/key ring, that all public
+wrappers delete request/context/handle/lifecycle arguments, and that `__cause__`, `__context__`,
+notes, dynamic attributes, and completed internal locals are detached. Separate construction
+tests prove that tested pre-publication and post-publication failures leave an externally
+retained exact object with no published state slot. Lifecycle tests exercise constructor,
+composer close/enter/exit, and registry
+close with all four exact control signals. The exit coverage uses real context managers and
+proves the four exact originating body controls across cleanup success, ordinary failure,
+and all four exact cleanup controls. It also defines and verifies
+ordinary-body/ordinary-cleanup precedence, rejects direct `__exit__` argument spoofing and
+exact-control subclasses, and proves that a truthy cleanup return cannot suppress the body.
+The added context-exit cases cover all 120 manual class/instance active-triple combinations,
+direct calls from inside a real context, nested/concurrent/closed entry, all four exact body
+controls with truthy cleanup, raw exit-descriptor binding, saved callback one-time use,
+enter-activation failure, exit-binding interruption before and after publication, and
+prepared/active/consumed lease stages.
+
+The six consume-acknowledgement groups add every pairing of the four exact body controls
+and four exact consume-return controls, every body/close-return pairing, one interrupted
+reconciliation followed by success, bounded repeated-reconciliation interruption,
+wrong-thread and saved-callback replay during the consumed window, and a real fork in that
+window. They prove exact body-object identity and traceback-tail preservation after a
+confirmed reconciliation, one cleanup invocation, complete operation retirement,
+post-cleanup lease finalization, a deterministic exhaustion boundary, and rejection that
+does not let a foreign thread or child process take over the owner's cleanup.
+
+The recycled-identifier regressions cover prepared, bound, active, and consumed leases for
+ordinary `threading.Thread` owners and raw alien owners created with
+`_thread.start_new_thread`. For every stage, the owner terminates while its callbacks remain
+saved; a bounded successor loop observes real equality between the old and new integer
+identifiers. The ordinary-thread case also proves the `Thread` objects differ. The alien
+case explicitly obtains `threading.current_thread()` in both actual thread states, but its
+authorization assertion is the different library TLS tokens: cached `_DummyThread`
+identity is recorded only as a runtime observation and is never a pass condition.
+
+Successor descriptor binding, enter activation, exit consumption/reconciliation, direct
+reconciliation/finalization, and candidate discard all fail without changing the exact
+lease object, composer and registry closed flags, or complete active-handle map. A second
+alien regression releases the owner's weak enter callback before termination, then proves
+that both raw direct enter and lookup of a new enter descriptor fail without clearing or
+replacing the quarantined stale candidate. A separate explicit `composer.close()` closes
+the registry and retires the handle while leaving the orphaned lease quarantined inside the
+closed composer. These tests run on the supported CPython 3.9, 3.12, and 3.13 baselines; an
+unavailable identifier reuse is reported as a skip rather than a pass.
+
+The suite also runs real POSIX-fork probes: child issue/prepare/retire/close/enter against an
+inherited issuer, construction of a new composer from that issuer, parent/child
+double-consume, every inherited composer and registry public path including composer exit,
+forks while other threads own issuer or operation locks, authorization-time issuer
+revalidation, and exact parent usability afterward. Actual `spawn` and `forkserver` process
+starts prove that
+handle, composer, and registry transfer is rejected. Separate fallback tests prove PID
+drift refreshes both module epochs when no at-fork callback is available. The new real-fork
+probes additionally prove that an active exception triple cannot suppress
+`protected_operation_process_mismatch` and that inherited prepared, active, consumed, and
+one-time exit callbacks all reject in the child while the parent remains usable.
+
+Test counts are observations, never promotion evidence. A release candidate must run the
+complete baseline in `RELEASE_GATES.md` on the exact clean source tree and retain the
+required evidence.
+
+## 12. Why Gate A remains closed
+
+This slice is a composition foundation, not a production authorization system. Gate A
+remains closed because at least these blockers remain:
+
+1. No real authenticator, authenticated API/session boundary, IdP adapter, or authoritative
+   current-state provider exists.
+2. Current-state reads have no proven cross-store snapshot/consistency contract and no
+   production freshness/failover evidence.
+3. The composer is not mandatory at runtime, and no repository/effect adapter requires an
+   `AuthorizedOperation`.
+4. Events, snapshots, inbox, outbox, attempts, projections, artifacts, approvals, and
+   recovery paths do not yet all prove exact tenant/workspace repository isolation and
+   legacy migration/rollback rehearsal.
+5. One-time process-local consume is not durable and is not atomic with an effect or
+   receipt. Crash recovery, idempotency, and reconciliation are unimplemented.
+6. Outstanding handles cannot cross processes or restarts; no distributed replay CAS or
+   durable authorization ledger exists.
+7. Test composition uses in-memory/fake components and does not prove production key,
+   revision-guard, time, directory, database, quota, monitoring, or incident behavior.
+8. Arbitrary in-process code is outside the isolation model; worker/plugin sandboxing and
+   least privilege remain open.
+9. No retained clean-host, migration, fault-injection, performance, security-review, or
+   promotion evidence covers this new boundary.
+10. Real prefork service integration has not yet proved worker-local construction,
+    graceful reload/drain, cancellation, and monitoring of process-mismatch failures.
+
+Until those items are closed with independently reviewable commits and exact evidence, the
+maximum permitted use remains local/offline development with synthetic data and fake,
+no-op, or read-only adapters. Passing tests must not be described as production readiness.

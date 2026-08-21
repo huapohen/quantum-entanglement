@@ -33,6 +33,27 @@ Python cannot erase an immutable copy deliberately created by a consumer or a th
 SDK. A trusted adapter must keep the view lifetime short, avoid converting it to `str`, and
 must never place it in an exception, request model, event, artifact, metric or log field.
 
+## Inbound authentication credential lease
+
+The process-local request-context issuer accepts one exact `SecretMaterial` as its inbound
+credential lease. It exposes only a read-only view to the configured authenticator and
+attempts to close the lease after success, validation rejection, provider exception, clock
+failure, capacity rejection, or issuer shutdown rejection. A view retained by the
+authenticator observes the overwritten backing buffer after a successful close. If the
+wipe primitive itself raises, issuance fails with a redacted stable code and returns no
+context; translated credential-access, authenticator and wipe failures also detach their raw
+exception cause/context and private traceback frames so an exception inspector cannot recover
+provider text or the issuer's credential `memoryview` through frame locals. Operators must
+still treat the material as not proven erased when the wipe itself fails.
+
+This use does not route an inbound bearer credential through `FileSecretProvider`, does not
+make a provider reference an authenticated identity, and does not define OIDC/JWT/mTLS.
+The transport remains responsible for bounding and wiping its original header/body buffer
+before it constructs the lease. A future authenticator must return only bounded identity,
+revision, scope and domain-separated evidence-fingerprint facts; it must not return or
+retain the raw credential. See
+[`TRUSTED_REQUEST_CONTEXT.md`](./TRUSTED_REQUEST_CONTEXT.md).
+
 ## File provider layout
 
 The provider supports only direct-child references such as:

@@ -4,6 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
+  "lastArchivedCommit": "a23d7adc8161752ae3d75c262abb0fb7918df6fb",
+  "lastImageArchivedAt": "2026-08-21T19:07:53+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -224,8 +226,96 @@
       "sourceKind": "yuque-readonly",
       "sourceReference": "https://www.yuque.com/beth/wanwork/ises6lb84aiwtzp4#kK1N",
       "width": 1328
+    },
+    {
+      "byteSize": 434896,
+      "captureDate": "2026-08-21T10:58:18.174Z",
+      "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
+      "contentScope": "Local product trial desktop viewport before running the synthetic three-Agent collaboration",
+      "derivation": "playwright-cli-viewport-capture",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "Proves only the rendered 1440x1000 viewport of the local build at the bound Git commit, not the complete page or any deployed service",
+        "The demo uses synthetic Agent functions and in-memory state; it does not validate model quality, external connectors, durable deployment, production approval, or Gate A-E completion"
+      ],
+      "filename": "10_local_trial_desktop_idle.png",
+      "firstArchivedAt": "2026-08-21T16:54:16+08:00",
+      "height": 1000,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-redacted-synthetic-local-ui",
+      "sha256": "8ca4ef49cb0e4a204c1795e61bead06c1ebda4a4cb6621d310f9340c43a092a9",
+      "sourceKind": "local-playwright-runtime",
+      "sourceReference": "git:8e4d8d7990d536ce78c1e65c5a3eb77bafc54c24; playwright:page-2026-08-21T10-58-18-174Z.png",
+      "width": 1440
+    },
+    {
+      "byteSize": 445825,
+      "captureDate": "2026-08-21T11:01:56.060Z",
+      "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
+      "contentScope": "Local product trial desktop viewport after the real local demo returned three Artifacts and 25 events",
+      "derivation": "playwright-cli-viewport-capture",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "Shows the completed UI projection and counters for one local synthetic run; the exact session, plan and Artifact identifiers are ephemeral",
+        "Does not validate a real model, external messaging, persistent storage, production deployment, security approval, or Gate A-E completion"
+      ],
+      "filename": "11_local_trial_desktop_complete.png",
+      "firstArchivedAt": "2026-08-21T16:54:16+08:00",
+      "height": 1000,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-redacted-synthetic-local-ui",
+      "sha256": "f2dfcdf04443ec34db9252995f55be7620094aa1a09070022bfb1214ff71acc3",
+      "sourceKind": "local-playwright-runtime",
+      "sourceReference": "git:8e4d8d7990d536ce78c1e65c5a3eb77bafc54c24; playwright:page-2026-08-21T11-01-56-060Z.png",
+      "width": 1440
+    },
+    {
+      "byteSize": 209676,
+      "captureDate": "2026-08-21T11:02:30.413Z",
+      "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
+      "contentScope": "Completed local product trial at a 390x844 mobile viewport",
+      "derivation": "playwright-cli-viewport-capture",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "Proves the visible mobile viewport and accessibility snapshot for one browser engine, not exhaustive device, browser or assistive-technology compatibility",
+        "The page remains a synthetic loopback-only product slice and is not evidence of connector, persistence or production readiness"
+      ],
+      "filename": "12_local_trial_mobile_complete.png",
+      "firstArchivedAt": "2026-08-21T16:54:16+08:00",
+      "height": 844,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-redacted-synthetic-local-ui",
+      "sha256": "4cef3481bad639386cc5a870c7563474f42c2ef972912190bad9b0cedbb892be",
+      "sourceKind": "local-playwright-runtime",
+      "sourceReference": "git:8e4d8d7990d536ce78c1e65c5a3eb77bafc54c24; playwright:page-2026-08-21T11-02-30-413Z.png",
+      "width": 390
+    },
+    {
+      "byteSize": 140364,
+      "captureDate": "2026-08-21T11:03:11.731Z",
+      "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
+      "contentScope": "Rendered product architecture, execution sequence and platform-state SVG diagrams in the local product trial",
+      "derivation": "playwright-cli-viewport-capture",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "The diagrams explain intended and currently implemented local product relationships; they are not proof that every production component or external protocol exists",
+        "Viewport evidence does not replace source review, automated tests, independent security review or Gate A-E promotion evidence"
+      ],
+      "filename": "13_local_trial_architecture_diagrams.png",
+      "firstArchivedAt": "2026-08-21T16:54:16+08:00",
+      "height": 1000,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-redacted-synthetic-local-ui",
+      "sha256": "39e35386c1cee306c102ebe8818e6a9686520510fa55b7a9c7b7aca0374ecd8e",
+      "sourceKind": "local-playwright-runtime",
+      "sourceReference": "git:8e4d8d7990d536ce78c1e65c5a3eb77bafc54c24; playwright:page-2026-08-21T11-03-11-731Z.png",
+      "width": 1440
     }
   ],
-  "redactionStatus": "unredacted-restricted-originals",
-  "schemaVersion": 2
+  "redactionStatus": "mixed-restricted-originals-and-synthetic-local-ui",
+  "schemaVersion": 3
 }

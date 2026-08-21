@@ -70,6 +70,14 @@ Release gates:
 - migration from the previous tagged release is automated and rollback is documented;
 - runbook demonstrates install, start, stop, recover and upgrade on a clean host.
 
+Current attempt-recovery checkpoint: durable queue/lease primitives, a transactionally
+consistent job/current-attempt snapshot, a receipt-aware fail-closed decision matrix, and
+legacy `RUNNING`-task quarantine are implemented. The orchestrator still uses direct Agent
+callbacks. Versioned invocation-start evidence, trusted result/action receipts, retry-safety
+classification, a fenced worker, receipt-bound attempt reconciliation, business projection,
+and process-kill evidence remain Phase 1 blockers. See
+[`INVOCATION_RECOVERY_COORDINATION.md`](./INVOCATION_RECOVERY_COORDINATION.md).
+
 ## Phase 2 — secure multi-tenant core (`0.3.0`)
 
 Runnable boundary: multiple internal organizations can share a deployment without data or

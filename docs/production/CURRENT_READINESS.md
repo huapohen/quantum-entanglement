@@ -1,6 +1,6 @@
 # Quantum Entanglement 当前生产就绪审计
 
-- 更新日期：2026-08-20
+- 更新日期：2026-08-21
 - 审计口径：只计算本文所在主线中已提交、可复现的源码和证据
 - 硬边界：[`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md)
 - 结论：**内核组件已形成较强验证基线，但仍不是生产服务；Gate A–E 全部关闭**
@@ -27,6 +27,19 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
    `succeeded | rejected | effect_unknown` receipt 原子绑定。
 
+另有一个跨领域 P0：当前主线已经实现统一、无锁的 PID + opaque epoch process identity
+foundation，并完成 `SQLiteEventStore` 的独立 process-bound 候选；artifact/projection/revocation
+store、`RequestContextIssuer`、key/secret registry、plugin/runtime、connector 和 composition root
+仍未完成同等级迁移。这些对象仍可能在 child 触碰 inherited lock/provider/connection 前继续运行。
+`non-copyable`/`non-pickleable` 不阻止 fork 复制；credential-bearing 或不可信 worker 必须先
+spawn/exec，再在 child 内构造 store、issuer、provider 和 event loop，并且必须发生在 secret load
+之前。event-store mismatch child 即使已经稳定拒绝，也必须停止 admission 并以 `os._exit`/exec
+替换；普通解释器 teardown 不能安全销毁 inherited SQLite graph。已实现基础合同见
+[`PROCESS_INHERITANCE.md`](./PROCESS_INHERITANCE.md)，完整依赖与测试矩阵见
+[`12_process_inheritance_dependency_audit.md`](../../analysis_report/research/12_process_inheritance_dependency_audit.md)。
+event store 的单组件运行合同见
+[`SQLITE_EVENT_STORE_PROCESS_BINDING.md`](./SQLITE_EVENT_STORE_PROCESS_BINDING.md)。
+
 测试通过证明对应断言在记录环境中成立，不证明端到端生产安全、容量、SLO、RPO/RTO 或 GA。
 
 ## 1. 可靠性与一致性
@@ -34,7 +47,10 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 ### 已提交能力
 
 - `store.py`：WAL、optimistic stream version、idempotent append、atomic multi-event append、
-  transactional inbox/outbox 和 bounded reads；
+  transactional inbox/outbox、bounded reads，以及全 public/lifecycle/deferred stream process owner
+  guards、exact SQL snapshots、transaction context enter/exit、owner-aware
+  transaction/migration/constructor cleanup、nested clean mismatch 和完整 inherited graph
+  quarantine；
 - `runtime.py`：plan/task/initial-ready 原子初始化；approval request/decision 与 task transition
   原子批次；commit-after-wrapper-error 精确协调；post-commit observer 故障隔离；
 - session recovery：每页最多 1,000 events，验证同 stream/连续 sequence，并执行 1,000,000
@@ -60,6 +76,12 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 - connector 不支持 receiver idempotency/fencing 时只能诚实承诺 at-least-once；
 - 编排 session lock 是进程内锁，多进程/多实例调度仍可能重复调用 Agent；
 - 没有完整 crash-at-every-boundary、kill -9、long-running heartbeat 和 graceful drain E2E。
+- 共享 process identity helper 已通过真实 fork、nested fork、PID drift、fork-while-unrelated-lock、
+  spawn/forkserver、copy/pickle 和 parent-continuity；`SQLiteEventStore` 又独立覆盖全部入口、open
+  transaction/clock/migration/iterator fork、transaction context enter/exit、child GC/finalizer、
+  exact control、nested clean error graph 和 fresh fork-before-init/spawn/forkserver contention/CAS。
+  但 artifact/projection/revocation store 与 recovery coordinator 的已构造实例仍未绑定 owner，
+  单组件证据不能替代逐组件接入。
 
 晋级标准：任意 admission、claim、dispatch、receiver accept、result accept、ACK 和响应边界崩溃
 后，只能恢复为未发生、已证明成功、明确拒绝或需要人工/自动 reconcile 的 unknown；不得盲目
@@ -94,6 +116,8 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
   需逐路径迁移和 canary 扫描；旧数据库/备份可能含历史自由文本 `last_error`；
 - Agent、plugin 和 connector 与主进程共享文件/网络/进程权限，无 sandbox、SSRF/DNS/IP
   revalidation、CPU/内存或出网 allowlist；
+- `RequestContextIssuer`、in-memory revocation high-water、HMAC key lifecycle 和 secret material
+  尚无统一 fork/spawn contract；parent 擦除 secret 不会擦除已 fork child 的独立 buffer；
 - stable identifier hash 不是匿名化，仍需 retention/access/cardinality policy。
 
 晋级标准：身份只能来自验证过的认证层；所有受保护动作执行时重新授权；secret canary 在
@@ -144,6 +168,10 @@ P0/P1 门禁：
   隐式迁移；
 - health 必须区分 liveness/readiness/dependency detail，详细信息需要授权且不能泄露拓扑；
 - shutdown 必须停止 admission、等待/取消安全工作、释放 lease，并对 unknown effect 告警；
+- production composition root 必须证明 worker topology 在 connection/issuer/secret/event-loop 初始化
+  前完成；禁止 preload 后继承 live authority、SQLite connection 或 connector；
+- 任何 process mismatch worker 必须停止 admission 后使用 `os._exit`/exec；禁止捕获后继续服务或
+  依赖普通 `sys.exit`/解释器 teardown 完成 inherited native resource 清理；
 - metrics/alerts 至少覆盖 queue age、stuck attempt、lease expiry、DLQ、projection lag、backup
   age、auth denial、secret/config failure、provider latency/cost 和 storage capacity；
 - operational log、durable security audit 和业务 event 必须保持不同失败语义。
@@ -202,6 +230,9 @@ compileall、deterministic demo 和 diff check。
 
 - supported Python/OS/SQLite clean-runner matrix 的不可变 CI 证据；
 - API/fake-connector E2E、cross-tenant property、fuzz、crash-at-every-boundary、load/chaos/soak；
+- artifact/projection/revocation/authorization/secret/runtime/connector 的 POSIX fork/fork-while-lock、
+  spawn/forkserver、parent continuity、fresh child composition 和 spawn-before-secret-load retained
+  matrix；`SQLiteEventStore` 自身的对应矩阵已存在，但不是系统级证明；
 - coverage/mutation policy、branch protection、review ownership 和正式 promotion decision；
 - 每次代码变化后重新生成的 exact source-bound packages/SBOM/release evidence。
 
@@ -225,14 +256,16 @@ timeline”的目标，但仓库尚无正式 Web/desktop UI 或服务端页面�
 
 按风险与依赖推进：
 
-1. 把 `RUNNING` task、durable attempt、accepted result/artifact 和 terminal state 组成可崩溃协调
+1. 先冻结 process model：为 issuer/authorization 与核心 store 建立 pre-lock PID/epoch fence，并把
+   credential-bearing/untrusted worker 固定为 spawn/exec-before-secret-load composition；
+2. 把 `RUNNING` task、durable attempt、accepted result/artifact 和 terminal state 组成可崩溃协调
    的状态机；没有 result receipt 时绝不把 succeeded job 猜成 completed；
-2. 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；
-3. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
-4. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
-5. 实现 authenticated loopback API、transactional command receipt、stream、health 和 SIGTERM；
-6. 完成单节点部署、upgrade/rollback、restore/non-emitting reconcile 和 clean-host evidence；
-7. 通过 Gate C 后再推进 capacity/OTel/isolation/PostgreSQL/HA/DR。
+3. 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；
+4. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
+5. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
+6. 实现 authenticated loopback API、transactional command receipt、stream、health 和 SIGTERM；
+7. 完成单节点部署、upgrade/rollback、restore/non-emitting reconcile 和 clean-host evidence；
+8. 通过 Gate C 后再推进 capacity/OTel/isolation/PostgreSQL/HA/DR。
 
 每个独立行为及其测试单独提交；每阶段都有运行命令、失败边界、兼容/迁移、回退和证据文档。
 默认分支每次提交后保持可运行，但“可运行”不等于“可生产晋级”。

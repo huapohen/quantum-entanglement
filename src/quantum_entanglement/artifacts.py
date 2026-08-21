@@ -587,6 +587,29 @@ class ArtifactLedger:
             )
         return position
 
+    def _reconcile_committed_event(
+        self,
+        event: DomainEvent,
+        *,
+        expected_global_position: int,
+    ) -> Optional[StoredEvent]:
+        """Return the exact event committed before an append wrapper failed."""
+
+        try:
+            stored = self.event_store.get_idempotent_event(
+                event.stream_id,
+                event.idempotency_key or "",
+            )
+        except Exception:
+            return None
+        if (
+            stored is None
+            or stored.global_position != expected_global_position + 1
+            or stored.event.to_dict() != event.to_dict()
+        ):
+            return None
+        return stored
+
     @staticmethod
     def _digest(content: str) -> str:
         return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -786,18 +809,28 @@ class ArtifactLedger:
                     idempotency_key=idempotency_key,
                     payload=payload,
                 )
+                expected_global_position = self._replay_position
                 try:
                     stored = self.event_store.append(
                         event,
-                        expected_global_position=self._replay_position,
+                        expected_global_position=expected_global_position,
                     )
-                except ConcurrencyError as exc:
-                    if attempt + 1 >= _MAX_RECORD_ADMISSION_ATTEMPTS:
-                        raise ArtifactRecordError(
-                            "artifact record admission did not stabilize"
-                        ) from exc
-                    self._rebuild_under_lock()
-                    continue
+                except Exception as exc:
+                    committed = self._reconcile_committed_event(
+                        event,
+                        expected_global_position=expected_global_position,
+                    )
+                    if committed is not None:
+                        stored = committed
+                    elif isinstance(exc, ConcurrencyError):
+                        if attempt + 1 >= _MAX_RECORD_ADMISSION_ATTEMPTS:
+                            raise ArtifactRecordError(
+                                "artifact record admission did not stabilize"
+                            ) from exc
+                        self._rebuild_under_lock()
+                        continue
+                    else:
+                        raise
 
                 # A racing idempotent retry is resolved against its durable request.
                 if stored.event.event_id != event.event_id:
