@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "a72240af22c5f47f0710dee6d3ee216ba654eedf",
-  "lastImageArchivedAt": "2026-08-21T16:54:16+08:00",
+  "lastArchivedCommit": "a23d7adc8161752ae3d75c262abb0fb7918df6fb",
+  "lastImageArchivedAt": "2026-08-21T19:07:53+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -229,7 +229,7 @@
     },
     {
       "byteSize": 434896,
-      "captureDate": "2026-08-21T08:40:33.777Z",
+      "captureDate": "2026-08-21T10:58:18.174Z",
       "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
       "contentScope": "Local product trial desktop viewport before running the synthetic three-Agent collaboration",
       "derivation": "playwright-cli-viewport-capture",
@@ -246,12 +246,12 @@
       "redactionStatus": "not-redacted-synthetic-local-ui",
       "sha256": "8ca4ef49cb0e4a204c1795e61bead06c1ebda4a4cb6621d310f9340c43a092a9",
       "sourceKind": "local-playwright-runtime",
-      "sourceReference": "git:c64723a0db405e341832e9de6963e5e107c940cf; playwright:page-2026-08-21T08-40-33-777Z.png",
+      "sourceReference": "git:8e4d8d7990d536ce78c1e65c5a3eb77bafc54c24; playwright:page-2026-08-21T10-58-18-174Z.png",
       "width": 1440
     },
     {
-      "byteSize": 446097,
-      "captureDate": "2026-08-21T08:41:13.750Z",
+      "byteSize": 445825,
+      "captureDate": "2026-08-21T11:01:56.060Z",
       "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
       "contentScope": "Local product trial desktop viewport after the real local demo returned three Artifacts and 25 events",
       "derivation": "playwright-cli-viewport-capture",
@@ -266,14 +266,14 @@
       "mediaType": "image/png",
       "notForPublicDistribution": true,
       "redactionStatus": "not-redacted-synthetic-local-ui",
-      "sha256": "8bcf1392edeabc9d15de7a0d745d41986bfa08bdda1f5693c55e86795819359b",
+      "sha256": "f2dfcdf04443ec34db9252995f55be7620094aa1a09070022bfb1214ff71acc3",
       "sourceKind": "local-playwright-runtime",
-      "sourceReference": "git:c64723a0db405e341832e9de6963e5e107c940cf; playwright:page-2026-08-21T08-41-13-750Z.png",
+      "sourceReference": "git:8e4d8d7990d536ce78c1e65c5a3eb77bafc54c24; playwright:page-2026-08-21T11-01-56-060Z.png",
       "width": 1440
     },
     {
       "byteSize": 209676,
-      "captureDate": "2026-08-21T08:42:30.074Z",
+      "captureDate": "2026-08-21T11:02:30.413Z",
       "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
       "contentScope": "Completed local product trial at a 390x844 mobile viewport",
       "derivation": "playwright-cli-viewport-capture",
@@ -290,12 +290,12 @@
       "redactionStatus": "not-redacted-synthetic-local-ui",
       "sha256": "4cef3481bad639386cc5a870c7563474f42c2ef972912190bad9b0cedbb892be",
       "sourceKind": "local-playwright-runtime",
-      "sourceReference": "git:c64723a0db405e341832e9de6963e5e107c940cf; playwright:page-2026-08-21T08-42-30-074Z.png",
+      "sourceReference": "git:8e4d8d7990d536ce78c1e65c5a3eb77bafc54c24; playwright:page-2026-08-21T11-02-30-413Z.png",
       "width": 390
     },
     {
       "byteSize": 140364,
-      "captureDate": "2026-08-21T08:44:37.444Z",
+      "captureDate": "2026-08-21T11:03:11.731Z",
       "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
       "contentScope": "Rendered product architecture, execution sequence and platform-state SVG diagrams in the local product trial",
       "derivation": "playwright-cli-viewport-capture",
@@ -312,7 +312,7 @@
       "redactionStatus": "not-redacted-synthetic-local-ui",
       "sha256": "39e35386c1cee306c102ebe8818e6a9686520510fa55b7a9c7b7aca0374ecd8e",
       "sourceKind": "local-playwright-runtime",
-      "sourceReference": "git:c64723a0db405e341832e9de6963e5e107c940cf; playwright:page-2026-08-21T08-44-37-444Z.png",
+      "sourceReference": "git:8e4d8d7990d536ce78c1e65c5a3eb77bafc54c24; playwright:page-2026-08-21T11-03-11-731Z.png",
       "width": 1440
     }
   ],

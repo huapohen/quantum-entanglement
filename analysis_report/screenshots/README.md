@@ -54,10 +54,10 @@
 | [`07_yuque_products_rows_12_16.jpeg`](07_yuque_products_rows_12_16.jpeg) | 1328×768 | 未知 / 2026-08-19 14:20:11 +08:00 | `C-internal-research-table`；同一语雀页 rows 12–16 | `cf5e10a68edc` |
 | [`08_yuque_im_provider_comparison.jpeg`](08_yuque_im_provider_comparison.jpeg) | 1328×768 | 未知 / 2026-08-19 14:20:11 +08:00 | `C-internal-research-table`；同一语雀页 IM 对比 viewport | `a68da0334c83` |
 | [`09_yuque_technical_options.jpeg`](09_yuque_technical_options.jpeg) | 1328×768 | 未知 / 2026-08-19 14:20:11 +08:00 | `C-internal-research-table`；同一语雀页技术选项 viewport | `e326e95d3a7f` |
-| [`10_local_trial_desktop_idle.png`](10_local_trial_desktop_idle.png) | 1440×1000 | 2026-08-21 08:40:33.777Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；桌面初始产品视图 | `8ca4ef49cb0e` |
-| [`11_local_trial_desktop_complete.png`](11_local_trial_desktop_complete.png) | 1440×1000 | 2026-08-21 08:41:13.750Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；3 Artifact / 25 event 完成态 | `8bcf1392edea` |
-| [`12_local_trial_mobile_complete.png`](12_local_trial_mobile_complete.png) | 390×844 | 2026-08-21 08:42:30.074Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；移动端完成态 | `4cef3481bad6` |
-| [`13_local_trial_architecture_diagrams.png`](13_local_trial_architecture_diagrams.png) | 1440×1000 | 2026-08-21 08:44:37.444Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；架构、时序与状态 SVG | `39e35386c1ce` |
+| [`10_local_trial_desktop_idle.png`](10_local_trial_desktop_idle.png) | 1440×1000 | 2026-08-21 10:58:18.174Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；桌面初始产品视图 | `8ca4ef49cb0e` |
+| [`11_local_trial_desktop_complete.png`](11_local_trial_desktop_complete.png) | 1440×1000 | 2026-08-21 11:01:56.060Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；3 Artifact / 25 event 完成态 | `f2dfcdf04443` |
+| [`12_local_trial_mobile_complete.png`](12_local_trial_mobile_complete.png) | 390×844 | 2026-08-21 11:02:30.413Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；移动端完成态 | `4cef3481bad6` |
+| [`13_local_trial_architecture_diagrams.png`](13_local_trial_architecture_diagrams.png) | 1440×1000 | 2026-08-21 11:03:11.731Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；架构、时序与状态 SVG | `39e35386c1ce` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件
