@@ -322,6 +322,14 @@ class _BoundaryFailure:
 _BoundaryValue = TypeVar("_BoundaryValue")
 
 
+class _RLockLike(Protocol):
+    """Small structural surface used by the process-local registries."""
+
+    def __enter__(self) -> bool: ...
+
+    def __exit__(self, exc_type: object, exc_value: object, trace: object) -> None: ...
+
+
 def _invoke_boundary(
     callback: Callable[[], _BoundaryValue],
 ) -> tuple[Optional[_BoundaryValue], Optional[_BoundaryFailure]]:
@@ -593,6 +601,16 @@ class _AuthorizedOperationRegistry:
         "__owner_epoch",
         "__owner_pid",
     )
+    __active: dict[int, tuple[weakref.ReferenceType[AuthorizedOperation], _OperationSnapshot]]
+    __clock: ServerClock
+    __closed: bool
+    __last_observed_at: Optional[datetime]
+    __lock: _RLockLike
+    __max_active_operations: int
+    __max_clock_skew: timedelta
+    __max_operation_ttl: timedelta
+    __owner_epoch: object
+    __owner_pid: int
 
     def __init__(
         self,
@@ -653,13 +671,13 @@ class _AuthorizedOperationRegistry:
             "now",
             "protected_operation_clock_unavailable",
         )
-        self.__max_operation_ttl = _require_duration(
+        validated_operation_ttl = _require_duration(
             max_operation_ttl,
             "max_operation_ttl",
             minimum=timedelta(microseconds=1),
             maximum=timedelta(minutes=5),
         )
-        self.__max_clock_skew = _require_duration(
+        validated_clock_skew = _require_duration(
             max_clock_skew,
             "max_clock_skew",
             minimum=timedelta(0),
@@ -669,16 +687,33 @@ class _AuthorizedOperationRegistry:
             raise TypeError("max_active_operations must be an integer")
         if not 1 <= max_active_operations <= 1_000_000:
             raise ValueError("max_active_operations is outside the supported range")
-        self.__clock = clock
-        self.__max_active_operations = max_active_operations
-        self.__active: dict[
+        active: dict[
             int, tuple[weakref.ReferenceType[AuthorizedOperation], _OperationSnapshot]
         ] = {}
-        self.__lock = threading.RLock()
-        self.__closed = False
-        self.__last_observed_at: Optional[datetime] = None
-        self.__owner_pid = owner_pid
-        self.__owner_epoch = owner_epoch
+        lock = threading.RLock()
+
+        object.__setattr__(self, "_AuthorizedOperationRegistry__clock", clock)
+        object.__setattr__(
+            self,
+            "_AuthorizedOperationRegistry__max_operation_ttl",
+            validated_operation_ttl,
+        )
+        object.__setattr__(
+            self,
+            "_AuthorizedOperationRegistry__max_clock_skew",
+            validated_clock_skew,
+        )
+        object.__setattr__(
+            self,
+            "_AuthorizedOperationRegistry__max_active_operations",
+            max_active_operations,
+        )
+        object.__setattr__(self, "_AuthorizedOperationRegistry__active", active)
+        object.__setattr__(self, "_AuthorizedOperationRegistry__lock", lock)
+        object.__setattr__(self, "_AuthorizedOperationRegistry__closed", False)
+        object.__setattr__(self, "_AuthorizedOperationRegistry__last_observed_at", None)
+        object.__setattr__(self, "_AuthorizedOperationRegistry__owner_pid", owner_pid)
+        object.__setattr__(self, "_AuthorizedOperationRegistry__owner_epoch", owner_epoch)
         return True
 
     def issue(
@@ -1193,6 +1228,17 @@ class ProtectedOperationComposer:
         "__provider",
         "__registry",
     )
+    __authorizer: TenantAuthorizer
+    __closed: bool
+    __issuer: RequestContextIssuer
+    __lock: _RLockLike
+    __max_clock_skew: timedelta
+    __max_state_age: timedelta
+    __operation_ttl: timedelta
+    __owner_epoch: object
+    __owner_pid: int
+    __provider: CurrentAuthorizationStateProvider
+    __registry: _AuthorizedOperationRegistry
 
     def __init__(
         self,
@@ -1274,38 +1320,48 @@ class ProtectedOperationComposer:
         )
         if type(authorizer) is not TenantAuthorizer:
             raise TypeError("authorizer must be an exact TenantAuthorizer")
-        self.__operation_ttl = _require_duration(
+        validated_operation_ttl = _require_duration(
             operation_ttl,
             "operation_ttl",
             minimum=timedelta(microseconds=1),
             maximum=timedelta(minutes=5),
         )
-        self.__max_state_age = _require_duration(
+        validated_state_age = _require_duration(
             max_state_age,
             "max_state_age",
             minimum=timedelta(microseconds=1),
             maximum=timedelta(minutes=5),
         )
-        self.__max_clock_skew = _require_duration(
+        validated_clock_skew = _require_duration(
             max_clock_skew,
             "max_clock_skew",
             minimum=timedelta(0),
             maximum=timedelta(minutes=5),
         )
         configured_clock = clock if clock is not None else SystemClock()
-        self.__registry = _AuthorizedOperationRegistry(
+        registry = _AuthorizedOperationRegistry(
             clock=configured_clock,
-            max_operation_ttl=self.__operation_ttl,
-            max_clock_skew=self.__max_clock_skew,
+            max_operation_ttl=validated_operation_ttl,
+            max_clock_skew=validated_clock_skew,
             max_active_operations=max_active_operations,
         )
-        self.__issuer = issuer
-        self.__provider = state_provider
-        self.__authorizer = authorizer
-        self.__lock = threading.RLock()
-        self.__closed = False
-        self.__owner_pid = owner_pid
-        self.__owner_epoch = owner_epoch
+        lock = threading.RLock()
+
+        object.__setattr__(
+            self, "_ProtectedOperationComposer__operation_ttl", validated_operation_ttl
+        )
+        object.__setattr__(self, "_ProtectedOperationComposer__max_state_age", validated_state_age)
+        object.__setattr__(
+            self, "_ProtectedOperationComposer__max_clock_skew", validated_clock_skew
+        )
+        object.__setattr__(self, "_ProtectedOperationComposer__registry", registry)
+        object.__setattr__(self, "_ProtectedOperationComposer__issuer", issuer)
+        object.__setattr__(self, "_ProtectedOperationComposer__provider", state_provider)
+        object.__setattr__(self, "_ProtectedOperationComposer__authorizer", authorizer)
+        object.__setattr__(self, "_ProtectedOperationComposer__lock", lock)
+        object.__setattr__(self, "_ProtectedOperationComposer__closed", False)
+        object.__setattr__(self, "_ProtectedOperationComposer__owner_pid", owner_pid)
+        object.__setattr__(self, "_ProtectedOperationComposer__owner_epoch", owner_epoch)
         return True
 
     def authorize(
