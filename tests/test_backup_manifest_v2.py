@@ -59,6 +59,11 @@ from quantum_entanglement.backup_topology import (
 from quantum_entanglement.domain_migrations import (
     DOMAIN_MIGRATION_REGISTRY,
     MAX_DOMAIN_MIGRATIONS,
+    AppliedSchemaMigration,
+    DomainMigrationDependencyRow,
+    SchemaDomainHead,
+    SchemaShape,
+    SchemaState,
 )
 
 SHA_A = "a" * 64
@@ -321,6 +326,51 @@ def valid_prefix_manifest_dict(migration_count: int, shape: str) -> dict[str, An
     return value
 
 
+def durable_schema_state(value: Optional[dict[str, Any]] = None) -> SchemaState:
+    parsed = parse_backup_manifest_v2(value or valid_manifest_dict()).schema_state
+    return SchemaState(
+        sidecar_format=parsed.sidecar_format,
+        shape=SchemaShape(parsed.shape),
+        legacy_schema_version=parsed.legacy_schema_version,
+        applied_migrations=tuple(
+            AppliedSchemaMigration(
+                migration_id=item.migration_id,
+                filename=item.filename,
+                sql_sha256=item.sql_sha256,
+                domain=item.domain,
+                domain_version=item.domain_version,
+                kind=item.kind,
+                descriptor_sha256=item.descriptor_sha256,
+                owned_schema_sha256=item.owned_schema_sha256,
+                metadata_recorded=item.metadata_recorded,
+            )
+            for item in parsed.applied_migrations
+        ),
+        domain_heads=tuple(
+            SchemaDomainHead(
+                domain=item.domain,
+                domain_version=item.domain_version,
+                migration_id=item.migration_id,
+                owned_schema_sha256=item.owned_schema_sha256,
+                metadata_recorded=item.metadata_recorded,
+            )
+            for item in parsed.domain_heads
+        ),
+        dependency_edges=tuple(
+            DomainMigrationDependencyRow(
+                migration_id=item.migration_id,
+                depends_on_migration_id=item.depends_on_migration_id,
+            )
+            for item in parsed.dependency_edges
+        ),
+        owned_schema_digests=tuple(
+            (item.domain, item.owned_schema_sha256) for item in parsed.owned_schema_digests
+        ),
+        registry_sha256=parsed.registry_sha256,
+        state_sha256=parsed.state_sha256,
+    )
+
+
 class ExactBackupManifestV2CodecTests(unittest.TestCase):
     def assert_rejected(self, mutate: Any, pattern: Optional[str] = None) -> None:
         value = valid_manifest_dict()
@@ -390,6 +440,141 @@ class ExactBackupManifestV2CodecTests(unittest.TestCase):
         )
         with self.assertRaises(FrozenInstanceError):
             parsed.page_size = 8192  # type: ignore[misc]
+
+    def test_schema_state_factory_binds_exact_durable_state_and_timestamps(self) -> None:
+        expected = parse_backup_manifest_v2(valid_manifest_dict()).schema_state
+        timestamps = {item.migration_id: item.applied_at for item in expected.applied_migrations}
+        actual = BackupManifestV2SchemaState.from_schema_state(
+            durable_schema_state(),
+            timestamps,
+        )
+        self.assertEqual(actual, expected)
+        self.assertIs(type(actual), BackupManifestV2SchemaState)
+
+        empty_value = valid_prefix_manifest_dict(0, "empty")
+        empty_expected = parse_backup_manifest_v2(empty_value).schema_state
+        self.assertEqual(
+            BackupManifestV2SchemaState.from_schema_state(
+                durable_schema_state(empty_value),
+                {},
+            ),
+            empty_expected,
+        )
+
+    def test_schema_state_factory_rejects_untrusted_or_unmatched_input(self) -> None:
+        state = durable_schema_state()
+        parsed = parse_backup_manifest_v2(valid_manifest_dict()).schema_state
+        timestamps = {item.migration_id: item.applied_at for item in parsed.applied_migrations}
+        with self.assertRaisesRegex(TypeError, "exact SchemaState"):
+            BackupManifestV2SchemaState.from_schema_state(object(), timestamps)
+        for wrong in ([], tuple(timestamps.items()), None):
+            with self.subTest(container=type(wrong).__name__):
+                with self.assertRaisesRegex(TypeError, "plain dictionary"):
+                    BackupManifestV2SchemaState.from_schema_state(state, wrong)
+
+        missing = dict(timestamps)
+        missing.pop(next(iter(missing)))
+        with self.assertRaisesRegex(ValueError, "differ"):
+            BackupManifestV2SchemaState.from_schema_state(state, missing)
+        extra = dict(timestamps)
+        extra[99] = "2026-08-20T00:00:03Z"
+        with self.assertRaisesRegex(ValueError, "differ"):
+            BackupManifestV2SchemaState.from_schema_state(state, extra)
+        with self.assertRaisesRegex(TypeError, "exact integers"):
+            BackupManifestV2SchemaState.from_schema_state(
+                state,
+                {True: "2026-08-20T00:00:00Z"},
+            )
+        malformed = dict(timestamps)
+        malformed[next(iter(malformed))] = "2026-08-20 00:00:00"
+        with self.assertRaisesRegex(ValueError, "canonical RFC 3339"):
+            BackupManifestV2SchemaState.from_schema_state(state, malformed)
+
+        object.__setattr__(state, "state_sha256", SHA_A)
+        with self.assertRaisesRegex(ValueError, "not canonical"):
+            BackupManifestV2SchemaState.from_schema_state(state, timestamps)
+
+        state = durable_schema_state()
+        yielded = 0
+        first_migration = state.applied_migrations[0]
+
+        def infinite() -> Iterator[AppliedSchemaMigration]:
+            nonlocal yielded
+            while True:
+                yielded += 1
+                yield first_migration
+
+        object.__setattr__(state, "applied_migrations", infinite())
+        with self.assertRaisesRegex(ValueError, "exceeds the hard limit"):
+            BackupManifestV2SchemaState.from_schema_state(state, timestamps)
+        self.assertEqual(yielded, MAX_DOMAIN_MIGRATIONS + 1)
+
+    def test_registry_topology_factory_reconstructs_exact_trusted_evidence(self) -> None:
+        parsed = parse_backup_manifest_v2(valid_manifest_dict())
+        profile_names = tuple(item.profile for item in parsed.registry_topology.present_profiles)
+        counts = {item.name: item.row_count for item in parsed.registry_topology.table_counts}
+        actual = BackupManifestV2RegistryTopology.from_trusted_registry(
+            parsed.schema_state,
+            profile_names,
+            counts,
+        )
+        self.assertEqual(actual, parsed.registry_topology)
+        self.assertIs(type(actual), BackupManifestV2RegistryTopology)
+
+    def test_registry_topology_factory_rejects_noncanonical_sources(self) -> None:
+        parsed = parse_backup_manifest_v2(valid_manifest_dict())
+        names = tuple(item.profile for item in parsed.registry_topology.present_profiles)
+        counts = {item.name: item.row_count for item in parsed.registry_topology.table_counts}
+        for wrong in (list(names), iter(names), None):
+            with self.subTest(container=type(wrong).__name__):
+                with self.assertRaisesRegex(TypeError, "exact tuple"):
+                    BackupManifestV2RegistryTopology.from_trusted_registry(
+                        parsed.schema_state,
+                        wrong,
+                        counts,
+                    )
+        with self.assertRaisesRegex(ValueError, "canonical order"):
+            BackupManifestV2RegistryTopology.from_trusted_registry(
+                parsed.schema_state,
+                tuple(reversed(names)),
+                counts,
+            )
+        with self.assertRaisesRegex(ValueError, "duplicates"):
+            BackupManifestV2RegistryTopology.from_trusted_registry(
+                parsed.schema_state,
+                tuple(sorted(names + (names[0],))),
+                counts,
+            )
+        with self.assertRaisesRegex(TypeError, "plain dictionary"):
+            BackupManifestV2RegistryTopology.from_trusted_registry(
+                parsed.schema_state,
+                names,
+                tuple(counts.items()),
+            )
+        bad_key: dict[Any, Any] = dict(counts)
+        bad_key[True] = 0
+        with self.assertRaisesRegex(TypeError, "plain strings"):
+            BackupManifestV2RegistryTopology.from_trusted_registry(
+                parsed.schema_state,
+                names,
+                bad_key,
+            )
+        bad_value: dict[Any, Any] = dict(counts)
+        bad_value[next(iter(bad_value))] = True
+        with self.assertRaisesRegex(TypeError, "exact integers"):
+            BackupManifestV2RegistryTopology.from_trusted_registry(
+                parsed.schema_state,
+                names,
+                bad_value,
+            )
+        missing = dict(counts)
+        missing.pop(next(iter(missing)))
+        with self.assertRaisesRegex(ValueError, "tableCounts differ"):
+            BackupManifestV2RegistryTopology.from_trusted_registry(
+                parsed.schema_state,
+                names,
+                missing,
+            )
 
     def test_dict_and_canonical_byte_round_trips_are_exact(self) -> None:
         value = valid_manifest_dict()
