@@ -2242,6 +2242,101 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             except RuntimeError:
                 pass
 
+    def test_readback_poison_waits_for_an_inflight_store_lock(self):
+        reader_may_enter = threading.Event()
+        reader_inside = threading.Event()
+        release_reader = threading.Event()
+        readback_interrupted = threading.Event()
+        mutator_finished = threading.Event()
+        reader_errors = []
+        mutator_errors = []
+
+        def read_after_usable_check():
+            if not reader_may_enter.wait(timeout=2):
+                reader_errors.append(AssertionError("reader start timed out"))
+                return
+            with self.store._lock:
+                self.store._require_usable()
+                reader_inside.set()
+                if not release_reader.wait(timeout=2):
+                    reader_errors.append(AssertionError("reader release timed out"))
+                    return
+                try:
+                    self.store._connection.execute("SELECT 1").fetchone()
+                except BaseException as error:
+                    reader_errors.append(error)
+
+        real_commit = self.store._commit_write_transaction
+        real_reconcile = self.store._reconcile_enqueued_job
+
+        def committed_ack_loss(connection):
+            real_commit(connection)
+            raise RuntimeError("commit acknowledgement lost")
+
+        def interrupted_readback(spec):
+            real_reconcile(spec)
+            reader_may_enter.set()
+            if not reader_inside.wait(timeout=2):
+                raise AssertionError("inflight reader did not acquire the store lock")
+            readback_interrupted.set()
+            raise KeyboardInterrupt("readback interrupted after releasing the store lock")
+
+        def mutate():
+            try:
+                self.store.enqueue(job_spec())
+            except BaseException as error:
+                mutator_errors.append(error)
+            finally:
+                mutator_finished.set()
+
+        reader = threading.Thread(target=read_after_usable_check)
+        mutator = threading.Thread(target=mutate)
+        reader.start()
+        try:
+            with (
+                patch.object(
+                    self.store,
+                    "_commit_write_transaction",
+                    side_effect=committed_ack_loss,
+                ),
+                patch.object(
+                    self.store,
+                    "_reconcile_enqueued_job",
+                    side_effect=interrupted_readback,
+                ),
+            ):
+                mutator.start()
+                self.assertTrue(readback_interrupted.wait(timeout=2))
+                self.assertFalse(mutator_finished.wait(timeout=0.1))
+                release_reader.set()
+                reader.join(timeout=2)
+                mutator.join(timeout=2)
+        finally:
+            reader_may_enter.set()
+            release_reader.set()
+            reader.join(timeout=2)
+            if mutator.ident is not None:
+                mutator.join(timeout=2)
+
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(mutator.is_alive())
+        self.assertEqual(reader_errors, [])
+        self.assertEqual(len(mutator_errors), 1)
+        self._assert_clean_control_signal(
+            mutator_errors[0],
+            KeyboardInterrupt,
+            marker="readback interrupted after releasing the store lock",
+            ambiguity=True,
+        )
+        with self.assertRaises(InvocationStorePoisonedError):
+            self.store.schema_version()
+
+        reopened = SQLiteInvocationAttemptStore(self.path, clock=self.clock)
+        try:
+            self.assertEqual(reopened.get("invocation-1").status, InvocationStatus.QUEUED)
+        finally:
+            reopened.close()
+
     def test_owned_mutations_reject_mixed_lease_binding(self):
         self.store.enqueue(job_spec())
         lease = self.store.claim("invocation-1", "worker", lease_seconds=10)

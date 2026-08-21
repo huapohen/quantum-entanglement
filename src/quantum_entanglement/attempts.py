@@ -1087,14 +1087,15 @@ class SQLiteInvocationAttemptStore:
     def _poison_store(self) -> Optional[_ControlSignalDescriptor]:
         """Permanently quarantine this instance and best-effort close its connection."""
 
-        self._poisoned = True
-        self._closed = True
-        close_control: Optional[_ControlSignalDescriptor] = None
-        if not self._connection_closed:
-            self._connection_closed, close_control = self._close_connection_outcome(
-                self._connection
-            )
-        return close_control
+        with self._lock:
+            self._poisoned = True
+            self._closed = True
+            close_control: Optional[_ControlSignalDescriptor] = None
+            if not self._connection_closed:
+                self._connection_closed, close_control = self._close_connection_outcome(
+                    self._connection
+                )
+            return close_control
 
     def _require_usable(self) -> None:
         if self._creator_pid != os.getpid():
