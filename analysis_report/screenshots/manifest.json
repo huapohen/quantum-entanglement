@@ -5,7 +5,7 @@
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
   "lastArchivedCommit": "a72240af22c5f47f0710dee6d3ee216ba654eedf",
-  "lastUpdatedAt": "2026-08-21T16:54:16+08:00",
+  "lastImageArchivedAt": "2026-08-21T16:54:16+08:00",
   "items": [
     {
       "byteSize": 807190,
