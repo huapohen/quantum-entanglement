@@ -604,7 +604,8 @@ class _AuthorizedOperationRegistry:
     ) -> None:
         initialized, failure = _invoke_boundary(
             partial(
-                self._initialize,
+                _AuthorizedOperationRegistry._initialize,
+                self,
                 clock=clock,
                 max_operation_ttl=max_operation_ttl,
                 max_clock_skew=max_clock_skew,
@@ -1205,7 +1206,8 @@ class ProtectedOperationComposer:
     ) -> None:
         initialized, failure = _invoke_boundary(
             partial(
-                self._initialize,
+                ProtectedOperationComposer._initialize,
+                self,
                 issuer=issuer,
                 state_provider=state_provider,
                 authorizer=authorizer,
