@@ -187,11 +187,11 @@ store 在构造时绑定 creator PID。fork 子进程对 read/write/recovery/con
 
 ```bash
 PYTHONPATH=src python -m pytest -o addopts='' -q
-PYTHONPATH=src PYTHONWARNINGS=error::ResourceWarning +  python3.13 -m pytest -o addopts='' -q +  -W error::pytest.PytestUnraisableExceptionWarning
+PYTHONPATH=src PYTHONWARNINGS=error::ResourceWarning python3.13 -m pytest -o addopts='' -q -W error::pytest.PytestUnraisableExceptionWarning
 ruff check src tests scripts examples
 ruff format --check src tests scripts examples
 PYTHONPATH=src mypy --strict src
-PYTHONPYCACHEPREFIX=/tmp/qe-pycache python3.13 -m compileall -q +  src tests scripts examples
+PYTHONPYCACHEPREFIX=/tmp/qe-pycache python3.13 -m compileall -q src tests scripts examples
 python3 scripts/verify_dependency_locks.py --repository-root .
 PYTHONPATH=src python3 examples/group_chat_demo.py --compact
 git diff --check
