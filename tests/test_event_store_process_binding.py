@@ -3,14 +3,17 @@ from __future__ import annotations
 import os
 import select
 import signal
+import sqlite3
 import tempfile
 import time
 import unittest
 from collections.abc import Callable
 from pathlib import Path
+from unittest import mock
 
+import quantum_entanglement.store as store_module
 from quantum_entanglement import EventStoreLifecycleError
-from quantum_entanglement.delivery import OutboxStatus
+from quantum_entanglement.delivery import OutboxMessage, OutboxStatus
 from quantum_entanglement.events import DomainEvent
 from quantum_entanglement.store import SQLiteEventStore
 
@@ -67,27 +70,34 @@ def _lifecycle_outcome(
     try:
         action()
     except EventStoreLifecycleError as error:
-        if (
-            type(error) is not EventStoreLifecycleError
-            or error.args != ("event_store_process_mismatch",)
-            or error.code != "event_store_process_mismatch"
-            or error.__cause__ is not None
-            or error.__context__ is not None
-            or getattr(error, "__notes__", None) is not None
-        ):
-            return b"unsafe-error"
-        traceback_cursor = error.__traceback__
-        while traceback_cursor is not None:
-            frame = traceback_cursor.tb_frame
-            if frame.f_globals.get("__name__") == "quantum_entanglement.store":
-                local_values = tuple(frame.f_locals.values())
-                if any(value is item for value in local_values for item in forbidden):
-                    return b"leaked-local"
-            traceback_cursor = traceback_cursor.tb_next
-        return b"rejected"
+        return _lifecycle_error_outcome(error, forbidden)
     except BaseException:
         return b"wrong-error"
     return b"accepted"
+
+
+def _lifecycle_error_outcome(
+    error: EventStoreLifecycleError,
+    forbidden: tuple[object, ...],
+) -> bytes:
+    if (
+        type(error) is not EventStoreLifecycleError
+        or error.args != ("event_store_process_mismatch",)
+        or error.code != "event_store_process_mismatch"
+        or error.__cause__ is not None
+        or error.__context__ is not None
+        or getattr(error, "__notes__", None) is not None
+    ):
+        return b"unsafe-error"
+    traceback_cursor = error.__traceback__
+    while traceback_cursor is not None:
+        frame = traceback_cursor.tb_frame
+        if frame.f_globals.get("__name__") == "quantum_entanglement.store":
+            local_values = tuple(frame.f_locals.values())
+            if any(value is item for value in local_values for item in forbidden):
+                return b"leaked-local"
+        traceback_cursor = traceback_cursor.tb_next
+    return b"rejected"
 
 
 @unittest.skipUnless(hasattr(os, "fork"), "requires POSIX fork")
@@ -172,6 +182,136 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
         self.assertEqual(self.store.stream_version("stream:owner"), 0)
         self.store.append(event)
         self.assertEqual(self.store.stream_version("stream:owner"), 1)
+
+    def test_clock_fork_after_begin_rejects_child_without_rollback_or_lock_release(self) -> None:
+        event = DomainEvent(
+            "stream:clock-fork",
+            "clock.created",
+            {},
+            "actor:test",
+            idempotency_key="clock-created",
+        )
+        message = OutboxMessage(
+            "local:test",
+            {},
+            message_id="message:clock-fork",
+            idempotency_key="message:clock-fork",
+            available_at="2026-08-21T00:00:00Z",
+            created_at="2026-08-21T00:00:00Z",
+        )
+        self.store.append_with_outbox(event, (message,))
+        parent_pid = os.getpid()
+        child_pids: list[int] = []
+        read_fd, write_fd = os.pipe()
+
+        def forking_clock() -> str:
+            if child_pids:
+                return "2026-08-21T00:00:00Z"
+            pid = os.fork()
+            if pid == 0:
+                return "2026-08-21T00:00:01Z"
+            child_pids.append(pid)
+            return "2026-08-21T00:00:01Z"
+
+        self.store._clock = forking_clock
+        try:
+            try:
+                claimed = self.store.claim_outbox("worker:parent", limit=1)
+            except EventStoreLifecycleError as error:
+                if os.getpid() == parent_pid:
+                    raise
+                outcome = _lifecycle_error_outcome(error, (self.store,))
+                os.write(write_fd, outcome)
+                os.close(write_fd)
+                os._exit(0)
+
+            if os.getpid() != parent_pid:
+                os.write(write_fd, b"accepted")
+                os.close(write_fd)
+                os._exit(0)
+
+            self.assertEqual(len(claimed), 1)
+            self.assertEqual(len(child_pids), 1)
+            os.close(write_fd)
+            ready, _, _ = select.select((read_fd,), (), (), 3.0)
+            self.assertTrue(ready, "clock-fork child produced no lifecycle result")
+            self.assertEqual(os.read(read_fd, 4096), b"rejected")
+            status = _wait_for_child(child_pids[0], 3.0)
+            self.assertTrue(os.WIFEXITED(status))
+            self.assertEqual(os.WEXITSTATUS(status), 0)
+        finally:
+            if os.getpid() == parent_pid:
+                try:
+                    os.close(read_fd)
+                except OSError:
+                    pass
+                self.store._clock = lambda: "2026-08-21T00:00:02Z"
+
+        persisted = self.store.get_outbox("message:clock-fork")
+        self.assertIsNotNone(persisted)
+        assert persisted is not None
+        self.assertEqual(persisted.attempt_count, 1)
+        self.assertEqual(persisted.status, OutboxStatus.IN_FLIGHT)
+        self.assertFalse(self.store._connection.in_transaction)
+
+    def test_constructor_migration_clock_fork_quarantines_without_child_close(self) -> None:
+        parent_pid = os.getpid()
+        child_pids: list[int] = []
+        read_fd, write_fd = os.pipe()
+        real_connect = sqlite3.connect
+        constructor_path = str(Path(self.tempdir.name) / "constructor-fork.sqlite3")
+
+        class CloseTrackingConnection(sqlite3.Connection):
+            def close(connection_self) -> None:
+                if os.getpid() != parent_pid:
+                    os.write(write_fd, b"closed:")
+                super().close()
+
+        def tracking_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+            return real_connect(*args, **kwargs, factory=CloseTrackingConnection)
+
+        def forking_clock() -> str:
+            if child_pids:
+                return "2026-08-21T00:00:00Z"
+            pid = os.fork()
+            if pid == 0:
+                return "2026-08-21T00:00:00Z"
+            child_pids.append(pid)
+            return "2026-08-21T00:00:00Z"
+
+        try:
+            try:
+                with mock.patch.object(store_module.sqlite3, "connect", tracking_connect):
+                    constructed = SQLiteEventStore(constructor_path, clock=forking_clock)
+            except EventStoreLifecycleError as error:
+                if os.getpid() == parent_pid:
+                    raise
+                outcome = _lifecycle_error_outcome(error, ())
+                os.write(write_fd, outcome)
+                os.close(write_fd)
+                os._exit(0)
+
+            if os.getpid() != parent_pid:
+                os.write(write_fd, b"accepted")
+                os.close(write_fd)
+                os._exit(0)
+
+            self.assertEqual(len(child_pids), 1)
+            os.close(write_fd)
+            ready, _, _ = select.select((read_fd,), (), (), 3.0)
+            self.assertTrue(ready, "constructor-fork child produced no lifecycle result")
+            self.assertEqual(os.read(read_fd, 4096), b"rejected")
+            status = _wait_for_child(child_pids[0], 3.0)
+            self.assertTrue(os.WIFEXITED(status))
+            self.assertEqual(os.WEXITSTATUS(status), 0)
+            self.assertEqual(constructed.stream_version("stream:constructor"), 0)
+            constructed.close()
+        finally:
+            if os.getpid() == parent_pid:
+                try:
+                    os.close(read_fd)
+                except OSError:
+                    pass
 
     def test_inherited_entry_rejects_before_caller_input_is_touched(self) -> None:
         class HostileInput:

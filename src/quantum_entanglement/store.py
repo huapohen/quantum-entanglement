@@ -84,6 +84,7 @@ _MAX_JSON_INTEGER_BITS = 4_096
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
 _EVENT_STORE_PROCESS_SIGNAL_TOKEN = object()
+_EVENT_STORE_CHILD_CONNECTION_QUARANTINE: List[sqlite3.Connection] = []
 
 
 class _EventStoreProcessMismatchSignal(BaseException):
@@ -146,6 +147,12 @@ def _raise_event_store_process_mismatch() -> NoReturn:
         if type(public_error) is EventStoreLifecycleError:
             public_error.__context__ = None
         raise
+
+
+def _quarantine_inherited_event_store_connection(connection: sqlite3.Connection) -> None:
+    """Retain a child-inherited wrapper without close, rollback, or finalization."""
+
+    _EVENT_STORE_CHILD_CONNECTION_QUARANTINE.append(connection)
 
 
 _Method = TypeVar("_Method", bound=Callable[..., Any])
@@ -246,6 +253,8 @@ class SQLiteEventStore:
     ) -> None:
         self._process_owner = _process_identity.capture_process_owner()
         self._require_current_process()
+        if type(path) is not str:
+            raise TypeError("path must be a string")
         if not callable(clock):
             raise TypeError("clock must be callable")
         if type(max_json_bytes) is not int:
@@ -256,16 +265,31 @@ class SQLiteEventStore:
         if path != ":memory:":
             parent = os.path.dirname(os.path.abspath(path))
             os.makedirs(parent, exist_ok=True)
+            self._require_current_process()
         self._connection = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self._require_current_process()
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._clock = clock
         self._max_json_bytes = max_json_bytes
+        process_mismatch = False
         try:
             self._initialize()
+        except _EventStoreProcessMismatchSignal as error:
+            trusted = _consume_event_store_process_signal(error)
+            if not trusted:
+                raise
+            _quarantine_inherited_event_store_connection(self._connection)
+            process_mismatch = True
         except BaseException:
-            self._connection.close()
-            raise
+            if self._process_is_current():
+                self._connection.close()
+                raise
+            _quarantine_inherited_event_store_connection(self._connection)
+            process_mismatch = True
+        if process_mismatch:
+            del self, path, clock, max_json_bytes
+            _raise_event_store_process_mismatch()
 
     def _require_current_process(self) -> None:
         """Emit the exact private signal before any inherited dependency access."""
@@ -275,8 +299,33 @@ class SQLiteEventStore:
             _event_store_process_mismatch_signal,
         )
 
+    def _process_is_current(self) -> bool:
+        """Check cleanup authority without allowing the private signal to escape."""
+
+        try:
+            self._require_current_process()
+        except _EventStoreProcessMismatchSignal as error:
+            if not _consume_event_store_process_signal(error):
+                raise
+            return False
+        return True
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """Acquire and release the RLock only while this process owns the store."""
+
+        self._require_current_process()
+        lock = self._lock
+        lock.acquire()
+        try:
+            self._require_current_process()
+            yield
+        finally:
+            if self._process_is_current():
+                lock.release()
+
     def _initialize(self) -> None:
-        with self._lock:
+        with self._locked():
             self._connection.executescript(
                 """
                 PRAGMA journal_mode=WAL;
@@ -348,25 +397,48 @@ class SQLiteEventStore:
                     ON inbox_receipts(event_global_position);
                 """
             )
-            apply_sqlite_migrations(self._connection, clock=self._now)
+            self._require_current_process()
+            apply_sqlite_migrations(
+                self._connection,
+                clock=self._now,
+                _process_guard=self._require_current_process,
+            )
+            self._require_current_process()
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
+        self._require_current_process()
+        lock = self._lock
+        lock.acquire()
+        try:
+            self._require_current_process()
+            connection = self._connection
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_current_process()
             try:
-                yield self._connection
+                yield connection
             except BaseException:
-                if self._connection.in_transaction:
-                    self._connection.execute("ROLLBACK")
+                if not self._process_is_current():
+                    raise
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+                    self._require_current_process()
                 raise
             else:
+                self._require_current_process()
                 try:
-                    self._connection.execute("COMMIT")
+                    connection.execute("COMMIT")
+                    self._require_current_process()
                 except BaseException:
-                    if self._connection.in_transaction:
-                        self._connection.execute("ROLLBACK")
+                    if not self._process_is_current():
+                        raise
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
+                        self._require_current_process()
                     raise
+        finally:
+            if self._process_is_current():
+                lock.release()
 
     @classmethod
     def _copy_json_value(
@@ -701,7 +773,12 @@ class SQLiteEventStore:
     def _now(self) -> str:
         """Read the store-owned clock after the write transaction is acquired."""
 
-        return self._normalize_timestamp(self._clock(), "clock")
+        self._require_current_process()
+        value = self._clock()
+        self._require_current_process()
+        normalized = self._normalize_timestamp(value, "clock")
+        self._require_current_process()
+        return normalized
 
     @staticmethod
     def _validate_page_cursor(value: int, field_name: str) -> int:
@@ -790,7 +867,7 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def stream_version(self, stream_id: str) -> int:
-        with self._lock:
+        with self._locked():
             row = self._connection.execute(
                 "SELECT COALESCE(MAX(sequence), 0) AS version FROM events WHERE stream_id = ?",
                 (stream_id,),
@@ -809,7 +886,7 @@ class SQLiteEventStore:
             raise TypeError("stream_id and idempotency_key must be strings")
         if not stream_id.strip() or not idempotency_key.strip():
             raise ValueError("stream_id and idempotency_key are required")
-        with self._lock:
+        with self._locked():
             row = self._connection.execute(
                 "SELECT * FROM events WHERE stream_id = ? AND idempotency_key = ?",
                 (stream_id, idempotency_key),
@@ -1046,7 +1123,7 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def read_stream(self, stream_id: str, after_sequence: int = 0) -> Tuple[StoredEvent, ...]:
-        with self._lock:
+        with self._locked():
             rows = self._connection.execute(
                 "SELECT * FROM events WHERE stream_id = ? AND sequence > ? ORDER BY sequence",
                 (stream_id, after_sequence),
@@ -1068,7 +1145,7 @@ class SQLiteEventStore:
             raise ValueError("stream_id is required")
         cursor = self._validate_page_cursor(after_sequence, "after_sequence")
         page_limit = self._validate_page_limit(limit)
-        with self._lock:
+        with self._locked():
             rows = self._connection.execute(
                 """
                 SELECT * FROM events
@@ -1099,7 +1176,7 @@ class SQLiteEventStore:
         def events() -> Iterator[StoredEvent]:
             position = cursor
             for _index in range(page_limit):
-                with self._lock:
+                with self._locked():
                     query = self._connection.execute(
                         """
                         SELECT * FROM events
@@ -1333,7 +1410,7 @@ class SQLiteEventStore:
     def read_outbox_ambiguities(self, *, open_only: bool = True) -> Tuple[OutboxAmbiguity, ...]:
         """Read durable reconciliation work in deterministic insertion order."""
 
-        with self._lock:
+        with self._locked():
             if open_only:
                 rows = self._connection.execute(
                     """
@@ -1364,7 +1441,7 @@ class SQLiteEventStore:
         page_limit = self._validate_page_limit(limit)
         if type(open_only) is not bool:
             raise TypeError("open_only must be a boolean")
-        with self._lock:
+        with self._locked():
             if open_only:
                 rows = self._connection.execute(
                     """
@@ -1470,7 +1547,7 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def get_outbox(self, message_id: str) -> Optional[StoredOutboxMessage]:
-        with self._lock:
+        with self._locked():
             row = self._connection.execute(
                 "SELECT * FROM outbox WHERE message_id = ?", (message_id,)
             ).fetchone()
@@ -1478,7 +1555,7 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def read_outbox(self, status: Optional[OutboxStatus] = None) -> Tuple[StoredOutboxMessage, ...]:
-        with self._lock:
+        with self._locked():
             if status is None:
                 rows = self._connection.execute(
                     "SELECT * FROM outbox ORDER BY outbox_position"
@@ -1503,7 +1580,7 @@ class SQLiteEventStore:
         page_limit = self._validate_page_limit(limit)
         if status is not None and type(status) is not OutboxStatus:
             raise TypeError("status must be an OutboxStatus or None")
-        with self._lock:
+        with self._locked():
             if status is None:
                 rows = self._connection.execute(
                     """
@@ -1525,7 +1602,7 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def get_inbox_receipt(self, consumer_id: str, message_id: str) -> Optional[InboxReceipt]:
-        with self._lock:
+        with self._locked():
             row = self._connection.execute(
                 """
                 SELECT * FROM inbox_receipts
@@ -1560,7 +1637,7 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def load_snapshot(self, stream_id: str) -> Optional[Tuple[int, Dict[str, object]]]:
-        with self._lock:
+        with self._locked():
             row = self._connection.execute(
                 "SELECT sequence, state_json FROM snapshots WHERE stream_id = ?", (stream_id,)
             ).fetchone()
@@ -1577,7 +1654,7 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def close(self) -> None:
-        with self._lock:
+        with self._locked():
             self._connection.close()
 
     @_bind_event_store_process
