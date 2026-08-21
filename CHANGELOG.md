@@ -108,6 +108,22 @@ release. Promotion additionally requires the evidence defined in
   hostile instance lookup, and `with composer:` preserves a genuine exact originating
   control signal over every cleanup outcome while rejecting direct-argument spoofing and
   ignoring cleanup return values.
+- Protected-operation context exits now require a process/thread-bound one-time descriptor
+  lease before the current exception triple can receive originating-control precedence;
+  manual exits and stale callbacks cannot claim it, while nested/concurrent entry and
+  inherited fork leases fail closed.
+- Context-exit leases now strongly retain and identity-compare a library-owned per-thread
+  opaque token instead of trusting recyclable integer identifiers or runtime-managed
+  `Thread`/`_DummyThread` wrappers. A successor cannot bind, activate, consume, reconcile,
+  finalize, or discard an orphaned lease after identifier or wrapper reuse; explicit
+  composer close remains the separate fail-closed handle-retirement path when an owner
+  terminates before exit.
+- Context exits now retain a consumed lease commit across an interrupted helper-return
+  window, reconcile exact process/thread/token state with an at-most-two-attempt budget,
+  and run cleanup plus finalization structurally at most once per exit path. One
+  reconciliation interruption preserves a genuine originating control signal; repeated
+  interruption exhausts deterministically, while wrong-thread, replayed, and forked
+  callbacks cannot take over the owner's cleanup.
 - Exact operation control signals are reissued without dependency exception state;
   `SystemExit` preserves only `None`, exact booleans, or exact integer status 0 through 255
   and maps every other status to `1`.
