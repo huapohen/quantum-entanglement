@@ -103,6 +103,9 @@ class LocalTrialRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send(HTTPStatus.OK, body, "text/html; charset=utf-8")
             return
+        if route == "/favicon.ico":
+            self._send(HTTPStatus.NO_CONTENT, b"", "image/x-icon")
+            return
         if route == "/api/health":
             if not self._token_is_valid():
                 self._send_json(HTTPStatus.FORBIDDEN, {"error": "trial_token_invalid"})
