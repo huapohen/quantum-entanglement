@@ -817,7 +817,9 @@ class SQLiteBackupTests(unittest.TestCase):
         backup, manifest_path, _created = self.create_backup()
         destination = self.root / "restore-temp-race" / "state.sqlite3"
         real_copy_fd = backup_module._copy_fd
+        real_read_only_connection_fd = backup_module._read_only_connection_fd
         replacement_temp = None
+        post_replacement_connection_attempts = 0
 
         def replace_temporary_file_after_copy(source_descriptor, destination_descriptor):
             nonlocal replacement_temp
@@ -829,9 +831,22 @@ class SQLiteBackupTests(unittest.TestCase):
             replacement_temp.write_bytes(b"operator temporary file")
             return result
 
-        with patch(
-            "quantum_entanglement.backup._copy_fd",
-            side_effect=replace_temporary_file_after_copy,
+        def reject_reopening_unlinked_descriptor(descriptor):
+            nonlocal post_replacement_connection_attempts
+            if replacement_temp is not None:
+                post_replacement_connection_attempts += 1
+                raise sqlite3.OperationalError("unable to open database file")
+            return real_read_only_connection_fd(descriptor)
+
+        with (
+            patch(
+                "quantum_entanglement.backup._copy_fd",
+                side_effect=replace_temporary_file_after_copy,
+            ),
+            patch(
+                "quantum_entanglement.backup._read_only_connection_fd",
+                side_effect=reject_reopening_unlinked_descriptor,
+            ),
         ):
             with self.assertRaisesRegex(BackupIntegrityError, "temporary file path changed"):
                 restore_sqlite_backup(
@@ -843,6 +858,7 @@ class SQLiteBackupTests(unittest.TestCase):
         self.assertIsNotNone(replacement_temp)
         self.assertEqual(replacement_temp.read_bytes(), b"operator temporary file")
         self.assertFalse(destination.exists())
+        self.assertEqual(post_replacement_connection_attempts, 0)
 
     def test_restore_detects_backup_in_place_change_during_copy(self):
         backup, manifest_path, _created = self.create_backup()
