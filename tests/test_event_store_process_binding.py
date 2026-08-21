@@ -142,6 +142,68 @@ def _fresh_event_store_worker(path: str, mode: str, connection: object) -> None:
         channel.close()  # type: ignore[attr-defined]
 
 
+def _nested_stale_store_worker(connection: object) -> None:
+    """Prove a current store can reclean one nested stale-store lifecycle error."""
+
+    channel = connection
+    fresh: SQLiteEventStore | None = None
+    try:
+        stale = SQLiteEventStore(":memory:")
+        store_module._process_identity._after_fork_in_child()
+        fresh = SQLiteEventStore(":memory:", clock=lambda: "2026-08-21T00:00:00Z")
+        fresh.append_with_outbox(
+            DomainEvent(
+                "stream:fresh",
+                "fresh.created",
+                {},
+                "actor:test",
+                event_id="event:fresh",
+                timestamp="2026-08-21T00:00:00Z",
+            ),
+            (
+                OutboxMessage(
+                    "local:test",
+                    {},
+                    message_id="message:fresh",
+                    idempotency_key="message:fresh",
+                    available_at="2026-08-21T00:00:00Z",
+                    created_at="2026-08-21T00:00:00Z",
+                ),
+            ),
+        )
+        fresh._clock = lambda: stale.stream_version("stream:stale-clock")
+        outcome = _lifecycle_outcome(
+            lambda: fresh.claim_outbox("worker:fresh", limit=1),
+            (fresh, stale),
+        )
+        transaction_open = fresh._connection.in_transaction
+        fresh_quarantined = any(
+            root is fresh for root in store_module._EVENT_STORE_CHILD_GRAPH_QUARANTINE
+        )
+        fresh._clock = lambda: "2026-08-21T00:00:01Z"
+        continuity = fresh.append(
+            DomainEvent(
+                "stream:fresh-continuity",
+                "fresh.continued",
+                {},
+                "actor:test",
+                event_id="event:fresh-continuity",
+                timestamp="2026-08-21T00:00:01Z",
+            ),
+            expected_version=0,
+        ).global_position
+        channel.send(  # type: ignore[attr-defined]
+            ("result", outcome, transaction_open, fresh_quarantined, continuity)
+        )
+    except BaseException as error:
+        channel.send(("error", type(error).__name__))  # type: ignore[attr-defined]
+    finally:
+        if fresh is not None:
+            fresh.close()
+        channel.close()  # type: ignore[attr-defined]
+        os._exit(0)
+
+
 def _fork_before_connection_probe(path: str, mode: str, connection: object) -> None:
     """Run one real fork before either side creates any SQLite wrapper."""
 
@@ -375,6 +437,24 @@ def _lifecycle_error_outcome(
                 return b"leaked-local"
         traceback_cursor = traceback_cursor.tb_next
     return b"rejected"
+
+
+def _exit_control_outcome(
+    action: Callable[[object, object, object], object],
+    control: BaseException,
+) -> bytes:
+    try:
+        raise control
+    except BaseException as caught:
+        suppressed = action(type(caught), caught, caught.__traceback__)
+        if (
+            caught is not control
+            or suppressed is not False
+            or caught.__cause__ is not None
+            or caught.__context__ is not None
+        ):
+            return b"control-rewritten"
+    return b"control-preserved"
 
 
 def _object_reaches_forbidden(
@@ -667,6 +747,142 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
         finally:
             entered.__exit__(None, None, None)
         self.assertFalse(self.store._connection.in_transaction)
+
+    def test_inherited_exit_boundaries_preserve_exact_controls(self) -> None:
+        self.store.append(
+            DomainEvent(
+                "stream:exit-control",
+                "exit-control.created",
+                {},
+                "actor:test",
+                event_id="event:exit-control",
+                timestamp="2026-08-21T00:00:00Z",
+            )
+        )
+        stream_context = self.store.stream_all_page(limit=1)
+        iterator = stream_context.__enter__()
+        transaction = self.store._transaction()
+        connection = transaction.__enter__()
+        try:
+            actions: tuple[tuple[str, Callable[[object, object, object], object]], ...] = (
+                ("store", self.store.__exit__),
+                ("stream", stream_context.__exit__),
+                ("transaction", transaction.__exit__),
+            )
+            controls: tuple[BaseException, ...] = (
+                KeyboardInterrupt("inherited keyboard interrupt"),
+                SystemExit(47),
+                GeneratorExit("inherited generator exit"),
+                CancelledError("inherited cancellation"),
+            )
+            for boundary, action in actions:
+                for control in controls:
+                    with self.subTest(boundary=boundary, control=type(control).__name__):
+                        self.assertEqual(
+                            _run_fork_child(
+                                lambda action=action, control=control: _exit_control_outcome(
+                                    action,
+                                    control,
+                                )
+                            ),
+                            b"control-preserved",
+                        )
+            self.assertTrue(connection.in_transaction)
+            self.assertEqual(next(iterator).global_position, 1)
+        finally:
+            transaction.__exit__(None, None, None)
+            stream_context.__exit__(None, None, None)
+        self.assertFalse(self.store._connection.in_transaction)
+
+    def test_nested_public_mismatch_is_recleaned_at_outer_store_boundary(self) -> None:
+        event = DomainEvent(
+            "stream:nested-mismatch",
+            "nested.created",
+            {},
+            "actor:test",
+            event_id="event:nested-mismatch",
+            timestamp="2026-08-21T00:00:00Z",
+        )
+        message = OutboxMessage(
+            "local:test",
+            {},
+            message_id="message:nested-mismatch",
+            idempotency_key="message:nested-mismatch",
+            available_at="2026-08-21T00:00:00Z",
+            created_at="2026-08-21T00:00:00Z",
+        )
+        self.store.append_with_outbox(event, (message,))
+        parent_pid = os.getpid()
+        child_pids: list[int] = []
+        read_fd, write_fd = os.pipe()
+
+        def nested_forking_clock() -> str:
+            if child_pids:
+                return "2026-08-21T00:00:01Z"
+            pid = os.fork()
+            if pid == 0:
+                self.store.stream_version("stream:nested-provider")
+                raise AssertionError("inherited nested store call unexpectedly returned")
+            child_pids.append(pid)
+            return "2026-08-21T00:00:01Z"
+
+        self.store._clock = nested_forking_clock
+        try:
+            try:
+                claimed = self.store.claim_outbox("worker:parent", limit=1)
+            except EventStoreLifecycleError as error:
+                if os.getpid() == parent_pid:
+                    raise
+                os.write(write_fd, _lifecycle_error_outcome(error, (self.store,)))
+                os.close(write_fd)
+                os._exit(0)
+
+            if os.getpid() != parent_pid:
+                os.write(write_fd, b"accepted")
+                os.close(write_fd)
+                os._exit(0)
+
+            self.assertEqual(len(claimed), 1)
+            os.close(write_fd)
+            ready, _, _ = select.select((read_fd,), (), (), 3.0)
+            self.assertTrue(ready, "nested-mismatch child produced no lifecycle result")
+            self.assertEqual(os.read(read_fd, 4096), b"rejected")
+            status = _wait_for_child(child_pids[0], 3.0)
+            self.assertTrue(os.WIFEXITED(status))
+            self.assertEqual(os.WEXITSTATUS(status), 0)
+        finally:
+            if os.getpid() == parent_pid:
+                try:
+                    os.close(read_fd)
+                except OSError:
+                    pass
+                self.store._clock = lambda: "2026-08-21T00:00:02Z"
+
+        self.assertFalse(self.store._connection.in_transaction)
+
+    def test_current_store_rolls_back_and_continues_after_nested_stale_store(self) -> None:
+        context = multiprocessing.get_context("spawn")
+        parent_channel, child_channel = context.Pipe()
+        process = context.Process(
+            target=_nested_stale_store_worker,
+            args=(child_channel,),
+        )
+        process.start()
+        child_channel.close()
+        try:
+            self.assertTrue(parent_channel.poll(10.0), "nested stale-store worker timed out")
+            self.assertEqual(
+                parent_channel.recv(),
+                ("result", b"rejected", False, False, 2),
+            )
+            process.join(5.0)
+            self.assertFalse(process.is_alive())
+            self.assertEqual(process.exitcode, 0)
+        finally:
+            parent_channel.close()
+            if process.is_alive():
+                process.terminate()
+                process.join(2.0)
 
     def test_clock_fork_after_begin_rejects_child_without_rollback_or_lock_release(self) -> None:
         event = DomainEvent(
@@ -1072,6 +1288,19 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
         self.assertIsNone(provider_error.__cause__)
         self.assertIsNone(provider_error.__context__)
         self.assertEqual(self.store.stream_version("stream:provider"), 0)
+
+        forged_lifecycle = EventStoreLifecycleError()
+
+        class ForgedLifecycleIterable:
+            def __iter__(self):
+                raise forged_lifecycle
+
+        with self.assertRaises(EventStoreLifecycleError) as caught_lifecycle:
+            self.store.append_many("stream:forged-lifecycle", ForgedLifecycleIterable())
+        self.assertIs(caught_lifecycle.exception, forged_lifecycle)
+        self.assertIsNone(forged_lifecycle.__cause__)
+        self.assertIsNone(forged_lifecycle.__context__)
+        self.assertEqual(self.store.stream_version("stream:forged-lifecycle"), 0)
 
     def test_public_mismatch_detaches_active_outer_exception_context(self) -> None:
         caller_sentinel = RuntimeError("caller sentinel")
