@@ -53,6 +53,12 @@ release. Promotion additionally requires the evidence defined in
   lease before the current exception triple can receive originating-control precedence;
   manual exits and stale callbacks cannot claim it, while nested/concurrent entry and
   inherited fork leases fail closed.
+- Context exits now retain a consumed lease commit across an interrupted helper-return
+  window, reconcile exact process/thread/token state with an at-most-two-attempt budget,
+  and run cleanup plus finalization structurally at most once per exit path. One
+  reconciliation interruption preserves a genuine originating control signal; repeated
+  interruption exhausts deterministically, while wrong-thread, replayed, and forked
+  callbacks cannot take over the owner's cleanup.
 - Exact operation control signals are reissued without dependency exception state;
   `SystemExit` preserves only `None`, exact booleans, or exact integer status 0 through 255
   and maps every other status to `1`.
