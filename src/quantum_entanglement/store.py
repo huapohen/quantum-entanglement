@@ -18,6 +18,7 @@ from types import MappingProxyType
 from typing import (
     Any,
     Callable,
+    ContextManager,
     Dict,
     Iterable,
     Iterator,
@@ -25,6 +26,7 @@ from typing import (
     Mapping,
     NoReturn,
     Optional,
+    SupportsIndex,
     Tuple,
     TypeVar,
     cast,
@@ -309,6 +311,128 @@ class _OutboxWriteSnapshot:
     message: OutboxMessage
     payload_json: str
     headers_json: str
+
+
+class _EventPageIterator:
+    """One process-bound event page whose ownership is checked on every resume."""
+
+    __slots__ = ("_limit", "_position", "_store")
+
+    def __init__(self, store: "SQLiteEventStore", position: int, limit: int) -> None:
+        self._store = store
+        self._position = position
+        self._limit = limit
+
+    def __iter__(self) -> "_EventPageIterator":
+        store = self._store
+        try:
+            store._require_current_process()
+            return self
+        except _EventStoreProcessMismatchSignal as error:
+            if not _consume_event_store_process_signal(error):
+                raise
+        del self, store
+        _raise_event_store_process_mismatch()
+
+    def __next__(self) -> StoredEvent:
+        try:
+            return self._next_internal()
+        except _EventStoreProcessMismatchSignal as error:
+            if not _consume_event_store_process_signal(error):
+                raise
+        del self
+        _raise_event_store_process_mismatch()
+
+    def _next_internal(self) -> StoredEvent:
+        store = self._store
+        store._require_current_process()
+        if self._limit <= 0:
+            raise StopIteration
+        position = self._position
+        with store._locked():
+            query = store._connection.execute(
+                """
+                SELECT * FROM events
+                WHERE global_position > ?
+                ORDER BY global_position LIMIT 1
+                """,
+                (position,),
+            )
+            try:
+                row = query.fetchone()
+            finally:
+                query.close()
+        if row is None:
+            self._limit = 0
+            raise StopIteration
+        item = store._row_to_event(row)
+        store._require_current_process()
+        self._position = item.global_position
+        self._limit -= 1
+        return item
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("event store iterators cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("event store iterators cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("event store iterators cannot be serialized")
+
+
+class _EventPageContext:
+    """Context boundary that revalidates ownership independently of method call time."""
+
+    __slots__ = ("_entered", "_iterator", "_limit", "_position", "_store")
+
+    def __init__(self, store: "SQLiteEventStore", position: int, limit: int) -> None:
+        self._store = store
+        self._position = position
+        self._limit = limit
+        self._entered = False
+        self._iterator: Optional[_EventPageIterator] = None
+
+    def __enter__(self) -> Iterator[StoredEvent]:
+        store = self._store
+        try:
+            store._require_current_process()
+            if self._entered:
+                raise RuntimeError("event page context cannot be re-entered")
+            iterator = _EventPageIterator(store, self._position, self._limit)
+            self._iterator = iterator
+            self._entered = True
+            return iterator
+        except _EventStoreProcessMismatchSignal as error:
+            if not _consume_event_store_process_signal(error):
+                raise
+        del self, store
+        _raise_event_store_process_mismatch()
+
+    def __exit__(
+        self,
+        exc_type: object,
+        exc: object,
+        traceback: object,
+    ) -> None:
+        store = self._store
+        try:
+            store._require_current_process()
+            return None
+        except _EventStoreProcessMismatchSignal as error:
+            if not _consume_event_store_process_signal(error):
+                raise
+        del self, store, exc_type, exc, traceback
+        _raise_event_store_process_mismatch()
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("event store contexts cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("event store contexts cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("event store contexts cannot be serialized")
 
 
 class SQLiteEventStore:
@@ -1400,40 +1524,17 @@ class SQLiteEventStore:
             return tuple(events)
 
     @_bind_event_store_process
-    @contextmanager
     def stream_all_page(
         self,
         after_position: int = 0,
         limit: int = 1000,
-    ) -> Iterator[Iterator[StoredEvent]]:
+    ) -> ContextManager[Iterator[StoredEvent]]:
         """Decode one global-position page without holding a lock across a yielded row."""
 
         cursor = self._validate_page_cursor(after_position, "after_position")
         page_limit = self._validate_page_limit(limit)
-
-        def events() -> Iterator[StoredEvent]:
-            position = cursor
-            for _index in range(page_limit):
-                with self._locked():
-                    query = self._connection.execute(
-                        """
-                        SELECT * FROM events
-                        WHERE global_position > ?
-                        ORDER BY global_position LIMIT 1
-                        """,
-                        (position,),
-                    )
-                    try:
-                        row = query.fetchone()
-                    finally:
-                        query.close()
-                if row is None:
-                    return
-                item = self._row_to_event(row)
-                position = item.global_position
-                yield item
-
-        yield events()
+        self._require_current_process()
+        return _EventPageContext(self, cursor, page_limit)
 
     @_bind_event_store_process
     def claim_outbox(
@@ -1989,3 +2090,19 @@ class SQLiteEventStore:
     @_bind_event_store_process
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self.close()
+
+    @_bind_event_store_process
+    def __copy__(self) -> NoReturn:
+        raise TypeError("event stores cannot be copied")
+
+    @_bind_event_store_process
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("event stores cannot be copied")
+
+    @_bind_event_store_process
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("event stores cannot be serialized")
+
+    @_bind_event_store_process
+    def __reduce_ex__(self, _protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("event stores cannot be serialized")

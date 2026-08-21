@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import os
+import pickle
 import select
 import signal
 import sqlite3
@@ -429,6 +431,91 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
 
         self.assertEqual(self.store.stream_version("stream:iterable-fork"), 1)
         self.assertFalse(self.store._connection.in_transaction)
+
+    def test_stream_enter_resume_iter_and_exit_each_reject_inherited_state(self) -> None:
+        events = tuple(
+            DomainEvent(
+                "stream:deferred",
+                "deferred.created",
+                {"index": index},
+                "actor:test",
+                event_id=f"event:deferred:{index}",
+                timestamp="2026-08-21T00:00:00Z",
+            )
+            for index in range(3)
+        )
+        self.store.append_many("stream:deferred", events, expected_version=0)
+        context = self.store.stream_all_page(limit=3)
+
+        self.assertEqual(
+            _run_fork_child(
+                lambda: _lifecycle_outcome(
+                    context.__enter__,
+                    (self.store, context),
+                )
+            ),
+            b"rejected",
+        )
+
+        iterator = context.__enter__()
+        first = next(iterator)
+        self.assertEqual(first.global_position, 1)
+        self.assertEqual(
+            _run_fork_child(
+                lambda: _lifecycle_outcome(
+                    lambda: iter(iterator),
+                    (self.store, context, iterator),
+                )
+            ),
+            b"rejected",
+        )
+        self.assertEqual(
+            _run_fork_child(
+                lambda: _lifecycle_outcome(
+                    lambda: next(iterator),
+                    (self.store, context, iterator),
+                )
+            ),
+            b"rejected",
+        )
+        second = next(iterator)
+        self.assertEqual(second.global_position, 2)
+
+        def exit_during_active_exception() -> object:
+            try:
+                raise RuntimeError("caller sentinel")
+            except RuntimeError as sentinel:
+                return context.__exit__(RuntimeError, sentinel, sentinel.__traceback__)
+
+        self.assertEqual(
+            _run_fork_child(
+                lambda: _lifecycle_outcome(
+                    exit_during_active_exception,
+                    (self.store, context, iterator),
+                )
+            ),
+            b"rejected",
+        )
+        third = next(iterator)
+        self.assertEqual(third.global_position, 3)
+        with self.assertRaises(StopIteration):
+            next(iterator)
+        context.__exit__(None, None, None)
+
+    def test_live_store_context_and_iterator_cannot_be_copied_or_serialized(self) -> None:
+        context = self.store.stream_all_page()
+        iterator = context.__enter__()
+        try:
+            for value in (self.store, context, iterator):
+                with self.subTest(value=type(value).__name__):
+                    with self.assertRaisesRegex(TypeError, "cannot be copied"):
+                        copy.copy(value)
+                    with self.assertRaisesRegex(TypeError, "cannot be copied"):
+                        copy.deepcopy(value)
+                    with self.assertRaisesRegex(TypeError, "cannot be serialized"):
+                        pickle.dumps(value)
+        finally:
+            context.__exit__(None, None, None)
 
     def test_write_snapshots_reject_hostile_sqlite_adapters_before_begin(self) -> None:
         adapter_calls = 0
