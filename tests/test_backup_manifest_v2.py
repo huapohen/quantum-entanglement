@@ -3,31 +3,20 @@ import hashlib
 import inspect
 import json
 import sqlite3
+import subprocess
+import sys
 import unittest
 from collections.abc import Iterator
 from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
 from typing import Any, Optional, cast
 from unittest.mock import patch
 
+import quantum_entanglement as package_module
 import quantum_entanglement.backup as active_backup_module
 import quantum_entanglement.backup_manifest_v2 as codec_module
 from quantum_entanglement import (
-    BACKUP_MANIFEST_V2_FORMAT as PUBLIC_V2_FORMAT,
-)
-from quantum_entanglement import (
     BackupManifest as PublicBackupManifest,
-)
-from quantum_entanglement import (
-    BackupManifestV2 as PublicBackupManifestV2,
-)
-from quantum_entanglement import (
-    decode_backup_manifest_v2 as public_decode_v2,
-)
-from quantum_entanglement import (
-    encode_backup_manifest_v2 as public_encode_v2,
-)
-from quantum_entanglement import (
-    parse_backup_manifest_v2 as public_parse_v2,
 )
 from quantum_entanglement.backup import BackupManifest
 from quantum_entanglement.backup_manifest_v2 import (
@@ -383,14 +372,15 @@ class ExactBackupManifestV2CodecTests(unittest.TestCase):
             with self.assertRaises((TypeError, ValueError)):
                 parse_backup_manifest_v2(value)
 
-    def test_public_api_is_explicit_and_v1_type_remains_unchanged(self) -> None:
+    def test_versioned_module_api_is_explicit_and_v1_type_remains_unchanged(self) -> None:
         self.assertIs(PublicBackupManifest, BackupManifest)
-        self.assertIs(PublicBackupManifestV2, BackupManifestV2)
-        self.assertIs(public_parse_v2, parse_backup_manifest_v2)
-        self.assertIs(public_encode_v2, encode_backup_manifest_v2)
-        self.assertIs(public_decode_v2, decode_backup_manifest_v2)
-        self.assertEqual(PUBLIC_V2_FORMAT, "qe.sqlite-backup/2")
-        self.assertIsNot(PublicBackupManifest, PublicBackupManifestV2)
+        self.assertIsNot(PublicBackupManifest, BackupManifestV2)
+        self.assertEqual(BACKUP_MANIFEST_V2_FORMAT, "qe.sqlite-backup/2")
+        self.assertFalse(hasattr(package_module, "BACKUP_MANIFEST_V2_FORMAT"))
+        self.assertFalse(hasattr(package_module, "BackupManifestV2"))
+        self.assertFalse(hasattr(package_module, "parse_backup_manifest_v2"))
+        self.assertFalse(hasattr(package_module, "encode_backup_manifest_v2"))
+        self.assertFalse(hasattr(package_module, "decode_backup_manifest_v2"))
 
         v1_value = {
             "formatVersion": "qe.sqlite-backup/1",
@@ -407,6 +397,35 @@ class ExactBackupManifestV2CodecTests(unittest.TestCase):
         self.assertEqual(parsed_v1.to_dict(), v1_value)
         with self.assertRaisesRegex(ValueError, "format version 1"):
             BackupManifest.from_dict(valid_manifest_dict())
+
+    def test_cold_package_import_does_not_read_packaged_migration_sql(self) -> None:
+        script = """
+import json
+import pathlib
+
+observed = []
+original = pathlib.Path.read_text
+
+def tracked(self, *args, **kwargs):
+    if str(self).endswith('.up.sql'):
+        observed.append(str(self))
+    return original(self, *args, **kwargs)
+
+pathlib.Path.read_text = tracked
+import quantum_entanglement
+print(json.dumps(observed))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            cwd=str(Path(__file__).resolve().parents[1]),
+            env={"PYTHONPATH": "src"},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [])
 
     def test_v1_active_module_has_no_v2_reachability(self) -> None:
         source = inspect.getsource(active_backup_module)
