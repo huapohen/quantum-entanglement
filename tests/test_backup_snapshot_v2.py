@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import quantum_entanglement.backup as active_backup_module
 import quantum_entanglement.backup_snapshot_v2 as snapshot_module
+import quantum_entanglement.projections as projections_module
 from quantum_entanglement.backup_manifest_v2 import (
     BACKUP_MANIFEST_V2_FORMAT,
     BackupManifestV2,
@@ -230,6 +231,25 @@ class BackupManifestV2SnapshotTests(unittest.TestCase):
                 derive_backup_manifest_v2_snapshot(partial)
             self.assertFalse(partial.in_transaction)
             partial.close()
+
+            drift_path = str(Path(tempdir) / "drift.sqlite3")
+            drift = sqlite3.connect(drift_path)
+            drift.execute(projections_module._PROJECTION_OFFSETS_TABLE_SQL)
+            drift.execute(projections_module._PROJECTION_RECEIPTS_TABLE_SQL)
+            drift.execute(
+                projections_module._PROJECTION_RECEIPTS_POSITION_INDEX_SQL.replace(
+                    "projection_name, global_position",
+                    "event_id",
+                )
+            )
+            drift.commit()
+            with self.assertRaisesRegex(
+                BackupManifestV2SnapshotError,
+                "schema_catalog_object_drift",
+            ):
+                derive_backup_manifest_v2_snapshot(drift)
+            self.assertFalse(drift.in_transaction)
+            drift.close()
 
             timestamp_path = str(Path(tempdir) / "timestamp.sqlite3")
             initialize_full_database(timestamp_path)
