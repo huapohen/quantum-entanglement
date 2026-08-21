@@ -7,10 +7,14 @@ import select
 import signal
 import sqlite3
 import tempfile
+import threading
 import time
 import unittest
+import warnings
+from asyncio import CancelledError
 from collections.abc import Callable
 from pathlib import Path
+from types import FunctionType, GeneratorType, MethodType
 from unittest import mock
 
 import quantum_entanglement.store as store_module
@@ -96,10 +100,63 @@ def _lifecycle_error_outcome(
         frame = traceback_cursor.tb_frame
         if frame.f_globals.get("__name__") == "quantum_entanglement.store":
             local_values = tuple(frame.f_locals.values())
-            if any(value is item for value in local_values for item in forbidden):
+            if any(_object_reaches_forbidden(value, forbidden) for value in local_values):
                 return b"leaked-local"
         traceback_cursor = traceback_cursor.tb_next
     return b"rejected"
+
+
+def _object_reaches_forbidden(
+    value: object,
+    forbidden: tuple[object, ...],
+    *,
+    seen: set[int] | None = None,
+    depth: int = 0,
+) -> bool:
+    if any(value is item for item in forbidden):
+        return True
+    if depth >= 8:
+        return False
+    if seen is None:
+        seen = set()
+    identity = id(value)
+    if identity in seen:
+        return False
+    seen.add(identity)
+    if type(value) in (tuple, list, set, frozenset):
+        return any(
+            _object_reaches_forbidden(item, forbidden, seen=seen, depth=depth + 1) for item in value
+        )
+    if type(value) is dict:
+        return any(
+            _object_reaches_forbidden(item, forbidden, seen=seen, depth=depth + 1)
+            for pair in value.items()
+            for item in pair
+        )
+    if type(value) is FunctionType:
+        closure = value.__closure__ or ()
+        for cell in closure:
+            try:
+                item = cell.cell_contents
+            except ValueError:
+                continue
+            if _object_reaches_forbidden(item, forbidden, seen=seen, depth=depth + 1):
+                return True
+        return False
+    if type(value) is MethodType:
+        return _object_reaches_forbidden(
+            value.__self__,
+            forbidden,
+            seen=seen,
+            depth=depth + 1,
+        )
+    if type(value) is GeneratorType:
+        frame = value.gi_frame
+        return frame is not None and any(
+            _object_reaches_forbidden(item, forbidden, seen=seen, depth=depth + 1)
+            for item in tuple(frame.f_locals.values())
+        )
+    return False
 
 
 @unittest.skipUnless(hasattr(os, "fork"), "requires POSIX fork")
@@ -516,6 +573,130 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
                         pickle.dumps(value)
         finally:
             context.__exit__(None, None, None)
+
+    def test_originating_exact_control_wins_over_transaction_cleanup_control(self) -> None:
+        delegate = self.store._connection
+
+        class CleanupInterruptingConnection:
+            def __init__(connection_self, *, commit_error: BaseException | None = None) -> None:
+                connection_self.commit_error = commit_error
+
+            @property
+            def in_transaction(connection_self) -> bool:
+                return delegate.in_transaction
+
+            def execute(
+                connection_self,
+                statement: str,
+                parameters: tuple[object, ...] = (),
+            ) -> object:
+                if statement == "COMMIT" and connection_self.commit_error is not None:
+                    raise connection_self.commit_error
+                if statement == "ROLLBACK":
+                    raise KeyboardInterrupt("cleanup control")
+                return delegate.execute(statement, parameters)
+
+        controls: tuple[BaseException, ...] = (
+            KeyboardInterrupt("originating keyboard interrupt"),
+            SystemExit(23),
+            GeneratorExit("originating generator exit"),
+            CancelledError("originating cancellation"),
+        )
+        for originating in controls:
+            with self.subTest(control=type(originating).__name__):
+                self.store._connection = CleanupInterruptingConnection()  # type: ignore[assignment]
+                try:
+                    with self.assertRaises(type(originating)) as caught:
+                        with self.store._transaction():
+                            raise originating
+                    self.assertIs(caught.exception, originating)
+                finally:
+                    self.store._connection = delegate
+                    if delegate.in_transaction:
+                        delegate.execute("ROLLBACK")
+
+        commit_origin = GeneratorExit("originating commit control")
+        self.store._connection = CleanupInterruptingConnection(  # type: ignore[assignment]
+            commit_error=commit_origin
+        )
+        try:
+            with self.assertRaises(GeneratorExit) as caught_commit:
+                with self.store._transaction():
+                    pass
+            self.assertIs(caught_commit.exception, commit_origin)
+        finally:
+            self.store._connection = delegate
+            if delegate.in_transaction:
+                delegate.execute("ROLLBACK")
+
+    def test_non_process_provider_exception_is_not_rewritten_or_detached(self) -> None:
+        class ProviderError(Exception):
+            pass
+
+        provider_error = ProviderError("provider sentinel")
+
+        class FailingIterable:
+            def __iter__(self):
+                raise provider_error
+
+        with self.assertRaises(ProviderError) as caught:
+            self.store.append_many("stream:provider", FailingIterable())
+        self.assertIs(caught.exception, provider_error)
+        self.assertIsNone(provider_error.__cause__)
+        self.assertIsNone(provider_error.__context__)
+        self.assertEqual(self.store.stream_version("stream:provider"), 0)
+
+    def test_public_mismatch_detaches_active_outer_exception_context(self) -> None:
+        caller_sentinel = RuntimeError("caller sentinel")
+
+        def active_exception_action() -> object:
+            try:
+                raise caller_sentinel
+            except RuntimeError:
+                return self.store.stream_version("stream:active-context")
+
+        self.assertEqual(
+            _run_fork_child(
+                lambda: _lifecycle_outcome(
+                    active_exception_action,
+                    (self.store, caller_sentinel),
+                )
+            ),
+            b"rejected",
+        )
+        self.assertIsNone(caller_sentinel.__cause__)
+        self.assertIsNone(caller_sentinel.__context__)
+
+    def test_child_does_not_wait_for_parent_thread_transaction_or_lock(self) -> None:
+        transaction_open = threading.Event()
+        release_transaction = threading.Event()
+
+        def hold_transaction() -> None:
+            with self.store._transaction():
+                transaction_open.set()
+                release_transaction.wait(5.0)
+
+        holder = threading.Thread(target=hold_transaction)
+        holder.start()
+        self.assertTrue(transaction_open.wait(1.0))
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                outcome = _run_fork_child(
+                    lambda: _lifecycle_outcome(
+                        self.store.close,
+                        (self.store,),
+                    ),
+                    timeout=2.0,
+                )
+            self.assertEqual(outcome, b"rejected")
+        finally:
+            release_transaction.set()
+            holder.join(2.0)
+
+        self.assertFalse(holder.is_alive())
+        self.assertFalse(self.store._connection.in_transaction)
+        self.assertEqual(self.store.stream_version("stream:parent-continuity"), 0)
 
     def test_write_snapshots_reject_hostile_sqlite_adapters_before_begin(self) -> None:
         adapter_calls = 0

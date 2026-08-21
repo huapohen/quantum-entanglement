@@ -10,6 +10,7 @@ import os
 import sqlite3
 import threading
 import traceback as traceback_module
+from asyncio import CancelledError
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -155,6 +156,10 @@ def _quarantine_inherited_event_store_connection(connection: sqlite3.Connection)
     """Retain a child-inherited wrapper without close, rollback, or finalization."""
 
     _EVENT_STORE_CHILD_CONNECTION_QUARANTINE.append(connection)
+
+
+def _is_exact_control_signal(error: BaseException) -> bool:
+    return type(error) in (KeyboardInterrupt, SystemExit, GeneratorExit, CancelledError)
 
 
 _Method = TypeVar("_Method", bound=Callable[..., Any])
@@ -446,43 +451,57 @@ class SQLiteEventStore:
         max_json_bytes: int = 1024 * 1024,
     ) -> None:
         self._process_owner = _process_identity.capture_process_owner()
-        self._require_current_process()
-        if type(path) is not str:
-            raise TypeError("path must be a string")
-        if not callable(clock):
-            raise TypeError("clock must be callable")
-        if type(max_json_bytes) is not int:
-            raise TypeError("max_json_bytes must be an integer")
-        if max_json_bytes <= 0:
-            raise ValueError("max_json_bytes must be greater than zero")
-        self.path = path
-        if path != ":memory:":
-            parent = os.path.dirname(os.path.abspath(path))
-            os.makedirs(parent, exist_ok=True)
-            self._require_current_process()
-        self._connection = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
-        self._require_current_process()
-        self._connection.row_factory = sqlite3.Row
-        self._lock = threading.RLock()
-        self._clock = clock
-        self._max_json_bytes = max_json_bytes
         process_mismatch = False
+        connection: Optional[sqlite3.Connection] = None
+        parent: Optional[str] = None
         try:
+            self._require_current_process()
+            if type(path) is not str:
+                raise TypeError("path must be a string")
+            if not callable(clock):
+                raise TypeError("clock must be callable")
+            if type(max_json_bytes) is not int:
+                raise TypeError("max_json_bytes must be an integer")
+            if max_json_bytes <= 0:
+                raise ValueError("max_json_bytes must be greater than zero")
+            self.path = path
+            if path != ":memory:":
+                parent = os.path.dirname(os.path.abspath(path))
+                os.makedirs(parent, exist_ok=True)
+                self._require_current_process()
+            connection = sqlite3.connect(
+                path,
+                check_same_thread=False,
+                isolation_level=None,
+            )
+            self._connection = connection
+            self._require_current_process()
+            connection.row_factory = sqlite3.Row
+            self._lock = threading.RLock()
+            self._clock = clock
+            self._max_json_bytes = max_json_bytes
             self._initialize()
         except _EventStoreProcessMismatchSignal as error:
             trusted = _consume_event_store_process_signal(error)
             if not trusted:
                 raise
-            _quarantine_inherited_event_store_connection(self._connection)
+            if connection is not None:
+                _quarantine_inherited_event_store_connection(connection)
             process_mismatch = True
-        except BaseException:
+        except BaseException as initialization_error:
             if self._process_is_current():
-                self._connection.close()
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except BaseException:
+                        if not _is_exact_control_signal(initialization_error):
+                            raise
                 raise
-            _quarantine_inherited_event_store_connection(self._connection)
+            if connection is not None:
+                _quarantine_inherited_event_store_connection(connection)
             process_mismatch = True
         if process_mismatch:
-            del self, path, clock, max_json_bytes
+            del self, path, clock, max_json_bytes, parent, connection
             _raise_event_store_process_mismatch()
 
     def _require_current_process(self) -> None:
@@ -612,24 +631,32 @@ class SQLiteEventStore:
             self._require_current_process()
             try:
                 yield connection
-            except BaseException:
+            except BaseException as body_error:
                 if not self._process_is_current():
                     raise
-                if connection.in_transaction:
-                    connection.execute("ROLLBACK")
-                    self._require_current_process()
+                try:
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
+                        self._require_current_process()
+                except BaseException:
+                    if not _is_exact_control_signal(body_error):
+                        raise
                 raise
             else:
                 self._require_current_process()
                 try:
                     connection.execute("COMMIT")
                     self._require_current_process()
-                except BaseException:
+                except BaseException as commit_error:
                     if not self._process_is_current():
                         raise
-                    if connection.in_transaction:
-                        connection.execute("ROLLBACK")
-                        self._require_current_process()
+                    try:
+                        if connection.in_transaction:
+                            connection.execute("ROLLBACK")
+                            self._require_current_process()
+                    except BaseException:
+                        if not _is_exact_control_signal(commit_error):
+                            raise
                     raise
         finally:
             if self._process_is_current():
