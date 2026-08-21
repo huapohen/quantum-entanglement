@@ -3,8 +3,9 @@
 ## Status and release boundary
 
 Commit `e0b5495` adds a pure, immutable registry of the SQLite catalog topology that the
-current binary knows how to attest. This is a compatibility-development checkpoint for
-backup manifest v2, not an operational v2 backup feature.
+current binary knows how to attest. A later checkpoint adds the separate
+[exact manifest v2 codec](SQLITE_BACKUP_MANIFEST_V2_CODEC.md). Together they remain
+compatibility-development infrastructure, not an operational v2 backup feature.
 
 The active backup surface is unchanged:
 
@@ -14,6 +15,7 @@ The active backup surface is unchanged:
 - the admin CLI has no v2 dispatch;
 - `backup_topology.py` opens no database or file, starts no transaction, and performs
   no migration;
+- the v2 codec is pure and remains unreachable from the active v1 module;
 - domain-sparse/native migration execution remains unavailable.
 
 Consequently this stage is safe to deploy as inert package data, but it does not close the
@@ -157,17 +159,17 @@ must never reinterpret v2 evidence as v1 or migrate a backup while verifying it.
 
 ## Open work
 
-The following remain separate fail-closed stages:
+The exact canonical manifest v2 model and bounded JSON codec are now implemented as an
+inactive checkpoint. The following remain separate fail-closed stages:
 
-1. exact canonical manifest v2 model and bounded JSON codec;
-2. stable-snapshot derivation of present profiles, catalog rows, table counts, sidecar
+1. stable-snapshot derivation of present profiles, catalog rows, table counts, sidecar
    rows, ledger timestamps, and `SchemaState`;
-3. v2 creation/publication with all existing descriptor, inode, mode, no-overwrite, and
+2. v2 creation/publication with all existing descriptor, inode, mode, no-overwrite, and
    fsync controls;
-4. quarantine verification against database bytes and exact catalog topology;
-5. exact-byte restore followed by the same quarantine checks;
-6. v1-to-v2 bridge rehearsal, mixed-binary rejection, RPO/RTO and effect reconciliation;
-7. authenticated custody/signature policy.
+3. quarantine verification against database bytes and exact catalog topology;
+4. exact-byte restore followed by the same quarantine checks;
+5. v1-to-v2 bridge rehearsal, mixed-binary rejection, RPO/RTO and effect reconciliation;
+6. authenticated custody/signature policy.
 
 Until those stages have independent evidence, production documentation and readiness
 must continue to describe backup manifest v2 as unavailable.
