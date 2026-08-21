@@ -96,7 +96,12 @@ from .runtime import (
     SessionRecoveryError,
 )
 from .scheduler import TaskGraph, TaskSpec, TaskTransition, WorkflowPlan
-from .store import ConcurrencyError, EventStoreIntegrityError, SQLiteEventStore
+from .store import (
+    ConcurrencyError,
+    EventStoreIntegrityError,
+    EventStoreLifecycleError,
+    SQLiteEventStore,
+)
 from .tenancy import (
     CAPABILITY_PROTOCOL_VERSION,
     AccessRequest,
@@ -188,6 +193,7 @@ __all__ = [
     "CallerRequestContext",
     "ConcurrencyError",
     "EventStoreIntegrityError",
+    "EventStoreLifecycleError",
     "BridgeStatus",
     "ChatRoute",
     "ContextBudgetError",

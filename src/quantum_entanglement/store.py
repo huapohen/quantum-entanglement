@@ -9,12 +9,28 @@ import math
 import os
 import sqlite3
 import threading
+import traceback as traceback_module
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from types import MappingProxyType
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    NoReturn,
+    Optional,
+    Tuple,
+    TypeVar,
+    cast,
+)
 
+from . import process_identity as _process_identity
 from .delivery import (
     InboxAppendResult,
     InboxReceipt,
@@ -33,6 +49,15 @@ class ConcurrencyError(RuntimeError):
 
 class EventStoreIntegrityError(RuntimeError):
     """Raised when persisted event-store data violates its durable contract."""
+
+
+class EventStoreLifecycleError(RuntimeError):
+    """Raised when an event-store instance cannot safely serve lifecycle work."""
+
+    code = "event_store_process_mismatch"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)
 
 
 class EventStoreJsonError(Exception):
@@ -58,6 +83,91 @@ _MAX_JSON_STRING_LENGTH = 65_536
 _MAX_JSON_INTEGER_BITS = 4_096
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
+_EVENT_STORE_PROCESS_SIGNAL_TOKEN = object()
+
+
+class _EventStoreProcessMismatchSignal(BaseException):
+    """Module-private ownership signal that must never escape a public boundary."""
+
+    __slots__ = ("token",)
+
+    def __init__(self, token: object) -> None:
+        super().__init__("event store process mismatch")
+        self.token = token
+
+
+def _event_store_process_mismatch_signal() -> BaseException:
+    return _EventStoreProcessMismatchSignal(_EVENT_STORE_PROCESS_SIGNAL_TOKEN)
+
+
+def _trusted_event_store_process_signal(error: BaseException) -> bool:
+    """Verify exact construction identity and the foundation guard's tail frames."""
+
+    if type(error) is not _EventStoreProcessMismatchSignal:
+        return False
+    try:
+        token = object.__getattribute__(error, "token")
+    except AttributeError:
+        return False
+    if token is not _EVENT_STORE_PROCESS_SIGNAL_TOKEN:
+        return False
+    traceback_cursor = error.__traceback__
+    codes = []
+    while traceback_cursor is not None:
+        codes.append(traceback_cursor.tb_frame.f_code)
+        traceback_cursor = traceback_cursor.tb_next
+    return len(codes) >= 3 and codes[-3:] == [
+        SQLiteEventStore._require_current_process.__code__,
+        _process_identity.require_current_process.__code__,
+        _process_identity._raise_process_mismatch.__code__,
+    ]
+
+
+def _consume_event_store_process_signal(error: BaseException) -> bool:
+    """Detach one trusted internal signal and clear every completed internal frame."""
+
+    if not _trusted_event_store_process_signal(error):
+        return False
+    error_traceback = error.__traceback__
+    error.__cause__ = None
+    error.__context__ = None
+    error.__traceback__ = None
+    if error_traceback is not None:
+        traceback_module.clear_frames(error_traceback)
+    return True
+
+
+def _raise_event_store_process_mismatch() -> NoReturn:
+    """Create the one stable public error outside any internal exception handler."""
+
+    try:
+        raise EventStoreLifecycleError() from None
+    except EventStoreLifecycleError as public_error:
+        if type(public_error) is EventStoreLifecycleError:
+            public_error.__context__ = None
+        raise
+
+
+_Method = TypeVar("_Method", bound=Callable[..., Any])
+
+
+def _bind_event_store_process(method: _Method) -> _Method:
+    """Reject a fork-inherited store before reading caller inputs or dependencies."""
+
+    @wraps(method)
+    def process_bound(*args: Any, **kwargs: Any) -> Any:
+        store = args[0]
+        try:
+            store._require_current_process()
+            return method(*args, **kwargs)
+        except _EventStoreProcessMismatchSignal as error:
+            trusted = _consume_event_store_process_signal(error)
+            if not trusted:
+                raise
+        del args, kwargs, store
+        _raise_event_store_process_mismatch()
+
+    return cast(_Method, process_bound)
 
 
 def _reject_json_constant(value: str) -> Any:
@@ -134,6 +244,8 @@ class SQLiteEventStore:
         clock: Callable[[], str] = utc_now,
         max_json_bytes: int = 1024 * 1024,
     ) -> None:
+        self._process_owner = _process_identity.capture_process_owner()
+        self._require_current_process()
         if not callable(clock):
             raise TypeError("clock must be callable")
         if type(max_json_bytes) is not int:
@@ -154,6 +266,14 @@ class SQLiteEventStore:
         except BaseException:
             self._connection.close()
             raise
+
+    def _require_current_process(self) -> None:
+        """Emit the exact private signal before any inherited dependency access."""
+
+        _process_identity.require_current_process(
+            self._process_owner,
+            _event_store_process_mismatch_signal,
+        )
 
     def _initialize(self) -> None:
         with self._lock:
@@ -668,6 +788,7 @@ class SQLiteEventStore:
             raise RuntimeError("SQLite did not return an event global position")
         return StoredEvent(event, sequence, int(global_position)), True
 
+    @_bind_event_store_process
     def stream_version(self, stream_id: str) -> int:
         with self._lock:
             row = self._connection.execute(
@@ -676,6 +797,7 @@ class SQLiteEventStore:
             ).fetchone()
             return int(row["version"])
 
+    @_bind_event_store_process
     def get_idempotent_event(
         self,
         stream_id: str,
@@ -694,6 +816,7 @@ class SQLiteEventStore:
             ).fetchone()
             return None if row is None else self._row_to_event(row)
 
+    @_bind_event_store_process
     def append(
         self,
         event: DomainEvent,
@@ -717,6 +840,7 @@ class SQLiteEventStore:
             )
             return stored
 
+    @_bind_event_store_process
     def append_with_outbox(
         self,
         event: DomainEvent,
@@ -802,6 +926,7 @@ class SQLiteEventStore:
             ).fetchall()
             return stored, tuple(self._row_to_outbox(row) for row in rows)
 
+    @_bind_event_store_process
     def append_inbox(
         self,
         consumer_id: str,
@@ -865,6 +990,7 @@ class SQLiteEventStore:
             )
             return InboxAppendResult(stored, receipt, False)
 
+    @_bind_event_store_process
     def append_many(
         self,
         stream_id: str,
@@ -918,6 +1044,7 @@ class SQLiteEventStore:
                 stored.append(StoredEvent(event, sequence, int(global_position)))
             return tuple(stored)
 
+    @_bind_event_store_process
     def read_stream(self, stream_id: str, after_sequence: int = 0) -> Tuple[StoredEvent, ...]:
         with self._lock:
             rows = self._connection.execute(
@@ -926,6 +1053,7 @@ class SQLiteEventStore:
             ).fetchall()
             return tuple(self._row_to_event(row) for row in rows)
 
+    @_bind_event_store_process
     def read_stream_page(
         self,
         stream_id: str,
@@ -951,10 +1079,12 @@ class SQLiteEventStore:
             ).fetchall()
             return tuple(self._row_to_event(row) for row in rows)
 
+    @_bind_event_store_process
     def read_all(self, after_position: int = 0, limit: int = 1000) -> Tuple[StoredEvent, ...]:
         with self.stream_all_page(after_position=after_position, limit=limit) as events:
             return tuple(events)
 
+    @_bind_event_store_process
     @contextmanager
     def stream_all_page(
         self,
@@ -990,6 +1120,7 @@ class SQLiteEventStore:
 
         yield events()
 
+    @_bind_event_store_process
     def claim_outbox(
         self,
         worker_id: str,
@@ -1060,6 +1191,7 @@ class SQLiteEventStore:
                 claimed.append(self._row_to_outbox(updated))
             return tuple(claimed)
 
+    @_bind_event_store_process
     def acknowledge_outbox(
         self,
         message_id: str,
@@ -1100,6 +1232,7 @@ class SQLiteEventStore:
             )
             return cursor.rowcount == 1
 
+    @_bind_event_store_process
     def reject_outbox(
         self,
         message_id: str,
@@ -1144,6 +1277,7 @@ class SQLiteEventStore:
             )
             return cursor.rowcount == 1
 
+    @_bind_event_store_process
     def mark_outbox_ambiguous(
         self,
         message_id: str,
@@ -1195,6 +1329,7 @@ class SQLiteEventStore:
             )
             return True
 
+    @_bind_event_store_process
     def read_outbox_ambiguities(self, *, open_only: bool = True) -> Tuple[OutboxAmbiguity, ...]:
         """Read durable reconciliation work in deterministic insertion order."""
 
@@ -1212,6 +1347,7 @@ class SQLiteEventStore:
                 ).fetchall()
             return tuple(self._row_to_ambiguity(row) for row in rows)
 
+    @_bind_event_store_process
     def read_outbox_ambiguities_page(
         self,
         after_rowid: int = 0,
@@ -1248,6 +1384,7 @@ class SQLiteEventStore:
                 ).fetchall()
             return tuple(self._row_to_ambiguity_page_item(row) for row in rows)
 
+    @_bind_event_store_process
     def resolve_outbox_ambiguity(
         self,
         message_id: str,
@@ -1331,6 +1468,7 @@ class SQLiteEventStore:
             )
             return True
 
+    @_bind_event_store_process
     def get_outbox(self, message_id: str) -> Optional[StoredOutboxMessage]:
         with self._lock:
             row = self._connection.execute(
@@ -1338,6 +1476,7 @@ class SQLiteEventStore:
             ).fetchone()
             return None if row is None else self._row_to_outbox(row)
 
+    @_bind_event_store_process
     def read_outbox(self, status: Optional[OutboxStatus] = None) -> Tuple[StoredOutboxMessage, ...]:
         with self._lock:
             if status is None:
@@ -1351,6 +1490,7 @@ class SQLiteEventStore:
                 ).fetchall()
             return tuple(self._row_to_outbox(row) for row in rows)
 
+    @_bind_event_store_process
     def read_outbox_page(
         self,
         after_position: int = 0,
@@ -1383,6 +1523,7 @@ class SQLiteEventStore:
                 ).fetchall()
             return tuple(self._row_to_outbox_page_item(row) for row in rows)
 
+    @_bind_event_store_process
     def get_inbox_receipt(self, consumer_id: str, message_id: str) -> Optional[InboxReceipt]:
         with self._lock:
             row = self._connection.execute(
@@ -1394,6 +1535,7 @@ class SQLiteEventStore:
             ).fetchone()
             return None if row is None else self._row_to_inbox(row)
 
+    @_bind_event_store_process
     def save_snapshot(
         self, stream_id: str, sequence: int, state: Dict[str, object], at: str
     ) -> None:
@@ -1416,6 +1558,7 @@ class SQLiteEventStore:
                 ),
             )
 
+    @_bind_event_store_process
     def load_snapshot(self, stream_id: str) -> Optional[Tuple[int, Dict[str, object]]]:
         with self._lock:
             row = self._connection.execute(
@@ -1432,12 +1575,15 @@ class SQLiteEventStore:
             except (IndexError, KeyError, TypeError, ValueError) as exc:
                 raise EventStoreIntegrityError("persisted snapshot row is malformed") from exc
 
+    @_bind_event_store_process
     def close(self) -> None:
         with self._lock:
             self._connection.close()
 
+    @_bind_event_store_process
     def __enter__(self) -> "SQLiteEventStore":
         return self
 
+    @_bind_event_store_process
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self.close()
