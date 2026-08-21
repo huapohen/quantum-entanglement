@@ -119,6 +119,57 @@ class BackupSchemaSqlCanonicalizationTests(unittest.TestCase):
             """'single''quote', `tick``quote` TEXT )""",
         )
 
+    def test_python_only_whitespace_cannot_collide_with_sqlite_token_space(self):
+        trusted = "CREATE TABLE demo (payload_json TEXT NOT NULL, sequence INTEGER)"
+        mutated = trusted.replace("payload_json TEXT", "payload_json\u00a0TEXT")
+        vertical_tab = trusted.replace("payload_json TEXT", "payload_json\vTEXT")
+
+        self.assertNotEqual(
+            canonicalize_backup_schema_sql(trusted),
+            canonicalize_backup_schema_sql(mutated),
+        )
+        self.assertNotEqual(
+            backup_schema_ddl_sha256(trusted),
+            backup_schema_ddl_sha256(mutated),
+        )
+        self.assertNotEqual(
+            backup_schema_ddl_sha256(trusted),
+            backup_schema_ddl_sha256(vertical_tab),
+        )
+
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute(mutated)
+            columns = connection.execute("PRAGMA table_info(demo)").fetchall()
+        finally:
+            connection.close()
+        self.assertNotIn("payload_json", {row[1] for row in columns})
+        self.assertIn("payload_json\u00a0TEXT", {row[1] for row in columns})
+
+    def test_line_and_block_comments_are_preserved_without_semantic_collisions(self):
+        newline_terminates_comment = (
+            "CREATE TABLE demo (value INTEGER -- comment\n, required TEXT NOT NULL)"
+        )
+        comment_consumes_remainder = newline_terminates_comment.replace("\n", " ")
+        self.assertNotEqual(
+            canonicalize_backup_schema_sql(newline_terminates_comment),
+            canonicalize_backup_schema_sql(comment_consumes_remainder),
+        )
+        self.assertNotEqual(
+            backup_schema_ddl_sha256(newline_terminates_comment),
+            backup_schema_ddl_sha256(comment_consumes_remainder),
+        )
+        self.assertIn(
+            "-- comment\n",
+            canonicalize_backup_schema_sql(newline_terminates_comment),
+        )
+        self.assertNotEqual(
+            canonicalize_backup_schema_sql("CREATE TABLE demo (value /* a  b */ TEXT)"),
+            canonicalize_backup_schema_sql("CREATE TABLE demo (value /* a b */ TEXT)"),
+        )
+        with self.assertRaisesRegex(ValueError, "unterminated block comment"):
+            canonicalize_backup_schema_sql("CREATE TABLE demo (value /* missing")
+
     def test_unterminated_quoted_region_fails_closed(self):
         for source in (
             "CREATE TABLE 'unterminated",
