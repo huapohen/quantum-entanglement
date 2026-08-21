@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import inspect
 import multiprocessing
 import os
 import pickle
@@ -179,6 +180,29 @@ def _fork_active_exit_spoof_probe(connection, composer):
             *selected,
         )
     )
+    try:
+        connection.send(results)
+    finally:
+        connection.close()
+
+
+def _fork_context_lease_stage_probe(
+    connection,
+    enter_callback,
+    exit_callback,
+    *,
+    enter_pending,
+):
+    results = {}
+    if enter_pending:
+        results["enter"] = _capture_process_call(enter_callback)
+    try:
+        raise KeyboardInterrupt("fork-context-lease-stage-canary")
+    except KeyboardInterrupt:
+        active_triple = sys.exc_info()
+        results["exit"] = _capture_process_call(
+            lambda selected=active_triple: exit_callback(*selected)
+        )
     try:
         connection.send(results)
     finally:
@@ -3419,6 +3443,123 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                         captured = error
                 self.assertIs(captured, body)
 
+    def test_raw_exit_descriptor_binding_cannot_mint_context_lease(self):
+        composer = self.make_composer()
+        descriptor = inspect.getattr_static(ProtectedOperationComposer, "__exit__")
+
+        self.capture_error(
+            "protected_operation_internal_failure",
+            lambda: descriptor.__get__(composer, ProtectedOperationComposer),
+        )
+        self.assertIs(
+            ProtectedOperationComposer.__enter__(composer),
+            composer,
+        )
+
+    def test_saved_context_exit_callable_is_one_time(self):
+        composer = self.make_composer()
+        enter_descriptor = inspect.getattr_static(ProtectedOperationComposer, "__enter__")
+        exit_descriptor = inspect.getattr_static(ProtectedOperationComposer, "__exit__")
+        enter_callback = enter_descriptor.__get__(composer, ProtectedOperationComposer)
+        exit_callback = exit_descriptor.__get__(composer, ProtectedOperationComposer)
+
+        self.assertIs(enter_callback(), composer)
+        self.assertIsNone(exit_callback(None, None, None))
+        try:
+            raise KeyboardInterrupt("late-exit-body-secret-canary")
+        except KeyboardInterrupt:
+            active_triple = sys.exc_info()
+            self.capture_error(
+                "protected_operation_internal_failure",
+                lambda: exit_callback(*active_triple),
+            )
+
+    def test_enter_failure_discards_prepared_context_lease(self):
+        failure_types = (RuntimeError, KeyboardInterrupt, GeneratorExit)
+
+        for failure_type in failure_types:
+            with self.subTest(failure=failure_type.__name__):
+                composer = self.make_composer()
+                canary = f"{failure_type.__name__}-enter-failure-secret-canary"
+                original = failure_type(canary)
+
+                def fail_activation(_composer, _lease, *, selected=original):
+                    raise selected
+
+                def enter_context(selected_composer=composer):
+                    with selected_composer:
+                        pass
+
+                with patch.object(
+                    ProtectedOperationComposer,
+                    "_activate_context_exit_lease",
+                    fail_activation,
+                ):
+                    if failure_type is RuntimeError:
+                        self.capture_error(
+                            "protected_operation_internal_failure",
+                            enter_context,
+                        )
+                    else:
+                        signal = self.capture_control_signal(
+                            failure_type,
+                            enter_context,
+                        )
+                        self.assertIsNot(signal, original)
+
+                self.assertIs(
+                    ProtectedOperationComposer.__enter__(composer),
+                    composer,
+                )
+                with composer:
+                    pass
+
+    def test_context_exit_binding_cuts_do_not_leave_stale_lease(self):
+        failure_types = (RuntimeError, KeyboardInterrupt, GeneratorExit)
+        real_bind = ProtectedOperationComposer._bind_context_exit_lease
+
+        for cut in ("before", "after"):
+            for failure_type in failure_types:
+                with self.subTest(cut=cut, failure=failure_type.__name__):
+                    composer = self.make_composer()
+                    canary = f"{cut}-{failure_type.__name__}-bind-secret-canary"
+                    original = failure_type(canary)
+
+                    def interrupted_bind(
+                        selected_composer,
+                        lease,
+                        *,
+                        selected_cut=cut,
+                        selected_original=original,
+                    ):
+                        if selected_cut == "after":
+                            real_bind(selected_composer, lease)
+                        raise selected_original
+
+                    def enter_context(selected_composer=composer):
+                        with selected_composer:
+                            pass
+
+                    with patch.object(
+                        ProtectedOperationComposer,
+                        "_bind_context_exit_lease",
+                        interrupted_bind,
+                    ):
+                        if failure_type is RuntimeError:
+                            self.capture_error(
+                                "protected_operation_internal_failure",
+                                enter_context,
+                            )
+                        else:
+                            signal = self.capture_control_signal(
+                                failure_type,
+                                enter_context,
+                            )
+                            self.assertIsNot(signal, original)
+
+                    with composer:
+                        pass
+
     def test_exact_control_signals_survive_consume_and_retire_boundaries(self):
         signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
         for method_name in ("consume", "retire"):
@@ -3710,6 +3851,59 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                 self.assertEqual(payload["after_handler"], expected)
                 operation = composer.authorize(self.context, self.request)
                 composer.consume(operation, self.context, self.request)
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_real_fork_rejects_prepared_active_and_consumed_context_leases(self):
+        fork_context = multiprocessing.get_context("fork")
+        expected = (
+            "operation_error",
+            "protected_operation_process_mismatch",
+            True,
+            True,
+        )
+
+        for stage in ("prepared", "active", "consumed"):
+            with self.subTest(stage=stage):
+                composer = self.make_composer()
+                enter_descriptor = inspect.getattr_static(
+                    ProtectedOperationComposer,
+                    "__enter__",
+                )
+                exit_descriptor = inspect.getattr_static(
+                    ProtectedOperationComposer,
+                    "__exit__",
+                )
+                enter_callback = enter_descriptor.__get__(
+                    composer,
+                    ProtectedOperationComposer,
+                )
+                exit_callback = exit_descriptor.__get__(
+                    composer,
+                    ProtectedOperationComposer,
+                )
+                if stage in ("active", "consumed"):
+                    self.assertIs(enter_callback(), composer)
+                if stage == "consumed":
+                    self.assertIsNone(exit_callback(None, None, None))
+
+                parent_connection, child_connection = fork_context.Pipe(duplex=False)
+                process = fork_context.Process(
+                    target=_fork_context_lease_stage_probe,
+                    args=(child_connection, enter_callback, exit_callback),
+                    kwargs={"enter_pending": stage == "prepared"},
+                )
+
+                process.start()
+                child_connection.close()
+                payload = self.receive_process_payload(process, parent_connection)
+
+                if stage == "prepared":
+                    self.assertEqual(payload["enter"], expected)
+                self.assertEqual(payload["exit"], expected)
+                if stage == "prepared":
+                    self.assertIs(enter_callback(), composer)
+                if stage != "consumed":
+                    self.assertIsNone(exit_callback(None, None, None))
 
     @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
     def test_real_fork_rejects_every_inherited_composer_and_registry_path(self):
