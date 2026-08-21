@@ -349,15 +349,28 @@ to constructor and registry/composer authorization and lifecycle boundaries, pre
 dependency from smuggling tenant or credential material through a control-shaped exception
 while preserving async-worker cancellation and ordinary bounded exit status.
 
-Composer and registry construction use the same boundary before structurally probing the
-configured provider's `load_current_state` method or the configured clock's `now` method.
-A descriptor, proxy, or `__getattribute__` failure therefore receives the same containment
-as a later method call. Missing/non-callable provider and clock methods fail closed with
-`protected_operation_state_unavailable` and `protected_operation_clock_unavailable`;
-remaining invalid construction state becomes `protected_operation_internal_failure`.
-Before any public construction failure escapes, the constructor deletes every supplied
-dependency and configuration argument from its frame. Exact control signals are reissued
-through the bounded policy above; other failures become fresh code-only errors.
+Composer and registry constructors statically bind their exact class initializer before
+entering the boundary; neither resolves `_initialize` through the supplied instance. Only an
+exact `ProtectedOperationComposer` and exact internal registry may initialize. A subclass or
+other receiver fails closed inside the boundary rather than gaining a virtual descriptor path
+before containment.
+
+Inside that boundary, provider `load_current_state` and clock `now` lookup deliberately uses
+attribute access without a default. A missing attribute and an `AttributeError` raised by a
+descriptor, proxy, or `__getattribute__` therefore both enter the same inner dependency
+boundary, have their completed frames cleared, and map to
+`protected_operation_state_unavailable` or `protected_operation_clock_unavailable`. A
+non-callable result maps to the same dependency-specific code. An inherited issuer retains
+the distinct `protected_operation_process_mismatch` code; other invalid constructor state
+without an already supported stable code becomes `protected_operation_internal_failure`.
+
+All fallible validation, registry creation, and lock creation complete in locals before the
+exact object's slots are published. If any of them fails, an externally retained object made
+with `object.__new__` remains uninitialized rather than retaining a clock, registry, issuer,
+provider, or authorizer. Before the public construction failure escapes, the constructor also
+deletes every supplied dependency and configuration argument from its public frame. Exact
+control signals are reissued through the bounded policy above; other failures become fresh
+code-only errors.
 
 Representative codes are grouped below. Callers must treat every code as denial and must
 not retry an irreversible effect without a new reviewed idempotency policy.
@@ -448,6 +461,10 @@ fail-closed compatibility tightening. Any prefork deployment that previously ini
 these objects in its master must move the complete composition root into the worker. There
 is no compatibility mode for inherited contexts or handles.
 
+Composer and internal registry subclass initialization is also intentionally unsupported.
+Composition roots must construct the exact reviewed classes; extension belongs in the
+provider and future effect-adapter ports, not in subclass overrides of the security boundary.
+
 Rollback is code-only because no persistent state is written. Stop the candidate process,
 close composer/issuer instances, discard all outstanding process-local handles, and deploy
 the prior tree. Never try to preserve, pickle, migrate, or grandfather a handle across
@@ -503,8 +520,10 @@ section 12 remain unchanged.
 
 The dedicated suite covers exact state types/snapshots, redacted representations,
 structural provider injection, hostile provider/clock descriptor lookup during construction,
-constructor argument/frame detachment, workspace requirements, same-ID cross-tenant isolation,
-every actor/scope/revision substitution, provider observation freshness/future time,
+descriptor-raised `AttributeError`, static initializer binding, exact subclass rejection,
+zero-slot lock-failure rollback, constructor argument/frame detachment, workspace requirements,
+same-ID cross-tenant isolation, every actor/scope/revision substitution, provider observation
+freshness/future time,
 provider and authorizer exception-chain/frame detachment, hostile `BaseException` and safe
 control-signal replacement across construction, authorization, and lifecycle boundaries,
 the complete safe `SystemExit` status matrix, exact `asyncio.CancelledError` propagation,
@@ -517,10 +536,12 @@ expiry, service-clock rollback, hard concurrent issuance capacity, serial replay
 concurrent replay, action-time reauthorization, and exact one-time consumption.
 
 Process-mismatch tests inspect every public composer and registry traceback after a failure
-raised inside an already active secret-bearing caller exception. They prove that the fresh
-constructor cannot retain its issuer/provider/authorizer/key ring, that all public wrappers
-delete request/context/handle/lifecycle arguments, and that `__cause__`, `__context__`,
-notes, dynamic attributes, and completed internal locals are detached. Lifecycle tests
+raised inside an already active secret-bearing caller exception. They prove that the public
+constructor failure cannot retain its issuer/provider/authorizer/key ring, that all public
+wrappers delete request/context/handle/lifecycle arguments, and that `__cause__`, `__context__`,
+notes, dynamic attributes, and completed internal locals are detached. Separate construction
+tests prove that lock failure leaves an externally retained exact object with no initialized
+slots. Lifecycle tests
 exercise constructor, composer close/enter/exit, and registry close with all four exact
 control signals; the exit path uses an actual context-manager body exception rather than a
 synthetic direct call.
