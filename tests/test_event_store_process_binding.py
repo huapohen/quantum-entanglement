@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import multiprocessing
 import os
 import pickle
 import select
@@ -21,7 +22,8 @@ import quantum_entanglement.store as store_module
 from quantum_entanglement import EventStoreLifecycleError
 from quantum_entanglement.delivery import OutboxMessage, OutboxStatus
 from quantum_entanglement.events import DomainEvent
-from quantum_entanglement.store import SQLiteEventStore
+from quantum_entanglement.migrations import validate_sqlite_schema
+from quantum_entanglement.store import ConcurrencyError, SQLiteEventStore
 
 
 def _wait_for_child(pid: int, timeout: float) -> int:
@@ -67,6 +69,274 @@ def _run_fork_child(callback: Callable[[], bytes], timeout: float = 3.0) -> byte
     if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
         raise AssertionError(f"fork child failed with status {status}")
     return payload
+
+
+def _fresh_event_store_worker(path: str, mode: str, connection: object) -> None:
+    channel = connection
+    store: SQLiteEventStore | None = None
+    try:
+        store = SQLiteEventStore(path, clock=lambda: "2026-08-21T00:00:10Z")
+        channel.send(("ready",))  # type: ignore[attr-defined]
+        if channel.recv() != ("go",):  # type: ignore[attr-defined]
+            raise RuntimeError("fresh process start protocol failed")
+        if mode == "global_cas":
+            event = DomainEvent(
+                "stream:child-cas",
+                "cas.created",
+                {},
+                "actor:child",
+                event_id="event:child-cas",
+                timestamp="2026-08-21T00:00:00Z",
+            )
+            try:
+                stored = store.append(event, expected_version=0, expected_global_position=1)
+            except ConcurrencyError:
+                result: object = ("conflict",)
+            else:
+                result = ("stored", stored.global_position)
+        elif mode == "idempotent_outbox":
+            event = DomainEvent(
+                "stream:idempotent-race",
+                "race.created",
+                {"value": "same"},
+                "actor:shared",
+                event_id="event:idempotent-race",
+                timestamp="2026-08-21T00:00:00Z",
+                idempotency_key="admission:idempotent-race",
+            )
+            message = OutboxMessage(
+                "local:test",
+                {"value": "same"},
+                message_id="message:idempotent-race",
+                idempotency_key="message:idempotent-race",
+                available_at="2026-08-21T00:00:00Z",
+                created_at="2026-08-21T00:00:00Z",
+            )
+            stored, messages = store.append_with_outbox(event, (message,), expected_version=0)
+            result = ("stored", stored.global_position, len(messages))
+        elif mode == "claim":
+            claimed = store.claim_outbox("worker:child", limit=1)
+            result = ("claimed", len(claimed))
+        elif mode == "ambiguity":
+            ambiguity = store.read_outbox_ambiguities()[0]
+            resolved = store.resolve_outbox_ambiguity(
+                ambiguity.message_id,
+                ambiguity.lease_token_digest,
+                "dead_letter",
+                resolved_at="2026-08-21T00:00:20Z",
+                retry_at="2026-08-21T00:00:20Z",
+            )
+            result = ("resolved", resolved)
+        else:
+            raise ValueError("unsupported fresh-process mode")
+        channel.send(("result", result))  # type: ignore[attr-defined]
+    except BaseException as error:
+        try:
+            channel.send(("error", type(error).__name__))  # type: ignore[attr-defined]
+        except BaseException:
+            pass
+    finally:
+        if store is not None:
+            store.close()
+        channel.close()  # type: ignore[attr-defined]
+
+
+def _fork_before_connection_probe(path: str, mode: str, connection: object) -> None:
+    """Run one real fork before either side creates any SQLite wrapper."""
+
+    channel = connection
+    context = multiprocessing.get_context("fork")
+    parent_channel, child_channel = context.Pipe()
+    child = context.Process(
+        target=_fresh_event_store_worker,
+        args=(path, mode, child_channel),
+    )
+    parent_store: SQLiteEventStore | None = None
+    try:
+        child.start()
+        child_channel.close()
+        if not parent_channel.poll(5.0) or parent_channel.recv() != ("ready",):
+            raise RuntimeError("fork child did not become ready")
+        parent_store = SQLiteEventStore(path, clock=lambda: "2026-08-21T00:00:10Z")
+
+        if mode == "global_cas":
+            parent_store.append(
+                DomainEvent(
+                    "stream:seed",
+                    "seed.created",
+                    {},
+                    "actor:parent",
+                    event_id="event:seed",
+                    timestamp="2026-08-21T00:00:00Z",
+                ),
+                expected_version=0,
+            )
+        elif mode == "claim":
+            parent_store.append_with_outbox(
+                DomainEvent(
+                    "stream:lease-race",
+                    "lease.created",
+                    {},
+                    "actor:parent",
+                    event_id="event:lease-race",
+                    timestamp="2026-08-21T00:00:00Z",
+                ),
+                (
+                    OutboxMessage(
+                        "local:test",
+                        {},
+                        message_id="message:lease-race",
+                        idempotency_key="message:lease-race",
+                        available_at="2026-08-21T00:00:00Z",
+                        created_at="2026-08-21T00:00:00Z",
+                    ),
+                ),
+                expected_version=0,
+            )
+        elif mode == "ambiguity":
+            parent_store.append_with_outbox(
+                DomainEvent(
+                    "stream:ambiguity-race",
+                    "ambiguity.created",
+                    {},
+                    "actor:parent",
+                    event_id="event:ambiguity-race",
+                    timestamp="2026-08-21T00:00:00Z",
+                ),
+                (
+                    OutboxMessage(
+                        "local:test",
+                        {},
+                        message_id="message:ambiguity-race",
+                        idempotency_key="message:ambiguity-race",
+                        available_at="2026-08-21T00:00:00Z",
+                        created_at="2026-08-21T00:00:00Z",
+                    ),
+                ),
+                expected_version=0,
+            )
+            claimed = parent_store.claim_outbox("worker:setup", limit=1)[0]
+            if claimed.lease_token is None:
+                raise RuntimeError("setup lease token is missing")
+            parent_store.mark_outbox_ambiguous(
+                claimed.message.message_id,
+                claimed.lease_token,
+                "ack_failed",
+                marked_at="2026-08-21T00:00:11Z",
+            )
+
+        parent_channel.send(("go",))
+        if mode == "global_cas":
+            try:
+                stored = parent_store.append(
+                    DomainEvent(
+                        "stream:parent-cas",
+                        "cas.created",
+                        {},
+                        "actor:parent",
+                        event_id="event:parent-cas",
+                        timestamp="2026-08-21T00:00:00Z",
+                    ),
+                    expected_version=0,
+                    expected_global_position=1,
+                )
+            except ConcurrencyError:
+                parent_result: object = ("conflict",)
+            else:
+                parent_result = ("stored", stored.global_position)
+        elif mode == "idempotent_outbox":
+            stored, messages = parent_store.append_with_outbox(
+                DomainEvent(
+                    "stream:idempotent-race",
+                    "race.created",
+                    {"value": "same"},
+                    "actor:shared",
+                    event_id="event:idempotent-race",
+                    timestamp="2026-08-21T00:00:00Z",
+                    idempotency_key="admission:idempotent-race",
+                ),
+                (
+                    OutboxMessage(
+                        "local:test",
+                        {"value": "same"},
+                        message_id="message:idempotent-race",
+                        idempotency_key="message:idempotent-race",
+                        available_at="2026-08-21T00:00:00Z",
+                        created_at="2026-08-21T00:00:00Z",
+                    ),
+                ),
+                expected_version=0,
+            )
+            parent_result = ("stored", stored.global_position, len(messages))
+        elif mode == "claim":
+            parent_result = ("claimed", len(parent_store.claim_outbox("worker:parent", limit=1)))
+        elif mode == "ambiguity":
+            ambiguity = parent_store.read_outbox_ambiguities()[0]
+            parent_result = (
+                "resolved",
+                parent_store.resolve_outbox_ambiguity(
+                    ambiguity.message_id,
+                    ambiguity.lease_token_digest,
+                    "retry",
+                    resolved_at="2026-08-21T00:00:20Z",
+                    retry_at="2026-08-21T00:00:20Z",
+                ),
+            )
+        else:
+            raise ValueError("unsupported fork probe mode")
+
+        if not parent_channel.poll(5.0):
+            raise RuntimeError("fork child did not publish a result")
+        message = parent_channel.recv()
+        if message[0] != "result":
+            raise RuntimeError("fork child returned an error")
+        child_result = message[1]
+        child.join(5.0)
+        if child.is_alive() or child.exitcode != 0:
+            raise RuntimeError("fork child did not exit cleanly")
+
+        if mode == "global_cas":
+            valid = {parent_result[0], child_result[0]} == {"stored", "conflict"}
+            valid = valid and len(parent_store.read_all(limit=10)) == 2
+        elif mode == "idempotent_outbox":
+            valid = parent_result == child_result == ("stored", 1, 1)
+            valid = valid and len(parent_store.read_all(limit=10)) == 1
+            valid = valid and len(parent_store.read_outbox()) == 1
+        elif mode == "claim":
+            valid = sorted((parent_result[1], child_result[1])) == [0, 1]
+            durable = parent_store.get_outbox("message:lease-race")
+            valid = (
+                valid
+                and durable is not None
+                and durable.status is OutboxStatus.IN_FLIGHT
+                and durable.attempt_count == 1
+            )
+        else:
+            valid = sorted((parent_result[1], child_result[1])) == [False, True]
+            ambiguity = parent_store.read_outbox_ambiguities(open_only=False)[0]
+            valid = valid and ambiguity.resolution in {"retry", "dead_letter"}
+        valid = (
+            valid
+            and parent_store._connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        )
+        valid = (
+            valid and not parent_store._connection.execute("PRAGMA foreign_key_check").fetchall()
+        )
+        valid = valid and validate_sqlite_schema(parent_store._connection) == 3
+        channel.send(("result", mode, valid))  # type: ignore[attr-defined]
+    except BaseException as error:
+        try:
+            channel.send(("error", mode, type(error).__name__))  # type: ignore[attr-defined]
+        except BaseException:
+            pass
+    finally:
+        parent_channel.close()
+        if child.is_alive():
+            child.terminate()
+        child.join(2.0)
+        if parent_store is not None:
+            parent_store.close()
+        channel.close()  # type: ignore[attr-defined]
 
 
 def _lifecycle_outcome(
@@ -169,6 +439,69 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.store.close()
         self.tempdir.cleanup()
+
+    def _run_fresh_process_race(
+        self,
+        start_method: str,
+        path: str,
+        mode: str,
+        parent_action: Callable[[], object],
+    ) -> tuple[object, object]:
+        context = multiprocessing.get_context(start_method)
+        parent_channel, child_channel = context.Pipe()
+        process = context.Process(
+            target=_fresh_event_store_worker,
+            args=(path, mode, child_channel),
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            process.start()
+        child_channel.close()
+        try:
+            self.assertTrue(parent_channel.poll(5.0), "fresh child did not become ready")
+            self.assertEqual(parent_channel.recv(), ("ready",))
+            parent_channel.send(("go",))
+            parent_result = parent_action()
+            self.assertTrue(parent_channel.poll(5.0), "fresh child did not publish a result")
+            message = parent_channel.recv()
+            self.assertEqual(message[0], "result", message)
+            child_result = message[1]
+            process.join(5.0)
+            self.assertFalse(process.is_alive(), "fresh child did not exit")
+            self.assertEqual(process.exitcode, 0)
+            return parent_result, child_result
+        finally:
+            parent_channel.close()
+            if process.is_alive():
+                process.terminate()
+                process.join(2.0)
+
+    def _assert_fresh_store_integrity(self, store: SQLiteEventStore) -> None:
+        self.assertEqual(store._connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        self.assertEqual(store._connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+        self.assertEqual(validate_sqlite_schema(store._connection), 3)
+
+    def _run_fork_before_init_probe(self, path: str, mode: str) -> None:
+        context = multiprocessing.get_context("spawn")
+        parent_channel, child_channel = context.Pipe()
+        process = context.Process(
+            target=_fork_before_connection_probe,
+            args=(path, mode, child_channel),
+        )
+        process.start()
+        child_channel.close()
+        try:
+            self.assertTrue(parent_channel.poll(10.0), "fork-before-init probe timed out")
+            message = parent_channel.recv()
+            self.assertEqual(message, ("result", mode, True), message)
+            process.join(5.0)
+            self.assertFalse(process.is_alive(), "fork-before-init supervisor did not exit")
+            self.assertEqual(process.exitcode, 0)
+        finally:
+            parent_channel.close()
+            if process.is_alive():
+                process.terminate()
+                process.join(2.0)
 
     def test_all_ordinary_and_lifecycle_entry_points_reject_inherited_store(self) -> None:
         event = DomainEvent(
@@ -697,6 +1030,227 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
         self.assertFalse(holder.is_alive())
         self.assertFalse(self.store._connection.in_transaction)
         self.assertEqual(self.store.stream_version("stream:parent-continuity"), 0)
+
+    def test_fresh_fork_spawn_and_forkserver_connections_preserve_all_cas(self) -> None:
+        if {"fork", "spawn"}.issubset(multiprocessing.get_all_start_methods()):
+            for mode in ("global_cas", "idempotent_outbox", "claim", "ambiguity"):
+                with self.subTest(start_method="fork-before-init", mode=mode):
+                    path = str(Path(self.tempdir.name) / f"fresh-fork-{mode}.sqlite3")
+                    self._run_fork_before_init_probe(path, mode)
+
+        methods = tuple(
+            method
+            for method in ("spawn", "forkserver")
+            if method in multiprocessing.get_all_start_methods()
+        )
+        self.assertTrue(methods)
+        for start_method in methods:
+            with self.subTest(start_method=start_method, mode="global_cas"):
+                path = str(Path(self.tempdir.name) / f"fresh-{start_method}-global.sqlite3")
+                with SQLiteEventStore(path, clock=lambda: "2026-08-21T00:00:10Z") as parent:
+                    parent.append(
+                        DomainEvent(
+                            "stream:seed",
+                            "seed.created",
+                            {},
+                            "actor:parent",
+                            event_id="event:seed",
+                            timestamp="2026-08-21T00:00:00Z",
+                        ),
+                        expected_version=0,
+                    )
+
+                    def parent_global_cas() -> object:
+                        try:
+                            stored = parent.append(
+                                DomainEvent(
+                                    "stream:parent-cas",
+                                    "cas.created",
+                                    {},
+                                    "actor:parent",
+                                    event_id="event:parent-cas",
+                                    timestamp="2026-08-21T00:00:00Z",
+                                ),
+                                expected_version=0,
+                                expected_global_position=1,
+                            )
+                        except ConcurrencyError:
+                            return ("conflict",)
+                        return ("stored", stored.global_position)
+
+                    parent_result, child_result = self._run_fresh_process_race(
+                        start_method,
+                        path,
+                        "global_cas",
+                        parent_global_cas,
+                    )
+                    self.assertEqual(
+                        {parent_result[0], child_result[0]},  # type: ignore[index]
+                        {"stored", "conflict"},
+                    )
+                    self.assertEqual(len(parent.read_all(limit=10)), 2)
+                    self._assert_fresh_store_integrity(parent)
+
+            with self.subTest(start_method=start_method, mode="idempotent_outbox"):
+                path = str(Path(self.tempdir.name) / f"fresh-{start_method}-idem.sqlite3")
+                with SQLiteEventStore(path, clock=lambda: "2026-08-21T00:00:10Z") as parent:
+                    shared_event = DomainEvent(
+                        "stream:idempotent-race",
+                        "race.created",
+                        {"value": "same"},
+                        "actor:shared",
+                        event_id="event:idempotent-race",
+                        timestamp="2026-08-21T00:00:00Z",
+                        idempotency_key="admission:idempotent-race",
+                    )
+                    shared_message = OutboxMessage(
+                        "local:test",
+                        {"value": "same"},
+                        message_id="message:idempotent-race",
+                        idempotency_key="message:idempotent-race",
+                        available_at="2026-08-21T00:00:00Z",
+                        created_at="2026-08-21T00:00:00Z",
+                    )
+
+                    def parent_idempotent(
+                        shared_event: DomainEvent = shared_event,
+                        shared_message: OutboxMessage = shared_message,
+                    ) -> object:
+                        stored, messages = parent.append_with_outbox(
+                            shared_event,
+                            (shared_message,),
+                            expected_version=0,
+                        )
+                        return ("stored", stored.global_position, len(messages))
+
+                    parent_result, child_result = self._run_fresh_process_race(
+                        start_method,
+                        path,
+                        "idempotent_outbox",
+                        parent_idempotent,
+                    )
+                    self.assertEqual(parent_result, ("stored", 1, 1))
+                    self.assertEqual(child_result, ("stored", 1, 1))
+                    self.assertEqual(len(parent.read_all(limit=10)), 1)
+                    self.assertEqual(len(parent.read_outbox()), 1)
+                    self._assert_fresh_store_integrity(parent)
+
+            with self.subTest(start_method=start_method, mode="lease"):
+                path = str(Path(self.tempdir.name) / f"fresh-{start_method}-lease.sqlite3")
+                with SQLiteEventStore(path, clock=lambda: "2026-08-21T00:00:10Z") as parent:
+                    parent.append_with_outbox(
+                        DomainEvent(
+                            "stream:lease-race",
+                            "lease.created",
+                            {},
+                            "actor:parent",
+                            event_id="event:lease-race",
+                            timestamp="2026-08-21T00:00:00Z",
+                        ),
+                        (
+                            OutboxMessage(
+                                "local:test",
+                                {},
+                                message_id="message:lease-race",
+                                idempotency_key="message:lease-race",
+                                available_at="2026-08-21T00:00:00Z",
+                                created_at="2026-08-21T00:00:00Z",
+                            ),
+                        ),
+                        expected_version=0,
+                    )
+
+                    def parent_claim() -> object:
+                        return ("claimed", len(parent.claim_outbox("worker:parent", limit=1)))
+
+                    parent_result, child_result = self._run_fresh_process_race(
+                        start_method,
+                        path,
+                        "claim",
+                        parent_claim,
+                    )
+                    self.assertEqual(
+                        sorted((parent_result[1], child_result[1])),  # type: ignore[index]
+                        [0, 1],
+                    )
+                    durable = parent.get_outbox("message:lease-race")
+                    self.assertIsNotNone(durable)
+                    assert durable is not None
+                    self.assertEqual(durable.status, OutboxStatus.IN_FLIGHT)
+                    self.assertEqual(durable.attempt_count, 1)
+                    self._assert_fresh_store_integrity(parent)
+
+            with self.subTest(start_method=start_method, mode="ambiguity"):
+                path = str(Path(self.tempdir.name) / f"fresh-{start_method}-amb.sqlite3")
+                with SQLiteEventStore(path, clock=lambda: "2026-08-21T00:00:10Z") as parent:
+                    parent.append_with_outbox(
+                        DomainEvent(
+                            "stream:ambiguity-race",
+                            "ambiguity.created",
+                            {},
+                            "actor:parent",
+                            event_id="event:ambiguity-race",
+                            timestamp="2026-08-21T00:00:00Z",
+                        ),
+                        (
+                            OutboxMessage(
+                                "local:test",
+                                {},
+                                message_id="message:ambiguity-race",
+                                idempotency_key="message:ambiguity-race",
+                                available_at="2026-08-21T00:00:00Z",
+                                created_at="2026-08-21T00:00:00Z",
+                            ),
+                        ),
+                        expected_version=0,
+                    )
+                    claimed = parent.claim_outbox("worker:setup", limit=1)[0]
+                    assert claimed.lease_token is not None
+                    self.assertTrue(
+                        parent.mark_outbox_ambiguous(
+                            claimed.message.message_id,
+                            claimed.lease_token,
+                            "ack_failed",
+                            marked_at="2026-08-21T00:00:11Z",
+                        )
+                    )
+                    ambiguity = parent.read_outbox_ambiguities()[0]
+
+                    def parent_resolve(
+                        ambiguity_message_id: str = ambiguity.message_id,
+                        ambiguity_digest: str = ambiguity.lease_token_digest,
+                    ) -> object:
+                        return (
+                            "resolved",
+                            parent.resolve_outbox_ambiguity(
+                                ambiguity_message_id,
+                                ambiguity_digest,
+                                "retry",
+                                resolved_at="2026-08-21T00:00:20Z",
+                                retry_at="2026-08-21T00:00:20Z",
+                            ),
+                        )
+
+                    parent_result, child_result = self._run_fresh_process_race(
+                        start_method,
+                        path,
+                        "ambiguity",
+                        parent_resolve,
+                    )
+                    self.assertEqual(
+                        sorted((parent_result[1], child_result[1])),  # type: ignore[index]
+                        [False, True],
+                    )
+                    resolved = parent.read_outbox_ambiguities(open_only=False)[0]
+                    self.assertIn(resolved.resolution, {"retry", "dead_letter"})
+                    durable = parent.get_outbox("message:ambiguity-race")
+                    self.assertIsNotNone(durable)
+                    assert durable is not None
+                    self.assertIn(
+                        durable.status,
+                        {OutboxStatus.PENDING, OutboxStatus.DEAD_LETTER},
+                    )
+                    self._assert_fresh_store_integrity(parent)
 
     def test_write_snapshots_reject_hostile_sqlite_adapters_before_begin(self) -> None:
         adapter_calls = 0
