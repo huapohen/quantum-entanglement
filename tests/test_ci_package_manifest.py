@@ -5,8 +5,14 @@ from pathlib import Path
 class PackageManifestWorkflowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow_path = Path(__file__).parents[1] / ".github" / "workflows" / "package.yml"
+        cls.repository_root = Path(__file__).parents[1]
+        cls.workflow_path = cls.repository_root / ".github" / "workflows" / "package.yml"
         cls.workflow = cls.workflow_path.read_text(encoding="utf-8")
+
+    def test_sdist_explicitly_includes_test_package_marker(self):
+        manifest = (self.repository_root / "MANIFEST.in").read_text(encoding="utf-8")
+
+        self.assertEqual(manifest, "include tests/__init__.py\n")
 
     def test_package_checkout_does_not_persist_git_credentials(self):
         self.assertIn(

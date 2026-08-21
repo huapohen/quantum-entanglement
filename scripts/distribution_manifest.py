@@ -311,7 +311,7 @@ def _git_tracked_source_files(repository_root: Path, identity: ProjectIdentity) 
         if not (name.startswith(f"src/{identity.normalized_name}/") or name.startswith("tests/")):
             _fail("source_inventory_invalid")
         names.append(name)
-    names.extend(("LICENSE", "README.md", "pyproject.toml"))
+    names.extend(("LICENSE", "MANIFEST.in", "README.md", "pyproject.toml"))
     if len(names) != len(set(names)) or len(names) > _MAX_SOURCE_FILES:
         _fail("source_inventory_invalid")
 
