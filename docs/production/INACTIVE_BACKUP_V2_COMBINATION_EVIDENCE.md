@@ -8,18 +8,20 @@ root, v1 backup implementation, and admin CLI remain unable to reach the v2 code
 snapshot derivation.
 
 The independently reviewed backup-v2 candidate was replayed onto the current canonical
-foundation without changing either source branch. The resulting subject was:
+foundation without changing either source branch, then repaired after a combination
+reviewer found a transaction-lifecycle window. The repaired local subject was:
 
 - branch: `codex/backup-v2-on-canonical-v1`;
-- subject commit: `3f39481e53817515692f60de6e5155dc317957b9`;
-- subject tree: `f40ae09da7e3edab64ce0a162b212e1bc7db9a1b`;
+- subject commit: `f799efae8a540e3b20faebfbb65c4ca22976ae84`;
+- subject tree: `37f9f0d75673015e63e1b3ca9b5705a138851513`;
 - canonical parent: `967b4364c36e84c2c54c51528ab717da615222ac`;
 - source candidate: `3946847b1eceec85beac5b8f1e2031b870cedaa5`;
 - worktree state during the recorded gates: clean.
 
 This document is a later evidence-only commit and therefore is not included in the subject
 tree above. The final combined HEAD must be rechecked after this document is committed and
-must receive an independent read-only review before integration.
+must receive a fresh independent read-only review before integration. Passing the original
+backup-v2 review does not waive review of the lifecycle repair.
 
 ## Replay map
 
@@ -59,27 +61,79 @@ canonical invocation-store, process-binding, and test-isolation entries and adde
 backup topology, codec, snapshot, cold-import, and remaining-work entries. No whole-file
 `ours` or `theirs` resolution was used.
 
-Immediately before this evidence document, the subject differed from the canonical parent
-in exactly eleven paths: `CHANGELOG.md`, four backup documents, three new source modules,
+At the recorded subject, the branch differed from the canonical parent in exactly twelve
+paths: `CHANGELOG.md`, five backup documents, three new source modules,
 and three new test modules. The package root, `tests/__init__.py`, and
 `tests/test_backup.py` retained their canonical blobs.
 
+## Transaction-lifecycle repair
+
+The combination reviewer used a real exact `sqlite3.Connection` and one-shot
+`sys.settrace` controls to expose two P1 windows in the replayed snapshot derivation:
+
+- SQLite had completed `BEGIN`, but the Python ownership boolean had not yet been updated;
+- the derivation body had completed, but Python had not entered the separate cleanup block.
+
+Both cases propagated the same pre-created `KeyboardInterrupt` object while leaving
+`connection.in_transaction == true`. The repair did not encode the reviewer's historical
+line numbers. Its tests dynamically arm on observed `BEGIN`, body completion, real
+`ROLLBACK`, and exact connection transaction state.
+
+The repair was split into these commits:
+
+```text
+431e51a3a555e4daa1652e9a2ddbaf45620b0d2f test: expose backup snapshot lifecycle windows
+e6ccca8dc5be672b0cb9f17ea2b213d385ab788d fix: structure backup snapshot cleanup
+955bab894f9aa6cd27036a49f935d4c66abf3560 test: reject ambient snapshot controls
+6f9c9496e6e877b57ee3aab5574e4f771c55b573 fix: authenticate snapshot control origins
+846865ac3fbd52f7e26e07198f0422ceb6e19fab test: prove snapshot begin failures stay unowned
+f799efae8a540e3b20faebfbb65c4ca22976ae84 docs: define snapshot cleanup guarantee
+```
+
+The first test commit failed against the original implementation in 19 subtests on both
+Python 3.12 and 3.13: every exact control left the post-`BEGIN` or post-body transaction
+open, transient cleanup was attempted only once, `CancelledError` origin precedence was
+missing, and a post-rollback control acquired a synthetic second public-frame traceback.
+The ambient-control regression then failed four subtests against the first repair because
+thread-local handled-exception state was incorrectly accepted as lifecycle provenance.
+
+The final implementation installs two structured cleanup frames before `BEGIN`, derives
+ownership conservatively from exact live transaction state, retries after one interrupted
+or failed cleanup, and captures origin only at its own lifecycle `except` boundaries. Exact
+`KeyboardInterrupt`, `SystemExit`, `GeneratorExit`, and `CancelledError` use the same object
+and bare traceback-preserving re-raise. Denied/non-opening `BEGIN`, pre-existing caller
+transactions, and closed connections remain fail-closed.
+
+This is a bounded Python guarantee, not an atomic signal mask. One injected asynchronous
+control, or one transient cleanup fault followed by a successful fallback, is covered.
+Repeated asynchronous controls or persistent state-inspection/rollback failure can exhaust
+both attempts; no result is returned and the future descriptor/process owner must
+quarantine and close that connection. This inactive caller-connection helper still cannot
+perform that quarantine itself.
+
 ## Exact content checks
 
-The following subject blobs matched the independently accepted backup candidate exactly:
+The following unchanged subject blobs matched the independently accepted backup candidate
+exactly:
 
 | Path | Git blob |
 | --- | --- |
 | `docs/architecture/SQLITE_BACKUP_MANIFEST_V2_CODEC.md` | `2c86ddfa8bf519fab5cfafac54b6981658ae00bd` |
 | `docs/architecture/SQLITE_BACKUP_TOPOLOGY_REGISTRY.md` | `70755780fe8366a6da83c4963e39234b76e1f7cc` |
-| `docs/architecture/SQLITE_BACKUP_V2_SNAPSHOT_DERIVATION.md` | `1902d99d565a9bcd07f8298631cdb68a191303c8` |
 | `docs/production/SQLITE_BACKUP_RESTORE.md` | `a9a469bdf05de3bad7c7ecb13e71dc30ff72e655` |
 | `src/quantum_entanglement/backup_manifest_v2.py` | `cf0dc9532caa8ef1fb28678c97882b9a01cc17f4` |
-| `src/quantum_entanglement/backup_snapshot_v2.py` | `d957052436120e7b664cd589051e89e8b1b4f7f8` |
 | `src/quantum_entanglement/backup_topology.py` | `7bf3465d752841813002c71152a9df88993819f3` |
 | `tests/test_backup_manifest_v2.py` | `5b4b8c15f36e375107548581321bc34ecdee3623` |
-| `tests/test_backup_snapshot_v2.py` | `09140d5af7701d75341a502f32718f73245d8086` |
 | `tests/test_backup_topology.py` | `2499925f75d9c306d32adfa53e1dbf2b67b15a67` |
+
+The repaired subject fixed and documented these three blobs, which therefore require the
+fresh independent review called out above:
+
+| Path | Git blob |
+| --- | --- |
+| `docs/architecture/SQLITE_BACKUP_V2_SNAPSHOT_DERIVATION.md` | `ea4fb99e27771a729882276ea8e70f7acb0051e8` |
+| `src/quantum_entanglement/backup_snapshot_v2.py` | `a91ac3e3cd4d759fc8835d2c960e79010296b873` |
+| `tests/test_backup_snapshot_v2.py` | `0ac5c28370f3324f1e9c4a9fedeaddb7a07da268` |
 
 The following subject blobs matched canonical exactly:
 
@@ -101,14 +155,14 @@ also used warnings-as-errors.
 
 | Gate | Python 3.9.6 | Python 3.12.12 | Python 3.13.9 |
 | --- | ---: | ---: | ---: |
-| backup topology + manifest-v2 + snapshot-v2 | 60/60 | 60/60 | 60/60 |
-| full unittest discovery | 965/965, 1 expected skip | 965/965 | 965/965 |
+| backup topology + manifest-v2 + snapshot-v2 | 66/66 | 66/66 | 66/66 |
+| full unittest discovery | 971/971, 1 expected skip | 971/971 | 971/971 |
 | compileall: `src`, `tests`, `scripts`, `examples` | pass | pass | pass |
 | compact deterministic group-chat demo | pass | pass | pass |
 
 The historical `897/897` values in the source-candidate architecture documents describe
-that earlier branch. They are not the combined count; the measured combined count is
-965/965 on each interpreter above.
+that earlier branch. They are not the repaired combined count; the measured count is
+971/971 on each interpreter above.
 
 The following original adversarial regressions passed explicitly on Python 3.13.9:
 
@@ -120,6 +174,17 @@ The following original adversarial regressions passed explicitly on Python 3.13.
 6. Public failures detach active exception context.
 7. An originating exact control takes precedence over a cleanup control.
 8. A concurrent WAL commit cannot mix table counts into one derived snapshot.
+
+Six repaired lifecycle regressions also passed explicitly on Python 3.13.9:
+
+1. every exact control after effective `BEGIN` rolls back and preserves connection reuse;
+2. every exact control after body success or failure rolls back;
+3. one transient cleanup error/control is retried without hiding an exact origin;
+4. an ambient handled control cannot authenticate cleanup priority;
+5. a control after real rollback preserves identity/traceback and WAL reader reuse;
+6. denied or non-opening `BEGIN` remains transaction-free and reusable.
+
+The original eight plus these six selectors passed together as 14/14.
 
 One initial manual selector used a nonexistent unittest class name for two of these eight
 tests. That command failed at test loading. The corrected fully qualified selector passed
@@ -141,8 +206,10 @@ The static and repository gates passed:
 - candidate-diff, commit-message, and newly reachable blob credential scans: zero matches;
 - ancestry, exact path set, exact blob set, and clean-worktree checks: pass.
 
-An evidence file generated outside the checkout at the clean subject commit passed all five
-fixed local gates and strict verification against the exact commit:
+An evidence file generated outside the checkout at clean subject
+`f799efae8a540e3b20faebfbb65c4ca22976ae84`, tree
+`37f9f0d75673015e63e1b3ca9b5705a138851513`, passed all five fixed local gates and strict
+verification against that exact commit:
 
 - unit tests;
 - compact deterministic demo;
