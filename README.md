@@ -45,7 +45,26 @@ analysis_report/            调研总报告、专题研究和原始截图证据
 references/                 本地只读参考仓库（被 .gitignore 排除）
 ```
 
-## 快速验证
+## 本地产品试用
+
+想先从产品界面体验当前协作切片，运行：
+
+```bash
+./scripts/start_local_trial.sh
+```
+
+页面会真实执行本地三 Agent 合成 demo，并展示任务 DAG、3 个 Artifact、Needs You、
+25 步事件时间线和三张内联 SVG 系统图；它不会连接或发送任何飞书、企微消息。
+完整启动方式、页面导览、安全边界和故障排查见
+[`docs/LOCAL_PRODUCT_TRIAL.md`](docs/LOCAL_PRODUCT_TRIAL.md)。当前仍是本地体验，Gate A–E 全部关闭。
+
+只看终端结果：
+
+```bash
+./scripts/start_local_trial.sh --cli
+```
+
+## 开发验证
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
