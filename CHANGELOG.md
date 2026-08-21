@@ -41,6 +41,9 @@ release. Promotion additionally requires the evidence defined in
 - Protected-operation composer and registry construction now contain provider/clock
   descriptor failures inside the same hostile-dependency boundary, delete constructor
   inputs before public rethrow, and reissue only bounded clean control signals.
+- Protected-operation constructors now route descriptor-raised `AttributeError` through
+  frame cleanup, bind exact initializers without instance lookup, reject subclasses, and
+  publish dependency-bearing slots only after all validation and lock creation succeeds.
 - Exact operation control signals are reissued without dependency exception state;
   `SystemExit` preserves only `None`, exact booleans, or exact integer status 0 through 255
   and maps every other status to `1`.
