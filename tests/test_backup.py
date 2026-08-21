@@ -86,7 +86,8 @@ class SQLiteBackupTests(unittest.TestCase):
             projections.claim("restore-read-model", "worker-1", lease_seconds=60)
         finally:
             projections.close()
-        with sqlite3.connect(self.source) as connection:
+        connection = sqlite3.connect(self.source)
+        try:
             connection.execute(
                 """
                 INSERT INTO projection_receipts (
@@ -102,6 +103,9 @@ class SQLiteBackupTests(unittest.TestCase):
                 """,
                 (1, "restore-read-model"),
             )
+            connection.commit()
+        finally:
+            connection.close()
 
     def seed_revocation_high_water(self):
         with SQLiteRevocationRevisionGuard(str(self.source)) as guard:
