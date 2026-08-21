@@ -382,7 +382,7 @@ def _require_callable_dependency(
 
     if dependency is None:
         raise OperationAuthorizationError(failure_code)
-    candidate, failure = _invoke_boundary(lambda: getattr(dependency, method_name, None))
+    candidate, failure = _invoke_boundary(lambda: getattr(dependency, method_name))
     if failure is not None:
         _raise_dependency_failure(failure, failure_code)
     if not callable(candidate):

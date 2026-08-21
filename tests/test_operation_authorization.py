@@ -1111,6 +1111,69 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                     forbidden=forbidden,
                 )
 
+    def test_constructor_descriptor_attribute_errors_clear_dependency_frames(self):
+        cases = (
+            (
+                "provider",
+                "load_current_state",
+                "protected_operation_state_unavailable",
+            ),
+            (
+                "clock",
+                "now",
+                "protected_operation_clock_unavailable",
+            ),
+        )
+        for label, method_name, expected_code in cases:
+            with self.subTest(dependency=label):
+                canary = f"constructor-{label}-attribute-error-secret-canary"
+                original = AttributeError(canary)
+                dependency = FaultingDependencyDescriptor(method_name, original)
+                uninitialized = object.__new__(ProtectedOperationComposer)
+                values = {
+                    "issuer": self.issuer,
+                    "state_provider": (dependency if label == "provider" else self.provider),
+                    "authorizer": self.authorizer,
+                    "clock": dependency if label == "clock" else self.clock,
+                }
+
+                error = self.capture_error(
+                    expected_code,
+                    lambda selected=uninitialized, selected_values=values: (
+                        ProtectedOperationComposer.__init__(
+                            selected,
+                            **selected_values,
+                        )
+                    ),
+                )
+
+                forbidden = (
+                    uninitialized,
+                    dependency,
+                    self.issuer,
+                    self.provider,
+                    self.authorizer,
+                    self.verifier,
+                    self.key_ring,
+                    self.clock,
+                    self.context,
+                    self.request,
+                    original,
+                    values,
+                    b"signing-secret-canary-1234567890",
+                )
+                self.assert_detached_traceback(
+                    error,
+                    canary,
+                    expected_method="__init__",
+                    forbidden=forbidden,
+                )
+                self.assert_original_control_traceback_is_scrubbed(
+                    original,
+                    canary,
+                    forbidden=forbidden,
+                )
+
     def test_constructor_descriptor_control_signals_are_reissued_cleanly(self):
         cases = (
             (KeyboardInterrupt, "keyboard"),
