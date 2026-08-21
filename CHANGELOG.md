@@ -31,9 +31,10 @@ release. Promotion additionally requires the evidence defined in
 - Inactive exact SQLite backup manifest v2 model and bounded canonical JSON codec binding
   current bridge-only `SchemaState`, topology profiles, all catalog objects, and table counts
   while remaining unreachable from v1 create, verify, restore, and CLI paths.
-- Inactive backup manifest v2 evidence derivation from one caller-supplied exact SQLite read
-  transaction, including integrity, foreign-key, page-geometry, bridge-state, exact catalog,
-  and per-table-count evidence without activating a writer, verifier, restore path, or CLI.
+- Inactive backup manifest v2 evidence derivation from one owned read transaction on a
+  caller-supplied exact SQLite connection, including integrity, foreign-key, page-geometry,
+  bridge-state, exact catalog, and per-table-count evidence without activating a writer,
+  verifier, restore path, or CLI.
 
 ### Changed
 
