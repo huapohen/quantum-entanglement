@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from unittest.mock import patch
 
 from quantum_entanglement.service import ConfigurationError, RuntimeMode, ServiceConfig
 
@@ -191,6 +192,37 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertTrue(ServiceConfig._is_protected_writable_ancestor(root_metadata))
         self.assertFalse(ServiceConfig._is_protected_writable_ancestor(untrusted_metadata))
         self.assertFalse(ServiceConfig._is_protected_writable_ancestor(unprotected_metadata))
+
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "geteuid"), "requires POSIX")
+    def test_rejects_untrusted_owner_below_a_protected_sticky_ancestor(self) -> None:
+        sticky_parent = self.data_directory.parent / "sticky-parent"
+        sticky_parent.mkdir(mode=0o700)
+        sticky_parent.chmod(0o1777)
+        self.addCleanup(sticky_parent.chmod, 0o700)
+        untrusted_parent = sticky_parent / "untrusted-parent"
+        untrusted_parent.mkdir(mode=0o755)
+        untrusted_data = untrusted_parent / "data"
+        untrusted_data.mkdir(mode=0o700)
+        values = self.environment()
+        values["QE_DATA_DIR"] = str(untrusted_data)
+        values["QE_DATABASE_PATH"] = str(untrusted_data / "service.sqlite3")
+        real_lstat = Path.lstat
+        current_uid = os.geteuid()
+        untrusted_uid = current_uid + 1 if current_uid != 1 else 2
+
+        def lstat_with_untrusted_owner(path: Path) -> os.stat_result:
+            metadata = real_lstat(path)
+            if path != untrusted_parent:
+                return metadata
+            values = list(metadata)
+            values[stat.ST_UID] = untrusted_uid
+            return os.stat_result(values)
+
+        with (
+            patch.object(Path, "lstat", autospec=True, side_effect=lstat_with_untrusted_owner),
+            self.assertRaisesRegex(ConfigurationError, "configuration_path_ancestor_owner"),
+        ):
+            ServiceConfig.from_environment(values)
 
     def test_rejects_unsafe_existing_database(self) -> None:
         self.database_path.write_bytes(b"not-a-real-database")

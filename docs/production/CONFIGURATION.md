@@ -68,9 +68,9 @@ The three configured paths must be canonical absolute paths. `:memory:`, relativ
 At preflight time the implementation verifies:
 
 - no existing path component is a symbolic link;
-- no ancestor directory is attacker-replaceable: group- or world-writable ancestors are
-  rejected, except on POSIX when sticky semantics protect entries and the directory is owned
-  by root or the effective service user (for example, root-owned `/tmp`);
+- no ancestor directory is attacker-replaceable: on POSIX every ancestor is owned by root or
+  the effective service user, and group- or world-writable ancestors are rejected except when
+  sticky semantics protect their entries (for example, root-owned `/tmp`);
 - data and secret roots are owner-only directories owned by the effective service user;
 - the secret root and data directory neither overlap nor contain each other;
 - the database is a direct child of the data directory;
@@ -90,7 +90,8 @@ Configuration failures are intentionally low-information. Representative codes i
 - `configuration_snapshot_failed` / `configuration_snapshot_too_large`;
 - `configuration_value_invalid` / `configuration_type_invalid`;
 - `configuration_path_not_canonical` / `configuration_path_symlink`;
-- `configuration_path_permissions` / `configuration_path_ancestor_permissions`;
+- `configuration_path_permissions` / `configuration_path_ancestor_permissions` /
+  `configuration_path_ancestor_owner`;
 - `database_outside_data_directory` / `database_link_count_unsafe`;
 - `bind_host_not_literal_loopback` / `connector_not_permitted`;
 - `production_debug_forbidden`.
