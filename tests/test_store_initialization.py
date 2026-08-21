@@ -24,6 +24,28 @@ class SQLiteEventStoreInitializationTests(unittest.TestCase):
 
         connection.close.assert_called_once_with()
 
+    def test_originating_initialization_control_wins_over_close_control(self):
+        connection = mock.Mock()
+        originating = KeyboardInterrupt("originating initialization interrupt")
+        connection.close.side_effect = SystemExit(91)
+
+        with (
+            mock.patch(
+                "quantum_entanglement.store.sqlite3.connect",
+                return_value=connection,
+            ),
+            mock.patch.object(
+                SQLiteEventStore,
+                "_initialize",
+                side_effect=originating,
+            ),
+        ):
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                SQLiteEventStore(":memory:")
+
+        self.assertIs(caught.exception, originating)
+        connection.close.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()
