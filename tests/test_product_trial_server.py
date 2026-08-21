@@ -31,6 +31,7 @@ class LocalProductTrialServerTests(unittest.TestCase):
         method: str = "GET",
         token: str | None = None,
         origin: str | None = None,
+        fetch_site: str | None = None,
         data: bytes | None = None,
     ) -> tuple[int, dict[str, object], dict[str, str]]:
         headers = {}
@@ -38,6 +39,8 @@ class LocalProductTrialServerTests(unittest.TestCase):
             headers["X-QE-Trial-Token"] = token
         if origin is not None:
             headers["Origin"] = origin
+        if fetch_site is not None:
+            headers["Sec-Fetch-Site"] = fetch_site
         request = Request(self.origin + path, method=method, headers=headers, data=data)
         try:
             response = urlopen(request, timeout=5)
@@ -153,6 +156,45 @@ class LocalProductTrialServerTests(unittest.TestCase):
         connection.close()
         self.assertEqual(response.status, 421)
         self.assertEqual(body, {"error": "host_not_allowed"})
+
+    def test_fetch_metadata_accepts_same_origin_and_rejects_other_sites(self) -> None:
+        status, payload, _ = self.request_json(
+            "/api/health",
+            token=self.token,
+            origin=self.origin,
+            fetch_site="same-origin",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["status"], "ready")
+
+        for fetch_site in ("same-site", "cross-site"):
+            with self.subTest(fetch_site=fetch_site):
+                status, payload, _ = self.request_json(
+                    "/api/health",
+                    token=self.token,
+                    origin=self.origin,
+                    fetch_site=fetch_site,
+                )
+                self.assertEqual(status, 403)
+                self.assertEqual(payload, {"error": "fetch_site_not_allowed"})
+
+    def test_transfer_encoding_is_rejected_before_demo_execution(self) -> None:
+        connection = http.client.HTTPConnection(
+            "127.0.0.1",
+            self.server.server_port,
+            timeout=5,
+        )
+        try:
+            connection.putrequest("POST", "/api/demo")
+            connection.putheader("X-QE-Trial-Token", self.token)
+            connection.putheader("Transfer-Encoding", "chunked")
+            connection.endheaders()
+            response = connection.getresponse()
+            body = json.loads(response.read().decode("utf-8"))
+        finally:
+            connection.close()
+        self.assertEqual(response.status, 400)
+        self.assertEqual(body, {"error": "request_framing_invalid"})
 
     def test_only_one_demo_run_is_admitted_at_a_time(self) -> None:
         self.assertTrue(self.server.trial_state.run_lock.acquire(blocking=False))
