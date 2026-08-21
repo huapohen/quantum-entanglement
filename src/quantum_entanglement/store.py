@@ -141,6 +141,41 @@ def _consume_event_store_process_signal(error: BaseException) -> bool:
     return True
 
 
+def _trusted_event_store_public_mismatch(error: object) -> bool:
+    """Recognize a public mismatch previously created by the clean trampoline."""
+
+    if type(error) is not EventStoreLifecycleError:
+        return False
+    public_error = error
+    if (
+        public_error.args != (EventStoreLifecycleError.code,)
+        or public_error.__cause__ is not None
+        or public_error.__context__ is not None
+        or getattr(public_error, "__notes__", None) is not None
+    ):
+        return False
+    traceback_cursor = public_error.__traceback__
+    last_code = None
+    while traceback_cursor is not None:
+        last_code = traceback_cursor.tb_frame.f_code
+        traceback_cursor = traceback_cursor.tb_next
+    return last_code is _raise_event_store_process_mismatch.__code__
+
+
+def _consume_event_store_public_mismatch(error: EventStoreLifecycleError) -> bool:
+    """Detach a trusted nested public mismatch before publishing a fresh outer error."""
+
+    if not _trusted_event_store_public_mismatch(error):
+        return False
+    error_traceback = error.__traceback__
+    error.__cause__ = None
+    error.__context__ = None
+    error.__traceback__ = None
+    if error_traceback is not None:
+        traceback_module.clear_frames(error_traceback)
+    return True
+
+
 def _raise_event_store_process_mismatch() -> NoReturn:
     """Create the one stable public error outside any internal exception handler."""
 
@@ -173,6 +208,7 @@ def _bind_event_store_process(method: _Method) -> _Method:
     @wraps(method)
     def process_bound(*args: Any, **kwargs: Any) -> Any:
         store = args[0]
+        quarantine_required = True
         try:
             store._require_current_process()
             return method(*args, **kwargs)
@@ -180,7 +216,16 @@ def _bind_event_store_process(method: _Method) -> _Method:
             trusted = _consume_event_store_process_signal(error)
             if not trusted:
                 raise
+        except EventStoreLifecycleError as error:
+            trusted = _consume_event_store_public_mismatch(error)
+            if not trusted:
+                raise
+            quarantine_required = not store._process_is_current()
+        if quarantine_required:
             _quarantine_inherited_event_store_graph(store)
+        if method.__name__ == "__exit__" and len(args) >= 3 and _is_exact_control_signal(args[2]):
+            del args, kwargs, store
+            return False
         del args, kwargs, store
         _raise_event_store_process_mismatch()
 
@@ -425,7 +470,7 @@ class _EventPageContext:
         exc_type: object,
         exc: object,
         traceback: object,
-    ) -> None:
+    ) -> Optional[bool]:
         store = self._store
         try:
             store._require_current_process()
@@ -434,6 +479,9 @@ class _EventPageContext:
             if not _consume_event_store_process_signal(error):
                 raise
             _quarantine_inherited_event_store_graph(self)
+        if _is_exact_control_signal(cast(BaseException, exc)):
+            del self, store, exc_type, exc, traceback
+            return False
         del self, store, exc_type, exc, traceback
         _raise_event_store_process_mismatch()
 
@@ -474,13 +522,27 @@ class _EventStoreTransactionContext:
         _raise_event_store_process_mismatch()
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> Any:
+        store = self._store
         if type(exc) is _EventStoreProcessMismatchSignal:
             # The surrounding public wrapper must consume the originating signal after
             # its method frame unwinds. Retain this suspended generator instead of
             # resuming child-inherited transaction cleanup or translating too early.
             _quarantine_inherited_event_store_graph(self)
             return False
-        store = self._store
+        if _trusted_event_store_public_mismatch(exc):
+            if not store._process_is_current():
+                _quarantine_inherited_event_store_graph(self)
+                return False
+            return self._inner.__exit__(exc_type, exc, traceback)
+        if _is_exact_control_signal(exc):
+            try:
+                store._require_current_process()
+            except _EventStoreProcessMismatchSignal as error:
+                if not _consume_event_store_process_signal(error):
+                    raise
+                _quarantine_inherited_event_store_graph(self)
+                del self, store, exc_type, exc, traceback
+                return False
         try:
             store._require_current_process()
         except _EventStoreProcessMismatchSignal as error:
