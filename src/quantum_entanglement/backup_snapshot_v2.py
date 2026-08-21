@@ -9,7 +9,6 @@ or make v2 reachable from the active v1 backup APIs.
 from __future__ import annotations
 
 import sqlite3
-import sys
 from asyncio import CancelledError
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -452,10 +451,12 @@ def _is_exact_control_signal(error: BaseException) -> bool:
     return type(error) in _CONTROL_SIGNAL_TYPES
 
 
-def _finish_owned_snapshot(connection: sqlite3.Connection) -> None:
+def _finish_owned_snapshot(
+    connection: sqlite3.Connection,
+    originating_error: Optional[BaseException],
+) -> None:
     """End a conservatively owned transaction without replacing an exact control."""
 
-    originating_error = sys.exc_info()[1]
     try:
         if _connection_in_transaction(connection):
             _rollback_owned_snapshot(connection)
@@ -474,13 +475,17 @@ def _derive_inside_owned_snapshot(
 ) -> BackupManifestV2Snapshot:
     """Establish cleanup before BEGIN and keep it active through derivation."""
 
+    originating_error: Optional[BaseException] = None
     try:
         _execute(connection, "BEGIN", label="read_snapshot_begin")
         if not _connection_in_transaction(connection):
             raise _SnapshotFailure("read_snapshot_not_opened")
         return _derive_inside_transaction(connection)
+    except BaseException as error:
+        originating_error = error
+        raise
     finally:
-        _finish_owned_snapshot(connection)
+        _finish_owned_snapshot(connection, originating_error)
 
 
 def _derive_with_owned_snapshot(
@@ -488,10 +493,14 @@ def _derive_with_owned_snapshot(
 ) -> BackupManifestV2Snapshot:
     """Retry cleanup after one control or failure interrupts the inner finalizer."""
 
+    originating_error: Optional[BaseException] = None
     try:
         return _derive_inside_owned_snapshot(connection)
+    except BaseException as error:
+        originating_error = error
+        raise
     finally:
-        _finish_owned_snapshot(connection)
+        _finish_owned_snapshot(connection, originating_error)
 
 
 def derive_backup_manifest_v2_snapshot(
