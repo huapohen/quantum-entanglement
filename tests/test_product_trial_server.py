@@ -81,6 +81,12 @@ class LocalProductTrialServerTests(unittest.TestCase):
         self.assertNotIn("<script src=", body)
         self.assertNotIn("<link rel=", body)
 
+    def test_favicon_is_deliberately_empty_instead_of_logging_a_404(self) -> None:
+        with urlopen(self.origin + "/favicon.ico", timeout=5) as response:
+            body = response.read()
+        self.assertEqual(response.status, 204)
+        self.assertEqual(body, b"")
+
     def test_health_and_demo_require_the_ephemeral_token(self) -> None:
         status, payload, _ = self.request_json("/api/health")
         self.assertEqual(status, 403)
