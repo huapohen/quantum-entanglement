@@ -401,17 +401,19 @@ class ExactBackupManifestV2CodecTests(unittest.TestCase):
     def test_cold_package_import_does_not_read_packaged_migration_sql(self) -> None:
         script = """
 import json
-import pathlib
+import os
+import sys
 
 observed = []
-original = pathlib.Path.read_text
 
-def tracked(self, *args, **kwargs):
-    if str(self).endswith('.up.sql'):
-        observed.append(str(self))
-    return original(self, *args, **kwargs)
+def audit(event, args):
+    if event != 'open' or not args or type(args[0]) not in (str, bytes):
+        return
+    path = os.fsdecode(args[0])
+    if path.endswith('.up.sql'):
+        observed.append(path)
 
-pathlib.Path.read_text = tracked
+sys.addaudithook(audit)
 import quantum_entanglement
 print(json.dumps(observed))
 """
