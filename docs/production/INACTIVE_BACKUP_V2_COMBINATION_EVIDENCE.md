@@ -12,8 +12,8 @@ foundation without changing either source branch, then repaired after a combinat
 reviewer found a transaction-lifecycle window. The repaired local subject was:
 
 - branch: `codex/backup-v2-on-canonical-v1`;
-- subject commit: `f799efae8a540e3b20faebfbb65c4ca22976ae84`;
-- subject tree: `37f9f0d75673015e63e1b3ca9b5705a138851513`;
+- subject commit: `2201554932a6e6673e4b987c1168cb8b062d227c`;
+- subject tree: `9775fc9daf3aacc8a82a51b5d086ee419fc6913e`;
 - canonical parent: `967b4364c36e84c2c54c51528ab717da615222ac`;
 - source candidate: `3946847b1eceec85beac5b8f1e2031b870cedaa5`;
 - worktree state during the recorded gates: clean.
@@ -111,6 +111,31 @@ both attempts; no result is returned and the future descriptor/process owner mus
 quarantine and close that connection. This inactive caller-connection helper still cannot
 perform that quarantine itself.
 
+### Retained post-rollback control evidence
+
+A fresh independent review found one P2 evidence mismatch after the lifecycle repair. The
+architecture document correctly claimed that all four exact control types were covered at
+the post-real-`ROLLBACK` boundary, and external one-shot repros for all four passed, but the
+retained WAL regression instantiated only `KeyboardInterrupt`.
+
+Commit `2201554932a6e6673e4b987c1168cb8b062d227c` closes that P2 without changing production
+code, narrowing the documented contract, or increasing the unittest method count. The same
+retained test now runs four isolated subtests for exact `KeyboardInterrupt`, `SystemExit`,
+`GeneratorExit`, and `CancelledError`. Each subtest creates its own temporary WAL database,
+reader, writer, trace state, and exception graph, and proves:
+
+- the injected and caught control are the same object;
+- pre-existing traceback, cause, context, args, context-suppression state, and, for
+  `SystemExit`, the exact `code` survive the boundary;
+- the real rollback has completed and the reader is not in a transaction;
+- one writer connection can commit two later transactions and observe each durable count;
+- the same reader connection can derive a fresh exact snapshot after each writer commit;
+- callbacks, transactions, connections, and exception references are cleaned before the
+  next subtest.
+
+The retained-evidence P2 is therefore closed in this candidate. The complete repaired
+candidate still requires the fresh independent acceptance stated in the decision above.
+
 ## Exact content checks
 
 The following unchanged subject blobs matched the independently accepted backup candidate
@@ -133,7 +158,7 @@ fresh independent review called out above:
 | --- | --- |
 | `docs/architecture/SQLITE_BACKUP_V2_SNAPSHOT_DERIVATION.md` | `ea4fb99e27771a729882276ea8e70f7acb0051e8` |
 | `src/quantum_entanglement/backup_snapshot_v2.py` | `a91ac3e3cd4d759fc8835d2c960e79010296b873` |
-| `tests/test_backup_snapshot_v2.py` | `0ac5c28370f3324f1e9c4a9fedeaddb7a07da268` |
+| `tests/test_backup_snapshot_v2.py` | `17067fbfd6155a18a8ce7cd9ea14d3d0f437aeb6` |
 
 The following subject blobs matched canonical exactly:
 
@@ -181,10 +206,12 @@ Six repaired lifecycle regressions also passed explicitly on Python 3.13.9:
 2. every exact control after body success or failure rolls back;
 3. one transient cleanup error/control is retried without hiding an exact origin;
 4. an ambient handled control cannot authenticate cleanup priority;
-5. a control after real rollback preserves identity/traceback and WAL reader reuse;
+5. all four exact controls after real rollback preserve the full exception graph and WAL
+   reader/writer reuse in isolated retained subtests;
 6. denied or non-opening `BEGIN` remains transaction-free and reusable.
 
-The original eight plus these six selectors passed together as 14/14.
+The original eight plus these six selectors passed together as 14/14. The method count is
+unchanged; the post-rollback selector now executes all four exact-control subtests.
 
 One initial manual selector used a nonexistent unittest class name for two of these eight
 tests. That command failed at test loading. The corrected fully qualified selector passed
@@ -207,8 +234,8 @@ The static and repository gates passed:
 - ancestry, exact path set, exact blob set, and clean-worktree checks: pass.
 
 An evidence file generated outside the checkout at clean subject
-`f799efae8a540e3b20faebfbb65c4ca22976ae84`, tree
-`37f9f0d75673015e63e1b3ca9b5705a138851513`, passed all five fixed local gates and strict
+`2201554932a6e6673e4b987c1168cb8b062d227c`, tree
+`9775fc9daf3aacc8a82a51b5d086ee419fc6913e`, passed all five fixed local gates and strict
 verification against that exact commit:
 
 - unit tests;
