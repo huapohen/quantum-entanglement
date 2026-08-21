@@ -1014,6 +1014,88 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
                 except OSError:
                     pass
 
+    def test_constructor_migration_fork_preserves_originating_control(self) -> None:
+        parent_pid = os.getpid()
+        child_pids: list[int] = []
+        read_fd, write_fd = os.pipe()
+        real_connect = sqlite3.connect
+        constructor_path = str(Path(self.tempdir.name) / "constructor-control.sqlite3")
+        originating = KeyboardInterrupt("originating constructor control")
+
+        class FinalizerTrackingConnection(sqlite3.Connection):
+            def close(connection_self) -> None:
+                if os.getpid() != parent_pid:
+                    os.write(write_fd, b"connection-closed:")
+                super().close()
+
+            def __del__(connection_self) -> None:
+                if os.getpid() != parent_pid:
+                    try:
+                        os.write(write_fd, b"connection-finalized:")
+                    except OSError:
+                        pass
+
+        def tracking_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+            return real_connect(*args, **kwargs, factory=FinalizerTrackingConnection)
+
+        def control_forking_clock() -> str:
+            if child_pids:
+                return "2026-08-21T00:00:00Z"
+            pid = os.fork()
+            if pid == 0:
+                raise originating
+            child_pids.append(pid)
+            return "2026-08-21T00:00:00Z"
+
+        try:
+            try:
+                with mock.patch.object(store_module.sqlite3, "connect", tracking_connect):
+                    constructed = SQLiteEventStore(
+                        constructor_path,
+                        clock=control_forking_clock,
+                    )
+            except BaseException as error:
+                if os.getpid() == parent_pid:
+                    raise
+                if (
+                    error is originating
+                    and error.__cause__ is None
+                    and error.__context__ is None
+                    and getattr(error, "__notes__", None) is None
+                ):
+                    outcome = b"control-preserved:"
+                else:
+                    outcome = f"wrong:{type(error).__name__}:".encode("ascii")
+                gc.collect()
+                retained = sum(
+                    type(root) is SQLiteEventStore
+                    for root in store_module._EVENT_STORE_CHILD_GRAPH_QUARANTINE
+                )
+                os.write(write_fd, outcome + f"retained={retained}".encode("ascii"))
+                os.close(write_fd)
+                os._exit(0)
+
+            if os.getpid() != parent_pid:
+                os.write(write_fd, b"accepted")
+                os.close(write_fd)
+                os._exit(0)
+
+            self.assertEqual(len(child_pids), 1)
+            os.close(write_fd)
+            ready, _, _ = select.select((read_fd,), (), (), 3.0)
+            self.assertTrue(ready, "constructor-control child produced no result")
+            self.assertEqual(os.read(read_fd, 4096), b"control-preserved:retained=1")
+            status = _wait_for_child(child_pids[0], 3.0)
+            self.assertTrue(os.WIFEXITED(status))
+            self.assertEqual(os.WEXITSTATUS(status), 0)
+            constructed.close()
+        finally:
+            if os.getpid() == parent_pid:
+                try:
+                    os.close(read_fd)
+                except OSError:
+                    pass
+
     def test_inherited_entry_rejects_before_caller_input_is_touched(self) -> None:
         class HostileInput:
             def __getattribute__(self, _name: str) -> object:

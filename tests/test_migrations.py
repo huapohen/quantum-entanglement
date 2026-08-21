@@ -2,6 +2,7 @@ import importlib.resources
 import sqlite3
 import tempfile
 import unittest
+from asyncio import CancelledError
 from pathlib import Path
 from unittest import mock
 
@@ -474,6 +475,77 @@ class MigrationRunnerTests(unittest.TestCase):
         self.assertTrue(self.connection.in_transaction)
         self.connection.execute("ROLLBACK")
         self.assertFalse(self.table_exists("process_drift_partial"))
+        self.assertEqual(self.ledger_count(), 0)
+
+    def test_originating_control_wins_when_process_guard_denies_migration_cleanup(self):
+        migration = Migration(1, "0001_process_control.up.sql")
+        drifted = False
+        guarded = ProcessGuardedConnection(self.connection, lambda: drifted)
+
+        def process_guard():
+            if drifted:
+                raise MigrationProcessMismatchSignal("process drifted")
+
+        controls = (
+            KeyboardInterrupt("originating migration keyboard interrupt"),
+            SystemExit(61),
+            GeneratorExit("originating migration generator exit"),
+            CancelledError("originating migration cancellation"),
+        )
+        with mock.patch(
+            "quantum_entanglement.migrations.migration_text",
+            return_value="CREATE TABLE process_control_partial (value TEXT);",
+        ):
+            for originating in controls:
+                with self.subTest(control=type(originating).__name__):
+
+                    def control_clock(originating=originating):
+                        nonlocal drifted
+                        drifted = True
+                        raise originating
+
+                    with self.assertRaises(type(originating)) as caught:
+                        apply_sqlite_migrations(
+                            guarded,
+                            migrations=(migration,),
+                            clock=control_clock,
+                            _process_guard=process_guard,
+                        )
+                    self.assertIs(caught.exception, originating)
+                    drifted = False
+                    self.assertTrue(self.connection.in_transaction)
+                    self.connection.execute("ROLLBACK")
+                    self.assertFalse(self.connection.in_transaction)
+
+            class RollbackInterruptingConnection:
+                @property
+                def in_transaction(connection_self):
+                    return self.connection.in_transaction
+
+                def create_function(connection_self, *args, **kwargs):
+                    return self.connection.create_function(*args, **kwargs)
+
+                def execute(connection_self, statement, parameters=()):
+                    if statement == "ROLLBACK":
+                        raise SystemExit(62)
+                    return self.connection.execute(statement, parameters)
+
+            rollback_origin = KeyboardInterrupt("originating control before rollback")
+
+            def rollback_control_clock():
+                raise rollback_origin
+
+            with self.assertRaises(KeyboardInterrupt) as caught_rollback:
+                apply_sqlite_migrations(
+                    RollbackInterruptingConnection(),
+                    migrations=(migration,),
+                    clock=rollback_control_clock,
+                )
+            self.assertIs(caught_rollback.exception, rollback_origin)
+            self.assertTrue(self.connection.in_transaction)
+            self.connection.execute("ROLLBACK")
+
+        self.assertFalse(self.table_exists("process_control_partial"))
         self.assertEqual(self.ledger_count(), 0)
 
     def test_commit_failure_rolls_back_body_and_ledger_then_retries(self):

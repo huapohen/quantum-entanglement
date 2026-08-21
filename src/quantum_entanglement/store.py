@@ -621,6 +621,8 @@ class SQLiteEventStore:
                             raise
                 raise
             _quarantine_inherited_event_store_graph(self)
+            if _is_exact_control_signal(initialization_error):
+                raise
             process_mismatch = True
         if process_mismatch:
             del self, path, clock, max_json_bytes, parent, connection
