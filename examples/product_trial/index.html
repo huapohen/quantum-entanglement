@@ -1090,7 +1090,7 @@
                   <div>
                     <div class="message-meta">
                       <strong>协作编排器</strong>
-                      <span>等待运行</span>
+                      <span id="orchestrator-status">等待运行</span>
                     </div>
                     <div id="orchestrator-message" class="message-bubble">
                       我会把指令编译成确定性 DAG，并在每个 Agent 运行前装配已记录上下文。
@@ -1653,6 +1653,7 @@
           setText("artifact-count", artifacts.length + " ITEMS");
           setText("needs-count", needsYou.length + " BLOCKERS");
           setText("event-count", events.length + " EVENTS");
+          setText("orchestrator-status", "已完成");
           setText("orchestrator-message", "DAG 已完成，三个 Agent 的上下文、产出和结果均进入事件链。");
 
           updateTasks(statuses);
@@ -1679,6 +1680,7 @@
           if (!trialToken) return;
           runButton.disabled = true;
           setRunState("running", "Agent 协作运行中");
+          setText("orchestrator-status", "运行中");
           updateTasks({research: "running", design: "pending", review: "pending"});
           rawOutput.textContent = "正在执行真实本地 demo…";
           try {
@@ -1695,6 +1697,7 @@
           } catch (error) {
             const message = error instanceof Error ? error.message : "trial_run_failed";
             rawOutput.textContent = message;
+            setText("orchestrator-status", "运行失败");
             setRunState("error", "运行失败 · " + message);
           } finally {
             runButton.disabled = false;

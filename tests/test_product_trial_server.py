@@ -63,6 +63,7 @@ class LocalProductTrialServerTests(unittest.TestCase):
             body = response.read().decode("utf-8")
         for element_id in (
             "workbench",
+            "orchestrator-status",
             "task-research",
             "artifact-list",
             "needs-you-list",
