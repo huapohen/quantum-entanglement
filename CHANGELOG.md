@@ -31,6 +31,9 @@ release. Promotion additionally requires the evidence defined in
 - Inactive exact SQLite backup manifest v2 model and bounded canonical JSON codec binding
   current bridge-only `SchemaState`, topology profiles, all catalog objects, and table counts
   while remaining unreachable from v1 create, verify, restore, and CLI paths.
+- Inactive backup manifest v2 evidence derivation from one caller-supplied exact SQLite read
+  transaction, including integrity, foreign-key, page-geometry, bridge-state, exact catalog,
+  and per-table-count evidence without activating a writer, verifier, restore path, or CLI.
 
 ### Changed
 
@@ -38,6 +41,12 @@ release. Promotion additionally requires the evidence defined in
   identifies unimplemented ACP, MCP, authentication, and crash-recovery boundaries.
 - Outbox lease time is read only after SQLite write-lock acquisition, terminal fencing
   tokens are cleared, and persistent ambiguity history stores token digests only.
+- Backup topology DDL canonicalization now follows SQLite's exact ASCII token-whitespace
+  boundary and preserves comments, NBSP, vertical tab, quoted regions, and other semantic
+  token content to prevent cross-schema digest collisions.
+- Backup v2 remains reachable only through explicit versioned submodule imports, preserving
+  zero packaged-migration SQL reads during a cold package-root import while retaining
+  migration/topology cross-binding during explicit v2 initialization.
 
 ### In progress — not yet a shipped guarantee
 
@@ -48,9 +57,9 @@ release. Promotion additionally requires the evidence defined in
 - Per-component process-owner migration for stores, authorization, secrets, plugins, runtimes,
   connectors, and the final worker composition root; the shared foundation alone is not a
   fork-safety or secret-isolation guarantee.
-- Backup manifest v2 stable-snapshot derivation, writer/publication, quarantine verification,
-  exact-byte restore, mixed-version rehearsal, and authenticated custody; the topology
-  registry and pure codec alone do not make v2 operationally readable or writable.
+- Backup manifest v2 writer/publication, quarantine verification, exact-byte restore,
+  mixed-version rehearsal, and authenticated custody; the topology registry, codec, and
+  caller-connection snapshot derivation do not make v2 operationally readable or writable.
 
 ## Pre-release kernel baseline (`0.1.x`, not promoted)
 
