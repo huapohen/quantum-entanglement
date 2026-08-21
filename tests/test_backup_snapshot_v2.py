@@ -1,10 +1,13 @@
 import inspect
 import sqlite3
+import sys
 import tempfile
 import threading
 import unittest
+from asyncio import CancelledError
 from pathlib import Path
-from typing import Any, Optional
+from types import FrameType
+from typing import Any, Callable, Optional
 from unittest.mock import patch
 
 import quantum_entanglement.backup as active_backup_module
@@ -93,6 +96,61 @@ def initialize_schema_prefix(
 
 
 class BackupManifestV2SnapshotTests(unittest.TestCase):
+    def capture_semantic_boundary_control(
+        self,
+        connection: sqlite3.Connection,
+        control: BaseException,
+        *,
+        boundary_ready: Callable[[], bool],
+        transaction_active: bool,
+    ) -> tuple[BaseException, bool]:
+        """Inject once at a runtime transaction boundary, independent of source lines."""
+
+        injected = False
+
+        def trace(frame: FrameType, event: str, _argument: object) -> Any:
+            nonlocal injected
+            if (
+                not injected
+                and event == "line"
+                and frame.f_globals is snapshot_module.__dict__
+                and boundary_ready()
+                and connection.in_transaction is transaction_active
+            ):
+                injected = True
+                raise control
+            return trace
+
+        caught: Optional[BaseException] = None
+        previous_trace = sys.gettrace()
+        sys.settrace(trace)
+        try:
+            derive_backup_manifest_v2_snapshot(connection)
+        except BaseException as error:
+            caught = error
+        finally:
+            sys.settrace(previous_trace)
+        self.assertIsNotNone(caught)
+        assert caught is not None
+        return caught, injected
+
+    def assert_control_traceback_is_not_synthetically_reraised(
+        self,
+        control: BaseException,
+    ) -> None:
+        traceback_cursor = control.__traceback__
+        self.assertIsNotNone(traceback_cursor)
+        public_frames = 0
+        trace_frames = 0
+        while traceback_cursor is not None:
+            if traceback_cursor.tb_frame.f_code is derive_backup_manifest_v2_snapshot.__code__:
+                public_frames += 1
+            if traceback_cursor.tb_frame.f_code is self.capture_semantic_boundary_control.__code__:
+                trace_frames += 1
+            traceback_cursor = traceback_cursor.tb_next
+        self.assertEqual(public_frames, 1)
+        self.assertEqual(trace_frames, 1)
+
     def test_full_materialized_catalog_derives_manifest_ready_exact_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             path = str(Path(tempdir) / "full.sqlite3")
@@ -362,6 +420,240 @@ class BackupManifestV2SnapshotTests(unittest.TestCase):
             if connection.in_transaction:
                 connection.rollback()
             connection.close()
+
+    def test_single_control_after_begin_effect_is_rolled_back_and_connection_reused(
+        self,
+    ) -> None:
+        def begin_observer(state: dict[str, bool]) -> Callable[[str], None]:
+            def observe(statement: str) -> None:
+                if " ".join(statement.strip().split()).upper() == "BEGIN":
+                    state["begin_seen"] = True
+
+            return observe
+
+        control_types = (KeyboardInterrupt, SystemExit, GeneratorExit, CancelledError)
+        for control_type in control_types:
+            with self.subTest(control_type=control_type.__name__):
+                connection = sqlite3.connect(":memory:")
+                connection.execute("VACUUM")
+                boundary_state = {"begin_seen": False}
+                connection.set_trace_callback(begin_observer(boundary_state))
+                control = control_type(f"begin-boundary-{control_type.__name__}")
+                try:
+                    caught, injected = self.capture_semantic_boundary_control(
+                        connection,
+                        control,
+                        boundary_ready=lambda state=boundary_state: state["begin_seen"],
+                        transaction_active=True,
+                    )
+                    self.assertTrue(injected)
+                    self.assertIs(caught, control)
+                    self.assertFalse(connection.in_transaction)
+                    self.assert_control_traceback_is_not_synthetically_reraised(control)
+                    snapshot = derive_backup_manifest_v2_snapshot(connection)
+                    self.assertIs(type(snapshot), BackupManifestV2Snapshot)
+                    self.assertFalse(connection.in_transaction)
+                finally:
+                    connection.set_trace_callback(None)
+                    if connection.in_transaction:
+                        connection.rollback()
+                    connection.close()
+
+    def test_single_control_after_body_success_or_failure_always_cleans_snapshot(
+        self,
+    ) -> None:
+        control_types = (KeyboardInterrupt, SystemExit, GeneratorExit, CancelledError)
+        real_derive = snapshot_module._derive_inside_transaction
+
+        def body_for(
+            expected_outcome: str,
+            state: dict[str, bool],
+        ) -> Callable[[sqlite3.Connection], BackupManifestV2Snapshot]:
+            def finish_body(target: sqlite3.Connection) -> BackupManifestV2Snapshot:
+                if expected_outcome == "failure":
+                    state["body_finished"] = True
+                    raise HostileFault("body failed before asynchronous control")
+                result = real_derive(target)
+                state["body_finished"] = True
+                return result
+
+            return finish_body
+
+        for body_outcome in ("success", "failure"):
+            for control_type in control_types:
+                with self.subTest(body_outcome=body_outcome, control_type=control_type.__name__):
+                    connection = sqlite3.connect(":memory:")
+                    connection.execute("VACUUM")
+                    boundary_state = {"body_finished": False}
+
+                    control = control_type(f"body-{body_outcome}-boundary-{control_type.__name__}")
+                    try:
+                        with patch.object(
+                            snapshot_module,
+                            "_derive_inside_transaction",
+                            side_effect=body_for(body_outcome, boundary_state),
+                        ):
+                            caught, injected = self.capture_semantic_boundary_control(
+                                connection,
+                                control,
+                                boundary_ready=lambda state=boundary_state: state["body_finished"],
+                                transaction_active=True,
+                            )
+                        self.assertTrue(injected)
+                        self.assertIs(caught, control)
+                        self.assertFalse(connection.in_transaction)
+                        self.assert_control_traceback_is_not_synthetically_reraised(control)
+                        snapshot = derive_backup_manifest_v2_snapshot(connection)
+                        self.assertIs(type(snapshot), BackupManifestV2Snapshot)
+                        self.assertFalse(connection.in_transaction)
+                    finally:
+                        if connection.in_transaction:
+                            connection.rollback()
+                        connection.close()
+
+    def test_transient_cleanup_error_or_control_is_retried_without_hiding_origin(
+        self,
+    ) -> None:
+        real_rollback = snapshot_module._rollback_owned_snapshot
+        control_types = (KeyboardInterrupt, SystemExit, GeneratorExit, CancelledError)
+
+        def rollback_after_one_failure(
+            failure: BaseException,
+            state: dict[str, int],
+        ) -> Callable[[sqlite3.Connection], None]:
+            def rollback_once(target: sqlite3.Connection) -> None:
+                state["calls"] += 1
+                if state["calls"] == 1:
+                    raise failure
+                real_rollback(target)
+
+            return rollback_once
+
+        cases = (
+            (HostileFault("ordinary cleanup failure"), None),
+            (SystemExit("cleanup control"), None),
+            (SystemExit("cleanup must not replace origin"), KeyboardInterrupt("origin")),
+            (KeyboardInterrupt("cleanup must not replace origin"), SystemExit("origin")),
+            (GeneratorExit("cleanup must not replace origin"), CancelledError("origin")),
+            (CancelledError("cleanup must not replace origin"), GeneratorExit("origin")),
+        )
+        for cleanup_failure, originating_control in cases:
+            with self.subTest(
+                cleanup_type=type(cleanup_failure).__name__,
+                origin_type=(
+                    None if originating_control is None else type(originating_control).__name__
+                ),
+            ):
+                connection = sqlite3.connect(":memory:")
+                connection.execute("VACUUM")
+                cleanup_state = {"calls": 0}
+
+                body_patch = (
+                    patch.object(
+                        snapshot_module,
+                        "_derive_inside_transaction",
+                        side_effect=originating_control,
+                    )
+                    if originating_control is not None
+                    else patch.object(
+                        snapshot_module,
+                        "_derive_inside_transaction",
+                        wraps=snapshot_module._derive_inside_transaction,
+                    )
+                )
+                caught: Optional[BaseException] = None
+                try:
+                    with (
+                        body_patch,
+                        patch.object(
+                            snapshot_module,
+                            "_rollback_owned_snapshot",
+                            side_effect=rollback_after_one_failure(
+                                cleanup_failure,
+                                cleanup_state,
+                            ),
+                        ),
+                    ):
+                        try:
+                            derive_backup_manifest_v2_snapshot(connection)
+                        except BaseException as error:
+                            caught = error
+                    self.assertIsNotNone(caught)
+                    assert caught is not None
+                    if originating_control is not None:
+                        self.assertIs(caught, originating_control)
+                    elif type(cleanup_failure) in control_types:
+                        self.assertIs(caught, cleanup_failure)
+                    else:
+                        self.assertIs(type(caught), BackupManifestV2SnapshotError)
+                        self.assertEqual(str(caught), "read_snapshot_cleanup_failed")
+                    self.assertEqual(cleanup_state["calls"], 2)
+                    self.assertFalse(connection.in_transaction)
+                    snapshot = derive_backup_manifest_v2_snapshot(connection)
+                    self.assertIs(type(snapshot), BackupManifestV2Snapshot)
+                    self.assertFalse(connection.in_transaction)
+                finally:
+                    if connection.in_transaction:
+                        connection.rollback()
+                    connection.close()
+
+    def test_control_after_real_rollback_and_wal_writer_leave_reader_reusable(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = str(Path(tempdir) / "wal-boundary.sqlite3")
+            initialize_full_database(path)
+            journal = sqlite3.connect(path)
+            try:
+                self.assertEqual(journal.execute("PRAGMA journal_mode=WAL").fetchone(), ("wal",))
+            finally:
+                journal.close()
+
+            reader = sqlite3.connect(path)
+            rollback_seen = False
+
+            def observe(statement: str) -> None:
+                nonlocal rollback_seen
+                if " ".join(statement.strip().split()).upper() == "ROLLBACK":
+                    rollback_seen = True
+
+            reader.set_trace_callback(observe)
+            control = KeyboardInterrupt("post-rollback-boundary")
+            try:
+                caught, injected = self.capture_semantic_boundary_control(
+                    reader,
+                    control,
+                    boundary_ready=lambda: rollback_seen,
+                    transaction_active=False,
+                )
+                self.assertTrue(injected)
+                self.assertIs(caught, control)
+                self.assertFalse(reader.in_transaction)
+                self.assert_control_traceback_is_not_synthetically_reraised(control)
+
+                writer = sqlite3.connect(path)
+                try:
+                    writer.execute(
+                        """
+                        INSERT INTO projection_offsets (
+                            projection_name, last_global_position, owner_id,
+                            owner_epoch, lease_expires_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        ("post-control", 0, "writer", 1, T0, T0),
+                    )
+                    writer.commit()
+                finally:
+                    writer.close()
+                snapshot = derive_backup_manifest_v2_snapshot(reader)
+                counts = {
+                    item.name: item.row_count for item in snapshot.registry_topology.table_counts
+                }
+                self.assertEqual(counts["projection_offsets"], 1)
+                self.assertFalse(reader.in_transaction)
+            finally:
+                reader.set_trace_callback(None)
+                if reader.in_transaction:
+                    reader.rollback()
+                reader.close()
 
     def test_derivation_performs_no_schema_or_row_write(self) -> None:
         write_actions = {
