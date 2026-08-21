@@ -569,6 +569,24 @@ class BackupManifestV2SchemaState:
             "stateSha256": self.state_sha256,
         }
 
+    @classmethod
+    def from_schema_state(
+        cls,
+        state: object,
+        applied_at_by_migration_id: object,
+    ) -> BackupManifestV2SchemaState:
+        """Build exact manifest evidence from one already-validated durable state.
+
+        The timestamp mapping is deliberately separate because ``SchemaState`` excludes
+        timestamps from its stable digest. Callers must obtain both values from the same
+        SQLite read snapshot.
+        """
+
+        return _manifest_schema_state_from_durable_state(
+            state,
+            applied_at_by_migration_id,
+        )
+
 
 @dataclass(frozen=True)
 class BackupManifestV2RegistryTopology:
@@ -675,6 +693,21 @@ class BackupManifestV2RegistryTopology:
         value: Dict[str, Any] = dict(self._digest_dict())
         value["topologySha256"] = self.topology_sha256
         return value
+
+    @classmethod
+    def from_trusted_registry(
+        cls,
+        schema_state: object,
+        present_profile_names: object,
+        table_counts: object,
+    ) -> BackupManifestV2RegistryTopology:
+        """Build exact topology evidence from one classified SQLite catalog snapshot."""
+
+        return _manifest_registry_topology_from_trusted_evidence(
+            schema_state,
+            present_profile_names,
+            table_counts,
+        )
 
 
 @dataclass(frozen=True)
@@ -976,6 +1009,235 @@ def _schema_object_model(item: TrustedBackupSchemaObject) -> BackupManifestV2Sch
         table_name=item.table_name,
         ddl_sha256=item.ddl_sha256,
     )
+
+
+def _snapshot_durable_schema_state(item: object) -> SchemaState:
+    if type(item) is not SchemaState:
+        raise TypeError("manifest schema-state builder requires an exact SchemaState")
+    typed = item
+    migrations = _bounded_tuple(
+        typed.applied_migrations,
+        maximum=MAX_DOMAIN_MIGRATIONS,
+        label="durable schema state applied migrations",
+    )
+    heads = _bounded_tuple(
+        typed.domain_heads,
+        maximum=MAX_MIGRATION_DOMAINS,
+        label="durable schema state domain heads",
+    )
+    edges = _bounded_tuple(
+        typed.dependency_edges,
+        maximum=MAX_DOMAIN_MIGRATIONS,
+        label="durable schema state dependency edges",
+    )
+    digests = _bounded_tuple(
+        typed.owned_schema_digests,
+        maximum=MAX_MIGRATION_DOMAINS,
+        label="durable schema state owned schema digests",
+    )
+    copied_migrations: List[AppliedSchemaMigration] = []
+    for migration in migrations:
+        _require_exact_type(
+            migration,
+            AppliedSchemaMigration,
+            "durable schema state applied migration",
+        )
+        typed_migration = migration
+        copied_migrations.append(
+            AppliedSchemaMigration(
+                migration_id=typed_migration.migration_id,
+                filename=typed_migration.filename,
+                sql_sha256=typed_migration.sql_sha256,
+                domain=typed_migration.domain,
+                domain_version=typed_migration.domain_version,
+                kind=typed_migration.kind,
+                descriptor_sha256=typed_migration.descriptor_sha256,
+                owned_schema_sha256=typed_migration.owned_schema_sha256,
+                metadata_recorded=typed_migration.metadata_recorded,
+            )
+        )
+    copied_heads: List[SchemaDomainHead] = []
+    for head in heads:
+        _require_exact_type(head, SchemaDomainHead, "durable schema state domain head")
+        typed_head = head
+        copied_heads.append(
+            SchemaDomainHead(
+                domain=typed_head.domain,
+                domain_version=typed_head.domain_version,
+                migration_id=typed_head.migration_id,
+                owned_schema_sha256=typed_head.owned_schema_sha256,
+                metadata_recorded=typed_head.metadata_recorded,
+            )
+        )
+    copied_edges: List[DomainMigrationDependencyRow] = []
+    for edge in edges:
+        _require_exact_type(
+            edge,
+            DomainMigrationDependencyRow,
+            "durable schema state dependency edge",
+        )
+        typed_edge = edge
+        copied_edges.append(
+            DomainMigrationDependencyRow(
+                migration_id=typed_edge.migration_id,
+                depends_on_migration_id=typed_edge.depends_on_migration_id,
+            )
+        )
+    copied_digests: List[Tuple[str, str]] = []
+    for digest in digests:
+        if type(digest) is not tuple or len(digest) != 2:
+            raise TypeError("durable schema state owned schema digest must be an exact pair")
+        copied_digests.append((digest[0], digest[1]))
+    return SchemaState(
+        sidecar_format=typed.sidecar_format,
+        shape=typed.shape,
+        legacy_schema_version=typed.legacy_schema_version,
+        applied_migrations=tuple(copied_migrations),
+        domain_heads=tuple(copied_heads),
+        dependency_edges=tuple(copied_edges),
+        owned_schema_digests=tuple(copied_digests),
+        registry_sha256=typed.registry_sha256,
+        state_sha256=typed.state_sha256,
+    )
+
+
+def _manifest_schema_state_from_durable_state(
+    state: object,
+    applied_at_by_migration_id: object,
+) -> BackupManifestV2SchemaState:
+    durable_state = _snapshot_durable_schema_state(state)
+    try:
+        plan_bridge_migrations(durable_state)
+    except DomainMigrationPlanningError as error:
+        raise ValueError("manifest schema-state source is not canonical") from error
+    if type(applied_at_by_migration_id) is not dict:
+        raise TypeError("applied migration timestamps must be a plain dictionary")
+    timestamp_values = cast(Dict[object, object], applied_at_by_migration_id)
+    if len(timestamp_values) > MAX_DOMAIN_MIGRATIONS:
+        raise ValueError("applied migration timestamps exceed the hard limit")
+    timestamps: Dict[int, str] = {}
+    for migration_id, timestamp in timestamp_values.items():
+        if type(migration_id) is not int:
+            raise TypeError("applied migration timestamp keys must be exact integers")
+        if migration_id <= 0 or migration_id > MAX_MIGRATION_ID:
+            raise ValueError("applied migration timestamp key is outside the supported range")
+        timestamps[migration_id] = _canonical_timestamp(
+            timestamp,
+            "migration appliedAt",
+            created_at=False,
+        )
+    expected_ids = tuple(item.migration_id for item in durable_state.applied_migrations)
+    if set(timestamps) != set(expected_ids):
+        raise ValueError("applied migration timestamps differ from schemaState migrations")
+    return BackupManifestV2SchemaState(
+        sidecar_format=durable_state.sidecar_format,
+        shape=durable_state.shape.value,
+        legacy_schema_version=durable_state.legacy_schema_version,
+        applied_migrations=tuple(
+            BackupManifestV2AppliedMigration(
+                migration_id=item.migration_id,
+                filename=item.filename,
+                sql_sha256=item.sql_sha256,
+                domain=item.domain,
+                domain_version=item.domain_version,
+                kind=cast(Literal["legacy_bootstrap"], item.kind),
+                descriptor_sha256=item.descriptor_sha256,
+                owned_schema_sha256=item.owned_schema_sha256,
+                metadata_recorded=item.metadata_recorded,
+                applied_at=timestamps[item.migration_id],
+            )
+            for item in durable_state.applied_migrations
+        ),
+        domain_heads=tuple(
+            BackupManifestV2DomainHead(
+                domain=item.domain,
+                domain_version=item.domain_version,
+                migration_id=item.migration_id,
+                owned_schema_sha256=item.owned_schema_sha256,
+                metadata_recorded=item.metadata_recorded,
+            )
+            for item in durable_state.domain_heads
+        ),
+        dependency_edges=tuple(
+            BackupManifestV2DependencyEdge(
+                migration_id=item.migration_id,
+                depends_on_migration_id=item.depends_on_migration_id,
+            )
+            for item in durable_state.dependency_edges
+        ),
+        owned_schema_digests=tuple(
+            BackupManifestV2OwnedSchemaDigest(
+                domain=domain,
+                owned_schema_sha256=digest,
+            )
+            for domain, digest in durable_state.owned_schema_digests
+        ),
+        registry_sha256=durable_state.registry_sha256,
+        state_sha256=durable_state.state_sha256,
+    )
+
+
+def _manifest_registry_topology_from_trusted_evidence(
+    schema_state: object,
+    present_profile_names: object,
+    table_counts: object,
+) -> BackupManifestV2RegistryTopology:
+    stable_schema_state = _snapshot_schema_state(schema_state)
+    if stable_schema_state != schema_state:
+        raise ValueError("manifest schemaState differs from its canonical snapshot")
+    if type(present_profile_names) is not tuple:
+        raise TypeError("present topology profiles must be an exact tuple")
+    raw_names = present_profile_names
+    if len(raw_names) > _MAX_TOPOLOGY_PROFILES:
+        raise ValueError("present topology profiles exceed the hard limit")
+    names: List[str] = []
+    for name in raw_names:
+        names.append(_plain_string(name, "present topology profile", maximum=128))
+    profile_names = tuple(names)
+    if len(set(profile_names)) != len(profile_names):
+        raise ValueError("present topology profiles must not contain duplicates")
+    if profile_names != tuple(sorted(profile_names, key=lambda item: item.encode("utf-8"))):
+        raise ValueError("present topology profiles must use canonical order")
+    if type(table_counts) is not dict:
+        raise TypeError("topology table counts must be a plain dictionary")
+    raw_counts = cast(Dict[object, object], table_counts)
+    if len(raw_counts) > _MAX_TABLE_COUNTS:
+        raise ValueError("topology table counts exceed the hard limit")
+    count_models: List[BackupManifestV2TableCount] = []
+    for name, count in raw_counts.items():
+        if type(name) is not str:
+            raise TypeError("topology table count keys must be plain strings")
+        if type(count) is not int:
+            raise TypeError("topology table count values must be exact integers")
+        count_models.append(BackupManifestV2TableCount(name=name, row_count=count))
+    ordered_counts = tuple(sorted(count_models, key=lambda item: item.name.encode("utf-8")))
+    profiles = tuple(_topology_profile_model(name) for name in profile_names)
+    schema_objects = tuple(
+        _schema_object_model(item)
+        for item in BACKUP_TOPOLOGY_REGISTRY.objects_for_profiles(profile_names)
+    )
+    evidence = {
+        "format": _REGISTRY_TOPOLOGY_FORMAT,
+        "presentProfiles": [item.to_dict() for item in profiles],
+        "registrySha256": stable_schema_state.registry_sha256,
+        "schemaObjects": [item.to_dict() for item in schema_objects],
+        "stateSha256": stable_schema_state.state_sha256,
+        "tableCounts": [item.to_dict() for item in ordered_counts],
+        "topologyProfile": BACKUP_TOPOLOGY_PROFILE,
+        "topologyRegistrySha256": BACKUP_TOPOLOGY_REGISTRY.registry_sha256,
+    }
+    topology = BackupManifestV2RegistryTopology(
+        topology_profile=BACKUP_TOPOLOGY_PROFILE,
+        topology_registry_sha256=BACKUP_TOPOLOGY_REGISTRY.registry_sha256,
+        registry_sha256=stable_schema_state.registry_sha256,
+        state_sha256=stable_schema_state.state_sha256,
+        present_profiles=profiles,
+        schema_objects=schema_objects,
+        table_counts=ordered_counts,
+        topology_sha256=_canonical_sha256(evidence),
+    )
+    _validate_registry_topology_binding(stable_schema_state, topology)
+    return topology
 
 
 def _validate_registry_topology_binding(
