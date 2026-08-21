@@ -18,10 +18,10 @@
 - fork child 不 inspect/rollback/commit/close/release inherited resources，parent 连续运行；
 - fork-before-init、spawn、forkserver fresh connections 已覆盖四类 contention/CAS。
 
-本结论尚未经过另一名未参与实现者的完整独立复核，也不是 release/promotion 决定。系统 Gate A–E
-保持关闭，整体仍为 **NO-GO**。
+另一名未参与实现者已对代码、测试与生产文档完成只读独立复核，P0/P1/P2/P3 均为 0，结论为
+`ACCEPT candidate`。这不是 release/promotion 决定；系统 Gate A–E 保持关闭，整体仍为 **NO-GO**。
 
-## 1. 线性提交
+## 1. 截至本报告更新前的线性提交
 
 | 顺序 | commit | 独立变化 |
 |---:|---|---|
@@ -35,13 +35,23 @@
 | 8 | `0a68cac` | originating exact control 优先、active-exception clean graph、fork-while-parent-transaction |
 | 9 | `2667eba` | fork-before-init/spawn/forkserver fresh contention/CAS matrix |
 | 10 | `13dd687` | transaction context non-copy/deepcopy/pickle wrapper |
-| 11 | `f7d3e8a` | 首次 mismatch 与普通 GC 均 identity-only 隔离 inherited store 完整依赖图；transaction context 重新检查 enter/exit |
-| 12 | `b0cb6ed` | exact control 的 exit 优先级、可信 nested public mismatch 重清洗、fresh outer store rollback/continuity |
-| 13 | `fb29fc7` | migration/constructor cleanup 保留 originating exact control，并隔离 partial constructor graph |
-| 14 | `a17fc31` | ambiguity contention loser 改用 closed-row CAS，消除 probe 自身的 resolve/read 竞态 |
+| 11 | `a6730bf` | 定义 event-store process-binding 运行与回滚手册 |
+| 12 | `dcc37ce` | 更新系统进程继承威胁与就绪边界 |
+| 13 | `8c53df9` | 记录首轮实现、验证和残余风险 |
+| 14 | `f7d3e8a` | 首次 mismatch 与普通 GC 均 identity-only 隔离 inherited store 完整依赖图；transaction context 重新检查 enter/exit |
+| 15 | `b0cb6ed` | exact control 的 exit 优先级、可信 nested public mismatch 重清洗、fresh outer store rollback/continuity |
+| 16 | `fb29fc7` | migration/constructor cleanup 保留 originating exact control，并隔离 partial constructor graph |
+| 17 | `a17fc31` | ambiguity contention loser 改用 closed-row CAS，消除 probe 自身的 resolve/read 竞态 |
+| 18 | `bb0acf1` | 补强完整 graph quarantine、finalizer 与 `os._exit`/exec 运行合同 |
+| 19 | `f3b497e` | 把 native finalizer 与 nested mismatch 约束提升到通用进程继承合同 |
+| 20 | `7facfdd` | 记录 finalizer SIGSEGV 探针、修复与 928-test checkpoint |
+| 21 | `095d39b` | 更新当前生产就绪审计的单组件能力与系统残余 P0 |
+| 22 | `52a8483` | 更新 Changelog 的完整 inherited graph quarantine 合同 |
+| 23 | `87ef936` | 更新调研索引中的 finalizer 与三版本验证摘要 |
 
-每笔提交前均保持默认树可运行，并执行三版本全仓 unittest、locked Ruff lint/format、strict mypy 和
-dependency-lock verifier。未 reset、rebase、force-push、push 或操作 canonical/auth/backup worktree。
+行为/测试提交按阶段保持默认树可运行，并反复执行三版本全仓 unittest、locked Ruff lint/format、
+strict mypy 和 dependency-lock verifier；配套文档变化各自独立提交。未 reset、rebase、force-push、
+push 或操作 canonical/auth/backup worktree。
 
 ## 2. 实现边界
 
@@ -175,12 +185,12 @@ supervisor 启动，supervisor 在自身或 child 任一方 connect 前真实 fo
 
 ## 5. 当前可复现门禁
 
-最近组合 checkpoint 的观测值：
+本报告更新前 clean checkpoint `87ef936` 的观测值：
 
-| Gate | Python 3.9 | Python 3.12.12 | Python 3.13 |
+| Gate | Python 3.9.6 | Python 3.12.12 | Python 3.13.9 |
 |---|---:|---:|---:|
 | full unittest `-W error` | 928，skip 1 | 928 | 928 |
-| focused process-binding suite | pass | pass | pass |
+| focused process-binding suite | 37 | 37 | 37 |
 
 共同静态门禁：
 
@@ -191,10 +201,38 @@ PYTHONPATH=src mypy --strict --python-version 3.9 src/quantum_entanglement
 python3 scripts/verify_dependency_locks.py --repository-root .
 ```
 
-观测结果：Ruff pass、94 files already formatted、strict mypy 35 source files pass、dependency locks
-4 targets / 74 records。ambiguity contention 稳定性复跑为 Python 3.9 八轮全过，Python 3.12.12 与
-3.13 各四轮全过。完整 compileall、demo、secret count、external release evidence 和 clean final HEAD
-仍应在文档提交完成后重新运行并记录，不能用本节的中间 checkpoint 代替最终 evidence。
+观测结果：locked Ruff 0.16.3 pass、94 files already formatted、locked mypy 1.19.1 strict 35 source
+files pass、dependency locks 4 targets / 74 records。三版本 compileall 全部 exit 0；三版本 compact demo
+全部完成 3 artifacts、25 events、0 needs-you、0 errors，去除随机 ID 后的稳定业务字段完全一致。
+ambiguity contention 稳定性复跑为 Python 3.9 八轮全过，Python 3.12.12 与 3.13 各四轮全过。
+
+Git base ancestry 与 `diff --check` 通过；`git fsck --no-reflogs --strict` exit 0，只报告 dangling
+objects，无 missing/corrupt/fatal marker。当前树的常见 credential shape 只命中一个位于 redaction
+test 的 synthetic canary；源码、脚本、文档及其他常见 token/private-key shape 均为 0，检查过程不
+输出匹配值。
+
+外置 release evidence 在 `/tmp/qe-event-store-evidence.0cfEWP/release-evidence.json` 生成并由 strict
+verifier 回读，绑定 commit `87ef936407381ba69b86a4843c470e1ca4ea3adb`、tree
+`a330fb995e54e68a2e3c5aa704ac3341052c0fce`，5/5 gates passed、source clean、identity stable、reason
+codes 0；evidence SHA-256 为
+`77cb6678c9511e8cf20a978447f29bf949e0818da9a25758a73e901fda746ddf`。本报告自身的更新会形成新的
+docs-only HEAD，因此最终交付仍必须在该 HEAD 上重新跑门禁并生成新的外置 evidence；本记录不能
+替代最终 verifier 输出，也不是 promotion。
+
+### 5.1 独立只读复核
+
+另一名未参与实现者检查了 base-to-candidate diff、SQLite/Python object lifetime、lock/transaction
+cleanup、context enter/exit、exception propagation、constructor/migration cleanup、测试与生产文档，
+并复跑 focused 37-test 三轮、full 928-test suite 和 Ruff。结果：
+
+| 等级 | findings |
+|---|---:|
+| P0 | 0 |
+| P1 | 0 |
+| P2 | 0 |
+| P3 | 0 |
+
+独立结论为 `ACCEPT candidate`，仅适用于本单组件候选。
 
 ## 6. 迁移、回滚与兼容
 
@@ -215,8 +253,8 @@ binary 可回滚，但 worker topology 不回滚。禁止删除 guard、复用 i
   全部 process-bound；
 - guard 不能清除 fork 前复制的 secret/provider bytes；
 - process-global SQLite adapter registry 属于 trusted-host mutable state，未由本 helper 验证；
-- 尚无独立 reviewer、Linux production runner、chaos/soak/capacity/SLO/RPO/RTO evidence；
+- 尚无 Linux production runner、chaos/soak/capacity/SLO/RPO/RTO evidence；
 - service auth、tenant scope、attempt/result/action receipt 和 connector effect reconciliation P0 仍在。
 
-所以本实现只把 `SQLiteEventStore` 从“明确未接入”推进到“待独立复核的 process-bound 候选”。
-Gate A–E 不变，禁止真实飞书/企微发送、真实客户数据、公网监听和不可逆 connector。
+所以本实现只把 `SQLiteEventStore` 从“明确未接入”推进到“独立复核通过的 process-bound 单组件
+候选”。Gate A–E 不变，禁止真实飞书/企微发送、真实客户数据、公网监听和不可逆 connector。
