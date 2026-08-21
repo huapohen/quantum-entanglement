@@ -1079,6 +1079,12 @@ def restore_sqlite_backup(
         )
         os.fchmod(destination_fd, 0o600)
         copied_size, copied_digest = _copy_fd(backup_fd, destination_fd)
+        _require_entry_identity(
+            destination_directory_fd,
+            destination_temp_name,
+            destination_identity,
+            "restore temporary file",
+        )
         if copied_size != stable_manifest.byte_size:
             raise BackupIntegrityError("restored byte size differs from manifest")
         if copied_digest != stable_manifest.database_sha256:
