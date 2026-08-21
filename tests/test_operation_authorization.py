@@ -2975,6 +2975,229 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                     )
                     self.assert_original_control_traceback_is_scrubbed(original, canary)
 
+    def test_context_manager_preserves_originating_exact_control_over_cleanup(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+        cleanup_types = (None, RuntimeError, *signal_types)
+
+        for body_type in signal_types:
+            for cleanup_type in cleanup_types:
+                cleanup_name = "success" if cleanup_type is None else cleanup_type.__name__
+                with self.subTest(body=body_type.__name__, cleanup=cleanup_name):
+                    composer = self.make_composer()
+                    body_canary = f"{body_type.__name__}-origin-body-secret-canary"
+                    body = SystemExit(23) if body_type is SystemExit else body_type(body_canary)
+                    cleanup = None
+                    if cleanup_type is not None:
+                        cleanup_canary = f"{cleanup_name}-cleanup-secret-canary"
+                        cleanup = (
+                            SystemExit(17)
+                            if cleanup_type is SystemExit
+                            else cleanup_type(cleanup_canary)
+                        )
+
+                        def fail_close(_registry, *, selected=cleanup):
+                            raise selected
+
+                    def run_body(selected_composer=composer, selected_body=body):
+                        with selected_composer:
+                            raise selected_body
+
+                    captured = None
+                    if cleanup is None:
+                        try:
+                            run_body()
+                        except BaseException as error:
+                            captured = error
+                    else:
+                        with patch.object(
+                            _AuthorizedOperationRegistry,
+                            "_close",
+                            fail_close,
+                        ):
+                            try:
+                                run_body()
+                            except BaseException as error:
+                                captured = error
+
+                    self.assertIs(captured, body)
+                    self.assertIsNone(body.__cause__)
+                    self.assertIsNone(body.__context__)
+                    if body_type is SystemExit:
+                        self.assertEqual(body.code, 23)
+                    library_frames = []
+                    body_trace = body.__traceback__
+                    while body_trace is not None:
+                        if body_trace.tb_frame.f_code.co_filename.endswith(
+                            "/operation_authorization.py"
+                        ):
+                            library_frames.append(body_trace.tb_frame.f_code.co_name)
+                        body_trace = body_trace.tb_next
+                    self.assertEqual(library_frames, [])
+
+                    if cleanup is not None:
+                        self.assert_original_control_traceback_is_scrubbed(
+                            cleanup,
+                            "cleanup-secret-canary",
+                            forbidden=(
+                                composer,
+                                body,
+                                self.issuer,
+                                self.provider,
+                                self.authorizer,
+                                self.verifier,
+                                self.key_ring,
+                                self.clock,
+                                self.context,
+                                self.request,
+                            ),
+                        )
+
+    def test_context_manager_ordinary_cleanup_failure_replaces_ordinary_body(self):
+        composer = self.make_composer()
+        body = RuntimeError("ordinary-body-secret-canary")
+        cleanup = RuntimeError("ordinary-cleanup-secret-canary")
+
+        def fail_close(_registry):
+            raise cleanup
+
+        def run_body():
+            with composer:
+                raise body
+
+        with patch.object(_AuthorizedOperationRegistry, "_close", fail_close):
+            error = self.capture_error("protected_operation_internal_failure", run_body)
+
+        self.assert_detached_traceback(
+            error,
+            "ordinary-body-secret-canary",
+            "ordinary-cleanup-secret-canary",
+            expected_method="__exit__",
+            forbidden=(
+                composer,
+                body,
+                cleanup,
+                self.issuer,
+                self.provider,
+                self.authorizer,
+                self.verifier,
+                self.key_ring,
+                self.clock,
+                self.context,
+                self.request,
+            ),
+        )
+        self.assert_original_control_traceback_is_scrubbed(
+            cleanup,
+            "ordinary-body-secret-canary",
+            "ordinary-cleanup-secret-canary",
+            forbidden=(composer, body),
+        )
+
+    def test_direct_exit_arguments_cannot_spoof_originating_control(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+
+        for body_type in signal_types:
+            for cleanup_type in (RuntimeError, *signal_types):
+                with self.subTest(body=body_type.__name__, cleanup=cleanup_type.__name__):
+                    composer = self.make_composer()
+                    body = SystemExit(23) if body_type is SystemExit else body_type("body")
+                    cleanup = (
+                        SystemExit(17)
+                        if cleanup_type is SystemExit
+                        else cleanup_type("cleanup-secret-canary")
+                    )
+
+                    def fail_close(_registry, *, selected=cleanup):
+                        raise selected
+
+                    def invoke_exit(
+                        selected_composer=composer,
+                        selected_body_type=body_type,
+                        selected_body=body,
+                    ):
+                        return selected_composer.__exit__(
+                            selected_body_type,
+                            selected_body,
+                            None,
+                        )
+
+                    with patch.object(_AuthorizedOperationRegistry, "_close", fail_close):
+                        if cleanup_type is RuntimeError:
+                            error = self.capture_error(
+                                "protected_operation_internal_failure",
+                                invoke_exit,
+                            )
+                            self.assert_detached_traceback(
+                                error,
+                                "cleanup-secret-canary",
+                                expected_method="__exit__",
+                                forbidden=(composer, body, cleanup),
+                            )
+                        else:
+                            signal = self.capture_control_signal(
+                                cleanup_type,
+                                invoke_exit,
+                            )
+                            self.assertIsNot(signal, cleanup)
+                            self.assertEqual(
+                                signal.args,
+                                (17,) if cleanup_type is SystemExit else (),
+                            )
+                            self.assert_detached_control_traceback(
+                                signal,
+                                "__exit__",
+                                "cleanup-secret-canary",
+                                forbidden=(composer, body, cleanup),
+                            )
+                    self.assert_original_control_traceback_is_scrubbed(
+                        cleanup,
+                        "cleanup-secret-canary",
+                        forbidden=(composer, body),
+                    )
+
+    def test_context_manager_control_subclass_does_not_gain_origin_precedence(self):
+        class KeyboardInterruptSubclass(KeyboardInterrupt):
+            pass
+
+        composer = self.make_composer()
+        body = KeyboardInterruptSubclass("body-secret-canary")
+        cleanup = RuntimeError("cleanup-secret-canary")
+
+        def fail_close(_registry):
+            raise cleanup
+
+        def run_body():
+            with composer:
+                raise body
+
+        with patch.object(_AuthorizedOperationRegistry, "_close", fail_close):
+            error = self.capture_error("protected_operation_internal_failure", run_body)
+
+        self.assert_detached_traceback(
+            error,
+            "body-secret-canary",
+            "cleanup-secret-canary",
+            expected_method="__exit__",
+            forbidden=(composer, body, cleanup),
+        )
+
+    def test_context_manager_cleanup_return_value_never_suppresses_body(self):
+        composer = self.make_composer()
+        body = RuntimeError("body-secret-canary")
+
+        def return_true(_composer):
+            return True
+
+        captured = None
+        with patch.object(ProtectedOperationComposer, "_close", return_true):
+            try:
+                with composer:
+                    raise body
+            except RuntimeError as error:
+                captured = error
+
+        self.assertIs(captured, body)
+
     def test_exact_control_signals_survive_consume_and_retire_boundaries(self):
         signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
         for method_name in ("consume", "retire"):

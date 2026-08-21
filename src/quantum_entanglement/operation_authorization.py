@@ -1721,9 +1721,25 @@ class ProtectedOperationComposer:
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, trace: object) -> None:
+        active_exc_type, active_exc_value, active_trace = sys.exc_info()
+        originating_control_signal = (
+            active_exc_type is exc_type
+            and active_exc_value is exc_value
+            and active_trace is trace
+            and (
+                type(exc_value) is KeyboardInterrupt
+                or type(exc_value) is SystemExit
+                or type(exc_value) is GeneratorExit
+                or type(exc_value) is asyncio.CancelledError
+            )
+        )
+        del active_exc_type, active_exc_value, active_trace
         result, failure = _invoke_boundary(partial(ProtectedOperationComposer._close, self))
         if failure is None:
-            return result
+            return None
+        if originating_control_signal:
+            del self, exc_type, exc_value, trace, result, failure
+            return None
         failure_code, control_signal, system_exit_status = _operation_failure_details(
             failure,
             "protected_operation_internal_failure",
