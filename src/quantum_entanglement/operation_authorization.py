@@ -373,6 +373,22 @@ def _raise_dependency_failure(failure: _BoundaryFailure, code: str) -> NoReturn:
     raise OperationAuthorizationError(code) from None
 
 
+def _require_callable_dependency(
+    dependency: object,
+    method_name: str,
+    failure_code: str,
+) -> None:
+    """Probe one configured method without exposing descriptor failure state."""
+
+    if dependency is None:
+        raise OperationAuthorizationError(failure_code)
+    candidate, failure = _invoke_boundary(lambda: getattr(dependency, method_name, None))
+    if failure is not None:
+        _raise_dependency_failure(failure, failure_code)
+    if not callable(candidate):
+        raise OperationAuthorizationError(failure_code)
+
+
 def _operation_failure_details(
     failure: Optional[_BoundaryFailure],
     default_code: str,
@@ -586,9 +602,54 @@ class _AuthorizedOperationRegistry:
         max_clock_skew: timedelta = timedelta(seconds=30),
         max_active_operations: int = 10_000,
     ) -> None:
+        initialized, failure = _invoke_boundary(
+            partial(
+                self._initialize,
+                clock=clock,
+                max_operation_ttl=max_operation_ttl,
+                max_clock_skew=max_clock_skew,
+                max_active_operations=max_active_operations,
+            )
+        )
+        if failure is None and initialized is True:
+            return
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del (
+            self,
+            clock,
+            max_operation_ttl,
+            max_clock_skew,
+            max_active_operations,
+            initialized,
+            failure,
+        )
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _initialize(
+        self,
+        *,
+        clock: ServerClock,
+        max_operation_ttl: timedelta,
+        max_clock_skew: timedelta,
+        max_active_operations: int,
+    ) -> bool:
+        """Configure the registry inside one exception-containment boundary."""
+
         owner_pid, owner_epoch = _current_process_identity()
-        if clock is None or not callable(getattr(clock, "now", None)):
-            raise TypeError("clock must implement now()")
+        _require_callable_dependency(
+            clock,
+            "now",
+            "protected_operation_clock_unavailable",
+        )
         self.__max_operation_ttl = _require_duration(
             max_operation_ttl,
             "max_operation_ttl",
@@ -615,6 +676,7 @@ class _AuthorizedOperationRegistry:
         self.__last_observed_at: Optional[datetime] = None
         self.__owner_pid = owner_pid
         self.__owner_epoch = owner_epoch
+        return True
 
     def issue(
         self,
@@ -1141,41 +1203,69 @@ class ProtectedOperationComposer:
         max_clock_skew: timedelta = timedelta(seconds=30),
         max_active_operations: int = 10_000,
     ) -> None:
+        initialized, failure = _invoke_boundary(
+            partial(
+                self._initialize,
+                issuer=issuer,
+                state_provider=state_provider,
+                authorizer=authorizer,
+                clock=clock,
+                operation_ttl=operation_ttl,
+                max_state_age=max_state_age,
+                max_clock_skew=max_clock_skew,
+                max_active_operations=max_active_operations,
+            )
+        )
+        if failure is None and initialized is True:
+            return
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del (
+            self,
+            issuer,
+            state_provider,
+            authorizer,
+            clock,
+            operation_ttl,
+            max_state_age,
+            max_clock_skew,
+            max_active_operations,
+            initialized,
+            failure,
+        )
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+    def _initialize(
+        self,
+        *,
+        issuer: RequestContextIssuer,
+        state_provider: CurrentAuthorizationStateProvider,
+        authorizer: TenantAuthorizer,
+        clock: Optional[ServerClock],
+        operation_ttl: timedelta,
+        max_state_age: timedelta,
+        max_clock_skew: timedelta,
+        max_active_operations: int,
+    ) -> bool:
+        """Configure the composer inside one exception-containment boundary."""
+
         owner_pid, owner_epoch = _current_process_identity()
         if type(issuer) is not RequestContextIssuer:
             raise TypeError("issuer must be an exact RequestContextIssuer")
-        issuer_is_current, issuer_failure = _invoke_boundary(issuer._is_current_process_owner)
-        if issuer_failure is not None or issuer_is_current is not True:
-            _, control_signal, system_exit_status = _operation_failure_details(
-                issuer_failure,
-                "protected_operation_process_mismatch",
-            )
-            del (
-                self,
-                issuer,
-                state_provider,
-                authorizer,
-                clock,
-                operation_ttl,
-                max_state_age,
-                max_clock_skew,
-                max_active_operations,
-                owner_pid,
-                owner_epoch,
-                issuer_is_current,
-                issuer_failure,
-            )
-            if control_signal is not None:
-                _raise_control_signal(control_signal, system_exit_status)
-            try:
-                raise OperationAuthorizationError("protected_operation_process_mismatch") from None
-            except OperationAuthorizationError as public_error:
-                public_error.__context__ = None
-                raise
-        if state_provider is None or not callable(
-            getattr(state_provider, "load_current_state", None)
-        ):
-            raise TypeError("state_provider must implement load_current_state")
+        _require_current_process_issuer(issuer)
+        _require_callable_dependency(
+            state_provider,
+            "load_current_state",
+            "protected_operation_state_unavailable",
+        )
         if type(authorizer) is not TenantAuthorizer:
             raise TypeError("authorizer must be an exact TenantAuthorizer")
         self.__operation_ttl = _require_duration(
@@ -1210,6 +1300,7 @@ class ProtectedOperationComposer:
         self.__closed = False
         self.__owner_pid = owner_pid
         self.__owner_epoch = owner_epoch
+        return True
 
     def authorize(
         self,

@@ -207,6 +207,19 @@ class HostileBoundaryFailure(BaseException):
         BaseException.__setattr__(self, name, value)
 
 
+class FaultingDependencyDescriptor:
+    """Dependency whose structural method lookup raises one selected fault."""
+
+    def __init__(self, method_name, failure):
+        self.method_name = method_name
+        self.failure = failure
+
+    def __getattribute__(self, name):
+        if name == object.__getattribute__(self, "method_name"):
+            raise object.__getattribute__(self, "failure")
+        return object.__getattribute__(self, name)
+
+
 class FakeCurrentStateProvider:
     def __init__(self, state, *, failure=None):
         self.state = state
@@ -808,7 +821,13 @@ class ProtectedOperationComposerTests(unittest.TestCase):
         self.assertIsNone(captured.__context__)
         return captured
 
-    def assert_detached_traceback(self, error, *canaries, expected_method="authorize"):
+    def assert_detached_traceback(
+        self,
+        error,
+        *canaries,
+        expected_method="authorize",
+        forbidden=(),
+    ):
         trace = error.__traceback__
         library_frames = []
         while trace is not None:
@@ -821,6 +840,8 @@ class ProtectedOperationComposerTests(unittest.TestCase):
         )
         for frame in library_frames:
             for value in list(frame.f_locals.values()):
+                for selected in forbidden:
+                    self.assertIsNot(value, selected)
                 if isinstance(value, str):
                     for canary in canaries:
                         self.assertNotIn(canary, value)
@@ -917,11 +938,18 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                 if isinstance(value, str):
                     self.assertNotIn("secret-canary", value)
 
-    def assert_original_control_traceback_is_scrubbed(self, original, *canaries):
+    def assert_original_control_traceback_is_scrubbed(
+        self,
+        original,
+        *canaries,
+        forbidden=(),
+    ):
         trace = original.__traceback__
         self.assertIsNotNone(trace)
         while trace is not None:
             for value in list(trace.tb_frame.f_locals.values()):
+                for selected in forbidden:
+                    self.assertIsNot(value, selected)
                 self.assertIsNot(value, original)
                 self.assertNotIsInstance(
                     value,
@@ -946,7 +974,7 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                         self.assertNotIn(canary, value)
             trace = trace.tb_next
 
-    def assert_hostile_original_is_contained(self, original, canary):
+    def assert_hostile_original_is_contained(self, original, canary, *, forbidden=()):
         state = BaseException.__getattribute__(original, "__dict__")
         self.assertEqual(state["mutation_attempts"], [])
         for field in HostileBoundaryFailure._blocked_reads:
@@ -967,6 +995,8 @@ class ProtectedOperationComposerTests(unittest.TestCase):
         while trace is not None:
             frame = trace.tb_frame
             for value in list(frame.f_locals.values()):
+                for selected in forbidden:
+                    self.assertIsNot(value, selected)
                 self.assertIsNot(value, original)
                 self.assertNotIsInstance(
                     value,
@@ -982,7 +1012,15 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                     self.assertNotIn(canary, value)
             trace = trace.tb_next
 
-    def assert_clean_public_failure(self, error, original, canary, *, method):
+    def assert_clean_public_failure(
+        self,
+        error,
+        original,
+        canary,
+        *,
+        method,
+        forbidden=(),
+    ):
         self.assertIs(type(error), OperationAuthorizationError)
         self.assertIsNot(error, original)
         rendered = repr(
@@ -997,8 +1035,190 @@ class ProtectedOperationComposerTests(unittest.TestCase):
             )
         )
         self.assertNotIn(canary, rendered)
-        self.assert_detached_traceback(error, canary, expected_method=method)
-        self.assert_hostile_original_is_contained(original, canary)
+        self.assert_detached_traceback(
+            error,
+            canary,
+            expected_method=method,
+            forbidden=forbidden,
+        )
+        self.assert_hostile_original_is_contained(original, canary, forbidden=forbidden)
+
+    def test_constructor_descriptor_base_exceptions_are_contained(self):
+        cases = (
+            (
+                "provider",
+                "load_current_state",
+                "protected_operation_state_unavailable",
+            ),
+            (
+                "clock",
+                "now",
+                "protected_operation_clock_unavailable",
+            ),
+        )
+        for label, method_name, expected_code in cases:
+            with self.subTest(dependency=label):
+                canary = f"constructor-{label}-descriptor-hostile-secret-canary"
+                original = HostileBoundaryFailure(canary)
+                dependency = FaultingDependencyDescriptor(method_name, original)
+                uninitialized = object.__new__(ProtectedOperationComposer)
+                active_error = RuntimeError(f"{canary}-active-caller")
+                active_error.issuer = self.issuer
+                active_error.provider = dependency
+                active_error.authorizer = self.authorizer
+                active_error.clock = self.clock
+                values = {
+                    "issuer": self.issuer,
+                    "state_provider": (dependency if label == "provider" else self.provider),
+                    "authorizer": self.authorizer,
+                    "clock": dependency if label == "clock" else self.clock,
+                }
+
+                try:
+                    raise active_error
+                except RuntimeError:
+                    error = self.capture_error(
+                        expected_code,
+                        lambda selected=uninitialized, selected_values=values: (
+                            ProtectedOperationComposer.__init__(
+                                selected,
+                                **selected_values,
+                            )
+                        ),
+                    )
+
+                forbidden = (
+                    uninitialized,
+                    dependency,
+                    self.issuer,
+                    self.provider,
+                    self.authorizer,
+                    self.verifier,
+                    self.key_ring,
+                    self.clock,
+                    self.context,
+                    self.request,
+                    original,
+                    active_error,
+                    values,
+                    b"signing-secret-canary-1234567890",
+                )
+                self.assert_clean_public_failure(
+                    error,
+                    original,
+                    canary,
+                    method="__init__",
+                    forbidden=forbidden,
+                )
+
+    def test_constructor_descriptor_control_signals_are_reissued_cleanly(self):
+        cases = (
+            (KeyboardInterrupt, "keyboard"),
+            (SystemExit, "system"),
+            (GeneratorExit, "generator"),
+            (asyncio.CancelledError, "cancelled"),
+        )
+        dependencies = (
+            ("provider", "load_current_state"),
+            ("clock", "now"),
+        )
+        for label, method_name in dependencies:
+            for signal_type, signal_label in cases:
+                with self.subTest(dependency=label, signal=signal_type.__name__):
+                    canary = f"constructor-{label}-{signal_label}-descriptor-control-secret-canary"
+                    original = signal_type(canary)
+                    dependency = FaultingDependencyDescriptor(method_name, original)
+                    uninitialized = object.__new__(ProtectedOperationComposer)
+                    active_error = RuntimeError(f"{canary}-active-caller")
+                    active_error.issuer = self.issuer
+                    active_error.provider = dependency
+                    active_error.authorizer = self.authorizer
+                    active_error.clock = self.clock
+                    values = {
+                        "issuer": self.issuer,
+                        "state_provider": (dependency if label == "provider" else self.provider),
+                        "authorizer": self.authorizer,
+                        "clock": dependency if label == "clock" else self.clock,
+                    }
+
+                    try:
+                        raise active_error
+                    except RuntimeError:
+                        signal = self.capture_control_signal(
+                            signal_type,
+                            lambda selected=uninitialized, selected_values=values: (
+                                ProtectedOperationComposer.__init__(
+                                    selected,
+                                    **selected_values,
+                                )
+                            ),
+                        )
+
+                    self.assertIsNot(signal, original)
+                    self.assertEqual(signal.args, (1,) if signal_type is SystemExit else ())
+                    self.assertNotIn(canary, " ".join((str(signal), repr(signal))))
+                    forbidden = (
+                        uninitialized,
+                        dependency,
+                        self.issuer,
+                        self.provider,
+                        self.authorizer,
+                        self.verifier,
+                        self.key_ring,
+                        self.clock,
+                        self.context,
+                        self.request,
+                        original,
+                        active_error,
+                        values,
+                        b"signing-secret-canary-1234567890",
+                    )
+                    self.assert_detached_control_traceback(
+                        signal,
+                        "__init__",
+                        canary,
+                        forbidden=forbidden,
+                    )
+                    self.assert_original_control_traceback_is_scrubbed(
+                        original,
+                        canary,
+                        forbidden=forbidden,
+                    )
+
+    def test_constructor_preserves_normal_dependency_identity_and_default_deny(self):
+        provider = FakeCurrentStateProvider(
+            lambda basis, request: self.current_state(
+                basis,
+                request,
+                member=None,
+            )
+        )
+        composer = self.make_composer(provider=provider)
+        registry = object.__getattribute__(
+            composer,
+            "_ProtectedOperationComposer__registry",
+        )
+
+        self.assertIs(
+            object.__getattribute__(composer, "_ProtectedOperationComposer__issuer"),
+            self.issuer,
+        )
+        self.assertIs(
+            object.__getattribute__(composer, "_ProtectedOperationComposer__provider"),
+            provider,
+        )
+        self.assertIs(
+            object.__getattribute__(composer, "_ProtectedOperationComposer__authorizer"),
+            self.authorizer,
+        )
+        self.assertIs(
+            object.__getattribute__(registry, "_AuthorizedOperationRegistry__clock"),
+            self.clock,
+        )
+        self.assert_code(
+            "protected_operation_denied",
+            lambda: composer.authorize(self.context, self.request),
+        )
 
     def test_explicit_allow_issues_one_time_non_replayable_opaque_operation(self):
         operation = self.composer.authorize(self.context, self.request)
