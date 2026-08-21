@@ -119,7 +119,9 @@ def _fresh_event_store_worker(path: str, mode: str, connection: object) -> None:
             claimed = store.claim_outbox("worker:child", limit=1)
             result = ("claimed", len(claimed))
         elif mode == "ambiguity":
-            ambiguity = store.read_outbox_ambiguities()[0]
+            # The peer may win before this worker reaches its SELECT. Retain the
+            # resolved row so the losing CAS is observed as False, not IndexError.
+            ambiguity = store.read_outbox_ambiguities(open_only=False)[0]
             resolved = store.resolve_outbox_ambiguity(
                 ambiguity.message_id,
                 ambiguity.lease_token_digest,
