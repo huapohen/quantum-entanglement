@@ -359,24 +359,33 @@ control-signal priority, including when made from inside a real composer context
 The supported CPython context-manager path therefore authenticates one structural exit
 lease before it examines `sys.exc_info()`:
 
-1. special lookup of the enter descriptor prepares one opaque token bound to the exact
-   composer, current process, and exact `threading.current_thread()` object identity, while
-   retaining only a weak reference to the returned enter callback;
+1. special lookup of the enter descriptor prepares one opaque lease token bound to the
+   exact composer, current process, and a library-owned thread-local opaque token for the
+   current actual Python thread state, while retaining only a weak reference to the
+   returned enter callback;
 2. the immediately following special lookup of the exit descriptor binds that exact pending
    token and returns its exit callback;
 3. invocation of the returned enter callback activates the bound token; and
-4. invocation of the returned exit callback performs process and thread preflight, then
-   atomically commits the active token to a consumed-but-not-yet-finalized phase before
-   classifying the body exception.
+4. invocation of the returned exit callback performs process and thread-state-token
+   preflight, then atomically commits the active lease token to a
+   consumed-but-not-yet-finalized phase before classifying the body exception.
 
-The lease strongly retains that exact `Thread` object and every pending, binding,
-activation, consumption, reconciliation, finalization, stale-candidate cleanup, and
-discard path compares it with the current `Thread` object by `is`. A numeric
-`threading.get_ident()` value is never an ownership credential: CPython and the operating
-system may recycle it immediately after an owner terminates. A successor can therefore
-have the same integer identifier while still being a different, unauthorized thread
-object. Thread names, native identifiers, equality, and liveness are likewise not used to
-grant or transfer ownership.
+The module lazily creates one opaque owner token inside a library-owned `threading.local`
+dictionary for each actual Python thread state. The lease strongly retains that token, and
+every pending, binding, activation, consumption, reconciliation, finalization,
+stale-candidate cleanup, and discard path compares the current token with it by `is`. The
+retained old token cannot be deallocated and later regain the same object identity. The
+`threading.local` subclass must not define `__slots__`, because such slots are shared across
+threads instead of belonging to the per-thread dictionary.
+
+Numeric `threading.get_ident()` and native identifiers are never ownership credentials:
+CPython and the operating system may recycle them immediately after an owner terminates.
+`threading.Thread` identity is not a credential either. In particular, a thread created by
+`_thread.start_new_thread` can be represented by a cached `_DummyThread`, and supported
+CPython versions can reuse that same wrapper object for a later alien thread with the same
+identifier. The later actual thread state still receives a new library token. Thread and
+dummy-thread objects, names, equality, liveness, and identifiers therefore cannot grant or
+transfer lease ownership.
 
 On the successful authenticated path, the lease state is therefore
 `prepared -> bound -> active -> consumed -> finalized(None)`; cuts can discard an earlier
@@ -388,7 +397,7 @@ acknowledgement cut as an unconsumed lease would lose the genuine body-control i
 skip cleanup, and leave issued operations live.
 
 When the consume acknowledgement is unavailable, `__exit__` reads the exact retained
-token, owner `Thread` object identity, process, bound/active flags, and consumed flag
+lease token, owner thread-state token, process, bound/active flags, and consumed flag
 through a separate reconciliation boundary. Reconciliation permits at most two attempts
 and stops on the first definitive `True` or `False`, so one interrupted state read is
 tolerated without creating an unbounded cancellation loop. A definitive non-match is not
@@ -402,10 +411,10 @@ exhaustion case does not claim that an originating body control was authenticate
 Cleanup and lease finalization run in a structured `finally` after confirmed consumption
 or indeterminate reconciliation. One exit-callback path invokes the close helper at most
 once; it is never retried merely because an interruption arrived after close committed but
-before its return was acknowledged. Finalization retires only the exact consumed token on
-the owning thread and occurs only after that cleanup attempt. Thus a reconciled authentic
-exit closes the composer exactly once, retires every issued operation, and leaves no
-reusable lease even when consume, reconciliation, close, or finalization return windows
+before its return was acknowledged. Finalization retires only the exact consumed lease for
+the actual owner thread state and occurs only after that cleanup attempt. Thus a reconciled
+authentic exit closes the composer exactly once, retires every issued operation, and leaves
+no reusable lease even when consume, reconciliation, close, or finalization return windows
 are interrupted.
 
 Normal class-level and instance-level calls to `__enter__` or `__exit__` do not receive a
@@ -415,19 +424,22 @@ or while its consumed commit is awaiting acknowledgement. A composer admits at m
 prepared, bound, active, or consumed context lease: nested and concurrent context entry
 fail closed, only the exact owner may discard a failed enter or exit-binding candidate,
 and a closed composer rejects entry. A foreign thread cannot bind, activate, consume,
-reconcile, finalize, discard, or replay the owner's lease even if its integer thread
-identifier equals the terminated owner's identifier. A forked child fails the creator
-PID/process-epoch preflight before it can touch an inherited prepared, bound, active, or
-consumed lease, or invoke an inherited saved callback after finalization. The child cannot
-clean up the parent's copied state, while the parent can reconcile its exact lease and
-complete cleanup. In particular, a real active exception triple in the child cannot hide
-`protected_operation_process_mismatch`.
+reconcile, finalize, discard, or replay the owner's lease even if its integer identifier
+or cached `Thread`/`_DummyThread` wrapper is identical to the terminated owner's. A forked
+child fails the creator PID/process-epoch preflight before it can touch an inherited
+prepared, bound, active, or consumed lease, or invoke an inherited saved callback after
+finalization. The child cannot clean up the parent's copied state, while the parent can
+reconcile its exact lease and complete cleanup. In particular, a real active exception
+triple in the child cannot hide `protected_operation_process_mismatch`.
 
 If an owner thread terminates without invoking its exit callback, the lease is quarantined;
 there is no owner-death adoption or automatic successor cleanup. A saved enter or exit
 callback invoked by any successor returns a code-only
 `protected_operation_internal_failure` without changing the composer closed flag, registry
-closed flag, lease phase, or issued handles. Subsequent context entry remains fail closed.
+closed flag, lease phase, or issued handles. If the weakly retained enter callback has
+already disappeared, neither a direct raw enter nor lookup of a new enter descriptor may
+classify the successor as the stale candidate's owner, clear the lease, or replace it.
+Subsequent context entry remains fail closed.
 The composition root must invoke the explicit thread-agnostic `composer.close()` lifecycle
 path to close the registry and retire every handle, then discard the old composer. Explicit
 close does not authenticate the successor callback or finalize the orphaned lease, which
@@ -465,9 +477,10 @@ module state in the same prepare/bind/activate/consume order. That sequence is
 observationally indistinguishable from interpreter dispatch without unsupported
 frame/bytecode inspection. Retaining and reconciling a consumed record adds no interpreter
 provenance proof: deep reflection can also invoke those private state transitions and
-reconciliation helpers or replace a retained thread object. Exact `Thread` identity closes
-ordinary identifier reuse; it is not an interpreter-origin proof against arbitrary private
-state mutation. No frame or bytecode inspection is used. Arbitrary in-process reflection
+reconciliation helpers or replace a retained thread-state token. Exact library-token
+identity closes ordinary identifier and `Thread`/`_DummyThread` wrapper reuse; it is not an
+interpreter-origin proof against arbitrary private state mutation. No frame or bytecode
+inspection is used. Arbitrary in-process reflection
 and mutation remain explicitly outside this primitive's isolation claim. The lookup-order
 behavior is verified on the supported CPython 3.9, 3.12, and 3.13 baselines; another Python
 implementation requires its own compatibility and adversarial evidence before use.
@@ -576,7 +589,7 @@ process; never catch the code and retry the same handle.
 | Context is replaced by a new context for the same actor | Exact context ID/principal/revision snapshot fails | Durable session/revocation semantics if cross-process is required |
 | Service clock rolls backward | Local high-water freezes within skew and fails beyond it | Trusted time monitoring and incident runbook |
 | Dependency throws a mutation-hostile `BaseException` or control-shaped secret | Raw exception attrs are never touched; non-control failures become stable denial; exact four-way control signals are replaced with fresh empty-argument signals | Cancellation/termination integration tests in the real service host |
-| Caller passes the current active exception triple to `__exit__`, reuses a saved exit, recycles a terminated owner's thread identifier, changes threads, or forks with a context lease | Direct calls have no lease; a genuine exit lease strongly retains and identity-compares the exact owner `Thread` object, retains its consumed commit for exact-state reconciliation, and lets only that owner close/finalize through the callback | Explicitly close and discard a composer orphaned by owner termination; keep arbitrary in-process reflection outside the trust boundary; validate every supported Python runtime |
+| Caller passes the current active exception triple to `__exit__`, reuses a saved exit, recycles a terminated owner's thread identifier or cached dummy-thread wrapper, changes threads, or forks with a context lease | Direct calls have no lease; a genuine exit lease strongly retains and identity-compares a library-owned opaque token for the actual owner Python thread state, retains its consumed commit for exact-state reconciliation, and lets only that owner state close/finalize through the callback | Explicitly close and discard a composer orphaned by owner termination; keep arbitrary in-process reflection outside the trust boundary; validate every supported Python runtime |
 | Process crashes between consume and effect/receipt | No permissive recovery; handle is process-local | Transactional effect receipt or durable idempotency/reconciliation |
 | Registry is exhausted | Hard capacity; no over-issuance under concurrency | Per-tenant quotas, rate limits, load shedding, capacity evidence |
 | Arbitrary Python code runs in process | Explicitly outside this primitive's isolation claim | Sandboxed workers/plugins and least-privilege deployment |
@@ -605,9 +618,16 @@ cannot claim originating body-control precedence.
 
 The thread that begins interpreter context dispatch must remain alive through exit. If it
 terminates first, do not retry its saved callback on a replacement worker, even when the
-replacement reports the same integer thread identifier. Stop admission, call
-`composer.close()` explicitly, discard the orphaned composer and its callbacks, and create
-a new worker-local composition root. There is no lease migration or adoption API.
+replacement reports the same integer identifier or `threading.current_thread()` wrapper.
+Stop admission, call `composer.close()` explicitly, discard the orphaned composer and its
+callbacks, and create a new worker-local composition root. There is no lease migration or
+adoption API.
+
+The token identifies an actual Python thread state, not an `asyncio` task or another
+logical execution context sharing that thread. Do not transfer its callbacks between
+coroutines or hold this synchronous context open across a task handoff or `await` that lets
+untrusted same-thread code run. Task-level isolation requires a separately reviewed async
+lifecycle boundary; it is not supplied by this composer.
 
 Rollback is code-only because no persistent state is written. Stop the candidate process,
 close composer/issuer instances, discard all outstanding process-local handles, and deploy
@@ -730,16 +750,24 @@ confirmed reconciliation, one cleanup invocation, complete operation retirement,
 post-cleanup lease finalization, a deterministic exhaustion boundary, and rejection that
 does not let a foreign thread or child process take over the owner's cleanup.
 
-The recycled-identifier regression covers prepared, bound, active, and consumed leases.
-For every stage, the owner thread terminates while its callbacks remain saved; a bounded
-successor loop observes a real equality between the old and new integer identifiers and
-also proves the `Thread` objects differ. Successor descriptor binding, enter activation,
-exit consumption/reconciliation, direct reconciliation/finalization, and candidate discard
-all fail without changing the exact lease object, composer and registry closed flags, or
-the complete active-handle map. A separate explicit `composer.close()` then closes the
-registry and retires the handle while leaving the orphaned lease quarantined inside the
-closed composer. The same test passed on the supported CPython 3.9, 3.12, and 3.13
-baselines; an unavailable identifier reuse would be reported as a skip rather than a pass.
+The recycled-identifier regressions cover prepared, bound, active, and consumed leases for
+ordinary `threading.Thread` owners and raw alien owners created with
+`_thread.start_new_thread`. For every stage, the owner terminates while its callbacks remain
+saved; a bounded successor loop observes real equality between the old and new integer
+identifiers. The ordinary-thread case also proves the `Thread` objects differ. The alien
+case explicitly obtains `threading.current_thread()` in both actual thread states, but its
+authorization assertion is the different library TLS tokens: cached `_DummyThread`
+identity is recorded only as a runtime observation and is never a pass condition.
+
+Successor descriptor binding, enter activation, exit consumption/reconciliation, direct
+reconciliation/finalization, and candidate discard all fail without changing the exact
+lease object, composer and registry closed flags, or complete active-handle map. A second
+alien regression releases the owner's weak enter callback before termination, then proves
+that both raw direct enter and lookup of a new enter descriptor fail without clearing or
+replacing the quarantined stale candidate. A separate explicit `composer.close()` closes
+the registry and retires the handle while leaving the orphaned lease quarantined inside the
+closed composer. These tests run on the supported CPython 3.9, 3.12, and 3.13 baselines; an
+unavailable identifier reuse is reported as a skip rather than a pass.
 
 The suite also runs real POSIX-fork probes: child issue/prepare/retire/close/enter against an
 inherited issuer, construction of a new composer from that issuer, parent/child
