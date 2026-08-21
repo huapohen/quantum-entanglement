@@ -702,62 +702,131 @@ class BackupManifestV2SnapshotTests(unittest.TestCase):
                     connection.close()
 
     def test_control_after_real_rollback_and_wal_writer_leave_reader_reusable(self) -> None:
-        with tempfile.TemporaryDirectory() as tempdir:
-            path = str(Path(tempdir) / "wal-boundary.sqlite3")
-            initialize_full_database(path)
-            journal = sqlite3.connect(path)
-            try:
-                self.assertEqual(journal.execute("PRAGMA journal_mode=WAL").fetchone(), ("wal",))
-            finally:
-                journal.close()
-
-            reader = sqlite3.connect(path)
-            rollback_seen = False
-
+        def rollback_observer(state: dict[str, bool]) -> Callable[[str], None]:
             def observe(statement: str) -> None:
-                nonlocal rollback_seen
                 if " ".join(statement.strip().split()).upper() == "ROLLBACK":
-                    rollback_seen = True
+                    state["seen"] = True
 
-            reader.set_trace_callback(observe)
-            control = KeyboardInterrupt("post-rollback-boundary")
-            try:
-                caught, injected = self.capture_semantic_boundary_control(
-                    reader,
-                    control,
-                    boundary_ready=lambda: rollback_seen,
-                    transaction_active=False,
-                )
-                self.assertTrue(injected)
-                self.assertIs(caught, control)
-                self.assertFalse(reader.in_transaction)
-                self.assert_control_traceback_is_not_synthetically_reraised(control)
+            return observe
 
-                writer = sqlite3.connect(path)
-                try:
-                    writer.execute(
-                        """
-                        INSERT INTO projection_offsets (
-                            projection_name, last_global_position, owner_id,
-                            owner_epoch, lease_expires_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        ("post-control", 0, "writer", 1, T0, T0),
-                    )
-                    writer.commit()
-                finally:
-                    writer.close()
-                snapshot = derive_backup_manifest_v2_snapshot(reader)
-                counts = {
-                    item.name: item.row_count for item in snapshot.registry_topology.table_counts
-                }
-                self.assertEqual(counts["projection_offsets"], 1)
-                self.assertFalse(reader.in_transaction)
-            finally:
-                reader.set_trace_callback(None)
-                if reader.in_transaction:
-                    reader.rollback()
-                reader.close()
+        def rollback_ready(state: dict[str, bool]) -> Callable[[], bool]:
+            def ready() -> bool:
+                return state["seen"]
+
+            return ready
+
+        control_types = (KeyboardInterrupt, SystemExit, GeneratorExit, CancelledError)
+        for control_type in control_types:
+            with self.subTest(control_type=control_type.__name__):
+                with tempfile.TemporaryDirectory() as tempdir:
+                    path = str(Path(tempdir) / "wal-boundary.sqlite3")
+                    initialize_full_database(path)
+                    journal = sqlite3.connect(path)
+                    try:
+                        self.assertEqual(
+                            journal.execute("PRAGMA journal_mode=WAL").fetchone(),
+                            ("wal",),
+                        )
+                    finally:
+                        journal.close()
+
+                    marker = f"post-rollback-boundary-{control_type.__name__}"
+                    if control_type is SystemExit:
+                        system_exit_code: Optional[object] = (marker, 73)
+                        control = control_type(system_exit_code)
+                    else:
+                        system_exit_code = None
+                        control = control_type(marker, 73)
+                    try:
+                        raise control
+                    except BaseException as seeded:
+                        self.assertIs(seeded, control)
+                    preexisting_traceback = control.__traceback__
+                    self.assertIsNotNone(preexisting_traceback)
+                    original_args = control.args
+                    cause = HostileFault(f"cause-{control_type.__name__}")
+                    context = HostileFault(f"context-{control_type.__name__}")
+                    control.__cause__ = cause
+                    control.__context__ = context
+                    original_suppress_context = control.__suppress_context__
+
+                    reader = sqlite3.connect(path)
+                    rollback_state = {"seen": False}
+                    reader.set_trace_callback(rollback_observer(rollback_state))
+                    try:
+                        caught, injected = self.capture_semantic_boundary_control(
+                            reader,
+                            control,
+                            boundary_ready=rollback_ready(rollback_state),
+                            transaction_active=False,
+                        )
+                        self.assertTrue(injected)
+                        self.assertIs(caught, control)
+                        self.assertFalse(reader.in_transaction)
+                        self.assertIs(control.args, original_args)
+                        self.assertIs(control.__cause__, cause)
+                        self.assertIs(control.__context__, context)
+                        self.assertIs(
+                            control.__suppress_context__,
+                            original_suppress_context,
+                        )
+                        if control_type is SystemExit:
+                            self.assertIs(control.code, system_exit_code)
+                        traceback_cursor = control.__traceback__
+                        retained_preexisting_traceback = False
+                        while traceback_cursor is not None:
+                            if traceback_cursor is preexisting_traceback:
+                                retained_preexisting_traceback = True
+                            traceback_cursor = traceback_cursor.tb_next
+                        self.assertTrue(retained_preexisting_traceback)
+                        self.assert_control_traceback_is_not_synthetically_reraised(control)
+
+                        writer = sqlite3.connect(path)
+                        try:
+                            for row_count in (1, 2):
+                                writer.execute(
+                                    """
+                                    INSERT INTO projection_offsets (
+                                        projection_name, last_global_position, owner_id,
+                                        owner_epoch, lease_expires_at, updated_at
+                                    ) VALUES (?, ?, ?, ?, ?, ?)
+                                    """,
+                                    (
+                                        f"post-control-{control_type.__name__}-{row_count}",
+                                        0,
+                                        "writer",
+                                        1,
+                                        T0,
+                                        T0,
+                                    ),
+                                )
+                                writer.commit()
+                                self.assertFalse(writer.in_transaction)
+                                self.assertEqual(
+                                    writer.execute(
+                                        "SELECT COUNT(*) FROM projection_offsets"
+                                    ).fetchone(),
+                                    (row_count,),
+                                )
+                                snapshot = derive_backup_manifest_v2_snapshot(reader)
+                                counts = {
+                                    item.name: item.row_count
+                                    for item in snapshot.registry_topology.table_counts
+                                }
+                                self.assertEqual(counts["projection_offsets"], row_count)
+                                self.assertFalse(reader.in_transaction)
+                        finally:
+                            if writer.in_transaction:
+                                writer.rollback()
+                            writer.close()
+                    finally:
+                        reader.set_trace_callback(None)
+                        if reader.in_transaction:
+                            reader.rollback()
+                        reader.close()
+                        control.__traceback__ = None
+                        control.__cause__ = None
+                        control.__context__ = None
 
     def test_derivation_performs_no_schema_or_row_write(self) -> None:
         write_actions = {
