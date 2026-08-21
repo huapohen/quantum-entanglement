@@ -637,21 +637,23 @@ git diff --check
 
 ### 11.1 Observed local authorization-repair evidence
 
-At clean checkpoint `a090cf248dce49b89f90584e385dd81012d3c5b5` (tree
-`07204c108a355dd18bb83de69582dec140136e24`) on 2026-08-21, the following local synthetic
+At clean checkpoint `9013d679b87e28c2517124aa9e1990d5bee69864` (tree
+`2bc0d1be048fc58677405265fd63bb1ca5c0c46c`) on 2026-08-21, the following local synthetic
 checks were observed:
 
 | Check | Observed result |
 |---|---|
+| Independent thread-owner review | An independent reviewer rejected `3e0e5fe` with one P1 finding: an owner lease trusted recyclable `threading.get_ident()` integers, so the first successor that reused a terminated owner's identifier could take over a saved callback and retire live handles. Commit `729f46b` is the unapproved repair candidate, followed by exact semantics in `5b938c2` and this checkpoint's changelog; a fresh independent review is still required |
 | Reviewer consume-return reproducer | The reviewer matrix reproduced 16/16 failures at `0c5d5af`; after `092a68e` and `83bede3`, the same external script reported `0/16 failures` and no failure rows on CPython 3.9.6, 3.12.12, and 3.13.9. This closes the reproducer only; it is not fresh independent approval |
-| Changed authorization file | All 93 operation-authorization tests passed with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9 |
-| Adjacent authorization target | 178 tests passed with warnings as errors per interpreter: 93 operation-authorization, 47 request-context, and 38 tenancy tests |
+| Recycled-identifier regression | One stable four-stage regression terminates the owner, observes real integer identifier reuse by a different `Thread`, and proves prepared/bound/active/consumed saved callbacks cannot mutate the lease, composer, registry, or handles. It passed with warnings as errors on all three interpreters |
+| Changed authorization file | All 94 operation-authorization tests passed with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9 |
+| Adjacent authorization target | 179 tests passed with warnings as errors per interpreter: 94 operation-authorization, 47 request-context, and 38 tenancy tests |
 | Process/fork/replay selector | An exact 20-test selector across operation authorization and request context passed with warnings as errors on all three interpreters |
-| Repository suite | The declared `unittest` baseline ran 917 tests successfully on CPython 3.9.6, 3.12.12, and 3.13.9. The first two were warning-clean under `-W error`; CPython 3.13 still printed two unraisable destructor warnings despite its zero exit; see the caveat below |
+| Repository suite | The declared `unittest` baseline ran 918 tests successfully on CPython 3.9.6, 3.12.12, and 3.13.9. The first two were warning-clean under `-W error`; CPython 3.13 still printed two unraisable destructor warnings despite its zero exit; see the caveat below |
 | Static source gates | Locked Ruff 0.16.3 lint/format over 91 files and strict mypy 1.19.1 over 35 source files passed |
 | Supply-chain baseline | Four dependency-lock targets and 74 exact package records verified |
 | Parse, import, and smoke | Three-version `compileall`, package-root/versioned cold import, deterministic 25-event/3-artifact demo, and `git diff --check` passed |
-| Repository integrity | Four candidate commits from `0c5d5af` are linear with no merge and the checkpoint was clean. Strict object fsck exited zero while reporting existing dangling objects in the shared Git object database. A count-only high-confidence scan found no credential pattern in candidate-added lines; the complete tracked tree retained only the same two pre-existing synthetic fixtures at `tests/test_redaction.py:20` and `:53` (SHA-256 short fingerprints `1d0e3d463537` and `32f4cf588c77`) |
+| Repository integrity | Eight candidate commits from `0c5d5af` are linear with no merge and the checkpoint was clean. Strict object fsck exited zero while reporting 28 existing dangling objects in the shared Git object database. A count-only high-confidence scan found no credential pattern in candidate-added lines; the complete tracked tree retained only the same two pre-existing synthetic fixtures at `tests/test_redaction.py:20` and `:53` (SHA-256 short fingerprints `1d0e3d463537` and `32f4cf588c77`) |
 
 The adversarial construction cases cover provider and clock lookup through
 `__getattribute__`, descriptor-raised `AttributeError`, a mutation-hostile custom
@@ -664,24 +666,24 @@ completed-frame clearing, normal dependency identity, and default denial. Every 
 registry public wrapper is also exercised against hostile instance lookup before the
 boundary; its base implementation callback remains statically bound.
 
-The CPython 3.13 `unittest -W error` full-suite process exited successfully after 917 tests
+The CPython 3.13 `unittest -W error` full-suite process exited successfully after 918 tests
 but printed two unraisable destructor-time `ResourceWarning` diagnostics for unclosed
 SQLite connections. The Anaconda installation also contains an unrelated site-package
 named `tests`; its first unisolated discovery attempt shadowed the repository namespace and
-loaded only 901 tests, so that attempt is not counted. The successful 917-test run used
+loaded only 901 tests, so that attempt is not counted. The successful 918-test run used
 `-S` to suppress `site` initialization and exclude that unrelated package. Earlier
 per-test forced-GC diagnosis identified the existing
 `test_projection_receipt_count_omission_is_rejected` and
-`test_projection_receipt_count_tampering_is_rejected` backup paths. The changed 93-test
-authorization file and the 178-test adjacent target themselves passed with warnings as
+`test_projection_receipt_count_tampering_is_rejected` backup paths. The changed 94-test
+authorization file and the 179-test adjacent target themselves passed with warnings as
 errors on 3.13. This repair did not change the SQLite path, but the 3.13 repository suite
 must not be represented as warning-clean until that separate issue is fixed and
 independently verified.
 
 These results are a same-host development checkpoint, not retained release evidence,
 clean-host proof, production adapter evidence, independent-review approval, or Gate A
-promotion. The context-exit lease repair is only a candidate pending a fresh independent
-reviewer, and the blockers in section 12 remain unchanged.
+promotion. The exact-thread context-exit repair is only a candidate pending a fresh
+independent reviewer, and the blockers in section 12 remain unchanged.
 
 The dedicated suite covers exact state types/snapshots, redacted representations,
 structural provider injection, hostile provider/clock descriptor lookup during construction,
@@ -727,6 +729,17 @@ window. They prove exact body-object identity and traceback-tail preservation af
 confirmed reconciliation, one cleanup invocation, complete operation retirement,
 post-cleanup lease finalization, a deterministic exhaustion boundary, and rejection that
 does not let a foreign thread or child process take over the owner's cleanup.
+
+The recycled-identifier regression covers prepared, bound, active, and consumed leases.
+For every stage, the owner thread terminates while its callbacks remain saved; a bounded
+successor loop observes a real equality between the old and new integer identifiers and
+also proves the `Thread` objects differ. Successor descriptor binding, enter activation,
+exit consumption/reconciliation, direct reconciliation/finalization, and candidate discard
+all fail without changing the exact lease object, composer and registry closed flags, or
+the complete active-handle map. A separate explicit `composer.close()` then closes the
+registry and retires the handle while leaving the orphaned lease quarantined inside the
+closed composer. The same test passed on the supported CPython 3.9, 3.12, and 3.13
+baselines; an unavailable identifier reuse would be reported as a skip rather than a pass.
 
 The suite also runs real POSIX-fork probes: child issue/prepare/retire/close/enter against an
 inherited issuer, construction of a new composer from that issuer, parent/child
