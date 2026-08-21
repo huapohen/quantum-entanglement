@@ -53,6 +53,11 @@ release. Promotion additionally requires the evidence defined in
   lease before the current exception triple can receive originating-control precedence;
   manual exits and stale callbacks cannot claim it, while nested/concurrent entry and
   inherited fork leases fail closed.
+- Context-exit leases now strongly retain and identity-compare the exact owner `Thread`
+  object instead of trusting a recyclable integer thread identifier. A successor cannot
+  bind, activate, consume, reconcile, finalize, or discard an orphaned lease even after
+  identifier reuse; explicit composer close remains the separate fail-closed handle
+  retirement path when an owner terminates before exit.
 - Context exits now retain a consumed lease commit across an interrupted helper-return
   window, reconcile exact process/thread/token state with an at-most-two-attempt budget,
   and run cleanup plus finalization structurally at most once per exit path. One
