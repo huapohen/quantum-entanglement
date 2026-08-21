@@ -1,7 +1,7 @@
 # 进程身份、fork 继承与 worker 拓扑合同
 
-状态：**基础层已实现；任何现有 store、授权器、secret provider、runtime 或 connector 均尚未因此
-自动变成 fork-safe，相关生产 Gate 继续关闭。**
+状态：**基础层与 `SQLiteEventStore` 的独立接入候选已实现；其他 store、授权器、secret provider、
+runtime 或 connector 不会因此自动变成 fork-safe，相关生产 Gate 继续关闭。**
 
 本文定义 `quantum_entanglement.process_identity` 的已实现合同，以及后续组件接入时必须保持的
 顺序、失败语义、迁移和回滚边界。完整组件风险清单见
@@ -167,7 +167,17 @@ class ExampleStore:
 不能拼接进面向调用方的异常。guard 不吞 `KeyboardInterrupt`、`SystemExit`、`GeneratorExit` 或
 async cancellation；组件的 clean-rethrow 层也必须保留安全的 process-control 语义。
 
-## 6. 验证矩阵
+## 6. SQLiteEventStore 的已实现接入
+
+`SQLiteEventStore` 不采用上面仅用于说明顺序的最小示例。它额外覆盖 exact private signal
+provenance、clean public trampoline、SQL parameter snapshot、owner-aware explicit lock/transaction
+cleanup、migration/constructor quarantine，以及 stream enter/resume 边界。完整合同和运行手册见
+[`SQLITE_EVENT_STORE_PROCESS_BINDING.md`](./SQLITE_EVENT_STORE_PROCESS_BINDING.md)。
+
+该接入只说明 event store inherited instance 会 fail closed；不说明其 connection 可继承，也不为
+其他依赖提供传递性证明。
+
+## 7. 验证矩阵
 
 基础层测试当前保留以下证据：
 
@@ -183,16 +193,20 @@ async cancellation；组件的 clean-rethrow 层也必须保留安全的 process
 - 在没有 caller active exception 的直接调用中，invalid/uninitialized descriptor 产生无
   cause/context 的稳定 mismatch；active-exception lifecycle 的最终清理由组件测试证明；
 - spawn 与可用时的 forkserver 进程 fresh capture，不传输 live owner。
+- `SQLiteEventStore` 的全部普通/生命周期入口、stream enter/iter/每次 resume/exit、open transaction
+  clock fork、constructor migration fork、parent continuity 和 clean error graph；
+- fork-before-init、spawn、forkserver fresh connections 的 global-position、idempotency+outbox、lease
+  和 ambiguity CAS，最终 SQLite integrity/FK/schema 验证。
 
 平台没有 `os.fork` 时真实 fork suite 明确 skip；这不能记录成 fork 证明。每个接入组件仍需增加
 自己的全 public-path、fork-while-component-lock、open transaction、parent continuity、error graph
 和 fresh-instance durable contention 测试，基础层测试不能替代组件证据。
 
-## 7. 迁移顺序
+## 8. 迁移顺序
 
 建议保持每笔提交独立可运行：
 
-1. SQLite event/artifact/projection/revocation/attempt store；
+1. SQLite event store（候选已完成）；artifact/projection/revocation/attempt store 仍待逐项接入；
 2. recovery coordinator 与 publisher；
 3. request-context issuer、operation registry 和 authorizer composition；
 4. in-memory revocation/key lifecycle 与 `SecretMaterial` 的明确 process contract；
@@ -203,7 +217,7 @@ async cancellation；组件的 clean-rethrow 层也必须保留安全的 process
 每一项都先提交行为与测试，再单独提交 migration/rollback 文档，最后更新 readiness/evidence。
 不得用一次机械全仓加 guard 替代逐组件 public-path 审计。
 
-## 8. 兼容、部署与回滚
+## 9. 兼容、部署与回滚
 
 基础层没有数据库 schema、event schema、backup manifest 或 wire-format 变化。未来组件接入属于
 行为收紧：过去偶然能在 fork child 调用的 inherited instance 会改为固定错误。
@@ -220,15 +234,15 @@ async cancellation；组件的 clean-rethrow 层也必须保留安全的 process
 恢复到 fork-before-initialization 的旧部署拓扑。**禁止**通过删除 guard、重新允许 inherited live
 authority/connection/secret 来恢复服务。若生产仍依赖 preload + fork，应停止晋级并修复拓扑。
 
-## 9. 当前明确未完成
+## 10. 当前明确未完成
 
-- 尚无现有生产组件接入 owner guard；
+- `SQLiteEventStore` 已完成独立 owner-guard 候选；其他 stateful production 组件仍未完成；
 - 尚无 composition-root dependency graph 同 identity preflight；
 - 尚无 secret-before-fork 防复制的部署实现或 retained evidence；
 - 尚无 Linux production runner 的完整 fork/spawn/forkserver matrix；
-- 尚无每个 SQLite store 的 fresh-connection 多进程 contention 证明；
+- 只有 `SQLiteEventStore` 有 fresh-connection 多进程 contention 证明；其他 SQLite store 尚无；
 - 尚无 plugin/runtime/connector 的隔离 worker；
 - Gate A–E 没有因本基础层实现而关闭。
 
-因此本阶段只能表述为“统一 process identity foundation 已实现并通过本地矩阵”，不能表述为
-“系统已 fork-safe”“secret 已隔离”或“多进程生产可用”。
+因此本阶段只能表述为“统一 process identity foundation 与 `SQLiteEventStore` 单组件接入候选已
+通过本地矩阵”，不能表述为“系统已 fork-safe”“secret 已隔离”或“多进程生产可用”。
