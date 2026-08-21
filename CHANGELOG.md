@@ -64,6 +64,10 @@ release. Promotion additionally requires the evidence defined in
 - Backup v2 remains reachable only through explicit versioned submodule imports, preserving
   zero packaged-migration SQL reads during a cold package-root import while retaining
   migration/topology cross-binding during explicit v2 initialization.
+- Inactive backup-v2 snapshot derivation now establishes nested conservative cleanup before
+  `BEGIN`, retries one interrupted cleanup, verifies the final transaction state, preserves
+  exact `KeyboardInterrupt`, `SystemExit`, `GeneratorExit`, and `CancelledError` identity and
+  traceback, and rejects ambient handled controls as originating-control evidence.
 
 ### In progress — not yet a shipped guarantee
 
