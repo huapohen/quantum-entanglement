@@ -351,18 +351,46 @@ dependency from smuggling tenant or credential material through a control-shaped
 while preserving async-worker cancellation and ordinary bounded exit status.
 
 `ProtectedOperationComposer.__exit__` has a narrower rule for a control signal genuinely
-originating in a `with composer:` body. It matches the interpreter's active exception type,
-value, and traceback by identity against the three arguments supplied to `__exit__`, then
-requires the value to have the exact type `KeyboardInterrupt`, `SystemExit`,
+originating in a `with composer:` body. Identity with `sys.exc_info()` is necessary but not
+sufficient: a caller handling an exception can obtain that same triple and pass it to a
+manual class- or instance-level `__exit__` call. Such a call must never gain originating
+control-signal priority, including when made from inside a real composer context.
+
+The supported CPython context-manager path therefore authenticates one structural exit
+lease before it examines `sys.exc_info()`:
+
+1. special lookup of the enter descriptor prepares one opaque token bound to the exact
+   composer, current process, and current thread, while retaining only a weak reference to
+   the returned enter callback;
+2. the immediately following special lookup of the exit descriptor binds that exact pending
+   token and returns its exit callback;
+3. invocation of the returned enter callback activates the bound token; and
+4. invocation of the returned exit callback performs process and thread preflight, then
+   atomically consumes the active token before classifying the body exception.
+
+Normal class-level and instance-level calls to `__enter__` or `__exit__` do not receive a
+token. Binding the raw exit descriptor without a pending enter candidate cannot mint one.
+An authenticated exit callback is one-time even when saved by a caller or when cleanup
+fails. A composer admits at most one prepared or active context lease: nested and concurrent
+context entry fail closed, a failed enter or exit-binding cut discards its candidate, and a
+closed composer rejects entry. A forked child fails the creator PID/process-epoch preflight
+before it can consume an inherited prepared, active, or already-consumed lease. In
+particular, a real active exception triple in the child cannot hide
+`protected_operation_process_mismatch`.
+
+Only after that one-time authentication succeeds does the exit callback match the active
+exception type, value, and traceback by identity against the three interpreter-supplied
+arguments and require the value to have the exact type `KeyboardInterrupt`, `SystemExit`,
 `GeneratorExit`, or `asyncio.CancelledError`. It reads no exception attribute. When this
 match succeeds, cleanup success, an ordinary cleanup failure, or any exact cleanup control
 signal cannot replace the originating signal: `__exit__` returns a false value and Python
 continues propagating the same body object with its caller-owned traceback, status,
 cause/context, and other state unchanged. This is intentionally different from a control
 signal raised by a configured dependency, which is replaced through the bounded policy
-above. Directly passing a control object to `__exit__`, passing an unrelated active
-exception, or passing a control-signal subclass does not gain originating-signal priority.
-The cleanup return value is always ignored and can never suppress a body exception.
+above. Directly passing a control object or even the current active triple to `__exit__`,
+passing an unrelated active exception, reusing a consumed exit callback, or passing a
+control-signal subclass does not gain originating-signal priority. The cleanup return value
+is always ignored and can never suppress a body exception.
 
 When there is no genuine exact originating control signal, ordinary context-manager rules
 are narrowed as follows. Successful cleanup returns a false value, so an ordinary body
@@ -372,6 +400,16 @@ converted to a fresh stable code-only `OperationAuthorizationError` and likewise
 an ordinary body exception; its public cause/context chain and completed internal locals
 are detached. Cleanup failure is therefore operationally significant, while process
 termination and cancellation already in progress remain authoritative.
+
+This lease distinguishes ordinary special-method dispatch from ordinary direct calls; it is
+not a sandbox against arbitrary trusted Python code in the same process. Deep reflection
+can retrieve and bind both raw descriptors, preserve their callbacks, or read/call private
+module state in the same prepare/bind/activate/consume order. That sequence is
+observationally indistinguishable from interpreter dispatch without unsupported
+frame/bytecode inspection. It is explicitly outside this primitive's isolation claim, as is
+all other arbitrary in-process mutation. The lookup-order behavior is verified on the
+supported CPython 3.9, 3.12, and 3.13 baselines; another Python implementation requires its
+own compatibility and adversarial evidence before use.
 
 Composer and registry constructors statically bind their exact class initializer before
 entering the boundary; neither resolves `_initialize` through the supplied instance. Every
@@ -477,6 +515,7 @@ process; never catch the code and retry the same handle.
 | Context is replaced by a new context for the same actor | Exact context ID/principal/revision snapshot fails | Durable session/revocation semantics if cross-process is required |
 | Service clock rolls backward | Local high-water freezes within skew and fails beyond it | Trusted time monitoring and incident runbook |
 | Dependency throws a mutation-hostile `BaseException` or control-shaped secret | Raw exception attrs are never touched; non-control failures become stable denial; exact four-way control signals are replaced with fresh empty-argument signals | Cancellation/termination integration tests in the real service host |
+| Caller passes the current active exception triple to `__exit__`, reuses a saved exit, or forks with a context lease | Direct calls have no lease; a genuine exit lease is process/thread bound and atomically one-time before body-control precedence | Keep arbitrary in-process reflection outside the trust boundary; validate every supported Python runtime |
 | Process crashes between consume and effect/receipt | No permissive recovery; handle is process-local | Transactional effect receipt or durable idempotency/reconciliation |
 | Registry is exhausted | Hard capacity; no over-issuance under concurrency | Per-tenant quotas, rate limits, load shedding, capacity evidence |
 | Arbitrary Python code runs in process | Explicitly outside this primitive's isolation claim | Sandboxed workers/plugins and least-privilege deployment |
@@ -496,6 +535,12 @@ is no compatibility mode for inherited contexts or handles.
 Composer and internal registry subclass initialization is also intentionally unsupported.
 Composition roots must construct the exact reviewed classes; extension belongs in the
 provider and future effect-adapter ports, not in subclass overrides of the security boundary.
+
+One composer must not be entered by nested or concurrent `with` statements. Use distinct
+composer instances only when the composition root deliberately needs overlapping context
+lifetimes. Manual `__enter__` and `__exit__` remain fail-closed lifecycle calls for backward
+compatibility, but they are not equivalent to interpreter context-manager dispatch and
+cannot claim originating body-control precedence.
 
 Rollback is code-only because no persistent state is written. Stop the candidate process,
 close composer/issuer instances, discard all outstanding process-local handles, and deploy
