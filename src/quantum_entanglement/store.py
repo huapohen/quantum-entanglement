@@ -440,6 +440,30 @@ class _EventPageContext:
         raise TypeError("event store contexts cannot be serialized")
 
 
+class _EventStoreTransactionContext:
+    """Non-transferable wrapper around one private transaction generator."""
+
+    __slots__ = ("_inner",)
+
+    def __init__(self, inner: ContextManager[sqlite3.Connection]) -> None:
+        self._inner = inner
+
+    def __enter__(self) -> sqlite3.Connection:
+        return self._inner.__enter__()
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> Any:
+        return self._inner.__exit__(exc_type, exc, traceback)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("event store transactions cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("event store transactions cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("event store transactions cannot be serialized")
+
+
 class SQLiteEventStore:
     """Small durable event log suitable for the kernel and local-first clients."""
 
@@ -619,8 +643,12 @@ class SQLiteEventStore:
             )
             self._require_current_process()
 
+    def _transaction(self) -> ContextManager[sqlite3.Connection]:
+        self._require_current_process()
+        return _EventStoreTransactionContext(self._transaction_inner())
+
     @contextmanager
-    def _transaction(self) -> Iterator[sqlite3.Connection]:
+    def _transaction_inner(self) -> Iterator[sqlite3.Connection]:
         self._require_current_process()
         lock = self._lock
         lock.acquire()
