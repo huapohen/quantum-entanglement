@@ -597,6 +597,55 @@ class BackupManifestV2SnapshotTests(unittest.TestCase):
                         connection.rollback()
                     connection.close()
 
+    def test_ambient_handled_control_cannot_authenticate_cleanup_priority(self) -> None:
+        real_rollback = snapshot_module._rollback_owned_snapshot
+        control_types = (KeyboardInterrupt, SystemExit, GeneratorExit, CancelledError)
+
+        def rollback_after_failure(
+            state: dict[str, int],
+        ) -> Callable[[sqlite3.Connection], None]:
+            def rollback_once(target: sqlite3.Connection) -> None:
+                state["calls"] += 1
+                if state["calls"] == 1:
+                    raise HostileFault("cleanup must not trust ambient control")
+                real_rollback(target)
+
+            return rollback_once
+
+        for control_type in control_types:
+            with self.subTest(control_type=control_type.__name__):
+                connection = sqlite3.connect(":memory:")
+                connection.execute("VACUUM")
+                cleanup_state = {"calls": 0}
+
+                caught: Optional[BackupManifestV2SnapshotError] = None
+                try:
+                    try:
+                        raise control_type(f"ambient-{control_type.__name__}")
+                    except BaseException:
+                        with patch.object(
+                            snapshot_module,
+                            "_rollback_owned_snapshot",
+                            side_effect=rollback_after_failure(cleanup_state),
+                        ):
+                            try:
+                                derive_backup_manifest_v2_snapshot(connection)
+                            except BackupManifestV2SnapshotError as error:
+                                caught = error
+                    self.assertIsNotNone(caught)
+                    assert caught is not None
+                    self.assertEqual(str(caught), "read_snapshot_cleanup_failed")
+                    self.assertIsNone(caught.__context__)
+                    self.assertIsNone(caught.__cause__)
+                    self.assertEqual(cleanup_state["calls"], 2)
+                    self.assertFalse(connection.in_transaction)
+                    snapshot = derive_backup_manifest_v2_snapshot(connection)
+                    self.assertIs(type(snapshot), BackupManifestV2Snapshot)
+                finally:
+                    if connection.in_transaction:
+                        connection.rollback()
+                    connection.close()
+
     def test_control_after_real_rollback_and_wal_writer_leave_reader_reusable(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             path = str(Path(tempdir) / "wal-boundary.sqlite3")
