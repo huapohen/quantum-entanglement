@@ -1237,6 +1237,78 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                 forbidden=forbidden,
             )
 
+    def test_constructor_lock_failures_leave_exact_objects_uninitialized(self):
+        real_rlock = threading.RLock
+        composer_failure = RuntimeError("composer-lock-secret-canary")
+        composer_lock_calls = 0
+
+        def fail_second_lock():
+            nonlocal composer_lock_calls
+            composer_lock_calls += 1
+            if composer_lock_calls == 2:
+                raise composer_failure
+            return real_rlock()
+
+        composer = object.__new__(ProtectedOperationComposer)
+        with patch.object(operation_authorization.threading, "RLock", fail_second_lock):
+            composer_error = self.capture_error(
+                "protected_operation_internal_failure",
+                lambda: ProtectedOperationComposer.__init__(
+                    composer,
+                    issuer=self.issuer,
+                    state_provider=self.provider,
+                    authorizer=self.authorizer,
+                    clock=self.clock,
+                    operation_ttl=timedelta(seconds=20),
+                    max_state_age=timedelta(seconds=30),
+                ),
+            )
+
+        self.assertEqual(composer_lock_calls, 2)
+        for slot in ProtectedOperationComposer.__slots__:
+            with self.subTest(owner="composer", slot=slot), self.assertRaises(AttributeError):
+                object.__getattribute__(composer, f"_ProtectedOperationComposer{slot}")
+
+        registry_failure = RuntimeError("registry-lock-secret-canary")
+
+        def fail_registry_lock():
+            raise registry_failure
+
+        registry = object.__new__(_AuthorizedOperationRegistry)
+        with patch.object(operation_authorization.threading, "RLock", fail_registry_lock):
+            registry_error = self.capture_error(
+                "protected_operation_internal_failure",
+                lambda: _AuthorizedOperationRegistry.__init__(registry, clock=self.clock),
+            )
+
+        for slot in _AuthorizedOperationRegistry.__slots__:
+            with self.subTest(owner="registry", slot=slot), self.assertRaises(AttributeError):
+                object.__getattribute__(registry, f"_AuthorizedOperationRegistry{slot}")
+
+        forbidden = (
+            composer,
+            registry,
+            self.issuer,
+            self.provider,
+            self.authorizer,
+            self.verifier,
+            self.key_ring,
+            self.clock,
+            self.context,
+            self.request,
+            composer_failure,
+            registry_failure,
+            b"signing-secret-canary-1234567890",
+        )
+        for error in (composer_error, registry_error):
+            self.assert_detached_traceback(
+                error,
+                "composer-lock-secret-canary",
+                "registry-lock-secret-canary",
+                expected_method="__init__",
+                forbidden=forbidden,
+            )
+
     def test_constructor_descriptor_control_signals_are_reissued_cleanly(self):
         cases = (
             (KeyboardInterrupt, "keyboard"),
