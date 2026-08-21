@@ -11,7 +11,7 @@
 
 | 层级 | 结论 | 证据边界 |
 |---|---|---|
-| 本地产品候选 | **READY CANDIDATE；实际 main 落地待完成** | loopback-only、合成数据、内存 SQLite、无外部模型、无真实 connector |
+| 本地产品核验 | **READY FOR USER TRIAL** | 已落地实际 main；loopback-only、合成数据、内存 SQLite、无外部模型、无真实 connector |
 | 生产、私有试点、商用或 GA | **NO-GO** | Gate A–E 全部关闭；本报告不构成 promotion、发布批准或生产安全背书 |
 
 没有向飞书、企微的任何人、群、机器人或 webhook 发送消息；没有执行询问、回复、评论、@、
@@ -175,10 +175,12 @@ completed=true
 - 页面无外部资源，动态值使用 `textContent`；
 - 新截图、文档和 snapshot 未发现模型凭据或临时页面令牌标记。
 
-同一固定代码点的 task-local Playwright 运行还观察到控制台 0 error/0 warning、网络请求只有
-loopback 页面与 `/api/demo`，并且 cookie、localStorage、sessionStorage 全空。这三项没有单独
-tracked console/network/storage log，不能由 PNG 像素证明；它们是本任务 reviewer 的运行观察，
-不是 retained browser attestation。实际 main 落地后仍要重新执行启动和协议探针。
+同一固定代码点的 task-local Playwright 运行还观察到控制台 0 error/0 warning、所有页面/API
+请求均为 loopback，且 cookie、localStorage、sessionStorage 全空。工具列表明确显示页面与
+`/api/demo`；服务也实现了可能由浏览器访问的 loopback `/favicon.ico` 204 路由，因此这里不把
+请求集合缩写成只有两个 path。这些项目没有单独 tracked console/network/storage log，不能由
+PNG 像素证明；它们是本任务 reviewer 的运行观察，不是 retained browser attestation。实际 main
+落地后已按第 9.3 节重新执行启动和协议探针；该探针仍不等于 retained browser attestation。
 
 截图证据见：
 
@@ -192,9 +194,8 @@ tracked console/network/storage log，不能由 PNG 像素证明；它们是本�
 
 完整中文教程：[`docs/LOCAL_PRODUCT_TRIAL.md`](../../docs/LOCAL_PRODUCT_TRIAL.md)。
 
-本报告首次写入时，实际 `main` 仍是 `ced85607f551b7951b9113c39e377389176fc5f2`，尚不包含
-`scripts/start_local_trial.sh`；所以下列命令是第 9 节无损 merge 完成后的入口，不把当前尚未落地
-的路径冒充为已验证结果：
+本报告初稿写入时，实际 `main` 仍是 `ced85607f551b7951b9113c39e377389176fc5f2`；随后第 9 节
+记录的无损 merge 和实际路径探针已经完成。下列命令现在是已验证入口：
 
 ```bash
 cd /Users/lwblx/huapohen/agent/execute/quantum_entanglement
@@ -230,11 +231,67 @@ cd /Users/lwblx/huapohen/agent/execute/quantum_entanglement
 不是占位文案。任何外部消息发送、真实 connector、客户数据、模型凭据、不可逆副作用或公网监听
 都需要新的明确授权、设计、测试、独立审查和阶段晋级；本阶段一律不执行。
 
-## 9. 本阶段停点
+## 9. 实际 main 落地与本阶段停点
 
-本报告之后只执行两件收口工作：
+### 9.1 无损合并
 
-1. 保留实际 `main` 上已有的 41 个 Yuque-sync 提交，用普通无损 merge 接入本组合历史；
-2. 在实际主仓路径启动一次本地产品、验证完成态、停止服务，然后等待用户核验。
+实际主仓原 HEAD `ced85607f551b7951b9113c39e377389176fc5f2` 上有 41 个本地
+Yuque-sync 提交。只读三方预演确认两侧变更路径交集为 0，随后使用普通 `--no-ff` merge 生成：
 
-完成后不继续开启新的生产化模块，不 push，不恢复 Notion/语雀同步。
+```text
+merge commit ce28d30ed62b8278324725688b50c7409bddbd7f
+merge tree   dcd02aa0ab7cf100849696d48524193ed2f9e213
+parent 1     ced85607f551b7951b9113c39e377389176fc5f2
+parent 2     e21654a0666331c28739a76ef142df3b78f82184
+```
+
+merge tree 与预演 tree 精确相同；两个 parent 都是新 main 的 ancestor。原 41 个 Yuque-sync
+提交完整保留在第一父历史中，组合侧没有改写 `analysis_report/yuque_sync/` 路径。没有 reset、
+rebase、force-push 或 push。
+
+### 9.2 实际 main 三版本复验
+
+合并后的实际 main tree 再次执行完整 `-S -W error` discovery：
+
+| CPython | 结果 |
+|---|---:|
+| 3.9.6 | 1106/1106，1 个 Python 版本能力预期 skip |
+| 3.12.12 | 1106/1106 |
+| 3.13.9 | 1106/1106 |
+
+同一实际 tree 的 Ruff lint、105-file format、strict mypy 39 files、dependency locks 4/74、
+shell syntax、14-item screenshot manifest 和 `git diff --check` 也全部通过。
+
+### 9.3 启动脚本与 HTTP 产品探针
+
+实际主仓路径使用 `./scripts/start_local_trial.sh --no-open` 启动。server 按设计把一次性启动 URL
+写入自己的 stdout；校验进程把 stdout 捕获在内存管道中，只解析令牌但不向工具输出或用户界面
+回显，并仅通过 loopback `X-QE-Trial-Token` 请求头回送同一服务。令牌没有写入文件、报告、Git、
+聊天或外部网络；`--no-open` 避免抢占用户浏览器。观测结果：
+
+```text
+GET /                         -> 200
+POST /api/demo without token -> 403
+POST /api/demo valid token   -> 200
+task statuses                -> research/design/review completed
+artifacts                    -> 3
+events                       -> 25
+needsYou                     -> 0
+errors                       -> 0
+completed                    -> true
+externalMessaging            -> false
+persistentStorage            -> false
+productionApproved           -> false
+gateStatus                   -> A-E closed
+server exit code             -> 0
+loopback port after stop     -> closed
+```
+
+返回页包含 CSP，HTML 不引用 `https://` 外部页面资源。该探针验证启动脚本、loopback HTTP 边界和
+真实本地 demo 投影；最终视觉布局仍由第 6 节绑定的桌面/移动端 Playwright 证据承担。
+
+### 9.4 停点
+
+本阶段代码、报告、HTML、系统图、启动脚本、教程、截图、组合门禁和实际 main 启动复验均已完成。
+服务已经停止，监听端口已关闭。现在停止继续开发，等待用户核验；不继续开启新的生产化模块，
+不 push，不恢复 Notion/语雀同步，也不向飞书或企微发送任何消息。
