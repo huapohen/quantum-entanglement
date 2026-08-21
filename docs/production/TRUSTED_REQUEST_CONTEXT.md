@@ -284,7 +284,8 @@ closed as defined by `SERVICE_BOUNDARY.md`.
 Specific residual limitations of this slice are:
 
 - no real authenticator, identity provider, session store, authenticated transport, or API;
-- no action-time identity/membership refresh adapter and no revision comparison;
+- no reviewed production action-time identity/membership refresh adapter; the adjacent
+  fake-only provider port and exact revision comparison do not prove authoritative data;
 - no mandatory connection between `RequestContextIssuer`, `TenantAuthorizer`, runtime,
   approval, artifact, outbox, attempt, or effect-receipt paths;
 - no tenant/workspace scope on every repository or legacy-data migration rehearsal;

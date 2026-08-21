@@ -49,8 +49,8 @@ composer-owned bounded registry -> AuthorizedOperation
         v
 same composer.consume(operation, same context, exact request)
         |
-        +-> registry preflight: live, unmodified, unexpired, exact actor/request scope
         +-> same RequestContextIssuer.prepare_reauthorization
+        +-> registry preflight: live, unmodified, unexpired, exact actor/request scope
         +-> CurrentAuthorizationStateProvider.load_current_state again
         +-> exact identity/scope/revision/freshness comparison again
         +-> TenantAuthorizer.evaluate again -> explicit ALLOW only
@@ -72,14 +72,15 @@ check succeeds. The provider state and authorizer decision remain ordinary value
 Direct construction, deserialization, subclassing, truthiness, or possession of those
 values grants nothing.
 
-`consume` first proves that the handle is still live and bound to the exact actor/request.
-It then repeats same-issuer context validation, reloads current identity, membership,
-revocation, and capability state, repeats exact revision/freshness comparisons, and invokes
-the exact authorizer again. It performs a final same-issuer context check and atomically
-removes the handle only after that action-time decision is an explicit `ALLOW`. A successful
-handle can therefore be consumed once. Failed scope, state, revision, dependency, or policy
-checks do not consume it and grant no effect permission. Two concurrent correct consumers
-may both perform fresh checks, but exactly one can complete the local consume.
+`consume` first repeats same-issuer context validation to obtain the exact basis required by
+the registry scope comparison. It then proves that the handle is still live and bound to
+that exact actor/request before reloading current identity, membership, revocation, and
+capability state, repeating exact revision/freshness comparisons, and invoking the exact
+authorizer again. It performs a final same-issuer context check and atomically removes the
+handle only after that action-time decision is an explicit `ALLOW`. A successful handle can
+therefore be consumed once. Failed scope, state, revision, dependency, or policy checks do
+not consume it and grant no effect permission. Two concurrent correct consumers may both
+perform fresh checks, but exactly one can complete the local consume.
 
 ## 2. Trust and data matrix
 
@@ -348,6 +349,16 @@ to constructor and registry/composer authorization and lifecycle boundaries, pre
 dependency from smuggling tenant or credential material through a control-shaped exception
 while preserving async-worker cancellation and ordinary bounded exit status.
 
+Composer and registry construction use the same boundary before structurally probing the
+configured provider's `load_current_state` method or the configured clock's `now` method.
+A descriptor, proxy, or `__getattribute__` failure therefore receives the same containment
+as a later method call. Missing/non-callable provider and clock methods fail closed with
+`protected_operation_state_unavailable` and `protected_operation_clock_unavailable`;
+remaining invalid construction state becomes `protected_operation_internal_failure`.
+Before any public construction failure escapes, the constructor deletes every supplied
+dependency and configuration argument from its frame. Exact control signals are reissued
+through the bounded policy above; other failures become fresh code-only errors.
+
 Representative codes are grouped below. Callers must treat every code as denial and must
 not retry an irreversible effect without a new reviewed idempotency policy.
 
@@ -464,12 +475,13 @@ git diff --check
 ```
 
 The dedicated suite covers exact state types/snapshots, redacted representations,
-structural provider injection, workspace requirements, same-ID cross-tenant isolation,
+structural provider injection, hostile provider/clock descriptor lookup during construction,
+constructor argument/frame detachment, workspace requirements, same-ID cross-tenant isolation,
 every actor/scope/revision substitution, provider observation freshness/future time,
 provider and authorizer exception-chain/frame detachment, hostile `BaseException` and safe
-control-signal replacement across authorization and lifecycle boundaries, the complete
-safe `SystemExit` status matrix, exact `asyncio.CancelledError` propagation, fail-closed
-control subclasses, explicit deny,
+control-signal replacement across construction, authorization, and lifecycle boundaries,
+the complete safe `SystemExit` status matrix, exact `asyncio.CancelledError` propagation,
+fail-closed control subclasses, explicit deny,
 malformed decisions, membership downgrade, post-issuance identity/scope revision change,
 post-issuance capability revocation, context retirement during refresh, every final
 reauthorization binding-field drift, foreign issuer/composer, direct construction,
