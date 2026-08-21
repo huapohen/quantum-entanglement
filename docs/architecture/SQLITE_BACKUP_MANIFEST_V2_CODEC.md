@@ -24,8 +24,9 @@ their identities. A cold `import quantum_entanglement` does not perform those re
 Supplying a v2 value or JSON document to a v1 API remains an error. No operator should
 create, publish, verify, or restore a v2 backup at this stage.
 
-This code may be deployed as an inert pure codec. It does not close Gate C, establish an
-RPO/RTO, or make a v2 artifact recoverable.
+This code may be deployed as an inert explicit-submodule codec. Its operations are pure
+after the documented registry initialization boundary. It does not close Gate C,
+establish an RPO/RTO, or make a v2 artifact recoverable.
 
 The later [single-snapshot derivation checkpoint](SQLITE_BACKUP_V2_SNAPSHOT_DERIVATION.md)
 uses the codec's exact factories to construct schema and topology models from one SQLite
@@ -177,7 +178,7 @@ rate limits, file-descriptor limits, and bounded quarantine verification.
 
 ## Compatibility matrix at this checkpoint
 
-| Caller/artifact | v1 active APIs | v2 pure codec | Operationally supported |
+| Caller/artifact | v1 active APIs | explicit v2 codec | Operationally supported |
 |---|---:|---:|---:|
 | canonical `qe.sqlite-backup/1` pair | read/write/restore | rejected as v2 | yes, within the v1 runbook boundary |
 | canonical in-memory v2 dictionary | rejected by v1 model | parse/encode | no |
