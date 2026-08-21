@@ -13,8 +13,8 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+output/
 
 # Read-only source checkouts used for research; keep them beside the project,
 # but do not vendor their Git history or code into this repository.
 references/
-
