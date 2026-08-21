@@ -19,6 +19,7 @@ import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import partial
+from types import TracebackType
 from typing import Callable, NoReturn, Optional, Protocol, SupportsIndex, TypeVar, Union
 
 from .request_context import ReauthorizationBasis, RequestContext, RequestContextIssuer
@@ -327,7 +328,12 @@ class _RLockLike(Protocol):
 
     def __enter__(self) -> bool: ...
 
-    def __exit__(self, exc_type: object, exc_value: object, trace: object) -> None: ...
+    def __exit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_value: Optional[BaseException],
+        trace: Optional[TracebackType],
+    ) -> None: ...
 
 
 def _invoke_boundary(
@@ -586,31 +592,102 @@ class AuthorizedOperation:
         )
 
 
+@dataclass(repr=False)
+class _AuthorizedOperationRegistryState:
+    """Fully built registry state published through one exact slot."""
+
+    active: dict[int, tuple[weakref.ReferenceType[AuthorizedOperation], _OperationSnapshot]]
+    clock: ServerClock
+    closed: bool
+    last_observed_at: Optional[datetime]
+    lock: _RLockLike
+    max_active_operations: int
+    max_clock_skew: timedelta
+    max_operation_ttl: timedelta
+    owner_epoch: object
+    owner_pid: int
+
+    def __repr__(self) -> str:
+        return "AuthorizedOperationRegistryState(<configured>)"
+
+
+_REGISTRY_STATE_SLOT = "_AuthorizedOperationRegistry__state"
+
+
+def _publish_constructor_state(instance: object, slot_name: str, state: object) -> None:
+    """Publish one fully built constructor state with one exact slot write."""
+
+    object.__setattr__(instance, slot_name, state)
+
+
+def _discard_constructor_state(instance: object, slot_name: str) -> None:
+    """Remove a constructor state without invoking instance-level attribute hooks."""
+
+    try:
+        object.__delattr__(instance, slot_name)
+    except AttributeError:
+        pass
+
+
 class _AuthorizedOperationRegistry:
     """Thread-safe, bounded process-local registry owned by exactly one composer."""
 
-    __slots__ = (
-        "__active",
-        "__clock",
-        "__closed",
-        "__last_observed_at",
-        "__lock",
-        "__max_active_operations",
-        "__max_clock_skew",
-        "__max_operation_ttl",
-        "__owner_epoch",
-        "__owner_pid",
-    )
-    __active: dict[int, tuple[weakref.ReferenceType[AuthorizedOperation], _OperationSnapshot]]
-    __clock: ServerClock
-    __closed: bool
-    __last_observed_at: Optional[datetime]
-    __lock: _RLockLike
-    __max_active_operations: int
-    __max_clock_skew: timedelta
-    __max_operation_ttl: timedelta
-    __owner_epoch: object
-    __owner_pid: int
+    __slots__ = ("__state",)
+    __state: _AuthorizedOperationRegistryState
+
+    @property
+    def __active(
+        self,
+    ) -> dict[int, tuple[weakref.ReferenceType[AuthorizedOperation], _OperationSnapshot]]:
+        return self.__state.active
+
+    @property
+    def __clock(self) -> ServerClock:
+        return self.__state.clock
+
+    @property
+    def __closed(self) -> bool:
+        return self.__state.closed
+
+    @__closed.setter
+    def __closed(self, value: bool) -> None:
+        self.__state.closed = value
+
+    @property
+    def __last_observed_at(self) -> Optional[datetime]:
+        return self.__state.last_observed_at
+
+    @__last_observed_at.setter
+    def __last_observed_at(self, value: Optional[datetime]) -> None:
+        self.__state.last_observed_at = value
+
+    @property
+    def __lock(self) -> _RLockLike:
+        return self.__state.lock
+
+    @property
+    def __max_active_operations(self) -> int:
+        return self.__state.max_active_operations
+
+    @property
+    def __max_clock_skew(self) -> timedelta:
+        return self.__state.max_clock_skew
+
+    @property
+    def __max_operation_ttl(self) -> timedelta:
+        return self.__state.max_operation_ttl
+
+    @property
+    def __owner_epoch(self) -> object:
+        return self.__state.owner_epoch
+
+    @__owner_epoch.setter
+    def __owner_epoch(self, value: object) -> None:
+        self.__state.owner_epoch = value
+
+    @property
+    def __owner_pid(self) -> int:
+        return self.__state.owner_pid
 
     def __init__(
         self,
@@ -636,6 +713,7 @@ class _AuthorizedOperationRegistry:
             failure,
             "protected_operation_internal_failure",
         )
+        _discard_constructor_state(self, _REGISTRY_STATE_SLOT)
         del (
             self,
             clock,
@@ -687,33 +765,20 @@ class _AuthorizedOperationRegistry:
             raise TypeError("max_active_operations must be an integer")
         if not 1 <= max_active_operations <= 1_000_000:
             raise ValueError("max_active_operations is outside the supported range")
-        active: dict[
-            int, tuple[weakref.ReferenceType[AuthorizedOperation], _OperationSnapshot]
-        ] = {}
         lock = threading.RLock()
-
-        object.__setattr__(self, "_AuthorizedOperationRegistry__clock", clock)
-        object.__setattr__(
-            self,
-            "_AuthorizedOperationRegistry__max_operation_ttl",
-            validated_operation_ttl,
+        state = _AuthorizedOperationRegistryState(
+            active={},
+            clock=clock,
+            closed=False,
+            last_observed_at=None,
+            lock=lock,
+            max_active_operations=max_active_operations,
+            max_clock_skew=validated_clock_skew,
+            max_operation_ttl=validated_operation_ttl,
+            owner_epoch=owner_epoch,
+            owner_pid=owner_pid,
         )
-        object.__setattr__(
-            self,
-            "_AuthorizedOperationRegistry__max_clock_skew",
-            validated_clock_skew,
-        )
-        object.__setattr__(
-            self,
-            "_AuthorizedOperationRegistry__max_active_operations",
-            max_active_operations,
-        )
-        object.__setattr__(self, "_AuthorizedOperationRegistry__active", active)
-        object.__setattr__(self, "_AuthorizedOperationRegistry__lock", lock)
-        object.__setattr__(self, "_AuthorizedOperationRegistry__closed", False)
-        object.__setattr__(self, "_AuthorizedOperationRegistry__last_observed_at", None)
-        object.__setattr__(self, "_AuthorizedOperationRegistry__owner_pid", owner_pid)
-        object.__setattr__(self, "_AuthorizedOperationRegistry__owner_epoch", owner_epoch)
+        _publish_constructor_state(self, _REGISTRY_STATE_SLOT, state)
         return True
 
     def issue(
@@ -1212,33 +1277,86 @@ class _AuthorizedOperationRegistry:
             del self.__active[identifier]
 
 
+@dataclass(repr=False)
+class _ProtectedOperationComposerState:
+    """Fully built composer state published through one exact slot."""
+
+    authorizer: TenantAuthorizer
+    closed: bool
+    issuer: RequestContextIssuer
+    lock: _RLockLike
+    max_clock_skew: timedelta
+    max_state_age: timedelta
+    operation_ttl: timedelta
+    owner_epoch: object
+    owner_pid: int
+    provider: CurrentAuthorizationStateProvider
+    registry: _AuthorizedOperationRegistry
+
+    def __repr__(self) -> str:
+        return "ProtectedOperationComposerState(<configured>)"
+
+
+_COMPOSER_STATE_SLOT = "_ProtectedOperationComposer__state"
+
+
 class ProtectedOperationComposer:
     """Compose request admission, current state, and tenant authorization exactly once."""
 
-    __slots__ = (
-        "__authorizer",
-        "__closed",
-        "__issuer",
-        "__lock",
-        "__max_clock_skew",
-        "__max_state_age",
-        "__operation_ttl",
-        "__owner_epoch",
-        "__owner_pid",
-        "__provider",
-        "__registry",
-    )
-    __authorizer: TenantAuthorizer
-    __closed: bool
-    __issuer: RequestContextIssuer
-    __lock: _RLockLike
-    __max_clock_skew: timedelta
-    __max_state_age: timedelta
-    __operation_ttl: timedelta
-    __owner_epoch: object
-    __owner_pid: int
-    __provider: CurrentAuthorizationStateProvider
-    __registry: _AuthorizedOperationRegistry
+    __slots__ = ("__state",)
+    __state: _ProtectedOperationComposerState
+
+    @property
+    def __authorizer(self) -> TenantAuthorizer:
+        return self.__state.authorizer
+
+    @property
+    def __closed(self) -> bool:
+        return self.__state.closed
+
+    @__closed.setter
+    def __closed(self, value: bool) -> None:
+        self.__state.closed = value
+
+    @property
+    def __issuer(self) -> RequestContextIssuer:
+        return self.__state.issuer
+
+    @property
+    def __lock(self) -> _RLockLike:
+        return self.__state.lock
+
+    @property
+    def __max_clock_skew(self) -> timedelta:
+        return self.__state.max_clock_skew
+
+    @property
+    def __max_state_age(self) -> timedelta:
+        return self.__state.max_state_age
+
+    @property
+    def __operation_ttl(self) -> timedelta:
+        return self.__state.operation_ttl
+
+    @property
+    def __owner_epoch(self) -> object:
+        return self.__state.owner_epoch
+
+    @__owner_epoch.setter
+    def __owner_epoch(self, value: object) -> None:
+        self.__state.owner_epoch = value
+
+    @property
+    def __owner_pid(self) -> int:
+        return self.__state.owner_pid
+
+    @property
+    def __provider(self) -> CurrentAuthorizationStateProvider:
+        return self.__state.provider
+
+    @property
+    def __registry(self) -> _AuthorizedOperationRegistry:
+        return self.__state.registry
 
     def __init__(
         self,
@@ -1272,6 +1390,7 @@ class ProtectedOperationComposer:
             failure,
             "protected_operation_internal_failure",
         )
+        _discard_constructor_state(self, _COMPOSER_STATE_SLOT)
         del (
             self,
             issuer,
@@ -1346,22 +1465,20 @@ class ProtectedOperationComposer:
             max_active_operations=max_active_operations,
         )
         lock = threading.RLock()
-
-        object.__setattr__(
-            self, "_ProtectedOperationComposer__operation_ttl", validated_operation_ttl
+        state = _ProtectedOperationComposerState(
+            authorizer=authorizer,
+            closed=False,
+            issuer=issuer,
+            lock=lock,
+            max_clock_skew=validated_clock_skew,
+            max_state_age=validated_state_age,
+            operation_ttl=validated_operation_ttl,
+            owner_epoch=owner_epoch,
+            owner_pid=owner_pid,
+            provider=state_provider,
+            registry=registry,
         )
-        object.__setattr__(self, "_ProtectedOperationComposer__max_state_age", validated_state_age)
-        object.__setattr__(
-            self, "_ProtectedOperationComposer__max_clock_skew", validated_clock_skew
-        )
-        object.__setattr__(self, "_ProtectedOperationComposer__registry", registry)
-        object.__setattr__(self, "_ProtectedOperationComposer__issuer", issuer)
-        object.__setattr__(self, "_ProtectedOperationComposer__provider", state_provider)
-        object.__setattr__(self, "_ProtectedOperationComposer__authorizer", authorizer)
-        object.__setattr__(self, "_ProtectedOperationComposer__lock", lock)
-        object.__setattr__(self, "_ProtectedOperationComposer__closed", False)
-        object.__setattr__(self, "_ProtectedOperationComposer__owner_pid", owner_pid)
-        object.__setattr__(self, "_ProtectedOperationComposer__owner_epoch", owner_epoch)
+        _publish_constructor_state(self, _COMPOSER_STATE_SLOT, state)
         return True
 
     def authorize(
