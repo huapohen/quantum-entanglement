@@ -370,6 +370,61 @@ class BackupManifestV2SnapshotTests(unittest.TestCase):
         ):
             derive_backup_manifest_v2_snapshot(closed)
 
+    def test_begin_denial_or_nonopening_fails_closed_without_claiming_a_transaction(
+        self,
+    ) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.execute("VACUUM")
+
+        def deny_begin(
+            action: int,
+            first: Optional[str],
+            _second: Optional[str],
+            _database: Optional[str],
+            _source: Optional[str],
+        ) -> int:
+            if action == sqlite3.SQLITE_TRANSACTION and first == "BEGIN":
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        def allow_all(
+            _action: int,
+            _first: Optional[str],
+            _second: Optional[str],
+            _database: Optional[str],
+            _source: Optional[str],
+        ) -> int:
+            return sqlite3.SQLITE_OK
+
+        try:
+            connection.set_authorizer(deny_begin)
+            with self.assertRaisesRegex(
+                BackupManifestV2SnapshotError,
+                "read_snapshot_begin_read_failed",
+            ):
+                derive_backup_manifest_v2_snapshot(connection)
+            self.assertFalse(connection.in_transaction)
+            connection.set_authorizer(allow_all)
+
+            with (
+                patch.object(snapshot_module, "_execute", return_value=None),
+                self.assertRaisesRegex(
+                    BackupManifestV2SnapshotError,
+                    "read_snapshot_not_opened",
+                ),
+            ):
+                derive_backup_manifest_v2_snapshot(connection)
+            self.assertFalse(connection.in_transaction)
+
+            snapshot = derive_backup_manifest_v2_snapshot(connection)
+            self.assertIs(type(snapshot), BackupManifestV2Snapshot)
+            self.assertFalse(connection.in_transaction)
+        finally:
+            connection.set_authorizer(None)
+            if connection.in_transaction:
+                connection.rollback()
+            connection.close()
+
     def test_public_errors_detach_an_active_exception_context(self) -> None:
         caught: Optional[BackupManifestV2SnapshotError] = None
         try:
