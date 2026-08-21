@@ -523,28 +523,32 @@ python -m compileall -q src tests scripts examples
 git diff --check
 ```
 
-### 11.1 Observed local constructor-hardening evidence
+### 11.1 Observed local authorization-repair evidence
 
-At clean checkpoint `023c3ddbc299dae70faa44bb87b5877aceaba410` (tree
-`b068e6ab525882262decb9e62b5d6452be54682a`) on 2026-08-21, the following local synthetic
+At clean checkpoint `2929b37b1bd5da18e65d913609fb4fdce0b382de` (tree
+`32858a9839cddab1d58da7fa7d8d2a0ed065d0ed`) on 2026-08-21, the following local synthetic
 checks passed:
 
 | Check | Observed result |
 |---|---|
-| Constructor review | Independent read-only review rejected `f4a0995` with two P1 and one P2 findings; all three exact reproducers pass after `9418137` through `967d28a` |
-| Authorization target | 151 tests passed independently with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9 |
-| Repository suite | 890 tests passed independently with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9; see the 3.13 destructor-warning caveat below |
-| Static source gates | Locked Ruff 0.16.3 lint/format and strict mypy 1.19.1 over 35 source files passed |
+| Independent repair review | A new independent read-only review rejected `aaacd80` with three P1 findings: interruptible multi-slot construction, pre-boundary instance callback lookup, and cleanup control overriding an originating body control. Candidate fixes are `fe52abe`, `82b8cb2`, and `0e3e5e6`; a fresh independent review is still required |
+| Adjacent authorization target | 160 tests passed independently with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9: 75 operation-authorization, 47 request-context, and 38 tenancy tests |
+| Repository suite | 899 tests passed independently with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9; see the 3.13 destructor-warning caveat below |
+| Static source gates | Locked Ruff 0.16.3 lint/format over 91 files and strict mypy 1.19.1 over 35 source files passed |
 | Supply-chain baseline | Four dependency-lock targets and 74 exact package records verified |
 | Parse, import, and smoke | Three-version `compileall`, package-root/versioned cold import, deterministic 25-event/3-artifact demo, and `git diff --check` passed |
+| Repository integrity | Five candidate commits from `aaacd80` are linear; candidate ancestry, object fsck, and clean status passed. A high-confidence scan found no candidate-change credential material and no tracked-tree hit outside the pre-existing synthetic fixture at `tests/test_redaction.py:20` (SHA-256 short fingerprint `1d0e3d463537`) |
 
-The adversarial constructor cases cover provider and clock lookup through
+The adversarial construction cases cover provider and clock lookup through
 `__getattribute__`, descriptor-raised `AttributeError`, a mutation-hostile custom
 `BaseException`, exact `KeyboardInterrupt`, `SystemExit`,
 `GeneratorExit`, and `asyncio.CancelledError`, unsafe exit-status collapse, hostile subclass
-initializer lookup, exact-type rejection, first/second lock failure, zero-slot rollback,
-active caller exceptions, constructor argument deletion, completed-frame clearing, normal
-dependency identity, and default denial.
+initializer lookup, exact-type rejection, first/second lock failure, single-slot publication
+cuts immediately before and after the write, ordinary and exact-control interruption,
+post-failure state removal, active caller exceptions, constructor argument deletion,
+completed-frame clearing, normal dependency identity, and default denial. Every composer and
+registry public wrapper is also exercised against hostile instance lookup before the
+boundary; its base implementation callback remains statically bound.
 
 The CPython 3.13 full-suite process exited successfully but printed two unraisable
 destructor-time `ResourceWarning` diagnostics for unclosed SQLite connections in the existing
@@ -555,15 +559,16 @@ warnings, but the repository-wide result must not be represented as warning-clea
 separate backup-test cleanup is fixed and independently verified.
 
 These results are a same-host development checkpoint, not retained release evidence,
-clean-host proof, production adapter evidence, or Gate A promotion. The blockers in
-section 12 remain unchanged.
+clean-host proof, production adapter evidence, independent-review approval, or Gate A
+promotion. The three repairs are only a candidate pending a fresh independent reviewer, and
+the blockers in section 12 remain unchanged.
 
 The dedicated suite covers exact state types/snapshots, redacted representations,
 structural provider injection, hostile provider/clock descriptor lookup during construction,
 descriptor-raised `AttributeError`, static initializer binding, exact subclass rejection,
-zero-slot lock-failure rollback, constructor argument/frame detachment, workspace requirements,
-same-ID cross-tenant isolation, every actor/scope/revision substitution, provider observation
-freshness/future time,
+single-state-slot publication and rollback, static public-wrapper binding, constructor
+argument/frame detachment, workspace requirements, same-ID cross-tenant isolation, every
+actor/scope/revision substitution, provider observation freshness/future time,
 provider and authorizer exception-chain/frame detachment, hostile `BaseException` and safe
 control-signal replacement across construction, authorization, and lifecycle boundaries,
 the complete safe `SystemExit` status matrix, exact `asyncio.CancelledError` propagation,
@@ -580,11 +585,14 @@ raised inside an already active secret-bearing caller exception. They prove that
 constructor failure cannot retain its issuer/provider/authorizer/key ring, that all public
 wrappers delete request/context/handle/lifecycle arguments, and that `__cause__`, `__context__`,
 notes, dynamic attributes, and completed internal locals are detached. Separate construction
-tests prove that lock failure leaves an externally retained exact object with no initialized
-slots. Lifecycle tests
-exercise constructor, composer close/enter/exit, and registry close with all four exact
-control signals; the exit path uses an actual context-manager body exception rather than a
-synthetic direct call.
+tests prove that tested pre-publication and post-publication failures leave an externally
+retained exact object with no published state slot. Lifecycle tests exercise constructor,
+composer close/enter/exit, and registry
+close with all four exact control signals. The exit coverage uses real context managers and
+proves the four exact originating body controls across cleanup success, ordinary failure,
+and all four exact cleanup controls. It also defines and verifies
+ordinary-body/ordinary-cleanup precedence, rejects direct `__exit__` argument spoofing and
+exact-control subclasses, and proves that a truthy cleanup return cannot suppress the body.
 
 The suite also runs real POSIX-fork probes: child issue/prepare/retire/close/enter against an
 inherited issuer, construction of a new composer from that issuer, parent/child
