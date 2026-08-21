@@ -439,6 +439,12 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
                 adapter_calls += 1
                 return str(self)
 
+        class HostileInteger(int):
+            def __conform__(self, _protocol: object) -> int:
+                nonlocal adapter_calls
+                adapter_calls += 1
+                return int(self)
+
         hostile = HostileText("caller-controlled")
         event = DomainEvent(
             "stream:hostile",
@@ -452,6 +458,43 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
 
         with self.assertRaises(TypeError):
             self.store.append(event)
+
+        safe_event = DomainEvent(
+            "stream:safe",
+            "safe.created",
+            {},
+            "actor:test",
+            event_id="event:safe",
+            timestamp="2026-08-21T00:00:00Z",
+        )
+        message = OutboxMessage(
+            "local:test",
+            {},
+            message_id="message:safe",
+            idempotency_key="message:safe",
+            available_at="2026-08-21T00:00:00Z",
+            created_at="2026-08-21T00:00:00Z",
+        )
+        object.__setattr__(message, "destination", hostile)
+        hostile_integer = HostileInteger(1)
+        actions: tuple[Callable[[], object], ...] = (
+            lambda: self.store.append_with_outbox(safe_event, (message,)),
+            lambda: self.store.append_inbox(hostile, "message", safe_event),
+            lambda: self.store.append_many(hostile, (safe_event,)),
+            lambda: self.store.save_snapshot(hostile, 1, {}, "2026-08-21T00:00:00Z"),
+            lambda: self.store.save_snapshot("stream", hostile_integer, {}, hostile),
+            lambda: self.store.claim_outbox(hostile),
+            lambda: self.store.claim_outbox("worker", limit=hostile_integer),
+            lambda: self.store.acknowledge_outbox(hostile, "lease"),
+            lambda: self.store.acknowledge_outbox("message", hostile),
+            lambda: self.store.reject_outbox("message", "lease", hostile),
+            lambda: self.store.mark_outbox_ambiguous("message", hostile, "ack_failed"),
+            lambda: self.store.resolve_outbox_ambiguity(hostile, "0" * 64, "retry"),
+        )
+        for action in actions:
+            with self.subTest(action=action):
+                with self.assertRaises(TypeError):
+                    action()
 
         self.assertEqual(adapter_calls, 0)
         self.assertEqual(self.store.stream_version("stream:hostile"), 0)
