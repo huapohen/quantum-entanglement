@@ -67,6 +67,13 @@ materialized through arbitrary Python callbacks. Rejecting an existing transacti
 the function prove which snapshot it opened and ended; it never commits or rolls back a
 caller-owned transaction.
 
+After those preconditions succeed, the function conservatively adopts transaction
+ownership before it executes `BEGIN`. Both cleanup frames are already installed when the
+SQLite call begins. A denied or non-opening `BEGIN` is accepted as unowned only after the
+exact connection still reports no transaction. If SQLite has entered a transaction before
+the call raises or before Python reaches its next line, the cleanup frames treat that
+transaction as owned and roll it back.
+
 The exact-connection check is necessary but not sufficient for future production use. A
 caller can install authorizer, progress, trace, or conversion callbacks on an exact
 connection, and this function cannot recover the PID/epoch in which the connection was
@@ -85,7 +92,8 @@ is outside the supported operational boundary even if the type checks succeed.
 
 The derivation order is fixed:
 
-1. execute trusted literal `BEGIN` and confirm that SQLite reports an active transaction;
+1. enter two nested structured cleanup frames, execute trusted literal `BEGIN`, and confirm
+   that SQLite reports an active transaction;
 2. run bounded `PRAGMA main.integrity_check(1)` and require the single exact result `ok`;
 3. run `PRAGMA main.foreign_key_check` and require no result row;
 4. read `main.page_count` and `main.page_size` inside the same transaction;
@@ -178,11 +186,30 @@ transaction become a stable `BackupManifestV2SnapshotError` code.
 
 Public errors use a fresh-error trampoline that clears `__context__`, including when the
 function is called inside an active `except` or `__exit__` region. Exact originating
-`KeyboardInterrupt`, `SystemExit`, or `GeneratorExit` takes priority over a cleanup control
-signal. A cleanup control is used only when no originating exact control exists.
+`KeyboardInterrupt`, `SystemExit`, `GeneratorExit`, or `asyncio.CancelledError` takes
+priority over a cleanup control signal. The same originating control object and its
+traceback are propagated with a bare re-raise. A cleanup control is used only when no
+originating exact control exists. Subclasses are not accepted as exact controls.
+
+Control provenance is captured by the lifecycle's own `except` boundary. An unrelated
+control currently being handled by a caller is not evidence that the transaction body
+originated that control and cannot suppress or reclassify a cleanup failure.
+
+The inner cleanup owns the normal path. A second cleanup frame surrounds the complete
+`BEGIN`-through-inner-cleanup interval and retries state inspection plus rollback after one
+transient cleanup error or control. Runtime-state injection tests cover a single exact
+control after `BEGIN` has taken effect, after body success or failure, at cleanup entry, and
+after the real rollback has returned. These tests locate boundaries from exact connection
+state and observed transaction effects, not source line numbers.
 
 Rollback failure blocks a result. The function does not claim that a connection with
-failed cleanup is reusable; the future owner must quarantine and close it.
+failed cleanup is reusable; the future owner must quarantine and close it. The nested
+Python cleanup frames are not an atomic signal mask: repeated asynchronous controls or a
+persistent state-inspection/rollback failure can interrupt or exhaust both cleanup
+attempts. No result is returned in those cases, but this caller-connection checkpoint does
+not own enough lifecycle state to quarantine the connection itself. The operational writer
+must do so. The precise automated guarantee here is one injected asynchronous control, or
+one transient cleanup fault followed by a successful fallback cleanup.
 
 ## Supported schema-state matrix
 
@@ -210,7 +237,13 @@ The focused suite currently covers:
 - exact connection type, row/text factory, closed-connection, and caller-transaction
   rejection;
 - active-exception public error detachment;
-- originating-control precedence over cleanup control;
+- exact `KeyboardInterrupt`, `SystemExit`, `GeneratorExit`, and `CancelledError` at the
+  post-`BEGIN`, body-success, body-failure, cleanup-entry, and post-rollback boundaries;
+- originating-control identity and traceback preservation, including precedence over a
+  cleanup control;
+- rejection of ambient handled controls as originating-control evidence;
+- denied and non-opening `BEGIN`, transient cleanup error/control retry, final transaction
+  state, and subsequent connection reuse;
 - authorizer evidence that derivation performs no row or schema write;
 - a real WAL race in which a writer commits a new projection row while the reader is
   paused before table counts: the result retains the old snapshot count while a later
@@ -224,7 +257,7 @@ Observed local focused verification:
 | Gate | Result |
 |---|---|
 | Python 3.9 / 3.12 / 3.13 codec factory tests, warnings as errors | 34/34 each |
-| Python 3.9 / 3.12 / 3.13 snapshot tests, warnings as errors | 9/9 each |
+| Python 3.9 / 3.12 / 3.13 snapshot tests, warnings as errors | 15/15 each |
 | Python 3.9 / 3.12 / 3.13 topology tests, warnings as errors | 17/17 each |
 | Ruff lint and format | pass |
 | strict mypy for codec + snapshot modules | pass |
