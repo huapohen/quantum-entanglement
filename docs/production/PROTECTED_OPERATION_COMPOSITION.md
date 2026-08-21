@@ -474,6 +474,33 @@ python -m compileall -q src tests scripts examples
 git diff --check
 ```
 
+### 11.1 Observed local constructor-hardening evidence
+
+At clean checkpoint `76b24d767d28e9a8db5287a5c340a2c8b3546ebe` (tree
+`067c1f13049cf183505a51f4f5733b297a406273`) on 2026-08-21, the following local synthetic
+checks passed:
+
+| Check | Observed result |
+|---|---|
+| Constructor regression | Raw provider/clock descriptor faults reproduced before the fix; committed adversarial cases pass after `e79212b` |
+| Authorization target | 148 tests passed independently on CPython 3.9.6, 3.12.12, and 3.13.9 |
+| Repository suite | 887 tests passed independently on CPython 3.9.6, 3.12.12, and 3.13.9 |
+| Static source gates | Locked Ruff 0.16.3 lint/format and strict mypy 1.19.1 over 35 source files passed |
+| Supply-chain baseline | Four dependency-lock targets and 74 exact package records verified |
+| Parse and smoke | Python 3.9 `compileall`, the deterministic 25-event/3-artifact demo, and `git diff --check` passed |
+
+The adversarial constructor cases cover provider and clock lookup through
+`__getattribute__`, a mutation-hostile custom `BaseException`, exact `KeyboardInterrupt`,
+`SystemExit`, `GeneratorExit`, and `asyncio.CancelledError`, unsafe exit-status collapse,
+active caller exceptions, constructor argument deletion, completed-frame clearing, normal
+dependency identity, and default denial. The CPython 3.12/3.13 fork deprecation warning is
+an interpreter warning about multithreaded POSIX `fork`; the tested child still failed
+closed and the parent remained usable.
+
+These results are a same-host development checkpoint, not retained release evidence,
+clean-host proof, production adapter evidence, or Gate A promotion. The blockers in
+section 12 remain unchanged.
+
 The dedicated suite covers exact state types/snapshots, redacted representations,
 structural provider injection, hostile provider/clock descriptor lookup during construction,
 constructor argument/frame detachment, workspace requirements, same-ID cross-tenant isolation,

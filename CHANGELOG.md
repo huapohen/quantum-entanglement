@@ -38,6 +38,9 @@ release. Promotion additionally requires the evidence defined in
 - Public request-context and protected-operation boundary failures now detach completed
   internal traceback locals and explicitly clear any active caller exception context,
   including real context-manager body failures, before a code-only error escapes.
+- Protected-operation composer and registry construction now contain provider/clock
+  descriptor failures inside the same hostile-dependency boundary, delete constructor
+  inputs before public rethrow, and reissue only bounded clean control signals.
 - Exact operation control signals are reissued without dependency exception state;
   `SystemExit` preserves only `None`, exact booleans, or exact integer status 0 through 255
   and maps every other status to `1`.
