@@ -63,6 +63,9 @@ class DistributionManifestTests(unittest.TestCase):
         package.mkdir(parents=True)
         tests.mkdir()
         (self.repository / "LICENSE").write_text("fixture license\n", encoding="utf-8")
+        (self.repository / "MANIFEST.in").write_text(
+            "include tests/__init__.py\n", encoding="utf-8"
+        )
         (self.repository / "README.md").write_text("# Fixture\n", encoding="utf-8")
         (self.repository / "pyproject.toml").write_text(
             "[build-system]\n"
@@ -77,6 +80,7 @@ class DistributionManifestTests(unittest.TestCase):
         (package / "admin_cli.py").write_text("def main(): return 0\n", encoding="utf-8")
         (package / "cli.py").write_text("def main(): return 0\n", encoding="utf-8")
         (package / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (tests / "__init__.py").write_text('"""Fixture tests."""\n', encoding="utf-8")
         (tests / "test_fixture.py").write_text("def test_fixture(): pass\n", encoding="utf-8")
 
     @property
@@ -99,7 +103,7 @@ class DistributionManifestTests(unittest.TestCase):
             for path in sorted((self.repository / prefix).rglob("*")):
                 if path.is_file():
                     result[path.relative_to(self.repository).as_posix()] = path.read_bytes()
-        for name in ("LICENSE", "README.md", "pyproject.toml"):
+        for name in ("LICENSE", "MANIFEST.in", "README.md", "pyproject.toml"):
             result[name] = (self.repository / name).read_bytes()
         return result
 
