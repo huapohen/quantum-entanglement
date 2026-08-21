@@ -33,9 +33,12 @@ recovery, or establish a production RPO/RTO. Those remain deployment and release
 The inert [exact topology registry](../architecture/SQLITE_BACKUP_TOPOLOGY_REGISTRY.md)
 freezes the catalog vocabulary required by a future manifest v2 verifier. The separate
 [manifest v2 exact codec](../architecture/SQLITE_BACKUP_MANIFEST_V2_CODEC.md) can validate
-and canonically round-trip in-memory v2 evidence for compatibility development. Neither
-module is imported by the active v1 create/verify/restore path, the CLI has no v2 dispatch,
-and no v2 backup is operationally readable or writable.
+and canonically round-trip in-memory v2 evidence for compatibility development. The
+[single-snapshot derivation checkpoint](../architecture/SQLITE_BACKUP_V2_SNAPSHOT_DERIVATION.md)
+can build that evidence from one caller-supplied exact SQLite connection but does not own
+the file or process boundary. None of these modules is imported by the active v1
+create/verify/restore path, the CLI has no v2 dispatch, and no v2 backup is operationally
+readable or writable.
 
 ## Supported operating assumptions
 
