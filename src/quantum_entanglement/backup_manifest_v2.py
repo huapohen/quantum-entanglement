@@ -1,10 +1,12 @@
 # ruff: noqa: UP006, UP035, UP045
-"""Pure, exact codec for the inactive SQLite backup manifest v2 format.
+"""Exact codec for the inactive SQLite backup manifest v2 format.
 
-This module deliberately contains no filesystem or SQLite access.  The active backup
+Explicit import initializes the trusted topology and domain-migration registries, which
+read packaged ``*.up.sql`` resources to cross-bind their identities.  After that import
+boundary, codec operations perform no filesystem or SQLite access.  The active backup
 creator, verifier, and restore path continue to use :class:`backup.BackupManifest` and
-format ``qe.sqlite-backup/1`` exclusively.  V2 values can therefore be modelled and
-round-tripped for compatibility work without making v2 backup or restore reachable.
+format ``qe.sqlite-backup/1`` exclusively, so modelling and round-tripping v2 values does
+not make v2 backup or restore reachable.
 """
 
 from __future__ import annotations
