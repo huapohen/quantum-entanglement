@@ -3,7 +3,7 @@
 Status: implemented and tested process-local composition primitive; **fake-only, not wired
 to a repository, not production-ready, and not a Gate A completion claim**
 
-Last reviewed: 2026-08-20
+Last reviewed: 2026-08-21
 
 This document defines the narrow boundary implemented in
 `src/quantum_entanglement/operation_authorization.py`. The boundary composes one trusted
@@ -324,14 +324,15 @@ writes by throwing another secret-bearing exception.
 
 `raise ... from None` only suppresses presentation of Python's implicit exception chain;
 it does not make the programmatically readable `__context__` field `None`. Every public
-registry/composer rethrow therefore raises its fresh exception inside the same public
-frame, catches that exact fresh object, clears `__context__`, and uses a bare re-raise. This
-also applies to constructor process rejection and context-manager lifecycle failure. A
-failure raised while the caller is already handling another exception—including a real
-`with composer:` body exception—cannot retain that caller exception, its request, provider,
-authorizer, key ring, handle, or other attached state. Completed internal frames are
-cleared, while the remaining library traceback contains only the public entry frame (and
-the bounded control-signal helper for a reissued signal).
+registry/composer replacement rethrow therefore raises its fresh exception inside the same
+public frame, catches that exact fresh object, clears `__context__`, and uses a bare
+re-raise. This also applies to constructor process rejection and context-manager cleanup
+failure. When such a replacement is selected while the caller is already handling an
+ordinary exception—including a real `with composer:` body exception—the public replacement
+cannot retain that caller exception, its request, provider, authorizer, key ring, handle, or
+other attached state. Completed internal frames are cleared, while the remaining library
+traceback contains only the public entry frame (and the bounded control-signal helper for a
+reissued signal).
 
 Configured dependencies are treated as hostile exception boundaries, including custom
 classes that inherit directly from `BaseException`. A non-control `BaseException` becomes
@@ -349,11 +350,38 @@ to constructor and registry/composer authorization and lifecycle boundaries, pre
 dependency from smuggling tenant or credential material through a control-shaped exception
 while preserving async-worker cancellation and ordinary bounded exit status.
 
+`ProtectedOperationComposer.__exit__` has a narrower rule for a control signal genuinely
+originating in a `with composer:` body. It matches the interpreter's active exception type,
+value, and traceback by identity against the three arguments supplied to `__exit__`, then
+requires the value to have the exact type `KeyboardInterrupt`, `SystemExit`,
+`GeneratorExit`, or `asyncio.CancelledError`. It reads no exception attribute. When this
+match succeeds, cleanup success, an ordinary cleanup failure, or any exact cleanup control
+signal cannot replace the originating signal: `__exit__` returns a false value and Python
+continues propagating the same body object with its caller-owned traceback, status,
+cause/context, and other state unchanged. This is intentionally different from a control
+signal raised by a configured dependency, which is replaced through the bounded policy
+above. Directly passing a control object to `__exit__`, passing an unrelated active
+exception, or passing a control-signal subclass does not gain originating-signal priority.
+The cleanup return value is always ignored and can never suppress a body exception.
+
+When there is no genuine exact originating control signal, ordinary context-manager rules
+are narrowed as follows. Successful cleanup returns a false value, so an ordinary body
+exception continues unchanged. An exact cleanup control signal is reissued as a fresh
+bounded signal and replaces an ordinary body exception. An ordinary cleanup failure is
+converted to a fresh stable code-only `OperationAuthorizationError` and likewise replaces
+an ordinary body exception; its public cause/context chain and completed internal locals
+are detached. Cleanup failure is therefore operationally significant, while process
+termination and cancellation already in progress remain authoritative.
+
 Composer and registry constructors statically bind their exact class initializer before
-entering the boundary; neither resolves `_initialize` through the supplied instance. Only an
-exact `ProtectedOperationComposer` and exact internal registry may initialize. A subclass or
-other receiver fails closed inside the boundary rather than gaining a virtual descriptor path
-before containment.
+entering the boundary; neither resolves `_initialize` through the supplied instance. Every
+public composer and registry wrapper applies the same rule to its private implementation:
+the base-class callable is bound without reading `_authorize`, `_consume`, `_issue`,
+`_close`, or another callback through the supplied instance. A hostile instance lookup can
+therefore fail only after entering the containment boundary. Only an exact
+`ProtectedOperationComposer` and exact internal registry may initialize. A subclass or
+other receiver fails closed inside the boundary rather than gaining a virtual descriptor
+path before containment.
 
 Inside that boundary, provider `load_current_state` and clock `now` lookup deliberately uses
 attribute access without a default. A missing attribute and an `AttributeError` raised by a
@@ -364,13 +392,17 @@ non-callable result maps to the same dependency-specific code. An inherited issu
 the distinct `protected_operation_process_mismatch` code; other invalid constructor state
 without an already supported stable code becomes `protected_operation_internal_failure`.
 
-All fallible validation, registry creation, and lock creation complete in locals before the
-exact object's slots are published. If any of them fails, an externally retained object made
-with `object.__new__` remains uninitialized rather than retaining a clock, registry, issuer,
-provider, or authorizer. Before the public construction failure escapes, the constructor also
-deletes every supplied dependency and configuration argument from its public frame. Exact
-control signals are reissued through the bounded policy above; other failures become fresh
-code-only errors.
+All fallible validation, registry creation, lock creation, and exact internal state assembly
+complete in locals before publication. The composer and registry each expose only one
+`__state` slot; a fully built exact internal state object is published with one
+`object.__setattr__` slot write. If construction is interrupted immediately before or after
+that write, or fails anywhere else, the outer constructor removes the single state slot. An
+externally retained object made with `object.__new__` therefore remains uninitialized rather
+than retaining a partial clock, registry, issuer, provider, authorizer, lock, or active-map
+configuration. Before the public construction failure escapes, the constructor also deletes
+every supplied dependency and configuration argument from its public frame. Exact control
+signals are reissued through the bounded policy above; other failures become fresh code-only
+errors.
 
 Representative codes are grouped below. Callers must treat every code as denial and must
 not retry an irreversible effect without a new reviewed idempotency policy.
