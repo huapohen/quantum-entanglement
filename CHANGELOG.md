@@ -5,6 +5,37 @@ version is promoted; repository commits and passing tests alone do not constitut
 release. Promotion additionally requires the evidence defined in
 `docs/production/RELEASE_GATES.md`.
 
+## [0.1.0-local-trial.2] - 2026-08-21
+
+This is a non-promoted, loopback-only synthetic trial checkpoint. It does not open any
+production gate and does not authorize a real connector or external message.
+
+### Fixed
+
+- Made the source distribution inventory exact by explicitly packaging the tracked
+  `tests/__init__.py` marker and binding `MANIFEST.in` into the source manifest.
+- Accepted POSIX sticky writable ancestors only when every existing ancestor is owned by
+  root or the effective service user, while rejecting attacker-owned intermediate paths.
+- Fenced a restored temporary SQLite file by inode identity before reopening its descriptor,
+  preserving the correct path-replacement failure on Linux.
+- Removed a Python 3.9 fork-probe ordering dependency by collecting unrelated stale store
+  cycles while the parent process still owns their resources.
+
+### Verified
+
+- CPython 3.9, 3.12, and 3.13 each pass all 1,109 tests; Python 3.9 has one expected
+  version-capability skip.
+- Ruff lint/format, strict mypy, dependency locks, compileall, shell syntax, and strict Git
+  object validation pass on the checkpoint tree.
+- Two clean, independent locked builds produce byte-identical wheels and normalized sdists;
+  the source-bound distribution manifest, SBOM verification, CycloneDX 1.6 schema check,
+  and fresh-environment wheel smoke test pass.
+
+### Supersedes
+
+- `v0.1.0-local-trial.1` remains immutable for audit history but is superseded because its
+  first Linux CI run exposed the path-validation and sdist-inventory defects fixed here.
+
 ## [Unreleased]
 
 ### Added
@@ -150,5 +181,6 @@ release. Promotion additionally requires the evidence defined in
 - A2A data mapping, LangGraph bridge, mention routing, and isolated Harness runtime port.
 - Dependency-free three-Agent demo and 54 deterministic baseline tests.
 
-There is intentionally no version tag for this baseline. It is not supported for
-internet-facing, multi-tenant, or irreversible production workloads.
+This baseline is not a promoted release. Annotated `v0.1.0-local-trial.*` tags may record
+local trial checkpoints, but they do not authorize internet-facing, multi-tenant, or
+irreversible production workloads.
