@@ -674,7 +674,7 @@ checks were observed:
 | Static source gates | Locked Ruff 0.16.3 lint/format over 91 files and strict mypy 1.19.1 over 35 source files passed |
 | Supply-chain baseline | Four dependency-lock targets and 74 exact package records verified |
 | Parse, import, and smoke | Three-version `compileall`, package-root/versioned cold import, deterministic 25-event/3-artifact demo, and `git diff --check` passed |
-| Repository integrity | The 40 candidate commits from `b19ab6c` through `a60245a` are linear with no merge, the checkpoint was clean, and `git diff --check` passed |
+| Repository integrity | The 40-commit candidate range `b19ab6c..a60245a` is linear with no merge, the checkpoint was clean, and `git diff --check` passed |
 
 The adversarial construction cases cover provider and clock lookup through
 `__getattribute__`, descriptor-raised `AttributeError`, a mutation-hostile custom
