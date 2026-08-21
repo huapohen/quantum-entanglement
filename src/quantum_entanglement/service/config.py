@@ -260,13 +260,23 @@ class ServiceConfig:
             if stat.S_ISLNK(metadata.st_mode):
                 raise ConfigurationError("configuration_path_symlink", field)
             is_leaf = index == len(path.parts) - 1
-            if (
-                not is_leaf
-                and stat.S_ISDIR(metadata.st_mode)
-                and stat.S_IMODE(metadata.st_mode) & 0o022
-                and not ServiceConfig._is_protected_writable_ancestor(metadata)
-            ):
-                raise ConfigurationError("configuration_path_ancestor_permissions", field)
+            if not is_leaf and stat.S_ISDIR(metadata.st_mode):
+                if not ServiceConfig._has_trusted_ancestor_owner(metadata):
+                    raise ConfigurationError("configuration_path_ancestor_owner", field)
+                if (
+                    stat.S_IMODE(metadata.st_mode) & 0o022
+                    and not ServiceConfig._is_protected_writable_ancestor(metadata)
+                ):
+                    raise ConfigurationError("configuration_path_ancestor_permissions", field)
+
+    @staticmethod
+    def _has_trusted_ancestor_owner(metadata: os.stat_result) -> bool:
+        if os.name != "posix":
+            return True
+        get_effective_uid = getattr(os, "geteuid", None)
+        if get_effective_uid is None:
+            return False
+        return metadata.st_uid in {0, get_effective_uid()}
 
     @staticmethod
     def _is_protected_writable_ancestor(metadata: os.stat_result) -> bool:
@@ -274,10 +284,7 @@ class ServiceConfig:
 
         if os.name != "posix" or not metadata.st_mode & stat.S_ISVTX:
             return False
-        get_effective_uid = getattr(os, "geteuid", None)
-        if get_effective_uid is None:
-            return False
-        return metadata.st_uid in {0, get_effective_uid()}
+        return ServiceConfig._has_trusted_ancestor_owner(metadata)
 
     @classmethod
     def _validate_directory(cls, path: Path, field: str) -> None:
