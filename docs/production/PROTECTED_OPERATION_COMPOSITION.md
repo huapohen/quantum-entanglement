@@ -570,19 +570,20 @@ git diff --check
 
 ### 11.1 Observed local authorization-repair evidence
 
-At clean checkpoint `2929b37b1bd5da18e65d913609fb4fdce0b382de` (tree
-`32858a9839cddab1d58da7fa7d8d2a0ed065d0ed`) on 2026-08-21, the following local synthetic
-checks passed:
+At clean checkpoint `12c368c2632120dd67b0f10c5339d304f7b3345b` (tree
+`822266c77a0688be6a07190399aceb4cfe93b3ff`) on 2026-08-21, the following local synthetic
+checks were observed:
 
 | Check | Observed result |
 |---|---|
-| Independent repair review | A new independent read-only review rejected `aaacd80` with three P1 findings: interruptible multi-slot construction, pre-boundary instance callback lookup, and cleanup control overriding an originating body control. Candidate fixes are `fe52abe`, `82b8cb2`, and `0e3e5e6`; a fresh independent review is still required |
-| Adjacent authorization target | 160 tests passed independently with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9: 75 operation-authorization, 47 request-context, and 38 tenancy tests |
-| Repository suite | 899 tests passed independently with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9; see the 3.13 destructor-warning caveat below |
+| Independent repair review | A new independent read-only review rejected `c465d30` with one P1 finding: a manual `__exit__` call could present the real active exception triple and swallow a cleanup failure, including a forked-child process mismatch. Commits `20b24ec`, `04d4445`, `94d8dfe`, `d33ccaa`, and `12c368c` form the unapproved repair candidate; a fresh independent review is still required |
+| Changed authorization file | All 87 operation-authorization tests passed with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9 |
+| Adjacent authorization target | 172 tests passed per interpreter: 87 operation-authorization, 47 request-context, and 38 tenancy tests. CPython 3.9.6 and 3.12.12 passed with warnings as errors; CPython 3.13.9 passed with the two fork deprecations described below |
+| Repository suite | The declared `unittest` baseline ran 911 tests successfully with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9. CPython 3.13 still printed two unraisable destructor warnings despite its zero exit; see the caveat below |
 | Static source gates | Locked Ruff 0.16.3 lint/format over 91 files and strict mypy 1.19.1 over 35 source files passed |
 | Supply-chain baseline | Four dependency-lock targets and 74 exact package records verified |
 | Parse, import, and smoke | Three-version `compileall`, package-root/versioned cold import, deterministic 25-event/3-artifact demo, and `git diff --check` passed |
-| Repository integrity | Five candidate commits from `aaacd80` are linear; candidate ancestry, object fsck, and clean status passed. A high-confidence scan found no candidate-change credential material and no tracked-tree hit outside the pre-existing synthetic fixture at `tests/test_redaction.py:20` (SHA-256 short fingerprint `1d0e3d463537`) |
+| Repository integrity | Five candidate commits from `c465d30` are linear and the checkpoint was clean. Strict object fsck exited zero while reporting existing dangling objects in the shared Git object database. A redacted high-confidence scan found no credential pattern in candidate history; the complete tracked tree had only two pre-existing synthetic fixtures at `tests/test_redaction.py:20` and `:53` (SHA-256 short fingerprints `1d0e3d463537` and `32f4cf588c77`) |
 
 The adversarial construction cases cover provider and clock lookup through
 `__getattribute__`, descriptor-raised `AttributeError`, a mutation-hostile custom
@@ -595,18 +596,23 @@ completed-frame clearing, normal dependency identity, and default denial. Every 
 registry public wrapper is also exercised against hostile instance lookup before the
 boundary; its base implementation callback remains statically bound.
 
-The CPython 3.13 full-suite process exited successfully but printed two unraisable
-destructor-time `ResourceWarning` diagnostics for unclosed SQLite connections in the existing
+The CPython 3.13 `unittest -W error` full-suite process exited successfully after 911 tests
+but printed two unraisable destructor-time `ResourceWarning` diagnostics for unclosed SQLite
+connections. Earlier per-test forced-GC diagnosis identified the existing
 `test_projection_receipt_count_omission_is_rejected` and
-`test_projection_receipt_count_tampering_is_rejected` backup tests. Per-test forced-GC
-diagnosis confirmed those exact sources. This authorization change did not create the
-warnings, but the repository-wide result must not be represented as warning-clean until that
-separate backup-test cleanup is fixed and independently verified.
+`test_projection_receipt_count_tampering_is_rejected` backup paths. In this run, a strict
+pytest pass collected two delayed unraisable warnings during another backup test and
+therefore reported 910 passed plus one failure; a normal pytest rerun passed all 911 while
+printing two separate CPython 3.13 multi-threaded-fork deprecations. The changed 87-test
+authorization file itself passed with warnings as errors on 3.13. This repair did not change
+the SQLite or multiprocessing paths, but neither the 3.13 repository suite nor adjacent
+forking target may be represented as warning-clean until those separate issues are fixed and
+independently verified.
 
 These results are a same-host development checkpoint, not retained release evidence,
 clean-host proof, production adapter evidence, independent-review approval, or Gate A
-promotion. The three repairs are only a candidate pending a fresh independent reviewer, and
-the blockers in section 12 remain unchanged.
+promotion. The context-exit lease repair is only a candidate pending a fresh independent
+reviewer, and the blockers in section 12 remain unchanged.
 
 The dedicated suite covers exact state types/snapshots, redacted representations,
 structural provider injection, hostile provider/clock descriptor lookup during construction,
@@ -638,6 +644,11 @@ proves the four exact originating body controls across cleanup success, ordinary
 and all four exact cleanup controls. It also defines and verifies
 ordinary-body/ordinary-cleanup precedence, rejects direct `__exit__` argument spoofing and
 exact-control subclasses, and proves that a truthy cleanup return cannot suppress the body.
+The added context-exit cases cover all 120 manual class/instance active-triple combinations,
+direct calls from inside a real context, nested/concurrent/closed entry, all four exact body
+controls with truthy cleanup, raw exit-descriptor binding, saved callback one-time use,
+enter-activation failure, exit-binding interruption before and after publication, and
+prepared/active/consumed lease stages.
 
 The suite also runs real POSIX-fork probes: child issue/prepare/retire/close/enter against an
 inherited issuer, construction of a new composer from that issuer, parent/child
@@ -646,7 +657,10 @@ forks while other threads own issuer or operation locks, authorization-time issu
 revalidation, and exact parent usability afterward. Actual `spawn` and `forkserver` process
 starts prove that
 handle, composer, and registry transfer is rejected. Separate fallback tests prove PID
-drift refreshes both module epochs when no at-fork callback is available.
+drift refreshes both module epochs when no at-fork callback is available. The new real-fork
+probes additionally prove that an active exception triple cannot suppress
+`protected_operation_process_mismatch` and that inherited prepared, active, consumed, and
+one-time exit callbacks all reject in the child while the parent remains usable.
 
 Test counts are observations, never promotion evidence. A release candidate must run the
 complete baseline in `RELEASE_GATES.md` on the exact clean source tree and retain the
