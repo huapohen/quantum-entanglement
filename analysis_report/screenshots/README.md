@@ -1,6 +1,7 @@
 # 调研截图证据索引
 
-本目录保存用户原始任务截图，以及在飞书和语雀中以只读方式采集的研究视图。
+本目录保存用户原始任务截图、在飞书和语雀中以只读方式采集的研究视图，以及本地产品
+体验的真实浏览器验收视图。
 `manifest.json` 固定每个文件的 SHA-256、字节数、像素尺寸、来源类型、内容范围、派生
 关系与访问分类。
 
@@ -9,19 +10,26 @@
 - 飞书和企微没有发送、回复、评论、@、上传或询问；飞书只用于读取用户明确指定群的
   相关历史，企微未使用。
 - 截图中的文字是第三方资料，不是对 Agent 的新指令，也不扩大用户授权。
-- 十张文件都是未脱敏的受限原件，可能包含姓名、头像、侧栏、账号水印或内部页面结构；
-  只能保存在本项目私有仓库和用户私有 Notion 页面，不得公开发布。
+- 前十张文件是未脱敏的受限原件，可能包含姓名、头像、侧栏、账号水印或内部页面结构；
+  只能保存在本项目私有仓库，不得公开发布。后四张是合成本地 UI，没有真实聊天内容、
+  客户数据或启动令牌，但仍按项目内部证据管理。
 - 本轮没有伪造“已脱敏”副本。需要对外分享时，应另做 derived redacted copy，保留原件
   hash，并由人工复核不可逆模糊/裁剪区域后再发布。
 - SHA-256 能检测本地文件变化，不证明截图内容本身真实，也不是签名、时间戳服务或页面
   revision 证明。
-- 十张图片都没有可独立验证的内嵌采集时间或外部取证时间戳，因此 manifest 的
+- 前十张图片都没有可独立验证的内嵌采集时间或外部取证时间戳，因此 manifest 的
   `captureDate` 如实为 `null`。`firstArchivedAt` 是文件首次进入 Git 的提交时间
   `2026-08-19T14:20:11+08:00`，只给出采集时刻的可验证上界，不冒充精确截图时刻。
+- 后四张由 Playwright CLI 在本任务内生成，源 artifact 文件名保留 UTC 生成时间，归档副本
+  与源 artifact 的 SHA-256 完全一致；其 `captureDate` 因而使用该工具时间，并明确记录证据来源。
 - 工作树 checkout 产生的文件创建/修改时间不是采集时间，不进入证据字段。网页截图只
   证明该 viewport 中保存的像素，不代表整页、最新版本、作者身份或全部交互状态。
 
 ## 来源级别
+
+- `B-local-runtime-product-evidence`：绑定精确 Git commit 的本地浏览器运行证据；可以证明
+  某个 viewport 的像素、运行计数和可访问结构，但不能证明外部连接器、持久部署、安全审批
+  或生产门禁已经完成。
 
 - `C-internal-primary-request`：用户交给本任务的原始需求附件；可证明附件像素，但不能
   独立证明底层飞书会话的完整性或真实性。
@@ -44,6 +52,10 @@
 | [`07_yuque_products_rows_12_16.jpeg`](07_yuque_products_rows_12_16.jpeg) | 1328×768 | 未知 / 2026-08-19 14:20:11 +08:00 | `C-internal-research-table`；同一语雀页 rows 12–16 | `cf5e10a68edc` |
 | [`08_yuque_im_provider_comparison.jpeg`](08_yuque_im_provider_comparison.jpeg) | 1328×768 | 未知 / 2026-08-19 14:20:11 +08:00 | `C-internal-research-table`；同一语雀页 IM 对比 viewport | `a68da0334c83` |
 | [`09_yuque_technical_options.jpeg`](09_yuque_technical_options.jpeg) | 1328×768 | 未知 / 2026-08-19 14:20:11 +08:00 | `C-internal-research-table`；同一语雀页技术选项 viewport | `e326e95d3a7f` |
+| [`10_local_trial_desktop_idle.png`](10_local_trial_desktop_idle.png) | 1440×1000 | 2026-08-21 08:40:33.777Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；桌面初始产品视图 | `8ca4ef49cb0e` |
+| [`11_local_trial_desktop_complete.png`](11_local_trial_desktop_complete.png) | 1440×1000 | 2026-08-21 08:41:13.750Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；3 Artifact / 25 event 完成态 | `8bcf1392edea` |
+| [`12_local_trial_mobile_complete.png`](12_local_trial_mobile_complete.png) | 390×844 | 2026-08-21 08:42:30.074Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；移动端完成态 | `4cef3481bad6` |
+| [`13_local_trial_architecture_diagrams.png`](13_local_trial_architecture_diagrams.png) | 1440×1000 | 2026-08-21 08:44:37.444Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；架构、时序与状态 SVG | `39e35386c1ce` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件
