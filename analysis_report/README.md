@@ -36,7 +36,7 @@
 | `research/13_206acc1_transaction_release_evidence.md` | 发布证据快照：`206acc1` | canonical-parent 安全事务候选的 5/5 source-bound evidence、三版本 884-test 扩展门禁、JSON digest 与集成边界 |
 | `research/14_ca02903_attempt_replay_release_evidence.md` | 组合证据快照：`9c24274` | process-identity canonical 上 24 笔安全重放、逐提交专项、三版本 901-test 门禁、预期 fork warning 精确断言与新 evidence digest |
 | `research/15_event_store_process_boundary_audit.md` | 接入前设计审计 | `SQLiteEventStore` 的 26 个公开/生命周期入口、exact SQL snapshot、资源创建进程专属 cleanup、clean-error trampoline、iterator fork 缝隙、fresh-connection 测试与 13 提交接入序列；尚未改变 store 行为 |
-| `research/16_event_store_process_binding_implementation.md` | 待独立复核的实现候选 | `SQLiteEventStore` 全入口 process binding、exact SQL snapshot、完整 inherited graph quarantine、transaction/migration/constructor/context owner cleanup、nested clean error、child GC/finalizer 与 fork/spawn/forkserver fresh CAS；三版本 928-test checkpoint，Gate A–E 保持关闭 |
+| `research/16_event_store_process_binding_implementation.md` | 独立复核通过的单组件候选 | `SQLiteEventStore` 全入口 process binding、exact SQL snapshot、完整 inherited graph quarantine、transaction/migration/constructor/context owner cleanup、nested clean error、child GC/finalizer 与 fork/spawn/forkserver fresh CAS；独立 P0–P3 均为 0，三版本 928-test checkpoint，Gate A–E 保持关闭 |
 
 ## 已归档截图
 
