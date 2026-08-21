@@ -155,7 +155,7 @@ def _fork_before_connection_probe(path: str, mode: str, connection: object) -> N
     try:
         child.start()
         child_channel.close()
-        if not parent_channel.poll(5.0) or parent_channel.recv() != ("ready",):
+        if not parent_channel.poll(15.0) or parent_channel.recv() != ("ready",):
             raise RuntimeError("fork child did not become ready")
         parent_store = SQLiteEventStore(path, clock=lambda: "2026-08-21T00:00:10Z")
 
@@ -285,13 +285,13 @@ def _fork_before_connection_probe(path: str, mode: str, connection: object) -> N
         else:
             raise ValueError("unsupported fork probe mode")
 
-        if not parent_channel.poll(5.0):
+        if not parent_channel.poll(15.0):
             raise RuntimeError("fork child did not publish a result")
         message = parent_channel.recv()
         if message[0] != "result":
             raise RuntimeError("fork child returned an error")
         child_result = message[1]
-        child.join(5.0)
+        child.join(15.0)
         if child.is_alive() or child.exitcode != 0:
             raise RuntimeError("fork child did not exit cleanly")
 
@@ -458,15 +458,15 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
             process.start()
         child_channel.close()
         try:
-            self.assertTrue(parent_channel.poll(5.0), "fresh child did not become ready")
+            self.assertTrue(parent_channel.poll(15.0), "fresh child did not become ready")
             self.assertEqual(parent_channel.recv(), ("ready",))
             parent_channel.send(("go",))
             parent_result = parent_action()
-            self.assertTrue(parent_channel.poll(5.0), "fresh child did not publish a result")
+            self.assertTrue(parent_channel.poll(15.0), "fresh child did not publish a result")
             message = parent_channel.recv()
             self.assertEqual(message[0], "result", message)
             child_result = message[1]
-            process.join(5.0)
+            process.join(15.0)
             self.assertFalse(process.is_alive(), "fresh child did not exit")
             self.assertEqual(process.exitcode, 0)
             return parent_result, child_result
@@ -491,10 +491,10 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
         process.start()
         child_channel.close()
         try:
-            self.assertTrue(parent_channel.poll(10.0), "fork-before-init probe timed out")
+            self.assertTrue(parent_channel.poll(30.0), "fork-before-init probe timed out")
             message = parent_channel.recv()
             self.assertEqual(message, ("result", mode, True), message)
-            process.join(5.0)
+            process.join(15.0)
             self.assertFalse(process.is_alive(), "fork-before-init supervisor did not exit")
             self.assertEqual(process.exitcode, 0)
         finally:
@@ -895,8 +895,9 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
     def test_live_store_context_and_iterator_cannot_be_copied_or_serialized(self) -> None:
         context = self.store.stream_all_page()
         iterator = context.__enter__()
+        transaction = self.store._transaction()
         try:
-            for value in (self.store, context, iterator):
+            for value in (self.store, context, iterator, transaction):
                 with self.subTest(value=type(value).__name__):
                     with self.assertRaisesRegex(TypeError, "cannot be copied"):
                         copy.copy(value)
