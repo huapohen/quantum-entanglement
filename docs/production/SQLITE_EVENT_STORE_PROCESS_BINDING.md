@@ -9,11 +9,12 @@
 ## 1. 唯一安全结论
 
 - 已构造的 `SQLiteEventStore`、其 `sqlite3.Connection`、`RLock`、transaction context、stream
-  context/iterator 和 clock 都只属于 constructor 捕获的 exact PID + opaque epoch。
+  context/iterator、clock 及其可达依赖图都只属于 constructor 捕获的 exact PID + opaque epoch。
 - fork child 对 inherited instance 的 read、write、close、enter、exit、stream enter 和每次 iterator
   resume 都得到 exact `EventStoreLifecycleError("event_store_process_mismatch")`。
 - child mismatch 不检查 transaction state，不执行 rollback/commit/close，不释放 inherited `RLock`，
-  也不依赖 connection finalizer。
+  也不依赖 connection finalizer。首次 mismatch 会 identity-only 去重并强引用隔离完整 live graph；
+  即使 child 未调用入口而直接丢弃 store，owner-aware `__del__` 也会复活并隔离该 graph。
 - 多进程共享同一 SQLite 文件只允许各进程在 worker 创建完成后 fresh construct store。fresh
   connections 仍由 WAL、`BEGIN IMMEDIATE` 和 durable CAS 协调。
 - guard 不是 preload/fork live graph 的许可，也不能擦除 fork 前已复制到 child 的 secret/provider
@@ -38,7 +39,8 @@
 parent copy 继续得到剩余 exact positions，无 gap 或 duplicate。
 
 live store、transaction context、stream context 和 iterator 均拒绝 copy、deepcopy 和 pickle。这只
-阻止显式传输；fork 拒绝仍由 owner guard 完成。
+阻止显式传输；fork 拒绝仍由 owner guard 完成。transaction context 的未 enter、已 enter 后 exit
+也各自重新检查；child 不 resume inherited transaction generator。
 
 ## 3. exact SQL snapshot
 
@@ -85,9 +87,16 @@ clock 在 open transaction 中调用，但 `_now()` 在 callback 前后各 guard
 后再次 guard。clock 内真实 fork 时，child 在第一次后续 SQL 前拒绝，parent commit exactly once。
 
 current-process 的普通 body/driver error 保持 rollback 语义。若 originating exception 是 exact
-`KeyboardInterrupt`、`SystemExit`、`GeneratorExit` 或 `asyncio.CancelledError`，rollback/close 的
-cleanup control 不得覆盖 originating control。process mismatch 同样不能被 SQLite/rollback error
-改写。
+`KeyboardInterrupt`、`SystemExit`、`GeneratorExit` 或 `asyncio.CancelledError`，transaction、
+migration、constructor、close 或 context-exit cleanup 都不得覆盖 originating control。child
+context exit 会隔离 suspended graph 并返回“不抑制”，而不是 resume inherited cleanup。process
+mismatch 同样不能被 SQLite/rollback error 改写。
+
+若 inherited dependency 在 current fresh store 的 callback 内先产生可信 public mismatch，current
+store 必须 rollback 自己的 transaction、清理外层 traceback 并保持可继续使用，不能把 fresh store
+误放入 quarantine。若外层 store 自身也已 mismatch，则 suspended transaction graph 直接隔离，
+最终只发布一个重新清洗的 fixed public error。caller 自行构造或 graft 的同名 public error 不满足
+trampoline provenance，不会被清洗或改写。
 
 ### 4.2 migration 与 constructor
 
@@ -99,12 +108,13 @@ constructor migration clock 内 fork 时：
 
 - parent 独自完成 migration decision；
 - child 不 rollback、不 close、不 release inherited lock；
-- partially initialized connection 放入 child-only module-private quarantine，保持到安全
-  `_exit`/exec，避免 GC/finalizer；
+- partially initialized store、connection、lock、clock/provider 的完整可达 graph 放入 child-only
+  module-private quarantine，保持到安全 `_exit`/exec，避免 GC/finalizer；
 - public constructor error 使用同一 fixed lifecycle code。
 
-quarantine 不是 child 可继续服务的状态。捕获该 error 的 worker 必须进入 non-ready 并退出/exec；
-不得从 private quarantine 取回 wrapper。
+quarantine 不是 child 可继续服务的状态。捕获 mismatch 的 worker 必须进入 non-ready 并立即使用
+`os._exit` 或 exec；普通 `sys.exit`/解释器 teardown 可能清空 Python module globals，不能作为
+inherited SQLite graph 的安全销毁路径。不得从 private quarantine 取回 wrapper。
 
 ## 5. clean error graph
 
@@ -115,7 +125,9 @@ foundation 只创建 module-private `_EventStoreProcessMismatchSignal`。public 
 - traceback 尾部精确来自 store guard、`require_current_process` 和 foundation raise helper。
 
 受信号后先 detach cause/context/traceback，并清理完成的 internal frames；退出 `except`、删除
-store/caller locals 后才进入 module-level trampoline。trampoline 新建 exact
+store/caller locals 后才进入 module-level trampoline。嵌套边界只接受 traceback 最末 raise point
+确实来自该 trampoline、字段仍为 fixed clean contract 的 public mismatch，并再次清理完成的外层
+frames。trampoline 新建 exact
 `EventStoreLifecycleError`，显式把该 fresh error 的 `__context__` 设为 `None`，再 bare re-raise。
 
 公开错误不含 PID、epoch、path、SQL、stream/message ID、lease、provider 或 caller object；args
@@ -152,7 +164,8 @@ supervisor/child 任一方创建 connection **之前**真实 fork，随后双方
 3. 每个最终 worker 内 fresh construct `SQLiteEventStore`；
 4. 运行 inherited rejection 和 fresh contention 两组 synthetic matrix；
 5. mismatch metric 只记录 fixed code，不记录 path/PID/IDs；
-6. 合法流量出现 mismatch 时停止 admission，修复 composition topology，不捕获后继续 SQL；
+6. 合法流量出现 mismatch 时停止 admission，以 `os._exit`/exec 结束该 worker，修复 composition
+   topology，不捕获后继续 SQL；
 7. internal pilot 前仍需完成其他 store/provider/runtime 的独立 process-bound 迁移。
 
 本变化没有 schema、event、backup manifest 或 wire-format migration；它会把过去未定义的
@@ -163,7 +176,7 @@ fork-inherited 使用收紧为稳定拒绝。
 - binary 可回到上一版本，同一数据库无需 down migration；
 - 保留 fork-before-init worker topology，不把删除 guard 当作回滚；
 - open transaction 只由 original owner 决定 commit/rollback；
-- constructor/migration mismatch 的 child 只允许 non-ready exit/exec；
+- constructor/migration mismatch 的 child 只允许 non-ready 后 `os._exit`/exec；
 - 若 fresh worker 构造失败，停止 admission，禁止复用 parent store/connection。
 
 ## 9. 当前仍不可声明
