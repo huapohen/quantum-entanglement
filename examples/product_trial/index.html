@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quantum Entanglement · 本地体验</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; background: #0a1020; color: #edf3ff; }
+      main { max-width: 960px; margin: 0 auto; padding: 48px 24px; }
+      .boundary { color: #a9b8d6; line-height: 1.7; }
+      button { border: 0; border-radius: 10px; padding: 12px 18px; font-weight: 700; }
+      button:disabled { opacity: .45; }
+      pre { min-height: 240px; padding: 20px; overflow: auto; background: #111a31; border-radius: 14px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>QUANTUM ENTANGLEMENT / LOCAL TRIAL</p>
+      <h1>人和 Agent 的群聊协同内核</h1>
+      <p class="boundary">本页面只运行本机合成 Demo；不连接、不读取、也不发送任何飞书或企微消息。</p>
+      <button id="run" type="button">运行一次三 Agent 协作</button>
+      <p id="status" role="status">等待运行</p>
+      <pre id="output" aria-live="polite">点击按钮后，这里会显示真实内核运行结果。</pre>
+    </main>
+    <script>
+      (() => {
+        'use strict';
+        const token = new URLSearchParams(location.hash.slice(1)).get('token') || '';
+        history.replaceState(null, '', location.pathname);
+        const button = document.getElementById('run');
+        const status = document.getElementById('status');
+        const output = document.getElementById('output');
+        if (!token) {
+          button.disabled = true;
+          status.textContent = '启动令牌缺失，请通过启动脚本重新打开。';
+          return;
+        }
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          status.textContent = 'Agent 协作运行中…';
+          try {
+            const response = await fetch('/api/demo', {
+              method: 'POST',
+              headers: {'X-QE-Trial-Token': token}
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || 'trial_run_failed');
+            output.textContent = JSON.stringify(payload, null, 2);
+            status.textContent = '运行完成';
+          } catch (error) {
+            output.textContent = String(error instanceof Error ? error.message : 'trial_run_failed');
+            status.textContent = '运行失败';
+          } finally {
+            button.disabled = false;
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
