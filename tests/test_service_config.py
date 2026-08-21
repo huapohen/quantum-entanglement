@@ -183,9 +183,7 @@ class ServiceConfigTests(unittest.TestCase):
         untrusted_metadata = os.stat_result(
             (stat.S_IFDIR | 0o1777, 1, 1, 1, untrusted_uid, 1, 0, 0, 0, 0)
         )
-        root_metadata = os.stat_result(
-            (stat.S_IFDIR | 0o1777, 1, 1, 1, 0, 1, 0, 0, 0, 0)
-        )
+        root_metadata = os.stat_result((stat.S_IFDIR | 0o1777, 1, 1, 1, 0, 1, 0, 0, 0, 0))
         unprotected_metadata = os.stat_result(
             (stat.S_IFDIR | 0o0777, 1, 1, 1, current_uid, 1, 0, 0, 0, 0)
         )

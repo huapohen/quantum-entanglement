@@ -263,10 +263,9 @@ class ServiceConfig:
             if not is_leaf and stat.S_ISDIR(metadata.st_mode):
                 if not ServiceConfig._has_trusted_ancestor_owner(metadata):
                     raise ConfigurationError("configuration_path_ancestor_owner", field)
-                if (
-                    stat.S_IMODE(metadata.st_mode) & 0o022
-                    and not ServiceConfig._is_protected_writable_ancestor(metadata)
-                ):
+                if stat.S_IMODE(
+                    metadata.st_mode
+                ) & 0o022 and not ServiceConfig._is_protected_writable_ancestor(metadata):
                     raise ConfigurationError("configuration_path_ancestor_permissions", field)
 
     @staticmethod
