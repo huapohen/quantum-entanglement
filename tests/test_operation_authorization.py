@@ -3,6 +3,7 @@ import copy
 import multiprocessing
 import os
 import pickle
+import sys
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -155,6 +156,31 @@ def _fork_inherited_issuer_composer_probe(
                 )
             )
         )
+    finally:
+        connection.close()
+
+
+def _fork_active_exit_spoof_probe(connection, composer):
+    active_triple = None
+    results = {}
+    try:
+        raise KeyboardInterrupt("fork-active-exit-spoof-canary")
+    except KeyboardInterrupt:
+        active_triple = sys.exc_info()
+        results["inside_handler"] = _capture_process_call(
+            lambda selected=active_triple: ProtectedOperationComposer.__exit__(
+                composer,
+                *selected,
+            )
+        )
+    results["after_handler"] = _capture_process_call(
+        lambda selected=active_triple: ProtectedOperationComposer.__exit__(
+            composer,
+            *selected,
+        )
+    )
+    try:
+        connection.send(results)
     finally:
         connection.close()
 
@@ -3198,6 +3224,201 @@ class ProtectedOperationComposerTests(unittest.TestCase):
 
         self.assertIs(captured, body)
 
+    def test_active_exception_triple_cannot_spoof_manual_exit_precedence(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+        entry_states = ("never_entered", "explicit_entered", "closed")
+        access_paths = ("class", "instance")
+        cleanup_types = (RuntimeError, *signal_types)
+        failures = []
+
+        for entry_state in entry_states:
+            for access_path in access_paths:
+                for body_type in signal_types:
+                    for cleanup_type in cleanup_types:
+                        composer = self.make_composer()
+                        if entry_state == "explicit_entered":
+                            self.assertIs(
+                                ProtectedOperationComposer.__enter__(composer),
+                                composer,
+                            )
+                        elif entry_state == "closed":
+                            composer.close()
+                        body = SystemExit(23) if body_type is SystemExit else body_type("body")
+                        cleanup = (
+                            SystemExit(17)
+                            if cleanup_type is SystemExit
+                            else cleanup_type("cleanup-secret-canary")
+                        )
+
+                        def fail_close(_registry, *, selected=cleanup):
+                            raise selected
+
+                        try:
+                            raise body
+                        except BaseException:
+                            active_triple = sys.exc_info()
+
+                            def invoke_exit(
+                                selected_composer=composer,
+                                selected_access=access_path,
+                                selected_triple=active_triple,
+                            ):
+                                if selected_access == "class":
+                                    return ProtectedOperationComposer.__exit__(
+                                        selected_composer,
+                                        *selected_triple,
+                                    )
+                                return selected_composer.__exit__(*selected_triple)
+
+                            with patch.object(
+                                _AuthorizedOperationRegistry,
+                                "_close",
+                                fail_close,
+                            ):
+                                observed = _capture_process_call(invoke_exit)
+
+                        expected = (
+                            (
+                                "operation_error",
+                                "protected_operation_internal_failure",
+                                True,
+                                True,
+                            )
+                            if cleanup_type is RuntimeError
+                            else ("unexpected_error", cleanup_type.__name__)
+                        )
+                        if observed != expected:
+                            failures.append(
+                                (
+                                    entry_state,
+                                    access_path,
+                                    body_type.__name__,
+                                    cleanup_type.__name__,
+                                    observed,
+                                )
+                            )
+
+        self.assertEqual(len(failures), 0, failures[:12])
+
+    def test_direct_active_triple_inside_real_context_cannot_consume_exit_priority(self):
+        for access_path in ("class", "instance"):
+            with self.subTest(access=access_path):
+                composer = self.make_composer()
+                cleanup = RuntimeError("nested-direct-cleanup-secret-canary")
+
+                def fail_close(_registry, *, selected=cleanup):
+                    raise selected
+
+                observed = None
+                with composer:
+                    try:
+                        raise KeyboardInterrupt("nested-direct-body-secret-canary")
+                    except KeyboardInterrupt:
+                        active_triple = sys.exc_info()
+
+                        def invoke_exit(
+                            selected_access=access_path,
+                            selected_composer=composer,
+                            selected_triple=active_triple,
+                        ):
+                            if selected_access == "class":
+                                return ProtectedOperationComposer.__exit__(
+                                    selected_composer,
+                                    *selected_triple,
+                                )
+                            return selected_composer.__exit__(*selected_triple)
+
+                        with patch.object(
+                            _AuthorizedOperationRegistry,
+                            "_close",
+                            fail_close,
+                        ):
+                            observed = _capture_process_call(invoke_exit)
+
+                self.assertEqual(
+                    observed,
+                    (
+                        "operation_error",
+                        "protected_operation_internal_failure",
+                        True,
+                        True,
+                    ),
+                )
+
+    def test_context_manager_lease_rejects_nested_entry(self):
+        nested_composer = self.make_composer()
+
+        def enter_nested():
+            with nested_composer:
+                pass
+
+        with nested_composer:
+            self.capture_error("protected_operation_internal_failure", enter_nested)
+
+    def test_context_manager_lease_rejects_concurrent_entry(self):
+        concurrent_composer = self.make_composer()
+        owner_entered = threading.Event()
+        release_owner = threading.Event()
+        owner_results = []
+
+        def own_context():
+            try:
+                with concurrent_composer:
+                    owner_entered.set()
+                    release_owner.wait(5)
+            except BaseException as error:
+                owner_results.append(("error", type(error).__name__))
+            else:
+                owner_results.append(("success",))
+
+        owner = threading.Thread(target=own_context)
+        owner.start()
+        try:
+            self.assertTrue(owner_entered.wait(2))
+
+            def enter_concurrently():
+                with concurrent_composer:
+                    pass
+
+            self.capture_error(
+                "protected_operation_internal_failure",
+                enter_concurrently,
+            )
+        finally:
+            release_owner.set()
+            owner.join(2)
+        self.assertFalse(owner.is_alive())
+        self.assertEqual(owner_results, [("success",)])
+
+    def test_context_manager_lease_rejects_closed_entry(self):
+        closed_composer = self.make_composer()
+        closed_composer.close()
+
+        def enter_closed():
+            with closed_composer:
+                pass
+
+        self.assert_code("protected_operation_composer_closed", enter_closed)
+
+    def test_truthy_cleanup_preserves_every_originating_exact_control(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+
+        def return_true(_composer):
+            return True
+
+        for signal_type in signal_types:
+            with self.subTest(signal=signal_type.__name__):
+                composer = self.make_composer()
+                body = SystemExit(23) if signal_type is SystemExit else signal_type("body")
+                captured = None
+                with patch.object(ProtectedOperationComposer, "_close", return_true):
+                    try:
+                        with composer:
+                            raise body
+                    except BaseException as error:
+                        captured = error
+                self.assertIs(captured, body)
+
     def test_exact_control_signals_survive_consume_and_retire_boundaries(self):
         signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
         for method_name in ("consume", "retire"):
@@ -3456,6 +3677,39 @@ class ProtectedOperationComposerTests(unittest.TestCase):
             replacement.authorize(self.context, self.request),
             AuthorizedOperation,
         )
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_real_fork_active_exit_triple_never_swallows_process_mismatch(self):
+        fork_context = multiprocessing.get_context("fork")
+        expected = (
+            "operation_error",
+            "protected_operation_process_mismatch",
+            True,
+            True,
+        )
+
+        for entry_state in ("never_entered", "explicit_entered"):
+            with self.subTest(entry_state=entry_state):
+                composer = self.make_composer()
+                if entry_state == "explicit_entered":
+                    self.assertIs(
+                        ProtectedOperationComposer.__enter__(composer),
+                        composer,
+                    )
+                parent_connection, child_connection = fork_context.Pipe(duplex=False)
+                process = fork_context.Process(
+                    target=_fork_active_exit_spoof_probe,
+                    args=(child_connection, composer),
+                )
+
+                process.start()
+                child_connection.close()
+                payload = self.receive_process_payload(process, parent_connection)
+
+                self.assertEqual(payload["inside_handler"], expected)
+                self.assertEqual(payload["after_handler"], expected)
+                operation = composer.authorize(self.context, self.request)
+                composer.consume(operation, self.context, self.request)
 
     @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
     def test_real_fork_rejects_every_inherited_composer_and_registry_path(self):
