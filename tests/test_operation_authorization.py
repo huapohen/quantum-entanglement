@@ -1309,6 +1309,187 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                 forbidden=forbidden,
             )
 
+    def test_constructor_single_slot_publish_recovers_every_control_cut(self):
+        self.assertEqual(ProtectedOperationComposer.__slots__, ("__state",))
+        self.assertEqual(_AuthorizedOperationRegistry.__slots__, ("__state",))
+        real_publish = operation_authorization._publish_constructor_state
+        targets = (
+            (
+                "composer",
+                operation_authorization._COMPOSER_STATE_SLOT,
+            ),
+            (
+                "registry",
+                operation_authorization._REGISTRY_STATE_SLOT,
+            ),
+        )
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+
+        for target, target_slot in targets:
+            for cut in ("before", "after"):
+                for signal_type in signal_types:
+                    with self.subTest(target=target, cut=cut, signal=signal_type.__name__):
+                        canary = f"{target}-{cut}-{signal_type.__name__}-publish-secret-canary"
+                        original = signal_type(canary)
+                        instance = (
+                            object.__new__(ProtectedOperationComposer)
+                            if target == "composer"
+                            else object.__new__(_AuthorizedOperationRegistry)
+                        )
+
+                        def interrupted_publish(
+                            selected_instance,
+                            slot_name,
+                            state,
+                            *,
+                            selected_cut=cut,
+                            selected_original=original,
+                            selected_target_slot=target_slot,
+                        ):
+                            if slot_name != selected_target_slot:
+                                real_publish(selected_instance, slot_name, state)
+                                return
+                            if selected_cut == "after":
+                                real_publish(selected_instance, slot_name, state)
+                            raise selected_original
+
+                        if target == "composer":
+
+                            def construct(selected=instance):
+                                ProtectedOperationComposer.__init__(
+                                    selected,
+                                    issuer=self.issuer,
+                                    state_provider=self.provider,
+                                    authorizer=self.authorizer,
+                                    clock=self.clock,
+                                    operation_ttl=timedelta(seconds=20),
+                                    max_state_age=timedelta(seconds=30),
+                                )
+
+                        else:
+
+                            def construct(selected=instance):
+                                _AuthorizedOperationRegistry.__init__(
+                                    selected,
+                                    clock=self.clock,
+                                )
+
+                        with patch.object(
+                            operation_authorization,
+                            "_publish_constructor_state",
+                            interrupted_publish,
+                        ):
+                            signal = self.capture_control_signal(signal_type, construct)
+
+                        self.assertIsNot(signal, original)
+                        self.assertEqual(signal.args, (1,) if signal_type is SystemExit else ())
+                        with self.assertRaises(AttributeError):
+                            object.__getattribute__(instance, target_slot)
+                        forbidden = (
+                            instance,
+                            self.issuer,
+                            self.provider,
+                            self.authorizer,
+                            self.verifier,
+                            self.key_ring,
+                            self.clock,
+                            self.context,
+                            self.request,
+                            original,
+                            b"signing-secret-canary-1234567890",
+                        )
+                        self.assert_detached_control_traceback(
+                            signal,
+                            "__init__",
+                            canary,
+                            forbidden=forbidden,
+                        )
+                        self.assert_original_control_traceback_is_scrubbed(
+                            original,
+                            canary,
+                            forbidden=forbidden,
+                        )
+
+    def test_constructor_single_slot_publish_recovers_ordinary_failures(self):
+        real_publish = operation_authorization._publish_constructor_state
+        for target, target_slot in (
+            ("composer", operation_authorization._COMPOSER_STATE_SLOT),
+            ("registry", operation_authorization._REGISTRY_STATE_SLOT),
+        ):
+            for cut in ("before", "after"):
+                with self.subTest(target=target, cut=cut):
+                    canary = f"{target}-{cut}-ordinary-publish-secret-canary"
+                    original = HostileBoundaryFailure(canary)
+                    instance = (
+                        object.__new__(ProtectedOperationComposer)
+                        if target == "composer"
+                        else object.__new__(_AuthorizedOperationRegistry)
+                    )
+
+                    def interrupted_publish(
+                        selected_instance,
+                        slot_name,
+                        state,
+                        *,
+                        selected_cut=cut,
+                        selected_original=original,
+                        selected_target_slot=target_slot,
+                    ):
+                        if slot_name != selected_target_slot:
+                            real_publish(selected_instance, slot_name, state)
+                            return
+                        if selected_cut == "after":
+                            real_publish(selected_instance, slot_name, state)
+                        raise selected_original
+
+                    if target == "composer":
+
+                        def construct(selected=instance):
+                            ProtectedOperationComposer.__init__(
+                                selected,
+                                issuer=self.issuer,
+                                state_provider=self.provider,
+                                authorizer=self.authorizer,
+                                clock=self.clock,
+                            )
+
+                    else:
+
+                        def construct(selected=instance):
+                            _AuthorizedOperationRegistry.__init__(selected, clock=self.clock)
+
+                    with patch.object(
+                        operation_authorization,
+                        "_publish_constructor_state",
+                        interrupted_publish,
+                    ):
+                        error = self.capture_error(
+                            "protected_operation_internal_failure",
+                            construct,
+                        )
+
+                    with self.assertRaises(AttributeError):
+                        object.__getattribute__(instance, target_slot)
+                    self.assert_clean_public_failure(
+                        error,
+                        original,
+                        canary,
+                        method="__init__",
+                        forbidden=(
+                            instance,
+                            self.issuer,
+                            self.provider,
+                            self.authorizer,
+                            self.verifier,
+                            self.key_ring,
+                            self.clock,
+                            self.context,
+                            self.request,
+                            original,
+                            b"signing-secret-canary-1234567890",
+                        ),
+                    )
+
     def test_constructor_descriptor_control_signals_are_reissued_cleanly(self):
         cases = (
             (KeyboardInterrupt, "keyboard"),
