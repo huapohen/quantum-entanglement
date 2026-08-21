@@ -35,6 +35,12 @@ release. Promotion additionally requires the evidence defined in
   caller-supplied exact SQLite connection, including integrity, foreign-key, page-geometry,
   bridge-state, exact catalog, and per-table-count evidence without activating a writer,
   verifier, restore path, or CLI.
+- Process-bound `SQLiteEventStore` lifecycle with all ordinary read/write/close/context paths,
+  stream enter and every iterator resume, owner-aware transaction/migration/constructor cleanup,
+  child connection quarantine, and one stable clean lifecycle mismatch error.
+- Fork-before-initialization, spawn and forkserver fresh-connection evidence for global-position
+  contention, idempotent event-plus-outbox admission, outbox lease fencing, ambiguity resolution,
+  SQLite integrity, foreign keys and exact migration schema.
 
 ### Changed
 
@@ -68,6 +74,14 @@ release. Promotion additionally requires the evidence defined in
   `BEGIN`, retries one interrupted cleanup, verifies the final transaction state, preserves
   exact `KeyboardInterrupt`, `SystemExit`, `GeneratorExit`, and `CancelledError` identity and
   traceback, and rejects ambient handled controls as originating-control evidence.
+- Event-store caller values and iterables are copied outside SQLite locks into exact built-in
+  event/message/JSON/cursor/timestamp/lease snapshots, so caller `__conform__` adapters cannot run
+  inside DB-API binding. Live store, transaction, stream context and iterator objects reject
+  copy, deepcopy and serialization.
+- Event-store clock and migration callbacks are guarded before and after execution; fork child
+  cleanup never inspects, rolls back, commits, closes or unlocks inherited SQLite state. Exact
+  originating process controls take precedence over cleanup controls in current-process failure
+  paths.
 
 ### In progress — not yet a shipped guarantee
 
@@ -75,9 +89,10 @@ release. Promotion additionally requires the evidence defined in
   graceful shutdown.
 - Durable invocation attempt leasing, heartbeat, recovery, and terminal compare-and-set.
 - Verified capability and multi-tenant authorization boundaries.
-- Per-component process-owner migration for stores, authorization, secrets, plugins, runtimes,
-  connectors, and the final worker composition root; the shared foundation alone is not a
-  fork-safety or secret-isolation guarantee.
+- Remaining per-component process-owner migration for artifact/projection/revocation and other
+  stores, authorization, secrets, plugins, runtimes, connectors, and the final worker composition
+  root. The shared foundation plus event-store candidate is not a system-wide fork-safety or
+  secret-isolation guarantee.
 - Backup manifest v2 writer/publication, quarantine verification, exact-byte restore,
   mixed-version rehearsal, and authenticated custody; the topology registry, codec, and
   caller-connection snapshot derivation do not make v2 operationally readable or writable.
