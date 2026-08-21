@@ -67,7 +67,29 @@ http://127.0.0.1:8765/#token=…
 
 继续向下可看到 Gate A–E 阶梯和当前边界。展开“给工程师看的原始结果”，可以直接核对后端返回的 JSON，而不是只看 UI 投影。
 
-## 3. 其他启动方式
+## 3. 已保存的浏览器验收截图
+
+下面四张图来自绑定 Git commit `c64723a0db405e341832e9de6963e5e107c940cf` 的 Playwright 本地验收；完整 SHA-256、尺寸、生成时间和证据限制见 [`analysis_report/screenshots/manifest.json`](../analysis_report/screenshots/manifest.json)。
+
+桌面初始态：
+
+![本地产品体验桌面初始态](../analysis_report/screenshots/10_local_trial_desktop_idle.png)
+
+真实运行后的桌面完成态：
+
+![本地产品体验桌面完成态](../analysis_report/screenshots/11_local_trial_desktop_complete.png)
+
+390×844 移动端完成态：
+
+![本地产品体验移动端完成态](../analysis_report/screenshots/12_local_trial_mobile_complete.png)
+
+架构、执行时序和平台状态图：
+
+![本地产品体验系统图](../analysis_report/screenshots/13_local_trial_architecture_diagrams.png)
+
+这些是 viewport 证据，不代表真实模型、外部 connector、持久化部署或生产门禁已经通过。
+
+## 4. 其他启动方式
 
 ### 只启动服务，不自动打开浏览器
 
@@ -107,13 +129,13 @@ QE_TRIAL_PYTHON=/usr/bin/python3 ./scripts/start_local_trial.sh
 ./scripts/start_local_trial.sh --help
 ```
 
-## 4. 怎么停止
+## 5. 怎么停止
 
 回到启动服务的终端，按 `Ctrl-C`。服务会关闭监听端口并退出。页面随即无法再运行；下次启动会生成新令牌。
 
 如果使用 `--cli`，进程会在打印 JSON 后自动退出。
 
-## 5. 数据、网络与安全边界
+## 6. 数据、网络与安全边界
 
 本地体验刻意保持一个很窄的边界：
 
@@ -129,7 +151,7 @@ QE_TRIAL_PYTHON=/usr/bin/python3 ./scripts/start_local_trial.sh
 
 `boundary.productionApproved=false` 和 `gateStatus="A-E closed"` 是有意保留的事实。页面能运行，只代表当前产品切片可本地体验，不代表生产安全审批、私有试点批准或商用就绪。
 
-## 6. 常见问题
+## 7. 常见问题
 
 ### `Permission denied`
 
@@ -175,7 +197,7 @@ python3 --version
 
 本机验证中，Python 3.14 的冷启动可能需要约 30–40 秒，Python 3.9/3.13 更快。页面尚未出现时先观察终端；也可用 `QE_TRIAL_PYTHON` 选择 Python 3.9–3.13。
 
-## 7. 自己跑验收
+## 8. 自己跑验收
 
 无需第三方依赖即可执行功能测试：
 
@@ -200,7 +222,7 @@ sh -n scripts/start_local_trial.sh
 5. `Ctrl-C` 后服务停止；
 6. 手机宽度和桌面宽度都能阅读三张系统图与核心状态。
 
-## 8. 当前最值得你核验的产品问题
+## 9. 当前最值得你核验的产品问题
 
 试用时可以重点判断：
 
