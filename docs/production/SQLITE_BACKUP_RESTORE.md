@@ -30,6 +30,11 @@ This is not a complete disaster-recovery service. It does not schedule backups,
 replicate them, sign manifests, manage retention, encrypt files, implement point-in-time
 recovery, or establish a production RPO/RTO. Those remain deployment and release gates.
 
+The inert [exact topology registry](../architecture/SQLITE_BACKUP_TOPOLOGY_REGISTRY.md)
+freezes the catalog vocabulary required by a future manifest v2 verifier. It is not
+imported by the active v1 create/verify/restore path and does not make v2 readable or
+writable.
+
 ## Supported operating assumptions
 
 The current release boundary is intentionally narrow:

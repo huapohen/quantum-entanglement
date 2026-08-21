@@ -1,0 +1,173 @@
+# Exact SQLite backup topology registry
+
+## Status and release boundary
+
+Commit `e0b5495` adds a pure, immutable registry of the SQLite catalog topology that the
+current binary knows how to attest. This is a compatibility-development checkpoint for
+backup manifest v2, not an operational v2 backup feature.
+
+The active backup surface is unchanged:
+
+- `create_sqlite_backup()` still writes only `qe.sqlite-backup/1`;
+- `verify_sqlite_backup()` and `restore_sqlite_backup()` still accept only the exact
+  v1 manifest;
+- the admin CLI has no v2 dispatch;
+- `backup_topology.py` opens no database or file, starts no transaction, and performs
+  no migration;
+- domain-sparse/native migration execution remains unavailable.
+
+Consequently this stage is safe to deploy as inert package data, but it does not close the
+backup/restore, disaster-recovery, or Gate C requirements.
+
+## Exact registry identity
+
+The topology profile is `qe.sqlite-topology/bridge-v1`; the registry format is
+`qe.sqlite-topology-registry/1`. The current registry digest is:
+
+```text
+97350bc7e6cf94f021ab7468e66b2dc66cc5bc07c239fbdae1a32328ed4925f6
+```
+
+It contains eight profiles and 58 exact `sqlite_schema` objects:
+
+| Profile | Objects | Presence rule |
+|---|---:|---|
+| `qe.event-store-core/1` | 17 | optional as one exact component profile |
+| `qe.projection-store/1` | 6 | optional as one exact component profile |
+| `qe.revocation-guard/1` | 2 | optional as one exact component profile |
+| `qe.legacy-migration-ledger/1` | 2 | required when a migration is applied |
+| `qe.domain-migration-0001/1` | 14 | required for applied migration 1 |
+| `qe.domain-migration-0002/1` | 9 | required for applied migration 2 |
+| `qe.domain-migration-0003/1` | 4 | required for applied migration 3; depends on event-store core |
+| `qe.domain-migration-sidecar/1` | 4 | required when sidecar format 1 is present |
+
+Every object binds:
+
+- its topology profile and logical owner;
+- exact object type, name, and `tbl_name`;
+- a canonical DDL SHA-256 for explicit tables, indexes, views, and triggers;
+- SQL `NULL` for SQLite-created autoindexes, with their coordinate still included in
+  the profile digest.
+
+The registry digest binds the canonical ordered profile-name/profile-digest pairs. Each
+profile digest independently binds its migration ID, dependencies, presence mode, and
+full ordered object set. Profile dependencies must refer to known profiles and form an
+acyclic graph. Object coordinates are globally unique.
+
+## Domain-migration cross-binding
+
+The three migration profiles are checked against the packaged
+`DOMAIN_MIGRATION_REGISTRY` when the module loads:
+
+1. the migration-ID sets must be identical;
+2. each explicit table/index coordinate must be identical;
+3. every explicit DDL digest must be identical.
+
+SQLite-created autoindexes are additional topology evidence and therefore do not appear
+in a domain migration descriptor's explicit owned-object set. Any package change that
+updates migration SQL or descriptors without updating the topology registry fails closed
+at import or in the catalog conformance test.
+
+This cross-binding does not authorize a migration. The bridge planner remains the
+authority for supported schema state, and the v2 codec/verifier must bind both the domain
+registry digest and this independent topology-registry digest.
+
+## Catalog SQL canonicalization
+
+`canonicalize_backup_schema_sql()` exists only to compare trusted DDL with SQLite's
+catalog representation. Its normalization is deliberately narrow:
+
+1. require an exact built-in non-empty `str` of at most 64 KiB;
+2. remove outer whitespace and one final semicolon;
+3. collapse whitespace only outside quoted strings/identifiers;
+4. preserve single-quoted, double-quoted, backtick-quoted, and bracketed content byte for
+   byte, including doubled quote delimiters;
+5. remove `IF NOT EXISTS` only when it is in the leading
+   `CREATE [UNIQUE] TABLE|INDEX|TRIGGER|VIEW` clause;
+6. reject an unterminated quoted region.
+
+It does not case-fold quoted or unquoted SQL and does not erase arbitrary comments or an
+`IF NOT EXISTS` sequence inside a literal/identifier. This prevents two distinct
+definitions from becoming equal merely because quoted whitespace or text was rewritten.
+
+## Current conformance proof
+
+The deterministic catalog test materializes one database containing:
+
+- event-store core schema;
+- packaged migrations 1–3 and the legacy ledger;
+- projection offsets and receipts;
+- durable revocation high-water state;
+- the exact bridge sidecar and bootstrapped metadata.
+
+It then reads every non-statistics `sqlite_schema` row and compares the complete
+`(type, name, tbl_name, DDL digest)` mapping to all eight profiles. The current result is
+58 actual objects = 58 trusted objects, with no missing, extra, or drifted coordinate.
+
+The model tests additionally cover:
+
+- exact scalar types and immutable bounded snapshots;
+- infinite iterable rejection;
+- canonical ordering and duplicate rejection;
+- unknown/self/cyclic profile dependencies;
+- global coordinate uniqueness;
+- migration-registry equality;
+- quoted SQL preservation and leading-clause-only normalization.
+
+Observed local verification for `e0b5495`:
+
+| Gate | Result |
+|---|---|
+| Python 3.9 / 3.12 / 3.13 topology tests with warnings as errors | 15/15 each |
+| Python 3.9 / 3.12 / 3.13 full unittest | 852/852 each |
+| Ruff lint / format | pass |
+| strict mypy | 36 source files pass |
+| dependency locks | 4 targets / 74 package records verified |
+| compileall on 3.9 / 3.12 / 3.13 | pass |
+| compact group-chat demo | completed, 3 tasks / 25 events |
+
+These are local source checks, not immutable CI evidence or a production promotion.
+
+## Required update procedure
+
+Any schema-producing change must keep every intermediate commit runnable:
+
+1. change the owning component or packaged migration;
+2. update its exact topology profile and expected digests in the same behavior commit;
+3. update the frozen registry/profile digest assertions;
+4. run the complete catalog conformance test, all schema-owner tests, and all supported
+   Python gates;
+5. state compatibility impact in the migration/runbook documentation;
+6. do not reuse an already published profile identifier for an incompatible topology.
+
+Before a v2 writer is activated, the registry may evolve through reviewable versioned
+checkpoints. After a v2 manifest using this identity has been published, incompatible
+changes require a new topology/profile version plus an explicit reader compatibility
+matrix; silently rewriting `bridge-v1` would make stored evidence ambiguous.
+
+## Rollback
+
+At this inactive stage, rollback is an application-code revert: no database or manifest
+was written by the new module. Remove the registry and tests only while no public codec or
+stored v2 artifact depends on them.
+
+Once a v2 manifest is writable, rollback must retain a reader for every supported stored
+profile. A binary that does not recognize the manifest/topology version must refuse it; it
+must never reinterpret v2 evidence as v1 or migrate a backup while verifying it.
+
+## Open work
+
+The following remain separate fail-closed stages:
+
+1. exact canonical manifest v2 model and bounded JSON codec;
+2. stable-snapshot derivation of present profiles, catalog rows, table counts, sidecar
+   rows, ledger timestamps, and `SchemaState`;
+3. v2 creation/publication with all existing descriptor, inode, mode, no-overwrite, and
+   fsync controls;
+4. quarantine verification against database bytes and exact catalog topology;
+5. exact-byte restore followed by the same quarantine checks;
+6. v1-to-v2 bridge rehearsal, mixed-binary rejection, RPO/RTO and effect reconciliation;
+7. authenticated custody/signature policy.
+
+Until those stages have independent evidence, production documentation and readiness
+must continue to describe backup manifest v2 as unavailable.
