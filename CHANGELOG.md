@@ -102,7 +102,12 @@ release. Promotion additionally requires the evidence defined in
   inputs before public rethrow, and reissue only bounded clean control signals.
 - Protected-operation constructors now route descriptor-raised `AttributeError` through
   frame cleanup, bind exact initializers without instance lookup, reject subclasses, and
-  publish dependency-bearing slots only after all validation and lock creation succeeds.
+  publish one fully assembled internal state through a single slot write; interrupted
+  construction removes that slot instead of exposing partial dependencies.
+- Protected-operation registry and composer wrappers now bind base-class callbacks without
+  hostile instance lookup, and `with composer:` preserves a genuine exact originating
+  control signal over every cleanup outcome while rejecting direct-argument spoofing and
+  ignoring cleanup return values.
 - Exact operation control signals are reissued without dependency exception state;
   `SystemExit` preserves only `None`, exact booleans, or exact integer status 0 through 255
   and maps every other status to `1`.
