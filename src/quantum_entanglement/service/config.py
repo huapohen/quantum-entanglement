@@ -264,8 +264,20 @@ class ServiceConfig:
                 not is_leaf
                 and stat.S_ISDIR(metadata.st_mode)
                 and stat.S_IMODE(metadata.st_mode) & 0o022
+                and not ServiceConfig._is_protected_writable_ancestor(metadata)
             ):
                 raise ConfigurationError("configuration_path_ancestor_permissions", field)
+
+    @staticmethod
+    def _is_protected_writable_ancestor(metadata: os.stat_result) -> bool:
+        """Return whether POSIX sticky semantics protect a writable ancestor entry."""
+
+        if os.name != "posix" or not metadata.st_mode & stat.S_ISVTX:
+            return False
+        get_effective_uid = getattr(os, "geteuid", None)
+        if get_effective_uid is None:
+            return False
+        return metadata.st_uid in {0, get_effective_uid()}
 
     @classmethod
     def _validate_directory(cls, path: Path, field: str) -> None:
