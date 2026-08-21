@@ -69,9 +69,11 @@ Generation and verification fail closed unless all of these conditions hold:
   top-level package declaration, and every SHA-256 digest and size in `RECORD` match the
   inspected files.
 - The sdist contains byte-for-byte copies of the tracked package and test trees plus
-  `LICENSE`, `README.md`, and `pyproject.toml`. Its directory and generated metadata
-  inventory is exact, `SOURCES.txt` describes that inventory, and generated `setup.cfg`
-  cannot inject alternate build behavior.
+  `LICENSE`, `MANIFEST.in`, `README.md`, and `pyproject.toml`. `MANIFEST.in` explicitly
+  includes the test package marker that setuptools' default `tests/test*.py` discovery does
+  not select. Its directory and generated metadata inventory is exact, `SOURCES.txt`
+  describes that inventory, and generated `setup.cfg` cannot inject alternate build
+  behavior.
 - Wheel and sdist package metadata, entry points, and top-level package declaration agree.
 
 Each artifact record includes its filename, kind, compressed byte size and SHA-256, member
