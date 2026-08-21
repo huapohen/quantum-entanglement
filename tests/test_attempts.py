@@ -1453,6 +1453,171 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                 self.assertNotIn(lease.lease_token, exception_graph_text(cleaned))
                 self.assertEqual(tuple(self.store._connection.iterdump()), before)
 
+    def test_originating_exact_controls_outrank_cleanup_controls(self):
+        control_types = (KeyboardInterrupt, SystemExit, GeneratorExit)
+
+        def assert_origin(cleaned, error_type, markers):
+            self._assert_clean_control_signal(
+                cleaned,
+                error_type,
+                marker=markers[0],
+                system_exit_code=(1 if error_type is SystemExit else None),
+                ambiguity=True,
+            )
+            graph = exception_graph_text(cleaned)
+            for marker in markers:
+                self.assertNotIn(marker, graph)
+
+        for index, error_type in enumerate(control_types):
+            cleanup_type = control_types[(index + 1) % len(control_types)]
+            close_type = control_types[(index + 2) % len(control_types)]
+
+            with self.subTest(stage="write-rollback-close", error_type=error_type.__name__):
+                markers = (
+                    f"private originating write {error_type.__name__}",
+                    f"private write rollback {cleanup_type.__name__}",
+                    f"private write close {close_type.__name__}",
+                )
+                store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+                try:
+                    with (
+                        patch.object(
+                            store,
+                            "_commit_write_transaction",
+                            side_effect=error_type(markers[0]),
+                        ),
+                        patch.object(
+                            store,
+                            "_rollback_write_transaction",
+                            side_effect=cleanup_type(markers[1]),
+                        ),
+                        patch.object(
+                            store,
+                            "_close_connection",
+                            side_effect=close_type(markers[2]),
+                        ),
+                    ):
+                        cleaned = self._capture_base_exception(partial(store.enqueue, job_spec()))
+                    assert_origin(cleaned, error_type, markers)
+                    with self.assertRaises(InvocationStorePoisonedError):
+                        store.schema_version()
+                finally:
+                    store.close()
+
+            with self.subTest(stage="state-inspection-close", error_type=error_type.__name__):
+                markers = (
+                    f"private originating begin {error_type.__name__}",
+                    f"private state inspection {cleanup_type.__name__}",
+                    f"private state close {close_type.__name__}",
+                )
+                store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+                try:
+                    with (
+                        patch.object(
+                            store,
+                            "_begin_write_transaction",
+                            side_effect=error_type(markers[0]),
+                        ),
+                        patch.object(
+                            store,
+                            "_write_transaction_open",
+                            side_effect=cleanup_type(markers[1]),
+                        ),
+                        patch.object(
+                            store,
+                            "_close_connection",
+                            side_effect=close_type(markers[2]),
+                        ),
+                    ):
+                        cleaned = self._capture_base_exception(partial(store.enqueue, job_spec()))
+                    assert_origin(cleaned, error_type, markers)
+                    with self.assertRaises(InvocationStorePoisonedError):
+                        store.schema_version()
+                finally:
+                    store.close()
+
+            with self.subTest(stage="readback-close", error_type=error_type.__name__):
+                markers = (
+                    f"private originating commit {error_type.__name__}",
+                    f"private readback {cleanup_type.__name__}",
+                    f"private readback close {close_type.__name__}",
+                )
+                store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+                commit = store._commit_write_transaction
+
+                def committed_control(
+                    connection,
+                    commit=commit,
+                    marker=markers[0],
+                    error_type=error_type,
+                ):
+                    commit(connection)
+                    raise error_type(marker)
+
+                try:
+                    with (
+                        patch.object(
+                            store,
+                            "_commit_write_transaction",
+                            side_effect=committed_control,
+                        ),
+                        patch.object(
+                            store,
+                            "_reconcile_enqueued_job",
+                            side_effect=cleanup_type(markers[1]),
+                        ),
+                        patch.object(
+                            store,
+                            "_close_connection",
+                            side_effect=close_type(markers[2]),
+                        ),
+                    ):
+                        cleaned = self._capture_base_exception(partial(store.enqueue, job_spec()))
+                    assert_origin(cleaned, error_type, markers)
+                    with self.assertRaises(InvocationStorePoisonedError):
+                        store.schema_version()
+                finally:
+                    store.close()
+
+            with self.subTest(stage="read-rollback-close", error_type=error_type.__name__):
+                markers = (
+                    f"private originating read {error_type.__name__}",
+                    f"private read rollback {cleanup_type.__name__}",
+                    f"private read close {close_type.__name__}",
+                )
+                store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+                store.enqueue(job_spec())
+                try:
+                    with (
+                        patch.object(
+                            store,
+                            "_row_to_job",
+                            side_effect=error_type(markers[0]),
+                        ),
+                        patch.object(
+                            store,
+                            "_rollback_read_transaction",
+                            side_effect=cleanup_type(markers[1]),
+                        ),
+                        patch.object(
+                            store,
+                            "_close_connection",
+                            side_effect=close_type(markers[2]),
+                        ),
+                    ):
+                        cleaned = self._capture_base_exception(
+                            partial(
+                                store.recovery_snapshot_for_task,
+                                "session-1",
+                                "task-1",
+                            )
+                        )
+                    assert_origin(cleaned, error_type, markers)
+                    with self.assertRaises(InvocationStorePoisonedError):
+                        store.schema_version()
+                finally:
+                    store.close()
+
     def test_system_exit_codes_are_reduced_to_safe_exact_scalars(self):
         class IntSubclass(int):
             pass
@@ -1890,8 +2055,9 @@ class InvocationAttemptStoreTests(unittest.TestCase):
 
                     self._assert_clean_control_signal(
                         cleaned,
-                        KeyboardInterrupt,
-                        marker=readback_marker,
+                        SystemExit,
+                        marker=commit_marker,
+                        system_exit_code=1,
                         ambiguity=True,
                     )
                     graph = exception_graph_text(cleaned)
@@ -1943,9 +2109,8 @@ class InvocationAttemptStoreTests(unittest.TestCase):
 
         self._assert_clean_control_signal(
             cleaned,
-            SystemExit,
-            marker=secret_markers[1],
-            system_exit_code=1,
+            KeyboardInterrupt,
+            marker=secret_markers[0],
             ambiguity=True,
         )
         for marker in secret_markers:
@@ -2008,9 +2173,8 @@ class InvocationAttemptStoreTests(unittest.TestCase):
 
             self._assert_clean_control_signal(
                 poisoned_control,
-                SystemExit,
-                marker=markers[2],
-                system_exit_code=1,
+                KeyboardInterrupt,
+                marker=markers[0],
                 ambiguity=True,
             )
             self._assert_clean_control_signal(
@@ -2288,9 +2452,8 @@ class InvocationAttemptStoreTests(unittest.TestCase):
 
         self._assert_clean_control_signal(
             cleaned,
-            SystemExit,
-            marker=markers[2],
-            system_exit_code=1,
+            KeyboardInterrupt,
+            marker=markers[0],
             ambiguity=True,
         )
         for marker in markers:
@@ -2333,9 +2496,8 @@ class InvocationAttemptStoreTests(unittest.TestCase):
 
         self._assert_clean_control_signal(
             cleaned,
-            SystemExit,
-            marker=markers[2],
-            system_exit_code=1,
+            KeyboardInterrupt,
+            marker=markers[1],
             ambiguity=True,
         )
         for marker in markers:

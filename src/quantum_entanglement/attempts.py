@@ -987,7 +987,7 @@ class SQLiteInvocationAttemptStore:
                     raise _CommitOutcomeUnknown(
                         may_reconcile=False,
                         boundary_nonce=self._active_control_signal_boundary(),
-                        control_signal=close_control or rollback_control or body_control,
+                        control_signal=body_control or rollback_control or close_control,
                     ) from rollback_error
             else:
                 committed, commit_control = self._finish_write_transaction(self._connection)
@@ -1025,7 +1025,7 @@ class SQLiteInvocationAttemptStore:
                     raise _CommitOutcomeUnknown(
                         may_reconcile=False,
                         boundary_nonce=self._active_control_signal_boundary(),
-                        control_signal=close_control or rollback_control or descriptor,
+                        control_signal=descriptor or rollback_control or close_control,
                     ) from rollback_error
             return False, descriptor
         return True, None
@@ -1058,7 +1058,7 @@ class SQLiteInvocationAttemptStore:
                 raise _CommitOutcomeUnknown(
                     may_reconcile=False,
                     boundary_nonce=self._active_control_signal_boundary(),
-                    control_signal=close_control or rollback_control or descriptor,
+                    control_signal=descriptor or rollback_control or close_control,
                 ) from rollback_error
             return False, descriptor
         return True, None
@@ -1079,14 +1079,14 @@ class SQLiteInvocationAttemptStore:
             raise _CommitOutcomeUnknown(
                 may_reconcile=False,
                 boundary_nonce=self._active_control_signal_boundary(),
-                control_signal=close_control or state_control or prior_control,
+                control_signal=prior_control or state_control or close_control,
             ) from state_error
         if type(transaction_open) is not bool:
             close_control = self._poison_store()
             raise _CommitOutcomeUnknown(
                 may_reconcile=False,
                 boundary_nonce=self._active_control_signal_boundary(),
-                control_signal=close_control or prior_control,
+                control_signal=prior_control or close_control,
             ) from None
         return transaction_open
 
@@ -1248,15 +1248,15 @@ class SQLiteInvocationAttemptStore:
         control_signal: Optional[_ControlSignalDescriptor] = None,
     ) -> NoReturn:
         trusted = self._trusted_commit_error(error)
-        raw_descriptor: object = control_signal
-        if raw_descriptor is None and trusted:
-            raw_descriptor = error.control_signal
-        descriptor = _normalized_control_signal_descriptor(raw_descriptor)
-        if not trusted or raw_descriptor is not None:
+        originating_raw: object = error.control_signal if trusted else None
+        cleanup_raw: object = control_signal
+        originating = _normalized_control_signal_descriptor(originating_raw)
+        cleanup = _normalized_control_signal_descriptor(cleanup_raw)
+        descriptor = originating or cleanup
+        if not trusted or originating_raw is not None or cleanup_raw is not None:
             close_control = self._poison_store()
             normalized_close = _normalized_control_signal_descriptor(close_control)
-            if normalized_close is not None:
-                descriptor = normalized_close
+            descriptor = descriptor or normalized_close
         if trusted:
             error.__cause__ = None
             error.__context__ = None
@@ -1328,7 +1328,7 @@ class SQLiteInvocationAttemptStore:
                     raise _ReadTransactionOutcomeUnknown(
                         self._poison_nonce,
                         self._active_control_signal_boundary(),
-                        close_control or state_control or begin_control,
+                        begin_control or state_control or close_control,
                     ) from state_error
                 if transaction_open:
                     try:
@@ -1339,7 +1339,7 @@ class SQLiteInvocationAttemptStore:
                         raise _ReadTransactionOutcomeUnknown(
                             self._poison_nonce,
                             self._active_control_signal_boundary(),
-                            close_control or rollback_control or begin_control,
+                            begin_control or rollback_control or close_control,
                         ) from rollback_error
                 raise
 
@@ -1355,7 +1355,7 @@ class SQLiteInvocationAttemptStore:
                     raise _ReadTransactionOutcomeUnknown(
                         self._poison_nonce,
                         self._active_control_signal_boundary(),
-                        close_control or rollback_control or body_control,
+                        body_control or rollback_control or close_control,
                     ) from rollback_error
                 raise
 
@@ -1371,7 +1371,7 @@ class SQLiteInvocationAttemptStore:
                     raise _ReadTransactionOutcomeUnknown(
                         self._poison_nonce,
                         self._active_control_signal_boundary(),
-                        close_control or state_control or commit_control,
+                        commit_control or state_control or close_control,
                     ) from state_error
                 if transaction_open:
                     try:
@@ -1382,7 +1382,7 @@ class SQLiteInvocationAttemptStore:
                         raise _ReadTransactionOutcomeUnknown(
                             self._poison_nonce,
                             self._active_control_signal_boundary(),
-                            close_control or rollback_control or commit_control,
+                            commit_control or rollback_control or close_control,
                         ) from rollback_error
                 raise
 
