@@ -9,6 +9,8 @@ or make v2 reachable from the active v1 backup APIs.
 from __future__ import annotations
 
 import sqlite3
+import sys
+from asyncio import CancelledError
 from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import islice
@@ -34,7 +36,7 @@ from .domain_migrations import (
 _MAX_SQLITE_PAGE_COUNT = (2**32) - 2
 _MAX_SQLITE_PAGE_SIZE = 65_536
 _MAX_SQLITE_ROW_COUNT = (2**63) - 1
-_CONTROL_SIGNAL_TYPES = (KeyboardInterrupt, SystemExit, GeneratorExit)
+_CONTROL_SIGNAL_TYPES = (KeyboardInterrupt, SystemExit, GeneratorExit, CancelledError)
 _SQLITE_STAT1_NAME = "sqlite_stat1"
 _SQLITE_STAT1_DDL_SHA256 = backup_schema_ddl_sha256("CREATE TABLE sqlite_stat1(tbl,idx,stat)")
 
@@ -450,6 +452,48 @@ def _is_exact_control_signal(error: BaseException) -> bool:
     return type(error) in _CONTROL_SIGNAL_TYPES
 
 
+def _finish_owned_snapshot(connection: sqlite3.Connection) -> None:
+    """End a conservatively owned transaction without replacing an exact control."""
+
+    originating_error = sys.exc_info()[1]
+    try:
+        if _connection_in_transaction(connection):
+            _rollback_owned_snapshot(connection)
+    except BaseException as cleanup_error:
+        if originating_error is not None and _is_exact_control_signal(originating_error):
+            return
+        if _is_exact_control_signal(cleanup_error):
+            raise
+        if isinstance(cleanup_error, _SnapshotFailure):
+            raise
+        raise _SnapshotFailure("read_snapshot_cleanup_failed") from cleanup_error
+
+
+def _derive_inside_owned_snapshot(
+    connection: sqlite3.Connection,
+) -> BackupManifestV2Snapshot:
+    """Establish cleanup before BEGIN and keep it active through derivation."""
+
+    try:
+        _execute(connection, "BEGIN", label="read_snapshot_begin")
+        if not _connection_in_transaction(connection):
+            raise _SnapshotFailure("read_snapshot_not_opened")
+        return _derive_inside_transaction(connection)
+    finally:
+        _finish_owned_snapshot(connection)
+
+
+def _derive_with_owned_snapshot(
+    connection: sqlite3.Connection,
+) -> BackupManifestV2Snapshot:
+    """Retry cleanup after one control or failure interrupts the inner finalizer."""
+
+    try:
+        return _derive_inside_owned_snapshot(connection)
+    finally:
+        _finish_owned_snapshot(connection)
+
+
 def derive_backup_manifest_v2_snapshot(
     connection: object,
 ) -> BackupManifestV2Snapshot:
@@ -472,52 +516,18 @@ def derive_backup_manifest_v2_snapshot(
         code = error.code
         _raise_snapshot_error(code)
 
-    opened_snapshot = False
-    result: Optional[BackupManifestV2Snapshot] = None
-    originating_error: Optional[BaseException] = None
-    cleanup_error: Optional[BaseException] = None
+    failure_code: Optional[str] = None
     try:
-        begin_error: Optional[BaseException] = None
-        try:
-            _execute(typed_connection, "BEGIN", label="read_snapshot_begin")
-        except BaseException as error:
-            begin_error = error
-        opened_snapshot = _connection_in_transaction(typed_connection)
-        if begin_error is not None:
-            raise begin_error
-        if not opened_snapshot:
-            raise _SnapshotFailure("read_snapshot_not_opened")
-        result = _derive_inside_transaction(typed_connection)
+        return _derive_with_owned_snapshot(typed_connection)
     except BaseException as error:
-        originating_error = error
-
-    if opened_snapshot:
-        try:
-            _rollback_owned_snapshot(typed_connection)
-        except BaseException as error:
-            cleanup_error = error
-
-    if originating_error is not None and _is_exact_control_signal(originating_error):
-        raise originating_error
-    if cleanup_error is not None and _is_exact_control_signal(cleanup_error):
-        raise cleanup_error
-    if cleanup_error is not None:
-        if isinstance(cleanup_error, _SnapshotFailure):
-            code = cleanup_error.code
-        else:
-            code = "read_snapshot_cleanup_failed"
-        originating_error = None
-        cleanup_error = None
-        _raise_snapshot_error(code)
-    if originating_error is not None:
-        if isinstance(originating_error, _SnapshotFailure):
-            code = originating_error.code
-            originating_error = None
-            _raise_snapshot_error(code)
-        raise originating_error
-    if result is None:
+        if _is_exact_control_signal(error):
+            raise
+        if not isinstance(error, _SnapshotFailure):
+            raise
+        failure_code = error.code
+    if failure_code is None:
         _raise_snapshot_error("snapshot_result_missing")
-    return result
+    _raise_snapshot_error(failure_code)
 
 
 __all__ = [
