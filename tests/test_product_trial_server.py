@@ -52,11 +52,34 @@ class LocalProductTrialServerTests(unittest.TestCase):
             body = response.read().decode("utf-8")
             headers = response.headers
         self.assertEqual(response.status, 200)
-        self.assertIn("人和 Agent 的群聊协同内核", body)
+        self.assertIn("群聊不是入口", body)
         self.assertNotIn("https://", body)
         self.assertEqual(headers["Cache-Control"], "no-store")
         self.assertEqual(headers["X-Frame-Options"], "DENY")
         self.assertIn("connect-src 'self'", headers["Content-Security-Policy"])
+
+    def test_static_page_contains_the_product_views_and_inline_diagrams(self) -> None:
+        with urlopen(self.origin + "/", timeout=5) as response:
+            body = response.read().decode("utf-8")
+        for element_id in (
+            "workbench",
+            "task-research",
+            "artifact-list",
+            "needs-you-list",
+            "event-timeline",
+            "architecture-diagram",
+            "sequence-diagram",
+            "state-diagram",
+            "gate-ladder",
+            "raw-output",
+        ):
+            with self.subTest(element_id=element_id):
+                self.assertIn(f'id="{element_id}"', body)
+        self.assertGreaterEqual(body.count("<svg"), 3)
+        self.assertNotIn("innerHTML", body)
+        self.assertNotIn("eval(", body)
+        self.assertNotIn("<script src=", body)
+        self.assertNotIn("<link rel=", body)
 
     def test_health_and_demo_require_the_ephemeral_token(self) -> None:
         status, payload, _ = self.request_json("/api/health")
