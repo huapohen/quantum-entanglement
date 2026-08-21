@@ -335,6 +335,43 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
         )
         self.assertEqual(self.store.stream_version("stream:owner"), 0)
 
+    def test_read_parameters_reject_hostile_adapters_before_connection(self) -> None:
+        adapter_calls = 0
+
+        class HostileText(str):
+            def __conform__(self, _protocol: object) -> str:
+                nonlocal adapter_calls
+                adapter_calls += 1
+                return str(self)
+
+        class HostileInteger(int):
+            def __conform__(self, _protocol: object) -> int:
+                nonlocal adapter_calls
+                adapter_calls += 1
+                return int(self)
+
+        hostile_text = HostileText("caller-controlled")
+        hostile_integer = HostileInteger(0)
+        actions: tuple[Callable[[], object], ...] = (
+            lambda: self.store.stream_version(hostile_text),
+            lambda: self.store.get_idempotent_event(hostile_text, "key"),
+            lambda: self.store.get_idempotent_event("stream", hostile_text),
+            lambda: self.store.read_stream(hostile_text),
+            lambda: self.store.read_stream("stream", hostile_integer),
+            lambda: self.store.read_stream_page(hostile_text),
+            lambda: self.store.get_outbox(hostile_text),
+            lambda: self.store.get_inbox_receipt(hostile_text, "message"),
+            lambda: self.store.get_inbox_receipt("consumer", hostile_text),
+            lambda: self.store.load_snapshot(hostile_text),
+        )
+
+        for action in actions:
+            with self.subTest(action=action):
+                with self.assertRaises(TypeError):
+                    action()
+        self.assertEqual(adapter_calls, 0)
+        self.assertEqual(self.store.stream_version("stream:owner"), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

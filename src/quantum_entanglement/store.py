@@ -203,6 +203,41 @@ def _persisted_optional_text(value: Any, field_name: str) -> Optional[str]:
     return _persisted_text(value, field_name)
 
 
+def _caller_text(value: object, field_name: str, *, required: bool = False) -> str:
+    """Copy only an exact built-in string into a SQLite-safe caller snapshot."""
+
+    if type(value) is not str:
+        raise TypeError(f"{field_name} must be a string")
+    if required and not value.strip():
+        raise ValueError(f"{field_name} is required")
+    return value
+
+
+def _caller_optional_text(value: object, field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _caller_text(value, field_name)
+
+
+def _caller_sqlite_integer(
+    value: object,
+    field_name: str,
+    *,
+    minimum: Optional[int] = None,
+) -> int:
+    """Copy an exact integer that SQLite can bind without caller adaptation."""
+
+    if type(value) is not int:
+        raise TypeError(f"{field_name} must be an integer")
+    if minimum is not None and value < minimum:
+        if minimum == 0:
+            raise ValueError(f"{field_name} cannot be negative")
+        raise ValueError(f"{field_name} must be at least {minimum}")
+    if not -_MAX_SQLITE_INTEGER - 1 <= value <= _MAX_SQLITE_INTEGER:
+        raise ValueError(f"{field_name} exceeds SQLite's integer range")
+    return value
+
+
 class _JsonTraversalState:
     __slots__ = ("active_container_ids", "nodes")
 
@@ -320,6 +355,7 @@ class SQLiteEventStore:
         try:
             self._require_current_process()
             yield
+            self._require_current_process()
         finally:
             if self._process_is_current():
                 lock.release()
@@ -782,13 +818,7 @@ class SQLiteEventStore:
 
     @staticmethod
     def _validate_page_cursor(value: int, field_name: str) -> int:
-        if type(value) is not int:
-            raise TypeError(f"{field_name} must be an integer")
-        if value < 0:
-            raise ValueError(f"{field_name} cannot be negative")
-        if value > _MAX_SQLITE_INTEGER:
-            raise ValueError(f"{field_name} exceeds SQLite's integer range")
-        return value
+        return _caller_sqlite_integer(value, field_name, minimum=0)
 
     @staticmethod
     def _validate_page_limit(limit: int) -> int:
@@ -867,10 +897,11 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def stream_version(self, stream_id: str) -> int:
+        stream_id_snapshot = _caller_text(stream_id, "stream_id")
         with self._locked():
             row = self._connection.execute(
                 "SELECT COALESCE(MAX(sequence), 0) AS version FROM events WHERE stream_id = ?",
-                (stream_id,),
+                (stream_id_snapshot,),
             ).fetchone()
             return int(row["version"])
 
@@ -882,14 +913,16 @@ class SQLiteEventStore:
     ) -> Optional[StoredEvent]:
         """Return the exact event already admitted for one stream-local retry key."""
 
-        if type(stream_id) is not str or type(idempotency_key) is not str:
-            raise TypeError("stream_id and idempotency_key must be strings")
-        if not stream_id.strip() or not idempotency_key.strip():
-            raise ValueError("stream_id and idempotency_key are required")
+        stream_id_snapshot = _caller_text(stream_id, "stream_id", required=True)
+        idempotency_key_snapshot = _caller_text(
+            idempotency_key,
+            "idempotency_key",
+            required=True,
+        )
         with self._locked():
             row = self._connection.execute(
                 "SELECT * FROM events WHERE stream_id = ? AND idempotency_key = ?",
-                (stream_id, idempotency_key),
+                (stream_id_snapshot, idempotency_key_snapshot),
             ).fetchone()
             return None if row is None else self._row_to_event(row)
 
@@ -1123,10 +1156,12 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def read_stream(self, stream_id: str, after_sequence: int = 0) -> Tuple[StoredEvent, ...]:
+        stream_id_snapshot = _caller_text(stream_id, "stream_id")
+        sequence_snapshot = _caller_sqlite_integer(after_sequence, "after_sequence")
         with self._locked():
             rows = self._connection.execute(
                 "SELECT * FROM events WHERE stream_id = ? AND sequence > ? ORDER BY sequence",
-                (stream_id, after_sequence),
+                (stream_id_snapshot, sequence_snapshot),
             ).fetchall()
             return tuple(self._row_to_event(row) for row in rows)
 
@@ -1139,10 +1174,7 @@ class SQLiteEventStore:
     ) -> Tuple[StoredEvent, ...]:
         """Read one bounded stream page ordered by its exclusive sequence cursor."""
 
-        if type(stream_id) is not str:
-            raise TypeError("stream_id must be a string")
-        if not stream_id.strip():
-            raise ValueError("stream_id is required")
+        stream_id_snapshot = _caller_text(stream_id, "stream_id", required=True)
         cursor = self._validate_page_cursor(after_sequence, "after_sequence")
         page_limit = self._validate_page_limit(limit)
         with self._locked():
@@ -1152,7 +1184,7 @@ class SQLiteEventStore:
                 WHERE stream_id = ? AND sequence > ?
                 ORDER BY sequence LIMIT ?
                 """,
-                (stream_id, cursor, page_limit),
+                (stream_id_snapshot, cursor, page_limit),
             ).fetchall()
             return tuple(self._row_to_event(row) for row in rows)
 
@@ -1410,8 +1442,11 @@ class SQLiteEventStore:
     def read_outbox_ambiguities(self, *, open_only: bool = True) -> Tuple[OutboxAmbiguity, ...]:
         """Read durable reconciliation work in deterministic insertion order."""
 
+        if type(open_only) is not bool:
+            raise TypeError("open_only must be a boolean")
+        open_only_snapshot = open_only
         with self._locked():
-            if open_only:
+            if open_only_snapshot:
                 rows = self._connection.execute(
                     """
                     SELECT * FROM outbox_ambiguities
@@ -1441,8 +1476,9 @@ class SQLiteEventStore:
         page_limit = self._validate_page_limit(limit)
         if type(open_only) is not bool:
             raise TypeError("open_only must be a boolean")
+        open_only_snapshot = open_only
         with self._locked():
-            if open_only:
+            if open_only_snapshot:
                 rows = self._connection.execute(
                     """
                     SELECT rowid AS ambiguity_rowid, * FROM outbox_ambiguities
@@ -1547,23 +1583,27 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def get_outbox(self, message_id: str) -> Optional[StoredOutboxMessage]:
+        message_id_snapshot = _caller_text(message_id, "message_id")
         with self._locked():
             row = self._connection.execute(
-                "SELECT * FROM outbox WHERE message_id = ?", (message_id,)
+                "SELECT * FROM outbox WHERE message_id = ?", (message_id_snapshot,)
             ).fetchone()
             return None if row is None else self._row_to_outbox(row)
 
     @_bind_event_store_process
     def read_outbox(self, status: Optional[OutboxStatus] = None) -> Tuple[StoredOutboxMessage, ...]:
+        if status is not None and type(status) is not OutboxStatus:
+            raise TypeError("status must be an OutboxStatus or None")
+        status_value = None if status is None else _caller_text(status.value, "status")
         with self._locked():
-            if status is None:
+            if status_value is None:
                 rows = self._connection.execute(
                     "SELECT * FROM outbox ORDER BY outbox_position"
                 ).fetchall()
             else:
                 rows = self._connection.execute(
                     "SELECT * FROM outbox WHERE status = ? ORDER BY outbox_position",
-                    (status.value,),
+                    (status_value,),
                 ).fetchall()
             return tuple(self._row_to_outbox(row) for row in rows)
 
@@ -1580,8 +1620,9 @@ class SQLiteEventStore:
         page_limit = self._validate_page_limit(limit)
         if status is not None and type(status) is not OutboxStatus:
             raise TypeError("status must be an OutboxStatus or None")
+        status_value = None if status is None else _caller_text(status.value, "status")
         with self._locked():
-            if status is None:
+            if status_value is None:
                 rows = self._connection.execute(
                     """
                     SELECT * FROM outbox WHERE outbox_position > ?
@@ -1596,19 +1637,21 @@ class SQLiteEventStore:
                     WHERE outbox_position > ? AND status = ?
                     ORDER BY outbox_position LIMIT ?
                     """,
-                    (cursor, status.value, page_limit),
+                    (cursor, status_value, page_limit),
                 ).fetchall()
             return tuple(self._row_to_outbox_page_item(row) for row in rows)
 
     @_bind_event_store_process
     def get_inbox_receipt(self, consumer_id: str, message_id: str) -> Optional[InboxReceipt]:
+        consumer_id_snapshot = _caller_text(consumer_id, "consumer_id")
+        message_id_snapshot = _caller_text(message_id, "message_id")
         with self._locked():
             row = self._connection.execute(
                 """
                 SELECT * FROM inbox_receipts
                 WHERE consumer_id = ? AND message_id = ?
                 """,
-                (consumer_id, message_id),
+                (consumer_id_snapshot, message_id_snapshot),
             ).fetchone()
             return None if row is None else self._row_to_inbox(row)
 
@@ -1637,20 +1680,26 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def load_snapshot(self, stream_id: str) -> Optional[Tuple[int, Dict[str, object]]]:
+        stream_id_snapshot = _caller_text(stream_id, "stream_id")
         with self._locked():
             row = self._connection.execute(
-                "SELECT sequence, state_json FROM snapshots WHERE stream_id = ?", (stream_id,)
+                "SELECT sequence, state_json FROM snapshots WHERE stream_id = ?",
+                (stream_id_snapshot,),
             ).fetchone()
             if row is None:
                 return None
             try:
-                return _persisted_integer(
-                    row["sequence"], "snapshot sequence"
-                ), self._decode_json_object(row["state_json"], "snapshot state")
-            except EventStoreIntegrityError:
-                raise
-            except (IndexError, KeyError, TypeError, ValueError) as exc:
+                persisted_snapshot = (row["sequence"], row["state_json"])
+            except (IndexError, KeyError) as exc:
                 raise EventStoreIntegrityError("persisted snapshot row is malformed") from exc
+        try:
+            return _persisted_integer(
+                persisted_snapshot[0], "snapshot sequence"
+            ), self._decode_json_object(persisted_snapshot[1], "snapshot state")
+        except EventStoreIntegrityError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise EventStoreIntegrityError("persisted snapshot row is malformed") from exc
 
     @_bind_event_store_process
     def close(self) -> None:
