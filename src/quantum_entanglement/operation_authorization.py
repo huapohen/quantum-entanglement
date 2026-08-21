@@ -645,6 +645,8 @@ class _AuthorizedOperationRegistry:
     ) -> bool:
         """Configure the registry inside one exception-containment boundary."""
 
+        if type(self) is not _AuthorizedOperationRegistry:
+            raise TypeError("registry must be an exact AuthorizedOperationRegistry")
         owner_pid, owner_epoch = _current_process_identity()
         _require_callable_dependency(
             clock,
@@ -1259,6 +1261,8 @@ class ProtectedOperationComposer:
     ) -> bool:
         """Configure the composer inside one exception-containment boundary."""
 
+        if type(self) is not ProtectedOperationComposer:
+            raise TypeError("composer must be an exact ProtectedOperationComposer")
         owner_pid, owner_epoch = _current_process_identity()
         if type(issuer) is not RequestContextIssuer:
             raise TypeError("issuer must be an exact RequestContextIssuer")
