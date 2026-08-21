@@ -1,8 +1,11 @@
+import _thread
 import asyncio
 import copy
+import inspect
 import multiprocessing
 import os
 import pickle
+import sys
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -155,6 +158,54 @@ def _fork_inherited_issuer_composer_probe(
                 )
             )
         )
+    finally:
+        connection.close()
+
+
+def _fork_active_exit_spoof_probe(connection, composer):
+    active_triple = None
+    results = {}
+    try:
+        raise KeyboardInterrupt("fork-active-exit-spoof-canary")
+    except KeyboardInterrupt:
+        active_triple = sys.exc_info()
+        results["inside_handler"] = _capture_process_call(
+            lambda selected=active_triple: ProtectedOperationComposer.__exit__(
+                composer,
+                *selected,
+            )
+        )
+    results["after_handler"] = _capture_process_call(
+        lambda selected=active_triple: ProtectedOperationComposer.__exit__(
+            composer,
+            *selected,
+        )
+    )
+    try:
+        connection.send(results)
+    finally:
+        connection.close()
+
+
+def _fork_context_lease_stage_probe(
+    connection,
+    enter_callback,
+    exit_callback,
+    *,
+    enter_pending,
+):
+    results = {}
+    if enter_pending:
+        results["enter"] = _capture_process_call(enter_callback)
+    try:
+        raise KeyboardInterrupt("fork-context-lease-stage-canary")
+    except KeyboardInterrupt:
+        active_triple = sys.exc_info()
+        results["exit"] = _capture_process_call(
+            lambda selected=active_triple: exit_callback(*selected)
+        )
+    try:
+        connection.send(results)
     finally:
         connection.close()
 
@@ -820,6 +871,33 @@ class ProtectedOperationComposerTests(unittest.TestCase):
         self.assertIsNone(captured.__cause__)
         self.assertIsNone(captured.__context__)
         return captured
+
+    def assert_traceback_contains_identity(self, trace, expected):
+        self.assertIsNotNone(expected)
+        while trace is not None and trace is not expected:
+            trace = trace.tb_next
+        self.assertIs(trace, expected)
+
+    def assert_context_exit_fully_closed(self, composer):
+        registry = object.__getattribute__(
+            composer,
+            "_ProtectedOperationComposer__registry",
+        )
+        self.assertIs(
+            object.__getattribute__(composer, "_ProtectedOperationComposer__closed"),
+            True,
+        )
+        self.assertIsNone(
+            object.__getattribute__(composer, "_ProtectedOperationComposer__context_lease")
+        )
+        self.assertIs(
+            object.__getattribute__(registry, "_AuthorizedOperationRegistry__closed"),
+            True,
+        )
+        self.assertEqual(
+            object.__getattribute__(registry, "_AuthorizedOperationRegistry__active"),
+            {},
+        )
 
     def assert_detached_traceback(
         self,
@@ -3198,6 +3276,1565 @@ class ProtectedOperationComposerTests(unittest.TestCase):
 
         self.assertIs(captured, body)
 
+    def test_active_exception_triple_cannot_spoof_manual_exit_precedence(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+        entry_states = ("never_entered", "explicit_entered", "closed")
+        access_paths = ("class", "instance")
+        cleanup_types = (RuntimeError, *signal_types)
+        failures = []
+
+        for entry_state in entry_states:
+            for access_path in access_paths:
+                for body_type in signal_types:
+                    for cleanup_type in cleanup_types:
+                        composer = self.make_composer()
+                        if entry_state == "explicit_entered":
+                            self.assertIs(
+                                ProtectedOperationComposer.__enter__(composer),
+                                composer,
+                            )
+                        elif entry_state == "closed":
+                            composer.close()
+                        body = SystemExit(23) if body_type is SystemExit else body_type("body")
+                        cleanup = (
+                            SystemExit(17)
+                            if cleanup_type is SystemExit
+                            else cleanup_type("cleanup-secret-canary")
+                        )
+
+                        def fail_close(_registry, *, selected=cleanup):
+                            raise selected
+
+                        try:
+                            raise body
+                        except BaseException:
+                            active_triple = sys.exc_info()
+
+                            def invoke_exit(
+                                selected_composer=composer,
+                                selected_access=access_path,
+                                selected_triple=active_triple,
+                            ):
+                                if selected_access == "class":
+                                    return ProtectedOperationComposer.__exit__(
+                                        selected_composer,
+                                        *selected_triple,
+                                    )
+                                return selected_composer.__exit__(*selected_triple)
+
+                            with patch.object(
+                                _AuthorizedOperationRegistry,
+                                "_close",
+                                fail_close,
+                            ):
+                                observed = _capture_process_call(invoke_exit)
+
+                        expected = (
+                            (
+                                "operation_error",
+                                "protected_operation_internal_failure",
+                                True,
+                                True,
+                            )
+                            if cleanup_type is RuntimeError
+                            else ("unexpected_error", cleanup_type.__name__)
+                        )
+                        if observed != expected:
+                            failures.append(
+                                (
+                                    entry_state,
+                                    access_path,
+                                    body_type.__name__,
+                                    cleanup_type.__name__,
+                                    observed,
+                                )
+                            )
+
+        self.assertEqual(len(failures), 0, failures[:12])
+
+    def test_direct_active_triple_inside_real_context_cannot_consume_exit_priority(self):
+        for access_path in ("class", "instance"):
+            with self.subTest(access=access_path):
+                composer = self.make_composer()
+                cleanup = RuntimeError("nested-direct-cleanup-secret-canary")
+
+                def fail_close(_registry, *, selected=cleanup):
+                    raise selected
+
+                observed = None
+                with composer:
+                    try:
+                        raise KeyboardInterrupt("nested-direct-body-secret-canary")
+                    except KeyboardInterrupt:
+                        active_triple = sys.exc_info()
+
+                        def invoke_exit(
+                            selected_access=access_path,
+                            selected_composer=composer,
+                            selected_triple=active_triple,
+                        ):
+                            if selected_access == "class":
+                                return ProtectedOperationComposer.__exit__(
+                                    selected_composer,
+                                    *selected_triple,
+                                )
+                            return selected_composer.__exit__(*selected_triple)
+
+                        with patch.object(
+                            _AuthorizedOperationRegistry,
+                            "_close",
+                            fail_close,
+                        ):
+                            observed = _capture_process_call(invoke_exit)
+
+                self.assertEqual(
+                    observed,
+                    (
+                        "operation_error",
+                        "protected_operation_internal_failure",
+                        True,
+                        True,
+                    ),
+                )
+
+    def test_context_manager_lease_rejects_nested_entry(self):
+        nested_composer = self.make_composer()
+
+        def enter_nested():
+            with nested_composer:
+                pass
+
+        with nested_composer:
+            self.capture_error("protected_operation_internal_failure", enter_nested)
+
+    def test_context_manager_lease_rejects_concurrent_entry(self):
+        concurrent_composer = self.make_composer()
+        owner_entered = threading.Event()
+        release_owner = threading.Event()
+        owner_results = []
+
+        def own_context():
+            try:
+                with concurrent_composer:
+                    owner_entered.set()
+                    release_owner.wait(5)
+            except BaseException as error:
+                owner_results.append(("error", type(error).__name__))
+            else:
+                owner_results.append(("success",))
+
+        owner = threading.Thread(target=own_context)
+        owner.start()
+        try:
+            self.assertTrue(owner_entered.wait(2))
+
+            def enter_concurrently():
+                with concurrent_composer:
+                    pass
+
+            self.capture_error(
+                "protected_operation_internal_failure",
+                enter_concurrently,
+            )
+        finally:
+            release_owner.set()
+            owner.join(2)
+        self.assertFalse(owner.is_alive())
+        self.assertEqual(owner_results, [("success",)])
+
+    def test_context_lease_rejects_successor_after_owner_ident_reuse(self):
+        expected = (
+            "operation_error",
+            "protected_operation_internal_failure",
+            True,
+            True,
+        )
+
+        for stage in ("prepared", "bound", "active", "consumed"):
+            with self.subTest(stage=stage):
+                composer = self.make_composer()
+                self.addCleanup(composer.close)
+                operation = composer.authorize(self.context, self.request)
+                registry = object.__getattribute__(
+                    composer,
+                    "_ProtectedOperationComposer__registry",
+                )
+                enter_descriptor = inspect.getattr_static(
+                    ProtectedOperationComposer,
+                    "__enter__",
+                )
+                exit_descriptor = inspect.getattr_static(
+                    ProtectedOperationComposer,
+                    "__exit__",
+                )
+                callbacks = {}
+                owner_state = {}
+                owner_errors = []
+
+                def prepare_owner(
+                    *,
+                    selected_callbacks=callbacks,
+                    selected_composer=composer,
+                    selected_enter_descriptor=enter_descriptor,
+                    selected_errors=owner_errors,
+                    selected_exit_descriptor=exit_descriptor,
+                    selected_owner_state=owner_state,
+                    selected_stage=stage,
+                ):
+                    try:
+                        selected_owner_state["thread"] = threading.current_thread()
+                        selected_owner_state["ident"] = threading.get_ident()
+                        selected_owner_state["thread_token"] = (
+                            operation_authorization._current_context_exit_thread_token()
+                        )
+                        selected_callbacks["enter"] = selected_enter_descriptor.__get__(
+                            selected_composer,
+                            ProtectedOperationComposer,
+                        )
+                        if selected_stage != "prepared":
+                            selected_callbacks["exit"] = selected_exit_descriptor.__get__(
+                                selected_composer,
+                                ProtectedOperationComposer,
+                            )
+                        if selected_stage in ("active", "consumed"):
+                            entered = selected_callbacks["enter"]()
+                            if entered is not selected_composer:
+                                raise AssertionError("context entry did not return composer")
+                        if selected_stage == "consumed":
+                            context_lease = object.__getattribute__(
+                                selected_composer,
+                                "_ProtectedOperationComposer__context_lease",
+                            )
+                            if context_lease is None:
+                                raise AssertionError("context lease was not published")
+                            consumed = ProtectedOperationComposer._consume_context_exit_lease(
+                                selected_composer,
+                                context_lease.token,
+                            )
+                            if consumed is not True:
+                                raise AssertionError("context lease was not consumed")
+                    except BaseException as error:
+                        selected_errors.append(type(error).__name__)
+
+                owner = threading.Thread(target=prepare_owner)
+                owner.start()
+                owner.join(2)
+                self.assertFalse(owner.is_alive())
+                self.assertEqual(owner_errors, [])
+                self.assertIs(owner_state["thread"], owner)
+
+                lease_before = object.__getattribute__(
+                    composer,
+                    "_ProtectedOperationComposer__context_lease",
+                )
+                self.assertIsNotNone(lease_before)
+                self.assertIs(
+                    lease_before.owner_thread_token,
+                    owner_state["thread_token"],
+                )
+                active_before = dict(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__active",
+                    )
+                )
+                self.assertEqual(len(active_before), 1)
+
+                reused = None
+                for _attempt in range(128):
+                    observation = {}
+
+                    def invoke_saved_callback(
+                        *,
+                        selected_callbacks=callbacks,
+                        selected_composer=composer,
+                        selected_exit_descriptor=exit_descriptor,
+                        selected_lease=lease_before,
+                        selected_observation=observation,
+                        selected_owner_state=owner_state,
+                        selected_stage=stage,
+                    ):
+                        selected_observation["ident"] = threading.get_ident()
+                        if selected_observation["ident"] != selected_owner_state["ident"]:
+                            return
+                        selected_observation["thread"] = threading.current_thread()
+                        selected_observation["thread_token"] = (
+                            operation_authorization._current_context_exit_thread_token()
+                        )
+                        if selected_stage == "prepared":
+                            selected_observation["results"] = (
+                                _capture_process_call(
+                                    lambda: selected_exit_descriptor.__get__(
+                                        selected_composer,
+                                        ProtectedOperationComposer,
+                                    )
+                                ),
+                                _capture_process_call(selected_callbacks["enter"]),
+                            )
+                            return
+                        if selected_stage == "bound":
+                            selected_observation["results"] = (
+                                _capture_process_call(selected_callbacks["enter"]),
+                            )
+                            return
+                        try:
+                            raise KeyboardInterrupt("successor-body-secret-canary")
+                        except KeyboardInterrupt:
+                            active_triple = sys.exc_info()
+                            selected_observation["results"] = (
+                                _capture_process_call(
+                                    lambda selected=active_triple: selected_callbacks["exit"](
+                                        *selected
+                                    )
+                                ),
+                            )
+                            if selected_stage == "consumed":
+                                selected_observation["reconciled"] = (
+                                    ProtectedOperationComposer._reconcile_context_exit_lease(
+                                        selected_composer,
+                                        selected_lease.token,
+                                    )
+                                )
+                                selected_observation["finalized"] = (
+                                    ProtectedOperationComposer._finalize_context_exit_lease(
+                                        selected_composer,
+                                        selected_lease.token,
+                                    )
+                                )
+                                ProtectedOperationComposer._discard_context_exit_lease(
+                                    selected_composer,
+                                    selected_lease.token,
+                                    True,
+                                )
+
+                    successor = threading.Thread(target=invoke_saved_callback)
+                    successor.start()
+                    successor.join(2)
+                    self.assertFalse(successor.is_alive())
+                    if "results" in observation:
+                        reused = (successor, observation)
+                        break
+
+                if reused is None:
+                    composer.close()
+                    self.skipTest("thread identifier reuse unavailable")
+                successor, observation = reused
+                self.assertEqual(observation["ident"], owner_state["ident"])
+                self.assertIs(observation["thread"], successor)
+                self.assertIsNot(observation["thread"], owner)
+                self.assertIsNot(
+                    observation["thread_token"],
+                    owner_state["thread_token"],
+                )
+                self.assertEqual(
+                    observation["results"],
+                    (expected, expected) if stage == "prepared" else (expected,),
+                )
+                if stage == "consumed":
+                    self.assertIs(observation["reconciled"], False)
+                    self.assertIs(observation["finalized"], False)
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__context_lease",
+                    ),
+                    lease_before,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__closed",
+                    ),
+                    False,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__closed",
+                    ),
+                    False,
+                )
+                self.assertEqual(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__active",
+                    ),
+                    active_before,
+                )
+
+                composer.close()
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__context_lease",
+                    ),
+                    lease_before,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__closed",
+                    ),
+                    True,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__closed",
+                    ),
+                    True,
+                )
+                self.assertEqual(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__active",
+                    ),
+                    {},
+                )
+                self.assert_code(
+                    "protected_operation_composer_closed",
+                    lambda selected_composer=composer, selected_operation=operation: (
+                        selected_composer.consume(
+                            selected_operation,
+                            self.context,
+                            self.request,
+                        )
+                    ),
+                )
+
+    def test_context_lease_rejects_alien_successor_after_owner_ident_reuse(self):
+        expected = (
+            "operation_error",
+            "protected_operation_internal_failure",
+            True,
+            True,
+        )
+        expected_stage = {
+            "prepared": (False, False, False),
+            "bound": (False, False, True),
+            "active": (True, False, True),
+            "consumed": (True, True, True),
+        }
+
+        for stage in ("prepared", "bound", "active", "consumed"):
+            with self.subTest(stage=stage):
+                composer = self.make_composer()
+                self.addCleanup(composer.close)
+                operation = composer.authorize(self.context, self.request)
+                registry = object.__getattribute__(
+                    composer,
+                    "_ProtectedOperationComposer__registry",
+                )
+                enter_descriptor = inspect.getattr_static(
+                    ProtectedOperationComposer,
+                    "__enter__",
+                )
+                exit_descriptor = inspect.getattr_static(
+                    ProtectedOperationComposer,
+                    "__exit__",
+                )
+                callbacks = {}
+                owner_state = {}
+                owner_errors = []
+                owner_done = threading.Event()
+
+                def prepare_owner(
+                    *,
+                    selected_callbacks=callbacks,
+                    selected_composer=composer,
+                    selected_done=owner_done,
+                    selected_enter_descriptor=enter_descriptor,
+                    selected_errors=owner_errors,
+                    selected_exit_descriptor=exit_descriptor,
+                    selected_owner_state=owner_state,
+                    selected_stage=stage,
+                ):
+                    try:
+                        selected_owner_state["dummy_thread"] = threading.current_thread()
+                        selected_owner_state["ident"] = threading.get_ident()
+                        selected_owner_state["thread_token"] = (
+                            operation_authorization._current_context_exit_thread_token()
+                        )
+                        selected_callbacks["enter"] = selected_enter_descriptor.__get__(
+                            selected_composer,
+                            ProtectedOperationComposer,
+                        )
+                        if selected_stage != "prepared":
+                            selected_callbacks["exit"] = selected_exit_descriptor.__get__(
+                                selected_composer,
+                                ProtectedOperationComposer,
+                            )
+                        if selected_stage in ("active", "consumed"):
+                            entered = selected_callbacks["enter"]()
+                            if entered is not selected_composer:
+                                raise AssertionError("context entry did not return composer")
+                        if selected_stage == "consumed":
+                            context_lease = object.__getattribute__(
+                                selected_composer,
+                                "_ProtectedOperationComposer__context_lease",
+                            )
+                            if context_lease is None:
+                                raise AssertionError("context lease was not published")
+                            consumed = ProtectedOperationComposer._consume_context_exit_lease(
+                                selected_composer,
+                                context_lease.token,
+                            )
+                            if consumed is not True:
+                                raise AssertionError("context lease was not consumed")
+                    except BaseException as error:
+                        selected_errors.append(type(error).__name__)
+                    finally:
+                        selected_done.set()
+
+                _thread.start_new_thread(prepare_owner, ())
+                self.assertTrue(owner_done.wait(2))
+                self.assertEqual(owner_errors, [])
+
+                lease_before = object.__getattribute__(
+                    composer,
+                    "_ProtectedOperationComposer__context_lease",
+                )
+                self.assertIsNotNone(lease_before)
+                self.assertIs(
+                    lease_before.owner_thread_token,
+                    owner_state["thread_token"],
+                )
+                self.assertEqual(
+                    (
+                        lease_before.active,
+                        lease_before.consumed,
+                        lease_before.exit_bound,
+                    ),
+                    expected_stage[stage],
+                )
+                active_before = dict(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__active",
+                    )
+                )
+                self.assertEqual(len(active_before), 1)
+
+                reused = None
+                for _attempt in range(256):
+                    observation = {}
+                    successor_done = threading.Event()
+
+                    def invoke_saved_callback(
+                        *,
+                        selected_callbacks=callbacks,
+                        selected_composer=composer,
+                        selected_done=successor_done,
+                        selected_exit_descriptor=exit_descriptor,
+                        selected_lease=lease_before,
+                        selected_observation=observation,
+                        selected_owner_state=owner_state,
+                        selected_stage=stage,
+                    ):
+                        try:
+                            selected_observation["dummy_thread"] = threading.current_thread()
+                            selected_observation["ident"] = threading.get_ident()
+                            selected_observation["thread_token"] = (
+                                operation_authorization._current_context_exit_thread_token()
+                            )
+                            if selected_observation["ident"] != selected_owner_state["ident"]:
+                                return
+                            if selected_stage == "prepared":
+                                selected_observation["results"] = (
+                                    _capture_process_call(
+                                        lambda: selected_exit_descriptor.__get__(
+                                            selected_composer,
+                                            ProtectedOperationComposer,
+                                        )
+                                    ),
+                                    _capture_process_call(selected_callbacks["enter"]),
+                                )
+                                return
+                            if selected_stage == "bound":
+                                selected_observation["results"] = (
+                                    _capture_process_call(selected_callbacks["enter"]),
+                                )
+                                return
+                            try:
+                                raise KeyboardInterrupt("alien-successor-body-secret-canary")
+                            except KeyboardInterrupt:
+                                active_triple = sys.exc_info()
+                                selected_observation["results"] = (
+                                    _capture_process_call(
+                                        lambda selected=active_triple: selected_callbacks["exit"](
+                                            *selected
+                                        )
+                                    ),
+                                )
+                                if selected_stage == "consumed":
+                                    selected_observation["reconciled"] = (
+                                        ProtectedOperationComposer._reconcile_context_exit_lease(
+                                            selected_composer,
+                                            selected_lease.token,
+                                        )
+                                    )
+                                    selected_observation["finalized"] = (
+                                        ProtectedOperationComposer._finalize_context_exit_lease(
+                                            selected_composer,
+                                            selected_lease.token,
+                                        )
+                                    )
+                                    ProtectedOperationComposer._discard_context_exit_lease(
+                                        selected_composer,
+                                        selected_lease.token,
+                                        True,
+                                    )
+                        except BaseException as error:
+                            selected_observation["thread_error"] = type(error).__name__
+                        finally:
+                            selected_done.set()
+
+                    _thread.start_new_thread(invoke_saved_callback, ())
+                    self.assertTrue(successor_done.wait(2))
+                    self.assertNotIn("thread_error", observation)
+                    if "results" in observation:
+                        reused = observation
+                        break
+
+                if reused is None:
+                    composer.close()
+                    self.skipTest("alien thread identifier reuse unavailable")
+                self.assertEqual(reused["ident"], owner_state["ident"])
+                self.assertIsNot(
+                    reused["thread_token"],
+                    owner_state["thread_token"],
+                )
+                self.assertEqual(
+                    reused["results"],
+                    (expected, expected) if stage == "prepared" else (expected,),
+                )
+                if stage == "consumed":
+                    self.assertIs(reused["reconciled"], False)
+                    self.assertIs(reused["finalized"], False)
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__context_lease",
+                    ),
+                    lease_before,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__closed",
+                    ),
+                    False,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__closed",
+                    ),
+                    False,
+                )
+                self.assertEqual(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__active",
+                    ),
+                    active_before,
+                )
+
+                composer.close()
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__context_lease",
+                    ),
+                    lease_before,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__closed",
+                    ),
+                    True,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__closed",
+                    ),
+                    True,
+                )
+                self.assertEqual(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__active",
+                    ),
+                    {},
+                )
+                self.assert_code(
+                    "protected_operation_composer_closed",
+                    lambda selected_composer=composer, selected_operation=operation: (
+                        selected_composer.consume(
+                            selected_operation,
+                            self.context,
+                            self.request,
+                        )
+                    ),
+                )
+
+    def test_context_lease_quarantines_dead_alien_owner_candidate(self):
+        expected = (
+            "operation_error",
+            "protected_operation_internal_failure",
+            True,
+            True,
+        )
+
+        for successor_path in ("direct_enter", "new_descriptor"):
+            with self.subTest(successor_path=successor_path):
+                composer = self.make_composer()
+                self.addCleanup(composer.close)
+                operation = composer.authorize(self.context, self.request)
+                registry = object.__getattribute__(
+                    composer,
+                    "_ProtectedOperationComposer__registry",
+                )
+                enter_descriptor = inspect.getattr_static(
+                    ProtectedOperationComposer,
+                    "__enter__",
+                )
+                owner_state = {}
+                owner_errors = []
+                owner_done = threading.Event()
+
+                def prepare_and_release_owner_callback(
+                    *,
+                    selected_composer=composer,
+                    selected_done=owner_done,
+                    selected_enter_descriptor=enter_descriptor,
+                    selected_errors=owner_errors,
+                    selected_owner_state=owner_state,
+                ):
+                    try:
+                        selected_owner_state["dummy_thread"] = threading.current_thread()
+                        selected_owner_state["ident"] = threading.get_ident()
+                        selected_owner_state["thread_token"] = (
+                            operation_authorization._current_context_exit_thread_token()
+                        )
+                        enter_callback = selected_enter_descriptor.__get__(
+                            selected_composer,
+                            ProtectedOperationComposer,
+                        )
+                        context_lease = object.__getattribute__(
+                            selected_composer,
+                            "_ProtectedOperationComposer__context_lease",
+                        )
+                        if context_lease is None:
+                            raise AssertionError("context lease was not published")
+                        del enter_callback
+                        if context_lease.entry_callback() is not None:
+                            raise AssertionError("entry callback remained live")
+                    except BaseException as error:
+                        selected_errors.append(type(error).__name__)
+                    finally:
+                        selected_done.set()
+
+                _thread.start_new_thread(prepare_and_release_owner_callback, ())
+                self.assertTrue(owner_done.wait(2))
+                self.assertEqual(owner_errors, [])
+
+                lease_before = object.__getattribute__(
+                    composer,
+                    "_ProtectedOperationComposer__context_lease",
+                )
+                self.assertIsNotNone(lease_before)
+                self.assertIsNone(lease_before.entry_callback())
+                self.assertIs(
+                    lease_before.owner_thread_token,
+                    owner_state["thread_token"],
+                )
+                self.assertEqual(
+                    (
+                        lease_before.active,
+                        lease_before.consumed,
+                        lease_before.exit_bound,
+                    ),
+                    (False, False, False),
+                )
+                active_before = dict(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__active",
+                    )
+                )
+                self.assertEqual(len(active_before), 1)
+
+                reused = None
+                for _attempt in range(256):
+                    observation = {}
+                    successor_done = threading.Event()
+
+                    def attempt_stale_candidate_cleanup(
+                        *,
+                        selected_composer=composer,
+                        selected_done=successor_done,
+                        selected_enter_descriptor=enter_descriptor,
+                        selected_observation=observation,
+                        selected_owner_state=owner_state,
+                        selected_successor_path=successor_path,
+                    ):
+                        try:
+                            selected_observation["dummy_thread"] = threading.current_thread()
+                            selected_observation["ident"] = threading.get_ident()
+                            selected_observation["thread_token"] = (
+                                operation_authorization._current_context_exit_thread_token()
+                            )
+                            if selected_observation["ident"] != selected_owner_state["ident"]:
+                                return
+                            if selected_successor_path == "direct_enter":
+                                selected_observation["result"] = _capture_process_call(
+                                    lambda: ProtectedOperationComposer.__enter__(selected_composer)
+                                )
+                            else:
+                                selected_observation["result"] = _capture_process_call(
+                                    lambda: selected_enter_descriptor.__get__(
+                                        selected_composer,
+                                        ProtectedOperationComposer,
+                                    )
+                                )
+                        except BaseException as error:
+                            selected_observation["thread_error"] = type(error).__name__
+                        finally:
+                            selected_done.set()
+
+                    _thread.start_new_thread(attempt_stale_candidate_cleanup, ())
+                    self.assertTrue(successor_done.wait(2))
+                    self.assertNotIn("thread_error", observation)
+                    if "result" in observation:
+                        reused = observation
+                        break
+
+                if reused is None:
+                    composer.close()
+                    self.skipTest("alien thread identifier reuse unavailable")
+                self.assertEqual(reused["ident"], owner_state["ident"])
+                self.assertIsNot(
+                    reused["thread_token"],
+                    owner_state["thread_token"],
+                )
+                self.assertEqual(reused["result"], expected)
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__context_lease",
+                    ),
+                    lease_before,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__closed",
+                    ),
+                    False,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__closed",
+                    ),
+                    False,
+                )
+                self.assertEqual(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__active",
+                    ),
+                    active_before,
+                )
+
+                composer.close()
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__context_lease",
+                    ),
+                    lease_before,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        composer,
+                        "_ProtectedOperationComposer__closed",
+                    ),
+                    True,
+                )
+                self.assertIs(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__closed",
+                    ),
+                    True,
+                )
+                self.assertEqual(
+                    object.__getattribute__(
+                        registry,
+                        "_AuthorizedOperationRegistry__active",
+                    ),
+                    {},
+                )
+                self.assert_code(
+                    "protected_operation_composer_closed",
+                    lambda selected_composer=composer, selected_operation=operation: (
+                        selected_composer.consume(
+                            selected_operation,
+                            self.context,
+                            self.request,
+                        )
+                    ),
+                )
+
+    def test_context_manager_lease_rejects_closed_entry(self):
+        closed_composer = self.make_composer()
+        closed_composer.close()
+
+        def enter_closed():
+            with closed_composer:
+                pass
+
+        self.assert_code("protected_operation_composer_closed", enter_closed)
+
+    def test_truthy_cleanup_preserves_every_originating_exact_control(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+
+        def return_true(_composer):
+            return True
+
+        for signal_type in signal_types:
+            with self.subTest(signal=signal_type.__name__):
+                composer = self.make_composer()
+                body = SystemExit(23) if signal_type is SystemExit else signal_type("body")
+                captured = None
+                with patch.object(ProtectedOperationComposer, "_close", return_true):
+                    try:
+                        with composer:
+                            raise body
+                    except BaseException as error:
+                        captured = error
+                self.assertIs(captured, body)
+
+    def test_raw_exit_descriptor_binding_cannot_mint_context_lease(self):
+        composer = self.make_composer()
+        descriptor = inspect.getattr_static(ProtectedOperationComposer, "__exit__")
+
+        self.capture_error(
+            "protected_operation_internal_failure",
+            lambda: descriptor.__get__(composer, ProtectedOperationComposer),
+        )
+        self.assertIs(
+            ProtectedOperationComposer.__enter__(composer),
+            composer,
+        )
+
+    def test_saved_context_exit_callable_is_one_time(self):
+        composer = self.make_composer()
+        enter_descriptor = inspect.getattr_static(ProtectedOperationComposer, "__enter__")
+        exit_descriptor = inspect.getattr_static(ProtectedOperationComposer, "__exit__")
+        enter_callback = enter_descriptor.__get__(composer, ProtectedOperationComposer)
+        exit_callback = exit_descriptor.__get__(composer, ProtectedOperationComposer)
+
+        self.assertIs(enter_callback(), composer)
+        self.assertIsNone(exit_callback(None, None, None))
+        try:
+            raise KeyboardInterrupt("late-exit-body-secret-canary")
+        except KeyboardInterrupt:
+            active_triple = sys.exc_info()
+            self.capture_error(
+                "protected_operation_internal_failure",
+                lambda: exit_callback(*active_triple),
+            )
+
+    def test_enter_failure_discards_prepared_context_lease(self):
+        failure_types = (RuntimeError, KeyboardInterrupt, GeneratorExit)
+
+        for failure_type in failure_types:
+            with self.subTest(failure=failure_type.__name__):
+                composer = self.make_composer()
+                canary = f"{failure_type.__name__}-enter-failure-secret-canary"
+                original = failure_type(canary)
+
+                def fail_activation(_composer, _lease, *, selected=original):
+                    raise selected
+
+                def enter_context(selected_composer=composer):
+                    with selected_composer:
+                        pass
+
+                with patch.object(
+                    ProtectedOperationComposer,
+                    "_activate_context_exit_lease",
+                    fail_activation,
+                ):
+                    if failure_type is RuntimeError:
+                        self.capture_error(
+                            "protected_operation_internal_failure",
+                            enter_context,
+                        )
+                    else:
+                        signal = self.capture_control_signal(
+                            failure_type,
+                            enter_context,
+                        )
+                        self.assertIsNot(signal, original)
+
+                self.assertIs(
+                    ProtectedOperationComposer.__enter__(composer),
+                    composer,
+                )
+                with composer:
+                    pass
+
+    def test_context_exit_binding_cuts_do_not_leave_stale_lease(self):
+        failure_types = (RuntimeError, KeyboardInterrupt, GeneratorExit)
+        real_bind = ProtectedOperationComposer._bind_context_exit_lease
+
+        for cut in ("before", "after"):
+            for failure_type in failure_types:
+                with self.subTest(cut=cut, failure=failure_type.__name__):
+                    composer = self.make_composer()
+                    canary = f"{cut}-{failure_type.__name__}-bind-secret-canary"
+                    original = failure_type(canary)
+
+                    def interrupted_bind(
+                        selected_composer,
+                        lease,
+                        *,
+                        selected_cut=cut,
+                        selected_original=original,
+                    ):
+                        if selected_cut == "after":
+                            real_bind(selected_composer, lease)
+                        raise selected_original
+
+                    def enter_context(selected_composer=composer):
+                        with selected_composer:
+                            pass
+
+                    with patch.object(
+                        ProtectedOperationComposer,
+                        "_bind_context_exit_lease",
+                        interrupted_bind,
+                    ):
+                        if failure_type is RuntimeError:
+                            self.capture_error(
+                                "protected_operation_internal_failure",
+                                enter_context,
+                            )
+                        else:
+                            signal = self.capture_control_signal(
+                                failure_type,
+                                enter_context,
+                            )
+                            self.assertIsNot(signal, original)
+
+                    with composer:
+                        pass
+
+    def test_context_exit_consume_commit_return_window_is_reconciled(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+        real_consume = ProtectedOperationComposer._consume_context_exit_lease
+        real_close = ProtectedOperationComposer._close
+
+        for body_type in signal_types:
+            for cut_type in signal_types:
+                with self.subTest(body=body_type.__name__, cut=cut_type.__name__):
+                    composer = self.make_composer()
+                    operations = tuple(
+                        composer.authorize(self.context, self.request) for _ in range(3)
+                    )
+                    body = (
+                        SystemExit(23)
+                        if body_type is SystemExit
+                        else body_type("consume-window-body-secret-canary")
+                    )
+                    cut = (
+                        SystemExit(19)
+                        if cut_type is SystemExit
+                        else cut_type("consume-window-cut-secret-canary")
+                    )
+                    consume_triples = []
+                    close_calls = []
+
+                    def consume_then_interrupt(
+                        selected_composer,
+                        lease,
+                        *,
+                        selected_cut=cut,
+                        selected_triples=consume_triples,
+                    ):
+                        selected_triples.append(sys.exc_info())
+                        self.assertIs(real_consume(selected_composer, lease), True)
+                        raise selected_cut
+
+                    def record_close(selected_composer, *, selected_calls=close_calls):
+                        selected_calls.append(selected_composer)
+                        return real_close(selected_composer)
+
+                    captured = None
+                    with (
+                        patch.object(
+                            ProtectedOperationComposer,
+                            "_consume_context_exit_lease",
+                            consume_then_interrupt,
+                        ),
+                        patch.object(
+                            ProtectedOperationComposer,
+                            "_close",
+                            record_close,
+                        ),
+                    ):
+                        try:
+                            with composer:
+                                raise body
+                        except BaseException as error:
+                            captured = error
+
+                    self.assertIs(captured, body)
+                    self.assertEqual(len(consume_triples), 1)
+                    self.assertIs(consume_triples[0][0], body_type)
+                    self.assertIs(consume_triples[0][1], body)
+                    self.assert_traceback_contains_identity(
+                        captured.__traceback__,
+                        consume_triples[0][2],
+                    )
+                    self.assertEqual(close_calls, [composer])
+                    self.assert_context_exit_fully_closed(composer)
+                    for operation in operations:
+                        self.assert_code(
+                            "protected_operation_composer_closed",
+                            lambda selected=operation, selected_composer=composer: (
+                                selected_composer.consume(
+                                    selected,
+                                    self.context,
+                                    self.request,
+                                )
+                            ),
+                        )
+
+    def test_context_exit_close_commit_return_window_is_not_retried(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+        real_close = ProtectedOperationComposer._close
+
+        for body_type in signal_types:
+            for cut_type in signal_types:
+                with self.subTest(body=body_type.__name__, cut=cut_type.__name__):
+                    composer = self.make_composer()
+                    operations = tuple(
+                        composer.authorize(self.context, self.request) for _ in range(3)
+                    )
+                    body = (
+                        SystemExit(23)
+                        if body_type is SystemExit
+                        else body_type("close-window-body-secret-canary")
+                    )
+                    cut = (
+                        SystemExit(19)
+                        if cut_type is SystemExit
+                        else cut_type("close-window-cut-secret-canary")
+                    )
+                    close_triples = []
+                    close_calls = []
+
+                    def close_then_interrupt(
+                        selected_composer,
+                        *,
+                        selected_cut=cut,
+                        selected_calls=close_calls,
+                        selected_triples=close_triples,
+                    ):
+                        selected_calls.append(selected_composer)
+                        selected_triples.append(sys.exc_info())
+                        real_close(selected_composer)
+                        raise selected_cut
+
+                    captured = None
+                    with patch.object(
+                        ProtectedOperationComposer,
+                        "_close",
+                        close_then_interrupt,
+                    ):
+                        try:
+                            with composer:
+                                raise body
+                        except BaseException as error:
+                            captured = error
+
+                    self.assertIs(captured, body)
+                    self.assertEqual(close_calls, [composer])
+                    self.assertEqual(len(close_triples), 1)
+                    self.assertIs(close_triples[0][0], body_type)
+                    self.assertIs(close_triples[0][1], body)
+                    self.assert_traceback_contains_identity(
+                        captured.__traceback__,
+                        close_triples[0][2],
+                    )
+                    self.assert_context_exit_fully_closed(composer)
+                    for operation in operations:
+                        self.assert_code(
+                            "protected_operation_composer_closed",
+                            lambda selected=operation, selected_composer=composer: (
+                                selected_composer.consume(
+                                    selected,
+                                    self.context,
+                                    self.request,
+                                )
+                            ),
+                        )
+
+    def test_context_exit_reconcile_return_control_is_retried_once(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+        real_consume = ProtectedOperationComposer._consume_context_exit_lease
+        real_reconcile = ProtectedOperationComposer._reconcile_context_exit_lease
+        real_close = ProtectedOperationComposer._close
+
+        for body_type in signal_types:
+            for cut_type in signal_types:
+                with self.subTest(body=body_type.__name__, cut=cut_type.__name__):
+                    composer = self.make_composer()
+                    composer.authorize(self.context, self.request)
+                    body = (
+                        SystemExit(23)
+                        if body_type is SystemExit
+                        else body_type("reconcile-window-body-secret-canary")
+                    )
+                    cut = (
+                        SystemExit(19)
+                        if cut_type is SystemExit
+                        else cut_type("reconcile-window-cut-secret-canary")
+                    )
+                    reconcile_calls = []
+                    close_calls = []
+
+                    def consume_then_fail(selected_composer, lease):
+                        self.assertIs(real_consume(selected_composer, lease), True)
+                        raise RuntimeError("consume-commit-ack-secret-canary")
+
+                    def reconcile_then_interrupt_once(
+                        selected_composer,
+                        lease,
+                        *,
+                        selected_cut=cut,
+                        selected_calls=reconcile_calls,
+                    ):
+                        reconciled = real_reconcile(selected_composer, lease)
+                        selected_calls.append(reconciled)
+                        if len(selected_calls) == 1:
+                            raise selected_cut
+                        return reconciled
+
+                    def record_close(selected_composer, *, selected_calls=close_calls):
+                        selected_calls.append(selected_composer)
+                        return real_close(selected_composer)
+
+                    captured = None
+                    with (
+                        patch.object(
+                            ProtectedOperationComposer,
+                            "_consume_context_exit_lease",
+                            consume_then_fail,
+                        ),
+                        patch.object(
+                            ProtectedOperationComposer,
+                            "_reconcile_context_exit_lease",
+                            reconcile_then_interrupt_once,
+                        ),
+                        patch.object(
+                            ProtectedOperationComposer,
+                            "_close",
+                            record_close,
+                        ),
+                    ):
+                        try:
+                            with composer:
+                                raise body
+                        except BaseException as error:
+                            captured = error
+
+                    self.assertIs(captured, body)
+                    self.assertEqual(reconcile_calls, [True, True])
+                    self.assertEqual(close_calls, [composer])
+                    self.assert_context_exit_fully_closed(composer)
+
+    def test_context_exit_reconcile_control_exhaustion_is_bounded_and_closes(self):
+        signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
+        real_consume = ProtectedOperationComposer._consume_context_exit_lease
+        real_reconcile = ProtectedOperationComposer._reconcile_context_exit_lease
+        real_close = ProtectedOperationComposer._close
+
+        for cut_type in signal_types:
+            with self.subTest(cut=cut_type.__name__):
+                composer = self.make_composer()
+                composer.authorize(self.context, self.request)
+                body = KeyboardInterrupt("reconcile-exhaustion-body-secret-canary")
+                cut = (
+                    SystemExit(19)
+                    if cut_type is SystemExit
+                    else cut_type("reconcile-exhaustion-cut-secret-canary")
+                )
+                reconcile_calls = []
+                close_calls = []
+
+                def consume_then_fail(selected_composer, lease):
+                    self.assertIs(real_consume(selected_composer, lease), True)
+                    raise RuntimeError("consume-commit-ack-secret-canary")
+
+                def always_interrupt_reconcile(
+                    selected_composer,
+                    lease,
+                    *,
+                    selected_cut=cut,
+                    selected_calls=reconcile_calls,
+                ):
+                    selected_calls.append(real_reconcile(selected_composer, lease))
+                    raise selected_cut
+
+                def record_close(selected_composer, *, selected_calls=close_calls):
+                    selected_calls.append(selected_composer)
+                    return real_close(selected_composer)
+
+                captured = None
+                with (
+                    patch.object(
+                        ProtectedOperationComposer,
+                        "_consume_context_exit_lease",
+                        consume_then_fail,
+                    ),
+                    patch.object(
+                        ProtectedOperationComposer,
+                        "_reconcile_context_exit_lease",
+                        always_interrupt_reconcile,
+                    ),
+                    patch.object(
+                        ProtectedOperationComposer,
+                        "_close",
+                        record_close,
+                    ),
+                ):
+                    try:
+                        with composer:
+                            raise body
+                    except BaseException as error:
+                        captured = error
+
+                self.assertIs(type(captured), cut_type)
+                self.assertIsNot(captured, body)
+                self.assertIsNot(captured, cut)
+                self.assertEqual(reconcile_calls, [True, True])
+                self.assertEqual(close_calls, [composer])
+                self.assert_context_exit_fully_closed(composer)
+
+    def test_context_exit_consumed_window_rejects_foreign_thread_and_replay(self):
+        composer = self.make_composer()
+        composer.authorize(self.context, self.request)
+        body = KeyboardInterrupt("thread-owner-body-secret-canary")
+        cut = GeneratorExit("thread-owner-cut-secret-canary")
+        real_consume = ProtectedOperationComposer._consume_context_exit_lease
+        real_close = ProtectedOperationComposer._close
+        owner_entered = threading.Event()
+        owner_consumed = threading.Event()
+        release_owner = threading.Event()
+        callbacks = {}
+        owner_traces = []
+        owner_results = []
+        close_calls = []
+
+        def consume_then_wait(selected_composer, lease):
+            consumed = real_consume(selected_composer, lease)
+            owner_consumed.set()
+            if not release_owner.wait(5):
+                raise AssertionError("owner release timed out")
+            if consumed is not True:
+                raise AssertionError("context exit lease was not consumed")
+            raise cut
+
+        def record_close(selected_composer):
+            close_calls.append(selected_composer)
+            return real_close(selected_composer)
+
+        def own_context_exit():
+            enter_descriptor = inspect.getattr_static(
+                ProtectedOperationComposer,
+                "__enter__",
+            )
+            exit_descriptor = inspect.getattr_static(
+                ProtectedOperationComposer,
+                "__exit__",
+            )
+            enter_callback = enter_descriptor.__get__(
+                composer,
+                ProtectedOperationComposer,
+            )
+            exit_callback = exit_descriptor.__get__(
+                composer,
+                ProtectedOperationComposer,
+            )
+            callbacks["exit"] = exit_callback
+            enter_callback()
+            owner_entered.set()
+            try:
+                try:
+                    raise body
+                except KeyboardInterrupt:
+                    owner_traces.append(sys.exc_info()[2])
+                    exit_callback(*sys.exc_info())
+                    raise
+            except BaseException as error:
+                owner_results.append(error)
+
+        with (
+            patch.object(
+                ProtectedOperationComposer,
+                "_consume_context_exit_lease",
+                consume_then_wait,
+            ),
+            patch.object(
+                ProtectedOperationComposer,
+                "_close",
+                record_close,
+            ),
+        ):
+            owner = threading.Thread(target=own_context_exit)
+            owner.start()
+            try:
+                self.assertTrue(owner_entered.wait(2))
+                self.assertTrue(owner_consumed.wait(2))
+                foreign = KeyboardInterrupt("foreign-thread-replay-secret-canary")
+                try:
+                    raise foreign
+                except KeyboardInterrupt:
+                    foreign_result = _capture_process_call(
+                        lambda: callbacks["exit"](*sys.exc_info())
+                    )
+            finally:
+                release_owner.set()
+                owner.join(2)
+
+            self.assertFalse(owner.is_alive())
+            self.assertEqual(
+                foreign_result,
+                (
+                    "operation_error",
+                    "protected_operation_internal_failure",
+                    True,
+                    True,
+                ),
+            )
+            self.assertEqual(owner_results, [body])
+            self.assert_traceback_contains_identity(
+                owner_results[0].__traceback__,
+                owner_traces[0],
+            )
+            self.assertEqual(close_calls, [composer])
+
+            replay = KeyboardInterrupt("same-callback-replay-secret-canary")
+            try:
+                raise replay
+            except KeyboardInterrupt:
+                replay_result = _capture_process_call(lambda: callbacks["exit"](*sys.exc_info()))
+
+        self.assertEqual(
+            replay_result,
+            (
+                "operation_error",
+                "protected_operation_internal_failure",
+                True,
+                True,
+            ),
+        )
+        self.assertEqual(close_calls, [composer])
+        self.assert_context_exit_fully_closed(composer)
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_context_exit_consumed_return_window_rejects_fork_and_parent_recovers(self):
+        composer = self.make_composer()
+        composer.authorize(self.context, self.request)
+        enter_descriptor = inspect.getattr_static(ProtectedOperationComposer, "__enter__")
+        exit_descriptor = inspect.getattr_static(ProtectedOperationComposer, "__exit__")
+        enter_callback = enter_descriptor.__get__(composer, ProtectedOperationComposer)
+        exit_callback = exit_descriptor.__get__(composer, ProtectedOperationComposer)
+        self.assertIs(enter_callback(), composer)
+        real_consume = ProtectedOperationComposer._consume_context_exit_lease
+        real_close = ProtectedOperationComposer._close
+        fork_context = multiprocessing.get_context("fork")
+        child_payloads = []
+        close_calls = []
+        body_traces = []
+        body = asyncio.CancelledError("fork-parent-body-secret-canary")
+        cut = KeyboardInterrupt("fork-parent-cut-secret-canary")
+
+        def consume_then_fork(selected_composer, lease):
+            self.assertIs(real_consume(selected_composer, lease), True)
+            parent_connection, child_connection = fork_context.Pipe(duplex=False)
+            process = fork_context.Process(
+                target=_fork_context_lease_stage_probe,
+                args=(child_connection, enter_callback, exit_callback),
+                kwargs={"enter_pending": False},
+            )
+            process.start()
+            child_connection.close()
+            child_payloads.append(self.receive_process_payload(process, parent_connection))
+            raise cut
+
+        def record_close(selected_composer):
+            close_calls.append(selected_composer)
+            return real_close(selected_composer)
+
+        captured = None
+        with (
+            patch.object(
+                ProtectedOperationComposer,
+                "_consume_context_exit_lease",
+                consume_then_fork,
+            ),
+            patch.object(
+                ProtectedOperationComposer,
+                "_close",
+                record_close,
+            ),
+        ):
+            try:
+                try:
+                    raise body
+                except asyncio.CancelledError:
+                    body_traces.append(sys.exc_info()[2])
+                    exit_callback(*sys.exc_info())
+                    raise
+            except BaseException as error:
+                captured = error
+
+            replay = KeyboardInterrupt("fork-parent-replay-secret-canary")
+            try:
+                raise replay
+            except KeyboardInterrupt:
+                replay_result = _capture_process_call(lambda: exit_callback(*sys.exc_info()))
+
+        expected_child = (
+            "operation_error",
+            "protected_operation_process_mismatch",
+            True,
+            True,
+        )
+        self.assertIs(captured, body)
+        self.assert_traceback_contains_identity(captured.__traceback__, body_traces[0])
+        self.assertEqual(child_payloads, [{"exit": expected_child}])
+        self.assertEqual(
+            replay_result,
+            (
+                "operation_error",
+                "protected_operation_internal_failure",
+                True,
+                True,
+            ),
+        )
+        self.assertEqual(close_calls, [composer])
+        self.assert_context_exit_fully_closed(composer)
+
     def test_exact_control_signals_survive_consume_and_retire_boundaries(self):
         signal_types = (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)
         for method_name in ("consume", "retire"):
@@ -3456,6 +5093,92 @@ class ProtectedOperationComposerTests(unittest.TestCase):
             replacement.authorize(self.context, self.request),
             AuthorizedOperation,
         )
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_real_fork_active_exit_triple_never_swallows_process_mismatch(self):
+        fork_context = multiprocessing.get_context("fork")
+        expected = (
+            "operation_error",
+            "protected_operation_process_mismatch",
+            True,
+            True,
+        )
+
+        for entry_state in ("never_entered", "explicit_entered"):
+            with self.subTest(entry_state=entry_state):
+                composer = self.make_composer()
+                if entry_state == "explicit_entered":
+                    self.assertIs(
+                        ProtectedOperationComposer.__enter__(composer),
+                        composer,
+                    )
+                parent_connection, child_connection = fork_context.Pipe(duplex=False)
+                process = fork_context.Process(
+                    target=_fork_active_exit_spoof_probe,
+                    args=(child_connection, composer),
+                )
+
+                process.start()
+                child_connection.close()
+                payload = self.receive_process_payload(process, parent_connection)
+
+                self.assertEqual(payload["inside_handler"], expected)
+                self.assertEqual(payload["after_handler"], expected)
+                operation = composer.authorize(self.context, self.request)
+                composer.consume(operation, self.context, self.request)
+
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
+    def test_real_fork_rejects_prepared_active_and_consumed_context_leases(self):
+        fork_context = multiprocessing.get_context("fork")
+        expected = (
+            "operation_error",
+            "protected_operation_process_mismatch",
+            True,
+            True,
+        )
+
+        for stage in ("prepared", "active", "consumed"):
+            with self.subTest(stage=stage):
+                composer = self.make_composer()
+                enter_descriptor = inspect.getattr_static(
+                    ProtectedOperationComposer,
+                    "__enter__",
+                )
+                exit_descriptor = inspect.getattr_static(
+                    ProtectedOperationComposer,
+                    "__exit__",
+                )
+                enter_callback = enter_descriptor.__get__(
+                    composer,
+                    ProtectedOperationComposer,
+                )
+                exit_callback = exit_descriptor.__get__(
+                    composer,
+                    ProtectedOperationComposer,
+                )
+                if stage in ("active", "consumed"):
+                    self.assertIs(enter_callback(), composer)
+                if stage == "consumed":
+                    self.assertIsNone(exit_callback(None, None, None))
+
+                parent_connection, child_connection = fork_context.Pipe(duplex=False)
+                process = fork_context.Process(
+                    target=_fork_context_lease_stage_probe,
+                    args=(child_connection, enter_callback, exit_callback),
+                    kwargs={"enter_pending": stage == "prepared"},
+                )
+
+                process.start()
+                child_connection.close()
+                payload = self.receive_process_payload(process, parent_connection)
+
+                if stage == "prepared":
+                    self.assertEqual(payload["enter"], expected)
+                self.assertEqual(payload["exit"], expected)
+                if stage == "prepared":
+                    self.assertIs(enter_callback(), composer)
+                if stage != "consumed":
+                    self.assertIsNone(exit_callback(None, None, None))
 
     @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "fork unavailable")
     def test_real_fork_rejects_every_inherited_composer_and_registry_path(self):

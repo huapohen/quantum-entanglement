@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from types import TracebackType
-from typing import Callable, NoReturn, Optional, Protocol, SupportsIndex, TypeVar, Union
+from typing import Callable, NoReturn, Optional, Protocol, SupportsIndex, TypeVar, Union, cast
 
 from .request_context import ReauthorizationBasis, RequestContext, RequestContextIssuer
 from .tenancy import (
@@ -48,6 +48,26 @@ _CANCELLED_ERROR = "cancelled_error"
 _PROCESS_PID = os.getpid()
 _PROCESS_EPOCH = object()
 _SystemExitStatus = Optional[Union[bool, int]]
+
+
+class _ContextExitThreadState(threading.local):
+    """One interpreter-managed dictionary for each actual Python thread state."""
+
+    token: object
+
+
+_CONTEXT_EXIT_THREAD_STATE = _ContextExitThreadState()
+
+
+def _current_context_exit_thread_token() -> object:
+    """Return a non-reusable token whose prior instance remains lease-retained."""
+
+    try:
+        return _CONTEXT_EXIT_THREAD_STATE.token
+    except AttributeError:
+        token = object()
+        _CONTEXT_EXIT_THREAD_STATE.token = token
+        return token
 
 
 def _refresh_process_epoch_after_fork() -> None:
@@ -1301,12 +1321,28 @@ class _AuthorizedOperationRegistry:
             del self.__active[identifier]
 
 
+@dataclass(frozen=True, repr=False)
+class _ProtectedOperationContextLease:
+    """One interpreter-protocol candidate bound to one actual Python thread state."""
+
+    active: bool
+    consumed: bool
+    entry_callback: weakref.ReferenceType[object]
+    exit_bound: bool
+    owner_thread_token: object
+    token: object
+
+    def __repr__(self) -> str:
+        return "ProtectedOperationContextLease(<opaque>)"
+
+
 @dataclass(repr=False)
 class _ProtectedOperationComposerState:
     """Fully built composer state published through one exact slot."""
 
     authorizer: TenantAuthorizer
     closed: bool
+    context_lease: Optional[_ProtectedOperationContextLease]
     issuer: RequestContextIssuer
     lock: _RLockLike
     max_clock_skew: timedelta
@@ -1322,6 +1358,126 @@ class _ProtectedOperationComposerState:
 
 
 _COMPOSER_STATE_SLOT = "_ProtectedOperationComposer__state"
+_CONTEXT_EXIT_RECONCILIATION_ATTEMPTS = 2
+
+
+class _ProtectedOperationEnterDescriptor:
+    """Prepare one candidate only during special-method context lookup."""
+
+    __slots__ = ()
+
+    def __get__(
+        self,
+        instance: Optional[object],
+        owner: Optional[type[object]] = None,
+    ) -> Callable[..., object]:
+        if instance is None:
+            return __enter__
+        composer = cast("ProtectedOperationComposer", instance)
+        lease = object()
+        enter_function = cast(Callable[..., object], __enter__)
+        enter_callback = partial(
+            enter_function,
+            composer,
+            _context_exit_lease=lease,
+        )
+        callback_reference = cast(weakref.ReferenceType[object], weakref.ref(enter_callback))
+        prepared, failure = _invoke_boundary(
+            partial(
+                ProtectedOperationComposer._prepare_context_enter_lease,
+                composer,
+                lease,
+                callback_reference,
+            )
+        )
+        if failure is None and prepared is True:
+            return enter_callback
+        _invoke_boundary(
+            partial(
+                ProtectedOperationComposer._discard_context_exit_lease,
+                composer,
+                lease,
+                True,
+            )
+        )
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del (
+            instance,
+            owner,
+            composer,
+            lease,
+            enter_function,
+            enter_callback,
+            callback_reference,
+            prepared,
+            failure,
+        )
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
+
+
+class _ProtectedOperationExitDescriptor:
+    """Bind only the pending candidate prepared by context-manager lookup."""
+
+    __slots__ = ()
+
+    def __get__(
+        self,
+        instance: Optional[object],
+        owner: Optional[type[object]] = None,
+    ) -> Callable[..., object]:
+        if instance is None:
+            return __exit__
+        composer = cast("ProtectedOperationComposer", instance)
+        lease, failure = _invoke_boundary(
+            partial(ProtectedOperationComposer._pending_context_exit_lease, composer)
+        )
+        if failure is None and lease is not None:
+            exit_function = cast(Callable[..., object], __exit__)
+            exit_callback = partial(
+                exit_function,
+                composer,
+                _context_exit_lease=lease,
+            )
+            bound, bind_failure = _invoke_boundary(
+                partial(
+                    ProtectedOperationComposer._bind_context_exit_lease,
+                    composer,
+                    lease,
+                )
+            )
+            if bind_failure is None and bound is True:
+                return exit_callback
+            _invoke_boundary(
+                partial(
+                    ProtectedOperationComposer._discard_context_exit_lease,
+                    composer,
+                    lease,
+                    True,
+                )
+            )
+            failure = bind_failure
+            del exit_function, exit_callback, bound, bind_failure
+        failure_code, control_signal, system_exit_status = _operation_failure_details(
+            failure,
+            "protected_operation_internal_failure",
+        )
+        del instance, owner, composer, lease, failure
+        if control_signal is not None:
+            _raise_control_signal(control_signal, system_exit_status)
+        try:
+            raise OperationAuthorizationError(failure_code) from None
+        except OperationAuthorizationError as public_error:
+            public_error.__context__ = None
+            raise
 
 
 class ProtectedOperationComposer:
@@ -1329,6 +1485,15 @@ class ProtectedOperationComposer:
 
     __slots__ = ("__state",)
     __state: _ProtectedOperationComposerState
+    __enter__ = _ProtectedOperationEnterDescriptor()
+    __exit__ = _ProtectedOperationExitDescriptor()
+
+    def __getattribute__(self, name: str) -> object:
+        if name == "__enter__":
+            return partial(__enter__, self)
+        if name == "__exit__":
+            return partial(__exit__, self)
+        return object.__getattribute__(self, name)
 
     @property
     def __authorizer(self) -> TenantAuthorizer:
@@ -1341,6 +1506,14 @@ class ProtectedOperationComposer:
     @__closed.setter
     def __closed(self, value: bool) -> None:
         self.__state.closed = value
+
+    @property
+    def __context_lease(self) -> Optional[_ProtectedOperationContextLease]:
+        return self.__state.context_lease
+
+    @__context_lease.setter
+    def __context_lease(self, value: Optional[_ProtectedOperationContextLease]) -> None:
+        self.__state.context_lease = value
 
     @property
     def __issuer(self) -> RequestContextIssuer:
@@ -1492,6 +1665,7 @@ class ProtectedOperationComposer:
         state = _ProtectedOperationComposerState(
             authorizer=authorizer,
             closed=False,
+            context_lease=None,
             issuer=issuer,
             lock=lock,
             max_clock_skew=validated_clock_skew,
@@ -1699,59 +1873,205 @@ class ProtectedOperationComposer:
             self.__closed = True
             self.__registry.close()
 
-    def __enter__(self) -> ProtectedOperationComposer:
-        entered, failure = _invoke_boundary(partial(ProtectedOperationComposer._enter, self))
-        if failure is None and type(entered) is ProtectedOperationComposer:
-            return entered
-        failure_code, control_signal, system_exit_status = _operation_failure_details(
-            failure,
-            "protected_operation_internal_failure",
-        )
-        del self, entered, failure
-        if control_signal is not None:
-            _raise_control_signal(control_signal, system_exit_status)
-        try:
-            raise OperationAuthorizationError(failure_code) from None
-        except OperationAuthorizationError as public_error:
-            public_error.__context__ = None
-            raise
-
     def _enter(self) -> ProtectedOperationComposer:
-        self._ensure_open()
+        self._ensure_process()
+        _require_current_process_issuer(self.__issuer)
+        owner_thread_token = _current_context_exit_thread_token()
+        with self.__lock:
+            context_lease = self.__context_lease
+            if (
+                context_lease is not None
+                and context_lease.owner_thread_token is owner_thread_token
+                and not context_lease.active
+                and context_lease.entry_callback() is None
+            ):
+                self.__context_lease = None
+                context_lease = None
+            if context_lease is not None:
+                if (
+                    context_lease.owner_thread_token is owner_thread_token
+                    and not context_lease.active
+                ):
+                    self.__context_lease = None
+                raise OperationAuthorizationError("protected_operation_internal_failure")
+            if self.__closed:
+                raise OperationAuthorizationError("protected_operation_composer_closed")
         return self
 
-    def __exit__(self, exc_type: object, exc_value: object, trace: object) -> None:
-        active_exc_type, active_exc_value, active_trace = sys.exc_info()
-        originating_control_signal = (
-            active_exc_type is exc_type
-            and active_exc_value is exc_value
-            and active_trace is trace
-            and (
-                type(exc_value) is KeyboardInterrupt
-                or type(exc_value) is SystemExit
-                or type(exc_value) is GeneratorExit
-                or type(exc_value) is asyncio.CancelledError
+    def _prepare_context_enter_lease(
+        self,
+        lease: object,
+        entry_callback: weakref.ReferenceType[object],
+    ) -> bool:
+        if type(self) is not ProtectedOperationComposer:
+            raise TypeError("composer must be an exact ProtectedOperationComposer")
+        self._ensure_process()
+        _require_current_process_issuer(self.__issuer)
+        owner_thread_token = _current_context_exit_thread_token()
+        with self.__lock:
+            context_lease = self.__context_lease
+            if (
+                context_lease is not None
+                and context_lease.owner_thread_token is owner_thread_token
+                and not context_lease.active
+                and context_lease.entry_callback() is None
+            ):
+                self.__context_lease = None
+                context_lease = None
+            if self.__closed:
+                raise OperationAuthorizationError("protected_operation_composer_closed")
+            if context_lease is not None:
+                raise OperationAuthorizationError("protected_operation_internal_failure")
+            self.__context_lease = _ProtectedOperationContextLease(
+                active=False,
+                consumed=False,
+                entry_callback=entry_callback,
+                exit_bound=False,
+                owner_thread_token=owner_thread_token,
+                token=lease,
             )
-        )
-        del active_exc_type, active_exc_value, active_trace
-        result, failure = _invoke_boundary(partial(ProtectedOperationComposer._close, self))
-        if failure is None:
-            return None
-        if originating_control_signal:
-            del self, exc_type, exc_value, trace, result, failure
-            return None
-        failure_code, control_signal, system_exit_status = _operation_failure_details(
-            failure,
-            "protected_operation_internal_failure",
-        )
-        del self, exc_type, exc_value, trace, result, failure
-        if control_signal is not None:
-            _raise_control_signal(control_signal, system_exit_status)
-        try:
-            raise OperationAuthorizationError(failure_code) from None
-        except OperationAuthorizationError as public_error:
-            public_error.__context__ = None
-            raise
+        return True
+
+    def _pending_context_exit_lease(self) -> object:
+        self._ensure_process()
+        owner_thread_token = _current_context_exit_thread_token()
+        with self.__lock:
+            context_lease = self.__context_lease
+            if (
+                context_lease is None
+                or context_lease.active
+                or context_lease.exit_bound
+                or context_lease.owner_thread_token is not owner_thread_token
+                or context_lease.entry_callback() is None
+            ):
+                raise OperationAuthorizationError("protected_operation_internal_failure")
+            return context_lease.token
+
+    def _bind_context_exit_lease(self, lease: object) -> bool:
+        self._ensure_process()
+        owner_thread_token = _current_context_exit_thread_token()
+        with self.__lock:
+            context_lease = self.__context_lease
+            if (
+                context_lease is None
+                or context_lease.active
+                or context_lease.exit_bound
+                or context_lease.owner_thread_token is not owner_thread_token
+                or context_lease.token is not lease
+                or context_lease.entry_callback() is None
+            ):
+                raise OperationAuthorizationError("protected_operation_internal_failure")
+            self.__context_lease = _ProtectedOperationContextLease(
+                active=False,
+                consumed=False,
+                entry_callback=context_lease.entry_callback,
+                exit_bound=True,
+                owner_thread_token=context_lease.owner_thread_token,
+                token=context_lease.token,
+            )
+        return True
+
+    def _activate_context_exit_lease(self, lease: object) -> bool:
+        if type(self) is not ProtectedOperationComposer:
+            raise TypeError("composer must be an exact ProtectedOperationComposer")
+        self._ensure_process()
+        _require_current_process_issuer(self.__issuer)
+        owner_thread_token = _current_context_exit_thread_token()
+        with self.__lock:
+            context_lease = self.__context_lease
+            if self.__closed:
+                raise OperationAuthorizationError("protected_operation_composer_closed")
+            if (
+                context_lease is None
+                or context_lease.active
+                or context_lease.consumed
+                or not context_lease.exit_bound
+                or context_lease.owner_thread_token is not owner_thread_token
+                or context_lease.token is not lease
+                or context_lease.entry_callback() is None
+            ):
+                raise OperationAuthorizationError("protected_operation_internal_failure")
+            self.__context_lease = _ProtectedOperationContextLease(
+                active=True,
+                consumed=False,
+                entry_callback=context_lease.entry_callback,
+                exit_bound=True,
+                owner_thread_token=context_lease.owner_thread_token,
+                token=context_lease.token,
+            )
+        return True
+
+    def _consume_context_exit_lease(self, lease: object) -> bool:
+        self._ensure_process()
+        owner_thread_token = _current_context_exit_thread_token()
+        with self.__lock:
+            context_lease = self.__context_lease
+            if (
+                context_lease is None
+                or not context_lease.active
+                or context_lease.consumed
+                or not context_lease.exit_bound
+                or context_lease.owner_thread_token is not owner_thread_token
+                or context_lease.token is not lease
+            ):
+                raise OperationAuthorizationError("protected_operation_internal_failure")
+            self.__context_lease = _ProtectedOperationContextLease(
+                active=True,
+                consumed=True,
+                entry_callback=context_lease.entry_callback,
+                exit_bound=True,
+                owner_thread_token=context_lease.owner_thread_token,
+                token=context_lease.token,
+            )
+        return True
+
+    def _reconcile_context_exit_lease(self, lease: object) -> bool:
+        """Read the exact consume commit after a helper acknowledgement failure."""
+
+        self._ensure_process()
+        owner_thread_token = _current_context_exit_thread_token()
+        with self.__lock:
+            context_lease = self.__context_lease
+            return bool(
+                context_lease is not None
+                and context_lease.active
+                and context_lease.consumed
+                and context_lease.exit_bound
+                and context_lease.owner_thread_token is owner_thread_token
+                and context_lease.token is lease
+            )
+
+    def _finalize_context_exit_lease(self, lease: object) -> bool:
+        """Retire one consumed lease only after its cleanup attempt."""
+
+        self._ensure_process()
+        owner_thread_token = _current_context_exit_thread_token()
+        with self.__lock:
+            context_lease = self.__context_lease
+            if (
+                context_lease is None
+                or not context_lease.active
+                or not context_lease.consumed
+                or not context_lease.exit_bound
+                or context_lease.owner_thread_token is not owner_thread_token
+                or context_lease.token is not lease
+            ):
+                return False
+            self.__context_lease = None
+        return True
+
+    def _discard_context_exit_lease(self, lease: object, include_active: bool) -> None:
+        self._ensure_process()
+        owner_thread_token = _current_context_exit_thread_token()
+        with self.__lock:
+            context_lease = self.__context_lease
+            if (
+                context_lease is not None
+                and context_lease.owner_thread_token is owner_thread_token
+                and context_lease.token is lease
+                and (include_active or not context_lease.active)
+            ):
+                self.__context_lease = None
 
     def __repr__(self) -> str:
         return "ProtectedOperationComposer(<configured>)"
@@ -1987,6 +2307,213 @@ class ProtectedOperationComposer:
             identity_revision=basis.identity_revision,
             scope_revision=basis.scope_revision,
         )
+
+
+def __enter__(
+    composer: ProtectedOperationComposer,
+    *,
+    _context_exit_lease: Optional[object] = None,
+) -> ProtectedOperationComposer:
+    callback: Callable[[], object]
+    if _context_exit_lease is None:
+        callback = partial(ProtectedOperationComposer._enter, composer)
+    else:
+        callback = partial(
+            ProtectedOperationComposer._activate_context_exit_lease,
+            composer,
+            _context_exit_lease,
+        )
+    entered, failure = _invoke_boundary(callback)
+    if failure is None and (
+        (
+            _context_exit_lease is None
+            and type(entered) is ProtectedOperationComposer
+            and entered is composer
+        )
+        or (_context_exit_lease is not None and entered is True)
+    ):
+        return composer
+    if _context_exit_lease is not None:
+        _invoke_boundary(
+            partial(
+                ProtectedOperationComposer._discard_context_exit_lease,
+                composer,
+                _context_exit_lease,
+                True,
+            )
+        )
+    failure_code, control_signal, system_exit_status = _operation_failure_details(
+        failure,
+        "protected_operation_internal_failure",
+    )
+    del composer, _context_exit_lease, callback, entered, failure
+    if control_signal is not None:
+        _raise_control_signal(control_signal, system_exit_status)
+    try:
+        raise OperationAuthorizationError(failure_code) from None
+    except OperationAuthorizationError as public_error:
+        public_error.__context__ = None
+        raise
+
+
+def __exit__(
+    composer: ProtectedOperationComposer,
+    exc_type: object,
+    exc_value: object,
+    trace: object,
+    *,
+    _context_exit_lease: Optional[object] = None,
+) -> None:
+    authenticated_context_exit = False
+    originating_control_signal = False
+    cleanup_required = _context_exit_lease is None
+    authenticated: Optional[object] = None
+    authentication_failure: Optional[_BoundaryFailure] = None
+    reconciled: Optional[object] = None
+    reconciliation_failure: Optional[_BoundaryFailure] = None
+    reconciliation_completed = False
+    _reconciliation_attempt = 0
+    pending_failure: Optional[_BoundaryFailure] = None
+    cleanup_result: Optional[object] = None
+    cleanup_failure: Optional[_BoundaryFailure] = None
+    finalized: Optional[object] = None
+    finalization_failure: Optional[_BoundaryFailure] = None
+
+    try:
+        if _context_exit_lease is not None:
+            authenticated, authentication_failure = _invoke_boundary(
+                partial(
+                    ProtectedOperationComposer._consume_context_exit_lease,
+                    composer,
+                    _context_exit_lease,
+                )
+            )
+            pending_failure = authentication_failure
+            if authentication_failure is None and authenticated is True:
+                authenticated_context_exit = True
+                cleanup_required = True
+            else:
+                for _reconciliation_attempt in range(
+                    1,
+                    _CONTEXT_EXIT_RECONCILIATION_ATTEMPTS + 1,
+                ):
+                    reconciled, reconciliation_failure = _invoke_boundary(
+                        partial(
+                            ProtectedOperationComposer._reconcile_context_exit_lease,
+                            composer,
+                            _context_exit_lease,
+                        )
+                    )
+                    if reconciliation_failure is not None:
+                        pending_failure = reconciliation_failure
+                        continue
+                    reconciliation_completed = True
+                    if reconciled is True:
+                        authenticated_context_exit = True
+                        cleanup_required = True
+                    else:
+                        cleanup_required = False
+                    break
+                if not reconciliation_completed:
+                    cleanup_required = True
+
+        if authenticated_context_exit:
+            active_exc_type, active_exc_value, active_trace = sys.exc_info()
+            originating_control_signal = (
+                active_exc_type is exc_type
+                and active_exc_value is exc_value
+                and active_trace is trace
+                and (
+                    type(exc_value) is KeyboardInterrupt
+                    or type(exc_value) is SystemExit
+                    or type(exc_value) is GeneratorExit
+                    or type(exc_value) is asyncio.CancelledError
+                )
+            )
+            del active_exc_type, active_exc_value, active_trace
+    finally:
+        if cleanup_required:
+            cleanup_result, cleanup_failure = _invoke_boundary(
+                partial(ProtectedOperationComposer._close, composer)
+            )
+            if _context_exit_lease is not None:
+                finalized, finalization_failure = _invoke_boundary(
+                    partial(
+                        ProtectedOperationComposer._finalize_context_exit_lease,
+                        composer,
+                        _context_exit_lease,
+                    )
+                )
+
+    if originating_control_signal:
+        del (
+            composer,
+            exc_type,
+            exc_value,
+            trace,
+            _context_exit_lease,
+            authenticated,
+            authentication_failure,
+            reconciled,
+            reconciliation_failure,
+            pending_failure,
+            cleanup_result,
+            cleanup_failure,
+            finalized,
+            finalization_failure,
+        )
+        return None
+
+    selected_failure: Optional[_BoundaryFailure] = None
+    internal_failure = False
+    if _context_exit_lease is None:
+        if cleanup_failure is None:
+            return None
+        selected_failure = cleanup_failure
+    elif not authenticated_context_exit:
+        selected_failure = pending_failure
+        internal_failure = selected_failure is None
+    elif finalization_failure is not None:
+        selected_failure = finalization_failure
+    elif finalized is not True:
+        internal_failure = True
+    elif cleanup_failure is not None:
+        selected_failure = cleanup_failure
+    elif pending_failure is not None:
+        selected_failure = pending_failure
+    else:
+        return None
+
+    failure_code, control_signal, system_exit_status = _operation_failure_details(
+        selected_failure,
+        "protected_operation_internal_failure",
+    )
+    if internal_failure:
+        failure_code = "protected_operation_internal_failure"
+    del (
+        composer,
+        exc_type,
+        exc_value,
+        trace,
+        _context_exit_lease,
+        authenticated,
+        authentication_failure,
+        reconciled,
+        reconciliation_failure,
+        pending_failure,
+        cleanup_result,
+        cleanup_failure,
+        finalized,
+        finalization_failure,
+        selected_failure,
+    )
+    if control_signal is not None:
+        _raise_control_signal(control_signal, system_exit_status)
+    try:
+        raise OperationAuthorizationError(failure_code) from None
+    except OperationAuthorizationError as public_error:
+        public_error.__context__ = None
+        raise
 
 
 __all__ = [
