@@ -50,6 +50,26 @@ _PROCESS_EPOCH = object()
 _SystemExitStatus = Optional[Union[bool, int]]
 
 
+class _ContextExitThreadState(threading.local):
+    """One interpreter-managed dictionary for each actual Python thread state."""
+
+    token: object
+
+
+_CONTEXT_EXIT_THREAD_STATE = _ContextExitThreadState()
+
+
+def _current_context_exit_thread_token() -> object:
+    """Return a non-reusable token whose prior instance remains lease-retained."""
+
+    try:
+        return _CONTEXT_EXIT_THREAD_STATE.token
+    except AttributeError:
+        token = object()
+        _CONTEXT_EXIT_THREAD_STATE.token = token
+        return token
+
+
 def _refresh_process_epoch_after_fork() -> None:
     """Refresh process identity without consulting any possibly inherited lock."""
 
@@ -1303,13 +1323,13 @@ class _AuthorizedOperationRegistry:
 
 @dataclass(frozen=True, repr=False)
 class _ProtectedOperationContextLease:
-    """One interpreter-protocol candidate bound to an exact composer and thread."""
+    """One interpreter-protocol candidate bound to one actual Python thread state."""
 
     active: bool
     consumed: bool
     entry_callback: weakref.ReferenceType[object]
     exit_bound: bool
-    owner_thread: threading.Thread
+    owner_thread_token: object
     token: object
 
     def __repr__(self) -> str:
@@ -1856,19 +1876,22 @@ class ProtectedOperationComposer:
     def _enter(self) -> ProtectedOperationComposer:
         self._ensure_process()
         _require_current_process_issuer(self.__issuer)
-        owner_thread = threading.current_thread()
+        owner_thread_token = _current_context_exit_thread_token()
         with self.__lock:
             context_lease = self.__context_lease
             if (
                 context_lease is not None
-                and context_lease.owner_thread is owner_thread
+                and context_lease.owner_thread_token is owner_thread_token
                 and not context_lease.active
                 and context_lease.entry_callback() is None
             ):
                 self.__context_lease = None
                 context_lease = None
             if context_lease is not None:
-                if context_lease.owner_thread is owner_thread and not context_lease.active:
+                if (
+                    context_lease.owner_thread_token is owner_thread_token
+                    and not context_lease.active
+                ):
                     self.__context_lease = None
                 raise OperationAuthorizationError("protected_operation_internal_failure")
             if self.__closed:
@@ -1884,12 +1907,12 @@ class ProtectedOperationComposer:
             raise TypeError("composer must be an exact ProtectedOperationComposer")
         self._ensure_process()
         _require_current_process_issuer(self.__issuer)
-        owner_thread = threading.current_thread()
+        owner_thread_token = _current_context_exit_thread_token()
         with self.__lock:
             context_lease = self.__context_lease
             if (
                 context_lease is not None
-                and context_lease.owner_thread is owner_thread
+                and context_lease.owner_thread_token is owner_thread_token
                 and not context_lease.active
                 and context_lease.entry_callback() is None
             ):
@@ -1904,21 +1927,21 @@ class ProtectedOperationComposer:
                 consumed=False,
                 entry_callback=entry_callback,
                 exit_bound=False,
-                owner_thread=owner_thread,
+                owner_thread_token=owner_thread_token,
                 token=lease,
             )
         return True
 
     def _pending_context_exit_lease(self) -> object:
         self._ensure_process()
-        owner_thread = threading.current_thread()
+        owner_thread_token = _current_context_exit_thread_token()
         with self.__lock:
             context_lease = self.__context_lease
             if (
                 context_lease is None
                 or context_lease.active
                 or context_lease.exit_bound
-                or context_lease.owner_thread is not owner_thread
+                or context_lease.owner_thread_token is not owner_thread_token
                 or context_lease.entry_callback() is None
             ):
                 raise OperationAuthorizationError("protected_operation_internal_failure")
@@ -1926,14 +1949,14 @@ class ProtectedOperationComposer:
 
     def _bind_context_exit_lease(self, lease: object) -> bool:
         self._ensure_process()
-        owner_thread = threading.current_thread()
+        owner_thread_token = _current_context_exit_thread_token()
         with self.__lock:
             context_lease = self.__context_lease
             if (
                 context_lease is None
                 or context_lease.active
                 or context_lease.exit_bound
-                or context_lease.owner_thread is not owner_thread
+                or context_lease.owner_thread_token is not owner_thread_token
                 or context_lease.token is not lease
                 or context_lease.entry_callback() is None
             ):
@@ -1943,7 +1966,7 @@ class ProtectedOperationComposer:
                 consumed=False,
                 entry_callback=context_lease.entry_callback,
                 exit_bound=True,
-                owner_thread=context_lease.owner_thread,
+                owner_thread_token=context_lease.owner_thread_token,
                 token=context_lease.token,
             )
         return True
@@ -1953,7 +1976,7 @@ class ProtectedOperationComposer:
             raise TypeError("composer must be an exact ProtectedOperationComposer")
         self._ensure_process()
         _require_current_process_issuer(self.__issuer)
-        owner_thread = threading.current_thread()
+        owner_thread_token = _current_context_exit_thread_token()
         with self.__lock:
             context_lease = self.__context_lease
             if self.__closed:
@@ -1963,7 +1986,7 @@ class ProtectedOperationComposer:
                 or context_lease.active
                 or context_lease.consumed
                 or not context_lease.exit_bound
-                or context_lease.owner_thread is not owner_thread
+                or context_lease.owner_thread_token is not owner_thread_token
                 or context_lease.token is not lease
                 or context_lease.entry_callback() is None
             ):
@@ -1973,14 +1996,14 @@ class ProtectedOperationComposer:
                 consumed=False,
                 entry_callback=context_lease.entry_callback,
                 exit_bound=True,
-                owner_thread=context_lease.owner_thread,
+                owner_thread_token=context_lease.owner_thread_token,
                 token=context_lease.token,
             )
         return True
 
     def _consume_context_exit_lease(self, lease: object) -> bool:
         self._ensure_process()
-        owner_thread = threading.current_thread()
+        owner_thread_token = _current_context_exit_thread_token()
         with self.__lock:
             context_lease = self.__context_lease
             if (
@@ -1988,7 +2011,7 @@ class ProtectedOperationComposer:
                 or not context_lease.active
                 or context_lease.consumed
                 or not context_lease.exit_bound
-                or context_lease.owner_thread is not owner_thread
+                or context_lease.owner_thread_token is not owner_thread_token
                 or context_lease.token is not lease
             ):
                 raise OperationAuthorizationError("protected_operation_internal_failure")
@@ -1997,7 +2020,7 @@ class ProtectedOperationComposer:
                 consumed=True,
                 entry_callback=context_lease.entry_callback,
                 exit_bound=True,
-                owner_thread=context_lease.owner_thread,
+                owner_thread_token=context_lease.owner_thread_token,
                 token=context_lease.token,
             )
         return True
@@ -2006,7 +2029,7 @@ class ProtectedOperationComposer:
         """Read the exact consume commit after a helper acknowledgement failure."""
 
         self._ensure_process()
-        owner_thread = threading.current_thread()
+        owner_thread_token = _current_context_exit_thread_token()
         with self.__lock:
             context_lease = self.__context_lease
             return bool(
@@ -2014,7 +2037,7 @@ class ProtectedOperationComposer:
                 and context_lease.active
                 and context_lease.consumed
                 and context_lease.exit_bound
-                and context_lease.owner_thread is owner_thread
+                and context_lease.owner_thread_token is owner_thread_token
                 and context_lease.token is lease
             )
 
@@ -2022,7 +2045,7 @@ class ProtectedOperationComposer:
         """Retire one consumed lease only after its cleanup attempt."""
 
         self._ensure_process()
-        owner_thread = threading.current_thread()
+        owner_thread_token = _current_context_exit_thread_token()
         with self.__lock:
             context_lease = self.__context_lease
             if (
@@ -2030,7 +2053,7 @@ class ProtectedOperationComposer:
                 or not context_lease.active
                 or not context_lease.consumed
                 or not context_lease.exit_bound
-                or context_lease.owner_thread is not owner_thread
+                or context_lease.owner_thread_token is not owner_thread_token
                 or context_lease.token is not lease
             ):
                 return False
@@ -2039,12 +2062,12 @@ class ProtectedOperationComposer:
 
     def _discard_context_exit_lease(self, lease: object, include_active: bool) -> None:
         self._ensure_process()
-        owner_thread = threading.current_thread()
+        owner_thread_token = _current_context_exit_thread_token()
         with self.__lock:
             context_lease = self.__context_lease
             if (
                 context_lease is not None
-                and context_lease.owner_thread is owner_thread
+                and context_lease.owner_thread_token is owner_thread_token
                 and context_lease.token is lease
                 and (include_active or not context_lease.active)
             ):
