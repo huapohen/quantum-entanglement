@@ -33,7 +33,8 @@ store、`RequestContextIssuer`、key/secret registry、plugin/runtime、connecto
 仍未完成同等级迁移。这些对象仍可能在 child 触碰 inherited lock/provider/connection 前继续运行。
 `non-copyable`/`non-pickleable` 不阻止 fork 复制；credential-bearing 或不可信 worker 必须先
 spawn/exec，再在 child 内构造 store、issuer、provider 和 event loop，并且必须发生在 secret load
-之前。已实现基础合同见
+之前。event-store mismatch child 即使已经稳定拒绝，也必须停止 admission 并以 `os._exit`/exec
+替换；普通解释器 teardown 不能安全销毁 inherited SQLite graph。已实现基础合同见
 [`PROCESS_INHERITANCE.md`](./PROCESS_INHERITANCE.md)，完整依赖与测试矩阵见
 [`12_process_inheritance_dependency_audit.md`](../../analysis_report/research/12_process_inheritance_dependency_audit.md)。
 event store 的单组件运行合同见
@@ -47,7 +48,9 @@ event store 的单组件运行合同见
 
 - `store.py`：WAL、optimistic stream version、idempotent append、atomic multi-event append、
   transactional inbox/outbox、bounded reads，以及全 public/lifecycle/deferred stream process owner
-  guards、exact SQL snapshots 和 owner-aware transaction/migration/constructor cleanup；
+  guards、exact SQL snapshots、transaction context enter/exit、owner-aware
+  transaction/migration/constructor cleanup、nested clean mismatch 和完整 inherited graph
+  quarantine；
 - `runtime.py`：plan/task/initial-ready 原子初始化；approval request/decision 与 task transition
   原子批次；commit-after-wrapper-error 精确协调；post-commit observer 故障隔离；
 - session recovery：每页最多 1,000 events，验证同 stream/连续 sequence，并执行 1,000,000
@@ -75,9 +78,10 @@ event store 的单组件运行合同见
 - 没有完整 crash-at-every-boundary、kill -9、long-running heartbeat 和 graceful drain E2E。
 - 共享 process identity helper 已通过真实 fork、nested fork、PID drift、fork-while-unrelated-lock、
   spawn/forkserver、copy/pickle 和 parent-continuity；`SQLiteEventStore` 又独立覆盖全部入口、open
-  transaction/clock/migration/iterator fork、clean error graph 和 fresh fork-before-init/spawn/
-  forkserver contention/CAS。但 artifact/projection/revocation store 与 recovery coordinator 的已
-  构造实例仍未绑定 owner，单组件证据不能替代逐组件接入。
+  transaction/clock/migration/iterator fork、transaction context enter/exit、child GC/finalizer、
+  exact control、nested clean error graph 和 fresh fork-before-init/spawn/forkserver contention/CAS。
+  但 artifact/projection/revocation store 与 recovery coordinator 的已构造实例仍未绑定 owner，
+  单组件证据不能替代逐组件接入。
 
 晋级标准：任意 admission、claim、dispatch、receiver accept、result accept、ACK 和响应边界崩溃
 后，只能恢复为未发生、已证明成功、明确拒绝或需要人工/自动 reconcile 的 unknown；不得盲目
@@ -166,6 +170,8 @@ P0/P1 门禁：
 - shutdown 必须停止 admission、等待/取消安全工作、释放 lease，并对 unknown effect 告警；
 - production composition root 必须证明 worker topology 在 connection/issuer/secret/event-loop 初始化
   前完成；禁止 preload 后继承 live authority、SQLite connection 或 connector；
+- 任何 process mismatch worker 必须停止 admission 后使用 `os._exit`/exec；禁止捕获后继续服务或
+  依赖普通 `sys.exit`/解释器 teardown 完成 inherited native resource 清理；
 - metrics/alerts 至少覆盖 queue age、stuck attempt、lease expiry、DLQ、projection lag、backup
   age、auth denial、secret/config failure、provider latency/cost 和 storage capacity；
 - operational log、durable security audit 和业务 event 必须保持不同失败语义。
