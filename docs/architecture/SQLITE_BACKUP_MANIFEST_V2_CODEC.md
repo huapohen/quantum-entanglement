@@ -13,17 +13,23 @@ The active production-facing surface remains version 1:
   `BackupManifest`;
 - the admin CLI has no v2 command or version dispatch;
 - `backup.py` contains no v2 import, symbol, or format string;
-- the v2 codec opens no database, file, directory, descriptor, or transaction and performs
-  no migration.
+- after explicit versioned-submodule initialization, codec construction, parsing, encoding,
+  and decoding open no database, file, directory, descriptor, or transaction and perform no
+  migration.
 
-The package exports the explicitly versioned `BackupManifestV2`,
-`parse_backup_manifest_v2()`, `encode_backup_manifest_v2()`, and
-`decode_backup_manifest_v2()` symbols so compatibility work can be reviewed without
-silently changing the v1 type. Supplying a v2 value or JSON document to a v1 API remains
-an error. No operator should create, publish, verify, or restore a v2 backup at this stage.
+The package root deliberately exports no v2 symbol. Compatibility code must explicitly
+import `quantum_entanglement.backup_manifest_v2`, whose initialization imports the topology
+and domain-migration registries and reads the packaged `*.up.sql` resources to cross-bind
+their identities. A cold `import quantum_entanglement` does not perform those reads.
+Supplying a v2 value or JSON document to a v1 API remains an error. No operator should
+create, publish, verify, or restore a v2 backup at this stage.
 
 This code may be deployed as an inert pure codec. It does not close Gate C, establish an
 RPO/RTO, or make a v2 artifact recoverable.
+
+The later [single-snapshot derivation checkpoint](SQLITE_BACKUP_V2_SNAPSHOT_DERIVATION.md)
+uses the codec's exact factories to construct schema and topology models from one SQLite
+read view. It remains internal and does not change this operational boundary.
 
 ## Why the codec is a separate stage
 
@@ -181,11 +187,13 @@ rate limits, file-descriptor limits, and bounded quarantine verification.
 There is no downgrade conversion. V2 evidence cannot be discarded and reinterpreted as a
 v1 manifest, and v1 evidence cannot be promoted by changing only `formatVersion`.
 
-## Public API and reachability invariant
+## Versioned submodule API and reachability invariant
 
-The package-level exports are version-qualified. The unqualified `BackupManifest` remains
-the exact v1 type for source compatibility. Tests inspect the active `backup.py` source and
-function globals to require that v2 names, imports, and the v2 format string remain
+The unqualified package-root `BackupManifest` remains the exact v1 type for source
+compatibility, and the package root exposes no `BackupManifestV2`, parser, encoder, or
+decoder. The v2 names exist only in the explicitly imported, versioned
+`backup_manifest_v2` submodule. Tests inspect both the package root and active `backup.py`
+source/function globals to require that v2 names, imports, and the v2 format string remain
 unreachable from create, verify, and restore.
 
 Any future activation must be explicit: a new version-dispatch boundary and separate v2
@@ -207,17 +215,19 @@ The codec suite covers:
 - duplicate-key, invalid UTF-8, malformed/deep/oversized JSON, float, non-finite,
   oversized-integer and non-canonical-byte rejection;
 - low-level frozen-model mutation before serialization;
-- absence of SQLite, filesystem, and migration side effects.
+- no SQLite, filesystem, or migration side effect from codec operations after explicit
+  submodule initialization;
+- zero packaged-migration SQL reads during a cold package-root import.
 
 Observed local source verification for this checkpoint:
 
 | Gate | Result |
 |---|---|
-| Python 3.9 / 3.12 / 3.13 codec tests with warnings as errors | 29/29 each |
-| Python 3.9 / 3.12 / 3.13 topology tests with warnings as errors | 15/15 each |
-| Python 3.9 / 3.12 / 3.13 full unittest | 881/881 each |
+| Python 3.9 / 3.12 / 3.13 codec tests with warnings as errors | 34/34 each |
+| Python 3.9 / 3.12 / 3.13 topology tests with warnings as errors | 17/17 each |
+| Python 3.9 / 3.12 / 3.13 full unittest | 897/897 each |
 | Ruff lint and format | pass |
-| strict mypy | 37 source files pass |
+| strict mypy | 38 source files pass |
 | dependency locks | 4 targets / 74 package records verified |
 
 These are local checks, not immutable CI evidence, independent release review, or
@@ -227,8 +237,8 @@ candidate must be reviewed from a clean checkout before integration.
 ## Rollback
 
 Because no v2 file is created or consumed operationally, rollback is an application-code
-rollback: remove the versioned exports, codec, tests, and documentation together. V1
-database and backup bytes require no data rollback.
+rollback: remove the explicitly imported versioned submodules, tests, and documentation
+together. The package root and v1 database/backup bytes require no change or data rollback.
 
 That simple rollback rule expires the moment any v2 bytes are published. From that point,
 every supported release must retain a reader and quarantine verifier for every accepted
@@ -237,18 +247,17 @@ the recovery set. A writer must never be enabled behind a flag that can outlive 
 
 ## Remaining activation sequence
 
-The next stages remain separate fail-closed changes:
+The exact single-transaction SQLite evidence derivation is now implemented as another
+inactive checkpoint. The next stages remain separate fail-closed changes:
 
-1. derive the v2 model from one stable SQLite snapshot and stable sidecar/ledger/catalog
-   observations;
-2. publish the database and v2 manifest with the existing descriptor, inode, permission,
+1. publish the database and v2 manifest with the existing descriptor, inode, permission,
    no-overwrite, cleanup and directory-`fsync` controls;
-3. verify v2 in quarantine against exact database bytes, catalog topology, schema state,
+2. verify v2 in quarantine against exact database bytes, catalog topology, schema state,
    integrity, foreign keys and row-count evidence;
-4. restore exact bytes to a new path and repeat all quarantine checks before activation;
-5. rehearse v1/v2 mixed binaries, crash points, rollback/forward-fix, effect reconciliation,
+3. restore exact bytes to a new path and repeat all quarantine checks before activation;
+4. rehearse v1/v2 mixed binaries, crash points, rollback/forward-fix, effect reconciliation,
    and measured RPO/RTO;
-6. add authenticated custody/signature and key-rotation policy.
+5. add authenticated custody/signature and key-rotation policy.
 
 Until every stage has independent and combined evidence, readiness documentation must
 continue to report manifest v2 as unavailable for backup or recovery.
