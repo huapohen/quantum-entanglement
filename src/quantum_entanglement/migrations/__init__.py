@@ -13,6 +13,7 @@ import hashlib
 import importlib.resources
 import re
 import sqlite3
+from asyncio import CancelledError
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Sequence, Tuple
 
@@ -231,6 +232,10 @@ def _run_process_guard(process_guard: Optional[Callable[[], None]]) -> None:
         process_guard()
 
 
+def _is_exact_control_signal(error: BaseException) -> bool:
+    return type(error) in (KeyboardInterrupt, SystemExit, GeneratorExit, CancelledError)
+
+
 def apply_sqlite_migrations(
     connection: sqlite3.Connection,
     *,
@@ -324,11 +329,23 @@ def apply_sqlite_migrations(
             _run_process_guard(_process_guard)
             connection.execute("COMMIT")
             _run_process_guard(_process_guard)
-        except BaseException:
-            _run_process_guard(_process_guard)
-            if connection.in_transaction:
-                connection.execute("ROLLBACK")
+        except BaseException as migration_error:
+            cleanup_denied = False
+            try:
                 _run_process_guard(_process_guard)
+            except BaseException:
+                if not _is_exact_control_signal(migration_error):
+                    raise
+                cleanup_denied = True
+            if cleanup_denied:
+                raise
+            try:
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+                    _run_process_guard(_process_guard)
+            except BaseException:
+                if not _is_exact_control_signal(migration_error):
+                    raise
             raise
 
     _run_process_guard(_process_guard)
