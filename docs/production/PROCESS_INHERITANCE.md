@@ -129,12 +129,17 @@ class ExampleStore:
    或 input object 的 property/repr；
 4. child mismatch 后不得 best-effort close、rollback、retire、wipe 或 drain 继承资源；
 5. `__exit__` 通过受 guard 的 `close()`，不能在 child 静默成功；
-6. finalizer 不得在无法证明 current owner 时触碰继承资源；生产资源不能依赖 finalizer 关闭；
+6. finalizer 不得在无法证明 current owner 时触碰继承资源；若 wrapper 持有会自行运行 native
+   finalizer 的对象，仅让 wrapper finalizer 返回仍不充分，组件必须在 child 把完整 live graph 强引用
+   隔离到 `os._exit`/exec；生产资源不能依赖 finalizer 关闭；
 7. constant `repr` 若完全不读依赖状态可以不抛 mismatch，但不得因此提供任何 lifecycle 操作；
 8. wrapper/composer 不能只保护自己；所有 live authority/provider/store 依赖必须证明属于同一
    current identity，防止 fresh child wrapper 包住 inherited dependency；
 9. public lifecycle mismatch 的最终异常清理仍由组件负责，必须验证 traceback locals 不可达
-   caller/provider/store/secret graph。
+   caller/provider/store/secret graph；嵌套边界只可重新清理具备可信 trampoline provenance 的
+   exact public mismatch，不能按错误文本授权清洗；
+10. mismatch 后的 child 必须停止 admission 并以 `os._exit` 或 exec 结束；普通 `sys.exit` 和解释器
+    teardown 可能清空 module globals、触发 inherited native finalizer，不能作为安全销毁路径。
 
 ## 4. 支持与禁止的进程拓扑
 
@@ -170,8 +175,9 @@ async cancellation；组件的 clean-rethrow 层也必须保留安全的 process
 ## 6. SQLiteEventStore 的已实现接入
 
 `SQLiteEventStore` 不采用上面仅用于说明顺序的最小示例。它额外覆盖 exact private signal
-provenance、clean public trampoline、SQL parameter snapshot、owner-aware explicit lock/transaction
-cleanup、migration/constructor quarantine，以及 stream enter/resume 边界。完整合同和运行手册见
+provenance、nested clean public trampoline、SQL parameter snapshot、owner-aware explicit
+lock/transaction cleanup、transaction context enter/exit、migration/constructor quarantine、普通 GC
+路径的 owner-aware graph quarantine，以及 stream enter/resume 边界。完整合同和运行手册见
 [`SQLITE_EVENT_STORE_PROCESS_BINDING.md`](./SQLITE_EVENT_STORE_PROCESS_BINDING.md)。
 
 该接入只说明 event store inherited instance 会 fail closed；不说明其 connection 可继承，也不为
@@ -194,7 +200,11 @@ cleanup、migration/constructor quarantine，以及 stream enter/resume 边界�
   cause/context 的稳定 mismatch；active-exception lifecycle 的最终清理由组件测试证明；
 - spawn 与可用时的 forkserver 进程 fresh capture，不传输 live owner。
 - `SQLiteEventStore` 的全部普通/生命周期入口、stream enter/iter/每次 resume/exit、open transaction
-  clock fork、constructor migration fork、parent continuity 和 clean error graph；
+  clock fork、transaction context enter/exit、constructor migration fork、inherited store 直接 GC、
+  parent continuity、nested trusted mismatch 和 clean error graph；
+- originating exact `KeyboardInterrupt`、`SystemExit`、`GeneratorExit`、`CancelledError` 在
+  transaction/migration/constructor/context cleanup 前保持优先，caller forged 同名 lifecycle error
+  不会被当作可信 mismatch；
 - fork-before-init、spawn、forkserver fresh connections 的 global-position、idempotency+outbox、lease
   和 ambiguity CAS，最终 SQLite integrity/FK/schema 验证。
 
@@ -228,7 +238,9 @@ cleanup、migration/constructor quarantine，以及 stream enter/resume 边界�
 2. 将 worker 创建移动到 secret/store/provider/event-loop 初始化之前；
 3. 在最终 worker 内构造 fresh dependency graph；
 4. 用 synthetic tenant、fake connector 和临时数据库跑 retained process matrix；
-5. 观察 mismatch 指标，确认不存在依赖旧继承行为的合法流量后再晋级。
+5. 观察 mismatch 指标，确认不存在依赖旧继承行为的合法流量后再晋级；
+6. 一旦合法流量出现 mismatch，停止 admission，并让 supervisor 以 `os._exit`/exec 替换该 worker；
+   不得捕获后继续服务或依赖普通解释器退出完成清理。
 
 回滚可以回到上一可运行 binary 和同一 schema，因为 foundation 不迁移数据；但回滚方案只能是
 恢复到 fork-before-initialization 的旧部署拓扑。**禁止**通过删除 guard、重新允许 inherited live
