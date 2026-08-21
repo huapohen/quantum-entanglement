@@ -372,6 +372,91 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
         self.assertEqual(adapter_calls, 0)
         self.assertEqual(self.store.stream_version("stream:owner"), 0)
 
+    def test_event_batch_iterable_fork_rejects_child_before_begin(self) -> None:
+        parent_pid = os.getpid()
+        child_pids: list[int] = []
+        read_fd, write_fd = os.pipe()
+        event = DomainEvent(
+            "stream:iterable-fork",
+            "iterable.created",
+            {},
+            "actor:test",
+            event_id="event:iterable-fork",
+            timestamp="2026-08-21T00:00:00Z",
+        )
+
+        class ForkingIterable:
+            def __iter__(iterable_self):
+                pid = os.fork()
+                if pid != 0:
+                    child_pids.append(pid)
+                yield event
+
+        try:
+            try:
+                stored = self.store.append_many(
+                    "stream:iterable-fork",
+                    ForkingIterable(),
+                    expected_version=0,
+                )
+            except EventStoreLifecycleError as error:
+                if os.getpid() == parent_pid:
+                    raise
+                os.write(write_fd, _lifecycle_error_outcome(error, (self.store, event)))
+                os.close(write_fd)
+                os._exit(0)
+
+            if os.getpid() != parent_pid:
+                os.write(write_fd, b"accepted")
+                os.close(write_fd)
+                os._exit(0)
+
+            self.assertEqual(len(stored), 1)
+            self.assertEqual(len(child_pids), 1)
+            os.close(write_fd)
+            ready, _, _ = select.select((read_fd,), (), (), 3.0)
+            self.assertTrue(ready, "iterable-fork child produced no lifecycle result")
+            self.assertEqual(os.read(read_fd, 4096), b"rejected")
+            status = _wait_for_child(child_pids[0], 3.0)
+            self.assertTrue(os.WIFEXITED(status))
+            self.assertEqual(os.WEXITSTATUS(status), 0)
+        finally:
+            if os.getpid() == parent_pid:
+                try:
+                    os.close(read_fd)
+                except OSError:
+                    pass
+
+        self.assertEqual(self.store.stream_version("stream:iterable-fork"), 1)
+        self.assertFalse(self.store._connection.in_transaction)
+
+    def test_write_snapshots_reject_hostile_sqlite_adapters_before_begin(self) -> None:
+        adapter_calls = 0
+
+        class HostileText(str):
+            def __conform__(self, _protocol: object) -> str:
+                nonlocal adapter_calls
+                adapter_calls += 1
+                return str(self)
+
+        hostile = HostileText("caller-controlled")
+        event = DomainEvent(
+            "stream:hostile",
+            "hostile.created",
+            {},
+            "actor:test",
+            event_id="event:hostile",
+            timestamp="2026-08-21T00:00:00Z",
+        )
+        object.__setattr__(event, "event_id", hostile)
+
+        with self.assertRaises(TypeError):
+            self.store.append(event)
+
+        self.assertEqual(adapter_calls, 0)
+        self.assertEqual(self.store.stream_version("stream:hostile"), 0)
+        self.assertFalse(self.store._connection.in_transaction)
+
 
 if __name__ == "__main__":
     unittest.main()

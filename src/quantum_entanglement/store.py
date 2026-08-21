@@ -276,6 +276,25 @@ class OutboxAmbiguityPageItem:
     ambiguity: OutboxAmbiguity
 
 
+@dataclass(frozen=True)
+class _JsonObjectSnapshot:
+    value: Dict[str, Any]
+    encoded: str
+
+
+@dataclass(frozen=True)
+class _EventWriteSnapshot:
+    event: DomainEvent
+    payload_json: str
+
+
+@dataclass(frozen=True)
+class _OutboxWriteSnapshot:
+    message: OutboxMessage
+    payload_json: str
+    headers_json: str
+
+
 class SQLiteEventStore:
     """Small durable event log suitable for the kernel and local-first clients."""
 
@@ -585,6 +604,114 @@ class SQLiteEventStore:
             )
         return encoded
 
+    def _snapshot_json_object(
+        self,
+        value: Mapping[str, Any],
+        field_name: str,
+    ) -> _JsonObjectSnapshot:
+        encoded = self._encode_json_object(value, field_name)
+        decoded = json.loads(encoded, parse_constant=_reject_json_constant)
+        if type(decoded) is not dict:
+            raise EventStoreJsonTypeError(f"{field_name} must be a plain JSON object")
+        return _JsonObjectSnapshot(decoded, encoded)
+
+    def _snapshot_event(self, event: DomainEvent) -> _EventWriteSnapshot:
+        if type(event) is not DomainEvent:
+            raise TypeError("event must be an exact DomainEvent")
+        stream_id = _caller_text(
+            object.__getattribute__(event, "stream_id"),
+            "event stream_id",
+            required=True,
+        )
+        event_type = _caller_text(
+            object.__getattribute__(event, "event_type"),
+            "event event_type",
+            required=True,
+        )
+        actor_id = _caller_text(
+            object.__getattribute__(event, "actor_id"),
+            "event actor_id",
+            required=True,
+        )
+        event_id = _caller_text(object.__getattribute__(event, "event_id"), "event event_id")
+        timestamp = _caller_text(
+            object.__getattribute__(event, "timestamp"),
+            "event timestamp",
+        )
+        correlation_id = _caller_optional_text(
+            object.__getattribute__(event, "correlation_id"),
+            "event correlation_id",
+        )
+        causation_id = _caller_optional_text(
+            object.__getattribute__(event, "causation_id"),
+            "event causation_id",
+        )
+        idempotency_key = _caller_optional_text(
+            object.__getattribute__(event, "idempotency_key"),
+            "event idempotency_key",
+        )
+        payload = self._snapshot_json_object(
+            object.__getattribute__(event, "payload"),
+            "event payload",
+        )
+        snapshot_event = DomainEvent(
+            stream_id=stream_id,
+            event_type=event_type,
+            payload=payload.value,
+            actor_id=actor_id,
+            event_id=event_id,
+            timestamp=timestamp,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            idempotency_key=idempotency_key,
+        )
+        return _EventWriteSnapshot(snapshot_event, payload.encoded)
+
+    def _snapshot_outbox_message(self, message: OutboxMessage) -> _OutboxWriteSnapshot:
+        if type(message) is not OutboxMessage:
+            raise TypeError("message must be an exact OutboxMessage")
+        destination = _caller_text(
+            object.__getattribute__(message, "destination"),
+            "outbox destination",
+            required=True,
+        )
+        message_id = _caller_text(
+            object.__getattribute__(message, "message_id"),
+            "outbox message_id",
+            required=True,
+        )
+        idempotency_key = _caller_text(
+            object.__getattribute__(message, "idempotency_key"),
+            "outbox idempotency_key",
+            required=True,
+        )
+        available_at = _caller_text(
+            object.__getattribute__(message, "available_at"),
+            "outbox available_at",
+        )
+        created_at = _caller_text(
+            object.__getattribute__(message, "created_at"),
+            "outbox created_at",
+        )
+        payload = self._snapshot_json_object(
+            object.__getattribute__(message, "payload"),
+            "outbox payload",
+        )
+        headers = self._snapshot_json_object(
+            object.__getattribute__(message, "headers"),
+            "outbox headers",
+        )
+        snapshot_message = OutboxMessage(
+            destination=destination,
+            payload=payload.value,
+            headers=headers.value,
+            message_id=message_id,
+            idempotency_key=idempotency_key,
+            available_at=available_at,
+            created_at=created_at,
+        )
+        return _OutboxWriteSnapshot(snapshot_message, payload.encoded, headers.encoded)
+
     def _decode_json_object(self, encoded: Any, field_name: str) -> Dict[str, Any]:
         """Decode one persisted JSON object without trusting SQLite affinity."""
 
@@ -837,12 +964,13 @@ class SQLiteEventStore:
     def _append_in_transaction(
         self,
         connection: sqlite3.Connection,
-        event: DomainEvent,
+        event_snapshot: _EventWriteSnapshot,
         expected_version: Optional[int],
         expected_global_position: Optional[int] = None,
     ) -> Tuple[StoredEvent, bool]:
         """Append inside an existing transaction and report whether a row was inserted."""
 
+        event = event_snapshot.event
         if event.idempotency_key is not None:
             existing = connection.execute(
                 "SELECT * FROM events WHERE stream_id = ? AND idempotency_key = ?",
@@ -884,7 +1012,7 @@ class SQLiteEventStore:
                 event.event_type,
                 event.actor_id,
                 event.timestamp,
-                self._encode_json_object(event.payload, "event payload"),
+                event_snapshot.payload_json,
                 event.correlation_id,
                 event.causation_id,
                 event.idempotency_key,
@@ -936,17 +1064,26 @@ class SQLiteEventStore:
     ) -> StoredEvent:
         """Append one event, returning the existing record for an idempotent retry."""
 
+        event_snapshot = self._snapshot_event(event)
+        expected_version_snapshot = (
+            None
+            if expected_version is None
+            else _caller_sqlite_integer(expected_version, "expected_version")
+        )
         if expected_global_position is not None:
-            expected_global_position = self._validate_page_cursor(
+            expected_global_position_snapshot = self._validate_page_cursor(
                 expected_global_position,
                 "expected_global_position",
             )
+        else:
+            expected_global_position_snapshot = None
+        self._require_current_process()
         with self._transaction() as connection:
             stored, _inserted = self._append_in_transaction(
                 connection,
-                event,
-                expected_version,
-                expected_global_position,
+                event_snapshot,
+                expected_version_snapshot,
+                expected_global_position_snapshot,
             )
             return stored
 
@@ -964,9 +1101,22 @@ class SQLiteEventStore:
         event, preserving the event-to-delivery transaction boundary.
         """
 
-        batch = tuple(messages)
+        raw_batch = tuple(messages)
+        self._require_current_process()
+        event_snapshot = self._snapshot_event(event)
+        batch = tuple(self._snapshot_outbox_message(message) for message in raw_batch)
+        expected_version_snapshot = (
+            None
+            if expected_version is None
+            else _caller_sqlite_integer(expected_version, "expected_version")
+        )
+        self._require_current_process()
         with self._transaction() as connection:
-            stored, inserted = self._append_in_transaction(connection, event, expected_version)
+            stored, inserted = self._append_in_transaction(
+                connection,
+                event_snapshot,
+                expected_version_snapshot,
+            )
             if not inserted:
                 rows = connection.execute(
                     """
@@ -979,11 +1129,11 @@ class SQLiteEventStore:
                 existing = tuple(self._row_to_outbox(row) for row in rows)
                 requested = tuple(
                     (
-                        item.message_id,
-                        item.destination,
-                        item.idempotency_key,
-                        dict(item.payload),
-                        dict(item.headers),
+                        item.message.message_id,
+                        item.message.destination,
+                        item.message.idempotency_key,
+                        dict(item.message.payload),
+                        dict(item.message.headers),
                     )
                     for item in batch
                 )
@@ -1004,6 +1154,7 @@ class SQLiteEventStore:
                 return stored, existing
 
             for message in batch:
+                item = message.message
                 connection.execute(
                     """
                     INSERT INTO outbox (
@@ -1014,16 +1165,16 @@ class SQLiteEventStore:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                     """,
                     (
-                        message.message_id,
-                        message.destination,
-                        self._encode_json_object(message.payload, "outbox payload"),
-                        self._encode_json_object(message.headers, "outbox headers"),
-                        message.idempotency_key,
+                        item.message_id,
+                        item.destination,
+                        message.payload_json,
+                        message.headers_json,
+                        item.idempotency_key,
                         stored.event.event_id,
                         stored.global_position,
                         OutboxStatus.PENDING.value,
-                        message.available_at,
-                        message.created_at,
+                        item.available_at,
+                        item.created_at,
                     ),
                 )
             rows = connection.execute(
@@ -1053,15 +1204,32 @@ class SQLiteEventStore:
         retry returns the original event and result without appending again.
         """
 
-        if not consumer_id.strip() or not message_id.strip():
-            raise ValueError("consumer_id and message_id are required")
+        consumer_id_snapshot = _caller_text(consumer_id, "consumer_id", required=True)
+        message_id_snapshot = _caller_text(message_id, "message_id", required=True)
+        event_snapshot = self._snapshot_event(event)
+        result_snapshot = self._snapshot_json_object(
+            {} if result is None else result,
+            "inbox result",
+        )
+        if received_at is None:
+            received_at_snapshot = utc_now()
+            self._require_current_process()
+            received_at_snapshot = _caller_text(received_at_snapshot, "received_at")
+        else:
+            received_at_snapshot = _caller_text(received_at, "received_at")
+        expected_version_snapshot = (
+            None
+            if expected_version is None
+            else _caller_sqlite_integer(expected_version, "expected_version")
+        )
+        self._require_current_process()
         with self._transaction() as connection:
             existing = connection.execute(
                 """
                 SELECT * FROM inbox_receipts
                 WHERE consumer_id = ? AND message_id = ?
                 """,
-                (consumer_id, message_id),
+                (consumer_id_snapshot, message_id_snapshot),
             ).fetchone()
             if existing is not None:
                 receipt = self._row_to_inbox(existing)
@@ -1073,14 +1241,18 @@ class SQLiteEventStore:
                     raise RuntimeError("inbox receipt references a missing event")
                 return InboxAppendResult(self._row_to_event(event_row), receipt, True)
 
-            stored, _inserted = self._append_in_transaction(connection, event, expected_version)
+            stored, _inserted = self._append_in_transaction(
+                connection,
+                event_snapshot,
+                expected_version_snapshot,
+            )
             receipt = InboxReceipt(
-                consumer_id=consumer_id,
-                message_id=message_id,
-                received_at=received_at or utc_now(),
+                consumer_id=consumer_id_snapshot,
+                message_id=message_id_snapshot,
+                received_at=received_at_snapshot,
                 event_id=stored.event.event_id,
                 event_global_position=stored.global_position,
-                result=dict(result or {}),
+                result=result_snapshot.value,
             )
             connection.execute(
                 """
@@ -1095,7 +1267,7 @@ class SQLiteEventStore:
                     receipt.received_at,
                     receipt.event_id,
                     receipt.event_global_position,
-                    self._encode_json_object(receipt.result, "inbox result"),
+                    result_snapshot.encoded,
                 ),
             )
             return InboxAppendResult(stored, receipt, False)
@@ -1109,24 +1281,37 @@ class SQLiteEventStore:
     ) -> Tuple[StoredEvent, ...]:
         """Atomically append a batch to one stream."""
 
-        batch = tuple(events)
-        if any(item.stream_id != stream_id for item in batch):
+        raw_batch = tuple(events)
+        self._require_current_process()
+        stream_id_snapshot = _caller_text(stream_id, "stream_id")
+        batch = tuple(self._snapshot_event(event) for event in raw_batch)
+        if any(item.event.stream_id != stream_id_snapshot for item in batch):
             raise ValueError("all batch events must use the declared stream_id")
         if not batch:
             return ()
+        expected_version_snapshot = (
+            None
+            if expected_version is None
+            else _caller_sqlite_integer(expected_version, "expected_version")
+        )
+        self._require_current_process()
         with self._transaction() as connection:
             row = connection.execute(
                 "SELECT COALESCE(MAX(sequence), 0) AS version FROM events WHERE stream_id = ?",
-                (stream_id,),
+                (stream_id_snapshot,),
             ).fetchone()
             current_version = int(row["version"])
-            if expected_version is not None and expected_version != current_version:
+            if (
+                expected_version_snapshot is not None
+                and expected_version_snapshot != current_version
+            ):
                 raise ConcurrencyError(
                     "stream %s expected version %d but is %d"
-                    % (stream_id, expected_version, current_version)
+                    % (stream_id_snapshot, expected_version_snapshot, current_version)
                 )
             stored: List[StoredEvent] = []
-            for offset, event in enumerate(batch, start=1):
+            for offset, event_snapshot in enumerate(batch, start=1):
+                event = event_snapshot.event
                 sequence = current_version + offset
                 cursor = connection.execute(
                     """
@@ -1136,13 +1321,13 @@ class SQLiteEventStore:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        stream_id,
+                        stream_id_snapshot,
                         sequence,
                         event.event_id,
                         event.event_type,
                         event.actor_id,
                         event.timestamp,
-                        self._encode_json_object(event.payload, "event payload"),
+                        event_snapshot.payload_json,
                         event.correlation_id,
                         event.causation_id,
                         event.idempotency_key,
@@ -1659,6 +1844,11 @@ class SQLiteEventStore:
     def save_snapshot(
         self, stream_id: str, sequence: int, state: Dict[str, object], at: str
     ) -> None:
+        stream_id_snapshot = _caller_text(stream_id, "stream_id")
+        sequence_snapshot = _caller_sqlite_integer(sequence, "sequence")
+        state_snapshot = self._snapshot_json_object(state, "snapshot state")
+        at_snapshot = _caller_text(at, "at")
+        self._require_current_process()
         with self._transaction() as connection:
             connection.execute(
                 """
@@ -1671,10 +1861,10 @@ class SQLiteEventStore:
                 WHERE excluded.sequence >= snapshots.sequence
                 """,
                 (
-                    stream_id,
-                    sequence,
-                    self._encode_json_object(state, "snapshot state"),
-                    at,
+                    stream_id_snapshot,
+                    sequence_snapshot,
+                    state_snapshot.encoded,
+                    at_snapshot,
                 ),
             )
 
