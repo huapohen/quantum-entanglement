@@ -69,7 +69,7 @@ http://127.0.0.1:8765/#token=…
 
 ## 3. 已保存的浏览器验收截图
 
-下面四张图来自绑定 Git commit `c64723a0db405e341832e9de6963e5e107c940cf` 的 Playwright 本地验收；完整 SHA-256、尺寸、生成时间和证据限制见 [`analysis_report/screenshots/manifest.json`](../analysis_report/screenshots/manifest.json)。
+下面四张图来自绑定 Git commit `8e4d8d7990d536ce78c1e65c5a3eb77bafc54c24` 的 Playwright 本地验收；完整 SHA-256、尺寸、生成时间和证据限制见 [`analysis_report/screenshots/manifest.json`](../analysis_report/screenshots/manifest.json)。
 
 桌面初始态：
 
