@@ -641,10 +641,12 @@ Nothing in this document authorizes a Feishu or WeCom send.
 
 ## 11. Verification
 
-Run the dedicated boundary and adjacent security regression tests:
+Run the dedicated boundary and adjacent regression tests with the standard-library runner.
+`-S` prevents unrelated site packages from shadowing the repository test package:
 
 ```bash
-PYTHONPATH=src python -m pytest -q \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src \
+python -S -W error -m unittest \
   tests/test_operation_authorization.py \
   tests/test_request_context.py \
   tests/test_tenancy.py
@@ -655,25 +657,24 @@ python -m compileall -q src tests scripts examples
 git diff --check
 ```
 
-### 11.1 Observed local authorization-repair evidence
+### 11.1 Observed local thread-local lease evidence
 
-At clean checkpoint `9013d679b87e28c2517124aa9e1990d5bee69864` (tree
-`2bc0d1be048fc58677405265fd63bb1ca5c0c46c`) on 2026-08-21, the following local synthetic
+At clean code checkpoint `a60245a358465d3990cef69f8ef39290df527fdd` (tree
+`b75cbd5cc0526ff5fbd691dea63b24a99bc6b1a1`) on 2026-08-21, the following local synthetic
 checks were observed:
 
 | Check | Observed result |
 |---|---|
-| Independent thread-owner review | An independent reviewer rejected `3e0e5fe` with one P1 finding: an owner lease trusted recyclable `threading.get_ident()` integers, so the first successor that reused a terminated owner's identifier could take over a saved callback and retire live handles. Commit `729f46b` is the unapproved repair candidate, followed by exact semantics in `5b938c2` and this checkpoint's changelog; a fresh independent review is still required |
+| Independent thread-owner review | The final reviewer found no implementation defect at `a60245a` and reported P0/P1/P2 = 0. The overall review remained REJECT with one P3 because this section still described the older `9013d67` checkpoint and 94/179/918 counts. This evidence-only update closes that documentation gap; it does not change the reviewed code or open a production gate |
 | Reviewer consume-return reproducer | The reviewer matrix reproduced 16/16 failures at `0c5d5af`; after `092a68e` and `83bede3`, the same external script reported `0/16 failures` and no failure rows on CPython 3.9.6, 3.12.12, and 3.13.9. This closes the reproducer only; it is not fresh independent approval |
-| Recycled-identifier regression | One stable four-stage regression terminates the owner, observes real integer identifier reuse by a different `Thread`, and proves prepared/bound/active/consumed saved callbacks cannot mutate the lease, composer, registry, or handles. It passed with warnings as errors on all three interpreters |
-| Changed authorization file | All 94 operation-authorization tests passed with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9 |
-| Adjacent authorization target | 179 tests passed with warnings as errors per interpreter: 94 operation-authorization, 47 request-context, and 38 tenancy tests |
-| Process/fork/replay selector | An exact 20-test selector across operation authorization and request context passed with warnings as errors on all three interpreters |
-| Repository suite | The declared `unittest` baseline ran 918 tests successfully on CPython 3.9.6, 3.12.12, and 3.13.9. The first two were warning-clean under `-W error`; CPython 3.13 still printed two unraisable destructor warnings despite its zero exit; see the caveat below |
+| Recycled-identifier regressions | Ordinary and raw-alien owner regressions observed real integer identifier reuse on all three interpreters. CPython 3.9 and 3.12 also reused the same `_DummyThread` wrapper, while every successor received a different library TLS token. Prepared/bound/active/consumed callbacks and the stale weak-callback path could not mutate the quarantined lease, composer, registry, or handles; no reuse case was counted as a pass through a skip |
+| Changed authorization file | All 96 operation-authorization tests passed with warnings as errors on CPython 3.9.6, 3.12.12, and 3.13.9 |
+| Adjacent authorization target | 181 tests passed with warnings as errors per interpreter: 96 operation-authorization, 47 request-context, and 38 tenancy tests |
+| Repository suite | The declared `unittest` baseline ran 920 tests successfully on CPython 3.9.6, 3.12.12, and 3.13.9. The first two were warning-clean under `-W error`; CPython 3.13 still printed two unraisable destructor warnings despite its zero exit; see the caveat below |
 | Static source gates | Locked Ruff 0.16.3 lint/format over 91 files and strict mypy 1.19.1 over 35 source files passed |
 | Supply-chain baseline | Four dependency-lock targets and 74 exact package records verified |
 | Parse, import, and smoke | Three-version `compileall`, package-root/versioned cold import, deterministic 25-event/3-artifact demo, and `git diff --check` passed |
-| Repository integrity | Eight candidate commits from `0c5d5af` are linear with no merge and the checkpoint was clean. Strict object fsck exited zero while reporting 28 existing dangling objects in the shared Git object database. A count-only high-confidence scan found no credential pattern in candidate-added lines; the complete tracked tree retained only the same two pre-existing synthetic fixtures at `tests/test_redaction.py:20` and `:53` (SHA-256 short fingerprints `1d0e3d463537` and `32f4cf588c77`) |
+| Repository integrity | The 40 candidate commits from `b19ab6c` through `a60245a` are linear with no merge, the checkpoint was clean, and `git diff --check` passed |
 
 The adversarial construction cases cover provider and clock lookup through
 `__getattribute__`, descriptor-raised `AttributeError`, a mutation-hostile custom
@@ -686,24 +687,24 @@ completed-frame clearing, normal dependency identity, and default denial. Every 
 registry public wrapper is also exercised against hostile instance lookup before the
 boundary; its base implementation callback remains statically bound.
 
-The CPython 3.13 `unittest -W error` full-suite process exited successfully after 918 tests
+The CPython 3.13 `unittest -W error` full-suite process exited successfully after 920 tests
 but printed two unraisable destructor-time `ResourceWarning` diagnostics for unclosed
 SQLite connections. The Anaconda installation also contains an unrelated site-package
-named `tests`; its first unisolated discovery attempt shadowed the repository namespace and
-loaded only 901 tests, so that attempt is not counted. The successful 918-test run used
-`-S` to suppress `site` initialization and exclude that unrelated package. Earlier
+named `tests`, so the successful 920-test run used `-S` to suppress `site` initialization
+and exclude that unrelated package. Earlier
 per-test forced-GC diagnosis identified the existing
 `test_projection_receipt_count_omission_is_rejected` and
-`test_projection_receipt_count_tampering_is_rejected` backup paths. The changed 94-test
-authorization file and the 179-test adjacent target themselves passed with warnings as
+`test_projection_receipt_count_tampering_is_rejected` backup paths. The changed 96-test
+authorization file and the 181-test adjacent target themselves passed with warnings as
 errors on 3.13. This repair did not change the SQLite path, but the 3.13 repository suite
 must not be represented as warning-clean until that separate issue is fixed and
 independently verified.
 
 These results are a same-host development checkpoint, not retained release evidence,
 clean-host proof, production adapter evidence, independent-review approval, or Gate A
-promotion. The exact-thread context-exit repair is only a candidate pending a fresh
-independent reviewer, and the blockers in section 12 remain unchanged.
+promotion. The reviewer found the thread-local-token implementation acceptable and raised
+only the evidence-documentation P3 described above. This document-only repair still requires
+an incremental reviewer check, and the blockers in section 12 remain unchanged.
 
 The dedicated suite covers exact state types/snapshots, redacted representations,
 structural provider injection, hostile provider/clock descriptor lookup during construction,
