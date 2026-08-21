@@ -413,7 +413,7 @@ exceptions, exception-graph redaction, persistent reopen, and waiting-thread qua
 PYTHONPATH=src python3 -m unittest tests.test_attempts -v
 ```
 
-The current direct suite contains 113 tests (one `BaseExceptionGroup` case is version-gated on
+The current direct suite contains 117 tests (one `BaseExceptionGroup` case is version-gated on
 Python 3.9). The matrix includes exact control-signal cleaning, safe `SystemExit` codes, hostile
 exception objects, control subclasses/groups, forged internal sentinels, whole-traceback
 provenance and grafting attacks, exact-`bool` transaction-state inspection, hostile `__bool__`
