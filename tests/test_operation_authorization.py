@@ -1490,6 +1490,246 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                         ),
                     )
 
+    def test_every_composer_public_wrapper_contains_hostile_instance_lookup(self):
+        operation = self.composer.authorize(self.context, self.request)
+        paths = (
+            (
+                "authorize",
+                "_authorize",
+                lambda selected: ProtectedOperationComposer.authorize(
+                    selected,
+                    self.context,
+                    self.request,
+                ),
+            ),
+            (
+                "consume",
+                "_consume",
+                lambda selected: ProtectedOperationComposer.consume(
+                    selected,
+                    operation,
+                    self.context,
+                    self.request,
+                ),
+            ),
+            (
+                "retire",
+                "_retire",
+                lambda selected: ProtectedOperationComposer.retire(selected, operation),
+            ),
+            (
+                "close",
+                "_close",
+                lambda selected: ProtectedOperationComposer.close(selected),
+            ),
+            (
+                "__enter__",
+                "_enter",
+                lambda selected: ProtectedOperationComposer.__enter__(selected),
+            ),
+            (
+                "__exit__",
+                "_close",
+                lambda selected: ProtectedOperationComposer.__exit__(
+                    selected,
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+        )
+
+        for public_name, callback_name, invoke in paths:
+            with self.subTest(method=public_name):
+                canary = f"composer-{public_name}-instance-lookup-secret-canary"
+                original = HostileBoundaryFailure(canary)
+                lookups = []
+
+                class LookupHostileComposer(ProtectedOperationComposer):
+                    def __getattribute__(
+                        self,
+                        name,
+                        selected_lookups=lookups,
+                        selected_original=original,
+                    ):
+                        if name.startswith("_"):
+                            selected_lookups.append(name)
+                            raise selected_original
+                        return object.__getattribute__(self, name)
+
+                instance = object.__new__(LookupHostileComposer)
+                active_error = RuntimeError(f"{canary}-active-caller")
+                active_error.instance = instance
+                active_error.context = self.context
+                active_error.request = self.request
+                try:
+                    raise active_error
+                except RuntimeError:
+                    error = self.capture_error(
+                        "protected_operation_internal_failure",
+                        lambda selected=instance, selected_invoke=invoke: selected_invoke(selected),
+                    )
+
+                self.assertTrue(lookups)
+                self.assertNotIn(callback_name, lookups)
+                self.assert_clean_public_failure(
+                    error,
+                    original,
+                    canary,
+                    method=public_name,
+                    forbidden=(
+                        instance,
+                        self.issuer,
+                        self.provider,
+                        self.authorizer,
+                        self.verifier,
+                        self.key_ring,
+                        self.clock,
+                        self.context,
+                        self.request,
+                        operation,
+                        original,
+                        active_error,
+                        b"signing-secret-canary-1234567890",
+                    ),
+                )
+
+    def test_every_registry_public_wrapper_contains_hostile_instance_lookup(self):
+        operation = self.composer.authorize(self.context, self.request)
+        basis = self.issuer.prepare_reauthorization(self.context, self.request)
+        binding = _OperationBinding(
+            context_id=basis.context_id,
+            authenticator_id=basis.authenticator_id,
+            audience=basis.audience,
+            request_id=basis.request_id,
+            principal_id=basis.principal_id,
+            subject_id=basis.subject_id,
+            tenant_id=basis.tenant_id,
+            workspace_id=self.workspace,
+            action=self.request.action,
+            resource_type=self.request.resource.resource_type,
+            resource_id=self.request.resource.resource_id,
+            decision_id="ef" * 32,
+            identity_revision=basis.identity_revision,
+            scope_revision=basis.scope_revision,
+        )
+        expires_at = self.clock.now() + timedelta(seconds=20)
+        paths = (
+            (
+                "issue",
+                "_issue",
+                lambda selected: _AuthorizedOperationRegistry.issue(
+                    selected,
+                    binding,
+                    expires_at=expires_at,
+                ),
+            ),
+            (
+                "observe_now",
+                "_observe_now",
+                lambda selected: _AuthorizedOperationRegistry.observe_now(selected),
+            ),
+            (
+                "verify",
+                "_verify",
+                lambda selected: _AuthorizedOperationRegistry.verify(
+                    selected,
+                    operation,
+                    binding,
+                ),
+            ),
+            (
+                "check_request",
+                "_check_request",
+                lambda selected: _AuthorizedOperationRegistry.check_request(
+                    selected,
+                    operation,
+                    basis,
+                    self.request,
+                ),
+            ),
+            (
+                "consume_request",
+                "_consume_request",
+                lambda selected: _AuthorizedOperationRegistry.consume_request(
+                    selected,
+                    operation,
+                    basis,
+                    self.request,
+                ),
+            ),
+            (
+                "retire",
+                "_retire",
+                lambda selected: _AuthorizedOperationRegistry.retire(selected, operation),
+            ),
+            (
+                "close",
+                "_close",
+                lambda selected: _AuthorizedOperationRegistry.close(selected),
+            ),
+        )
+
+        for public_name, callback_name, invoke in paths:
+            with self.subTest(method=public_name):
+                canary = f"registry-{public_name}-instance-lookup-secret-canary"
+                original = HostileBoundaryFailure(canary)
+                lookups = []
+
+                class LookupHostileRegistry(_AuthorizedOperationRegistry):
+                    def __getattribute__(
+                        self,
+                        name,
+                        selected_lookups=lookups,
+                        selected_original=original,
+                    ):
+                        if name.startswith("_"):
+                            selected_lookups.append(name)
+                            raise selected_original
+                        return object.__getattribute__(self, name)
+
+                instance = object.__new__(LookupHostileRegistry)
+                active_error = RuntimeError(f"{canary}-active-caller")
+                active_error.instance = instance
+                active_error.binding = binding
+                active_error.operation = operation
+                active_error.request = self.request
+                try:
+                    raise active_error
+                except RuntimeError:
+                    error = self.capture_error(
+                        "protected_operation_internal_failure",
+                        lambda selected=instance, selected_invoke=invoke: selected_invoke(selected),
+                    )
+
+                self.assertTrue(lookups)
+                self.assertNotIn(callback_name, lookups)
+                self.assert_clean_public_failure(
+                    error,
+                    original,
+                    canary,
+                    method=public_name,
+                    forbidden=(
+                        instance,
+                        self.composer,
+                        self.issuer,
+                        self.provider,
+                        self.authorizer,
+                        self.verifier,
+                        self.key_ring,
+                        self.clock,
+                        self.context,
+                        self.request,
+                        operation,
+                        basis,
+                        binding,
+                        expires_at,
+                        original,
+                        active_error,
+                        b"signing-secret-canary-1234567890",
+                    ),
+                )
+
     def test_constructor_descriptor_control_signals_are_reissued_cleanly(self):
         cases = (
             (KeyboardInterrupt, "keyboard"),

@@ -787,7 +787,9 @@ class _AuthorizedOperationRegistry:
         *,
         expires_at: datetime,
     ) -> AuthorizedOperation:
-        operation, failure = _invoke_boundary(partial(self._issue, binding, expires_at=expires_at))
+        operation, failure = _invoke_boundary(
+            partial(_AuthorizedOperationRegistry._issue, self, binding, expires_at=expires_at)
+        )
         if failure is None and type(operation) is AuthorizedOperation:
             return operation
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -829,7 +831,9 @@ class _AuthorizedOperationRegistry:
     def observe_now(self) -> datetime:
         """Advance and return the registry's service-clock high-water mark."""
 
-        observed_at, failure = _invoke_boundary(self._observe_now)
+        observed_at, failure = _invoke_boundary(
+            partial(_AuthorizedOperationRegistry._observe_now, self)
+        )
         if failure is None and isinstance(observed_at, datetime):
             return observed_at
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -855,7 +859,9 @@ class _AuthorizedOperationRegistry:
             return self._clock_now()
 
     def verify(self, operation: AuthorizedOperation, expected: _OperationBinding) -> None:
-        _, failure = _invoke_boundary(partial(self._verify, operation, expected))
+        _, failure = _invoke_boundary(
+            partial(_AuthorizedOperationRegistry._verify, self, operation, expected)
+        )
         if failure is None:
             return
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -894,7 +900,15 @@ class _AuthorizedOperationRegistry:
     ) -> None:
         """Verify a live exact actor/request handle without granting or consuming it."""
 
-        _, failure = _invoke_boundary(partial(self._check_request, operation, basis, request))
+        _, failure = _invoke_boundary(
+            partial(
+                _AuthorizedOperationRegistry._check_request,
+                self,
+                operation,
+                basis,
+                request,
+            )
+        )
         if failure is None:
             return
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -944,7 +958,15 @@ class _AuthorizedOperationRegistry:
     ) -> None:
         """Atomically verify exact actor/request scope and retire on success."""
 
-        _, failure = _invoke_boundary(partial(self._consume_request, operation, basis, request))
+        _, failure = _invoke_boundary(
+            partial(
+                _AuthorizedOperationRegistry._consume_request,
+                self,
+                operation,
+                basis,
+                request,
+            )
+        )
         if failure is None:
             return
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -989,7 +1011,9 @@ class _AuthorizedOperationRegistry:
             self._prune(now)
 
     def retire(self, operation: AuthorizedOperation) -> None:
-        _, failure = _invoke_boundary(partial(self._retire, operation))
+        _, failure = _invoke_boundary(
+            partial(_AuthorizedOperationRegistry._retire, self, operation)
+        )
         if failure is None:
             return
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -1014,7 +1038,7 @@ class _AuthorizedOperationRegistry:
             self.__active.pop(id(operation), None)
 
     def close(self) -> None:
-        _, failure = _invoke_boundary(self._close)
+        _, failure = _invoke_boundary(partial(_AuthorizedOperationRegistry._close, self))
         if failure is None:
             return
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -1488,7 +1512,9 @@ class ProtectedOperationComposer:
     ) -> AuthorizedOperation:
         """Return one bounded opaque handle only after an explicit ALLOW decision."""
 
-        operation, failure = _invoke_boundary(partial(self._authorize, context, request))
+        operation, failure = _invoke_boundary(
+            partial(ProtectedOperationComposer._authorize, self, context, request)
+        )
         if failure is None and type(operation) is AuthorizedOperation:
             return operation
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -1558,7 +1584,9 @@ class ProtectedOperationComposer:
     ) -> None:
         """Atomically validate exact operation scope and retire the handle before an effect."""
 
-        result, failure = _invoke_boundary(partial(self._consume, operation, context, request))
+        result, failure = _invoke_boundary(
+            partial(ProtectedOperationComposer._consume, self, operation, context, request)
+        )
         if failure is None:
             return result
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -1622,7 +1650,9 @@ class ProtectedOperationComposer:
     def retire(self, operation: AuthorizedOperation) -> None:
         """Invalidate one exact issued handle without disclosing registry membership."""
 
-        result, failure = _invoke_boundary(partial(self._retire, operation))
+        result, failure = _invoke_boundary(
+            partial(ProtectedOperationComposer._retire, self, operation)
+        )
         if failure is None:
             return result
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -1645,7 +1675,7 @@ class ProtectedOperationComposer:
     def close(self) -> None:
         """Invalidate all handles and reject future composition. Idempotent."""
 
-        result, failure = _invoke_boundary(self._close)
+        result, failure = _invoke_boundary(partial(ProtectedOperationComposer._close, self))
         if failure is None:
             return result
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -1670,7 +1700,7 @@ class ProtectedOperationComposer:
             self.__registry.close()
 
     def __enter__(self) -> ProtectedOperationComposer:
-        entered, failure = _invoke_boundary(self._enter)
+        entered, failure = _invoke_boundary(partial(ProtectedOperationComposer._enter, self))
         if failure is None and type(entered) is ProtectedOperationComposer:
             return entered
         failure_code, control_signal, system_exit_status = _operation_failure_details(
@@ -1691,7 +1721,7 @@ class ProtectedOperationComposer:
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, trace: object) -> None:
-        result, failure = _invoke_boundary(self._close)
+        result, failure = _invoke_boundary(partial(ProtectedOperationComposer._close, self))
         if failure is None:
             return result
         failure_code, control_signal, system_exit_status = _operation_failure_details(
