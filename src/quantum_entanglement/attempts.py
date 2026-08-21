@@ -194,6 +194,35 @@ class _ReadTransactionOutcomeUnknown(RuntimeError):
         self.control_signal = control_signal
 
 
+_FIXED_PUBLIC_ERROR_TYPES: Tuple[Type[BaseException], ...] = (
+    InvocationCommitAmbiguityError,
+    InvocationTransactionError,
+    InvocationStoreClosedError,
+    InvocationStoreProcessMismatchError,
+    InvocationStorePoisonedError,
+)
+
+
+def _fixed_public_error_type(error: BaseException) -> Optional[Type[BaseException]]:
+    for error_type in _FIXED_PUBLIC_ERROR_TYPES:
+        if isinstance(error, error_type):
+            return error_type
+    return None
+
+
+def _raise_clean_fixed_public_error(error_type: Type[BaseException]) -> NoReturn:
+    """Raise one new allowlisted public error with no active-exception context."""
+
+    if not any(error_type is allowed for allowed in _FIXED_PUBLIC_ERROR_TYPES):
+        raise RuntimeError("unsupported invocation public error type")
+    try:
+        raise error_type() from None
+    except BaseException as public_error:
+        if type(public_error) is error_type:
+            public_error.__context__ = None
+        raise
+
+
 class InvocationStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -271,8 +300,13 @@ def _normalized_safe_transaction_body_error(
 def _raise_clean_transaction_body_error(descriptor: _SafeTransactionBodyError) -> NoReturn:
     normalized = _normalized_safe_transaction_body_error(descriptor)
     if normalized is None:
-        raise InvocationTransactionError() from None
-    raise normalized.error_type(normalized.message) from None
+        _raise_clean_fixed_public_error(InvocationTransactionError)
+    try:
+        raise normalized.error_type(normalized.message) from None
+    except BaseException as public_error:
+        if type(public_error) is normalized.error_type:
+            public_error.__context__ = None
+        raise
 
 
 def _collect_trusted_module_code_objects() -> frozenset[CodeType]:
@@ -351,22 +385,32 @@ def _raise_clean_control_signal(
         or type(close_failure) is not bool
         or (ambiguity and close_failure)
     ):
-        raise InvocationTransactionError()
+        _raise_clean_fixed_public_error(InvocationTransactionError)
     if ambiguity:
         cause: Optional[BaseException] = InvocationCommitAmbiguityError()
     elif close_failure:
         cause = InvocationStoreClosedError()
     else:
         cause = None
-    if normalized.kind is _ControlSignalKind.KEYBOARD_INTERRUPT:
-        raise KeyboardInterrupt() from cause
-    if normalized.kind is _ControlSignalKind.GENERATOR_EXIT:
-        raise GeneratorExit() from cause
-    if normalized.kind is _ControlSignalKind.CANCELLED:
-        raise CancelledError() from cause
-    if normalized.kind is _ControlSignalKind.SYSTEM_EXIT:
-        raise SystemExit(normalized.system_exit_code) from cause
-    raise RuntimeError("unsupported invocation control signal")
+    expected_type: Type[BaseException]
+    try:
+        if normalized.kind is _ControlSignalKind.KEYBOARD_INTERRUPT:
+            expected_type = KeyboardInterrupt
+            raise KeyboardInterrupt() from cause
+        if normalized.kind is _ControlSignalKind.GENERATOR_EXIT:
+            expected_type = GeneratorExit
+            raise GeneratorExit() from cause
+        if normalized.kind is _ControlSignalKind.CANCELLED:
+            expected_type = CancelledError
+            raise CancelledError() from cause
+        if normalized.kind is _ControlSignalKind.SYSTEM_EXIT:
+            expected_type = SystemExit
+            raise SystemExit(normalized.system_exit_code) from cause
+        raise RuntimeError("unsupported invocation control signal")
+    except BaseException as public_error:
+        if type(public_error) is expected_type:
+            public_error.__context__ = None
+        raise
 
 
 _Method = TypeVar("_Method", bound=Callable[..., Any])
@@ -377,12 +421,27 @@ def _bind_store_process(method: _Method) -> _Method:
     """Reject a fork-inherited store before touching its lock or SQLite connection."""
 
     def process_bound(*args: Any, **kwargs: Any) -> Any:
+        validation_error: Optional[_SafeTransactionBodyError] = None
+        fixed_error_type: Optional[Type[BaseException]] = None
         store = args[0]
         process_matches = store._creator_pid == os.getpid()
         if not process_matches:
             del args, kwargs, store
-            raise InvocationStoreProcessMismatchError() from None
-        return method(*args, **kwargs)
+            _raise_clean_fixed_public_error(InvocationStoreProcessMismatchError)
+        try:
+            return method(*args, **kwargs)
+        except BaseException as error:
+            fixed_error_type = _fixed_public_error_type(error)
+            if fixed_error_type is None:
+                validation_error = _safe_transaction_body_error(error)
+            if fixed_error_type is None and validation_error is None:
+                raise
+        del args, kwargs, store
+        if fixed_error_type is not None:
+            _raise_clean_fixed_public_error(fixed_error_type)
+        if validation_error is not None:
+            _raise_clean_transaction_body_error(validation_error)
+        raise RuntimeError("invocation read signal classification is missing")
 
     process_bound.__name__ = method.__name__
     process_bound.__qualname__ = method.__qualname__
@@ -399,6 +458,7 @@ def _sanitize_control_signals(method: _Method) -> _Method:
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         descriptor: Optional[_ControlSignalDescriptor] = None
         validation_error: Optional[_SafeTransactionBodyError] = None
+        fixed_error_type: Optional[Type[BaseException]] = None
         invalid_base_exception = False
         transaction_failure = False
         commit_ambiguity = False
@@ -408,7 +468,7 @@ def _sanitize_control_signals(method: _Method) -> _Method:
         process_matches = store._creator_pid == os.getpid()
         if not process_matches:
             del args, kwargs, store
-            raise InvocationStoreProcessMismatchError() from None
+            _raise_clean_fixed_public_error(InvocationStoreProcessMismatchError)
         store._push_control_signal_boundary(boundary_nonce)
         try:
             try:
@@ -430,16 +490,20 @@ def _sanitize_control_signals(method: _Method) -> _Method:
                 elif isinstance(error, InvocationCommitAmbiguityError):
                     commit_ambiguity = True
                 else:
-                    descriptor = _control_signal_descriptor(error)
-                    if descriptor is not None:
-                        control_ambiguity = (
-                            type(error.__cause__) is InvocationCommitAmbiguityError
-                            and error.__cause__.__traceback__ is None
-                        )
-                    if descriptor is None:
-                        if isinstance(error, Exception):
-                            raise
-                        invalid_base_exception = True
+                    fixed_error_type = _fixed_public_error_type(error)
+                    if fixed_error_type is None:
+                        descriptor = _control_signal_descriptor(error)
+                        if descriptor is not None:
+                            control_ambiguity = (
+                                type(error.__cause__) is InvocationCommitAmbiguityError
+                                and error.__cause__.__traceback__ is None
+                            )
+                    if fixed_error_type is None and descriptor is None:
+                        validation_error = _safe_transaction_body_error(error)
+                        if validation_error is None:
+                            if isinstance(error, Exception):
+                                raise
+                            invalid_base_exception = True
         finally:
             store._pop_control_signal_boundary(boundary_nonce)
         del args, kwargs, store
@@ -447,10 +511,12 @@ def _sanitize_control_signals(method: _Method) -> _Method:
             _raise_clean_control_signal(descriptor, ambiguity=control_ambiguity)
         if validation_error is not None:
             _raise_clean_transaction_body_error(validation_error)
+        if fixed_error_type is not None:
+            _raise_clean_fixed_public_error(fixed_error_type)
         if invalid_base_exception or transaction_failure:
-            raise InvocationTransactionError() from None
+            _raise_clean_fixed_public_error(InvocationTransactionError)
         if commit_ambiguity:
-            raise InvocationCommitAmbiguityError() from None
+            _raise_clean_fixed_public_error(InvocationCommitAmbiguityError)
         raise RuntimeError("invocation control signal classification is missing")
 
     wrapped.__name__ = method.__name__
@@ -474,7 +540,7 @@ def _sanitize_close_signals(method: _Method) -> _Method:
         process_matches = store._creator_pid == os.getpid()
         if not process_matches:
             del args, kwargs, store
-            raise InvocationStoreProcessMismatchError() from None
+            _raise_clean_fixed_public_error(InvocationStoreProcessMismatchError)
         store._push_control_signal_boundary(boundary_nonce)
         try:
             try:
@@ -500,7 +566,7 @@ def _sanitize_close_signals(method: _Method) -> _Method:
         if descriptor is not None:
             _raise_clean_control_signal(descriptor, close_failure=True)
         if close_failure:
-            raise InvocationStoreClosedError() from None
+            _raise_clean_fixed_public_error(InvocationStoreClosedError)
         raise RuntimeError("invocation close signal classification is missing")
 
     wrapped_close.__name__ = method.__name__

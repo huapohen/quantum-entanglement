@@ -266,6 +266,12 @@ class InvocationAttemptStoreTests(unittest.TestCase):
             return error
         self.fail("operation did not raise a BaseException")
 
+    def _capture_while_exception_active(self, operation, marker):
+        try:
+            raise HostileFault(marker)
+        except HostileFault:
+            return self._capture_base_exception(operation)
+
     def _assert_clean_control_signal(
         self,
         error,
@@ -421,6 +427,204 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                 method = getattr(SQLiteInvocationAttemptStore, name)
                 self.assertFalse(hasattr(method, "__wrapped__"))
                 self.assertNotEqual(str(inspect.signature(method)), "(*args, **kwargs)")
+
+    def test_public_errors_do_not_retain_a_caller_active_exception(self):
+        self.store.enqueue(job_spec())
+        lease = self.store.claim("invocation-1", "worker", lease_seconds=10)
+        assert lease is not None
+        self.store.close()
+        closed_operations = (
+            self.store.__enter__,
+            partial(self.store.get, "invocation-1"),
+            partial(self.store.get_for_task, "session-1", "task-1"),
+            partial(self.store.recovery_snapshot_for_task, "session-1", "task-1"),
+            partial(self.store.attempts, "invocation-1"),
+            partial(self.store.attempts_page, "invocation-1"),
+            partial(self.store.enqueue, job_spec()),
+            self.store.recover_expired,
+            partial(self.store.claim_next, "worker", lease_seconds=5),
+            partial(self.store.claim, "invocation-1", "worker", lease_seconds=5),
+            partial(self.store.heartbeat, lease, lease_seconds=5),
+            partial(self.store.complete, lease),
+            partial(self.store.fail, lease, "closed"),
+            self.store.schema_version,
+        )
+        for index, operation in enumerate(closed_operations):
+            with self.subTest(kind="closed", index=index):
+                marker = f"private caller exception for closed operation {index}"
+                captured = self._capture_while_exception_active(operation, marker)
+                self.assertIs(type(captured), InvocationStoreClosedError)
+                self.assertIsNone(captured.__cause__)
+                self.assertIsNone(captured.__context__)
+                self.assertNotIn(marker, exception_graph_text(captured))
+
+        poison_store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        poison_store._poison_store()
+        try:
+            for index, operation in enumerate(
+                (
+                    poison_store.schema_version,
+                    partial(poison_store.enqueue, job_spec()),
+                )
+            ):
+                with self.subTest(kind="poisoned", index=index):
+                    marker = f"private caller exception for poisoned operation {index}"
+                    captured = self._capture_while_exception_active(operation, marker)
+                    self.assertIs(type(captured), InvocationStorePoisonedError)
+                    self.assertIsNone(captured.__cause__)
+                    self.assertIsNone(captured.__context__)
+                    self.assertNotIn(marker, exception_graph_text(captured))
+        finally:
+            poison_store.close()
+
+        mismatch_store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        mismatch_store._creator_pid += 1
+        for index, operation in enumerate(
+            (
+                mismatch_store.schema_version,
+                partial(mismatch_store.enqueue, job_spec()),
+                mismatch_store.close,
+            )
+        ):
+            with self.subTest(kind="process-mismatch", index=index):
+                marker = f"private caller exception for mismatched operation {index}"
+                captured = self._capture_while_exception_active(operation, marker)
+                self.assertIs(type(captured), InvocationStoreProcessMismatchError)
+                self.assertIsNone(captured.__cause__)
+                self.assertIsNone(captured.__context__)
+                self.assertNotIn(marker, exception_graph_text(captured))
+        mismatch_store._creator_pid -= 1
+        mismatch_store.close()
+
+        transaction_store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        try:
+            marker = "private caller exception for transaction failure"
+            with patch.object(
+                transaction_store,
+                "_begin_write_transaction",
+                side_effect=HostileFault("private transaction driver failure"),
+            ):
+                captured = self._capture_while_exception_active(
+                    partial(transaction_store.enqueue, job_spec()),
+                    marker,
+                )
+            self.assertIs(type(captured), InvocationTransactionError)
+            self.assertIsNone(captured.__cause__)
+            self.assertIsNone(captured.__context__)
+            self.assertNotIn(marker, exception_graph_text(captured))
+        finally:
+            transaction_store.close()
+
+        ambiguity_store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        commit = ambiguity_store._commit_write_transaction
+
+        def committed_failure(connection):
+            commit(connection)
+            raise HostileFault("private commit acknowledgement")
+
+        try:
+            marker = "private caller exception for commit ambiguity"
+            with (
+                patch.object(
+                    ambiguity_store,
+                    "_commit_write_transaction",
+                    side_effect=committed_failure,
+                ),
+                patch.object(
+                    ambiguity_store,
+                    "_reconcile_enqueued_job",
+                    return_value=None,
+                ),
+            ):
+                captured = self._capture_while_exception_active(
+                    partial(ambiguity_store.enqueue, job_spec()),
+                    marker,
+                )
+            self.assertIs(type(captured), InvocationCommitAmbiguityError)
+            self.assertIsNone(captured.__cause__)
+            self.assertIsNone(captured.__context__)
+            self.assertNotIn(marker, exception_graph_text(captured))
+        finally:
+            ambiguity_store.close()
+
+        close_store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        marker = "private caller exception for close failure"
+        with patch.object(
+            close_store,
+            "_close_connection",
+            side_effect=HostileFault("private close driver failure"),
+        ):
+            captured = self._capture_while_exception_active(close_store.close, marker)
+        self.assertIs(type(captured), InvocationStoreClosedError)
+        self.assertIsNone(captured.__cause__)
+        self.assertIsNone(captured.__context__)
+        self.assertNotIn(marker, exception_graph_text(captured))
+        close_store.close()
+
+    def test_public_validation_and_control_errors_clear_caller_active_exception(self):
+        self.store.enqueue(job_spec())
+        validation_cases = (
+            (partial(self.store.get, ""), ValueError),
+            (
+                partial(
+                    self.store.claim,
+                    "invocation-1",
+                    "worker",
+                    lease_seconds=0,
+                ),
+                ValueError,
+            ),
+            (
+                partial(
+                    self.store.claim,
+                    "invocation-1",
+                    "worker",
+                    lease_seconds="private",
+                ),
+                TypeError,
+            ),
+            (
+                partial(
+                    self.store.enqueue,
+                    job_spec(payload_digest="f" * 64),
+                ),
+                InvocationConflictError,
+            ),
+        )
+        for index, (operation, error_type) in enumerate(validation_cases):
+            with self.subTest(kind="validation", index=index):
+                marker = f"private caller exception for validation {index}"
+                captured = self._capture_while_exception_active(operation, marker)
+                self.assertIs(type(captured), error_type)
+                self.assertIsNone(captured.__cause__)
+                self.assertIsNone(captured.__context__)
+                self.assertNotIn(marker, exception_graph_text(captured))
+
+        for index, error_type in enumerate((KeyboardInterrupt, SystemExit, GeneratorExit)):
+            with self.subTest(kind="control", error_type=error_type.__name__):
+                marker = f"private caller exception for control {error_type.__name__}"
+                control_marker = f"private originating {error_type.__name__}"
+                with patch.object(
+                    self.store,
+                    "_begin_write_transaction",
+                    side_effect=error_type(control_marker),
+                ):
+                    captured = self._capture_while_exception_active(
+                        partial(
+                            self.store.enqueue,
+                            job_spec(
+                                invocation_id=f"control-{index}",
+                                task_id=f"control-task-{index}",
+                                idempotency_key=f"control-key-{index}",
+                            ),
+                        ),
+                        marker,
+                    )
+                self.assertIs(type(captured), error_type)
+                self.assertIsNone(captured.__cause__)
+                self.assertIsNone(captured.__context__)
+                self.assertNotIn(marker, exception_graph_text(captured))
+                self.assertNotIn(control_marker, exception_graph_text(captured))
 
     def test_lease_duration_must_advance_durable_timestamp(self):
         self.store.enqueue(job_spec())
@@ -884,7 +1088,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                             cursor = cursor.tb_next
                         self.assertEqual(
                             [frame.f_code.co_name for frame in module_frames],
-                            ["wrapped"],
+                            ["wrapped", "_raise_clean_fixed_public_error"],
                         )
                         self.assertFalse(
                             {"args", "kwargs", "store", "error"} & set(module_frames[0].f_locals)
@@ -962,7 +1166,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                     for frame in frames
                     if frame.f_globals.get("__name__") == attempts_module.__name__
                 ],
-                ["wrapped"],
+                ["wrapped", "_raise_clean_fixed_public_error"],
             )
             self.assertEqual(store.schema_version(), 2)
             self.assertIsNone(store.get("invocation-1"))
