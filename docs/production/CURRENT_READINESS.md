@@ -1,6 +1,6 @@
 # Quantum Entanglement 当前生产就绪审计
 
-- 更新日期：2026-08-20
+- 更新日期：2026-08-21
 - 审计口径：只计算本文所在主线中已提交、可复现的源码和证据
 - 硬边界：[`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md)
 - 结论：**内核组件已形成较强验证基线，但仍不是生产服务；Gate A–E 全部关闭**
@@ -28,13 +28,16 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
    `succeeded | rejected | effect_unknown` receipt 原子绑定。
 
 另有一个跨领域 P0：当前主线已经实现统一、无锁的 PID + opaque epoch process identity
-foundation，但尚未把任何现有 SQLite store、`RequestContextIssuer`、revocation/key registry、
-plugin/runtime 或 event-loop 对象迁移到该 guard。这些对象仍可能在 child 触碰 inherited lock/
-provider/connection 前继续运行。`non-copyable`/`non-pickleable` 不阻止 fork 复制；credential-bearing
-或不可信 worker 必须先 spawn/exec，再在 child 内构造 store、issuer、provider 和 event loop，并且
-必须发生在 secret load 之前。已实现基础合同见
+foundation，并完成 `SQLiteEventStore` 的独立 process-bound 候选；artifact/projection/revocation
+store、`RequestContextIssuer`、key/secret registry、plugin/runtime、connector 和 composition root
+仍未完成同等级迁移。这些对象仍可能在 child 触碰 inherited lock/provider/connection 前继续运行。
+`non-copyable`/`non-pickleable` 不阻止 fork 复制；credential-bearing 或不可信 worker 必须先
+spawn/exec，再在 child 内构造 store、issuer、provider 和 event loop，并且必须发生在 secret load
+之前。已实现基础合同见
 [`PROCESS_INHERITANCE.md`](./PROCESS_INHERITANCE.md)，完整依赖与测试矩阵见
 [`12_process_inheritance_dependency_audit.md`](../../analysis_report/research/12_process_inheritance_dependency_audit.md)。
+event store 的单组件运行合同见
+[`SQLITE_EVENT_STORE_PROCESS_BINDING.md`](./SQLITE_EVENT_STORE_PROCESS_BINDING.md)。
 
 测试通过证明对应断言在记录环境中成立，不证明端到端生产安全、容量、SLO、RPO/RTO 或 GA。
 
@@ -43,7 +46,8 @@ provider/connection 前继续运行。`non-copyable`/`non-pickleable` 不阻止 
 ### 已提交能力
 
 - `store.py`：WAL、optimistic stream version、idempotent append、atomic multi-event append、
-  transactional inbox/outbox 和 bounded reads；
+  transactional inbox/outbox、bounded reads，以及全 public/lifecycle/deferred stream process owner
+  guards、exact SQL snapshots 和 owner-aware transaction/migration/constructor cleanup；
 - `runtime.py`：plan/task/initial-ready 原子初始化；approval request/decision 与 task transition
   原子批次；commit-after-wrapper-error 精确协调；post-commit observer 故障隔离；
 - session recovery：每页最多 1,000 events，验证同 stream/连续 sequence，并执行 1,000,000
@@ -70,9 +74,10 @@ provider/connection 前继续运行。`non-copyable`/`non-pickleable` 不阻止 
 - 编排 session lock 是进程内锁，多进程/多实例调度仍可能重复调用 Agent；
 - 没有完整 crash-at-every-boundary、kill -9、long-running heartbeat 和 graceful drain E2E。
 - 共享 process identity helper 已通过真实 fork、nested fork、PID drift、fork-while-unrelated-lock、
-  spawn/forkserver、copy/pickle 和 parent-continuity 测试；但 `SQLiteEventStore`、artifact/projection/
-  revocation store 与 recovery coordinator 的已构造实例仍未绑定 owner，helper 不能替代逐组件
-  public-path 接入和 fork-while-component-lock 证明。
+  spawn/forkserver、copy/pickle 和 parent-continuity；`SQLiteEventStore` 又独立覆盖全部入口、open
+  transaction/clock/migration/iterator fork、clean error graph 和 fresh fork-before-init/spawn/
+  forkserver contention/CAS。但 artifact/projection/revocation store 与 recovery coordinator 的已
+  构造实例仍未绑定 owner，单组件证据不能替代逐组件接入。
 
 晋级标准：任意 admission、claim、dispatch、receiver accept、result accept、ACK 和响应边界崩溃
 后，只能恢复为未发生、已证明成功、明确拒绝或需要人工/自动 reconcile 的 unknown；不得盲目
@@ -219,8 +224,9 @@ compileall、deterministic demo 和 diff check。
 
 - supported Python/OS/SQLite clean-runner matrix 的不可变 CI 证据；
 - API/fake-connector E2E、cross-tenant property、fuzz、crash-at-every-boundary、load/chaos/soak；
-- POSIX fork/fork-while-lock、multiprocessing spawn/forkserver、parent continuity、fresh child connection
-  和 spawn-before-secret-load retained matrix；
+- artifact/projection/revocation/authorization/secret/runtime/connector 的 POSIX fork/fork-while-lock、
+  spawn/forkserver、parent continuity、fresh child composition 和 spawn-before-secret-load retained
+  matrix；`SQLiteEventStore` 自身的对应矩阵已存在，但不是系统级证明；
 - coverage/mutation policy、branch protection、review ownership 和正式 promotion decision；
 - 每次代码变化后重新生成的 exact source-bound packages/SBOM/release evidence。
 
