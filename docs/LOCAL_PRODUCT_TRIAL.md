@@ -24,7 +24,7 @@ cd /Users/lwblx/huapohen/agent/execute/quantum_entanglement
 
 1. 检查 Python 版本；
 2. 在 `127.0.0.1:8765` 启动仅本机可访问的服务；
-3. 用一次性页面令牌打开浏览器。
+3. 用本次启动专属的临时页面令牌打开浏览器。
 
 终端会显示类似下面的提示：
 
@@ -34,7 +34,7 @@ http://127.0.0.1:8765/#token=…
 按 Ctrl-C 停止。
 ```
 
-令牌每次启动都会重新生成。页面读到令牌后会立刻从地址栏移除 fragment；后续调用只把它放在发往同源 loopback 服务的 `X-QE-Trial-Token` 请求头中。
+令牌每次启动都会重新生成，在该服务进程存活期间可用于多次本地 demo 调用。页面读到令牌后会立刻从地址栏移除 fragment；后续调用只把它放在发往同源 loopback 服务的 `X-QE-Trial-Token` 请求头中。
 
 ## 2. 页面怎么试
 
