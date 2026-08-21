@@ -26,6 +26,8 @@ release. Promotion additionally requires the evidence defined in
 - Lock-free PID plus opaque-epoch process-owner foundation with at-fork rotation, independent
   PID-drift fallback, non-serializable owner descriptors, nested-fork/parent-continuity tests,
   and fresh spawn/forkserver construction evidence.
+- Inert exact SQLite backup-topology registry binding eight current component profiles,
+  58 catalog objects, migration descriptors, canonical DDL digests, and acyclic dependencies.
 
 ### Changed
 
@@ -59,6 +61,9 @@ release. Promotion additionally requires the evidence defined in
 - Per-component process-owner migration for stores, authorization, secrets, plugins, runtimes,
   connectors, and the final worker composition root; the shared foundation alone is not a
   fork-safety or secret-isolation guarantee.
+- Backup manifest v2 codec, stable-snapshot derivation, quarantine verification, exact-byte
+  restore, mixed-version rehearsal, and authenticated custody; the topology registry alone
+  does not make v2 readable or writable.
 
 ## Pre-release kernel baseline (`0.1.x`, not promoted)
 
