@@ -1174,7 +1174,7 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                     forbidden=forbidden,
                 )
 
-    def test_constructor_does_not_resolve_initializer_through_hostile_instance(self):
+    def test_constructor_statically_rejects_hostile_subclass_initializer(self):
         lookups = []
         composer_fault = HostileBoundaryFailure("constructor-composer-initializer-secret-canary")
         registry_fault = HostileBoundaryFailure("constructor-registry-initializer-secret-canary")
@@ -1193,25 +1193,49 @@ class ProtectedOperationComposerTests(unittest.TestCase):
                     raise registry_fault
                 return super().__getattribute__(name)
 
-        composer = LookupHostileComposer(
-            issuer=self.issuer,
-            state_provider=self.provider,
-            authorizer=self.authorizer,
-            clock=self.clock,
-            operation_ttl=timedelta(seconds=20),
-            max_state_age=timedelta(seconds=30),
+        composer = object.__new__(LookupHostileComposer)
+        registry = object.__new__(LookupHostileRegistry)
+        composer_error = self.capture_error(
+            "protected_operation_internal_failure",
+            lambda: ProtectedOperationComposer.__init__(
+                composer,
+                issuer=self.issuer,
+                state_provider=self.provider,
+                authorizer=self.authorizer,
+                clock=self.clock,
+                operation_ttl=timedelta(seconds=20),
+                max_state_age=timedelta(seconds=30),
+            ),
         )
-        registry = LookupHostileRegistry(clock=self.clock)
+        registry_error = self.capture_error(
+            "protected_operation_internal_failure",
+            lambda: _AuthorizedOperationRegistry.__init__(registry, clock=self.clock),
+        )
 
         self.assertEqual(lookups, [])
-        self.assertIs(
-            object.__getattribute__(composer, "_ProtectedOperationComposer__issuer"),
+        forbidden = (
+            composer,
+            registry,
             self.issuer,
-        )
-        self.assertIs(
-            object.__getattribute__(registry, "_AuthorizedOperationRegistry__clock"),
+            self.provider,
+            self.authorizer,
+            self.verifier,
+            self.key_ring,
             self.clock,
+            self.context,
+            self.request,
+            composer_fault,
+            registry_fault,
+            b"signing-secret-canary-1234567890",
         )
+        for error in (composer_error, registry_error):
+            self.assert_detached_traceback(
+                error,
+                "constructor-composer-initializer-secret-canary",
+                "constructor-registry-initializer-secret-canary",
+                expected_method="__init__",
+                forbidden=forbidden,
+            )
 
     def test_constructor_descriptor_control_signals_are_reissued_cleanly(self):
         cases = (
