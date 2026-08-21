@@ -49,6 +49,10 @@ release. Promotion additionally requires the evidence defined in
   hostile instance lookup, and `with composer:` preserves a genuine exact originating
   control signal over every cleanup outcome while rejecting direct-argument spoofing and
   ignoring cleanup return values.
+- Protected-operation context exits now require a process/thread-bound one-time descriptor
+  lease before the current exception triple can receive originating-control precedence;
+  manual exits and stale callbacks cannot claim it, while nested/concurrent entry and
+  inherited fork leases fail closed.
 - Exact operation control signals are reissued without dependency exception state;
   `SystemExit` preserves only `None`, exact booleans, or exact integer status 0 through 255
   and maps every other status to `1`.
