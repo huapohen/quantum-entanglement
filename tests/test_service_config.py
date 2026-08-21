@@ -1,4 +1,5 @@
 import os
+import stat
 import tempfile
 import unittest
 from collections.abc import Iterator, Mapping
@@ -157,6 +158,39 @@ class ServiceConfigTests(unittest.TestCase):
             "configuration_path_ancestor_permissions",
         ):
             ServiceConfig.from_environment(values)
+
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "geteuid"), "requires POSIX")
+    def test_accepts_only_trusted_sticky_writable_path_ancestors(self) -> None:
+        sticky_parent = self.data_directory.parent / "sticky-parent"
+        sticky_parent.mkdir(mode=0o700)
+        sticky_parent.chmod(0o1777)
+        self.addCleanup(sticky_parent.chmod, 0o700)
+        sticky_data = sticky_parent / "data"
+        sticky_secrets = sticky_parent / "secrets"
+        sticky_data.mkdir(mode=0o700)
+        sticky_secrets.mkdir(mode=0o700)
+        values = self.environment()
+        values["QE_DATA_DIR"] = str(sticky_data)
+        values["QE_DATABASE_PATH"] = str(sticky_data / "service.sqlite3")
+        values["QE_SECRET_ROOT"] = str(sticky_secrets)
+
+        configuration = ServiceConfig.from_environment(values)
+
+        self.assertEqual(configuration.data_directory, sticky_data)
+        current_uid = os.geteuid()
+        untrusted_uid = current_uid + 1 if current_uid != 1 else 2
+        untrusted_metadata = os.stat_result(
+            (stat.S_IFDIR | 0o1777, 1, 1, 1, untrusted_uid, 1, 0, 0, 0, 0)
+        )
+        root_metadata = os.stat_result(
+            (stat.S_IFDIR | 0o1777, 1, 1, 1, 0, 1, 0, 0, 0, 0)
+        )
+        unprotected_metadata = os.stat_result(
+            (stat.S_IFDIR | 0o0777, 1, 1, 1, current_uid, 1, 0, 0, 0, 0)
+        )
+        self.assertTrue(ServiceConfig._is_protected_writable_ancestor(root_metadata))
+        self.assertFalse(ServiceConfig._is_protected_writable_ancestor(untrusted_metadata))
+        self.assertFalse(ServiceConfig._is_protected_writable_ancestor(unprotected_metadata))
 
     def test_rejects_unsafe_existing_database(self) -> None:
         self.database_path.write_bytes(b"not-a-real-database")
