@@ -15,6 +15,11 @@ build/
 *.egg-info/
 output/
 
+# Local branch workspaces and retained review evidence live beside the main checkout.
+# They are managed independently and must never enter the product repository.
+/artifacts/
+/worktrees/
+
 # Read-only source checkouts used for research; keep them beside the project,
 # but do not vendor their Git history or code into this repository.
 references/
