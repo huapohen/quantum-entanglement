@@ -10,9 +10,11 @@ branch: main
 扁平化时 HEAD: 75d02192c842b358bdff6a5af18c69dec3044cb1
 ```
 
-主线仓库先从 `execute/quantum_entanglement` 移入 `infinite/quantum_entanglement/main`，随后提升为
-`infinite/quantum_entanglement` 根仓库。两次移动后均执行 `git worktree repair`，修复全部 linked
-worktree 的 common Git directory 指针。迁移没有切换分支、改写提交或改变远端。
+下面出现的两个旧路径只用于记录已经完成的迁移历史，**不是当前入口，也不能复制到脚本或操作
+命令中**：主线仓库先从 `execute/quantum_entanglement` 移入
+`infinite/quantum_entanglement/main`，随后提升为本文件上方列出的正式根仓库。两次移动后均执行
+`git worktree repair`，修复全部 linked worktree 的 common Git directory 指针。迁移没有切换
+分支、改写提交或改变远端。
 
 ## 迁入 worktrees 的 13 个历史工作区
 
