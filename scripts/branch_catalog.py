@@ -218,6 +218,16 @@ def md(value: str) -> str:
     return value.replace("|", "\\|").replace("\n", " ")
 
 
+def branch_hub_root(repo: Path) -> Path:
+    if (
+        repo.name == "main"
+        and repo.parent.name == "quantum_entanglement"
+        and repo.parent.parent.name == "infinite"
+    ):
+        return repo.parent
+    return repo.parent / "infinite" / repo.name
+
+
 def render_catalog(
     repo: Path,
     branches: Sequence[BranchRecord],
@@ -225,6 +235,7 @@ def render_catalog(
     tags: Sequence[tuple[str, str, str, str]],
 ) -> str:
     main = next(branch for branch in branches if branch.name == "main")
+    hub_root = branch_hub_root(repo)
     archive_count = sum(branch.name.startswith("archive/") for branch in branches)
     historical_count = len(branches) - archive_count - 1
     lines = [
@@ -308,8 +319,8 @@ def render_catalog(
             "",
             "## 本机 Worktree 目录",
             "",
-            "`main` 固定保留在 `execute/quantum_entanglement`。长期保留的历史 worktree 统一进入 "
-            "`execute/infinite/quantum_entanglement/worktrees`；"
+            f"`main` 固定在 `{repo}`。长期保留的历史 worktree 统一进入 "
+            f"`{hub_root / 'worktrees'}`；"
             "`/private/tmp` 下的是可删除的临时验证工作区。",
             "",
             "| 状态 | 分支/模式 | HEAD | 路径 |",
@@ -352,7 +363,7 @@ def render_catalog(
             "```bash",
             f"cd {repo}",
             "git fetch origin",
-            "git worktree add ../infinite/quantum_entanglement/worktrees/<目录名> \\",
+            f"git worktree add {hub_root / 'worktrees'}/<目录名> \\",
             "  -b codex/<任务名> origin/main",
             "```",
             "",
@@ -375,7 +386,7 @@ def render_catalog(
             "",
             "1. `main` 永远是唯一默认主线；阶段分支不能自封为发布分支。",
             "2. 每个小改动继续独立提交，阶段完成后再进入 `main`。",
-            "3. 新 worktree 一律建在 `execute/infinite/quantum_entanglement/worktrees`。",
+            f"3. 新 worktree 一律建在 `{hub_root / 'worktrees'}`。",
             "4. 历史分支默认只读；需要恢复时从 `main` 新建分支并挑选提交。",
             "5. `archive/*` 只用于保全证据，不在其中开发、不移动其尖端。",
             "6. 删除 worktree 前先确认状态干净、提交已推送；"
@@ -405,7 +416,7 @@ def write_or_check(path: Path, content: str, check: bool) -> bool:
 
 def build_parser() -> argparse.ArgumentParser:
     script_repo = Path(__file__).resolve().parent.parent
-    default_output = script_repo.parent / "infinite" / script_repo.name / "BRANCH_CATALOG.md"
+    default_output = branch_hub_root(script_repo) / "BRANCH_CATALOG.md"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=script_repo)
     parser.add_argument(
