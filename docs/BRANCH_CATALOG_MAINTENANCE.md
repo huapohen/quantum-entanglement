@@ -26,6 +26,14 @@
 ./scripts/update_branch_catalog.sh --check
 ```
 
+检查所有已跟踪脚本和文档是否误用了迁移前路径：
+
+```bash
+./scripts/check_workspace_paths.py
+```
+
+退出码为 0 才表示路径审计通过。迁移清单中的旧路径只保留为历史证据，不能复制成新命令。
+
 新分支如果没有人工说明，会自动进入目录并标记为“用途待补充”。在元数据 JSON 的 `branches`
 对象中加入分支名和用途后重新生成即可。
 
