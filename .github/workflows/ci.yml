@@ -37,6 +37,9 @@ jobs:
           cache: pip
           cache-dependency-path: ${{ matrix.lockfile }}
 
+      - name: Reject obsolete workspace paths
+        run: python scripts/check_workspace_paths.py
+
       - name: Verify dependency locks
         run: python scripts/verify_dependency_locks.py --repository-root .
 
