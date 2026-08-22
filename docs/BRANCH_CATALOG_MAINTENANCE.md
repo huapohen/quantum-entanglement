@@ -7,9 +7,12 @@
 ```
 
 该文档由 `scripts/branch_catalog.py` 根据 Git 引用和 worktree 状态生成。分支的人工用途说明
-维护在 `docs/branch_catalog_metadata.json`，因此说明来源与生成工具都随主仓库提交、评审和推送；
-生成结果由 `execute/infinite/quantum_entanglement` 下独立的本地管理仓库保存历史，不把大体积
-worktree 或评审产物提交进去。
+维护在 `docs/branch_catalog_metadata.json`。说明来源、生成工具和生成结果全部由主仓库提交、
+评审并推送；大体积 `worktrees/` 和 `artifacts/` 仍由 `.gitignore` 排除。
+
+为避免“生成目录—提交目录—main SHA 改变—目录立刻过期”的循环，若 `origin/main` 最新提交
+只修改 `BRANCH_CATALOG.md`，生成器会把它的父提交作为目录基线。下一次真实代码或文档提交
+仍会正常触发目录更新。
 
 更新远端引用并重新生成：
 
