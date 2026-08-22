@@ -148,6 +148,37 @@ class BranchCatalogTests(unittest.TestCase):
         self.assertIn("正式主线工作区", rendered)
         self.assertIn("`v0.1.0`", rendered)
 
+    def test_render_catalog_uses_catalog_baseline_for_main_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline = "a" * 40
+            catalog_commit = "b" * 40
+            main = BranchRecord(
+                name="main",
+                oid=baseline,
+                tip_time="2026-08-22T10:00:00+08:00",
+                subject="payload baseline",
+                purpose="唯一正式主线。",
+                category="正式主线",
+                relation="主线目录基线",
+                ahead=0,
+                behind=0,
+                worktree=str(root),
+            )
+            worktree = WorktreeRecord(
+                path=str(root),
+                head=catalog_commit,
+                branch="main",
+                prunable=False,
+                exists=True,
+                clean=None,
+            )
+
+            rendered = render_catalog(root, [main], [worktree], [])
+
+        self.assertIn(f"| 正式主线工作区 | `main` | `{baseline[:12]}`", rendered)
+        self.assertNotIn(catalog_commit[:12], rendered)
+
     def test_write_or_check_detects_stale_catalog(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "catalog.md"
