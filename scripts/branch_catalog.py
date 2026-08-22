@@ -181,7 +181,7 @@ def branch_purpose(name: str, subject: str, purposes: dict[str, str]) -> str:
 
 def relation_to_main(repo: Path, oid: str, main_oid: str) -> tuple[str, int, int]:
     if oid == main_oid:
-        return "主线当前节点", 0, 0
+        return "主线目录基线", 0, 0
     counts = git(repo, "rev-list", "--left-right", "--count", f"{main_oid}...{oid}").stdout.split()
     behind, ahead = (int(counts[0]), int(counts[1]))
     merged = git(repo, "merge-base", "--is-ancestor", oid, main_oid, check=False).returncode == 0
@@ -189,13 +189,44 @@ def relation_to_main(repo: Path, oid: str, main_oid: str) -> tuple[str, int, int
     return relation, ahead, behind
 
 
+def commit_details(repo: Path, oid: str) -> tuple[str, str]:
+    value = git(repo, "show", "-s", "--format=%cI%x00%s", oid).stdout.rstrip("\n")
+    tip_time, subject = value.split("\0", 1)
+    return tip_time, subject
+
+
+def catalog_main_baseline(
+    repo: Path, output: Path, main_ref: str = "refs/remotes/origin/main"
+) -> str:
+    tip = git(repo, "rev-parse", main_ref).stdout.strip()
+    try:
+        relative_output = output.resolve().relative_to(repo.resolve()).as_posix()
+    except ValueError:
+        return tip
+    changed_paths = git(
+        repo, "diff-tree", "--no-commit-id", "--name-only", "-r", tip, "--"
+    ).stdout.splitlines()
+    if changed_paths != [relative_output]:
+        return tip
+    parent = git(repo, "rev-parse", f"{tip}^", check=False)
+    return parent.stdout.strip() if parent.returncode == 0 else tip
+
+
 def collect_branches(
-    repo: Path, purposes: dict[str, str], worktrees: Sequence[WorktreeRecord]
+    repo: Path,
+    purposes: dict[str, str],
+    worktrees: Sequence[WorktreeRecord],
+    *,
+    main_oid: str | None = None,
 ) -> list[BranchRecord]:
-    main_oid = git(repo, "rev-parse", "refs/remotes/origin/main").stdout.strip()
+    if main_oid is None:
+        main_oid = git(repo, "rev-parse", "refs/remotes/origin/main").stdout.strip()
     worktree_by_branch = {item.branch: item.path for item in worktrees if item.branch}
     records: list[BranchRecord] = []
     for name, oid, tip_time, subject in remote_refs(repo):
+        if name == "main" and oid != main_oid:
+            oid = main_oid
+            tip_time, subject = commit_details(repo, main_oid)
         relation, ahead, behind = relation_to_main(repo, oid, main_oid)
         records.append(
             BranchRecord(
@@ -219,6 +250,8 @@ def md(value: str) -> str:
 
 
 def branch_hub_root(repo: Path) -> Path:
+    if repo.name == "quantum_entanglement" and repo.parent.name == "infinite":
+        return repo
     if (
         repo.name == "main"
         and repo.parent.name == "quantum_entanglement"
@@ -249,7 +282,7 @@ def render_catalog(
         "",
         "| 场景 | 应使用的引用 | 说明 |",
         "| --- | --- | --- |",
-        f"| 日常开发、验收、继续主线任务 | `main` (`{main.oid[:12]}`) | "
+        f"| 日常开发、验收、继续主线任务 | `main`（目录基线 `{main.oid[:12]}`） | "
         f"唯一正式主分支；目录 `{repo}`。 |",
         "| 复现当前本地试用版本 | `v0.1.0-local-trial.2` | "
         "固定版本标签，不会随 `main` 后续提交移动。 |",
@@ -266,7 +299,8 @@ def render_catalog(
         "",
         "Git 本身不保存可靠的“分支创建时间”。下表的“节点时间”是该分支尖端提交的提交时间，"
         "这是能够审计的时间节点；不能把它冒充为分支创建时间。"
-        "`领先/落后` 以生成目录时的 `origin/main` 为基准。",
+        "`领先/落后` 以目录基线为准；若 `origin/main` 最新提交只更新本目录，"
+        "生成器会使用其父提交，避免目录提交导致自身立即过期。",
         "",
         "## 命名和生命周期",
         "",
@@ -441,12 +475,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         purposes = load_purposes(args.metadata.resolve())
         worktrees = parse_worktrees(repo)
-        branches = collect_branches(repo, purposes, worktrees)
+        output = args.output.resolve()
+        main_oid = catalog_main_baseline(repo, output)
+        branches = collect_branches(repo, purposes, worktrees, main_oid=main_oid)
         content = render_catalog(repo, branches, worktrees, tag_rows(repo))
     except (KeyError, ValueError, OSError, subprocess.SubprocessError) as exc:
         print(f"branch catalog generation failed: {exc}", file=sys.stderr)
         return 2
-    return 0 if write_or_check(args.output.resolve(), content, args.check) else 1
+    return 0 if write_or_check(output, content, args.check) else 1
 
 
 if __name__ == "__main__":
