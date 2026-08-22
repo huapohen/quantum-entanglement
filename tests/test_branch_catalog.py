@@ -12,6 +12,8 @@ from scripts.branch_catalog import (
     branch_category,
     branch_hub_root,
     branch_purpose,
+    catalog_main_baseline,
+    git,
     load_purposes,
     render_catalog,
     write_or_check,
@@ -19,17 +21,46 @@ from scripts.branch_catalog import (
 
 
 class BranchCatalogTests(unittest.TestCase):
-    def test_branch_hub_root_supports_original_and_consolidated_layouts(self) -> None:
+    def test_branch_hub_root_supports_all_local_layouts(self) -> None:
         original = Path("/workspace/execute/quantum_entanglement")
-        consolidated = Path("/workspace/execute/infinite/quantum_entanglement/main")
+        nested = Path("/workspace/execute/infinite/quantum_entanglement/main")
+        flattened = Path("/workspace/execute/infinite/quantum_entanglement")
         self.assertEqual(
             branch_hub_root(original),
             Path("/workspace/execute/infinite/quantum_entanglement"),
         )
         self.assertEqual(
-            branch_hub_root(consolidated),
+            branch_hub_root(nested),
             Path("/workspace/execute/infinite/quantum_entanglement"),
         )
+        self.assertEqual(
+            branch_hub_root(flattened),
+            Path("/workspace/execute/infinite/quantum_entanglement"),
+        )
+
+    def test_catalog_baseline_skips_a_catalog_only_tip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            git(root, "init", "-b", "main")
+            git(root, "config", "user.name", "catalog-test")
+            git(root, "config", "user.email", "catalog-test@example.invalid")
+            payload = root / "payload.txt"
+            payload.write_text("one\n", encoding="utf-8")
+            git(root, "add", "payload.txt")
+            git(root, "commit", "-m", "initial payload")
+            baseline = git(root, "rev-parse", "HEAD").stdout.strip()
+
+            catalog = root / "BRANCH_CATALOG.md"
+            catalog.write_text("snapshot\n", encoding="utf-8")
+            git(root, "add", "BRANCH_CATALOG.md")
+            git(root, "commit", "-m", "refresh catalog")
+            self.assertEqual(catalog_main_baseline(root, catalog, "HEAD"), baseline)
+
+            payload.write_text("two\n", encoding="utf-8")
+            git(root, "add", "payload.txt")
+            git(root, "commit", "-m", "update payload")
+            current = git(root, "rev-parse", "HEAD").stdout.strip()
+            self.assertEqual(catalog_main_baseline(root, catalog, "HEAD"), current)
 
     def test_archive_source_name_recovers_original_branch(self) -> None:
         self.assertEqual(
