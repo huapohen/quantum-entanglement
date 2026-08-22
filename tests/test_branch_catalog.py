@@ -10,6 +10,7 @@ from scripts.branch_catalog import (
     WorktreeRecord,
     archive_source_name,
     branch_category,
+    branch_hub_root,
     branch_purpose,
     load_purposes,
     render_catalog,
@@ -18,6 +19,18 @@ from scripts.branch_catalog import (
 
 
 class BranchCatalogTests(unittest.TestCase):
+    def test_branch_hub_root_supports_original_and_consolidated_layouts(self) -> None:
+        original = Path("/workspace/execute/quantum_entanglement")
+        consolidated = Path("/workspace/execute/infinite/quantum_entanglement/main")
+        self.assertEqual(
+            branch_hub_root(original),
+            Path("/workspace/execute/infinite/quantum_entanglement"),
+        )
+        self.assertEqual(
+            branch_hub_root(consolidated),
+            Path("/workspace/execute/infinite/quantum_entanglement"),
+        )
+
     def test_archive_source_name_recovers_original_branch(self) -> None:
         self.assertEqual(
             archive_source_name("archive/2026-08-21/codex/service-boundary-v1"),
