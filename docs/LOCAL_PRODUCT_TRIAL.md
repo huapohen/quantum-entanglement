@@ -16,7 +16,7 @@
 进入仓库后运行：
 
 ```bash
-cd /Users/lwblx/huapohen/agent/execute/quantum_entanglement
+cd /Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/main
 ./scripts/start_local_trial.sh
 ```
 

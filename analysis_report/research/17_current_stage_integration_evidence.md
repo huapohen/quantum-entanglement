@@ -198,7 +198,7 @@ PNG 像素证明；它们是本任务 reviewer 的运行观察，不是 retained
 记录的无损 merge 和实际路径探针已经完成。下列命令现在是已验证入口：
 
 ```bash
-cd /Users/lwblx/huapohen/agent/execute/quantum_entanglement
+cd /Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/main
 ./scripts/start_local_trial.sh
 ```
 
