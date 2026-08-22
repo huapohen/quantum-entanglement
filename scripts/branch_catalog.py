@@ -362,6 +362,7 @@ def render_catalog(
         ]
     )
     for item in sorted(worktrees, key=lambda record: record.path):
+        is_main_worktree = Path(item.path).resolve() == repo.resolve()
         if item.prunable:
             state = "失效登记（可 prune）"
         elif not item.exists:
@@ -370,12 +371,15 @@ def render_catalog(
             state = "存在、干净"
         elif item.clean is False:
             state = "存在、有未提交修改"
-        elif Path(item.path).resolve() == repo.resolve():
+        elif is_main_worktree:
             state = "正式主线工作区"
         else:
             state = "存在、状态未知"
         mode = item.branch or "detached"
-        lines.append(f"| {state} | `{md(mode)}` | `{item.head[:12]}` | `{md(item.path)}` |")
+        displayed_head = main.oid if is_main_worktree and item.branch == "main" else item.head
+        lines.append(
+            f"| {state} | `{md(mode)}` | `{displayed_head[:12]}` | `{md(item.path)}` |"
+        )
     lines.extend(
         [
             "",
