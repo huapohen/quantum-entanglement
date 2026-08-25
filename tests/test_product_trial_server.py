@@ -69,6 +69,10 @@ class LocalProductTrialServerTests(unittest.TestCase):
             "orchestrator-status",
             "task-research",
             "artifact-list",
+            "artifact-preview",
+            "artifact-preview-name",
+            "artifact-preview-content",
+            "artifact-download",
             "needs-you-list",
             "event-timeline",
             "architecture-diagram",
@@ -84,6 +88,8 @@ class LocalProductTrialServerTests(unittest.TestCase):
         self.assertNotIn("eval(", body)
         self.assertNotIn("<script src=", body)
         self.assertNotIn("<link rel=", body)
+        self.assertIn("URL.createObjectURL", body)
+        self.assertIn("download", body)
 
     def test_favicon_is_deliberately_empty_instead_of_logging_a_404(self) -> None:
         with urlopen(self.origin + "/favicon.ico", timeout=5) as response:
