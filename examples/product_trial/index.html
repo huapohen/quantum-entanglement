@@ -597,6 +597,21 @@
         background: rgba(7, 14, 28, 0.45);
       }
 
+      .artifact-button {
+        width: 100%;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .artifact-button:hover,
+      .artifact-button:focus-visible,
+      .artifact-button[aria-pressed="true"] {
+        border-color: rgba(107, 231, 227, 0.48);
+        background: rgba(27, 61, 72, 0.42);
+        outline: none;
+      }
+
       .file-icon {
         display: grid;
         width: 34px;
@@ -630,6 +645,70 @@
       .artifact-version {
         color: var(--muted);
         font-size: 10px;
+      }
+
+      .artifact-preview {
+        margin-top: 14px;
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: 14px;
+        background: rgba(5, 12, 25, 0.72);
+      }
+
+      .artifact-preview[hidden] {
+        display: none;
+      }
+
+      .artifact-preview-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 13px 14px;
+      }
+
+      .artifact-preview-title {
+        min-width: 0;
+      }
+
+      .artifact-preview-title strong {
+        display: block;
+        overflow: hidden;
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .artifact-preview-title span {
+        display: block;
+        margin-top: 4px;
+        overflow: hidden;
+        color: var(--faint);
+        font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .artifact-download {
+        flex: 0 0 auto;
+        padding: 7px 10px;
+        border: 1px solid rgba(107, 231, 227, 0.35);
+        border-radius: 9px;
+        color: var(--cyan);
+        font-size: 10px;
+        cursor: pointer;
+        background: rgba(107, 231, 227, 0.08);
+      }
+
+      .artifact-download:hover,
+      .artifact-download:focus-visible {
+        border-color: var(--cyan);
+        outline: none;
+      }
+
+      .artifact-preview pre {
+        max-height: 280px;
+        color: #dce6fa;
       }
 
       .empty-state {
@@ -1151,6 +1230,24 @@
                 <ul id="artifact-list" class="artifact-list">
                   <li class="empty-state">运行后会出现协议笔记、架构方案与审阅报告。</li>
                 </ul>
+                <section
+                  id="artifact-preview"
+                  class="artifact-preview"
+                  aria-label="Markdown Artifact 原文预览"
+                  aria-live="polite"
+                  hidden
+                >
+                  <div class="artifact-preview-header">
+                    <div class="artifact-preview-title">
+                      <strong id="artifact-preview-name">尚未选择 Artifact</strong>
+                      <span id="artifact-preview-meta"></span>
+                    </div>
+                    <button id="artifact-download" class="artifact-download" type="button" disabled>
+                      下载 .md
+                    </button>
+                  </div>
+                  <pre id="artifact-preview-content"></pre>
+                </section>
               </div>
             </article>
 
@@ -1480,9 +1577,15 @@
         const runStateLabel = document.getElementById("run-state-label");
         const rawOutput = document.getElementById("raw-output");
         const artifactList = document.getElementById("artifact-list");
+        const artifactPreview = document.getElementById("artifact-preview");
+        const artifactPreviewName = document.getElementById("artifact-preview-name");
+        const artifactPreviewMeta = document.getElementById("artifact-preview-meta");
+        const artifactPreviewContent = document.getElementById("artifact-preview-content");
+        const artifactDownload = document.getElementById("artifact-download");
         const needsList = document.getElementById("needs-you-list");
         const eventTimeline = document.getElementById("event-timeline");
         const chatThread = document.getElementById("chat-thread");
+        let selectedArtifact = null;
 
         const taskNames = {
           research: "研究协议边界",
@@ -1560,8 +1663,29 @@
           chatThread.appendChild(message);
         }
 
+        function safeArtifactName(value) {
+          const name = String(value || "artifact.md");
+          return /^[A-Za-z0-9._-]{1,128}$/.test(name) ? name : "artifact.md";
+        }
+
+        function selectArtifact(artifact, selectedButton) {
+          selectedArtifact = artifact;
+          artifactList.querySelectorAll(".artifact-button").forEach((button) => {
+            button.setAttribute("aria-pressed", button === selectedButton ? "true" : "false");
+          });
+          artifactPreviewName.textContent = safeArtifactName(artifact.name);
+          artifactPreviewMeta.textContent =
+            "v" + String(artifact.version || 1) + " · " + String(artifact.digest || "no digest");
+          artifactPreviewContent.textContent = String(artifact.content || "");
+          artifactPreview.hidden = false;
+          artifactDownload.disabled = false;
+        }
+
         function renderArtifacts(artifacts) {
           clearChildren(artifactList);
+          selectedArtifact = null;
+          artifactPreview.hidden = true;
+          artifactDownload.disabled = true;
           if (!artifacts.length) {
             const empty = document.createElement("li");
             empty.className = "empty-state";
@@ -1569,9 +1693,13 @@
             artifactList.appendChild(empty);
             return;
           }
-          artifacts.forEach((artifact) => {
+          artifacts.forEach((artifact, index) => {
             const item = document.createElement("li");
-            item.className = "artifact-card";
+            const button = document.createElement("button");
+            button.className = "artifact-card artifact-button";
+            button.type = "button";
+            button.setAttribute("aria-pressed", "false");
+            button.setAttribute("aria-label", "查看 " + safeArtifactName(artifact.name) + " 原文");
 
             const icon = document.createElement("span");
             icon.className = "file-icon";
@@ -1589,10 +1717,27 @@
             const version = document.createElement("span");
             version.className = "artifact-version";
             version.textContent = "v" + String(artifact.version || 1);
-            item.append(icon, info, version);
+            button.append(icon, info, version);
+            button.addEventListener("click", () => selectArtifact(artifact, button));
+            item.appendChild(button);
             artifactList.appendChild(item);
+            if (index === 0) selectArtifact(artifact, button);
           });
         }
+
+        artifactDownload.addEventListener("click", () => {
+          if (!selectedArtifact) return;
+          const content = String(selectedArtifact.content || "");
+          const blob = new Blob([content], {type: "text/markdown;charset=utf-8"});
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = safeArtifactName(selectedArtifact.name);
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+        });
 
         function renderNeedsYou(items) {
           clearChildren(needsList);
