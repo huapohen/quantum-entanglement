@@ -103,10 +103,19 @@ async def run_demo() -> dict[str, object]:
         result = await kernel.run(
             WorkflowPlan("demo-session", "设计人和 Agent 的群聊协作内核", human.actor_id, tasks)
         )
+        run_payload = result.to_dict()
+        run_payload["artifacts"] = [
+            {
+                **item.ref.to_dict(),
+                "content": item.content,
+                "createdAt": item.created_at,
+            }
+            for item in kernel.artifacts.current_all(result.session_id)
+        ]
         return {
             "chatRoute": routed.route.value,
             "directAgents": [actor.actor_id for actor in routed.direct_agents],
-            "run": result.to_dict(),
+            "run": run_payload,
             "events": [
                 {
                     "sequence": item.sequence,
