@@ -126,6 +126,32 @@ class LocalProductTrialServerTests(unittest.TestCase):
             {"research": "completed", "design": "completed", "review": "completed"},
         )
         self.assertEqual(len(run["artifacts"]), 3)
+        artifacts = {
+            artifact["name"]: artifact
+            for artifact in run["artifacts"]
+            if isinstance(artifact, dict)
+        }
+        self.assertEqual(
+            set(artifacts),
+            {"architecture.md", "protocol-notes.md", "review.md"},
+        )
+        self.assertEqual(
+            artifacts["protocol-notes.md"]["content"],
+            "A2A 管 Agent 互操作；MCP 管工具与数据。",
+        )
+        self.assertIn(
+            artifacts["protocol-notes.md"]["content"],
+            artifacts["architecture.md"]["content"],
+        )
+        self.assertIn(
+            artifacts["architecture.md"]["content"],
+            artifacts["review.md"]["content"],
+        )
+        for artifact in artifacts.values():
+            self.assertEqual(artifact["mediaType"], "text/markdown")
+            self.assertTrue(str(artifact["digest"]).startswith("sha256:"))
+            self.assertIsInstance(artifact["content"], str)
+            self.assertTrue(artifact["content"])
         self.assertEqual(len(result["events"]), 25)
 
     def test_cross_origin_wrong_host_and_request_bodies_fail_closed(self) -> None:
