@@ -57,7 +57,13 @@ http://127.0.0.1:8765/#token=…
 - `architecture.md`：系统架构师的产出；
 - `review.md`：安全审阅员的产出。
 
-每个 Artifact 卡片会显示版本号和 digest。运行生成的 session、plan 和 Artifact ID 可以变化，但任务数量、Artifact 数量、事件数量和因果顺序应保持稳定。
+每个 Artifact 卡片会显示版本号和 digest。运行完成后，第一个 Artifact 会自动在卡片下方展开
+原文；点击任意卡片可切换 Markdown 原文，点击“下载 .md”可把当前版本保存为同名文件。预览和
+下载内容都直接来自本次后端运行结果，不是页面内预置文本。下载到本机的文件会保留，但服务端
+Artifact 仍只存于本次运行的内存 SQLite 中，停止服务后不会持久化。
+
+运行生成的 session、plan 和 Artifact ID 可以变化，但任务数量、Artifact 数量、事件数量和因果
+顺序应保持稳定。
 
 页面下半部分还有三张完整内联 SVG：
 
@@ -218,9 +224,11 @@ sh -n scripts/start_local_trial.sh
 1. 默认启动不会连接外部消息平台；
 2. 没有 token 时 API 拒绝调用；
 3. 点击一次后出现 3 个 completed task、3 个 Artifact 和 25 个事件；
-4. 原始 JSON 与 UI 数字一致；
-5. `Ctrl-C` 后服务停止；
-6. 手机宽度和桌面宽度都能阅读三张系统图与核心状态。
+4. 依次点击三个 Artifact，预览区显示对应 Markdown 原文、版本和 digest；
+5. 下载 `review.md` 后，文件正文与页面预览及原始 JSON 中的 `content` 完全一致；
+6. 原始 JSON 与 UI 数字一致；
+7. `Ctrl-C` 后服务停止；
+8. 手机宽度和桌面宽度都能阅读三张系统图与核心状态。
 
 ## 9. 当前最值得你核验的产品问题
 
