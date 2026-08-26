@@ -724,6 +724,24 @@ WanWork 应同时使用 repository 强制 scope、数据库约束/RLS、tenant-f
 - Agent 对外身份、代表关系和群聊中真实发言者必须可见；
 - 默认策略仍是“不发送”，只有明确的用户 action/capability 才能外发。
 
+#### 渠道 outbox 值得复用，但 ACK 丢失窗口必须进入 `unknown`
+
+【固定源码事实】Clawith 已把 ChatMessage 与 `ChannelDelivery` outbox 放进同一业务事务，使用稳定
+delivery identity、claim TTL、attempt count 和退避重试；渠道失败不会重新运行 Agent Graph。这是正确的
+副作用隔离方向，见 [`channel_delivery.py#L143-L177`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_runtime/channel_delivery.py#L143-L177) 与
+[`#L195-L278`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_runtime/channel_delivery.py#L195-L278)。
+
+但 worker 会先提交 `claimed`，再调用 provider，成功返回后才另开事务写 `delivered` 和
+`provider_message_id`。若 provider 已接受消息，但响应丢失，或 worker 在 send 后、complete commit 前崩溃，
+claim 过期后会再次发送，见 [`channel_delivery.py#L351-L419`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_runtime/channel_delivery.py#L351-L419)。
+envelope 虽携带内部 `idempotency_key`，本轮静态审查没有证明所有 provider sender 都把它映射为服务商
+支持的幂等键，也没有在 send 前获得可查询的 provider operation receipt。因此该链路应按 **at-least-once
+delivery** 理解，不能宣称 exactly-once；本轮没有向任何渠道实发，未动态复现重复消息。
+
+【分析判断】WanWork 应直接吸收“消息事务内 outbox + 不重跑 Graph”，但要把 dispatch 后未确认状态记录为
+`unknown`，优先使用 provider idempotency token；没有原生幂等能力时保存可查询 operation identity，执行
+reconcile，无法判定时进入 Needs You。不能用无限重试把“尽量送达”换成“可能重复代表用户发言”。
+
 ### 12.3 “可私有化”不等于“模型和数据完全不出境”
 
 【官网/文档声明】README 明确写明本地部署不运行任何 AI 模型，LLM 推理由外部 API provider 处理；本地主要部署 Web 应用和 Docker 编排，见 [`README.md#L72-L79`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/README.md#L72-L79)。虽然 provider registry 支持 vLLM/Ollama/SGLang 等本地兼容端点，但是否真正离线取决于管理员配置的模型、MCP、渠道和对象存储位置。
@@ -767,6 +785,41 @@ API 和调度 worker 不持有宿主 Docker socket；executor broker 只接受�
 
 【分析判断】WanWork 的 Helm/Kubernetes 资产必须独立通过 template/lint、kind smoke、升级/回滚、网络策略、Pod Security、External Secrets、S3、备份恢复和多副本故障注入门禁，不能因为仓库里出现 `helm/` 目录就标记“企业级 K8s 已完成”。
 
+### 12.7 默认凭据、加密、日志、健康检查与版本身份必须 fail closed
+
+【固定源码事实】固定快照还有五组与生产发布直接相关的静态风险：
+
+1. 应用配置为 `SECRET_KEY` 和 `JWT_SECRET_KEY` 提供可预测默认值；启动时只记录 warning，主 Compose
+   也在环境变量缺失时继续使用这些默认值，见 [`config.py#L84-L107`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/config.py#L84-L107)、
+   [`main.py#L121-L135`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/main.py#L121-L135) 与
+   [`docker-compose.yml#L40-L57`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/docker-compose.yml#L40-L57)。
+2. 通用 credential helper 使用 AES-256-CBC、随机 IV 和 PKCS#7 padding，但固定格式只有
+   `IV + ciphertext`，没有 MAC/tag 或 AEAD authentication，见 [`security.py#L55-L124`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/core/security.py#L55-L124)。
+   这提供保密性意图，却不能提供现代 authenticated-encryption 的完整篡改检测语义；本轮没有做密文
+   oracle 或利用测试，因此不把静态风险写成已利用漏洞。
+3. Loguru stdout handler 固定启用 `backtrace=True, diagnose=True`；异常诊断可能展开局部变量，增加 token、
+   payload 或用户数据进入日志的风险，见 [`logging_config.py#L61-L75`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/core/logging_config.py#L61-L75)。
+4. `/api/health` 只返回静态 `status=ok` 与版本，没有验证数据库、Redis、LangGraph checkpointer、对象存储、
+   worker heartbeat 或 migration state，见 [`main.py#L480-L483`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/main.py#L480-L483)。
+   它适合作为浅 liveness，不足以作为 readiness 或发布完成证明。
+5. 版本身份存在多套漂移：backend/frontend package 都写 `0.1.0`，Chart `appVersion` 写 `1.9.3`，
+   `values.yaml` 尾部又混入 `appVersion: v260331` 的 Chart 元数据；固定工作树的 backend/frontend
+   `VERSION` 文件均为 `1.11.4-fix.1`，而审计 commit 主题已经是 `v1.11.5-quality-harness`。此外
+   `namespace.yaml` 在 Namespace 与条件 Secret 之间缺少 YAML document separator，`secrets.yaml` 为空。
+   见 [`backend/pyproject.toml#L1-L4`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/pyproject.toml#L1-L4)、
+   [`frontend/package.json#L1-L6`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/frontend/package.json#L1-L6)、
+   [`backend/VERSION`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/VERSION)、
+   [`frontend/VERSION`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/frontend/VERSION)、
+   [`Chart.yaml#L1-L7`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/helm/clawith/Chart.yaml#L1-L7)、
+   [`values.yaml#L205-L228`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/helm/clawith/values.yaml#L205-L228) 与
+   [`namespace.yaml#L1-L19`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/helm/clawith/templates/namespace.yaml#L1-L19)。
+
+【分析判断】WanWork 的生产配置必须在 secret 缺失、过短、等于样例或复用时拒绝启动；敏感数据使用
+KMS envelope encryption + AEAD 与 key version；生产异常日志默认关闭变量诊断并执行结构化字段白名单/脱敏；
+liveness、readiness、dependency health 和 worker freshness 分端点；release manifest 用一个不可歧义的
+version + commit + image digest + migration head 贯穿包、镜像、Chart、UI 与证据包。Helm 必须先经过
+`helm lint/template` 和真实集群 smoke，不能让浅 health 把依赖失效的部署判为成功。
+
 ## 13. 技术架构与源码地图：LangGraph 只是控制图，真正价值在周围的 durable runtime
 
 ### 13.1 整体技术栈
@@ -797,6 +850,24 @@ flowchart TB
 【固定源码事实】Runtime graph 固定节点为 `control_guard → compact/model/tool/verify/wait/terminal`，只有明确 classified 的 compact transient error 和 safe-read tool error使用有限 retry。RuntimeContext 必须携带 tenant、Run 和 Command identity；wait 使用 LangGraph interrupt，状态只允许在预定义 route/status 组合中迁移。见 [`graph.py#L30-L69`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_runtime/graph.py#L30-L69)、[`#L116-L190`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_runtime/graph.py#L116-L190) 与 [`#L206-L238`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_runtime/graph.py#L206-L238)。
 
 新 Run 的输入在受锁连接上捕获成 snapshot；resume type 必须匹配当前 waiting state，见 [`langgraph_driver.py#L82-L132`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_runtime/langgraph_driver.py#L82-L132) 与 [`#L176-L220`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_runtime/langgraph_driver.py#L176-L220)。
+
+【固定源码事实】更有价值的是 Graph 周围的三层持久化合同：
+
+- 产品入口使用稳定的 `StartRun / ResumeRun / CancelRun`、`RunHandle`、`RunView` 和 `RuntimeEvent`，
+  不直接把 LangGraph 私有 state 暴露给上层，见 [`contracts.py#L13-L148`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_runtime/contracts.py#L13-L148)；
+- command inbox 对 `(run_id, idempotency_key)` 做唯一约束，记录 claim、expiry、attempt 和 applied
+  checkpoint；driver 使用 `durability=sync`，并把 run/command identity 写入 checkpoint metadata 后精确回读，
+  见 [`agent_run_command.py#L25-L103`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/models/agent_run_command.py#L25-L103) 与
+  [`langgraph_driver.py#L395-L479`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_runtime/langgraph_driver.py#L395-L479)；
+- `AgentRunEvent` 是 append-only、可重建的产品投影；Tool Ledger 单独记录 `read/write/external_write`、
+  `safe/conditional/never`、started/succeeded/failed/unknown、arguments hash、lease 与 provider call ID，
+  见 [`agent_run_event.py#L25-L98`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/models/agent_run_event.py#L25-L98) 与
+  [`agent_tool_execution.py#L25-L119`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/models/agent_tool_execution.py#L25-L119)。
+
+【分析判断】WanWork 应直接吸收“命令收件箱—权威执行 checkpoint—产品事件投影—副作用 receipt”分权，
+尤其保留 command/checkpoint identity 绑定和 `unknown`。但不应让 LangGraph checkpoint 变成跨版本业务对象的
+唯一事实源：QE 的 canonical event、Attempt、Artifact、authority 与 receipt 继续作为框架中立领域合同，
+LangGraph 只是可替换执行 adapter；两侧用稳定 ID、revision 和 digest 互相校验。
 
 【分析判断】这体现了与 DeepSeek Harness 相通的正确思想：
 
@@ -870,6 +941,9 @@ LangGraph 在这里适合作为确定性控制图；Harness 思想应落在 node
 8. **审计不是不可变事实源。** 普通表 + best-effort 写入无法支撑“所有操作完整可回放”的强承诺。
 9. **默认沙箱/Compose 权限过大。** executor 网络、宿主 pip proxy、privileged、Docker socket 和缺乏资源配额是生产 P0 风险。
 10. **Kubernetes 交付资产漂移。** Chart 静态缺口和文档/模板不一致说明仍需要完整 release engineering。
+11. **渠道 outbox 仍是 at-least-once。** send 后、完成落库前的 ACK 丢失窗口可能触发重复外发，必须有 provider 幂等或 unknown/reconcile。
+12. **默认 secret 与 credential encryption 不可作为生产基线。** 弱默认值只告警不停机，CBC helper 又没有 authenticated-encryption tag。
+13. **健康、日志与版本身份不足以支撑强发布门禁。** 浅 health、变量诊断日志、多套版本和 Chart 模板漂移会制造“看起来已发布”的假阳性。
 
 ### 14.3 对竞争格局的真正含义
 
@@ -942,6 +1016,8 @@ flowchart LR
 | Skill progressive disclosure | catalog → read → activate → materialize | 不可变 package snapshot、digest、来源与批准状态 |
 | 模型能力探测 | connection/tool/vision/limits capability facts | 探测绑定 model config fingerprint 和时间 |
 | Candidate/CAS | Agent 文件/Artifact 候选发布协议 | base version、digest、scope、冲突/未知显式化 |
+| Command inbox + checkpoint projection | command idempotency、精确 checkpoint identity、可重建产品事件 | LangGraph 只作 adapter；领域 event/Attempt/Artifact/receipt 仍是框架中立合同 |
+| Channel outbox | ChatMessage 事务内 stage，渠道失败不重跑 Graph | provider 幂等、dispatch unknown、reconcile 与用户可见重复风险 |
 
 ### 16.2 借思想但重做边界
 
@@ -969,6 +1045,11 @@ flowchart LR
 - 用普通 best-effort AuditLog 支撑“不可篡改全链路审计”宣称；
 - 把内部 `notify/consult/task_delegate` 称为标准 A2A；
 - 用 Helm 文件存在代替生产部署验证。
+- 默认 secret 缺失时只告警后继续运行；
+- 用无认证 AES-CBC 作为生产 credential envelope；
+- 把静态 `status=ok` 当 readiness 或发布成功证明；
+- 在生产异常日志中启用局部变量诊断；
+- 让包、VERSION、镜像、Chart 和 UI 各自声明互相矛盾的版本。
 
 ## 17. 分阶段落地建议与阶段门禁
 
