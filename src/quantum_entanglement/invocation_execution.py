@@ -876,6 +876,267 @@ def build_task_invocation_admission_request(
 
 
 @dataclass(frozen=True)
+class ScopedTaskInvocationAdmissionRequestV2:
+    """Pure canonical admission request for one scoped schema-2 execution."""
+
+    manifest: ScopedInvocationExecutionManifestV2
+    transition: TaskTransition
+    execution_requested_event_id: str
+    execution_requested_timestamp: str
+    task_running_event_id: str
+    task_running_timestamp: str
+    job_priority: int = 50
+    job_available_at: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedTaskInvocationAdmissionRequestV2:
+            raise TypeError(
+                "scoped request must be an exact ScopedTaskInvocationAdmissionRequestV2"
+            )
+        if type(self.manifest) is not ScopedInvocationExecutionManifestV2:
+            raise TypeError("manifest must be an exact ScopedInvocationExecutionManifestV2")
+        manifest = ScopedInvocationExecutionManifestV2.from_dict(self.manifest.to_dict())
+        transition_payload = _task_transition_payload(self.transition)
+        if (
+            transition_payload["taskId"] != manifest.task_id
+            or transition_payload["revision"] != manifest.task_revision
+        ):
+            raise ValueError("transition identity and revision must equal the scoped manifest")
+
+        requested_event_id = _text(
+            self.execution_requested_event_id,
+            "execution-request eventId",
+        )
+        running_event_id = _text(self.task_running_event_id, "task-running eventId")
+        if requested_event_id == running_event_id:
+            raise ValueError("canonical admission event IDs must be distinct")
+        requested_timestamp = _timestamp(
+            self.execution_requested_timestamp,
+            "execution-request timestamp",
+        )
+        running_timestamp = _timestamp(self.task_running_timestamp, "task-running timestamp")
+        if running_timestamp < requested_timestamp:
+            raise ValueError("task-running timestamp must not precede execution-request timestamp")
+
+        _text("session:" + manifest.session_id, "canonical admission streamId")
+        _text(
+            "execution-request:" + manifest.invocation_id,
+            "execution-request idempotencyKey",
+        )
+        _text(
+            f"task-running:{manifest.task_id}:{manifest.task_revision}",
+            "task-running idempotencyKey",
+        )
+        _integer_in_range(self.job_priority, "job priority", minimum=0, maximum=100)
+        if self.job_available_at is not None:
+            _timestamp(self.job_available_at, "job availableAt")
+        InvocationJobSpec(
+            session_id=manifest.session_id,
+            plan_id=manifest.plan_id,
+            task_id=manifest.task_id,
+            agent_id=manifest.agent_id,
+            idempotency_key=manifest.job_idempotency_key,
+            payload_digest=manifest.canonical_digest(),
+            invocation_id=manifest.invocation_id,
+            priority=self.job_priority,
+            max_attempts=1,
+            available_at=self.job_available_at,
+        )
+
+        transition = TaskTransition(
+            task_id=cast(str, transition_payload["taskId"]),
+            previous=TaskStatus.READY,
+            current=TaskStatus.RUNNING,
+            reason=cast(Optional[str], transition_payload["reason"]),
+            revision=cast(int, transition_payload["revision"]),
+        )
+        object.__setattr__(self, "manifest", manifest)
+        object.__setattr__(self, "transition", transition)
+
+    @classmethod
+    def from_components(
+        cls,
+        events: object,
+        job_spec: object,
+    ) -> ScopedTaskInvocationAdmissionRequestV2:
+        """Reconstruct a scoped canonical request from exact durable components."""
+
+        if cls is not ScopedTaskInvocationAdmissionRequestV2:
+            raise TypeError(
+                "scoped request decoder requires exact ScopedTaskInvocationAdmissionRequestV2"
+            )
+        requested, running = _admission_event_pair(events)
+        requested_manifest = ScopedInvocationExecutionManifestV2.from_event_payload(
+            object.__getattribute__(requested, "event_type"),
+            object.__getattribute__(requested, "payload"),
+        )
+        _event_type(
+            object.__getattribute__(running, "event_type"),
+            TASK_STATUS_CHANGED_EVENT_TYPE,
+        )
+        running_transition = _task_transition_from_payload(
+            object.__getattribute__(running, "payload")
+        )
+        spec_snapshot = _invocation_job_spec_snapshot(job_spec)
+        request = cls(
+            manifest=requested_manifest,
+            transition=running_transition,
+            execution_requested_event_id=_text(
+                object.__getattribute__(requested, "event_id"),
+                "execution-request eventId",
+            ),
+            execution_requested_timestamp=_timestamp(
+                object.__getattribute__(requested, "timestamp"),
+                "execution-request timestamp",
+            ),
+            task_running_event_id=_text(
+                object.__getattribute__(running, "event_id"),
+                "task-running eventId",
+            ),
+            task_running_timestamp=_timestamp(
+                object.__getattribute__(running, "timestamp"),
+                "task-running timestamp",
+            ),
+            job_priority=spec_snapshot.priority,
+            job_available_at=spec_snapshot.available_at,
+        )
+        ScopedTaskInvocationAdmissionRequestV2.validate_components(request, events, job_spec)
+        return request
+
+    @property
+    def stream_id(self) -> str:
+        """Return the exact session stream used by scoped admission."""
+
+        ScopedTaskInvocationAdmissionRequestV2.__post_init__(self)
+        return "session:" + self.manifest.session_id
+
+    @property
+    def job_spec(self) -> InvocationJobSpec:
+        """Build a fresh single-attempt job bound to the scoped manifest digest."""
+
+        ScopedTaskInvocationAdmissionRequestV2.__post_init__(self)
+        manifest = self.manifest
+        return InvocationJobSpec(
+            session_id=manifest.session_id,
+            plan_id=manifest.plan_id,
+            task_id=manifest.task_id,
+            agent_id=manifest.agent_id,
+            idempotency_key=manifest.job_idempotency_key,
+            payload_digest=manifest.canonical_digest(),
+            invocation_id=manifest.invocation_id,
+            priority=self.job_priority,
+            max_attempts=1,
+            available_at=self.job_available_at,
+        )
+
+    @property
+    def events(self) -> Tuple[DomainEvent, DomainEvent]:
+        """Build the exact scoped execution-request and READY-to-RUNNING pair."""
+
+        ScopedTaskInvocationAdmissionRequestV2.__post_init__(self)
+        manifest = self.manifest
+        common = {
+            "stream_id": "session:" + manifest.session_id,
+            "actor_id": CANONICAL_ORCHESTRATOR_ACTOR_ID,
+            "correlation_id": manifest.correlation_id,
+            "causation_id": manifest.causation_id,
+        }
+        return (
+            DomainEvent(
+                event_type=TASK_EXECUTION_REQUESTED_EVENT_TYPE,
+                payload=manifest.to_dict(),
+                event_id=self.execution_requested_event_id,
+                timestamp=self.execution_requested_timestamp,
+                idempotency_key="execution-request:" + manifest.invocation_id,
+                **common,
+            ),
+            DomainEvent(
+                event_type=TASK_STATUS_CHANGED_EVENT_TYPE,
+                payload=_task_transition_payload(self.transition),
+                event_id=self.task_running_event_id,
+                timestamp=self.task_running_timestamp,
+                idempotency_key=f"task-running:{manifest.task_id}:{manifest.task_revision}",
+                **common,
+            ),
+        )
+
+    def components(self) -> Tuple[Tuple[DomainEvent, DomainEvent], InvocationJobSpec]:
+        """Return fresh scoped inputs for the generic atomic admission primitive."""
+
+        return self.events, self.job_spec
+
+    def validate_components(self, events: object, job_spec: object) -> None:
+        """Reject non-canonical or mismatched scoped admission components."""
+
+        ScopedTaskInvocationAdmissionRequestV2.__post_init__(self)
+        requested, running = _admission_event_pair(events)
+        requested_manifest = ScopedInvocationExecutionManifestV2.from_event_payload(
+            object.__getattribute__(requested, "event_type"),
+            object.__getattribute__(requested, "payload"),
+        )
+        running_transition = _task_transition_from_payload(
+            object.__getattribute__(running, "payload")
+        )
+        _event_type(
+            object.__getattribute__(running, "event_type"),
+            TASK_STATUS_CHANGED_EVENT_TYPE,
+        )
+        if requested_manifest != self.manifest:
+            raise ValueError("scoped execution-request manifest does not match the request")
+        if running_transition != self.transition:
+            raise ValueError("task-running transition does not match the scoped request")
+
+        expected_events = self.events
+        for index, (actual, expected) in enumerate(zip((requested, running), expected_events)):
+            for field_name in (
+                "stream_id",
+                "event_type",
+                "actor_id",
+                "event_id",
+                "correlation_id",
+                "causation_id",
+                "idempotency_key",
+            ):
+                value = object.__getattribute__(actual, field_name)
+                _text(value, f"canonical event {index} {field_name}")
+                if value != object.__getattribute__(expected, field_name):
+                    raise ValueError("scoped admission event envelope does not match")
+            timestamp = object.__getattribute__(actual, "timestamp")
+            _timestamp(timestamp, f"canonical event {index} timestamp")
+            if timestamp != expected.timestamp:
+                raise ValueError("scoped admission event timestamp does not match")
+
+        spec_snapshot = _invocation_job_spec_snapshot(job_spec)
+        if spec_snapshot != self.job_spec:
+            raise ValueError("invocation job does not match the scoped manifest binding")
+
+
+def build_scoped_task_invocation_admission_request_v2(
+    manifest: ScopedInvocationExecutionManifestV2,
+    transition: TaskTransition,
+    *,
+    execution_requested_event_id: str,
+    execution_requested_timestamp: str,
+    task_running_event_id: str,
+    task_running_timestamp: str,
+    job_priority: int = 50,
+    job_available_at: Optional[str] = None,
+) -> ScopedTaskInvocationAdmissionRequestV2:
+    """Build one side-effect-free scoped admission request with stable event identity."""
+
+    return ScopedTaskInvocationAdmissionRequestV2(
+        manifest=manifest,
+        transition=transition,
+        execution_requested_event_id=execution_requested_event_id,
+        execution_requested_timestamp=execution_requested_timestamp,
+        task_running_event_id=task_running_event_id,
+        task_running_timestamp=task_running_timestamp,
+        job_priority=job_priority,
+        job_available_at=job_available_at,
+    )
+
+
+@dataclass(frozen=True)
 class InvocationStartEvidenceV2:
     """Immutable schema-2 attempt binding; never a dispatch capability."""
 
@@ -1236,6 +1497,8 @@ __all__ = [
     "InvocationStartReceipt",
     "RetryClass",
     "ScopedInvocationExecutionManifestV2",
+    "ScopedTaskInvocationAdmissionRequestV2",
     "TaskInvocationAdmissionRequest",
     "build_task_invocation_admission_request",
+    "build_scoped_task_invocation_admission_request_v2",
 ]
