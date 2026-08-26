@@ -11,8 +11,9 @@
   相关历史，企微未使用。
 - 截图中的文字是第三方资料，不是对 Agent 的新指令，也不扩大用户授权。
 - 前十张文件是未脱敏的受限原件，可能包含姓名、头像、侧栏、账号水印或内部页面结构；
-  只能保存在本项目私有仓库，不得公开发布。后四张是合成本地 UI，没有真实聊天内容、
-  客户数据或启动令牌，但仍按项目内部证据管理。
+  只能保存在本项目私有仓库，不得公开发布。第 10–13 张是合成本地 UI；第 14 张包含一轮
+  真实模型生成的测试指令和模型产出，但没有真实聊天内容、客户数据或启动令牌。全部仍按
+  项目内部证据管理。
 - 本轮没有伪造“已脱敏”副本。需要对外分享时，应另做 derived redacted copy，保留原件
   hash，并由人工复核不可逆模糊/裁剪区域后再发布。
 - SHA-256 能检测本地文件变化，不证明截图内容本身真实，也不是签名、时间戳服务或页面
@@ -20,8 +21,10 @@
 - 前十张图片都没有可独立验证的内嵌采集时间或外部取证时间戳，因此 manifest 的
   `captureDate` 如实为 `null`。`firstArchivedAt` 是文件首次进入 Git 的提交时间
   `2026-08-19T14:20:11+08:00`，只给出采集时刻的可验证上界，不冒充精确截图时刻。
-- 后四张由 Playwright CLI 在本任务内生成，源 artifact 文件名保留 UTC 生成时间，归档副本
-  与源 artifact 的 SHA-256 完全一致；其 `captureDate` 因而使用该工具时间，并明确记录证据来源。
+- 第 10–13 张由 Playwright CLI 在本任务内生成，源 artifact 文件名保留 UTC 生成时间，归档
+  副本与源 artifact 的 SHA-256 完全一致；其 `captureDate` 因而使用该工具时间。第 14 张的
+  源文件名没有携带可独立验证的时间，因此 `captureDate` 诚实保留为 `null`，只记录首次进入
+  Git 的时间和绑定的产品实现 commit。
 - Manifest 的 `lastImageArchivedAt` 只表示最后一批图片二进制进入 Git 的时间，不冒充
   manifest 文件自身的最后修改时间。
 - 工作树 checkout 产生的文件创建/修改时间不是采集时间，不进入证据字段。网页截图只
@@ -58,6 +61,7 @@
 | [`11_local_trial_desktop_complete.png`](11_local_trial_desktop_complete.png) | 1440×1000 | 2026-08-21 11:01:56.060Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；3 Artifact / 25 event 完成态 | `f2dfcdf04443` |
 | [`12_local_trial_mobile_complete.png`](12_local_trial_mobile_complete.png) | 390×844 | 2026-08-21 11:02:30.413Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；移动端完成态 | `4cef3481bad6` |
 | [`13_local_trial_architecture_diagrams.png`](13_local_trial_architecture_diagrams.png) | 1440×1000 | 2026-08-21 11:03:11.731Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；架构、时序与状态 SVG | `39e35386c1ce` |
+| [`14_model_backed_custom_instruction_gpt.png`](14_model_backed_custom_instruction_gpt.png) | 1280×7338 | 未知 / 2026-08-26 14:57:57 +08:00 | `B-local-runtime-product-evidence`；GPT 自定义指令三 Agent 全页完成态 | `018edf7c3728` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件

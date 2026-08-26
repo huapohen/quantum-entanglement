@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "a23d7adc8161752ae3d75c262abb0fb7918df6fb",
-  "lastImageArchivedAt": "2026-08-21T19:07:53+08:00",
+  "lastArchivedCommit": "b9c6c4df69522f8ca190692545c79bf3dfd5da41",
+  "lastImageArchivedAt": "2026-08-26T14:57:57+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -314,8 +314,31 @@
       "sourceKind": "local-playwright-runtime",
       "sourceReference": "git:8e4d8d7990d536ce78c1e65c5a3eb77bafc54c24; playwright:page-2026-08-21T11-03-11-731Z.png",
       "width": 1440
+    },
+    {
+      "byteSize": 1914763,
+      "captureDate": null,
+      "captureDateEvidence": "The retained source filename has no independently verifiable timestamp; firstArchivedAt is the exact Git commit timestamp and is not presented as capture time",
+      "contentScope": "Full-page local product trial after one real GPT gpt-5.6-sol run completed a custom instruction through researcher, architect and reviewer tasks with three Markdown Artifacts and 25 events",
+      "derivation": "playwright-full-page-capture",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "Proves the pixels and visible outputs of one local model-backed run bound to implementation commit 886aedc097e8ad371eea89ca0fa568bcc58ac9a0; it does not prove repeatability, model quality, provider availability or a deployed service",
+        "The run used the direct OpenAI-compatible Responses adapter, not a real DeepSeek Harness sidecar, durable invocation attempts, persistent storage, external connector, production authentication or Gate A-E promotion",
+        "The screenshot contains generated test content and opaque run identifiers; it was reviewed for credential-like strings but remains restricted internal evidence"
+      ],
+      "filename": "14_model_backed_custom_instruction_gpt.png",
+      "firstArchivedAt": "2026-08-26T14:57:57+08:00",
+      "height": 7338,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "reviewed-no-credential-model-output-restricted",
+      "sha256": "018edf7c3728530f4cb03b7a115dfc4e46bf53963c1efb06fbfb1638f9f492b8",
+      "sourceKind": "local-playwright-runtime",
+      "sourceReference": "git:886aedc097e8ad371eea89ca0fa568bcc58ac9a0; output/playwright/custom-instruction-gpt-success.png; source SHA-256 matched archive",
+      "width": 1280
     }
   ],
-  "redactionStatus": "mixed-restricted-originals-and-synthetic-local-ui",
+  "redactionStatus": "mixed-restricted-originals-synthetic-ui-and-reviewed-model-output",
   "schemaVersion": 3
 }
