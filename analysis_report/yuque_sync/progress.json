@@ -1,8 +1,12 @@
 {
   "updated_at": "2026-08-24T17:23:25+08:00",
+  "historical_snapshot_updated_at": "2026-08-24T17:23:25+08:00",
+  "snapshot_scope": "remote_write_and_readback_as_of_2026-08-24_excludes_current_local_delta",
   "repository": "https://www.yuque.com/huapohen/rmqgc7",
   "visibility": "private",
   "status": "complete_manual_sync",
+  "historical_snapshot_status": "complete_manual_sync",
+  "current_content_status": "partial",
   "continuous_sync": "disabled_by_user",
   "notion_objects": 15,
   "task_rows": 19,
@@ -17,7 +21,18 @@
     "yuque_url": "https://www.yuque.com/huapohen/rmqgc7/xwny43no7vv09zsf",
     "verification": "8 numbered sections, 3 tables, 1 code block, 4 Notion links"
   },
+  "historical_latest_verified_change": {
+    "notion_id": "3c2ead4b-996e-81be-ab42-fa6a50362cfe",
+    "title": "11｜Process Identity + Invocation 组合发布证据",
+    "yuque_slug": "xwny43no7vv09zsf",
+    "yuque_url": "https://www.yuque.com/huapohen/rmqgc7/xwny43no7vv09zsf",
+    "verification": "8 numbered sections, 3 tables, 1 code block, 4 Notion links"
+  },
   "project_home": {
+    "yuque_slug": "cg81fnfyk3ygtt2c",
+    "verification": "new page linked; current Notion evidence baseline present; stale 531-test baseline removed"
+  },
+  "historical_project_home": {
     "yuque_slug": "cg81fnfyk3ygtt2c",
     "verification": "new page linked; current Notion evidence baseline present; stale 531-test baseline removed"
   },
@@ -26,5 +41,26 @@
     "Notion table of contents is represented by Yuque's generated outline.",
     "Notion child-page blocks are represented as linked Yuque documents plus source links."
   ],
-  "missing_items": []
+  "missing_items": [],
+  "historical_snapshot_missing_items": [],
+  "current_local_delta": {
+    "updated_at": "2026-08-27T03:55:47+08:00",
+    "status": "partial",
+    "remote_write_status": "local_pending",
+    "remote_readback_status": "local_pending",
+    "live_remote_readback_performed": false,
+    "pending_source_count": 5,
+    "pending_existing_yuque_document_count": 4,
+    "pending_new_yuque_document_count": 1,
+    "previous_remote_verified_image_count": 10,
+    "current_local_transfer_image_count": 15,
+    "new_clawith_image_count": 5,
+    "source_paths": [
+      "analysis_report/yuque_sync/source/01_comprehensive_report.md",
+      "analysis_report/yuque_sync/source/06_competitors.md",
+      "analysis_report/yuque_sync/source/07_product_blueprint.md",
+      "analysis_report/yuque_sync/source/11_screenshot_evidence.md",
+      "analysis_report/yuque_sync/source/14_clawith_competitive_analysis.md"
+    ]
+  }
 }

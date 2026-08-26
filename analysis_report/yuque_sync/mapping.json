@@ -3,10 +3,65 @@
   "source": "notion",
   "destination": "yuque_private_space",
   "sync_status": "complete_manual_sync",
+  "sync_status_scope": "remote_write_and_readback_snapshot_as_of_2026-08-24_excludes_current_local_delta",
+  "current_content_status": "partial",
   "continuous_sync": "disabled_by_user",
   "yuque_repository": {"name":"Quantum Entanglement｜人 + 多 Agent 协同办公","repo":"huapohen/rmqgc7","url":"https://www.yuque.com/huapohen/rmqgc7","visibility_verified":"private","visibility_evidence":"当前知识库为私密，仅自己和协作者可访问","verified_at":"2026-08-24T17:05:00+08:00"},
   "last_discovery_at": "2026-08-24T16:48:00+08:00",
   "last_successful_sync_at": "2026-08-24T17:23:25+08:00",
+  "current_local_delta": {
+    "updated_at": "2026-08-27T03:55:47+08:00",
+    "status": "partial",
+    "remote_write_status": "local_pending",
+    "remote_readback_status": "local_pending",
+    "live_remote_readback_performed": false,
+    "historical_objects_and_hashes_mutated": false,
+    "entries": [
+      {
+        "source_path": "analysis_report/yuque_sync/source/01_comprehensive_report.md",
+        "title": "综合报告｜人与多 Agent 群聊协同产品：调研、架构与实现",
+        "yuque_slug": "nspilnhf8bpg0207",
+        "previous_verified_normalized_sha256": "a81389814cb43f5eeeafb738219013b1ba44b2dddac411c1a621e8f9838e3b16",
+        "current_normalized_sha256": "6abb03e9af96177783bfcd87e2570e1a13b1df0c18674909656587840ee99b41",
+        "target_status": "local_pending"
+      },
+      {
+        "source_path": "analysis_report/yuque_sync/source/06_competitors.md",
+        "title": "04｜多 Agent 竞品全景",
+        "yuque_slug": "nhywrdbud44vtcxv",
+        "previous_verified_normalized_sha256": "fa192975f698f6997c87649c0252dc2785a8638b18d9784112f52045ed998f96",
+        "current_normalized_sha256": "96c1d11c9d45472722f3cc6e88116fab75135e84e5571ec23d1fc6334cf305ad",
+        "target_status": "local_pending"
+      },
+      {
+        "source_path": "analysis_report/yuque_sync/source/07_product_blueprint.md",
+        "title": "05｜目标产品与架构蓝图",
+        "yuque_slug": "dcvqphyycqa53ekz",
+        "previous_verified_normalized_sha256": "ec10620ebbf3e4c04fe49998fae81ea4ed97aab503e5693dff35ddcca5a4917a",
+        "current_normalized_sha256": "fa4be1e143662f34c84cc1d5f42408bc1d11438b1b9e1579c4000908d8cbd6b5",
+        "target_status": "local_pending"
+      },
+      {
+        "source_path": "analysis_report/yuque_sync/source/11_screenshot_evidence.md",
+        "title": "证据库｜飞书与语雀调研截图（只读）",
+        "yuque_slug": "xutzmgpsnk2a2mb9",
+        "previous_verified_normalized_sha256": "93183daf20ef46232b1ac94848f565a30ba8bda1cdaaa5370b04bb7ad49bfa94",
+        "current_normalized_sha256": "a6e3b765b2b3a405bcfaa3dc5d3aeb0007e29a5148615014513feb2f8fc5f139",
+        "previous_remote_verified_image_count": 10,
+        "current_local_transfer_image_count": 15,
+        "new_clawith_image_count": 5,
+        "target_status": "local_pending"
+      },
+      {
+        "source_path": "analysis_report/yuque_sync/source/14_clawith_competitive_analysis.md",
+        "title": "Clawith 竞品深研：从“数字员工组织”反推 WanWork 的产品与底层取舍",
+        "yuque_slug": null,
+        "current_normalized_sha256": "66b1fbb2a52a94379e8739b73c87987ae55a73579460d421ff9a14fe2df3aa69",
+        "target_identity_status": "not_created_or_observed",
+        "target_status": "local_pending"
+      }
+    ]
+  },
   "known_object_count": 34,
   "page_or_database_count": 15,
   "task_row_count": 19,
