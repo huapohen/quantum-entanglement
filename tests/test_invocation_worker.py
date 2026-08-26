@@ -16,12 +16,17 @@ from quantum_entanglement.invocation_execution import (
     InvocationStartEvidenceV2,
     InvocationStartObserved,
     InvocationStartReceipt,
+    ScopedInvocationExecutionManifestV2,
+    ScopedInvocationStartClaimedV3,
+    ScopedInvocationStartEvidenceV3,
+    ScopedInvocationStartReceiptV3,
 )
 from quantum_entanglement.invocation_worker import (
     HeartbeatPureWorkerGate,
     InvocationWorkerAdmission,
     InvocationWorkerConfiguration,
     InvocationWorkerDisabledError,
+    ScopedInvocationWorkerAdmissionV3,
 )
 
 LEASE_TOKEN = "worker-gate-secret-lease-canary"
@@ -114,19 +119,114 @@ def valid_configuration() -> InvocationWorkerConfiguration:
     )
 
 
+def valid_scoped_manifest() -> ScopedInvocationExecutionManifestV2:
+    return ScopedInvocationExecutionManifestV2.from_dict(
+        {
+            "schemaVersion": 2,
+            "tenantId": "tenant-worker-1",
+            "workspaceId": "workspace-worker-1",
+            "invocationId": "invocation-scoped-worker-1",
+            "sessionId": "session-scoped-worker-1",
+            "planId": "plan-scoped-worker-1",
+            "taskId": "task-scoped-worker-1",
+            "agentId": "agent-scoped-worker-1",
+            "jobIdempotencyKey": "invoke:task-scoped-worker-1",
+            "taskRevision": 9,
+            "correlationId": "correlation-scoped-worker-1",
+            "causationId": "task-scoped-worker-1",
+            "envelopeDigest": "1" * 64,
+            "contextDigest": "2" * 64,
+            "authorizationDigest": "3" * 64,
+            "runtimeRevision": RUNTIME_REVISION,
+            "effectClass": "pure",
+            "retryClass": "never",
+        }
+    )
+
+
+def valid_scoped_claim(
+    manifest: ScopedInvocationExecutionManifestV2 | None = None,
+) -> ScopedInvocationStartClaimedV3:
+    selected = manifest or valid_scoped_manifest()
+    evidence = ScopedInvocationStartEvidenceV3(
+        schema_version=3,
+        tenant_id=selected.tenant_id,
+        workspace_id=selected.workspace_id,
+        invocation_id=selected.invocation_id,
+        session_id=selected.session_id,
+        plan_id=selected.plan_id,
+        task_id=selected.task_id,
+        agent_id=selected.agent_id,
+        job_idempotency_key=selected.job_idempotency_key,
+        attempt_id="attempt-scoped-worker-1",
+        attempt_number=1,
+        lease_epoch=1,
+        worker_id="worker-scoped-1",
+        lease_token_digest=hashlib.sha256(LEASE_TOKEN.encode("utf-8")).hexdigest(),
+        claimed_at=CLAIMED_AT,
+        lease_expires_at=EXPIRES_AT,
+        manifest_digest=selected.canonical_digest(),
+        envelope_digest=selected.envelope_digest,
+        context_digest=selected.context_digest,
+        authorization_digest=selected.authorization_digest,
+        runtime_revision=selected.runtime_revision,
+        correlation_id=selected.correlation_id,
+        causation_id=selected.causation_id,
+    )
+    receipt = ScopedInvocationStartReceiptV3(
+        event_id="event-scoped-worker-start-1",
+        stream_id="session:" + selected.session_id,
+        sequence=3,
+        global_position=11,
+        evidence=evidence,
+    )
+    lease = InvocationLease(
+        invocation_id=selected.invocation_id,
+        session_id=selected.session_id,
+        plan_id=selected.plan_id,
+        task_id=selected.task_id,
+        agent_id=selected.agent_id,
+        idempotency_key=selected.job_idempotency_key,
+        payload_digest=selected.canonical_digest(),
+        attempt_id=evidence.attempt_id,
+        attempt_number=1,
+        max_attempts=1,
+        lease_epoch=1,
+        worker_id=evidence.worker_id,
+        lease_token=LEASE_TOKEN,
+        claimed_at=CLAIMED_AT,
+        lease_expires_at=EXPIRES_AT,
+    )
+    return ScopedInvocationStartClaimedV3(receipt, lease)
+
+
 class InvocationWorkerAdmissionTests(unittest.TestCase):
     def test_worker_contracts_are_exported_from_the_package_surface(self) -> None:
-        expected = {
+        expected_package = {
             "HeartbeatPureWorkerGate": HeartbeatPureWorkerGate,
             "InvocationWorkerAdmission": InvocationWorkerAdmission,
             "InvocationWorkerConfiguration": InvocationWorkerConfiguration,
             "InvocationWorkerDisabledError": InvocationWorkerDisabledError,
         }
-        self.assertEqual(set(invocation_worker_module.__all__), set(expected))
-        for name, value in expected.items():
+        expected_module = {
+            **expected_package,
+            "ScopedInvocationWorkerAdmissionV3": ScopedInvocationWorkerAdmissionV3,
+        }
+        self.assertEqual(set(invocation_worker_module.__all__), set(expected_module))
+        for name, value in expected_package.items():
             with self.subTest(name=name):
                 self.assertIn(name, quantum_entanglement.__all__)
                 self.assertIs(getattr(quantum_entanglement, name), value)
+
+    def test_legacy_admission_is_explicitly_ineligible_for_promotion(self) -> None:
+        admission = HeartbeatPureWorkerGate.prepare(
+            valid_claim(),
+            valid_manifest(),
+            valid_configuration(),
+            handler_revision=RUNTIME_REVISION,
+        )
+
+        self.assertFalse(admission.promotion_eligible)
 
     def test_prepare_snapshots_exact_claim_manifest_and_configuration(self) -> None:
         manifest = valid_manifest()
@@ -287,6 +387,101 @@ class InvocationWorkerAdmissionTests(unittest.TestCase):
             with self.subTest(message=message):
                 with self.assertRaisesRegex(ValueError, message):
                     InvocationWorkerConfiguration(**values)
+
+
+class ScopedInvocationWorkerAdmissionTests(unittest.TestCase):
+    def test_prepare_scoped_v3_snapshots_complete_scope_and_authority(self) -> None:
+        manifest = valid_scoped_manifest()
+        claim = valid_scoped_claim(manifest)
+        configuration = valid_configuration()
+
+        admission = HeartbeatPureWorkerGate.prepare_scoped_v3(
+            claim,
+            manifest,
+            configuration,
+            handler_revision=RUNTIME_REVISION,
+        )
+
+        self.assertIs(type(admission), ScopedInvocationWorkerAdmissionV3)
+        self.assertIsNot(admission.claim, claim)
+        self.assertIsNot(admission.manifest, manifest)
+        self.assertIsNot(admission.configuration, configuration)
+        self.assertEqual(admission.manifest.tenant_id, manifest.tenant_id)
+        self.assertEqual(admission.manifest.workspace_id, manifest.workspace_id)
+        self.assertEqual(admission.claim.receipt, claim.receipt)
+        self.assertFalse(admission.promotion_eligible)
+        self.assertNotIn(LEASE_TOKEN, repr(admission))
+        with self.assertRaises(TypeError):
+            json.dumps(admission)
+
+    def test_scoped_and_legacy_claims_manifests_never_cross_worker_gate(self) -> None:
+        with self.assertRaisesRegex(TypeError, "ScopedInvocationStartClaimedV3"):
+            HeartbeatPureWorkerGate.prepare_scoped_v3(
+                valid_claim(),  # type: ignore[arg-type]
+                valid_scoped_manifest(),
+                valid_configuration(),
+                handler_revision=RUNTIME_REVISION,
+            )
+        with self.assertRaisesRegex(TypeError, "ScopedInvocationExecutionManifestV2"):
+            HeartbeatPureWorkerGate.prepare_scoped_v3(
+                valid_scoped_claim(),
+                valid_manifest(),  # type: ignore[arg-type]
+                valid_configuration(),
+                handler_revision=RUNTIME_REVISION,
+            )
+
+    def test_scoped_scope_and_every_start_binding_drift_fail_closed(self) -> None:
+        manifest = valid_scoped_manifest()
+        claim = valid_scoped_claim(manifest)
+        mismatches = {
+            "tenant_id": {"tenant_id": "tenant-other"},
+            "workspace_id": {"workspace_id": "workspace-other"},
+            "invocation_id": {"invocation_id": "invocation-other"},
+            "session_id": {"session_id": "session-other"},
+            "plan_id": {"plan_id": "plan-other"},
+            "task_id": {"task_id": "task-other", "causation_id": "task-other"},
+            "agent_id": {"agent_id": "agent-other"},
+            "job_idempotency_key": {"job_idempotency_key": "invoke:other"},
+            "envelope_digest": {"envelope_digest": "4" * 64},
+            "context_digest": {"context_digest": "5" * 64},
+            "authorization_digest": {"authorization_digest": "6" * 64},
+            "runtime_revision": {"runtime_revision": "runtime:other"},
+            "correlation_id": {"correlation_id": "correlation-other"},
+        }
+        for field_name, changes in mismatches.items():
+            with self.subTest(field=field_name):
+                changed = replace(manifest, **changes)
+                with self.assertRaisesRegex(ValueError, "scoped"):
+                    HeartbeatPureWorkerGate.prepare_scoped_v3(
+                        claim,
+                        changed,
+                        valid_configuration(),
+                        handler_revision=changed.runtime_revision,
+                    )
+
+    def test_scoped_gate_accepts_only_pure_never_and_exact_handler_revision(self) -> None:
+        for effect_class in (
+            EffectClass.IDEMPOTENT,
+            EffectClass.RECEIPT_RECONCILED,
+            EffectClass.NON_RETRIABLE,
+        ):
+            with self.subTest(effect=effect_class.value):
+                manifest = replace(valid_scoped_manifest(), effect_class=effect_class)
+                with self.assertRaisesRegex(ValueError, "effectClass=pure"):
+                    HeartbeatPureWorkerGate.prepare_scoped_v3(
+                        valid_scoped_claim(manifest),
+                        manifest,
+                        valid_configuration(),
+                        handler_revision=RUNTIME_REVISION,
+                    )
+
+        with self.assertRaisesRegex(ValueError, "handler revision"):
+            HeartbeatPureWorkerGate.prepare_scoped_v3(
+                valid_scoped_claim(),
+                valid_scoped_manifest(),
+                valid_configuration(),
+                handler_revision="runtime:other",
+            )
 
 
 class HeartbeatPureWorkerDisabledTests(unittest.IsolatedAsyncioTestCase):
