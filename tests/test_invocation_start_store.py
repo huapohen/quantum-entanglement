@@ -4,11 +4,13 @@ import hashlib
 import json
 import tempfile
 import unittest
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
+import quantum_entanglement.attempts as attempts_module
 import quantum_entanglement.store as store_module
 from quantum_entanglement.attempts import InvocationLease, SQLiteInvocationAttemptStore
 from quantum_entanglement.events import DomainEvent, StoredEvent
@@ -28,6 +30,7 @@ from quantum_entanglement.store import (
     ConcurrencyError,
     EventStorePoisonedError,
     InvocationStartConflictError,
+    InvocationStartTransactionError,
     SQLiteEventStore,
 )
 
@@ -527,6 +530,106 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
             ).fetchone()[0],
             0,
         )
+
+    def test_every_post_mutation_failure_rolls_back_job_attempt_and_start_together(self) -> None:
+        for stage in ("after-cas", "after-start-append", "after-fresh-readback"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                path = str(Path(directory) / "state.sqlite3")
+                store = SQLiteEventStore(path, clock=lambda: ADMITTED_AT)
+                request = canonical_request()
+                try:
+                    store.append_task_invocation_admission(request, expected_version=0)
+                    original_cas = attempts_module._claim_first_invocation_in_transaction
+                    original_append = store._append_in_transaction
+                    original_readback = store._read_invocation_start_in_transaction
+
+                    def fail_after_cas(
+                        *args: Any,
+                        _original: Any = original_cas,
+                        **kwargs: Any,
+                    ) -> Any:
+                        _original(*args, **kwargs)
+                        raise RuntimeError("injected post-CAS failure")
+
+                    def fail_after_append(
+                        *args: Any,
+                        _original: Any = original_append,
+                        **kwargs: Any,
+                    ) -> Any:
+                        _original(*args, **kwargs)
+                        raise RuntimeError("injected post-append failure")
+
+                    def fail_after_readback(
+                        *args: Any,
+                        _original: Any = original_readback,
+                        **kwargs: Any,
+                    ) -> Any:
+                        result = _original(*args, **kwargs)
+                        if kwargs.get("fresh") is True and result is not None:
+                            raise RuntimeError("injected post-readback failure")
+                        return result
+
+                    with ExitStack() as patches:
+                        patches.enter_context(patch.object(store, "_now", return_value=CLAIMED_AT))
+                        patches.enter_context(
+                            patch(
+                                "quantum_entanglement.store.secrets.token_urlsafe",
+                                return_value=f"rollback-canary-{stage}",
+                            )
+                        )
+                        if stage == "after-cas":
+                            patches.enter_context(
+                                patch(
+                                    "quantum_entanglement.store."
+                                    "_claim_first_invocation_in_transaction",
+                                    side_effect=fail_after_cas,
+                                )
+                            )
+                        elif stage == "after-start-append":
+                            patches.enter_context(
+                                patch.object(
+                                    store,
+                                    "_append_in_transaction",
+                                    side_effect=fail_after_append,
+                                )
+                            )
+                        else:
+                            patches.enter_context(
+                                patch.object(
+                                    store,
+                                    "_read_invocation_start_in_transaction",
+                                    side_effect=fail_after_readback,
+                                )
+                            )
+                        with self.assertRaises(InvocationStartTransactionError):
+                            store.claim_invocation_start(
+                                request.manifest.invocation_id,
+                                "worker-start-store-1",
+                                lease_seconds=60,
+                                expected_version=2,
+                            )
+
+                    row = store._connection.execute(
+                        "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+                        (request.manifest.invocation_id,),
+                    ).fetchone()
+                    self.assertEqual(row["status"], "queued")
+                    self.assertEqual(row["attempts_started"], 0)
+                    self.assertEqual(row["lease_epoch"], 0)
+                    self.assertIsNone(row["lease_owner"])
+                    self.assertIsNone(row["lease_token_digest"])
+                    self.assertEqual(
+                        store._connection.execute(
+                            "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                            (request.manifest.invocation_id,),
+                        ).fetchone()[0],
+                        0,
+                    )
+                    self.assertEqual(store.stream_version(request.stream_id), 2)
+                    self.assertIsNone(store.read_invocation_start(request.manifest.invocation_id))
+                    self.assertFalse(store._poisoned)
+                finally:
+                    store.close()
 
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
