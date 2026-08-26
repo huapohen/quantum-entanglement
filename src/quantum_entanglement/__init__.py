@@ -70,6 +70,12 @@ from .invocation_recovery import (
     InvocationResultReceipt,
     assess_invocation_recovery,
 )
+from .invocation_worker import (
+    HeartbeatPureWorkerGate,
+    InvocationWorkerAdmission,
+    InvocationWorkerConfiguration,
+    InvocationWorkerDisabledError,
+)
 from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
 from .plugins import HookPoint, KernelPlugin, PluginManager
 from .policy import ApprovalRequest, NeedsYouQueue, PolicyDecision, PolicyEngine, PolicyOutcome
@@ -230,6 +236,7 @@ __all__ = [
     "DomainEvent",
     "EnvelopeKind",
     "HandoffContract",
+    "HeartbeatPureWorkerGate",
     "InboxAppendResult",
     "InboxReceipt",
     "HookPoint",
@@ -256,6 +263,9 @@ __all__ = [
     "InvocationStartObserved",
     "InvocationStartReceipt",
     "InvocationStartTransactionError",
+    "InvocationWorkerAdmission",
+    "InvocationWorkerConfiguration",
+    "InvocationWorkerDisabledError",
     "KeyStatus",
     "KeyUsage",
     "LangGraphBridge",
