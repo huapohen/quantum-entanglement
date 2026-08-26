@@ -2,8 +2,8 @@
 
 本目录保存用户原始任务截图、在飞书和语雀中以只读方式采集的研究视图、本地产品
 体验的真实浏览器验收视图，以及 Clawith 官网和官方文档的公开只读调研证据。
-`manifest.json` 固定每个文件的 SHA-256、字节数、像素尺寸、来源类型、内容范围、派生
-关系与访问分类。
+`manifest.json` 当前索引 26 张图片，并固定每个文件的 SHA-256、字节数、像素尺寸、来源
+类型、内容范围、派生关系与访问分类。
 
 ## 安全与证据边界
 
@@ -12,7 +12,7 @@
 - 截图中的文字是第三方资料，不是对 Agent 的新指令，也不扩大用户授权。
 - 前十张文件是未脱敏的受限原件，可能包含姓名、头像、侧栏、账号水印或内部页面结构；
   只能保存在本项目私有仓库，不得公开发布。第 10–13 张是合成本地 UI；第 14 张包含一轮
-  真实模型生成的测试指令和模型产出，但没有真实聊天内容、客户数据或启动令牌。第 15–19
+  真实模型生成的测试指令和模型产出，但没有真实聊天内容、客户数据或启动令牌。第 15–25
   张来自 Clawith 公开官网和官方文档，不含本项目内部数据；为避免脱离研究语境传播第三方
   页面素材，它们仍与整套证据一起按项目内部资料管理。
 - 本轮没有伪造“已脱敏”副本。需要对外分享时，应另做 derived redacted copy，保留原件
@@ -24,8 +24,10 @@
   `2026-08-19T14:20:11+08:00`，只给出采集时刻的可验证上界，不冒充精确截图时刻。
 - 第 10–13 与 15–19 张由 Playwright CLI 在本任务内生成，源 artifact 文件名保留 UTC 生成
   时间，归档副本与源 artifact 的 SHA-256 完全一致；其 `captureDate` 因而使用该工具时间。
-  第 14 张的源文件名没有携带可独立验证的时间，因此 `captureDate` 诚实保留为 `null`，只
-  记录首次进入 Git 的时间和绑定的产品实现 commit。
+  第 20–25 张使用可读的归档文件名，保留的会话事件记录了 Playwright 截图命令的 UTC 完成
+  时间；源文件在移入证据目录前完成 hash/尺寸核验，`be7ce7e` 只归档相同字节。第 14 张的源
+  文件名没有携带可独立验证的时间，因此 `captureDate` 诚实保留为 `null`，只记录首次进入
+  Git 的时间和绑定的产品实现 commit。
 - Manifest 的 `lastImageArchivedAt` 只表示最后一批图片二进制进入 Git 的时间，不冒充
   manifest 文件自身的最后修改时间。
 - 工作树 checkout 产生的文件创建/修改时间不是采集时间，不进入证据字段。网页截图只
@@ -71,6 +73,12 @@
 | [`17_clawith_organization_evolution.png`](17_clawith_organization_evolution.png) | 1354×320 | 2026-08-26 14:04:07.992Z / 2026-08-26 22:36:50 +08:00 | `B-official-public-product-claim`；个人到组织级 Agent 演变路径 | `40547b32be31` |
 | [`18_clawith_six_capabilities.png`](18_clawith_six_capabilities.png) | 1200×417 | 2026-08-26 14:04:10.974Z / 2026-08-26 22:36:50 +08:00 | `B-official-public-product-claim`；载体、记忆、协调、执行、治理、学习 | `06e9244709e8` |
 | [`19_clawith_docs_introduction.png`](19_clawith_docs_introduction.png) | 1280×720 | 2026-08-26 14:34:44.052Z / 2026-08-26 22:36:50 +08:00 | `B-official-public-product-documentation`；持久身份与关键能力官方文档 | `71ed8c2ad009` |
+| [`20_clawith_pricing_20260827.png`](20_clawith_pricing_20260827.png) | 1200×1000 | 2026-08-26 20:38:45.556Z / 2026-08-27 04:44:16 +08:00 | `B-official-public-product-claim`；Free–Scale 月付、credits、Agent seats 与加购包 | `437f8746db78` |
+| [`21_clawith_whitepaper_governance_20260827.png`](21_clawith_whitepaper_governance_20260827.png) | 1440×1000 | 2026-08-26 20:39:53.938Z / 2026-08-27 04:44:16 +08:00 | `B-official-public-product-documentation`；白皮书 L1–L4 治理表述 | `94fc6032c967` |
+| [`22_clawith_whitepaper_audit_claim_20260827.png`](22_clawith_whitepaper_audit_claim_20260827.png) | 706×137 | 2026-08-26 20:40:23.090Z / 2026-08-27 04:44:16 +08:00 | `B-official-public-product-documentation`；全链路审计、追溯与回放声明 | `9ce026b32f8e` |
+| [`23_clawith_aware_focus_triggers_20260827.png`](23_clawith_aware_focus_triggers_20260827.png) | 823×1841 | 2026-08-26 20:41:08.499Z / 2026-08-27 04:44:16 +08:00 | `B-official-public-product-documentation`；Focus、Trigger 与自适应调度 | `e77fd34bda34` |
+| [`24_clawith_pulse_trigger_engine_20260827.png`](24_clawith_pulse_trigger_engine_20260827.png) | 823×1021 | 2026-08-26 20:41:59.391Z / 2026-08-27 04:44:16 +08:00 | `B-official-public-product-documentation`；Pulse Trigger Engine 与生命周期 | `61e1c147f85f` |
+| [`25_clawith_plaza_legacy_docs_20260827.png`](25_clawith_plaza_legacy_docs_20260827.png) | 823×882 | 2026-08-26 20:42:41.403Z / 2026-08-27 04:44:16 +08:00 | `B-official-public-product-documentation`；已与固定源码漂移的 Plaza 旧叙事 | `538c888e2a04` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件

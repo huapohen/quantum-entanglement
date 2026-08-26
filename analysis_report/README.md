@@ -47,10 +47,10 @@
 
 完整 SHA-256、尺寸、来源、证据等级和隐私边界见
 [`screenshots/README.md`](screenshots/README.md) 与
-[`screenshots/manifest.json`](screenshots/manifest.json)。前十张图是受限、未脱敏原件，只能
-进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地产品 UI，第 14
-张是真实模型测试输出；第 15–19 张是 Clawith 公开官网与官方文档只读证据。整套资料仍按
-项目内部证据管理。
+[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 26 张图；前十张是受限、
+未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地
+产品 UI，第 14 张是真实模型测试输出；第 15–25 张是 Clawith 公开官网、白皮书与官方文档
+只读证据。整套资料仍按项目内部证据管理。
 
 | 文件 | 内容 | 采集方式 |
 |---|---|---|
@@ -74,6 +74,12 @@
 | `screenshots/17_clawith_organization_evolution.png` | 个人 Agent 到组织级协作网络演变路径 | Playwright 官网只读证据 |
 | `screenshots/18_clawith_six_capabilities.png` | 载体、记忆、协调、执行、治理与学习六类能力 | Playwright 官网只读证据 |
 | `screenshots/19_clawith_docs_introduction.png` | 持久身份、记忆、协作与关键概念 | Playwright 官方文档只读证据 |
+| `screenshots/20_clawith_pricing_20260827.png` | Free–Scale 月付、credits、public Agent seats 与加购包 | Playwright 价格页元素只读证据 |
+| `screenshots/21_clawith_whitepaper_governance_20260827.png` | L1–L4 四级自治权限模型白皮书表述 | Playwright 白皮书 viewport 只读证据 |
+| `screenshots/22_clawith_whitepaper_audit_claim_20260827.png` | 全链路审计、追溯、回放与证据声明 | Playwright 白皮书元素只读证据 |
+| `screenshots/23_clawith_aware_focus_triggers_20260827.png` | Focus、Trigger、绑定与自适应调度文档 | Playwright 官方文档元素只读证据 |
+| `screenshots/24_clawith_pulse_trigger_engine_20260827.png` | Pulse Trigger Engine、类型与生命周期文档 | Playwright 官方文档元素只读证据 |
+| `screenshots/25_clawith_plaza_legacy_docs_20260827.png` | 与固定源码 Experience Library 已漂移的 Plaza 旧文档 | Playwright 官方文档元素只读证据 |
 
 ## 数据安全
 

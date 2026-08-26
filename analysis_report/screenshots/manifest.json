@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "755c3c6545b3755ff415a713e7635c7caea8c6ce",
-  "lastImageArchivedAt": "2026-08-26T22:36:50+08:00",
+  "lastArchivedCommit": "be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5",
+  "lastImageArchivedAt": "2026-08-27T04:44:16+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -447,6 +447,138 @@
       "sourceKind": "clawith-official-docs-readonly",
       "sourceReference": "https://clawith.ai/docs/; playwright:page-2026-08-26T14-34-44-052Z.png; archived-git:755c3c6545b3755ff415a713e7635c7caea8c6ce",
       "width": 1280
+    },
+    {
+      "byteSize": 324312,
+      "captureDate": "2026-08-26T20:38:45.556Z",
+      "captureDateEvidence": "The retained session event records completion of the Playwright CLI element-screenshot command at this UTC timestamp; the named source artifact was moved into the archive without byte changes and its SHA-256 matches",
+      "contentScope": "Clawith official pricing page showing the monthly Free, Starter, Pro and Scale tiers, included credits, public Agent seats and top-up packs",
+      "derivation": "playwright-cli-element-capture",
+      "evidenceClass": "B-official-public-product-claim",
+      "evidenceLimitations": [
+        "Pricing, credits, discounts and seat allowances are time-sensitive vendor offers; this screenshot is not a contractual quote and does not preserve taxes, regional availability or later changes",
+        "The element capture proves only the rendered monthly pricing content at access time; no purchase, billing, model-usage or service-delivery flow was exercised"
+      ],
+      "filename": "20_clawith_pricing_20260827.png",
+      "firstArchivedAt": "2026-08-27T04:44:16+08:00",
+      "height": 1000,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "437f8746db7883b7612071a476795f3fc2ce6bf257c2823ba64e86c097a18c8f",
+      "sourceKind": "clawith-official-web-readonly",
+      "sourceReference": "https://www.clawith.ai/pricing; playwright:output/playwright/clawith/20_clawith_pricing_20260827.png; captured-at:2026-08-26T20:38:45.556Z; archived-git:be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5",
+      "width": 1200
+    },
+    {
+      "byteSize": 272089,
+      "captureDate": "2026-08-26T20:39:53.938Z",
+      "captureDateEvidence": "The retained session event records completion of the Playwright CLI viewport-screenshot command at this UTC timestamp; the named source artifact was moved into the archive without byte changes and its SHA-256 matches",
+      "contentScope": "Clawith official technical-whitepaper viewport around the claimed L1-L4 four-tier autonomous permission model",
+      "derivation": "playwright-cli-viewport-capture",
+      "evidenceClass": "B-official-public-product-documentation",
+      "evidenceLimitations": [
+        "This is vendor-authored whitepaper wording, not runtime proof that four autonomy levels, risk interception or the depicted governance architecture are implemented as described",
+        "The viewport preserves one mutable section and has no immutable vendor revision; the fixed source audit remains authoritative for implementation comparisons"
+      ],
+      "filename": "21_clawith_whitepaper_governance_20260827.png",
+      "firstArchivedAt": "2026-08-27T04:44:16+08:00",
+      "height": 1000,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "94fc6032c967df7d19a6a4af55375abf1d182360afcc61a169ccf7573240ae17",
+      "sourceKind": "clawith-official-web-readonly",
+      "sourceReference": "https://www.clawith.ai/blog/clawith-technical-whitepaper#82-l1-l4-four-tier-autonomous-permission-model; playwright:output/playwright/clawith/21_clawith_whitepaper_governance_20260827.png; captured-at:2026-08-26T20:39:53.938Z; archived-git:be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5",
+      "width": 1440
+    },
+    {
+      "byteSize": 30062,
+      "captureDate": "2026-08-26T20:40:23.090Z",
+      "captureDateEvidence": "The retained session event records completion of the Playwright CLI element-screenshot command at this UTC timestamp; the named source artifact was moved into the archive without byte changes and its SHA-256 matches",
+      "contentScope": "Clawith official whitepaper claim that all Agent operations use L1-L4 boundaries and that full-chain audit makes every tool call and message flow traceable, replayable and evidentiary",
+      "derivation": "playwright-cli-element-capture",
+      "evidenceClass": "B-official-public-product-documentation",
+      "evidenceLimitations": [
+        "The isolated sentence proves the vendor made the claim, not that the implementation has a tamper-evident audit chain, complete replay semantics or evidentiary controls",
+        "Surrounding qualifications and an immutable page revision are not retained; the fixed source audit found L1-L3 and best-effort ordinary audit writes at the reviewed commit"
+      ],
+      "filename": "22_clawith_whitepaper_audit_claim_20260827.png",
+      "firstArchivedAt": "2026-08-27T04:44:16+08:00",
+      "height": 137,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "9ce026b32f8e67d37a9fdc4f875fabe7ea8efb815c6eab35caa226270752340c",
+      "sourceKind": "clawith-official-web-readonly",
+      "sourceReference": "https://www.clawith.ai/blog/clawith-technical-whitepaper; playwright:output/playwright/clawith/22_clawith_whitepaper_audit_claim_20260827.png; captured-at:2026-08-26T20:40:23.090Z; archived-git:be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5",
+      "width": 706
+    },
+    {
+      "byteSize": 204702,
+      "captureDate": "2026-08-26T20:41:08.499Z",
+      "captureDateEvidence": "The retained session event records completion of the Playwright CLI element-screenshot command at this UTC timestamp; the named source artifact was moved into the archive without byte changes and its SHA-256 matches",
+      "contentScope": "Clawith official Aware documentation covering Focus items, adaptive trigger types, Focus-Trigger binding and self-adaptive scheduling",
+      "derivation": "playwright-cli-element-capture",
+      "evidenceClass": "B-official-public-product-documentation",
+      "evidenceLimitations": [
+        "Shows mutable official documentation, not a runtime trace proving trigger durability, scheduling accuracy, recovery behavior or autonomous decision quality",
+        "A Feishu notification phrase visible in the documentation is only a vendor example; this read-only capture invoked no connector and sent no message"
+      ],
+      "filename": "23_clawith_aware_focus_triggers_20260827.png",
+      "firstArchivedAt": "2026-08-27T04:44:16+08:00",
+      "height": 1841,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "e77fd34bda345d72b398f3e3c86cf519193e7ddf2a0f44f6fbc835c77ef7b9c0",
+      "sourceKind": "clawith-official-docs-readonly",
+      "sourceReference": "https://www.clawith.ai/docs/features/aware; playwright:output/playwright/clawith/23_clawith_aware_focus_triggers_20260827.png; captured-at:2026-08-26T20:41:08.499Z; archived-git:be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5",
+      "width": 823
+    },
+    {
+      "byteSize": 120407,
+      "captureDate": "2026-08-26T20:41:59.391Z",
+      "captureDateEvidence": "The retained session event records completion of the Playwright CLI element-screenshot command at this UTC timestamp; the named source artifact was moved into the archive without byte changes and its SHA-256 matches",
+      "contentScope": "Clawith official Pulse documentation describing the trigger execution engine, supported trigger types and trigger lifecycle",
+      "derivation": "playwright-cli-element-capture",
+      "evidenceClass": "B-official-public-product-documentation",
+      "evidenceLimitations": [
+        "Shows the documented trigger-engine contract, not a runtime execution, concurrency, delivery, retry, expiry or crash-recovery test",
+        "No cron, webhook, message listener, one-shot timer or external side effect was created or fired during this read-only capture"
+      ],
+      "filename": "24_clawith_pulse_trigger_engine_20260827.png",
+      "firstArchivedAt": "2026-08-27T04:44:16+08:00",
+      "height": 1021,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "61e1c147f85f16e5cad9e08a2635586f5ab21cd8ab7077b0add44debcdd2a1de",
+      "sourceKind": "clawith-official-docs-readonly",
+      "sourceReference": "https://www.clawith.ai/docs/features/pulse; playwright:output/playwright/clawith/24_clawith_pulse_trigger_engine_20260827.png; captured-at:2026-08-26T20:41:59.391Z; archived-git:be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5",
+      "width": 823
+    },
+    {
+      "byteSize": 108988,
+      "captureDate": "2026-08-26T20:42:41.403Z",
+      "captureDateEvidence": "The retained session event records completion of the Playwright CLI element-screenshot and browser-close command at this UTC timestamp; the source image was written before close, moved into the archive without byte changes and its SHA-256 matches",
+      "contentScope": "Clawith official Plaza documentation describing an Agent-authored organizational knowledge feed with posts, browsing, comments and automatic knowledge flow",
+      "derivation": "playwright-cli-element-capture",
+      "evidenceClass": "B-official-public-product-documentation",
+      "evidenceLimitations": [
+        "This mutable documentation preserves the legacy Plaza social-feed narrative; the reviewed fixed source had already replaced that model with a human-published Experience Library",
+        "No Agent post, comment, search, publication or knowledge propagation was created or exercised during this read-only capture"
+      ],
+      "filename": "25_clawith_plaza_legacy_docs_20260827.png",
+      "firstArchivedAt": "2026-08-27T04:44:16+08:00",
+      "height": 882,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "538c888e2a04fceb44bca5cd3a6fcc6e0d05891b9a6f7371dcde308740a078c2",
+      "sourceKind": "clawith-official-docs-readonly",
+      "sourceReference": "https://www.clawith.ai/docs/features/plaza; playwright:output/playwright/clawith/25_clawith_plaza_legacy_docs_20260827.png; captured-at:2026-08-26T20:42:41.403Z; archived-git:be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5",
+      "width": 823
     }
   ],
   "redactionStatus": "mixed-restricted-originals-synthetic-ui-and-reviewed-model-output",
