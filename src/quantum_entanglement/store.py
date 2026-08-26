@@ -60,6 +60,7 @@ from .invocation_execution import (
     CANONICAL_ORCHESTRATOR_ACTOR_ID,
     TASK_INVOCATION_STARTED_EVENT_TYPE,
     InvocationStartEvidenceV2,
+    InvocationStartObserved,
     InvocationStartReceipt,
     TaskInvocationAdmissionRequest,
 )
@@ -3166,6 +3167,82 @@ class SQLiteEventStore:
             spec,
             expected_version=expected_version_snapshot,
         )
+
+    @_sanitize_invocation_start_controls
+    @_bind_event_store_process
+    def read_invocation_start(
+        self,
+        invocation_id: str,
+    ) -> Optional[InvocationStartObserved]:
+        """Return a capability-free observation of one canonical durable start.
+
+        Unknown invocation identities and canonically admitted but unstarted jobs return
+        ``None``. Any partial, legacy, or contradictory durable state fails closed instead
+        of being upgraded into schema-2 start evidence.
+        """
+
+        invocation_id_snapshot = _caller_invocation_identity(
+            invocation_id,
+            "invocation_id",
+        )
+        self._require_current_process()
+        result: Optional[InvocationStartObserved] = None
+        completed_body = False
+        try:
+            with self._transaction(classify_admission=True) as connection:
+                readback = self._read_invocation_start_in_transaction(
+                    connection,
+                    invocation_id_snapshot,
+                )
+                if readback is not None:
+                    try:
+                        result = InvocationStartObserved(readback.receipt)
+                    except (TypeError, ValueError):
+                        raise InvocationStartConflictError() from None
+                completed_body = True
+        except _EventStoreAdmissionTransactionSignal as error:
+            classified = _take_classified_event_store_transaction_signal(error)
+            if classified is None:
+                raise
+            outcome, control = classified
+            if control is not None:
+                raise _EventStoreStartControlSignal(
+                    control,
+                    ambiguity=outcome == "ambiguous",
+                    token=_EVENT_STORE_START_CONTROL_TOKEN,
+                ) from None
+            raise _EventStoreStartErrorSignal(
+                "transaction" if outcome == "rolled_back" else "ambiguous",
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
+        except sqlite3.Error as error:
+            _detach_exception(error)
+            if completed_body:
+                self._poisoned = True
+                kind = "ambiguous"
+            else:
+                kind = "transaction"
+            raise _EventStoreStartErrorSignal(
+                kind,
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
+        except BaseException as error:
+            if completed_body and self._process_is_current():
+                descriptor = _event_store_control_descriptor(error)
+                self._poisoned = True
+                _detach_exception(error)
+                if descriptor is not None:
+                    raise _EventStoreStartControlSignal(
+                        descriptor,
+                        ambiguity=True,
+                        token=_EVENT_STORE_START_CONTROL_TOKEN,
+                    ) from None
+                raise _EventStoreStartErrorSignal(
+                    "ambiguous",
+                    token=_EVENT_STORE_START_CONTROL_TOKEN,
+                ) from None
+            raise
+        return result
 
     @_bind_event_store_process
     def read_stream(self, stream_id: str, after_sequence: int = 0) -> Tuple[StoredEvent, ...]:
