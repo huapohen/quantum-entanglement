@@ -18,11 +18,22 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Dict, Mapping, Set, Tuple, cast
 
+from ._artifact_codec import (
+    CanonicalArtifactMetadataV1,
+    artifact_blob_digest_v1,
+    artifact_metadata_digest_v1,
+    artifact_request_digest_v1,
+    canonical_artifact_metadata_v1,
+    decode_canonical_artifact_metadata_v1,
+)
 from .invocation_execution import EffectClass
 
 SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_MANIFEST_DOMAIN = "quantum-entanglement.invocation-result-manifest/2\n"
 ACTION_RECEIPT_SET_DOMAIN = "quantum-entanglement.action-receipt-set/1\n"
+SCOPED_INVOCATION_RESULT_ARTIFACT_CANDIDATE_DOMAIN = (
+    "quantum-entanglement.invocation-result-artifact-candidate/2\n"
+)
 EMPTY_ACTION_RECEIPT_SET_DIGEST = hashlib.sha256(
     ACTION_RECEIPT_SET_DOMAIN.encode("utf-8") + b"[]"
 ).hexdigest()
@@ -32,6 +43,7 @@ _MIN_SQLITE_INTEGER = -(1 << 63)
 _MAX_IDENTITY_BYTES = 4_096
 _MAX_MEDIA_TYPE_BYTES = 255
 _MAX_ARTIFACTS = 256
+_MAX_ARTIFACT_CONTENT_BYTES = 16 * 1024 * 1024
 _MAX_MANIFEST_BYTES = 1_048_576
 _MAX_NARRATION_BYTES = 524_288
 _MAX_RESULT_METADATA_BYTES = 65_536
@@ -421,6 +433,175 @@ class ScopedInvocationResultArtifactV2:
             idempotency_key=raw["idempotencyKey"],
             request_digest=raw["requestDigest"],
         )
+
+
+@dataclass(frozen=True)
+class ScopedInvocationResultArtifactCandidateV2:
+    """Exact in-process Artifact content proposal; never a serializable receipt."""
+
+    tenant_id: str
+    workspace_id: str
+    session_id: str
+    task_id: str
+    artifact_id: str
+    name: str
+    media_type: str
+    content: bytes = field(repr=False)
+    metadata_canonical_bytes: bytes = field(repr=False)
+    created_by: str
+    idempotency_key: str
+    expected_head_version: int
+    _metadata: CanonicalArtifactMetadataV1 = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationResultArtifactCandidateV2:
+            raise TypeError(
+                "artifact candidate must be an exact ScopedInvocationResultArtifactCandidateV2"
+            )
+        for label, value in (
+            ("tenantId", self.tenant_id),
+            ("workspaceId", self.workspace_id),
+            ("sessionId", self.session_id),
+            ("taskId", self.task_id),
+            ("artifactId", self.artifact_id),
+            ("name", self.name),
+            ("createdBy", self.created_by),
+            ("idempotencyKey", self.idempotency_key),
+        ):
+            _text(value, label)
+        media_type = _text(
+            self.media_type,
+            "mediaType",
+            maximum_bytes=_MAX_MEDIA_TYPE_BYTES,
+        )
+        if any(character.isspace() for character in media_type) or "/" not in media_type:
+            raise ValueError("mediaType must be a whitespace-free type/subtype")
+        if type(self.content) is not bytes:
+            raise TypeError("artifact content must be immutable bytes")
+        if len(self.content) > _MAX_ARTIFACT_CONTENT_BYTES:
+            raise ValueError("artifact content exceeds its byte limit")
+        metadata = decode_canonical_artifact_metadata_v1(self.metadata_canonical_bytes)
+        expected_head = _nonnegative_integer(self.expected_head_version, "expectedHeadVersion")
+        if expected_head >= _MAX_SQLITE_INTEGER:
+            raise ValueError("expectedHeadVersion cannot allocate a successor version")
+        object.__setattr__(self, "_metadata", metadata)
+        self.to_descriptor()
+        self.canonical_digest()
+
+    @classmethod
+    def from_content_metadata(
+        cls,
+        *,
+        tenant_id: str,
+        workspace_id: str,
+        session_id: str,
+        task_id: str,
+        artifact_id: str,
+        name: str,
+        media_type: str,
+        content: bytes,
+        metadata: object,
+        created_by: str,
+        idempotency_key: str,
+        expected_head_version: int,
+    ) -> ScopedInvocationResultArtifactCandidateV2:
+        if cls is not ScopedInvocationResultArtifactCandidateV2:
+            raise TypeError("artifact candidate factory requires the exact schema-2 class")
+        canonical_metadata = canonical_artifact_metadata_v1(metadata)
+        return cls(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            session_id=session_id,
+            task_id=task_id,
+            artifact_id=artifact_id,
+            name=name,
+            media_type=media_type,
+            content=content,
+            metadata_canonical_bytes=canonical_metadata.canonical_bytes,
+            created_by=created_by,
+            idempotency_key=idempotency_key,
+            expected_head_version=expected_head_version,
+        )
+
+    @property
+    def version(self) -> int:
+        return self.expected_head_version + 1
+
+    @property
+    def parent_version(self) -> int | None:
+        return self.expected_head_version or None
+
+    @property
+    def byte_size(self) -> int:
+        return len(self.content)
+
+    @property
+    def blob_digest(self) -> str:
+        return artifact_blob_digest_v1(self.content)
+
+    @property
+    def metadata_digest(self) -> str:
+        return artifact_metadata_digest_v1(self._metadata)
+
+    @property
+    def artifact_request_digest(self) -> str:
+        return artifact_request_digest_v1(
+            tenant_id=self.tenant_id,
+            workspace_id=self.workspace_id,
+            session_id=self.session_id,
+            task_id=self.task_id,
+            name=self.name,
+            media_type=self.media_type,
+            blob_digest=self.blob_digest,
+            byte_size=self.byte_size,
+            metadata=self._metadata,
+            created_by=self.created_by,
+        )
+
+    def metadata_dict(self) -> Dict[str, object]:
+        return self._metadata.to_dict()
+
+    def to_descriptor(self) -> ScopedInvocationResultArtifactV2:
+        return ScopedInvocationResultArtifactV2(
+            artifact_id=self.artifact_id,
+            name=self.name,
+            version=self.version,
+            parent_version=self.parent_version,
+            media_type=self.media_type,
+            blob_digest=self.blob_digest,
+            byte_size=self.byte_size,
+            metadata_digest=self.metadata_digest,
+            created_by=self.created_by,
+            idempotency_key=self.idempotency_key,
+            request_digest=self.artifact_request_digest,
+        )
+
+    def _identity_dict(self) -> Dict[str, object]:
+        return {
+            "schemaVersion": 2,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "sessionId": self.session_id,
+            "taskId": self.task_id,
+            "artifactId": self.artifact_id,
+            "name": self.name,
+            "mediaType": self.media_type,
+            "blobDigest": self.blob_digest,
+            "byteSize": self.byte_size,
+            "metadataDigest": self.metadata_digest,
+            "createdBy": self.created_by,
+            "idempotencyKey": self.idempotency_key,
+            "expectedHeadVersion": self.expected_head_version,
+            "version": self.version,
+            "parentVersion": self.parent_version,
+            "artifactRequestDigest": self.artifact_request_digest,
+        }
+
+    def canonical_digest(self) -> str:
+        return hashlib.sha256(
+            SCOPED_INVOCATION_RESULT_ARTIFACT_CANDIDATE_DOMAIN.encode("utf-8")
+            + _canonical_json_bytes(self._identity_dict())
+        ).hexdigest()
 
 
 @dataclass(frozen=True)
