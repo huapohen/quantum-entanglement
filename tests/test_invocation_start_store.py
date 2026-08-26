@@ -14,6 +14,7 @@ from quantum_entanglement.invocation_execution import (
     CANONICAL_ORCHESTRATOR_ACTOR_ID,
     TASK_INVOCATION_STARTED_EVENT_TYPE,
     InvocationExecutionManifest,
+    InvocationStartClaimed,
     InvocationStartEvidenceV2,
     InvocationStartObserved,
     TaskInvocationAdmissionRequest,
@@ -160,6 +161,43 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
                 0
             ],
             0,
+        )
+
+    def test_first_claim_commits_attempt_and_start_event_as_one_unit(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+
+        claimed = self.store.claim_invocation_start(
+            request.manifest.invocation_id,
+            "worker-start-store-1",
+            lease_seconds=60,
+            expected_version=2,
+        )
+
+        self.assertIs(type(claimed), InvocationStartClaimed)
+        typed = cast(InvocationStartClaimed, claimed)
+        self.assertEqual(typed.receipt.sequence, 3)
+        self.assertEqual(typed.receipt.evidence.invocation_id, request.manifest.invocation_id)
+        self.assertEqual(typed.receipt.evidence.attempt_id, typed.lease.attempt_id)
+        self.assertEqual(typed.receipt.evidence.worker_id, typed.lease.worker_id)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT event_type FROM events WHERE event_id = ?",
+                (typed.receipt.event_id,),
+            ).fetchone()[0],
+            TASK_INVOCATION_STARTED_EVENT_TYPE,
+        )
+        self.assertEqual(self.store.stream_version(request.stream_id), 3)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            1,
+        )
+        self.assertEqual(
+            self.store.read_invocation_start(request.manifest.invocation_id),
+            InvocationStartObserved(typed.receipt),
         )
 
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
