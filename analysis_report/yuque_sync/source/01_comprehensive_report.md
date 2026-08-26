@@ -1,6 +1,6 @@
 # 综合报告｜人与多 Agent 群聊协同产品：调研、架构与实现
 
-> **同步状态**：2026-08-20 已从本地单一真相源 [`analysis_report/multi_agent_collaboration_report.md`](https://github.com/huapohen/quantum-entanglement/blob/main/analysis_report/multi_agent_collaboration_report.md) 更新。文中的 531 项测试只属于历史基线 `e4cbf040579bf1f33c2b7692d2fbd6944d837952`，不得当作当前主线。当前生产边界见 [07｜当前实现证据与生产边界](https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853)；最新 invocation 事务阶段证据见 [10｜认证化 Invocation 事务恢复证据](https://app.notion.com/p/3c2ead4b996e8105b0cad304ef28dd38)。
+> **本地传输源状态**：2026-08-27 已补入 Clawith 增量，等待写入并回读私人语雀；当前状态为 `local_pending`，不是远端同步完成证明。2026-08-20 内容属于最近一次已发布历史基线。文中的 531 项测试只属于历史基线 `e4cbf040579bf1f33c2b7692d2fbd6944d837952`，不得当作当前主线。当前生产边界见 [07｜当前实现证据与生产边界](https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853)；最新 invocation 事务阶段证据见 [10｜认证化 Invocation 事务恢复证据](https://app.notion.com/p/3c2ead4b996e8105b0cad304ef28dd38)。
 
 ## Notion 专题与证据导航
 
@@ -14,6 +14,7 @@
 - [07｜当前实现证据与生产边界](https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853)
 - [10｜认证化 Invocation 事务恢复证据](https://app.notion.com/p/3c2ead4b996e8105b0cad304ef28dd38)
 - [证据库｜飞书与语雀调研截图（只读）](https://app.notion.com/p/3c1ead4b996e8101997fecd0302714ba)
+- `local_pending`：[Clawith 竞品深研：从“数字员工组织”反推 WanWork 的产品与底层取舍](14_clawith_competitive_analysis.md)
 
 > 项目代号：Quantum Entanglement
 > 面向方向：WanWork 人与 Agent 协同办公
@@ -36,6 +37,7 @@
 - 外部 Agent 用 A2A，工具/数据用 MCP，内部组织语义用 WanWork Coordination Envelope；
 - LangGraph 负责需要 checkpoint/interrupt 的长期流程，插件式 Harness 负责单个 Agent run，平台领域内核位于二者之上；
 - 人工不是异常分支，而是授权与责任体系中的正式参与者。
+- Clawith 校准产品形态：稳定 AgentIdentity/Revision、Participant/Crew、主动工作和人审 Experience 值得吸收；其非标准 A2A 命名、宽权限部署和弱审计边界不进入生产基线。
 
 本轮研究的最重要决策：
 
@@ -45,8 +47,11 @@
 4. **`@Agent` 绕过 LLM 规划，但绝不绕过日志、政策、上下文和版本。**
 5. **LangGraph + DeepSeek Harness 不是二选一；二者都不应成为全部业务真相源。**
 6. **先做一个结果可见、验收清晰的高价值业务 Agent 团队，再抽象平台。**
+7. **LangGraph 管确定性控制流，Harness 管节点执行纪律；产品机制可以借鉴，权限、供应链和审计边界必须按 WanWork 不变量重建。**
 
 本仓库已经用可运行代码验证核心不变量。下述 2026-08-20 历史 clean baseline 固定为 `e4cbf040579bf1f33c2b7692d2fbd6944d837952`：531 项测试和 5 个本地 release gate 通过；本地 demo 完成 `@Agent` 直达、三 Agent 接力、版本化产出和因果事件。该历史快照还包含 durable delivery/attempt/artifact/projection、tenant authorization slice、备份恢复、迁移桥、canonical release evidence 与双构建制品门禁。它仍是预生产单节点内核，不是可部署的商业服务：正式 A2A/MCP、public admission、系统级 action-time authorization、完整 effect receipt、IM/UI、生产部署/观测、锁定供应链与端到端事务集成仍未完成。
+
+Clawith 增量调研绑定固定源码 `45fc701c366c69f89dff26d91d6a4a9cbc38e6f8` 与 2026-08-26 归档的官网截图；本轮没有启动 Clawith、连接真实模型、做压力/跨租户/渠道/MCP 动态验证。因此下文只把固定源码事实用于架构取舍，不把其能力写成 Quantum Entanglement 已实现，也不把官网营销表述写成生产证明。
 
 ## 1. 研究目标与范围
 
@@ -83,6 +88,7 @@
 | LangGraph | `1e44bda` / `1.2.11` | graph/checkpoint/interrupt |
 | LangChain | `2019bf5` / `1.3.15` | model/tool/message/middleware |
 | Deep Agents | `75c5ce4` / `0.7.7` | 上层通用 Agent scaffold |
+| Clawith | `45fc701c` / 固定于 2026-08-26 | AI 组织产品、群聊、主动调度、经验库与运行时边界 |
 
 
 研究把事实分为 A（源码/规范）、B（官方产品）、C（内部资料）、D（假设），避免把宣传或讨论当作已验证实现。完整方法见 [00｜范围、证据与核心发现](https://app.notion.com/p/3c1ead4b996e81c991e5f915de1828bd)。
@@ -149,6 +155,10 @@ Agent 可以更换模型、框架、进程或部署位置；平台不依赖它�
 
 
 详细逐项分析见 [04｜多 Agent 竞品全景](https://app.notion.com/p/3c1ead4b996e811fa520ed44582eeb1b)；官方来源、固定源码、许可证和宣传/实现差异的逐项核验见 [06｜竞品官方信源、许可证与实现核验](https://app.notion.com/p/3c1ead4b996e81f9b5eddebebc96d30a)。后者覆盖 14 个产品与 65 条唯一来源，并严格区分“官方宣称 / 可验证实现 / 推断 / 未知”。
+
+**Clawith 增量一级竞品（不计入上述历史 14 家口径）：** 它最值得学习的不是“AI 组织”口号，而是把多个机制做成同一日常工作台：Agent 是稳定组织对象；人和 Agent 统一为 Participant 并进入长期 Crew；`@单 Agent` 确定性直达，`@多个 Agent` 才进入模型规划；Focus、Trigger、稳定 Occurrence 与 Run 组成主动工作闭环；Artifact 可提炼为人审后才发布的 Experience；workspace 写入以 candidate、digest 和 CAS 显式处理冲突。它同时暴露了必须反向吸取的教训：内部 `notify/consult/task_delegate` 不是标准 A2A，默认 Compose/宿主 pip 权限过宽，Skill/MCP 自安装缺少完整供应链门禁，普通 best-effort AuditLog 不能支撑不可篡改审计承诺。
+
+因此目标不是复制 Clawith 页面，而是组合两边优势：用其组织语言和原生群聊降低使用门槛，用 WanWork 的 canonical event、AgentRevision、HandoffContract、Artifact、authority、receipt、unknown/fencing 和标准 adapter 重新建立可靠边界。当前验收产品仍是 loopback 固定三 Agent 切片，不是上述完整组织产品。
 ### 3.3 市场空白
 目前没有一个候选同时做到：
 - 群聊原生的独立 Agent 身份；
