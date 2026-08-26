@@ -71,6 +71,10 @@ from .invocation_execution import (
     InvocationStartEvidenceV2,
     InvocationStartObserved,
     InvocationStartReceipt,
+    ScopedInvocationStartClaimedV3,
+    ScopedInvocationStartEvidenceV3,
+    ScopedInvocationStartObservedV3,
+    ScopedInvocationStartReceiptV3,
     ScopedTaskInvocationAdmissionRequestV2,
     TaskInvocationAdmissionRequest,
 )
@@ -872,6 +876,37 @@ _InvocationStartState = Union[  # noqa: UP007 -- strict Python 3.9 mypy gate.
 _InvocationStartResult = Union[  # noqa: UP007 -- strict Python 3.9 mypy gate.
     InvocationStartClaimed,
     InvocationStartObserved,
+]
+
+
+@dataclass(frozen=True)
+class _ScopedInvocationStartAdmission:
+    """Scoped canonical admission that has not yet minted start authority."""
+
+    admission: _InvocationAdmissionReceipt
+    request: ScopedTaskInvocationAdmissionRequestV2
+    job: InvocationJob
+
+
+@dataclass(frozen=True)
+class _ScopedInvocationStartReadback:
+    """Validated scoped start state without plaintext lease authority."""
+
+    admission: _InvocationAdmissionReceipt
+    request: ScopedTaskInvocationAdmissionRequestV2
+    job: InvocationJob
+    attempt: InvocationAttempt
+    event: StoredEvent
+    receipt: ScopedInvocationStartReceiptV3
+
+
+_ScopedInvocationStartState = Union[  # noqa: UP007 -- strict Python 3.9 mypy gate.
+    _ScopedInvocationStartAdmission,
+    _ScopedInvocationStartReadback,
+]
+_ScopedInvocationStartResult = Union[  # noqa: UP007 -- strict Python 3.9 mypy gate.
+    ScopedInvocationStartClaimedV3,
+    ScopedInvocationStartObservedV3,
 ]
 
 
@@ -1934,6 +1969,38 @@ class SQLiteEventStore:
             raise InvocationStartConflictError() from None
         return admission, request, job
 
+    def _canonical_scoped_invocation_admission_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        invocation_id: str,
+    ) -> Tuple[
+        _InvocationAdmissionReceipt,
+        ScopedTaskInvocationAdmissionRequestV2,
+        InvocationJob,
+    ]:
+        """Prove one v4 receipt is the exact scoped schema-2 semantic admission."""
+
+        try:
+            admission, stored_events, job = self._validate_invocation_admission_receipt(
+                connection,
+                row,
+            )
+            if admission.invocation_id != invocation_id:
+                raise ValueError("scoped invocation admission identity does not match")
+            request = ScopedTaskInvocationAdmissionRequestV2.from_components(
+                tuple(stored.event for stored in stored_events),
+                self._invocation_job_spec_from_job(job),
+            )
+            if request.manifest.invocation_id != invocation_id:
+                raise ValueError("scoped admission manifest identity is inconsistent")
+            if request.manifest.canonical_digest() != job.payload_digest:
+                raise ValueError("scoped admission manifest digest is inconsistent")
+        except (EventStoreIntegrityError, InvocationIntegrityError, TypeError, ValueError):
+            raise InvocationStartConflictError() from None
+        return admission, request, job
+
     def _invocation_start_candidates_in_transaction(
         self,
         connection: sqlite3.Connection,
@@ -2198,6 +2265,130 @@ class SQLiteEventStore:
             job,
             candidates[0],
             fresh=fresh,
+        )
+
+    def _validate_scoped_invocation_start_readback(
+        self,
+        connection: sqlite3.Connection,
+        admission: _InvocationAdmissionReceipt,
+        request: ScopedTaskInvocationAdmissionRequestV2,
+        job: InvocationJob,
+        stored: StoredEvent,
+        *,
+        fresh: bool,
+    ) -> _ScopedInvocationStartReadback:
+        """Validate one schema-3 start against scoped admission, job and attempt."""
+
+        if type(fresh) is not bool:
+            raise TypeError("fresh must be a boolean")
+        manifest = request.manifest
+        event = stored.event
+        canonical_key = "invocation-start:%s:1" % manifest.invocation_id
+        try:
+            evidence = ScopedInvocationStartEvidenceV3.from_event_payload(
+                event.event_type,
+                event.payload,
+            )
+            if (
+                event.stream_id != admission.stream_id
+                or event.actor_id != CANONICAL_ORCHESTRATOR_ACTOR_ID
+                or event.idempotency_key != canonical_key
+                or event.timestamp != evidence.claimed_at
+                or event.correlation_id != manifest.correlation_id
+                or event.causation_id != manifest.causation_id
+                or stored.sequence <= admission.last_sequence
+                or stored.global_position <= admission.last_global_position
+            ):
+                raise ValueError("scoped invocation-start event envelope is inconsistent")
+            if (
+                evidence.schema_version != 3
+                or evidence.tenant_id != manifest.tenant_id
+                or evidence.workspace_id != manifest.workspace_id
+                or evidence.invocation_id != manifest.invocation_id
+                or evidence.session_id != manifest.session_id
+                or evidence.plan_id != manifest.plan_id
+                or evidence.task_id != manifest.task_id
+                or evidence.agent_id != manifest.agent_id
+                or evidence.job_idempotency_key != manifest.job_idempotency_key
+                or evidence.attempt_number != 1
+                or evidence.lease_epoch != 1
+                or evidence.manifest_digest != manifest.canonical_digest()
+                or evidence.manifest_digest != job.payload_digest
+                or evidence.envelope_digest != manifest.envelope_digest
+                or evidence.context_digest != manifest.context_digest
+                or evidence.authorization_digest != manifest.authorization_digest
+                or evidence.runtime_revision != manifest.runtime_revision
+                or evidence.correlation_id != manifest.correlation_id
+                or evidence.causation_id != manifest.causation_id
+            ):
+                raise ValueError("scoped invocation-start evidence is inconsistent")
+
+            attempt_rows = connection.execute(
+                """
+                SELECT * FROM invocation_attempts
+                WHERE invocation_id = ?
+                ORDER BY attempt_number
+                LIMIT 2
+                """,
+                (manifest.invocation_id,),
+            ).fetchall()
+            if len(attempt_rows) != 1:
+                raise ValueError("scoped invocation start does not have exactly one attempt")
+            attempt = SQLiteInvocationAttemptStore._row_to_attempt(attempt_rows[0])
+            SQLiteInvocationAttemptStore._validate_recovery_snapshot(
+                job,
+                attempt,
+                attempt_count=1,
+            )
+            if (
+                job.max_attempts != 1
+                or job.attempts_started != 1
+                or job.lease_epoch != 1
+                or attempt.attempt_id != evidence.attempt_id
+                or attempt.invocation_id != evidence.invocation_id
+                or attempt.attempt_number != evidence.attempt_number
+                or attempt.lease_epoch != evidence.lease_epoch
+                or attempt.worker_id != evidence.worker_id
+                or attempt.lease_token_digest != evidence.lease_token_digest
+                or attempt.started_at != evidence.claimed_at
+                or attempt.heartbeat_at < evidence.claimed_at
+                or attempt.lease_expires_at < evidence.lease_expires_at
+                or job.updated_at < evidence.claimed_at
+            ):
+                raise ValueError("scoped invocation-start attempt binding is inconsistent")
+            if fresh and (
+                job.status is not InvocationStatus.RUNNING
+                or attempt.status is not AttemptStatus.RUNNING
+                or job.lease_owner != evidence.worker_id
+                or job.lease_token_digest != evidence.lease_token_digest
+                or job.heartbeat_at != evidence.claimed_at
+                or job.lease_expires_at != evidence.lease_expires_at
+                or job.updated_at != evidence.claimed_at
+                or attempt.heartbeat_at != evidence.claimed_at
+                or attempt.lease_expires_at != evidence.lease_expires_at
+            ):
+                raise ValueError("fresh scoped invocation-start ownership is inconsistent")
+            receipt = ScopedInvocationStartReceiptV3(
+                event_id=event.event_id,
+                stream_id=event.stream_id,
+                sequence=stored.sequence,
+                global_position=stored.global_position,
+                evidence=evidence,
+            )
+        except (
+            EventStoreIntegrityError,
+            InvocationIntegrityError,
+            TypeError,
+            ValueError,
+        ):
+            raise InvocationStartConflictError() from None
+        return _ScopedInvocationStartReadback(
+            admission=admission,
+            request=request,
+            job=job,
+            attempt=attempt,
+            event=stored,
+            receipt=receipt,
         )
 
     def _read_invocation_start_in_transaction(
