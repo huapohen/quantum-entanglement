@@ -485,8 +485,6 @@ class ScopedInvocationResultArtifactCandidateV2:
         if expected_head >= _MAX_SQLITE_INTEGER:
             raise ValueError("expectedHeadVersion cannot allocate a successor version")
         object.__setattr__(self, "_metadata", metadata)
-        self.to_descriptor()
-        self.canonical_digest()
 
     @classmethod
     def from_content_metadata(
@@ -525,26 +523,32 @@ class ScopedInvocationResultArtifactCandidateV2:
 
     @property
     def version(self) -> int:
+        ScopedInvocationResultArtifactCandidateV2.__post_init__(self)
         return self.expected_head_version + 1
 
     @property
     def parent_version(self) -> int | None:
+        ScopedInvocationResultArtifactCandidateV2.__post_init__(self)
         return self.expected_head_version or None
 
     @property
     def byte_size(self) -> int:
+        ScopedInvocationResultArtifactCandidateV2.__post_init__(self)
         return len(self.content)
 
     @property
     def blob_digest(self) -> str:
+        ScopedInvocationResultArtifactCandidateV2.__post_init__(self)
         return artifact_blob_digest_v1(self.content)
 
     @property
     def metadata_digest(self) -> str:
+        ScopedInvocationResultArtifactCandidateV2.__post_init__(self)
         return artifact_metadata_digest_v1(self._metadata)
 
     @property
     def artifact_request_digest(self) -> str:
+        ScopedInvocationResultArtifactCandidateV2.__post_init__(self)
         return artifact_request_digest_v1(
             tenant_id=self.tenant_id,
             workspace_id=self.workspace_id,
@@ -559,9 +563,11 @@ class ScopedInvocationResultArtifactCandidateV2:
         )
 
     def metadata_dict(self) -> Dict[str, object]:
+        ScopedInvocationResultArtifactCandidateV2.__post_init__(self)
         return self._metadata.to_dict()
 
     def to_descriptor(self) -> ScopedInvocationResultArtifactV2:
+        ScopedInvocationResultArtifactCandidateV2.__post_init__(self)
         return ScopedInvocationResultArtifactV2(
             artifact_id=self.artifact_id,
             name=self.name,
@@ -598,6 +604,7 @@ class ScopedInvocationResultArtifactCandidateV2:
         }
 
     def canonical_digest(self) -> str:
+        ScopedInvocationResultArtifactCandidateV2.__post_init__(self)
         return hashlib.sha256(
             SCOPED_INVOCATION_RESULT_ARTIFACT_CANDIDATE_DOMAIN.encode("utf-8")
             + _canonical_json_bytes(self._identity_dict())
