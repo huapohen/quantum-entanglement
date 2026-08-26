@@ -6,6 +6,8 @@ import math
 import unittest
 from dataclasses import replace
 
+import quantum_entanglement
+import quantum_entanglement.invocation_worker as invocation_worker_module
 from quantum_entanglement.attempts import InvocationLease
 from quantum_entanglement.invocation_execution import (
     EffectClass,
@@ -113,6 +115,19 @@ def valid_configuration() -> InvocationWorkerConfiguration:
 
 
 class InvocationWorkerAdmissionTests(unittest.TestCase):
+    def test_worker_contracts_are_exported_from_the_package_surface(self) -> None:
+        expected = {
+            "HeartbeatPureWorkerGate": HeartbeatPureWorkerGate,
+            "InvocationWorkerAdmission": InvocationWorkerAdmission,
+            "InvocationWorkerConfiguration": InvocationWorkerConfiguration,
+            "InvocationWorkerDisabledError": InvocationWorkerDisabledError,
+        }
+        self.assertEqual(set(invocation_worker_module.__all__), set(expected))
+        for name, value in expected.items():
+            with self.subTest(name=name):
+                self.assertIn(name, quantum_entanglement.__all__)
+                self.assertIs(getattr(quantum_entanglement, name), value)
+
     def test_prepare_snapshots_exact_claim_manifest_and_configuration(self) -> None:
         manifest = valid_manifest()
         claim = valid_claim(manifest)
