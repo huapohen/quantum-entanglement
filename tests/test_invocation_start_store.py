@@ -966,7 +966,8 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
                         expected_version=2,
                     )
         finally:
-            self.store._connection.set_authorizer(None)
+            # Python 3.9 does not reliably treat None as "disable authorizer".
+            self.store._connection.set_authorizer(lambda *_args: sqlite3.SQLITE_OK)
 
         self.assertIsNone(caught.exception.__cause__)
         self.assertIsNone(caught.exception.__context__)
