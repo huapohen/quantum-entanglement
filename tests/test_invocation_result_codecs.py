@@ -5,6 +5,7 @@ import json
 import unicodedata
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 
 import quantum_entanglement
 import quantum_entanglement.invocation_results as invocation_results_module
@@ -203,6 +204,101 @@ class ScopedInvocationResultManifestCodecTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "exact"):
             ManifestSubclass.from_dict(wire)
 
+    def test_every_manifest_wire_field_is_required(self) -> None:
+        wire = valid_manifest().to_dict()
+        for field_name in tuple(wire):
+            with self.subTest(field_name=field_name):
+                changed = dict(wire)
+                del changed[field_name]
+                with self.assertRaisesRegex(ValueError, "exact schema"):
+                    ScopedInvocationResultManifestV2.from_dict(changed)
+
+    def test_result_body_is_deeply_snapshotted_and_hidden_from_repr(self) -> None:
+        nested: list[object] = [{"text": "résumé"}, 7, True, None]
+        source: dict[str, object] = {"nested": nested, "secret": "metadata-secret"}
+        manifest = valid_manifest(
+            narration="narration-secret\nsecond line",
+            metadata=source,
+        )
+
+        nested[0] = {"text": "mutated"}
+        source["later"] = "mutation"
+        first_wire = manifest.to_dict()
+        self.assertEqual(
+            first_wire["metadata"],
+            {"nested": [{"text": "résumé"}, 7, True, None], "secret": "metadata-secret"},
+        )
+        first_wire["metadata"]["secret"] = "wire-mutated"  # type: ignore[index]
+        self.assertEqual(manifest.to_dict()["metadata"]["secret"], "metadata-secret")  # type: ignore[index]
+        self.assertNotIn("narration-secret", repr(manifest))
+        self.assertNotIn("metadata-secret", repr(manifest))
+
+    def test_result_body_rejects_noncanonical_or_unsafe_text(self) -> None:
+        decomposed = unicodedata.normalize("NFD", "résumé")
+        for narration in (decomposed, "bad\x00text", "bad\rtext", "\ud800"):
+            with self.subTest(narration=repr(narration)):
+                with self.assertRaises(ValueError):
+                    valid_manifest(narration=narration)
+
+        for metadata in (
+            {decomposed: "value"},
+            {"value": decomposed},
+            {"value": "bad\x00text"},
+            {"value": "\ud800"},
+        ):
+            with self.subTest(metadata=repr(metadata)):
+                with self.assertRaises(ValueError):
+                    valid_manifest(metadata=metadata)
+
+    def test_result_metadata_rejects_cycles_depth_nodes_numbers_and_types(self) -> None:
+        cycle: dict[str, object] = {}
+        cycle["self"] = cycle
+        too_deep: object = "leaf"
+        for _ in range(65):
+            too_deep = [too_deep]
+
+        invalid_values: tuple[dict[object, object], ...] = (
+            cycle,
+            {"deep": too_deep},
+            {str(index): index for index in range(5_001)},
+            {1: "non-text-key"},
+            {"number": float("nan")},
+            {"number": float("inf")},
+            {"number": 1 << 63},
+            {"value": object()},
+        )
+        for metadata in invalid_values:
+            with self.subTest(metadata_type=next(iter(metadata), "empty")):
+                with self.assertRaises((TypeError, ValueError)):
+                    valid_manifest(metadata=metadata)  # type: ignore[arg-type]
+
+    def test_result_metadata_detects_same_length_concurrent_mutation(self) -> None:
+        values: list[object] = ["captured", "original"]
+        metadata: dict[str, object] = {"items": values}
+        original_snapshot = invocation_results_module._snapshot_json_value
+        changed = False
+
+        def mutate_during_snapshot(value: object, label: str, **kwargs: object) -> object:
+            nonlocal changed
+            if label == "metadata.items[0]" and not changed:
+                values[1] = "mutated"
+                changed = True
+            return original_snapshot(value, label, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(
+            invocation_results_module,
+            "_snapshot_json_value",
+            side_effect=mutate_during_snapshot,
+        ):
+            with self.assertRaisesRegex(ValueError, "changed while"):
+                valid_manifest(metadata=metadata)
+
+    def test_result_identity_limit_matches_scoped_start_identity_limit(self) -> None:
+        boundary = valid_manifest(result_ref="r" * 4_096)
+        self.assertEqual(len(boundary.result_ref.encode("utf-8")), 4_096)
+        with self.assertRaisesRegex(ValueError, "byte limit"):
+            valid_manifest(result_ref="r" * 4_097)
+
     def test_manifest_binds_optional_primary_artifact_and_unique_artifact_set(self) -> None:
         first = valid_artifact()
         second = valid_artifact(
@@ -216,6 +312,9 @@ class ScopedInvocationResultManifestCodecTests(unittest.TestCase):
         )
         self.assertEqual(manifest.primary_artifact_id, second.artifact_id)
         self.assertEqual(manifest.result_ref, "result:invocation-result-1")
+
+        with self.assertRaisesRegex(ValueError, "must not alias"):
+            valid_manifest(result_ref=first.artifact_id)
 
         invalid_sets: tuple[
             tuple[tuple[ScopedInvocationResultArtifactV2, ...], str | None], ...
@@ -269,6 +368,34 @@ class ScopedInvocationResultManifestCodecTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "at most 256"):
             valid_manifest(artifacts=many, primary_artifact_id="artifact-0")
+
+    def test_artifact_order_changes_manifest_digest(self) -> None:
+        first = valid_artifact()
+        second = valid_artifact(
+            artifact_id="artifact-result-2",
+            name="evidence.json",
+            idempotency_key="result-artifact:invocation-result-1:2",
+        )
+        forward = valid_manifest(artifacts=(first, second))
+        reverse = valid_manifest(artifacts=(second, first))
+        self.assertNotEqual(forward.canonical_digest(), reverse.canonical_digest())
+
+    def test_manifest_size_limit_is_enforced_during_construction(self) -> None:
+        artifacts = tuple(
+            valid_artifact(
+                artifact_id=f"artifact-{index}",
+                name=f"artifact-{index}-" + ("n" * 1_500),
+                idempotency_key=f"artifact-key-{index}",
+            )
+            for index in range(256)
+        )
+        with self.assertRaisesRegex(ValueError, "manifest exceeds"):
+            valid_manifest(
+                artifacts=artifacts,
+                primary_artifact_id=None,
+                narration="n" * 524_288,
+                metadata={"payload": "m" * 60_000},
+            )
 
 
 if __name__ == "__main__":  # pragma: no cover

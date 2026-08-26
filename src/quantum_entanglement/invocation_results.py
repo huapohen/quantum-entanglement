@@ -34,7 +34,7 @@ _MAX_MEDIA_TYPE_BYTES = 255
 _MAX_ARTIFACTS = 256
 _MAX_MANIFEST_BYTES = 1_048_576
 _MAX_NARRATION_BYTES = 524_288
-_MAX_RESULT_METADATA_BYTES = 262_144
+_MAX_RESULT_METADATA_BYTES = 65_536
 _MAX_METADATA_DEPTH = 64
 _MAX_METADATA_NODES = 10_000
 _MAX_METADATA_KEY_BYTES = 4_096
@@ -144,11 +144,19 @@ def _body_text(value: object, label: str, *, maximum_bytes: int) -> str:
     if unicodedata.normalize("NFC", value) != value:
         raise ValueError(f"{label} must use Unicode NFC")
     if any(
-        (ord(character) < 0x20 and character not in "\t\n\r") or ord(character) == 0x7F
+        (ord(character) < 0x20 and character not in "\t\n") or ord(character) == 0x7F
         for character in value
     ):
         raise ValueError(f"{label} contains a forbidden control character")
     return value
+
+
+def _same_snapshot_slot(current: object, captured: object) -> bool:
+    if type(current) is not type(captured):
+        return False
+    if type(current) in (dict, list):
+        return current is captured
+    return current == captured
 
 
 def _snapshot_json_value(
@@ -202,7 +210,14 @@ def _snapshot_json_value(
                 )
                 for index, item in enumerate(items)
             ]
-            if len(sequence) != len(items):
+            try:
+                current_items = tuple(sequence)
+            except RuntimeError as error:
+                raise ValueError(f"{label} changed while it was being snapshotted") from error
+            if len(current_items) != len(items) or any(
+                not _same_snapshot_slot(current, captured)
+                for current, captured in zip(current_items, items)
+            ):
                 raise ValueError(f"{label} changed while it was being snapshotted")
             return copied
 
@@ -230,7 +245,17 @@ def _snapshot_json_value(
                 active=active,
                 nodes=nodes,
             )
-        if len(mapping) != len(entries):
+        try:
+            current_entries = tuple(mapping.items())
+        except RuntimeError as error:
+            raise ValueError(f"{label} changed while it was being snapshotted") from error
+        if len(current_entries) != len(entries) or any(
+            current_key != captured_key or not _same_snapshot_slot(current_value, captured_value)
+            for (current_key, current_value), (captured_key, captured_value) in zip(
+                current_entries,
+                entries,
+            )
+        ):
             raise ValueError(f"{label} changed while it was being snapshotted")
         return copied_mapping
     finally:
@@ -494,6 +519,8 @@ class ScopedInvocationResultManifestV2:
             artifacts.append(snapshot)
         if self.primary_artifact_id is not None and self.primary_artifact_id not in artifact_ids:
             raise ValueError("primaryArtifactId must identify one descriptor in artifacts")
+        if self.result_ref in artifact_ids:
+            raise ValueError("resultRef must not alias an artifactId")
         object.__setattr__(self, "metadata", metadata)
         object.__setattr__(self, "_metadata_canonical_bytes", metadata_bytes)
         object.__setattr__(self, "artifacts", tuple(artifacts))
