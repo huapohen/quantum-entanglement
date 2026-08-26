@@ -143,6 +143,8 @@ WanWork 对外应像网络节点，对内应像协作操作系统：外部消息
 
 WanWork 最应直接吸收四个彼此咬合的产品机制：版本化稳定身份与 Directory、原生 Crew 群聊和公开 handoff、`Focus → Trigger → occurrence → Run` 的主动工作闭环、`draft → human review → published/retired` 的 Experience Library。必须保留并增强自己的版本化 Artifact、action-scoped authority、append-only event、provider receipt、unknown/fencing 和标准协议边缘 adapter；不要复制宽权限部署、第三方 Skill/MCP 默认自扩展、非标准 A2A 命名或用普通审计表承载不可篡改承诺。完整源码定位、对照矩阵与阶段建议见 [`14_clawith_competitive_analysis.md`](14_clawith_competitive_analysis.md)。
 
+2026-08-27 首页进一步用量化、营销、研发三个“部门级交付样板”呈现角色链、阶段、人审和结果指标。这种 Solution Blueprint 比功能清单更接近用户购买语言，值得进入产品层；但研发卡片同时写“仅需 3 天”和 `6d 21h`，且本轮没有对应 Run、仓库、PR 或测试报告。WanWork 应让 BlueprintRevision 编译到既有 Agent/Handoff/Artifact/Policy 合同，并让结果卡只从同 scope 的接受事件、Artifact、receipt 和明确统计窗口派生，不能复制无证据绑定的数字。完整像素和限制见 Clawith 专题第 2.4 节；该专题仍为 `local_pending`。
+
 另有两个不应遗漏的基础机制：Skill 应按 `catalog → read → activate → materialize` 渐进披露，避免把全部能力和供应链风险一次塞进模型上下文；模型连接应把 tool、vision、结构化输出、上下文/速率限制等探测结果绑定到不可变配置指纹与探测时间。前者仍须经过版本 pin、审批、签名/扫描、隔离与出网门禁，后者只是有时效的 capability fact，不能由模型名或厂商宣传推断。
 
 ## 5. 跨竞品机制比较

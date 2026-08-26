@@ -228,6 +228,12 @@ unknown/fencing 和标准协议边缘 adapter；不要复制宽权限部署、�
 非标准 A2A 命名或用普通审计表承载不可篡改承诺。完整源码定位、对照矩阵与阶段建议见
 [`20_clawith_competitive_analysis.md`](20_clawith_competitive_analysis.md)。
 
+2026-08-27 首页进一步用量化、营销、研发三个“部门级交付样板”呈现角色链、阶段、人审和
+结果指标。这种 Solution Blueprint 比功能清单更接近用户购买语言，值得进入产品层；但研发
+卡片同时写“仅需 3 天”和 `6d 21h`，且本轮没有对应 Run、仓库、PR 或测试报告。WanWork
+应让 BlueprintRevision 编译到既有 Agent/Handoff/Artifact/Policy 合同，并让结果卡只从
+同 scope 的接受事件、Artifact、receipt 和明确统计窗口派生，不能复制无证据绑定的数字。
+
 另有两个不应遗漏的基础机制：Skill 应按 `catalog → read → activate → materialize` 渐进披露，
 避免把全部能力和供应链风险一次塞进模型上下文；模型连接应把 tool、vision、结构化输出、
 上下文/速率限制等探测结果绑定到不可变配置指纹与探测时间。前者仍须经过版本 pin、审批、
