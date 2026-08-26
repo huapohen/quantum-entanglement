@@ -6,6 +6,8 @@ import unicodedata
 import unittest
 from dataclasses import replace
 
+import quantum_entanglement
+import quantum_entanglement.invocation_results as invocation_results_module
 from quantum_entanglement.invocation_execution import EffectClass
 from quantum_entanglement.invocation_results import (
     EMPTY_ACTION_RECEIPT_SET_DIGEST,
@@ -118,6 +120,21 @@ class ScopedInvocationResultArtifactCodecTests(unittest.TestCase):
 
 
 class ScopedInvocationResultManifestCodecTests(unittest.TestCase):
+    def test_result_codec_contracts_are_exported_from_the_package_surface(self) -> None:
+        expected = {
+            "EMPTY_ACTION_RECEIPT_SET_DIGEST": EMPTY_ACTION_RECEIPT_SET_DIGEST,
+            "SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION": (
+                SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION
+            ),
+            "ScopedInvocationResultArtifactV2": ScopedInvocationResultArtifactV2,
+            "ScopedInvocationResultManifestV2": ScopedInvocationResultManifestV2,
+        }
+        self.assertEqual(set(invocation_results_module.__all__), set(expected))
+        for name, value in expected.items():
+            with self.subTest(name=name):
+                self.assertIn(name, quantum_entanglement.__all__)
+                self.assertIs(getattr(quantum_entanglement, name), value)
+
     def test_manifest_round_trip_and_domain_separated_digest_are_deterministic(self) -> None:
         manifest = valid_manifest()
 

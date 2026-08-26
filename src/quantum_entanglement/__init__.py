@@ -80,6 +80,12 @@ from .invocation_recovery import (
     InvocationResultReceipt,
     assess_invocation_recovery,
 )
+from .invocation_results import (
+    EMPTY_ACTION_RECEIPT_SET_DIGEST,
+    SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION,
+    ScopedInvocationResultArtifactV2,
+    ScopedInvocationResultManifestV2,
+)
 from .invocation_worker import (
     HeartbeatPureWorkerGate,
     InvocationWorkerAdmission,
@@ -246,6 +252,7 @@ __all__ = [
     "DelegationError",
     "DomainEvent",
     "EnvelopeKind",
+    "EMPTY_ACTION_RECEIPT_SET_DIGEST",
     "HandoffContract",
     "HeartbeatPureWorkerGate",
     "InboxAppendResult",
@@ -313,12 +320,15 @@ __all__ = [
     "SQLiteRevocationRevisionGuard",
     "SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN",
     "SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION",
+    "SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION",
     "SCOPED_INVOCATION_START_EVIDENCE_SCHEMA_VERSION",
     "ServerClock",
     "StoredArtifact",
     "StoredEvent",
     "StoredOutboxMessage",
     "ScopedInvocationExecutionManifestV2",
+    "ScopedInvocationResultArtifactV2",
+    "ScopedInvocationResultManifestV2",
     "ScopedInvocationStartClaimedV3",
     "ScopedInvocationStartEvidenceV3",
     "ScopedInvocationStartObservedV3",
