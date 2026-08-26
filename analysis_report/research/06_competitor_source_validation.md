@@ -1,12 +1,20 @@
 # 多 Agent 协同竞品：官方信源与可验证实现核验
 
-> 核验日期：2026-08-19（Asia/Shanghai）
+> 基线核验日期：2026-08-19（Asia/Shanghai）
 >
-> 核验对象：`04_competitor_landscape.md` 中的 14 个产品
+> 基线核验对象：`04_competitor_landscape.md` 当时收录的原 14 个产品
+>
+> 基线来源口径：65 条来源记录（63 个唯一外部 URL + 2 张内部语雀截图）
 >
 > 证据范围：产品官网、公开文档、生产 API 说明、官方 GitHub 组织/仓库、仓库内许可证与实现文件
 >
 > 限制：本轮是“信源与源码静态核验”，未注册商业产品、未执行付费流程，也未把“存在代码/测试文件”写成“已完成端到端实测”。
+>
+> **2026-08-26 增补说明：** Clawith 后加入一级竞品清单，已用官网/文档、归档截图和
+> 固定源码单独核验，详见
+> [`20_clawith_competitive_analysis.md`](20_clawith_competitive_analysis.md)。该增补不在本文件
+> 原 14 项矩阵与旧 65 条来源台账中；不得把它冒充为 2026-08-19 基线已覆盖的第 15 项或
+> 第 66 条来源。
 
 ## 1. 结论先行
 
@@ -29,6 +37,25 @@
 - **群聊式多 runtime 汇聚：OpenAgents**——Workspace、Launcher、Network SDK、共享线程/文件/浏览器和 A2A adapter 均有源码。
 - **长期身份与治理边界：CodexLoom**——稳定 Agent ID、Profile、Topic、Message、Artifact、Needs You 的对象边界可读，但许可证为 Elastic License 2.0，且不应把组织图当权限系统。
 - **市场化验收与结算：NEAR Agent Market**——任务、投标、交付、验收、争议、托管资金形成完整 API 状态机，但公开 SDK 不是后端实现。
+
+### 1.1 2026-08-26 Clawith 独立增补结论
+
+Clawith 不改写上述九项历史校正，也不加入下方原 14 项矩阵。独立增补核验得到三层结论：
+
+- **官网/文档声明：** Clawith 将自己定位为 AI 组织/Digital Employee 平台，并宣传持久
+  身份、记忆、A2A、Aware/Pulse、权限审计、Plaza、任意模型、MCP 与私有化。
+- **固定源码事实：** Apache-2.0 固定 commit
+  `45fc701c366c69f89dff26d91d6a4a9cbc38e6f8` 可定位稳定 Agent、Participant/Crew、
+  单 `@` 确定性路由、多 `@` 规划、Focus/Trigger/Run/Heartbeat、人审 Experience
+  Library、LangGraph runtime 与 workspace candidate/CAS。
+- **本次未验证：** 没有启动产品、连接真实模型、执行迁移/测试、做跨租户/SSRF/压力测试、
+  联调 MCP/A2A 或向任何真实渠道发消息；因此不能把源码存在写成端到端或生产就绪证明。
+
+取长补短的结论是：WanWork 产品层优先吸收稳定身份、原生 Crew、主动工作和人审经验库；
+底层继续用 tenant-first authority、append-only event、版本化 Artifact、receipt、
+unknown/fencing 与标准协议 adapter 重建。Clawith 的内部 A2A 命名、宽权限 Compose/沙箱、
+第三方能力默认自扩展及 best-effort 审计不可照搬。详细证据与逐项取舍只在 `20` 展开，
+此处不复制其完整来源台账。
 
 ## 2. 证据口径
 
@@ -65,7 +92,7 @@
 
 只公开 SDK、协议或文档，不等于产品后端开源；可自托管也不必然意味着许可证允许提供竞争性 SaaS。
 
-## 3. 14 项核验矩阵
+## 3. 原 14 项基线核验矩阵（不含 Clawith）
 
 | # | 产品（当前名称） | 官方入口状态 | 公开实现 | 许可证结论 | 原表关键结论的核验状态 | 置信度 |
 |---:|---|---|---|---|---|---|
@@ -583,7 +610,7 @@ Mindra 官网当前将产品定义为“AI Employees/AI coworkers”：用户描
 11. **FloatIM IACT/Selfware**：等待公开规范、版本和 LICENSE；没有机器可读 schema/测试向量前，不作为 WanWork 协议依赖。
 12. **Coze “3.0”**：寻找官方发布日期/版本说明；若只是历史营销名称，应从当前竞品名中移除版本号。
 
-## 9. 官方来源台账
+## 9. 原 14 项官方来源台账（65 条历史记录，不含 Clawith）
 
 > 下列页面和仓库均在 2026-08-19 访问或通过 GitHub API 核对。GitHub blob 链接优先固定到本轮观察到的提交，避免主分支后续变化造成证据漂移。
 
@@ -708,3 +735,9 @@ Mindra 官网当前将产品定义为“AI Employees/AI coworkers”：用户描
 - 未记录、输出或引用任何 API Key/凭据。
 
 因此，这份报告适合作为竞品事实底稿与下一轮实测清单，不应替代法律许可证意见、安全审计或商业尽调。
+
+Clawith 增补遵守同一可复核边界，但使用 2026-08-26 的独立证据集；其官网声明、固定源码
+事实和未验证项应以 [`20_clawith_competitive_analysis.md`](20_clawith_competitive_analysis.md)
+及截图 manifest 为准。本文件的历史统计始终是原 14 项、65 条来源；把两份研究合并理解时
+可以说“当前竞品表共 15 项（原 14 项基线 + Clawith 增补）”，不能说 Clawith 已计入旧
+65 条来源，也不能把固定源码静态审查升级为运行或生产验证。
