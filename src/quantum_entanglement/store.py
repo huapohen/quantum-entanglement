@@ -10,6 +10,7 @@ import os
 import sqlite3
 import threading
 import traceback as traceback_module
+import unicodedata
 from asyncio import CancelledError
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -35,9 +36,12 @@ from typing import (
 
 from . import process_identity as _process_identity
 from .attempts import (
+    AttemptStatus,
+    InvocationAttempt,
     InvocationIntegrityError,
     InvocationJob,
     InvocationJobSpec,
+    InvocationStatus,
     SQLiteInvocationAttemptStore,
     _enqueue_invocation_job_in_transaction,
 )
@@ -52,7 +56,13 @@ from .delivery import (
     StoredOutboxMessage,
 )
 from .events import DomainEvent, StoredEvent
-from .invocation_execution import TaskInvocationAdmissionRequest
+from .invocation_execution import (
+    CANONICAL_ORCHESTRATOR_ACTOR_ID,
+    TASK_INVOCATION_STARTED_EVENT_TYPE,
+    InvocationStartEvidenceV2,
+    InvocationStartReceipt,
+    TaskInvocationAdmissionRequest,
+)
 from .migrations import apply_sqlite_migrations
 from .protocol import new_id, utc_now
 
@@ -493,7 +503,7 @@ def _take_classified_event_store_transaction_signal(
 
     if type(error) is not _EventStoreAdmissionTransactionSignal:
         return None
-    signal = cast(_EventStoreAdmissionTransactionSignal, error)
+    signal = error
     if signal.token is not _EVENT_STORE_ADMISSION_CONTROL_TOKEN or signal.outcome not in {
         "rolled_back",
         "ambiguous",
@@ -672,6 +682,25 @@ def _caller_text(value: object, field_name: str, *, required: bool = False) -> s
     return value
 
 
+def _caller_invocation_identity(value: object, field_name: str) -> str:
+    """Snapshot one canonical identity before a start transaction touches SQLite."""
+
+    snapshot = _caller_text(value, field_name, required=True)
+    try:
+        encoded = snapshot.encode("utf-8")
+    except UnicodeError:
+        encoded = None
+    if encoded is None:
+        raise ValueError(f"{field_name} must be valid UTF-8") from None
+    if len(encoded) > 4_096:
+        raise ValueError(f"{field_name} exceeds its UTF-8 byte limit")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in snapshot):
+        raise ValueError(f"{field_name} contains a C0 or DEL control character")
+    if unicodedata.normalize("NFC", snapshot) != snapshot:
+        raise ValueError(f"{field_name} must use Unicode NFC")
+    return snapshot
+
+
 def _caller_optional_text(value: object, field_name: str) -> Optional[str]:
     if value is None:
         return None
@@ -789,6 +818,18 @@ class _InvocationAdmissionReceipt:
     event_manifest_sha256: str
     job_binding_sha256: str
     admitted_at: str
+
+
+@dataclass(frozen=True)
+class _InvocationStartReadback:
+    """Validated durable start state, with no plaintext lease authority."""
+
+    admission: _InvocationAdmissionReceipt
+    request: TaskInvocationAdmissionRequest
+    job: InvocationJob
+    attempt: InvocationAttempt
+    event: StoredEvent
+    receipt: InvocationStartReceipt
 
 
 @dataclass(frozen=True)
@@ -1821,6 +1862,306 @@ class SQLiteEventStore:
                 "invocation admission receipt event manifest is inconsistent"
             )
         return receipt, tuple(stored_events), job
+
+    def _canonical_invocation_admission_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        invocation_id: str,
+    ) -> Tuple[_InvocationAdmissionReceipt, TaskInvocationAdmissionRequest, InvocationJob]:
+        """Prove one v4 receipt is also the exact canonical semantic admission."""
+
+        try:
+            admission, stored_events, job = self._validate_invocation_admission_receipt(
+                connection,
+                row,
+            )
+            if admission.invocation_id != invocation_id:
+                raise ValueError("invocation admission identity does not match the request")
+            request = TaskInvocationAdmissionRequest.from_components(
+                tuple(stored.event for stored in stored_events),
+                self._invocation_job_spec_from_job(job),
+            )
+            if request.manifest.invocation_id != invocation_id:
+                raise ValueError("canonical admission manifest identity is inconsistent")
+            if request.manifest.canonical_digest() != job.payload_digest:
+                raise ValueError("canonical admission manifest digest is inconsistent")
+        except (EventStoreIntegrityError, InvocationIntegrityError, TypeError, ValueError):
+            raise InvocationStartConflictError() from None
+        return admission, request, job
+
+    def _invocation_start_candidates_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        admission: _InvocationAdmissionReceipt,
+        request: TaskInvocationAdmissionRequest,
+    ) -> Tuple[StoredEvent, ...]:
+        """Find every start-like row relevant to this task, including legacy evidence."""
+
+        invocation_id = request.manifest.invocation_id
+        task_id = request.manifest.task_id
+        canonical_key = "invocation-start:%s:1" % invocation_id
+        legacy_key = "invocation-started:%s" % task_id
+        rows = connection.execute(
+            """
+            SELECT * FROM events
+            WHERE stream_id = ?
+              AND (
+                    event_type = ?
+                 OR idempotency_key = ?
+                 OR idempotency_key = ?
+              )
+            ORDER BY sequence
+            """,
+            (
+                admission.stream_id,
+                TASK_INVOCATION_STARTED_EVENT_TYPE,
+                canonical_key,
+                legacy_key,
+            ),
+        ).fetchall()
+        relevant: List[StoredEvent] = []
+        try:
+            for row in rows:
+                stored = self._row_to_event(row)
+                event = stored.event
+                payload = event.payload
+                payload_matches = (
+                    payload.get("invocationId") == invocation_id
+                    or payload.get("invocation_id") == invocation_id
+                    or payload.get("taskId") == task_id
+                    or payload.get("task_id") == task_id
+                )
+                if event.idempotency_key in {canonical_key, legacy_key} or payload_matches:
+                    relevant.append(stored)
+        except (EventStoreIntegrityError, TypeError, ValueError):
+            raise InvocationStartConflictError() from None
+        if len(relevant) > 1:
+            raise InvocationStartConflictError() from None
+        return tuple(relevant)
+
+    @staticmethod
+    def _validate_unstarted_invocation_in_transaction(
+        connection: sqlite3.Connection,
+        job: InvocationJob,
+    ) -> None:
+        """Require the exact zero-attempt queued state before authority allocation."""
+
+        rows = connection.execute(
+            """
+            SELECT * FROM invocation_attempts
+            WHERE invocation_id = ?
+            ORDER BY attempt_number
+            LIMIT 2
+            """,
+            (job.invocation_id,),
+        ).fetchall()
+        try:
+            SQLiteInvocationAttemptStore._validate_recovery_snapshot(
+                job,
+                None,
+                attempt_count=len(rows),
+            )
+        except InvocationIntegrityError:
+            raise InvocationStartConflictError() from None
+        if (
+            rows
+            or job.status is not InvocationStatus.QUEUED
+            or job.max_attempts != 1
+            or job.attempts_started != 0
+            or job.lease_epoch != 0
+            or job.lease_owner is not None
+            or job.lease_token_digest is not None
+            or job.lease_expires_at is not None
+            or job.heartbeat_at is not None
+            or job.result_ref is not None
+            or job.last_error is not None
+            or job.finished_at is not None
+        ):
+            raise InvocationStartConflictError() from None
+
+    def _validate_invocation_start_readback(
+        self,
+        connection: sqlite3.Connection,
+        admission: _InvocationAdmissionReceipt,
+        request: TaskInvocationAdmissionRequest,
+        job: InvocationJob,
+        stored: StoredEvent,
+        *,
+        fresh: bool,
+    ) -> _InvocationStartReadback:
+        """Validate one schema-2 event against admission, job, and exactly one attempt."""
+
+        if type(fresh) is not bool:
+            raise TypeError("fresh must be a boolean")
+        manifest = request.manifest
+        event = stored.event
+        canonical_key = "invocation-start:%s:1" % manifest.invocation_id
+        try:
+            evidence = InvocationStartEvidenceV2.from_event_payload(
+                event.event_type,
+                event.payload,
+            )
+            if (
+                event.stream_id != admission.stream_id
+                or event.actor_id != CANONICAL_ORCHESTRATOR_ACTOR_ID
+                or event.idempotency_key != canonical_key
+                or event.timestamp != evidence.claimed_at
+                or event.correlation_id != manifest.correlation_id
+                or event.causation_id != manifest.causation_id
+                or stored.sequence <= admission.last_sequence
+                or stored.global_position <= admission.last_global_position
+            ):
+                raise ValueError("invocation-start event envelope is inconsistent")
+            if (
+                evidence.schema_version != 2
+                or evidence.invocation_id != manifest.invocation_id
+                or evidence.session_id != manifest.session_id
+                or evidence.plan_id != manifest.plan_id
+                or evidence.task_id != manifest.task_id
+                or evidence.agent_id != manifest.agent_id
+                or evidence.job_idempotency_key != manifest.job_idempotency_key
+                or evidence.attempt_number != 1
+                or evidence.lease_epoch != 1
+                or evidence.manifest_digest != manifest.canonical_digest()
+                or evidence.manifest_digest != job.payload_digest
+                or evidence.envelope_digest != manifest.envelope_digest
+                or evidence.context_digest != manifest.context_digest
+                or evidence.authorization_digest != manifest.authorization_digest
+                or evidence.runtime_revision != manifest.runtime_revision
+                or evidence.correlation_id != manifest.correlation_id
+                or evidence.causation_id != manifest.causation_id
+            ):
+                raise ValueError("invocation-start evidence is inconsistent")
+
+            attempt_rows = connection.execute(
+                """
+                SELECT * FROM invocation_attempts
+                WHERE invocation_id = ?
+                ORDER BY attempt_number
+                LIMIT 2
+                """,
+                (manifest.invocation_id,),
+            ).fetchall()
+            if len(attempt_rows) != 1:
+                raise ValueError("invocation start does not have exactly one attempt")
+            attempt = SQLiteInvocationAttemptStore._row_to_attempt(attempt_rows[0])
+            SQLiteInvocationAttemptStore._validate_recovery_snapshot(
+                job,
+                attempt,
+                attempt_count=1,
+            )
+            if (
+                job.max_attempts != 1
+                or job.attempts_started != 1
+                or job.lease_epoch != 1
+                or attempt.attempt_id != evidence.attempt_id
+                or attempt.invocation_id != evidence.invocation_id
+                or attempt.attempt_number != evidence.attempt_number
+                or attempt.lease_epoch != evidence.lease_epoch
+                or attempt.worker_id != evidence.worker_id
+                or attempt.lease_token_digest != evidence.lease_token_digest
+                or attempt.started_at != evidence.claimed_at
+                or attempt.heartbeat_at < evidence.claimed_at
+                or attempt.lease_expires_at < evidence.lease_expires_at
+                or job.updated_at < evidence.claimed_at
+            ):
+                raise ValueError("invocation-start attempt binding is inconsistent")
+            if fresh and (
+                job.status is not InvocationStatus.RUNNING
+                or attempt.status is not AttemptStatus.RUNNING
+                or job.lease_owner != evidence.worker_id
+                or job.lease_token_digest != evidence.lease_token_digest
+                or job.heartbeat_at != evidence.claimed_at
+                or job.lease_expires_at != evidence.lease_expires_at
+                or job.updated_at != evidence.claimed_at
+                or attempt.heartbeat_at != evidence.claimed_at
+                or attempt.lease_expires_at != evidence.lease_expires_at
+            ):
+                raise ValueError("fresh invocation-start ownership is inconsistent")
+            receipt = InvocationStartReceipt(
+                event_id=event.event_id,
+                stream_id=event.stream_id,
+                sequence=stored.sequence,
+                global_position=stored.global_position,
+                evidence=evidence,
+            )
+        except (
+            EventStoreIntegrityError,
+            InvocationIntegrityError,
+            TypeError,
+            ValueError,
+        ):
+            raise InvocationStartConflictError() from None
+        return _InvocationStartReadback(
+            admission=admission,
+            request=request,
+            job=job,
+            attempt=attempt,
+            event=stored,
+            receipt=receipt,
+        )
+
+    def _read_invocation_start_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        invocation_id: str,
+        *,
+        fresh: bool = False,
+    ) -> Optional[_InvocationStartReadback]:
+        """Read one canonical start snapshot or prove the job remains unstarted."""
+
+        receipt_rows = connection.execute(
+            """
+            SELECT * FROM invocation_admissions
+            WHERE invocation_id = ?
+            LIMIT 2
+            """,
+            (invocation_id,),
+        ).fetchall()
+        if not receipt_rows:
+            job_row = connection.execute(
+                "SELECT 1 FROM invocation_jobs WHERE invocation_id = ? LIMIT 1",
+                (invocation_id,),
+            ).fetchone()
+            event_row = connection.execute(
+                """
+                SELECT 1 FROM events
+                WHERE idempotency_key IN (?, ?)
+                LIMIT 1
+                """,
+                (
+                    "execution-request:%s" % invocation_id,
+                    "invocation-start:%s:1" % invocation_id,
+                ),
+            ).fetchone()
+            if job_row is not None or event_row is not None:
+                raise InvocationStartConflictError() from None
+            return None
+        if len(receipt_rows) != 1:
+            raise InvocationStartConflictError() from None
+        admission, request, job = self._canonical_invocation_admission_in_transaction(
+            connection,
+            receipt_rows[0],
+            invocation_id=invocation_id,
+        )
+        candidates = self._invocation_start_candidates_in_transaction(
+            connection,
+            admission,
+            request,
+        )
+        if not candidates:
+            self._validate_unstarted_invocation_in_transaction(connection, job)
+            return None
+        return self._validate_invocation_start_readback(
+            connection,
+            admission,
+            request,
+            job,
+            candidates[0],
+            fresh=fresh,
+        )
 
     def _snapshot_outbox_message(self, message: OutboxMessage) -> _OutboxWriteSnapshot:
         if type(message) is not OutboxMessage:
