@@ -44,6 +44,29 @@ class TextSubclass(str):
     pass
 
 
+def event_store_traceback_locals(error: BaseException) -> str:
+    """Render only store-owned frames retained by one public exception chain."""
+
+    pending = [error]
+    seen: set[int] = set()
+    values: list[str] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        traceback = current.__traceback__
+        while traceback is not None:
+            if traceback.tb_frame.f_code.co_filename == store_module.__file__:
+                values.extend(repr(value) for value in traceback.tb_frame.f_locals.values())
+            traceback = traceback.tb_next
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    return "\n".join(values)
+
+
 def canonical_request() -> TaskInvocationAdmissionRequest:
     manifest = InvocationExecutionManifest.from_dict(
         {
@@ -630,6 +653,49 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
                     self.assertFalse(store._poisoned)
                 finally:
                     store.close()
+
+    def test_nonstandard_base_exception_cannot_escape_with_plaintext_lease_authority(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        canary = "raw-lease-hostile-base-exception-canary"
+
+        class HostileFault(BaseException):
+            pass
+
+        def hostile_digest(_lease_token: str) -> str:
+            raise HostileFault(canary)
+
+        with (
+            patch.object(self.store, "_now", return_value=CLAIMED_AT),
+            patch.object(self.store, "_lease_token_digest", new=hostile_digest),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                return_value=canary,
+            ),
+        ):
+            with self.assertRaises(InvocationStartTransactionError) as caught:
+                self.store.claim_invocation_start(
+                    request.manifest.invocation_id,
+                    "worker-start-store-1",
+                    lease_seconds=60,
+                    expected_version=2,
+                )
+
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        self.assertNotIn(canary, str(caught.exception))
+        self.assertNotIn(canary, repr(caught.exception))
+        self.assertNotIn(canary, event_store_traceback_locals(caught.exception))
+        self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
+        self.assertEqual(self.store.stream_version(request.stream_id), 2)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            0,
+        )
+        self.assertFalse(self.store._poisoned)
 
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
