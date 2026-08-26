@@ -228,6 +228,11 @@ unknown/fencing 和标准协议边缘 adapter；不要复制宽权限部署、�
 非标准 A2A 命名或用普通审计表承载不可篡改承诺。完整源码定位、对照矩阵与阶段建议见
 [`20_clawith_competitive_analysis.md`](20_clawith_competitive_analysis.md)。
 
+另有两个不应遗漏的基础机制：Skill 应按 `catalog → read → activate → materialize` 渐进披露，
+避免把全部能力和供应链风险一次塞进模型上下文；模型连接应把 tool、vision、结构化输出、
+上下文/速率限制等探测结果绑定到不可变配置指纹与探测时间。前者仍须经过版本 pin、审批、
+签名/扫描、隔离与出网门禁，后者只是有时效的 capability fact，不能由模型名或厂商宣传推断。
+
 ## 5. 跨竞品机制比较
 
 ### 5.1 编排

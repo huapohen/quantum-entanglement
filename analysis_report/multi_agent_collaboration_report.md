@@ -656,6 +656,8 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
   authenticated service、持久刷新/重连、群聊消息投影和 desktop/web packaging；
 - Agent roster、能力卡、版本和状态；
 - AgentIdentity/不可变 AgentRevision、Human/Agent Participant、长期 Crew 与多人真实群聊；
+- 绑定 model config fingerprint、provider/model revision、探测时间与有效期的模型能力事实；
+- `catalog → read → activate → materialize` 的 Skill 渐进披露和不可变 package snapshot；
 - 计划确认与重规划 diff；
 - Focus→Trigger→Occurrence→Run 的主动工作入口与人审 Experience Library；
 - artifact review/compare/impact；
@@ -683,6 +685,7 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 
 - AgentIdentity/不可变 AgentRevision、Human/Agent Participant、长期 Crew 与原生群聊；
 - 单 Agent mention 确定性直达，多 Agent mention 规划后由平台校验；
+- model/tool/vision/limit capability observation 与有界 Skill catalog/read；
 - 群聊、任务、Artifact、Needs You 四个同源视图；
 - 固定业务 task templates + 动态规划；
 - 可见 artifact 和 review；
@@ -695,6 +698,7 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 - 多租户、合规、审计、成本/SLA；
 - Agent 版本、灰度和评测；
 - Focus/Trigger/Occurrence/Run 主动工作与 Artifact→draft→人审 published/retired Experience；
+- 经组织审批、版本 pin、签名/扫描和隔离门禁的 Skill activate/materialize；
 - IM 正式接入与移动/桌面。
 
 ### Phase 3：开放生态
@@ -776,6 +780,8 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 | mention 路由 | 单 Agent 确定性；多 Agent 候选规划 + 平台校验 | 前者有内核证据，完整多人产品待实现 |
 | 主动工作 | Focus→Trigger→Occurrence→Run | 目标设计，待实现 |
 | 组织经验 | Artifact→draft→人审 published/retired Experience | 目标设计，待实现 |
+| 模型能力 | 配置指纹 + 有时效的 CapabilityObservation | 目标设计，待实现；禁止从模型名推断 |
+| Skill 生命周期 | catalog→read→activate→materialize | 目标设计，待实现；activation 受供应链门禁 |
 | Workspace 写入 | candidate + digest + per-object CAS + reconcile | Artifact CAS 已有，通用 workspace 待实现 |
 | Clawith 内部 A2A | 只借 coordination 思想，不沿用标准 A2A 名称 | 采用 |
 | 执行安全基线 | 不采用 privileged Compose、宿主 pip 或 prompt 自安装 MCP | 采用，生产门禁待闭合 |
@@ -833,6 +839,7 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 5. 在 secret/process/receipt 边界闭合后接入 source-pinned、model-only、最小权限 DeepSeek
    Harness sidecar；direct Responses 永久保留为诊断对照，不冒充 Harness；
 6. 在核心交付闭环稳定后接入 Focus→Trigger→Occurrence→Run 与人审 Experience Library，主动工作仍复用同一授权、Artifact 和 receipt 链；
-7. 对外兼容标准，对内牢牢掌握组织协作状态与治理；不复制非标准 A2A 命名、宽权限 Compose、宿主 pip/MCP 自安装和 best-effort 审计。
+7. 建立绑定配置指纹和时间的模型能力事实，以及 `catalog → read → activate → materialize` 的 Skill 渐进披露；前者不得靠名称猜测，后者不得绕过审批、供应链和执行隔离；
+8. 对外兼容标准，对内牢牢掌握组织协作状态与治理；不复制非标准 A2A 命名、宽权限 Compose、宿主 pip/MCP 自安装和 best-effort 审计。
 
 如果只做群聊外壳，竞争会落到模型和 UI；如果只做通用框架，用户看不到价值。真正有机会形成世界级产品的中间层，是把开放 Agent runtime 与真实组织工作连接起来，并让协作过程像数据库事务一样可靠、像群聊一样自然、像优秀团队一样可理解和可接管。

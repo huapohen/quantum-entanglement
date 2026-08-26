@@ -205,6 +205,19 @@ Clawith 源码中的 `notify/consult/task_delegate` 是有价值的内部协作�
 
 组织经验采用 `Artifact → Experience draft → human review → published/retired`。AI 可以提炼草稿，但只有人或明确治理角色审核发布的 Experience 才进入权威检索；条目必须保留来源、适用条件、失效信号、数据分类和引用。Experience 是跨任务知识，不替代一次任务的正式 Artifact。
 
+### 5.11 Skill 渐进披露与模型能力事实
+
+Skill 不应把所有说明、代码和权限一次灌入上下文。平台先向模型暴露有界 catalog，需要时只读
+package metadata/说明，再由平台根据 policy、批准状态和 Run scope 激活，最后在隔离执行域中
+materialize 固定 digest 的不可变快照。`catalog → read → activate → materialize` 四步必须分别
+可审计；来源、签名/扫描、SBOM、credential、egress 和撤销状态不满足时，不得仅凭 prompt 自安装。
+
+模型能力也不能从名字、价格页或历史经验猜测。每个 `ModelConnection` 应持有配置指纹；tool
+calling、vision、structured output、streaming、上下文/输出限制和速率限制等探测结果形成带
+provider/model revision、`observed_at`、有效期和原始证据摘要的 `CapabilityObservation`。planner
+只能依据未过期事实选候选模型，Harness 在调用时仍做 action-time 校验；缺失、过期或冲突必须
+显式降级或 Needs You，不能静默假定支持。
+
 ## 6. LangGraph + DeepSeek Harness 的组合边界
 
 建议不是修改其中一个去吞掉另一个，而是定义 ports：
@@ -302,10 +315,12 @@ MVP 可优先腾讯 IM + Flutter/Tauri 组合，但 transport 必须抽象，避
 
 ## 11. 接下来应实现的最小闭环
 
-1. 建立 `AgentIdentity + immutable AgentRevision + Human/Agent Participant + Crew` 的持久对象，并让 Run 固定 revision。
-2. 完成单 Agent `@` 确定性路由和多 Agent mention planning，证明两者都不绕过事件/政策/上下文。
-3. 完成 LangGraph 可选 bridge，展示 interrupt→Needs You→resume；节点执行统一经过 Harness 纪律。
-4. 增加 SQLite 重启恢复与 outbox，验证进程崩溃后不重复 artifact/副作用；共享写入使用 candidate + CAS。
-5. 提供本地群聊 demo：两个并行 Agent、一个依赖 Agent、一次人工审批、一个版本化报告。
-6. 在交付闭环稳定后增加 Focus→Trigger→Occurrence→Run 和人审 Experience Library；未发布经验不得进入权威检索。
-7. 完成 A2A Agent Card 与标准映射，保留内部 correlation/causation，不沿用非标准 A2A 命名。
+1. 先闭合原子 Result/Artifact/attempt/task-terminal 验收、receipt-bound recovery 和 action receipt；在此之前 heartbeat worker、主动调度和真实 connector 保持关闭。
+2. 建立 `AgentIdentity + immutable AgentRevision + Human/Agent Participant + Crew` 的持久对象，并让 Run 固定 revision。
+3. 完成单 Agent `@` 确定性路由和多 Agent mention planning，证明两者都不绕过事件/政策/上下文。
+4. 建立绑定配置指纹与时间的模型 `CapabilityObservation`，以及 `catalog → read → activate → materialize` 的不可变 Skill package 链；activation 继续受供应链与执行隔离门禁约束。
+5. 完成 LangGraph 可选 bridge，展示 interrupt→Needs You→resume；节点执行统一经过 Harness 纪律。
+6. 增加 SQLite 重启恢复与 outbox，验证进程崩溃后不重复 artifact/副作用；共享写入使用 candidate + CAS。
+7. 提供本地群聊 demo：两个并行 Agent、一个依赖 Agent、一次人工审批、一个版本化报告。
+8. 在交付闭环稳定后增加 Focus→Trigger→Occurrence→Run 和人审 Experience Library；未发布经验不得进入权威检索。
+9. 完成 A2A Agent Card 与标准映射，保留内部 correlation/causation，不沿用非标准 A2A 命名。
