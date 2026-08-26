@@ -377,9 +377,7 @@ def render_catalog(
             state = "存在、状态未知"
         mode = item.branch or "detached"
         displayed_head = main.oid if is_main_worktree and item.branch == "main" else item.head
-        lines.append(
-            f"| {state} | `{md(mode)}` | `{displayed_head[:12]}` | `{md(item.path)}` |"
-        )
+        lines.append(f"| {state} | `{md(mode)}` | `{displayed_head[:12]}` | `{md(item.path)}` |")
     lines.extend(
         [
             "",

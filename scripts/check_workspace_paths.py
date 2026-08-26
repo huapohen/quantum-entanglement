@@ -83,8 +83,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     for finding in findings:
         print(
-            f"{finding.path}:{finding.line}: obsolete workspace path: "
-            f"{finding.obsolete_path}",
+            f"{finding.path}:{finding.line}: obsolete workspace path: {finding.obsolete_path}",
             file=sys.stderr,
         )
     return 1

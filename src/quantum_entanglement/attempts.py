@@ -897,9 +897,7 @@ def _enqueue_invocation_job_in_transaction(
         ),
     ).fetchall()
     if rows:
-        if len(rows) != 1 or not SQLiteInvocationAttemptStore._existing_matches(
-            rows[0], spec
-        ):
+        if len(rows) != 1 or not SQLiteInvocationAttemptStore._existing_matches(rows[0], spec):
             raise InvocationConflictError(
                 "invocation identity or idempotency key is already bound to different work"
             )
