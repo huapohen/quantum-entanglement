@@ -229,6 +229,92 @@
         margin-top: 30px;
       }
 
+      .instruction-composer {
+        max-width: 760px;
+        margin-top: 30px;
+        padding: 18px;
+        border: 1px solid var(--line-strong);
+        border-radius: 18px;
+        background: rgba(10, 19, 37, 0.78);
+        box-shadow: 0 18px 45px rgba(0, 0, 0, 0.18);
+      }
+
+      .instruction-label {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 10px;
+        font-size: 14px;
+        font-weight: 760;
+      }
+
+      .instruction-label span {
+        color: var(--cyan);
+        font-size: 10px;
+        font-weight: 720;
+        letter-spacing: 0.12em;
+      }
+
+      .instruction-input {
+        display: block;
+        width: 100%;
+        min-height: 132px;
+        padding: 14px 15px;
+        resize: vertical;
+        border: 1px solid var(--line-strong);
+        border-radius: 13px;
+        outline: none;
+        color: var(--ink);
+        font-family: inherit;
+        font-size: 14px;
+        line-height: 1.7;
+        background: rgba(4, 11, 23, 0.72);
+        transition: border-color 160ms ease, box-shadow 160ms ease;
+      }
+
+      .instruction-input::placeholder {
+        color: var(--faint);
+      }
+
+      .instruction-input:focus {
+        border-color: rgba(107, 231, 227, 0.72);
+        box-shadow: 0 0 0 3px rgba(107, 231, 227, 0.12);
+      }
+
+      .instruction-input[aria-invalid="true"] {
+        border-color: rgba(255, 140, 153, 0.7);
+      }
+
+      .instruction-meta {
+        display: flex;
+        min-height: 25px;
+        align-items: start;
+        justify-content: space-between;
+        gap: 16px;
+        padding-top: 7px;
+        color: var(--faint);
+        font-size: 10px;
+        line-height: 1.5;
+      }
+
+      .instruction-error {
+        color: var(--red);
+      }
+
+      .instruction-composer .hero-actions {
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 11px;
+      }
+
+      .composer-hint {
+        max-width: 390px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.55;
+      }
+
       .primary-button {
         position: relative;
         min-height: 50px;
@@ -253,9 +339,13 @@
       }
 
       .primary-button:disabled {
-        cursor: wait;
+        cursor: not-allowed;
         opacity: 0.55;
         transform: none;
+      }
+
+      .primary-button[aria-busy="true"] {
+        cursor: wait;
       }
 
       .secondary-link {
@@ -336,6 +426,42 @@
         grid-template-columns: repeat(2, 1fr);
         gap: 12px;
         margin-top: 23px;
+      }
+
+      .runtime-facts {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 9px;
+        margin-top: 20px;
+      }
+
+      .runtime-fact {
+        min-width: 0;
+        padding: 10px 11px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: rgba(6, 13, 27, 0.36);
+      }
+
+      .runtime-fact span,
+      .runtime-fact strong {
+        display: block;
+      }
+
+      .runtime-fact span {
+        color: var(--faint);
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .runtime-fact strong {
+        margin-top: 5px;
+        overflow: hidden;
+        color: #dce6fa;
+        font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .metric {
@@ -709,6 +835,36 @@
       .artifact-preview pre {
         max-height: 280px;
         color: #dce6fa;
+      }
+
+      .narration-body {
+        padding: 18px 20px 22px;
+      }
+
+      .narration-output {
+        display: grid;
+        gap: 10px;
+      }
+
+      .narration-entry {
+        padding: 14px;
+        border: 1px solid rgba(107, 231, 227, 0.24);
+        border-radius: 13px;
+        color: #dce6fa;
+        font-size: 13px;
+        line-height: 1.72;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: linear-gradient(145deg, rgba(22, 57, 68, 0.34), rgba(20, 18, 47, 0.38));
+      }
+
+      .narration-entry strong {
+        display: block;
+        margin-bottom: 7px;
+        color: var(--cyan);
+        font-size: 10px;
+        font-weight: 760;
+        letter-spacing: 0.08em;
       }
 
       .empty-state {
@@ -1090,11 +1246,38 @@
             这不是聊天机器人壳，而是当前真实协作内核的本地体验：一句群聊指令被路由成可计算的任务图，
             三个 Agent 依次产出 Artifact，平台保存因果链、状态和事件审计。
           </p>
-          <div class="hero-actions">
-            <button id="run-demo" class="primary-button" type="button">
-              运行一次真实三 Agent 协作
-            </button>
-            <a class="secondary-link" href="#diagrams">先看系统如何运转</a>
+          <div class="instruction-composer" aria-labelledby="instruction-label">
+            <label id="instruction-label" class="instruction-label" for="instruction-input">
+              发布你的协作指令
+              <span>CUSTOM INSTRUCTION</span>
+            </label>
+            <textarea
+              id="instruction-input"
+              class="instruction-input"
+              rows="5"
+              maxlength="12000"
+              aria-describedby="instruction-error instruction-count"
+              aria-invalid="false"
+              placeholder="例如：调研三种 Agent 间协作协议，比较其边界，并给出我们的底层协议设计建议。"
+            ></textarea>
+            <div class="instruction-meta">
+              <span id="instruction-error" class="instruction-error" role="alert"></span>
+              <span id="instruction-count">0 / 12000</span>
+            </div>
+            <div class="hero-actions">
+              <span class="composer-hint">
+                指令仅发送给本机回环服务；是否调用公网模型由右侧明确显示的运行模式决定。
+              </span>
+              <button
+                id="run-demo"
+                class="primary-button"
+                type="button"
+                aria-busy="false"
+                disabled
+              >
+                发布指令并运行
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1105,6 +1288,24 @@
               <span class="status-dot" aria-hidden="true"></span>
               <span id="run-state-label" role="status">等待启动</span>
             </span>
+          </div>
+          <div class="runtime-facts" aria-label="当前模型运行配置">
+            <div class="runtime-fact">
+              <span>运行模式</span>
+              <strong id="runtime-mode" title="等待后端确认">等待后端确认</strong>
+            </div>
+            <div class="runtime-fact">
+              <span>Provider</span>
+              <strong id="runtime-provider" title="等待后端确认">等待后端确认</strong>
+            </div>
+            <div class="runtime-fact">
+              <span>模型</span>
+              <strong id="runtime-model" title="等待后端确认">等待后端确认</strong>
+            </div>
+            <div class="runtime-fact">
+              <span>Runtime 状态</span>
+              <strong id="runtime-status" title="检查中">检查中</strong>
+            </div>
           </div>
           <div class="metric-grid">
             <div class="metric">
@@ -1125,8 +1326,8 @@
             </div>
           </div>
           <p class="boundary-note">
-            仅使用内存 SQLite 与合成数据。不会连接、读取或发送任何飞书/企微消息；
-            不访问公网，不产生不可逆外部副作用。
+            不会连接、读取或发送任何飞书/企微消息；模型模式只访问启动时明确配置的大模型端点，
+            不产生消息发送等不可逆外部副作用。
           </p>
         </aside>
       </section>
@@ -1158,9 +1359,8 @@
                       <strong>产品负责人</strong>
                       <span>任务发起人</span>
                     </div>
-                    <div class="message-bubble">
-                      <span class="mention">@协议研究员</span>
-                      先研究 Agent 协作协议，再交给系统架构师设计，最后由审阅员检查。
+                    <div id="submitted-instruction" class="message-bubble">
+                      等待你在上方发布自定义协作指令。
                     </div>
                   </div>
                 </div>
@@ -1188,27 +1388,27 @@
                 <span id="plan-id" class="mini-pill">PLAN / 尚未生成</span>
               </header>
               <div class="task-body">
-                <div class="task-dag" aria-label="协议研究到设计再到审阅的任务依赖图">
+                <div class="task-dag" aria-label="指令分析到成果生成再到质量复核的任务依赖图">
                   <div id="task-research" class="task-node" data-status="pending">
                     <div>
-                      <strong>研究协议边界</strong>
-                      <div class="task-agent">@协议研究员</div>
+                      <strong>分析用户指令</strong>
+                      <div class="task-agent">@需求分析 Agent</div>
                     </div>
                     <span class="task-status">PENDING</span>
                   </div>
                   <div class="task-arrow" aria-hidden="true">→</div>
                   <div id="task-design" class="task-node" data-status="pending">
                     <div>
-                      <strong>设计协作内核</strong>
-                      <div class="task-agent">@系统架构师</div>
+                      <strong>生成完整成果</strong>
+                      <div class="task-agent">@方案生成 Agent</div>
                     </div>
                     <span class="task-status">PENDING</span>
                   </div>
                   <div class="task-arrow" aria-hidden="true">→</div>
                   <div id="task-review" class="task-node" data-status="pending">
                     <div>
-                      <strong>审阅安全不变量</strong>
-                      <div class="task-agent">@安全审阅员</div>
+                      <strong>复核最终交付</strong>
+                      <div class="task-agent">@质量复核 Agent</div>
                     </div>
                     <span class="task-status">PENDING</span>
                   </div>
@@ -1218,6 +1418,23 @@
           </div>
 
           <div class="stack">
+            <article class="panel" aria-labelledby="narration-title">
+              <header class="panel-header">
+                <h3 id="narration-title" class="panel-title">
+                  <span class="panel-title-icon" aria-hidden="true">模</span>
+                  模型生成结果
+                </h3>
+                <span id="narration-state" class="mini-pill">等待运行</span>
+              </header>
+              <div class="narration-body">
+                <div id="model-narration-content" class="narration-output" aria-live="polite">
+                  <div class="empty-state">
+                    发布指令后，这里会原样展示后端返回的真实模型 narration；合成模式也会明确标识。
+                  </div>
+                </div>
+              </div>
+            </article>
+
             <article class="panel">
               <header class="panel-header">
                 <h3 class="panel-title">
@@ -1228,7 +1445,7 @@
               </header>
               <div class="artifact-body">
                 <ul id="artifact-list" class="artifact-list">
-                  <li class="empty-state">运行后会出现协议笔记、架构方案与审阅报告。</li>
+                  <li class="empty-state">运行后会出现指令分析、完整成果与最终复核 Markdown。</li>
                 </ul>
                 <section
                   id="artifact-preview"
@@ -1262,7 +1479,7 @@
               <div class="needs-body">
                 <ul id="needs-you-list" class="needs-list">
                   <li class="empty-state">
-                    当前合成任务不需要人工接管。真实产品中，审批、歧义和不可确定副作用会在这里停住并请求你决定。
+                    当前只读生成任务不需要人工接管。真实产品中，审批、歧义和不可确定副作用会在这里停住并请求你决定。
                   </li>
                 </ul>
               </div>
@@ -1486,17 +1703,17 @@
           <article class="panel boundary-card safe">
             <h3>✓ 已可真实运行</h3>
             <ul>
-              <li>群聊 mention 路由与三 Agent DAG</li>
+              <li>自定义指令编译与三 Agent DAG</li>
               <li>上下文编译、任务状态和依赖调度</li>
               <li>Artifact 版本、digest 与事件审计</li>
-              <li>确定性 demo、恢复与大量负向门禁</li>
+              <li>真实 GPT 生成、流式响应与错误脱敏</li>
             </ul>
           </article>
           <article class="panel boundary-card limit">
             <h3>△ 本地体验限制</h3>
             <ul>
               <li>数据在内存中，重启即清空</li>
-              <li>Agent 回答为合成函数，不调用模型</li>
+              <li>模型结果仍需人工判断，不保证事实正确</li>
               <li>只绑定 127.0.0.1，使用临时页面令牌</li>
               <li>这是产品切片，不是完整 Web 服务</li>
             </ul>
@@ -1559,7 +1776,7 @@
       </section>
 
       <footer>
-        Quantum Entanglement Local Trial · synthetic data only · loopback only · no external messaging.
+        Quantum Entanglement Local Trial · explicit runtime · loopback control plane · no external messaging.
         页面不加载 CDN、字体、统计脚本或任何公网资源。按终端中的 Ctrl-C 可停止本地服务。
       </footer>
     </main>
@@ -1571,7 +1788,11 @@
         const trialToken = new URLSearchParams(window.location.hash.slice(1)).get("token") || "";
         window.history.replaceState(null, "", window.location.pathname);
 
+        const MAX_INSTRUCTION_LENGTH = 12000;
         const runButton = document.getElementById("run-demo");
+        const instructionInput = document.getElementById("instruction-input");
+        const instructionCount = document.getElementById("instruction-count");
+        const instructionError = document.getElementById("instruction-error");
         const tokenError = document.getElementById("token-error");
         const runState = document.getElementById("run-state");
         const runStateLabel = document.getElementById("run-state-label");
@@ -1585,18 +1806,21 @@
         const needsList = document.getElementById("needs-you-list");
         const eventTimeline = document.getElementById("event-timeline");
         const chatThread = document.getElementById("chat-thread");
+        const narrationContent = document.getElementById("model-narration-content");
         let selectedArtifact = null;
+        let instructionTouched = false;
+        let runInProgress = false;
 
         const taskNames = {
-          research: "研究协议边界",
-          design: "设计协作内核",
-          review: "审阅安全不变量"
+          research: "分析用户指令",
+          design: "生成完整成果",
+          review: "复核最终交付"
         };
 
         const taskAgents = {
-          research: "协议研究员",
-          design: "系统架构师",
-          review: "安全审阅员"
+          research: "需求分析 Agent",
+          design: "方案生成 Agent",
+          review: "质量复核 Agent"
         };
 
         const eventLabels = {
@@ -1614,6 +1838,10 @@
           if (element) element.textContent = String(value);
         }
 
+        function isRecord(value) {
+          return value !== null && typeof value === "object" && !Array.isArray(value);
+        }
+
         function clearChildren(element) {
           while (element.firstChild) element.removeChild(element.firstChild);
         }
@@ -1621,6 +1849,54 @@
         function setRunState(state, label) {
           runState.dataset.state = state;
           runStateLabel.textContent = label;
+        }
+
+        function setRuntimeField(id, value) {
+          const element = document.getElementById(id);
+          if (!element) return;
+          const displayValue = String(value || "未提供");
+          element.textContent = displayValue;
+          element.title = displayValue;
+        }
+
+        function renderRuntime(payload, statusOverride) {
+          const safePayload = isRecord(payload) ? payload : {};
+          const result = isRecord(safePayload.result) ? safePayload.result : {};
+          const runtime = isRecord(safePayload.runtime)
+            ? safePayload.runtime
+            : (isRecord(result.runtime) ? result.runtime : {});
+          const mode = runtime.mode || safePayload.mode;
+          const provider = runtime.provider || safePayload.provider;
+          const model = runtime.model || safePayload.model;
+          const status = statusOverride || runtime.status || safePayload.status;
+          if (mode) setRuntimeField("runtime-mode", mode);
+          if (provider) setRuntimeField("runtime-provider", provider);
+          if (model) setRuntimeField("runtime-model", model);
+          if (status) setRuntimeField("runtime-status", status);
+        }
+
+        function instructionValidation(value) {
+          if (!value.trim()) return "请输入要交给 Agent 协作执行的指令。";
+          if (value.length > MAX_INSTRUCTION_LENGTH) {
+            return "指令最多允许 " + MAX_INSTRUCTION_LENGTH + " 个字符。";
+          }
+          return "";
+        }
+
+        function syncRunButton() {
+          const invalid = Boolean(instructionValidation(instructionInput.value));
+          runButton.disabled = !trialToken || runInProgress || invalid;
+        }
+
+        function updateInstructionState(showError) {
+          const value = instructionInput.value;
+          const error = instructionValidation(value);
+          instructionCount.textContent = value.length + " / " + MAX_INSTRUCTION_LENGTH;
+          const shouldShowError = Boolean(error) && (showError || instructionTouched);
+          instructionError.textContent = shouldShowError ? error : "";
+          instructionInput.setAttribute("aria-invalid", shouldShowError ? "true" : "false");
+          syncRunButton();
+          return !error;
         }
 
         function taskStatusLabel(status) {
@@ -1725,6 +2001,91 @@
           });
         }
 
+        function appendNarrationEntries(value, label, entries) {
+          if (typeof value === "string") {
+            if (value.trim()) entries.push({label: label, text: value});
+            return;
+          }
+          if (Array.isArray(value)) {
+            value.forEach((item, index) => {
+              appendNarrationEntries(item, label + " " + String(index + 1), entries);
+            });
+            return;
+          }
+          if (!isRecord(value)) return;
+          const taskAgentLabel = [value.taskId, value.agentId]
+            .filter((item) => typeof item === "string" && item)
+            .join(" · ");
+          const itemLabel = taskAgentLabel || value.name || value.role || label;
+          if (typeof value.narration === "string") {
+            appendNarrationEntries(value.narration, String(itemLabel), entries);
+            return;
+          }
+          if (typeof value.content === "string") {
+            appendNarrationEntries(value.content, String(itemLabel), entries);
+            return;
+          }
+          if (typeof value.text === "string") {
+            appendNarrationEntries(value.text, String(itemLabel), entries);
+            return;
+          }
+          Object.keys(value).forEach((key) => {
+            appendNarrationEntries(value[key], String(key), entries);
+          });
+        }
+
+        function extractNarrations(payload) {
+          const safePayload = isRecord(payload) ? payload : {};
+          const result = isRecord(safePayload.result) ? safePayload.result : {};
+          const run = isRecord(result.run) ? result.run : {};
+          const sources = [
+            [run.narrations, "Agent narration"],
+            [result.narrations, "Agent narration"],
+            [result.narration, "模型 narration"],
+            [run.narration, "模型 narration"],
+            [safePayload.narrations, "Agent narration"],
+            [safePayload.narration, "模型 narration"]
+          ];
+          for (const source of sources) {
+            const entries = [];
+            appendNarrationEntries(source[0], source[1], entries);
+            if (entries.length) return entries;
+          }
+          return [];
+        }
+
+        function renderNarration(payload) {
+          const entries = extractNarrations(payload);
+          clearChildren(narrationContent);
+          if (!entries.length) {
+            const empty = document.createElement("div");
+            empty.className = "empty-state";
+            empty.textContent = "后端没有返回 narration；请在原始 JSON 中核对本次运行结果。";
+            narrationContent.appendChild(empty);
+            setText("narration-state", "无 NARRATION");
+            return;
+          }
+          entries.forEach((entry) => {
+            const item = document.createElement("div");
+            item.className = "narration-entry";
+            const label = document.createElement("strong");
+            label.textContent = String(entry.label);
+            const text = document.createElement("div");
+            text.textContent = String(entry.text);
+            item.append(label, text);
+            narrationContent.appendChild(item);
+          });
+          setText("narration-state", entries.length + " NARRATION");
+        }
+
+        function setNarrationPending(message) {
+          clearChildren(narrationContent);
+          const pending = document.createElement("div");
+          pending.className = "empty-state";
+          pending.textContent = message;
+          narrationContent.appendChild(pending);
+        }
+
         artifactDownload.addEventListener("click", () => {
           if (!selectedArtifact) return;
           const content = String(selectedArtifact.content || "");
@@ -1745,7 +2106,7 @@
             const empty = document.createElement("li");
             empty.className = "empty-state";
             empty.textContent =
-              "本次合成任务没有阻断。真实审批、歧义或 effect_unknown 会在这里等待你决定。";
+              "本次任务没有阻断。审批、歧义或 effect_unknown 会在这里等待你决定。";
             needsList.appendChild(empty);
             return;
           }
@@ -1784,13 +2145,15 @@
         }
 
         function renderRun(payload) {
-          const result = payload.result;
-          const run = result.run;
+          const result = isRecord(payload.result) ? payload.result : {};
+          const run = isRecord(result.run) ? result.run : result;
           const statuses = run.statuses || {};
           const artifacts = Array.isArray(run.artifacts) ? run.artifacts : [];
           const needsYou = Array.isArray(run.needsYou) ? run.needsYou : [];
           const events = Array.isArray(result.events) ? result.events : [];
 
+          renderRuntime(payload);
+          renderNarration(payload);
           setText("chat-route", "ROUTE / " + String(result.chatRoute || "unknown").toUpperCase());
           setText("plan-id", "PLAN / " + String(run.planId || "unknown").slice(0, 14));
           setText("metric-artifacts", artifacts.length);
@@ -1799,7 +2162,7 @@
           setText("needs-count", needsYou.length + " BLOCKERS");
           setText("event-count", events.length + " EVENTS");
           setText("orchestrator-status", "已完成");
-          setText("orchestrator-message", "DAG 已完成，三个 Agent 的上下文、产出和结果均进入事件链。");
+          setText("orchestrator-message", "DAG 已完成，Agent 上下文、模型结果和产出均已进入事件链。");
 
           updateTasks(statuses);
           renderArtifacts(artifacts);
@@ -1815,27 +2178,80 @@
           rawOutput.textContent = JSON.stringify(payload, null, 2);
         }
 
-        if (!trialToken) {
-          runButton.disabled = true;
-          tokenError.classList.add("visible");
-          setRunState("error", "启动令牌缺失");
-        }
-
-        runButton.addEventListener("click", async () => {
-          if (!trialToken) return;
-          runButton.disabled = true;
-          setRunState("running", "Agent 协作运行中");
-          setText("orchestrator-status", "运行中");
-          updateTasks({research: "running", design: "pending", review: "pending"});
-          rawOutput.textContent = "正在执行真实本地 demo…";
+        async function loadRuntimeHealth() {
           try {
-            const response = await window.fetch("/api/demo", {
-              method: "POST",
+            const response = await window.fetch("/api/health", {
               headers: {"X-QE-Trial-Token": trialToken}
             });
             const payload = await response.json();
+            if (!response.ok) throw new Error("health_check_failed");
+            renderRuntime(payload);
+          } catch (_error) {
+            setRuntimeField("runtime-status", "不可用");
+          }
+        }
+
+        function responseError(payload, response) {
+          if (isRecord(payload)) {
+            if (typeof payload.error === "string") return payload.error;
+            if (isRecord(payload.error)) {
+              if (typeof payload.error.message === "string") return payload.error.message;
+              if (typeof payload.error.code === "string") return payload.error.code;
+            }
+          }
+          return "trial_run_failed_" + String(response.status);
+        }
+
+        if (!trialToken) {
+          tokenError.classList.add("visible");
+          setRunState("error", "启动令牌缺失");
+          setRuntimeField("runtime-status", "令牌缺失");
+        } else {
+          void loadRuntimeHealth();
+        }
+
+        instructionInput.addEventListener("input", () => {
+          instructionTouched = true;
+          updateInstructionState(false);
+        });
+
+        instructionInput.addEventListener("blur", () => {
+          instructionTouched = true;
+          updateInstructionState(true);
+        });
+
+        updateInstructionState(false);
+
+        runButton.addEventListener("click", async () => {
+          if (!trialToken) return;
+          instructionTouched = true;
+          if (!updateInstructionState(true)) return;
+          const instruction = instructionInput.value.trim();
+          runInProgress = true;
+          syncRunButton();
+          runButton.setAttribute("aria-busy", "true");
+          runButton.textContent = "运行中…";
+          setRunState("running", "Agent 协作运行中");
+          setRuntimeField("runtime-status", "运行中");
+          setText("narration-state", "模型生成中");
+          setText("submitted-instruction", instruction);
+          setText("orchestrator-status", "运行中");
+          updateTasks({research: "running", design: "pending", review: "pending"});
+          setNarrationPending("模型正在处理你的自定义指令，请等待后端返回真实 narration。");
+          rawOutput.textContent = "正在执行自定义指令…";
+          try {
+            const response = await window.fetch("/api/demo", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-QE-Trial-Token": trialToken
+              },
+              body: JSON.stringify({instruction: instruction})
+            });
+            const payload = await response.json();
+            renderRuntime(payload);
             if (!response.ok) {
-              throw new Error(String(payload.error || "trial_run_failed"));
+              throw new Error(responseError(payload, response));
             }
             renderRun(payload);
             setRunState("complete", "运行完成 · 可审计");
@@ -1843,9 +2259,15 @@
             const message = error instanceof Error ? error.message : "trial_run_failed";
             rawOutput.textContent = message;
             setText("orchestrator-status", "运行失败");
+            setText("narration-state", "运行失败");
+            setNarrationPending("本次没有取得模型 narration。错误：" + message);
+            setRuntimeField("runtime-status", "错误");
             setRunState("error", "运行失败 · " + message);
           } finally {
-            runButton.disabled = false;
+            runInProgress = false;
+            runButton.setAttribute("aria-busy", "false");
+            runButton.textContent = "发布指令并运行";
+            syncRunButton();
           }
         });
       })();
