@@ -23,6 +23,7 @@ from quantum_entanglement.invocation_execution import (
 from quantum_entanglement.protocol import TaskStatus
 from quantum_entanglement.scheduler import TaskTransition
 from quantum_entanglement.store import (
+    ConcurrencyError,
     InvocationStartConflictError,
     SQLiteEventStore,
 )
@@ -447,6 +448,124 @@ class ScopedTaskInvocationAdmissionStoreTests(unittest.TestCase):
         self.assertEqual(observed.receipt, claimed.receipt)
         self.assertEqual(replay.receipt, claimed.receipt)
         self.assertFalse(hasattr(replay, "lease"))
+
+    def test_wrong_scope_and_stream_version_fail_before_authority_allocation(self) -> None:
+        request = scoped_request()
+        self.store.append_scoped_task_invocation_admission_v2(
+            request,
+            expected_version=0,
+        )
+        self.store._clock = lambda: CLAIMED_AT
+
+        for tenant_id, workspace_id, expected_version, error_type in (
+            (
+                "tenant-other",
+                request.manifest.workspace_id,
+                2,
+                InvocationStartConflictError,
+            ),
+            (
+                request.manifest.tenant_id,
+                "workspace-other",
+                2,
+                InvocationStartConflictError,
+            ),
+            (
+                request.manifest.tenant_id,
+                request.manifest.workspace_id,
+                1,
+                ConcurrencyError,
+            ),
+        ):
+            with self.subTest(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                expected_version=expected_version,
+            ):
+                with (
+                    mock.patch(
+                        "quantum_entanglement.store.new_id",
+                        side_effect=AssertionError("identifier provider must not run"),
+                    ),
+                    mock.patch(
+                        "quantum_entanglement.store.secrets.token_urlsafe",
+                        side_effect=AssertionError("lease provider must not run"),
+                    ),
+                ):
+                    with self.assertRaises(error_type):
+                        self.store.claim_scoped_invocation_start_v3(
+                            tenant_id,
+                            workspace_id,
+                            request.manifest.invocation_id,
+                            "worker-scoped-store-1",
+                            lease_seconds=60,
+                            expected_version=expected_version,
+                        )
+        self.assertEqual(table_counts(self.store), (2, 1, 1, 0))
+
+    def test_scoped_claim_inputs_are_snapshotted_before_any_provider(self) -> None:
+        request = scoped_request()
+        self.store.append_scoped_task_invocation_admission_v2(
+            request,
+            expected_version=0,
+        )
+        baseline = {
+            "tenant_id": request.manifest.tenant_id,
+            "workspace_id": request.manifest.workspace_id,
+            "invocation_id": request.manifest.invocation_id,
+            "worker_id": "worker-scoped-store-1",
+            "lease_seconds": 60,
+            "expected_version": 2,
+        }
+        invalid = (
+            {"tenant_id": ""},
+            {"workspace_id": " padded"},
+            {"invocation_id": True},
+            {"worker_id": "line\nworker"},
+            {"lease_seconds": True},
+            {"lease_seconds": 0},
+            {"expected_version": True},
+            {"expected_version": -1},
+        )
+        for changes in invalid:
+            with self.subTest(changes=changes):
+                values = {**baseline, **changes}
+                with (
+                    mock.patch(
+                        "quantum_entanglement.store.new_id",
+                        side_effect=AssertionError("identifier provider must not run"),
+                    ),
+                    mock.patch(
+                        "quantum_entanglement.store.secrets.token_urlsafe",
+                        side_effect=AssertionError("lease provider must not run"),
+                    ),
+                ):
+                    with self.assertRaises((TypeError, ValueError)):
+                        self.store.claim_scoped_invocation_start_v3(**values)  # type: ignore[arg-type]
+        self.assertEqual(table_counts(self.store), (2, 1, 1, 0))
+
+    def test_scoped_start_apis_reject_legacy_admission_without_attempt(self) -> None:
+        request = legacy_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        self.store._clock = lambda: CLAIMED_AT
+
+        with self.assertRaises(InvocationStartConflictError):
+            self.store.claim_scoped_invocation_start_v3(
+                "tenant-cannot-be-invented",
+                "workspace-cannot-be-invented",
+                request.manifest.invocation_id,
+                "worker-must-not-run",
+                lease_seconds=60,
+                expected_version=2,
+            )
+        with self.assertRaises(InvocationStartConflictError):
+            self.store.read_scoped_invocation_start_v3(
+                "tenant-cannot-be-invented",
+                "workspace-cannot-be-invented",
+                request.manifest.invocation_id,
+            )
+
+        self.assertEqual(table_counts(self.store), (2, 1, 1, 0))
 
 
 if __name__ == "__main__":  # pragma: no cover
