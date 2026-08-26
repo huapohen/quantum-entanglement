@@ -8,6 +8,8 @@ WanWork 的核心对象不是“聊天机器人”，而是一个由人、Agent�
 > 每个 Agent 都是有身份、有能力、有边界、有责任的群成员；平台把模糊目标转成可恢复任务图，并让所有人清楚谁在做、依据什么、产出了什么、何时需要人。
 
 Clawith 固定源码进一步证明了“稳定 Agent + 原生群聊 + 主动工作 + 组织经验”可以组成普通团队能理解的产品形态；这里借鉴的是产品机制和经源码定位的局部实现，不代表这些能力已在 Quantum Entanglement 当前验收切片中完成。
+
+Clawith 2026-08-27 首页又证明了“部门级交付样板”比功能清单更容易让用户理解价值。WanWork 把它实现为不可变 `SolutionBlueprintRevision`：固定角色 revision、handoff、输入、Artifact schema、验收标准、预算、人工门和 policy profile，但只编译到下述既有对象，不拥有第二套运行状态。任何结果指标都必须绑定接受的 Run/Artifact/receipt、统计窗口和证据等级。
 ## 2. 产品不变量
 1. **模型可见即已记录**：任何发给 Agent 的上下文必须先形成可重建事件。
 2. **平台持有协作状态**：Agent 可无状态，任务、artifact、审批和因果链归平台。
@@ -194,7 +196,10 @@ MVP 可优先腾讯 IM + Flutter/Tauri 组合，但 transport 必须抽象，避
 退出标准：单机可重放、审批恢复不重复、失败传播正确、全部模型上下文可从事件重建。
 ### Phase 1：一个高价值场景
 选择验收标准清晰、输入可获取、结果可见的业务场景。先做 3–5 个稳定 AgentIdentity/不可变 AgentRevision、Human/Agent Participant、长期 Crew，以及群聊/任务/artifact/Needs You 四视图；单 Agent mention 确定性直达，多 Agent mention 才规划，不做无限 Agent 商店。
-退出标准：真实用户连续使用；任务完成率、人工干预成本和结果采纳率优于单 Agent。
+
+把这组角色和验收合同发布成一个不可变 `SolutionBlueprintRevision`，让用户能查看、复制、运行和升级业务样板；Blueprint 只引用 Agent/Handoff/Artifact/Policy，不重复持有执行状态。
+
+退出标准：真实用户连续使用；任务完成率、人工干预成本和结果采纳率优于单 Agent；每个对外展示的时长、成本、提交、测试或业务结果都能回溯到同 scope 的接受证据与明确统计口径。
 ### Phase 2：团队与企业治理
 - 组织、角色、data scope、审批链；
 - 多租户、审计、成本、SLA、Agent 版本；
@@ -239,7 +244,7 @@ MVP 可优先腾讯 IM + Flutter/Tauri 组合，但 transport 必须抽象，避
 
 ## 11. 接下来应实现的最小闭环
 1. 先闭合原子 Result/Artifact/attempt/task-terminal 验收、receipt-bound recovery 和 action receipt；在此之前 heartbeat worker、主动调度和真实 connector 保持关闭。
-2. 完成 Human/Agent Participant、长期 Crew 与稳定 AgentIdentity/不可变 AgentRevision；证明单 Agent mention“绕过 planner、不绕过事件/政策/上下文”，多 Agent mention 规划后仍由平台验证。
+2. 完成 Human/Agent Participant、长期 Crew 与稳定 AgentIdentity/不可变 AgentRevision；证明单 Agent mention“绕过 planner、不绕过事件/政策/上下文”，多 Agent mention 规划后仍由平台验证；用一个不可变 `SolutionBlueprintRevision` 打包真实高价值场景的角色、handoff、Artifact 验收、预算、人工门和 policy 引用，但不新建平行编排权威。
 3. 建立绑定配置指纹与时间的模型 `CapabilityObservation`，以及 `catalog → read → activate → materialize` 的不可变 Skill package 链；activation 继续受供应链与执行隔离门禁约束。
 4. 完成 LangGraph 可选 bridge，展示 interrupt→Needs You→resume。
 5. 增加 SQLite 重启恢复与 outbox，验证进程崩溃后不重复 artifact/副作用。
