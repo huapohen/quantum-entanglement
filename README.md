@@ -59,9 +59,11 @@ artifacts/                  本地评审、发布与旧管理仓库证据（被 
 ./scripts/start_local_trial.sh
 ```
 
-页面会真实执行本地三 Agent 合成 demo，并展示任务 DAG、3 个可预览和下载的 Markdown
+页面允许发布任意自定义指令，默认通过本地 `.env` 配置的 OpenAI-compatible GPT 模型依次执行
+分析、生成、复核三个 Agent，并展示真实模型 narration、任务 DAG、3 个可预览和下载的 Markdown
 Artifact、Needs You、25 步事件时间线和三张内联 SVG 系统图；它不会连接或发送任何飞书、
-企微消息。
+企微消息。缺失模型配置或调用失败时会明确报错，不会隐式伪装成合成成功；需要离线 fixture 时
+显式运行 `./scripts/start_local_trial.sh --synthetic`。
 完整启动方式、页面导览、安全边界和故障排查见
 [`docs/LOCAL_PRODUCT_TRIAL.md`](docs/LOCAL_PRODUCT_TRIAL.md)。当前仍是本地体验，Gate A–E 全部关闭。
 

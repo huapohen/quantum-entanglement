@@ -1,6 +1,6 @@
 # Quantum Entanglement 本地产品体验入手教程
 
-这份教程帮助你在本机启动并核验当前阶段的“人 + Agent 原生群聊协同”产品切片。它会真实执行仓库里的协作内核，展示任务 DAG、三个 Agent 的状态、三个版本化 Artifact 和完整事件链；但 Agent 输出仍是合成函数，不会调用大模型，也不会连接或发送任何飞书、企微消息。
+这份教程帮助你在本机启动并核验当前阶段的“人 + Agent 原生群聊协同”产品切片。你可以输入任意自定义指令，后端会调用配置的 GPT 模型，让分析、生成、复核三个 Agent 依次工作，并展示任务 DAG、真实模型 narration、三个版本化 Markdown Artifact 和完整事件链。它不会连接或发送任何飞书、企微消息。
 
 > 当前定位：可运行、可审计的本地产品体验，不是生产发布。Gate A–E 仍全部关闭。
 
@@ -11,7 +11,25 @@
 - macOS 或 Linux；
 - Python 3.9 或更高版本；
 - 任意现代浏览器；
-- 不需要安装第三方 Python 包，不需要配置模型凭据。
+- 不需要安装第三方 Python 包；
+- 仓库根目录已有本地 `.env`，或按 `.env.example` 配置 OpenAI-compatible 模型凭据。
+
+首次配置：
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+然后编辑 `.env`：
+
+```dotenv
+OPENAI_API_KEY=<只保存在本机的 Key>
+OPENAI_BASE_URL=https://your-gateway.example/v1
+OPENAI_MODEL=gpt-5.6-sol
+```
+
+真实 Key 不得提交到 Git；仓库的 `.gitignore` 已忽略 `.env`。Key、base URL 和 model 必须作为一套配置使用。
 
 进入仓库后运行：
 
@@ -29,7 +47,7 @@ cd /Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement
 终端会显示类似下面的提示：
 
 ```text
-Quantum Entanglement 本地体验已启动（仅合成数据，不连接任何聊天平台）
+Quantum Entanglement 本地体验已启动（openai-compatible / gpt-5.6-sol，不连接任何聊天平台）
 http://127.0.0.1:8765/#token=…
 按 Ctrl-C 停止。
 ```
@@ -38,32 +56,33 @@ http://127.0.0.1:8765/#token=…
 
 ## 2. 页面怎么试
 
-打开页面后，先确认右上角显示 `LOCAL ONLY`，然后点击“运行一次真实三 Agent 协作”。这次运行不是预录动画：浏览器会调用本地 `/api/demo`，后端再执行仓库中的 `run_demo()`。
+打开页面后，先确认右上角显示 `LOCAL ONLY`，并核对 Runtime 区域显示 `MODEL`、`OPENAI-COMPATIBLE`、`GPT-5.6-SOL` 和 `CONFIGURED`。在“发布你的协作指令”中输入任务，点击“发布指令并运行”。浏览器会向本地 `/api/demo` 严格发送 `{"instruction":"…"}`；后端把它编译为分析 → 生成 → 复核三节点 DAG，并通过 `AgentRuntimePort` 调用流式 Responses API。
 
 正常完成后应看到：
 
 | 区域 | 预期结果 | 代表什么 |
 | --- | --- | --- |
 | 运行状态 | `运行完成 · 可审计` | 本地协作执行完成 |
-| 群聊路由 | `ROUTE / DIRECT` | mention 路由选择了目标 Agent |
+| 群聊路由 | `ROUTE / LOCAL-DIRECT` | 本地自定义指令进入受治理的 Agent 流程 |
 | 任务 DAG | research、design、review 全部 `COMPLETED` | 依赖顺序由确定性调度器推进 |
-| Artifact | 3 ITEMS | 协议笔记、架构方案、审阅报告各形成一个版本 |
-| Needs You | 0 BLOCKERS | 当前合成场景没有审批或歧义阻断 |
+| 模型 Narration | 3 段非空输出 | 三次真实模型调用均返回结果 |
+| Artifact | 3 ITEMS | 每个模型结果被映射为一个可下载 Markdown 版本 |
+| Needs You | 0 BLOCKERS | 当前只读生成场景没有审批或歧义阻断 |
 | 事件时间线 | 25 EVENTS | 计划、任务、上下文、调用、产出和结果均进入因果序列 |
 
 三个预期 Artifact 是：
 
-- `protocol-notes.md`：协议研究员的产出；
-- `architecture.md`：系统架构师的产出；
-- `review.md`：安全审阅员的产出。
+- `01_analysis.md`：需求分析 Agent 对目标、约束和验收标准的分析；
+- `02_result.md`：方案生成 Agent 基于上游 Artifact 形成的完整成果；
+- `03_final_review.md`：质量复核 Agent 检查并修订后的最终交付。
 
 每个 Artifact 卡片会显示版本号和 digest。运行完成后，第一个 Artifact 会自动在卡片下方展开
 原文；点击任意卡片可切换 Markdown 原文，点击“下载 .md”可把当前版本保存为同名文件。预览和
 下载内容都直接来自本次后端运行结果，不是页面内预置文本。下载到本机的文件会保留，但服务端
 Artifact 仍只存于本次运行的内存 SQLite 中，停止服务后不会持久化。
 
-运行生成的 session、plan 和 Artifact ID 可以变化，但任务数量、Artifact 数量、事件数量和因果
-顺序应保持稳定。
+运行生成的 session、plan、Artifact ID、正文长度和 token usage 可以变化，但三个任务的依赖关系、
+三个 Artifact 和因果顺序应保持稳定。模型输出本身不是确定性的，不能用固定正文做验收。
 
 页面下半部分还有三张完整内联 SVG：
 
@@ -93,7 +112,7 @@ Artifact 仍只存于本次运行的内存 SQLite 中，停止服务后不会持
 
 ![本地产品体验系统图](../analysis_report/screenshots/13_local_trial_architecture_diagrams.png)
 
-这些是 viewport 证据，不代表真实模型、外部 connector、持久化部署或生产门禁已经通过。
+这些旧截图绑定的是此前的合成版本，仅用于页面布局参考，不作为本次真实模型能力的验收证据。真实模型浏览器验收应以当前页面、原始 JSON 和新生成 Artifact 为准；它仍不代表外部 connector、持久化部署或生产门禁已经通过。
 
 ## 4. 其他启动方式
 
@@ -119,7 +138,15 @@ Artifact 仍只存于本次运行的内存 SQLite 中，停止服务后不会持
 ./scripts/start_local_trial.sh --cli
 ```
 
-CLI 模式执行与网页后端相同的合成协作 demo，然后把完整 JSON 输出到终端。正常结果应包含 3 个 Artifact、25 个事件、0 个 Needs You 和 0 个 errors。
+CLI 模式保留原有确定性合成协作 demo，方便离线检查内核，然后把完整 JSON 输出到终端。它不是网页真实模型模式。
+
+### 显式使用离线合成模式
+
+```bash
+./scripts/start_local_trial.sh --synthetic
+```
+
+只有显式传入 `--synthetic` 才会让网页使用确定性 fixture。默认 GPT 配置缺失或调用失败时，服务会报错，不会悄悄回退成合成答案。
 
 ### 指定 Python
 
@@ -151,9 +178,11 @@ QE_TRIAL_PYTHON=/usr/bin/python3 ./scripts/start_local_trial.sh
 - 页面不加载 CDN、外部字体、统计脚本或第三方 JavaScript；
 - 动态数据通过 `textContent` 写入 DOM，不使用 `innerHTML` 或 `eval`；
 - Content Security Policy、`X-Frame-Options: DENY`、`no-store` 等响应头默认启用；
-- demo 使用内存 SQLite 和合成输入，停止进程后数据消失；
+- demo 使用内存 SQLite，停止进程后任务与 Artifact 数据消失；
 - 不读取、不连接、不发送任何飞书、企微或其他真实消息；
-- 不调用外部模型、不访问客户数据、不执行不可逆外部副作用。
+- 默认只把你在页面输入的指令、确定性任务契约和上游 Artifact 发给配置的 GPT 网关；
+- 不访问客户数据，不执行不可逆外部副作用；
+- API Key 只从进程环境或本地 `.env` 读取，不进入 HTTP 响应、Artifact、事件 metadata 或日志。
 
 `boundary.productionApproved=false` 和 `gateStatus="A-E closed"` 是有意保留的事实。页面能运行，只代表当前产品切片可本地体验，不代表生产安全审批、私有试点批准或商用就绪。
 
@@ -195,6 +224,14 @@ python3 --version
 
 服务一次只允许一个 demo 运行。等待当前运行结束后再点；不要同时在多个标签页反复触发。
 
+### 启动时报 `model_configuration_missing_or_invalid`
+
+检查 `.env` 是否同时设置 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `OPENAI_MODEL`，并彻底重启服务。不要只更换 Key；端点和模型必须匹配。
+
+### 页面提示 `trial_run_failed`
+
+后端有意向浏览器隐藏 provider 原始错误，防止网关诊断回显凭据或 Prompt。先检查网络/VPN，再核对模型端点；若 `/models` 可用但运行失败，还要确认网关支持 `/responses`、结构化 input 和 `stream=true`。
+
 ### 页面没有自动打开
 
 终端中的服务仍可能已经启动。复制它打印的 `http://127.0.0.1:…/#token=…` 完整地址到浏览器；或使用 `--no-open` 明确采用手动打开方式。
@@ -209,6 +246,8 @@ python3 --version
 
 ```bash
 PYTHONPATH=src python3 -m unittest -v \
+  tests.test_adapters_openai_responses \
+  tests.test_product_trial \
   tests.test_product_trial_server \
   tests.test_start_local_trial_script
 ```
@@ -223,9 +262,9 @@ sh -n scripts/start_local_trial.sh
 
 1. 默认启动不会连接外部消息平台；
 2. 没有 token 时 API 拒绝调用；
-3. 点击一次后出现 3 个 completed task、3 个 Artifact 和 25 个事件；
+3. 输入一条从未出现在代码里的自定义指令，运行后仍出现 3 个 completed task、3 段 narration、3 个 Artifact 和 25 个事件；
 4. 依次点击三个 Artifact，预览区显示对应 Markdown 原文、版本和 digest；
-5. 下载 `review.md` 后，文件正文与页面预览及原始 JSON 中的 `content` 完全一致；
+5. 下载 `03_final_review.md` 后，文件正文与页面预览及原始 JSON 中的 `content` 完全一致；
 6. 原始 JSON 与 UI 数字一致；
 7. `Ctrl-C` 后服务停止；
 8. 手机宽度和桌面宽度都能阅读三张系统图与核心状态。
@@ -246,5 +285,7 @@ sh -n scripts/start_local_trial.sh
 - 启动脚本：`scripts/start_local_trial.sh`
 - 本地 HTTP 服务：`examples/product_trial_server.py`
 - 产品体验页面：`examples/product_trial/index.html`
+- 自定义指令工作流：`src/quantum_entanglement/product_trial.py`
+- Responses API 运行时：`src/quantum_entanglement/adapters/openai_responses.py`
 - 合成协作场景：`examples/group_chat_demo.py`
 - 核心实现：`src/quantum_entanglement/`
