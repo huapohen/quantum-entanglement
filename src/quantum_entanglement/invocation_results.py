@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Dict, Mapping, Set, Tuple, cast
 
 from .invocation_execution import EffectClass
@@ -26,12 +28,20 @@ EMPTY_ACTION_RECEIPT_SET_DIGEST = hashlib.sha256(
 ).hexdigest()
 
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
-_MAX_IDENTITY_BYTES = 512
+_MIN_SQLITE_INTEGER = -(1 << 63)
+_MAX_IDENTITY_BYTES = 4_096
 _MAX_MEDIA_TYPE_BYTES = 255
 _MAX_ARTIFACTS = 256
 _MAX_MANIFEST_BYTES = 1_048_576
+_MAX_NARRATION_BYTES = 524_288
+_MAX_RESULT_METADATA_BYTES = 262_144
+_MAX_METADATA_DEPTH = 64
+_MAX_METADATA_NODES = 10_000
+_MAX_METADATA_KEY_BYTES = 4_096
+_MAX_METADATA_STRING_BYTES = 262_144
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _BLOB_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_MAPPING_PROXY_TYPE: type = type(MappingProxyType({}))
 
 _ARTIFACT_FIELDS = frozenset(
     (
@@ -68,6 +78,9 @@ _MANIFEST_FIELDS = frozenset(
         "effectClass",
         "actionReceiptSetDigest",
         "resultRef",
+        "narration",
+        "metadata",
+        "primaryArtifactId",
         "artifacts",
     )
 )
@@ -115,6 +128,150 @@ def _digest(value: object, label: str) -> str:
     if _SHA256_PATTERN.fullmatch(digest) is None:
         raise ValueError(f"{label} must be canonical lowercase SHA-256")
     return digest
+
+
+def _body_text(value: object, label: str, *, maximum_bytes: int) -> str:
+    if type(value) is not str:
+        raise TypeError(f"{label} must be a plain string")
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeError:
+        encoded = None
+    if encoded is None:
+        raise ValueError(f"{label} must be valid UTF-8") from None
+    if len(encoded) > maximum_bytes:
+        raise ValueError(f"{label} exceeds its UTF-8 byte limit")
+    if unicodedata.normalize("NFC", value) != value:
+        raise ValueError(f"{label} must use Unicode NFC")
+    if any(
+        (ord(character) < 0x20 and character not in "\t\n\r") or ord(character) == 0x7F
+        for character in value
+    ):
+        raise ValueError(f"{label} contains a forbidden control character")
+    return value
+
+
+def _snapshot_json_value(
+    value: object,
+    label: str,
+    *,
+    depth: int,
+    active: set[int],
+    nodes: list[int],
+) -> object:
+    nodes[0] += 1
+    if nodes[0] > _MAX_METADATA_NODES:
+        raise ValueError(f"{label} exceeds its JSON node limit")
+    value_type = type(value)
+    if value is None or value_type is bool:
+        return value
+    if value_type is str:
+        return _body_text(value, label, maximum_bytes=_MAX_METADATA_STRING_BYTES)
+    if value_type is int:
+        integer = cast(int, value)
+        if not _MIN_SQLITE_INTEGER <= integer <= _MAX_SQLITE_INTEGER:
+            raise ValueError(f"{label} integer is outside the signed 64-bit range")
+        return integer
+    if value_type is float:
+        number = cast(float, value)
+        if not math.isfinite(number):
+            raise ValueError(f"{label} contains a non-finite number")
+        return number
+    if value_type not in (dict, list):
+        raise TypeError(f"{label} contains a non-JSON value")
+    if depth >= _MAX_METADATA_DEPTH:
+        raise ValueError(f"{label} exceeds its nesting limit")
+    identity = id(value)
+    if identity in active:
+        raise ValueError(f"{label} contains a reference cycle")
+    active.add(identity)
+    try:
+        if value_type is list:
+            sequence = cast(list[object], value)
+            try:
+                items = tuple(sequence)
+            except RuntimeError as error:
+                raise ValueError(f"{label} changed while it was being snapshotted") from error
+            copied = [
+                _snapshot_json_value(
+                    item,
+                    f"{label}[{index}]",
+                    depth=depth + 1,
+                    active=active,
+                    nodes=nodes,
+                )
+                for index, item in enumerate(items)
+            ]
+            if len(sequence) != len(items):
+                raise ValueError(f"{label} changed while it was being snapshotted")
+            return copied
+
+        mapping = cast(dict[object, object], value)
+        try:
+            entries = tuple(mapping.items())
+        except RuntimeError as error:
+            raise ValueError(f"{label} changed while it was being snapshotted") from error
+        copied_mapping: dict[str, object] = {}
+        for key, item in entries:
+            nodes[0] += 1
+            if nodes[0] > _MAX_METADATA_NODES:
+                raise ValueError(f"{label} exceeds its JSON node limit")
+            if type(key) is not str:
+                raise TypeError(f"{label} keys must be plain strings")
+            normalized_key = _body_text(
+                key,
+                f"{label} key",
+                maximum_bytes=_MAX_METADATA_KEY_BYTES,
+            )
+            copied_mapping[normalized_key] = _snapshot_json_value(
+                item,
+                f"{label}.{normalized_key}",
+                depth=depth + 1,
+                active=active,
+                nodes=nodes,
+            )
+        if len(mapping) != len(entries):
+            raise ValueError(f"{label} changed while it was being snapshotted")
+        return copied_mapping
+    finally:
+        active.discard(identity)
+
+
+def _freeze_json(value: object) -> object:
+    if type(value) is dict:
+        mapping = cast(dict[str, object], value)
+        return MappingProxyType({key: _freeze_json(item) for key, item in mapping.items()})
+    if type(value) is list:
+        return tuple(_freeze_json(item) for item in cast(list[object], value))
+    return value
+
+
+def _thaw_json(value: object) -> object:
+    if type(value) is _MAPPING_PROXY_TYPE:
+        mapping = cast(Mapping[str, object], value)
+        return {key: _thaw_json(item) for key, item in mapping.items()}
+    if type(value) is tuple:
+        return [_thaw_json(item) for item in cast(tuple[object, ...], value)]
+    return value
+
+
+def _snapshot_json_object(
+    value: object,
+    label: str,
+    *,
+    allow_frozen: bool,
+) -> tuple[Mapping[str, object], bytes]:
+    if allow_frozen and type(value) is _MAPPING_PROXY_TYPE:
+        value = _thaw_json(value)
+    if type(value) is not dict:
+        raise TypeError(f"{label} must be a plain dictionary")
+    copied = _snapshot_json_value(value, label, depth=0, active=set(), nodes=[0])
+    if type(copied) is not dict:  # pragma: no cover - protected by the exact root guard.
+        raise TypeError(f"{label} must be a JSON object")
+    canonical = _canonical_json_bytes(cast(Mapping[str, object], copied))
+    if len(canonical) > _MAX_RESULT_METADATA_BYTES:
+        raise ValueError(f"{label} exceeds its canonical byte limit")
+    return cast(Mapping[str, object], _freeze_json(copied)), canonical
 
 
 def _blob_digest(value: object) -> str:
@@ -262,7 +419,11 @@ class ScopedInvocationResultManifestV2:
     effect_class: EffectClass
     action_receipt_set_digest: str
     result_ref: str
+    narration: str = field(repr=False)
+    metadata: Mapping[str, object] = field(repr=False)
+    primary_artifact_id: str | None
     artifacts: Tuple[ScopedInvocationResultArtifactV2, ...] = field(repr=False)
+    _metadata_canonical_bytes: bytes = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if type(self) is not ScopedInvocationResultManifestV2:
@@ -289,6 +450,14 @@ class ScopedInvocationResultManifestV2:
         _positive_integer(self.task_revision, "taskRevision")
         _digest(self.execution_manifest_digest, "executionManifestDigest")
         _digest(self.action_receipt_set_digest, "actionReceiptSetDigest")
+        _body_text(self.narration, "narration", maximum_bytes=_MAX_NARRATION_BYTES)
+        metadata, metadata_bytes = _snapshot_json_object(
+            self.metadata,
+            "metadata",
+            allow_frozen=True,
+        )
+        if self.primary_artifact_id is not None:
+            _text(self.primary_artifact_id, "primaryArtifactId")
         if self.causation_id != self.task_id:
             raise ValueError("causationId must equal taskId")
         if type(self.effect_class) is not EffectClass:
@@ -300,12 +469,12 @@ class ScopedInvocationResultManifestV2:
             raise ValueError("effectful results require a non-empty action receipt set digest")
         if type(self.artifacts) is not tuple:
             raise TypeError("artifacts must be an exact tuple")
-        if not self.artifacts or len(self.artifacts) > _MAX_ARTIFACTS:
-            raise ValueError("artifacts must contain between 1 and 256 descriptors")
+        if len(self.artifacts) > _MAX_ARTIFACTS:
+            raise ValueError("artifacts must contain at most 256 descriptors")
 
         artifacts: list[ScopedInvocationResultArtifactV2] = []
         artifact_ids: set[str] = set()
-        version_heads: set[tuple[str, int]] = set()
+        artifact_names: set[str] = set()
         idempotency_keys: set[str] = set()
         for item in self.artifacts:
             if type(item) is not ScopedInvocationResultArtifactV2:
@@ -315,21 +484,26 @@ class ScopedInvocationResultManifestV2:
                 raise ValueError("artifact createdBy must equal the result agentId")
             if snapshot.artifact_id in artifact_ids:
                 raise ValueError("result manifest repeats an artifactId")
-            head = (snapshot.name, snapshot.version)
-            if head in version_heads:
-                raise ValueError("result manifest repeats an artifact name/version")
+            if snapshot.name in artifact_names:
+                raise ValueError("result manifest repeats an artifact name")
             if snapshot.idempotency_key in idempotency_keys:
                 raise ValueError("result manifest repeats an artifact idempotencyKey")
             artifact_ids.add(snapshot.artifact_id)
-            version_heads.add(head)
+            artifact_names.add(snapshot.name)
             idempotency_keys.add(snapshot.idempotency_key)
             artifacts.append(snapshot)
-        if self.result_ref not in artifact_ids:
-            raise ValueError("resultRef must identify one descriptor in artifacts")
+        if self.primary_artifact_id is not None and self.primary_artifact_id not in artifact_ids:
+            raise ValueError("primaryArtifactId must identify one descriptor in artifacts")
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "_metadata_canonical_bytes", metadata_bytes)
         object.__setattr__(self, "artifacts", tuple(artifacts))
+        if len(_canonical_json_bytes(self._wire_dict())) > _MAX_MANIFEST_BYTES:
+            raise ValueError("result manifest exceeds its canonical byte limit")
 
-    def to_dict(self) -> Dict[str, object]:
-        ScopedInvocationResultManifestV2.__post_init__(self)
+    def _wire_dict(self) -> Dict[str, object]:
+        metadata = _thaw_json(self.metadata)
+        if type(metadata) is not dict:  # pragma: no cover - protected by construction.
+            raise TypeError("metadata snapshot is not a JSON object")
         return {
             "schemaVersion": self.schema_version,
             "tenantId": self.tenant_id,
@@ -348,8 +522,15 @@ class ScopedInvocationResultManifestV2:
             "effectClass": self.effect_class.value,
             "actionReceiptSetDigest": self.action_receipt_set_digest,
             "resultRef": self.result_ref,
+            "narration": self.narration,
+            "metadata": metadata,
+            "primaryArtifactId": self.primary_artifact_id,
             "artifacts": [item.to_dict() for item in self.artifacts],
         }
+
+    def to_dict(self) -> Dict[str, object]:
+        ScopedInvocationResultManifestV2.__post_init__(self)
+        return self._wire_dict()
 
     @classmethod
     def from_dict(cls, value: object) -> ScopedInvocationResultManifestV2:
@@ -377,6 +558,9 @@ class ScopedInvocationResultManifestV2:
             effect_class=_effect_class(raw["effectClass"]),
             action_receipt_set_digest=raw["actionReceiptSetDigest"],
             result_ref=raw["resultRef"],
+            narration=raw["narration"],
+            metadata=raw["metadata"],
+            primary_artifact_id=raw["primaryArtifactId"],
             artifacts=tuple(
                 ScopedInvocationResultArtifactV2.from_dict(item) for item in raw_artifacts
             ),

@@ -45,7 +45,10 @@ def valid_manifest(
     artifacts: tuple[ScopedInvocationResultArtifactV2, ...] | None = None,
     effect_class: EffectClass = EffectClass.PURE,
     action_receipt_set_digest: str = EMPTY_ACTION_RECEIPT_SET_DIGEST,
-    result_ref: str = "artifact-result-1",
+    result_ref: str = "result:invocation-result-1",
+    narration: str = "completed result",
+    metadata: dict[str, object] | None = None,
+    primary_artifact_id: str | None = "artifact-result-1",
 ) -> ScopedInvocationResultManifestV2:
     return ScopedInvocationResultManifestV2(
         schema_version=SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION,
@@ -65,6 +68,9 @@ def valid_manifest(
         effect_class=effect_class,
         action_receipt_set_digest=action_receipt_set_digest,
         result_ref=result_ref,
+        narration=narration,
+        metadata={"provider": "fake", "tokens": 3} if metadata is None else metadata,
+        primary_artifact_id=primary_artifact_id,
         artifacts=(valid_artifact(),) if artifacts is None else artifacts,
     )
 
@@ -163,12 +169,16 @@ class ScopedInvocationResultManifestCodecTests(unittest.TestCase):
         decoded = ScopedInvocationResultManifestV2.from_dict(wire)
 
         wire["tenantId"] = "tenant-mutated"
+        metadata = wire["metadata"]
+        self.assertIs(type(metadata), dict)
+        metadata["provider"] = "mutated"  # type: ignore[index]
         artifacts = wire["artifacts"]
         self.assertIs(type(artifacts), list)
         artifacts[0]["artifactId"] = "artifact-mutated"  # type: ignore[index]
         artifacts.append(valid_artifact(artifact_id="later").to_dict())  # type: ignore[union-attr]
 
         self.assertEqual(decoded.tenant_id, "tenant-result-1")
+        self.assertEqual(decoded.metadata["provider"], "fake")
         self.assertEqual(decoded.artifacts[0].artifact_id, "artifact-result-1")
         self.assertEqual(len(decoded.artifacts), 1)
 
@@ -193,30 +203,42 @@ class ScopedInvocationResultManifestCodecTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "exact"):
             ManifestSubclass.from_dict(wire)
 
-    def test_manifest_binds_primary_artifact_agent_and_unique_artifact_set(self) -> None:
+    def test_manifest_binds_optional_primary_artifact_and_unique_artifact_set(self) -> None:
         first = valid_artifact()
         second = valid_artifact(
             artifact_id="artifact-result-2",
             name="evidence.json",
             idempotency_key="result-artifact:invocation-result-1:2",
         )
-        manifest = valid_manifest(artifacts=(first, second), result_ref=second.artifact_id)
-        self.assertEqual(manifest.result_ref, second.artifact_id)
+        manifest = valid_manifest(
+            artifacts=(first, second),
+            primary_artifact_id=second.artifact_id,
+        )
+        self.assertEqual(manifest.primary_artifact_id, second.artifact_id)
+        self.assertEqual(manifest.result_ref, "result:invocation-result-1")
 
-        invalid_sets = (
-            ((first,), "missing-result-ref"),
+        invalid_sets: tuple[
+            tuple[tuple[ScopedInvocationResultArtifactV2, ...], str | None], ...
+        ] = (
+            ((first,), "missing-primary-artifact"),
             ((first, replace(first, name="other.md")), first.artifact_id),
-            ((first, replace(second, name=first.name)), first.artifact_id),
+            (
+                (first, replace(second, name=first.name, version=2, parent_version=1)),
+                first.artifact_id,
+            ),
             (
                 (first, replace(second, idempotency_key=first.idempotency_key)),
                 first.artifact_id,
             ),
             ((replace(first, created_by="agent-other"),), first.artifact_id),
         )
-        for artifacts, result_ref in invalid_sets:
-            with self.subTest(artifacts=artifacts, result_ref=result_ref):
+        for artifacts, primary_artifact_id in invalid_sets:
+            with self.subTest(artifacts=artifacts, primary_artifact_id=primary_artifact_id):
                 with self.assertRaises(ValueError):
-                    valid_manifest(artifacts=artifacts, result_ref=result_ref)
+                    valid_manifest(
+                        artifacts=artifacts,
+                        primary_artifact_id=primary_artifact_id,
+                    )
 
     def test_effect_class_and_action_receipt_set_cannot_contradict(self) -> None:
         with self.assertRaisesRegex(ValueError, "empty action receipt"):
@@ -231,8 +253,9 @@ class ScopedInvocationResultManifestCodecTests(unittest.TestCase):
         self.assertIs(effectful.effect_class, EffectClass.IDEMPOTENT)
 
     def test_manifest_collection_is_bounded_and_immutable(self) -> None:
-        with self.assertRaisesRegex(ValueError, "between 1 and 256"):
-            valid_manifest(artifacts=())
+        narration_only = valid_manifest(artifacts=(), primary_artifact_id=None)
+        self.assertEqual(narration_only.artifacts, ())
+        self.assertIsNone(narration_only.primary_artifact_id)
         with self.assertRaisesRegex(TypeError, "exact tuple"):
             replace(valid_manifest(), artifacts=[valid_artifact()])  # type: ignore[arg-type]
 
@@ -244,8 +267,8 @@ class ScopedInvocationResultManifestCodecTests(unittest.TestCase):
             )
             for index in range(257)
         )
-        with self.assertRaisesRegex(ValueError, "between 1 and 256"):
-            valid_manifest(artifacts=many, result_ref="artifact-0")
+        with self.assertRaisesRegex(ValueError, "at most 256"):
+            valid_manifest(artifacts=many, primary_artifact_id="artifact-0")
 
 
 if __name__ == "__main__":  # pragma: no cover
