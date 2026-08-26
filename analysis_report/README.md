@@ -41,6 +41,7 @@
 | `research/18_model_backed_custom_instruction_evidence.md` | 当前模型产品证据：`886aedc` | 任意自定义指令、GPT `gpt-5.6-sol`、三 Agent DAG、三段 narration、三个 Markdown Artifact、25-event 浏览器验收、凭据/HTTP/Harness 边界与下一 crash-safe 里程碑 |
 | `research/19_six_agent_collaboration_protocols_and_bottom_layer_design.md` | 当前协议选型：2026-08-26 | A2A 1.0（`v1.0.1` release）、stateless MCP 2026-07-28、BeeAI ACP、ANP、AGNTCY、FIPA ACL/Contract Net 六项边界，WanWork canonical envelope 设计、现状差距与落地顺序 |
 | `research/20_clawith_competitive_analysis.md` | Clawith 固定源码深研：2026-08-26 | 基于官网、官方文档和 `dataelement/Clawith@45fc701c` 的产品、群聊、长期身份、Aware/Pulse、Experience Library、Skills/MCP、治理与部署审计；明确可借鉴项、不可照搬项和 WanWork 优先级 |
+| `research/21_atomic_invocation_start_release_evidence.md` | 当前 atomic start 发布证据：`a1fd355` | first-claim/start 的代码、提交、Python 3.9/3.12/3.13、BEGIN/COMMIT/ROLLBACK ACK-loss、双连接、spawn/fork、backup/token canary 与未关闭 worker/result/action/Gate A–E 边界 |
 
 ## 已归档截图
 
