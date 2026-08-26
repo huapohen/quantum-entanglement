@@ -10,7 +10,7 @@
   "last_discovery_at": "2026-08-24T16:48:00+08:00",
   "last_successful_sync_at": "2026-08-24T17:23:25+08:00",
   "current_local_delta": {
-    "updated_at": "2026-08-27T05:00:53+08:00",
+    "updated_at": "2026-08-27T06:19:11+08:00",
     "status": "partial",
     "remote_write_status": "local_pending",
     "remote_readback_status": "local_pending",
@@ -24,7 +24,7 @@
         "title": "综合报告｜人与多 Agent 群聊协同产品：调研、架构与实现",
         "yuque_slug": "nspilnhf8bpg0207",
         "previous_verified_normalized_sha256": "a81389814cb43f5eeeafb738219013b1ba44b2dddac411c1a621e8f9838e3b16",
-        "current_normalized_sha256": "bd8ed10465b1cc8f35873db04c58031d631657290a7db0b12749df0cfab7ba55",
+        "current_normalized_sha256": "02a289a6dd43e5f5c8806585d66c11b0f285321724af47900e769ad731a27ff0",
         "target_status": "local_pending"
       },
       {
@@ -41,7 +41,7 @@
         "title": "04｜多 Agent 竞品全景",
         "yuque_slug": "nhywrdbud44vtcxv",
         "previous_verified_normalized_sha256": "fa192975f698f6997c87649c0252dc2785a8638b18d9784112f52045ed998f96",
-        "current_normalized_sha256": "96c1d11c9d45472722f3cc6e88116fab75135e84e5571ec23d1fc6334cf305ad",
+        "current_normalized_sha256": "af48002be14d23a14b71ac2627c92762beda74834a3061cd508981cb90bc06d5",
         "target_status": "local_pending"
       },
       {
@@ -49,7 +49,7 @@
         "title": "05｜目标产品与架构蓝图",
         "yuque_slug": "dcvqphyycqa53ekz",
         "previous_verified_normalized_sha256": "ec10620ebbf3e4c04fe49998fae81ea4ed97aab503e5693dff35ddcca5a4917a",
-        "current_normalized_sha256": "fa4be1e143662f34c84cc1d5f42408bc1d11438b1b9e1579c4000908d8cbd6b5",
+        "current_normalized_sha256": "9f4a1cc26bdff409dfc1c613dea17e8e28ccfea4e80fa267511018f3b8f87b67",
         "target_status": "local_pending"
       },
       {

@@ -157,6 +157,13 @@ Artifact 是跨 Agent 交接的正式媒介，支持文档、表格、代码、�
 主动工作采用 `Focus → Trigger → Occurrence → Run → Result/Needs You`。Focus 是结构化长期目标；Trigger 只表达何时重新评估；Occurrence 使用稳定幂等身份；Run 复用同一 admission、policy、Harness、Artifact 和 receipt 链。cron、消息、事件或 webhook 都不能直接承诺外部副作用，也不能绕过 action-time gate。
 
 Experience Library 与正式 Artifact 分开：AI 或人从一次交付提炼 draft，只有人或明确治理角色审核后的 `published` 条目才能进入权威检索；过时内容进入 `retired`。每条 Experience 保留来源 Artifact、适用条件、失效信号、数据分类、reviewer 和引用/采纳记录，避免“模型读过”被误当成组织事实。
+
+### 5.11 Skill 渐进披露与模型能力事实
+
+Skill 不应把所有说明、代码和权限一次灌入上下文。平台先向模型暴露有界 catalog，需要时只读 package metadata/说明，再由平台根据 policy、批准状态和 Run scope 激活，最后在隔离执行域中 materialize 固定 digest 的不可变快照。`catalog → read → activate → materialize` 四步必须分别可审计；来源、签名/扫描、SBOM、credential、egress 和撤销状态不满足时，不得仅凭 prompt 自安装。
+
+模型能力也不能从名字、价格页或历史经验猜测。每个 `ModelConnection` 应持有配置指纹；tool calling、vision、structured output、streaming、上下文/输出限制和速率限制等探测结果形成带 provider/model revision、`observed_at`、有效期和原始证据摘要的 `CapabilityObservation`。planner 只能依据未过期事实选候选模型，Harness 在调用时仍做 action-time 校验；缺失、过期或冲突必须显式降级或 Needs You，不能静默假定支持。
+
 ## 6. LangGraph + DeepSeek Harness 的组合边界
 建议不是修改其中一个去吞掉另一个，而是定义 ports：
 - `WorkflowEnginePort`：start/resume/interrupt/checkpoint；LangGraph 是一个实现。
@@ -231,13 +238,15 @@ MVP 可优先腾讯 IM + Flutter/Tauri 组合，但 transport 必须抽象，避
 
 
 ## 11. 接下来应实现的最小闭环
-1. 完成 Human/Agent Participant、长期 Crew 与稳定 AgentIdentity/不可变 AgentRevision；证明单 Agent mention“绕过 planner、不绕过事件/政策/上下文”，多 Agent mention 规划后仍由平台验证。
-2. 完成 A2A Agent Card 与 JSON-RPC 映射，保留内部 correlation/causation。
-3. 完成 LangGraph 可选 bridge，展示 interrupt→Needs You→resume。
-4. 增加 SQLite 重启恢复与 outbox，验证进程崩溃后不重复 artifact/副作用。
-5. 提供本地群聊 demo：两个并行 Agent、一个依赖 Agent、一次人工审批、一个版本化报告。
-6. 在核心交付闭环稳定后接入 Focus→Trigger→Occurrence→Run 与人审 Experience Library；主动工作仍复用同一授权、Artifact 和 receipt 链。
-7. 不复制 Clawith 的非标准 A2A 命名、宽权限 Compose、宿主 pip/MCP 自安装和 best-effort 审计边界。
+1. 先闭合原子 Result/Artifact/attempt/task-terminal 验收、receipt-bound recovery 和 action receipt；在此之前 heartbeat worker、主动调度和真实 connector 保持关闭。
+2. 完成 Human/Agent Participant、长期 Crew 与稳定 AgentIdentity/不可变 AgentRevision；证明单 Agent mention“绕过 planner、不绕过事件/政策/上下文”，多 Agent mention 规划后仍由平台验证。
+3. 建立绑定配置指纹与时间的模型 `CapabilityObservation`，以及 `catalog → read → activate → materialize` 的不可变 Skill package 链；activation 继续受供应链与执行隔离门禁约束。
+4. 完成 LangGraph 可选 bridge，展示 interrupt→Needs You→resume。
+5. 增加 SQLite 重启恢复与 outbox，验证进程崩溃后不重复 artifact/副作用。
+6. 提供本地群聊 demo：两个并行 Agent、一个依赖 Agent、一次人工审批、一个版本化报告。
+7. 在核心交付闭环稳定后接入 Focus→Trigger→Occurrence→Run 与人审 Experience Library；主动工作仍复用同一授权、Artifact 和 receipt 链。
+8. 完成 A2A Agent Card 与 JSON-RPC 映射，保留内部 correlation/causation。
+9. 不复制 Clawith 的非标准 A2A 命名、宽权限 Compose、宿主 pip/MCP 自安装和 best-effort 审计边界。
 
 ---
 

@@ -143,6 +143,8 @@ WanWork 对外应像网络节点，对内应像协作操作系统：外部消息
 
 WanWork 最应直接吸收四个彼此咬合的产品机制：版本化稳定身份与 Directory、原生 Crew 群聊和公开 handoff、`Focus → Trigger → occurrence → Run` 的主动工作闭环、`draft → human review → published/retired` 的 Experience Library。必须保留并增强自己的版本化 Artifact、action-scoped authority、append-only event、provider receipt、unknown/fencing 和标准协议边缘 adapter；不要复制宽权限部署、第三方 Skill/MCP 默认自扩展、非标准 A2A 命名或用普通审计表承载不可篡改承诺。完整源码定位、对照矩阵与阶段建议见 [`14_clawith_competitive_analysis.md`](14_clawith_competitive_analysis.md)。
 
+另有两个不应遗漏的基础机制：Skill 应按 `catalog → read → activate → materialize` 渐进披露，避免把全部能力和供应链风险一次塞进模型上下文；模型连接应把 tool、vision、结构化输出、上下文/速率限制等探测结果绑定到不可变配置指纹与探测时间。前者仍须经过版本 pin、审批、签名/扫描、隔离与出网门禁，后者只是有时效的 capability fact，不能由模型名或厂商宣传推断。
+
 ## 5. 跨竞品机制比较
 ### 5.1 编排
 - 单 Agent 自由规划易展示，但难审计、难恢复。

@@ -1,11 +1,13 @@
 # Notion → 私人语雀镜像状态
 
-更新时间：2026-08-27 05:00（Asia/Shanghai）
+更新时间：2026-08-27 06:19（Asia/Shanghai）
 
 ## 当前状态
 
 - 2026-08-27 已把 Clawith 增量纳入 5 个本地语雀传输源：综合报告、竞品全景、目标架构、
   截图证据，以及完整 Clawith 专题 `source/14_clawith_competitive_analysis.md`。
+- 06:16 的本地增量进一步把 Skill 渐进披露、模型能力事实及其生产门禁写入竞品、架构、
+  综合报告和正式路线图；仍只属于 `local_pending`，没有发生语雀或 Notion 远端写入。
 - 当前全局共有 6 个源在私人语雀为 `local_pending`：上述 5 个 Clawith 源，以及此前已变化但
   尚未远端同步的 `source/05_protocols.md`。本轮整体状态为 `partial`：尚未执行远端写入，也
   没有进行实时远端回读。下列“已完成”只描述 2026-08-24 的历史快照，不包含当前增量。
