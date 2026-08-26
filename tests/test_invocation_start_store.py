@@ -774,6 +774,56 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
             0,
         )
 
+    def test_denied_commit_rolls_back_start_without_poison_or_token_persistence(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        canary = "raw-lease-denied-commit-canary"
+
+        def deny_commit(
+            action_code: int,
+            operation: object,
+            _table: object,
+            _database: object,
+            _trigger: object,
+        ) -> int:
+            if action_code == sqlite3.SQLITE_TRANSACTION and str(operation).upper() == "COMMIT":
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        self.store._connection.set_authorizer(deny_commit)
+        try:
+            with (
+                patch.object(self.store, "_now", return_value=CLAIMED_AT),
+                patch(
+                    "quantum_entanglement.store.secrets.token_urlsafe",
+                    return_value=canary,
+                ),
+            ):
+                with self.assertRaises(InvocationStartTransactionError) as caught:
+                    self.store.claim_invocation_start(
+                        request.manifest.invocation_id,
+                        "worker-start-store-1",
+                        lease_seconds=60,
+                        expected_version=2,
+                    )
+        finally:
+            self.store._connection.set_authorizer(None)
+
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        self.assertFalse(self.store._connection.in_transaction)
+        self.assertFalse(self.store._poisoned)
+        self.assertEqual(self.store.stream_version(request.stream_id), 2)
+        self.assertIsNone(self.store.read_invocation_start(request.manifest.invocation_id))
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            0,
+        )
+        self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
+
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
 
