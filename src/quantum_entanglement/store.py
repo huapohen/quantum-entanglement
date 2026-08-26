@@ -115,6 +115,36 @@ class InvocationAdmissionTransactionError(RuntimeError):
         super().__init__("invocation admission transaction was rolled back")
 
 
+class InvocationStartConflictError(RuntimeError):
+    """Raised when invocation start evidence is missing, partial, or contradictory."""
+
+    code = "invocation_start_conflict"
+
+    def __init__(self) -> None:
+        super().__init__("invocation start is not bound to one canonical durable state")
+
+
+class InvocationStartCommitAmbiguityError(RuntimeError):
+    """Raised when start may be durable but its COMMIT was not acknowledged."""
+
+    code = "invocation_start_commit_ambiguous"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "invocation start commit outcome is unknown; reopen the store and "
+            "observe the durable start receipt"
+        )
+
+
+class InvocationStartTransactionError(RuntimeError):
+    """Raised when an invocation-start transaction was confirmed rolled back."""
+
+    code = "invocation_start_transaction_failed"
+
+    def __init__(self) -> None:
+        super().__init__("invocation start transaction was rolled back")
+
+
 class EventStorePoisonedError(EventStoreIntegrityError):
     """Raised after an ambiguous transaction quarantines this store instance."""
 
@@ -133,6 +163,7 @@ _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
 _EVENT_STORE_PROCESS_SIGNAL_TOKEN = object()
 _EVENT_STORE_ADMISSION_CONTROL_TOKEN = object()
+_EVENT_STORE_START_CONTROL_TOKEN = object()
 _EVENT_STORE_CHILD_GRAPH_QUARANTINE: List[object] = []
 _INVOCATION_ADMISSION_RECEIPT_FORMAT = "qe.invocation-admission-receipt/1"
 
@@ -186,6 +217,35 @@ class _EventStoreAdmissionTransactionSignal(BaseException):
         super().__init__("event store admission transaction signal")
         self.outcome = outcome
         self.control = control
+        self.token = token
+
+
+class _EventStoreStartControlSignal(BaseException):
+    """Private start control signal that never retains caller or lease state."""
+
+    __slots__ = ("ambiguity", "descriptor", "token")
+
+    def __init__(
+        self,
+        descriptor: _EventStoreControlDescriptor,
+        *,
+        ambiguity: bool,
+        token: object,
+    ) -> None:
+        super().__init__("event store invocation-start control signal")
+        self.descriptor = descriptor
+        self.ambiguity = ambiguity
+        self.token = token
+
+
+class _EventStoreStartErrorSignal(BaseException):
+    """Private fixed-error trampoline used after plaintext lease authority exists."""
+
+    __slots__ = ("kind", "token")
+
+    def __init__(self, kind: str, *, token: object) -> None:
+        super().__init__("event store invocation-start error signal")
+        self.kind = kind
         self.token = token
 
 
@@ -330,17 +390,26 @@ def _normalized_event_store_control_descriptor(
     return None
 
 
-def _raise_clean_event_store_control(
+def _event_store_ambiguity_error(scope: str) -> BaseException:
+    if scope == "admission":
+        return InvocationAdmissionCommitAmbiguityError()
+    if scope == "start":
+        return InvocationStartCommitAmbiguityError()
+    raise RuntimeError("unsupported event store ambiguity scope")
+
+
+def _raise_clean_event_store_control_for_scope(
     descriptor: _EventStoreControlDescriptor,
     *,
     ambiguity: bool,
+    scope: str,
 ) -> NoReturn:
+    if scope not in {"admission", "start"}:
+        raise RuntimeError("unsupported event store control scope") from None
     normalized = _normalized_event_store_control_descriptor(descriptor)
     if normalized is None or type(ambiguity) is not bool:
-        raise InvocationAdmissionCommitAmbiguityError() from None
-    cause: Optional[BaseException] = (
-        InvocationAdmissionCommitAmbiguityError() if ambiguity else None
-    )
+        raise _event_store_ambiguity_error(scope) from None
+    cause: Optional[BaseException] = _event_store_ambiguity_error(scope) if ambiguity else None
     expected_type: type[BaseException]
     try:
         if normalized.kind == "keyboard_interrupt":
@@ -358,6 +427,52 @@ def _raise_clean_event_store_control(
         raise RuntimeError("unsupported event store control signal")
     except BaseException as public_error:
         if type(public_error) is expected_type:
+            public_error.__context__ = None
+        raise
+
+
+def _raise_clean_event_store_control(
+    descriptor: _EventStoreControlDescriptor,
+    *,
+    ambiguity: bool,
+) -> NoReturn:
+    """Preserve the existing admission-scoped clean control contract."""
+
+    _raise_clean_event_store_control_for_scope(
+        descriptor,
+        ambiguity=ambiguity,
+        scope="admission",
+    )
+
+
+def _raise_clean_invocation_start_control(
+    descriptor: _EventStoreControlDescriptor,
+    *,
+    ambiguity: bool,
+) -> NoReturn:
+    """Reissue one clean control with a start-scoped ambiguity cause."""
+
+    _raise_clean_event_store_control_for_scope(
+        descriptor,
+        ambiguity=ambiguity,
+        scope="start",
+    )
+
+
+def _raise_clean_invocation_start_error(kind: str) -> NoReturn:
+    error_type: type[BaseException]
+    if kind == "conflict":
+        error_type = InvocationStartConflictError
+    elif kind == "transaction":
+        error_type = InvocationStartTransactionError
+    elif kind == "ambiguous":
+        error_type = InvocationStartCommitAmbiguityError
+    else:
+        raise RuntimeError("unsupported invocation-start error kind") from None
+    try:
+        raise error_type() from None
+    except BaseException as public_error:
+        if type(public_error) is error_type:
             public_error.__context__ = None
         raise
 
@@ -402,6 +517,67 @@ def _sanitize_invocation_admission_controls(method: _Method) -> _Method:
             _detach_exception(error)
         del args, kwargs
         _raise_clean_event_store_control(descriptor, ambiguity=ambiguity)
+
+    return cast(_Method, sanitized)
+
+
+def _sanitize_invocation_start_controls(method: _Method) -> _Method:
+    """Unwind capability-bearing start frames before publishing controls or errors."""
+
+    @wraps(method)
+    def sanitized(*args: Any, **kwargs: Any) -> Any:
+        descriptor: Optional[_EventStoreControlDescriptor] = None
+        ambiguity = False
+        fixed_error_kind: Optional[str] = None
+        try:
+            return method(*args, **kwargs)
+        except _EventStoreStartControlSignal as error:
+            if (
+                type(error) is not _EventStoreStartControlSignal
+                or error.token is not _EVENT_STORE_START_CONTROL_TOKEN
+                or type(error.ambiguity) is not bool
+            ):
+                raise
+            descriptor = _normalized_event_store_control_descriptor(error.descriptor)
+            ambiguity = error.ambiguity
+            if descriptor is None:
+                raise
+            _detach_exception(error)
+        except _EventStoreStartErrorSignal as error:
+            if (
+                type(error) is not _EventStoreStartErrorSignal
+                or error.token is not _EVENT_STORE_START_CONTROL_TOKEN
+                or type(error.kind) is not str
+                or error.kind not in {"conflict", "transaction", "ambiguous"}
+            ):
+                raise
+            fixed_error_kind = error.kind
+            _detach_exception(error)
+        except (
+            InvocationStartConflictError,
+            InvocationStartTransactionError,
+            InvocationStartCommitAmbiguityError,
+        ) as error:
+            if type(error) is InvocationStartConflictError:
+                fixed_error_kind = "conflict"
+            elif type(error) is InvocationStartTransactionError:
+                fixed_error_kind = "transaction"
+            elif type(error) is InvocationStartCommitAmbiguityError:
+                fixed_error_kind = "ambiguous"
+            else:  # pragma: no cover - subclasses are re-raised by the exact checks.
+                raise
+            _detach_exception(error)
+        except BaseException as error:
+            descriptor = _event_store_control_descriptor(error)
+            if descriptor is None:
+                raise
+            _detach_exception(error)
+        del args, kwargs
+        if descriptor is not None:
+            _raise_clean_invocation_start_control(descriptor, ambiguity=ambiguity)
+        if fixed_error_kind is not None:
+            _raise_clean_invocation_start_error(fixed_error_kind)
+        raise RuntimeError("invocation-start sanitizer classification is missing")
 
     return cast(_Method, sanitized)
 
