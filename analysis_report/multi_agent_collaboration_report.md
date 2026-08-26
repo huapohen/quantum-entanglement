@@ -1,11 +1,11 @@
 # 人与多 Agent 群聊协同产品：调研、架构与实现报告
 
-> 项目代号：Quantum Entanglement  
-> 面向方向：WanWork 人与 Agent 协同办公  
-> 初版日期：2026-08-19；当前实现补充：2026-08-26
-> 本地单一真相源：`analysis_report/`  
-> 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
-> Notion 镜像：<https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44?pvs=204>
+> 项目代号：Quantum Entanglement<br>
+> 面向方向：WanWork 人与 Agent 协同办公<br>
+> 初版日期：2026-08-19；当前实现补充：2026-08-26<br>
+> 本地单一真相源：`analysis_report/`<br>
+> 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement><br>
+> Notion 镜像：<https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44?pvs=204><br>
 > 安全边界：飞书/企微全程只读，未发送、回复、评论、@ 或上传任何内容
 
 > **实现证据说明（2026-08-26）：** 文中的 531 项测试、142-commit 增量只绑定
@@ -28,6 +28,7 @@
 - 外部 Agent 用 A2A，工具/数据用 MCP，内部组织语义用 WanWork Coordination Envelope；
 - LangGraph 负责需要 checkpoint/interrupt 的长期流程，插件式 Harness 负责单个 Agent run，平台领域内核位于二者之上；
 - 人工不是异常分支，而是授权与责任体系中的正式参与者。
+- Clawith 校准产品形态：稳定 AgentIdentity/Revision、Participant/Crew、主动工作和人审 Experience 值得吸收；其非标准 A2A 命名、宽权限部署和弱审计边界不进入生产基线。
 
 本轮研究的最重要决策：
 
@@ -37,6 +38,7 @@
 4. **`@Agent` 绕过 LLM 规划，但绝不绕过日志、政策、上下文和版本。**
 5. **LangGraph + DeepSeek Harness 不是二选一；二者都不应成为全部业务真相源。**
 6. **先做一个结果可见、验收清晰的高价值业务 Agent 团队，再抽象平台。**
+7. **LangGraph 管确定性控制流，Harness 管节点执行纪律；产品机制可以借鉴，权限、供应链和审计边界必须按 WanWork 不变量重建。**
 
 本仓库已经用可运行代码验证核心不变量。下述 2026-08-20 历史 clean baseline 固定为
 `e4cbf040579bf1f33c2b7692d2fbd6944d837952`：531 项测试和 5 个本地 release gate
@@ -57,6 +59,8 @@ Responses adapter，不是官方 DeepSeek Harness；Gate A–E 仍全部关闭�
 SQLite 事务提交，exact replay 只接受 receipt，split/tamper 状态 fail-closed，COMMIT 确认丢失
 会 poison 当前 store 并要求 reopen/reconcile。GitHub `ci` 与 `package` 均已通过；这仍只是
 admission spine，不代表 worker claim、result/Artifact acceptance 或生产 Gate 已闭合。
+
+Clawith 增量调研绑定固定源码 `45fc701c366c69f89dff26d91d6a4a9cbc38e6f8` 与 2026-08-26 归档的官网截图；本轮没有启动 Clawith、连接真实模型、做压力/跨租户/渠道/MCP 动态验证。因此下文只把固定源码事实用于架构取舍，不把其能力写成 Quantum Entanglement 已实现，也不把官网营销表述写成生产证明。
 
 ## 1. 研究目标与范围
 
@@ -93,8 +97,11 @@ admission spine，不代表 worker claim、result/Artifact acceptance 或生产 
 | LangGraph | `1e44bda` / `1.2.11` | graph/checkpoint/interrupt |
 | LangChain | `2019bf5` / `1.3.15` | model/tool/message/middleware |
 | Deep Agents | `75c5ce4` / `0.7.7` | 上层通用 Agent scaffold |
+| Clawith | `45fc701c` / 固定于 2026-08-26 | AI 组织产品、群聊、主动调度、经验库与运行时边界 |
 
 研究把事实分为 A（源码/规范）、B（官方产品）、C（内部资料）、D（假设），避免把宣传或讨论当作已验证实现。完整方法见 `research/00_scope_evidence_and_findings.md`。
+
+第 3.2 节的“14 个产品”和 `research/06_competitor_source_validation.md` 的 65 条唯一来源是原有历史验证口径；Clawith 是其后的独立增量研究，不回填或重算上述数字。完整增量证据见 [`research/20_clawith_competitive_analysis.md`](research/20_clawith_competitive_analysis.md)。
 
 ### 1.3 指令与资料的区分
 
@@ -171,6 +178,10 @@ Agent 可以更换模型、框架、进程或部署位置；平台不依赖它�
 
 详细逐项分析见 `research/04_competitor_landscape.md`；官方来源、固定源码、许可证和宣传/实现差异的逐项核验见 `research/06_competitor_source_validation.md`。后者覆盖 14 个产品与 65 条唯一来源，并严格区分“官方宣称 / 可验证实现 / 推断 / 未知”。
 
+**Clawith 增量一级竞品（不计入上述历史 14 家口径）：** 它最值得学习的不是“AI 组织”口号，而是把多个机制做成同一日常工作台：Agent 是稳定组织对象；人和 Agent 统一为 Participant 并进入长期 Crew；`@单 Agent` 确定性直达，`@多个 Agent` 才进入模型规划；Focus、Trigger、稳定 Occurrence 与 Run 组成主动工作闭环；Artifact 可提炼为人审后才发布的 Experience；workspace 写入以 candidate、digest 和 CAS 显式处理冲突。它同时暴露了必须反向吸取的教训：内部 `notify/consult/task_delegate` 不是标准 A2A，默认 Compose/宿主 pip 权限过宽，Skill/MCP 自安装缺少完整供应链门禁，普通 best-effort AuditLog 不能支撑不可篡改审计承诺。
+
+因此目标不是复制 Clawith 页面，而是组合两边优势：用其组织语言和原生群聊降低使用门槛，用 WanWork 的 canonical event、AgentRevision、HandoffContract、Artifact、authority、receipt、unknown/fencing 和标准 adapter 重新建立可靠边界。当前验收产品仍是 loopback 固定三 Agent 切片，不是上述完整组织产品。
+
 ### 3.3 市场空白
 
 目前没有一个候选同时做到：
@@ -245,14 +256,17 @@ Agent 原生发言不等于让所有内部 token 都刷群。建议：
 
 ```mermaid
 flowchart TB
-  U[人类群成员] --> IM[群聊/桌面/移动/Web]
-  A[原生 Agent 成员] --> IM
+  U[Human Participant] --> CR[Crew / Participant Membership]
+  A[AgentIdentity + pinned AgentRevision] --> CR
+  CR --> IM[群聊/桌面/移动/Web]
   IM --> IN[消息入口与 @ 路由]
   IN --> EV[Coordination Envelope + EventStore]
   EV --> PL[Planner / WorkflowPlan]
   EV --> CT[Context Compiler]
   EV --> PO[Policy + Needs You]
+  EV --> AW[Focus / Trigger / Occurrence / Run]
   PL --> DG[Deterministic DAG Scheduler]
+  AW --> DG
   DG --> RT[AgentRuntimePort / Plugin Harness]
   CT --> RT
   PO --> RT
@@ -260,14 +274,21 @@ flowchart TB
   RT --> LM[模型适配器]
   RT --> MCP[MCP Tool/Data]
   RT --> A2A[A2A Remote Agent]
-  RT --> AR[Artifact Ledger]
+  RT --> WC[Workspace Candidate + CAS]
+  WC --> AR[Artifact Ledger]
+  AR --> EX[Experience Draft / Human Review / Publish]
+  EX --> CT
   AR --> EV
   EV --> PR[群聊/任务/Artifact/审批/审计投影]
 ```
 
+这是目标架构增量，不是当前已实现清单。当前代码证据仍以第 9 节和更新日期更晚、绑定完整 source commit/tree 的工程报告为准。
+
 ### 5.1 领域层
 
-领域层拥有：Actor、Session、Thread、Envelope、WorkflowPlan、Task/Attempt、Handoff、Context Manifest、Artifact、Approval、Authority、Action Intent、外部 Action Receipt。
+领域层拥有：AgentIdentity、不可变 AgentRevision、Human/Agent Participant、Crew、Actor、Session、Thread、Envelope、WorkflowPlan、Task/Attempt、Handoff、Context Manifest、Artifact、Focus/Trigger/Occurrence、Experience、Approval、Authority、Action Intent、外部 Action Receipt。
+
+AgentIdentity 是长期组织身份；persona、模型、工具、政策与能力配置的每次变化生成新 AgentRevision，一次 Run 必须固定 revision。Participant 是消息、Task、Approval、Artifact 和 Audit 共用的身份引用，Crew 是 tenant/workspace 内长期存在的协作空间；服务账号或协调 Agent 代办时必须显式记录 `on_behalf_of`。
 
 它不 import 具体模型、LangGraph、LangChain、IM SDK 或 A2A SDK。所有外部依赖通过 ports/adapters。
 
@@ -300,6 +321,8 @@ LLM 可以生成/修订计划，但平台执行：
 - 失败下游 blocked；
 - 取消、重试、supersede；
 - 图版本和重规划 diff。
+
+入口先区分路由语义：`@单 Agent` 固定目标、不得由模型重新选人；`@多个 Agent` 或模糊目标才生成候选计划，并在冻结 AgentRevision、成员、权限、预算和验收标准后调度。两条路径最终进入同一 Envelope、policy、context 和 event 流。
 
 任务状态：
 
@@ -362,6 +385,8 @@ Artifact 是正式交付和 Agent 接力的中心：
 完整性校验。仍需把 Orchestrator 的 artifact/task/result/event 组合成一次可恢复事务，并为
 大文件增加受治理的外部存储边界。
 
+共享 workspace 写入采用 candidate-first：Run 提交 `base_version + scope + author_run + content_digest`，平台在 policy 和 CAS 后记录 `applied / conflict / unknown`，失败候选保留供合并或 reconcile。跨多个文件/对象只能承诺“逐对象 CAS + 可恢复批次”，必须用 saga/outbox/reconciliation，不能把它误写成跨 S3/DB 原子事务。
+
 ### 5.7 Policy
 
 PolicyEngine 输入：
@@ -372,6 +397,12 @@ action + target + risk + external_side_effect + irreversible
 ```
 
 输出 allow/deny/needs-approval。安全读取和草稿默认低摩擦；高风险、不可逆或超出授权的动作请求人。凭据不进入 Envelope，Connector 使用 vault 中的 credential。
+
+### 5.8 主动工作与组织经验
+
+主动工作采用 `Focus → Trigger → Occurrence → Run → Result/Needs You`。Focus 是结构化长期目标；Trigger 只表达何时重新评估；Occurrence 使用稳定幂等身份；Run 复用同一 admission、policy、Harness、Artifact 和 receipt 链。cron、消息、事件或 webhook 都不能直接承诺外部副作用，也不能绕过 action-time gate。
+
+Experience Library 与正式 Artifact 分开：AI 或人从一次交付提炼 draft，只有人或明确治理角色审核后的 `published` 条目才能进入权威检索；过时内容进入 `retired`。每条 Experience 保留来源 Artifact、适用条件、失效信号、数据分类、reviewer 和引用/采纳记录，避免“模型读过”被误当成组织事实。
 
 ## 6. 协议决策
 
@@ -387,6 +418,8 @@ action + target + risk + external_side_effect + irreversible
 | 能力目录 | Agent Card，可映射 OASF | 生态发现与企业分类 |
 | 网络/联邦 | 观察 ANP/AGNTCY SLIM | Phase 3/4，MVP 不先背复杂度 |
 | 事件外壳/追踪 | CloudEvents 思路 + W3C Trace Context/OTel | 通用基础设施兼容 |
+
+Clawith 固定源码中的内部 `notify/consult/task_delegate` 有等待、关联结果和恢复价值，但没有构成标准 A2A Agent Card、binding、Task/Artifact API 或官方 SDK/TCK 证明。WanWork 内部称其 coordination/handoff；只有通过标准 adapter 与兼容性门禁的边缘能力才称 A2A，避免协议命名制造虚假兼容。
 
 ### 6.2 为什么内部 Envelope 必须自研
 
@@ -417,6 +450,8 @@ A2A/MCP 故意不覆盖：群成员、组织授权、内部 DAG、artifact 业�
 适合：复杂长期 workflow、checkpoint、StateGraph/Pregel、parallel superstep、interrupt/Command、子图和 time-travel。
 
 注意：interrupt 恢复会从节点开头重执行，所以 interrupt 前不能放无幂等外部副作用。checkpoint 保存控制流位置，不是不可变业务事实。
+
+Clawith 的固定 runtime graph 进一步验证了组合边界：LangGraph 负责确定性的 route、checkpoint、wait/interrupt/resume；DeepSeek Harness 思想落在每个 node executor 的 model/tool schema、policy、sandbox、effect lifecycle、receipt、verification、停止条件和按副作用分类的 retry。不要把 Harness 缩成不透明 LangGraph node，也不要让 LangGraph 私有 state 接管领域事实。
 
 ### 7.3 LangChain
 
@@ -602,6 +637,9 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 - data classification、DLP、审计保留；
 - sandbox 与 network/file policy；
 - 所有外部发送/不可逆动作的 action-time gate。
+- API/control worker 与不可信 executor 安全域分离；生产基线不使用 privileged Compose、宿主 Docker socket 或宿主 pip 代理；
+- Skill/MCP 的 proposal、组织审批、版本 pin、签名/扫描、quarantine、最小 egress 和 credential scope；Agent 不能仅凭 prompt 自安装并立即执行；
+- 高风险动作的审计事实不可 best-effort 静默丢失；append-only decision/intent/receipt/reconcile 必须可验证。
 
 ### P1：协议与运行时
 
@@ -617,7 +655,9 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 - 已有 loopback-only 自定义指令、任务图、Artifact、Needs You 和 timeline 产品切片；仍需正式
   authenticated service、持久刷新/重连、群聊消息投影和 desktop/web packaging；
 - Agent roster、能力卡、版本和状态；
+- AgentIdentity/不可变 AgentRevision、Human/Agent Participant、长期 Crew 与多人真实群聊；
 - 计划确认与重规划 diff；
+- Focus→Trigger→Occurrence→Run 的主动工作入口与人审 Experience Library；
 - artifact review/compare/impact；
 - IM webhook、独立 Agent 身份和多端同步。
 
@@ -641,7 +681,9 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 
 交付：
 
-- 原生群聊与四个核心视图；
+- AgentIdentity/不可变 AgentRevision、Human/Agent Participant、长期 Crew 与原生群聊；
+- 单 Agent mention 确定性直达，多 Agent mention 规划后由平台校验；
+- 群聊、任务、Artifact、Needs You 四个同源视图；
 - 固定业务 task templates + 动态规划；
 - 可见 artifact 和 review；
 - Needs You；
@@ -652,6 +694,7 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 - 组织/岗位/授权/审批链；
 - 多租户、合规、审计、成本/SLA；
 - Agent 版本、灰度和评测；
+- Focus/Trigger/Occurrence/Run 主动工作与 Artifact→draft→人审 published/retired Experience；
 - IM 正式接入与移动/桌面。
 
 ### Phase 3：开放生态
@@ -710,6 +753,9 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 | 框架锁定 | 业务层出现大量上游类型 | ports、contract tests、领域层零依赖 |
 | 标准追新 | 协议升级打断核心开发 | canonical envelope + versioned adapter |
 | IM 锁定 | task state 依赖厂商消息 | transport 抽象、平台事件真相源 |
+| 宿主权限穿透 | executor 可控 Docker socket/宿主 pip/控制面网络 | 独立 executor security domain、fail closed、短期最小凭据 |
+| 能力供应链自扩展 | Agent 仅凭 prompt 安装 Skill/MCP | proposal/approval、版本 pin、签名扫描、quarantine、egress broker |
+| 审计强声明弱事实 | 高风险动作成功但审计 best-effort 丢失 | decision/intent/receipt/reconcile 进入 append-only 事实链，记录失败时 fail closed |
 
 ## 14. 决策清单
 
@@ -726,6 +772,13 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 | 内部协议 | Coordination Envelope | 已实现 v0.1 子集 |
 | 人工介入 | Needs You + scoped capability | 已实现内核，待 UI/持久化 |
 | Artifact | append-only | 已实现内核 |
+| Agent 组织身份 | AgentIdentity + immutable AgentRevision + Participant/Crew | 目标设计，当前产品未闭环 |
+| mention 路由 | 单 Agent 确定性；多 Agent 候选规划 + 平台校验 | 前者有内核证据，完整多人产品待实现 |
+| 主动工作 | Focus→Trigger→Occurrence→Run | 目标设计，待实现 |
+| 组织经验 | Artifact→draft→人审 published/retired Experience | 目标设计，待实现 |
+| Workspace 写入 | candidate + digest + per-object CAS + reconcile | Artifact CAS 已有，通用 workspace 待实现 |
+| Clawith 内部 A2A | 只借 coordination 思想，不沿用标准 A2A 名称 | 采用 |
+| 执行安全基线 | 不采用 privileged Compose、宿主 pip 或 prompt 自安装 MCP | 采用，生产门禁待闭合 |
 | 旧 ACP | 不新增，只迁移 | 采用 |
 | ANP/SLIM | 观察/预留 adapter | 后期 |
 
@@ -743,7 +796,10 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 - `research/07_current_implementation_status.md`
 - `research/08_commit_invariant_test_ledger.md` 至
   `research/18_model_backed_custom_instruction_evidence.md` 的工程、恢复、进程边界和当前产品证据；
-  完整状态与索引以 `analysis_report/README.md` 为准。
+- `research/19_six_agent_collaboration_protocols_and_bottom_layer_design.md`：六类协议与底层边界；
+- [`research/20_clawith_competitive_analysis.md`](research/20_clawith_competitive_analysis.md)：Clawith 固定源码、官网声明、未验证项与取舍矩阵；
+
+完整状态与索引以 `analysis_report/README.md` 为准。
 
 截图证据：
 
@@ -759,6 +815,8 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 - `screenshots/09_yuque_technical_options.jpeg`
 - `screenshots/10_local_trial_desktop_idle.png` 至
   `screenshots/14_model_backed_custom_instruction_gpt.png`
+- `screenshots/15_clawith_homepage_positioning.png` 至
+  `screenshots/19_clawith_docs_introduction.png`
 
 一手外部协议来源见 `research/03_protocol_landscape.md` 第 12 节；框架源码路径和固定 commit 见 `research/02_framework_deepdive.md`。
 
@@ -769,11 +827,12 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 1. 以已完成的 `RUNNING` + queued job + admission receipt 原子边界为起点，继续完成 first-claim、
    attempt、heartbeat、accepted result/Artifact receipt 和 terminal task state，使整条链可在
    kill/restart 后确定性协调；
-2. 与此同时确定一个首发业务闭环，限定 Agent 团队、输入、产出和验收；
-3. UI 先做群聊、任务、artifact、Needs You 四个同源视图；
+2. 与此同时确定一个首发业务闭环，限定 Agent 团队、输入、产出和验收，并把 Agent 固化为稳定 AgentIdentity + 不可变 AgentRevision；
+3. UI 先做 Human/Agent Participant、长期 Crew，以及群聊、任务、artifact、Needs You 四个同源视图；单 Agent mention 确定性直达，多 Agent mention 才规划；
 4. 把“每个被接受 artifact 的时间、质量和成本”作为评估中心；
 5. 在 secret/process/receipt 边界闭合后接入 source-pinned、model-only、最小权限 DeepSeek
    Harness sidecar；direct Responses 永久保留为诊断对照，不冒充 Harness；
-6. 对外兼容标准，对内牢牢掌握组织协作状态与治理。
+6. 在核心交付闭环稳定后接入 Focus→Trigger→Occurrence→Run 与人审 Experience Library，主动工作仍复用同一授权、Artifact 和 receipt 链；
+7. 对外兼容标准，对内牢牢掌握组织协作状态与治理；不复制非标准 A2A 命名、宽权限 Compose、宿主 pip/MCP 自安装和 best-effort 审计。
 
 如果只做群聊外壳，竞争会落到模型和 UI；如果只做通用框架，用户看不到价值。真正有机会形成世界级产品的中间层，是把开放 Agent runtime 与真实组织工作连接起来，并让协作过程像数据库事务一样可靠、像群聊一样自然、像优秀团队一样可理解和可接管。
