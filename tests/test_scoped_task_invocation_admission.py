@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -566,6 +568,59 @@ class ScopedTaskInvocationAdmissionStoreTests(unittest.TestCase):
             )
 
         self.assertEqual(table_counts(self.store), (2, 1, 1, 0))
+
+    def test_two_connections_issue_exactly_one_scoped_plaintext_lease(self) -> None:
+        request = scoped_request()
+        self.store.append_scoped_task_invocation_admission_v2(
+            request,
+            expected_version=0,
+        )
+        self.store._clock = lambda: CLAIMED_AT
+        peer = SQLiteEventStore(self.path, clock=lambda: CLAIMED_AT)
+        barrier = threading.Barrier(2)
+
+        def compete(store: SQLiteEventStore, worker_id: str) -> object:
+            barrier.wait(timeout=5)
+            return store.claim_scoped_invocation_start_v3(
+                request.manifest.tenant_id,
+                request.manifest.workspace_id,
+                request.manifest.invocation_id,
+                worker_id,
+                lease_seconds=60,
+                expected_version=2,
+            )
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = (
+                    executor.submit(compete, self.store, "worker-scoped-a"),
+                    executor.submit(compete, peer, "worker-scoped-b"),
+                )
+                results = tuple(future.result(timeout=10) for future in futures)
+        finally:
+            peer.close()
+
+        self.assertEqual(
+            sum(type(item) is ScopedInvocationStartClaimedV3 for item in results),
+            1,
+        )
+        self.assertEqual(
+            sum(type(item) is ScopedInvocationStartObservedV3 for item in results),
+            1,
+        )
+        claimed = next(
+            cast(ScopedInvocationStartClaimedV3, item)
+            for item in results
+            if type(item) is ScopedInvocationStartClaimedV3
+        )
+        observed = next(
+            cast(ScopedInvocationStartObservedV3, item)
+            for item in results
+            if type(item) is ScopedInvocationStartObservedV3
+        )
+        self.assertEqual(claimed.receipt, observed.receipt)
+        self.assertFalse(hasattr(observed, "lease"))
+        self.assertEqual(table_counts(self.store), (3, 1, 1, 1))
 
 
 if __name__ == "__main__":  # pragma: no cover
