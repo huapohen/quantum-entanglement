@@ -8,12 +8,14 @@ WanWork 的核心对象不是“聊天机器人”，而是一个由人、Agent�
 
 > 每个 Agent 都是有身份、有能力、有边界、有责任的群成员；平台把模糊目标转成可恢复任务图，并让所有人清楚谁在做、依据什么、产出了什么、何时需要人。
 
+Clawith 固定源码进一步证明了“稳定 Agent + 原生群聊 + 主动工作 + 组织经验”可以组成普通团队能理解的产品形态；这里借鉴的是产品机制和经源码定位的局部实现，不代表这些能力已在 Quantum Entanglement 当前验收切片中完成。详细证据和限制见 [`20_clawith_competitive_analysis.md`](20_clawith_competitive_analysis.md)。
+
 ## 2. 产品不变量
 
 1. **模型可见即已记录**：任何发给 Agent 的上下文必须先形成可重建事件。
 2. **平台持有协作状态**：Agent 可无状态，任务、artifact、审批和因果链归平台。
 3. **可计算的事不用模型猜**：依赖、版本、就绪、权限、失败传播由确定性逻辑处理。
-4. **Agent 不被主 Agent 冒充**：执行者以自己的身份发布进度和结果。
+4. **身份稳定、执行版本冻结**：AgentIdentity 长期稳定，配置变更形成不可变 AgentRevision；每个 Run 固定引用实际 revision，执行者不能被主 Agent 冒充。
 5. **正式结果不是聊天文本**：结果进入 append-only artifact，聊天只引用版本。
 6. **授权不从身份推断**：每次 handoff 显式携带 action/data/risk 范围。
 7. **回滚也不改历史**：回滚创建新版本，保留完整因果和决策记录。
@@ -33,9 +35,11 @@ WanWork 的核心对象不是“聊天机器人”，而是一个由人、Agent�
 6. 审阅 Agent 按验收标准检查，不通过则生成修订任务；
 7. 主 Agent 只做跨结果综合，不冒充子 Agent。
 
-### 3.2 `@Agent` 直达
+### 3.2 `@Agent` 直达与多 Agent 规划
 
 用户 `@数据分析师 检查 v3 表格异常`。路由器不再调用 LLM 选择 Agent，但仍执行身份解析、授权、上下文编译、事件落盘和结果版本化。若该任务影响其他 artifact，平台用依赖图提示影响范围。
+
+用户同时 `@` 多个 Agent 或只给出模糊目标时，模型只能生成候选分工与任务图；平台仍需校验成员身份、AgentRevision、依赖、预算、权限和验收标准后再调度。单 Agent mention 的确定性与多 Agent planning 的开放性不能混成同一路由。
 
 ### 3.3 Agent 主动请求人
 
@@ -56,24 +60,32 @@ Agent 或模型故障时，平台保留最后已提交事件、上下文摘要�
 
 ```mermaid
 flowchart TB
-  U[人类成员] --> IM[群聊与多端交互层]
-  A[群聊原生 Agent 成员] --> IM
+  U[Human Participant] --> CR[Crew / Participant Membership]
+  A[AgentIdentity + pinned AgentRevision] --> CR
+  CR --> IM[群聊与多端交互层]
   IM --> R[消息入口与 @Agent 路由]
   R --> E[Coordination Envelope / Event Log]
   E --> P[规划与任务图服务]
   E --> C[上下文编译器]
   E --> G[政策、授权与 Needs You]
+  E --> O[Focus / Trigger / Occurrence / Run]
   P --> S[确定性 DAG 调度器]
+  O --> S
   S --> H[插件式 Harness Runtime]
   C --> H
   G --> H
   H --> L[本地/托管模型适配器]
   H --> M[MCP 工具与数据]
   H --> X[A2A / ACP 外部 Agent]
-  H --> F[Artifact 版本库]
+  H --> W[Workspace Candidate + CAS]
+  W --> F[Artifact 版本库]
+  F --> K[Experience Draft / Human Review / Publish]
+  K --> C
   F --> E
   E --> V[群聊/时间线/任务图/Artifact/审计投影]
 ```
+
+上图是目标架构，不是当前实现清单；当前真实能力与缺口仍以主报告和更新日期更晚、绑定 source commit/tree 的工程证据为准。
 
 ## 5. 分层职责
 
@@ -81,9 +93,11 @@ flowchart TB
 
 负责消息展示、群成员、@、已读、附件、实时流与多端体验。它不是任务真相源。IM webhook 可能重复、乱序或延迟，因此入口必须按平台 idempotency key 去重并保留外部 message id 映射。
 
+人和 Agent 应统一引用 Participant；Crew 是 tenant/workspace 内长期存在的会话与协作空间，而不是一次 Run 的临时 recipient 列表。Participant 同时被消息、Task、Approval、Artifact 和 Audit 引用，并显式保留 `on_behalf_of`。AgentIdentity 保持稳定，persona、模型、工具、政策等配置变更生成不可变 AgentRevision，历史 Run 不随最新配置漂移。
+
 Agent 独立身份至少包含：
 
-- 稳定 actor id 与版本；
+- 稳定 actor/identity id、当前 revision 与 Run 固定 revision；
 - 名称、头像、角色和提供方；
 - 能力卡与可调用协议；
 - 当前状态（空闲/工作/等待/失败/离线）；
@@ -94,9 +108,9 @@ Agent 独立身份至少包含：
 
 路由分三条：
 
-- `@Agent`：确定性直达；
+- `@单 Agent`：确定性直达，不让模型重新选人；
+- `@多个 Agent` 或模糊目标：planner 生成候选计划，平台验证后调度；
 - 命令/按钮：确定性 action；
-- 自然语言目标：进入 planner，由 LLM 给出候选 WorkflowPlan，再经过结构和政策校验。
 
 三条路由最终都生成相同的 Coordination Envelope，避免直达消息成为审计和恢复的旁路。
 
@@ -141,6 +155,8 @@ Harness 负责执行一次受治理的 Agent invocation：
 
 插件点要稳定、顺序确定、可观测、可超时且有隔离策略。不要让插件直接修改数据库隐式状态；它应产生命令或事件。
 
+借鉴 Clawith 固定控制图与 DeepSeek Harness 的共同纪律，模型只提出下一步意图；Harness/executor 拥有 tool schema 校验、policy、sandbox、effect lifecycle、receipt、verification、停止条件和按副作用分类的 retry。未知外部结果必须进入 reconcile，不能被统一当作失败后自动重放。
+
 ### 5.6 上下文编译
 
 上下文不是 `messages[-N:]`。建议分层：
@@ -166,6 +182,8 @@ Artifact 是跨 Agent 交接的正式媒介，支持文档、表格、代码、�
 - artifact 与任务结果事件同一事务或通过 outbox 保证最终一致；
 - 下游任务绑定具体版本，版本变化触发影响分析而非盲目重跑。
 
+对共享 workspace 的写入也不应由多个 Agent 直接覆盖：每次 Run 先提交带 `base_version + scope + author_run + content_digest` 的 candidate，平台经过 policy 与 CAS 后产生 `applied / conflict / unknown` 等显式结果；跨多个对象使用 durable saga/outbox/reconciliation，不把逐文件 CAS 误写成跨存储原子事务。
+
 ### 5.8 政策与 Needs You
 
 政策输入包括 action、target、risk、external side effect、irreversible、data classes、authority。输出为 allow/deny/needs-approval，并记录规则版本和原因。
@@ -179,6 +197,14 @@ Artifact 是跨 Agent 交接的正式媒介，支持文档、表格、代码、�
 - **内部 Envelope**：组织成员、因果、幂等、授权、审批、artifact、群聊投影。
 - **LangGraph bridge**：需要 checkpoint、interrupt/time-travel 的上层流程；不让 LangGraph state 取代领域事件。
 
+Clawith 源码中的 `notify/consult/task_delegate` 是有价值的内部协作机制，但不是标准 A2A 兼容证明。WanWork 只吸收其等待、恢复和公开身份思想，内部仍称 coordination/handoff，对外 A2A 必须走标准 adapter、官方 SDK/TCK 与版本协商。
+
+### 5.10 主动工作与组织经验
+
+主动工作采用 `Focus → Trigger → Occurrence → Run → Result/Needs You`：Focus 是结构化长期关注点；Trigger 只决定何时重新评估；Occurrence 有稳定幂等身份；Run 仍走同一 admission、policy、Harness 和 Artifact 链路。定时、消息、事件或 webhook 都不能绕过 action-time 授权。
+
+组织经验采用 `Artifact → Experience draft → human review → published/retired`。AI 可以提炼草稿，但只有人或明确治理角色审核发布的 Experience 才进入权威检索；条目必须保留来源、适用条件、失效信号、数据分类和引用。Experience 是跨任务知识，不替代一次任务的正式 Artifact。
+
 ## 6. LangGraph + DeepSeek Harness 的组合边界
 
 建议不是修改其中一个去吞掉另一个，而是定义 ports：
@@ -190,6 +216,8 @@ Artifact 是跨 Agent 交接的正式媒介，支持文档、表格、代码、�
 - `EventStorePort` 与 `ArtifactStorePort`：平台真相源。
 
 LangGraph checkpoint 保存流程执行位置；领域事件保存业务事实。恢复时 checkpoint 可以重建或替换，已发生的审批和 artifact 不能被 checkpoint 覆盖。
+
+组合原则是“LangGraph 管确定性控制流，Harness 管每个执行节点的真实执行纪律”：前者负责 route/checkpoint/interrupt/resume，后者负责模型与工具边界、隔离、effect/receipt、verification 和失败分类。不要把 Harness 简化成一个不透明 LangGraph node，也不要让 LangGraph 私有 state 成为权限、Artifact 或审计真相源。
 
 ## 7. IM 选型解读
 
@@ -220,7 +248,7 @@ MVP 可优先腾讯 IM + Flutter/Tauri 组合，但 transport 必须抽象，避
 
 ### Phase 1：一个高价值场景
 
-选择验收标准清晰、输入可获取、结果可见的业务场景。先做 3–5 个稳定 Agent 和群聊/任务/artifact/Needs You 四视图，不做无限 Agent 商店。
+选择验收标准清晰、输入可获取、结果可见的业务场景。先做 3–5 个版本化 AgentIdentity/Revision、Human/Agent Participant 与长期 Crew，并交付群聊/任务/artifact/Needs You 四视图，不做无限 Agent 商店。
 
 退出标准：真实用户连续使用；任务完成率、人工干预成本和结果采纳率优于单 Agent。
 
@@ -270,11 +298,14 @@ MVP 可优先腾讯 IM + Flutter/Tauri 组合，但 transport 必须抽象，避
 | 供应商锁定 | 模型/IM/harness 状态渗透核心 | ports、契约测试、平台真相源 |
 | 权限扩散 | Agent 继承用户全部能力 | 最小 authority、任务级批准、过期 capability |
 
+明确不进入生产基线的 Clawith 机制：把内部协作命名成标准 A2A；backend/worker 使用 privileged Compose 或挂宿主 Docker socket；把 pip 安装转交宿主执行；允许 Agent/普通用户仅凭 prompt 自安装 Skill/MCP；用可静默失败的 best-effort 业务表支撑“不可篡改审计”宣称。能力扩展必须经过版本 pin、审批、隔离、出网与供应链门禁；高风险动作在审计事实无法原子记录时应 fail closed。
+
 ## 11. 接下来应实现的最小闭环
 
-1. 完成 `@Agent` 路由并证明“绕过 planner、不绕过事件/政策/上下文”。
-2. 完成 A2A Agent Card 与 JSON-RPC 映射，保留内部 correlation/causation。
-3. 完成 LangGraph 可选 bridge，展示 interrupt→Needs You→resume。
-4. 增加 SQLite 重启恢复与 outbox，验证进程崩溃后不重复 artifact/副作用。
+1. 建立 `AgentIdentity + immutable AgentRevision + Human/Agent Participant + Crew` 的持久对象，并让 Run 固定 revision。
+2. 完成单 Agent `@` 确定性路由和多 Agent mention planning，证明两者都不绕过事件/政策/上下文。
+3. 完成 LangGraph 可选 bridge，展示 interrupt→Needs You→resume；节点执行统一经过 Harness 纪律。
+4. 增加 SQLite 重启恢复与 outbox，验证进程崩溃后不重复 artifact/副作用；共享写入使用 candidate + CAS。
 5. 提供本地群聊 demo：两个并行 Agent、一个依赖 Agent、一次人工审批、一个版本化报告。
-
+6. 在交付闭环稳定后增加 Focus→Trigger→Occurrence→Run 和人审 Experience Library；未发布经验不得进入权威检索。
+7. 完成 A2A Agent Card 与标准映射，保留内部 correlation/causation，不沿用非标准 A2A 命名。
