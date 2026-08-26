@@ -254,6 +254,10 @@ acceptance criteria:
   and explicit `on_behalf_of` when one actor represents another;
 - group chat, task graph, Artifact, Needs You and audit/timeline views projected from the
   same events;
+- an immutable `SolutionBlueprintRevision` for one real department workflow, compiling
+  its roles, handoffs, inputs, Artifact schemas, acceptance criteria, budgets, human gates
+  and policy profile into the existing domain contracts instead of owning a second runtime
+  state machine;
 - deterministic single-Agent mention routing and platform-validated multi-Agent planning;
 - human review, revision and takeover paths without regressing arbitrary custom
   instructions to a fixed demonstration prompt.
@@ -261,7 +265,10 @@ acceptance criteria:
 PT-1 evidence must show that restart preserves groups, members, messages, tasks, Artifacts
 and approvals; duplicate inbound events do not create duplicate messages or Runs; all APIs
 enforce tenant/workspace scope; an Agent cannot impersonate another Participant; and every
-downstream consumer pins an accepted Artifact version.
+downstream consumer pins an accepted Artifact version. Any duration, cost, commit, test,
+adoption or business-outcome card must identify its measurement window and evidence class
+and derive from same-scope accepted Run events, Artifacts or receipts; template defaults,
+simulations, vendor claims and externally verified outcomes remain visibly distinct.
 
 ### PT-2 — reliable handoff and shared work
 
