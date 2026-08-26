@@ -85,6 +85,7 @@ from .invocation_worker import (
     InvocationWorkerAdmission,
     InvocationWorkerConfiguration,
     InvocationWorkerDisabledError,
+    ScopedInvocationWorkerAdmissionV3,
 )
 from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
 from .plugins import HookPoint, KernelPlugin, PluginManager
@@ -322,6 +323,7 @@ __all__ = [
     "ScopedInvocationStartEvidenceV3",
     "ScopedInvocationStartObservedV3",
     "ScopedInvocationStartReceiptV3",
+    "ScopedInvocationWorkerAdmissionV3",
     "ScopedTaskInvocationAdmissionRequestV2",
     "TaskGraph",
     "TaskInvocationAdmissionRequest",

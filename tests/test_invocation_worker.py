@@ -207,11 +207,9 @@ class InvocationWorkerAdmissionTests(unittest.TestCase):
             "InvocationWorkerAdmission": InvocationWorkerAdmission,
             "InvocationWorkerConfiguration": InvocationWorkerConfiguration,
             "InvocationWorkerDisabledError": InvocationWorkerDisabledError,
-        }
-        expected_module = {
-            **expected_package,
             "ScopedInvocationWorkerAdmissionV3": ScopedInvocationWorkerAdmissionV3,
         }
+        expected_module = dict(expected_package)
         self.assertEqual(set(invocation_worker_module.__all__), set(expected_module))
         for name, value in expected_package.items():
             with self.subTest(name=name):
