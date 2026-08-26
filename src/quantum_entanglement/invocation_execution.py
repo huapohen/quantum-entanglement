@@ -23,8 +23,12 @@ from .protocol import TaskStatus
 from .scheduler import TaskTransition
 
 INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION = 1
+SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION = 2
 INVOCATION_START_EVIDENCE_SCHEMA_VERSION = 2
 INVOCATION_EXECUTION_MANIFEST_DOMAIN = "quantum-entanglement.invocation-execution-manifest/1\n"
+SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN = (
+    "quantum-entanglement.invocation-execution-manifest/2\n"
+)
 CANONICAL_ORCHESTRATOR_ACTOR_ID = "orchestrator"
 TASK_EXECUTION_REQUESTED_EVENT_TYPE = "task.execution.requested"
 TASK_INVOCATION_STARTED_EVENT_TYPE = "task.invocation.started"
@@ -38,6 +42,29 @@ _MAX_IDENTITY_BYTES = 4_096
 _MANIFEST_FIELDS = frozenset(
     (
         "schemaVersion",
+        "invocationId",
+        "sessionId",
+        "planId",
+        "taskId",
+        "agentId",
+        "jobIdempotencyKey",
+        "taskRevision",
+        "correlationId",
+        "causationId",
+        "envelopeDigest",
+        "contextDigest",
+        "authorizationDigest",
+        "runtimeRevision",
+        "effectClass",
+        "retryClass",
+    )
+)
+
+_SCOPED_MANIFEST_FIELDS = frozenset(
+    (
+        "schemaVersion",
+        "tenantId",
+        "workspaceId",
         "invocationId",
         "sessionId",
         "planId",
@@ -438,6 +465,145 @@ class InvocationExecutionManifest:
 
         return hashlib.sha256(
             INVOCATION_EXECUTION_MANIFEST_DOMAIN.encode("utf-8") + self.canonical_bytes()
+        ).hexdigest()
+
+
+@dataclass(frozen=True)
+class ScopedInvocationExecutionManifestV2:
+    """Immutable schema-2 execution input with explicit tenant/workspace scope."""
+
+    schema_version: int
+    tenant_id: str
+    workspace_id: str
+    invocation_id: str
+    session_id: str
+    plan_id: str
+    task_id: str
+    agent_id: str
+    job_idempotency_key: str
+    task_revision: int
+    correlation_id: str
+    causation_id: str
+    envelope_digest: str
+    context_digest: str
+    authorization_digest: str
+    runtime_revision: str
+    effect_class: EffectClass
+    retry_class: RetryClass
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationExecutionManifestV2:
+            raise TypeError("scoped manifest must be an exact ScopedInvocationExecutionManifestV2")
+        _schema_version(
+            self.schema_version,
+            SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION,
+            "schemaVersion",
+        )
+        for label, value in (
+            ("tenantId", self.tenant_id),
+            ("workspaceId", self.workspace_id),
+            ("invocationId", self.invocation_id),
+            ("sessionId", self.session_id),
+            ("planId", self.plan_id),
+            ("taskId", self.task_id),
+            ("agentId", self.agent_id),
+            ("jobIdempotencyKey", self.job_idempotency_key),
+            ("correlationId", self.correlation_id),
+            ("causationId", self.causation_id),
+            ("runtimeRevision", self.runtime_revision),
+        ):
+            _text(value, label)
+        _positive_integer(self.task_revision, "taskRevision")
+        _digest(self.envelope_digest, "envelopeDigest")
+        _digest(self.context_digest, "contextDigest")
+        _digest(self.authorization_digest, "authorizationDigest")
+        if self.causation_id != self.task_id:
+            raise ValueError("causationId must equal taskId")
+        if type(self.effect_class) is not EffectClass:
+            raise TypeError("effect_class must be an exact EffectClass")
+        if type(self.retry_class) is not RetryClass:
+            raise TypeError("retry_class must be an exact RetryClass")
+
+    def to_dict(self) -> Dict[str, object]:
+        """Return the exact camel-case scoped schema-2 wire object."""
+
+        ScopedInvocationExecutionManifestV2.__post_init__(self)
+        return {
+            "schemaVersion": self.schema_version,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "invocationId": self.invocation_id,
+            "sessionId": self.session_id,
+            "planId": self.plan_id,
+            "taskId": self.task_id,
+            "agentId": self.agent_id,
+            "jobIdempotencyKey": self.job_idempotency_key,
+            "taskRevision": self.task_revision,
+            "correlationId": self.correlation_id,
+            "causationId": self.causation_id,
+            "envelopeDigest": self.envelope_digest,
+            "contextDigest": self.context_digest,
+            "authorizationDigest": self.authorization_digest,
+            "runtimeRevision": self.runtime_revision,
+            "effectClass": self.effect_class.value,
+            "retryClass": self.retry_class.value,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> ScopedInvocationExecutionManifestV2:
+        """Decode one exact scoped schema-2 wire object without retaining its container."""
+
+        if cls is not ScopedInvocationExecutionManifestV2:
+            raise TypeError("scoped manifest decoder requires the exact schema-2 class")
+        raw = _exact_dict(
+            value,
+            set(_SCOPED_MANIFEST_FIELDS),
+            "scoped invocation execution manifest",
+        )
+        return cls(
+            schema_version=raw["schemaVersion"],
+            tenant_id=raw["tenantId"],
+            workspace_id=raw["workspaceId"],
+            invocation_id=raw["invocationId"],
+            session_id=raw["sessionId"],
+            plan_id=raw["planId"],
+            task_id=raw["taskId"],
+            agent_id=raw["agentId"],
+            job_idempotency_key=raw["jobIdempotencyKey"],
+            task_revision=raw["taskRevision"],
+            correlation_id=raw["correlationId"],
+            causation_id=raw["causationId"],
+            envelope_digest=raw["envelopeDigest"],
+            context_digest=raw["contextDigest"],
+            authorization_digest=raw["authorizationDigest"],
+            runtime_revision=raw["runtimeRevision"],
+            effect_class=_effect_class(raw["effectClass"]),
+            retry_class=_retry_class(raw["retryClass"]),
+        )
+
+    @classmethod
+    def from_event_payload(
+        cls,
+        event_type: object,
+        payload: object,
+    ) -> ScopedInvocationExecutionManifestV2:
+        """Decode only schema-2 payloads in the canonical execution-request vocabulary."""
+
+        if cls is not ScopedInvocationExecutionManifestV2:
+            raise TypeError("scoped manifest event decoder requires the exact schema-2 class")
+        _event_type(event_type, TASK_EXECUTION_REQUESTED_EVENT_TYPE)
+        return cls.from_dict(payload)
+
+    def canonical_bytes(self) -> bytes:
+        """Return the unique canonical JSON bytes covered by the scoped digest."""
+
+        return _canonical_json_bytes(self.to_dict())
+
+    def canonical_digest(self) -> str:
+        """Return the schema-2 domain-separated queued-job payload digest."""
+
+        return hashlib.sha256(
+            SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN.encode("utf-8") + self.canonical_bytes()
         ).hexdigest()
 
 
@@ -1057,6 +1223,8 @@ __all__ = [
     "INVOCATION_EXECUTION_MANIFEST_DOMAIN",
     "INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION",
     "INVOCATION_START_EVIDENCE_SCHEMA_VERSION",
+    "SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN",
+    "SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION",
     "TASK_EXECUTION_REQUESTED_EVENT_TYPE",
     "TASK_INVOCATION_STARTED_EVENT_TYPE",
     "TASK_STATUS_CHANGED_EVENT_TYPE",
@@ -1067,6 +1235,7 @@ __all__ = [
     "InvocationStartObserved",
     "InvocationStartReceipt",
     "RetryClass",
+    "ScopedInvocationExecutionManifestV2",
     "TaskInvocationAdmissionRequest",
     "build_task_invocation_admission_request",
 ]
