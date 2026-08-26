@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import multiprocessing
+import queue
 import sqlite3
 import tempfile
 import threading
@@ -170,6 +172,49 @@ def seed_valid_start(
         raise AssertionError("canonical invocation was not claimable")
     stored = store.append(canonical_start_event(request, lease), expected_version=2)
     return request, lease, stored
+
+
+def spawn_invocation_start_worker(
+    path: str,
+    worker_id: str,
+    ready: Any,
+    start: Any,
+    results: Any,
+    token_calls: Any,
+) -> None:
+    """Compete from a fresh spawned interpreter without serializing lease authority."""
+
+    store = SQLiteEventStore(path, clock=lambda: CLAIMED_AT)
+
+    def token_provider(_nbytes: int = 32) -> str:
+        token_calls.put(worker_id)
+        return f"spawn-only-{worker_id}-lease-token"
+
+    try:
+        ready.put(worker_id)
+        if not start.wait(timeout=10):
+            raise RuntimeError("spawn invocation start barrier timed out")
+        with patch(
+            "quantum_entanglement.store.secrets.token_urlsafe",
+            new=token_provider,
+        ):
+            result = store.claim_invocation_start(
+                "invocation-start-store-1",
+                worker_id,
+                lease_seconds=60,
+                expected_version=2,
+            )
+        if type(result) is InvocationStartClaimed:
+            kind = "claimed"
+            attempt_id = result.lease.attempt_id
+        elif type(result) is InvocationStartObserved:
+            kind = "observed"
+            attempt_id = result.receipt.evidence.attempt_id
+        else:  # pragma: no cover - public result union is closed.
+            raise AssertionError("unexpected invocation start result")
+        results.put((kind, result.receipt.event_id, attempt_id))
+    finally:
+        store.close()
 
 
 class InvocationStartObservationStoreTests(unittest.TestCase):
@@ -1372,6 +1417,80 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
             for item in results
         }
         self.assertEqual(len(receipts), 1)
+        self.assertEqual(self.store.stream_version(request.stream_id), 3)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            1,
+        )
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type = ?",
+                (TASK_INVOCATION_STARTED_EVENT_TYPE,),
+            ).fetchone()[0],
+            1,
+        )
+
+    def test_two_spawn_processes_issue_one_claim_and_one_observation(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        self.store.close()
+        context = multiprocessing.get_context("spawn")
+        ready = context.Queue()
+        start = context.Event()
+        results = context.Queue()
+        token_calls = context.Queue()
+        processes = (
+            context.Process(
+                target=spawn_invocation_start_worker,
+                args=(
+                    self.path,
+                    "worker-start-spawn-left",
+                    ready,
+                    start,
+                    results,
+                    token_calls,
+                ),
+            ),
+            context.Process(
+                target=spawn_invocation_start_worker,
+                args=(
+                    self.path,
+                    "worker-start-spawn-right",
+                    ready,
+                    start,
+                    results,
+                    token_calls,
+                ),
+            ),
+        )
+        for process in processes:
+            process.start()
+        try:
+            self.assertEqual(
+                {ready.get(timeout=10), ready.get(timeout=10)},
+                {"worker-start-spawn-left", "worker-start-spawn-right"},
+            )
+            start.set()
+            outcomes = (results.get(timeout=15), results.get(timeout=15))
+        finally:
+            for process in processes:
+                process.join(timeout=15)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+        self.assertEqual([process.exitcode for process in processes], [0, 0])
+        self.assertEqual({item[0] for item in outcomes}, {"claimed", "observed"})
+        self.assertEqual(len({item[1] for item in outcomes}), 1)
+        self.assertEqual(len({item[2] for item in outcomes}), 1)
+        token_worker = token_calls.get(timeout=5)
+        self.assertIn(token_worker, {"worker-start-spawn-left", "worker-start-spawn-right"})
+        with self.assertRaises(queue.Empty):
+            token_calls.get_nowait()
+
+        self.store = SQLiteEventStore(self.path, clock=lambda: ADMITTED_AT)
         self.assertEqual(self.store.stream_version(request.stream_id), 3)
         self.assertEqual(
             self.store._connection.execute(
