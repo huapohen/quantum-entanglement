@@ -570,6 +570,7 @@ def _sanitize_invocation_start_controls(method: _Method) -> _Method:
         descriptor: Optional[_EventStoreControlDescriptor] = None
         ambiguity = False
         fixed_error_kind: Optional[str] = None
+        process_mismatch = False
         try:
             return method(*args, **kwargs)
         except _EventStoreStartControlSignal as error:
@@ -608,12 +609,19 @@ def _sanitize_invocation_start_controls(method: _Method) -> _Method:
             else:  # pragma: no cover - subclasses are re-raised by the exact checks.
                 raise
             _detach_exception(error)
+        except EventStoreLifecycleError as error:
+            trusted = _consume_event_store_public_mismatch(error)
+            if not trusted:
+                raise
+            process_mismatch = True
         except BaseException as error:
             descriptor = _event_store_control_descriptor(error)
             if descriptor is None:
                 raise
             _detach_exception(error)
         del args, kwargs
+        if process_mismatch:
+            _raise_event_store_process_mismatch()
         if descriptor is not None:
             _raise_clean_invocation_start_control(descriptor, ambiguity=ambiguity)
         if fixed_error_kind is not None:
