@@ -742,7 +742,10 @@ def _caller_number(value: object, field_name: str, *, positive: bool = False) ->
     """Copy one finite exact built-in number without invoking caller comparison hooks."""
 
     if type(value) is int:
-        snapshot = float(value)
+        try:
+            snapshot = float(value)
+        except OverflowError:
+            raise ValueError(f"{field_name} exceeds the supported numeric range") from None
     elif type(value) is float:
         snapshot = value
     else:
