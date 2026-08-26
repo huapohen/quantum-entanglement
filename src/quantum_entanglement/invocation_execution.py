@@ -25,6 +25,7 @@ from .scheduler import TaskTransition
 INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION = 1
 SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION = 2
 INVOCATION_START_EVIDENCE_SCHEMA_VERSION = 2
+SCOPED_INVOCATION_START_EVIDENCE_SCHEMA_VERSION = 3
 INVOCATION_EXECUTION_MANIFEST_DOMAIN = "quantum-entanglement.invocation-execution-manifest/1\n"
 SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN = (
     "quantum-entanglement.invocation-execution-manifest/2\n"
@@ -86,6 +87,34 @@ _SCOPED_MANIFEST_FIELDS = frozenset(
 _START_EVIDENCE_FIELDS = frozenset(
     (
         "schemaVersion",
+        "invocationId",
+        "sessionId",
+        "planId",
+        "taskId",
+        "agentId",
+        "jobIdempotencyKey",
+        "attemptId",
+        "attemptNumber",
+        "leaseEpoch",
+        "workerId",
+        "leaseTokenDigest",
+        "claimedAt",
+        "leaseExpiresAt",
+        "manifestDigest",
+        "envelopeDigest",
+        "contextDigest",
+        "authorizationDigest",
+        "runtimeRevision",
+        "correlationId",
+        "causationId",
+    )
+)
+
+_SCOPED_START_EVIDENCE_FIELDS = frozenset(
+    (
+        "schemaVersion",
+        "tenantId",
+        "workspaceId",
         "invocationId",
         "sessionId",
         "planId",
@@ -1268,6 +1297,155 @@ class InvocationStartEvidenceV2:
 
 
 @dataclass(frozen=True)
+class ScopedInvocationStartEvidenceV3:
+    """Immutable schema-3 start binding with explicit tenant/workspace scope."""
+
+    schema_version: int
+    tenant_id: str
+    workspace_id: str
+    invocation_id: str
+    session_id: str
+    plan_id: str
+    task_id: str
+    agent_id: str
+    job_idempotency_key: str
+    attempt_id: str
+    attempt_number: int
+    lease_epoch: int
+    worker_id: str
+    lease_token_digest: str
+    claimed_at: str
+    lease_expires_at: str
+    manifest_digest: str
+    envelope_digest: str
+    context_digest: str
+    authorization_digest: str
+    runtime_revision: str
+    correlation_id: str
+    causation_id: str
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationStartEvidenceV3:
+            raise TypeError(
+                "scoped start evidence must be an exact ScopedInvocationStartEvidenceV3"
+            )
+        _schema_version(
+            self.schema_version,
+            SCOPED_INVOCATION_START_EVIDENCE_SCHEMA_VERSION,
+            "schemaVersion",
+        )
+        for label, value in (
+            ("tenantId", self.tenant_id),
+            ("workspaceId", self.workspace_id),
+            ("invocationId", self.invocation_id),
+            ("sessionId", self.session_id),
+            ("planId", self.plan_id),
+            ("taskId", self.task_id),
+            ("agentId", self.agent_id),
+            ("jobIdempotencyKey", self.job_idempotency_key),
+            ("attemptId", self.attempt_id),
+            ("workerId", self.worker_id),
+            ("runtimeRevision", self.runtime_revision),
+            ("correlationId", self.correlation_id),
+            ("causationId", self.causation_id),
+        ):
+            _text(value, label)
+        _positive_integer(self.attempt_number, "attemptNumber")
+        _positive_integer(self.lease_epoch, "leaseEpoch")
+        _digest(self.lease_token_digest, "leaseTokenDigest")
+        claimed_at = _timestamp(self.claimed_at, "claimedAt")
+        lease_expires_at = _timestamp(self.lease_expires_at, "leaseExpiresAt")
+        if lease_expires_at <= claimed_at:
+            raise ValueError("leaseExpiresAt must follow claimedAt")
+        _digest(self.manifest_digest, "manifestDigest")
+        _digest(self.envelope_digest, "envelopeDigest")
+        _digest(self.context_digest, "contextDigest")
+        _digest(self.authorization_digest, "authorizationDigest")
+        if self.causation_id != self.task_id:
+            raise ValueError("causationId must equal taskId")
+
+    def to_dict(self) -> Dict[str, object]:
+        """Return the exact camel-case scoped schema-3 wire object."""
+
+        ScopedInvocationStartEvidenceV3.__post_init__(self)
+        return {
+            "schemaVersion": self.schema_version,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "invocationId": self.invocation_id,
+            "sessionId": self.session_id,
+            "planId": self.plan_id,
+            "taskId": self.task_id,
+            "agentId": self.agent_id,
+            "jobIdempotencyKey": self.job_idempotency_key,
+            "attemptId": self.attempt_id,
+            "attemptNumber": self.attempt_number,
+            "leaseEpoch": self.lease_epoch,
+            "workerId": self.worker_id,
+            "leaseTokenDigest": self.lease_token_digest,
+            "claimedAt": self.claimed_at,
+            "leaseExpiresAt": self.lease_expires_at,
+            "manifestDigest": self.manifest_digest,
+            "envelopeDigest": self.envelope_digest,
+            "contextDigest": self.context_digest,
+            "authorizationDigest": self.authorization_digest,
+            "runtimeRevision": self.runtime_revision,
+            "correlationId": self.correlation_id,
+            "causationId": self.causation_id,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> ScopedInvocationStartEvidenceV3:
+        """Decode one exact scoped schema-3 wire object without retaining its container."""
+
+        if cls is not ScopedInvocationStartEvidenceV3:
+            raise TypeError("scoped start decoder requires the exact schema-3 class")
+        raw = _exact_dict(
+            value,
+            set(_SCOPED_START_EVIDENCE_FIELDS),
+            "scoped invocation start evidence",
+        )
+        return cls(
+            schema_version=raw["schemaVersion"],
+            tenant_id=raw["tenantId"],
+            workspace_id=raw["workspaceId"],
+            invocation_id=raw["invocationId"],
+            session_id=raw["sessionId"],
+            plan_id=raw["planId"],
+            task_id=raw["taskId"],
+            agent_id=raw["agentId"],
+            job_idempotency_key=raw["jobIdempotencyKey"],
+            attempt_id=raw["attemptId"],
+            attempt_number=raw["attemptNumber"],
+            lease_epoch=raw["leaseEpoch"],
+            worker_id=raw["workerId"],
+            lease_token_digest=raw["leaseTokenDigest"],
+            claimed_at=raw["claimedAt"],
+            lease_expires_at=raw["leaseExpiresAt"],
+            manifest_digest=raw["manifestDigest"],
+            envelope_digest=raw["envelopeDigest"],
+            context_digest=raw["contextDigest"],
+            authorization_digest=raw["authorizationDigest"],
+            runtime_revision=raw["runtimeRevision"],
+            correlation_id=raw["correlationId"],
+            causation_id=raw["causationId"],
+        )
+
+    @classmethod
+    def from_event_payload(
+        cls,
+        event_type: object,
+        payload: object,
+    ) -> ScopedInvocationStartEvidenceV3:
+        """Decode only scoped starts in the canonical invocation-start vocabulary."""
+
+        if cls is not ScopedInvocationStartEvidenceV3:
+            raise TypeError("scoped start event decoder requires the exact schema-3 class")
+        _event_type(event_type, TASK_INVOCATION_STARTED_EVENT_TYPE)
+        return cls.from_dict(payload)
+
+
+@dataclass(frozen=True)
 class InvocationStartReceipt:
     """Immutable stored-event coordinates and schema-2 invocation-start evidence."""
 
@@ -1486,6 +1664,7 @@ __all__ = [
     "INVOCATION_START_EVIDENCE_SCHEMA_VERSION",
     "SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN",
     "SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION",
+    "SCOPED_INVOCATION_START_EVIDENCE_SCHEMA_VERSION",
     "TASK_EXECUTION_REQUESTED_EVENT_TYPE",
     "TASK_INVOCATION_STARTED_EVENT_TYPE",
     "TASK_STATUS_CHANGED_EVENT_TYPE",
@@ -1497,6 +1676,7 @@ __all__ = [
     "InvocationStartReceipt",
     "RetryClass",
     "ScopedInvocationExecutionManifestV2",
+    "ScopedInvocationStartEvidenceV3",
     "ScopedTaskInvocationAdmissionRequestV2",
     "TaskInvocationAdmissionRequest",
     "build_task_invocation_admission_request",
