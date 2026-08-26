@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import multiprocessing
+import os
 import queue
 import sqlite3
 import tempfile
@@ -34,6 +35,7 @@ from quantum_entanglement.protocol import TaskStatus
 from quantum_entanglement.scheduler import TaskTransition
 from quantum_entanglement.store import (
     ConcurrencyError,
+    EventStoreLifecycleError,
     EventStorePoisonedError,
     InvocationStartCommitAmbiguityError,
     InvocationStartConflictError,
@@ -215,6 +217,88 @@ def spawn_invocation_start_worker(
         results.put((kind, result.receipt.event_id, attempt_id))
     finally:
         store.close()
+
+
+def probe_invocation_start_provider_fork(
+    path: str,
+    stage: str,
+    result_connection: Any,
+) -> None:
+    """Fork inside one provider and prove the child stops at the immediate PID guard."""
+
+    store = SQLiteEventStore(path, clock=lambda: ADMITTED_AT)
+    request = canonical_request()
+    store.append_task_invocation_admission(request, expected_version=0)
+    parent_pid = os.getpid()
+    forked = False
+
+    def fork_value(child_value: str, parent_value: str) -> str:
+        nonlocal forked
+        if forked:
+            raise RuntimeError("provider fork repeated")
+        forked = True
+        child_pid = os.fork()
+        if child_pid == 0:
+            return child_value
+        waited_pid, status = os.waitpid(child_pid, 0)
+        if waited_pid != child_pid or not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+            raise RuntimeError("provider child did not exit cleanly")
+        return parent_value
+
+    def clock_provider() -> str:
+        if stage == "clock":
+            return fork_value(CLAIMED_AT, CLAIMED_AT)
+        return CLAIMED_AT
+
+    def id_provider(prefix: str = "evt") -> str:
+        if stage == "attempt-id" and prefix == "attempt":
+            return fork_value("attempt-provider-child", "attempt-provider-parent")
+        if stage == "event-id" and prefix == "evt":
+            return fork_value("event-provider-child", "event-provider-parent")
+        return f"{prefix}-{stage}-stable"
+
+    def token_provider(_nbytes: int = 32) -> str:
+        if stage == "lease-token":
+            return fork_value("token-provider-child", "token-provider-parent")
+        return f"token-{stage}-stable"
+
+    try:
+        with (
+            patch.object(store, "_now", new=clock_provider),
+            patch.object(store_module, "new_id", new=id_provider),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                new=token_provider,
+            ),
+        ):
+            try:
+                result = store.claim_invocation_start(
+                    request.manifest.invocation_id,
+                    "worker-provider-fork",
+                    lease_seconds=60,
+                    expected_version=2,
+                )
+            except BaseException as error:
+                if os.getpid() == parent_pid:
+                    raise
+                result_connection.send(
+                    ("child", stage, type(error).__name__, getattr(error, "code", None))
+                )
+                os._exit(0)
+        if type(result) is not InvocationStartClaimed:
+            raise AssertionError("provider-fork parent did not retain the sole claim")
+        result_connection.send(
+            (
+                "parent",
+                stage,
+                type(result).__name__,
+                result.receipt.event_id,
+                result.receipt.evidence.attempt_id,
+            )
+        )
+    finally:
+        store.close()
+        result_connection.close()
 
 
 class InvocationStartObservationStoreTests(unittest.TestCase):
@@ -1506,6 +1590,66 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
             ).fetchone()[0],
             1,
         )
+
+    @unittest.skipUnless(hasattr(os, "fork"), "POSIX fork is unavailable")
+    def test_every_start_provider_fork_rejects_child_and_allows_one_parent_claim(self) -> None:
+        self.store.close()
+        context = multiprocessing.get_context("spawn")
+        stages = ("clock", "attempt-id", "event-id", "lease-token")
+        for stage in stages:
+            with self.subTest(stage=stage):
+                path = str(Path(self.tempdir.name) / f"provider-fork-{stage}.sqlite3")
+                receive_connection, send_connection = context.Pipe(duplex=False)
+                process = context.Process(
+                    target=probe_invocation_start_provider_fork,
+                    args=(path, stage, send_connection),
+                )
+                process.start()
+                send_connection.close()
+                outcomes: set[tuple[object, ...]] = set()
+                try:
+                    for _ in range(2):
+                        self.assertTrue(
+                            receive_connection.poll(10),
+                            f"provider fork {stage} did not report both outcomes",
+                        )
+                        outcomes.add(receive_connection.recv())
+                finally:
+                    receive_connection.close()
+                    process.join(timeout=10)
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(timeout=5)
+                self.assertEqual(process.exitcode, 0)
+                child = next(item for item in outcomes if item[0] == "child")
+                parent = next(item for item in outcomes if item[0] == "parent")
+                self.assertEqual(
+                    child,
+                    (
+                        "child",
+                        stage,
+                        EventStoreLifecycleError.__name__,
+                        EventStoreLifecycleError.code,
+                    ),
+                )
+                self.assertEqual(parent[0:3], ("parent", stage, "InvocationStartClaimed"))
+
+                reopened = SQLiteEventStore(path, clock=lambda: ADMITTED_AT)
+                try:
+                    observed = reopened.read_invocation_start("invocation-start-store-1")
+                    self.assertIs(type(observed), InvocationStartObserved)
+                    typed = cast(InvocationStartObserved, observed)
+                    self.assertEqual(typed.receipt.event_id, parent[3])
+                    self.assertEqual(typed.receipt.evidence.attempt_id, parent[4])
+                    self.assertEqual(
+                        reopened._connection.execute(
+                            "SELECT COUNT(*) FROM invocation_attempts"
+                        ).fetchone()[0],
+                        1,
+                    )
+                finally:
+                    reopened.close()
+        self.store = SQLiteEventStore(self.path, clock=lambda: ADMITTED_AT)
 
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
