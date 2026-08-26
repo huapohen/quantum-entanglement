@@ -6,6 +6,8 @@ import unicodedata
 import unittest
 from dataclasses import replace
 
+import quantum_entanglement
+import quantum_entanglement.invocation_execution as invocation_execution_module
 from quantum_entanglement.invocation_execution import (
     SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN,
     TASK_EXECUTION_REQUESTED_EVENT_TYPE,
@@ -47,6 +49,20 @@ def valid_legacy_manifest_dict() -> dict[str, object]:
 
 
 class ScopedInvocationExecutionManifestTests(unittest.TestCase):
+    def test_scoped_manifest_contract_is_exported_from_both_surfaces(self) -> None:
+        expected = {
+            "SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN": (
+                SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN
+            ),
+            "SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION": 2,
+            "ScopedInvocationExecutionManifestV2": ScopedInvocationExecutionManifestV2,
+        }
+        for name, value in expected.items():
+            with self.subTest(name=name):
+                self.assertIn(name, invocation_execution_module.__all__)
+                self.assertIn(name, quantum_entanglement.__all__)
+                self.assertIs(getattr(quantum_entanglement, name), value)
+
     def test_exact_round_trip_and_domain_separated_digest(self) -> None:
         raw = valid_manifest_dict()
 
