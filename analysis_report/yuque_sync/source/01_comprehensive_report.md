@@ -156,7 +156,7 @@ Agent 可以更换模型、框架、进程或部署位置；平台不依赖它�
 
 详细逐项分析见 [04｜多 Agent 竞品全景](https://app.notion.com/p/3c1ead4b996e811fa520ed44582eeb1b)；官方来源、固定源码、许可证和宣传/实现差异的逐项核验见 [06｜竞品官方信源、许可证与实现核验](https://app.notion.com/p/3c1ead4b996e81f9b5eddebebc96d30a)。后者覆盖 14 个产品与 65 条唯一来源，并严格区分“官方宣称 / 可验证实现 / 推断 / 未知”。
 
-**Clawith 增量一级竞品（不计入上述历史 14 家口径）：** 它最值得学习的不是“AI 组织”口号，而是把多个机制做成同一日常工作台：Agent 是稳定组织对象；人和 Agent 统一为 Participant 并进入长期 Crew；`@单 Agent` 确定性直达，`@多个 Agent` 才进入模型规划；Focus、Trigger、稳定 Occurrence 与 Run 组成主动工作闭环；Artifact 可提炼为人审后才发布的 Experience；workspace 写入以 candidate、digest 和 CAS 显式处理冲突。它同时暴露了必须反向吸取的教训：内部 `notify/consult/task_delegate` 不是标准 A2A，默认 Compose/宿主 pip 权限过宽，Skill/MCP 自安装缺少完整供应链门禁，普通 best-effort AuditLog 不能支撑不可篡改审计承诺。
+**Clawith 增量一级竞品（不计入上述历史 14 家口径）：** 它最值得学习的不是“AI 组织”口号，而是把多个机制做成同一日常工作台：Agent 是稳定组织对象；人和 Agent 统一为 Participant 并进入长期 Crew；`@单 Agent` 确定性直达，`@多个 Agent` 才进入模型规划；Focus、Trigger、稳定 Occurrence 与 Run 组成主动工作闭环；对话/Run 产出可提炼为人审后才发布的 Experience；workspace 写入以 candidate、digest 和 CAS 显式处理冲突。它同时暴露了必须反向吸取的教训：内部 `notify/consult/task_delegate` 不是标准 A2A，默认 Compose/宿主 pip 权限过宽，Skill/MCP 自安装缺少完整供应链门禁，普通 best-effort AuditLog 不能支撑不可篡改审计承诺。
 
 因此目标不是复制 Clawith 页面，而是组合两边优势：用其组织语言和原生群聊降低使用门槛，用 WanWork 的 canonical event、AgentRevision、HandoffContract、Artifact、authority、receipt、unknown/fencing 和标准 adapter 重新建立可靠边界。当前验收产品仍是 loopback 固定三 Agent 切片，不是上述完整组织产品。
 ### 3.3 市场空白

@@ -10,7 +10,7 @@
   "last_discovery_at": "2026-08-24T16:48:00+08:00",
   "last_successful_sync_at": "2026-08-24T17:23:25+08:00",
   "current_local_delta": {
-    "updated_at": "2026-08-27T04:33:44+08:00",
+    "updated_at": "2026-08-27T04:35:33+08:00",
     "status": "partial",
     "remote_write_status": "local_pending",
     "remote_readback_status": "local_pending",
@@ -24,7 +24,7 @@
         "title": "综合报告｜人与多 Agent 群聊协同产品：调研、架构与实现",
         "yuque_slug": "nspilnhf8bpg0207",
         "previous_verified_normalized_sha256": "a81389814cb43f5eeeafb738219013b1ba44b2dddac411c1a621e8f9838e3b16",
-        "current_normalized_sha256": "6abb03e9af96177783bfcd87e2570e1a13b1df0c18674909656587840ee99b41",
+        "current_normalized_sha256": "bd8ed10465b1cc8f35873db04c58031d631657290a7db0b12749df0cfab7ba55",
         "target_status": "local_pending"
       },
       {
