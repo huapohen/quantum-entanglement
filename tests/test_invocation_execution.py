@@ -5,6 +5,7 @@ import unittest
 from dataclasses import FrozenInstanceError, fields, replace
 from typing import Any, cast
 
+from quantum_entanglement.attempts import InvocationLease
 from quantum_entanglement.events import DomainEvent
 from quantum_entanglement.invocation_execution import (
     CANONICAL_ORCHESTRATOR_ACTOR_ID,
@@ -14,7 +15,10 @@ from quantum_entanglement.invocation_execution import (
     TASK_STATUS_CHANGED_EVENT_TYPE,
     EffectClass,
     InvocationExecutionManifest,
+    InvocationStartClaimed,
     InvocationStartEvidenceV2,
+    InvocationStartObserved,
+    InvocationStartReceipt,
     RetryClass,
     TaskInvocationAdmissionRequest,
     build_task_invocation_admission_request,
@@ -26,7 +30,7 @@ SHA_A = "a" * 64
 SHA_B = "b" * 64
 SHA_C = "c" * 64
 SHA_D = "d" * 64
-SHA_E = "e" * 64
+LEASE_TOKEN = "lease-token-secret-canary"
 EVENT_TIME_A = "2026-08-27T01:02:03.000004Z"
 EVENT_TIME_B = "2026-08-27T01:02:03.000005Z"
 
@@ -36,6 +40,10 @@ class DictSubclass(dict[str, Any]):
 
 
 class TextSubclass(str):
+    pass
+
+
+class IntegerSubclass(int):
     pass
 
 
@@ -97,7 +105,7 @@ def valid_start_dict() -> dict[str, Any]:
         "attemptNumber": 1,
         "leaseEpoch": 1,
         "workerId": "worker-1",
-        "leaseTokenDigest": SHA_E,
+        "leaseTokenDigest": hashlib.sha256(LEASE_TOKEN.encode("utf-8")).hexdigest(),
         "claimedAt": "2026-08-27T01:02:03.000004Z",
         "leaseExpiresAt": "2026-08-27T01:03:03.000004Z",
         "manifestDigest": manifest.canonical_digest(),
@@ -108,6 +116,38 @@ def valid_start_dict() -> dict[str, Any]:
         "correlationId": manifest.correlation_id,
         "causationId": manifest.causation_id,
     }
+
+
+def valid_start_receipt() -> InvocationStartReceipt:
+    evidence = InvocationStartEvidenceV2.from_dict(valid_start_dict())
+    return InvocationStartReceipt(
+        event_id="event-invocation-started",
+        stream_id="session:" + evidence.session_id,
+        sequence=3,
+        global_position=11,
+        evidence=evidence,
+    )
+
+
+def valid_invocation_lease() -> InvocationLease:
+    evidence = InvocationStartEvidenceV2.from_dict(valid_start_dict())
+    return InvocationLease(
+        invocation_id=evidence.invocation_id,
+        session_id=evidence.session_id,
+        plan_id=evidence.plan_id,
+        task_id=evidence.task_id,
+        agent_id=evidence.agent_id,
+        idempotency_key=evidence.job_idempotency_key,
+        payload_digest=evidence.manifest_digest,
+        attempt_id=evidence.attempt_id,
+        attempt_number=evidence.attempt_number,
+        max_attempts=1,
+        lease_epoch=evidence.lease_epoch,
+        worker_id=evidence.worker_id,
+        lease_token=LEASE_TOKEN,
+        claimed_at=evidence.claimed_at,
+        lease_expires_at=evidence.lease_expires_at,
+    )
 
 
 def exception_chain_text(error: BaseException) -> str:
@@ -369,6 +409,133 @@ class TaskInvocationAdmissionRequestTests(unittest.TestCase):
         )
         self.assertEqual(decoded.canonical_digest(), request.job_spec.payload_digest)
         self.assertEqual(running.payload["revision"], decoded.task_revision)
+
+    def test_from_components_round_trips_exact_durable_values_without_factories(self) -> None:
+        expected = valid_admission_request()
+        events, job = expected.components()
+
+        decoded = TaskInvocationAdmissionRequest.from_components(events, job)
+
+        self.assertEqual(decoded, expected)
+        self.assertEqual(decoded.components(), expected.components())
+        self.assertIsNot(decoded.manifest, expected.manifest)
+        self.assertIsNot(decoded.transition, expected.transition)
+
+        available = replace(expected, job_available_at="2026-08-27T01:04:03.000004Z")
+        available_events, available_job = available.components()
+        self.assertEqual(
+            TaskInvocationAdmissionRequest.from_components(
+                available_events,
+                available_job,
+            ),
+            available,
+        )
+
+    def test_from_components_rejects_nonexact_or_noncanonical_envelopes(self) -> None:
+        request = valid_admission_request()
+        events, job = request.components()
+
+        malformed_batches: tuple[object, ...] = (
+            list(events),
+            events[:1],
+            events + (events[1],),
+            (events[1], events[0]),
+        )
+        for batch in malformed_batches:
+            with self.subTest(batch_type=type(batch).__name__):
+                with self.assertRaises((TypeError, ValueError)):
+                    TaskInvocationAdmissionRequest.from_components(batch, job)
+
+        replacements: tuple[tuple[int, str, Any], ...] = (
+            (0, "stream_id", "session:other"),
+            (0, "event_type", "task.execution_requested"),
+            (0, "actor_id", "legacy-orchestrator"),
+            (0, "event_id", TextSubclass(events[0].event_id)),
+            (0, "timestamp", "2026-08-27T01:02:03Z"),
+            (0, "correlation_id", "correlation-other"),
+            (0, "causation_id", "task-other"),
+            (0, "idempotency_key", "execution-request:other"),
+            (1, "stream_id", "session:other"),
+            (1, "event_type", "task.status_changed"),
+            (1, "actor_id", "legacy-orchestrator"),
+            (1, "correlation_id", "correlation-other"),
+            (1, "causation_id", "task-other"),
+            (1, "idempotency_key", "task-running:other:2"),
+        )
+        for index, field_name, value in replacements:
+            with self.subTest(index=index, field_name=field_name):
+                changed = list(events)
+                changed[index] = replace(events[index], **{field_name: value})
+                with self.assertRaises((TypeError, ValueError)):
+                    TaskInvocationAdmissionRequest.from_components(tuple(changed), job)
+
+        future_manifest = dict(events[0].payload)
+        future_manifest["schemaVersion"] = 2
+        with self.assertRaises(ValueError):
+            TaskInvocationAdmissionRequest.from_components(
+                (replace(events[0], payload=future_manifest), events[1]),
+                job,
+            )
+
+    def test_from_components_strictly_snapshots_job_integers_and_bindings(self) -> None:
+        request = valid_admission_request()
+        events, job = request.components()
+        replacements: dict[str, Any] = {
+            "invocation_id": "inv-other",
+            "session_id": "session-other",
+            "plan_id": "plan-other",
+            "task_id": "task-other",
+            "agent_id": "agent-other",
+            "idempotency_key": "invoke:other",
+            "payload_digest": "f" * 64,
+            "max_attempts": 2,
+            "available_at": "2026-08-27T01:02:03Z",
+        }
+        for field_name, value in replacements.items():
+            with self.subTest(field_name=field_name):
+                changed = replace(job, **{field_name: value})
+                with self.assertRaises((TypeError, ValueError)):
+                    TaskInvocationAdmissionRequest.from_components(events, changed)
+
+        changed_priority = replace(job, priority=72)
+        decoded_priority = TaskInvocationAdmissionRequest.from_components(
+            events,
+            changed_priority,
+        )
+        self.assertEqual(decoded_priority.job_priority, 72)
+        self.assertEqual(decoded_priority.job_spec, changed_priority)
+
+        for field_name in ("priority", "max_attempts"):
+            for value in (True, IntegerSubclass(1)):
+                with self.subTest(integer_field=field_name, value_type=type(value).__name__):
+                    forged = replace(job)
+                    object.__setattr__(forged, field_name, value)
+                    with self.assertRaises(TypeError):
+                        TaskInvocationAdmissionRequest.from_components(events, forged)
+
+    def test_from_components_rejects_duck_types_without_invoking_their_callbacks(self) -> None:
+        request = valid_admission_request()
+        events, job = request.components()
+
+        class HostileDuck:
+            @property
+            def payload(self) -> object:
+                raise AssertionError("caller callback must not execute")
+
+            def __iter__(self) -> object:
+                raise AssertionError("caller callback must not execute")
+
+        for candidate_events, candidate_job in (
+            (HostileDuck(), job),
+            ((HostileDuck(), events[1]), job),
+            (events, HostileDuck()),
+        ):
+            with self.subTest(candidate_type=type(candidate_events).__name__):
+                with self.assertRaises(TypeError):
+                    TaskInvocationAdmissionRequest.from_components(
+                        candidate_events,
+                        candidate_job,
+                    )
 
     def test_caller_event_identity_and_time_are_stable_and_payloads_are_fresh(self) -> None:
         request = valid_admission_request()
@@ -727,6 +894,166 @@ class InvocationStartEvidenceTests(unittest.TestCase):
         object.__setattr__(evidence, "lease_epoch", True)
         with self.assertRaises(TypeError):
             evidence.to_dict()
+
+
+class InvocationStartResultTests(unittest.TestCase):
+    def test_receipt_and_observed_are_capability_free_exact_round_trips(self) -> None:
+        receipt = valid_start_receipt()
+        expected = {
+            "eventId": "event-invocation-started",
+            "streamId": "session:session-1",
+            "sequence": 3,
+            "globalPosition": 11,
+            "evidence": valid_start_dict(),
+        }
+
+        self.assertEqual(receipt.to_dict(), expected)
+        self.assertEqual(InvocationStartReceipt.from_dict(expected), receipt)
+        observed = InvocationStartObserved(receipt)
+        self.assertEqual(observed.to_dict(), {"receipt": expected})
+        self.assertEqual(InvocationStartObserved.from_dict(observed.to_dict()), observed)
+        self.assertIsNot(observed.receipt, receipt)
+        self.assertIsNot(observed.receipt.evidence, receipt.evidence)
+        self.assertNotIn(LEASE_TOKEN, json.dumps(observed.to_dict(), sort_keys=True))
+
+    def test_receipt_strictly_validates_type_text_positions_and_stream_binding(self) -> None:
+        raw = valid_start_receipt().to_dict()
+        missing = copy.deepcopy(raw)
+        del missing["sequence"]
+        extra = copy.deepcopy(raw)
+        extra["leaseToken"] = "secret-extra-lease-canary"
+        for candidate in (missing, extra):
+            with self.subTest(keys=tuple(candidate)):
+                with self.assertRaisesRegex(ValueError, "exact schema"):
+                    InvocationStartReceipt.from_dict(candidate)
+        with self.assertRaisesRegex(TypeError, "plain dictionary"):
+            InvocationStartReceipt.from_dict(DictSubclass(raw))
+
+        for field_name, value in (
+            ("eventId", TextSubclass("event-invocation-started")),
+            ("streamId", "session:other"),
+            ("sequence", True),
+            ("sequence", IntegerSubclass(3)),
+            ("sequence", 0),
+            ("sequence", 1 << 63),
+            ("globalPosition", True),
+            ("globalPosition", IntegerSubclass(11)),
+            ("globalPosition", 2),
+        ):
+            with self.subTest(field_name=field_name, value=value):
+                changed = copy.deepcopy(raw)
+                changed[field_name] = value
+                with self.assertRaises((TypeError, ValueError)):
+                    InvocationStartReceipt.from_dict(changed)
+
+    def test_result_types_are_exact_immutable_and_revalidate_low_level_forgery(self) -> None:
+        class ReceiptSubclass(InvocationStartReceipt):
+            pass
+
+        class ObservedSubclass(InvocationStartObserved):
+            pass
+
+        class ClaimedSubclass(InvocationStartClaimed):
+            pass
+
+        receipt = valid_start_receipt()
+        lease = valid_invocation_lease()
+        for operation in (
+            lambda: ReceiptSubclass(
+                receipt.event_id,
+                receipt.stream_id,
+                receipt.sequence,
+                receipt.global_position,
+                receipt.evidence,
+            ),
+            lambda: ObservedSubclass(receipt),
+            lambda: ClaimedSubclass(receipt, lease),
+        ):
+            with self.assertRaises(TypeError):
+                operation()
+
+        observed = InvocationStartObserved(receipt)
+        with self.assertRaises(FrozenInstanceError):
+            observed.receipt = receipt  # type: ignore[misc]
+
+        forged_receipt = valid_start_receipt()
+        object.__setattr__(forged_receipt, "sequence", True)
+        with self.assertRaises(TypeError):
+            forged_receipt.to_dict()
+        with self.assertRaises(TypeError):
+            InvocationStartObserved(forged_receipt)
+
+    def test_claimed_snapshots_exact_lease_and_never_serializes_raw_authority(self) -> None:
+        receipt = valid_start_receipt()
+        lease = valid_invocation_lease()
+
+        claimed = InvocationStartClaimed(receipt, lease)
+
+        self.assertEqual(claimed.receipt, receipt)
+        self.assertEqual(claimed.lease, lease)
+        self.assertIsNot(claimed.receipt, receipt)
+        self.assertIsNot(claimed.lease, lease)
+        self.assertFalse(hasattr(claimed, "to_dict"))
+        self.assertNotIn(LEASE_TOKEN, repr(claimed))
+        self.assertNotIn(LEASE_TOKEN, str(claimed))
+        self.assertNotIn(LEASE_TOKEN, repr(claimed.lease))
+        with self.assertRaises(TypeError) as caught:
+            json.dumps(claimed)
+        self.assertNotIn(LEASE_TOKEN, exception_chain_text(caught.exception))
+        with self.assertRaises(FrozenInstanceError):
+            claimed.lease = lease  # type: ignore[misc]
+
+    def test_claimed_rejects_every_lease_evidence_binding_mismatch(self) -> None:
+        receipt = valid_start_receipt()
+        lease = valid_invocation_lease()
+        replacements: dict[str, Any] = {
+            "invocation_id": "inv-other",
+            "session_id": "session-other",
+            "plan_id": "plan-other",
+            "task_id": "task-other",
+            "agent_id": "agent-other",
+            "idempotency_key": "invoke:other",
+            "payload_digest": "f" * 64,
+            "attempt_id": "attempt-other",
+            "attempt_number": 2,
+            "max_attempts": 2,
+            "lease_epoch": 2,
+            "worker_id": "worker-other",
+            "lease_token": "different-raw-lease-secret",
+            "claimed_at": "2026-08-27T01:02:02.000004Z",
+            "lease_expires_at": "2026-08-27T01:03:04.000004Z",
+        }
+        for field_name, value in replacements.items():
+            with self.subTest(field_name=field_name):
+                with self.assertRaises(ValueError):
+                    InvocationStartClaimed(receipt, replace(lease, **{field_name: value}))
+
+        for field_name in ("attempt_number", "max_attempts", "lease_epoch"):
+            for value in (True, IntegerSubclass(1)):
+                with self.subTest(integer_field=field_name, value_type=type(value).__name__):
+                    forged = replace(lease)
+                    object.__setattr__(forged, field_name, value)
+                    with self.assertRaises(TypeError):
+                        InvocationStartClaimed(receipt, forged)
+
+    def test_claimed_validation_errors_never_retain_raw_lease_canaries(self) -> None:
+        receipt = valid_start_receipt()
+        mismatched_canary = "secret-mismatched-raw-lease-canary"
+        surrogate_canary = "secret-surrogate-lease-canary-\ud800"
+        cases = (
+            (mismatched_canary, replace(valid_invocation_lease(), lease_token=mismatched_canary)),
+            (surrogate_canary, replace(valid_invocation_lease(), lease_token=surrogate_canary)),
+        )
+        for canary, lease in cases:
+            with self.subTest(canary=canary.encode("utf-8", "backslashreplace")):
+                with self.assertRaises((TypeError, ValueError)) as caught:
+                    InvocationStartClaimed(receipt, lease)
+                self.assertNotIn(
+                    canary.replace("\ud800", ""),
+                    exception_chain_text(caught.exception),
+                )
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
 
 
 if __name__ == "__main__":
