@@ -8,7 +8,8 @@
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow
-初始化与 approval、严格流式 session recovery、durable invocation-attempt store、持久 artifact
+初始化与 approval、严格流式 session recovery、event/RUNNING transition + queued invocation job +
+immutable admission receipt 的原子 admission、durable invocation-attempt store、持久 artifact
 store、transactional inbox/outbox、publisher、leased projection、domain migration、tenant
 authorization primitive、SQLite backup/restore、严格 service config、opaque/file secret provider、
 依赖锁、可复现制品、source-bound 双 SBOM、publisher typed safe logging/redaction，以及一个
@@ -23,8 +24,9 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 
 当前最关键的三个断层是：
 
-1. `OrchestratorKernel` 尚未使用 durable invocation-attempt store；崩溃留下的 `RUNNING` task
-   仍没有基于 attempt/result receipt 的安全协调；
+1. `SQLiteEventStore` 已能原子提交 caller-supplied `RUNNING` transition、queued job 和 admission
+   receipt，但 `OrchestratorKernel` 尚未使用该 API，也没有把 first claim、attempt、result/artifact
+   receipt 与 terminal projection 串成安全协调；
 2. events、snapshots、delivery、attempt 和 projection repository 尚未统一强制 tenant/workspace
    scope，tenant domain object 不能替代可信认证与 SQL predicate；
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
@@ -59,7 +61,10 @@ event store 的单组件运行合同见
   transactional inbox/outbox、bounded reads，以及全 public/lifecycle/deferred stream process owner
   guards、exact SQL snapshots、transaction context enter/exit、owner-aware
   transaction/migration/constructor cleanup、nested clean mismatch 和完整 inherited graph
-  quarantine；
+  quarantine；另有 `append_invocation_admission` 把 caller-supplied event batch、queued job 与
+  checksum-bound immutable receipt 同 transaction 提交，只允许 receipt-proven exact replay，partial
+  或无 receipt split binding、tamper 与缺失关联 row 全部 fail closed；运行合同见
+  [`ATOMIC_INVOCATION_ADMISSION.md`](./ATOMIC_INVOCATION_ADMISSION.md)；
 - `runtime.py`：plan/task/initial-ready 原子初始化；approval request/decision 与 task transition
   原子批次；commit-after-wrapper-error 精确协调；post-commit observer 故障隔离；
 - session recovery：每页最多 1,000 events，验证同 stream/连续 sequence，并执行 1,000,000
@@ -78,7 +83,10 @@ event store 的单组件运行合同见
 
 ### 未关闭 P0/P1
 
-- runtime 仍直接调用 Agent，没有 enqueue/claim/heartbeat/fencing 的 attempt integration；
+- runtime 仍直接调用 Agent，尚未接入 atomic admission，也没有 claim/heartbeat/fencing 的 attempt
+  integration；
+- admission 只解决 event/job/receipt 的提交边界；caller-owned first claim、attempt/start receipt、
+  result/artifact acceptance 和 receipt-aware worker gate 尚未实现；
 - task `RUNNING`、attempt、artifact/result acceptance 和 terminal task state 不是端到端状态机；
 - Agent 返回后逐个写 artifact、result 和 completion，任一边界崩溃仍需 receipt-based reconcile；
 - succeeded attempt 没有不可变 result receipt 时不能安全自动投影 `COMPLETED`；
@@ -139,8 +147,8 @@ Artifact repository 已把 tenant/workspace 纳入必填 predicate 和唯一键�
 
 未关闭 P0：
 
-- events、snapshots、inbox、outbox、invocation jobs/attempts 和 projections 仍有裸 session/id 或
-  global position 查询；
+- events、snapshots、inbox、outbox、invocation jobs/attempts/admissions 和 projections 仍有裸
+  session/id 或 global position 查询；
 - 没有可信 `RequestContext` 把认证 principal、membership revision 与目标 scope 绑定；
 - 没有 tenant-bound/signed external cursor、统一不可枚举 error、cache/metric isolation；
 - legacy 数据没有 operator mapping、可重入 backfill、NOT NULL/unique contract migration；
@@ -192,8 +200,10 @@ P0/P1 门禁：
 
 已实现 packaged/checksum-bound domain migrations、SQLite online backup、source/file identity、
 integrity/foreign-key/schema/version/core-row-count manifest、restore precondition 和本地 admin CLI。
-Backup manifest 已覆盖真实 `projection_offsets`、`projection_receipts` 和
-`qe_revocation_high_water`，旧审计中的表名/漏表结论已经关闭。
+Backup manifest 已覆盖真实 `projection_offsets`、`projection_receipts`、
+`qe_revocation_high_water` 和 migration-4 `invocation_admissions`；non-empty admission receipt 已有
+backup/restore 后 exact replay 测试，v3 backup 也覆盖 restore-forward-upgrade。旧审计中的表名/漏表
+结论已经关闭。
 
 仍缺：
 
@@ -234,7 +244,10 @@ SLO/RPO/RTO 只能引用真实 workload 下的 p50/p95/p99、CPU、RSS、disk、
 ## 9. 测试与证据
 
 主线已有广泛 deterministic unit、tamper、recovery、migration、publisher、projection、tenancy、
-backup、distribution、SBOM、config/secret、approval atomicity 和 fault-wrapper tests。当前本地
+backup、distribution、SBOM、config/secret、approval atomicity、atomic invocation admission 和
+fault-wrapper tests。admission 专项覆盖 partial/full split、receipt/event/job tamper、commit
+ambiguity/poison/reopen、control signal、双 connection/process 竞争、fork inherited rejection、v3→v4
+migration 与 non-empty receipt backup/restore。当前本地
 门禁同时执行 dependency-lock verifier、完整 unittest、locked Ruff lint/format、strict mypy、
 compileall、deterministic demo 和 diff check。
 
@@ -273,8 +286,9 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
 
 1. 先冻结 process model：为 issuer/authorization 与核心 store 建立 pre-lock PID/epoch fence，并把
    credential-bearing/untrusted worker 固定为 spawn/exec-before-secret-load composition；
-2. 把 `RUNNING` task、durable attempt、accepted result/artifact 和 terminal state 组成可崩溃协调
-   的状态机；没有 result receipt 时绝不把 succeeded job 猜成 completed；
+2. 在已完成 event/job/receipt atomic admission 之后，实现 caller-owned atomic first claim，再把
+   attempt/start receipt、heartbeat、accepted result/artifact 和 terminal state 组成可崩溃协调的
+   状态机；没有 result receipt 时绝不把 succeeded job 猜成 completed；
 3. 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；
 4. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
 5. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
