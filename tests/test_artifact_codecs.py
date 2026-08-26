@@ -4,6 +4,7 @@ import json
 import unicodedata
 import unittest
 
+from quantum_entanglement import artifact_store as artifact_store_module
 from quantum_entanglement._artifact_codec import (
     ARTIFACT_METADATA_DOMAIN_V1,
     ArtifactMetadataCodecTooLargeError,
@@ -46,6 +47,35 @@ class ArtifactCanonicalCodecTests(unittest.TestCase):
             "980fb603821d12ea722f3d950b2f82812e310972c38e3fc2ed90f81df84cffbe",
         )
         self.assertTrue(ARTIFACT_METADATA_DOMAIN_V1.endswith("\n"))
+
+    def test_shared_request_digest_matches_the_existing_artifact_store_algorithm(self) -> None:
+        metadata = canonical_artifact_metadata_v1({"β": [True, None], "a": 1})
+        blob_digest = artifact_blob_digest_v1(b"hello\x00world")
+        shared = artifact_request_digest_v1(
+            tenant_id="tenant-a",
+            workspace_id="workspace-a",
+            session_id="session-a",
+            task_id="task-a",
+            name="report.md",
+            media_type="text/markdown",
+            blob_digest=blob_digest,
+            byte_size=11,
+            metadata=metadata,
+            created_by="agent-a",
+        )
+        existing = artifact_store_module._request_digest(
+            tenant_id="tenant-a",
+            workspace_id="workspace-a",
+            session_id="session-a",
+            task_id="task-a",
+            name="report.md",
+            media_type="text/markdown",
+            blob_digest=blob_digest,
+            byte_size=11,
+            metadata=metadata.to_dict(),
+            created_by="agent-a",
+        )
+        self.assertEqual(shared, existing)
 
     def test_metadata_snapshot_and_decoded_values_are_independent(self) -> None:
         nested: list[object] = [{"value": "original"}]
