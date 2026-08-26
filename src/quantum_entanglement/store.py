@@ -2409,6 +2409,84 @@ class SQLiteEventStore:
             return state
         return None
 
+    def _load_scoped_invocation_start_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        invocation_id: str,
+        *,
+        fresh: bool = False,
+    ) -> Optional[_ScopedInvocationStartState]:
+        """Load an unknown, scoped-unstarted, or validated scoped-started state."""
+
+        receipt_rows = connection.execute(
+            """
+            SELECT * FROM invocation_admissions
+            WHERE invocation_id = ?
+            LIMIT 2
+            """,
+            (invocation_id,),
+        ).fetchall()
+        if not receipt_rows:
+            job_row = connection.execute(
+                "SELECT 1 FROM invocation_jobs WHERE invocation_id = ? LIMIT 1",
+                (invocation_id,),
+            ).fetchone()
+            event_row = connection.execute(
+                """
+                SELECT 1 FROM events
+                WHERE idempotency_key IN (?, ?)
+                LIMIT 1
+                """,
+                (
+                    "execution-request:%s" % invocation_id,
+                    "invocation-start:%s:1" % invocation_id,
+                ),
+            ).fetchone()
+            if job_row is not None or event_row is not None:
+                raise InvocationStartConflictError() from None
+            return None
+        if len(receipt_rows) != 1:
+            raise InvocationStartConflictError() from None
+        admission, request, job = self._canonical_scoped_invocation_admission_in_transaction(
+            connection,
+            receipt_rows[0],
+            invocation_id=invocation_id,
+        )
+        candidates = self._invocation_start_candidates_in_transaction(
+            connection,
+            request.manifest.invocation_id,
+            request.manifest.task_id,
+        )
+        if not candidates:
+            self._validate_unstarted_invocation_in_transaction(connection, job)
+            return _ScopedInvocationStartAdmission(admission, request, job)
+        return self._validate_scoped_invocation_start_readback(
+            connection,
+            admission,
+            request,
+            job,
+            candidates[0],
+            fresh=fresh,
+        )
+
+    def _read_scoped_invocation_start_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        invocation_id: str,
+        *,
+        fresh: bool = False,
+    ) -> Optional[_ScopedInvocationStartReadback]:
+        """Read only validated scoped start evidence from one transaction snapshot."""
+
+        state = self._load_scoped_invocation_start_in_transaction(
+            connection,
+            invocation_id,
+            fresh=fresh,
+        )
+        if type(state) is _ScopedInvocationStartReadback:
+            return state
+        return None
+
     def _claim_invocation_start_in_transaction(
         self,
         connection: sqlite3.Connection,
