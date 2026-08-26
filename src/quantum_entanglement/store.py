@@ -1937,12 +1937,11 @@ class SQLiteEventStore:
     def _invocation_start_candidates_in_transaction(
         self,
         connection: sqlite3.Connection,
-        request: TaskInvocationAdmissionRequest,
+        invocation_id: str,
+        task_id: str,
     ) -> Tuple[StoredEvent, ...]:
         """Find every database-wide start-like row relevant to this task."""
 
-        invocation_id = request.manifest.invocation_id
-        task_id = request.manifest.task_id
         canonical_key = "invocation-start:%s:1" % invocation_id
         legacy_key = "invocation-started:%s" % task_id
         rows = connection.execute(
@@ -2186,7 +2185,8 @@ class SQLiteEventStore:
         )
         candidates = self._invocation_start_candidates_in_transaction(
             connection,
-            request,
+            request.manifest.invocation_id,
+            request.manifest.task_id,
         )
         if not candidates:
             self._validate_unstarted_invocation_in_transaction(connection, job)
