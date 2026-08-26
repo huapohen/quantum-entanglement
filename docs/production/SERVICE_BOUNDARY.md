@@ -5,9 +5,10 @@ README、演示、测试数量、环境变量或操作便利均不得放宽这�
 
 ## 当前结论
 
-当前版本是可重复验证的协作内核，**不是生产服务，也不是商用 GA**。它可在可信开发者控制
-的本机或隔离 CI 中运行单元测试、恢复测试、构建验证和演示；不得承载真实客户敏感数据，
-不得暴露给不可信调用者，也不得执行不可逆外部副作用。
+当前版本是可重复验证的协作内核和本地产品试用，**不是生产服务，也不是商用 GA**。它可在
+可信开发者控制的本机或隔离 CI 中运行单元测试、恢复测试、构建验证和演示；也可由可信
+开发者在 loopback-only 临时访问 token 之后，用显式配置的模型 provider 运行自定义指令试用。
+不得承载真实客户敏感数据，不得暴露给不可信调用者，也不得执行不可逆外部副作用。
 
 仓库已经包含事件存储、durable invocation-attempt store、artifact store、inbox/outbox、
 publisher、projection、tenant authorization primitive、SQLite backup/restore、严格配置和文件
@@ -32,9 +33,9 @@ revision/evidence；但仓库没有真实 authenticator、authenticated transpor
 | 拓扑 | 单机；编排器单进程；SQLite 位于可信本地文件系统 |
 | 调用者 | 可信开发者或隔离 CI；直接调用 Python API、管理 CLI 或 demo |
 | 数据 | 合成数据、去敏 fixture、专用临时数据库 |
-| Agent | 内嵌测试 Agent 或受控 fake；无不可信代码沙箱保证 |
+| Agent | 内嵌测试 Agent、受控 fake，或本地试用中的受控文本生成模型；无不可信代码沙箱保证 |
 | Connector | fake、no-op 或只读 fixture；不得产生真实外部副作用 |
-| 网络 | 不提供 HTTP/ASGI 服务；不监听公网；核心测试无需真实外部服务 |
+| 网络 | 仅允许示例 server 监听 loopback，及显式配置的模型 provider HTTPS 出网；不提供 production HTTP/ASGI 服务，不监听公网 |
 | 运维 | 人工观察下的测试、故障注入、构建和 backup/restore rehearsal |
 | 发布 | 可验证源码与本地制品候选；全部 production promotion gate 仍关闭 |
 
@@ -53,16 +54,17 @@ Invocation lease、projection lease 和 SQLite WAL 中的多进程原语只是�
 - 在 action receipt、effect-unknown reconciliation 和 action-time authorization 未闭环时
   执行不可逆副作用。
 
-凭据只允许通过受支持的 opaque `SecretRef` 和 provider 边界进入未来 composition root。
-源码、测试、日志、事件、报告、release evidence 和普通回复不得包含完整 API key、token、
-cookie、OIDC credential 或私钥。
+生产 composition root 的凭据只允许通过受支持的 opaque `SecretRef` 和 provider 边界进入。
+当前本地试用的 `.env` loader 是受限开发适配器：文件必须保持 Git ignored、仅本机使用，且
+provider 配置必须成套匹配；它不构成生产 secret-loading 先例。源码、测试、日志、事件、报告、
+release evidence 和普通回复不得包含完整 API key、token、cookie、OIDC credential 或私钥。
 
 ## 当前缺失的端到端闭环
 
 以下缺口任一存在，都必须保持 `NON_PRODUCTION`：
 
 1. 没有真实身份提供方/认证 transport、action-time identity/membership refresh、版本化服务
-   API、强制 RequestContext/authorizer composition root、health 或 SIGTERM lifecycle；
+   API、强制 RequestContext/authorizer composition root、正式 health 或 SIGTERM lifecycle；
 2. events、snapshots、delivery、attempt 和 projection repository 尚未强制 tenant/workspace
    scope，caller-provided identity 仍不可信；
 3. runtime 尚未把 durable invocation attempt 与 `RUNNING` task、result/artifact acceptance
@@ -74,7 +76,9 @@ cookie、OIDC credential 或私钥。
 6. dependency-risk evaluator 已 fail closed 且 promotion disabled；真实 scanner/database/legal
    policy、签名 provenance、artifact signature、可信 builder、容量、故障、安全、可观测性和
    soak 仍缺真实 promotion evidence；
-7. 没有支持拓扑上的 clean-host 部署、升级、回滚、恢复与 RPO/RTO 演练证据。
+7. 没有支持拓扑上的 clean-host 部署、升级、回滚、恢复与 RPO/RTO 演练证据；
+8. 本地模型路径尚未接入生产 `SecretProvider`、进程隔离、provider 出网 allowlist、Prompt/响应
+   数据分级和端到端 secret-canary 验证。
 
 测试通过只证明对应断言在记录的环境成立，不能替代上述闭环或人工晋级决定。
 
