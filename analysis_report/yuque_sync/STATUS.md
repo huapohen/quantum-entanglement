@@ -1,6 +1,6 @@
 # Notion → 私人语雀镜像状态
 
-更新时间：2026-08-27 03:55（Asia/Shanghai）
+更新时间：2026-08-27 05:00（Asia/Shanghai）
 
 ## 当前状态
 
@@ -15,9 +15,9 @@
   它们只描述 2026-08-24 历史快照。当前状态必须读取新增的 `current_content_status=partial`
   与 `current_local_delta.status=partial`，禁止把旧值 `complete_manual_sync` 解读为当前内容已同步。
 - 完整专题与规范报告 `../research/20_clawith_competitive_analysis.md` 字节一致，SHA-256 均为
-  `66b1fbb2a52a94379e8739b73c87987ae55a73579460d421ff9a14fe2df3aa69`。
+  `d52f4755fc9d3c35d8160ca3dad8417cca2bdd360a4f9008c2275a03406c6168`。
 - `source/14_clawith_competitive_analysis.md` 是“完整原样”传输源，不是独立本地渲染根；
-  其中相对链接按规范报告所在的 `research/` 目录解释。远端发布必须上传/重写 5 张 Clawith
+  其中相对链接按规范报告所在的 `research/` 目录解释。远端发布必须上传/重写 11 张 Clawith
   图片和仓库内链接，并在回读后才能把状态改为已同步。
 - 2026-08-24 历史快照生成时，Notion 连接器曾完成授权并递归抓取项目主页、相关子页和
   任务库，共核验 15 个页面/数据库对象，任务库保持 19 条记录。

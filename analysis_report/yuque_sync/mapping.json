@@ -10,7 +10,7 @@
   "last_discovery_at": "2026-08-24T16:48:00+08:00",
   "last_successful_sync_at": "2026-08-24T17:23:25+08:00",
   "current_local_delta": {
-    "updated_at": "2026-08-27T04:35:33+08:00",
+    "updated_at": "2026-08-27T05:00:53+08:00",
     "status": "partial",
     "remote_write_status": "local_pending",
     "remote_readback_status": "local_pending",
@@ -57,17 +57,17 @@
         "title": "证据库｜飞书与语雀调研截图（只读）",
         "yuque_slug": "xutzmgpsnk2a2mb9",
         "previous_verified_normalized_sha256": "93183daf20ef46232b1ac94848f565a30ba8bda1cdaaa5370b04bb7ad49bfa94",
-        "current_normalized_sha256": "a6e3b765b2b3a405bcfaa3dc5d3aeb0007e29a5148615014513feb2f8fc5f139",
+        "current_normalized_sha256": "182edf97f5f42675e6c2ad74f9ced1fe7f1cb747b0eb64dda7dffcb5cd1940b2",
         "previous_remote_verified_image_count": 10,
-        "current_local_transfer_image_count": 15,
-        "new_clawith_image_count": 5,
+        "current_local_transfer_image_count": 21,
+        "new_clawith_image_count": 11,
         "target_status": "local_pending"
       },
       {
         "source_path": "analysis_report/yuque_sync/source/14_clawith_competitive_analysis.md",
         "title": "Clawith 竞品深研：从“数字员工组织”反推 WanWork 的产品与底层取舍",
         "yuque_slug": null,
-        "current_normalized_sha256": "66b1fbb2a52a94379e8739b73c87987ae55a73579460d421ff9a14fe2df3aa69",
+        "current_normalized_sha256": "d52f4755fc9d3c35d8160ca3dad8417cca2bdd360a4f9008c2275a03406c6168",
         "target_identity_status": "not_created_or_observed",
         "target_status": "local_pending"
       }

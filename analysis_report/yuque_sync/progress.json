@@ -44,7 +44,7 @@
   "missing_items": [],
   "historical_snapshot_missing_items": [],
   "current_local_delta": {
-    "updated_at": "2026-08-27T04:35:33+08:00",
+    "updated_at": "2026-08-27T05:00:53+08:00",
     "status": "partial",
     "remote_write_status": "local_pending",
     "remote_readback_status": "local_pending",
@@ -54,8 +54,8 @@
     "pending_existing_yuque_document_count": 5,
     "pending_new_yuque_document_count": 1,
     "previous_remote_verified_image_count": 10,
-    "current_local_transfer_image_count": 15,
-    "new_clawith_image_count": 5,
+    "current_local_transfer_image_count": 21,
+    "new_clawith_image_count": 11,
     "source_paths": [
       "analysis_report/yuque_sync/source/01_comprehensive_report.md",
       "analysis_report/yuque_sync/source/05_protocols.md",
