@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
+import quantum_entanglement
 import quantum_entanglement.attempts as attempts_module
 import quantum_entanglement.store as store_module
 from quantum_entanglement.attempts import InvocationLease, SQLiteInvocationAttemptStore
@@ -34,6 +35,7 @@ from quantum_entanglement.invocation_execution import (
     InvocationStartClaimed,
     InvocationStartEvidenceV2,
     InvocationStartObserved,
+    InvocationStartReceipt,
     TaskInvocationAdmissionRequest,
     build_task_invocation_admission_request,
 )
@@ -316,6 +318,24 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.store.close()
         self.tempdir.cleanup()
+
+    def test_invocation_start_contract_is_exported_from_the_package_root(self) -> None:
+        exports = {
+            "InvocationExecutionManifest": InvocationExecutionManifest,
+            "InvocationStartClaimed": InvocationStartClaimed,
+            "InvocationStartCommitAmbiguityError": InvocationStartCommitAmbiguityError,
+            "InvocationStartConflictError": InvocationStartConflictError,
+            "InvocationStartEvidenceV2": InvocationStartEvidenceV2,
+            "InvocationStartObserved": InvocationStartObserved,
+            "InvocationStartReceipt": InvocationStartReceipt,
+            "InvocationStartTransactionError": InvocationStartTransactionError,
+            "TaskInvocationAdmissionRequest": TaskInvocationAdmissionRequest,
+            "build_task_invocation_admission_request": build_task_invocation_admission_request,
+        }
+        for name, expected in exports.items():
+            with self.subTest(name=name):
+                self.assertIs(getattr(quantum_entanglement, name), expected)
+                self.assertIn(name, quantum_entanglement.__all__)
 
     def assert_receipt_only_replay(
         self,
