@@ -7,7 +7,7 @@ name = "quantum-entanglement"
 version = "0.1.0"
 description = "Event-sourced multi-agent coordination kernel for human-agent group work"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "huapohen" }]
