@@ -57,6 +57,11 @@ runtime command boundary 完成。
 acknowledgement 丢失时，job 可能已经可见；在 receipt-aware claim 协议完成前，不得让真实副作用
 worker 自动消费这条路径。
 
+下一边界的 canonical event vocabulary、execution manifest、receipt-gated transaction、
+non-replayable lease 与 commit ambiguity 合同已经冻结在
+[`ATOMIC_INVOCATION_START.md`](./ATOMIC_INVOCATION_START.md)。该设计合同不改变本 API 的 generic
+语义，也不构成源码实现或 worker 启用证明。
+
 ## 2. 原子提交不变量
 
 一次新 admission 只有同时满足以下不变量才会提交：
@@ -394,8 +399,8 @@ PYTHONPATH=src .venv/bin/python -m unittest \
 replay 提供 durable proof。它没有关闭 invocation 生命周期其余边界，也没有让 runtime、tenant、
 API、connector、deployment 或 observability 达到生产标准。
 
-在 claim/start receipt UoW、heartbeat worker、result/artifact acceptance UoW、terminal projection、
-crash/kill/restart matrix、可信 tenant scope 和 service lifecycle 完成前：
+在 canonical admission/claim/start UoW、heartbeat worker、result/artifact acceptance UoW、
+terminal projection、crash/kill/restart matrix、可信 tenant scope 和 service lifecycle 完成前：
 
 - 不得把 `append_invocation_admission` 描述为 exactly-once Agent execution；
 - 不得启用真实飞书、企微或其他不可逆 connector；

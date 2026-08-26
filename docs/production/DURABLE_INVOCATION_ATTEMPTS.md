@@ -1,7 +1,9 @@
 # Durable invocation attempts: design and operations
 
-Status: storage foundation and caller-owned first-claim primitive implemented; atomic
-claim/start receipt and orchestrator integration pending.
+Status: storage foundation and caller-owned first-claim primitive implemented; the canonical
+admission/atomic-start design is frozen in
+[`ATOMIC_INVOCATION_START.md`](./ATOMIC_INVOCATION_START.md), but its codecs, EventStore unit of
+work and orchestrator integration are pending.
 
 This component prevents two local worker processes from both believing they own the
 same Agent invocation. It also gives a crashed invocation a bounded recovery path instead
@@ -102,11 +104,11 @@ running SQLite cleanup, while the parent retains its transaction and connection.
 
 This extraction is an internal composition seam, not yet the cross-store unit of work. No
 start event or immutable claim/start receipt shares this transaction, and
-`OrchestratorKernel` does not use it. A future EventStore-owned transaction must prove one
-database path, connection, process owner and receipt-bound commit before a worker is authorized
-to invoke an Agent. Direct callers of the helper own all locking, transaction lifecycle,
-deadline calculation, rollback and commit-ambiguity policy; using it in autocommit mode is
-outside the supported contract.
+`OrchestratorKernel` does not use it. The exact future EventStore-owned transaction, canonical
+event vocabulary, non-replayable lease rule and commit-ambiguity behavior are frozen in
+[`ATOMIC_INVOCATION_START.md`](./ATOMIC_INVOCATION_START.md). Direct callers of the helper own all
+locking, transaction lifecycle, deadline calculation, rollback and commit-ambiguity policy;
+using it in autocommit mode is outside the supported contract.
 
 The returned `InvocationLease` contains two different controls:
 
@@ -334,7 +336,9 @@ durably `RUNNING` task instead of silently publishing a stuck graph. Those found
 **not** close the readiness audit finding: the task remains unavailable until trusted start
 evidence, result receipts, worker fencing, and receipt-bound projection are integrated.
 
-The integration change must make these durable boundaries reconcilable:
+The integration change must make these durable boundaries reconcilable. The first boundary is
+now split explicitly into canonical semantic admission followed by receipt-gated atomic first
+claim/start; neither a generic admission nor a standalone queued job authorizes dispatch:
 
 1. enqueue/claim ownership;
 2. `task.invocation.started` with attempt identity and epoch;
