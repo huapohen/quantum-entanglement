@@ -60,7 +60,9 @@ from .invocation_execution import (
     InvocationStartObserved,
     InvocationStartReceipt,
     ScopedInvocationExecutionManifestV2,
+    ScopedTaskInvocationAdmissionRequestV2,
     TaskInvocationAdmissionRequest,
+    build_scoped_task_invocation_admission_request_v2,
     build_task_invocation_admission_request,
 )
 from .invocation_recovery import (
@@ -310,6 +312,7 @@ __all__ = [
     "StoredEvent",
     "StoredOutboxMessage",
     "ScopedInvocationExecutionManifestV2",
+    "ScopedTaskInvocationAdmissionRequestV2",
     "TaskGraph",
     "TaskInvocationAdmissionRequest",
     "TaskSpec",
@@ -330,6 +333,7 @@ __all__ = [
     "validate_delegation",
     "assess_invocation_recovery",
     "build_task_invocation_admission_request",
+    "build_scoped_task_invocation_admission_request_v2",
     "AgentRegistration",
     "AgentRegistry",
     "ApprovalRequest",
