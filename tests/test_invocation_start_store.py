@@ -339,6 +339,65 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
                     expected_version=3,
                 )
 
+    def test_first_claim_samples_each_provider_before_its_immediate_pid_guard(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        calls: list[str] = []
+        original_guard = self.store._require_current_process
+        provided_ids = iter(("attempt-provider-order", "event-provider-order"))
+
+        def guarded() -> None:
+            calls.append("pid")
+            original_guard()
+
+        def clock() -> str:
+            calls.append("clock")
+            return CLAIMED_AT
+
+        def id_provider(prefix: str = "evt") -> str:
+            calls.append(f"id:{prefix}")
+            return next(provided_ids)
+
+        def token_provider(nbytes: int = 32) -> str:
+            calls.append(f"token:{nbytes}")
+            return "provider-order-lease-token"
+
+        with (
+            patch.object(self.store, "_require_current_process", new=guarded),
+            patch.object(self.store, "_now", new=clock),
+            patch.object(store_module, "new_id", new=id_provider),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                new=token_provider,
+            ),
+        ):
+            claimed = self.store.claim_invocation_start(
+                request.manifest.invocation_id,
+                "worker-start-store-1",
+                lease_seconds=60,
+                expected_version=2,
+            )
+
+        self.assertIs(type(claimed), InvocationStartClaimed)
+        provider_start = calls.index("clock")
+        self.assertEqual(
+            calls[provider_start : provider_start + 8],
+            [
+                "clock",
+                "pid",
+                "id:attempt",
+                "pid",
+                "id:evt",
+                "pid",
+                "token:32",
+                "pid",
+            ],
+        )
+        self.assertEqual(calls.count("clock"), 1)
+        self.assertEqual(calls.count("id:attempt"), 1)
+        self.assertEqual(calls.count("id:evt"), 1)
+        self.assertEqual(calls.count("token:32"), 1)
+
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
 
