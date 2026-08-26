@@ -52,6 +52,7 @@ from .delivery import (
     StoredOutboxMessage,
 )
 from .events import DomainEvent, StoredEvent
+from .invocation_execution import TaskInvocationAdmissionRequest
 from .migrations import apply_sqlite_migrations
 from .protocol import new_id, utc_now
 
@@ -2603,6 +2604,36 @@ class SQLiteEventStore:
         if result is None:  # pragma: no cover - every completed body assigns a result.
             raise RuntimeError("invocation admission completed without a result")
         return result
+
+    @_bind_event_store_process
+    def append_task_invocation_admission(
+        self,
+        request: TaskInvocationAdmissionRequest,
+        *,
+        expected_version: int,
+    ) -> InvocationAdmissionResult:
+        """Admit one exact canonical task invocation through the atomic v4 boundary.
+
+        The process guard runs before this method inspects caller-owned request state. The
+        canonical request then builds a fresh event/job component snapshot and revalidates
+        that snapshot before the existing admission primitive owns persistence, replay and
+        commit-outcome handling.
+        """
+
+        if type(request) is not TaskInvocationAdmissionRequest:
+            raise TypeError("request must be an exact TaskInvocationAdmissionRequest")
+        expected_version_snapshot = _caller_sqlite_integer(
+            expected_version,
+            "expected_version",
+            minimum=0,
+        )
+        events, spec = TaskInvocationAdmissionRequest.components(request)
+        TaskInvocationAdmissionRequest.validate_components(request, events, spec)
+        return self.append_invocation_admission(
+            events,
+            spec,
+            expected_version=expected_version_snapshot,
+        )
 
     @_bind_event_store_process
     def read_stream(self, stream_id: str, after_sequence: int = 0) -> Tuple[StoredEvent, ...]:
