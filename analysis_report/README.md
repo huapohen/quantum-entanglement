@@ -40,6 +40,7 @@
 | `research/17_current_stage_integration_evidence.md` | 当前阶段组合证据 | Backup-v2、Event-store、Authorization 与本地产品试用的绿色历史集成；三版本 1106-test full gate、四组 focused gate、静态/依赖/截图/浏览器证据、启动入口与 Gate A–E NO-GO 边界 |
 | `research/18_model_backed_custom_instruction_evidence.md` | 当前模型产品证据：`886aedc` | 任意自定义指令、GPT `gpt-5.6-sol`、三 Agent DAG、三段 narration、三个 Markdown Artifact、25-event 浏览器验收、凭据/HTTP/Harness 边界与下一 crash-safe 里程碑 |
 | `research/19_six_agent_collaboration_protocols_and_bottom_layer_design.md` | 当前协议选型：2026-08-26 | A2A 1.0（`v1.0.1` release）、stateless MCP 2026-07-28、BeeAI ACP、ANP、AGNTCY、FIPA ACL/Contract Net 六项边界，WanWork canonical envelope 设计、现状差距与落地顺序 |
+| `research/20_clawith_competitive_analysis.md` | Clawith 固定源码深研：2026-08-26 | 基于官网、官方文档和 `dataelement/Clawith@45fc701c` 的产品、群聊、长期身份、Aware/Pulse、Experience Library、Skills/MCP、治理与部署审计；明确可借鉴项、不可照搬项和 WanWork 优先级 |
 
 ## 已归档截图
 
@@ -47,7 +48,8 @@
 [`screenshots/README.md`](screenshots/README.md) 与
 [`screenshots/manifest.json`](screenshots/manifest.json)。前十张图是受限、未脱敏原件，只能
 进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地产品 UI，第 14
-张是真实模型测试输出，全部仍按项目内部证据管理。
+张是真实模型测试输出；第 15–19 张是 Clawith 公开官网与官方文档只读证据。整套资料仍按
+项目内部证据管理。
 
 | 文件 | 内容 | 采集方式 |
 |---|---|---|
@@ -66,9 +68,15 @@
 | `screenshots/12_local_trial_mobile_complete.png` | 390×844 移动端完成态 | Playwright loopback 运行证据 |
 | `screenshots/13_local_trial_architecture_diagrams.png` | 产品架构、执行时序、平台状态图 | Playwright loopback 运行证据 |
 | `screenshots/14_model_backed_custom_instruction_gpt.png` | GPT 自定义指令三 Agent 全页完成态 | Playwright loopback 真实模型运行证据 |
+| `screenshots/15_clawith_homepage_positioning.png` | Clawith 的 AI 组织产品定位 | Playwright 官网只读证据 |
+| `screenshots/16_clawith_collaboration_network.png` | 专家、超级个体与 Agent 协作网络 | Playwright 官网只读证据 |
+| `screenshots/17_clawith_organization_evolution.png` | 个人 Agent 到组织级协作网络演变路径 | Playwright 官网只读证据 |
+| `screenshots/18_clawith_six_capabilities.png` | 载体、记忆、协调、执行、治理与学习六类能力 | Playwright 官网只读证据 |
+| `screenshots/19_clawith_docs_introduction.png` | 持久身份、记忆、协作与关键概念 | Playwright 官方文档只读证据 |
 
 ## 数据安全
 
 - 飞书与企微始终只读，没有发送、回复、评论、@ 或上传。
+- Clawith 官网、官方文档和公开源码仅做只读调研，没有注册、登录、创建 Agent 或触发外部动作。
 - 与本课题无关的凭据不会进入报告、截图索引、代码、Git 历史或 Notion。
 - `references/` 是本地研究副本，不纳入本仓库提交。
