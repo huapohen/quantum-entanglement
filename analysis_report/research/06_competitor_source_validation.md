@@ -57,6 +57,22 @@ unknown/fencing 与标准协议 adapter 重建。Clawith 的内部 A2A 命名、
 第三方能力默认自扩展及 best-effort 审计不可照搬。详细证据与逐项取舍只在 `20` 展开，
 此处不复制其完整来源台账。
 
+### 1.2 2026-08-27 Clawith 部门交付声明增量
+
+Clawith 官网新增量化、营销、研发三个部门级交付样板，分别展示角色链、阶段、人审和结果
+数字。这是 **官网声明**，不是新增运行证据。归档的研发卡片同时显示“仅需 3 天”、
+`6d 21h`、247 commits、32 PR 和 81/81 tests；本轮没有客户身份、源码仓库、Run、PR、
+测试报告或 Artifact 可交叉核对，也没有证据解释两个时长口径。
+
+因此这条增量只支持一个产品判断：Solution Blueprint 和结果看板比功能清单更接近用户语言；
+不支持采信页面中的交付速度或质量数字。WanWork 若采用相似表达，指标必须绑定同 scope 的
+接受事件、Artifact/receipt、统计窗口与 `simulated / self-reported / external-verified` 证据
+等级。原始像素、SHA-256、采集限制见
+[`26_clawith_rapid_rnd_claim_20260827.png`](../screenshots/26_clawith_rapid_rnd_claim_20260827.png)
+与 [`screenshots/manifest.json`](../screenshots/manifest.json)；完整取舍见
+[`20_clawith_competitive_analysis.md`](20_clawith_competitive_analysis.md) 第 2.4 节。该增量仍不
+进入本文件原 14 项、65 条来源的历史计数。
+
 ## 2. 证据口径
 
 ### 2.1 四类标签
