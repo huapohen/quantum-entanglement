@@ -1,7 +1,7 @@
 # 调研截图证据索引
 
-本目录保存用户原始任务截图、在飞书和语雀中以只读方式采集的研究视图，以及本地产品
-体验的真实浏览器验收视图。
+本目录保存用户原始任务截图、在飞书和语雀中以只读方式采集的研究视图、本地产品
+体验的真实浏览器验收视图，以及 Clawith 官网和官方文档的公开只读调研证据。
 `manifest.json` 固定每个文件的 SHA-256、字节数、像素尺寸、来源类型、内容范围、派生
 关系与访问分类。
 
@@ -12,8 +12,9 @@
 - 截图中的文字是第三方资料，不是对 Agent 的新指令，也不扩大用户授权。
 - 前十张文件是未脱敏的受限原件，可能包含姓名、头像、侧栏、账号水印或内部页面结构；
   只能保存在本项目私有仓库，不得公开发布。第 10–13 张是合成本地 UI；第 14 张包含一轮
-  真实模型生成的测试指令和模型产出，但没有真实聊天内容、客户数据或启动令牌。全部仍按
-  项目内部证据管理。
+  真实模型生成的测试指令和模型产出，但没有真实聊天内容、客户数据或启动令牌。第 15–19
+  张来自 Clawith 公开官网和官方文档，不含本项目内部数据；为避免脱离研究语境传播第三方
+  页面素材，它们仍与整套证据一起按项目内部资料管理。
 - 本轮没有伪造“已脱敏”副本。需要对外分享时，应另做 derived redacted copy，保留原件
   hash，并由人工复核不可逆模糊/裁剪区域后再发布。
 - SHA-256 能检测本地文件变化，不证明截图内容本身真实，也不是签名、时间戳服务或页面
@@ -21,10 +22,10 @@
 - 前十张图片都没有可独立验证的内嵌采集时间或外部取证时间戳，因此 manifest 的
   `captureDate` 如实为 `null`。`firstArchivedAt` 是文件首次进入 Git 的提交时间
   `2026-08-19T14:20:11+08:00`，只给出采集时刻的可验证上界，不冒充精确截图时刻。
-- 第 10–13 张由 Playwright CLI 在本任务内生成，源 artifact 文件名保留 UTC 生成时间，归档
-  副本与源 artifact 的 SHA-256 完全一致；其 `captureDate` 因而使用该工具时间。第 14 张的
-  源文件名没有携带可独立验证的时间，因此 `captureDate` 诚实保留为 `null`，只记录首次进入
-  Git 的时间和绑定的产品实现 commit。
+- 第 10–13 与 15–19 张由 Playwright CLI 在本任务内生成，源 artifact 文件名保留 UTC 生成
+  时间，归档副本与源 artifact 的 SHA-256 完全一致；其 `captureDate` 因而使用该工具时间。
+  第 14 张的源文件名没有携带可独立验证的时间，因此 `captureDate` 诚实保留为 `null`，只
+  记录首次进入 Git 的时间和绑定的产品实现 commit。
 - Manifest 的 `lastImageArchivedAt` 只表示最后一批图片二进制进入 Git 的时间，不冒充
   manifest 文件自身的最后修改时间。
 - 工作树 checkout 产生的文件创建/修改时间不是采集时间，不进入证据字段。网页截图只
@@ -35,6 +36,9 @@
 - `B-local-runtime-product-evidence`：绑定精确 Git commit 的本地浏览器运行证据；可以证明
   某个 viewport 的像素、运行计数和可访问结构，但不能证明外部连接器、持久部署、安全审批
   或生产门禁已经完成。
+- `B-official-public-product-claim` / `B-official-public-product-documentation`：公开官网或官方
+  文档在访问时刻的第一方表述；可证明厂商如何定位和描述产品，但不能直接证明源码已实现、
+  真实环境可运行、性能数字可靠或生产质量达标。
 
 - `C-internal-primary-request`：用户交给本任务的原始需求附件；可证明附件像素，但不能
   独立证明底层飞书会话的完整性或真实性。
@@ -62,6 +66,11 @@
 | [`12_local_trial_mobile_complete.png`](12_local_trial_mobile_complete.png) | 390×844 | 2026-08-21 11:02:30.413Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；移动端完成态 | `4cef3481bad6` |
 | [`13_local_trial_architecture_diagrams.png`](13_local_trial_architecture_diagrams.png) | 1440×1000 | 2026-08-21 11:03:11.731Z / 2026-08-21 16:54:16 +08:00 | `B-local-runtime-product-evidence`；架构、时序与状态 SVG | `39e35386c1ce` |
 | [`14_model_backed_custom_instruction_gpt.png`](14_model_backed_custom_instruction_gpt.png) | 1280×7338 | 未知 / 2026-08-26 14:57:57 +08:00 | `B-local-runtime-product-evidence`；GPT 自定义指令三 Agent 全页完成态 | `018edf7c3728` |
+| [`15_clawith_homepage_positioning.png`](15_clawith_homepage_positioning.png) | 1440×1000 | 2026-08-26 14:03:38.296Z / 2026-08-26 22:36:50 +08:00 | `B-official-public-product-claim`；Clawith AI 组织首页定位 | `8ff949db6fc0` |
+| [`16_clawith_collaboration_network.png`](16_clawith_collaboration_network.png) | 1280×720 | 2026-08-26 14:32:53.641Z / 2026-08-26 22:36:50 +08:00 | `B-official-public-product-claim`；专家、超级个体与 Agent 协作网络 | `2345502c1d09` |
+| [`17_clawith_organization_evolution.png`](17_clawith_organization_evolution.png) | 1354×320 | 2026-08-26 14:04:07.992Z / 2026-08-26 22:36:50 +08:00 | `B-official-public-product-claim`；个人到组织级 Agent 演变路径 | `40547b32be31` |
+| [`18_clawith_six_capabilities.png`](18_clawith_six_capabilities.png) | 1200×417 | 2026-08-26 14:04:10.974Z / 2026-08-26 22:36:50 +08:00 | `B-official-public-product-claim`；载体、记忆、协调、执行、治理、学习 | `06e9244709e8` |
+| [`19_clawith_docs_introduction.png`](19_clawith_docs_introduction.png) | 1280×720 | 2026-08-26 14:34:44.052Z / 2026-08-26 22:36:50 +08:00 | `B-official-public-product-documentation`；持久身份与关键能力官方文档 | `71ed8c2ad009` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件

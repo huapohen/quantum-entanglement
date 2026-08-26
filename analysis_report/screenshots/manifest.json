@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "b9c6c4df69522f8ca190692545c79bf3dfd5da41",
-  "lastImageArchivedAt": "2026-08-26T14:57:57+08:00",
+  "lastArchivedCommit": "755c3c6545b3755ff415a713e7635c7caea8c6ce",
+  "lastImageArchivedAt": "2026-08-26T22:36:50+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -336,6 +336,116 @@
       "sha256": "018edf7c3728530f4cb03b7a115dfc4e46bf53963c1efb06fbfb1638f9f492b8",
       "sourceKind": "local-playwright-runtime",
       "sourceReference": "git:886aedc097e8ad371eea89ca0fa568bcc58ac9a0; output/playwright/custom-instruction-gpt-success.png; source SHA-256 matched archive",
+      "width": 1280
+    },
+    {
+      "byteSize": 182952,
+      "captureDate": "2026-08-26T14:03:38.296Z",
+      "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
+      "contentScope": "Clawith official homepage hero presenting an AI-organization product and a four-agent collaboration visualization",
+      "derivation": "playwright-cli-viewport-capture",
+      "evidenceClass": "B-official-public-product-claim",
+      "evidenceLimitations": [
+        "Proves only what the official Clawith homepage rendered in this viewport at access time; it does not validate the depicted workflow, business-impact figures or production implementation",
+        "The page is vendor-authored marketing material and may change without an immutable revision or release binding"
+      ],
+      "filename": "15_clawith_homepage_positioning.png",
+      "firstArchivedAt": "2026-08-26T22:36:50+08:00",
+      "height": 1000,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "8ff949db6fc0072444f22564c1a5e0986618f1a13bc9e95d96550d124cb72702",
+      "sourceKind": "clawith-official-web-readonly",
+      "sourceReference": "https://clawith.ai/; playwright:page-2026-08-26T14-03-38-296Z.png; archived-git:755c3c6545b3755ff415a713e7635c7caea8c6ce",
+      "width": 1440
+    },
+    {
+      "byteSize": 231516,
+      "captureDate": "2026-08-26T14:32:53.641Z",
+      "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
+      "contentScope": "Clawith official homepage model of experts, super-individuals and task Agents collaborating across organizational boundaries",
+      "derivation": "playwright-cli-viewport-capture",
+      "evidenceClass": "B-official-public-product-claim",
+      "evidenceLimitations": [
+        "Captures the vendor's intended collaboration model, not a trace of a real multi-Agent execution or proof that A2A delegation and expert escalation work as depicted",
+        "The viewport does not retain an immutable page revision and the lower explanatory sentence is partly obscured by the fixed call-to-action overlay"
+      ],
+      "filename": "16_clawith_collaboration_network.png",
+      "firstArchivedAt": "2026-08-26T22:36:50+08:00",
+      "height": 720,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "2345502c1d0927283a4243291d25187291868c8642a651892c047d9a81bf7482",
+      "sourceKind": "clawith-official-web-readonly",
+      "sourceReference": "https://clawith.ai/; playwright:page-2026-08-26T14-32-53-641Z.png; archived-git:755c3c6545b3755ff415a713e7635c7caea8c6ce",
+      "width": 1280
+    },
+    {
+      "byteSize": 102211,
+      "captureDate": "2026-08-26T14:04:07.992Z",
+      "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
+      "contentScope": "Clawith official three-step narrative from personal Agent through business Agent to an organization-level collaboration network",
+      "derivation": "playwright-cli-element-capture",
+      "evidenceClass": "B-official-public-product-claim",
+      "evidenceLimitations": [
+        "Records a vendor-authored product thesis rather than empirical evidence that cognition moves from individuals into an organization",
+        "The isolated element omits surrounding page context and has no immutable vendor revision identifier"
+      ],
+      "filename": "17_clawith_organization_evolution.png",
+      "firstArchivedAt": "2026-08-26T22:36:50+08:00",
+      "height": 320,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "40547b32be310264c6c36959b3e9b355b5852d6aa3f4cefabf5c1805e28368cd",
+      "sourceKind": "clawith-official-web-readonly",
+      "sourceReference": "https://clawith.ai/; playwright:element-2026-08-26T14-04-07-992Z.png; archived-git:755c3c6545b3755ff415a713e7635c7caea8c6ce",
+      "width": 1354
+    },
+    {
+      "byteSize": 149003,
+      "captureDate": "2026-08-26T14:04:10.974Z",
+      "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
+      "contentScope": "Clawith official six-capability grid: role carrier, memory, coordination, execution, governance and organizational learning",
+      "derivation": "playwright-cli-element-capture",
+      "evidenceClass": "B-official-public-product-claim",
+      "evidenceLimitations": [
+        "Captures the capability taxonomy and vendor wording only; each capability requires separate source-code and runtime validation",
+        "The isolated element omits surrounding qualification, implementation detail, configuration constraints and release binding"
+      ],
+      "filename": "18_clawith_six_capabilities.png",
+      "firstArchivedAt": "2026-08-26T22:36:50+08:00",
+      "height": 417,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "06e9244709e8ebb60b245ec6a4a7759e4ad7bea9a7e8a3653c777ec2e3b731a7",
+      "sourceKind": "clawith-official-web-readonly",
+      "sourceReference": "https://clawith.ai/; playwright:element-2026-08-26T14-04-10-974Z.png; archived-git:755c3c6545b3755ff415a713e7635c7caea8c6ce",
+      "width": 1200
+    },
+    {
+      "byteSize": 105846,
+      "captureDate": "2026-08-26T14:34:44.052Z",
+      "captureDateEvidence": "Playwright CLI generated the UTC timestamp in the retained source artifact filename during this task; the archive copy has an identical SHA-256",
+      "contentScope": "Clawith official documentation introduction describing persistent identity, memory, social collaboration, sensing, evolution and persistence",
+      "derivation": "playwright-cli-viewport-capture",
+      "evidenceClass": "B-official-public-product-documentation",
+      "evidenceLimitations": [
+        "Shows official documentation claims at access time but does not prove runtime behavior, operational quality, security, performance or completeness",
+        "The screenshot reaches only the start of the key-concepts table; the retained documentation snapshot and source audit provide the remaining context"
+      ],
+      "filename": "19_clawith_docs_introduction.png",
+      "firstArchivedAt": "2026-08-26T22:36:50+08:00",
+      "height": 720,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "71ed8c2ad00973a44ef2571748bc2f9591182d2e478bdf6729ee53fe6cb6a7bc",
+      "sourceKind": "clawith-official-docs-readonly",
+      "sourceReference": "https://clawith.ai/docs/; playwright:page-2026-08-26T14-34-44-052Z.png; archived-git:755c3c6545b3755ff415a713e7635c7caea8c6ce",
       "width": 1280
     }
   ],
