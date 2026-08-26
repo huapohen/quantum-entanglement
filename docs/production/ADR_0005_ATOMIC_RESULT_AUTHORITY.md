@@ -106,7 +106,7 @@ describing materialized Artifacts:
 ```text
 resultRef                 stable logical result identity; never an Artifact alias
 narration                 bounded canonical UTF-8 result text
-metadata                  bounded canonical JSON object
+metadata                  bounded canonical JSON object (at most 65,536 bytes)
 primaryArtifactId         optional; when present, names one descriptor
 artifacts                 ordered tuple containing zero through 256 descriptors
 ```
@@ -122,6 +122,11 @@ Artifact request identities live in exact content candidates covered by the acce
 The value codec may decode future effect-bearing manifests for audit compatibility, but the first
 acceptor mechanically admits only `effectClass=pure` with the canonical empty action-receipt set.
 No label, caller boolean or non-empty receipt digest relaxes this promotion boundary.
+
+Constructing or decoding a manifest proves only that a capability-free value has the exact
+canonical shape: `codec-valid` is not `request-eligible`, and neither is `durably accepted`. The
+acceptance request rejects non-pure input before persistence, and the store independently
+revalidates the pure/empty-set binding while holding the exact active start capability.
 
 The result transaction makes this set visible all-or-nothing:
 
@@ -189,6 +194,7 @@ invocation_result_receipts
   UNIQUE scoped invocation
   UNIQUE attempt
   UNIQUE scoped idempotency key
+  UNIQUE (tenant_id, workspace_id, result_ref)
 
 invocation_result_artifacts
   PK (receipt_id, ordinal)

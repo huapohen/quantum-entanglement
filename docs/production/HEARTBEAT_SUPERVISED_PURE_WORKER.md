@@ -164,6 +164,10 @@ to its descriptor. The request digest also covers the expected event-stream vers
 cannot request acceptance for any effect class other than `pure` with the canonical empty action
 receipt set.
 
+A decoded manifest and a successfully constructed request remain capability-free values. The
+worker and store each re-snapshot and independently revalidate the exact pure/empty-set binding; no
+codec success, `is_valid` result or caller-authored value is dispatch or completion authority.
+
 `SQLiteInvocationAttemptStore.complete(...)` is not this boundary and must not be called by the
 worker. It does not validate result or Artifact evidence and can create a succeeded attempt whose
 result is unrecoverable. The current `OrchestratorKernel` path that writes Artifacts, a result event
@@ -192,9 +196,12 @@ composition evidence; a label alone cannot authorize automatic replay.
 ## Observability and secrecy
 
 Allowed identifiers are invocation ID, attempt ID, attempt number, lease epoch, worker ID, state,
-bounded reason code, manifest digest and stored receipt coordinates. The raw lease token, handler
-inputs/outputs, credentials, authorization material, exception objects, tracebacks and closure
-locals are forbidden in repr, JSON, logs, metrics, events, Artifact metadata and error chains.
+bounded reason code, manifest digest and stored receipt coordinates. The raw lease token,
+credentials, authorization material, exception objects, tracebacks and closure locals are forbidden
+in repr, observability JSON, logs, metrics, events, Artifact metadata and error chains. Handler
+inputs and outputs are also forbidden at those observability surfaces; their bounded canonical
+bytes may exist only inside the access-controlled result manifest or Artifact blob authority.
+Events and observability carry references and digests only.
 
 Handler failures map to a closed enum of redacted reason codes. Unknown `BaseException` subclasses,
 exception groups and cancellation subclasses are untrusted failures. Exact interpreter control
