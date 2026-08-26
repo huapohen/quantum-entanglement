@@ -977,6 +977,81 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
         )
         self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
 
+    def test_rollback_failure_is_sanitized_quarantined_and_recoverable_after_close(self) -> None:
+        real_connect = sqlite3.connect
+
+        class RollbackFailureConnection(sqlite3.Connection):
+            fail_next_rollback = False
+
+            def execute(
+                connection_self,
+                statement: str,
+                parameters: object = (),
+            ) -> sqlite3.Cursor:
+                if statement.strip().upper() == "ROLLBACK" and connection_self.fail_next_rollback:
+                    connection_self.fail_next_rollback = False
+                    raise sqlite3.OperationalError("private rollback driver detail")
+                return super().execute(statement, parameters)  # type: ignore[arg-type]
+
+        def connect_with_fault(database: str, **kwargs: Any) -> sqlite3.Connection:
+            return cast(
+                sqlite3.Connection,
+                real_connect(database, factory=RollbackFailureConnection, **kwargs),
+            )
+
+        self.store.close()
+        with patch(
+            "quantum_entanglement.store.sqlite3.connect",
+            new=connect_with_fault,
+        ):
+            self.store = SQLiteEventStore(self.path, clock=lambda: ADMITTED_AT)
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        connection = cast(RollbackFailureConnection, self.store._connection)
+        self.assertIsInstance(connection, RollbackFailureConnection)
+        connection.fail_next_rollback = True
+        canary = "raw-lease-rollback-failure-canary"
+
+        def fail_after_lease(_lease_token: str) -> str:
+            raise RuntimeError("injected body failure requiring rollback")
+
+        with (
+            patch.object(self.store, "_now", return_value=CLAIMED_AT),
+            patch.object(self.store, "_lease_token_digest", new=fail_after_lease),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                return_value=canary,
+            ),
+        ):
+            with self.assertRaises(InvocationStartCommitAmbiguityError) as caught:
+                self.store.claim_invocation_start(
+                    request.manifest.invocation_id,
+                    "worker-start-store-1",
+                    lease_seconds=60,
+                    expected_version=2,
+                )
+
+        self.assertNotIn("rollback", str(caught.exception).lower())
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        self.assertNotIn(canary, event_store_traceback_locals(caught.exception))
+        self.assertTrue(connection.in_transaction)
+        with self.assertRaises(EventStorePoisonedError):
+            self.store.stream_version(request.stream_id)
+        self.store.close()
+
+        self.store = SQLiteEventStore(self.path, clock=lambda: ADMITTED_AT)
+        self.assertEqual(self.store.stream_version(request.stream_id), 2)
+        self.assertIsNone(self.store.read_invocation_start(request.manifest.invocation_id))
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            0,
+        )
+        self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
+
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
 
