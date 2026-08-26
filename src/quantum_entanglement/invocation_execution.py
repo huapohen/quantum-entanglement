@@ -12,12 +12,12 @@ import hashlib
 import json
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Mapping, Optional, Set, Tuple, cast
 
-from .attempts import InvocationJobSpec
+from .attempts import InvocationJobSpec, InvocationLease
 from .events import DomainEvent
 from .protocol import TaskStatus
 from .scheduler import TaskTransition
@@ -84,6 +84,9 @@ _START_EVIDENCE_FIELDS = frozenset(
 
 _TASK_TRANSITION_FIELDS = frozenset(("taskId", "previous", "current", "reason", "revision"))
 
+_START_RECEIPT_FIELDS = frozenset(("eventId", "streamId", "sequence", "globalPosition", "evidence"))
+_START_OBSERVED_FIELDS = frozenset(("receipt",))
+
 
 class EffectClass(str, Enum):
     """External-effect classification frozen by the execution admission manifest."""
@@ -124,6 +127,14 @@ def _positive_integer(value: object, label: str) -> int:
     if type(value) is not int:
         raise TypeError(f"{label} must be an exact integer")
     if value <= 0 or value > _MAX_SQLITE_INTEGER:
+        raise ValueError(f"{label} is outside its supported range")
+    return value
+
+
+def _integer_in_range(value: object, label: str, *, minimum: int, maximum: int) -> int:
+    if type(value) is not int:
+        raise TypeError(f"{label} must be an exact integer")
+    if value < minimum or value > maximum:
         raise ValueError(f"{label} is outside its supported range")
     return value
 
@@ -247,6 +258,64 @@ def _task_transition_from_payload(payload: object) -> TaskTransition:
         reason = _text(reason, "transition reason")
     revision = _positive_integer(raw["revision"], "transition revision")
     return TaskTransition(task_id, TaskStatus.READY, TaskStatus.RUNNING, reason, revision)
+
+
+def _admission_event_pair(events: object) -> Tuple[DomainEvent, DomainEvent]:
+    if type(events) is not tuple:
+        raise TypeError("canonical admission events must be an exact tuple")
+    typed_events = cast(Tuple[object, ...], events)
+    if len(typed_events) != 2:
+        raise ValueError("canonical admission requires exactly two events")
+    if any(type(item) is not DomainEvent for item in typed_events):
+        raise TypeError("canonical admission requires exact DomainEvent values")
+    return cast(Tuple[DomainEvent, DomainEvent], typed_events)
+
+
+def _invocation_job_spec_snapshot(job_spec: object) -> InvocationJobSpec:
+    if type(job_spec) is not InvocationJobSpec:
+        raise TypeError("job_spec must be an exact InvocationJobSpec")
+    typed_spec = job_spec
+    session_id = _text(object.__getattribute__(typed_spec, "session_id"), "job sessionId")
+    plan_id = _text(object.__getattribute__(typed_spec, "plan_id"), "job planId")
+    task_id = _text(object.__getattribute__(typed_spec, "task_id"), "job taskId")
+    agent_id = _text(object.__getattribute__(typed_spec, "agent_id"), "job agentId")
+    idempotency_key = _text(
+        object.__getattribute__(typed_spec, "idempotency_key"),
+        "job idempotencyKey",
+    )
+    invocation_id = _text(
+        object.__getattribute__(typed_spec, "invocation_id"),
+        "job invocationId",
+    )
+    payload_digest = _digest(
+        object.__getattribute__(typed_spec, "payload_digest"),
+        "job payloadDigest",
+    )
+    priority = _integer_in_range(
+        object.__getattribute__(typed_spec, "priority"),
+        "job priority",
+        minimum=0,
+        maximum=100,
+    )
+    max_attempts = _positive_integer(
+        object.__getattribute__(typed_spec, "max_attempts"),
+        "job maxAttempts",
+    )
+    available_at = object.__getattribute__(typed_spec, "available_at")
+    if available_at is not None:
+        available_at = _timestamp(available_at, "job availableAt")
+    return InvocationJobSpec(
+        session_id=session_id,
+        plan_id=plan_id,
+        task_id=task_id,
+        agent_id=agent_id,
+        idempotency_key=idempotency_key,
+        payload_digest=payload_digest,
+        invocation_id=invocation_id,
+        priority=priority,
+        max_attempts=max_attempts,
+        available_at=cast(Optional[str], available_at),
+    )
 
 
 @dataclass(frozen=True)
@@ -427,8 +496,9 @@ class TaskInvocationAdmissionRequest:
             f"task-running:{manifest.task_id}:{manifest.task_revision}",
             "task-running idempotencyKey",
         )
+        _integer_in_range(self.job_priority, "job priority", minimum=0, maximum=100)
         if self.job_available_at is not None:
-            _text(self.job_available_at, "job availableAt")
+            _timestamp(self.job_available_at, "job availableAt")
         InvocationJobSpec(
             session_id=manifest.session_id,
             plan_id=manifest.plan_id,
@@ -451,6 +521,59 @@ class TaskInvocationAdmissionRequest:
         )
         object.__setattr__(self, "manifest", manifest)
         object.__setattr__(self, "transition", transition)
+
+    @classmethod
+    def from_components(
+        cls,
+        events: object,
+        job_spec: object,
+    ) -> TaskInvocationAdmissionRequest:
+        """Reconstruct one canonical request from exact durable component values.
+
+        This decoder reads only built-in fields from exact domain model types.  It never
+        invokes a caller-provided factory, callback, instance method, mapping protocol or
+        duck-typed adapter while reconstructing the admission boundary.
+        """
+
+        if cls is not TaskInvocationAdmissionRequest:
+            raise TypeError("request decoder requires exact TaskInvocationAdmissionRequest")
+        requested, running = _admission_event_pair(events)
+        requested_manifest = InvocationExecutionManifest.from_event_payload(
+            object.__getattribute__(requested, "event_type"),
+            object.__getattribute__(requested, "payload"),
+        )
+        _event_type(
+            object.__getattribute__(running, "event_type"),
+            TASK_STATUS_CHANGED_EVENT_TYPE,
+        )
+        running_transition = _task_transition_from_payload(
+            object.__getattribute__(running, "payload")
+        )
+        spec_snapshot = _invocation_job_spec_snapshot(job_spec)
+        request = cls(
+            manifest=requested_manifest,
+            transition=running_transition,
+            execution_requested_event_id=_text(
+                object.__getattribute__(requested, "event_id"),
+                "execution-request eventId",
+            ),
+            execution_requested_timestamp=_timestamp(
+                object.__getattribute__(requested, "timestamp"),
+                "execution-request timestamp",
+            ),
+            task_running_event_id=_text(
+                object.__getattribute__(running, "event_id"),
+                "task-running eventId",
+            ),
+            task_running_timestamp=_timestamp(
+                object.__getattribute__(running, "timestamp"),
+                "task-running timestamp",
+            ),
+            job_priority=spec_snapshot.priority,
+            job_available_at=spec_snapshot.available_at,
+        )
+        TaskInvocationAdmissionRequest.validate_components(request, events, job_spec)
+        return request
 
     @property
     def stream_id(self) -> str:
@@ -518,15 +641,7 @@ class TaskInvocationAdmissionRequest:
         """Reject any non-canonical, legacy, reordered, extra or mismatched components."""
 
         TaskInvocationAdmissionRequest.__post_init__(self)
-        if type(events) is not tuple:
-            raise TypeError("canonical admission events must be an exact tuple")
-        typed_events = cast(Tuple[object, ...], events)
-        if len(typed_events) != 2:
-            raise ValueError("canonical admission requires exactly two events")
-        if any(type(item) is not DomainEvent for item in typed_events):
-            raise TypeError("canonical admission requires exact DomainEvent values")
-        requested = cast(DomainEvent, typed_events[0])
-        running = cast(DomainEvent, typed_events[1])
+        requested, running = _admission_event_pair(events)
 
         requested_manifest = InvocationExecutionManifest.from_event_payload(
             object.__getattribute__(requested, "event_type"),
@@ -564,27 +679,7 @@ class TaskInvocationAdmissionRequest:
             if timestamp != expected.timestamp:
                 raise ValueError("canonical admission event timestamp does not match")
 
-        if type(job_spec) is not InvocationJobSpec:
-            raise TypeError("job_spec must be an exact InvocationJobSpec")
-        typed_spec = job_spec
-        available_at = object.__getattribute__(typed_spec, "available_at")
-        if available_at is not None:
-            _text(available_at, "job availableAt")
-        spec_snapshot = InvocationJobSpec(
-            session_id=object.__getattribute__(typed_spec, "session_id"),
-            plan_id=object.__getattribute__(typed_spec, "plan_id"),
-            task_id=object.__getattribute__(typed_spec, "task_id"),
-            agent_id=object.__getattribute__(typed_spec, "agent_id"),
-            idempotency_key=object.__getattribute__(typed_spec, "idempotency_key"),
-            payload_digest=_digest(
-                object.__getattribute__(typed_spec, "payload_digest"),
-                "job payloadDigest",
-            ),
-            invocation_id=object.__getattribute__(typed_spec, "invocation_id"),
-            priority=object.__getattribute__(typed_spec, "priority"),
-            max_attempts=object.__getattribute__(typed_spec, "max_attempts"),
-            available_at=available_at,
-        )
+        spec_snapshot = _invocation_job_spec_snapshot(job_spec)
         if spec_snapshot != self.job_spec:
             raise ValueError("invocation job does not match the canonical manifest binding")
 
@@ -745,6 +840,218 @@ class InvocationStartEvidenceV2:
         return cls.from_dict(payload)
 
 
+@dataclass(frozen=True)
+class InvocationStartReceipt:
+    """Immutable stored-event coordinates and schema-2 invocation-start evidence."""
+
+    event_id: str
+    stream_id: str
+    sequence: int
+    global_position: int
+    evidence: InvocationStartEvidenceV2
+
+    def __post_init__(self) -> None:
+        if type(self) is not InvocationStartReceipt:
+            raise TypeError("start receipt must be an exact InvocationStartReceipt")
+        event_id = _text(self.event_id, "start receipt eventId")
+        stream_id = _text(self.stream_id, "start receipt streamId")
+        sequence = _positive_integer(self.sequence, "start receipt sequence")
+        global_position = _positive_integer(
+            self.global_position,
+            "start receipt globalPosition",
+        )
+        if global_position < sequence:
+            raise ValueError("start receipt globalPosition must not precede its stream sequence")
+        if type(self.evidence) is not InvocationStartEvidenceV2:
+            raise TypeError("start receipt evidence must be exact InvocationStartEvidenceV2")
+        evidence = InvocationStartEvidenceV2.from_dict(
+            InvocationStartEvidenceV2.to_dict(self.evidence)
+        )
+        if stream_id != "session:" + evidence.session_id:
+            raise ValueError("start receipt streamId does not match its evidence sessionId")
+        object.__setattr__(self, "event_id", event_id)
+        object.__setattr__(self, "stream_id", stream_id)
+        object.__setattr__(self, "sequence", sequence)
+        object.__setattr__(self, "global_position", global_position)
+        object.__setattr__(self, "evidence", evidence)
+
+    def to_dict(self) -> Dict[str, object]:
+        """Return a capability-free wire snapshot of this durable receipt."""
+
+        InvocationStartReceipt.__post_init__(self)
+        return {
+            "eventId": self.event_id,
+            "streamId": self.stream_id,
+            "sequence": self.sequence,
+            "globalPosition": self.global_position,
+            "evidence": InvocationStartEvidenceV2.to_dict(self.evidence),
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> InvocationStartReceipt:
+        """Decode one exact capability-free receipt wire object."""
+
+        if cls is not InvocationStartReceipt:
+            raise TypeError("receipt decoder requires exact InvocationStartReceipt")
+        raw = _exact_dict(value, set(_START_RECEIPT_FIELDS), "invocation start receipt")
+        return cls(
+            event_id=raw["eventId"],
+            stream_id=raw["streamId"],
+            sequence=raw["sequence"],
+            global_position=raw["globalPosition"],
+            evidence=InvocationStartEvidenceV2.from_dict(raw["evidence"]),
+        )
+
+
+def _invocation_start_receipt_snapshot(receipt: object) -> InvocationStartReceipt:
+    if type(receipt) is not InvocationStartReceipt:
+        raise TypeError("receipt must be an exact InvocationStartReceipt")
+    return InvocationStartReceipt.from_dict(InvocationStartReceipt.to_dict(receipt))
+
+
+def _invocation_lease_snapshot(lease: object) -> InvocationLease:
+    if type(lease) is not InvocationLease:
+        raise TypeError("lease must be an exact InvocationLease")
+    typed = lease
+    invocation_id = _text(
+        object.__getattribute__(typed, "invocation_id"),
+        "lease invocationId",
+    )
+    session_id = _text(object.__getattribute__(typed, "session_id"), "lease sessionId")
+    plan_id = _text(object.__getattribute__(typed, "plan_id"), "lease planId")
+    task_id = _text(object.__getattribute__(typed, "task_id"), "lease taskId")
+    agent_id = _text(object.__getattribute__(typed, "agent_id"), "lease agentId")
+    idempotency_key = _text(
+        object.__getattribute__(typed, "idempotency_key"),
+        "lease idempotencyKey",
+    )
+    payload_digest = _digest(
+        object.__getattribute__(typed, "payload_digest"),
+        "lease payloadDigest",
+    )
+    attempt_id = _text(object.__getattribute__(typed, "attempt_id"), "lease attemptId")
+    attempt_number = _positive_integer(
+        object.__getattribute__(typed, "attempt_number"),
+        "lease attemptNumber",
+    )
+    max_attempts = _positive_integer(
+        object.__getattribute__(typed, "max_attempts"),
+        "lease maxAttempts",
+    )
+    lease_epoch = _positive_integer(
+        object.__getattribute__(typed, "lease_epoch"),
+        "lease epoch",
+    )
+    worker_id = _text(object.__getattribute__(typed, "worker_id"), "lease workerId")
+    lease_token = _text(
+        object.__getattribute__(typed, "lease_token"),
+        "lease token",
+    )
+    claimed_at = _timestamp(
+        object.__getattribute__(typed, "claimed_at"),
+        "lease claimedAt",
+    )
+    lease_expires_at = _timestamp(
+        object.__getattribute__(typed, "lease_expires_at"),
+        "lease leaseExpiresAt",
+    )
+    if lease_expires_at <= claimed_at:
+        raise ValueError("lease leaseExpiresAt must follow claimedAt")
+    return InvocationLease(
+        invocation_id=invocation_id,
+        session_id=session_id,
+        plan_id=plan_id,
+        task_id=task_id,
+        agent_id=agent_id,
+        idempotency_key=idempotency_key,
+        payload_digest=payload_digest,
+        attempt_id=attempt_id,
+        attempt_number=attempt_number,
+        max_attempts=max_attempts,
+        lease_epoch=lease_epoch,
+        worker_id=worker_id,
+        lease_token=lease_token,
+        claimed_at=claimed_at,
+        lease_expires_at=lease_expires_at,
+    )
+
+
+def _validate_start_lease_binding(
+    receipt: InvocationStartReceipt,
+    lease: InvocationLease,
+) -> None:
+    evidence = receipt.evidence
+    bindings = (
+        (lease.invocation_id, evidence.invocation_id),
+        (lease.session_id, evidence.session_id),
+        (lease.plan_id, evidence.plan_id),
+        (lease.task_id, evidence.task_id),
+        (lease.agent_id, evidence.agent_id),
+        (lease.idempotency_key, evidence.job_idempotency_key),
+        (lease.payload_digest, evidence.manifest_digest),
+        (lease.attempt_id, evidence.attempt_id),
+        (lease.attempt_number, evidence.attempt_number),
+        (lease.lease_epoch, evidence.lease_epoch),
+        (lease.worker_id, evidence.worker_id),
+        (lease.claimed_at, evidence.claimed_at),
+        (lease.lease_expires_at, evidence.lease_expires_at),
+    )
+    if any(actual != expected for actual, expected in bindings):
+        raise ValueError("claimed lease does not match its invocation-start evidence")
+    if lease.max_attempts != 1:
+        raise ValueError("claimed lease must preserve the canonical single-attempt policy")
+    if hashlib.sha256(lease.lease_token.encode("utf-8")).hexdigest() != evidence.lease_token_digest:
+        raise ValueError("claimed lease token does not match its evidence digest")
+
+
+@dataclass(frozen=True)
+class InvocationStartClaimed:
+    """Newly claimed worker authority paired with its durable start receipt.
+
+    This capability-bearing result intentionally has no ``to_dict`` method.  Its raw
+    lease is excluded from repr and must be handed directly to fenced worker APIs.
+    """
+
+    receipt: InvocationStartReceipt
+    lease: InvocationLease = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not InvocationStartClaimed:
+            raise TypeError("claimed result must be an exact InvocationStartClaimed")
+        receipt = _invocation_start_receipt_snapshot(self.receipt)
+        lease = _invocation_lease_snapshot(self.lease)
+        _validate_start_lease_binding(receipt, lease)
+        object.__setattr__(self, "receipt", receipt)
+        object.__setattr__(self, "lease", lease)
+
+
+@dataclass(frozen=True)
+class InvocationStartObserved:
+    """Capability-free replay result for an already committed invocation start."""
+
+    receipt: InvocationStartReceipt
+
+    def __post_init__(self) -> None:
+        if type(self) is not InvocationStartObserved:
+            raise TypeError("observed result must be an exact InvocationStartObserved")
+        object.__setattr__(self, "receipt", _invocation_start_receipt_snapshot(self.receipt))
+
+    def to_dict(self) -> Dict[str, object]:
+        """Return a capability-free replay observation."""
+
+        InvocationStartObserved.__post_init__(self)
+        return {"receipt": InvocationStartReceipt.to_dict(self.receipt)}
+
+    @classmethod
+    def from_dict(cls, value: object) -> InvocationStartObserved:
+        """Decode one exact capability-free replay observation."""
+
+        if cls is not InvocationStartObserved:
+            raise TypeError("observed decoder requires exact InvocationStartObserved")
+        raw = _exact_dict(value, set(_START_OBSERVED_FIELDS), "invocation start observation")
+        return cls(receipt=InvocationStartReceipt.from_dict(raw["receipt"]))
+
+
 __all__ = [
     "CANONICAL_ORCHESTRATOR_ACTOR_ID",
     "INVOCATION_EXECUTION_MANIFEST_DOMAIN",
@@ -755,7 +1062,10 @@ __all__ = [
     "TASK_STATUS_CHANGED_EVENT_TYPE",
     "EffectClass",
     "InvocationExecutionManifest",
+    "InvocationStartClaimed",
     "InvocationStartEvidenceV2",
+    "InvocationStartObserved",
+    "InvocationStartReceipt",
     "RetryClass",
     "TaskInvocationAdmissionRequest",
     "build_task_invocation_admission_request",
