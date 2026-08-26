@@ -15,13 +15,20 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Mapping, Set, cast
+from typing import Any, Dict, Mapping, Optional, Set, Tuple, cast
+
+from .attempts import InvocationJobSpec
+from .events import DomainEvent
+from .protocol import TaskStatus
+from .scheduler import TaskTransition
 
 INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION = 1
 INVOCATION_START_EVIDENCE_SCHEMA_VERSION = 2
 INVOCATION_EXECUTION_MANIFEST_DOMAIN = "quantum-entanglement.invocation-execution-manifest/1\n"
+CANONICAL_ORCHESTRATOR_ACTOR_ID = "orchestrator"
 TASK_EXECUTION_REQUESTED_EVENT_TYPE = "task.execution.requested"
 TASK_INVOCATION_STARTED_EVENT_TYPE = "task.invocation.started"
+TASK_STATUS_CHANGED_EVENT_TYPE = "task.status.changed"
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _CANONICAL_UTC_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z")
@@ -74,6 +81,8 @@ _START_EVIDENCE_FIELDS = frozenset(
         "causationId",
     )
 )
+
+_TASK_TRANSITION_FIELDS = frozenset(("taskId", "previous", "current", "reason", "revision"))
 
 
 class EffectClass(str, Enum):
@@ -204,6 +213,42 @@ def _canonical_json_bytes(value: Mapping[str, object]) -> bytes:
     ).encode("utf-8")
 
 
+def _task_transition_payload(transition: object) -> Dict[str, object]:
+    if type(transition) is not TaskTransition:
+        raise TypeError("transition must be an exact TaskTransition")
+    typed = transition
+    task_id = _text(typed.task_id, "transition taskId")
+    if typed.previous is not TaskStatus.READY or typed.current is not TaskStatus.RUNNING:
+        raise ValueError("transition must be exactly READY to RUNNING")
+    reason = typed.reason
+    if reason is not None:
+        reason = _text(reason, "transition reason")
+    revision = _positive_integer(typed.revision, "transition revision")
+    return {
+        "taskId": task_id,
+        "previous": TaskStatus.READY.value,
+        "current": TaskStatus.RUNNING.value,
+        "reason": reason,
+        "revision": revision,
+    }
+
+
+def _task_transition_from_payload(payload: object) -> TaskTransition:
+    raw = _exact_dict(payload, set(_TASK_TRANSITION_FIELDS), "task transition")
+    task_id = _text(raw["taskId"], "transition taskId")
+    previous = raw["previous"]
+    current = raw["current"]
+    if type(previous) is not str or type(current) is not str:
+        raise TypeError("transition statuses must be plain strings")
+    if previous != TaskStatus.READY.value or current != TaskStatus.RUNNING.value:
+        raise ValueError("transition must be exactly READY to RUNNING")
+    reason = raw["reason"]
+    if reason is not None:
+        reason = _text(reason, "transition reason")
+    revision = _positive_integer(raw["revision"], "transition revision")
+    return TaskTransition(task_id, TaskStatus.READY, TaskStatus.RUNNING, reason, revision)
+
+
 @dataclass(frozen=True)
 class InvocationExecutionManifest:
     """Immutable schema-1 input binding for one logical invocation."""
@@ -325,6 +370,248 @@ class InvocationExecutionManifest:
         return hashlib.sha256(
             INVOCATION_EXECUTION_MANIFEST_DOMAIN.encode("utf-8") + self.canonical_bytes()
         ).hexdigest()
+
+
+@dataclass(frozen=True)
+class TaskInvocationAdmissionRequest:
+    """Pure canonical request for one task execution admission.
+
+    Event IDs and timestamps are caller-owned inputs so an exact retry produces the same
+    admission manifest.  Events and the job are rebuilt on access instead of retained as
+    mutable nested payloads; this object does not write or authorize anything.
+    """
+
+    manifest: InvocationExecutionManifest
+    transition: TaskTransition
+    execution_requested_event_id: str
+    execution_requested_timestamp: str
+    task_running_event_id: str
+    task_running_timestamp: str
+    job_priority: int = 50
+    job_available_at: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if type(self) is not TaskInvocationAdmissionRequest:
+            raise TypeError("request must be an exact TaskInvocationAdmissionRequest")
+        if type(self.manifest) is not InvocationExecutionManifest:
+            raise TypeError("manifest must be an exact InvocationExecutionManifest")
+        manifest = InvocationExecutionManifest.from_dict(self.manifest.to_dict())
+        transition_payload = _task_transition_payload(self.transition)
+        if (
+            transition_payload["taskId"] != manifest.task_id
+            or transition_payload["revision"] != manifest.task_revision
+        ):
+            raise ValueError("transition identity and revision must equal the manifest")
+
+        requested_event_id = _text(
+            self.execution_requested_event_id,
+            "execution-request eventId",
+        )
+        running_event_id = _text(self.task_running_event_id, "task-running eventId")
+        if requested_event_id == running_event_id:
+            raise ValueError("canonical admission event IDs must be distinct")
+        requested_timestamp = _timestamp(
+            self.execution_requested_timestamp,
+            "execution-request timestamp",
+        )
+        running_timestamp = _timestamp(self.task_running_timestamp, "task-running timestamp")
+        if running_timestamp < requested_timestamp:
+            raise ValueError("task-running timestamp must not precede execution-request timestamp")
+
+        _text("session:" + manifest.session_id, "canonical admission streamId")
+        _text(
+            "execution-request:" + manifest.invocation_id,
+            "execution-request idempotencyKey",
+        )
+        _text(
+            f"task-running:{manifest.task_id}:{manifest.task_revision}",
+            "task-running idempotencyKey",
+        )
+        if self.job_available_at is not None:
+            _text(self.job_available_at, "job availableAt")
+        InvocationJobSpec(
+            session_id=manifest.session_id,
+            plan_id=manifest.plan_id,
+            task_id=manifest.task_id,
+            agent_id=manifest.agent_id,
+            idempotency_key=manifest.job_idempotency_key,
+            payload_digest=manifest.canonical_digest(),
+            invocation_id=manifest.invocation_id,
+            priority=self.job_priority,
+            max_attempts=1,
+            available_at=self.job_available_at,
+        )
+
+        transition = TaskTransition(
+            task_id=cast(str, transition_payload["taskId"]),
+            previous=TaskStatus.READY,
+            current=TaskStatus.RUNNING,
+            reason=cast(Optional[str], transition_payload["reason"]),
+            revision=cast(int, transition_payload["revision"]),
+        )
+        object.__setattr__(self, "manifest", manifest)
+        object.__setattr__(self, "transition", transition)
+
+    @property
+    def stream_id(self) -> str:
+        """Return the one session stream accepted by the canonical admission."""
+
+        TaskInvocationAdmissionRequest.__post_init__(self)
+        return "session:" + self.manifest.session_id
+
+    @property
+    def job_spec(self) -> InvocationJobSpec:
+        """Build a fresh single-attempt job bound to the complete manifest."""
+
+        TaskInvocationAdmissionRequest.__post_init__(self)
+        manifest = self.manifest
+        return InvocationJobSpec(
+            session_id=manifest.session_id,
+            plan_id=manifest.plan_id,
+            task_id=manifest.task_id,
+            agent_id=manifest.agent_id,
+            idempotency_key=manifest.job_idempotency_key,
+            payload_digest=manifest.canonical_digest(),
+            invocation_id=manifest.invocation_id,
+            priority=self.job_priority,
+            max_attempts=1,
+            available_at=self.job_available_at,
+        )
+
+    @property
+    def events(self) -> Tuple[DomainEvent, DomainEvent]:
+        """Build the exact ordered execution-request and READY-to-RUNNING pair."""
+
+        TaskInvocationAdmissionRequest.__post_init__(self)
+        manifest = self.manifest
+        common = {
+            "stream_id": "session:" + manifest.session_id,
+            "actor_id": CANONICAL_ORCHESTRATOR_ACTOR_ID,
+            "correlation_id": manifest.correlation_id,
+            "causation_id": manifest.causation_id,
+        }
+        return (
+            DomainEvent(
+                event_type=TASK_EXECUTION_REQUESTED_EVENT_TYPE,
+                payload=manifest.to_dict(),
+                event_id=self.execution_requested_event_id,
+                timestamp=self.execution_requested_timestamp,
+                idempotency_key="execution-request:" + manifest.invocation_id,
+                **common,
+            ),
+            DomainEvent(
+                event_type=TASK_STATUS_CHANGED_EVENT_TYPE,
+                payload=_task_transition_payload(self.transition),
+                event_id=self.task_running_event_id,
+                timestamp=self.task_running_timestamp,
+                idempotency_key=f"task-running:{manifest.task_id}:{manifest.task_revision}",
+                **common,
+            ),
+        )
+
+    def components(self) -> Tuple[Tuple[DomainEvent, DomainEvent], InvocationJobSpec]:
+        """Return fresh canonical inputs for the generic atomic admission primitive."""
+
+        return self.events, self.job_spec
+
+    def validate_components(self, events: object, job_spec: object) -> None:
+        """Reject any non-canonical, legacy, reordered, extra or mismatched components."""
+
+        TaskInvocationAdmissionRequest.__post_init__(self)
+        if type(events) is not tuple:
+            raise TypeError("canonical admission events must be an exact tuple")
+        typed_events = cast(Tuple[object, ...], events)
+        if len(typed_events) != 2:
+            raise ValueError("canonical admission requires exactly two events")
+        if any(type(item) is not DomainEvent for item in typed_events):
+            raise TypeError("canonical admission requires exact DomainEvent values")
+        requested = cast(DomainEvent, typed_events[0])
+        running = cast(DomainEvent, typed_events[1])
+
+        requested_manifest = InvocationExecutionManifest.from_event_payload(
+            object.__getattribute__(requested, "event_type"),
+            object.__getattribute__(requested, "payload"),
+        )
+        running_transition = _task_transition_from_payload(
+            object.__getattribute__(running, "payload")
+        )
+        _event_type(
+            object.__getattribute__(running, "event_type"),
+            TASK_STATUS_CHANGED_EVENT_TYPE,
+        )
+        if requested_manifest != self.manifest:
+            raise ValueError("execution-request manifest does not match the request")
+        if running_transition != self.transition:
+            raise ValueError("task-running transition does not match the request")
+
+        expected_events = self.events
+        for index, (actual, expected) in enumerate(zip((requested, running), expected_events)):
+            for field_name in (
+                "stream_id",
+                "event_type",
+                "actor_id",
+                "event_id",
+                "correlation_id",
+                "causation_id",
+                "idempotency_key",
+            ):
+                value = object.__getattribute__(actual, field_name)
+                _text(value, f"canonical event {index} {field_name}")
+                if value != object.__getattribute__(expected, field_name):
+                    raise ValueError("canonical admission event envelope does not match")
+            timestamp = object.__getattribute__(actual, "timestamp")
+            _timestamp(timestamp, f"canonical event {index} timestamp")
+            if timestamp != expected.timestamp:
+                raise ValueError("canonical admission event timestamp does not match")
+
+        if type(job_spec) is not InvocationJobSpec:
+            raise TypeError("job_spec must be an exact InvocationJobSpec")
+        typed_spec = job_spec
+        available_at = object.__getattribute__(typed_spec, "available_at")
+        if available_at is not None:
+            _text(available_at, "job availableAt")
+        spec_snapshot = InvocationJobSpec(
+            session_id=object.__getattribute__(typed_spec, "session_id"),
+            plan_id=object.__getattribute__(typed_spec, "plan_id"),
+            task_id=object.__getattribute__(typed_spec, "task_id"),
+            agent_id=object.__getattribute__(typed_spec, "agent_id"),
+            idempotency_key=object.__getattribute__(typed_spec, "idempotency_key"),
+            payload_digest=_digest(
+                object.__getattribute__(typed_spec, "payload_digest"),
+                "job payloadDigest",
+            ),
+            invocation_id=object.__getattribute__(typed_spec, "invocation_id"),
+            priority=object.__getattribute__(typed_spec, "priority"),
+            max_attempts=object.__getattribute__(typed_spec, "max_attempts"),
+            available_at=available_at,
+        )
+        if spec_snapshot != self.job_spec:
+            raise ValueError("invocation job does not match the canonical manifest binding")
+
+
+def build_task_invocation_admission_request(
+    manifest: InvocationExecutionManifest,
+    transition: TaskTransition,
+    *,
+    execution_requested_event_id: str,
+    execution_requested_timestamp: str,
+    task_running_event_id: str,
+    task_running_timestamp: str,
+    job_priority: int = 50,
+    job_available_at: Optional[str] = None,
+) -> TaskInvocationAdmissionRequest:
+    """Build one side-effect-free canonical admission request with stable event identity."""
+
+    return TaskInvocationAdmissionRequest(
+        manifest=manifest,
+        transition=transition,
+        execution_requested_event_id=execution_requested_event_id,
+        execution_requested_timestamp=execution_requested_timestamp,
+        task_running_event_id=task_running_event_id,
+        task_running_timestamp=task_running_timestamp,
+        job_priority=job_priority,
+        job_available_at=job_available_at,
+    )
 
 
 @dataclass(frozen=True)
@@ -459,13 +746,17 @@ class InvocationStartEvidenceV2:
 
 
 __all__ = [
+    "CANONICAL_ORCHESTRATOR_ACTOR_ID",
     "INVOCATION_EXECUTION_MANIFEST_DOMAIN",
     "INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION",
     "INVOCATION_START_EVIDENCE_SCHEMA_VERSION",
     "TASK_EXECUTION_REQUESTED_EVENT_TYPE",
     "TASK_INVOCATION_STARTED_EVENT_TYPE",
+    "TASK_STATUS_CHANGED_EVENT_TYPE",
     "EffectClass",
     "InvocationExecutionManifest",
     "InvocationStartEvidenceV2",
     "RetryClass",
+    "TaskInvocationAdmissionRequest",
+    "build_task_invocation_admission_request",
 ]
