@@ -10,12 +10,14 @@
   "last_discovery_at": "2026-08-24T16:48:00+08:00",
   "last_successful_sync_at": "2026-08-24T17:23:25+08:00",
   "current_local_delta": {
-    "updated_at": "2026-08-27T03:55:47+08:00",
+    "updated_at": "2026-08-27T04:33:44+08:00",
     "status": "partial",
     "remote_write_status": "local_pending",
     "remote_readback_status": "local_pending",
     "live_remote_readback_performed": false,
     "historical_objects_and_hashes_mutated": false,
+    "pending_source_count": 6,
+    "clawith_pending_source_count": 5,
     "entries": [
       {
         "source_path": "analysis_report/yuque_sync/source/01_comprehensive_report.md",
@@ -23,6 +25,15 @@
         "yuque_slug": "nspilnhf8bpg0207",
         "previous_verified_normalized_sha256": "a81389814cb43f5eeeafb738219013b1ba44b2dddac411c1a621e8f9838e3b16",
         "current_normalized_sha256": "6abb03e9af96177783bfcd87e2570e1a13b1df0c18674909656587840ee99b41",
+        "target_status": "local_pending"
+      },
+      {
+        "source_path": "analysis_report/yuque_sync/source/05_protocols.md",
+        "title": "03｜Agent 协议全景与选型",
+        "yuque_slug": "rb0gmtpl4gl4fhaf",
+        "previous_verified_normalized_sha256": "18aec7b94782a439e842827a495c9a7d1cb341eb0501d4d6e40305bd916ebbcb",
+        "current_normalized_sha256": "52a071247731b4b7606eedf98b2e1988b5f9f392498747b4e8503801596c34ec",
+        "change_scope": "preexisting_protocol_update_not_caused_by_clawith",
         "target_status": "local_pending"
       },
       {

@@ -6,7 +6,8 @@
 
 - 2026-08-27 已把 Clawith 增量纳入 5 个本地语雀传输源：综合报告、竞品全景、目标架构、
   截图证据，以及完整 Clawith 专题 `source/14_clawith_competitive_analysis.md`。
-- 5 个源在私人语雀均为 `local_pending`，本轮整体状态为 `partial`：尚未执行远端写入，也
+- 当前全局共有 6 个源在私人语雀为 `local_pending`：上述 5 个 Clawith 源，以及此前已变化但
+  尚未远端同步的 `source/05_protocols.md`。本轮整体状态为 `partial`：尚未执行远端写入，也
   没有进行实时远端回读。下列“已完成”只描述 2026-08-24 的历史快照，不包含当前增量。
 - `mapping.json` 的 15 个历史远端对象、slug、已回读摘要和 verification 均保持不变；
   新的 `current_local_delta` 只登记当前本地摘要与 pending 状态，不伪造 Clawith 远端对象。
