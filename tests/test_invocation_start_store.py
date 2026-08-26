@@ -20,6 +20,12 @@ from unittest.mock import patch
 import quantum_entanglement.attempts as attempts_module
 import quantum_entanglement.store as store_module
 from quantum_entanglement.attempts import InvocationLease, SQLiteInvocationAttemptStore
+from quantum_entanglement.backup import (
+    create_sqlite_backup,
+    default_manifest_path,
+    restore_sqlite_backup,
+    verify_sqlite_backup,
+)
 from quantum_entanglement.events import DomainEvent, StoredEvent
 from quantum_entanglement.invocation_execution import (
     CANONICAL_ORCHESTRATOR_ACTOR_ID,
@@ -1650,6 +1656,90 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
                 finally:
                     reopened.close()
         self.store = SQLiteEventStore(self.path, clock=lambda: ADMITTED_AT)
+
+    def test_plaintext_start_lease_never_enters_sqlite_backup_or_restore(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        canary = "raw-lease-backup-restore-secret-canary"
+        with (
+            patch.object(self.store, "_now", return_value=CLAIMED_AT),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                return_value=canary,
+            ),
+        ):
+            result = self.store.claim_invocation_start(
+                request.manifest.invocation_id,
+                "worker-start-backup",
+                lease_seconds=60,
+                expected_version=2,
+            )
+        self.assertIs(type(result), InvocationStartClaimed)
+        claimed = cast(InvocationStartClaimed, result)
+        token_digest = hashlib.sha256(canary.encode("utf-8")).hexdigest()
+        self.assertEqual(claimed.receipt.evidence.lease_token_digest, token_digest)
+        self.assertNotIn(canary, repr(claimed))
+        self.assertNotIn(canary, repr(claimed.lease))
+        self.assertNotIn(
+            canary,
+            json.dumps(InvocationStartObserved(claimed.receipt).to_dict(), sort_keys=True),
+        )
+        self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
+
+        source_files = tuple(
+            candidate
+            for candidate in (
+                Path(self.path),
+                Path(self.path + "-wal"),
+                Path(self.path + "-shm"),
+            )
+            if candidate.exists()
+        )
+        for candidate in source_files:
+            self.assertNotIn(canary.encode("utf-8"), candidate.read_bytes())
+
+        backup_path = Path(self.tempdir.name) / "backups" / "start.sqlite3"
+        created = create_sqlite_backup(
+            self.path,
+            backup_path,
+            clock=lambda: CLAIMED_AT,
+        )
+        manifest_path = default_manifest_path(backup_path)
+        self.assertEqual(verify_sqlite_backup(backup_path), created)
+        self.assertEqual(created.table_counts["invocation_admissions"], 1)
+        self.assertEqual(created.table_counts["invocation_attempts"], 1)
+        self.assertNotIn(canary.encode("utf-8"), backup_path.read_bytes())
+        self.assertNotIn(canary.encode("utf-8"), manifest_path.read_bytes())
+
+        self.store.close()
+        restored_path = Path(self.tempdir.name) / "restore" / "start.sqlite3"
+        restored = restore_sqlite_backup(
+            backup_path,
+            restored_path,
+            manifest_path=manifest_path,
+        )
+        self.assertEqual(restored, created)
+        self.store = SQLiteEventStore(str(restored_path), clock=lambda: CLAIMED_AT)
+        observed = self.store.read_invocation_start(request.manifest.invocation_id)
+        self.assertIs(type(observed), InvocationStartObserved)
+        replayed = self.assert_receipt_only_replay(
+            self.store,
+            request.manifest.invocation_id,
+            "worker-start-restored",
+            expected_version=2,
+        )
+        self.assertEqual(replayed, observed)
+        self.assertEqual(
+            [
+                row[0]
+                for row in self.store._connection.execute(
+                    "SELECT version FROM qe_schema_migrations ORDER BY version"
+                ).fetchall()
+            ],
+            [1, 2, 3, 4],
+        )
+        self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
+        self.assertNotIn(canary.encode("utf-8"), restored_path.read_bytes())
 
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
