@@ -1,6 +1,6 @@
 # Notion → 私人语雀镜像状态
 
-更新时间：2026-08-27 06:19（Asia/Shanghai）
+更新时间：2026-08-27 07:45（Asia/Shanghai）
 
 ## 当前状态
 
@@ -8,6 +8,9 @@
   截图证据，以及完整 Clawith 专题 `source/14_clawith_competitive_analysis.md`。
 - 06:16 的本地增量进一步把 Skill 渐进披露、模型能力事实及其生产门禁写入竞品、架构、
   综合报告和正式路线图；仍只属于 `local_pending`，没有发生语雀或 Notion 远端写入。
+- 07:45 的本地增量把官网部门级交付样板、SolutionBlueprintRevision、结果指标 evidence
+  contract 及第 26 张研发卡片证据写入上述 5 个 Clawith 传输源；同一卡片“3 天 / 6d 21h”
+  冲突按原样保留，不替厂商解释，也没有发生任何远端写入。
 - 当前全局共有 6 个源在私人语雀为 `local_pending`：上述 5 个 Clawith 源，以及此前已变化但
   尚未远端同步的 `source/05_protocols.md`。本轮整体状态为 `partial`：尚未执行远端写入，也
   没有进行实时远端回读。下列“已完成”只描述 2026-08-24 的历史快照，不包含当前增量。
@@ -17,9 +20,9 @@
   它们只描述 2026-08-24 历史快照。当前状态必须读取新增的 `current_content_status=partial`
   与 `current_local_delta.status=partial`，禁止把旧值 `complete_manual_sync` 解读为当前内容已同步。
 - 完整专题与规范报告 `../research/20_clawith_competitive_analysis.md` 字节一致，SHA-256 均为
-  `d52f4755fc9d3c35d8160ca3dad8417cca2bdd360a4f9008c2275a03406c6168`。
+  `f0f01f5de73843bf45a70aece601daa8dc89169cc50f11305ab7ce5c83128b4c`。
 - `source/14_clawith_competitive_analysis.md` 是“完整原样”传输源，不是独立本地渲染根；
-  其中相对链接按规范报告所在的 `research/` 目录解释。远端发布必须上传/重写 11 张 Clawith
+  其中相对链接按规范报告所在的 `research/` 目录解释。远端发布必须上传/重写 12 张 Clawith
   图片和仓库内链接，并在回读后才能把状态改为已同步。
 - 2026-08-24 历史快照生成时，Notion 连接器曾完成授权并递归抓取项目主页、相关子页和
   任务库，共核验 15 个页面/数据库对象，任务库保持 19 条记录。
