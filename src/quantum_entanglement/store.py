@@ -687,6 +687,8 @@ def _caller_invocation_identity(value: object, field_name: str) -> str:
     """Snapshot one canonical identity before a start transaction touches SQLite."""
 
     snapshot = _caller_text(value, field_name, required=True)
+    if snapshot != snapshot.strip():
+        raise ValueError(f"{field_name} must not contain surrounding whitespace")
     try:
         encoded = snapshot.encode("utf-8")
     except UnicodeError:
