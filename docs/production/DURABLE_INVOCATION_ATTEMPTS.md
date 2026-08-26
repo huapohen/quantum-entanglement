@@ -1,6 +1,7 @@
 # Durable invocation attempts: design and operations
 
-Status: storage foundation implemented; orchestrator integration pending.
+Status: storage foundation and caller-owned first-claim primitive implemented; atomic
+claim/start receipt and orchestrator integration pending.
 
 This component prevents two local worker processes from both believing they own the
 same Agent invocation. It also gives a crashed invocation a bounded recovery path instead
@@ -75,6 +76,37 @@ Every first claim executes in `BEGIN IMMEDIATE`, conditionally moves one eligibl
 before commit. Eligibility and the final CAS both require `attempts_started = 0` and
 `lease_epoch = 0`; independent SQLite connections therefore serialize the ownership decision,
 while failed, expired, or partially restored ownership state cannot be reclaimed.
+
+### Caller-owned first-claim composition boundary
+
+Commit `0871711c44e371318532313aae7611b66b2563b1` extracts the existing first-claim body into
+package-internal, caller-owned transaction primitives:
+
+- `_select_first_claim_candidate_in_transaction(...)` performs the exact ordered selection,
+  attempt-history check, claimable re-read, non-regressing-clock check, budget check and epoch
+  bound without mutating the candidate;
+- `_claim_first_invocation_in_transaction(...)` repeats that validation, executes the first
+  job CAS, inserts the running attempt and returns the opaque lease, but never begins, commits
+  or rolls back a transaction, acquires the store lock, samples a clock or allocates identifiers;
+- `_InvocationClaimRequest` snapshots worker and optional invocation selection before the
+  transaction body uses them.
+
+The public `claim`/`claim_next` wrapper still owns `BEGIN IMMEDIATE`, expiry recovery,
+commit-acknowledgement reconciliation and store poisoning. It fully validates that a candidate
+exists before calling the attempt-ID and lease-token providers, then binds the second validation
+to that exact invocation. Empty, missing, future, effect-unknown/non-first and recovered-only
+paths therefore call neither provider; a recovered-only transaction can commit expiry recovery
+without a later provider fault rolling it back. The wrapper rechecks process ownership after
+each provider. A real fork inside a provider makes the child reject the inherited store without
+running SQLite cleanup, while the parent retains its transaction and connection.
+
+This extraction is an internal composition seam, not yet the cross-store unit of work. No
+start event or immutable claim/start receipt shares this transaction, and
+`OrchestratorKernel` does not use it. A future EventStore-owned transaction must prove one
+database path, connection, process owner and receipt-bound commit before a worker is authorized
+to invoke an Agent. Direct callers of the helper own all locking, transaction lifecycle,
+deadline calculation, rollback and commit-ambiguity policy; using it in autocommit mode is
+outside the supported contract.
 
 The returned `InvocationLease` contains two different controls:
 
@@ -406,19 +438,25 @@ job/attempt time causality, sub-microsecond lease rejection, strict timestamp pa
 non-disclosure, oversized lease normalization without mutation, orphan-history first-claim
 rejection, invalid lease inputs, committed-then-error reconciliation for every public mutation,
 pre-commit and post-commit `BaseException` behavior, exact readback interruption, no-op safety,
-full lease-binding forgery rejection, read/write rollback poisoning, close retry, hostile driver
-exceptions, exception-graph redaction, persistent reopen, and waiting-thread quarantine:
+full lease-binding forgery rejection, caller-owned helper rollback/composition equivalence,
+zero-provider no-candidate paths, provider fault/control cleaning, provider PID drift and real
+fork behavior, read/write rollback poisoning, close retry, hostile driver exceptions,
+exception-graph redaction, persistent reopen, and waiting-thread quarantine:
 
 ```bash
 PYTHONPATH=src python3 -m unittest tests.test_attempts -v
 ```
 
-The current direct suite contains 117 tests (one `BaseExceptionGroup` case is version-gated on
-Python 3.9). The matrix includes exact control-signal cleaning, safe `SystemExit` codes, hostile
+The current direct suite contains 129 tests. The matrix includes exact control-signal cleaning,
+safe `SystemExit` codes, hostile
 exception objects, control subclasses/groups, forged internal sentinels, whole-traceback
 provenance and grafting attacks, exact-`bool` transaction-state inspection, hostile `__bool__`
 objects, claim readback rejection after concurrent heartbeat/deadline drift, and a real POSIX-fork
-probe covering inherited reads, writes, recovery, context entry and close.
+probe covering inherited reads, writes, recovery, context entry, close and identifier-provider
+fork. The exact source commit above was also verified in an isolated detached worktree with
+1,197 repository tests, locked Ruff lint/format, strict mypy over 41 source modules and the
+4-target/74-record dependency-lock verifier. This is local reproducible evidence, not a
+production promotion.
 
 The Phase 1 release still requires process-kill fault injection at every integration
 boundary, a real runtime heartbeat/cancellation test, backup/restore rehearsal and retained

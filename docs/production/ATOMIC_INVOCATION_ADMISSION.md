@@ -13,6 +13,7 @@ invocation job 和一张不可变 admission receipt 放进同一个 SQLite trans
 |---|---|
 | migration 4、domain migration/backup topology、升级/降级与恢复测试 | `245ecde231e1292f2e0e39d7bcf409c44243763d` |
 | atomic admission API、receipt 验证、故障/竞争/process 测试、包级公开类型 | `5226ef1994fab5f165c244ac0716ca329c0950fe` |
+| caller-owned first-claim primitive、public claim 等价/无候选/provider-fork 证据 | `0871711c44e371318532313aae7611b66b2563b1` |
 
 后续文档提交不会改变上述源码边界。每次发布仍必须对最终候选提交重新生成 source-bound evidence；
 仅引用实现提交不能证明当前 checkout、CI runner 或部署制品与它们一致。
@@ -39,9 +40,11 @@ COMMIT
 `InvocationJobSpec.task_id`，也不会自行生成 `RUNNING` 事件。这个语义检查仍必须由未来可信的
 runtime command boundary 完成。
 
-本实现尚未完成：
+后续 Slice A 已从 attempt store 中提取 caller-owned first-claim transaction primitive，
+但它还没有与 EventStore 和 immutable start receipt 组合。本实现尚未完成：
 
-- caller-owned atomic first claim、attempt 创建、lease/epoch fencing 与 start event 的统一提交；
+- first claim、attempt 创建、lease/epoch fencing、start event 和 immutable claim/start receipt
+  的统一提交；
 - heartbeat-supervised worker、SIGTERM bounded drain、kill/restart reconciliation；
 - immutable result receipt，以及 result、artifact、attempt success、task terminal projection 的原子
   acceptance；
@@ -391,7 +394,7 @@ PYTHONPATH=src .venv/bin/python -m unittest \
 replay 提供 durable proof。它没有关闭 invocation 生命周期其余边界，也没有让 runtime、tenant、
 API、connector、deployment 或 observability 达到生产标准。
 
-在 caller-owned claim receipt、heartbeat worker、result/artifact acceptance UoW、terminal projection、
+在 claim/start receipt UoW、heartbeat worker、result/artifact acceptance UoW、terminal projection、
 crash/kill/restart matrix、可信 tenant scope 和 service lifecycle 完成前：
 
 - 不得把 `append_invocation_admission` 描述为 exactly-once Agent execution；

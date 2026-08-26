@@ -25,8 +25,9 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 当前最关键的三个断层是：
 
 1. `SQLiteEventStore` 已能原子提交 caller-supplied `RUNNING` transition、queued job 和 admission
-   receipt，但 `OrchestratorKernel` 尚未使用该 API，也没有把 first claim、attempt、result/artifact
-   receipt 与 terminal projection 串成安全协调；
+   receipt，attempt store 也已提取 caller-owned first-claim transaction primitive；但
+   `OrchestratorKernel` 尚未使用这些 API，claim/attempt 也尚未与 start receipt/event、
+   result/artifact receipt 和 terminal projection 串成安全协调；
 2. events、snapshots、delivery、attempt 和 projection repository 尚未统一强制 tenant/workspace
    scope，tenant domain object 不能替代可信认证与 SQL predicate；
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
@@ -74,7 +75,8 @@ event store 的单组件运行合同见
   metadata、1,000,000 metadata nodes、384 MiB state-data 累积门禁；多 ledger 写入以事务内
   global-position CAS 重建重算，幂等重试严格绑定完整稳定请求；
 - `attempts.py`：单机 SQLite durable job/attempt、lease、heartbeat、retry、expiry、epoch fencing
-  和 stale-owner terminal CAS；
+  和 stale-owner terminal CAS；已提取 caller-owned first-claim helper，保留 public claim 的
+  recovery/commit-ambiguity 合同，并覆盖 provider PID/fork 与无候选零调用；
 - `artifact_store.py`：tenant/workspace-scoped blob/version、digest、并发版本和恢复检查；
 - `publisher.py`：bounded callback admission、timeout、retry/dead-letter、lease deadline、ambiguity
   记录和 receiver receipt 校验；
@@ -85,8 +87,9 @@ event store 的单组件运行合同见
 
 - runtime 仍直接调用 Agent，尚未接入 atomic admission，也没有 claim/heartbeat/fencing 的 attempt
   integration；
-- admission 只解决 event/job/receipt 的提交边界；caller-owned first claim、attempt/start receipt、
-  result/artifact acceptance 和 receipt-aware worker gate 尚未实现；
+- admission 只解决 event/job/receipt 的提交边界；caller-owned first-claim primitive
+  已实现，但 claim + attempt + start event + immutable receipt 的统一 UoW、result/artifact
+  acceptance 和 receipt-aware worker gate 仍未实现；
 - task `RUNNING`、attempt、artifact/result acceptance 和 terminal task state 不是端到端状态机；
 - Agent 返回后逐个写 artifact、result 和 completion，任一边界崩溃仍需 receipt-based reconcile；
 - succeeded attempt 没有不可变 result receipt 时不能安全自动投影 `COMPLETED`；
@@ -286,9 +289,10 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
 
 1. 先冻结 process model：为 issuer/authorization 与核心 store 建立 pre-lock PID/epoch fence，并把
    credential-bearing/untrusted worker 固定为 spawn/exec-before-secret-load composition；
-2. 在已完成 event/job/receipt atomic admission 之后，实现 caller-owned atomic first claim，再把
-   attempt/start receipt、heartbeat、accepted result/artifact 和 terminal state 组成可崩溃协调的
-   状态机；没有 result receipt 时绝不把 succeeded job 猜成 completed；
+2. 在已完成 event/job/receipt atomic admission 和 caller-owned first-claim primitive 之上，
+   实现 claim + attempt + start event + immutable receipt 统一 UoW，再把 heartbeat、
+   accepted result/artifact 和 terminal state 组成可崩溃协调的状态机；没有 result
+   receipt 时绝不把 succeeded job 猜成 completed；
 3. 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；
 4. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
 5. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
