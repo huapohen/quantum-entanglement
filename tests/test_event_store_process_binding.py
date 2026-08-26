@@ -23,7 +23,7 @@ import quantum_entanglement.store as store_module
 from quantum_entanglement import EventStoreLifecycleError
 from quantum_entanglement.delivery import OutboxMessage, OutboxStatus
 from quantum_entanglement.events import DomainEvent
-from quantum_entanglement.migrations import validate_sqlite_schema
+from quantum_entanglement.migrations import MIGRATIONS, validate_sqlite_schema
 from quantum_entanglement.store import ConcurrencyError, SQLiteEventStore
 
 
@@ -387,7 +387,7 @@ def _fork_before_connection_probe(path: str, mode: str, connection: object) -> N
         valid = (
             valid and not parent_store._connection.execute("PRAGMA foreign_key_check").fetchall()
         )
-        valid = valid and validate_sqlite_schema(parent_store._connection) == 3
+        valid = valid and validate_sqlite_schema(parent_store._connection) == len(MIGRATIONS)
         channel.send(("result", mode, valid))  # type: ignore[attr-defined]
     except BaseException as error:
         try:
@@ -562,7 +562,7 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
     def _assert_fresh_store_integrity(self, store: SQLiteEventStore) -> None:
         self.assertEqual(store._connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         self.assertEqual(store._connection.execute("PRAGMA foreign_key_check").fetchall(), [])
-        self.assertEqual(validate_sqlite_schema(store._connection), 3)
+        self.assertEqual(validate_sqlite_schema(store._connection), len(MIGRATIONS))
 
     def _run_fork_before_init_probe(self, path: str, mode: str) -> None:
         context = multiprocessing.get_context("spawn")

@@ -23,6 +23,7 @@ BACKUP_TOPOLOGY_REGISTRY_FORMAT = "qe.sqlite-topology-registry/1"
 BACKUP_TOPOLOGY_PROFILE_FORMAT = "qe.sqlite-topology-profile/1"
 
 EVENT_STORE_CORE_PROFILE = "qe.event-store-core/1"
+INVOCATION_ADMISSION_PROFILE = "qe.domain-migration-0004/1"
 PROJECTION_STORE_PROFILE = "qe.projection-store/1"
 REVOCATION_GUARD_PROFILE = "qe.revocation-guard/1"
 LEGACY_MIGRATION_LEDGER_PROFILE = "qe.legacy-migration-ledger/1"
@@ -32,6 +33,7 @@ _DOMAIN_MIGRATION_PROFILE_NAMES = (
     "qe.domain-migration-0001/1",
     "qe.domain-migration-0002/1",
     "qe.domain-migration-0003/1",
+    INVOCATION_ADMISSION_PROFILE,
 )
 _PRESENCE_MODE = "atomic"
 _MAX_PROFILE_COUNT = 64
@@ -660,6 +662,45 @@ _DOMAIN_MIGRATION_1 = _profile(
     migration_id=1,
 )
 
+_DOMAIN_MIGRATION_4 = _profile(
+    INVOCATION_ADMISSION_PROFILE,
+    "admission",
+    (
+        (
+            "index",
+            "idx_invocation_admissions_stream",
+            "invocation_admissions",
+            "344a7678080c50e371658d631cdbb7212f51d163fb01796f3900939dad96be97",
+        ),
+        (
+            "index",
+            "sqlite_autoindex_invocation_admissions_1",
+            "invocation_admissions",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_invocation_admissions_2",
+            "invocation_admissions",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_invocation_admissions_3",
+            "invocation_admissions",
+            None,
+        ),
+        (
+            "table",
+            "invocation_admissions",
+            "invocation_admissions",
+            "9d5f3a777477c977927e3adca667f8aa87f92e5a79a7e60302300a38a67b3311",
+        ),
+    ),
+    migration_id=4,
+    dependencies=(EVENT_STORE_CORE_PROFILE, _DOMAIN_MIGRATION_PROFILE_NAMES[0]),
+)
+
 _DOMAIN_MIGRATION_2 = _profile(
     _DOMAIN_MIGRATION_PROFILE_NAMES[1],
     "artifacts",
@@ -766,6 +807,7 @@ BACKUP_TOPOLOGY_REGISTRY = TrustedBackupTopologyRegistry(
         sorted(
             (
                 _EVENT_STORE_CORE,
+                _DOMAIN_MIGRATION_4,
                 _PROJECTION_STORE,
                 _REVOCATION_GUARD,
                 _LEGACY_MIGRATION_LEDGER,
@@ -813,6 +855,7 @@ __all__ = [
     "BACKUP_TOPOLOGY_REGISTRY_FORMAT",
     "DOMAIN_MIGRATION_SIDECAR_PROFILE",
     "EVENT_STORE_CORE_PROFILE",
+    "INVOCATION_ADMISSION_PROFILE",
     "LEGACY_MIGRATION_LEDGER_PROFILE",
     "PROJECTION_STORE_PROFILE",
     "REVOCATION_GUARD_PROFILE",

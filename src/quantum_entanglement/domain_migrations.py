@@ -1070,6 +1070,7 @@ _LEGACY_COORDINATES: Mapping[int, Tuple[str, int]] = {
     1: ("attempts", 1),
     2: ("artifacts", 1),
     3: ("delivery", 1),
+    4: ("admission", 1),
 }
 
 _LEGACY_OWNED_OBJECTS: Mapping[int, Tuple[Tuple[str, str], ...]] = {
@@ -1094,6 +1095,17 @@ _LEGACY_OWNED_OBJECTS: Mapping[int, Tuple[Tuple[str, str], ...]] = {
         ("index", "idx_outbox_ambiguities_opened"),
         ("table", "outbox_ambiguities"),
     ),
+    4: (
+        ("index", "idx_invocation_admissions_stream"),
+        ("table", "invocation_admissions"),
+    ),
+}
+
+_LEGACY_DEPENDENCIES: Mapping[int, Tuple[int, ...]] = {
+    1: (),
+    2: (),
+    3: (),
+    4: (1,),
 }
 
 
@@ -1132,7 +1144,7 @@ def _build_legacy_descriptors() -> Tuple[DomainMigrationDescriptor, ...]:
                 domain=domain,
                 domain_version=domain_version,
                 kind="legacy_bootstrap",
-                dependencies=(),
+                dependencies=_LEGACY_DEPENDENCIES[migration_id],
                 owned_objects=owned_objects,
             )
         )

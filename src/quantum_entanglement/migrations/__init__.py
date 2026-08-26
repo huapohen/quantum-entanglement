@@ -46,6 +46,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(1, "0001_invocation_attempts.up.sql"),
     Migration(2, "0002_artifacts.up.sql"),
     Migration(3, "0003_outbox_ambiguities.up.sql"),
+    Migration(4, "0004_invocation_admissions.up.sql"),
 )
 
 _LEDGER_SCHEMA_SQL = """

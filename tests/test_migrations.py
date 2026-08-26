@@ -14,8 +14,10 @@ from quantum_entanglement.migrations import (
     MigrationVersionError,
     apply_sqlite_migrations,
     current_schema_version,
+    migration_text,
     validate_sqlite_schema,
 )
+from quantum_entanglement.store import SQLiteEventStore
 
 NOW = "2026-08-20T00:00:00Z"
 
@@ -171,6 +173,140 @@ class MigrationRunnerTests(unittest.TestCase):
             ).fetchone()
             is not None
         )
+
+    def prepare_event_store_migration_prefix(self, count: int) -> None:
+        """Materialize the event-store prerequisites, then downgrade to v3 when needed."""
+
+        if count not in (3, 4):
+            raise ValueError("event-store migration prefix must be 3 or 4")
+        self.connection.close()
+        store = SQLiteEventStore(self.path, clock=lambda: NOW)
+        store.close()
+        self.connection = sqlite3.connect(self.path, isolation_level=None)
+        self.connection.row_factory = sqlite3.Row
+        for migration in reversed(MIGRATIONS[count:]):
+            self.connection.executescript(
+                migration_text(migration.filename.replace(".up.sql", ".down.sql"))
+            )
+            self.connection.execute(
+                "DELETE FROM main.qe_schema_migrations WHERE version = ?",
+                (migration.version,),
+            )
+
+    def test_invocation_admission_migration_upgrades_v3_with_exact_constraints(self):
+        self.prepare_event_store_migration_prefix(3)
+
+        self.assertEqual(
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=(1, 2, 3),
+                clock=lambda: NOW,
+            ),
+            3,
+        )
+        self.assertFalse(self.table_exists("invocation_admissions"))
+        self.assertEqual(
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=(1, 2, 3, 4),
+                clock=lambda: NOW,
+            ),
+            4,
+        )
+        self.assertEqual(validate_sqlite_schema(self.connection), 4)
+        self.assertTrue(self.table_exists("invocation_admissions"))
+        self.assertIsNotNone(
+            self.connection.execute(
+                "SELECT 1 FROM sqlite_schema WHERE type = 'index' "
+                "AND name = 'idx_invocation_admissions_stream'"
+            ).fetchone()
+        )
+        foreign_key_sources = {
+            row[3]
+            for row in self.connection.execute(
+                "PRAGMA main.foreign_key_list('invocation_admissions')"
+            ).fetchall()
+        }
+        self.assertEqual(
+            foreign_key_sources,
+            {
+                "invocation_id",
+                "stream_id",
+                "first_sequence",
+                "last_sequence",
+                "first_global_position",
+                "last_global_position",
+            },
+        )
+        table_sql = self.connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'invocation_admissions'"
+        ).fetchone()[0]
+        for invariant in (
+            "receipt_format = 'qe.invocation-admission-receipt/1'",
+            "stream_id = 'session:' || session_id",
+            "first_sequence = original_version + 1",
+            "last_sequence = original_version + event_count",
+            "last_global_position = first_global_position + event_count - 1",
+        ):
+            with self.subTest(invariant=invariant):
+                self.assertIn(invariant, table_sql)
+
+    def test_invocation_admission_migration_adopts_only_exact_preexisting_objects(self):
+        self.prepare_event_store_migration_prefix(3)
+        migration = MIGRATIONS[3]
+        self.connection.executescript(migration_text(migration.filename))
+
+        self.assertEqual(self.ledger_count(), 3)
+        self.assertEqual(
+            apply_sqlite_migrations(self.connection, clock=lambda: NOW),
+            4,
+        )
+        self.assertEqual(self.ledger_count(), 4)
+
+        self.connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 4")
+        self.connection.execute("DROP INDEX idx_invocation_admissions_stream")
+        self.connection.execute(
+            "CREATE INDEX idx_invocation_admissions_stream ON invocation_admissions(stream_id)"
+        )
+        with self.assertRaisesRegex(
+            MigrationDriftError,
+            "idx_invocation_admissions_stream.*differs",
+        ):
+            apply_sqlite_migrations(self.connection, clock=lambda: NOW)
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertEqual(self.ledger_count(), 3)
+        drifted_sql = self.connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type = 'index' "
+            "AND name = 'idx_invocation_admissions_stream'"
+        ).fetchone()[0]
+        self.assertIn("invocation_admissions(stream_id)", drifted_sql)
+
+    def test_invocation_admission_applied_ledger_filename_and_checksum_drift_fail_closed(self):
+        self.prepare_event_store_migration_prefix(4)
+        original = self.connection.execute(
+            "SELECT filename, sha256 FROM main.qe_schema_migrations WHERE version = 4"
+        ).fetchone()
+
+        for column, replacement in (
+            ("filename", "0004_tampered.up.sql"),
+            ("sha256", "0" * 64),
+        ):
+            with self.subTest(column=column):
+                self.connection.execute(
+                    f"UPDATE main.qe_schema_migrations SET {column} = ? WHERE version = 4",
+                    (replacement,),
+                )
+                with self.assertRaisesRegex(
+                    MigrationDriftError,
+                    "migration 4 checksum or filename differs",
+                ):
+                    apply_sqlite_migrations(self.connection, clock=lambda: NOW)
+                self.connection.execute(
+                    "UPDATE main.qe_schema_migrations "
+                    "SET filename = ?, sha256 = ? WHERE version = 4",
+                    (original["filename"], original["sha256"]),
+                )
 
     def test_target_versions_must_be_a_continuous_registry_prefix(self):
         for invalid in ((2,), (1, 3), (1, 1), (3, 2, 1)):

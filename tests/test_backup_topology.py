@@ -12,6 +12,7 @@ from quantum_entanglement.backup_topology import (
     BACKUP_TOPOLOGY_REGISTRY_FORMAT,
     DOMAIN_MIGRATION_SIDECAR_PROFILE,
     EVENT_STORE_CORE_PROFILE,
+    INVOCATION_ADMISSION_PROFILE,
     LEGACY_MIGRATION_LEDGER_PROFILE,
     PROJECTION_STORE_PROFILE,
     REVOCATION_GUARD_PROFILE,
@@ -350,7 +351,7 @@ class CurrentBackupTopologyRegistryTests(unittest.TestCase):
         )
         self.assertEqual(
             BACKUP_TOPOLOGY_REGISTRY.registry_sha256,
-            "97350bc7e6cf94f021ab7468e66b2dc66cc5bc07c239fbdae1a32328ed4925f6",
+            "d940bea8e2a3c80cd76fc282a042667527632c236cf802fd39dab250005da2aa",
         )
         self.assertEqual(
             {profile.name: profile.profile_sha256 for profile in BACKUP_TOPOLOGY_REGISTRY.profiles},
@@ -369,6 +370,9 @@ class CurrentBackupTopologyRegistryTests(unittest.TestCase):
                 ),
                 EVENT_STORE_CORE_PROFILE: (
                     "883bad37cfb6a088894b073495b4c6c588e461bb6faeeef9dde8442576d63316"
+                ),
+                INVOCATION_ADMISSION_PROFILE: (
+                    "5eb9ccd2ced7ac47e27db5911f82f84ff5500ce252634efe26fd3686b6488a6d"
                 ),
                 LEGACY_MIGRATION_LEDGER_PROFILE: (
                     "23fe66dc01d9173d95b44c3278709a7042bc86aa8a0a51453672f169293f4e48"
@@ -450,7 +454,7 @@ class CurrentBackupTopologyRegistryTests(unittest.TestCase):
             for object_type, name, table_name, schema_sql in catalog_rows
         }
 
-        self.assertEqual(len(expected), 58)
+        self.assertEqual(len(expected), 63)
         self.assertEqual(actual, expected)
 
 

@@ -36,6 +36,7 @@ _CORE_TABLES = (
     "inbox_receipts",
     "invocation_jobs",
     "invocation_attempts",
+    "invocation_admissions",
     "artifact_blobs",
     "artifact_versions",
     "projection_offsets",

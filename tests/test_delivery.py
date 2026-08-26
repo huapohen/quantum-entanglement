@@ -169,7 +169,7 @@ class TransactionalDeliveryTests(unittest.TestCase):
 
         upgraded = SQLiteEventStore(upgrade_path, clock=self.clock)
         try:
-            self.assertEqual(current_schema_version(upgraded._connection), 3)
+            self.assertEqual(current_schema_version(upgraded._connection), len(MIGRATIONS))
             columns = {
                 row["name"]
                 for row in upgraded._connection.execute(
@@ -190,7 +190,7 @@ class TransactionalDeliveryTests(unittest.TestCase):
             upgraded.close()
 
     def test_schema_validator_covers_outbox_ambiguity_migration(self):
-        self.assertEqual(validate_sqlite_schema(self.store._connection), 3)
+        self.assertEqual(validate_sqlite_schema(self.store._connection), len(MIGRATIONS))
 
         self.store._connection.execute("DROP INDEX idx_outbox_ambiguities_opened")
         with self.assertRaisesRegex(
@@ -249,7 +249,7 @@ class TransactionalDeliveryTests(unittest.TestCase):
             rows = {
                 item.message_id: item for item in upgraded.read_outbox_ambiguities(open_only=False)
             }
-            self.assertEqual(current_schema_version(upgraded._connection), 3)
+            self.assertEqual(current_schema_version(upgraded._connection), len(MIGRATIONS))
             self.assertEqual(
                 rows["legacy-open"].lease_token_digest,
                 hashlib.sha256(open_token.encode("utf-8")).hexdigest(),
@@ -377,7 +377,7 @@ class TransactionalDeliveryTests(unittest.TestCase):
                 for future in (executor.submit(migrate), executor.submit(migrate))
             ]
 
-        self.assertEqual(results, [(3, False), (3, False)])
+        self.assertEqual(results, [(len(MIGRATIONS), False), (len(MIGRATIONS), False)])
         verified = SQLiteEventStore(concurrent_path, clock=self.clock)
         try:
             ambiguity = verified.read_outbox_ambiguities()[0]
@@ -419,7 +419,20 @@ class TransactionalDeliveryTests(unittest.TestCase):
 
     def test_outbox_ambiguity_down_migration_is_rehearsable(self):
         rollback_path = str(Path(self.tempdir.name) / "rollback-v3.sqlite3")
-        initialized = SQLiteEventStore(rollback_path, clock=self.clock)
+
+        def apply_only_v3(connection, *, clock, _process_guard=None):
+            return apply_sqlite_migrations(
+                connection,
+                migrations=MIGRATIONS[:3],
+                clock=clock,
+                _process_guard=_process_guard,
+            )
+
+        with mock.patch(
+            "quantum_entanglement.store.apply_sqlite_migrations",
+            side_effect=apply_only_v3,
+        ):
+            initialized = SQLiteEventStore(rollback_path, clock=self.clock)
         initialized.close()
         connection = sqlite3.connect(rollback_path, isolation_level=None)
         connection.row_factory = sqlite3.Row

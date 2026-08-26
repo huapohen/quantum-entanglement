@@ -35,6 +35,7 @@ from quantum_entanglement.attempts import (
     invocation_payload_digest,
 )
 from quantum_entanglement.events import DomainEvent
+from quantum_entanglement.migrations import MIGRATIONS
 from quantum_entanglement.store import SQLiteEventStore
 
 T0 = "2026-08-20T00:00:00Z"
@@ -2834,7 +2835,7 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         stored = event_store.append(DomainEvent("session:s1", "created", {}, "actor"))
         reopened = SQLiteInvocationAttemptStore(self.path, clock=self.clock)
 
-        self.assertEqual(reopened.schema_version(), 3)
+        self.assertEqual(reopened.schema_version(), len(MIGRATIONS))
         self.assertEqual(stored.sequence, 1)
         self.assertEqual(len(event_store.read_stream("session:s1")), 1)
         reopened.close()

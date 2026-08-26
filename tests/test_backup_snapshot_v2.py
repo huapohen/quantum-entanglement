@@ -35,7 +35,7 @@ from quantum_entanglement.domain_migrations import (
     install_domain_migration_sidecar,
     plan_bridge_migrations,
 )
-from quantum_entanglement.migrations import apply_sqlite_migrations
+from quantum_entanglement.migrations import MIGRATIONS, apply_sqlite_migrations, migration_text
 from quantum_entanglement.projections import SQLiteProjectionOffsetStore
 from quantum_entanglement.store import SQLiteEventStore
 from quantum_entanglement.tenancy import SQLiteRevocationRevisionGuard
@@ -170,9 +170,9 @@ class BackupManifestV2SnapshotTests(unittest.TestCase):
 
         self.assertIs(type(snapshot), BackupManifestV2Snapshot)
         self.assertEqual(snapshot.schema_state.shape, "bridged_prefix")
-        self.assertEqual(len(snapshot.schema_state.applied_migrations), 3)
-        self.assertEqual(len(snapshot.registry_topology.present_profiles), 8)
-        self.assertEqual(len(snapshot.registry_topology.schema_objects), 58)
+        self.assertEqual(len(snapshot.schema_state.applied_migrations), len(MIGRATIONS))
+        self.assertEqual(len(snapshot.registry_topology.present_profiles), 9)
+        self.assertEqual(len(snapshot.registry_topology.schema_objects), 63)
         self.assertEqual(
             tuple(item.profile for item in snapshot.registry_topology.present_profiles),
             tuple(profile.name for profile in BACKUP_TOPOLOGY_REGISTRY.profiles),
@@ -227,15 +227,22 @@ class BackupManifestV2SnapshotTests(unittest.TestCase):
             (3, "sidecar_absent"),
             (3, "legacy_prefix"),
             (3, "bridged_prefix"),
+            (4, "sidecar_absent"),
+            (4, "legacy_prefix"),
+            (4, "bridged_prefix"),
         )
         for migration_count, shape in cases:
             with self.subTest(migration_count=migration_count, shape=shape):
                 with tempfile.TemporaryDirectory() as tempdir:
                     path = str(Path(tempdir) / "prefix.sqlite3")
-                    if migration_count == 3:
+                    if migration_count >= 3:
                         event_store = SQLiteEventStore(path, clock=lambda: T0)
                         event_store.close()
                         connection = sqlite3.connect(path)
+                        for migration in reversed(MIGRATIONS[migration_count:]):
+                            connection.executescript(
+                                migration_text(migration.filename.replace(".up.sql", ".down.sql"))
+                            )
                         if shape != "sidecar_absent":
                             install_domain_migration_sidecar(connection)
                         if shape == "bridged_prefix":
