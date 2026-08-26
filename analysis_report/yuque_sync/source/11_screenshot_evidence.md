@@ -1,8 +1,8 @@
 # 证据库｜飞书与语雀调研截图（只读）
 
-> **本地传输源状态**：2026-08-27 已补入 11 张 Clawith 官网/文档截图索引，本页当前库存为 21 张；等待上传并回读私人语雀。当前状态为 `local_pending`，不是远端同步完成证明。上次远端回读只覆盖 00–09 共 10 张图片。
-> **受限内部证据**：00–09 为 `restricted-internal`、`unredacted-restricted-original`；15–25 虽来自公开官网/文档，仍按内部研究证据集管理。不得把本页或图片迁入公开空间；对外分享必须另建派生副本并人工复核。
-> **完整性索引**：[本地 `manifest.json`](https://github.com/huapohen/quantum-entanglement/blob/main/analysis_report/screenshots/manifest.json) 当前共 36,906 bytes，SHA-256 `81009095ea30db9b6ef92cd5b5760ed6b6a6f10ed0ab3cf9d5ed73d5a3de34f3`；逐图记录完整 SHA-256、字节数、像素尺寸、来源、证据等级与隐私分类。checksum 只能检测文件变化，不证明截图内容真实性，也不是数字签名或时间戳。
+> **本地传输源状态**：2026-08-27 已补入 12 张 Clawith 官网/文档截图索引，本页当前库存为 22 张；等待上传并回读私人语雀。当前状态为 `local_pending`，不是远端同步完成证明。上次远端回读只覆盖 00–09 共 10 张图片。
+> **受限内部证据**：00–09 为 `restricted-internal`、`unredacted-restricted-original`；15–26 虽来自公开官网/文档，仍按内部研究证据集管理。不得把本页或图片迁入公开空间；对外分享必须另建派生副本并人工复核。
+> **完整性索引**：[本地 `manifest.json`](https://github.com/huapohen/quantum-entanglement/blob/main/analysis_report/screenshots/manifest.json) 当前共 38,703 bytes，SHA-256 `9b7f4f275421302e4bf0122b80886bce60a38eeb067b9a39a06d67ac5dc8d354`；逐图记录完整 SHA-256、字节数、像素尺寸、来源、证据等级与隐私分类。checksum 只能检测文件变化，不证明截图内容真实性，也不是数字签名或时间戳。
 > 这些截图仅作为研究证据，只读采集；未向飞书或企微发送、回复、评论、@ 或上传任何内容。
 ## 证据分级
 - 飞书与语雀截图属于内部研究/讨论证据（C 级），用于确认需求背景与候选方向。
@@ -81,6 +81,10 @@ Pulse Trigger Engine 文档的 trigger 类型和生命周期；不是 exactly-on
 
 ## 25_clawith_plaza_legacy_docs_20260827.png
 Clawith 官方文档仍在线的 Plaza 内部社交 feed 旧叙事；固定源码新主路径已转为人审 Experience Library，两者必须分层理解。
+![image](IMAGE_PLACEHOLDER:image)
+
+## 26_clawith_rapid_rnd_claim_20260827.png
+Clawith 官网“极速研发部”交付卡片：PM 拆 spec、前后端并行、QA、一个真人终审及 commits/PR/tests 指标；同一卡片同时出现“仅需 3 天”和 `6d 21h`，只作为厂商表述与口径冲突证据，不证明真实交付速度或质量。
 ![image](IMAGE_PLACEHOLDER:image)
 
 ---
