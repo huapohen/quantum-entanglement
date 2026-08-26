@@ -34,6 +34,16 @@ from typing import (
 )
 
 from . import process_identity as _process_identity
+from .attempts import (
+    InvocationIntegrityError,
+    InvocationJob,
+    InvocationJobSpec,
+    SQLiteInvocationAttemptStore,
+    _enqueue_invocation_job_in_transaction,
+)
+from .attempts import (
+    _normalize_timestamp as _normalize_invocation_timestamp,
+)
 from .delivery import (
     InboxAppendResult,
     InboxReceipt,
@@ -79,6 +89,40 @@ class EventStoreJsonTooLargeError(EventStoreJsonValueError):
     """Raised before a JSON field exceeds a structural or encoded-size limit."""
 
 
+class InvocationAdmissionConflictError(RuntimeError):
+    """Raised when an atomic event/job admission boundary is reused differently."""
+
+
+class InvocationAdmissionCommitAmbiguityError(RuntimeError):
+    """Raised when admission may be durable but its COMMIT was not acknowledged."""
+
+    code = "invocation_admission_commit_ambiguous"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "invocation admission commit outcome is unknown; reopen the store and "
+            "reconcile the exact request"
+        )
+
+
+class InvocationAdmissionTransactionError(RuntimeError):
+    """Raised when admission COMMIT failed and rollback was confirmed."""
+
+    code = "invocation_admission_transaction_failed"
+
+    def __init__(self) -> None:
+        super().__init__("invocation admission transaction was rolled back")
+
+
+class EventStorePoisonedError(EventStoreIntegrityError):
+    """Raised after an ambiguous transaction quarantines this store instance."""
+
+    code = "event_store_poisoned"
+
+    def __init__(self) -> None:
+        super().__init__("event store is poisoned and must be reopened")
+
+
 _MAX_JSON_DEPTH = 64
 _MAX_JSON_NODES = 10_000
 _MAX_JSON_KEY_LENGTH = 512
@@ -87,7 +131,9 @@ _MAX_JSON_INTEGER_BITS = 4_096
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
 _EVENT_STORE_PROCESS_SIGNAL_TOKEN = object()
+_EVENT_STORE_ADMISSION_CONTROL_TOKEN = object()
 _EVENT_STORE_CHILD_GRAPH_QUARANTINE: List[object] = []
+_INVOCATION_ADMISSION_RECEIPT_FORMAT = "qe.invocation-admission-receipt/1"
 
 
 class _EventStoreProcessMismatchSignal(BaseException):
@@ -97,6 +143,48 @@ class _EventStoreProcessMismatchSignal(BaseException):
 
     def __init__(self, token: object) -> None:
         super().__init__("event store process mismatch")
+        self.token = token
+
+
+@dataclass(frozen=True)
+class _EventStoreControlDescriptor:
+    kind: str
+    system_exit_code: Optional[object] = None
+
+
+class _EventStoreAdmissionControlSignal(BaseException):
+    """Private trampoline signal that cannot retain caller-owned exception state."""
+
+    __slots__ = ("ambiguity", "descriptor", "token")
+
+    def __init__(
+        self,
+        descriptor: _EventStoreControlDescriptor,
+        *,
+        ambiguity: bool,
+        token: object,
+    ) -> None:
+        super().__init__("event store admission control signal")
+        self.descriptor = descriptor
+        self.ambiguity = ambiguity
+        self.token = token
+
+
+class _EventStoreAdmissionTransactionSignal(BaseException):
+    """Trusted classification emitted by the admission-aware transaction boundary."""
+
+    __slots__ = ("control", "outcome", "token")
+
+    def __init__(
+        self,
+        outcome: str,
+        *,
+        control: Optional[_EventStoreControlDescriptor],
+        token: object,
+    ) -> None:
+        super().__init__("event store admission transaction signal")
+        self.outcome = outcome
+        self.control = control
         self.token = token
 
 
@@ -199,7 +287,122 @@ def _is_exact_control_signal(error: BaseException) -> bool:
     return type(error) in (KeyboardInterrupt, SystemExit, GeneratorExit, CancelledError)
 
 
+def _event_store_control_descriptor(
+    error: BaseException,
+) -> Optional[_EventStoreControlDescriptor]:
+    if type(error) is KeyboardInterrupt:
+        return _EventStoreControlDescriptor("keyboard_interrupt")
+    if type(error) is GeneratorExit:
+        return _EventStoreControlDescriptor("generator_exit")
+    if type(error) is CancelledError:
+        return _EventStoreControlDescriptor("cancelled")
+    if type(error) is SystemExit:
+        code = error.code
+        if code is None or type(code) is bool:
+            safe_code: Optional[object] = code
+        elif type(code) is int and 0 <= code <= 255:
+            safe_code = code
+        else:
+            safe_code = 1
+        return _EventStoreControlDescriptor("system_exit", safe_code)
+    return None
+
+
+def _normalized_event_store_control_descriptor(
+    descriptor: object,
+) -> Optional[_EventStoreControlDescriptor]:
+    if type(descriptor) is not _EventStoreControlDescriptor:
+        return None
+    if descriptor.kind in {"keyboard_interrupt", "generator_exit", "cancelled"}:
+        if descriptor.system_exit_code is not None:
+            return None
+        return _EventStoreControlDescriptor(descriptor.kind)
+    if descriptor.kind == "system_exit":
+        code = descriptor.system_exit_code
+        if code is None or type(code) is bool:
+            safe_code: Optional[object] = code
+        elif type(code) is int and 0 <= code <= 255:
+            safe_code = code
+        else:
+            safe_code = 1
+        return _EventStoreControlDescriptor("system_exit", safe_code)
+    return None
+
+
+def _raise_clean_event_store_control(
+    descriptor: _EventStoreControlDescriptor,
+    *,
+    ambiguity: bool,
+) -> NoReturn:
+    normalized = _normalized_event_store_control_descriptor(descriptor)
+    if normalized is None or type(ambiguity) is not bool:
+        raise InvocationAdmissionCommitAmbiguityError() from None
+    cause: Optional[BaseException] = (
+        InvocationAdmissionCommitAmbiguityError() if ambiguity else None
+    )
+    expected_type: type[BaseException]
+    try:
+        if normalized.kind == "keyboard_interrupt":
+            expected_type = KeyboardInterrupt
+            raise KeyboardInterrupt() from cause
+        if normalized.kind == "generator_exit":
+            expected_type = GeneratorExit
+            raise GeneratorExit() from cause
+        if normalized.kind == "cancelled":
+            expected_type = CancelledError
+            raise CancelledError() from cause
+        if normalized.kind == "system_exit":
+            expected_type = SystemExit
+            raise SystemExit(normalized.system_exit_code) from cause
+        raise RuntimeError("unsupported event store control signal")
+    except BaseException as public_error:
+        if type(public_error) is expected_type:
+            public_error.__context__ = None
+        raise
+
+
+def _detach_exception(error: BaseException) -> None:
+    error_traceback = error.__traceback__
+    error.__cause__ = None
+    error.__context__ = None
+    error.__traceback__ = None
+    if error_traceback is not None:
+        traceback_module.clear_frames(error_traceback)
+
+
 _Method = TypeVar("_Method", bound=Callable[..., Any])
+
+
+def _sanitize_invocation_admission_controls(method: _Method) -> _Method:
+    """Reissue exact control flow after admission frames and caller arguments unwind."""
+
+    @wraps(method)
+    def sanitized(*args: Any, **kwargs: Any) -> Any:
+        descriptor: Optional[_EventStoreControlDescriptor] = None
+        ambiguity = False
+        try:
+            return method(*args, **kwargs)
+        except _EventStoreAdmissionControlSignal as error:
+            if (
+                type(error) is not _EventStoreAdmissionControlSignal
+                or error.token is not _EVENT_STORE_ADMISSION_CONTROL_TOKEN
+                or type(error.ambiguity) is not bool
+            ):
+                raise
+            descriptor = _normalized_event_store_control_descriptor(error.descriptor)
+            ambiguity = error.ambiguity
+            if descriptor is None:
+                raise
+            _detach_exception(error)
+        except BaseException as error:
+            descriptor = _event_store_control_descriptor(error)
+            if descriptor is None:
+                raise
+            _detach_exception(error)
+        del args, kwargs
+        _raise_clean_event_store_control(descriptor, ambiguity=ambiguity)
+
+    return cast(_Method, sanitized)
 
 
 def _bind_event_store_process(method: _Method) -> _Method:
@@ -211,6 +414,9 @@ def _bind_event_store_process(method: _Method) -> _Method:
         quarantine_required = True
         try:
             store._require_current_process()
+            if store._poisoned and method.__name__ not in {"close", "__exit__"}:
+                del args, kwargs, store
+                raise EventStorePoisonedError() from None
             return method(*args, **kwargs)
         except _EventStoreProcessMismatchSignal as error:
             trusted = _consume_event_store_process_signal(error)
@@ -357,6 +563,34 @@ class _JsonObjectSnapshot:
 class _EventWriteSnapshot:
     event: DomainEvent
     payload_json: str
+
+
+@dataclass(frozen=True)
+class InvocationAdmissionResult:
+    """The events and queued job committed by one atomic invocation admission."""
+
+    events: Tuple[StoredEvent, ...]
+    job: InvocationJob
+
+
+@dataclass(frozen=True)
+class _InvocationAdmissionReceipt:
+    """Validated durable proof that one event/job unit was admitted atomically."""
+
+    invocation_id: str
+    session_id: str
+    task_id: str
+    stream_id: str
+    job_idempotency_key: str
+    original_version: int
+    event_ids: Tuple[str, ...]
+    first_sequence: int
+    last_sequence: int
+    first_global_position: int
+    last_global_position: int
+    event_manifest_sha256: str
+    job_binding_sha256: str
+    admitted_at: str
 
 
 @dataclass(frozen=True)
@@ -575,6 +809,7 @@ class SQLiteEventStore:
         max_json_bytes: int = 1024 * 1024,
     ) -> None:
         self._process_owner = _process_identity.capture_process_owner()
+        self._poisoned = False
         process_mismatch = False
         connection: Optional[sqlite3.Connection] = None
         parent: Optional[str] = None
@@ -662,14 +897,18 @@ class SQLiteEventStore:
                 pass
 
     @contextmanager
-    def _locked(self) -> Iterator[None]:
+    def _locked(self, *, allow_poisoned: bool = False) -> Iterator[None]:
         """Acquire and release the RLock only while this process owns the store."""
 
         self._require_current_process()
+        if type(allow_poisoned) is not bool:
+            raise TypeError("allow_poisoned must be a boolean")
         lock = self._lock
         lock.acquire()
         try:
             self._require_current_process()
+            if self._poisoned and not allow_poisoned:
+                raise EventStorePoisonedError() from None
             yield
             self._require_current_process()
         finally:
@@ -757,30 +996,96 @@ class SQLiteEventStore:
             )
             self._require_current_process()
 
-    def _transaction(self) -> ContextManager[sqlite3.Connection]:
+    def _transaction(
+        self,
+        *,
+        classify_admission: bool = False,
+    ) -> ContextManager[sqlite3.Connection]:
         self._require_current_process()
-        return _EventStoreTransactionContext(self, self._transaction_inner())
+        if type(classify_admission) is not bool:
+            raise TypeError("classify_admission must be a boolean")
+        return _EventStoreTransactionContext(
+            self,
+            self._transaction_inner(classify_admission=classify_admission),
+        )
 
     @contextmanager
-    def _transaction_inner(self) -> Iterator[sqlite3.Connection]:
+    def _transaction_inner(
+        self,
+        *,
+        classify_admission: bool,
+    ) -> Iterator[sqlite3.Connection]:
         self._require_current_process()
         lock = self._lock
         lock.acquire()
         try:
             self._require_current_process()
+            if self._poisoned:
+                raise EventStorePoisonedError() from None
             connection = self._connection
-            connection.execute("BEGIN IMMEDIATE")
-            self._require_current_process()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._require_current_process()
+            except BaseException as begin_error:
+                if not self._process_is_current() or not classify_admission:
+                    raise
+                try:
+                    transaction_open = connection.in_transaction
+                    if type(transaction_open) is not bool:
+                        raise RuntimeError("SQLite returned a non-boolean transaction state")
+                    if transaction_open:
+                        connection.execute("ROLLBACK")
+                        self._require_current_process()
+                        rollback_state = connection.in_transaction
+                        if type(rollback_state) is not bool or rollback_state:
+                            raise RuntimeError("SQLite did not confirm BEGIN rollback")
+                except BaseException as rollback_error:
+                    control = _event_store_control_descriptor(
+                        begin_error
+                    ) or _event_store_control_descriptor(rollback_error)
+                    self._poisoned = True
+                    _detach_exception(rollback_error)
+                    _detach_exception(begin_error)
+                    raise _EventStoreAdmissionTransactionSignal(
+                        "ambiguous",
+                        control=control,
+                        token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+                    ) from None
+                control = _event_store_control_descriptor(begin_error)
+                _detach_exception(begin_error)
+                raise _EventStoreAdmissionTransactionSignal(
+                    "rolled_back",
+                    control=control,
+                    token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+                ) from None
             try:
                 yield connection
             except BaseException as body_error:
                 if not self._process_is_current():
                     raise
                 try:
-                    if connection.in_transaction:
+                    transaction_open = connection.in_transaction
+                    if type(transaction_open) is not bool:
+                        raise RuntimeError("SQLite returned a non-boolean transaction state")
+                    if transaction_open:
                         connection.execute("ROLLBACK")
                         self._require_current_process()
-                except BaseException:
+                        rollback_state = connection.in_transaction
+                        if type(rollback_state) is not bool or rollback_state:
+                            raise RuntimeError("SQLite did not confirm body rollback")
+                except BaseException as rollback_error:
+                    if classify_admission:
+                        control = _event_store_control_descriptor(
+                            body_error
+                        ) or _event_store_control_descriptor(rollback_error)
+                        self._poisoned = True
+                        _detach_exception(rollback_error)
+                        _detach_exception(body_error)
+                        raise _EventStoreAdmissionTransactionSignal(
+                            "ambiguous",
+                            control=control,
+                            token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+                        ) from None
                     if not _is_exact_control_signal(body_error):
                         raise
                 raise
@@ -792,13 +1097,51 @@ class SQLiteEventStore:
                 except BaseException as commit_error:
                     if not self._process_is_current():
                         raise
+                    transaction_was_open = False
+                    rollback_confirmed = False
                     try:
-                        if connection.in_transaction:
+                        transaction_was_open = connection.in_transaction
+                        if type(transaction_was_open) is not bool:
+                            raise RuntimeError("SQLite returned a non-boolean transaction state")
+                        if transaction_was_open:
                             connection.execute("ROLLBACK")
                             self._require_current_process()
-                    except BaseException:
+                            rollback_state = connection.in_transaction
+                            if type(rollback_state) is not bool:
+                                raise RuntimeError(
+                                    "SQLite returned a non-boolean transaction state"
+                                )
+                            rollback_confirmed = not rollback_state
+                    except BaseException as rollback_error:
+                        if classify_admission:
+                            control = _event_store_control_descriptor(
+                                commit_error
+                            ) or _event_store_control_descriptor(rollback_error)
+                            self._poisoned = True
+                            _detach_exception(rollback_error)
+                            _detach_exception(commit_error)
+                            raise _EventStoreAdmissionTransactionSignal(
+                                "ambiguous",
+                                control=control,
+                                token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+                            ) from None
                         if not _is_exact_control_signal(commit_error):
                             raise
+                    if classify_admission:
+                        outcome = (
+                            "rolled_back"
+                            if transaction_was_open and rollback_confirmed
+                            else "ambiguous"
+                        )
+                        control = _event_store_control_descriptor(commit_error)
+                        if outcome == "ambiguous":
+                            self._poisoned = True
+                        _detach_exception(commit_error)
+                        raise _EventStoreAdmissionTransactionSignal(
+                            outcome,
+                            control=control,
+                            token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+                        ) from None
                     raise
         finally:
             if self._process_is_current():
@@ -975,6 +1318,311 @@ class SQLiteEventStore:
             idempotency_key=idempotency_key,
         )
         return _EventWriteSnapshot(snapshot_event, payload.encoded)
+
+    @staticmethod
+    def _snapshot_invocation_job_spec(spec: InvocationJobSpec) -> InvocationJobSpec:
+        """Copy an exact immutable job request before acquiring the write transaction."""
+
+        if type(spec) is not InvocationJobSpec:
+            raise TypeError("spec must be an exact InvocationJobSpec")
+        return InvocationJobSpec(
+            session_id=object.__getattribute__(spec, "session_id"),
+            plan_id=object.__getattribute__(spec, "plan_id"),
+            task_id=object.__getattribute__(spec, "task_id"),
+            agent_id=object.__getattribute__(spec, "agent_id"),
+            idempotency_key=object.__getattribute__(spec, "idempotency_key"),
+            payload_digest=object.__getattribute__(spec, "payload_digest"),
+            invocation_id=object.__getattribute__(spec, "invocation_id"),
+            priority=object.__getattribute__(spec, "priority"),
+            max_attempts=object.__getattribute__(spec, "max_attempts"),
+            available_at=object.__getattribute__(spec, "available_at"),
+        )
+
+    @staticmethod
+    def _invocation_event_manifest_sha256(
+        batch: Tuple[_EventWriteSnapshot, ...],
+    ) -> str:
+        """Bind the full ordered immutable event request without storing its payload twice."""
+
+        manifest = [
+            [
+                item.event.stream_id,
+                item.event.event_type,
+                item.event.actor_id,
+                item.event.event_id,
+                item.event.timestamp,
+                item.event.correlation_id,
+                item.event.causation_id,
+                item.event.idempotency_key,
+                item.payload_json,
+            ]
+            for item in batch
+        ]
+        encoded = json.dumps(
+            manifest,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _invocation_job_binding_sha256(spec: InvocationJobSpec) -> str:
+        """Bind every immutable enqueue field using the enqueue timestamp semantics."""
+
+        requested_available_at = (
+            _normalize_invocation_timestamp(spec.available_at, "available_at")
+            if spec.available_at is not None
+            else None
+        )
+        encoded = json.dumps(
+            [
+                spec.invocation_id,
+                spec.session_id,
+                spec.plan_id,
+                spec.task_id,
+                spec.agent_id,
+                spec.idempotency_key,
+                spec.payload_digest,
+                spec.priority,
+                spec.max_attempts,
+                requested_available_at,
+            ],
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _invocation_job_spec_from_job(job: InvocationJob) -> InvocationJobSpec:
+        """Recover the immutable portion of a validated persisted job."""
+
+        return InvocationJobSpec(
+            invocation_id=job.invocation_id,
+            session_id=job.session_id,
+            plan_id=job.plan_id,
+            task_id=job.task_id,
+            agent_id=job.agent_id,
+            idempotency_key=job.idempotency_key,
+            payload_digest=job.payload_digest,
+            priority=job.priority,
+            max_attempts=job.max_attempts,
+            available_at=job.requested_available_at,
+        )
+
+    @staticmethod
+    def _row_to_invocation_admission_receipt(
+        row: sqlite3.Row,
+    ) -> _InvocationAdmissionReceipt:
+        """Decode one receipt strictly; durable defects are integrity failures."""
+
+        try:
+            receipt_format = _persisted_text(
+                row["receipt_format"],
+                "invocation admission receipt format",
+                required=True,
+            )
+            if receipt_format != _INVOCATION_ADMISSION_RECEIPT_FORMAT:
+                raise ValueError("persisted invocation admission receipt format is unsupported")
+            invocation_id = _persisted_text(
+                row["invocation_id"], "invocation admission invocation_id", required=True
+            )
+            session_id = _persisted_text(
+                row["session_id"], "invocation admission session_id", required=True
+            )
+            task_id = _persisted_text(row["task_id"], "invocation admission task_id", required=True)
+            stream_id = _persisted_text(
+                row["stream_id"], "invocation admission stream_id", required=True
+            )
+            job_idempotency_key = _persisted_text(
+                row["job_idempotency_key"],
+                "invocation admission job idempotency key",
+                required=True,
+            )
+            original_version = _persisted_integer(
+                row["original_version"],
+                "invocation admission original version",
+            )
+            event_count = _persisted_integer(
+                row["event_count"],
+                "invocation admission event count",
+                minimum=1,
+            )
+            event_ids_json = _persisted_text(
+                row["event_ids_json"],
+                "invocation admission event IDs",
+                required=True,
+            )
+            decoded_event_ids = json.loads(
+                event_ids_json,
+                parse_constant=_reject_json_constant,
+            )
+            if type(decoded_event_ids) is not list or len(decoded_event_ids) != event_count:
+                raise ValueError("persisted invocation admission event IDs are malformed")
+            event_ids = tuple(
+                _persisted_text(
+                    event_id,
+                    "invocation admission event ID",
+                    required=True,
+                )
+                for event_id in decoded_event_ids
+            )
+            if len(set(event_ids)) != len(event_ids):
+                raise ValueError("persisted invocation admission repeats an event ID")
+            canonical_event_ids = json.dumps(
+                list(event_ids),
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if canonical_event_ids != event_ids_json:
+                raise ValueError("persisted invocation admission event IDs are not canonical")
+            first_sequence = _persisted_integer(
+                row["first_sequence"],
+                "invocation admission first sequence",
+                minimum=1,
+            )
+            last_sequence = _persisted_integer(
+                row["last_sequence"],
+                "invocation admission last sequence",
+                minimum=1,
+            )
+            first_global_position = _persisted_integer(
+                row["first_global_position"],
+                "invocation admission first global position",
+                minimum=1,
+            )
+            last_global_position = _persisted_integer(
+                row["last_global_position"],
+                "invocation admission last global position",
+                minimum=1,
+            )
+            event_manifest_sha256 = _persisted_text(
+                row["event_manifest_sha256"],
+                "invocation admission event manifest digest",
+                required=True,
+            )
+            job_binding_sha256 = _persisted_text(
+                row["job_binding_sha256"],
+                "invocation admission job binding digest",
+                required=True,
+            )
+            for digest in (event_manifest_sha256, job_binding_sha256):
+                if len(digest) != 64 or any(
+                    character not in "0123456789abcdef" for character in digest
+                ):
+                    raise ValueError("persisted invocation admission digest is not canonical")
+            admitted_at = _persisted_text(
+                row["admitted_at"],
+                "invocation admission admitted_at",
+                required=True,
+            )
+            if _normalize_invocation_timestamp(admitted_at, "admitted_at") != admitted_at:
+                raise ValueError("persisted invocation admission timestamp is not canonical")
+            if stream_id != "session:%s" % session_id:
+                raise ValueError("persisted invocation admission stream binding is malformed")
+            if first_sequence != original_version + 1:
+                raise ValueError("persisted invocation admission first sequence is malformed")
+            if last_sequence != original_version + event_count:
+                raise ValueError("persisted invocation admission last sequence is malformed")
+            if last_global_position != first_global_position + event_count - 1:
+                raise ValueError("persisted invocation admission global range is malformed")
+            return _InvocationAdmissionReceipt(
+                invocation_id=invocation_id,
+                session_id=session_id,
+                task_id=task_id,
+                stream_id=stream_id,
+                job_idempotency_key=job_idempotency_key,
+                original_version=original_version,
+                event_ids=event_ids,
+                first_sequence=first_sequence,
+                last_sequence=last_sequence,
+                first_global_position=first_global_position,
+                last_global_position=last_global_position,
+                event_manifest_sha256=event_manifest_sha256,
+                job_binding_sha256=job_binding_sha256,
+                admitted_at=admitted_at,
+            )
+        except EventStoreIntegrityError:
+            raise
+        except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise EventStoreIntegrityError(
+                "persisted invocation admission receipt is malformed"
+            ) from exc
+
+    def _validate_invocation_admission_receipt(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> Tuple[_InvocationAdmissionReceipt, Tuple[StoredEvent, ...], InvocationJob]:
+        """Prove that a receipt still binds the exact durable event/job state."""
+
+        receipt = self._row_to_invocation_admission_receipt(row)
+        job_row = connection.execute(
+            "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+            (receipt.invocation_id,),
+        ).fetchone()
+        if job_row is None:
+            raise EventStoreIntegrityError("invocation admission receipt refers to a missing job")
+        try:
+            job = SQLiteInvocationAttemptStore._row_to_job(job_row)
+            durable_job_digest = self._invocation_job_binding_sha256(
+                self._invocation_job_spec_from_job(job)
+            )
+        except (InvocationIntegrityError, TypeError, ValueError) as exc:
+            raise EventStoreIntegrityError(
+                "invocation admission receipt refers to a malformed job"
+            ) from exc
+        if (
+            job.session_id != receipt.session_id
+            or job.task_id != receipt.task_id
+            or job.idempotency_key != receipt.job_idempotency_key
+            or job.created_at != receipt.admitted_at
+            or durable_job_digest != receipt.job_binding_sha256
+        ):
+            raise EventStoreIntegrityError(
+                "invocation admission receipt job binding is inconsistent"
+            )
+
+        stored_events: List[StoredEvent] = []
+        stored_snapshots: List[_EventWriteSnapshot] = []
+        for offset, event_id in enumerate(receipt.event_ids):
+            event_row = connection.execute(
+                "SELECT * FROM events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            if event_row is None:
+                raise EventStoreIntegrityError(
+                    "invocation admission receipt refers to a missing event"
+                )
+            try:
+                stored = self._row_to_event(event_row)
+                snapshot = self._snapshot_event(stored.event)
+            except (EventStoreJsonError, TypeError, ValueError) as exc:
+                raise EventStoreIntegrityError(
+                    "invocation admission receipt refers to a malformed event"
+                ) from exc
+            if (
+                stored.event.stream_id != receipt.stream_id
+                or stored.sequence != receipt.first_sequence + offset
+                or stored.global_position != receipt.first_global_position + offset
+            ):
+                raise EventStoreIntegrityError(
+                    "invocation admission receipt event range is inconsistent"
+                )
+            stored_events.append(stored)
+            stored_snapshots.append(snapshot)
+        if (
+            stored_events[-1].sequence != receipt.last_sequence
+            or stored_events[-1].global_position != receipt.last_global_position
+            or self._invocation_event_manifest_sha256(tuple(stored_snapshots))
+            != receipt.event_manifest_sha256
+        ):
+            raise EventStoreIntegrityError(
+                "invocation admission receipt event manifest is inconsistent"
+            )
+        return receipt, tuple(stored_events), job
 
     def _snapshot_outbox_message(self, message: OutboxMessage) -> _OutboxWriteSnapshot:
         if type(message) is not OutboxMessage:
@@ -1653,6 +2301,309 @@ class SQLiteEventStore:
                 stored.append(StoredEvent(event, sequence, int(global_position)))
             return tuple(stored)
 
+    @_sanitize_invocation_admission_controls
+    @_bind_event_store_process
+    def append_invocation_admission(
+        self,
+        events: Iterable[DomainEvent],
+        spec: InvocationJobSpec,
+        expected_version: Optional[int] = None,
+    ) -> InvocationAdmissionResult:
+        """Atomically append one stream batch and enqueue its invocation job.
+
+        The event stream is bound to ``session:<spec.session_id>``. Exact UoW retries
+        return the original rows, while partial or changed event/job bindings fail
+        closed. Unlike standalone enqueue, a retry must reuse the same invocation ID,
+        event IDs, event order, and event content. This method only admits durable work;
+        it never claims or executes the queued job.
+
+        If transaction exit fails after the complete body was assembled, the current
+        transaction layer cannot safely distinguish a rejected COMMIT from a committed
+        write whose acknowledgement was lost. The method therefore raises
+        ``InvocationAdmissionCommitAmbiguityError`` and requires reopen/readback retry.
+        """
+
+        raw_batch = tuple(events)
+        self._require_current_process()
+        batch = tuple(self._snapshot_event(event) for event in raw_batch)
+        spec_snapshot = self._snapshot_invocation_job_spec(spec)
+        expected_version_snapshot = (
+            None
+            if expected_version is None
+            else _caller_sqlite_integer(expected_version, "expected_version")
+        )
+        if not batch:
+            raise ValueError("invocation admission requires at least one event")
+        session_stream_id = "session:%s" % spec_snapshot.session_id
+        if any(item.event.stream_id != session_stream_id for item in batch):
+            raise ValueError("all admission events must use session:<spec.session_id> as stream_id")
+
+        event_ids: set[str] = set()
+        idempotency_keys: set[str] = set()
+        for item in batch:
+            event = item.event
+            if event.event_id in event_ids:
+                raise InvocationAdmissionConflictError("invocation admission repeats an event_id")
+            event_ids.add(event.event_id)
+            if event.idempotency_key is not None:
+                if event.idempotency_key in idempotency_keys:
+                    raise InvocationAdmissionConflictError(
+                        "invocation admission repeats an event idempotency_key"
+                    )
+                idempotency_keys.add(event.idempotency_key)
+
+        requested_event_ids = tuple(item.event.event_id for item in batch)
+        requested_event_manifest_sha256 = self._invocation_event_manifest_sha256(batch)
+        requested_job_binding_sha256 = self._invocation_job_binding_sha256(spec_snapshot)
+
+        self._require_current_process()
+        completed_body = False
+        result: Optional[InvocationAdmissionResult] = None
+        commit_exit_failed = False
+        transaction_failed = False
+        pending_control: Optional[_EventStoreControlDescriptor] = None
+        pending_control_ambiguity = False
+        try:
+            with self._transaction(classify_admission=True) as connection:
+                receipt_rows = connection.execute(
+                    """
+                    SELECT * FROM invocation_admissions
+                    WHERE invocation_id = ?
+                       OR (session_id = ? AND task_id = ?)
+                       OR (session_id = ? AND job_idempotency_key = ?)
+                    """,
+                    (
+                        spec_snapshot.invocation_id,
+                        spec_snapshot.session_id,
+                        spec_snapshot.task_id,
+                        spec_snapshot.session_id,
+                        spec_snapshot.idempotency_key,
+                    ),
+                ).fetchall()
+                if len(receipt_rows) > 1:
+                    raise InvocationAdmissionConflictError(
+                        "invocation admission identities are bound to different receipts"
+                    )
+                if receipt_rows:
+                    if receipt_rows[0]["invocation_id"] != spec_snapshot.invocation_id:
+                        raise InvocationAdmissionConflictError(
+                            "invocation admission identity is already bound differently"
+                        )
+                    receipt, existing_events, job = self._validate_invocation_admission_receipt(
+                        connection,
+                        receipt_rows[0],
+                    )
+                    if (
+                        receipt.session_id != spec_snapshot.session_id
+                        or receipt.task_id != spec_snapshot.task_id
+                        or receipt.stream_id != session_stream_id
+                        or receipt.job_idempotency_key != spec_snapshot.idempotency_key
+                        or receipt.event_ids != requested_event_ids
+                        or receipt.event_manifest_sha256 != requested_event_manifest_sha256
+                        or receipt.job_binding_sha256 != requested_job_binding_sha256
+                        or tuple(stored.event for stored in existing_events)
+                        != tuple(item.event for item in batch)
+                    ):
+                        raise InvocationAdmissionConflictError(
+                            "invocation admission receipt is bound to different work"
+                        )
+                    if (
+                        expected_version_snapshot is not None
+                        and expected_version_snapshot != receipt.original_version
+                    ):
+                        raise ConcurrencyError(
+                            "stream %s expected version %d but admission began at %d"
+                            % (
+                                session_stream_id,
+                                expected_version_snapshot,
+                                receipt.original_version,
+                            )
+                        )
+                    result = InvocationAdmissionResult(existing_events, job)
+                else:
+                    for item in batch:
+                        event = item.event
+                        if event.idempotency_key is None:
+                            rows = connection.execute(
+                                "SELECT * FROM events WHERE event_id = ?",
+                                (event.event_id,),
+                            ).fetchall()
+                        else:
+                            rows = connection.execute(
+                                """
+                                SELECT * FROM events
+                                WHERE event_id = ?
+                                   OR (stream_id = ? AND idempotency_key = ?)
+                                """,
+                                (event.event_id, event.stream_id, event.idempotency_key),
+                            ).fetchall()
+                        if rows:
+                            raise InvocationAdmissionConflictError(
+                                "invocation admission has partial or unproven events without "
+                                "a durable receipt"
+                            )
+
+                    job_rows = connection.execute(
+                        """
+                        SELECT * FROM invocation_jobs
+                        WHERE invocation_id = ?
+                           OR (session_id = ? AND task_id = ?)
+                           OR (session_id = ? AND idempotency_key = ?)
+                        """,
+                        (
+                            spec_snapshot.invocation_id,
+                            spec_snapshot.session_id,
+                            spec_snapshot.task_id,
+                            spec_snapshot.session_id,
+                            spec_snapshot.idempotency_key,
+                        ),
+                    ).fetchall()
+                    if job_rows:
+                        raise InvocationAdmissionConflictError(
+                            "invocation admission has a partial or unproven job without "
+                            "a durable receipt"
+                        )
+
+                    row = connection.execute(
+                        """
+                        SELECT COALESCE(MAX(sequence), 0) AS version
+                        FROM events WHERE stream_id = ?
+                        """,
+                        (session_stream_id,),
+                    ).fetchone()
+                    current_version = int(row["version"])
+                    if (
+                        expected_version_snapshot is not None
+                        and expected_version_snapshot != current_version
+                    ):
+                        raise ConcurrencyError(
+                            "stream %s expected version %d but is %d"
+                            % (
+                                session_stream_id,
+                                expected_version_snapshot,
+                                current_version,
+                            )
+                        )
+                    stored_events: List[StoredEvent] = []
+                    for offset, item in enumerate(batch):
+                        stored, inserted = self._append_in_transaction(
+                            connection,
+                            item,
+                            current_version + offset,
+                        )
+                        if not inserted:  # pragma: no cover - guarded by identity reads.
+                            raise InvocationAdmissionConflictError(
+                                "invocation admission event appeared during its transaction"
+                            )
+                        stored_events.append(stored)
+                    if any(
+                        stored.global_position != stored_events[0].global_position + offset
+                        for offset, stored in enumerate(stored_events)
+                    ):
+                        raise EventStoreIntegrityError(
+                            "invocation admission events did not receive a contiguous range"
+                        )
+                    now = _normalize_invocation_timestamp(self._now(), "clock")
+                    job = _enqueue_invocation_job_in_transaction(
+                        connection,
+                        spec_snapshot,
+                        now=now,
+                    )
+                    event_ids_json = json.dumps(
+                        list(requested_event_ids),
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO invocation_admissions (
+                            invocation_id, receipt_format, session_id, task_id,
+                            stream_id, job_idempotency_key, original_version,
+                            event_count, event_ids_json, first_sequence, last_sequence,
+                            first_global_position, last_global_position,
+                            event_manifest_sha256, job_binding_sha256, admitted_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            spec_snapshot.invocation_id,
+                            _INVOCATION_ADMISSION_RECEIPT_FORMAT,
+                            spec_snapshot.session_id,
+                            spec_snapshot.task_id,
+                            session_stream_id,
+                            spec_snapshot.idempotency_key,
+                            current_version,
+                            len(stored_events),
+                            event_ids_json,
+                            stored_events[0].sequence,
+                            stored_events[-1].sequence,
+                            stored_events[0].global_position,
+                            stored_events[-1].global_position,
+                            requested_event_manifest_sha256,
+                            requested_job_binding_sha256,
+                            now,
+                        ),
+                    )
+                    receipt_row = connection.execute(
+                        "SELECT * FROM invocation_admissions WHERE invocation_id = ?",
+                        (spec_snapshot.invocation_id,),
+                    ).fetchone()
+                    if receipt_row is None:  # pragma: no cover - same transaction insert.
+                        raise RuntimeError("invocation admission receipt disappeared")
+                    _receipt, verified_events, verified_job = (
+                        self._validate_invocation_admission_receipt(
+                            connection,
+                            receipt_row,
+                        )
+                    )
+                    result = InvocationAdmissionResult(verified_events, verified_job)
+                completed_body = True
+        except _EventStoreAdmissionTransactionSignal as error:
+            trusted = (
+                type(error) is _EventStoreAdmissionTransactionSignal
+                and error.token is _EVENT_STORE_ADMISSION_CONTROL_TOKEN
+                and error.outcome in {"rolled_back", "ambiguous"}
+            )
+            control = _normalized_event_store_control_descriptor(error.control)
+            if not trusted or (error.control is not None and control is None):
+                raise
+            outcome = error.outcome
+            _detach_exception(error)
+            if control is not None:
+                pending_control = control
+                pending_control_ambiguity = outcome == "ambiguous"
+            elif outcome == "rolled_back":
+                transaction_failed = True
+            else:
+                commit_exit_failed = True
+        except sqlite3.Error as error:
+            _detach_exception(error)
+            transaction_failed = True
+        except BaseException as error:
+            if completed_body and self._process_is_current():
+                descriptor = _event_store_control_descriptor(error)
+                if descriptor is not None:
+                    _detach_exception(error)
+                    pending_control = descriptor
+                    pending_control_ambiguity = True
+                else:
+                    commit_exit_failed = True
+            else:
+                raise
+        if pending_control is not None:
+            raise _EventStoreAdmissionControlSignal(
+                pending_control,
+                ambiguity=pending_control_ambiguity,
+                token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+            ) from None
+        if transaction_failed:
+            raise InvocationAdmissionTransactionError() from None
+        if commit_exit_failed:
+            raise InvocationAdmissionCommitAmbiguityError() from None
+        if result is None:  # pragma: no cover - every completed body assigns a result.
+            raise RuntimeError("invocation admission completed without a result")
+        return result
+
     @_bind_event_store_process
     def read_stream(self, stream_id: str, after_sequence: int = 0) -> Tuple[StoredEvent, ...]:
         stream_id_snapshot = _caller_text(stream_id, "stream_id")
@@ -2249,7 +3200,7 @@ class SQLiteEventStore:
 
     @_bind_event_store_process
     def close(self) -> None:
-        with self._locked():
+        with self._locked(allow_poisoned=True):
             self._connection.close()
 
     @_bind_event_store_process

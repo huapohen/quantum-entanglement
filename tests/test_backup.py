@@ -27,6 +27,7 @@ from quantum_entanglement.backup import (
 )
 from quantum_entanglement.delivery import OutboxMessage, OutboxStatus
 from quantum_entanglement.events import DomainEvent
+from quantum_entanglement.migrations import current_schema_version, migration_text
 from quantum_entanglement.projections import SQLiteProjectionOffsetStore
 from quantum_entanglement.store import SQLiteEventStore
 from quantum_entanglement.tenancy import SQLiteRevocationRevisionGuard, TenantId
@@ -599,6 +600,101 @@ class SQLiteBackupTests(unittest.TestCase):
             item = artifacts.get("tenant-1", "workspace-1", "artifact-1")
             self.assertIsNotNone(item)
             self.assertEqual(item.content, b"# Result\n")
+
+    def test_backup_restore_preserves_nonempty_invocation_admission_receipt(self):
+        events = (
+            DomainEvent(
+                "session:session-2",
+                "task.execution_requested",
+                {"taskId": "task-2"},
+                "actor-1",
+                event_id="event-requested-2",
+                timestamp=T0,
+                idempotency_key="admission:requested:2",
+            ),
+            DomainEvent(
+                "session:session-2",
+                "task.status_changed",
+                {"taskId": "task-2", "status": "running"},
+                "orchestrator",
+                event_id="event-running-2",
+                timestamp=T0,
+                causation_id="event-requested-2",
+                idempotency_key="admission:running:2",
+            ),
+        )
+        spec = InvocationJobSpec(
+            invocation_id="invocation-2",
+            session_id="session-2",
+            plan_id="plan-2",
+            task_id="task-2",
+            agent_id="agent-2",
+            idempotency_key="invoke:task-2",
+            payload_digest=invocation_payload_digest({"task": "task-2"}),
+        )
+        with SQLiteEventStore(str(self.source), clock=lambda: T0) as event_store:
+            admitted = event_store.append_invocation_admission(
+                events,
+                spec,
+                expected_version=0,
+            )
+
+        backup, manifest_path, created = self.create_backup()
+        self.assertEqual(created.table_counts["invocation_admissions"], 1)
+        self.assertEqual([item["version"] for item in created.migrations], [1, 2, 3, 4])
+
+        destination = self.root / "restore-admission" / "state.sqlite3"
+        restored = restore_sqlite_backup(
+            backup,
+            destination,
+            manifest_path=manifest_path,
+        )
+        self.assertEqual(restored, created)
+        self.assertEqual(restored.table_counts["invocation_admissions"], 1)
+        with SQLiteEventStore(str(destination), clock=lambda: T0) as restored_store:
+            replay = restored_store.append_invocation_admission(
+                events,
+                spec,
+                expected_version=0,
+            )
+            self.assertEqual(replay, admitted)
+            self.assertEqual(
+                restored_store._connection.execute(
+                    "PRAGMA foreign_key_check('invocation_admissions')"
+                ).fetchall(),
+                [],
+            )
+
+    def test_v3_backup_restores_then_upgrades_to_invocation_admission_migration(self):
+        with SQLiteEventStore(str(self.source), clock=lambda: T0):
+            pass
+        with closing(sqlite3.connect(self.source, isolation_level=None)) as connection:
+            connection.executescript(migration_text("0004_invocation_admissions.down.sql"))
+            connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 4")
+
+        backup, manifest_path, created = self.create_backup()
+        self.assertEqual([item["version"] for item in created.migrations], [1, 2, 3])
+        self.assertNotIn("invocation_admissions", created.table_counts)
+
+        destination = self.root / "restore-v3" / "state.sqlite3"
+        restored = restore_sqlite_backup(
+            backup,
+            destination,
+            manifest_path=manifest_path,
+        )
+        self.assertEqual(restored, created)
+        with SQLiteEventStore(str(destination), clock=lambda: T0) as upgraded:
+            self.assertEqual(current_schema_version(upgraded._connection), 4)
+            self.assertEqual(
+                upgraded._connection.execute(
+                    "SELECT COUNT(*) FROM invocation_admissions"
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                upgraded._connection.execute("PRAGMA foreign_key_check").fetchall(),
+                [],
+            )
 
     def test_restore_rehearses_outbox_ambiguity_artifact_and_attempt_state(self):
         events = SQLiteEventStore(str(self.source), clock=lambda: T0)
