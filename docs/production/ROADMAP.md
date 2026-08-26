@@ -209,13 +209,119 @@ decision.
 ## Parallel product track
 
 The kernel becomes commercially useful only through a visible business workflow. In
-parallel with Phases 1–4, the product track must deliver:
+parallel with Phases 1–4, the product track turns the useful product mechanisms identified
+in the fixed-source Clawith study into WanWork objects while retaining this repository's
+event, authority, Artifact, receipt, unknown-result and fencing boundaries. The source and
+claim limitations behind these choices remain documented in
+[`../../analysis_report/research/20_clawith_competitive_analysis.md`](../../analysis_report/research/20_clawith_competitive_analysis.md).
 
-- group chat, task graph, artifact, Needs You and audit views from the same event source;
-- a three-to-five Agent workflow with explicit inputs, outputs and acceptance criteria;
-- human review, revision and takeover paths;
-- usage, latency, cost and accepted-artifact metrics;
-- accessibility, localization and desktop/web deployment validation.
+The milestones below are named `PT-*` so that they cannot be confused with production
+Gates A–E in [`CURRENT_READINESS.md`](./CURRENT_READINESS.md). A product-track milestone,
+demo, screenshot or browser test is **not** evidence that any Gate A–E is closed. Gate
+promotion still requires the kernel, security, recovery, deployment and retained-evidence
+criteria owned by that gate; the current gate state remains the one recorded in
+`CURRENT_READINESS.md`.
 
-The first pilot is allowed to be narrow. It is not allowed to bypass the production gates
-for data integrity, authority or external side effects.
+### PT-0 — reliable product substrate
+
+Before long-lived or proactive Agent behavior is enabled, complete the atomic acceptance
+and recovery chain:
+
+- accept Result, canonical Artifact, attempt terminal state and task terminal state in one
+  authoritative transaction with exact ACK-loss readback;
+- bind crash/kill recovery to the invocation-start and result receipts, including stale
+  worker fencing and heartbeat supervision;
+- persist external action receipts and route uncertain effects to explicit
+  `effect_unknown` reconciliation;
+- expose only tenant/workspace-scoped, authenticated commands and same-source projections.
+
+The worker gate remains default-off until atomic result acceptance and receipt-bound
+recovery pass the documented crash matrix. After that boundary is proven, promotion may
+initially allow only explicitly allowlisted pure, fake, no-op or read-only workers. No
+proactive scheduler may dispatch a real connector, and no external messaging connector may
+be enabled, until its action-time policy, provider receipt, idempotency, unknown-result
+reconciliation and fault-injection gates pass. Feishu and WeCom sending remains prohibited
+without a new explicit user authorization.
+
+### PT-1 — persistent organization and native collaboration space
+
+Deliver the first durable three-to-five Agent workflow with explicit inputs, outputs and
+acceptance criteria:
+
+- tenant-scoped `Workspace`, stable `AgentIdentity`, immutable `AgentRevision`, and a Run
+  pinned to the revision that actually executed;
+- Human/Agent `Participant`, long-lived `Crew`, membership, Directory, message/read state,
+  and explicit `on_behalf_of` when one actor represents another;
+- group chat, task graph, Artifact, Needs You and audit/timeline views projected from the
+  same events;
+- deterministic single-Agent mention routing and platform-validated multi-Agent planning;
+- human review, revision and takeover paths without regressing arbitrary custom
+  instructions to a fixed demonstration prompt.
+
+PT-1 evidence must show that restart preserves groups, members, messages, tasks, Artifacts
+and approvals; duplicate inbound events do not create duplicate messages or Runs; all APIs
+enforce tenant/workspace scope; an Agent cannot impersonate another Participant; and every
+downstream consumer pins an accepted Artifact version.
+
+### PT-2 — reliable handoff and shared work
+
+Add a versioned `HandoffContract` whose intent, offer, acceptance, progress, result and
+Artifact acceptance are distinct states. Multi-Agent planning must be bounded by member,
+revision, authority, budget, deadline, cancellation and cycle checks. Approval, missing
+input, ambiguity and unknown-effect reconciliation converge on the Needs You projection.
+
+Shared workspace publication uses a candidate containing `base_version`, scope, author Run
+and content digest. Policy plus per-object CAS produces explicit `applied`, `conflict` or
+`unknown` outcomes; multi-object work uses a durable saga/outbox and reconciliation rather
+than claiming a cross-store atomic transaction. PT-2 cannot be promoted until dispatch,
+effect, receipt and Artifact-boundary crash tests reject stale results and demonstrate no
+silent loss or duplicate accepted external effect.
+
+### PT-3 — proactive work and governed organizational experience
+
+Only after PT-0 recovery and PT-2 handoff boundaries are proven, add:
+
+- structured `Focus`, typed `Trigger`, stable `Occurrence`, heartbeat-supervised `Run` and
+  a report explaining why the Agent woke, what it did and whom it is waiting for;
+- cron, once, interval, event and webhook triggers with payload, rate, egress and
+  action-time policy;
+- `Artifact -> Experience draft -> human review -> published/retired`, including source,
+  applicability, invalidation signals, data classification, reviewer and citation/adoption
+  records.
+
+Duplicate trigger delivery must create one logical occurrence, proactive high-risk actions
+must enter Needs You, and unpublished Experience content must never enter authoritative
+retrieval. A trigger is not permission to bypass the worker or connector gate in PT-0.
+
+### PT-4 — governed capability expansion and model management
+
+Implement Skill progressive disclosure as `catalog -> read -> activate -> materialize`,
+backed by immutable package versions, content digests, publisher/source identity, proposal
+and approval state, quarantine/scanning/signature/SBOM evidence, and an immutable activation
+receipt. Tool definition, Agent assignment and execution binding remain separate objects;
+an Agent cannot install and immediately execute third-party code merely because a prompt
+requested it.
+
+Model management must probe connection, tool calling, vision and declared limit facts, then
+bind every observation to the exact model-configuration fingerprint, probe version and
+timestamp. Probe results expire or are superseded explicitly; they are capability evidence,
+not a permanent provider promise, and probing must not disclose credentials or create
+production side effects.
+
+MCP capability expansion requires an official-SDK adapter, protocol/version negotiation,
+per-tool effect/approval/retry/idempotency/reconcile contracts, Vault/KMS credential
+references and a unified egress broker with redirect, private-network and metadata-service
+defenses. Unknown effects are never automatically replayed.
+
+### PT-5 — interoperable channels and supported delivery
+
+After the internal canonical model and the preceding gates are stable, add standard A2A
+Agent Card and Task/Artifact mappings, version-pinned SDK/TCK evidence, and a deliberately
+small set of provider adapters with separate inbound/outbound receipts and reconciliation.
+Split API, trusted worker and untrusted executor security domains before treating external
+channels or third-party runtime execution as a supported deployment boundary.
+
+The product track also retains usage, latency, cost and accepted-Artifact metrics plus
+accessibility, localization and desktop/web packaging validation. The first pilot may be
+narrow, but no product-track milestone may bypass production gates for data integrity,
+authority, tenant isolation, external side effects, recovery or deployment evidence.
