@@ -1205,6 +1205,124 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
                 finally:
                     reopened.close()
 
+    def test_rollback_controls_are_reissued_with_ambiguity_and_reopen_unstarted(self) -> None:
+        real_connect = sqlite3.connect
+
+        class RollbackControlConnection(sqlite3.Connection):
+            signal_name: str | None = None
+            raised_signal: BaseException | None = None
+
+            def execute(
+                connection_self,
+                statement: str,
+                parameters: object = (),
+            ) -> sqlite3.Cursor:
+                if (
+                    statement.strip().upper() == "ROLLBACK"
+                    and connection_self.signal_name is not None
+                ):
+                    signal_name = connection_self.signal_name
+                    connection_self.signal_name = None
+                    super().execute(statement, parameters)  # type: ignore[arg-type]
+                    if signal_name == "keyboard":
+                        signal: BaseException = KeyboardInterrupt("private-keyboard")
+                    elif signal_name == "system-exit":
+                        signal = SystemExit(31)
+                    elif signal_name == "generator-exit":
+                        signal = GeneratorExit("private-generator-exit")
+                    elif signal_name == "cancelled":
+                        signal = CancelledError("private-cancelled")
+                    else:  # pragma: no cover - closed test table.
+                        raise AssertionError("unknown rollback control")
+                    connection_self.raised_signal = signal
+                    raise signal
+                return super().execute(statement, parameters)  # type: ignore[arg-type]
+
+        def connect_with_control(database: str, **kwargs: Any) -> sqlite3.Connection:
+            return cast(
+                sqlite3.Connection,
+                real_connect(database, factory=RollbackControlConnection, **kwargs),
+            )
+
+        cases: tuple[tuple[str, type[BaseException]], ...] = (
+            ("keyboard", KeyboardInterrupt),
+            ("system-exit", SystemExit),
+            ("generator-exit", GeneratorExit),
+            ("cancelled", CancelledError),
+        )
+        request = canonical_request()
+        for signal_name, signal_type in cases:
+            with self.subTest(signal_name=signal_name):
+                path = str(Path(self.tempdir.name) / f"rollback-control-{signal_name}.sqlite3")
+                with patch(
+                    "quantum_entanglement.store.sqlite3.connect",
+                    new=connect_with_control,
+                ):
+                    control_store = SQLiteEventStore(path, clock=lambda: ADMITTED_AT)
+                control_store.append_task_invocation_admission(request, expected_version=0)
+                connection = cast(RollbackControlConnection, control_store._connection)
+                self.assertIsInstance(connection, RollbackControlConnection)
+                connection.signal_name = signal_name
+                canary = f"raw-lease-rollback-control-{signal_name}"
+
+                def fail_after_lease(_lease_token: str) -> str:
+                    raise RuntimeError("body failure before controlled rollback")
+
+                try:
+                    with (
+                        patch.object(control_store, "_now", return_value=CLAIMED_AT),
+                        patch.object(
+                            control_store,
+                            "_lease_token_digest",
+                            new=fail_after_lease,
+                        ),
+                        patch(
+                            "quantum_entanglement.store.secrets.token_urlsafe",
+                            return_value=canary,
+                        ),
+                    ):
+                        with self.assertRaises(signal_type) as caught:
+                            control_store.claim_invocation_start(
+                                request.manifest.invocation_id,
+                                "worker-start-store-1",
+                                lease_seconds=60,
+                                expected_version=2,
+                            )
+                    self.assertIsNot(caught.exception, connection.raised_signal)
+                    self.assertIsNone(caught.exception.__context__)
+                    cause = cast(
+                        InvocationStartCommitAmbiguityError,
+                        caught.exception.__cause__,
+                    )
+                    self.assertIs(type(cause), InvocationStartCommitAmbiguityError)
+                    self.assertIsNone(cause.__traceback__)
+                    self.assertEqual(
+                        str(caught.exception),
+                        "31" if signal_type is SystemExit else "",
+                    )
+                    self.assertNotIn(canary, event_store_traceback_locals(caught.exception))
+                    with self.assertRaises(EventStorePoisonedError):
+                        control_store.stream_version(request.stream_id)
+                finally:
+                    control_store.close()
+
+                reopened = SQLiteEventStore(path, clock=lambda: ADMITTED_AT)
+                try:
+                    self.assertEqual(reopened.stream_version(request.stream_id), 2)
+                    self.assertIsNone(
+                        reopened.read_invocation_start(request.manifest.invocation_id)
+                    )
+                    self.assertEqual(
+                        reopened._connection.execute(
+                            "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                            (request.manifest.invocation_id,),
+                        ).fetchone()[0],
+                        0,
+                    )
+                    self.assertNotIn(canary, "\n".join(reopened._connection.iterdump()))
+                finally:
+                    reopened.close()
+
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
 
