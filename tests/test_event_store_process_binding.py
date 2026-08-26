@@ -611,6 +611,19 @@ class SQLiteEventStoreProcessEntryTests(unittest.TestCase):
             ("read_stream_page", lambda: self.store.read_stream_page("stream:owner")),
             ("read_all", lambda: self.store.read_all()),
             ("stream_all_page_call", lambda: self.store.stream_all_page()),
+            (
+                "read_invocation_start",
+                lambda: self.store.read_invocation_start("invocation:owner"),
+            ),
+            (
+                "claim_invocation_start",
+                lambda: self.store.claim_invocation_start(
+                    "invocation:owner",
+                    "worker:owner",
+                    lease_seconds=30,
+                    expected_version=0,
+                ),
+            ),
             ("claim_outbox", lambda: self.store.claim_outbox("worker")),
             ("acknowledge_outbox", lambda: self.store.acknowledge_outbox("msg", "lease")),
             ("reject_outbox", lambda: self.store.reject_outbox("msg", "lease", "error")),
