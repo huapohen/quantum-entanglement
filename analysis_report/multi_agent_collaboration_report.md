@@ -180,6 +180,14 @@ Agent 可以更换模型、框架、进程或部署位置；平台不依赖它�
 
 **Clawith 增量一级竞品（不计入上述历史 14 家口径）：** 它最值得学习的不是“AI 组织”口号，而是把多个机制做成同一日常工作台：Agent 是稳定组织对象；人和 Agent 统一为 Participant 并进入长期 Crew；`@单 Agent` 确定性直达，`@多个 Agent` 才进入模型规划；Focus、Trigger、稳定 Occurrence 与 Run 组成主动工作闭环；对话/Run 产出可提炼为人审后才发布的 Experience；workspace 写入以 candidate、digest 和 CAS 显式处理冲突。它同时暴露了必须反向吸取的教训：内部 `notify/consult/task_delegate` 不是标准 A2A，默认 Compose/宿主 pip 权限过宽，Skill/MCP 自安装缺少完整供应链门禁，普通 best-effort AuditLog 不能支撑不可篡改审计承诺。
 
+2026-08-27 官网增量又给出一个产品化信号：量化、营销、研发不再只是功能示例，而被包装成
+“部门角色链 + 阶段交付 + 一个人审 + 结果指标”的 Solution Blueprint。WanWork 应学习这种
+用户能选择和验收的业务样板，但模板必须编译到既有 AgentRevision、HandoffContract、Artifact
+和 policy 合同，不能成为第二套隐藏编排权威；结果卡也只能从同一 Run 的接受事件、Artifact、
+receipt 和明确统计窗口派生。Clawith 同一研发卡片同时写“仅需 3 天”和 `6d 21h`，正好说明
+营销口径如果没有 evidence contract 会反噬可信度。完整像素、限制和取舍见
+[`research/20_clawith_competitive_analysis.md`](research/20_clawith_competitive_analysis.md) 第 2.4 节。
+
 因此目标不是复制 Clawith 页面，而是组合两边优势：用其组织语言和原生群聊降低使用门槛，用 WanWork 的 canonical event、AgentRevision、HandoffContract、Artifact、authority、receipt、unknown/fencing 和标准 adapter 重新建立可靠边界。当前验收产品仍是 loopback 固定三 Agent 切片，不是上述完整组织产品。
 
 ### 3.3 市场空白
