@@ -86,13 +86,15 @@ python3 scripts/report_sync_bundle.py
 
 ```bash
 python3 scripts/report_sync_bundle.py \
-  --output analysis_report/report_sync_bundles/checkpoint-20260826.json
+  --output analysis_report/report_sync_bundles/checkpoint-20260827-clawith.json
 python3 scripts/report_sync_bundle.py \
-  --verify analysis_report/report_sync_bundles/checkpoint-20260826.json
+  --verify analysis_report/report_sync_bundles/checkpoint-20260827-clawith.json
 ```
 
 `sourceTargets` 记录的是 source-target entry，不等于远端页面数；所有实时远端回读标记固定为
-`false`。完整字段、pinned-read 安全边界、v2→v3 迁移和 recovery 处置见
+`false`。当前 Clawith checkpoint 固定 40 个本地 source、41 个 source-target 和 20 张图片；
+Clawith 的 Notion 与语雀条目均为 `local_pending`，不构成远端写入或回读证明。完整字段、
+pinned-read 安全边界、v2→v3 迁移和 recovery 处置见
 [`docs/production/REPORT_SYNC_BUNDLE.md`](docs/production/REPORT_SYNC_BUNDLE.md)。
 
 ## 开发验证
