@@ -47,9 +47,9 @@
 
 完整 SHA-256、尺寸、来源、证据等级和隐私边界见
 [`screenshots/README.md`](screenshots/README.md) 与
-[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 26 张图；前十张是受限、
+[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 27 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地
-产品 UI，第 14 张是真实模型测试输出；第 15–25 张是 Clawith 公开官网、白皮书与官方文档
+产品 UI，第 14 张是真实模型测试输出；第 15–26 张是 Clawith 公开官网、白皮书与官方文档
 只读证据。整套资料仍按项目内部证据管理。
 
 | 文件 | 内容 | 采集方式 |
@@ -80,6 +80,7 @@
 | `screenshots/23_clawith_aware_focus_triggers_20260827.png` | Focus、Trigger、绑定与自适应调度文档 | Playwright 官方文档元素只读证据 |
 | `screenshots/24_clawith_pulse_trigger_engine_20260827.png` | Pulse Trigger Engine、类型与生命周期文档 | Playwright 官方文档元素只读证据 |
 | `screenshots/25_clawith_plaza_legacy_docs_20260827.png` | 与固定源码 Experience Library 已漂移的 Plaza 旧文档 | Playwright 官方文档元素只读证据 |
+| `screenshots/26_clawith_rapid_rnd_claim_20260827.png` | 部门级研发交付样板、阶段指标与 `3 天` / `6d 21h` 同卡片口径冲突 | Playwright 官网元素只读证据 |
 
 ## 数据安全
 

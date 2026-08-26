@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5",
-  "lastImageArchivedAt": "2026-08-27T04:44:16+08:00",
+  "lastArchivedCommit": "e58bc9d0b4abd3806f4e98cc1b04dd121a224ff9",
+  "lastImageArchivedAt": "2026-08-27T07:36:23+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -579,6 +579,29 @@
       "sourceKind": "clawith-official-docs-readonly",
       "sourceReference": "https://www.clawith.ai/docs/features/plaza; playwright:output/playwright/clawith/25_clawith_plaza_legacy_docs_20260827.png; captured-at:2026-08-26T20:42:41.403Z; archived-git:be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5",
       "width": 823
+    },
+    {
+      "byteSize": 126524,
+      "captureDate": "2026-08-26T23:34:22.005Z",
+      "captureDateEvidence": "The Playwright CLI element-screenshot filename records this UTC completion timestamp; the named source artifact was copied into the archive without byte changes and its SHA-256 matches",
+      "contentScope": "Clawith official homepage Rapid R&D Department card showing a brief-to-spec-to-development-to-test-to-human-review-to-ship pipeline together with three-day, 6d 21h, 247-commit, 32-PR and 81/81-test claims",
+      "derivation": "playwright-cli-element-capture",
+      "evidenceClass": "B-official-public-product-claim",
+      "evidenceLimitations": [
+        "First-party marketing card only; no customer identity, source repository, Run, PR, test report, delivery artifact or independent measurement was inspected",
+        "The same card visibly says both 'only 3 days' and '6d 21h'; this archive preserves the inconsistency and does not reconcile or endorse either duration",
+        "No trial, GitHub, registration or external-action control was invoked during this read-only capture"
+      ],
+      "filename": "26_clawith_rapid_rnd_claim_20260827.png",
+      "firstArchivedAt": "2026-08-27T07:36:23+08:00",
+      "height": 460,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-public-webpage-in-internal-evidence-set",
+      "sha256": "7833304a81445375f2fc22183874fffa5fa451472ef877659e1895e6b4e93496",
+      "sourceKind": "clawith-official-homepage-readonly",
+      "sourceReference": "https://clawith.ai/; playwright:output/playwright/clawith/26_clawith_rapid_rnd_claim_20260827.png; captured-at:2026-08-26T23:34:22.005Z; archived-git:e58bc9d0b4abd3806f4e98cc1b04dd121a224ff9",
+      "width": 1184
     }
   ],
   "redactionStatus": "mixed-restricted-originals-synthetic-ui-and-reviewed-model-output",
