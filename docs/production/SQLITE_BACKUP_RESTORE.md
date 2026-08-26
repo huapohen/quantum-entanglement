@@ -29,6 +29,8 @@ The descriptor and inode hardening was delivered in these slices:
 This is not a complete disaster-recovery service. It does not schedule backups,
 replicate them, sign manifests, manage retention, encrypt files, implement point-in-time
 recovery, or establish a production RPO/RTO. Those remain deployment and release gates.
+This runbook does not close any of Gates A–E; all remain closed pending their independent
+evidence and approval.
 
 The inert [exact topology registry](../architecture/SQLITE_BACKUP_TOPOLOGY_REGISTRY.md)
 freezes the catalog vocabulary required by a future manifest v2 verifier. The separate
@@ -97,8 +99,9 @@ is `qe.sqlite-backup/1` and records:
 - database SHA-256 and exact byte size;
 - SQLite page count and page size;
 - counts for known tables that exist in the snapshot, including projection checkpoints,
-  projection receipts, and durable revocation high-water state when those components have
-  initialized their tables;
+  projection receipts, durable revocation high-water state, and the migration-4
+  `invocation_admissions` receipt table when those components have initialized their
+  tables;
 - each applied migration version, filename, packaged SQL checksum, and application
   timestamp.
 
@@ -106,12 +109,21 @@ The manifest does not contain credentials or raw artifact/event content. It is n
 cryptographically authenticated, however, so custody controls must protect the database
 and manifest together.
 
-For `projection_offsets`, `projection_receipts`, and `qe_revocation_high_water`, creation
-records a count whenever the table exists in the copied snapshot. Verification derives
-the same evidence from the opened database: changing one of these counts or removing its
-manifest entry while the table remains present fails with a table-count mismatch. This
-closes silent omission of projection idempotency and authorization anti-rollback state
-from a normally created pair.
+For `projection_offsets`, `projection_receipts`, `qe_revocation_high_water`, and
+`invocation_admissions`, creation records a count whenever the table exists in the copied
+snapshot. Verification derives the same evidence from the opened database: changing one
+of these counts or removing its manifest entry while the table remains present fails with
+a table-count mismatch. This closes silent omission of projection idempotency,
+authorization anti-rollback state, and atomic-admission receipt inventory from a normally
+created pair.
+
+The active v1 implementation recognizes the exact continuous migration prefix through
+`0004_invocation_admissions.up.sql`. The retained downgrade test gives the current
+validator a registry ending at v3; it raises `MigrationVersionError` for ledger row 4 and
+leaves the database unchanged. This proves validator-level behavior, not a historical v3
+wheel in an independent process; the real mixed-wheel/process matrix remains open. Never
+delete row 4 or the receipt table to make an old binary accept the database; use the
+matching tested binary and an evidence-backed rollback or restore decision.
 
 Format version 1 intentionally remains readable for databases created before one of
 these self-initializing components was enabled, so it does not require a component table
@@ -342,7 +354,7 @@ the deployment environment.
 | Backup/manifest path is replaced during verify | Verify continues on stable FD then fails identity check | Repeat under deployment mount |
 | Backup/manifest is changed in place during verify | Digest/reread check fails | Repeat under deployment mount |
 | Backup parent is replaced during verify | Parent identity check fails | Repeat under deployment mount |
-| Migration ledger is future/gapped/drifted | Backup/verify fails closed | Upgrade/rollback compatibility drill |
+| Migration ledger is future/gapped/drifted, including v4 opened by a v3 registry | Backup/verify fails closed before mutation | Upgrade/rollback compatibility drill |
 | Migration-owned schema is missing/weakened | Schema congruence check fails | Corruption quarantine exercise |
 | Projection receipt count is changed or omitted from a normally created manifest | Verification fails with table-count drift | Compare receipt/checkpoint identities and positions after restore |
 | Revocation high-water count is changed or omitted from a normally created manifest | Verification fails with table-count drift | Compare every tenant revision and digest before authorization is enabled |
@@ -373,6 +385,10 @@ It asserts exact source/destination database bytes before stores reopen the dest
 then reopens event/delivery, invocation-attempt, and artifact stores and verifies the
 records remain readable.
 
+A focused migration-4 rehearsal separately seeds a non-empty durable
+invocation-admission receipt bound to its job and event batch. It proves backup/restore
+preserves the receipt, exact replay still returns it, and its foreign keys remain valid.
+
 Focused manifest tests additionally seed a real projection offset and receipt plus a
 durable tenant revocation high-water row. They assert that backup creation records these
 counts and that verification rejects changed or omitted receipt/high-water entries. Those
@@ -383,9 +399,9 @@ Before every production release, extend the drill on a disposable deployment-equ
 host:
 
 1. Seed representative pending, running, successful, failed, canceled, approval, DLQ,
-   published, ambiguity, artifact-version, inbox-receipt, projection-offset,
-   projection-receipt, action-receipt, and tenant revocation-high-water states that exist
-   in that release.
+   published, ambiguity, invocation-admission, artifact-version, inbox-receipt,
+   projection-offset, projection-receipt, action-receipt, and tenant
+   revocation-high-water states that exist in that release.
 2. Record domain counts, artifact digests, event/global positions, projection offsets,
    projection receipt event IDs/positions, active lease epochs, every tenant revocation
    revision/state digest, open ambiguity IDs, and the release binary revision.
@@ -433,8 +449,8 @@ and external connectors disabled until all steps pass:
    marking it published/dead-letter.
 10. Change the configured path through the deployment's audited configuration mechanism.
 11. Start one instance with ingress and connectors still disabled. Run readiness and
-    smoke reads for sessions, tasks, events, artifacts, attempts, outbox, ambiguities,
-    projections, and audit data.
+    smoke reads for sessions, tasks, events, artifacts, attempts, admission receipts,
+    outbox, ambiguities, projections, and audit data.
 12. Enable internal writers first, then workers, then explicitly approved external
     connectors. Observe errors, queue age, duplicate-effect signals, WAL growth, and
     integrity alerts through the documented recovery window.
@@ -468,7 +484,7 @@ files or edit the migration ledger manually.
 | Pair contains only database or only manifest | Treat it as incomplete; do not synthesize the missing member |
 | Path/inode replacement is detected | Abort, preserve the replacement, and investigate directory access |
 | Post-publication restore check fails | Remove only the destination inode created by that restore |
-| Older binary rejects the migration history | Use the matching tested binary/backup; never edit checksums or ledger rows |
+| V3 binary rejects a v4 migration history | Use the matching tested v4 binary/backup; never edit checksums, ledger rows, or `invocation_admissions` |
 | Activation validation fails before traffic | Keep traffic closed; preserve candidate and select an evidence-backed rollback path |
 | Validation fails after traffic/effects | Freeze both timelines and perform incident reconciliation; do not blindly switch back |
 

@@ -214,7 +214,9 @@ spawn/exec-before-secret-load；event store guard 不能擦除 fork 时已经复
 - migration body 与 `qe_schema_migrations` version 4 ledger row 同 transaction 提交；
 - populated v3 数据库可以升级到 v4，不修改既有 jobs、attempts、artifacts 或 outbox ambiguity；
 - 预先伪造的 weakened `invocation_admissions` table 会触发 drift，不能得到 v4 ledger row；
-- 只支持 v3 registry 的旧 binary 会在不修改数据库的前提下拒绝 v4 database。
+- 当前 validator 在传入仅到 v3 的 registry 时，会在不修改数据库的前提下拒绝
+  v4 database。这是进程内 registry simulation，不是历史 v3 wheel 的独立进程实证；
+  mixed-wheel/process matrix 仍是发布门禁。
 
 部署必须先停 admission/worker，备份并验证 v3 数据库，再用 v4 binary 完成 migration preflight；
 不能让 constructor-time 隐式升级替代 production startup gate。

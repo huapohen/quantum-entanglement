@@ -3,7 +3,7 @@
 This document defines the Phase 1 production contract for
 `quantum_entanglement.publisher.OutboxPublisher` and the SQLite outbox state it
 owns. It is a release-candidate boundary, not a claim that every GA gate in
-`RELEASE_GATES.md` is complete.
+`RELEASE_GATES.md` is complete. Gates A–E all remain closed.
 
 ## Safety invariants
 
@@ -153,8 +153,17 @@ PRAGMA integrity_check;
 PRAGMA wal_checkpoint(TRUNCATE);
 ```
 
-Expected schema version is 3 after Event Store initialization. The ambiguity
-table must contain `lease_token_digest` and must not contain `lease_token`.
+Expected schema version is 4 after current Event Store initialization: migration 3 still
+owns the ambiguity schema, while migration 4 adds the separate durable
+`invocation_admissions` receipt table. The ambiguity table must contain
+`lease_token_digest` and must not contain `lease_token`.
+
+Ledger row 4 is also a validator-level downgrade fence. In the current retained test, the
+current validator is given a v3-only registry; it treats row 4 as newer, raises
+`MigrationVersionError`, and leaves the ledger and schema unchanged. This is not yet a
+historical v3 wheel running in an independent process; that mixed-wheel/process matrix is
+still required. Deleting row 4 or the admission table to make a v3 binary start is
+unsupported.
 After all processes using the copied database are stopped, checkpoint/truncate
 the WAL and verify backup/support-export policy no longer carries obsolete raw
 tokens. Existing backups cannot be retroactively scrubbed; apply retention and
@@ -166,10 +175,13 @@ Prefer a forward fix or a schema-compatible application rollback. Migration 3
 is intentionally one-way for token data: SHA-256 digests cannot reconstruct raw
 lease tokens.
 
-The supplied down migration drops `outbox_ambiguities` and deletes ledger row
-3. This discards reconciliation history and is acceptable only in a rehearsed
-rollback after all open ambiguities have been resolved or exported to a secured
-incident record.
+The supplied down migration drops `outbox_ambiguities` and deletes ledger row 3. This
+discards reconciliation history and is acceptable only in a rehearsed rollback after all
+open ambiguities have been resolved or exported to a secured incident record. It must not
+run while ledger row 4 remains: deleting row 3 beneath row 4 creates a rejected migration
+hole. Reaching an exact v3 rollback target from a current v4 database first requires a
+separately approved admission-state rollback/restore decision; this outbox runbook does
+not authorize dropping durable admission receipts.
 
 Required destructive-rollback sequence:
 
@@ -178,14 +190,15 @@ Required destructive-rollback sequence:
 3. create and validate an online backup;
 4. export the ambiguity count and evidence-backed disposition without raw
    fencing tokens;
-5. execute the packaged down migration on the exact selected database;
+5. prove the exact selected database has no migration row later than 3, then execute the
+   packaged down migration;
 6. run foreign-key and integrity checks;
 7. start the prior binary and run its smoke test;
 8. restore the backup or forward-fix immediately if verification fails.
 
-The deterministic suite rehearses the down migration and checks schema version,
-table removal, foreign keys, and database integrity. That test is evidence of
-mechanics, not authorization to run a destructive rollback in production.
+The deterministic suite rehearses the down migration from an exact v3 state and checks
+schema version, table removal, foreign keys, and database integrity. That test is evidence
+of mechanics, not authorization to run a destructive rollback in production.
 
 ## Monitoring and alerts
 

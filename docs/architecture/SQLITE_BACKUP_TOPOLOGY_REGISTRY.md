@@ -33,10 +33,10 @@ The topology profile is `qe.sqlite-topology/bridge-v1`; the registry format is
 `qe.sqlite-topology-registry/1`. The current registry digest is:
 
 ```text
-97350bc7e6cf94f021ab7468e66b2dc66cc5bc07c239fbdae1a32328ed4925f6
+d940bea8e2a3c80cd76fc282a042667527632c236cf802fd39dab250005da2aa
 ```
 
-It contains eight profiles and 58 exact `sqlite_schema` objects:
+It contains nine profiles and 63 exact `sqlite_schema` objects:
 
 | Profile | Objects | Presence rule |
 |---|---:|---|
@@ -47,7 +47,22 @@ It contains eight profiles and 58 exact `sqlite_schema` objects:
 | `qe.domain-migration-0001/1` | 14 | required for applied migration 1 |
 | `qe.domain-migration-0002/1` | 9 | required for applied migration 2 |
 | `qe.domain-migration-0003/1` | 4 | required for applied migration 3; depends on event-store core |
+| `qe.domain-migration-0004/1` | 5 | required for applied migration 4; depends on migration 1 and event-store core |
 | `qe.domain-migration-sidecar/1` | 4 | required when sidecar format 1 is present |
+
+The independently frozen identities that bind the new admission schema are:
+
+| Identity | SHA-256 |
+|---|---|
+| Domain-migration registry | `923e8e9c95e2da1844e79515b0a420b3397e343c57296cba561c1e8e99d96650` |
+| Backup-topology registry | `d940bea8e2a3c80cd76fc282a042667527632c236cf802fd39dab250005da2aa` |
+| `qe.domain-migration-0004/1` profile | `5eb9ccd2ced7ac47e27db5911f82f84ff5500ce252634efe26fd3686b6488a6d` |
+
+Migration 4 is the current packaged `0004_invocation_admissions.up.sql`, owned by
+`admission@1`. Its domain descriptor has the semantic migration dependency `4 → 1`.
+Its topology profile additionally depends on `qe.event-store-core/1`, because the receipt
+table has foreign keys into `events`; that component prerequisite is not another durable
+domain-migration edge.
 
 Every object binds:
 
@@ -64,7 +79,7 @@ acyclic graph. Object coordinates are globally unique.
 
 ## Domain-migration cross-binding
 
-The three migration profiles are checked against the packaged
+The four migration profiles are checked against the packaged
 `DOMAIN_MIGRATION_REGISTRY` when the module loads:
 
 1. the migration-ID sets must be identical;
@@ -79,6 +94,13 @@ at import or in the catalog conformance test.
 This cross-binding does not authorize a migration. The bridge planner remains the
 authority for supported schema state, and the v2 codec/verifier must bind both the domain
 registry digest and this independent topology-registry digest.
+
+Migration 4 also establishes a validator-level downgrade fence. The current retained test
+passes a v3-only registry to the current validator; durable ledger row 4 is then newer and
+the validator raises `MigrationVersionError` before mutation. This is an in-process
+registry simulation, not yet a packaged historical-v3-wheel/process result. Removing the
+receipt table or editing the ledger to bypass the fence is not a supported rollback, and
+the mixed-wheel/process matrix remains release-blocking.
 
 ## Catalog SQL canonicalization
 
@@ -110,14 +132,15 @@ not share a digest with different token/constraint semantics.
 The deterministic catalog test materializes one database containing:
 
 - event-store core schema;
-- packaged migrations 1–3 and the legacy ledger;
+- packaged migrations 1–4 and the legacy ledger, including the invocation-admission
+  receipt table and its four indexes;
 - projection offsets and receipts;
 - durable revocation high-water state;
 - the exact bridge sidecar and bootstrapped metadata.
 
 It then reads every non-statistics `sqlite_schema` row and compares the complete
-`(type, name, tbl_name, DDL digest)` mapping to all eight profiles. The current result is
-58 actual objects = 58 trusted objects, with no missing, extra, or drifted coordinate.
+`(type, name, tbl_name, DDL digest)` mapping to all nine profiles. The current result is
+63 actual objects = 63 trusted objects, with no missing, extra, or drifted coordinate.
 
 The model tests additionally cover:
 
@@ -131,19 +154,9 @@ The model tests additionally cover:
 - SQLite-token-exact ASCII whitespace, NBSP/vertical-tab separation, and exact line/block
   comment preservation.
 
-Observed local verification for the current checkpoint:
-
-| Gate | Result |
-|---|---|
-| Python 3.9 / 3.12 / 3.13 topology tests with warnings as errors | 17/17 each |
-| Python 3.9 / 3.12 / 3.13 full unittest | 897/897 each |
-| Ruff lint / format | pass |
-| strict mypy | 38 source files pass |
-| dependency locks | 4 targets / 74 package records verified |
-| compileall on 3.9 / 3.12 / 3.13 | pass |
-| compact group-chat demo | completed, 3 tasks / 25 events |
-
-These are local source checks, not immutable CI evidence or a production promotion.
+The frozen counts and digests are source-level conformance assertions. A passing local
+test remains neither immutable CI evidence nor a production promotion. Gates A–E remain
+closed until their separate release evidence and approvals exist.
 
 ## Required update procedure
 

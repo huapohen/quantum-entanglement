@@ -2,11 +2,13 @@
 
 Status: **phase-1 bridge planner and atomic applier implemented; release integration still blocked**
 
-Decision scope: preserve the immutable legacy migration history numbered 1-3, introduce a
-domain-aware sidecar and deterministic dependency planner, and make a later artifact v4
-possible without forcing an artifact-only database to execute delivery migration v3.
+Decision scope: preserve the current immutable global migration prefix numbered 1–4,
+including invocation-admission migration 4 and its semantic dependency on migration 1;
+introduce a domain-aware sidecar and deterministic dependency planner; and make a later
+sparse artifact migration possible without forcing an artifact-only database through
+unrelated delivery and admission migrations.
 
-Last reviewed against source: 2026-08-20
+Last reviewed against source: 2026-08-26
 
 This document distinguishes committed bridge primitives from the remaining release design.
 The implementation status below is authoritative for this checkout; later sections describe
@@ -17,7 +19,7 @@ release gate exists.
 
 Implemented and tested in `src/quantum_entanglement/domain_migrations.py`:
 
-- a bounded trusted registry for immutable legacy migrations 1-3, their domains,
+- a bounded trusted registry for immutable packaged migrations 1–4, their domains,
   dependencies, packaged SQL digests, and owned-schema manifests;
 - exact validation and atomic installation of the two format-1 sidecar tables;
 - single-snapshot classification of absent-sidecar, empty, unbridged legacy-prefix, and
@@ -33,8 +35,11 @@ Implemented and tested in `src/quantum_entanglement/domain_migrations.py`:
 
 Not implemented and therefore release-blocking:
 
-- native/domain-sparse migration writes, artifact v4, or a sparse-aware legacy runner;
-- domain-aware backup manifest v2 and restore reconciliation;
+- native/domain-sparse migration writes, the proposed artifact migration at ID 5 or later,
+  or a sparse-aware legacy runner;
+- runtime enforcement of non-migration topology prerequisites by `SchemaState`, the bridge
+  reader/planner, or the legacy migration runner;
+- operational domain-aware backup-v2 creation, verification, restore, and reconciliation;
 - mixed-binary rollout evidence, service/admin integration, and a promoted phase-1 release.
 
 The sidecar installer and metadata bootstrap remain separately callable atomic primitives,
@@ -71,19 +76,21 @@ The same implementation also creates the coupling this proposal addresses:
 5. Expected objects are inferred from a limited `CREATE TABLE/INDEX` and `DROP
    TABLE/INDEX` parser rather than an explicit domain-owned object manifest.
 
-The legacy sequence is:
+The current continuous packaged sequence is:
 
 | Global version | Packaged migration | Logical domain | Actual prerequisite |
 |---:|---|---|---|
 | 1 | [`0001_invocation_attempts.up.sql`](../../src/quantum_entanglement/migrations/0001_invocation_attempts.up.sql) | `attempts` | none |
 | 2 | [`0002_artifacts.up.sql`](../../src/quantum_entanglement/migrations/0002_artifacts.up.sql) | `artifacts` | none on migration 1 |
 | 3 | [`0003_outbox_ambiguities.up.sql`](../../src/quantum_entanglement/migrations/0003_outbox_ambiguities.up.sql) | `delivery` | the pre-existing `outbox` table created by `SQLiteEventStore` |
+| 4 | [`0004_invocation_admissions.up.sql`](../../src/quantum_entanglement/migrations/0004_invocation_admissions.up.sql) | `admission` | migration 1 plus the pre-existing `events` table created by `SQLiteEventStore` |
 
 The version order is historical, not a semantic dependency graph. Migration 2 does not
 need the invocation tables from migration 1. Migration 3 does not need artifact objects,
 but it does need `outbox`, which is currently created directly by
 [`SQLiteEventStore`](../../src/quantum_entanglement/store.py) before the global runner is
-called.
+called. Migration 4 does have the explicit semantic edge `4 → 1`; its foreign keys into
+`events` are represented separately as an event-store topology prerequisite.
 
 Current store selection demonstrates the problem:
 
@@ -92,10 +99,12 @@ Current store selection demonstrates the problem:
 - `SQLiteInvocationAttemptStore` also asks for `(1, 2)`, even though an attempt-only
   schema does not semantically own artifact tables;
 - `SQLiteEventStore` creates its base schema directly and then applies the complete global
-  registry, including v3;
-- a future artifact migration with global ID 4 cannot be selected as `(1, 2, 4)` because
-  the current runner requires `(1, 2, 3, 4)`; applying v3 to an artifact-only database
-  fails when `outbox` is absent.
+  registry through v4;
+- a future artifact migration with global ID 5 cannot be selected as `(1, 2, 5)` because
+  the current runner would require `(1, 2, 3, 4, 5)`; applying v3 to an artifact-only
+  database fails when `outbox` is absent. Migration 4's event-store prerequisite is
+  recorded in the topology registry, but the legacy runner can create its empty foreign-key
+  table even when `events` is absent; that enforcement gap is itself release-blocking.
 
 The current backup implementation is
 [`src/quantum_entanglement/backup.py`](../../src/quantum_entanglement/backup.py). Its public
@@ -108,18 +117,32 @@ evidence is nevertheless global-prefix-only:
 - `_validate_migration_evidence` compares row `i` with global `MIGRATIONS[i]`;
 - `_database_evidence` calls the current global `validate_sqlite_schema`;
 - manifest `migrations` is a flat continuous prefix;
-- `_CORE_TABLES` is fixed and does not attest the proposed sidecar tables;
+- `_CORE_TABLES` now includes `invocation_admissions`, but it remains a fixed inventory and
+  does not attest the proposed sidecar tables;
 - the exact v1 manifest parser has no domain heads, dependency edges, registry digest, or
   `SchemaState` digest.
 
-Therefore the current runner and backup verifier must both change in the bridge release.
-Adding only a v4 SQL file is unsafe and unsupported.
+Migration 4 was therefore added to the global runner, domain registry, exact topology, and
+v1 backup table inventory as one coordinated current-prefix change. That does not provide
+a native sparse runner or make manifest v2 operational; both remain separate bridge
+release work.
+
+The current frozen identities are:
+
+| Identity | SHA-256 |
+|---|---|
+| Domain-migration registry | `923e8e9c95e2da1844e79515b0a420b3397e343c57296cba561c1e8e99d96650` |
+| Backup-topology registry | `d940bea8e2a3c80cd76fc282a042667527632c236cf802fd39dab250005da2aa` |
+| Migration-4 topology profile | `5eb9ccd2ced7ac47e27db5911f82f84ff5500ce252634efe26fd3686b6488a6d` |
+
+These digests are compatibility identities, not signatures or production-readiness
+attestations.
 
 ## 2. Goals
 
 The sidecar design must provide all of the following:
 
-1. Preserve legacy SQL bytes, global IDs 1-3, filenames, checksums, and existing
+1. Preserve packaged SQL bytes, global IDs 1–4, filenames, checksums, and existing
    `qe_schema_migrations` rows.
 2. Reinterpret the global integer as an immutable migration ID, not a database-wide schema
    head.
@@ -137,7 +160,7 @@ The sidecar design must provide all of the following:
 9. Preserve fail-closed behavior for checksum drift, unknown/newer migrations, weak
    schemas, races, partial DDL, and commit failure.
 10. Make backup and restore evidence congruent with the domain-aware state.
-11. Support a two-stage bridge-first rollout before any v4 or sparse-ledger write.
+11. Support a bridge-first rollout before any native or sparse-ledger write.
 12. Define mixed-version, rollback, recovery, failure-injection, and release-evidence
     requirements before implementation.
 
@@ -145,16 +168,16 @@ The sidecar design must provide all of the following:
 
 The current bridge foundation does not:
 
-- claim that native/domain-sparse application, backup format v2, or artifact v4 is
-  implemented;
-- change or renumber legacy migrations 1-3;
+- claim that native/domain-sparse application, backup format v2, or the proposed artifact
+  migration at ID 5 or later is implemented;
+- change or renumber packaged migrations 1–4;
 - turn SQLite into a multi-host consensus database;
 - provide PostgreSQL/Alembic/Flyway compatibility or a generic SQL migration framework;
 - make destructive down migrations an automatic startup path;
 - infer a trustworthy ledger from arbitrary unledgered tables or application data;
 - allow branches to rewrite or merge already-applied migration history;
 - grant a migration write authority merely because it depends on another domain;
-- make artifact v4 online or zero-downtime by definition;
+- make a future artifact migration online or zero-downtime by definition;
 - solve artifact tenant isolation, event schema versioning, backup encryption, PITR,
   retention, or KMS by architecture text alone;
 - replace application-level rolling compatibility tests with planner compatibility;
@@ -174,9 +197,9 @@ does not imply dependency on every smaller ID.
 
 ### 4.2 Domain and domain version
 
-A domain is a stable lower-snake-case identifier such as `attempts`, `artifacts`, or
-`delivery`. A `(domain, domain_version)` pair is unique. Versions within one domain are a
-continuous prefix starting at 1; different domains advance independently.
+A domain is a stable lower-snake-case identifier such as `attempts`, `artifacts`,
+`delivery`, or `admission`. A `(domain, domain_version)` pair is unique. Versions within
+one domain are a continuous prefix starting at 1; different domains advance independently.
 
 ### 4.3 Owned schema
 
@@ -192,6 +215,7 @@ The initial logical ownership map is:
 | `attempts` | `invocation_jobs`, `invocation_attempts`, and their indexes |
 | `artifacts` | `artifact_blobs`, `artifact_versions`, and their indexes |
 | `delivery` | base `outbox`/receipt delivery objects, `outbox_ambiguities`, and related indexes |
+| `admission` | `invocation_admissions` and its explicit stream index |
 
 The event store currently creates several base objects outside the migration registry.
 The bridge must model those as explicit schema preconditions/owned-state fingerprints; it
@@ -202,8 +226,11 @@ designed migration may bring base event/delivery schema under the registry.
 
 A hard dependency means migration A cannot be applied unless migration B is already
 applied or appears earlier in the same plan. The dependency graph contains migration edges
-only. Non-migration prerequisites—such as v3's required legacy `outbox` shape—are explicit
-schema preconditions evaluated from `SchemaState`.
+only. Non-migration prerequisites—such as v3's required legacy `outbox` shape and v4's
+required event-store `events` shape—are encoded today in the independent backup-topology
+registry. Current `SchemaState`, bridge validation, and the legacy runner do **not** consume
+those component edges. A future native planner/executor must evaluate and revalidate them;
+until then, topology-registry presence is a model assertion, not an admission check.
 
 ## 5. Implemented format-1 durable sidecar
 
@@ -295,12 +322,13 @@ registry until application.
 - A weak pre-created table, view shadow, trigger, custom index, unexpected column, missing
   check, or partial pair fails closed.
 - No `CREATE TABLE IF NOT EXISTS` result is trusted without inspecting `main.sqlite_master`.
-- Every legacy ledger row has exactly one metadata row after bootstrap.
+- Every packaged ledger row has exactly one metadata row after bootstrap.
 - Every metadata row has exactly one supported ledger row; no orphan or duplicate
   `(domain, domain_version)` exists.
 - Durable dependencies match the registry exactly and form no self-edge or cycle.
-- Sidecar installation and metadata bootstrap each commit atomically in their own
-  `BEGIN IMMEDIATE` transaction; combined plan execution is not yet implemented.
+- Sidecar installation and metadata bootstrap each commit atomically when called
+  separately; `apply_bridge_migration_plan` can compose both locked kernels in one
+  revalidated `BEGIN IMMEDIATE` transaction.
 - Re-running bootstrap validates the winner; it does not “repair” missing or conflicting
   rows silently.
 
@@ -342,16 +370,22 @@ Registry validation occurs before any database mutation and requires:
 
 The bridge mapping is:
 
-| Migration ID | Domain coordinate | Dependencies | Kind | Important precondition |
+| Migration ID | Domain coordinate | Dependencies | Kind | Registered topology requirement |
 |---:|---|---|---|---|
 | 1 | `attempts@1` | none | `legacy_bootstrap` | legacy v1 owned schema exactly matches packaged expectation |
 | 2 | `artifacts@1` | none | `legacy_bootstrap` | legacy v2 owned schema exactly matches packaged expectation |
-| 3 | `delivery@1` | none | `legacy_bootstrap` | legacy `outbox` and v3 result shapes are valid |
-| 4 | `artifacts@2` | migration 2 | `native` | **future proposal only**: v1 artifact data is convertible to tenant/workspace-isolated v4 shape |
+| 3 | `delivery@1` | none | `legacy_bootstrap` | legacy `outbox` plus the migration-3 result shape |
+| 4 | `admission@1` | migration 1 | `legacy_bootstrap` | event-store `events` plus the migration-1 job schema used by admission foreign keys |
 
 The historical fact that legacy row 2 followed row 1 is preserved by timestamps and IDs,
-not converted into a false semantic dependency. Likewise, v3's `outbox` requirement is a
-schema precondition because no ledger migration currently represents base `outbox` DDL.
+not converted into a false semantic dependency. V3's `outbox` requirement is registered as
+a component prerequisite because no ledger migration currently represents base `outbox`
+DDL. Migration 4 is different: its use of `invocation_jobs` is the explicit domain edge
+`4 → 1`, while its use of event-store `events` is a registered topology prerequisite
+because no migration owns that base table. Neither component prerequisite is currently
+enforced by the bridge snapshot reader; the migration-4 SQL can also install an empty
+foreign-key table without the referenced `events` table. The topology registry must not be
+described as runtime enforcement.
 
 ## 7. Legacy bootstrap protocol
 
@@ -368,20 +402,28 @@ file, ledger row, application table, or global ID.
 The bridge accepts only:
 
 - a truly empty database with no legacy ledger and no known migration-owned object;
-- a current, exactly validated legacy prefix `()`, `(1)`, `(1, 2)`, or `(1, 2, 3)`;
+- a current, exactly validated legacy prefix `()`, `(1)`, `(1, 2)`, `(1, 2, 3)`, or
+  `(1, 2, 3, 4)`;
 - an already bridged state whose sidecar, descriptors, dependencies, and owned schema all
   validate exactly.
 
 It rejects:
 
-- an absent ledger with known invocation/artifact/ambiguity objects;
+- an absent ledger with known invocation/artifact/ambiguity/admission objects;
 - ledger holes, unknown versions, duplicate rows, filename/checksum drift, or weak ledger
   DDL;
 - an object shape that differs from the packaged legacy postcondition;
 - only one sidecar table, partial metadata, extra metadata, conflicting domain mapping, or
   dependency drift;
-- an unknown/newer sidecar schema or descriptor digest;
-- a database whose base `outbox` shape cannot satisfy applied v3.
+- an unknown/newer sidecar schema or descriptor digest.
+
+This accepted/rejected classification covers the legacy ledger and migration-owned
+objects only. It currently does **not** reject an already-applied v3 database after base
+`outbox` is removed, or an already-applied v4 database after base `events` is removed.
+Those states violate the registered topology but can still be classified as
+`legacy_prefix`/`bridged_prefix`; operators must therefore run the independent exact
+topology and foreign-key/integrity controls, and phase-1 release integration remains
+blocked until the bridge enforces the component prerequisites directly.
 
 An operator may first use the current legacy runner to adopt a supported exact legacy
 shape where that behavior is already tested. The bridge itself does not infer missing
@@ -400,9 +442,10 @@ The atomic bridge plan applier performs the following under its write lock:
    and exact `plan_sha256` equality;
 5. creates both exact sidecar tables when the allowlisted action requires it, or validates
    the existing pair;
-6. inserts one `legacy_bootstrap` metadata row for each applied legacy ID when the
+6. inserts one `legacy_bootstrap` metadata row for each applied packaged ID when the
    allowlisted bootstrap action requires it;
-7. inserts the exact semantic dependency set, which is empty for legacy IDs 1-3;
+7. inserts the exact semantic dependency set: IDs 1–3 have no edges and ID 4 records
+   `4 → 1` when applied;
 8. computes and compares the exact expected post-write `SchemaState` before commit;
 9. commits; on any `BaseException` while it still owns the transaction, rolls back all DDL
    and rows and verifies that the transaction ended;
@@ -419,9 +462,10 @@ That sparse behavior must remain disabled during bridge-only phase 1.
 ## 8. Implemented bridge-only `SchemaState`
 
 `current_schema_version(connection) -> int` cannot represent independent domains. The
-committed immutable `SchemaState` is the sole input to the bridge-only planner. Backup
-evidence, readiness integration, restore reconciliation, and sparse-state representation
-remain future work.
+committed immutable `SchemaState` is the sole input to the bridge-only planner. Inactive
+manifest-v2 codec and single-snapshot evidence checkpoints exist, but active backup-v2
+creation/verification/restore, readiness integration, restore reconciliation, and
+sparse-state representation remain future work.
 
 Committed fields (model names abbreviated in this example):
 
@@ -467,14 +511,16 @@ Canonicalization rules:
 The state digest is content evidence, not a signature. Backup manifests and release
 records still require authenticated custody.
 
-Examples after phase 2:
+The first row below is current. The remaining rows illustrate a possible later sparse
+artifact migration using candidate ID 5; no migration-5 SQL or native executor exists in
+this checkout:
 
 | Database role | Global ledger IDs | Domain heads |
 |---|---|---|
-| Legacy shared database | `1, 2, 3` | `attempts@1`, `artifacts@1`, `delivery@1` |
-| New artifact-only database after v4 | `2, 4` | `artifacts@2` |
-| Existing artifact database upgraded to v4 | `1, 2, 4` | `attempts@1`, `artifacts@2` |
-| Full shared database after v4 | `1, 2, 3, 4` | `attempts@1`, `artifacts@2`, `delivery@1` |
+| Current shared database | `1, 2, 3, 4` | `admission@1`, `attempts@1`, `artifacts@1`, `delivery@1` |
+| New artifact-only database after candidate v5 | `2, 5` | `artifacts@2` |
+| Existing artifact database upgraded to candidate v5 | `1, 2, 5` | `attempts@1`, `artifacts@2` |
+| Full shared database after candidate v5 | `1, 2, 3, 4, 5` | `admission@1`, `attempts@1`, `artifacts@2`, `delivery@1` |
 
 The apparently extra `attempts@1` in an existing artifact database is retained legacy
 history, not a reason to apply attempts to new artifact-only databases.
@@ -565,23 +611,26 @@ For each affected domain, validation includes:
 - `PRAGMA foreign_key_check` and an operation-appropriate integrity check.
 
 Migration 3 is treated as `delivery` because both the base `outbox` state it scrubs and the
-ambiguity table belong to the delivery boundary. Its direct base-table creation remains an
-explicit legacy precondition, not invented migration history.
+ambiguity table belong to the delivery boundary. The separately created base table remains
+a registered topology prerequisite, not invented migration history; current bridge state
+inspection does not yet enforce that prerequisite.
 
 Ownership transfer is not part of sidecar format 1. If a future refactor must transfer an
 object between domains, it requires a separately reviewed protocol and format/version
 change; adding both owners temporarily is forbidden.
 
-## 11. Two-stage release: bridge, then v4
+## 11. Two-stage release: bridge, then a future sparse migration
 
-No release may combine first sidecar deployment and first sparse/v4 write.
+No release may combine first sidecar deployment and the first native/sparse write. Current
+migration 4 is already part of the continuous global prefix; it is not the sparse phase-2
+migration described here.
 
 ### 11.1 Phase 1 — bridge-only release
 
 The bridge release must include:
 
 - exact sidecar DDL and legacy bootstrap;
-- domain registry descriptors for legacy IDs 1-3;
+- domain registry descriptors for packaged IDs 1–4, including the exact `4 → 1` edge;
 - `SchemaState`, validator, deterministic planner, and plan digest;
 - a feature gate that **disables native/sparse application**;
 - domain-aware backup manifest/parser support while retaining strict verification of
@@ -597,7 +646,8 @@ rejecting every extra table, but this observation is not sufficient evidence. Th
 old/bridge binary matrix must pass before rollout.
 
 Old backup code may physically copy sidecar tables yet omit them from manifest evidence.
-Such a backup is not sufficient for phase-2 promotion. Before enabling v4, every backup
+Such a backup is not sufficient for phase-2 promotion. Before enabling any sparse
+migration, every backup
 writer/verifier/restore job must use domain-aware evidence and a new verified backup must
 be retained.
 
@@ -612,22 +662,25 @@ Phase-1 exit criteria:
 6. the fleet has remained healthy for the recorded soak interval;
 7. a release owner signs the sparse-ledger enablement decision.
 
-### 11.2 Phase 2 — artifact v4 release
+### 11.2 Phase 2 — future artifact migration (candidate ID 5)
 
-Only a later release may package and enable migration ID 4 / `artifacts@2`. It must:
+Only a later release may package and enable a native migration, illustrated here as
+candidate migration ID 5 / `artifacts@2`. It must:
 
 - depend explicitly on migration ID 2 / `artifacts@1`, not on global ID 3;
 - be rehearsed on every observed legacy artifact shape and representative data volume;
 - stop or fence artifact writers for the required SQLite rebuild window;
 - prove tenant/workspace physical identity and blob isolation postconditions;
 - emit domain-aware backup and plan/state evidence;
-- reject any non-bridge binary before it can open a sparse or unknown-v4 database;
-- keep a tested v4-aware application rollback target or use verified pre-v4 restore.
+- reject any non-bridge binary before it can open a sparse or unknown-migration database;
+- keep a tested sparse-aware application rollback target or use verified pre-migration
+  restore.
 
-The current v2 artifact schema still uses a global `artifact_id` primary key and global
-blob digest key. A likely v4 goal is composite tenant/workspace identity and composite blob
-foreign keys, but the exact DDL, orphan policy, data-copy algorithm, metadata limits, and
-rollback are separate implementation work. This document does not claim they exist.
+The current migration-2 artifact schema still uses a global `artifact_id` primary key and
+global blob digest key. A possible future goal is composite tenant/workspace identity and
+composite blob foreign keys, but the exact ID, DDL, orphan policy, data-copy algorithm,
+metadata limits, and rollback are separate implementation work. This document does not
+claim they exist.
 
 ## 12. Mixed-version compatibility
 
@@ -647,18 +700,33 @@ bridge for `target_versions`; it is not a general domain-migration negotiation m
 The final API should be explicit and versioned, and the compatibility shim should be
 removed only in its own tested commit after the fleet floor advances.
 
-### 12.2 Sparse/v4 boundary
+### 12.2 Current v4 downgrade fence
 
-After any database records ID 4 or any sparse ledger:
+A database with ledger row 4 requires a v4-aware binary. At validator level, passing a
+registry that ends at version 3 makes the current validator see row 4 as newer, raise
+`MigrationVersionError`, and leave the ledger and admission receipt schema unchanged.
+The retained test is this in-process v3-registry simulation; it is not yet evidence from a
+packaged historical v3 wheel in an independent process. Operators must not delete row 4 or
+`invocation_admissions` to evade the fence, and the real old-wheel/process matrix remains a
+release gate.
+
+Current v4 remains a continuous global prefix and is supported by the current legacy
+runner and active v1 backup implementation. This downgrade fence is distinct from the
+stronger incompatibility of a future sparse ledger.
+
+### 12.3 Future sparse boundary
+
+After any database records a native sparse migration such as candidate ID 5, or any other
+sparse ledger:
 
 - current legacy `validate_sqlite_schema`, `current_schema_version`, and backup format v1
   are incompatible by design;
 - old binaries must fail readiness before mutation;
 - routing must prevent them from receiving that database;
 - application rollback is limited to a binary that understands and safely operates the
-  resulting `SchemaState` and v4 table shapes;
-- rollback to a pre-bridge binary requires restoring a verified pre-v4 backup, not editing
-  the ledger to look old.
+  resulting `SchemaState` and new table shapes;
+- rollback to a pre-bridge binary requires restoring a verified pre-migration backup, not
+  editing the ledger to look old.
 
 Mixed-version tests must exercise two physical processes/wheels, not only monkey-patched
 functions in one interpreter.
@@ -691,14 +759,14 @@ For every database before bridge deployment:
 5. roll through the fleet, recording each database state digest;
 6. keep sparse/native application disabled;
 7. remove or disable old backup/restore jobs;
-8. meet phase-1 exit criteria and soak before approving v4.
+8. meet phase-1 exit criteria and soak before approving any native/sparse migration.
 
-### 13.3 V4 deployment
+### 13.3 Future sparse artifact deployment (candidate v5)
 
 1. prove all binary identities satisfy the bridge floor;
 2. disable/fence artifact writers and drain active artifact transactions;
 3. create and verify a fresh domain-aware backup;
-4. inspect and retain the deterministic v4 plan and digest;
+4. inspect and retain the deterministic candidate-v5 plan and digest;
 5. apply under `BEGIN IMMEDIATE` with postcondition validation;
 6. verify domain heads, sidecar edges, owned object DDL, row counts, blob/content digests,
    tenant/workspace collision cases, foreign keys, and integrity;
@@ -740,12 +808,17 @@ A future sidecar-aware destructive rollback tool would have to:
 That tool is not part of the current code or this sidecar proposal's initial delivery.
 Prefer schema-compatible application rollback or restore-and-forward-fix.
 
-### 14.3 After v4
+### 14.3 After current v4 or a future sparse migration
 
-Do not send a v4 database to the current legacy runner. Roll back application code only to
-a tested v4-aware version. If v4 data layout is not reversibly compatible, restore the
-pre-v4 backup in reconciliation mode or forward-fix. Restoring loses post-backup writes, so
-the release must define export/replay/reconciliation and measured RPO/RTO before promotion.
+Do not send a v4 database to a v3-only runner. Roll application code back only to a tested
+v4-aware version. The packaged v4 down migration drops durable admission receipts and is
+therefore destructive safety-state loss, not an automatic downgrade mechanism; prefer a
+forward fix or a verified pre-v4 restore with effect/work reconciliation.
+
+For a future native/sparse migration, roll back only to a tested sparse-aware version. If
+its data layout is not reversibly compatible, restore the pre-migration backup in
+reconciliation mode or forward-fix. Restoring loses post-backup writes, so every release
+must define export/replay/reconciliation and measured RPO/RTO before promotion.
 
 ## 15. Backup and restore format evolution
 
@@ -786,24 +859,25 @@ and call it compatible. V2 must include a canonical block equivalent to:
         "appliedAt": "2026-08-20T00:00:00.000000Z"
       },
       {
-        "migrationId": 4,
+        "migrationId": 5,
         "domain": "artifacts",
         "domainVersion": 2,
-        "filename": "0004_artifact_tenant_isolation.up.sql",
+        "filename": "0005_artifact_tenant_isolation.up.sql",
         "sqlSha256": "<lowercase sha256>",
         "descriptorSha256": "<lowercase sha256>",
         "ownedSchemaSha256": "<lowercase sha256>",
         "appliedAt": "2026-08-20T00:01:00.000000Z"
       }
     ],
-    "dependencies": [{"migrationId": 4, "dependsOnMigrationId": 2}]
+    "dependencies": [{"migrationId": 5, "dependsOnMigrationId": 2}]
   }
 }
 ```
 
-The example is a shape illustration, not the implemented `BackupManifest` schema. The
-final parser must have exact fields, strict types/count/byte limits, canonical ordering,
-known format/registry validation, and manifest authentication/custody policy.
+The migration-5 entry is only a shape illustration, not a packaged migration or the
+implemented `BackupManifest` schema. The final parser must have exact fields, strict
+types/count/byte limits, canonical ordering, known format/registry validation, and
+manifest authentication/custody policy.
 
 Table-count evidence must derive from the validated owned-object registry rather than only
 the current fixed `_CORE_TABLES`, and must include both sidecar tables. The manifest and
@@ -848,10 +922,12 @@ Implementation is incomplete until deterministic tests cover every row.
 | Executor interrupted by `BaseException` | No partial state and lock released |
 | Attempt to write another domain's object | Preflight/postcondition rejects and rolls back |
 | V3 without valid `outbox` precondition | Fail before destructive rename/data copy |
-| V4 duplicate cross-tenant IDs | Conversion proves independent composite identity or rolls back |
-| V4 shared/orphan blob edge case | Explicit duplication/quarantine policy; no silent loss or cross-tenant sharing |
+| Candidate v5 duplicate cross-tenant IDs | Conversion proves independent composite identity or rolls back |
+| Candidate v5 shared/orphan blob edge case | Explicit duplication/quarantine policy; no silent loss or cross-tenant sharing |
 | Old binary opens bridged prefix | Only supported in tested phase-1 matrix |
-| Old binary opens sparse/v4 state | Fails readiness before mutation |
+| Current validator with a v3-only registry opens v4 state | In-process simulation raises `MigrationVersionError` before mutation; ledger remains `1, 2, 3, 4` |
+| Packaged historical v3 wheel opens current v4 state | Independent-process matrix must prove the same fail-closed result before release |
+| Legacy binary opens future sparse state | Fails readiness before mutation |
 | V1 backup of bridged DB | Classified insufficient for phase 2 |
 | Manifest state differs from database sidecar | Backup/restore verification fails |
 | Restore rolls schema state backward | Reconciliation blocks activation |
@@ -889,6 +965,10 @@ Readiness is false when:
 - a migration is in progress, ambiguous, or failed postcondition;
 - phase-2 enablement lacks a recorded phase-1 exit decision.
 
+The current bridge cannot itself prove the fourth item because it does not consume the
+topology registry's component prerequisites. Consequently it cannot close readiness on its
+own even when every check it currently implements passes.
+
 ## 18. Required invariants
 
 These are release-blocking:
@@ -911,7 +991,8 @@ These are release-blocking:
 15. No bridge bootstrap infers history from unledgered objects.
 16. No sparse/native migration is written until all binaries and backup paths are
     bridge-aware.
-17. No legacy binary touches a sparse/v4 database.
+17. No v3-only binary touches a v4 database, and no legacy runner touches a future sparse
+    database.
 18. Backup manifest evidence and database `SchemaState` are congruent.
 19. Restore never lowers applied security/data state silently.
 20. Destructive down/restore is explicit, rehearsed, and never an automatic readiness fix.
@@ -978,6 +1059,7 @@ current backup behavior; they do not exercise a native/sparse migration:
 ```bash
 PYTHONPATH=src python3 -m unittest tests.test_domain_migrations -v
 PYTHONPATH=src python3 -m unittest tests.test_migrations -v
+PYTHONPATH=src python3 -m unittest tests.test_invocation_admission_migration -v
 PYTHONPATH=src python3 -m unittest tests.test_migration_targets -v
 PYTHONPATH=src python3 -m unittest tests.test_backup -v
 ruff check src/quantum_entanglement/migrations tests/test_migrations.py \
@@ -1000,14 +1082,15 @@ deterministic tests for:
 
 - independent domain selection and sparse ledgers;
 - v3 base precondition and legacy upgrade shapes;
-- v4 clean, populated, collision, shared-blob, orphan, rollback, and large-data cases;
-- old/bridge/v4 wheel process matrix;
+- future artifact migration clean, populated, collision, shared-blob, orphan, rollback,
+  and large-data cases;
+- v3/v4 downgrade-fence process tests plus the old/bridge/future-sparse wheel matrix;
 - backup manifest v1/v2 parsing, creation, verification, restore, tamper, and downgrade;
 - clean wheel package-data, CLI/admin inspection, and deployment smoke.
 
 ### 20.3 Retained phase evidence
 
-Every bridge and v4 promotion record must include:
+Every bridge and later native/sparse promotion record must include:
 
 1. source commits, clean tree/archive digest, wheel digest, and installed SQL/registry
    digests;
@@ -1020,7 +1103,8 @@ Every bridge and v4 promotion record must include:
 7. migration lock/duration, database growth, row counts, content/blob digests, foreign-key
    and integrity results;
 8. backup v1/v2 verification, restore rehearsal, RPO/RTO, and reconciliation outcome;
-9. bridge rollback and post-v4 rollback/restore rehearsal;
+9. bridge rollback, current-v4 downgrade-fence evidence, and post-sparse rollback/restore
+   rehearsal;
 10. unresolved risks with severity, owner, expiry, and promotion impact;
 11. phase-1 fleet adoption proof and signed sparse-enable decision;
 12. reviewer identity and explicit promote/reject decision under
@@ -1028,13 +1112,13 @@ Every bridge and v4 promotion record must include:
 
 Architectural plausibility, a green narrow unit test, or an unchanged exception is not
 release evidence. Phase 2 remains blocked until the bridge, backup format, fleet floor,
-artifact v4 implementation, and restore path all have direct retained proof.
+future artifact migration implementation, and restore path all have direct retained proof.
 
 ## 21. Decision summary
 
 Adopt a sidecar rather than rewriting legacy history:
 
-- keep `qe_schema_migrations` and v1-v3 immutable;
+- keep `qe_schema_migrations` and v1–v4 immutable;
 - add exact `qe_schema_migration_metadata` and
   `qe_schema_migration_dependencies` tables;
 - map global IDs to independent domain versions;
@@ -1042,10 +1126,11 @@ Adopt a sidecar rather than rewriting legacy history:
 - replace the single schema integer with canonical `SchemaState`;
 - plan the dependency closure deterministically and recheck it under the write lock;
 - deploy the bridge and domain-aware backup first, with sparse writes disabled;
-- enable artifact v4 only after every process and restore path crosses the bridge floor;
-- prohibit old binaries and backup v1 once a sparse/v4 state exists;
+- enable a future artifact migration only after every process and restore path crosses the
+  bridge floor;
+- prohibit old binaries and backup v1 once a future sparse state exists;
 - prefer compatible rollback or verified restore/forward-fix over direct down migration.
 
-This is the minimum safe bridge from the current continuous global prefix to genuinely
-domain-owned migrations. It is a design contract for the next implementation stages, not
-a production-readiness claim.
+This is the minimum safe bridge from the current continuous global prefix through v4 to
+genuinely domain-owned migrations. It is a design contract for the next implementation
+stages, not a production-readiness claim. Gates A–E remain closed.
