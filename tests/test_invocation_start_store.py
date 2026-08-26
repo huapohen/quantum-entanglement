@@ -30,6 +30,7 @@ from quantum_entanglement.scheduler import TaskTransition
 from quantum_entanglement.store import (
     ConcurrencyError,
     EventStorePoisonedError,
+    InvocationStartCommitAmbiguityError,
     InvocationStartConflictError,
     InvocationStartTransactionError,
     SQLiteEventStore,
@@ -821,6 +822,84 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
                 (request.manifest.invocation_id,),
             ).fetchone()[0],
             0,
+        )
+        self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
+
+    def test_commit_ack_loss_poisons_and_reopens_as_receipt_only_observation(self) -> None:
+        real_connect = sqlite3.connect
+
+        class CommitAckLossConnection(sqlite3.Connection):
+            fail_next_commit = False
+
+            def execute(
+                connection_self,
+                statement: str,
+                parameters: object = (),
+            ) -> sqlite3.Cursor:
+                if statement.strip().upper() == "COMMIT" and connection_self.fail_next_commit:
+                    connection_self.fail_next_commit = False
+                    super().execute(statement, parameters)  # type: ignore[arg-type]
+                    raise sqlite3.OperationalError("commit acknowledgement lost")
+                return super().execute(statement, parameters)  # type: ignore[arg-type]
+
+        def connect_with_fault(database: str, **kwargs: Any) -> sqlite3.Connection:
+            return cast(
+                sqlite3.Connection,
+                real_connect(database, factory=CommitAckLossConnection, **kwargs),
+            )
+
+        self.store.close()
+        with patch(
+            "quantum_entanglement.store.sqlite3.connect",
+            new=connect_with_fault,
+        ):
+            self.store = SQLiteEventStore(self.path, clock=lambda: ADMITTED_AT)
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        connection = cast(CommitAckLossConnection, self.store._connection)
+        self.assertIsInstance(connection, CommitAckLossConnection)
+        connection.fail_next_commit = True
+        canary = "raw-lease-commit-ack-loss-canary"
+
+        with (
+            patch.object(self.store, "_now", return_value=CLAIMED_AT),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                return_value=canary,
+            ),
+        ):
+            with self.assertRaises(InvocationStartCommitAmbiguityError) as caught:
+                self.store.claim_invocation_start(
+                    request.manifest.invocation_id,
+                    "worker-start-store-1",
+                    lease_seconds=60,
+                    expected_version=2,
+                )
+
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        self.assertNotIn(canary, event_store_traceback_locals(caught.exception))
+        with self.assertRaises(EventStorePoisonedError):
+            self.store.read_invocation_start(request.manifest.invocation_id)
+        self.store.close()
+
+        self.store = SQLiteEventStore(self.path, clock=lambda: ADMITTED_AT)
+        observed = self.store.read_invocation_start(request.manifest.invocation_id)
+        self.assertIs(type(observed), InvocationStartObserved)
+        retried = self.assert_receipt_only_replay(
+            self.store,
+            request.manifest.invocation_id,
+            "worker-start-store-reconcile",
+            expected_version=2,
+        )
+        self.assertEqual(retried, observed)
+        self.assertEqual(self.store.stream_version(request.stream_id), 3)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            1,
         )
         self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
 
