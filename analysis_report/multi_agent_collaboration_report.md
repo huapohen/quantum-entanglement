@@ -2,15 +2,17 @@
 
 > 项目代号：Quantum Entanglement  
 > 面向方向：WanWork 人与 Agent 协同办公  
-> 报告日期：2026-08-19  
+> 初版日期：2026-08-19；当前实现补充：2026-08-26
 > 本地单一真相源：`analysis_report/`  
 > 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 > Notion 镜像：<https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44?pvs=204>
 > 安全边界：飞书/企微全程只读，未发送、回复、评论、@ 或上传任何内容
 
-> **实现证据说明（2026-08-20）：** 第 9–11 节及文中的 531 项测试、142-commit 增量只绑定
+> **实现证据说明（2026-08-26）：** 文中的 531 项测试、142-commit 增量只绑定
 > 历史基线 `e4cbf040579bf1f33c2b7692d2fbd6944d837952`。后续实现已经继续演进；这些数字不得
-> 作为当前主线或发布证据。当前生产边界以
+> 作为当前主线或发布证据。当前真实模型产品证据绑定
+> `886aedc097e8ad371eea89ca0fa568bcc58ac9a0`，详见
+> [`research/18_model_backed_custom_instruction_evidence.md`](research/18_model_backed_custom_instruction_evidence.md)。当前生产边界以
 > [`docs/production/CURRENT_READINESS.md`](../docs/production/CURRENT_READINESS.md) 及更新日期
 > 更晚、明确绑定完整 source commit/tree 的证据报告为准。
 
@@ -41,8 +43,20 @@
 通过；本地 demo 完成 `@Agent` 直达、三 Agent 接力、版本化产出和因果事件。该历史快照还包含
 durable delivery/attempt/artifact/projection、tenant authorization slice、备份恢复、迁移桥、
 canonical release evidence 与双构建制品门禁。它仍是预生产单节点内核，不是可部署的
-商业服务：正式 A2A/MCP、public admission、系统级 action-time authorization、完整 effect
-receipt、IM/UI、生产部署/观测、锁定供应链与端到端事务集成仍未完成。
+商业服务：正式 A2A/MCP、业务 Orchestrator 对 durable admission 的接入、系统级 action-time
+authorization、完整 effect receipt、IM/UI、生产部署/观测和端到端事务集成仍未完成。
+
+截至 2026-08-26，产品体验已从历史合成 demo 演进为 loopback-only 自定义指令页面：用户可
+输入任意指令，默认由 GPT `gpt-5.6-sol` 经 `OpenAIResponsesRuntime` 依次执行 researcher、
+architect、reviewer 三任务，展示三段 narration、三个可预览/下载的 Markdown Artifact、任务
+DAG、Needs You、25-event timeline 和架构图。真实模型全页截图已经归档。该路径是 direct
+Responses adapter，不是官方 DeepSeek Harness；Gate A–E 仍全部关闭。
+
+同日新增的正式 migration 4 与 atomic invocation admission 分别绑定提交 `245ecde` 和
+`5226ef1`：`RUNNING` 事件批次、queued invocation job 与不可变 admission receipt 可在同一
+SQLite 事务提交，exact replay 只接受 receipt，split/tamper 状态 fail-closed，COMMIT 确认丢失
+会 poison 当前 store 并要求 reopen/reconcile。GitHub `ci` 与 `package` 均已通过；这仍只是
+admission spine，不代表 worker claim、result/Artifact acceptance 或生产 Gate 已闭合。
 
 ## 1. 研究目标与范围
 
@@ -498,7 +512,7 @@ ToolPort
 6. 可从 append-only 事件历史恢复 WorkflowPlan、任务状态、批准凭证和依赖 Artifact；已完成任务不会在重启后重复调用 Agent。
 7. 领域事件与 outbox 原子提交，inbox receipt 与入站事件原子提交；过期发布租约可回收，旧发布者不能越过 fencing token 确认消息。
 
-### 9.3 验证
+### 9.3 历史验证快照
 
 本节以下列表是最初 54-test 快照的能力说明；当前 clean baseline 为 531 项测试，完整
 增量和未覆盖边界见 `research/07_current_implementation_status.md`。原始测试覆盖：
@@ -521,7 +535,51 @@ ToolPort
 - transactional outbox/inbox、跨进程互斥领取、租约回收、fencing ACK、重试与 dead letter；
 - AgentRuntimePort、调用幂等冲突、显式隔离 factory、首次启动串行、同 session turn gate、可重试 close 和生命周期的 fake-backed contract；真实官方 SDK/隔离 launcher 仍需端到端验证。
 
-本地 demo 输出：3 个任务全部 completed，3 个 artifact，25 条事件；无模型和外部服务依赖。
+历史本地 demo 输出：3 个任务全部 completed，3 个 artifact，25 条事件；无模型和外部服务
+依赖。该句只描述旧 synthetic checkpoint，不描述当前默认产品路径。
+
+### 9.4 当前自定义指令与模型产品切片
+
+当前默认试用路径为：
+
+```text
+用户自定义指令
+  → loopback product-trial adapter
+  → 固定 researcher → architect → reviewer DAG
+  → AgentRuntimePort
+  → OpenAIResponsesRuntime
+  → OpenAI-compatible /responses
+  → narration + 3 Markdown Artifact + event projection
+```
+
+已提交能力：
+
+- 页面/API 接受任意非空自定义指令，不再把固定示例当唯一命令；
+- 模型调用使用流式 SSE 读取，只有完整终止和合法响应才算成功；
+- 断流、超时、响应超限、非法 JSON/SSE 和 provider error 都显式失败；
+- 缺少模型配置或调用失败时不会隐式回退 synthetic；离线 fixture 必须显式选择；
+- 三个 task 分别产生真实 narration，并把前序 Artifact 作为下游 context；
+- `01_analysis.md`、`02_result.md`、`03_final_review.md` 支持原文预览、下载和 digest 校验；
+- loopback server 具备临时 token、Host/Origin/Fetch Metadata、请求体和单并发门禁；
+- 页面明确标注 `productionApproved=false`、`A-E closed` 和禁止外部消息。
+
+一次绑定 `886aedc` 的浏览器验收完成 3 task、3 Artifact、25 event，归档截图为
+`screenshots/14_model_backed_custom_instruction_gpt.png`，SHA-256
+`018edf7c3728530f4cb03b7a115dfc4e46bf53963c1efb06fbfb1638f9f492b8`。
+
+仍未关闭：
+
+- atomic admission API 已把 `RUNNING` event batch、queued job 和 receipt 组成同一可恢复事务，
+  但当前产品 Orchestrator 尚未接入；claim、attempt、heartbeat、result receipt、Artifact 和
+  terminal task state 仍未组成后续原子 UoW；
+- `.env` 是本地开发加载器，尚未接入生产 `SecretRef/SecretProvider` composition 和进程隔离；
+- 临时 shared token 不是用户/tenant/workspace 认证；
+- 当前三个 Agent 共享一个模型 runtime，通过 prompt/Task/Handoff 区分，没有独立工具、persona
+  或 sandbox profile；
+- 团队/DAG 是固定模板，不是模型动态规划；
+- 当前 direct Responses adapter 没有 Harness session log、Cordis lifecycle、tool loop、compaction
+  或 RuntimeEvent 增量流；
+- 持久服务、SIGTERM drain、resumable stream、容量、OTel、soak 与部署门禁未完成。
 
 ## 10. 生产化差距
 
@@ -529,10 +587,11 @@ ToolPort
 
 已经验证：从 event log 恢复 WorkflowPlan/TaskGraph/Approval/Agent invocation，以及 transactional outbox/inbox 的本地一致性边界。
 
-当前已提交 durable attempt/lease/heartbeat store、artifact blob/metadata 事务和 fenced
-projection/upcaster primitives。仍需完成的是系统组合边界：Orchestrator 接入 durable
-attempt，authorization/tool/effect/action receipt/artifact/task terminal 的端到端事务，
-worker crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOWN 状态。
+当前已提交 receipt-bound atomic admission、durable attempt/lease/heartbeat store、artifact
+blob/metadata 事务和 fenced projection/upcaster primitives。仍需完成的是系统组合边界：
+Orchestrator 接入 admission 与 durable attempt，原子 first-claim/result/Artifact acceptance，
+authorization/tool/effect/action receipt/task terminal 的端到端事务，worker
+crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOWN 状态。
 
 ### P0：安全
 
@@ -555,7 +614,8 @@ worker crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式
 
 ### P1：产品
 
-- 群聊/任务图/artifact/Needs You UI；
+- 已有 loopback-only 自定义指令、任务图、Artifact、Needs You 和 timeline 产品切片；仍需正式
+  authenticated service、持久刷新/重连、群聊消息投影和 desktop/web packaging；
 - Agent roster、能力卡、版本和状态；
 - 计划确认与重规划 diff；
 - artifact review/compare/impact；
@@ -565,7 +625,8 @@ worker crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式
 
 ### Phase 0：内核不变量（当前）
 
-目标：所有模型可见上下文可重建；任务、artifact、审批和因果由平台持有；本地 demo 可验证。
+目标：所有模型可见上下文可重建；任务、artifact、审批和因果由平台持有；自定义指令的真实
+模型产品切片可验证，同时不越过生产运行边界。
 
 完成标准：
 
@@ -680,6 +741,9 @@ worker crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式
 - `research/05_target_product_and_architecture.md`
 - `research/06_competitor_source_validation.md`
 - `research/07_current_implementation_status.md`
+- `research/08_commit_invariant_test_ledger.md` 至
+  `research/18_model_backed_custom_instruction_evidence.md` 的工程、恢复、进程边界和当前产品证据；
+  完整状态与索引以 `analysis_report/README.md` 为准。
 
 截图证据：
 
@@ -693,6 +757,8 @@ worker crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式
 - `screenshots/07_yuque_products_rows_12_16.jpeg`
 - `screenshots/08_yuque_im_provider_comparison.jpeg`
 - `screenshots/09_yuque_technical_options.jpeg`
+- `screenshots/10_local_trial_desktop_idle.png` 至
+  `screenshots/14_model_backed_custom_instruction_gpt.png`
 
 一手外部协议来源见 `research/03_protocol_landscape.md` 第 12 节；框架源码路径和固定 commit 见 `research/02_framework_deepdive.md`。
 
@@ -700,10 +766,14 @@ worker crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式
 
 应继续投入，但产品和技术必须同时收敛：
 
-1. 以已经完成的 crash recovery、inbox/outbox 与 DSH runtime port 为基础，继续完成 A2A contract、MCP adapter 和真实隔离 Harness factory 的端到端验证；
+1. 以已完成的 `RUNNING` + queued job + admission receipt 原子边界为起点，继续完成 first-claim、
+   attempt、heartbeat、accepted result/Artifact receipt 和 terminal task state，使整条链可在
+   kill/restart 后确定性协调；
 2. 与此同时确定一个首发业务闭环，限定 Agent 团队、输入、产出和验收；
 3. UI 先做群聊、任务、artifact、Needs You 四个同源视图；
 4. 把“每个被接受 artifact 的时间、质量和成本”作为评估中心；
-5. 对外兼容标准，对内牢牢掌握组织协作状态与治理。
+5. 在 secret/process/receipt 边界闭合后接入 source-pinned、model-only、最小权限 DeepSeek
+   Harness sidecar；direct Responses 永久保留为诊断对照，不冒充 Harness；
+6. 对外兼容标准，对内牢牢掌握组织协作状态与治理。
 
 如果只做群聊外壳，竞争会落到模型和 UI；如果只做通用框架，用户看不到价值。真正有机会形成世界级产品的中间层，是把开放 Agent runtime 与真实组织工作连接起来，并让协作过程像数据库事务一样可靠、像群聊一样自然、像优秀团队一样可理解和可接管。
