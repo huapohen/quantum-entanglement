@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from asyncio import CancelledError
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
@@ -1051,6 +1052,48 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
             0,
         )
         self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
+
+    def test_provider_controls_are_reissued_clean_after_confirmed_rollback(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        cases: tuple[tuple[str, BaseException, type[BaseException]], ...] = (
+            ("keyboard", KeyboardInterrupt("private-keyboard"), KeyboardInterrupt),
+            ("system-exit", SystemExit("private-system-exit"), SystemExit),
+            ("generator-exit", GeneratorExit("private-generator-exit"), GeneratorExit),
+            ("cancelled", CancelledError("private-cancelled"), CancelledError),
+        )
+
+        for label, original_signal, signal_type in cases:
+            with (
+                self.subTest(label=label),
+                patch.object(self.store, "_now", return_value=CLAIMED_AT),
+                patch(
+                    "quantum_entanglement.store.secrets.token_urlsafe",
+                    side_effect=original_signal,
+                ),
+            ):
+                with self.assertRaises(signal_type) as caught:
+                    self.store.claim_invocation_start(
+                        request.manifest.invocation_id,
+                        "worker-start-store-1",
+                        lease_seconds=60,
+                        expected_version=2,
+                    )
+            self.assertIsNot(caught.exception, original_signal)
+            self.assertIsNone(caught.exception.__cause__)
+            self.assertIsNone(caught.exception.__context__)
+            self.assertEqual(str(caught.exception), "1" if signal_type is SystemExit else "")
+            self.assertNotIn("private-", event_store_traceback_locals(caught.exception))
+            self.assertFalse(self.store._poisoned)
+            self.assertEqual(self.store.stream_version(request.stream_id), 2)
+            self.assertIsNone(self.store.read_invocation_start(request.manifest.invocation_id))
+            self.assertEqual(
+                self.store._connection.execute(
+                    "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                    (request.manifest.invocation_id,),
+                ).fetchone()[0],
+                0,
+            )
 
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
