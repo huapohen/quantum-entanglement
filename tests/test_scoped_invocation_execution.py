@@ -11,6 +11,7 @@ import quantum_entanglement.invocation_execution as invocation_execution_module
 from quantum_entanglement.attempts import InvocationJobSpec, InvocationLease
 from quantum_entanglement.invocation_execution import (
     SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN,
+    SCOPED_INVOCATION_START_EVIDENCE_SCHEMA_VERSION,
     TASK_EXECUTION_REQUESTED_EVENT_TYPE,
     TASK_INVOCATION_STARTED_EVENT_TYPE,
     EffectClass,
@@ -193,6 +194,13 @@ class ScopedInvocationExecutionManifestTests(unittest.TestCase):
             "SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION": 2,
             "ScopedInvocationExecutionManifestV2": ScopedInvocationExecutionManifestV2,
             "ScopedTaskInvocationAdmissionRequestV2": ScopedTaskInvocationAdmissionRequestV2,
+            "SCOPED_INVOCATION_START_EVIDENCE_SCHEMA_VERSION": (
+                SCOPED_INVOCATION_START_EVIDENCE_SCHEMA_VERSION
+            ),
+            "ScopedInvocationStartClaimedV3": ScopedInvocationStartClaimedV3,
+            "ScopedInvocationStartEvidenceV3": ScopedInvocationStartEvidenceV3,
+            "ScopedInvocationStartObservedV3": ScopedInvocationStartObservedV3,
+            "ScopedInvocationStartReceiptV3": ScopedInvocationStartReceiptV3,
             "build_scoped_task_invocation_admission_request_v2": (
                 build_scoped_task_invocation_admission_request_v2
             ),
