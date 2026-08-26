@@ -71,6 +71,7 @@ from .invocation_execution import (
     InvocationStartEvidenceV2,
     InvocationStartObserved,
     InvocationStartReceipt,
+    ScopedTaskInvocationAdmissionRequestV2,
     TaskInvocationAdmissionRequest,
 )
 from .migrations import apply_sqlite_migrations
@@ -3414,6 +3415,35 @@ class SQLiteEventStore:
         )
         events, spec = TaskInvocationAdmissionRequest.components(request)
         TaskInvocationAdmissionRequest.validate_components(request, events, spec)
+        return self.append_invocation_admission(
+            events,
+            spec,
+            expected_version=expected_version_snapshot,
+        )
+
+    @_bind_event_store_process
+    def append_scoped_task_invocation_admission_v2(
+        self,
+        request: ScopedTaskInvocationAdmissionRequestV2,
+        *,
+        expected_version: int,
+    ) -> InvocationAdmissionResult:
+        """Admit one scope-bearing schema-2 execution through the atomic v4 boundary.
+
+        Scope is covered by the execution-manifest payload digest stored on the queued job.
+        This method does not enable claim/start or worker dispatch; those require the future
+        schema-3 scoped start boundary.
+        """
+
+        if type(request) is not ScopedTaskInvocationAdmissionRequestV2:
+            raise TypeError("request must be an exact ScopedTaskInvocationAdmissionRequestV2")
+        expected_version_snapshot = _caller_sqlite_integer(
+            expected_version,
+            "expected_version",
+            minimum=0,
+        )
+        events, spec = ScopedTaskInvocationAdmissionRequestV2.components(request)
+        ScopedTaskInvocationAdmissionRequestV2.validate_components(request, events, spec)
         return self.append_invocation_admission(
             events,
             spec,
