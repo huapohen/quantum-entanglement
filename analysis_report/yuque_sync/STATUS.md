@@ -10,6 +10,9 @@
   `66b1fbb2a52a94379e8739b73c87987ae55a73579460d421ff9a14fe2df3aa69`。
 - 本轮 Clawith 增量在 Notion 与私人语雀均为 `local_pending`：尚未执行远端写入，也没有
   进行实时远端回读。下列远端状态是 2026-08-24 的最近一次已验证快照，不包含 Clawith。
+- `source/14_clawith_competitive_analysis.md` 是“完整原样”传输源，不是独立本地渲染根；
+  其中相对链接按规范报告所在的 `research/` 目录解释。远端发布必须上传/重写 5 张 Clawith
+  图片和仓库内链接，并在回读后才能把状态改为已同步。
 - Notion 连接器已重新授权，并递归抓取项目主页、相关子页和任务库。
 - 共核验 15 个页面/数据库对象；任务库保持 19 条记录。
 - 私人语雀知识库仍为 `Quantum Entanglement｜人 + 多 Agent 协同办公`：
