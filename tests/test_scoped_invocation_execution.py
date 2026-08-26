@@ -12,9 +12,12 @@ from quantum_entanglement.attempts import InvocationJobSpec
 from quantum_entanglement.invocation_execution import (
     SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN,
     TASK_EXECUTION_REQUESTED_EVENT_TYPE,
+    TASK_INVOCATION_STARTED_EVENT_TYPE,
     EffectClass,
     InvocationExecutionManifest,
+    InvocationStartEvidenceV2,
     ScopedInvocationExecutionManifestV2,
+    ScopedInvocationStartEvidenceV3,
     ScopedTaskInvocationAdmissionRequestV2,
     TaskInvocationAdmissionRequest,
     build_scoped_task_invocation_admission_request_v2,
@@ -25,6 +28,9 @@ from quantum_entanglement.scheduler import TaskTransition
 
 REQUESTED_AT = "2026-08-27T09:00:00.000001Z"
 RUNNING_AT = "2026-08-27T09:00:00.000002Z"
+CLAIMED_AT = "2026-08-27T09:00:01.000000Z"
+LEASE_EXPIRES_AT = "2026-08-27T09:01:01.000000Z"
+LEASE_TOKEN = "scoped-start-secret-lease-canary"
 
 
 def valid_manifest_dict() -> dict[str, object]:
@@ -94,6 +100,45 @@ def valid_legacy_request() -> TaskInvocationAdmissionRequest:
         task_running_timestamp=RUNNING_AT,
         job_priority=51,
     )
+
+
+def valid_scoped_start_dict() -> dict[str, object]:
+    manifest = ScopedInvocationExecutionManifestV2.from_dict(valid_manifest_dict())
+    return {
+        "schemaVersion": 3,
+        "tenantId": manifest.tenant_id,
+        "workspaceId": manifest.workspace_id,
+        "invocationId": manifest.invocation_id,
+        "sessionId": manifest.session_id,
+        "planId": manifest.plan_id,
+        "taskId": manifest.task_id,
+        "agentId": manifest.agent_id,
+        "jobIdempotencyKey": manifest.job_idempotency_key,
+        "attemptId": "attempt-scoped-1",
+        "attemptNumber": 1,
+        "leaseEpoch": 1,
+        "workerId": "worker-scoped-1",
+        "leaseTokenDigest": hashlib.sha256(LEASE_TOKEN.encode("utf-8")).hexdigest(),
+        "claimedAt": CLAIMED_AT,
+        "leaseExpiresAt": LEASE_EXPIRES_AT,
+        "manifestDigest": manifest.canonical_digest(),
+        "envelopeDigest": manifest.envelope_digest,
+        "contextDigest": manifest.context_digest,
+        "authorizationDigest": manifest.authorization_digest,
+        "runtimeRevision": manifest.runtime_revision,
+        "correlationId": manifest.correlation_id,
+        "causationId": manifest.causation_id,
+    }
+
+
+def valid_legacy_start_dict() -> dict[str, object]:
+    scoped = valid_scoped_start_dict()
+    del scoped["tenantId"]
+    del scoped["workspaceId"]
+    scoped["schemaVersion"] = 2
+    legacy_manifest = InvocationExecutionManifest.from_dict(valid_legacy_manifest_dict())
+    scoped["manifestDigest"] = legacy_manifest.canonical_digest()
+    return scoped
 
 
 class ScopedInvocationExecutionManifestTests(unittest.TestCase):
@@ -517,6 +562,187 @@ class ScopedTaskInvocationAdmissionRequestTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "scoped manifest binding"):
             request.validate_components(events, forged_job)
+
+
+class ScopedInvocationStartEvidenceTests(unittest.TestCase):
+    def test_exact_round_trip_binds_scope_and_canonical_start_vocabulary(self) -> None:
+        raw = valid_scoped_start_dict()
+
+        evidence = ScopedInvocationStartEvidenceV3.from_dict(raw)
+
+        self.assertEqual(evidence.to_dict(), raw)
+        self.assertEqual(evidence.tenant_id, valid_manifest_dict()["tenantId"])
+        self.assertEqual(evidence.workspace_id, valid_manifest_dict()["workspaceId"])
+        self.assertEqual(
+            ScopedInvocationStartEvidenceV3.from_event_payload(
+                TASK_INVOCATION_STARTED_EVENT_TYPE,
+                raw,
+            ),
+            evidence,
+        )
+        self.assertNotIn(LEASE_TOKEN, repr(evidence))
+        self.assertNotIn(LEASE_TOKEN, json.dumps(evidence.to_dict(), sort_keys=True))
+
+    def test_legacy_and_scoped_start_schemas_never_upcast(self) -> None:
+        legacy = valid_legacy_start_dict()
+        scoped = valid_scoped_start_dict()
+
+        legacy_model = InvocationStartEvidenceV2.from_dict(legacy)
+        scoped_model = ScopedInvocationStartEvidenceV3.from_dict(scoped)
+
+        with self.assertRaises(ValueError):
+            ScopedInvocationStartEvidenceV3.from_dict(legacy)
+        with self.assertRaises(ValueError):
+            InvocationStartEvidenceV2.from_dict(scoped)
+        with self.assertRaises(TypeError):
+            ScopedInvocationStartEvidenceV3.from_dict(legacy_model)
+        with self.assertRaises(TypeError):
+            InvocationStartEvidenceV2.from_dict(scoped_model)
+
+    def test_exact_fields_versions_and_raw_lease_fail_closed(self) -> None:
+        baseline = valid_scoped_start_dict()
+        cases = []
+        missing = dict(baseline)
+        del missing["tenantId"]
+        cases.append(missing)
+        extra = dict(baseline)
+        extra["leaseToken"] = LEASE_TOKEN
+        cases.append(extra)
+        future = dict(baseline)
+        future["schemaVersion"] = 4
+        cases.append(future)
+        boolean = dict(baseline)
+        boolean["schemaVersion"] = True
+        cases.append(boolean)
+
+        for index, raw in enumerate(cases):
+            with self.subTest(case=index):
+                with self.assertRaises((TypeError, ValueError)):
+                    ScopedInvocationStartEvidenceV3.from_dict(raw)
+
+        with self.assertRaises(TypeError):
+            ScopedInvocationStartEvidenceV3.from_dict(tuple(baseline.items()))
+
+    def test_all_start_identities_require_bounded_nfc_plain_text(self) -> None:
+        identity_fields = (
+            "tenantId",
+            "workspaceId",
+            "invocationId",
+            "sessionId",
+            "planId",
+            "taskId",
+            "agentId",
+            "jobIdempotencyKey",
+            "attemptId",
+            "workerId",
+            "runtimeRevision",
+            "correlationId",
+            "causationId",
+        )
+        invalid_values = (
+            "",
+            " padded",
+            "padded ",
+            "line\nfeed",
+            "delete\x7f",
+            "x" * 4_097,
+            "surrogate-\ud800",
+            unicodedata.normalize("NFD", "é"),
+            7,
+        )
+        for field_name in identity_fields:
+            for value in invalid_values:
+                with self.subTest(field=field_name, value=repr(value)[:40]):
+                    raw = valid_scoped_start_dict()
+                    raw[field_name] = value
+                    if field_name == "taskId":
+                        raw["causationId"] = value
+                    with self.assertRaises((TypeError, ValueError, UnicodeError)):
+                        ScopedInvocationStartEvidenceV3.from_dict(raw)
+
+    def test_start_numbers_digests_and_times_are_strict(self) -> None:
+        for field_name in ("attemptNumber", "leaseEpoch"):
+            for value in (True, 0, -1, (1 << 63), "1"):
+                with self.subTest(field=field_name, value=value):
+                    raw = valid_scoped_start_dict()
+                    raw[field_name] = value
+                    with self.assertRaises((TypeError, ValueError)):
+                        ScopedInvocationStartEvidenceV3.from_dict(raw)
+
+        digest_fields = (
+            "leaseTokenDigest",
+            "manifestDigest",
+            "envelopeDigest",
+            "contextDigest",
+            "authorizationDigest",
+        )
+        for field_name in digest_fields:
+            for value in ("A" * 64, "a" * 63, "g" * 64, 1):
+                with self.subTest(field=field_name, value=value):
+                    raw = valid_scoped_start_dict()
+                    raw[field_name] = value
+                    with self.assertRaises((TypeError, ValueError)):
+                        ScopedInvocationStartEvidenceV3.from_dict(raw)
+
+        time_cases = (
+            ("claimedAt", "2026-08-27T09:00:01Z"),
+            ("claimedAt", "2026-02-30T09:00:01.000000Z"),
+            ("leaseExpiresAt", CLAIMED_AT),
+            ("leaseExpiresAt", "2026-08-27T09:00:00.999999Z"),
+        )
+        for field_name, value in time_cases:
+            with self.subTest(field=field_name, value=value):
+                raw = valid_scoped_start_dict()
+                raw[field_name] = value
+                with self.assertRaises((TypeError, ValueError)):
+                    ScopedInvocationStartEvidenceV3.from_dict(raw)
+
+    def test_scope_values_cannot_hide_inside_the_manifest_digest(self) -> None:
+        baseline = ScopedInvocationStartEvidenceV3.from_dict(valid_scoped_start_dict())
+        changed_tenant = replace(baseline, tenant_id="tenant-scoped-2")
+        changed_workspace = replace(baseline, workspace_id="workspace-scoped-2")
+
+        self.assertNotEqual(changed_tenant, baseline)
+        self.assertNotEqual(changed_workspace, baseline)
+        self.assertEqual(changed_tenant.manifest_digest, baseline.manifest_digest)
+        self.assertEqual(changed_workspace.manifest_digest, baseline.manifest_digest)
+
+    def test_event_decoder_and_subclass_dispatch_are_exact(self) -> None:
+        for event_type in (
+            "task.invocation_started",
+            TASK_EXECUTION_REQUESTED_EVENT_TYPE,
+            "task.status.changed",
+            1,
+        ):
+            with self.subTest(event_type=event_type):
+                with self.assertRaises((TypeError, ValueError)):
+                    ScopedInvocationStartEvidenceV3.from_event_payload(
+                        event_type,
+                        valid_scoped_start_dict(),
+                    )
+
+        class ScopedStartSubclass(ScopedInvocationStartEvidenceV3):
+            pass
+
+        with self.assertRaisesRegex(TypeError, "exact schema-3 class"):
+            ScopedStartSubclass.from_dict(valid_scoped_start_dict())
+        with self.assertRaisesRegex(TypeError, "exact schema-3 class"):
+            ScopedStartSubclass.from_event_payload(
+                TASK_INVOCATION_STARTED_EVENT_TYPE,
+                valid_scoped_start_dict(),
+            )
+
+    def test_decoder_snapshots_the_caller_mapping(self) -> None:
+        raw = valid_scoped_start_dict()
+        evidence = ScopedInvocationStartEvidenceV3.from_dict(raw)
+        raw["tenantId"] = "mutated-after-decode"
+        raw["leaseTokenDigest"] = "0" * 64
+
+        self.assertEqual(evidence.tenant_id, "tenant-scoped-1")
+        self.assertEqual(
+            evidence.lease_token_digest,
+            hashlib.sha256(LEASE_TOKEN.encode("utf-8")).hexdigest(),
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover
