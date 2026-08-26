@@ -15,6 +15,7 @@ import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Dict, Mapping, Set, Tuple, cast
 
@@ -29,11 +30,15 @@ from ._artifact_codec import (
 from .invocation_execution import EffectClass
 
 SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION = 2
+SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_MANIFEST_DOMAIN = "quantum-entanglement.invocation-result-manifest/2\n"
 ACTION_RECEIPT_SET_DOMAIN = "quantum-entanglement.action-receipt-set/1\n"
 SCOPED_INVOCATION_RESULT_ARTIFACT_CANDIDATE_DOMAIN = (
     "quantum-entanglement.invocation-result-artifact-candidate/2\n"
 )
+SCOPED_INVOCATION_RESULT_EVIDENCE_DOMAIN = "quantum-entanglement.invocation-result-evidence/2\n"
+TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE = "task.invocation.result.accepted"
+TASK_STATUS_CHANGED_EVENT_TYPE = "task.status.changed"
 EMPTY_ACTION_RECEIPT_SET_DIGEST = hashlib.sha256(
     ACTION_RECEIPT_SET_DOMAIN.encode("utf-8") + b"[]"
 ).hexdigest()
@@ -53,6 +58,7 @@ _MAX_METADATA_KEY_BYTES = 4_096
 _MAX_METADATA_STRING_BYTES = 262_144
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _BLOB_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_CANONICAL_UTC_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z")
 _MAPPING_PROXY_TYPE: type = type(MappingProxyType({}))
 
 _ARTIFACT_FIELDS = frozenset(
@@ -94,6 +100,51 @@ _MANIFEST_FIELDS = frozenset(
         "metadata",
         "primaryArtifactId",
         "artifacts",
+    )
+)
+
+_EVENT_COORDINATE_FIELDS = frozenset(
+    (
+        "eventId",
+        "streamId",
+        "eventType",
+        "sequence",
+        "globalPosition",
+        "eventEnvelopeDigest",
+    )
+)
+
+_RESULT_EVIDENCE_FIELDS = frozenset(
+    (
+        "schemaVersion",
+        "evidenceKind",
+        "receiptId",
+        "tenantId",
+        "workspaceId",
+        "invocationId",
+        "sessionId",
+        "planId",
+        "taskId",
+        "agentId",
+        "jobIdempotencyKey",
+        "runningTaskRevision",
+        "terminalTaskRevision",
+        "attemptId",
+        "attemptNumber",
+        "leaseEpoch",
+        "workerId",
+        "leaseTokenDigest",
+        "startReceiptDigest",
+        "executionManifestDigest",
+        "resultManifestSchemaVersion",
+        "resultManifestDigest",
+        "resultRef",
+        "effectClass",
+        "actionReceiptSetDigest",
+        "acceptanceIdempotencyKey",
+        "requestDigest",
+        "acceptedAt",
+        "artifactCount",
     )
 )
 
@@ -140,6 +191,24 @@ def _digest(value: object, label: str) -> str:
     if _SHA256_PATTERN.fullmatch(digest) is None:
         raise ValueError(f"{label} must be canonical lowercase SHA-256")
     return digest
+
+
+def _timestamp(value: object, label: str) -> str:
+    timestamp = _text(value, label, maximum_bytes=27)
+    if _CANONICAL_UTC_PATTERN.fullmatch(timestamp) is None:
+        raise ValueError(f"{label} must be canonical UTC with microseconds")
+    try:
+        parsed = datetime.fromisoformat(timestamp[:-1] + "+00:00")
+    except ValueError:
+        parsed = None
+    if parsed is None:
+        raise ValueError(f"{label} must be a valid UTC timestamp") from None
+    canonical = (
+        parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    )
+    if canonical != timestamp:
+        raise ValueError(f"{label} must be canonical UTC with microseconds")
+    return timestamp
 
 
 def _body_text(value: object, label: str, *, maximum_bytes: int) -> str:
@@ -608,6 +677,237 @@ class ScopedInvocationResultArtifactCandidateV2:
         return hashlib.sha256(
             SCOPED_INVOCATION_RESULT_ARTIFACT_CANDIDATE_DOMAIN.encode("utf-8")
             + _canonical_json_bytes(self._identity_dict())
+        ).hexdigest()
+
+
+@dataclass(frozen=True)
+class ScopedInvocationResultEventCoordinatesV2:
+    """Immutable coordinates and digest for one event row stored by result acceptance."""
+
+    event_id: str
+    stream_id: str
+    event_type: str
+    sequence: int
+    global_position: int
+    event_envelope_digest: str
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationResultEventCoordinatesV2:
+            raise TypeError(
+                "event coordinates must be exact ScopedInvocationResultEventCoordinatesV2"
+            )
+        for label, value in (
+            ("eventId", self.event_id),
+            ("streamId", self.stream_id),
+            ("eventType", self.event_type),
+        ):
+            _text(value, label)
+        sequence = _positive_integer(self.sequence, "sequence")
+        global_position = _positive_integer(self.global_position, "globalPosition")
+        if global_position < sequence:
+            raise ValueError("globalPosition must not precede its stream sequence")
+        _digest(self.event_envelope_digest, "eventEnvelopeDigest")
+
+    def to_dict(self) -> Dict[str, object]:
+        ScopedInvocationResultEventCoordinatesV2.__post_init__(self)
+        return {
+            "eventId": self.event_id,
+            "streamId": self.stream_id,
+            "eventType": self.event_type,
+            "sequence": self.sequence,
+            "globalPosition": self.global_position,
+            "eventEnvelopeDigest": self.event_envelope_digest,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> ScopedInvocationResultEventCoordinatesV2:
+        if cls is not ScopedInvocationResultEventCoordinatesV2:
+            raise TypeError("event coordinate decoder requires the exact schema-2 class")
+        raw = _exact_dict(value, set(_EVENT_COORDINATE_FIELDS), "result event coordinates")
+        return cls(
+            event_id=raw["eventId"],
+            stream_id=raw["streamId"],
+            event_type=raw["eventType"],
+            sequence=raw["sequence"],
+            global_position=raw["globalPosition"],
+            event_envelope_digest=raw["eventEnvelopeDigest"],
+        )
+
+
+@dataclass(frozen=True)
+class ScopedInvocationResultEvidenceV2:
+    """Exact schema-2 payload for the canonical accepted-result event."""
+
+    schema_version: int
+    evidence_kind: str
+    receipt_id: str
+    tenant_id: str
+    workspace_id: str
+    invocation_id: str
+    session_id: str
+    plan_id: str
+    task_id: str
+    agent_id: str
+    job_idempotency_key: str
+    running_task_revision: int
+    terminal_task_revision: int
+    attempt_id: str
+    attempt_number: int
+    lease_epoch: int
+    worker_id: str
+    lease_token_digest: str
+    start_receipt_digest: str
+    execution_manifest_digest: str
+    result_manifest_schema_version: int
+    result_manifest_digest: str
+    result_ref: str
+    effect_class: EffectClass
+    action_receipt_set_digest: str
+    acceptance_idempotency_key: str
+    request_digest: str
+    accepted_at: str
+    artifact_count: int
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationResultEvidenceV2:
+            raise TypeError("result evidence must be exact ScopedInvocationResultEvidenceV2")
+        if type(self.schema_version) is not int:
+            raise TypeError("schemaVersion must be an exact integer")
+        if self.schema_version != SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION:
+            raise ValueError("schemaVersion is unsupported")
+        if type(self.evidence_kind) is not str:
+            raise TypeError("evidenceKind must be a plain string")
+        if self.evidence_kind != "attempt_bound":
+            raise ValueError("evidenceKind must be attempt_bound")
+        for label, value in (
+            ("receiptId", self.receipt_id),
+            ("tenantId", self.tenant_id),
+            ("workspaceId", self.workspace_id),
+            ("invocationId", self.invocation_id),
+            ("sessionId", self.session_id),
+            ("planId", self.plan_id),
+            ("taskId", self.task_id),
+            ("agentId", self.agent_id),
+            ("jobIdempotencyKey", self.job_idempotency_key),
+            ("attemptId", self.attempt_id),
+            ("workerId", self.worker_id),
+            ("resultRef", self.result_ref),
+            ("acceptanceIdempotencyKey", self.acceptance_idempotency_key),
+        ):
+            _text(value, label)
+        running_revision = _positive_integer(
+            self.running_task_revision,
+            "runningTaskRevision",
+        )
+        terminal_revision = _positive_integer(
+            self.terminal_task_revision,
+            "terminalTaskRevision",
+        )
+        if running_revision >= _MAX_SQLITE_INTEGER or terminal_revision != running_revision + 1:
+            raise ValueError("terminalTaskRevision must immediately follow runningTaskRevision")
+        _positive_integer(self.attempt_number, "attemptNumber")
+        _positive_integer(self.lease_epoch, "leaseEpoch")
+        for label, value in (
+            ("leaseTokenDigest", self.lease_token_digest),
+            ("startReceiptDigest", self.start_receipt_digest),
+            ("executionManifestDigest", self.execution_manifest_digest),
+            ("resultManifestDigest", self.result_manifest_digest),
+            ("actionReceiptSetDigest", self.action_receipt_set_digest),
+            ("requestDigest", self.request_digest),
+        ):
+            _digest(value, label)
+        if type(self.result_manifest_schema_version) is not int:
+            raise TypeError("resultManifestSchemaVersion must be an exact integer")
+        if self.result_manifest_schema_version != SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION:
+            raise ValueError("resultManifestSchemaVersion is unsupported")
+        if type(self.effect_class) is not EffectClass:
+            raise TypeError("effectClass must be an exact EffectClass")
+        if self.effect_class is not EffectClass.PURE:
+            raise ValueError("accepted schema-2 evidence requires effectClass pure")
+        if self.action_receipt_set_digest != EMPTY_ACTION_RECEIPT_SET_DIGEST:
+            raise ValueError("accepted pure evidence requires the empty action receipt set")
+        _timestamp(self.accepted_at, "acceptedAt")
+        artifact_count = _nonnegative_integer(self.artifact_count, "artifactCount")
+        if artifact_count > _MAX_ARTIFACTS:
+            raise ValueError("artifactCount exceeds the schema-2 limit")
+
+    def to_dict(self) -> Dict[str, object]:
+        ScopedInvocationResultEvidenceV2.__post_init__(self)
+        return {
+            "schemaVersion": self.schema_version,
+            "evidenceKind": self.evidence_kind,
+            "receiptId": self.receipt_id,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "invocationId": self.invocation_id,
+            "sessionId": self.session_id,
+            "planId": self.plan_id,
+            "taskId": self.task_id,
+            "agentId": self.agent_id,
+            "jobIdempotencyKey": self.job_idempotency_key,
+            "runningTaskRevision": self.running_task_revision,
+            "terminalTaskRevision": self.terminal_task_revision,
+            "attemptId": self.attempt_id,
+            "attemptNumber": self.attempt_number,
+            "leaseEpoch": self.lease_epoch,
+            "workerId": self.worker_id,
+            "leaseTokenDigest": self.lease_token_digest,
+            "startReceiptDigest": self.start_receipt_digest,
+            "executionManifestDigest": self.execution_manifest_digest,
+            "resultManifestSchemaVersion": self.result_manifest_schema_version,
+            "resultManifestDigest": self.result_manifest_digest,
+            "resultRef": self.result_ref,
+            "effectClass": self.effect_class.value,
+            "actionReceiptSetDigest": self.action_receipt_set_digest,
+            "acceptanceIdempotencyKey": self.acceptance_idempotency_key,
+            "requestDigest": self.request_digest,
+            "acceptedAt": self.accepted_at,
+            "artifactCount": self.artifact_count,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> ScopedInvocationResultEvidenceV2:
+        if cls is not ScopedInvocationResultEvidenceV2:
+            raise TypeError("result evidence decoder requires the exact schema-2 class")
+        raw = _exact_dict(value, set(_RESULT_EVIDENCE_FIELDS), "scoped result evidence")
+        return cls(
+            schema_version=raw["schemaVersion"],
+            evidence_kind=raw["evidenceKind"],
+            receipt_id=raw["receiptId"],
+            tenant_id=raw["tenantId"],
+            workspace_id=raw["workspaceId"],
+            invocation_id=raw["invocationId"],
+            session_id=raw["sessionId"],
+            plan_id=raw["planId"],
+            task_id=raw["taskId"],
+            agent_id=raw["agentId"],
+            job_idempotency_key=raw["jobIdempotencyKey"],
+            running_task_revision=raw["runningTaskRevision"],
+            terminal_task_revision=raw["terminalTaskRevision"],
+            attempt_id=raw["attemptId"],
+            attempt_number=raw["attemptNumber"],
+            lease_epoch=raw["leaseEpoch"],
+            worker_id=raw["workerId"],
+            lease_token_digest=raw["leaseTokenDigest"],
+            start_receipt_digest=raw["startReceiptDigest"],
+            execution_manifest_digest=raw["executionManifestDigest"],
+            result_manifest_schema_version=raw["resultManifestSchemaVersion"],
+            result_manifest_digest=raw["resultManifestDigest"],
+            result_ref=raw["resultRef"],
+            effect_class=_effect_class(raw["effectClass"]),
+            action_receipt_set_digest=raw["actionReceiptSetDigest"],
+            acceptance_idempotency_key=raw["acceptanceIdempotencyKey"],
+            request_digest=raw["requestDigest"],
+            accepted_at=raw["acceptedAt"],
+            artifact_count=raw["artifactCount"],
+        )
+
+    def canonical_bytes(self) -> bytes:
+        return _canonical_json_bytes(self.to_dict())
+
+    def canonical_digest(self) -> str:
+        return hashlib.sha256(
+            SCOPED_INVOCATION_RESULT_EVIDENCE_DOMAIN.encode("utf-8") + self.canonical_bytes()
         ).hexdigest()
 
 
