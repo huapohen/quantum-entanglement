@@ -1,7 +1,8 @@
 # Canonical invocation admission and atomic start
 
-Status: strict evidence codecs and canonical semantic admission are implemented; receipt-gated
-atomic first claim/start, worker and runtime integration remain disabled.
+Status: the receipt-gated atomic first claim/start boundary is implemented, exported and retained
+on `main`. It is a narrow durable authority boundary, not a production worker: no
+heartbeat-supervised worker or runtime dispatch path consumes the returned authority yet.
 
 Implemented checkpoints:
 
@@ -14,13 +15,30 @@ Implemented checkpoints:
 | semantic binding matrix | `84d8fd3` | legacy/reordered/extra/tampered event/job rejection |
 | EventStore canonical wrapper | `8b0dc83` | v4 atomic admission/receipt reused without schema change |
 | wrapper fault/process evidence | `f23d8e1` | replay, forgery, poison, lost ACK, clean control and real fork |
+| capability/result models | `1bfab1b` | exact immutable receipt, claimed and observed types; lease omitted from serialization/repr |
+| durable observation/readback | `031754f`, `b840b04` | canonical admission/job/attempt/schema-2 event are revalidated as one observation |
+| atomic first claim/start | `ffc368c`, `70a59ba` | public `claim_invocation_start(...)` owns one transaction and returns authority only after ACK |
+| happy path and replay fence | `5f36448`, `5f5b11e` | one first claim; retry, peer connection and reopen are receipt-only observations |
+| transaction/control faults | `1fad819` through `4ff05fe` | rollback, BEGIN/COMMIT/ROLLBACK ACK loss, poison and control-signal isolation |
+| connection/process exclusion | `8c4d080`, `f655f83` | two connections and two spawned processes issue exactly one plaintext lease |
+| process/capability safety | `c6928f9`, `b2d0f16`, `4439630` | provider fork/PID fencing and SQLite/WAL/backup/restore secret canaries |
+| package surface | `a2fc9d6`, `3642178` | atomic-start result, receipt and error contracts exported and package-tested |
 
-These hashes identify implementation checkpoints, not final release evidence. The current source
-candidate must still pass complete clean-runner gates before promotion.
+These hashes identify implementation checkpoints, not a production release. Clean source candidate
+`a1fd35569fd093c93956294a644eb416a15e2c06` contains the complete boundary and passed the retained
+[CI run 33009646365](https://github.com/huapohen/quantum-entanglement/actions/runs/33009646365):
+Python 3.9 and 3.12 each ran 1,320 tests, and canonical release evidence passed. Its independent
+[package run 33009646336](https://github.com/huapohen/quantum-entanglement/actions/runs/33009646336)
+passed reproducible wheel/sdist, source-bound distribution-manifest, CycloneDX 1.6 SBOM and wheel
+smoke gates. The Python 3.9 SQLite-authorizer fixture correction is retained at `9bb2cc7`; it changes
+test cleanup, not the production transaction contract. On 2026-08-27, a local Python 3.13 full-suite
+rerun completed 1,320 tests successfully (the run emitted the existing CPython fork deprecation
+warnings); a focused rerun of `test_invocation_execution`, `test_invocation_start_controls` and
+`test_invocation_start_store` completed 75 tests successfully.
 
-This document freezes the next production execution-spine boundary. It does not claim that a
-worker is enabled, that an Agent can safely run, or that external effects are exactly once. The
-only target of this slice is:
+This document is the authoritative contract for the implemented execution-spine boundary. It does
+not claim that a production worker is enabled, that an Agent can yet run end to end through this
+authority, or that external effects are exactly once. The implemented scope is:
 
 ```text
 canonical execution admission receipt
@@ -29,8 +47,11 @@ canonical execution admission receipt
   -> one non-replayable lease capability returned only after acknowledged commit
 ```
 
-The worker, heartbeat supervisor, Agent dispatch, Artifact/result acceptance, terminal task
-projection, connector action and automatic retry remain disabled after this slice.
+The standalone attempt store already has heartbeat and terminal-CAS primitives, but no
+heartbeat-supervised worker is wired to `InvocationStartClaimed`. Atomic Artifact/result/attempt/task
+terminal acceptance, durable external action receipts, `effect_unknown` reconciliation, production
+connector actions and automatic retry remain outside this boundary. The existing deterministic
+demo/legacy runtime path is not evidence that these production integrations exist.
 
 ## Why the existing admission receipt is insufficient
 
@@ -158,7 +179,7 @@ being replayed through the new API.
 The EventStore owns this unit of work because the event log, admission receipt, invocation job and
 attempt rows must share the same SQLite connection, lock, process owner and commit outcome.
 
-Proposed public boundary:
+Implemented public boundary:
 
 ```python
 SQLiteEventStore.claim_invocation_start(
@@ -170,8 +191,8 @@ SQLiteEventStore.claim_invocation_start(
 ) -> InvocationStartClaimed | InvocationStartObserved
 ```
 
-After all caller inputs are snapshotted and creator-PID ownership is rechecked, one
-`BEGIN IMMEDIATE` transaction performs, in order:
+After all caller inputs are snapshotted and creator-PID ownership is rechecked, the method owns one
+`BEGIN IMMEDIATE` transaction and performs, in order:
 
 1. select the v4 admission receipt by invocation identity;
 2. strictly revalidate the receipt, its exact event range and the immutable queued job binding;
@@ -255,38 +276,57 @@ Therefore:
 This fail-closed false negative is intentional. It is safer than issuing two capabilities for one
 attempt.
 
-## Fault and concurrency evidence required
+## Retained fault and concurrency evidence
 
-The implementation is incomplete until retained tests cover:
+The committed `test_invocation_execution`, `test_invocation_start_controls` and
+`test_invocation_start_store` suites retain the following evidence:
 
-- every canonical field mismatch, unknown/missing field, future schema, bool-as-int and legacy
-  underscore event name;
-- standalone job, missing/tampered receipt, missing/tampered event, partial job/event/receipt and
-  attempt-without-start/start-without-attempt states;
-- faults before and after admission validation, job CAS, attempt insert, start append and in-
-  transaction readback, each proving full rollback;
-- BEGIN/COMMIT/ROLLBACK acknowledgement faults, exact controls, exception sanitization and poison;
-- two SQLite connections and two `spawn` processes competing for one invocation, with exactly one
-  `InvocationStartClaimed` and no second lease issuance;
-- exact replay/reopen returning observation only;
-- expected-version race rolling back job, attempt and event together;
-- real fork during every configurable provider, rejected before inherited-state access;
-- secret canary proving the raw token is absent from events, rows, receipts, `repr`, exceptions,
-  logs and release evidence;
-- backup v1 round-trip retaining and validating the schema-2 event without changing schema
-  topology;
-- recovery classification for queued/zero-attempt, active schema-2 start, expired/effect-unknown
-  start and legacy-unbound start;
-- Python 3.9 and 3.13 full suite, locked Ruff, strict mypy, package manifest, deterministic demo and
-  release evidence.
+- exact manifest/start codecs reject unknown or missing fields, future/legacy schemas,
+  bool-as-int values, legacy underscore event names, malformed digests/times and forged model
+  instances;
+- standalone jobs, generic or semantically forged admissions, wrong-stream start markers,
+  event/job/attempt/receipt tampering, partial row deletion, attempt-without-start and
+  start-without-attempt all fail closed;
+- injected failures after job CAS, start append and fresh readback roll back job, attempt and event
+  together;
+- BEGIN, COMMIT and ROLLBACK faults, acknowledgement loss, rollback failure and exact control
+  signals have sanitized outcomes; ambiguous outcomes poison the current store instance;
+- first claim, retry, peer connection and reopen preserve one receipt while only the first normally
+  acknowledged call receives `InvocationStartClaimed`;
+- two SQLite connections and two spawned processes produce exactly one claim, one observation, one
+  attempt, one schema-2 event and one lease-token provider call;
+- replay version is anchored to the stream version immediately before the start event, and a wrong
+  replay version is rejected before any clock, ID or token provider runs;
+- a real fork during each configurable start provider is rejected in the child, while the parent
+  retains the only claim;
+- plaintext lease canaries are absent from schema-2 payloads, receipt/observation JSON, `repr`,
+  exception chains, SQLite rows, database/WAL/SHM bytes, backup database, backup manifest and
+  restored database; only the SHA-256 token digest is durable;
+- backup v1 round-trip retains and revalidates the schema-2 event without introducing a new schema
+  migration or receipt table.
+
+The clean-runner and package evidence linked at the top covers the whole repository, not only these
+focused suites. It proves this implementation for the recorded Python/Linux matrix; it does not
+prove service-level crash safety or production readiness.
+
+The following evidence is deliberately still open:
+
+- a receipt-bound worker that heartbeats the exact lease/attempt, handles cancel, timeout, expiry,
+  graceful drain and crash recovery, and dispatches only pure/fake handlers;
+- one atomic acceptance boundary for Artifact/result, attempt terminal state and task terminal
+  projection, including stale-worker and ACK-loss matrices;
+- receipt-bound recovery classification for the complete worker/result state machine;
+- durable external action receipt plus `effect_unknown` reconciliation; and
+- authenticated service/fake-connector E2E, supported OS/SQLite matrix, load/chaos/soak and the
+  remaining production Gates A–E.
 
 ## Explicit non-goals and next order
 
-This slice must not:
+This implemented slice does not:
 
 - switch `OrchestratorKernel` to the durable path;
 - invoke an Agent, plugin tool, MCP server, connector or external message API;
-- heartbeat or complete/fail the attempt;
+- run the heartbeat loop or call complete/fail on the returned attempt authority;
 - write Artifact/result/terminal task state;
 - enable retry or reinterpret a legacy receipt;
 - claim exactly-once external effects.
