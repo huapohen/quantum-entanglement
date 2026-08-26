@@ -104,6 +104,10 @@ class ScopedInvocationExecutionManifestTests(unittest.TestCase):
             ),
             "SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION": 2,
             "ScopedInvocationExecutionManifestV2": ScopedInvocationExecutionManifestV2,
+            "ScopedTaskInvocationAdmissionRequestV2": ScopedTaskInvocationAdmissionRequestV2,
+            "build_scoped_task_invocation_admission_request_v2": (
+                build_scoped_task_invocation_admission_request_v2
+            ),
         }
         for name, value in expected.items():
             with self.subTest(name=name):
