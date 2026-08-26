@@ -791,6 +791,16 @@ class ReportSyncBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ReportSyncBundleError, "screenshot_policy_invalid"):
             generate_report_sync_bundle(self.repository)
 
+        item["notForPublicDistribution"] = True
+        item["redactionStatus"] = "not-applicable-public-webpage-in-internal-evidence-set"
+        self._write_screenshot_manifest([item])
+        generate_report_sync_bundle(self.repository)
+
+        item["redactionStatus"] = "unrestricted-public-copy"
+        self._write_screenshot_manifest([item])
+        with self.assertRaisesRegex(ReportSyncBundleError, "screenshot_policy_invalid"):
+            generate_report_sync_bundle(self.repository)
+
         self._write_screenshot_manifest(
             [self._image_item("00_fixture.png", self.image, width=1, height=1)]
         )

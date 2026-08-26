@@ -55,6 +55,7 @@ _IMAGE_EXTENSIONS = {
 _REDACTION_STATUSES = frozenset(
     {
         "not-redacted-synthetic-local-ui",
+        "not-applicable-public-webpage-in-internal-evidence-set",
         "reviewed-no-credential-model-output-restricted",
         "unredacted-restricted-original",
     }
