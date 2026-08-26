@@ -84,8 +84,7 @@ from a valid result receipt and its complete durable graph. The proposed API is:
 ```text
 accept_invocation_result(
     exact ResultAcceptanceRequest,
-    exact ScopedInvocationStartClaimed,
-    expected_stream_version
+    exact ScopedInvocationStartClaimed
 ) -> InvocationResultAccepted | InvocationResultObserved
 
 read_invocation_result(scoped invocation identity)
@@ -95,15 +94,40 @@ read_invocation_recovery_bundle(scoped task identity)
     -> one-snapshot verified durable graph
 ```
 
-`Accepted` may contain the still-live lease only inside the acknowledged call if a later internal
-step requires it; it is never serializable or replayable. `Observed` is capability-free. Lost
-commit acknowledgement, reopen, peer-process replay and recovery can return only an observation.
+`ResultAcceptanceRequest` includes the expected stream version inside its canonical request digest;
+it is never an unbound side parameter. `Accepted` is a non-serializable proof that this call made a
+fresh commit, but it does not retain the lease after the success CAS clears it. All post-commit work
+is represented by outbox rows in the same transaction. `Observed` is capability-free. Lost commit
+acknowledgement, reopen, peer-process replay and recovery can return only an observation.
+
+The schema-2 result manifest preserves the complete provider-neutral result body rather than only
+describing materialized Artifacts:
+
+```text
+resultRef                 stable logical result identity; never an Artifact alias
+narration                 bounded canonical UTF-8 result text
+metadata                  bounded canonical JSON object
+primaryArtifactId         optional; when present, names one descriptor
+artifacts                 ordered tuple containing zero through 256 descriptors
+```
+
+A narration-only result is valid and does not create a synthetic Artifact. `resultRef` is the
+stable value written to the invocation job and attempt; it remains unchanged whether the result has
+no Artifact, one primary Artifact or several supporting Artifacts. Artifact IDs, names and
+idempotency keys are unique within one result, and the first writer version forbids two descriptors
+with the same name even when their proposed versions differ. The manifest carries only immutable
+post-derivation descriptors. Raw bytes, canonical metadata bytes, expected head versions and
+Artifact request identities live in exact content candidates covered by the acceptance request.
+
+The value codec may decode future effect-bearing manifests for audit compatibility, but the first
+acceptor mechanically admits only `effectClass=pure` with the canonical empty action-receipt set.
+No label, caller boolean or non-empty receipt digest relaxes this promotion boundary.
 
 The result transaction makes this set visible all-or-nothing:
 
 ```text
 active scoped lease/start revalidation
-+ Artifact blobs and versions
++ zero or more Artifact blobs and versions
 + canonical bounded result manifest bytes
 + durable result receipt
 + task.invocation.result.accepted schema-2 event

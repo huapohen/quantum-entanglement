@@ -141,8 +141,10 @@ the following set visible all-or-nothing:
 ```text
 validated schema-2 start receipt
 + active invocation lease/attempt/epoch/token digest/deadline
-+ immutable result manifest and accepted-result receipt
++ immutable result manifest containing narration, metadata and a stable logical resultRef
 + zero or more immutable Artifact versions and blobs
++ optional primaryArtifactId bound to one of those versions
++ accepted-result receipt
 + canonical task.invocation.result.accepted event
 + succeeded invocation job and attempt
 + exact RUNNING -> COMPLETED task.status.changed event
@@ -153,6 +155,14 @@ No caller-supplied receipt is authority. The store constructs the receipt from r
 coordinates written in the same transaction. Exact replay returns the original accepted bundle.
 Conflicting replay, partial rows, stale lease, expired deadline, stream revision drift, task-scope
 drift, manifest drift or Artifact drift fails closed without publishing any subset.
+
+`resultRef` is not an Artifact ID. It remains the job/attempt's stable logical result identity even
+for a narration-only result. The manifest accepts zero through 256 ordered Artifact descriptors and
+an optional `primaryArtifactId`; a non-null primary ID must name exactly one descriptor. The exact
+acceptance request separately binds every raw Artifact content candidate and expected head version
+to its descriptor. The request digest also covers the expected event-stream version. The worker
+cannot request acceptance for any effect class other than `pure` with the canonical empty action
+receipt set.
 
 `SQLiteInvocationAttemptStore.complete(...)` is not this boundary and must not be called by the
 worker. It does not validate result or Artifact evidence and can create a succeeded attempt whose
