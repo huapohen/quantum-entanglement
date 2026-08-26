@@ -19,7 +19,9 @@ transaction described under "Integration boundary".
 - one automatically claimable attempt, lease heartbeat, expired-owner fencing and terminal CAS;
 - fail-closed effect-unknown quarantine after any failed or expired attempt;
 - fake or separately approved external connectors only;
-- Python 3.9 or newer and a filesystem on which SQLite WAL locking is reliable.
+- Python 3.9 through 3.13 and a filesystem on which SQLite WAL locking is reliable. Python 3.14
+  remains outside the package compatibility window until its context-protocol and SQLite
+  `STAT4` regressions have dedicated fixes, locks and CI evidence.
 
 This is a Phase 1 primitive. It is not the Phase 4 distributed worker implementation.
 Do not place the SQLite file on NFS or another filesystem without verified POSIX locking,

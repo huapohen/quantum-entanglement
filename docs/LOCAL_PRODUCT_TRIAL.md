@@ -9,7 +9,7 @@
 前置条件：
 
 - macOS 或 Linux；
-- Python 3.9 或更高版本；
+- Python 3.9–3.13；
 - 任意现代浏览器；
 - 不需要安装第三方 Python 包；
 - 仓库根目录已有本地 `.env`，或按 `.env.example` 配置 OpenAI-compatible 模型凭据。
@@ -154,7 +154,8 @@ CLI 模式保留原有确定性合成协作 demo，方便离线检查内核，�
 QE_TRIAL_PYTHON=/usr/bin/python3 ./scripts/start_local_trial.sh
 ```
 
-`QE_TRIAL_PYTHON` 可以是 PATH 中的命令，也可以是 Python 可执行文件的绝对路径。若某个较新的 Python 在冷启动时明显偏慢，可显式选择已安装的 Python 3.9–3.13。
+`QE_TRIAL_PYTHON` 可以是 PATH 中的命令，也可以是 Python 可执行文件的绝对路径。当前发布元数据
+和启动脚本都只接受 Python 3.9–3.13；Python 3.14 尚未进入兼容窗口。
 
 ### 查看全部参数
 
@@ -198,7 +199,7 @@ chmod +x scripts/start_local_trial.sh
 
 然后重新运行脚本。
 
-### `需要 Python 3.9 或更高版本`
+### `需要 Python 3.9–3.13（暂不支持 3.14+）`
 
 确认版本：
 
@@ -206,7 +207,9 @@ chmod +x scripts/start_local_trial.sh
 python3 --version
 ```
 
-安装或选择合适版本后，通过 `QE_TRIAL_PYTHON` 指定它。脚本不会自动安装软件，也不会改动系统 Python。
+安装或选择合适版本后，通过 `QE_TRIAL_PYTHON` 指定它。脚本不会自动安装软件，也不会改动系统
+Python。Python 3.14 当前会在 protected-operation context protocol 和启用 SQLite `STAT4` 的 backup-v2
+边界触发已知失败，因此启动脚本会在加载产品代码前明确拒绝，而不是继续运行一个未经支持的组合。
 
 ### `Address already in use`
 
@@ -236,9 +239,11 @@ python3 --version
 
 终端中的服务仍可能已经启动。复制它打印的 `http://127.0.0.1:…/#token=…` 完整地址到浏览器；或使用 `--no-open` 明确采用手动打开方式。
 
-### 较新 Python 首次启动较慢
+### 为什么 Python 3.14 会被拒绝
 
-本机验证中，Python 3.14 的冷启动可能需要约 30–40 秒，Python 3.9/3.13 更快。页面尚未出现时先观察终端；也可用 `QE_TRIAL_PYTHON` 选择 Python 3.9–3.13。
+当前 Python 3.14 完整套件的实证结果不是性能变慢，而是 `95 failures / 7 errors`。在 context-manager
+特殊方法查找顺序与 SQLite `STAT4` topology 完成兼容实现、3.14 lock/CI 和完整安全回归以前，
+项目元数据保持 `>=3.9,<3.14`。请用 `QE_TRIAL_PYTHON` 选择 Python 3.9–3.13。
 
 ## 8. 自己跑验收
 

@@ -17,6 +17,11 @@ authorization primitive、SQLite backup/restore、严格 service config、opaque
 `gpt-5.6-sol`，按分析、生成、复核三 Agent DAG 生成三个 Markdown Artifact；它是当前产品体验
 证据，不是正式 service composition root，也不改变任何生产 Gate 状态。
 
+当前包的诚实 Python 兼容窗口是 `>=3.9,<3.14`。CPython 3.14 已复现 `95 failures / 7 errors`：
+protected-operation context protocol 依赖的特殊方法 descriptor lookup 顺序发生变化，且其 SQLite
+3.53.2/`ENABLE_STAT4` 会让 backup-v2 schema catalog 多出 `sqlite_stat4`。在两条路径重写、3.14
+lock/CI 和完整安全回归通过前，3.14 不属于支持版本；启动脚本会在加载产品代码前拒绝它。
+
 这些能力分别有真实代码和负向测试，但尚未被可信认证入口、强制 tenant-scoped repository、
 runtime attempt/result 状态机、durable action receipt 和统一 service lifecycle 串成闭环。因此当前
 只能在可信本机或隔离 CI 中使用合成数据、fake、no-op 或只读 fixture。禁止真实飞书/企微
