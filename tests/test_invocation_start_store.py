@@ -7,7 +7,9 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
+import quantum_entanglement.store as store_module
 from quantum_entanglement.attempts import InvocationLease, SQLiteInvocationAttemptStore
 from quantum_entanglement.events import DomainEvent, StoredEvent
 from quantum_entanglement.invocation_execution import (
@@ -23,6 +25,7 @@ from quantum_entanglement.invocation_execution import (
 from quantum_entanglement.protocol import TaskStatus
 from quantum_entanglement.scheduler import TaskTransition
 from quantum_entanglement.store import (
+    ConcurrencyError,
     EventStorePoisonedError,
     InvocationStartConflictError,
     SQLiteEventStore,
@@ -148,6 +151,35 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
         self.store.close()
         self.tempdir.cleanup()
 
+    def assert_receipt_only_replay(
+        self,
+        store: SQLiteEventStore,
+        invocation_id: str,
+        worker_id: str,
+        *,
+        expected_version: int,
+    ) -> InvocationStartObserved:
+        with (
+            patch.object(store, "_now", side_effect=AssertionError("clock must not run")),
+            patch.object(
+                store_module,
+                "new_id",
+                side_effect=AssertionError("ID provider must not run"),
+            ),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                side_effect=AssertionError("token provider must not run"),
+            ),
+        ):
+            replay = store.claim_invocation_start(
+                invocation_id,
+                worker_id,
+                lease_seconds=60,
+                expected_version=expected_version,
+            )
+        self.assertIs(type(replay), InvocationStartObserved)
+        return cast(InvocationStartObserved, replay)
+
     def test_unknown_and_canonically_admitted_unstarted_invocations_return_none(self) -> None:
         request = canonical_request()
 
@@ -199,6 +231,113 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
             self.store.read_invocation_start(request.manifest.invocation_id),
             InvocationStartObserved(typed.receipt),
         )
+
+    def test_every_retry_peer_and_reopen_returns_receipt_only_without_providers(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        first = self.store.claim_invocation_start(
+            request.manifest.invocation_id,
+            "worker-start-store-1",
+            lease_seconds=60,
+            expected_version=2,
+        )
+        self.assertIs(type(first), InvocationStartClaimed)
+        receipt = cast(InvocationStartClaimed, first).receipt
+
+        same_worker = self.assert_receipt_only_replay(
+            self.store,
+            request.manifest.invocation_id,
+            "worker-start-store-1",
+            expected_version=2,
+        )
+        second_worker = self.assert_receipt_only_replay(
+            self.store,
+            request.manifest.invocation_id,
+            "worker-start-store-2",
+            expected_version=2,
+        )
+        peer = SQLiteEventStore(self.path, clock=lambda: CLAIMED_AT)
+        try:
+            peer_worker = self.assert_receipt_only_replay(
+                peer,
+                request.manifest.invocation_id,
+                "worker-start-store-peer",
+                expected_version=2,
+            )
+        finally:
+            peer.close()
+        self.store.close()
+        self.store = SQLiteEventStore(self.path, clock=lambda: CLAIMED_AT)
+        reopened = self.assert_receipt_only_replay(
+            self.store,
+            request.manifest.invocation_id,
+            "worker-start-store-reopened",
+            expected_version=2,
+        )
+
+        self.assertEqual(
+            {same_worker.receipt, second_worker.receipt, peer_worker.receipt, reopened.receipt},
+            {receipt},
+        )
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            1,
+        )
+
+    def test_replay_version_is_anchored_before_start_not_at_current_stream_head(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        first = self.store.claim_invocation_start(
+            request.manifest.invocation_id,
+            "worker-start-store-1",
+            lease_seconds=60,
+            expected_version=2,
+        )
+        self.assertIs(type(first), InvocationStartClaimed)
+        self.store.append(
+            DomainEvent(
+                stream_id=request.stream_id,
+                event_type="task.audit.recorded",
+                payload={"taskId": request.manifest.task_id},
+                actor_id=CANONICAL_ORCHESTRATOR_ACTOR_ID,
+                event_id="event-after-invocation-start",
+                timestamp=CLAIMED_AT,
+                correlation_id=request.manifest.correlation_id,
+                causation_id=request.manifest.causation_id,
+                idempotency_key="audit-after-invocation-start",
+            ),
+            expected_version=3,
+        )
+
+        observed = self.assert_receipt_only_replay(
+            self.store,
+            request.manifest.invocation_id,
+            "worker-start-store-2",
+            expected_version=2,
+        )
+        self.assertEqual(observed.receipt, cast(InvocationStartClaimed, first).receipt)
+        with (
+            patch.object(self.store, "_now", side_effect=AssertionError("clock must not run")),
+            patch.object(
+                store_module,
+                "new_id",
+                side_effect=AssertionError("ID provider must not run"),
+            ),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                side_effect=AssertionError("token provider must not run"),
+            ),
+        ):
+            with self.assertRaises(ConcurrencyError):
+                self.store.claim_invocation_start(
+                    request.manifest.invocation_id,
+                    "worker-start-store-2",
+                    lease_seconds=60,
+                    expected_version=3,
+                )
 
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
