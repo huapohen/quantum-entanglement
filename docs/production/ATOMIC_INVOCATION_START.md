@@ -1,7 +1,22 @@
 # Canonical invocation admission and atomic start
 
-Status: design contract frozen; codecs, EventStore composition and runtime integration are
-not yet implemented.
+Status: strict evidence codecs and canonical semantic admission are implemented; receipt-gated
+atomic first claim/start, worker and runtime integration remain disabled.
+
+Implemented checkpoints:
+
+| Boundary | Commit | Current proof |
+|---|---|---|
+| frozen contract | `fef1260` | this document and linked admission/attempt runbooks |
+| schema-1 manifest + schema-2 start codecs | `c4c4dcc` | strict exact-field/NFC/time/digest decoding; no raw lease field |
+| codec negative/security matrix | `b2abfa2` | future schema, bool-as-int, legacy names, secret-canary exception chains |
+| canonical request builder | `b8cd5c3` | exact two-event READY-to-RUNNING batch and single-attempt job binding |
+| semantic binding matrix | `84d8fd3` | legacy/reordered/extra/tampered event/job rejection |
+| EventStore canonical wrapper | `8b0dc83` | v4 atomic admission/receipt reused without schema change |
+| wrapper fault/process evidence | `f23d8e1` | replay, forgery, poison, lost ACK, clean control and real fork |
+
+These hashes identify implementation checkpoints, not final release evidence. The current source
+candidate must still pass complete clean-runner gates before promotion.
 
 This document freezes the next production execution-spine boundary. It does not claim that a
 worker is enabled, that an Agent can safely run, or that external effects are exactly once. The
@@ -95,8 +110,8 @@ effect and bind its result to an action receipt.
 
 ## Canonical admission batch
 
-`append_task_invocation_admission(...)` will be the only API allowed to create a claimable job. It
-builds, snapshots and atomically appends exactly this ordered pair:
+`append_task_invocation_admission(...)` is the only semantic API intended to create a future
+claimable job. It builds, snapshots and atomically appends exactly this ordered pair:
 
 1. `task.execution.requested` schema 1 with the complete execution manifest and its digest;
 2. `task.status.changed` for the same task, exactly `READY -> RUNNING`, with the same revision,
@@ -118,6 +133,20 @@ The canonical builder must prove before opening the transaction that:
 - both events share the requested correlation ID and use `task_id` as causation ID;
 - the transition payload names the same task and exact adjacent revision;
 - no caller-supplied extra event is accepted.
+
+`TaskInvocationAdmissionRequest` and `build_task_invocation_admission_request(...)` implement the
+pure construction boundary. The current schema fixes the canonical actor to `orchestrator`, binds
+the job payload digest to the domain-separated manifest digest, forces `max_attempts=1`, requires
+stable caller-supplied event IDs/timestamps and rejects a RUNNING timestamp earlier than the
+execution-request timestamp. Every component access rebuilds fresh events/job and revalidates the
+complete binding.
+
+`SQLiteEventStore.append_task_invocation_admission(...)` performs the PID/poison check before
+touching request state, requires an exact nonnegative stream version, rebuilds and revalidates the
+components through class-owned methods, then delegates persistence to the existing generic v4
+admission UoW. It intentionally has no second control sanitizer: the delegated admission boundary
+already owns transaction/control cleanup, and nesting it would lose the ambiguity cause on a
+clean control signal.
 
 Inside the existing admission transaction, normal v4 receipt validation remains authoritative.
 An exact replay returns the original events/job. Any generic/legacy event batch, standalone job,

@@ -58,9 +58,11 @@ acknowledgement 丢失时，job 可能已经可见；在 receipt-aware claim 协
 worker 自动消费这条路径。
 
 下一边界的 canonical event vocabulary、execution manifest、receipt-gated transaction、
-non-replayable lease 与 commit ambiguity 合同已经冻结在
-[`ATOMIC_INVOCATION_START.md`](./ATOMIC_INVOCATION_START.md)。该设计合同不改变本 API 的 generic
-语义，也不构成源码实现或 worker 启用证明。
+non-replayable lease 与 commit ambiguity 合同见
+[`ATOMIC_INVOCATION_START.md`](./ATOMIC_INVOCATION_START.md)。其中严格 codec、canonical request
+builder 与 `append_task_invocation_admission(...)` 已实现；它们在进入本 generic v4 UoW 前关闭业务
+语义绕过，但 atomic first claim/start、worker 与 runtime integration 仍未实现。generic API 的
+caller-supplied 语义保持不变，也不能单独授权 dispatch。
 
 ## 2. 原子提交不变量
 
