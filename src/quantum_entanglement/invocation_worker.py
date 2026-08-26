@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from .invocation_execution import (
     EffectClass,
@@ -39,7 +39,7 @@ def _duration(value: object, label: str) -> float:
     if type(value) not in (int, float):
         raise TypeError(f"{label} must be an exact built-in number")
     try:
-        normalized = float(value)
+        normalized = float(cast("int | float", value))
     except OverflowError as error:
         raise ValueError(f"{label} is outside the supported finite range") from error
     if not math.isfinite(normalized) or normalized <= 0:
