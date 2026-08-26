@@ -10,7 +10,7 @@
   "last_discovery_at": "2026-08-24T16:48:00+08:00",
   "last_successful_sync_at": "2026-08-24T17:23:25+08:00",
   "current_local_delta": {
-    "updated_at": "2026-08-27T07:45:35+08:00",
+    "updated_at": "2026-08-27T07:53:20+08:00",
     "status": "partial",
     "remote_write_status": "local_pending",
     "remote_readback_status": "local_pending",
@@ -67,7 +67,7 @@
         "source_path": "analysis_report/yuque_sync/source/14_clawith_competitive_analysis.md",
         "title": "Clawith 竞品深研：从“数字员工组织”反推 WanWork 的产品与底层取舍",
         "yuque_slug": null,
-        "current_normalized_sha256": "f0f01f5de73843bf45a70aece601daa8dc89169cc50f11305ab7ce5c83128b4c",
+        "current_normalized_sha256": "f8cb8119bee0f759d359fe2cfc401a48b988a72775ceff3e0196264815fa4e81",
         "target_identity_status": "not_created_or_observed",
         "target_status": "local_pending"
       }

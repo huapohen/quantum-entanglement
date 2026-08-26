@@ -44,7 +44,7 @@
   "missing_items": [],
   "historical_snapshot_missing_items": [],
   "current_local_delta": {
-    "updated_at": "2026-08-27T07:45:35+08:00",
+    "updated_at": "2026-08-27T07:53:20+08:00",
     "status": "partial",
     "remote_write_status": "local_pending",
     "remote_readback_status": "local_pending",
