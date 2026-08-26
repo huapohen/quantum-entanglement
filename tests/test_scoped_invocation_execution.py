@@ -8,13 +8,23 @@ from dataclasses import replace
 
 import quantum_entanglement
 import quantum_entanglement.invocation_execution as invocation_execution_module
+from quantum_entanglement.attempts import InvocationJobSpec
 from quantum_entanglement.invocation_execution import (
     SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN,
     TASK_EXECUTION_REQUESTED_EVENT_TYPE,
     EffectClass,
     InvocationExecutionManifest,
     ScopedInvocationExecutionManifestV2,
+    ScopedTaskInvocationAdmissionRequestV2,
+    TaskInvocationAdmissionRequest,
+    build_scoped_task_invocation_admission_request_v2,
+    build_task_invocation_admission_request,
 )
+from quantum_entanglement.protocol import TaskStatus
+from quantum_entanglement.scheduler import TaskTransition
+
+REQUESTED_AT = "2026-08-27T09:00:00.000001Z"
+RUNNING_AT = "2026-08-27T09:00:00.000002Z"
 
 
 def valid_manifest_dict() -> dict[str, object]:
@@ -46,6 +56,44 @@ def valid_legacy_manifest_dict() -> dict[str, object]:
     del scoped["workspaceId"]
     scoped["schemaVersion"] = 1
     return scoped
+
+
+def valid_scoped_request() -> ScopedTaskInvocationAdmissionRequestV2:
+    manifest = ScopedInvocationExecutionManifestV2.from_dict(valid_manifest_dict())
+    return build_scoped_task_invocation_admission_request_v2(
+        manifest,
+        TaskTransition(
+            task_id=manifest.task_id,
+            previous=TaskStatus.READY,
+            current=TaskStatus.RUNNING,
+            reason="scoped canonical admission",
+            revision=manifest.task_revision,
+        ),
+        execution_requested_event_id="event-scoped-execution-requested-1",
+        execution_requested_timestamp=REQUESTED_AT,
+        task_running_event_id="event-scoped-task-running-1",
+        task_running_timestamp=RUNNING_AT,
+        job_priority=73,
+    )
+
+
+def valid_legacy_request() -> TaskInvocationAdmissionRequest:
+    manifest = InvocationExecutionManifest.from_dict(valid_legacy_manifest_dict())
+    return build_task_invocation_admission_request(
+        manifest,
+        TaskTransition(
+            task_id=manifest.task_id,
+            previous=TaskStatus.READY,
+            current=TaskStatus.RUNNING,
+            reason="legacy admission",
+            revision=manifest.task_revision,
+        ),
+        execution_requested_event_id="event-legacy-execution-requested-1",
+        execution_requested_timestamp=REQUESTED_AT,
+        task_running_event_id="event-legacy-task-running-1",
+        task_running_timestamp=RUNNING_AT,
+        job_priority=51,
+    )
 
 
 class ScopedInvocationExecutionManifestTests(unittest.TestCase):
@@ -265,6 +313,206 @@ class ScopedInvocationExecutionManifestTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first.canonical_bytes(), second.canonical_bytes())
         self.assertEqual(first.canonical_digest(), second.canonical_digest())
+
+
+class ScopedTaskInvocationAdmissionRequestTests(unittest.TestCase):
+    def test_components_bind_scope_into_event_and_queued_job_digest(self) -> None:
+        request = valid_scoped_request()
+
+        events, job = request.components()
+
+        self.assertIs(type(events), tuple)
+        self.assertEqual(len(events), 2)
+        requested, running = events
+        self.assertEqual(requested.event_type, TASK_EXECUTION_REQUESTED_EVENT_TYPE)
+        self.assertEqual(requested.payload, request.manifest.to_dict())
+        self.assertEqual(requested.payload["tenantId"], request.manifest.tenant_id)
+        self.assertEqual(requested.payload["workspaceId"], request.manifest.workspace_id)
+        self.assertEqual(running.event_type, "task.status.changed")
+        self.assertEqual(request.stream_id, "session:" + request.manifest.session_id)
+        self.assertEqual(job.payload_digest, request.manifest.canonical_digest())
+        self.assertEqual(job.max_attempts, 1)
+        self.assertEqual(job.priority, 73)
+
+    def test_components_are_fresh_and_round_trip_through_exact_decoder(self) -> None:
+        request = valid_scoped_request()
+
+        first_events, first_job = request.components()
+        second_events, second_job = request.components()
+        decoded = ScopedTaskInvocationAdmissionRequestV2.from_components(
+            first_events,
+            first_job,
+        )
+
+        self.assertEqual(decoded, request)
+        self.assertEqual(first_events, second_events)
+        self.assertEqual(first_job, second_job)
+        self.assertIsNot(first_events, second_events)
+        self.assertIsNot(first_events[0], second_events[0])
+        self.assertIsNot(first_job, second_job)
+
+    def test_legacy_and_scoped_admission_decoders_never_upcast(self) -> None:
+        scoped_components = valid_scoped_request().components()
+        legacy_components = valid_legacy_request().components()
+
+        with self.assertRaises(ValueError):
+            TaskInvocationAdmissionRequest.from_components(*scoped_components)
+        with self.assertRaises(ValueError):
+            ScopedTaskInvocationAdmissionRequestV2.from_components(*legacy_components)
+
+    def test_reordered_extra_and_tampered_events_fail_closed(self) -> None:
+        request = valid_scoped_request()
+        events, job = request.components()
+
+        changed_scope = dict(events[0].payload)
+        changed_scope["tenantId"] = "tenant-confused-deputy"
+        tampered_requested = replace(events[0], payload=changed_scope)
+        cases = (
+            (tuple(reversed(events)), job),
+            (events + (events[0],), job),
+            ((tampered_requested, events[1]), job),
+            (
+                events,
+                replace(job, payload_digest="f" * 64),
+            ),
+        )
+        for index, (changed_events, changed_job) in enumerate(cases):
+            with self.subTest(case=index):
+                with self.assertRaises((TypeError, ValueError)):
+                    request.validate_components(changed_events, changed_job)
+
+    def test_every_event_envelope_coordinate_is_bound(self) -> None:
+        request = valid_scoped_request()
+        events, job = request.components()
+        requested, running = events
+        changes = {
+            "stream_id": "session:other",
+            "actor_id": "other-actor",
+            "event_id": "event-other",
+            "correlation_id": "correlation-other",
+            "causation_id": "task-other",
+            "idempotency_key": "other-idempotency",
+            "timestamp": "2026-08-27T09:00:00.000003Z",
+        }
+        for event_index, event in enumerate((requested, running)):
+            for field_name, value in changes.items():
+                with self.subTest(event=event_index, field=field_name):
+                    changed = replace(event, **{field_name: value})
+                    changed_events = (
+                        (changed, running) if event_index == 0 else (requested, changed)
+                    )
+                    with self.assertRaises(ValueError):
+                        request.validate_components(changed_events, job)
+
+    def test_transition_identity_revision_and_shape_are_exact(self) -> None:
+        manifest = ScopedInvocationExecutionManifestV2.from_dict(valid_manifest_dict())
+        transitions = (
+            TaskTransition(
+                "task-other",
+                TaskStatus.READY,
+                TaskStatus.RUNNING,
+                None,
+                manifest.task_revision,
+            ),
+            TaskTransition(
+                manifest.task_id,
+                TaskStatus.READY,
+                TaskStatus.RUNNING,
+                None,
+                manifest.task_revision + 1,
+            ),
+            TaskTransition(
+                manifest.task_id,
+                TaskStatus.RUNNING,
+                TaskStatus.COMPLETED,
+                None,
+                manifest.task_revision,
+            ),
+        )
+        for transition in transitions:
+            with self.subTest(transition=transition):
+                with self.assertRaises(ValueError):
+                    build_scoped_task_invocation_admission_request_v2(
+                        manifest,
+                        transition,
+                        execution_requested_event_id="event-one",
+                        execution_requested_timestamp=REQUESTED_AT,
+                        task_running_event_id="event-two",
+                        task_running_timestamp=RUNNING_AT,
+                    )
+
+    def test_ids_timestamps_priority_and_availability_fail_before_components(self) -> None:
+        manifest = ScopedInvocationExecutionManifestV2.from_dict(valid_manifest_dict())
+        transition = TaskTransition(
+            manifest.task_id,
+            TaskStatus.READY,
+            TaskStatus.RUNNING,
+            None,
+            manifest.task_revision,
+        )
+        baseline = {
+            "execution_requested_event_id": "event-one",
+            "execution_requested_timestamp": REQUESTED_AT,
+            "task_running_event_id": "event-two",
+            "task_running_timestamp": RUNNING_AT,
+            "job_priority": 50,
+            "job_available_at": None,
+        }
+        invalid_changes = (
+            {"task_running_event_id": "event-one"},
+            {"task_running_timestamp": "2026-08-27T08:59:59.999999Z"},
+            {"job_priority": True},
+            {"job_priority": -1},
+            {"job_priority": 101},
+            {"job_available_at": "not-a-time"},
+        )
+        for changes in invalid_changes:
+            with self.subTest(changes=changes):
+                values = {**baseline, **changes}
+                with self.assertRaises((TypeError, ValueError)):
+                    ScopedTaskInvocationAdmissionRequestV2(
+                        manifest=manifest,
+                        transition=transition,
+                        **values,  # type: ignore[arg-type]
+                    )
+
+    def test_decoder_requires_exact_domain_types(self) -> None:
+        request = valid_scoped_request()
+        events, job = request.components()
+
+        with self.assertRaises(TypeError):
+            ScopedTaskInvocationAdmissionRequestV2.from_components(list(events), job)
+        with self.assertRaises(TypeError):
+            ScopedTaskInvocationAdmissionRequestV2.from_components(
+                ({"event": "not-domain"}, events[1]),
+                job,
+            )
+        with self.assertRaises(TypeError):
+            ScopedTaskInvocationAdmissionRequestV2.from_components(
+                events,
+                {"invocation_id": job.invocation_id},
+            )
+        with self.assertRaises(TypeError):
+            ScopedTaskInvocationAdmissionRequestV2.from_components(events, object())
+
+    def test_direct_component_forgery_cannot_change_the_scoped_job_binding(self) -> None:
+        request = valid_scoped_request()
+        events, job = request.components()
+        forged_job = InvocationJobSpec(
+            session_id=job.session_id,
+            plan_id=job.plan_id,
+            task_id=job.task_id,
+            agent_id=job.agent_id,
+            idempotency_key=job.idempotency_key,
+            payload_digest=job.payload_digest,
+            invocation_id=job.invocation_id,
+            priority=job.priority,
+            max_attempts=2,
+            available_at=job.available_at,
+        )
+
+        with self.assertRaisesRegex(ValueError, "scoped manifest binding"):
+            request.validate_components(events, forged_job)
 
 
 if __name__ == "__main__":  # pragma: no cover
