@@ -17,7 +17,7 @@ qe_usage() {
   -h, --help        显示帮助
 
 环境变量：
-  QE_TRIAL_PYTHON   指定 Python 可执行文件（要求 Python 3.9 或更高）
+  QE_TRIAL_PYTHON   指定 Python 可执行文件（支持 Python 3.9–3.13）
   OPENAI_API_KEY    GPT 网关凭据（也可只写入仓库根目录 .env）
   OPENAI_BASE_URL   OpenAI-compatible /v1 端点
   OPENAI_MODEL      模型名，例如 gpt-5.6-sol
@@ -79,8 +79,8 @@ done
 
 command -v "$qe_python" >/dev/null 2>&1 || qe_fail "找不到 Python：$qe_python"
 
-if ! "$qe_python" -c 'import sys; raise SystemExit(sys.version_info < (3, 9))'; then
-  qe_fail "需要 Python 3.9 或更高版本"
+if ! "$qe_python" -c 'import sys; raise SystemExit(not ((3, 9) <= sys.version_info < (3, 14)))'; then
+  qe_fail "需要 Python 3.9–3.13（暂不支持 3.14+）"
 fi
 
 qe_pythonpath=$qe_repo_dir/src
