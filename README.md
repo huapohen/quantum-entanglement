@@ -31,6 +31,7 @@ attempt 的 lease、heartbeat、崩溃接管以及外部副作用确认仍在 `0
 - `docs/production/PROJECTION_HANDLER_SECURITY.md`
 - `docs/production/LOGGING_AND_REDACTION.md`
 - `docs/production/INVOCATION_RECOVERY_COORDINATION.md`
+- `docs/production/REPORT_SYNC_BUNDLE.md`
 - `docs/production/DEPENDENCY_LOCKS_AND_SBOM.md`
 - `docs/production/DEPENDENCY_RISK_PROMOTION.md`
 
@@ -72,6 +73,27 @@ Artifact、Needs You、25 步事件时间线和三张内联 SVG 系统图；它�
 ```bash
 ./scripts/start_local_trial.sh --cli
 ```
+
+## 本地报告库存 checkpoint
+
+生成 report/截图的确定性本地库存（只输出到终端，不访问 Notion、语雀、飞书或企微）：
+
+```bash
+python3 scripts/report_sync_bundle.py
+```
+
+使用未占用的新文件名保存并立即验证 schema v3 checkpoint：
+
+```bash
+python3 scripts/report_sync_bundle.py \
+  --output analysis_report/report_sync_bundles/checkpoint-20260826.json
+python3 scripts/report_sync_bundle.py \
+  --verify analysis_report/report_sync_bundles/checkpoint-20260826.json
+```
+
+`sourceTargets` 记录的是 source-target entry，不等于远端页面数；所有实时远端回读标记固定为
+`false`。完整字段、pinned-read 安全边界、v2→v3 迁移和 recovery 处置见
+[`docs/production/REPORT_SYNC_BUNDLE.md`](docs/production/REPORT_SYNC_BUNDLE.md)。
 
 ## 开发验证
 
