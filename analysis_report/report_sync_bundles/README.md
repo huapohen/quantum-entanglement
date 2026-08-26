@@ -1,0 +1,43 @@
+# Report sync checkpoint 索引
+
+本目录保存按阶段生成的确定性、本地只读 report sync 库存。checkpoint 不是 Notion 或语雀
+同步器，也不是远端状态探针；所有 `liveReadbackPerformed` 均为 `false`。文件名中的阶段只描述
+本地库存边界，不构成远端写入、远端回读或生产晋级证明。
+
+## 当前 checkpoint
+
+| 文件 | 状态 | 本地库存口径 | 说明 |
+|---|---|---|---|
+| `checkpoint-20260827-atomic-start-clawith-qa.json` | `current` | 41 source、42 source-target、26 images | Atomic invocation start 发布证据、Clawith QA 修正及补充网页证据收口后的 schema v3 库存；生成后必须在当前内容 checkout 立即执行 `--verify` |
+
+`current` 是本目录唯一应被当前文档、发布检查和人工审阅当作 latest 的 checkpoint。生成与验证
+命令见仓库根 [`README.md`](../../README.md)；不得在生成后继续修改它所覆盖的报告、语雀传输源、
+截图或三个 control manifest 而不重新生成一个新文件名的 checkpoint。
+
+## 已被取代的历史 checkpoint
+
+| 文件 | 状态 | 生成 commit | 历史边界 |
+|---|---|---|---|
+| `checkpoint-20260827-clawith-local-sync-ledger.json` | `superseded` | `15f24af` | Clawith 本地同步台账收口时的 schema v3 库存；早于 atomic-start 发布证据、Clawith QA 修正和截图 20–25 |
+| `checkpoint-20260827-clawith.json` | `superseded` | `15a77d3` | Clawith 传输源后续更新前的 schema v3 库存；其 Yuque mapping control 也早于 local-sync-ledger |
+
+`superseded` 只表示该文件不再描述当前 HEAD，也不得再被选作 latest；它不表示文件损坏或历史
+证据失效。两个旧 JSON 必须保持原样：不得覆盖、删除、重命名或手工修改。后续每个阶段继续使用
+新的 checkpoint 文件名，保留完整时间序列。
+
+## 验证历史 checkpoint
+
+旧 checkpoint 绑定生成时的报告、截图和 control manifest 字节，因此通常不应在当前 HEAD 上
+强行验证。需要复核时，在独立 detached worktree 中检出表内生成 commit，并使用该 checkout 的
+生成器验证对应文件；不要切换或清理正在工作的主目录。
+
+```bash
+git worktree add --detach <temporary-worktree> <generating-commit>
+python3 <temporary-worktree>/scripts/report_sync_bundle.py \
+  --repository-root <temporary-worktree> \
+  --verify analysis_report/report_sync_bundles/<checkpoint-file>.json
+git worktree remove <temporary-worktree>
+```
+
+验证成功只证明历史 checkpoint 与该历史 checkout 的本地库存一致。它不会进行实时远端回读，
+也不能证明 Notion、语雀或任何外部系统当前仍与本地内容一致。
