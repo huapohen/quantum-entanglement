@@ -14,6 +14,12 @@ class PackageManifestWorkflowTests(unittest.TestCase):
 
         self.assertEqual(manifest, "include tests/__init__.py\n")
 
+    def test_project_metadata_matches_the_verified_python_compatibility_window(self):
+        pyproject = (self.repository_root / "pyproject.toml").read_text(encoding="utf-8")
+
+        self.assertIn('requires-python = ">=3.9,<3.14"', pyproject)
+        self.assertNotIn('requires-python = ">=3.9"', pyproject)
+
     def test_package_checkout_does_not_persist_git_credentials(self):
         self.assertIn(
             "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",

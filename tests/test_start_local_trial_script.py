@@ -36,6 +36,13 @@ class StartLocalTrialScriptTests(unittest.TestCase):
         self.assertIn("--synthetic", result.stdout)
         self.assertIn("OPENAI_API_KEY", result.stdout)
         self.assertIn("不连接飞书、企微", result.stdout)
+        self.assertIn("支持 Python 3.9–3.13", result.stdout)
+
+    def test_launcher_has_an_explicit_fail_closed_python_compatibility_window(self) -> None:
+        script = SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("(3, 9) <= sys.version_info < (3, 14)", script)
+        self.assertIn("暂不支持 3.14+", script)
 
     def test_unknown_option_fails_without_starting_the_server(self) -> None:
         result = self.run_script("--unknown")
