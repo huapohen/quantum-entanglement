@@ -86,7 +86,7 @@ python3 scripts/report_sync_bundle.py
 
 ```bash
 python3 scripts/report_sync_bundle.py \
-  --verify analysis_report/report_sync_bundles/checkpoint-20260827-scoped-start-clawith-worker-authority.json
+  --verify analysis_report/report_sync_bundles/checkpoint-20260827-clawith-delivery-blueprint.json
 ```
 
 下一阶段生成 checkpoint 时必须使用新的阶段文件名，不覆盖当前或历史快照：
@@ -97,8 +97,8 @@ python3 scripts/report_sync_bundle.py \
 ```
 
 `sourceTargets` 记录的是 source-target entry，不等于远端页面数；所有实时远端回读标记固定为
-`false`。当前 scoped-start + worker authority + Clawith 本地库存 checkpoint 固定 41 个本地
-source、42 个 source-target 和 26 张图片；三个旧 checkpoint 只作为不可变历史快照保留，不再代表当前
+`false`。当前 scoped-start + worker authority + Clawith 部门样板/源码复核 checkpoint 固定 41 个本地
+source、42 个 source-target 和 27 张图片；四个旧 checkpoint 只作为不可变历史快照保留，不再代表当前
 库存。current / superseded 关系和历史 checkout 验证方式见
 [`analysis_report/report_sync_bundles/README.md`](analysis_report/report_sync_bundles/README.md)。
 Clawith 的 Notion 与语雀条目均为 `local_pending`，不构成远端写入或回读证明。其中
