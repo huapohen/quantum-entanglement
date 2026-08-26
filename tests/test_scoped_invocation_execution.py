@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import quantum_entanglement
 import quantum_entanglement.invocation_execution as invocation_execution_module
-from quantum_entanglement.attempts import InvocationJobSpec
+from quantum_entanglement.attempts import InvocationJobSpec, InvocationLease
 from quantum_entanglement.invocation_execution import (
     SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN,
     TASK_EXECUTION_REQUESTED_EVENT_TYPE,
@@ -17,7 +17,10 @@ from quantum_entanglement.invocation_execution import (
     InvocationExecutionManifest,
     InvocationStartEvidenceV2,
     ScopedInvocationExecutionManifestV2,
+    ScopedInvocationStartClaimedV3,
     ScopedInvocationStartEvidenceV3,
+    ScopedInvocationStartObservedV3,
+    ScopedInvocationStartReceiptV3,
     ScopedTaskInvocationAdmissionRequestV2,
     TaskInvocationAdmissionRequest,
     build_scoped_task_invocation_admission_request_v2,
@@ -139,6 +142,46 @@ def valid_legacy_start_dict() -> dict[str, object]:
     legacy_manifest = InvocationExecutionManifest.from_dict(valid_legacy_manifest_dict())
     scoped["manifestDigest"] = legacy_manifest.canonical_digest()
     return scoped
+
+
+def valid_scoped_start_receipt() -> ScopedInvocationStartReceiptV3:
+    evidence = ScopedInvocationStartEvidenceV3.from_dict(valid_scoped_start_dict())
+    return ScopedInvocationStartReceiptV3(
+        event_id="event-scoped-invocation-started-1",
+        stream_id="session:" + evidence.session_id,
+        sequence=3,
+        global_position=17,
+        evidence=evidence,
+    )
+
+
+def valid_scoped_lease() -> InvocationLease:
+    manifest = ScopedInvocationExecutionManifestV2.from_dict(valid_manifest_dict())
+    evidence = ScopedInvocationStartEvidenceV3.from_dict(valid_scoped_start_dict())
+    return InvocationLease(
+        invocation_id=evidence.invocation_id,
+        session_id=evidence.session_id,
+        plan_id=evidence.plan_id,
+        task_id=evidence.task_id,
+        agent_id=evidence.agent_id,
+        idempotency_key=evidence.job_idempotency_key,
+        payload_digest=manifest.canonical_digest(),
+        attempt_id=evidence.attempt_id,
+        attempt_number=evidence.attempt_number,
+        max_attempts=1,
+        lease_epoch=evidence.lease_epoch,
+        worker_id=evidence.worker_id,
+        lease_token=LEASE_TOKEN,
+        claimed_at=evidence.claimed_at,
+        lease_expires_at=evidence.lease_expires_at,
+    )
+
+
+def valid_scoped_claim() -> ScopedInvocationStartClaimedV3:
+    return ScopedInvocationStartClaimedV3(
+        valid_scoped_start_receipt(),
+        valid_scoped_lease(),
+    )
 
 
 class ScopedInvocationExecutionManifestTests(unittest.TestCase):
@@ -743,6 +786,145 @@ class ScopedInvocationStartEvidenceTests(unittest.TestCase):
             evidence.lease_token_digest,
             hashlib.sha256(LEASE_TOKEN.encode("utf-8")).hexdigest(),
         )
+
+
+class ScopedInvocationStartCapabilityTests(unittest.TestCase):
+    def test_receipt_round_trip_snapshots_scoped_evidence(self) -> None:
+        evidence = ScopedInvocationStartEvidenceV3.from_dict(valid_scoped_start_dict())
+        receipt = ScopedInvocationStartReceiptV3(
+            event_id="event-scoped-invocation-started-1",
+            stream_id="session:" + evidence.session_id,
+            sequence=3,
+            global_position=17,
+            evidence=evidence,
+        )
+
+        decoded = ScopedInvocationStartReceiptV3.from_dict(receipt.to_dict())
+
+        self.assertEqual(decoded, receipt)
+        self.assertIsNot(decoded.evidence, evidence)
+        self.assertEqual(decoded.evidence.tenant_id, evidence.tenant_id)
+        self.assertEqual(decoded.evidence.workspace_id, evidence.workspace_id)
+        self.assertNotIn(LEASE_TOKEN, json.dumps(decoded.to_dict(), sort_keys=True))
+
+    def test_receipt_coordinates_and_exact_wire_shape_fail_closed(self) -> None:
+        receipt = valid_scoped_start_receipt()
+        baseline = receipt.to_dict()
+
+        cases = []
+        missing = dict(baseline)
+        del missing["eventId"]
+        cases.append(missing)
+        extra = dict(baseline)
+        extra["leaseToken"] = LEASE_TOKEN
+        cases.append(extra)
+        wrong_stream = dict(baseline)
+        wrong_stream["streamId"] = "session:other"
+        cases.append(wrong_stream)
+        bool_sequence = dict(baseline)
+        bool_sequence["sequence"] = True
+        cases.append(bool_sequence)
+        early_position = dict(baseline)
+        early_position["globalPosition"] = 2
+        cases.append(early_position)
+
+        for index, raw in enumerate(cases):
+            with self.subTest(case=index):
+                with self.assertRaises((TypeError, ValueError)):
+                    ScopedInvocationStartReceiptV3.from_dict(raw)
+
+    def test_claim_snapshots_lease_and_never_serializes_plaintext_authority(self) -> None:
+        receipt = valid_scoped_start_receipt()
+        lease = valid_scoped_lease()
+
+        claim = ScopedInvocationStartClaimedV3(receipt, lease)
+
+        self.assertEqual(claim.receipt, receipt)
+        self.assertEqual(claim.lease, lease)
+        self.assertIsNot(claim.receipt, receipt)
+        self.assertIsNot(claim.lease, lease)
+        self.assertFalse(hasattr(claim, "to_dict"))
+        self.assertNotIn(LEASE_TOKEN, repr(claim))
+        self.assertNotIn(LEASE_TOKEN, str(claim))
+        self.assertNotIn(LEASE_TOKEN, repr(claim.lease))
+        with self.assertRaises(TypeError):
+            json.dumps(claim)
+
+    def test_claim_rejects_every_lease_evidence_binding_mismatch(self) -> None:
+        receipt = valid_scoped_start_receipt()
+        lease = valid_scoped_lease()
+        mismatches = {
+            "invocation_id": "invocation-other",
+            "session_id": "session-other",
+            "plan_id": "plan-other",
+            "task_id": "task-other",
+            "agent_id": "agent-other",
+            "idempotency_key": "invoke:other",
+            "payload_digest": "f" * 64,
+            "attempt_id": "attempt-other",
+            "attempt_number": 2,
+            "max_attempts": 2,
+            "lease_epoch": 2,
+            "worker_id": "worker-other",
+            "lease_token": "other-secret-token",
+            "claimed_at": "2026-08-27T09:00:00.999999Z",
+            "lease_expires_at": "2026-08-27T09:01:01.000001Z",
+        }
+        for field_name, value in mismatches.items():
+            with self.subTest(field=field_name):
+                with self.assertRaises(ValueError):
+                    ScopedInvocationStartClaimedV3(
+                        receipt,
+                        replace(lease, **{field_name: value}),
+                    )
+
+    def test_observation_round_trip_is_capability_free(self) -> None:
+        claim = valid_scoped_claim()
+        observation = ScopedInvocationStartObservedV3(claim.receipt)
+
+        decoded = ScopedInvocationStartObservedV3.from_dict(observation.to_dict())
+
+        self.assertEqual(decoded, observation)
+        self.assertFalse(hasattr(decoded, "lease"))
+        self.assertNotIn(LEASE_TOKEN, repr(decoded))
+        self.assertNotIn(LEASE_TOKEN, json.dumps(decoded.to_dict(), sort_keys=True))
+
+        hostile = observation.to_dict()
+        hostile["leaseToken"] = LEASE_TOKEN
+        with self.assertRaises(ValueError):
+            ScopedInvocationStartObservedV3.from_dict(hostile)
+
+    def test_legacy_and_scoped_receipts_are_not_interchangeable(self) -> None:
+        scoped = valid_scoped_start_receipt()
+        legacy_evidence = InvocationStartEvidenceV2.from_dict(valid_legacy_start_dict())
+
+        with self.assertRaises(TypeError):
+            ScopedInvocationStartReceiptV3(
+                event_id=scoped.event_id,
+                stream_id=scoped.stream_id,
+                sequence=scoped.sequence,
+                global_position=scoped.global_position,
+                evidence=legacy_evidence,  # type: ignore[arg-type]
+            )
+
+    def test_receipt_claim_and_observation_subclasses_fail_exactly(self) -> None:
+        class ReceiptSubclass(ScopedInvocationStartReceiptV3):
+            pass
+
+        class ClaimSubclass(ScopedInvocationStartClaimedV3):
+            pass
+
+        class ObservedSubclass(ScopedInvocationStartObservedV3):
+            pass
+
+        with self.assertRaisesRegex(TypeError, "exact schema-3 class"):
+            ReceiptSubclass.from_dict(valid_scoped_start_receipt().to_dict())
+        with self.assertRaisesRegex(TypeError, "exact schema-3 class"):
+            ObservedSubclass.from_dict(
+                ScopedInvocationStartObservedV3(valid_scoped_start_receipt()).to_dict()
+            )
+        with self.assertRaisesRegex(TypeError, "exact ScopedInvocationStartClaimedV3"):
+            ClaimSubclass(valid_scoped_start_receipt(), valid_scoped_lease())
 
 
 if __name__ == "__main__":  # pragma: no cover
