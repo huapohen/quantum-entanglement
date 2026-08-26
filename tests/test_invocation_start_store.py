@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -696,6 +697,82 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
             0,
         )
         self.assertFalse(self.store._poisoned)
+
+    def test_begin_ack_loss_confirms_rollback_before_any_start_provider(self) -> None:
+        real_connect = sqlite3.connect
+
+        class BeginAckLossConnection(sqlite3.Connection):
+            fail_next_begin = False
+
+            def execute(
+                connection_self,
+                statement: str,
+                parameters: object = (),
+            ) -> sqlite3.Cursor:
+                if (
+                    statement.strip().upper() == "BEGIN IMMEDIATE"
+                    and connection_self.fail_next_begin
+                ):
+                    connection_self.fail_next_begin = False
+                    super().execute(statement, parameters)  # type: ignore[arg-type]
+                    raise sqlite3.OperationalError("begin acknowledgement lost")
+                return super().execute(statement, parameters)  # type: ignore[arg-type]
+
+        def connect_with_fault(database: str, **kwargs: Any) -> sqlite3.Connection:
+            return cast(
+                sqlite3.Connection,
+                real_connect(database, factory=BeginAckLossConnection, **kwargs),
+            )
+
+        self.store.close()
+        with patch(
+            "quantum_entanglement.store.sqlite3.connect",
+            new=connect_with_fault,
+        ):
+            self.store = SQLiteEventStore(self.path, clock=lambda: ADMITTED_AT)
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        connection = cast(BeginAckLossConnection, self.store._connection)
+        self.assertIsInstance(connection, BeginAckLossConnection)
+        connection.fail_next_begin = True
+
+        with (
+            patch.object(
+                self.store,
+                "_now",
+                side_effect=AssertionError("clock must not run"),
+            ),
+            patch.object(
+                store_module,
+                "new_id",
+                side_effect=AssertionError("ID provider must not run"),
+            ),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                side_effect=AssertionError("token provider must not run"),
+            ),
+        ):
+            with self.assertRaises(InvocationStartTransactionError) as caught:
+                self.store.claim_invocation_start(
+                    request.manifest.invocation_id,
+                    "worker-start-store-1",
+                    lease_seconds=60,
+                    expected_version=2,
+                )
+
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        self.assertFalse(connection.in_transaction)
+        self.assertFalse(self.store._poisoned)
+        self.assertEqual(self.store.stream_version(request.stream_id), 2)
+        self.assertIsNone(self.store.read_invocation_start(request.manifest.invocation_id))
+        self.assertEqual(
+            connection.execute(
+                "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            0,
+        )
 
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
