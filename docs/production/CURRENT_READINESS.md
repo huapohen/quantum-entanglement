@@ -1,6 +1,6 @@
 # Quantum Entanglement 当前生产就绪审计
 
-- 更新日期：2026-08-26
+- 更新日期：2026-08-27
 - 审计口径：只计算本文所在主线中已提交、可复现的源码和证据
 - 硬边界：[`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md)
 - 结论：**内核组件已形成较强验证基线，但仍不是生产服务；Gate A–E 全部关闭**
@@ -9,8 +9,9 @@
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow
 初始化与 approval、严格流式 session recovery、event/RUNNING transition + queued invocation job +
-immutable admission receipt 的原子 admission、durable invocation-attempt store、持久 artifact
-store、transactional inbox/outbox、publisher、leased projection、domain migration、tenant
+immutable admission receipt 的原子 admission、admission-gated job/attempt/start-event 原子首次
+claim、durable invocation-attempt store、持久 artifact store、transactional inbox/outbox、publisher、
+leased projection、domain migration、tenant
 authorization primitive、SQLite backup/restore、严格 service config、opaque/file secret provider、
 依赖锁、可复现制品、source-bound 双 SBOM、publisher typed safe logging/redaction，以及一个
 明确标记为非生产的 loopback-only 模型试用页面。该页面可把任意自定义指令交给 GPT
@@ -30,9 +31,9 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 当前最关键的三个断层是：
 
 1. `SQLiteEventStore` 已能原子提交 caller-supplied `RUNNING` transition、queued job 和 admission
-   receipt，attempt store 也已提取 caller-owned first-claim transaction primitive；但
-   `OrchestratorKernel` 尚未使用这些 API，claim/attempt 也尚未与 start receipt/event、
-   result/artifact receipt 和 terminal projection 串成安全协调；
+   receipt，并由 `claim_invocation_start(...)` 在同一 SQLite transaction 内完成 admission
+   复核、job CAS、attempt、schema-2 start event 与 readback；但 `OrchestratorKernel` 尚未使用这些
+   API，也尚无 heartbeat-supervised worker、result/artifact receipt 与 terminal projection 闭环；
 2. events、snapshots、delivery、attempt 和 projection repository 尚未统一强制 tenant/workspace
    scope，tenant domain object 不能替代可信认证与 SQL predicate；
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
@@ -82,6 +83,11 @@ event store 的单组件运行合同见
 - `attempts.py`：单机 SQLite durable job/attempt、lease、heartbeat、retry、expiry、epoch fencing
   和 stale-owner terminal CAS；已提取 caller-owned first-claim helper，保留 public claim 的
   recovery/commit-ambiguity 合同，并覆盖 provider PID/fork 与无候选零调用；
+- `store.py::claim_invocation_start(...)`：严格复核 canonical admission 后，以单一
+  `BEGIN IMMEDIATE` transaction 完成首次 job claim、attempt insert、schema-2 start event 和完整
+  readback；仅首次正常 COMMIT ACK 返回携带非重放 lease 的 `InvocationStartClaimed`，replay、第二
+  worker、reopen 与 ACK-loss 后恢复只返回不含 lease 的 `InvocationStartObserved`；运行合同见
+  [`ATOMIC_INVOCATION_START.md`](./ATOMIC_INVOCATION_START.md)；
 - `artifact_store.py`：tenant/workspace-scoped blob/version、digest、并发版本和恢复检查；
 - `publisher.py`：bounded callback admission、timeout、retry/dead-letter、lease deadline、ambiguity
   记录和 receiver receipt 校验；
@@ -92,9 +98,9 @@ event store 的单组件运行合同见
 
 - runtime 仍直接调用 Agent，尚未接入 atomic admission，也没有 claim/heartbeat/fencing 的 attempt
   integration；
-- admission 只解决 event/job/receipt 的提交边界；caller-owned first-claim primitive
-  已实现，但 claim + attempt + start event + immutable receipt 的统一 UoW、result/artifact
-  acceptance 和 receipt-aware worker gate 仍未实现；
+- canonical admission 与 claim + attempt + schema-2 start event + readback 的统一 UoW 已实现；但
+  heartbeat-supervised receipt-aware worker gate、result/artifact acceptance 和 terminal state
+  仍未实现；
 - task `RUNNING`、attempt、artifact/result acceptance 和 terminal task state 不是端到端状态机；
 - Agent 返回后逐个写 artifact、result 和 completion，任一边界崩溃仍需 receipt-based reconcile；
 - succeeded attempt 没有不可变 result receipt 时不能安全自动投影 `COMPLETED`；
@@ -252,16 +258,23 @@ SLO/RPO/RTO 只能引用真实 workload 下的 p50/p95/p99、CPU、RSS、disk、
 ## 9. 测试与证据
 
 主线已有广泛 deterministic unit、tamper、recovery、migration、publisher、projection、tenancy、
-backup、distribution、SBOM、config/secret、approval atomicity、atomic invocation admission 和
-fault-wrapper tests。admission 专项覆盖 partial/full split、receipt/event/job tamper、commit
-ambiguity/poison/reopen、control signal、双 connection/process 竞争、fork inherited rejection、v3→v4
-migration 与 non-empty receipt backup/restore。当前本地
+backup、distribution、SBOM、config/secret、approval atomicity、atomic invocation admission/start
+和 fault-wrapper tests。start 专项覆盖 admission/job/event/attempt 伪造、事务 body 与
+BEGIN/COMMIT/ROLLBACK fault、ACK-loss poison/reopen、control signal、双 connection、双 spawn、
+provider fork、backup/restore 与 lease-token canary；admission 专项另覆盖 partial/full split、
+v3→v4 migration 与 non-empty receipt backup/restore。当前本地
 门禁同时执行 dependency-lock verifier、完整 unittest、locked Ruff lint/format、strict mypy、
 compileall、deterministic demo 和 diff check。
 
+当前已保留的组合证据包括：本机 Python 3.13 完整 1,320 tests，以及 GitHub clean runner 上
+Python 3.9 / 3.12 各 1,320 tests；Ruff format/check、strict mypy、compileall、canonical release
+evidence、可复现 package 与 SBOM 同轮通过。这证明该 source candidate 在记录矩阵内成立，不把
+范围外 OS、SQLite、服务级 crash/soak 或生产 Gate 推定为已通过。
+
 仍缺：
 
-- supported Python/OS/SQLite clean-runner matrix 的不可变 CI 证据；
+- 完整的 supported OS/SQLite 组合矩阵；当前不可变 CI 只覆盖 GitHub Linux 的 Python 3.9/3.12，
+  本机 Python 3.13 证据不能替代所有目标平台 clean runner；
 - API/fake-connector E2E、cross-tenant property、fuzz、crash-at-every-boundary、load/chaos/soak；
 - artifact/projection/revocation/authorization/secret/runtime/connector 的 POSIX fork/fork-while-lock、
   spawn/forkserver、parent continuity、fresh child composition 和 spawn-before-secret-load retained
@@ -294,10 +307,10 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
 
 1. 先冻结 process model：为 issuer/authorization 与核心 store 建立 pre-lock PID/epoch fence，并把
    credential-bearing/untrusted worker 固定为 spawn/exec-before-secret-load composition；
-2. 在已完成 event/job/receipt atomic admission 和 caller-owned first-claim primitive 之上，
-   实现 claim + attempt + start event + immutable receipt 统一 UoW，再把 heartbeat、
-   accepted result/artifact 和 terminal state 组成可崩溃协调的状态机；没有 result
-   receipt 时绝不把 succeeded job 猜成 completed；
+2. 在已完成 event/job/receipt atomic admission 与 claim + attempt + schema-2 start event + readback
+   统一 UoW 之上，实现 heartbeat-supervised pure/fake worker，再把 accepted result/artifact 和
+   terminal state 组成可崩溃协调的状态机；没有 result receipt 时绝不把 succeeded job 猜成
+   completed；
 3. 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；
 4. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
 5. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
