@@ -20,10 +20,11 @@ Clawith 是本轮调研中与 WanWork 产品愿景最接近、也最值得逐层
 6. **治理层不能照搬营销口径。** [官方技术白皮书](https://www.clawith.ai/blog/clawith-technical-whitepaper)宣称 L1–L4、全链路审计和每次操作可追溯/回放；固定源码实际是 L1–L3，通用审批对象缺少 tenant、TTL、policy version 和统一 action digest，审计写入是 best-effort 普通表，并非防篡改事件链。它有真实治理能力，但证据不足以支持最强营销表述。
 7. **部署默认值不能照搬。** 默认 Compose 给 backend 挂载 Docker socket，并启用 `privileged`、`SYS_ADMIN`、`seccomp=unconfined`、`apparmor=unconfined`。这与企业最小权限沙箱目标冲突，应视为开发/兼容部署权衡，而不是 WanWork 生产安全基线。
 8. **Clawith 证明了 WanWork 当前最大短板在产品面，而非协议文档不够多。** Quantum Entanglement 已有更严格的 canonical envelope、Artifact 版本、Needs You/action-scoped authority、外部副作用未知结果/fencing 和协议分层思想；但当前可验收产品仍是本地固定三 Agent 页面，距离多人组织、长期 Agent、群聊协作、主动调度和知识沉淀还有明显差距。
+9. **部门级交付样板是很强的商品化表达，但指标必须可审计。** 官网把量化、营销、研发包装成“角色链 + 阶段 + 人审 + 业务结果”卡片，用户一眼能理解买到什么；同一研发卡片却同时展示“仅需 3 天”和 `6d 21h`。WanWork 应学习 Solution Blueprint 和结果看板，不学习无 Run、Artifact、口径与来源绑定的营销数字。
 
 一句话建议：
 
-> **用 Clawith 校准产品形态，用 Quantum Entanglement 的事件、权限、Artifact 和协议纪律守住底层；优先做“组织身份 + 原生群聊 + 主动工作 + 人审经验库”四件套，不复制其宽权限部署、非标准 A2A 命名和不完整的统一审计边界。**
+> **用 Clawith 校准产品形态，用 Quantum Entanglement 的事件、权限、Artifact 和协议纪律守住底层；优先做“组织身份 + 原生群聊 + 主动工作 + 人审经验库”四件套，再用可审计的部门级交付样板把它们包装成用户能购买、运行和验收的业务结果；不复制其宽权限部署、非标准 A2A 命名和不完整的统一审计边界。**
 
 ## 1. 证据口径、源码身份与限制
 
@@ -146,6 +147,37 @@ credits 对应的模型、容量或可靠性。开源/自托管权利与官方�
 - 开源/私有化：底层协调内核、标准协议 adapter、单组织部署；
 - 商业云：托管模型、连接器、组织目录、审计运营、升级和支持；
 - 计费对象优先绑定可解释资源（模型 token、Run、Agent seat、存储和连接器），避免只用难以审计的模糊 credits。
+
+### 2.4 从功能清单到“部门级交付样板”：值得学习的商品化表达
+
+【官网/文档声明】2026-08-27 的首页新增“这样的组织，已经开始出现”，没有继续只列 Agent
+能力，而是用三个部门样板描述角色链、阶段、人审和结果：
+
+| 首页样板 | 页面可见叙事与数字 | 本轮能证明什么 |
+|---|---|---|
+| 量化投资部 | 价格/新闻/基本面并行分析，多空辩论，研究主管、交易员和三角度风控委员会接力；宣称 30 天模拟盘 `+10.4%` | 只证明官网如何包装一个多角色、逐级复核场景；没有策略、回测数据、费用、风险、账户或独立收益验证 |
+| 超级营销部 | 追热点、写内容、排期、读数据；宣称 1 位创始人、每周 154 帖、互动 `4.2×` | 只证明官网结果卡文案；没有渠道账号、基线、统计窗口、归因或内容质量证据 |
+| 极速研发部 | PM 拆 spec、前后端并行、QA、一个真人终审；宣称 247 commits、32 PR、81/81 tests | 截图固定了页面像素，但没有仓库、commit、PR、测试报告、Run、Artifact 或客户身份可核验 |
+
+![Clawith 极速研发部门级交付样板](../screenshots/26_clawith_rapid_rnd_claim_20260827.png)
+
+【官网/文档声明】同一研发卡片左侧写“一句话进去，一款软件出来，仅需 3 天”，结果指标和
+时间轴又写 `6d 21h`。二者不是同一个时长。本报告不替厂商猜测“3 天”是工作日、某个阶段、
+旧文案还是四舍五入；它只记录当前页面存在口径冲突。
+
+【分析判断】这个新增页面信号带来四个具体动作：
+
+1. **建立版本化 Solution Blueprint。** 用户选择的不是抽象“多 Agent”，而是研究、营销、
+   研发等可理解的业务样板。Blueprint 引用明确的 AgentRevision、HandoffContract、输入、
+   Artifact schema、验收标准、预算、人工门和 policy profile；运行时仍编译到现有领域合同，
+   不能变成第二套隐藏编排权威。
+2. **把“一个真人终审”做成可见的一等节点。** 人不是聊天框外的兜底，而是有待审 Artifact、
+   接受/驳回/修订、责任人和时限的 Needs You 工作项。
+3. **结果看板只能从权威事实派生。** 时长、成本、提交、PR、测试、采用率等指标必须绑定
+   tenant/workspace、BlueprintRevision、Run、接受的 Artifact/receipt、统计窗口和数据来源；
+   simulated、self-reported、external-verified 必须分级显示。
+4. **营销和产品共用一套 evidence contract。** 官网案例若未来由 WanWork 自动生成，应能从
+   展示数字下钻到脱敏后的证据摘要；口径变更要版本化，不能出现“3 天 / 6d 21h”而无解释。
 
 ## 3. 信息架构：已经是完整 Web 产品，不是框架样例
 
@@ -856,6 +888,7 @@ Quantum Entanglement 的机会不在复制一个功能更多的 Clawith，而在
 | 外部定位 | AI 组织、Digital Employee | 人 + Agent 原生协同与可靠内核 | 学 Clawith 的组织语言，保留 QE 的可信协作差异化 |
 | 稳定 Agent 身份 | 已有数据库 Agent、Soul/Memory/Focus/关系 | demo 仍以固定专业 Agent 为主；协议 Actor 更严谨 | 优先实现 `AgentIdentity + AgentRevision` 产品对象 |
 | 组织/成员 | Tenant、Identity/User、Directory、部门/角色 | tenant authorization primitives 已有；完整组织 UI/API 未闭环 | 数据边界用 QE，产品对象和导航学 Clawith |
+| 部门级交付样板 | 首页以量化、营销、研发卡片展示角色链、阶段、人审与结果指标 | 当前只有固定三 Agent DAG 和本地验收页，没有版本化业务样板/指标证据链 | 增加 SolutionBlueprintRevision；编译到既有合同，指标只从 Run/Artifact/receipt 派生 |
 | 群聊 | 原生 Group/Crew、Participant、workspace、read state | 当前可验收页是单人触发三 Agent DAG，并非多人长期群 | 第一产品优先级：真实多人 + Agent 持久群 |
 | mention 路由 | 单 Agent 确定性、多 Agent planning、`at` handoff | canonical envelope/handoff 有更严格设计，UI 未完整实现 | 合并两者：确定性 route + 版本化 HandoffContract |
 | Agent 公开身份 | 每个 Agent 以 Participant 回复 | 协议强调不冒充，当前 demo 仍以汇总页面呈现 | UI 强制 actor/on-behalf-of 可见 |
@@ -901,6 +934,7 @@ flowchart LR
 |---|---|---|
 | Agent 招聘/创建 | AgentIdentity + 不可变 AgentRevision | 历史 Run 固定 revision；创建者不等于永久所有权 |
 | Directory | 人/Agent 统一组织目录 | tenant/workspace scope、真实 Participant、可见性与联系权限分离 |
+| 部门级交付样板 | SolutionBlueprintRevision → 既有 Agent/Handoff/Artifact/Policy 合同 | 模板不是执行权威；Run 固定 revision；公开指标绑定接受证据与统计口径 |
 | Crew/Group | 长期群聊 + Agent 成员 + 群 workspace | 单 mention 确定性；多 mention 计划需平台校验 |
 | `at` handoff | 下一条公开回复的 mention intent | intent、delivery、acceptance、completion、Artifact acceptance 分状态 |
 | Aware/Pulse | Focus → Trigger → occurrence → Run → report | occurrence 稳定幂等；外部动作仍走 action-time policy |
@@ -951,6 +985,8 @@ flowchart LR
 - 长期 Group/Crew、成员列表、消息、单 Agent `@` 确定性路由；
 - 每个 Agent 以自己的身份回复；
 - 消息、Task、Artifact、Needs You、Event timeline 同源投影；
+- 一个版本化部门级 Solution Blueprint，通过现有合同创建角色链、任务、验收标准和人工门，
+  不引入第二套编排状态；
 - 任意自定义指令继续可用，不退回固定示例。
 
 阶段门禁：
@@ -960,6 +996,8 @@ flowchart LR
 - 单 Agent mention 不经过模型重新选人；
 - Agent 不得冒充另一个 Agent 或人；
 - 下游只消费明确 Artifact version；
+- 结果卡中的时长、成本、提交、测试等字段只能从同一 Run 的权威事件、Artifact 和 receipt
+  派生；模拟、厂商自报和外部核验状态必须可见；
 - 全部 API 强制 tenant/workspace scope；
 - 保持“不连接、不发送飞书/企微”默认安全行为。
 
@@ -1028,6 +1066,7 @@ flowchart LR
 | 主题 | 官网/文档或营销口径 | 固定源码观察 | 本报告结论 |
 |---|---|---|---|
 | AI 组织/Digital Employee | 核心定位 | Agent/Tenant/Directory/Group/Settings 路由真实存在 | 产品形态成立；效果收益未验证 |
+| 部门级交付结果 | 量化 `+10.4%`、营销 154 帖/`4.2×`、研发 247 commits/32 PR/81 tests | 本轮没有相应客户、Run、仓库、数据集或测试证据；研发卡同时显示“3 天”和 `6d 21h` | 学习场景包装和阶段可视化；不采信数字，WanWork 指标必须绑定可审计事实 |
 | 托管价格 | Free/Starter/Pro/Scale，credits + public Agent seats，年付省 20% | 开源仓库不能证明云价、credits 计量或套餐权益 | 只记录 2026-08-27 页面快照；采购/成本评估时必须重查正式报价与计量表 |
 | 持久身份 | Soul、Memory、Focus、长期存在 | soul/memory 文件；Focus 已迁到结构化 DB | 能力存在，文档对 focus.md 已漂移 |
 | 两层/多层记忆 | Agent 与组织知识 | 私有 workspace、群 memory、Experience | 有真实实现；记忆质量和隔离未运行验证 |
@@ -1078,11 +1117,16 @@ flowchart LR
 - [`23_clawith_aware_focus_triggers_20260827.png`](../screenshots/23_clawith_aware_focus_triggers_20260827.png)：Aware、Focus、trigger 与自适应 claim
 - [`24_clawith_pulse_trigger_engine_20260827.png`](../screenshots/24_clawith_pulse_trigger_engine_20260827.png)：Pulse engine 产品文档
 - [`25_clawith_plaza_legacy_docs_20260827.png`](../screenshots/25_clawith_plaza_legacy_docs_20260827.png)：仍在线的旧 Plaza 社交 feed 文档
-- [`../screenshots/manifest.json`](../screenshots/manifest.json)：第 15–25 张的来源 URL、采集限制、完整 SHA-256、字节数和像素尺寸
+- [`26_clawith_rapid_rnd_claim_20260827.png`](../screenshots/26_clawith_rapid_rnd_claim_20260827.png)：部门级研发交付样板、阶段指标与同卡片时长口径冲突
+- [`../screenshots/manifest.json`](../screenshots/manifest.json)：第 15–26 张的来源 URL、采集限制、完整 SHA-256、字节数和像素尺寸
 
 第 20–25 张由 Git 提交 `be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5` 固定文件字节；网页本身
 仍没有不可变 revision。其逐图 claim/源码反证/限制以 1.4 的专项表为准，不能脱离该表单独引用为
 “已验证能力”。
+
+第 26 张由 Git 提交 `e58bc9d0b4abd3806f4e98cc1b04dd121a224ff9` 固定文件字节，只证明
+该首页元素在采集时的可见像素。它没有核验卡片中的仓库、PR、测试、交付周期或客户结果；同卡片
+的两个时长口径按原样保留，不做推断性修正。
 
 ### 19.3 相关 WanWork / Quantum Entanglement 文档
 
@@ -1099,3 +1143,7 @@ Clawith 应正式进入 WanWork 的一级竞品和源码参考清单，但使用
 > **产品上大胆学它如何让 Agent 成为同事；底层上只选择经固定源码验证的机制，并用 Quantum Entanglement 的 tenant-first authority、append-only event、Artifact、receipt、unknown/fencing 和标准 adapter 重建安全边界。**
 
 近期最值得马上吸收的不是它的 Plaza 旧叙事或“自进化”营销，而是四个已经彼此咬合的产品机制：稳定 Agent 身份、原生 Crew 群聊、Aware 主动工作、人审 Experience Library。与此同时，MCP/Skills 自安装、Compose 权限、宿主 pip proxy、非标准 A2A 命名和 best-effort audit 必须进入“明确不照搬”清单。
+
+部门级 Solution Blueprint 是这四件套之上的商品化与验收层：它可以大胆借鉴，但每个公开结果
+必须由 WanWork 自己的 Run、Artifact、receipt 和统计口径托底，不能把竞品的营销数字直接当成
+产品能力或路线承诺。
