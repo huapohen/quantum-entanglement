@@ -7,17 +7,22 @@ qe_usage() {
 用法：scripts/start_local_trial.sh [选项]
 
 启动仅绑定 127.0.0.1 的 Quantum Entanglement 本地产品体验。
+网页模式默认读取仓库根目录 .env，并使用配置的 GPT 真实生成结果。
 
 选项：
   --port PORT       指定本地端口（默认：8765）
   --no-open         启动服务，但不自动打开浏览器
   --cli             不启动网页，直接运行同一套合成 Agent demo
+  --synthetic       网页使用确定性离线 fixture，不调用模型
   -h, --help        显示帮助
 
 环境变量：
   QE_TRIAL_PYTHON   指定 Python 可执行文件（要求 Python 3.9 或更高）
+  OPENAI_API_KEY    GPT 网关凭据（也可只写入仓库根目录 .env）
+  OPENAI_BASE_URL   OpenAI-compatible /v1 端点
+  OPENAI_MODEL      模型名，例如 gpt-5.6-sol
 
-边界：只使用合成数据，不连接飞书、企微或任何外部消息平台。
+边界：模型只处理你在本地页面输入的指令，不连接飞书、企微或任何外部消息平台。
 EOF
 }
 
@@ -33,6 +38,7 @@ qe_python=${QE_TRIAL_PYTHON:-python3}
 qe_port=8765
 qe_open=1
 qe_cli=0
+qe_runtime=gpt
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -51,6 +57,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --cli)
       qe_cli=1
+      shift
+      ;;
+    --synthetic)
+      qe_runtime=synthetic
       shift
       ;;
     -h|--help)
@@ -94,8 +104,8 @@ fi
 
 if [ "$qe_open" -eq 1 ]; then
   exec env PYTHONPATH="$qe_pythonpath" "$qe_python" -u examples/product_trial_server.py \
-    --port "$qe_port" --open
+    --port "$qe_port" --runtime "$qe_runtime" --open
 fi
 
 exec env PYTHONPATH="$qe_pythonpath" "$qe_python" -u examples/product_trial_server.py \
-  --port "$qe_port"
+  --port "$qe_port" --runtime "$qe_runtime"

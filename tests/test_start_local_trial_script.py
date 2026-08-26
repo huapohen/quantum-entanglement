@@ -33,6 +33,8 @@ class StartLocalTrialScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--no-open", result.stdout)
         self.assertIn("--cli", result.stdout)
+        self.assertIn("--synthetic", result.stdout)
+        self.assertIn("OPENAI_API_KEY", result.stdout)
         self.assertIn("不连接飞书、企微", result.stdout)
 
     def test_unknown_option_fails_without_starting_the_server(self) -> None:
@@ -55,6 +57,9 @@ class StartLocalTrialScriptTests(unittest.TestCase):
 
         environment = os.environ.copy()
         environment["QE_TRIAL_PYTHON"] = sys.executable
+        environment["OPENAI_API_KEY"] = "test-key-never-sent"
+        environment["OPENAI_BASE_URL"] = "https://gateway.example.test/v1"
+        environment["OPENAI_MODEL"] = "test-gpt-model"
         process = subprocess.Popen(
             [str(SCRIPT), "--no-open", "--port", str(port)],
             cwd=ROOT,
@@ -84,8 +89,26 @@ class StartLocalTrialScriptTests(unittest.TestCase):
                 os.killpg(process.pid, signal.SIGKILL)
                 stdout, stderr = process.communicate(timeout=10)
         self.assertEqual(process.returncode, 0, stderr)
-        self.assertIn("仅合成数据，不连接任何聊天平台", stdout)
+        self.assertIn("openai-compatible / test-gpt-model", stdout)
+        self.assertIn("不连接任何聊天平台", stdout)
         self.assertIn(f"http://127.0.0.1:{port}/#token=", stdout)
+
+    def test_synthetic_switch_runs_without_model_configuration(self) -> None:
+        environment = os.environ.copy()
+        environment["QE_TRIAL_PYTHON"] = sys.executable
+        for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"):
+            environment.pop(name, None)
+        result = subprocess.run(
+            [str(SCRIPT), "--synthetic", "--cli"],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("本地合成 Agent demo", result.stdout)
 
 
 if __name__ == "__main__":
