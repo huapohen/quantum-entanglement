@@ -6,7 +6,7 @@
 
 | 场景 | 应使用的引用 | 说明 |
 | --- | --- | --- |
-| 日常开发、验收、继续主线任务 | `main`（目录基线 `6fd316b74e46`） | 唯一正式主分支；目录 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement`。 |
+| 日常开发、验收、继续主线任务 | `main`（目录基线 `a2ca44e8c0fc`） | 唯一正式主分支；目录 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement`。 |
 | 复现当前本地试用版本 | `v0.1.0-local-trial.2` | 固定版本标签，不会随 `main` 后续提交移动。 |
 | 查看上一试用检查点 | `v0.1.0-local-trial.1` | 已被 `.2` 取代，仅用于对比。 |
 | 恢复某项历史实现 | 先从 `main` 新建分支，再挑选提交 | 优先 `git cherry-pick` 单个已审阅提交，不直接合并历史分支。 |
@@ -31,45 +31,45 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
-| 2026-08-25T23:00:58+08:00 | `main`<br>`6fd316b74e46` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 2026-08-23T18:04:39Z | `dependabot/pip/mypy-2.3.1`<br>`fce21d09e51b` | 用途待补充；当前节点主题：build(deps-dev): bump mypy from 1.19.1 to 2.3.1 | 未直接并入 main | 领先 1 / 落后 9 | — |
-| 2026-08-23T18:04:33Z | `dependabot/pip/ruff-0.16.4`<br>`bf627bc8a49f` | 用途待补充；当前节点主题：build(deps): bump ruff from 0.16.3 to 0.16.4 | 未直接并入 main | 领先 1 / 落后 9 | — |
-| 2026-08-23T18:04:23Z | `dependabot/pip/setuptools-84.0.0`<br>`f6af9b49fb5e` | 用途待补充；当前节点主题：build(deps): bump setuptools from 82.0.1 to 84.0.0 | 未直接并入 main | 领先 1 / 落后 9 | — |
-| 2026-08-23T18:04:16Z | `dependabot/pip/build-1.5.0`<br>`003a2dfd6eba` | 用途待补充；当前节点主题：build(deps): bump build from 1.4.4 to 1.5.0 | 未直接并入 main | 领先 1 / 落后 9 | — |
-| 2026-08-23T18:03:59Z | `dependabot/pip/pytest-asyncio-1.4.0`<br>`09a365f20145` | 用途待补充；当前节点主题：build(deps-dev): bump pytest-asyncio from 1.2.0 to 1.4.0 | 未直接并入 main | 领先 1 / 落后 9 | — |
-| 2026-08-21T23:29:23+08:00 | `codex/py39-test-isolation-fix`<br>`04298b429a34` | Python 3.9 fork 探针前回收旧 Store 周期的测试隔离修复候选。 | 未直接并入 main | 领先 1 / 落后 35 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-py39-test-isolation-fix` |
-| 2026-08-21T23:21:46+08:00 | `codex/ci-linux-test-fix`<br>`bbef2e02642b` | Linux 文件路径所有者与受保护祖先校验的 CI 修复候选。 | 未直接并入 main | 领先 3 / 落后 39 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-ci-linux-test-fix` |
-| 2026-08-21T22:53:52+08:00 | `codex/ci-package-fix`<br>`7755d83bd092` | 源码分发包测试标记与 sdist 契约的 CI 修复候选。 | 未直接并入 main | 领先 2 / 落后 39 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-ci-package-fix` |
-| 2026-08-21T20:33:35+08:00 | `codex/recovery-integrate-current`<br>`e21654a06663` | 恢复机制向当时最新主线集成后的阶段检查点；其节点已进入 main。 | 已作为祖先进入 main | 领先 0 / 落后 82 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-recovery-integrate-current` |
-| 2026-08-21T19:35:53+08:00 | `codex/gate-a-operation-authorization`<br>`1dd4247b0a1b` | Gate A 操作时授权、令牌消费和重授权边界候选。 | 未直接并入 main | 领先 42 / 落后 233 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-gate-a-operation-auth` |
-| 2026-08-21T19:11:57+08:00 | `codex/local-product-trial-v1`<br>`8dfff5e99cf8` | 当前本地产品体验页面、启动脚本、教程和验收截图的第一版阶段分支。 | 未直接并入 main | 领先 16 / 落后 172 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-local-product-trial-v1` |
-| 2026-08-21T16:40:21+08:00 | `codex/event-store-process-binding-v1`<br>`80dad143e7d5` | Event Store 与创建进程身份绑定的第一版候选。 | 未直接并入 main | 领先 25 / 落后 172 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-event-store-process-binding-v1` |
-| 2026-08-21T15:12:27+08:00 | `codex/backup-v2-on-canonical-v1`<br>`0b044d0dd63a` | 把备份 v2 候选重放到当时规范主线上并补齐回滚证据。 | 未直接并入 main | 领先 26 / 落后 172 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-backup-v2-on-canonical-v1` |
-| 2026-08-21T10:39:41+08:00 | `codex/backup-v2-snapshot-derivation`<br>`3946847b1ece` | 备份快照派生、导入边界和生命周期验证。 | 未直接并入 main | 领先 18 / 落后 212 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-backup-v2-snapshot-derivation` |
-| 2026-08-21T08:25:58+08:00 | `codex/backup-v2-exact-topology`<br>`bc95912a7407` | 备份 v2 的精确拓扑、所有权与恢复关系候选。 | 未直接并入 main | 领先 5 / 落后 212 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-backup-v2-exact-topology` |
-| 2026-08-21T08:07:46+08:00 | `codex/event-store-audit-on-foundation`<br>`e896c2de8758` | 基于进程身份基础版本开展 Event Store 审计。 | 未直接并入 main | 领先 7 / 落后 212 | — |
-| 2026-08-21T07:55:21+08:00 | `codex/event-store-process-audit`<br>`a5eaff9b4bda` | Event Store 跨进程使用、继承和失效边界审计。 | 未直接并入 main | 领先 7 / 落后 214 | — |
-| 2026-08-21T00:01:11+08:00 | `codex/attempt-recovery-on-process-v3`<br>`af8a6499f397` | 在进程身份约束基础上继续验证调用恢复和运行时证据同步。 | 未直接并入 main | 领先 33 / 落后 213 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-attempt-recovery-on-process-v3` |
-| 2026-08-20T23:45:11+08:00 | `codex/invocation-on-canonical-v4`<br>`622dbaa977cb` | 调用生命周期上下文解绑的第四版规范候选；其节点已成为 main 的祖先。 | 已作为祖先进入 main | 领先 0 / 落后 212 | — |
-| 2026-08-20T23:24:26+08:00 | `codex/notion-sync-v2`<br>`cded75eb5341` | Notion 证据同步与运行时回读的第二版实验分支。 | 未直接并入 main | 领先 30 / 落后 221 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-notion-sync-v2` |
-| 2026-08-20T23:23:15+08:00 | `codex/process-identity-foundation`<br>`ca02903b38f5` | 进程身份、fork 继承拒绝和资源所有权的基础分支；其节点已进入 main。 | 已作为祖先进入 main | 领先 0 / 落后 213 | — |
-| 2026-08-20T22:25:54+08:00 | `codex/attempt-recovery-integrated-v2`<br>`8d82dd7e672d` | 调用尝试恢复与事务一致性的第二版集成候选。 | 未直接并入 main | 领先 24 / 落后 221 | — |
-| 2026-08-20T22:25:36+08:00 | `codex/attempt-recovery-safe-v2`<br>`7f9530010037` | 调用恢复第二版的保守安全候选，用于隔离验证失败边界。 | 未直接并入 main | 领先 25 / 落后 222 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-attempt-recovery-safe-v2` |
-| 2026-08-20T20:54:55+08:00 | `codex/attempt-recovery-v1`<br>`e05357bebde6` | 调用恢复第一版实验，重点验证 invocation 事务证据认证。 | 未直接并入 main | 领先 60 / 落后 386 | — |
-| 2026-08-20T20:40:04+08:00 | `codex/backup-v2-codec`<br>`bcba6a419fbe` | 精确备份 manifest v2 编解码与可复现序列化实验。 | 未直接并入 main | 领先 3 / 落后 224 | — |
-| 2026-08-20T15:58:05+08:00 | `codex/request-context-audit-20260820`<br>`a6b4a4947138` | 请求上下文、凭据异常和 traceback 泄露边界审计。 | 未直接并入 main | 领先 6 / 落后 239 | — |
-| 2026-08-20T15:07:35+08:00 | `gate-a-trusted-context-foundation`<br>`c95635beb726` | Gate A 可信上下文、凭据擦除失败和请求边界的基础候选。 | 未直接并入 main | 领先 21 / 落后 328 | — |
-| 2026-08-20T10:41:51+08:00 | `codex/supply-policy-latest-audit`<br>`11dfa301de69` | 依赖采用、回滚和风险晋级规则的较新审计候选。 | 未直接并入 main | 领先 15 / 落后 358 | — |
-| 2026-08-20T10:35:28+08:00 | `codex/supply-policy-current-audit`<br>`ff663e9165e7` | 依赖风险策略在当时当前代码上的审计与数值边界修复。 | 未直接并入 main | 领先 14 / 落后 386 | — |
-| 2026-08-20T09:50:26+08:00 | `codex/safe-logging-current-20260820090738`<br>`f683ef508547` | 安全日志候选在当时当前代码上的集成与取消异常收敛。 | 未直接并入 main | 领先 16 / 落后 392 | — |
-| 2026-08-20T09:47:15+08:00 | `codex/supply-policy-v1`<br>`28959b497c86` | 依赖风险晋级与供应链策略第一版。 | 未直接并入 main | 领先 9 / 落后 422 | — |
-| 2026-08-20T09:08:23+08:00 | `codex/safe-logging-v1`<br>`88c3d921f31c` | 复合凭据字段脱敏和安全日志第一版。 | 未直接并入 main | 领先 18 / 落后 434 | — |
-| 2026-08-20T08:48:58+08:00 | `agent/evidence-ledger-current`<br>`0cdfaaa8a8ab` | 面向当时较新代码节点刷新的工程证据账本候选。 | 未直接并入 main | 领先 2 / 落后 423 | — |
-| 2026-08-20T08:48:34+08:00 | `codex/supply-chain-docs-v1`<br>`165a92c1c173` | 供应链安全里程碑、证据顺序和后续门禁文档。 | 未直接并入 main | 领先 4 / 落后 422 | — |
-| 2026-08-20T08:41:43+08:00 | `codex/service-config-v1`<br>`525161ed70bf` | 服务配置校验、环境边界和配置测试第一版。 | 未直接并入 main | 领先 10 / 落后 434 | — |
-| 2026-08-20T08:38:36+08:00 | `agent/evidence-ledger`<br>`7d46958f18ec` | 早期工程证据账本分支，用于汇总测试、审计和阶段结论。 | 未直接并入 main | 领先 3 / 落后 434 | — |
-| 2026-08-20T08:26:01+08:00 | `codex/service-boundary-v1`<br>`819b74cd1b45` | 服务运行边界、信任假设和安全策略绑定第一版。 | 未直接并入 main | 领先 7 / 落后 437 | — |
-| 2026-08-20T08:24:30+08:00 | `codex/backup-manifest-v1`<br>`87bd23a7a6bd` | 备份状态证据和 manifest v1 边界的早期实现。 | 未直接并入 main | 领先 4 / 落后 437 | — |
+| 2026-08-27T04:01:00+08:00 | `main`<br>`a2ca44e8c0fc` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
+| 2026-08-23T18:04:39Z | `dependabot/pip/mypy-2.3.1`<br>`fce21d09e51b` | 用途待补充；当前节点主题：build(deps-dev): bump mypy from 1.19.1 to 2.3.1 | 未直接并入 main | 领先 1 / 落后 102 | — |
+| 2026-08-23T18:04:33Z | `dependabot/pip/ruff-0.16.4`<br>`bf627bc8a49f` | 用途待补充；当前节点主题：build(deps): bump ruff from 0.16.3 to 0.16.4 | 未直接并入 main | 领先 1 / 落后 102 | — |
+| 2026-08-23T18:04:23Z | `dependabot/pip/setuptools-84.0.0`<br>`f6af9b49fb5e` | 用途待补充；当前节点主题：build(deps): bump setuptools from 82.0.1 to 84.0.0 | 未直接并入 main | 领先 1 / 落后 102 | — |
+| 2026-08-23T18:04:16Z | `dependabot/pip/build-1.5.0`<br>`003a2dfd6eba` | 用途待补充；当前节点主题：build(deps): bump build from 1.4.4 to 1.5.0 | 未直接并入 main | 领先 1 / 落后 102 | — |
+| 2026-08-23T18:03:59Z | `dependabot/pip/pytest-asyncio-1.4.0`<br>`09a365f20145` | 用途待补充；当前节点主题：build(deps-dev): bump pytest-asyncio from 1.2.0 to 1.4.0 | 未直接并入 main | 领先 1 / 落后 102 | — |
+| 2026-08-21T23:29:23+08:00 | `codex/py39-test-isolation-fix`<br>`04298b429a34` | Python 3.9 fork 探针前回收旧 Store 周期的测试隔离修复候选。 | 未直接并入 main | 领先 1 / 落后 128 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-py39-test-isolation-fix` |
+| 2026-08-21T23:21:46+08:00 | `codex/ci-linux-test-fix`<br>`bbef2e02642b` | Linux 文件路径所有者与受保护祖先校验的 CI 修复候选。 | 未直接并入 main | 领先 3 / 落后 132 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-ci-linux-test-fix` |
+| 2026-08-21T22:53:52+08:00 | `codex/ci-package-fix`<br>`7755d83bd092` | 源码分发包测试标记与 sdist 契约的 CI 修复候选。 | 未直接并入 main | 领先 2 / 落后 132 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-ci-package-fix` |
+| 2026-08-21T20:33:35+08:00 | `codex/recovery-integrate-current`<br>`e21654a06663` | 恢复机制向当时最新主线集成后的阶段检查点；其节点已进入 main。 | 已作为祖先进入 main | 领先 0 / 落后 175 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-recovery-integrate-current` |
+| 2026-08-21T19:35:53+08:00 | `codex/gate-a-operation-authorization`<br>`1dd4247b0a1b` | Gate A 操作时授权、令牌消费和重授权边界候选。 | 未直接并入 main | 领先 42 / 落后 326 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-gate-a-operation-auth` |
+| 2026-08-21T19:11:57+08:00 | `codex/local-product-trial-v1`<br>`8dfff5e99cf8` | 当前本地产品体验页面、启动脚本、教程和验收截图的第一版阶段分支。 | 未直接并入 main | 领先 16 / 落后 265 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-local-product-trial-v1` |
+| 2026-08-21T16:40:21+08:00 | `codex/event-store-process-binding-v1`<br>`80dad143e7d5` | Event Store 与创建进程身份绑定的第一版候选。 | 未直接并入 main | 领先 25 / 落后 265 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-event-store-process-binding-v1` |
+| 2026-08-21T15:12:27+08:00 | `codex/backup-v2-on-canonical-v1`<br>`0b044d0dd63a` | 把备份 v2 候选重放到当时规范主线上并补齐回滚证据。 | 未直接并入 main | 领先 26 / 落后 265 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-backup-v2-on-canonical-v1` |
+| 2026-08-21T10:39:41+08:00 | `codex/backup-v2-snapshot-derivation`<br>`3946847b1ece` | 备份快照派生、导入边界和生命周期验证。 | 未直接并入 main | 领先 18 / 落后 305 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-backup-v2-snapshot-derivation` |
+| 2026-08-21T08:25:58+08:00 | `codex/backup-v2-exact-topology`<br>`bc95912a7407` | 备份 v2 的精确拓扑、所有权与恢复关系候选。 | 未直接并入 main | 领先 5 / 落后 305 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-backup-v2-exact-topology` |
+| 2026-08-21T08:07:46+08:00 | `codex/event-store-audit-on-foundation`<br>`e896c2de8758` | 基于进程身份基础版本开展 Event Store 审计。 | 未直接并入 main | 领先 7 / 落后 305 | — |
+| 2026-08-21T07:55:21+08:00 | `codex/event-store-process-audit`<br>`a5eaff9b4bda` | Event Store 跨进程使用、继承和失效边界审计。 | 未直接并入 main | 领先 7 / 落后 307 | — |
+| 2026-08-21T00:01:11+08:00 | `codex/attempt-recovery-on-process-v3`<br>`af8a6499f397` | 在进程身份约束基础上继续验证调用恢复和运行时证据同步。 | 未直接并入 main | 领先 33 / 落后 306 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-attempt-recovery-on-process-v3` |
+| 2026-08-20T23:45:11+08:00 | `codex/invocation-on-canonical-v4`<br>`622dbaa977cb` | 调用生命周期上下文解绑的第四版规范候选；其节点已成为 main 的祖先。 | 已作为祖先进入 main | 领先 0 / 落后 305 | — |
+| 2026-08-20T23:24:26+08:00 | `codex/notion-sync-v2`<br>`cded75eb5341` | Notion 证据同步与运行时回读的第二版实验分支。 | 未直接并入 main | 领先 30 / 落后 314 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-notion-sync-v2` |
+| 2026-08-20T23:23:15+08:00 | `codex/process-identity-foundation`<br>`ca02903b38f5` | 进程身份、fork 继承拒绝和资源所有权的基础分支；其节点已进入 main。 | 已作为祖先进入 main | 领先 0 / 落后 306 | — |
+| 2026-08-20T22:25:54+08:00 | `codex/attempt-recovery-integrated-v2`<br>`8d82dd7e672d` | 调用尝试恢复与事务一致性的第二版集成候选。 | 未直接并入 main | 领先 24 / 落后 314 | — |
+| 2026-08-20T22:25:36+08:00 | `codex/attempt-recovery-safe-v2`<br>`7f9530010037` | 调用恢复第二版的保守安全候选，用于隔离验证失败边界。 | 未直接并入 main | 领先 25 / 落后 315 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-attempt-recovery-safe-v2` |
+| 2026-08-20T20:54:55+08:00 | `codex/attempt-recovery-v1`<br>`e05357bebde6` | 调用恢复第一版实验，重点验证 invocation 事务证据认证。 | 未直接并入 main | 领先 60 / 落后 479 | — |
+| 2026-08-20T20:40:04+08:00 | `codex/backup-v2-codec`<br>`bcba6a419fbe` | 精确备份 manifest v2 编解码与可复现序列化实验。 | 未直接并入 main | 领先 3 / 落后 317 | — |
+| 2026-08-20T15:58:05+08:00 | `codex/request-context-audit-20260820`<br>`a6b4a4947138` | 请求上下文、凭据异常和 traceback 泄露边界审计。 | 未直接并入 main | 领先 6 / 落后 332 | — |
+| 2026-08-20T15:07:35+08:00 | `gate-a-trusted-context-foundation`<br>`c95635beb726` | Gate A 可信上下文、凭据擦除失败和请求边界的基础候选。 | 未直接并入 main | 领先 21 / 落后 421 | — |
+| 2026-08-20T10:41:51+08:00 | `codex/supply-policy-latest-audit`<br>`11dfa301de69` | 依赖采用、回滚和风险晋级规则的较新审计候选。 | 未直接并入 main | 领先 15 / 落后 451 | — |
+| 2026-08-20T10:35:28+08:00 | `codex/supply-policy-current-audit`<br>`ff663e9165e7` | 依赖风险策略在当时当前代码上的审计与数值边界修复。 | 未直接并入 main | 领先 14 / 落后 479 | — |
+| 2026-08-20T09:50:26+08:00 | `codex/safe-logging-current-20260820090738`<br>`f683ef508547` | 安全日志候选在当时当前代码上的集成与取消异常收敛。 | 未直接并入 main | 领先 16 / 落后 485 | — |
+| 2026-08-20T09:47:15+08:00 | `codex/supply-policy-v1`<br>`28959b497c86` | 依赖风险晋级与供应链策略第一版。 | 未直接并入 main | 领先 9 / 落后 515 | — |
+| 2026-08-20T09:08:23+08:00 | `codex/safe-logging-v1`<br>`88c3d921f31c` | 复合凭据字段脱敏和安全日志第一版。 | 未直接并入 main | 领先 18 / 落后 527 | — |
+| 2026-08-20T08:48:58+08:00 | `agent/evidence-ledger-current`<br>`0cdfaaa8a8ab` | 面向当时较新代码节点刷新的工程证据账本候选。 | 未直接并入 main | 领先 2 / 落后 516 | — |
+| 2026-08-20T08:48:34+08:00 | `codex/supply-chain-docs-v1`<br>`165a92c1c173` | 供应链安全里程碑、证据顺序和后续门禁文档。 | 未直接并入 main | 领先 4 / 落后 515 | — |
+| 2026-08-20T08:41:43+08:00 | `codex/service-config-v1`<br>`525161ed70bf` | 服务配置校验、环境边界和配置测试第一版。 | 未直接并入 main | 领先 10 / 落后 527 | — |
+| 2026-08-20T08:38:36+08:00 | `agent/evidence-ledger`<br>`7d46958f18ec` | 早期工程证据账本分支，用于汇总测试、审计和阶段结论。 | 未直接并入 main | 领先 3 / 落后 527 | — |
+| 2026-08-20T08:26:01+08:00 | `codex/service-boundary-v1`<br>`819b74cd1b45` | 服务运行边界、信任假设和安全策略绑定第一版。 | 未直接并入 main | 领先 7 / 落后 530 | — |
+| 2026-08-20T08:24:30+08:00 | `codex/backup-manifest-v1`<br>`87bd23a7a6bd` | 备份状态证据和 manifest v1 边界的早期实现。 | 未直接并入 main | 领先 4 / 落后 530 | — |
 
 ### 如何理解“未直接并入 main”
 
@@ -79,47 +79,47 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 归档引用 | 类型 | 保存内容 | 相对 main |
 | --- | --- | --- | --- | --- |
-| 2026-08-21T10:39:41+08:00 | `archive/2026-08-21/codex/backup-v2-snapshot-derivation`<br>`3946847b1ece` | 归档：开发分支副本 | 只读取证副本：备份快照派生、导入边界和生命周期验证。 | 未直接并入 main；领先 18 / 落后 212 |
-| 2026-08-21T08:25:58+08:00 | `archive/2026-08-21/codex/backup-v2-exact-topology`<br>`bc95912a7407` | 归档：开发分支副本 | 只读取证副本：备份 v2 的精确拓扑、所有权与恢复关系候选。 | 未直接并入 main；领先 5 / 落后 212 |
-| 2026-08-21T08:07:46+08:00 | `archive/2026-08-21/codex/event-store-audit-on-foundation`<br>`e896c2de8758` | 归档：开发分支副本 | 只读取证副本：基于进程身份基础版本开展 Event Store 审计。 | 未直接并入 main；领先 7 / 落后 212 |
-| 2026-08-21T07:55:21+08:00 | `archive/2026-08-21/codex/event-store-process-audit`<br>`a5eaff9b4bda` | 归档：开发分支副本 | 只读取证副本：Event Store 跨进程使用、继承和失效边界审计。 | 未直接并入 main；领先 7 / 落后 214 |
-| 2026-08-21T00:01:11+08:00 | `archive/2026-08-21/codex/attempt-recovery-on-process-v3`<br>`af8a6499f397` | 归档：开发分支副本 | 只读取证副本：在进程身份约束基础上继续验证调用恢复和运行时证据同步。 | 未直接并入 main；领先 33 / 落后 213 |
-| 2026-08-20T23:45:11+08:00 | `archive/2026-08-21/codex/invocation-on-canonical-v4`<br>`622dbaa977cb` | 归档：开发分支副本 | 只读取证副本：调用生命周期上下文解绑的第四版规范候选；其节点已成为 main 的祖先。 | 已作为祖先进入 main；领先 0 / 落后 212 |
-| 2026-08-20T23:24:26+08:00 | `archive/2026-08-21/codex/notion-sync-v2`<br>`cded75eb5341` | 归档：开发分支副本 | 只读取证副本：Notion 证据同步与运行时回读的第二版实验分支。 | 未直接并入 main；领先 30 / 落后 221 |
-| 2026-08-20T23:23:15+08:00 | `archive/2026-08-21/codex/process-identity-foundation`<br>`ca02903b38f5` | 归档：开发分支副本 | 只读取证副本：进程身份、fork 继承拒绝和资源所有权的基础分支；其节点已进入 main。 | 已作为祖先进入 main；领先 0 / 落后 213 |
-| 2026-08-20T23:11:13+08:00 | `archive/2026-08-21/reflog/authorization-boundary-hardening`<br>`a06d7d290109` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：docs: record authorization boundary hardening | 未直接并入 main；领先 14 / 落后 233 |
-| 2026-08-20T22:25:54+08:00 | `archive/2026-08-21/codex/attempt-recovery-integrated-v2`<br>`8d82dd7e672d` | 归档：开发分支副本 | 只读取证副本：调用尝试恢复与事务一致性的第二版集成候选。 | 未直接并入 main；领先 24 / 落后 221 |
-| 2026-08-20T22:25:36+08:00 | `archive/2026-08-21/codex/attempt-recovery-safe-v2`<br>`7f9530010037` | 归档：开发分支副本 | 只读取证副本：调用恢复第二版的保守安全候选，用于隔离验证失败边界。 | 未直接并入 main；领先 25 / 落后 222 |
-| 2026-08-20T21:27:04+08:00 | `archive/2026-08-21/worktree/opauth-opaque-operation-integration`<br>`e99f809f218a` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：feat: issue opaque authorized operations | 未直接并入 main；领先 2 / 落后 222 |
-| 2026-08-20T21:17:53+08:00 | `archive/2026-08-21/worktree/replay-structured-dispatch-draining`<br>`b877b6dd786c` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：docs: define structured dispatch draining | 未直接并入 main；领先 16 / 落后 224 |
-| 2026-08-20T21:06:06+08:00 | `archive/2026-08-21/worktree/attempt-error-consistency`<br>`2f7117307faa` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：docs: define attempt error consistency | 未直接并入 main；领先 8 / 落后 224 |
-| 2026-08-20T21:01:35+08:00 | `archive/2026-08-21/reflog/issuer-fork-identity`<br>`1aa82c972f94` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：style: format issuer fork identity assertion | 未直接并入 main；领先 11 / 落后 233 |
-| 2026-08-20T20:54:55+08:00 | `archive/2026-08-21/codex/attempt-recovery-v1`<br>`e05357bebde6` | 归档：开发分支副本 | 只读取证副本：调用恢复第一版实验，重点验证 invocation 事务证据认证。 | 未直接并入 main；领先 60 / 落后 386 |
-| 2026-08-20T20:40:04+08:00 | `archive/2026-08-21/codex/backup-v2-codec`<br>`bcba6a419fbe` | 归档：开发分支副本 | 只读取证副本：精确备份 manifest v2 编解码与可复现序列化实验。 | 未直接并入 main；领先 3 / 落后 224 |
-| 2026-08-20T20:15:56+08:00 | `archive/2026-08-21/worktree/opauth-process-bound-compose`<br>`23183fd0cde1` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：feat: compose process-bound action-time operation authorization | 未直接并入 main；领先 3 / 落后 233 |
-| 2026-08-20T19:37:55+08:00 | `archive/2026-08-21/reflog/fork-inherited-invocation-store`<br>`d0f93b393e98` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：fix: reject fork-inherited invocation stores | 未直接并入 main；领先 58 / 落后 386 |
-| 2026-08-20T19:18:34+08:00 | `archive/2026-08-21/worktree/operation-auth-boundary`<br>`3609ab806fc7` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：docs: define protected operation boundary | 未直接并入 main；领先 4 / 落后 226 |
-| 2026-08-20T19:04:10+08:00 | `archive/2026-08-21/reflog/hostile-auth-fault-boundary`<br>`bddecdf5d4c1` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：docs: specify hostile authorization fault boundary | 未直接并入 main；领先 6 / 落后 233 |
-| 2026-08-20T18:20:58+08:00 | `archive/2026-08-21/reflog/action-time-reauthorization`<br>`3af4ded12c6d` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：docs: require action-time operation reauthorization | 未直接并入 main；领先 7 / 落后 233 |
-| 2026-08-20T17:34:42+08:00 | `archive/2026-08-21/worktree/recovery-durable-invocation`<br>`276913ce69ae` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：fix: reconcile durable invocation transactions | 未直接并入 main；领先 17 / 落后 233 |
-| 2026-08-20T17:15:21+08:00 | `archive/2026-08-21/reflog/invocation-enqueue-reconcile`<br>`eaab78181289` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：fix: reconcile invocation enqueue commits | 未直接并入 main；领先 56 / 落后 386 |
-| 2026-08-20T15:58:05+08:00 | `archive/2026-08-21/codex/request-context-audit-20260820`<br>`a6b4a4947138` | 归档：开发分支副本 | 只读取证副本：请求上下文、凭据异常和 traceback 泄露边界审计。 | 未直接并入 main；领先 6 / 落后 239 |
-| 2026-08-20T15:07:35+08:00 | `archive/2026-08-21/gate-a-trusted-context-foundation`<br>`c95635beb726` | 归档：Gate A 副本 | 只读取证副本：Gate A 可信上下文、凭据擦除失败和请求边界的基础候选。 | 未直接并入 main；领先 21 / 落后 328 |
-| 2026-08-20T10:41:51+08:00 | `archive/2026-08-21/codex/supply-policy-latest-audit`<br>`11dfa301de69` | 归档：开发分支副本 | 只读取证副本：依赖采用、回滚和风险晋级规则的较新审计候选。 | 未直接并入 main；领先 15 / 落后 358 |
-| 2026-08-20T10:35:28+08:00 | `archive/2026-08-21/codex/supply-policy-current-audit`<br>`ff663e9165e7` | 归档：开发分支副本 | 只读取证副本：依赖风险策略在当时当前代码上的审计与数值边界修复。 | 未直接并入 main；领先 14 / 落后 386 |
-| 2026-08-20T09:50:26+08:00 | `archive/2026-08-21/codex/safe-logging-current-20260820090738`<br>`f683ef508547` | 归档：开发分支副本 | 只读取证副本：安全日志候选在当时当前代码上的集成与取消异常收敛。 | 未直接并入 main；领先 16 / 落后 392 |
-| 2026-08-20T09:47:15+08:00 | `archive/2026-08-21/codex/supply-policy-v1`<br>`28959b497c86` | 归档：开发分支副本 | 只读取证副本：依赖风险晋级与供应链策略第一版。 | 未直接并入 main；领先 9 / 落后 422 |
-| 2026-08-20T09:08:23+08:00 | `archive/2026-08-21/codex/safe-logging-v1`<br>`88c3d921f31c` | 归档：开发分支副本 | 只读取证副本：复合凭据字段脱敏和安全日志第一版。 | 未直接并入 main；领先 18 / 落后 434 |
-| 2026-08-20T08:48:58+08:00 | `archive/2026-08-21/agent/evidence-ledger-current`<br>`0cdfaaa8a8ab` | 归档：Agent 分支副本 | 只读取证副本：面向当时较新代码节点刷新的工程证据账本候选。 | 未直接并入 main；领先 2 / 落后 423 |
-| 2026-08-20T08:48:34+08:00 | `archive/2026-08-21/codex/supply-chain-docs-v1`<br>`165a92c1c173` | 归档：开发分支副本 | 只读取证副本：供应链安全里程碑、证据顺序和后续门禁文档。 | 未直接并入 main；领先 4 / 落后 422 |
-| 2026-08-20T08:41:43+08:00 | `archive/2026-08-21/codex/service-config-v1`<br>`525161ed70bf` | 归档：开发分支副本 | 只读取证副本：服务配置校验、环境边界和配置测试第一版。 | 未直接并入 main；领先 10 / 落后 434 |
-| 2026-08-20T08:38:36+08:00 | `archive/2026-08-21/agent/evidence-ledger`<br>`7d46958f18ec` | 归档：Agent 分支副本 | 只读取证副本：早期工程证据账本分支，用于汇总测试、审计和阶段结论。 | 未直接并入 main；领先 3 / 落后 434 |
-| 2026-08-20T08:26:01+08:00 | `archive/2026-08-21/codex/service-boundary-v1`<br>`819b74cd1b45` | 归档：开发分支副本 | 只读取证副本：服务运行边界、信任假设和安全策略绑定第一版。 | 未直接并入 main；领先 7 / 落后 437 |
-| 2026-08-20T08:24:30+08:00 | `archive/2026-08-21/codex/backup-manifest-v1`<br>`87bd23a7a6bd` | 归档：开发分支副本 | 只读取证副本：备份状态证据和 manifest v1 边界的早期实现。 | 未直接并入 main；领先 4 / 落后 437 |
-| 2026-08-20T08:14:17+08:00 | `archive/2026-08-21/dangling/approval-recovery-chains`<br>`7bd31f947bdc` | 归档：孤立提交 | 保存当时无分支引用的提交，防止垃圾回收后丢失。 节点主题：validate staged approval recovery chains | 未直接并入 main；领先 1 / 落后 440 |
-| 2026-08-20T08:10:46+08:00 | `archive/2026-08-21/dangling/approval-decision-atomicity`<br>`ab0ef94b8bf7` | 归档：孤立提交 | 保存当时无分支引用的提交，防止垃圾回收后丢失。 节点主题：validate staged approval decision atomicity | 未直接并入 main；领先 1 / 落后 442 |
-| 2026-08-20T08:06:15+08:00 | `archive/2026-08-21/dangling/approval-request-atomicity`<br>`f596a7becf08` | 归档：孤立提交 | 保存当时无分支引用的提交，防止垃圾回收后丢失。 节点主题：validate staged approval request atomicity | 未直接并入 main；领先 1 / 落后 443 |
-| 2026-08-20T08:02:44+08:00 | `archive/2026-08-21/dangling/approval-snapshots`<br>`c2d8ba70bf93` | 归档：孤立提交 | 保存当时无分支引用的提交，防止垃圾回收后丢失。 节点主题：validate staged approval snapshots | 未直接并入 main；领先 1 / 落后 444 |
+| 2026-08-21T10:39:41+08:00 | `archive/2026-08-21/codex/backup-v2-snapshot-derivation`<br>`3946847b1ece` | 归档：开发分支副本 | 只读取证副本：备份快照派生、导入边界和生命周期验证。 | 未直接并入 main；领先 18 / 落后 305 |
+| 2026-08-21T08:25:58+08:00 | `archive/2026-08-21/codex/backup-v2-exact-topology`<br>`bc95912a7407` | 归档：开发分支副本 | 只读取证副本：备份 v2 的精确拓扑、所有权与恢复关系候选。 | 未直接并入 main；领先 5 / 落后 305 |
+| 2026-08-21T08:07:46+08:00 | `archive/2026-08-21/codex/event-store-audit-on-foundation`<br>`e896c2de8758` | 归档：开发分支副本 | 只读取证副本：基于进程身份基础版本开展 Event Store 审计。 | 未直接并入 main；领先 7 / 落后 305 |
+| 2026-08-21T07:55:21+08:00 | `archive/2026-08-21/codex/event-store-process-audit`<br>`a5eaff9b4bda` | 归档：开发分支副本 | 只读取证副本：Event Store 跨进程使用、继承和失效边界审计。 | 未直接并入 main；领先 7 / 落后 307 |
+| 2026-08-21T00:01:11+08:00 | `archive/2026-08-21/codex/attempt-recovery-on-process-v3`<br>`af8a6499f397` | 归档：开发分支副本 | 只读取证副本：在进程身份约束基础上继续验证调用恢复和运行时证据同步。 | 未直接并入 main；领先 33 / 落后 306 |
+| 2026-08-20T23:45:11+08:00 | `archive/2026-08-21/codex/invocation-on-canonical-v4`<br>`622dbaa977cb` | 归档：开发分支副本 | 只读取证副本：调用生命周期上下文解绑的第四版规范候选；其节点已成为 main 的祖先。 | 已作为祖先进入 main；领先 0 / 落后 305 |
+| 2026-08-20T23:24:26+08:00 | `archive/2026-08-21/codex/notion-sync-v2`<br>`cded75eb5341` | 归档：开发分支副本 | 只读取证副本：Notion 证据同步与运行时回读的第二版实验分支。 | 未直接并入 main；领先 30 / 落后 314 |
+| 2026-08-20T23:23:15+08:00 | `archive/2026-08-21/codex/process-identity-foundation`<br>`ca02903b38f5` | 归档：开发分支副本 | 只读取证副本：进程身份、fork 继承拒绝和资源所有权的基础分支；其节点已进入 main。 | 已作为祖先进入 main；领先 0 / 落后 306 |
+| 2026-08-20T23:11:13+08:00 | `archive/2026-08-21/reflog/authorization-boundary-hardening`<br>`a06d7d290109` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：docs: record authorization boundary hardening | 未直接并入 main；领先 14 / 落后 326 |
+| 2026-08-20T22:25:54+08:00 | `archive/2026-08-21/codex/attempt-recovery-integrated-v2`<br>`8d82dd7e672d` | 归档：开发分支副本 | 只读取证副本：调用尝试恢复与事务一致性的第二版集成候选。 | 未直接并入 main；领先 24 / 落后 314 |
+| 2026-08-20T22:25:36+08:00 | `archive/2026-08-21/codex/attempt-recovery-safe-v2`<br>`7f9530010037` | 归档：开发分支副本 | 只读取证副本：调用恢复第二版的保守安全候选，用于隔离验证失败边界。 | 未直接并入 main；领先 25 / 落后 315 |
+| 2026-08-20T21:27:04+08:00 | `archive/2026-08-21/worktree/opauth-opaque-operation-integration`<br>`e99f809f218a` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：feat: issue opaque authorized operations | 未直接并入 main；领先 2 / 落后 315 |
+| 2026-08-20T21:17:53+08:00 | `archive/2026-08-21/worktree/replay-structured-dispatch-draining`<br>`b877b6dd786c` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：docs: define structured dispatch draining | 未直接并入 main；领先 16 / 落后 317 |
+| 2026-08-20T21:06:06+08:00 | `archive/2026-08-21/worktree/attempt-error-consistency`<br>`2f7117307faa` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：docs: define attempt error consistency | 未直接并入 main；领先 8 / 落后 317 |
+| 2026-08-20T21:01:35+08:00 | `archive/2026-08-21/reflog/issuer-fork-identity`<br>`1aa82c972f94` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：style: format issuer fork identity assertion | 未直接并入 main；领先 11 / 落后 326 |
+| 2026-08-20T20:54:55+08:00 | `archive/2026-08-21/codex/attempt-recovery-v1`<br>`e05357bebde6` | 归档：开发分支副本 | 只读取证副本：调用恢复第一版实验，重点验证 invocation 事务证据认证。 | 未直接并入 main；领先 60 / 落后 479 |
+| 2026-08-20T20:40:04+08:00 | `archive/2026-08-21/codex/backup-v2-codec`<br>`bcba6a419fbe` | 归档：开发分支副本 | 只读取证副本：精确备份 manifest v2 编解码与可复现序列化实验。 | 未直接并入 main；领先 3 / 落后 317 |
+| 2026-08-20T20:15:56+08:00 | `archive/2026-08-21/worktree/opauth-process-bound-compose`<br>`23183fd0cde1` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：feat: compose process-bound action-time operation authorization | 未直接并入 main；领先 3 / 落后 326 |
+| 2026-08-20T19:37:55+08:00 | `archive/2026-08-21/reflog/fork-inherited-invocation-store`<br>`d0f93b393e98` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：fix: reject fork-inherited invocation stores | 未直接并入 main；领先 58 / 落后 479 |
+| 2026-08-20T19:18:34+08:00 | `archive/2026-08-21/worktree/operation-auth-boundary`<br>`3609ab806fc7` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：docs: define protected operation boundary | 未直接并入 main；领先 4 / 落后 319 |
+| 2026-08-20T19:04:10+08:00 | `archive/2026-08-21/reflog/hostile-auth-fault-boundary`<br>`bddecdf5d4c1` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：docs: specify hostile authorization fault boundary | 未直接并入 main；领先 6 / 落后 326 |
+| 2026-08-20T18:20:58+08:00 | `archive/2026-08-21/reflog/action-time-reauthorization`<br>`3af4ded12c6d` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：docs: require action-time operation reauthorization | 未直接并入 main；领先 7 / 落后 326 |
+| 2026-08-20T17:34:42+08:00 | `archive/2026-08-21/worktree/recovery-durable-invocation`<br>`276913ce69ae` | 归档：临时 worktree | 从临时或 detached worktree 保存的历史节点，仅供追溯。 节点主题：fix: reconcile durable invocation transactions | 未直接并入 main；领先 17 / 落后 326 |
+| 2026-08-20T17:15:21+08:00 | `archive/2026-08-21/reflog/invocation-enqueue-reconcile`<br>`eaab78181289` | 归档：reflog 救援 | 从本地 reflog 恢复的历史节点，仅供追溯。 节点主题：fix: reconcile invocation enqueue commits | 未直接并入 main；领先 56 / 落后 479 |
+| 2026-08-20T15:58:05+08:00 | `archive/2026-08-21/codex/request-context-audit-20260820`<br>`a6b4a4947138` | 归档：开发分支副本 | 只读取证副本：请求上下文、凭据异常和 traceback 泄露边界审计。 | 未直接并入 main；领先 6 / 落后 332 |
+| 2026-08-20T15:07:35+08:00 | `archive/2026-08-21/gate-a-trusted-context-foundation`<br>`c95635beb726` | 归档：Gate A 副本 | 只读取证副本：Gate A 可信上下文、凭据擦除失败和请求边界的基础候选。 | 未直接并入 main；领先 21 / 落后 421 |
+| 2026-08-20T10:41:51+08:00 | `archive/2026-08-21/codex/supply-policy-latest-audit`<br>`11dfa301de69` | 归档：开发分支副本 | 只读取证副本：依赖采用、回滚和风险晋级规则的较新审计候选。 | 未直接并入 main；领先 15 / 落后 451 |
+| 2026-08-20T10:35:28+08:00 | `archive/2026-08-21/codex/supply-policy-current-audit`<br>`ff663e9165e7` | 归档：开发分支副本 | 只读取证副本：依赖风险策略在当时当前代码上的审计与数值边界修复。 | 未直接并入 main；领先 14 / 落后 479 |
+| 2026-08-20T09:50:26+08:00 | `archive/2026-08-21/codex/safe-logging-current-20260820090738`<br>`f683ef508547` | 归档：开发分支副本 | 只读取证副本：安全日志候选在当时当前代码上的集成与取消异常收敛。 | 未直接并入 main；领先 16 / 落后 485 |
+| 2026-08-20T09:47:15+08:00 | `archive/2026-08-21/codex/supply-policy-v1`<br>`28959b497c86` | 归档：开发分支副本 | 只读取证副本：依赖风险晋级与供应链策略第一版。 | 未直接并入 main；领先 9 / 落后 515 |
+| 2026-08-20T09:08:23+08:00 | `archive/2026-08-21/codex/safe-logging-v1`<br>`88c3d921f31c` | 归档：开发分支副本 | 只读取证副本：复合凭据字段脱敏和安全日志第一版。 | 未直接并入 main；领先 18 / 落后 527 |
+| 2026-08-20T08:48:58+08:00 | `archive/2026-08-21/agent/evidence-ledger-current`<br>`0cdfaaa8a8ab` | 归档：Agent 分支副本 | 只读取证副本：面向当时较新代码节点刷新的工程证据账本候选。 | 未直接并入 main；领先 2 / 落后 516 |
+| 2026-08-20T08:48:34+08:00 | `archive/2026-08-21/codex/supply-chain-docs-v1`<br>`165a92c1c173` | 归档：开发分支副本 | 只读取证副本：供应链安全里程碑、证据顺序和后续门禁文档。 | 未直接并入 main；领先 4 / 落后 515 |
+| 2026-08-20T08:41:43+08:00 | `archive/2026-08-21/codex/service-config-v1`<br>`525161ed70bf` | 归档：开发分支副本 | 只读取证副本：服务配置校验、环境边界和配置测试第一版。 | 未直接并入 main；领先 10 / 落后 527 |
+| 2026-08-20T08:38:36+08:00 | `archive/2026-08-21/agent/evidence-ledger`<br>`7d46958f18ec` | 归档：Agent 分支副本 | 只读取证副本：早期工程证据账本分支，用于汇总测试、审计和阶段结论。 | 未直接并入 main；领先 3 / 落后 527 |
+| 2026-08-20T08:26:01+08:00 | `archive/2026-08-21/codex/service-boundary-v1`<br>`819b74cd1b45` | 归档：开发分支副本 | 只读取证副本：服务运行边界、信任假设和安全策略绑定第一版。 | 未直接并入 main；领先 7 / 落后 530 |
+| 2026-08-20T08:24:30+08:00 | `archive/2026-08-21/codex/backup-manifest-v1`<br>`87bd23a7a6bd` | 归档：开发分支副本 | 只读取证副本：备份状态证据和 manifest v1 边界的早期实现。 | 未直接并入 main；领先 4 / 落后 530 |
+| 2026-08-20T08:14:17+08:00 | `archive/2026-08-21/dangling/approval-recovery-chains`<br>`7bd31f947bdc` | 归档：孤立提交 | 保存当时无分支引用的提交，防止垃圾回收后丢失。 节点主题：validate staged approval recovery chains | 未直接并入 main；领先 1 / 落后 533 |
+| 2026-08-20T08:10:46+08:00 | `archive/2026-08-21/dangling/approval-decision-atomicity`<br>`ab0ef94b8bf7` | 归档：孤立提交 | 保存当时无分支引用的提交，防止垃圾回收后丢失。 节点主题：validate staged approval decision atomicity | 未直接并入 main；领先 1 / 落后 535 |
+| 2026-08-20T08:06:15+08:00 | `archive/2026-08-21/dangling/approval-request-atomicity`<br>`f596a7becf08` | 归档：孤立提交 | 保存当时无分支引用的提交，防止垃圾回收后丢失。 节点主题：validate staged approval request atomicity | 未直接并入 main；领先 1 / 落后 536 |
+| 2026-08-20T08:02:44+08:00 | `archive/2026-08-21/dangling/approval-snapshots`<br>`c2d8ba70bf93` | 归档：孤立提交 | 保存当时无分支引用的提交，防止垃圾回收后丢失。 节点主题：validate staged approval snapshots | 未直接并入 main；领先 1 / 落后 537 |
 
 ## 本机 Worktree 目录
 
@@ -127,7 +127,7 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 状态 | 分支/模式 | HEAD | 路径 |
 | --- | --- | --- | --- |
-| 正式主线工作区 | `main` | `6fd316b74e46` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
+| 正式主线工作区 | `main` | `a2ca44e8c0fc` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 存在、干净 | `codex/attempt-recovery-on-process-v3` | `af8a6499f397` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-attempt-recovery-on-process-v3` |
 | 存在、干净 | `codex/attempt-recovery-safe-v2` | `7f9530010037` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-attempt-recovery-safe-v2` |
 | 存在、干净 | `codex/backup-v2-exact-topology` | `bc95912a7407` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/qe-backup-v2-exact-topology` |
