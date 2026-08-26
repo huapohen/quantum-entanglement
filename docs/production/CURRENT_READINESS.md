@@ -1,6 +1,6 @@
 # Quantum Entanglement 当前生产就绪审计
 
-- 更新日期：2026-08-21
+- 更新日期：2026-08-26
 - 审计口径：只计算本文所在主线中已提交、可复现的源码和证据
 - 硬边界：[`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md)
 - 结论：**内核组件已形成较强验证基线，但仍不是生产服务；Gate A–E 全部关闭**
@@ -11,7 +11,10 @@
 初始化与 approval、严格流式 session recovery、durable invocation-attempt store、持久 artifact
 store、transactional inbox/outbox、publisher、leased projection、domain migration、tenant
 authorization primitive、SQLite backup/restore、严格 service config、opaque/file secret provider、
-依赖锁、可复现制品、source-bound 双 SBOM，以及 publisher typed safe logging/redaction。
+依赖锁、可复现制品、source-bound 双 SBOM、publisher typed safe logging/redaction，以及一个
+明确标记为非生产的 loopback-only 模型试用页面。该页面可把任意自定义指令交给 GPT
+`gpt-5.6-sol`，按分析、生成、复核三 Agent DAG 生成三个 Markdown Artifact；它是当前产品体验
+证据，不是正式 service composition root，也不改变任何生产 Gate 状态。
 
 这些能力分别有真实代码和负向测试，但尚未被可信认证入口、强制 tenant-scoped repository、
 runtime attempt/result 状态机、durable action receipt 和统一 service lifecycle 串成闭环。因此当前
@@ -26,6 +29,12 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
    scope，tenant domain object 不能替代可信认证与 SQL predicate；
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
    `succeeded | rejected | effect_unknown` receipt 原子绑定。
+
+新增的模型试用路径也暴露了必须先收口的安全边界：`examples/product_trial_server.py` 当前从
+本地 `.env`/进程环境加载 provider 配置，并在同一进程中构造模型 runtime；它尚未经过
+`ServiceConfig + SecretRef + SecretProvider` composition、spawn/exec-before-secret-load、统一
+出网策略或全输出 secret-canary 门禁。因此它只允许可信开发者在本机回环地址上使用显式批准的
+测试数据，不能升级为生产凭据入口或真实客户数据处理路径。
 
 另有一个跨领域 P0：当前主线已经实现统一、无锁的 PID + opaque epoch process identity
 foundation，并完成 `SQLiteEventStore` 的独立 process-bound 候选；artifact/projection/revocation
@@ -158,9 +167,12 @@ Artifact repository 已把 tenant/workspace 纳入必填 predicate 和唯一键�
 
 ## 5. 服务生命周期与可观测性
 
-严格配置/secret primitive 已存在，但没有读取它们并组装完整服务的 composition root。当前没有
-HTTP/ASGI listener、`/livez`、`/readyz`、startup preflight、admission stop、SIGTERM bounded
-drain、lease relinquish、structured audit store 或 OpenTelemetry。
+严格配置/secret primitive 已存在，但没有读取它们并组装完整服务的 production composition
+root。仓库现有 `examples/product_trial_server.py` 是 loopback-only `ThreadingHTTPServer` 试用
+adapter，提供临时共享访问 token、Host/Origin/Fetch Metadata 防护、严格 JSON 和请求体上限；
+它不是 authenticated `/api/v1`，也没有可信主体/tenant/workspace、`/livez`、`/readyz`、startup
+preflight、admission stop、SIGTERM bounded drain、lease relinquish、structured audit store 或
+OpenTelemetry。不得用该示例 listener 反推 Gate B 已完成。
 
 P0/P1 门禁：
 
@@ -239,8 +251,11 @@ compileall、deterministic demo 和 diff check。
 ## 10. 产品与人机协同界面
 
 调研报告已经定义“群聊即协作界面、任务图、Artifact、Needs You、takeover/reconcile 和审计
-timeline”的目标，但仓库尚无正式 Web/desktop UI 或服务端页面。CLI demo 不能替代权限一致性、
-刷新/断流恢复、可访问性、本地化和浏览器 E2E。UI 不得用隐藏按钮代替服务端授权。
+timeline”的目标。仓库现有本地产品试用页已经展示自定义指令、三 Agent DAG、真实模型
+narration、Artifact 预览/下载、Needs You、事件时间线和架构图，并完成一次本机 Playwright
+验收；但它仍是 source-checkout 下的单用户 loopback 示例，不是正式 Web/desktop 产品或服务端
+composition。现有截图和一次浏览器成功不能替代可信认证、权限一致性、持久重连、可访问性、
+本地化、故障/断流矩阵和打包后浏览器 E2E。UI 不得用隐藏按钮代替服务端授权。
 
 ## Gate 状态
 
