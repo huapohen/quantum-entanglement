@@ -4,8 +4,10 @@ import hashlib
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
 from asyncio import CancelledError
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
@@ -1322,6 +1324,69 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
                     self.assertNotIn(canary, "\n".join(reopened._connection.iterdump()))
                 finally:
                     reopened.close()
+
+    def test_two_connections_issue_exactly_one_plaintext_start_lease(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        peer = SQLiteEventStore(self.path, clock=lambda: ADMITTED_AT)
+        barrier = threading.Barrier(2)
+        token_lock = threading.Lock()
+        token_calls = 0
+
+        def token_provider(_nbytes: int = 32) -> str:
+            nonlocal token_calls
+            with token_lock:
+                token_calls += 1
+                return f"two-connection-token-{token_calls}"
+
+        def compete(store: SQLiteEventStore, worker_id: str) -> object:
+            barrier.wait(timeout=5)
+            return store.claim_invocation_start(
+                request.manifest.invocation_id,
+                worker_id,
+                lease_seconds=60,
+                expected_version=2,
+            )
+
+        try:
+            with patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                new=token_provider,
+            ):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = (
+                        executor.submit(compete, self.store, "worker-start-race-left"),
+                        executor.submit(compete, peer, "worker-start-race-right"),
+                    )
+                    results = tuple(future.result(timeout=10) for future in futures)
+        finally:
+            peer.close()
+
+        self.assertEqual(sum(type(item) is InvocationStartClaimed for item in results), 1)
+        self.assertEqual(sum(type(item) is InvocationStartObserved for item in results), 1)
+        self.assertEqual(token_calls, 1)
+        receipts = {
+            item.receipt
+            if type(item) is InvocationStartClaimed
+            else cast(InvocationStartObserved, item).receipt
+            for item in results
+        }
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(self.store.stream_version(request.stream_id), 3)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            1,
+        )
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type = ?",
+                (TASK_INVOCATION_STARTED_EVENT_TYPE,),
+            ).fetchone()[0],
+            1,
+        )
 
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
