@@ -51,6 +51,15 @@ from .delivery import (
     StoredOutboxMessage,
 )
 from .events import DomainEvent, StoredEvent
+from .invocation_execution import (
+    InvocationExecutionManifest,
+    InvocationStartClaimed,
+    InvocationStartEvidenceV2,
+    InvocationStartObserved,
+    InvocationStartReceipt,
+    TaskInvocationAdmissionRequest,
+    build_task_invocation_admission_request,
+)
 from .invocation_recovery import (
     InvocationBinding,
     InvocationRecoveryClosedError,
@@ -105,6 +114,9 @@ from .store import (
     InvocationAdmissionConflictError,
     InvocationAdmissionResult,
     InvocationAdmissionTransactionError,
+    InvocationStartCommitAmbiguityError,
+    InvocationStartConflictError,
+    InvocationStartTransactionError,
     SQLiteEventStore,
 )
 from .tenancy import (
@@ -229,6 +241,7 @@ __all__ = [
     "InvocationAdmissionConflictError",
     "InvocationAdmissionResult",
     "InvocationAdmissionTransactionError",
+    "InvocationExecutionManifest",
     "InvocationRecoveryClosedError",
     "InvocationRecoveryCoordinator",
     "InvocationRecoveryDecision",
@@ -236,6 +249,13 @@ __all__ = [
     "InvocationRecoverySnapshot",
     "InvocationRecoveryStore",
     "InvocationResultReceipt",
+    "InvocationStartClaimed",
+    "InvocationStartCommitAmbiguityError",
+    "InvocationStartConflictError",
+    "InvocationStartEvidenceV2",
+    "InvocationStartObserved",
+    "InvocationStartReceipt",
+    "InvocationStartTransactionError",
     "KeyStatus",
     "KeyUsage",
     "LangGraphBridge",
@@ -275,6 +295,7 @@ __all__ = [
     "StoredEvent",
     "StoredOutboxMessage",
     "TaskGraph",
+    "TaskInvocationAdmissionRequest",
     "TaskSpec",
     "TaskStatus",
     "TaskTransition",
@@ -292,6 +313,7 @@ __all__ = [
     "action_is_subset",
     "validate_delegation",
     "assess_invocation_recovery",
+    "build_task_invocation_admission_request",
     "AgentRegistration",
     "AgentRegistry",
     "ApprovalRequest",
