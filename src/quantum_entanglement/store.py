@@ -2686,6 +2686,216 @@ class SQLiteEventStore:
                 token=_EVENT_STORE_START_CONTROL_TOKEN,
             ) from None
 
+    def _claim_scoped_invocation_start_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        tenant_id: str,
+        workspace_id: str,
+        invocation_id: str,
+        worker_id: str,
+        *,
+        lease_seconds: float,
+        expected_version: int,
+    ) -> _ScopedInvocationStartResult:
+        """Mint scoped first-start authority, or observe an existing schema-3 receipt."""
+
+        state = self._load_scoped_invocation_start_in_transaction(connection, invocation_id)
+        if state is None:
+            raise InvocationStartConflictError() from None
+        if (
+            state.request.manifest.tenant_id != tenant_id
+            or state.request.manifest.workspace_id != workspace_id
+        ):
+            raise InvocationStartConflictError() from None
+        if type(state) is _ScopedInvocationStartReadback:
+            if expected_version != state.event.sequence - 1:
+                raise ConcurrencyError(
+                    "scoped invocation start expected stream version %d but began at %d"
+                    % (expected_version, state.event.sequence - 1)
+                )
+            return ScopedInvocationStartObservedV3(state.receipt)
+        if type(state) is not _ScopedInvocationStartAdmission:  # pragma: no cover
+            raise InvocationStartConflictError() from None
+
+        version_row = connection.execute(
+            "SELECT COALESCE(MAX(sequence), 0) AS version FROM events WHERE stream_id = ?",
+            (state.admission.stream_id,),
+        ).fetchone()
+        try:
+            current_version = _persisted_integer(
+                version_row["version"],
+                "scoped invocation-start stream version",
+            )
+        except (IndexError, KeyError, TypeError, ValueError):
+            raise InvocationStartConflictError() from None
+        if current_version != expected_version:
+            raise ConcurrencyError(
+                "stream %s expected version %d but is %d"
+                % (state.admission.stream_id, expected_version, current_version)
+            )
+
+        normalized_now = _normalize_invocation_timestamp(self._now(), "clock")
+        self._require_current_process()
+        deadline = _invocation_lease_deadline(normalized_now, lease_seconds)
+        claim_request = _InvocationClaimRequest(
+            worker_id=worker_id,
+            invocation_id=invocation_id,
+        )
+        try:
+            candidate = _select_first_claim_candidate_in_transaction(
+                connection,
+                claim_request,
+                now=normalized_now,
+            )
+        except InvocationIntegrityError:
+            raise InvocationStartConflictError() from None
+        if candidate is None or candidate != state.job:
+            raise InvocationStartConflictError() from None
+
+        try:
+            attempt_id = new_id("attempt")
+            self._require_current_process()
+            attempt_id = _caller_invocation_identity(attempt_id, "attempt_id provider result")
+            if (
+                connection.execute(
+                    "SELECT 1 FROM invocation_attempts WHERE attempt_id = ? LIMIT 1",
+                    (attempt_id,),
+                ).fetchone()
+                is not None
+            ):
+                raise InvocationStartConflictError() from None
+
+            start_event_id = new_id("evt")
+            self._require_current_process()
+            start_event_id = _caller_invocation_identity(
+                start_event_id,
+                "start event_id provider result",
+            )
+            if (
+                connection.execute(
+                    "SELECT 1 FROM events WHERE event_id = ? LIMIT 1",
+                    (start_event_id,),
+                ).fetchone()
+                is not None
+            ):
+                raise InvocationStartConflictError() from None
+
+            lease_token = secrets.token_urlsafe(32)
+            self._require_current_process()
+            lease_token = _caller_invocation_identity(
+                lease_token,
+                "lease token provider result",
+            )
+            lease = _claim_first_invocation_in_transaction(
+                connection,
+                claim_request,
+                now=normalized_now,
+                deadline=deadline,
+                attempt_id=attempt_id,
+                lease_token=lease_token,
+            )
+            if lease is None or (
+                lease.invocation_id != candidate.invocation_id
+                or lease.session_id != candidate.session_id
+                or lease.plan_id != candidate.plan_id
+                or lease.task_id != candidate.task_id
+                or lease.agent_id != candidate.agent_id
+                or lease.idempotency_key != candidate.idempotency_key
+                or lease.payload_digest != candidate.payload_digest
+                or lease.attempt_id != attempt_id
+                or lease.attempt_number != 1
+                or lease.max_attempts != 1
+                or lease.lease_epoch != 1
+                or lease.worker_id != worker_id
+                or lease.lease_token != lease_token
+                or lease.claimed_at != normalized_now
+                or lease.lease_expires_at != deadline
+            ):
+                raise InvocationStartConflictError() from None
+
+            manifest = state.request.manifest
+            evidence = ScopedInvocationStartEvidenceV3(
+                schema_version=3,
+                tenant_id=manifest.tenant_id,
+                workspace_id=manifest.workspace_id,
+                invocation_id=manifest.invocation_id,
+                session_id=manifest.session_id,
+                plan_id=manifest.plan_id,
+                task_id=manifest.task_id,
+                agent_id=manifest.agent_id,
+                job_idempotency_key=manifest.job_idempotency_key,
+                attempt_id=lease.attempt_id,
+                attempt_number=lease.attempt_number,
+                lease_epoch=lease.lease_epoch,
+                worker_id=lease.worker_id,
+                lease_token_digest=self._lease_token_digest(lease_token),
+                claimed_at=lease.claimed_at,
+                lease_expires_at=lease.lease_expires_at,
+                manifest_digest=manifest.canonical_digest(),
+                envelope_digest=manifest.envelope_digest,
+                context_digest=manifest.context_digest,
+                authorization_digest=manifest.authorization_digest,
+                runtime_revision=manifest.runtime_revision,
+                correlation_id=manifest.correlation_id,
+                causation_id=manifest.causation_id,
+            )
+            event = DomainEvent(
+                stream_id=state.admission.stream_id,
+                event_type=TASK_INVOCATION_STARTED_EVENT_TYPE,
+                payload=evidence.to_dict(),
+                actor_id=CANONICAL_ORCHESTRATOR_ACTOR_ID,
+                event_id=start_event_id,
+                timestamp=lease.claimed_at,
+                correlation_id=manifest.correlation_id,
+                causation_id=manifest.causation_id,
+                idempotency_key="invocation-start:%s:1" % invocation_id,
+            )
+            stored, inserted = self._append_in_transaction(
+                connection,
+                self._snapshot_event(event),
+                expected_version,
+            )
+            if not inserted or stored.sequence != expected_version + 1:
+                raise InvocationStartConflictError() from None
+            readback = self._read_scoped_invocation_start_in_transaction(
+                connection,
+                invocation_id,
+                fresh=True,
+            )
+            if (
+                readback is None
+                or readback.event != stored
+                or readback.receipt.evidence.tenant_id != tenant_id
+                or readback.receipt.evidence.workspace_id != workspace_id
+                or readback.receipt.evidence.lease_token_digest
+                != self._lease_token_digest(lease_token)
+            ):
+                raise InvocationStartConflictError() from None
+            return ScopedInvocationStartClaimedV3(readback.receipt, lease)
+        except sqlite3.Error:
+            raise
+        except (
+            ConcurrencyError,
+            EventStoreIntegrityError,
+            InvocationIntegrityError,
+            InvocationStartConflictError,
+            TypeError,
+            ValueError,
+        ) as error:
+            _detach_exception(error)
+            raise _EventStoreStartErrorSignal(
+                "conflict",
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
+        except BaseException as error:
+            if _trusted_event_store_process_signal(error) or _is_exact_control_signal(error):
+                raise
+            _detach_exception(error)
+            raise _EventStoreStartErrorSignal(
+                "transaction",
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
+
     def _snapshot_outbox_message(self, message: OutboxMessage) -> _OutboxWriteSnapshot:
         if type(message) is not OutboxMessage:
             raise TypeError("message must be an exact OutboxMessage")
