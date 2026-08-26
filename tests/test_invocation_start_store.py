@@ -437,6 +437,97 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
             0,
         )
 
+    def test_identifier_collisions_are_rejected_before_lease_token_generation(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        other_spec = replace(
+            request.job_spec,
+            invocation_id="invocation-start-store-collision-owner",
+            task_id="task-start-store-collision-owner",
+            idempotency_key="invoke:task-start-store-collision-owner",
+            payload_digest="e" * 64,
+        )
+        attempts = SQLiteInvocationAttemptStore(self.path, clock=lambda: CLAIMED_AT)
+        try:
+            attempts.enqueue(other_spec)
+            other_lease = attempts.claim(
+                other_spec.invocation_id,
+                "worker-collision-owner",
+                lease_seconds=60,
+            )
+        finally:
+            attempts.close()
+        if other_lease is None:  # pragma: no cover - the fixture owns a fresh job.
+            raise AssertionError("collision owner was not claimable")
+
+        attempt_id_calls: list[str] = []
+
+        def colliding_attempt_id(prefix: str = "evt") -> str:
+            attempt_id_calls.append(prefix)
+            if prefix != "attempt":
+                raise AssertionError("event ID provider must not run")
+            return other_lease.attempt_id
+
+        with (
+            patch.object(self.store, "_now", return_value=CLAIMED_AT),
+            patch.object(store_module, "new_id", new=colliding_attempt_id),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                side_effect=AssertionError("token provider must not run"),
+            ),
+        ):
+            with self.assertRaises(InvocationStartConflictError):
+                self.store.claim_invocation_start(
+                    request.manifest.invocation_id,
+                    "worker-start-store-1",
+                    lease_seconds=60,
+                    expected_version=2,
+                )
+        self.assertEqual(attempt_id_calls, ["attempt"])
+
+        admission_events, _job_spec = request.components()
+        existing_event_id = admission_events[0].event_id
+        event_id_calls: list[str] = []
+
+        def colliding_event_id(prefix: str = "evt") -> str:
+            event_id_calls.append(prefix)
+            if prefix == "attempt":
+                return "attempt-before-event-id-collision"
+            if prefix == "evt":
+                return existing_event_id
+            raise AssertionError("unexpected ID provider prefix")
+
+        with (
+            patch.object(self.store, "_now", return_value=CLAIMED_AT),
+            patch.object(store_module, "new_id", new=colliding_event_id),
+            patch(
+                "quantum_entanglement.store.secrets.token_urlsafe",
+                side_effect=AssertionError("token provider must not run"),
+            ),
+        ):
+            with self.assertRaises(InvocationStartConflictError):
+                self.store.claim_invocation_start(
+                    request.manifest.invocation_id,
+                    "worker-start-store-1",
+                    lease_seconds=60,
+                    expected_version=2,
+                )
+        self.assertEqual(event_id_calls, ["attempt", "evt"])
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT status FROM invocation_jobs WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            "queued",
+        )
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT COUNT(*) FROM invocation_attempts WHERE invocation_id = ?",
+                (request.manifest.invocation_id,),
+            ).fetchone()[0],
+            0,
+        )
+
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
 
