@@ -866,6 +866,19 @@ class InvocationRecoverySnapshot:
     attempt_count: int
 
 
+@dataclass(frozen=True)
+class _InvocationClaimRequest:
+    """Caller-snapshotted first-claim selection and worker identity."""
+
+    worker_id: str
+    invocation_id: Optional[str]
+
+    def __post_init__(self) -> None:
+        _required(self.worker_id, "worker_id")
+        if self.invocation_id is not None:
+            _required(self.invocation_id, "invocation_id")
+
+
 def _enqueue_invocation_job_in_transaction(
     connection: sqlite3.Connection,
     spec: InvocationJobSpec,
@@ -938,6 +951,175 @@ def _enqueue_invocation_job_in_transaction(
     if row is None:  # pragma: no cover - protected by the caller's transaction.
         raise RuntimeError("enqueued invocation disappeared")
     return SQLiteInvocationAttemptStore._row_to_job(row)
+
+
+def _select_first_claim_candidate_in_transaction(
+    connection: sqlite3.Connection,
+    request: _InvocationClaimRequest,
+    *,
+    now: str,
+) -> Optional[InvocationJob]:
+    """Return one fully validated first-claim candidate without mutating it."""
+
+    if type(request) is not _InvocationClaimRequest:
+        raise TypeError("request must be an invocation claim request")
+    _required(request.worker_id, "worker_id")
+    invocation_id = request.invocation_id
+    if invocation_id is not None:
+        invocation_id = _required(invocation_id, "invocation_id")
+    normalized_now = _normalize_timestamp(now, "now")
+    parameters = [normalized_now]
+    candidate_where = "status = 'queued' AND attempts_started = 0 AND available_at <= ?"
+    if invocation_id is not None:
+        candidate_where += " AND invocation_id = ?"
+        parameters.append(invocation_id)
+    candidate_row = connection.execute(
+        f"""
+        SELECT * FROM invocation_jobs WHERE {candidate_where}
+        ORDER BY priority DESC, available_at, created_at, invocation_id
+        LIMIT 1
+        """,
+        tuple(parameters),
+    ).fetchone()
+    if candidate_row is None:
+        return None
+    candidate = SQLiteInvocationAttemptStore._row_to_job(candidate_row)
+    prior_attempt = connection.execute(
+        """
+        SELECT 1 FROM invocation_attempts
+        WHERE invocation_id = ? LIMIT 1
+        """,
+        (candidate.invocation_id,),
+    ).fetchone()
+    if prior_attempt is not None:
+        raise InvocationIntegrityError("first-claim candidate has attempt history")
+    claimable_where = (
+        candidate_where + " AND lease_epoch = 0 AND result_ref IS NULL AND last_error IS NULL"
+    )
+    row = connection.execute(
+        f"""
+        SELECT * FROM invocation_jobs WHERE {claimable_where}
+        ORDER BY priority DESC, available_at, created_at, invocation_id
+        LIMIT 1
+        """,
+        tuple(parameters),
+    ).fetchone()
+    if row is None:
+        raise InvocationIntegrityError("first-claim candidate changed after validation")
+    job = SQLiteInvocationAttemptStore._row_to_job(row)
+    if job != candidate:
+        raise InvocationIntegrityError("first-claim candidate changed after validation")
+    _require_non_regressing_clock(normalized_now, job.created_at, job.updated_at)
+    attempt_number = job.attempts_started + 1
+    if attempt_number > job.max_attempts:
+        raise RuntimeError("queued invocation exceeded max_attempts invariant")
+    if job.lease_epoch >= _MAX_SQLITE_INTEGER:
+        raise InvocationIntegrityError("invocation lease epoch is exhausted")
+    return job
+
+
+def _claim_first_invocation_in_transaction(
+    connection: sqlite3.Connection,
+    request: _InvocationClaimRequest,
+    *,
+    now: str,
+    deadline: str,
+    attempt_id: str,
+    lease_token: str,
+) -> Optional[InvocationLease]:
+    """Claim one first attempt inside a transaction owned by the caller.
+
+    This primitive owns only the first-claim reads, compare-and-set, attempt insert,
+    and lease construction. The caller owns locking, transaction boundaries, expiry
+    recovery, clock sampling, deadline calculation, and opaque identifier generation.
+    Only the token digest is written to SQLite; the plaintext token is carried solely
+    by the returned :class:`InvocationLease`.
+    """
+
+    if type(request) is not _InvocationClaimRequest:
+        raise TypeError("request must be an invocation claim request")
+    worker_id = _required(request.worker_id, "worker_id")
+    normalized_now = _normalize_timestamp(now, "now")
+    normalized_deadline = _normalize_timestamp(deadline, "lease deadline")
+    if normalized_deadline <= normalized_now:
+        raise ValueError("lease deadline must be later than now")
+    normalized_attempt_id = _required(attempt_id, "attempt_id")
+    normalized_lease_token = _required(lease_token, "lease_token")
+    job = _select_first_claim_candidate_in_transaction(
+        connection,
+        request,
+        now=normalized_now,
+    )
+    if job is None:
+        return None
+
+    attempt_number = job.attempts_started + 1
+    epoch = job.lease_epoch + 1
+    token_digest = _lease_token_digest(normalized_lease_token)
+    update = connection.execute(
+        """
+        UPDATE invocation_jobs
+        SET status = 'running', attempts_started = ?, lease_epoch = ?,
+            lease_owner = ?, lease_token_digest = ?, lease_expires_at = ?,
+            heartbeat_at = ?, updated_at = ?, finished_at = NULL
+        WHERE invocation_id = ? AND status = 'queued'
+          AND attempts_started = 0 AND lease_epoch = 0
+          AND result_ref IS NULL AND last_error IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM invocation_attempts
+              WHERE invocation_attempts.invocation_id = invocation_jobs.invocation_id
+          )
+        """,
+        (
+            attempt_number,
+            epoch,
+            worker_id,
+            token_digest,
+            normalized_deadline,
+            normalized_now,
+            normalized_now,
+            job.invocation_id,
+        ),
+    )
+    if update.rowcount != 1:
+        raise InvocationIntegrityError("first-claim CAS rejected contradictory state")
+    connection.execute(
+        """
+        INSERT INTO invocation_attempts (
+            attempt_id, invocation_id, attempt_number, lease_epoch,
+            worker_id, lease_token_digest, status, started_at,
+            heartbeat_at, lease_expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
+        """,
+        (
+            normalized_attempt_id,
+            job.invocation_id,
+            attempt_number,
+            epoch,
+            worker_id,
+            token_digest,
+            normalized_now,
+            normalized_now,
+            normalized_deadline,
+        ),
+    )
+    return InvocationLease(
+        invocation_id=job.invocation_id,
+        session_id=job.session_id,
+        plan_id=job.plan_id,
+        task_id=job.task_id,
+        agent_id=job.agent_id,
+        idempotency_key=job.idempotency_key,
+        payload_digest=job.payload_digest,
+        attempt_id=normalized_attempt_id,
+        attempt_number=attempt_number,
+        max_attempts=job.max_attempts,
+        lease_epoch=epoch,
+        worker_id=worker_id,
+        lease_token=normalized_lease_token,
+        claimed_at=normalized_now,
+        lease_expires_at=normalized_deadline,
+    )
 
 
 class SQLiteInvocationAttemptStore:
@@ -1047,11 +1229,28 @@ class SQLiteInvocationAttemptStore:
                 raise InvocationTransactionError()
             body_control: Optional[_ControlSignalDescriptor] = None
             safe_body_error: Optional[_SafeTransactionBodyError] = None
+            body_process_mismatch = False
             try:
                 yield self._connection
             except BaseException as body_error:
-                body_control = _control_signal_descriptor(body_error)
-                if body_control is None:
+                if self._creator_pid != os.getpid():
+                    # A provider may fork while this transaction is open. The child must
+                    # not resume inherited SQLite cleanup; the public process boundary
+                    # will replace the ownership error after these frames unwind.
+                    raise
+                traceback_cursor = body_error.__traceback__
+                while traceback_cursor is not None and traceback_cursor.tb_next is not None:
+                    traceback_cursor = traceback_cursor.tb_next
+                body_process_mismatch = (
+                    type(body_error) is InvocationStoreProcessMismatchError
+                    and traceback_cursor is not None
+                    and traceback_cursor.tb_frame.f_code
+                    is SQLiteInvocationAttemptStore._require_usable.__code__
+                )
+                body_control = (
+                    None if body_process_mismatch else _control_signal_descriptor(body_error)
+                )
+                if body_control is None and not body_process_mismatch:
                     safe_body_error = _safe_transaction_body_error(body_error)
                 try:
                     self._rollback_write_transaction(self._connection)
@@ -1070,6 +1269,8 @@ class SQLiteInvocationAttemptStore:
                 if commit_control is not None:
                     self._raise_invocation_control_signal(commit_control)
                 raise InvocationTransactionError()
+            if body_process_mismatch:
+                raise InvocationStoreProcessMismatchError() from None
             if body_control is not None:
                 self._raise_invocation_control_signal(body_control)
             if safe_body_error is not None:
@@ -2278,9 +2479,8 @@ class SQLiteInvocationAttemptStore:
 
     def _claim_in_transaction(
         self,
-        worker_id: str,
+        request: _InvocationClaimRequest,
         *,
-        invocation_id: Optional[str],
         lease_seconds: float,
         commit_candidate: list[Optional[InvocationLease]],
         commit_recovery: list[Optional[Tuple[RecoverySummary, str]]],
@@ -2291,127 +2491,47 @@ class SQLiteInvocationAttemptStore:
             recovery = self._recover_expired_in_transaction(
                 connection,
                 normalized_now,
-                invocation_id=invocation_id,
-                limit=(None if invocation_id is not None else 1_000),
+                invocation_id=request.invocation_id,
+                limit=(None if request.invocation_id is not None else 1_000),
             )
             if recovery.recovered_count > 0:
                 commit_recovery[0] = (recovery, normalized_now)
-            parameters = [normalized_now]
-            candidate_where = "status = 'queued' AND attempts_started = 0 AND available_at <= ?"
-            if invocation_id is not None:
-                candidate_where += " AND invocation_id = ?"
-                parameters.append(invocation_id)
-            candidate_row = connection.execute(
-                f"""
-                SELECT * FROM invocation_jobs WHERE {candidate_where}
-                ORDER BY priority DESC, available_at, created_at, invocation_id
-                LIMIT 1
-                """,
-                tuple(parameters),
-            ).fetchone()
-            if candidate_row is None:
+            candidate = _select_first_claim_candidate_in_transaction(
+                connection,
+                request,
+                now=normalized_now,
+            )
+            if candidate is None:
                 return None
-            candidate = self._row_to_job(candidate_row)
-            prior_attempt = connection.execute(
-                """
-                SELECT 1 FROM invocation_attempts
-                WHERE invocation_id = ? LIMIT 1
-                """,
-                (candidate.invocation_id,),
-            ).fetchone()
-            if prior_attempt is not None:
-                raise InvocationIntegrityError("first-claim candidate has attempt history")
-            claimable_where = (
-                candidate_where
-                + " AND lease_epoch = 0 AND result_ref IS NULL AND last_error IS NULL"
+            selected_request = _InvocationClaimRequest(
+                worker_id=request.worker_id,
+                invocation_id=candidate.invocation_id,
             )
-            row = connection.execute(
-                f"""
-                SELECT * FROM invocation_jobs WHERE {claimable_where}
-                ORDER BY priority DESC, available_at, created_at, invocation_id
-                LIMIT 1
-                """,
-                tuple(parameters),
-            ).fetchone()
-            if row is None:
-                raise InvocationIntegrityError("first-claim candidate changed after validation")
-            job = self._row_to_job(row)
-            if job != candidate:
-                raise InvocationIntegrityError("first-claim candidate changed after validation")
-            _require_non_regressing_clock(normalized_now, job.created_at, job.updated_at)
-            attempt_number = job.attempts_started + 1
-            if attempt_number > job.max_attempts:
-                raise RuntimeError("queued invocation exceeded max_attempts invariant")
-            if job.lease_epoch >= _MAX_SQLITE_INTEGER:
-                raise InvocationIntegrityError("invocation lease epoch is exhausted")
-            epoch = job.lease_epoch + 1
             attempt_id = new_id("attempt")
+            self._require_usable()
             lease_token = secrets.token_urlsafe(32)
-            token_digest = _lease_token_digest(lease_token)
-            update = connection.execute(
-                """
-                UPDATE invocation_jobs
-                SET status = 'running', attempts_started = ?, lease_epoch = ?,
-                    lease_owner = ?, lease_token_digest = ?, lease_expires_at = ?,
-                    heartbeat_at = ?, updated_at = ?, finished_at = NULL
-                WHERE invocation_id = ? AND status = 'queued'
-                  AND attempts_started = 0 AND lease_epoch = 0
-                  AND result_ref IS NULL AND last_error IS NULL
-                  AND NOT EXISTS (
-                      SELECT 1 FROM invocation_attempts
-                      WHERE invocation_attempts.invocation_id = invocation_jobs.invocation_id
-                  )
-                """,
-                (
-                    attempt_number,
-                    epoch,
-                    worker_id,
-                    token_digest,
-                    deadline,
-                    normalized_now,
-                    normalized_now,
-                    job.invocation_id,
-                ),
-            )
-            if update.rowcount != 1:
-                raise InvocationIntegrityError("first-claim CAS rejected contradictory state")
-            connection.execute(
-                """
-                INSERT INTO invocation_attempts (
-                    attempt_id, invocation_id, attempt_number, lease_epoch,
-                    worker_id, lease_token_digest, status, started_at,
-                    heartbeat_at, lease_expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
-                """,
-                (
-                    attempt_id,
-                    job.invocation_id,
-                    attempt_number,
-                    epoch,
-                    worker_id,
-                    token_digest,
-                    normalized_now,
-                    normalized_now,
-                    deadline,
-                ),
-            )
-            lease = InvocationLease(
-                invocation_id=job.invocation_id,
-                session_id=job.session_id,
-                plan_id=job.plan_id,
-                task_id=job.task_id,
-                agent_id=job.agent_id,
-                idempotency_key=job.idempotency_key,
-                payload_digest=job.payload_digest,
+            self._require_usable()
+            lease = _claim_first_invocation_in_transaction(
+                connection,
+                selected_request,
+                now=normalized_now,
+                deadline=deadline,
                 attempt_id=attempt_id,
-                attempt_number=attempt_number,
-                max_attempts=job.max_attempts,
-                lease_epoch=epoch,
-                worker_id=worker_id,
                 lease_token=lease_token,
-                claimed_at=normalized_now,
-                lease_expires_at=deadline,
             )
+            if lease is None or (
+                lease.invocation_id != candidate.invocation_id
+                or lease.session_id != candidate.session_id
+                or lease.plan_id != candidate.plan_id
+                or lease.task_id != candidate.task_id
+                or lease.agent_id != candidate.agent_id
+                or lease.idempotency_key != candidate.idempotency_key
+                or lease.payload_digest != candidate.payload_digest
+                or lease.max_attempts != candidate.max_attempts
+            ):
+                raise InvocationIntegrityError(
+                    "first-claim candidate changed after identifier allocation"
+                )
             commit_candidate[0] = lease
             return lease
 
@@ -2422,15 +2542,17 @@ class SQLiteInvocationAttemptStore:
         invocation_id: Optional[str],
         lease_seconds: float,
     ) -> Optional[InvocationLease]:
-        _required(worker_id, "worker_id")
-        if invocation_id is not None:
-            _required(invocation_id, "invocation_id")
+        request = _InvocationClaimRequest(
+            worker_id=_required(worker_id, "worker_id"),
+            invocation_id=(
+                None if invocation_id is None else _required(invocation_id, "invocation_id")
+            ),
+        )
         commit_candidate: list[Optional[InvocationLease]] = [None]
         commit_recovery: list[Optional[Tuple[RecoverySummary, str]]] = [None]
         try:
             return self._claim_in_transaction(
-                worker_id,
-                invocation_id=invocation_id,
+                request,
                 lease_seconds=lease_seconds,
                 commit_candidate=commit_candidate,
                 commit_recovery=commit_recovery,

@@ -3,6 +3,7 @@ import hashlib
 import importlib.resources
 import inspect
 import multiprocessing
+import os
 import sqlite3
 import tempfile
 import threading
@@ -173,6 +174,43 @@ def probe_fork_inherited_attempt_store(store, result_connection):
             outcomes.append(("returned", None))
     result_connection.send(tuple(outcomes))
     result_connection.close()
+
+
+def probe_claim_identifier_provider_fork(path, result_connection):
+    store = SQLiteInvocationAttemptStore(path, clock=lambda: T0)
+    store.enqueue(job_spec())
+    forked = False
+
+    def fork_attempt_id(prefix):
+        nonlocal forked
+        if prefix != "attempt" or forked:
+            raise RuntimeError("unexpected attempt id provider call")
+        forked = True
+        child_pid = os.fork()
+        if child_pid == 0:
+            return "attempt-provider-child"
+        waited_pid, status = os.waitpid(child_pid, 0)
+        if waited_pid != child_pid or status != 0:
+            raise RuntimeError("provider child did not exit cleanly")
+        return "attempt-provider-parent"
+
+    try:
+        with patch.object(attempts_module, "new_id", side_effect=fork_attempt_id):
+            try:
+                lease = store.claim("invocation-1", "worker", lease_seconds=10)
+            except BaseException as error:
+                if os.getpid() == store._creator_pid:
+                    raise
+                result_connection.send(
+                    ("child", type(error).__name__, getattr(error, "code", None))
+                )
+                os._exit(0)
+        result_connection.send(
+            ("parent", lease.attempt_id if lease is not None else None, lease is not None)
+        )
+    finally:
+        store.close()
+        result_connection.close()
 
 
 class InvocationAttemptStoreTests(unittest.TestCase):
@@ -2991,6 +3029,535 @@ class InvocationAttemptStoreTests(unittest.TestCase):
         self.assertTrue(connection.in_transaction)
         connection.execute("ROLLBACK")
         self.assertIsNone(self.store.get("invocation-1"))
+
+    def test_transactional_first_claim_helper_leaves_atomic_rollback_to_caller(self):
+        self.store.enqueue(job_spec())
+        connection = self.store._connection
+        connection.execute("CREATE TABLE claim_helper_uow_marker (value TEXT NOT NULL)")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("INSERT INTO claim_helper_uow_marker VALUES ('sibling-write')")
+        statements = []
+        connection.set_trace_callback(statements.append)
+        token = "opaque-direct-helper-token"
+
+        try:
+            with (
+                patch.object(
+                    attempts_module,
+                    "new_id",
+                    side_effect=AssertionError("helper must not allocate an attempt id"),
+                ),
+                patch.object(
+                    attempts_module.secrets,
+                    "token_urlsafe",
+                    side_effect=AssertionError("helper must not allocate a lease token"),
+                ),
+            ):
+                lease = attempts_module._claim_first_invocation_in_transaction(
+                    connection,
+                    attempts_module._InvocationClaimRequest(
+                        worker_id="worker-direct",
+                        invocation_id="invocation-1",
+                    ),
+                    now=persisted_timestamp(0),
+                    deadline=persisted_timestamp(10),
+                    attempt_id="attempt-direct",
+                    lease_token=token,
+                )
+
+            self.assertIsNotNone(lease)
+            self.assertEqual(lease.attempt_id, "attempt-direct")
+            self.assertEqual(lease.lease_token, token)
+            self.assertNotIn(token, repr(lease))
+            self.assertTrue(connection.in_transaction)
+            durable = connection.execute(
+                """
+                SELECT jobs.lease_token_digest, attempts.lease_token_digest
+                FROM invocation_jobs jobs
+                JOIN invocation_attempts attempts USING (invocation_id)
+                WHERE jobs.invocation_id = ?
+                """,
+                ("invocation-1",),
+            ).fetchone()
+            expected_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            self.assertEqual(tuple(durable), (expected_digest, expected_digest))
+            self.assertNotIn(token, "\n".join(connection.iterdump()))
+            transaction_sql = tuple(statement.strip().upper() for statement in statements)
+            self.assertFalse(
+                any(
+                    statement.startswith(("BEGIN", "COMMIT", "ROLLBACK"))
+                    for statement in transaction_sql
+                )
+            )
+        finally:
+            connection.set_trace_callback(None)
+            connection.execute("ROLLBACK")
+
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM claim_helper_uow_marker").fetchone()[0],
+            0,
+        )
+        self.assertEqual(self.store.get("invocation-1").status, InvocationStatus.QUEUED)
+        self.assertEqual(self.store.attempts("invocation-1"), ())
+
+    def test_transactional_first_claim_helper_matches_public_claim_projection(self):
+        direct_path = str(Path(self.tempdir.name) / "claim-helper-direct.sqlite3")
+        public_path = str(Path(self.tempdir.name) / "claim-helper-public.sqlite3")
+        direct_store = SQLiteInvocationAttemptStore(direct_path, clock=MutableClock())
+        public_store = SQLiteInvocationAttemptStore(public_path, clock=MutableClock())
+        spec = job_spec()
+        direct_store.enqueue(spec)
+        public_store.enqueue(spec)
+        token = "opaque-equivalence-token"
+
+        def attempt_id_provider(prefix):
+            self.assertEqual(prefix, "attempt")
+            self.assertTrue(public_store._connection.in_transaction)
+            return "attempt-equivalent"
+
+        def lease_token_provider(byte_count):
+            self.assertEqual(byte_count, 32)
+            self.assertTrue(public_store._connection.in_transaction)
+            return token
+
+        try:
+            with (
+                patch.object(attempts_module, "new_id", side_effect=attempt_id_provider),
+                patch.object(
+                    attempts_module.secrets,
+                    "token_urlsafe",
+                    side_effect=lease_token_provider,
+                ),
+            ):
+                public_lease = public_store.claim(
+                    "invocation-1",
+                    "worker-equivalent",
+                    lease_seconds=10,
+                )
+
+            direct_store._connection.execute("BEGIN IMMEDIATE")
+            direct_lease = attempts_module._claim_first_invocation_in_transaction(
+                direct_store._connection,
+                attempts_module._InvocationClaimRequest(
+                    worker_id="worker-equivalent",
+                    invocation_id="invocation-1",
+                ),
+                now=persisted_timestamp(0),
+                deadline=persisted_timestamp(10),
+                attempt_id="attempt-equivalent",
+                lease_token=token,
+            )
+            direct_store._connection.execute("COMMIT")
+
+            self.assertEqual(direct_lease, public_lease)
+            self.assertEqual(
+                direct_store.get("invocation-1"),
+                public_store.get("invocation-1"),
+            )
+            self.assertEqual(
+                direct_store.attempts("invocation-1"),
+                public_store.attempts("invocation-1"),
+            )
+        finally:
+            direct_store.close()
+            public_store.close()
+
+    def test_public_claim_skips_identifier_providers_without_a_first_candidate(self):
+        def assert_skipped(store, operation, *, error_pattern=None):
+            with (
+                patch.object(
+                    attempts_module,
+                    "new_id",
+                    side_effect=AssertionError("attempt id provider must be skipped"),
+                ) as attempt_provider,
+                patch.object(
+                    attempts_module.secrets,
+                    "token_urlsafe",
+                    side_effect=AssertionError("lease token provider must be skipped"),
+                ) as token_provider,
+            ):
+                if error_pattern is None:
+                    self.assertIsNone(operation())
+                else:
+                    with self.assertRaisesRegex(InvocationIntegrityError, error_pattern):
+                        operation()
+            attempt_provider.assert_not_called()
+            token_provider.assert_not_called()
+            self.assertFalse(store._connection.in_transaction)
+
+        empty_store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        try:
+            assert_skipped(
+                empty_store,
+                partial(empty_store.claim_next, "worker", lease_seconds=10),
+            )
+        finally:
+            empty_store.close()
+
+        missing_store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        missing_store.enqueue(job_spec())
+        try:
+            assert_skipped(
+                missing_store,
+                partial(
+                    missing_store.claim,
+                    "missing-invocation",
+                    "worker",
+                    lease_seconds=10,
+                ),
+            )
+            self.assertEqual(
+                missing_store.get("invocation-1").status,
+                InvocationStatus.QUEUED,
+            )
+        finally:
+            missing_store.close()
+
+        future_store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        future_store.enqueue(job_spec(available_at=timestamp(5)))
+        try:
+            assert_skipped(
+                future_store,
+                partial(future_store.claim_next, "worker", lease_seconds=10),
+            )
+            self.assertEqual(
+                future_store.get("invocation-1").status,
+                InvocationStatus.QUEUED,
+            )
+        finally:
+            future_store.close()
+
+        attempted_store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        attempted_store.enqueue(job_spec())
+        attempted = attempted_store.claim("invocation-1", "first-worker", lease_seconds=10)
+        assert attempted is not None
+        self.assertTrue(attempted_store.fail(attempted, "effect unknown", retry_at=T0))
+        try:
+            assert_skipped(
+                attempted_store,
+                partial(
+                    attempted_store.claim,
+                    "invocation-1",
+                    "second-worker",
+                    lease_seconds=10,
+                ),
+            )
+            assert_skipped(
+                attempted_store,
+                partial(attempted_store.claim_next, "second-worker", lease_seconds=10),
+            )
+            self.assertEqual(attempted_store.get("invocation-1").attempts_started, 1)
+        finally:
+            attempted_store.close()
+
+        contradictory_store = SQLiteInvocationAttemptStore(":memory:", clock=MutableClock())
+        contradictory_store.enqueue(job_spec())
+        contradictory_store._connection.execute(
+            """
+            INSERT INTO invocation_attempts (
+                attempt_id, invocation_id, attempt_number, lease_epoch,
+                worker_id, lease_token_digest, status, started_at,
+                heartbeat_at, lease_expires_at, finished_at, error
+            ) VALUES (?, ?, 1, 1, ?, ?, 'failed', ?, ?, ?, ?, ?)
+            """,
+            (
+                "orphan-attempt",
+                "invocation-1",
+                "orphan-worker",
+                "1" * 64,
+                persisted_timestamp(0),
+                persisted_timestamp(0),
+                persisted_timestamp(10),
+                persisted_timestamp(5),
+                "orphan failure",
+            ),
+        )
+        try:
+            before = tuple(contradictory_store._connection.iterdump())
+            assert_skipped(
+                contradictory_store,
+                partial(
+                    contradictory_store.claim,
+                    "invocation-1",
+                    "worker",
+                    lease_seconds=10,
+                ),
+                error_pattern="first-claim candidate has attempt history",
+            )
+            self.assertEqual(tuple(contradictory_store._connection.iterdump()), before)
+        finally:
+            contradictory_store.close()
+
+    def test_recovered_only_claim_commits_before_skipping_faulting_providers(self):
+        clock = MutableClock()
+        path = str(Path(self.tempdir.name) / "claim-recovered-only.sqlite3")
+        store = SQLiteInvocationAttemptStore(path, clock=clock)
+        store.enqueue(job_spec())
+        first = store.claim("invocation-1", "expired-worker", lease_seconds=5)
+        assert first is not None
+        clock.set(timestamp(5))
+
+        try:
+            with (
+                patch.object(
+                    attempts_module,
+                    "new_id",
+                    side_effect=HostileFault("must not roll back expiry recovery"),
+                ) as attempt_provider,
+                patch.object(
+                    attempts_module.secrets,
+                    "token_urlsafe",
+                    side_effect=HostileFault("must not allocate after recovery"),
+                ) as token_provider,
+            ):
+                self.assertIsNone(
+                    store.claim(
+                        "invocation-1",
+                        "replacement-worker",
+                        lease_seconds=10,
+                    )
+                )
+            attempt_provider.assert_not_called()
+            token_provider.assert_not_called()
+            self.assertFalse(store._connection.in_transaction)
+        finally:
+            store.close()
+
+        reopened = SQLiteInvocationAttemptStore(path, clock=clock)
+        try:
+            job = reopened.get("invocation-1")
+            attempts = reopened.attempts("invocation-1")
+            self.assertEqual(job.status, InvocationStatus.QUEUED)
+            self.assertEqual(job.attempts_started, 1)
+            self.assertEqual(
+                job.last_error,
+                "lease expired before terminal acknowledgement",
+            )
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0].status, AttemptStatus.EXPIRED)
+            self.assertEqual(attempts[0].finished_at, persisted_timestamp(5))
+        finally:
+            reopened.close()
+
+    def test_claim_rechecks_process_ownership_after_each_identifier_provider(self):
+        self.store.enqueue(job_spec())
+        creator_pid = self.store._creator_pid
+        token_provider_called = False
+
+        def token_provider(_byte_count):
+            nonlocal token_provider_called
+            token_provider_called = True
+            return "token-must-not-be-created"
+
+        with (
+            patch.object(attempts_module, "new_id", return_value="attempt-process-drift"),
+            patch.object(
+                attempts_module.secrets,
+                "token_urlsafe",
+                side_effect=token_provider,
+            ),
+            patch.object(
+                attempts_module.os,
+                "getpid",
+                side_effect=(creator_pid, creator_pid, creator_pid + 1, creator_pid),
+            ),
+        ):
+            with self.assertRaises(InvocationStoreProcessMismatchError):
+                self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        self.assertFalse(token_provider_called)
+        self.assertFalse(self.store._connection.in_transaction)
+        self.assertEqual(self.store.get("invocation-1").status, InvocationStatus.QUEUED)
+        self.assertEqual(self.store.attempts("invocation-1"), ())
+
+        provider_calls = 0
+
+        def drifting_token_provider(_byte_count):
+            nonlocal provider_calls
+            provider_calls += 1
+            return "token-process-drift"
+
+        with (
+            patch.object(attempts_module, "new_id", return_value="attempt-process-drift"),
+            patch.object(
+                attempts_module.secrets,
+                "token_urlsafe",
+                side_effect=drifting_token_provider,
+            ),
+            patch.object(
+                attempts_module.os,
+                "getpid",
+                side_effect=(
+                    creator_pid,
+                    creator_pid,
+                    creator_pid,
+                    creator_pid + 1,
+                    creator_pid,
+                ),
+            ),
+        ):
+            with self.assertRaises(InvocationStoreProcessMismatchError):
+                self.store.claim("invocation-1", "worker", lease_seconds=10)
+
+        self.assertEqual(provider_calls, 1)
+        self.assertFalse(self.store._connection.in_transaction)
+        self.assertEqual(self.store.get("invocation-1").status, InvocationStatus.QUEUED)
+        self.assertEqual(self.store.attempts("invocation-1"), ())
+
+    @unittest.skipUnless(hasattr(os, "fork"), "POSIX fork is unavailable")
+    def test_claim_provider_fork_rejects_child_without_resuming_sqlite_cleanup(self):
+        # Keep the probe isolated from the fixture's unrelated SQLite handle. Some
+        # SQLite builds intentionally abort when a second inherited handle survives
+        # across the nested provider fork.
+        self.store.close()
+        context = multiprocessing.get_context("spawn")
+        receive_connection, send_connection = context.Pipe(duplex=False)
+        path = str(Path(self.tempdir.name) / "claim-provider-fork.sqlite3")
+        process = context.Process(
+            target=probe_claim_identifier_provider_fork,
+            args=(path, send_connection),
+        )
+        process.start()
+        send_connection.close()
+        try:
+            outcomes = set()
+            for _ in range(2):
+                if not receive_connection.poll(5):
+                    self.fail("provider fork probe did not report both process outcomes")
+                outcomes.add(receive_connection.recv())
+        finally:
+            receive_connection.close()
+            process.join(timeout=5)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+
+        self.assertEqual(process.exitcode, 0)
+        self.assertEqual(
+            outcomes,
+            {
+                (
+                    "child",
+                    "InvocationStoreProcessMismatchError",
+                    "invocation_store_process_mismatch",
+                ),
+                ("parent", "attempt-provider-parent", True),
+            },
+        )
+        reopened = SQLiteInvocationAttemptStore(path, clock=MutableClock())
+        try:
+            job = reopened.get("invocation-1")
+            attempts = reopened.attempts("invocation-1")
+            self.assertEqual(job.status, InvocationStatus.RUNNING)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0].attempt_id, "attempt-provider-parent")
+        finally:
+            reopened.close()
+
+    def test_claim_identifier_provider_controls_are_clean_and_rolled_back(self):
+        cases = (
+            (KeyboardInterrupt, lambda marker: KeyboardInterrupt(marker), None),
+            (SystemExit, lambda marker: SystemExit(marker), 1),
+            (GeneratorExit, lambda marker: GeneratorExit(marker), None),
+            (CancelledError, lambda marker: CancelledError(marker), None),
+        )
+        case_index = 0
+        for stage in ("attempt-id", "lease-token"):
+            for error_type, error_factory, exit_code in cases:
+                with self.subTest(stage=stage, error_type=error_type.__name__):
+                    path = str(
+                        Path(self.tempdir.name) / f"claim-provider-control-{case_index}.sqlite3"
+                    )
+                    case_index += 1
+                    store = SQLiteInvocationAttemptStore(path, clock=MutableClock())
+                    store.enqueue(job_spec())
+                    marker = f"private {stage} {error_type.__name__} provider"
+                    try:
+                        attempt_side_effect = (
+                            error_factory(marker) if stage == "attempt-id" else None
+                        )
+                        token_side_effect = (
+                            error_factory(marker) if stage == "lease-token" else None
+                        )
+                        with (
+                            patch.object(
+                                attempts_module,
+                                "new_id",
+                                return_value="attempt-control",
+                                side_effect=attempt_side_effect,
+                            ),
+                            patch.object(
+                                attempts_module.secrets,
+                                "token_urlsafe",
+                                return_value="token-control",
+                                side_effect=token_side_effect,
+                            ),
+                        ):
+                            captured = self._capture_base_exception(
+                                partial(
+                                    store.claim,
+                                    "invocation-1",
+                                    "worker",
+                                    lease_seconds=10,
+                                )
+                            )
+
+                        self._assert_clean_control_signal(
+                            captured,
+                            error_type,
+                            marker=marker,
+                            system_exit_code=exit_code,
+                        )
+                        self.assertFalse(store._connection.in_transaction)
+                        self.assertEqual(
+                            store.get("invocation-1").status,
+                            InvocationStatus.QUEUED,
+                        )
+                        self.assertEqual(store.attempts("invocation-1"), ())
+                    finally:
+                        store.close()
+
+    def test_claim_identifier_provider_faults_rollback_without_leaking_details(self):
+        for index, stage in enumerate(("attempt-id", "lease-token")):
+            with self.subTest(stage=stage):
+                path = str(Path(self.tempdir.name) / f"claim-provider-fault-{index}.sqlite3")
+                store = SQLiteInvocationAttemptStore(path, clock=MutableClock())
+                store.enqueue(job_spec())
+                marker = f"private {stage} provider path={path}"
+                try:
+                    with (
+                        patch.object(
+                            attempts_module,
+                            "new_id",
+                            return_value="attempt-provider-fault",
+                            side_effect=(HostileFault(marker) if stage == "attempt-id" else None),
+                        ),
+                        patch.object(
+                            attempts_module.secrets,
+                            "token_urlsafe",
+                            return_value="token-provider-fault",
+                            side_effect=(HostileFault(marker) if stage == "lease-token" else None),
+                        ),
+                    ):
+                        captured = self._capture_base_exception(
+                            partial(
+                                store.claim,
+                                "invocation-1",
+                                "worker",
+                                lease_seconds=10,
+                            )
+                        )
+
+                    self.assertIs(type(captured), InvocationTransactionError)
+                    self.assertNotIn(marker, exception_graph_text(captured))
+                    self.assertFalse(store._connection.in_transaction)
+                    self.assertEqual(
+                        store.get("invocation-1").status,
+                        InvocationStatus.QUEUED,
+                    )
+                    self.assertEqual(store.attempts("invocation-1"), ())
+                finally:
+                    store.close()
 
     def test_claim_next_obeys_availability_then_priority(self):
         self.store.enqueue(
