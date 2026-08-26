@@ -486,6 +486,27 @@ def _detach_exception(error: BaseException) -> None:
         traceback_module.clear_frames(error_traceback)
 
 
+def _take_classified_event_store_transaction_signal(
+    error: BaseException,
+) -> Optional[Tuple[str, Optional[_EventStoreControlDescriptor]]]:
+    """Copy and detach one trusted rollback/ambiguity outcome for scoped callers."""
+
+    if type(error) is not _EventStoreAdmissionTransactionSignal:
+        return None
+    signal = cast(_EventStoreAdmissionTransactionSignal, error)
+    if signal.token is not _EVENT_STORE_ADMISSION_CONTROL_TOKEN or signal.outcome not in {
+        "rolled_back",
+        "ambiguous",
+    }:
+        return None
+    control = _normalized_event_store_control_descriptor(signal.control)
+    if signal.control is not None and control is None:
+        return None
+    outcome = signal.outcome
+    _detach_exception(signal)
+    return outcome, control
+
+
 _Method = TypeVar("_Method", bound=Callable[..., Any])
 
 
@@ -2736,16 +2757,10 @@ class SQLiteEventStore:
                     result = InvocationAdmissionResult(verified_events, verified_job)
                 completed_body = True
         except _EventStoreAdmissionTransactionSignal as error:
-            trusted = (
-                type(error) is _EventStoreAdmissionTransactionSignal
-                and error.token is _EVENT_STORE_ADMISSION_CONTROL_TOKEN
-                and error.outcome in {"rolled_back", "ambiguous"}
-            )
-            control = _normalized_event_store_control_descriptor(error.control)
-            if not trusted or (error.control is not None and control is None):
+            classified = _take_classified_event_store_transaction_signal(error)
+            if classified is None:
                 raise
-            outcome = error.outcome
-            _detach_exception(error)
+            outcome, control = classified
             if control is not None:
                 pending_control = control
                 pending_control_ambiguity = outcome == "ambiguous"
