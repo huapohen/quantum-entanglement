@@ -4,7 +4,7 @@ Status: pre-production baseline
 
 Reviewed against: `0.1.x` and the `0.2.0` roadmap
 
-Last updated: 2026-08-20
+Last updated: 2026-08-26
 
 This document defines the security boundaries that implementation and release reviews
 must preserve. It is intentionally stricter than the current code: a listed control is
@@ -91,8 +91,12 @@ flowchart LR
 
 The current repository implements only part of this flow. Missing boxes are requirements,
 not implied controls. In particular, `0.1.x` has no public admission/authentication service,
-secret store, complete action receipt layer, or production connector. A process-local
-`RequestContextIssuer` now distinguishes caller scope claims from one configured
+production secret-store composition, complete action receipt layer, or production connector.
+It does include a loopback-only product-trial server with one ephemeral shared access token and
+an outbound OpenAI-compatible Responses adapter. Host/Origin/Fetch Metadata checks, body limits,
+strict JSON and provider-error sanitization reduce its local attack surface, but they do not
+authenticate a human principal or tenant/workspace and do not make it a production service. A
+process-local `RequestContextIssuer` now distinguishes caller scope claims from one configured
 authenticator result and blocks cross-request/scope handle reuse, but there is no real
 authenticator, authenticated transport, current membership refresh, or mandatory runtime/
 authorizer composition. That primitive does not complete the `Admission + authentication`
@@ -169,6 +173,11 @@ The following are release-blocking invariants:
 | TM-24 | Metrics label accepts arbitrary tenant/prompt text | secret leak/cardinality DoS, P1 | fixed label vocabulary, hashing/redaction, bounds | gap |
 | TM-25 | Caller chooses subject/tenant/workspace or reuses an issued context across scope | impersonation/tenant escape, P0 | authenticated subject mapping, exact process-local issuance, action-time identity/membership refresh, mandatory authorizer composition | partial |
 | TM-26 | Fork child reuses an inherited store, issuer, key, secret, runtime or connector | duplicate/unauthorized effect, deadlock, corruption or credential exposure, P0 | fork-before-init topology, PID + opaque epoch pre-lock guards, fresh child composition and spawn/exec-before-secret-load evidence | partial: shared identity foundation plus `SQLiteEventStore` full-entry candidate; other stores, issuer, key/secret, runtime, connector and composition root remain open |
+| TM-27 | Another local process or browser origin steals/reuses the trial access token | unauthorized model spend or prompt access, P1 | loopback bind, high-entropy per-start token, no-store response, Host/Origin/Fetch Metadata enforcement, short lifetime, trusted-user-only boundary | partial: local controls tested; no principal authentication, revocation service, rate quota or durable audit |
+| TM-28 | Trial `.env` is replaced, symlinked, over-permissioned or read inconsistently | provider credential exposure/substitution, P0 | production `SecretRef`/provider, descriptor-relative no-follow stable read, owner/mode checks, spawn-before-load | gap: current `.env` loader is development-only and reads a normal path |
+| TM-29 | Prompt, model response or provider error leaks a secret into events/artifacts/UI | credential or customer-data exposure, P0 | prompt classification, secret canary, provider-error firewall, typed persistence, redacted audit | partial: provider errors are sanitized; end-to-end prompt/response canary and data-classification gate are absent |
+| TM-30 | Configured model base URL or redirect reaches an unintended network target | SSRF/credential exfiltration, P0 | immutable provider allowlist, HTTPS, DNS/IP revalidation, redirect denial, egress policy | gap: local trial accepts an explicitly configured base URL without the production egress policy |
+| TM-31 | Model-backed local endpoint is mistaken for a production API | untrusted use, data exposure, unavailable lifecycle, P0/P1 | explicit NON_PRODUCTION response/docs, no public bind, authenticated `/api/v1` built separately, promotion review | partial: boundary is declared and response reports closed Gates; formal service composition remains absent |
 
 `partial` and `in progress` do not satisfy a release gate. Only a linked implementation,
 adversarial test, and retained evidence may change a row to `verified`.
@@ -273,9 +282,11 @@ operator-visible failure behavior, and rollback/containment steps.
 Until the controls above are verified:
 
 1. keep deployments local/single-user with synthetic or explicitly approved data;
-2. expose no unauthenticated network service;
+2. expose no network listener beyond the audited loopback-only product trial, and never bind it
+   to a non-loopback address or treat its shared token as user authentication;
 3. use no real outbound Feishu/WeCom connector;
-4. keep provider credentials outside events, prompts, artifacts, commits, and reports;
+4. keep provider credentials outside events, prompts, artifacts, commits, reports, and browser
+   responses; use the local `.env` path only as a development adapter;
 5. treat agent/plugin output as untrusted and require human confirmation outside the
    repository for any real irreversible action;
 6. do not describe `0.1.x` as production-ready or multi-tenant secure.
