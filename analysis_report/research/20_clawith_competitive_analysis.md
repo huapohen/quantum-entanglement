@@ -1,6 +1,6 @@
 # Clawith 竞品深研：从“数字员工组织”反推 WanWork 的产品与底层取舍
 
-> 调研截止：2026-08-26（Asia/Shanghai）<br>
+> 调研截止：2026-08-27（Asia/Shanghai）<br>
 > 官网入口：<https://clawith.ai/><br>
 > 固定源码：[`dataelement/Clawith@45fc701c366c69f89dff26d91d6a4a9cbc38e6f8`](https://github.com/dataelement/Clawith/tree/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8)<br>
 > 固定提交时间：2026-08-25 20:05:07 +08:00<br>
@@ -15,7 +15,7 @@ Clawith 是本轮调研中与 WanWork 产品愿景最接近、也最值得逐层
 1. **产品层应该大胆学习。** Agent 招聘/创建、稳定身份、Directory、Crew 群聊、`@Agent`、Aware/Pulse、Experience Library、模型能力探测和企业设置，已经把抽象的 Agent 技术翻译成普通团队能理解的组织语言。
 2. **群聊协作实现尤其值得吸收。** 人与 Agent 统一为 Participant；单 Agent `@` 确定性直达；多 Agent `@` 进入规划；每个 Agent 以自己的 Participant 身份公开回复；`at` 工具只冻结下一条公开回复的 mention intent，而不是偷偷代发。这与 WanWork“Agent 不被主 Agent 冒充”的不变量高度一致。
 3. **Aware/Pulse 的正确价值不是再包一层 cron。** 它把长期关注点、结构化 Focus、Trigger occurrence、可恢复 Run、Heartbeat 和主动汇报串成产品语义。WanWork 应借鉴“关注点 → 触发条件 → 一次可追踪执行 → 结果/等待人”的闭环。
-4. **Plaza 的最新源码比官网文档更值得学。** 最新实现已从“Agent 自动发帖的内部社交 feed”转成 **Experience Library**：AI 可起草，人类审核发布，只有 `published` 内容能被 Agent 检索；可退役、有适用条件、来源和引用/采纳统计。这比让 Agent 自动刷广场更稳健。
+4. **Plaza 的固定源码新路径比官网旧文档更值得学。** `/plaza` 前端和 Agent 知识消费主路径已转成 **Experience Library**：AI 可起草，人类审核发布，只有 `published` 内容能被 Agent 检索；可退役、有适用条件、来源和引用/采纳统计。这比让 Agent 自动刷广场更稳健。但 legacy Plaza 表/API 仍在固定源码中注册，旧 Agent 工具还依赖一次性运维脚本撤权，不能写成“旧 Plaza 已从所有部署和数据路径彻底删除”。
 5. **不要把 Clawith 的 A2A 当成标准 A2A。** 固定源码中的 A2A 是同一产品内的 `notify / consult / task_delegate` 协作子系统，具备等待、关联结果和恢复机制，但没有发现标准 Agent Card、A2A binding、标准 Task/Artifact API 或官方 SDK/TCK。WanWork 应继续采用“内部 canonical coordination protocol + 标准 A2A 边缘 adapter”。
 6. **治理层不能照搬营销口径。** [官方技术白皮书](https://www.clawith.ai/blog/clawith-technical-whitepaper)宣称 L1–L4、全链路审计和每次操作可追溯/回放；固定源码实际是 L1–L3，通用审批对象缺少 tenant、TTL、policy version 和统一 action digest，审计写入是 best-effort 普通表，并非防篡改事件链。它有真实治理能力，但证据不足以支持最强营销表述。
 7. **部署默认值不能照搬。** 默认 Compose 给 backend 挂载 Docker socket，并启用 `privileged`、`SYS_ADMIN`、`seccomp=unconfined`、`apparmor=unconfined`。这与企业最小权限沙箱目标冲突，应视为开发/兼容部署权衡，而不是 WanWork 生产安全基线。
@@ -70,7 +70,9 @@ Clawith 是本轮调研中与 WanWork 产品愿景最接近、也最值得逐层
 
 ### 1.4 截图证据
 
-官网与文档只读截图已存入项目证据目录，并在 [`../screenshots/manifest.json`](../screenshots/manifest.json) 中记录尺寸、SHA-256、来源和限制：
+官网与文档只读截图已存入项目证据目录。第 15–25 张均已在
+[`../screenshots/manifest.json`](../screenshots/manifest.json) 中记录完整 SHA-256、字节数、尺寸、来源、派生方式和限制。
+第 15–19 张覆盖官网产品定位和文档入口：
 
 - [`15_clawith_homepage_positioning.png`](../screenshots/15_clawith_homepage_positioning.png)
 - [`16_clawith_collaboration_network.png`](../screenshots/16_clawith_collaboration_network.png)
@@ -78,7 +80,23 @@ Clawith 是本轮调研中与 WanWork 产品愿景最接近、也最值得逐层
 - [`18_clawith_six_capabilities.png`](../screenshots/18_clawith_six_capabilities.png)
 - [`19_clawith_docs_introduction.png`](../screenshots/19_clawith_docs_introduction.png)
 
-截图证明的是采集时页面可见像素和官方措辞，不证明相应能力真的运行、效果数据真实或源码与页面完全同步。
+第 20–25 张在 Git 提交
+`be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5` 中作为**可变网页 claim 快照**首次归档，并已纳入当前 manifest。
+下表使用 manifest 中的二进制 SHA-256 前 12 位，并将页面可见表述、固定源码交叉核对和使用限制分开：
+
+| 截图 | 页面可见 claim（只证明像素） | 固定源码交叉核对 | 明确限制 |
+|---|---|---|---|
+| [`20_clawith_pricing_20260827.png`](../screenshots/20_clawith_pricing_20260827.png) `437f8746db78` | 月付页显示 Free `$0` / 5,000 one-time credits / 5 public Agent seats；Starter `$25` / 20,000 credits / 10 seats；Pro `$200` / 175,000 credits / 15 seats；Scale `$2,000` / 1,800,000 credits / 50 seats；页面另称年付省 20% | Apache-2.0、Compose/Helm 等源码事实只能证明开源与部署材料，不能证明官方云价格、credits 兑换或套餐权益 | 厂商可随时改价；不是报价单、合同、税费/SLA/地域可用性或价格性能证明；截图停在 monthly tab，不能据此推导未展示的全部年付金额 |
+| [`21_clawith_whitepaper_governance_20260827.png`](../screenshots/21_clawith_whitepaper_governance_20260827.png) `94fc6032c967` | 白皮书标题写 `L1–L4 Four-Tier Autonomous Permission Model`，并同时宣传 quota guard 与远端 Docker/Wasm 隔离 | 固定源码 `AutonomyService` 与默认 policy 明确只有 L1–L3；Compose/sandbox 的实际默认值也不能由白皮书段落替代 | 属厂商白皮书设计/营销表述，不是 L4 代码、策略迁移、运行 trace、安全评测或隔离认证 |
+| [`22_clawith_whitepaper_audit_claim_20260827.png`](../screenshots/22_clawith_whitepaper_audit_claim_20260827.png) `9ce026b32f8e` | 白皮书称高风险操作实时转人工审批，且每个 tool call、message flow 都可追踪、回放并提交为证据 | 固定源码有真实审批、tool receipt 和 AuditLog，但通用 AuditLog 是普通表，部分 helper best-effort 且失败不阻断 caller；未见全链 previous hash/WORM | 不能把一段白皮书文字当成全量审计导出、回放成功记录、不可篡改证明或合规认证 |
+| [`23_clawith_aware_focus_triggers_20260827.png`](../screenshots/23_clawith_aware_focus_triggers_20260827.png) `e77fd34bda34` | Aware 文档把 Focus 称为结构化 working memory，列出五类 trigger，并称 trigger 全部解决后自动完成/清理 Focus、可自动调大 interval、主动增删 trigger | 固定源码确认 DB Focus、trigger→focus binding 与六种 runtime type；本轮静态审查未定位一个能普遍保证截图所述“全部解决自动完成/清理”和自适应增删/调频的统一状态机 | 文档给出产品意图和示例，不证明每条自动化规则已实现、每类 trigger 语义一致或主动行为可靠 |
+| [`24_clawith_pulse_trigger_engine_20260827.png`](../screenshots/24_clawith_pulse_trigger_engine_20260827.png) `61e1c147f85f` | Pulse 文档称 daemon 按 heartbeat 检查 trigger，命中后创建 inner conversation、唤醒 Agent 并增加 fire count | 固定源码当前以 evaluator、stable occurrence、`TriggerExecution` queue/claim 和统一 `AgentRun` intake 承载；“Pulse”是产品标签，不是精确代码模块/API 合同 | 截图不证明 exactly-once、无漏触发、租约恢复、规模、时钟漂移、webhook 安全或与当前源码版本完全同步 |
+| [`25_clawith_plaza_legacy_docs_20260827.png`](../screenshots/25_clawith_plaza_legacy_docs_20260827.png) `538c888e2a04` | Plaza 文档仍描述 Agent 自动发更新、浏览、评论、搜索的内部社交 feed | 固定源码的 `/plaza` 前端已改为 Experience Library，Agent 自动 Plaza tools 有撤权脚本；但 legacy Plaza model/API/router 仍保留 | 这是旧产品语义的官方文档快照，不是当前 Agent 知识主路径；也不能反向证明所有升级部署都已执行撤权/迁移或历史数据已删除 |
+
+第 20–25 张的文件名日期和首次 Git 归档时间不是第三方可信时间戳，也没有锁定厂商页面 revision。
+所有截图都只证明归档像素与当时可见官方措辞，不证明能力真的运行、效果数据真实、源码与网页同步，
+更不能覆盖固定 commit 的相反或更窄事实。工程结论以固定源码为主；网页只用于证明厂商在该快照中
+“如何表述”。
 
 ## 2. 产品定位与商业模型
 
@@ -111,7 +129,17 @@ Clawith 是本轮调研中与 WanWork 产品愿景最接近、也最值得逐层
 
 【官网/文档声明】官网宣称 Apache 2.0、可私有化部署、可接任意模型和 MCP。价格页在本轮访问时采用 credits + public Agent seats：Free、Starter、Pro、Scale 四档，月付页面标价从 `$0`、`$25`、`$200` 到 `$2,000`，并提供额外 credits 包；年付口径宣称八折。价格会变化，采购前必须重新核验 [`pricing`](https://www.clawith.ai/pricing)。
 
+![Clawith 2026-08-27 价格页快照](../screenshots/20_clawith_pricing_20260827.png)
+
+这张图只能证明归档 viewport 中的 monthly 标价、credits 和 public Agent seats 文案；它没有给出
+credits 的逐模型扣减规则、超额/退款、税费、SLA、地区、数据处理条款或所有年付实付价。`Save 20%`
+是页面声明，不是本报告核算或合同承诺。后续成本模型必须拿当期正式报价、credits 计量表和真实
+workload 复算，不能把 `$25` 或 `$200` 直接当作一个团队/Agent 的稳定月成本。
+
 【固定源码事实】固定 commit 的 `LICENSE` 为 Apache-2.0；仓库含 Docker Compose、多进程 Compose 和 Helm Chart。因此它同时具备开源获客、自托管和官方云 credits 商业化的基础。
+
+固定源码能核验开源许可和自托管材料，不能核验托管商业套餐是否仍按截图提供，也不能证明云端
+credits 对应的模型、容量或可靠性。开源/自托管权利与官方托管套餐权益是两条不同证据链。
 
 【分析判断】WanWork 可采用相似的双轨结构：
 
@@ -252,6 +280,14 @@ WanWork 应采用“人可编辑文档 + 结构化权威状态 + 版本引用”
 
 【官网/文档声明】[`Aware`](https://www.clawith.ai/docs/features/aware) 的叙事是：Agent 收到任务后建立 Focus，绑定 Trigger，等待事件，再主动行动；[`Pulse`](https://www.clawith.ai/docs/features/pulse) 是 Trigger 的执行引擎。官方文档列出 cron、interval、webhook、message listener 和 one-shot。
 
+![Clawith Aware、Focus 与 Trigger 文档快照](../screenshots/23_clawith_aware_focus_triggers_20260827.png)
+
+截图还宣称“所有 trigger 解决后 Focus 自动 done/cleanup”以及可自动调大 interval、主动增加或移除
+trigger。它们是官方文档中的目标行为。本轮固定源码静态审查确认结构化 Focus、创建时 binding 和
+可显式完成/管理 trigger，但未定位一个对所有 trigger 普遍实施上述自适应增删/调频、自动完成和
+清理的统一状态机。没有定位不等于证明代码绝对不存在；它足以要求本报告**不把这几条网页 claim
+升级成已验证能力**。
+
 【固定源码事实】实际 Runtime 支持六类：
 
 - `cron`
@@ -270,6 +306,15 @@ WanWork 应采用“人可编辑文档 + 结构化权威状态 + 版本引用”
 - [`trigger_runtime/keys.py#L12-L48`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/trigger_runtime/keys.py#L12-L48)
 - [`trigger_runtime/executions.py#L20-L115`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/trigger_runtime/executions.py#L20-L115)
 - [`trigger_runtime/intake.py`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/trigger_runtime/intake.py)
+
+![Clawith Pulse Trigger Engine 文档快照](../screenshots/24_clawith_pulse_trigger_engine_20260827.png)
+
+【官网/文档声明】截图用“Pulse daemon 定期检查 → 创建 inner conversation → Agent 醒来 → fire count
+增加”解释产品。**【固定源码事实】**固定快照的当前实现粒度更细：evaluator 计算 occurrence，queue
+原子注册 `TriggerExecution` 与 Runtime command，worker claim 后进入统一 `AgentRun`，terminal
+checkpoint 再回写 execution/reflection。二者可以视为产品叙事与工程实现的近似映射，不能把
+“inner conversation”当作当前数据库/API 的精确合同，也不能仅凭截图声称 exactly-once、无漏触发
+或崩溃恢复已经动态验证。
 
 Heartbeat 也不是只写一条定时消息。Agent 模型保存 enabled、interval、active hours 和 last heartbeat；运行时从 claimed occurrence 生成稳定 `source_execution_id`，以幂等 key 进入同一 Run intake。见 [`agent.py#L133-L140`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/models/agent.py#L133-L140) 与 [`heartbeat_runtime.py#L27-L131`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/heartbeat_runtime.py#L27-L131)。
 
@@ -315,6 +360,11 @@ stateDiagram-v2
 
 【官网/文档声明】[`Plaza 文档`](https://www.clawith.ai/docs/features/plaza) 把它描述为 Agent 自动发工作更新、发现、评论和共享组织知识的内部社交 feed。
 
+![Clawith 旧 Plaza 社交 feed 文档快照](../screenshots/25_clawith_plaza_legacy_docs_20260827.png)
+
+这张截图用于证明**官方文档仍保留旧叙事**，不是用来证明固定源码的 Agent 仍以相同方式自动发帖。
+网页没有 release/commit binding，可能落后于产品，也可能服务兼容部署；必须与下节固定源码分开读。
+
 ### 7.2 固定源码已换成“人类策展、AI 消费”的经验库
 
 【固定源码事实】最新 `ExperienceEntry` 文件开头直接写明：Experience Library 替代旧 Plaza social feed；只有人类发布后，条目才可被 Agent 检索。生命周期为：
@@ -328,6 +378,12 @@ stateDiagram-v2
 AI 侧采用 `search_experience → read_experience` 的轻量 pull，并区分 read 与实际 cited/adopted；引用使用 `[[exp:<uuid>]]` 标记。见 [`experience_retrieval.py#L1-L58`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/experience_retrieval.py#L1-L58)。
 
 Agent 的 `propose_experience_draft` 只产出供人复核的结构化草稿，明确说“没有写入经验库，用户必须确认”，见 [`agent_tools.py#L3048-L3071`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/agent_tools.py#L3048-L3071)。旧 Plaza 自动发帖工具被禁用的迁移脚本见 [`disable_plaza_social_tools.py`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/scripts/disable_plaza_social_tools.py)。
+
+但“替代”需要限定在**固定源码的新前端与 Agent 知识主路径**：`/plaza` 路由外壳现在渲染
+Experience Library，legacy Plaza social models、API router 和相关兼容文案仍在仓库中；撤销旧
+`plaza_*` Agent 工具依赖一次性、幂等的运维脚本实际执行。静态源码不能证明每个历史部署都已跑
+迁移、旧授权已清空或 legacy 数据已删除。因此正确说法是“当前设计方向已转向人审 Experience”，
+不是“旧 Plaza 在所有版本和运行环境中已不存在”。
 
 ### 7.3 为什么这个纠偏很关键
 
@@ -521,6 +577,13 @@ WanWork 还必须补上：正式 Artifact contract、deadline/cancel propagation
 
 【官网/文档声明】白皮书中的 L1–L4 表述与固定源码不一致，应判定为文档/营销漂移，而不是源码事实。
 
+![Clawith 白皮书 L1–L4 治理宣传快照](../screenshots/21_clawith_whitepaper_governance_20260827.png)
+
+截图同时提到 quota guard 和“远端 Docker/Wasm 与主系统网络、文件存储隔离”。这些句子只能证明
+白皮书如何描述目标架构，不能替代当前 Compose、sandbox、network、credential 和 escape test 的
+源码/运行证据。特别是本报告已在 12.4–12.5 记录固定源码默认 privileged/Docker socket、默认
+`execute_code` 网络及宿主 pip 边界；不能用白皮书段落把这些具体风险覆盖掉。
+
 ### 10.2 Runtime-scoped approval 有可借鉴的确定性恢复
 
 【固定源码事实】Runtime approval ID 由 `run_id + action_type + tool_call_id` 稳定派生；重复检查会复用现有请求，避免同一动作生成多个审批。L3 创建 ApprovalRequest 后阻断；决策后可用稳定 idempotency key 恢复原 Run。见 [`autonomy_service.py#L29-L102`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/autonomy_service.py#L29-L102)、[`#L131-L161`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/autonomy_service.py#L131-L161) 与 [`#L197-L230`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/autonomy_service.py#L197-L230)。
@@ -544,6 +607,14 @@ WanWork 还必须补上：正式 Artifact contract、deadline/cancel propagation
 - decision event、resume event 与最终 action receipt。
 
 ### 10.4 Audit 是普通 best-effort 业务表，不是防篡改账本
+
+【官网/文档声明】白皮书宣称高风险动作实时进入人类审批卡，并由“full-chain operation audit log
+network”保证每个 tool call 和 message flow 均可追踪、回放和提交为证据：
+
+![Clawith 白皮书全链审计宣传快照](../screenshots/22_clawith_whitepaper_audit_claim_20260827.png)
+
+这张裁剪图是**厂商 claim 的像素证据**，不是一次真实 Run 的 audit export、tool replay、消息因果链
+或不可篡改校验结果。以下固定源码观察决定本报告能给出的更窄结论。
 
 【固定源码事实】`AuditLog` 是普通 SQL 表，字段为 tenant/user/agent/action/details/IP/time，没有 previous hash、sequence、签名、WORM retention 或不可变事件链，见 [`models/audit.py#L13-L28`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/models/audit.py#L13-L28)。后台 helper 使用普通 `INSERT`，异常被捕获并只写 error log，明确“Never let audit logging break the caller”，见 [`audit_logger.py#L177-L213`](https://github.com/dataelement/Clawith/blob/45fc701c366c69f89dff26d91d6a4a9cbc38e6f8/backend/app/services/audit_logger.py#L177-L213)。
 
@@ -957,11 +1028,13 @@ flowchart LR
 | 主题 | 官网/文档或营销口径 | 固定源码观察 | 本报告结论 |
 |---|---|---|---|
 | AI 组织/Digital Employee | 核心定位 | Agent/Tenant/Directory/Group/Settings 路由真实存在 | 产品形态成立；效果收益未验证 |
+| 托管价格 | Free/Starter/Pro/Scale，credits + public Agent seats，年付省 20% | 开源仓库不能证明云价、credits 计量或套餐权益 | 只记录 2026-08-27 页面快照；采购/成本评估时必须重查正式报价与计量表 |
 | 持久身份 | Soul、Memory、Focus、长期存在 | soul/memory 文件；Focus 已迁到结构化 DB | 能力存在，文档对 focus.md 已漂移 |
 | 两层/多层记忆 | Agent 与组织知识 | 私有 workspace、群 memory、Experience | 有真实实现；记忆质量和隔离未运行验证 |
 | A2A 协作 | Agent-to-Agent | 内部 notify/consult/task_delegate | 是内部协作，不是标准 A2A 兼容证明 |
-| Aware/Pulse | 主动感知与行动 | Focus/Trigger/occurrence/Run/Heartbeat | 固定源码链路存在；运行可靠性与规模未动态验证 |
-| Plaza | Agent 社交与组织学习 | 最新源码替换为人审 Experience Library | 源码方向更稳健，官网文档落后 |
+| Aware | Focus、五类 trigger、自动完成/清理与自适应调度 | DB Focus、六类 runtime type 和 binding 存在；未定位覆盖全部文档自动化 claim 的统一状态机 | 核心结构存在；自适应增删/调频与自动完成不能按网页直接判定已实现 |
+| Pulse | daemon heartbeat、inner conversation、fire count | evaluator → occurrence/TriggerExecution → queue/claim → AgentRun → terminal 回写 | 工程链路存在；产品术语不等于精确 API 合同，可靠性与规模未动态验证 |
+| Plaza | Agent 自动发帖、浏览、评论的社交 feed | `/plaza` 新前端/Agent 主路径为人审 Experience；legacy models/API 仍注册，旧工具需运维撤权 | 官网文档落后；方向已转，但不能称旧 Plaza 在所有部署中彻底删除 |
 | L1–L4 autonomy | 四级权限/自治 | 固定源码明确 L1–L3 | 文档与源码不一致 |
 | 全链路审计/可回放 | 完整追踪 | 普通 AuditLog，部分 best-effort 写入 | 有日志，不是防篡改完整账本 |
 | MCP | 可连接任意 MCP | HTTP/SSE tools/list + tools/call 子集 | 支持子集；完整协议、OAuth、SSRF治理不足 |
@@ -999,7 +1072,17 @@ flowchart LR
 - [`17_clawith_organization_evolution.png`](../screenshots/17_clawith_organization_evolution.png)：组织演进叙事
 - [`18_clawith_six_capabilities.png`](../screenshots/18_clawith_six_capabilities.png)：六项能力 taxonomy
 - [`19_clawith_docs_introduction.png`](../screenshots/19_clawith_docs_introduction.png)：官方文档 introduction
-- [`../screenshots/manifest.json`](../screenshots/manifest.json)：来源 URL、采集限制、尺寸和 SHA-256
+- [`20_clawith_pricing_20260827.png`](../screenshots/20_clawith_pricing_20260827.png)：可变 pricing monthly viewport；不是报价/合同
+- [`21_clawith_whitepaper_governance_20260827.png`](../screenshots/21_clawith_whitepaper_governance_20260827.png)：白皮书 L1–L4、quota、sandbox 宣传
+- [`22_clawith_whitepaper_audit_claim_20260827.png`](../screenshots/22_clawith_whitepaper_audit_claim_20260827.png)：白皮书“每个 tool/message 可追踪回放”宣传裁剪
+- [`23_clawith_aware_focus_triggers_20260827.png`](../screenshots/23_clawith_aware_focus_triggers_20260827.png)：Aware、Focus、trigger 与自适应 claim
+- [`24_clawith_pulse_trigger_engine_20260827.png`](../screenshots/24_clawith_pulse_trigger_engine_20260827.png)：Pulse engine 产品文档
+- [`25_clawith_plaza_legacy_docs_20260827.png`](../screenshots/25_clawith_plaza_legacy_docs_20260827.png)：仍在线的旧 Plaza 社交 feed 文档
+- [`../screenshots/manifest.json`](../screenshots/manifest.json)：第 15–25 张的来源 URL、采集限制、完整 SHA-256、字节数和像素尺寸
+
+第 20–25 张由 Git 提交 `be7ce7e62f4285509db9ef1ea1f699fbec3aa0e5` 固定文件字节；网页本身
+仍没有不可变 revision。其逐图 claim/源码反证/限制以 1.4 的专项表为准，不能脱离该表单独引用为
+“已验证能力”。
 
 ### 19.3 相关 WanWork / Quantum Entanglement 文档
 
