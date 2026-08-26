@@ -93,8 +93,11 @@ python3 scripts/report_sync_bundle.py \
 
 `sourceTargets` 记录的是 source-target entry，不等于远端页面数；所有实时远端回读标记固定为
 `false`。当前 Clawith checkpoint 固定 40 个本地 source、41 个 source-target 和 20 张图片；
-Clawith 的 Notion 与语雀条目均为 `local_pending`，不构成远端写入或回读证明。完整字段、
-pinned-read 安全边界、v2→v3 迁移和 recovery 处置见
+Clawith 的 Notion 与语雀条目均为 `local_pending`，不构成远端写入或回读证明。其中
+`analysis_report/notion_sync_manifest.json` 仍是 2026-08-20 的历史回读控制文件，故意不登记
+尚未远端写入并回读的 Clawith 页面；Clawith 的确定性计划页 key 只存在于本地 checkpoint 的
+`proposedTargetPageKey`，不能当作真实 Notion 页面标识。完整字段、pinned-read 安全边界、v2→v3
+迁移和 recovery 处置见
 [`docs/production/REPORT_SYNC_BUNDLE.md`](docs/production/REPORT_SYNC_BUNDLE.md)。
 
 ## 开发验证
