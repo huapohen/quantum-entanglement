@@ -2915,6 +2915,82 @@ class InvocationAttemptStoreTests(unittest.TestCase):
                 ),
             )
 
+    def test_transactional_enqueue_helper_leaves_atomic_rollback_to_caller(self):
+        connection = self.store._connection
+        connection.execute("CREATE TABLE helper_uow_marker (value TEXT NOT NULL)")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("INSERT INTO helper_uow_marker VALUES ('sibling-write')")
+
+        queued = attempts_module._enqueue_invocation_job_in_transaction(
+            connection,
+            job_spec(),
+            now=persisted_timestamp(0),
+        )
+
+        self.assertEqual(queued.status, InvocationStatus.QUEUED)
+        self.assertTrue(connection.in_transaction)
+        connection.execute("ROLLBACK")
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM helper_uow_marker").fetchone()[0],
+            0,
+        )
+        self.assertIsNone(self.store.get("invocation-1"))
+
+    def test_transactional_enqueue_helper_is_idempotent_inside_caller_transaction(self):
+        connection = self.store._connection
+        connection.execute("BEGIN IMMEDIATE")
+        first = attempts_module._enqueue_invocation_job_in_transaction(
+            connection,
+            job_spec(),
+            now=persisted_timestamp(0),
+        )
+        retried = attempts_module._enqueue_invocation_job_in_transaction(
+            connection,
+            job_spec(invocation_id="retry-generated-id"),
+            now=persisted_timestamp(1),
+        )
+
+        self.assertEqual(retried, first)
+        self.assertEqual(retried.created_at, persisted_timestamp(0))
+        self.assertTrue(connection.in_transaction)
+        connection.execute("ROLLBACK")
+
+    def test_transactional_enqueue_helper_normalizes_its_caller_clock(self):
+        connection = self.store._connection
+        connection.execute("BEGIN IMMEDIATE")
+
+        queued = attempts_module._enqueue_invocation_job_in_transaction(
+            connection,
+            job_spec(available_at=persisted_timestamp(2)),
+            now="2025-12-31T16:00:00+00:00",
+        )
+
+        self.assertEqual(queued.created_at, "2025-12-31T16:00:00.000000Z")
+        self.assertEqual(queued.updated_at, queued.created_at)
+        self.assertEqual(queued.available_at, persisted_timestamp(2))
+        self.assertTrue(connection.in_transaction)
+        connection.execute("ROLLBACK")
+
+    def test_transactional_enqueue_helper_reports_conflict_without_ending_transaction(self):
+        connection = self.store._connection
+        connection.execute("BEGIN IMMEDIATE")
+        attempts_module._enqueue_invocation_job_in_transaction(
+            connection,
+            job_spec(),
+            now=persisted_timestamp(0),
+        )
+
+        with self.assertRaises(InvocationConflictError):
+            attempts_module._enqueue_invocation_job_in_transaction(
+                connection,
+                job_spec(agent_id="different-agent"),
+                now=persisted_timestamp(1),
+            )
+
+        self.assertTrue(connection.in_transaction)
+        connection.execute("ROLLBACK")
+        self.assertIsNone(self.store.get("invocation-1"))
+
     def test_claim_next_obeys_availability_then_priority(self):
         self.store.enqueue(
             job_spec(

@@ -866,6 +866,82 @@ class InvocationRecoverySnapshot:
     attempt_count: int
 
 
+def _enqueue_invocation_job_in_transaction(
+    connection: sqlite3.Connection,
+    spec: InvocationJobSpec,
+    *,
+    now: str,
+) -> InvocationJob:
+    """Enqueue using a caller-owned transaction and one caller-sampled ``now``.
+
+    Transaction begin/commit/rollback, connection locking, and clock sampling remain
+    the caller's responsibility so this primitive can join a wider SQLite unit of work.
+    The sampled timestamp is normalized before it reaches durable state.
+    """
+
+    normalized_now = _normalize_timestamp(now, "now")
+    available_at = _normalize_timestamp(spec.available_at or normalized_now, "available_at")
+    rows = connection.execute(
+        """
+        SELECT * FROM invocation_jobs
+        WHERE invocation_id = ?
+           OR (session_id = ? AND task_id = ?)
+           OR (session_id = ? AND idempotency_key = ?)
+        """,
+        (
+            spec.invocation_id,
+            spec.session_id,
+            spec.task_id,
+            spec.session_id,
+            spec.idempotency_key,
+        ),
+    ).fetchall()
+    if rows:
+        if len(rows) != 1 or not SQLiteInvocationAttemptStore._existing_matches(
+            rows[0], spec
+        ):
+            raise InvocationConflictError(
+                "invocation identity or idempotency key is already bound to different work"
+            )
+        return SQLiteInvocationAttemptStore._row_to_job(rows[0])
+    connection.execute(
+        """
+        INSERT INTO invocation_jobs (
+            invocation_id, session_id, plan_id, task_id, agent_id,
+            idempotency_key, payload_digest, priority, status,
+            max_attempts, attempts_started, lease_epoch,
+            requested_available_at, available_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, 0, ?, ?, ?, ?)
+        """,
+        (
+            spec.invocation_id,
+            spec.session_id,
+            spec.plan_id,
+            spec.task_id,
+            spec.agent_id,
+            spec.idempotency_key,
+            spec.payload_digest,
+            spec.priority,
+            spec.max_attempts,
+            (
+                _normalize_timestamp(spec.available_at, "available_at")
+                if spec.available_at is not None
+                else None
+            ),
+            available_at,
+            normalized_now,
+            normalized_now,
+        ),
+    )
+    row = connection.execute(
+        "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+        (spec.invocation_id,),
+    ).fetchone()
+    if row is None:  # pragma: no cover - protected by the caller's transaction.
+        raise RuntimeError("enqueued invocation disappeared")
+    return SQLiteInvocationAttemptStore._row_to_job(row)
+
+
 class SQLiteInvocationAttemptStore:
     """Durable invocation queue shared by process-local stores on one host.
 
@@ -1669,66 +1745,11 @@ class SQLiteInvocationAttemptStore:
 
         try:
             with self._transaction() as connection:
-                now = self._now()
-                available_at = _normalize_timestamp(spec.available_at or now, "available_at")
-                rows = connection.execute(
-                    """
-                    SELECT * FROM invocation_jobs
-                    WHERE invocation_id = ?
-                       OR (session_id = ? AND task_id = ?)
-                       OR (session_id = ? AND idempotency_key = ?)
-                    """,
-                    (
-                        spec.invocation_id,
-                        spec.session_id,
-                        spec.task_id,
-                        spec.session_id,
-                        spec.idempotency_key,
-                    ),
-                ).fetchall()
-                if rows:
-                    if len(rows) != 1 or not self._existing_matches(rows[0], spec):
-                        raise InvocationConflictError(
-                            "invocation identity or idempotency key is already bound "
-                            "to different work"
-                        )
-                    return self._row_to_job(rows[0])
-                connection.execute(
-                    """
-                    INSERT INTO invocation_jobs (
-                        invocation_id, session_id, plan_id, task_id, agent_id,
-                        idempotency_key, payload_digest, priority, status,
-                        max_attempts, attempts_started, lease_epoch,
-                        requested_available_at, available_at, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, 0, ?, ?, ?, ?)
-                    """,
-                    (
-                        spec.invocation_id,
-                        spec.session_id,
-                        spec.plan_id,
-                        spec.task_id,
-                        spec.agent_id,
-                        spec.idempotency_key,
-                        spec.payload_digest,
-                        spec.priority,
-                        spec.max_attempts,
-                        (
-                            _normalize_timestamp(spec.available_at, "available_at")
-                            if spec.available_at is not None
-                            else None
-                        ),
-                        available_at,
-                        now,
-                        now,
-                    ),
+                return _enqueue_invocation_job_in_transaction(
+                    connection,
+                    spec,
+                    now=self._now(),
                 )
-                row = connection.execute(
-                    "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
-                    (spec.invocation_id,),
-                ).fetchone()
-                if row is None:  # pragma: no cover - protected by the transaction.
-                    raise RuntimeError("enqueued invocation disappeared")
-                return self._row_to_job(row)
         except _CommitOutcomeUnknown as error:
             if not self._trusted_commit_error(error) or not error.may_reconcile:
                 self._unreconciled_commit(error)
