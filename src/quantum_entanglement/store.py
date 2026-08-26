@@ -3887,6 +3887,88 @@ class SQLiteEventStore:
             raise
         return result
 
+    @_sanitize_invocation_start_controls
+    @_bind_event_store_process
+    def read_scoped_invocation_start_v3(
+        self,
+        tenant_id: str,
+        workspace_id: str,
+        invocation_id: str,
+    ) -> Optional[ScopedInvocationStartObservedV3]:
+        """Return a capability-free scoped observation of one schema-3 start.
+
+        A well-formed invocation owned by a different requested scope is indistinguishable
+        from an unknown invocation. Legacy unscoped or contradictory durable state fails closed.
+        """
+
+        tenant_id_snapshot = _caller_invocation_identity(tenant_id, "tenant_id")
+        workspace_id_snapshot = _caller_invocation_identity(workspace_id, "workspace_id")
+        invocation_id_snapshot = _caller_invocation_identity(
+            invocation_id,
+            "invocation_id",
+        )
+        self._require_current_process()
+        result: Optional[ScopedInvocationStartObservedV3] = None
+        completed_body = False
+        try:
+            with self._transaction(classify_admission=True) as connection:
+                readback = self._read_scoped_invocation_start_in_transaction(
+                    connection,
+                    invocation_id_snapshot,
+                )
+                if readback is not None and (
+                    readback.request.manifest.tenant_id == tenant_id_snapshot
+                    and readback.request.manifest.workspace_id == workspace_id_snapshot
+                ):
+                    try:
+                        result = ScopedInvocationStartObservedV3(readback.receipt)
+                    except (TypeError, ValueError):
+                        raise InvocationStartConflictError() from None
+                completed_body = True
+        except _EventStoreAdmissionTransactionSignal as error:
+            classified = _take_classified_event_store_transaction_signal(error)
+            if classified is None:
+                raise
+            outcome, control = classified
+            if control is not None:
+                raise _EventStoreStartControlSignal(
+                    control,
+                    ambiguity=outcome == "ambiguous",
+                    token=_EVENT_STORE_START_CONTROL_TOKEN,
+                ) from None
+            raise _EventStoreStartErrorSignal(
+                "transaction" if outcome == "rolled_back" else "ambiguous",
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
+        except sqlite3.Error as error:
+            _detach_exception(error)
+            if completed_body:
+                self._poisoned = True
+                kind = "ambiguous"
+            else:
+                kind = "transaction"
+            raise _EventStoreStartErrorSignal(
+                kind,
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
+        except BaseException as error:
+            if completed_body and self._process_is_current():
+                descriptor = _event_store_control_descriptor(error)
+                self._poisoned = True
+                _detach_exception(error)
+                if descriptor is not None:
+                    raise _EventStoreStartControlSignal(
+                        descriptor,
+                        ambiguity=True,
+                        token=_EVENT_STORE_START_CONTROL_TOKEN,
+                    ) from None
+                raise _EventStoreStartErrorSignal(
+                    "ambiguous",
+                    token=_EVENT_STORE_START_CONTROL_TOKEN,
+                ) from None
+            raise
+        return result
+
     @_bind_event_store_process
     def read_stream(self, stream_id: str, after_sequence: int = 0) -> Tuple[StoredEvent, ...]:
         stream_id_snapshot = _caller_text(stream_id, "stream_id")
