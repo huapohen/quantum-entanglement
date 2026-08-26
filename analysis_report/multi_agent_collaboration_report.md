@@ -823,6 +823,8 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
   `screenshots/14_model_backed_custom_instruction_gpt.png`
 - `screenshots/15_clawith_homepage_positioning.png` 至
   `screenshots/19_clawith_docs_introduction.png`
+- `screenshots/20_clawith_pricing_20260827.png` 至
+  `screenshots/25_clawith_plaza_legacy_docs_20260827.png`
 
 一手外部协议来源见 `research/03_protocol_landscape.md` 第 12 节；框架源码路径和固定 commit 见 `research/02_framework_deepdive.md`。
 
