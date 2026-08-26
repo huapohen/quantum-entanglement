@@ -857,6 +857,10 @@ _InvocationStartState = Union[  # noqa: UP007 -- strict Python 3.9 mypy gate.
     _InvocationStartAdmission,
     _InvocationStartReadback,
 ]
+_InvocationStartResult = Union[  # noqa: UP007 -- strict Python 3.9 mypy gate.
+    InvocationStartClaimed,
+    InvocationStartObserved,
+]
 
 
 @dataclass(frozen=True)
@@ -2210,7 +2214,7 @@ class SQLiteEventStore:
         *,
         lease_seconds: float,
         expected_version: int,
-    ) -> Union[InvocationStartClaimed, InvocationStartObserved]:  # noqa: UP007
+    ) -> _InvocationStartResult:
         """Mint and persist first-start authority, or observe an existing receipt."""
 
         state = self._load_invocation_start_in_transaction(connection, invocation_id)
@@ -3404,6 +3408,98 @@ class SQLiteEventStore:
             spec,
             expected_version=expected_version_snapshot,
         )
+
+    @_sanitize_invocation_start_controls
+    @_bind_event_store_process
+    def claim_invocation_start(
+        self,
+        invocation_id: str,
+        worker_id: str,
+        *,
+        lease_seconds: float,
+        expected_version: int,
+    ) -> _InvocationStartResult:
+        """Atomically mint one first-start lease or return a receipt-only replay.
+
+        Plaintext lease authority is returned only after the transaction that created
+        its attempt and schema-2 start event receives a normal COMMIT acknowledgement.
+        Any ambiguous exit poisons this store instance; reconciliation after reopen can
+        produce only :class:`InvocationStartObserved`.
+        """
+
+        invocation_id_snapshot = _caller_invocation_identity(
+            invocation_id,
+            "invocation_id",
+        )
+        worker_id_snapshot = _caller_invocation_identity(worker_id, "worker_id")
+        lease_seconds_snapshot = _caller_number(
+            lease_seconds,
+            "lease_seconds",
+            positive=True,
+        )
+        expected_version_snapshot = _caller_sqlite_integer(
+            expected_version,
+            "expected_version",
+            minimum=0,
+        )
+        self._require_current_process()
+        result: Optional[_InvocationStartResult] = None
+        completed_body = False
+        try:
+            with self._transaction(classify_admission=True) as connection:
+                result = self._claim_invocation_start_in_transaction(
+                    connection,
+                    invocation_id_snapshot,
+                    worker_id_snapshot,
+                    lease_seconds=lease_seconds_snapshot,
+                    expected_version=expected_version_snapshot,
+                )
+                completed_body = True
+        except _EventStoreAdmissionTransactionSignal as error:
+            classified = _take_classified_event_store_transaction_signal(error)
+            if classified is None:
+                raise
+            outcome, control = classified
+            if control is not None:
+                raise _EventStoreStartControlSignal(
+                    control,
+                    ambiguity=outcome == "ambiguous",
+                    token=_EVENT_STORE_START_CONTROL_TOKEN,
+                ) from None
+            raise _EventStoreStartErrorSignal(
+                "transaction" if outcome == "rolled_back" else "ambiguous",
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
+        except sqlite3.Error as error:
+            _detach_exception(error)
+            if completed_body:
+                self._poisoned = True
+                kind = "ambiguous"
+            else:
+                kind = "transaction"
+            raise _EventStoreStartErrorSignal(
+                kind,
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
+        except BaseException as error:
+            if completed_body and self._process_is_current():
+                descriptor = _event_store_control_descriptor(error)
+                self._poisoned = True
+                _detach_exception(error)
+                if descriptor is not None:
+                    raise _EventStoreStartControlSignal(
+                        descriptor,
+                        ambiguity=True,
+                        token=_EVENT_STORE_START_CONTROL_TOKEN,
+                    ) from None
+                raise _EventStoreStartErrorSignal(
+                    "ambiguous",
+                    token=_EVENT_STORE_START_CONTROL_TOKEN,
+                ) from None
+            raise
+        if result is None:  # pragma: no cover - every completed body assigns a result.
+            raise RuntimeError("invocation start completed without a result")
+        return result
 
     @_sanitize_invocation_start_controls
     @_bind_event_store_process
