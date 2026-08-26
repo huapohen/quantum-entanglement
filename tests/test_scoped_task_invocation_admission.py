@@ -13,6 +13,8 @@ from quantum_entanglement.invocation_execution import (
     TASK_STATUS_CHANGED_EVENT_TYPE,
     InvocationExecutionManifest,
     ScopedInvocationExecutionManifestV2,
+    ScopedInvocationStartClaimedV3,
+    ScopedInvocationStartObservedV3,
     ScopedTaskInvocationAdmissionRequestV2,
     TaskInvocationAdmissionRequest,
     build_scoped_task_invocation_admission_request_v2,
@@ -287,6 +289,164 @@ class ScopedTaskInvocationAdmissionStoreTests(unittest.TestCase):
             )
 
         self.assertEqual(table_counts(self.store), (2, 1, 1, 0))
+
+    def test_scoped_first_claim_commits_attempt_and_schema3_start_atomically(self) -> None:
+        request = scoped_request()
+        self.store.append_scoped_task_invocation_admission_v2(
+            request,
+            expected_version=0,
+        )
+        self.store._clock = lambda: CLAIMED_AT
+
+        result = self.store.claim_scoped_invocation_start_v3(
+            request.manifest.tenant_id,
+            request.manifest.workspace_id,
+            request.manifest.invocation_id,
+            "worker-scoped-store-1",
+            lease_seconds=60,
+            expected_version=2,
+        )
+
+        self.assertIs(type(result), ScopedInvocationStartClaimedV3)
+        claimed = cast(ScopedInvocationStartClaimedV3, result)
+        self.assertEqual(table_counts(self.store), (3, 1, 1, 1))
+        self.assertEqual(claimed.receipt.sequence, 3)
+        self.assertEqual(claimed.receipt.evidence.schema_version, 3)
+        self.assertEqual(claimed.receipt.evidence.tenant_id, request.manifest.tenant_id)
+        self.assertEqual(
+            claimed.receipt.evidence.workspace_id,
+            request.manifest.workspace_id,
+        )
+        self.assertEqual(
+            claimed.receipt.evidence.manifest_digest,
+            request.manifest.canonical_digest(),
+        )
+        self.assertEqual(claimed.lease.attempt_id, claimed.receipt.evidence.attempt_id)
+        self.assertNotIn(claimed.lease.lease_token, repr(claimed))
+
+    def test_scoped_claim_replay_returns_observation_without_lease(self) -> None:
+        request = scoped_request()
+        self.store.append_scoped_task_invocation_admission_v2(
+            request,
+            expected_version=0,
+        )
+        self.store._clock = lambda: CLAIMED_AT
+        first = self.store.claim_scoped_invocation_start_v3(
+            request.manifest.tenant_id,
+            request.manifest.workspace_id,
+            request.manifest.invocation_id,
+            "worker-scoped-store-1",
+            lease_seconds=60,
+            expected_version=2,
+        )
+
+        replay = self.store.claim_scoped_invocation_start_v3(
+            request.manifest.tenant_id,
+            request.manifest.workspace_id,
+            request.manifest.invocation_id,
+            "worker-scoped-store-other",
+            lease_seconds=60,
+            expected_version=2,
+        )
+
+        self.assertIs(type(first), ScopedInvocationStartClaimedV3)
+        self.assertIs(type(replay), ScopedInvocationStartObservedV3)
+        self.assertEqual(replay.receipt, first.receipt)
+        self.assertFalse(hasattr(replay, "lease"))
+        self.assertEqual(table_counts(self.store), (3, 1, 1, 1))
+
+    def test_scoped_read_is_capability_free_and_wrong_scope_is_not_found(self) -> None:
+        request = scoped_request()
+        self.assertIsNone(
+            self.store.read_scoped_invocation_start_v3(
+                request.manifest.tenant_id,
+                request.manifest.workspace_id,
+                request.manifest.invocation_id,
+            )
+        )
+        self.store.append_scoped_task_invocation_admission_v2(
+            request,
+            expected_version=0,
+        )
+        self.assertIsNone(
+            self.store.read_scoped_invocation_start_v3(
+                request.manifest.tenant_id,
+                request.manifest.workspace_id,
+                request.manifest.invocation_id,
+            )
+        )
+        self.store._clock = lambda: CLAIMED_AT
+        claimed = self.store.claim_scoped_invocation_start_v3(
+            request.manifest.tenant_id,
+            request.manifest.workspace_id,
+            request.manifest.invocation_id,
+            "worker-scoped-store-1",
+            lease_seconds=60,
+            expected_version=2,
+        )
+
+        observed = self.store.read_scoped_invocation_start_v3(
+            request.manifest.tenant_id,
+            request.manifest.workspace_id,
+            request.manifest.invocation_id,
+        )
+        wrong_tenant = self.store.read_scoped_invocation_start_v3(
+            "tenant-other",
+            request.manifest.workspace_id,
+            request.manifest.invocation_id,
+        )
+        wrong_workspace = self.store.read_scoped_invocation_start_v3(
+            request.manifest.tenant_id,
+            "workspace-other",
+            request.manifest.invocation_id,
+        )
+
+        self.assertIs(type(observed), ScopedInvocationStartObservedV3)
+        self.assertEqual(observed.receipt, claimed.receipt)
+        self.assertFalse(hasattr(observed, "lease"))
+        self.assertIsNone(wrong_tenant)
+        self.assertIsNone(wrong_workspace)
+
+    def test_reopen_can_observe_but_never_reissue_scoped_lease(self) -> None:
+        request = scoped_request()
+        self.store.append_scoped_task_invocation_admission_v2(
+            request,
+            expected_version=0,
+        )
+        self.store._clock = lambda: CLAIMED_AT
+        claimed = self.store.claim_scoped_invocation_start_v3(
+            request.manifest.tenant_id,
+            request.manifest.workspace_id,
+            request.manifest.invocation_id,
+            "worker-scoped-store-1",
+            lease_seconds=60,
+            expected_version=2,
+        )
+        self.store.close()
+
+        reopened = SQLiteEventStore(self.path, clock=lambda: CLAIMED_AT)
+        try:
+            observed = reopened.read_scoped_invocation_start_v3(
+                request.manifest.tenant_id,
+                request.manifest.workspace_id,
+                request.manifest.invocation_id,
+            )
+            replay = reopened.claim_scoped_invocation_start_v3(
+                request.manifest.tenant_id,
+                request.manifest.workspace_id,
+                request.manifest.invocation_id,
+                "worker-scoped-store-other",
+                lease_seconds=60,
+                expected_version=2,
+            )
+        finally:
+            reopened.close()
+
+        self.assertIs(type(observed), ScopedInvocationStartObservedV3)
+        self.assertIs(type(replay), ScopedInvocationStartObservedV3)
+        self.assertEqual(observed.receipt, claimed.receipt)
+        self.assertEqual(replay.receipt, claimed.receipt)
+        self.assertFalse(hasattr(replay, "lease"))
 
 
 if __name__ == "__main__":  # pragma: no cover
