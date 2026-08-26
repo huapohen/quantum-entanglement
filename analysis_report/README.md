@@ -38,14 +38,15 @@
 | `research/15_event_store_process_boundary_audit.md` | 接入前设计审计 | `SQLiteEventStore` 的 26 个公开/生命周期入口、exact SQL snapshot、资源创建进程专属 cleanup、clean-error trampoline、iterator fork 缝隙、fresh-connection 测试与 13 提交接入序列；尚未改变 store 行为 |
 | `research/16_event_store_process_binding_implementation.md` | 独立复核通过的单组件候选 | `SQLiteEventStore` 全入口 process binding、exact SQL snapshot、完整 inherited graph quarantine、transaction/migration/constructor/context owner cleanup、nested clean error、child GC/finalizer 与 fork/spawn/forkserver fresh CAS；独立 P0–P3 均为 0，三版本 928-test checkpoint，Gate A–E 保持关闭 |
 | `research/17_current_stage_integration_evidence.md` | 当前阶段组合证据 | Backup-v2、Event-store、Authorization 与本地产品试用的绿色历史集成；三版本 1106-test full gate、四组 focused gate、静态/依赖/截图/浏览器证据、启动入口与 Gate A–E NO-GO 边界 |
+| `research/18_model_backed_custom_instruction_evidence.md` | 当前模型产品证据：`886aedc` | 任意自定义指令、GPT `gpt-5.6-sol`、三 Agent DAG、三段 narration、三个 Markdown Artifact、25-event 浏览器验收、凭据/HTTP/Harness 边界与下一 crash-safe 里程碑 |
 
 ## 已归档截图
 
 完整 SHA-256、尺寸、来源、证据等级和隐私边界见
 [`screenshots/README.md`](screenshots/README.md) 与
 [`screenshots/manifest.json`](screenshots/manifest.json)。前十张图是受限、未脱敏原件，只能
-进入本项目私有仓库和用户私有知识库，不得公开分发；后四张是合成本地产品 UI，仍按项目内部
-证据管理。
+进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地产品 UI，第 14
+张是真实模型测试输出，全部仍按项目内部证据管理。
 
 | 文件 | 内容 | 采集方式 |
 |---|---|---|
@@ -63,6 +64,7 @@
 | `screenshots/11_local_trial_desktop_complete.png` | 3 Artifact / 25 event 桌面完成态 | Playwright loopback 运行证据 |
 | `screenshots/12_local_trial_mobile_complete.png` | 390×844 移动端完成态 | Playwright loopback 运行证据 |
 | `screenshots/13_local_trial_architecture_diagrams.png` | 产品架构、执行时序、平台状态图 | Playwright loopback 运行证据 |
+| `screenshots/14_model_backed_custom_instruction_gpt.png` | GPT 自定义指令三 Agent 全页完成态 | Playwright loopback 真实模型运行证据 |
 
 ## 数据安全
 
