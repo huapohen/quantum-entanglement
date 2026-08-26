@@ -398,6 +398,45 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
         self.assertEqual(calls.count("id:evt"), 1)
         self.assertEqual(calls.count("token:32"), 1)
 
+    def test_claim_rejects_noncanonical_lease_numbers_before_any_provider(self) -> None:
+        request = canonical_request()
+        self.store.append_task_invocation_admission(request, expected_version=0)
+        invalid_values = (True, "60", 0, -1, float("inf"), float("nan"), 10**400)
+
+        for value in invalid_values:
+            with (
+                self.subTest(value_type=type(value).__name__),
+                patch.object(
+                    self.store,
+                    "_now",
+                    side_effect=AssertionError("clock must not run"),
+                ),
+                patch.object(
+                    store_module,
+                    "new_id",
+                    side_effect=AssertionError("ID provider must not run"),
+                ),
+                patch(
+                    "quantum_entanglement.store.secrets.token_urlsafe",
+                    side_effect=AssertionError("token provider must not run"),
+                ),
+            ):
+                with self.assertRaises((TypeError, ValueError)):
+                    self.store.claim_invocation_start(
+                        request.manifest.invocation_id,
+                        "worker-start-store-1",
+                        lease_seconds=cast(float, value),
+                        expected_version=2,
+                    )
+
+        self.assertEqual(self.store.stream_version(request.stream_id), 2)
+        self.assertEqual(
+            self.store._connection.execute("SELECT COUNT(*) FROM invocation_attempts").fetchone()[
+                0
+            ],
+            0,
+        )
+
     def test_valid_start_is_observed_without_plaintext_lease_authority(self) -> None:
         request, lease, stored = seed_valid_start(self.store, self.path)
 
