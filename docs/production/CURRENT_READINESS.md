@@ -308,15 +308,18 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
 1. 先冻结 process model：为 issuer/authorization 与核心 store 建立 pre-lock PID/epoch fence，并把
    credential-bearing/untrusted worker 固定为 spawn/exec-before-secret-load composition；
 2. 在已完成 event/job/receipt atomic admission 与 claim + attempt + schema-2 start event + readback
-   统一 UoW 之上，实现 heartbeat-supervised pure/fake worker，再把 accepted result/artifact 和
-   terminal state 组成可崩溃协调的状态机；没有 result receipt 时绝不把 succeeded job 猜成
-   completed；
-3. 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；
-4. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
-5. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
-6. 实现 authenticated loopback API、transactional command receipt、stream、health 和 SIGTERM；
-7. 完成单节点部署、upgrade/rollback、restore/non-emitting reconcile 和 clean-host evidence；
-8. 通过 Gate C 后再推进 capacity/OTel/isolation/PostgreSQL/HA/DR。
+   统一 UoW 之上，已冻结默认关闭的
+   [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)；下一步先把 accepted
+   result/artifact、attempt 和 terminal task state 组成单一原子验收边界，没有 result receipt 时
+   绝不把 succeeded job 猜成 completed；
+3. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
+   heartbeat-supervised pure/fake worker；
+4. 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；
+5. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
+6. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
+7. 实现 authenticated loopback API、transactional command receipt、stream、health 和 SIGTERM；
+8. 完成单节点部署、upgrade/rollback、restore/non-emitting reconcile 和 clean-host evidence；
+9. 通过 Gate C 后再推进 capacity/OTel/isolation/PostgreSQL/HA/DR。
 
 每个独立行为及其测试单独提交；每阶段都有运行命令、失败边界、兼容/迁移、回退和证据文档。
 默认分支每次提交后保持可运行，但“可运行”不等于“可生产晋级”。

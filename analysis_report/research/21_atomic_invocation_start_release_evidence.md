@@ -362,9 +362,10 @@ canonical v4 admission already committed
 
 ```text
 atomic first-claim/start（本组件已完成）
-  → heartbeat-supervised pure/fake worker
+  → 默认关闭的 heartbeat worker 合同与 authority validator（已冻结，dispatch 未开放）
   → atomic Artifact/result/attempt/task terminal acceptance
   → receipt-bound crash/kill recovery
+  → 启用 heartbeat-supervised pure/fake worker
   → durable action receipt + effect_unknown reconcile
   → Gate A tenant/auth/redaction/sandbox
   → Gate B authenticated API/stream/lifecycle/fake E2E
@@ -372,6 +373,10 @@ atomic first-claim/start（本组件已完成）
   → Gate D quota/OTel/isolation/security/capacity/soak
   → Gate E PostgreSQL/HA/Kubernetes/continuous DR
 ```
+
+不能把 “worker 先跑起来” 理解成先调用 handler。若 atomic acceptance 尚未存在，handler 返回后
+只有内存结果和 durable RUNNING attempt，崩溃恢复无法证明 completion。当前默认关闭合同见
+[`HEARTBEAT_SUPERVISED_PURE_WORKER.md`](../../docs/production/HEARTBEAT_SUPERVISED_PURE_WORKER.md)。
 
 只有每一阶段的新 source candidate 重新通过对应 Python/OS/SQLite、fault/process、package 和
 source-bound evidence 后，才能提升该阶段状态。当前 Gate A–E 全部保持关闭。

@@ -335,11 +335,17 @@ The required next order is:
 
 ```text
 canonical semantic admission + atomic start
-  -> heartbeat-supervised pure/fake worker
+  -> freeze a default-off heartbeat worker contract
   -> atomic Artifact/result/attempt/terminal acceptance
   -> receipt-bound recovery and reconciliation
+  -> enable the heartbeat-supervised pure/fake worker
   -> action receipts and real connectors
 ```
+
+The default-off contract is now frozen in
+[`HEARTBEAT_SUPERVISED_PURE_WORKER.md`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md). Enabling dispatch
+before result acceptance would leave an in-memory handler result beside a durable RUNNING attempt,
+with no atomic completion proof after a crash. The gate therefore remains mechanically disabled.
 
 Real connectors remain prohibited until the final action-receipt boundary exists. In particular,
 no Feishu or WeCom person, group, bot or webhook may be used as a test target.
