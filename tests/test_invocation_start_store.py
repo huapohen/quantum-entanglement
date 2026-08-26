@@ -388,6 +388,87 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
         with self.assertRaises(InvocationStartConflictError):
             self.store.read_invocation_start(request.manifest.invocation_id)
 
+    def test_database_wide_wrong_stream_start_markers_block_authority_minting(self) -> None:
+        request = canonical_request()
+        cases: tuple[tuple[str, str, str, dict[str, object]], ...] = (
+            (
+                "payload-match",
+                TASK_INVOCATION_STARTED_EVENT_TYPE,
+                "unrelated-start-key",
+                {"invocationId": request.manifest.invocation_id},
+            ),
+            (
+                "canonical-key",
+                "legacy.start.marker",
+                f"invocation-start:{request.manifest.invocation_id}:1",
+                {},
+            ),
+            (
+                "legacy-key",
+                "legacy.start.marker",
+                f"invocation-started:{request.manifest.task_id}",
+                {},
+            ),
+        )
+        for label, event_type, idempotency_key, payload in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                path = str(Path(directory) / "state.sqlite3")
+                store = SQLiteEventStore(path, clock=lambda: ADMITTED_AT)
+                try:
+                    store.append_task_invocation_admission(request, expected_version=0)
+                    store.append(
+                        DomainEvent(
+                            stream_id=f"session:wrong-{label}",
+                            event_type=event_type,
+                            payload=payload,
+                            actor_id="forged-worker",
+                            event_id=f"wrong-stream-start-{label}",
+                            timestamp=CLAIMED_AT,
+                            correlation_id=request.manifest.correlation_id,
+                            causation_id=request.manifest.causation_id,
+                            idempotency_key=idempotency_key,
+                        ),
+                        expected_version=0,
+                    )
+                    with (
+                        patch.object(
+                            store,
+                            "_now",
+                            side_effect=AssertionError("clock must not run"),
+                        ),
+                        patch.object(
+                            store_module,
+                            "new_id",
+                            side_effect=AssertionError("ID provider must not run"),
+                        ),
+                        patch(
+                            "quantum_entanglement.store.secrets.token_urlsafe",
+                            side_effect=AssertionError("token provider must not run"),
+                        ),
+                    ):
+                        with self.assertRaises(InvocationStartConflictError):
+                            store.claim_invocation_start(
+                                request.manifest.invocation_id,
+                                "worker-start-store-1",
+                                lease_seconds=60,
+                                expected_version=2,
+                            )
+                    self.assertEqual(
+                        store._connection.execute(
+                            "SELECT status FROM invocation_jobs WHERE invocation_id = ?",
+                            (request.manifest.invocation_id,),
+                        ).fetchone()[0],
+                        "queued",
+                    )
+                    self.assertEqual(
+                        store._connection.execute(
+                            "SELECT COUNT(*) FROM invocation_attempts"
+                        ).fetchone()[0],
+                        0,
+                    )
+                finally:
+                    store.close()
+
     def test_legacy_runtime_start_is_never_upgraded_to_schema_two(self) -> None:
         request = canonical_request()
         self.store.append_task_invocation_admission(request, expected_version=0)
