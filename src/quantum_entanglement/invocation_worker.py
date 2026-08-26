@@ -19,6 +19,8 @@ from .invocation_execution import (
     InvocationExecutionManifest,
     InvocationStartClaimed,
     RetryClass,
+    ScopedInvocationExecutionManifestV2,
+    ScopedInvocationStartClaimedV3,
 )
 
 
@@ -175,6 +177,98 @@ class InvocationWorkerAdmission:
         object.__setattr__(self, "configuration", configuration)
         object.__setattr__(self, "handler_revision", handler_revision)
 
+    @property
+    def promotion_eligible(self) -> bool:
+        """Legacy unscoped start evidence can never enable production dispatch."""
+
+        return False
+
+
+def _scoped_manifest_snapshot(manifest: object) -> ScopedInvocationExecutionManifestV2:
+    if type(manifest) is not ScopedInvocationExecutionManifestV2:
+        raise TypeError("manifest must be an exact ScopedInvocationExecutionManifestV2")
+    return ScopedInvocationExecutionManifestV2.from_dict(manifest.to_dict())
+
+
+def _scoped_claim_snapshot(claim: object) -> ScopedInvocationStartClaimedV3:
+    if type(claim) is not ScopedInvocationStartClaimedV3:
+        raise TypeError("claim must be an exact ScopedInvocationStartClaimedV3")
+    return ScopedInvocationStartClaimedV3(claim.receipt, claim.lease)
+
+
+def _validate_scoped_manifest_start_binding(
+    manifest: ScopedInvocationExecutionManifestV2,
+    claim: ScopedInvocationStartClaimedV3,
+) -> None:
+    evidence = claim.receipt.evidence
+    bindings = (
+        (manifest.tenant_id, evidence.tenant_id),
+        (manifest.workspace_id, evidence.workspace_id),
+        (manifest.invocation_id, evidence.invocation_id),
+        (manifest.session_id, evidence.session_id),
+        (manifest.plan_id, evidence.plan_id),
+        (manifest.task_id, evidence.task_id),
+        (manifest.agent_id, evidence.agent_id),
+        (manifest.job_idempotency_key, evidence.job_idempotency_key),
+        (manifest.envelope_digest, evidence.envelope_digest),
+        (manifest.context_digest, evidence.context_digest),
+        (manifest.authorization_digest, evidence.authorization_digest),
+        (manifest.runtime_revision, evidence.runtime_revision),
+        (manifest.correlation_id, evidence.correlation_id),
+        (manifest.causation_id, evidence.causation_id),
+    )
+    if any(actual != expected for actual, expected in bindings):
+        raise ValueError("scoped manifest does not match schema-3 start evidence")
+    manifest_digest = manifest.canonical_digest()
+    if manifest_digest != evidence.manifest_digest or manifest_digest != claim.lease.payload_digest:
+        raise ValueError("scoped manifest digest does not match schema-3 start authority")
+    if manifest.effect_class is not EffectClass.PURE:
+        raise ValueError("scoped heartbeat worker accepts only effectClass=pure")
+    if manifest.retry_class is not RetryClass.NEVER:
+        raise ValueError("scoped heartbeat worker accepts only retryClass=never")
+    if evidence.attempt_number != 1 or evidence.lease_epoch != 1 or claim.lease.max_attempts != 1:
+        raise ValueError("scoped heartbeat worker accepts only first-attempt authority")
+
+
+@dataclass(frozen=True)
+class ScopedInvocationWorkerAdmissionV3:
+    """Scope-bearing capability snapshot prepared behind the disabled dispatch gate."""
+
+    claim: ScopedInvocationStartClaimedV3 = field(repr=False)
+    manifest: ScopedInvocationExecutionManifestV2
+    configuration: InvocationWorkerConfiguration
+    handler_revision: str
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationWorkerAdmissionV3:
+            raise TypeError(
+                "scoped worker admission must be exact ScopedInvocationWorkerAdmissionV3"
+            )
+        claim = _scoped_claim_snapshot(self.claim)
+        manifest = _scoped_manifest_snapshot(self.manifest)
+        if type(self.configuration) is not InvocationWorkerConfiguration:
+            raise TypeError("configuration must be an exact InvocationWorkerConfiguration")
+        configuration = InvocationWorkerConfiguration(
+            lease_seconds=self.configuration.lease_seconds,
+            heartbeat_interval_seconds=self.configuration.heartbeat_interval_seconds,
+            handler_timeout_seconds=self.configuration.handler_timeout_seconds,
+            drain_timeout_seconds=self.configuration.drain_timeout_seconds,
+        )
+        handler_revision = _revision(self.handler_revision)
+        _validate_scoped_manifest_start_binding(manifest, claim)
+        if handler_revision != manifest.runtime_revision:
+            raise ValueError("handler revision does not match the scoped runtime revision")
+        object.__setattr__(self, "claim", claim)
+        object.__setattr__(self, "manifest", manifest)
+        object.__setattr__(self, "configuration", configuration)
+        object.__setattr__(self, "handler_revision", handler_revision)
+
+    @property
+    def promotion_eligible(self) -> bool:
+        """Scope is necessary, but the result/recovery prerequisites are still absent."""
+
+        return False
+
 
 async def _disabled_dispatch() -> NoReturn:
     """Raise from an argument-free frame so caller work cannot enter the exception graph."""
@@ -204,6 +298,23 @@ class HeartbeatPureWorkerGate:
             handler_revision=handler_revision,
         )
 
+    @staticmethod
+    def prepare_scoped_v3(
+        claim: ScopedInvocationStartClaimedV3,
+        manifest: ScopedInvocationExecutionManifestV2,
+        configuration: InvocationWorkerConfiguration,
+        *,
+        handler_revision: str,
+    ) -> ScopedInvocationWorkerAdmissionV3:
+        """Validate scoped authority without making dispatch reachable."""
+
+        return ScopedInvocationWorkerAdmissionV3(
+            claim=claim,
+            manifest=manifest,
+            configuration=configuration,
+            handler_revision=handler_revision,
+        )
+
     def dispatch(self, _admission: object, _handler: object) -> Awaitable[NoReturn]:
         """Return a coroutine that always fails before inspecting caller-owned work."""
 
@@ -215,4 +326,5 @@ __all__ = [
     "InvocationWorkerAdmission",
     "InvocationWorkerConfiguration",
     "InvocationWorkerDisabledError",
+    "ScopedInvocationWorkerAdmissionV3",
 ]
