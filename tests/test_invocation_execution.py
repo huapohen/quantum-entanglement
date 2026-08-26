@@ -2,24 +2,33 @@ import copy
 import hashlib
 import json
 import unittest
-from dataclasses import FrozenInstanceError, fields
-from typing import Any
+from dataclasses import FrozenInstanceError, fields, replace
+from typing import Any, cast
 
+from quantum_entanglement.events import DomainEvent
 from quantum_entanglement.invocation_execution import (
+    CANONICAL_ORCHESTRATOR_ACTOR_ID,
     INVOCATION_EXECUTION_MANIFEST_DOMAIN,
     TASK_EXECUTION_REQUESTED_EVENT_TYPE,
     TASK_INVOCATION_STARTED_EVENT_TYPE,
+    TASK_STATUS_CHANGED_EVENT_TYPE,
     EffectClass,
     InvocationExecutionManifest,
     InvocationStartEvidenceV2,
     RetryClass,
+    TaskInvocationAdmissionRequest,
+    build_task_invocation_admission_request,
 )
+from quantum_entanglement.protocol import TaskStatus
+from quantum_entanglement.scheduler import TaskTransition
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
 SHA_C = "c" * 64
 SHA_D = "d" * 64
 SHA_E = "e" * 64
+EVENT_TIME_A = "2026-08-27T01:02:03.000004Z"
+EVENT_TIME_B = "2026-08-27T01:02:03.000005Z"
 
 
 class DictSubclass(dict[str, Any]):
@@ -53,6 +62,25 @@ def valid_manifest_dict() -> dict[str, Any]:
 
 def valid_manifest() -> InvocationExecutionManifest:
     return InvocationExecutionManifest.from_dict(valid_manifest_dict())
+
+
+def valid_admission_request() -> TaskInvocationAdmissionRequest:
+    manifest = valid_manifest()
+    return build_task_invocation_admission_request(
+        manifest,
+        TaskTransition(
+            task_id=manifest.task_id,
+            previous=TaskStatus.READY,
+            current=TaskStatus.RUNNING,
+            reason=None,
+            revision=manifest.task_revision,
+        ),
+        execution_requested_event_id="event-execution-requested",
+        execution_requested_timestamp=EVENT_TIME_A,
+        task_running_event_id="event-task-running",
+        task_running_timestamp=EVENT_TIME_B,
+        job_priority=73,
+    )
 
 
 def valid_start_dict() -> dict[str, Any]:
@@ -268,6 +296,277 @@ class InvocationExecutionManifestTests(unittest.TestCase):
             manifest.to_dict()
         with self.assertRaises(TypeError):
             manifest.canonical_digest()
+
+
+class TaskInvocationAdmissionRequestTests(unittest.TestCase):
+    def test_builder_constructs_exact_ordered_events_and_manifest_bound_job(self) -> None:
+        request = valid_admission_request()
+        events, job = request.components()
+        manifest = request.manifest
+
+        self.assertEqual(
+            [event.event_type for event in events],
+            [TASK_EXECUTION_REQUESTED_EVENT_TYPE, TASK_STATUS_CHANGED_EVENT_TYPE],
+        )
+        self.assertEqual(events[0].payload, manifest.to_dict())
+        self.assertEqual(
+            events[1].payload,
+            {
+                "taskId": manifest.task_id,
+                "previous": "ready",
+                "current": "running",
+                "reason": None,
+                "revision": manifest.task_revision,
+            },
+        )
+        self.assertEqual(events[0].payload["schemaVersion"], 1)
+        self.assertEqual(request.stream_id, "session:" + manifest.session_id)
+        self.assertEqual(
+            (
+                job.invocation_id,
+                job.session_id,
+                job.plan_id,
+                job.task_id,
+                job.agent_id,
+                job.idempotency_key,
+            ),
+            (
+                manifest.invocation_id,
+                manifest.session_id,
+                manifest.plan_id,
+                manifest.task_id,
+                manifest.agent_id,
+                manifest.job_idempotency_key,
+            ),
+        )
+        self.assertEqual(job.payload_digest, manifest.canonical_digest())
+        self.assertEqual(job.priority, 73)
+        self.assertEqual(job.max_attempts, 1)
+        self.assertIsNone(job.available_at)
+        request.validate_components(events, job)
+
+    def test_event_envelopes_bind_actor_causality_revision_and_idempotency(self) -> None:
+        request = valid_admission_request()
+        manifest = request.manifest
+        requested, running = request.events
+
+        for event in (requested, running):
+            self.assertEqual(event.stream_id, "session:" + manifest.session_id)
+            self.assertEqual(event.actor_id, CANONICAL_ORCHESTRATOR_ACTOR_ID)
+            self.assertEqual(event.correlation_id, manifest.correlation_id)
+            self.assertEqual(event.causation_id, manifest.task_id)
+        self.assertEqual(
+            requested.idempotency_key,
+            "execution-request:" + manifest.invocation_id,
+        )
+        self.assertEqual(
+            running.idempotency_key,
+            f"task-running:{manifest.task_id}:{manifest.task_revision}",
+        )
+        decoded = InvocationExecutionManifest.from_event_payload(
+            requested.event_type,
+            requested.payload,
+        )
+        self.assertEqual(decoded.canonical_digest(), request.job_spec.payload_digest)
+        self.assertEqual(running.payload["revision"], decoded.task_revision)
+
+    def test_caller_event_identity_and_time_are_stable_and_payloads_are_fresh(self) -> None:
+        request = valid_admission_request()
+        first_events, first_job = request.components()
+        payload = cast(dict[str, Any], first_events[0].payload)
+        payload["invocationId"] = "mutated-return-value"
+
+        second_events, second_job = request.components()
+        self.assertEqual(
+            [(item.event_id, item.timestamp) for item in first_events],
+            [
+                ("event-execution-requested", EVENT_TIME_A),
+                ("event-task-running", EVENT_TIME_B),
+            ],
+        )
+        self.assertEqual(
+            [(item.event_id, item.timestamp) for item in second_events],
+            [
+                ("event-execution-requested", EVENT_TIME_A),
+                ("event-task-running", EVENT_TIME_B),
+            ],
+        )
+        self.assertEqual(second_events[0].payload, request.manifest.to_dict())
+        self.assertEqual(first_job, second_job)
+        self.assertIsNot(first_job, second_job)
+        self.assertIsNot(first_events[0], second_events[0])
+        self.assertIsNot(first_events[0].payload, second_events[0].payload)
+
+    def test_event_timestamps_allow_equal_or_ascending_but_reject_descending(self) -> None:
+        ascending = valid_admission_request()
+        ascending.validate_components(ascending.events, ascending.job_spec)
+
+        equal = replace(ascending, task_running_timestamp=EVENT_TIME_A)
+        equal.validate_components(equal.events, equal.job_spec)
+        self.assertEqual(equal.events[0].timestamp, equal.events[1].timestamp)
+
+        with self.assertRaisesRegex(ValueError, "must not precede"):
+            replace(
+                ascending,
+                execution_requested_timestamp=EVENT_TIME_B,
+                task_running_timestamp=EVENT_TIME_A,
+            )
+
+    def test_request_rejects_noncanonical_transition_and_event_identity(self) -> None:
+        manifest = valid_manifest()
+        valid_transition = TaskTransition(
+            manifest.task_id,
+            TaskStatus.READY,
+            TaskStatus.RUNNING,
+            None,
+            manifest.task_revision,
+        )
+
+        invalid_transitions = (
+            replace(valid_transition, previous=TaskStatus.PENDING),
+            replace(valid_transition, current=TaskStatus.COMPLETED),
+            replace(valid_transition, task_id="another-task"),
+            replace(valid_transition, revision=manifest.task_revision + 1),
+            replace(valid_transition, revision=True),
+        )
+        for transition in invalid_transitions:
+            with self.subTest(transition=transition):
+                with self.assertRaises((TypeError, ValueError)):
+                    build_task_invocation_admission_request(
+                        manifest,
+                        transition,
+                        execution_requested_event_id="event-requested",
+                        execution_requested_timestamp=EVENT_TIME_A,
+                        task_running_event_id="event-running",
+                        task_running_timestamp=EVENT_TIME_B,
+                    )
+
+        for requested_id, requested_at, running_id in (
+            ("same-event", EVENT_TIME_A, "same-event"),
+            ("event-requested", "2026-08-27T01:02:03Z", "event-running"),
+        ):
+            with self.subTest(requested_id=requested_id, requested_at=requested_at):
+                with self.assertRaises(ValueError):
+                    build_task_invocation_admission_request(
+                        manifest,
+                        valid_transition,
+                        execution_requested_event_id=requested_id,
+                        execution_requested_timestamp=requested_at,
+                        task_running_event_id=running_id,
+                        task_running_timestamp=EVENT_TIME_B,
+                    )
+
+    def test_component_validation_rejects_legacy_reordered_and_extra_events(self) -> None:
+        request = valid_admission_request()
+        events = request.events
+        job = request.job_spec
+        extra_event = DomainEvent(
+            stream_id=request.stream_id,
+            event_type="task.audit.observed",
+            payload={},
+            actor_id="orchestrator",
+            event_id="event-extra",
+            timestamp=EVENT_TIME_B,
+        )
+        invalid_batches: tuple[object, ...] = (
+            list(events),
+            events[:1],
+            events + (extra_event,),
+            (events[1], events[0]),
+            (replace(events[0], event_type="task.execution_requested"), events[1]),
+            (events[0], replace(events[1], event_type="task.status_changed")),
+            (
+                events[0],
+                replace(events[1], payload={**events[1].payload, "schemaVersion": 1}),
+            ),
+        )
+        for batch in invalid_batches:
+            with self.subTest(batch=batch):
+                with self.assertRaises((TypeError, ValueError)):
+                    request.validate_components(batch, job)
+
+    def test_component_validation_rejects_every_job_manifest_binding_mismatch(self) -> None:
+        request = valid_admission_request()
+        events = request.events
+        job = request.job_spec
+        replacements: dict[str, Any] = {
+            "invocation_id": "invocation-other",
+            "session_id": "session-other",
+            "plan_id": "plan-other",
+            "task_id": "task-other",
+            "agent_id": "agent-other",
+            "idempotency_key": "invoke:other",
+            "payload_digest": "f" * 64,
+            "priority": job.priority - 1,
+            "max_attempts": 2,
+            "available_at": EVENT_TIME_A,
+        }
+        for field_name, value in replacements.items():
+            with self.subTest(field_name=field_name):
+                with self.assertRaises(ValueError):
+                    request.validate_components(events, replace(job, **{field_name: value}))
+
+    def test_component_validation_rejects_every_event_envelope_binding_mismatch(self) -> None:
+        request = valid_admission_request()
+        events = request.events
+        replacements: tuple[tuple[int, str, Any], ...] = (
+            (0, "stream_id", "session:other"),
+            (0, "actor_id", "other-actor"),
+            (0, "event_id", "other-event"),
+            (0, "timestamp", EVENT_TIME_B),
+            (0, "correlation_id", "other-correlation"),
+            (0, "causation_id", "other-task"),
+            (0, "idempotency_key", "execution-request:other"),
+            (1, "stream_id", "session:other"),
+            (1, "actor_id", "other-actor"),
+            (1, "event_id", "other-event"),
+            (1, "timestamp", EVENT_TIME_A),
+            (1, "correlation_id", "other-correlation"),
+            (1, "causation_id", "other-task"),
+            (1, "idempotency_key", "task-running:other:1"),
+        )
+        for index, field_name, value in replacements:
+            with self.subTest(index=index, field_name=field_name):
+                changed = list(events)
+                changed[index] = replace(events[index], **{field_name: value})
+                with self.assertRaises(ValueError):
+                    request.validate_components(tuple(changed), request.job_spec)
+
+    def test_component_validation_rejects_manifest_and_revision_tampering(self) -> None:
+        request = valid_admission_request()
+        events = request.events
+        payload_replacements: dict[str, Any] = {
+            "invocationId": "invocation-other",
+            "sessionId": "session-other",
+            "planId": "plan-other",
+            "taskId": "task-other",
+            "agentId": "agent-other",
+            "jobIdempotencyKey": "invoke:other",
+            "taskRevision": request.manifest.task_revision + 1,
+            "correlationId": "correlation-other",
+            "envelopeDigest": "1" * 64,
+            "contextDigest": "2" * 64,
+            "authorizationDigest": "3" * 64,
+            "runtimeRevision": "runtime-other",
+            "effectClass": "idempotent",
+        }
+        for field_name, value in payload_replacements.items():
+            with self.subTest(field_name=field_name):
+                payload = dict(events[0].payload)
+                payload[field_name] = value
+                if field_name == "taskId":
+                    payload["causationId"] = value
+                changed = (replace(events[0], payload=payload), events[1])
+                with self.assertRaises(ValueError):
+                    request.validate_components(changed, request.job_spec)
+
+        transition_payload = dict(events[1].payload)
+        transition_payload["revision"] = request.manifest.task_revision + 1
+        with self.assertRaises(ValueError):
+            request.validate_components(
+                (events[0], replace(events[1], payload=transition_payload)),
+                request.job_spec,
+            )
 
 
 class InvocationStartEvidenceTests(unittest.TestCase):
