@@ -52,11 +52,14 @@ from .delivery import (
 )
 from .events import DomainEvent, StoredEvent
 from .invocation_execution import (
+    SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN,
+    SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION,
     InvocationExecutionManifest,
     InvocationStartClaimed,
     InvocationStartEvidenceV2,
     InvocationStartObserved,
     InvocationStartReceipt,
+    ScopedInvocationExecutionManifestV2,
     TaskInvocationAdmissionRequest,
     build_task_invocation_admission_request,
 )
@@ -300,10 +303,13 @@ __all__ = [
     "SQLiteArtifactStore",
     "SQLiteEventStore",
     "SQLiteRevocationRevisionGuard",
+    "SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN",
+    "SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION",
     "ServerClock",
     "StoredArtifact",
     "StoredEvent",
     "StoredOutboxMessage",
+    "ScopedInvocationExecutionManifestV2",
     "TaskGraph",
     "TaskInvocationAdmissionRequest",
     "TaskSpec",
