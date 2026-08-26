@@ -1657,6 +1657,161 @@ class InvocationStartObserved:
         return cls(receipt=InvocationStartReceipt.from_dict(raw["receipt"]))
 
 
+@dataclass(frozen=True)
+class ScopedInvocationStartReceiptV3:
+    """Capability-free coordinates for one scoped schema-3 start event."""
+
+    event_id: str
+    stream_id: str
+    sequence: int
+    global_position: int
+    evidence: ScopedInvocationStartEvidenceV3
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationStartReceiptV3:
+            raise TypeError("scoped start receipt must be an exact ScopedInvocationStartReceiptV3")
+        event_id = _text(self.event_id, "scoped start receipt eventId")
+        stream_id = _text(self.stream_id, "scoped start receipt streamId")
+        sequence = _positive_integer(self.sequence, "scoped start receipt sequence")
+        global_position = _positive_integer(
+            self.global_position,
+            "scoped start receipt globalPosition",
+        )
+        if global_position < sequence:
+            raise ValueError(
+                "scoped start receipt globalPosition must not precede its stream sequence"
+            )
+        if type(self.evidence) is not ScopedInvocationStartEvidenceV3:
+            raise TypeError(
+                "scoped start receipt evidence must be exact ScopedInvocationStartEvidenceV3"
+            )
+        evidence = ScopedInvocationStartEvidenceV3.from_dict(self.evidence.to_dict())
+        if stream_id != "session:" + evidence.session_id:
+            raise ValueError("scoped start receipt streamId does not match its evidence sessionId")
+        object.__setattr__(self, "event_id", event_id)
+        object.__setattr__(self, "stream_id", stream_id)
+        object.__setattr__(self, "sequence", sequence)
+        object.__setattr__(self, "global_position", global_position)
+        object.__setattr__(self, "evidence", evidence)
+
+    def to_dict(self) -> Dict[str, object]:
+        """Return the exact capability-free scoped receipt wire object."""
+
+        ScopedInvocationStartReceiptV3.__post_init__(self)
+        return {
+            "eventId": self.event_id,
+            "streamId": self.stream_id,
+            "sequence": self.sequence,
+            "globalPosition": self.global_position,
+            "evidence": self.evidence.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> ScopedInvocationStartReceiptV3:
+        """Decode one exact capability-free scoped receipt."""
+
+        if cls is not ScopedInvocationStartReceiptV3:
+            raise TypeError("scoped receipt decoder requires the exact schema-3 class")
+        raw = _exact_dict(value, set(_START_RECEIPT_FIELDS), "scoped invocation start receipt")
+        return cls(
+            event_id=raw["eventId"],
+            stream_id=raw["streamId"],
+            sequence=raw["sequence"],
+            global_position=raw["globalPosition"],
+            evidence=ScopedInvocationStartEvidenceV3.from_dict(raw["evidence"]),
+        )
+
+
+def _scoped_invocation_start_receipt_snapshot(
+    receipt: object,
+) -> ScopedInvocationStartReceiptV3:
+    if type(receipt) is not ScopedInvocationStartReceiptV3:
+        raise TypeError("receipt must be an exact ScopedInvocationStartReceiptV3")
+    return ScopedInvocationStartReceiptV3.from_dict(receipt.to_dict())
+
+
+def _validate_scoped_start_lease_binding(
+    receipt: ScopedInvocationStartReceiptV3,
+    lease: InvocationLease,
+) -> None:
+    evidence = receipt.evidence
+    bindings = (
+        (lease.invocation_id, evidence.invocation_id),
+        (lease.session_id, evidence.session_id),
+        (lease.plan_id, evidence.plan_id),
+        (lease.task_id, evidence.task_id),
+        (lease.agent_id, evidence.agent_id),
+        (lease.idempotency_key, evidence.job_idempotency_key),
+        (lease.payload_digest, evidence.manifest_digest),
+        (lease.attempt_id, evidence.attempt_id),
+        (lease.attempt_number, evidence.attempt_number),
+        (lease.lease_epoch, evidence.lease_epoch),
+        (lease.worker_id, evidence.worker_id),
+        (lease.claimed_at, evidence.claimed_at),
+        (lease.lease_expires_at, evidence.lease_expires_at),
+    )
+    if any(actual != expected for actual, expected in bindings):
+        raise ValueError("claimed lease does not match its scoped invocation-start evidence")
+    if lease.max_attempts != 1:
+        raise ValueError("scoped claimed lease must preserve the single-attempt policy")
+    if hashlib.sha256(lease.lease_token.encode("utf-8")).hexdigest() != evidence.lease_token_digest:
+        raise ValueError("claimed lease token does not match its scoped evidence digest")
+
+
+@dataclass(frozen=True)
+class ScopedInvocationStartClaimedV3:
+    """One non-replayable scoped start receipt paired with its plaintext lease."""
+
+    receipt: ScopedInvocationStartReceiptV3
+    lease: InvocationLease = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationStartClaimedV3:
+            raise TypeError("scoped claimed result must be an exact ScopedInvocationStartClaimedV3")
+        receipt = _scoped_invocation_start_receipt_snapshot(self.receipt)
+        lease = _invocation_lease_snapshot(self.lease)
+        _validate_scoped_start_lease_binding(receipt, lease)
+        object.__setattr__(self, "receipt", receipt)
+        object.__setattr__(self, "lease", lease)
+
+
+@dataclass(frozen=True)
+class ScopedInvocationStartObservedV3:
+    """Capability-free replay observation for a scoped schema-3 start."""
+
+    receipt: ScopedInvocationStartReceiptV3
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationStartObservedV3:
+            raise TypeError(
+                "scoped observed result must be an exact ScopedInvocationStartObservedV3"
+            )
+        object.__setattr__(
+            self,
+            "receipt",
+            _scoped_invocation_start_receipt_snapshot(self.receipt),
+        )
+
+    def to_dict(self) -> Dict[str, object]:
+        """Return the exact capability-free scoped replay observation."""
+
+        ScopedInvocationStartObservedV3.__post_init__(self)
+        return {"receipt": self.receipt.to_dict()}
+
+    @classmethod
+    def from_dict(cls, value: object) -> ScopedInvocationStartObservedV3:
+        """Decode one exact capability-free scoped replay observation."""
+
+        if cls is not ScopedInvocationStartObservedV3:
+            raise TypeError("scoped observation decoder requires the exact schema-3 class")
+        raw = _exact_dict(
+            value,
+            set(_START_OBSERVED_FIELDS),
+            "scoped invocation start observation",
+        )
+        return cls(receipt=ScopedInvocationStartReceiptV3.from_dict(raw["receipt"]))
+
+
 __all__ = [
     "CANONICAL_ORCHESTRATOR_ACTOR_ID",
     "INVOCATION_EXECUTION_MANIFEST_DOMAIN",
@@ -1676,7 +1831,10 @@ __all__ = [
     "InvocationStartReceipt",
     "RetryClass",
     "ScopedInvocationExecutionManifestV2",
+    "ScopedInvocationStartClaimedV3",
     "ScopedInvocationStartEvidenceV3",
+    "ScopedInvocationStartObservedV3",
+    "ScopedInvocationStartReceiptV3",
     "ScopedTaskInvocationAdmissionRequestV2",
     "TaskInvocationAdmissionRequest",
     "build_task_invocation_admission_request",
