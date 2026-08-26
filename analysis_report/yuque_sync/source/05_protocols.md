@@ -1,6 +1,6 @@
 # 03｜Agent 协议全景与选型
 
-> 调研截止：2026-08-19（Asia/Shanghai）。事实优先取自官方规范、官方文档、官方仓库与正式发布页；“建议”与“协议事实”分开标注。
+> 调研截止：2026-08-26（Asia/Shanghai）。事实优先取自官方规范、官方文档、官方仓库与正式发布页；“建议”与“协议事实”分开标注。
 ## 0. 先给结论
 WanWork **应自研内部 Coordination Envelope（协调信封）及其持久化状态机，但不应自研一套对外通用 Agent 协议**。
 应自研的，是产品不可外包的内部语义：群聊参与者与发言归属、任务/子任务依赖、并发与幂等、上下文选择与压缩、Artifact 版本链、人类审批、预算/截止时间、审计和可恢复执行。它是 WanWork 的领域内核，而不是新的公网标准。
@@ -24,7 +24,7 @@ WanWork **应自研内部 Coordination Envelope（协调信封）及其持久化
 - 各类框架的 handoff/team/message API 是框架内抽象，不天然是跨实现协议。
 ## 2. A2A 1.0：外部 Agent 互操作首选
 ### 2.1 已核验事实
-截至 2026-08-19，官方规范页面标为 **Version 1.0**，GitHub 最新 release 为 `v1.0.1`（2026-05-28），主仓库 `a2aproject/A2A` 未归档、Apache-2.0。官方定位是让不同框架、公司和服务器上的 opaque agentic applications 协作，而不暴露内部 memory、tools 或实现。
+截至 2026-08-26，官方规范页面标为 **Version 1.0**，GitHub 最新 release 为 `v1.0.1`（2026-05-28），主仓库 `a2aproject/A2A` 未归档、Apache-2.0。官方定位是让不同框架、公司和服务器上的 opaque agentic applications 协作，而不暴露内部 memory、tools 或实现。
 官方 README 列出的核心能力：
 - Agent Card 能力发现；
 - JSON-RPC 2.0 over HTTP(S)；
@@ -52,22 +52,22 @@ A2A task 是远端交互状态，WanWork TaskAttempt 是内部责任与治理状
 | WanWork | A2A | 规则 |
 | --- | --- | --- |
 | AgentRegistration | Agent Card | 保留 card 原文和 digest；平台另存组织授权 |
-| TaskAttempt assign | `message/send` | Envelope 放在 data part 或明确 extension；不只发送自然语言 |
+| TaskAttempt assign | `SendMessage` | 只映射允许公开的任务字段或明确 extension；完整内部 Envelope 留在本地 |
 | progress event | task/status update | 远端状态归一化为内部事件，保留 remote task id |
 | ArtifactRef | A2A artifact/part | 大文件传 URI + digest + media type；内部版本仍由平台分配 |
-| cancel command | `tasks/cancel` | 记录请求与远端 receipt；取消不等于已停止 |
+| cancel command | `CancelTask` | 记录请求与远端 receipt；取消不等于已停止 |
 | correlation/trace | metadata/HTTP trace context | 不能依赖 remote 原样返回，gateway 维护映射 |
 | authority | 安全凭证 + internal policy | 不把完整企业策略泄露给远端，只给最小 capability |
 
 
 ### 2.4 实现注意
 - Agent Card 是外部输入，需 SSRF 防护、URL allowlist、schema/签名/缓存与变更审计。
-- `message/send` 的网络重试必须绑定稳定 request/idempotency；不能每次生成新业务任务。
+- `SendMessage` 的网络重试必须绑定稳定 request/idempotency；不能每次生成新业务任务。
 - SSE 断线后要按 task id 重连或回查，不能把 transport 断线判为任务失败。
 - push webhook 要校验签名、去重、处理乱序。
-- A2A 1.0 与早期 0.2/0.3 字段存在变化；adapter 必须按 protocol version 选择 codec。当前本仓库 adapter 是无依赖的稳定子集，仍需官方 SDK 合同测试。
+- A2A 1.0 与早期 0.2/0.3 字段存在变化；adapter 必须按 protocol version 选择 codec。当前本仓库 adapter 只是 dependency-free、legacy 0.3-shaped skeleton，仍使用旧方法名且没有完整 1.0 transport/version binding，**不能称为 A2A 1.0 interoperable**；`A2AAgentCard` 也只是早期字段子集。两者都需要版本锁定的官方 SDK/TCK 合同测试。
 ## 3. MCP：工具和数据边界，不是多 Agent 编排
-官方仓库当前主 schema 位于 `schema/2025-11-25`，规范使用日期版本。MCP 基于 JSON-RPC 的 client/server 生命周期，典型 server 能提供 tools、resources、prompts；client 侧还可协商 roots、sampling、elicitation 等能力。
+当前稳定规范为 `2026-07-28`，规范使用日期版本。该版本将核心改为 stateless request/response：`initialize/initialized` 握手、协议 session 和 `Mcp-Session-Id` 已退出；每个请求的 `_meta` 中 `protocolVersion` 与 `clientCapabilities` 必填，`clientInfo` 可选但客户端 SHOULD 在每次请求中携带。Client 可选调用 `server/discover` 预取 Server 能力。典型 Server 提供 tools、resources、prompts；需要中途输入时使用 Multi Round-Trip Requests（MRTR）。Roots、Sampling、Logging 已 deprecated，只为兼容存量保留，新实现不应依赖它们。
 适合：
 - 文件、数据库、搜索、SaaS API、知识资源的统一接入；
 - tool schema、resource URI、prompt template 的发现；
@@ -78,8 +78,8 @@ A2A task 是远端交互状态，WanWork TaskAttempt 是内部责任与治理状
 - 表达 Agent 团队成员关系、handoff 验收或 artifact version；
 - 让一个 MCP server 充当拥有自主责任的群聊 Agent；
 - 代替平台的用户批准、审计或任务恢复。
-“Agent 通过 MCP 调另一个 Agent”技术上可以包装成 tool，但会把长任务、身份、进度、取消和双向交互压扁成工具调用。对简单同步能力可接受；对真正远程 Agent 应用优先 A2A。
-安全建议：server 配置按租户和 Agent 隔离；OAuth/token 留在 connector vault；工具调用先进入统一 PolicyEngine；resource 内容视为不可信输入；sampling/elicitation 不得绕过平台对模型调用和用户交互的记录。
+“Agent 通过 MCP 调另一个 Agent”技术上可以包装成 tool。若只实现基础 `tools/call`，会压扁长任务、进度、取消和中途输入；MCP 2026-07-28 的 Tasks extension 与 MRTR 能补足其中一部分运行语义，但仍不提供 A2A Agent Card、Remote Agent identity、Task/Artifact 互操作与责任承诺。对简单能力或明确采用 Tasks/MRTR 的受控场景可以接受；对真正远程 Agent 应用优先 A2A。
+安全建议：server 配置按租户和 Agent 隔离；OAuth/token 留在 connector vault；工具调用先进入统一 PolicyEngine；resource 内容视为不可信输入；MRTR elicitation/input request 不得绕过平台的用户同意和交互审计。存量 Sampling 兼容层同样不得绕过模型调用记录，且不得成为新实现依赖。
 ## 4. 两种 ACP 的决策
 ### 4.1 Agent Communication Protocol：迁移到 A2A
 旧 ACP 有 Agent Manifest、Run、Message/MessagePart、Await、Session，曾支持同步/流式/后台执行和分布式 session。其思想仍可参考，尤其是 Await 和多模态 part；但官方仓库已经归档并明确并入 A2A。WanWork 只做旧系统迁移 adapter，不对其新增核心能力。
@@ -123,7 +123,7 @@ AutoGen Core 的 routed agents、message handlers、topic/subscription 和 distr
 CrewAI 的 Crew/Flow、CAMEL 的 role-playing society、LangGraph 的 Command/Send/interrupt、Deep Agents 的 subagent task tool 都是编排 API，而非组织级协议。
 它们验证不同协作模式，但 adapter 的正确层级是 `AgentRuntimePort` 或 `WorkflowEnginePort`。不要强迫外部 Agent 安装同一框架才能加入 WanWork。
 ### 7.4 FIPA ACL 与 Contract Net
-传统 FIPA ACL 的 performative（request/inform/propose/accept/reject）和 Contract Net 的招标/投标/授予/结果对长期开放任务市场仍有参考价值。现代实现可把这些语义放进 Envelope kind 与 task negotiation，不必复活完整旧协议栈。
+传统 FIPA ACL 的 performative（`request`、`inform`、`propose`、`accept-proposal`、`reject-proposal`）和 Contract Net 的 `cfp → propose/refuse → accept-proposal/reject-proposal → inform-done/inform-result/failure` 流程，对长期开放任务市场仍有参考价值。现代实现可把这些语义映射到 Envelope kind 与 task negotiation；若内部事件使用 `accepted/rejected` 简写，必须明确它不是 FIPA performative 原名，也不必复活完整旧协议栈。
 ## 8. CloudEvents、OpenTelemetry 与安全标准
 内部事件总线可采用 CloudEvents v1.0.2 的通用属性思想（id/source/type/subject/time/datacontenttype/specversion），但领域 payload 和 stream revision 仍由 WanWork 定义。CloudEvents 解决“事件如何被通用基础设施识别”，不解决“task.completed 是否合法”。
 追踪使用 W3C Trace Context/`traceparent` 与 OpenTelemetry；correlation id 关联业务目标，causation id 关联直接原因，trace id 关联一次分布式执行，三者不能混为一个字段。
@@ -183,7 +183,7 @@ signature_ref（只在跨信任域需要）
 | 能力 | 选型 | 时机 |
 | --- | --- | --- |
 | 外部 Agent 调用 | A2A 1.x | MVP |
-| 工具/数据 | MCP 2025-11-25 兼容层 | MVP |
+| 工具/数据 | MCP 2026-07-28 兼容层 | MVP |
 | 内部协作状态 | WanWork Envelope + event store | MVP，核心 |
 | Coding editor ↔ Agent | Agent Client Protocol v1 adapter | Coding 场景 |
 | 旧 BeeAI ACP | 只做迁移，不新增 | 有存量时 |
@@ -194,14 +194,14 @@ signature_ref（只在跨信任域需要）
 | Trace | W3C Trace Context + OTel | MVP |
 
 
-## 12. 一手来源（核验于 2026-08-19）
-- A2A 官方规范：[https://a2a-protocol.org/latest/specification/](https://a2a-protocol.org/latest/specification/)；仓库：[https://github.com/a2aproject/A2A](https://github.com/a2aproject/A2A)
-- MCP 规范与 schema：[https://modelcontextprotocol.io/specification/](https://modelcontextprotocol.io/specification/)；仓库：[https://github.com/modelcontextprotocol/modelcontextprotocol](https://github.com/modelcontextprotocol/modelcontextprotocol)
-- 旧 Agent Communication Protocol：[https://github.com/i-am-bee/acp](https://github.com/i-am-bee/acp)
+## 12. 一手来源（核验于 2026-08-26）
+- A2A `v1.0.1` 规范快照：[https://github.com/a2aproject/A2A/blob/v1.0.1/docs/specification.md](https://github.com/a2aproject/A2A/blob/v1.0.1/docs/specification.md)；release：[https://github.com/a2aproject/A2A/releases/tag/v1.0.1](https://github.com/a2aproject/A2A/releases/tag/v1.0.1)
+- MCP `2026-07-28` 规范与 schema：[https://modelcontextprotocol.io/specification/2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28)；GA 变更说明：[https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/blog/content/posts/2026-07-28-spec-ga/index.md](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/blog/content/posts/2026-07-28-spec-ga/index.md)
+- 旧 Agent Communication Protocol：[https://github.com/i-am-bee/acp](https://github.com/i-am-bee/acp)；最后 release：[https://github.com/i-am-bee/acp/releases/tag/v1.0.3](https://github.com/i-am-bee/acp/releases/tag/v1.0.3)
 - Agent Client Protocol：[https://agentclientprotocol.com/](https://agentclientprotocol.com/)；仓库：[https://github.com/agentclientprotocol/agent-client-protocol](https://github.com/agentclientprotocol/agent-client-protocol)
-- ANP：[https://github.com/agent-network-protocol/AgentNetworkProtocol](https://github.com/agent-network-protocol/AgentNetworkProtocol)
-- AGNTCY OASF：[https://github.com/agntcy/oasf](https://github.com/agntcy/oasf)
-- AGNTCY Directory：[https://github.com/agntcy/dir](https://github.com/agntcy/dir)
+- ANP `v1.1`：[https://github.com/agent-network-protocol/AgentNetworkProtocol/tree/v1.1](https://github.com/agent-network-protocol/AgentNetworkProtocol/tree/v1.1)
+- AGNTCY OASF `v1.1.0`：[https://github.com/agntcy/oasf/releases/tag/v1.1.0](https://github.com/agntcy/oasf/releases/tag/v1.1.0)
+- AGNTCY Directory `v1.7.0`：[https://github.com/agntcy/dir/releases/tag/v1.7.0](https://github.com/agntcy/dir/releases/tag/v1.7.0)
 - AGNTCY SLIM：[https://github.com/agntcy/slim](https://github.com/agntcy/slim)
 - CloudEvents：[https://github.com/cloudevents/spec](https://github.com/cloudevents/spec)
 这里的版本状态是截至核验日的快照；协议仍在快速演进，上线前必须重新跑 adapter contract suite。
@@ -209,4 +209,3 @@ signature_ref（只在跨信任域需要）
 ---
 
 来源：https://app.notion.com/p/3c1ead4b996e81c49a7ac20751c89cc7?pvs=204
-
