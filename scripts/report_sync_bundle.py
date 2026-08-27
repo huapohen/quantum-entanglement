@@ -427,8 +427,17 @@ def _safe_relative(value: object) -> str:
     pure = PurePosixPath(path)
     if pure.is_absolute() or pure.as_posix() != path:
         _fail("path_invalid")
-    if any(_is_sensitive_component(part) for part in pure.parts):
-        _fail("sensitive_path_forbidden")
+    for index, part in enumerate(pure.parts):
+        if not _is_sensitive_component(part):
+            continue
+        controlled_research_title = (
+            index == len(pure.parts) - 1
+            and len(pure.parts) == 3
+            and pure.parts[:2] == ("analysis_report", "research")
+            and _SOURCE_FILENAME_PATTERN.fullmatch(part) is not None
+        )
+        if not controlled_research_title:
+            _fail("sensitive_path_forbidden")
     return path
 
 

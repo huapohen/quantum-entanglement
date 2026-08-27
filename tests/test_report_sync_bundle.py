@@ -394,11 +394,27 @@ class ReportSyncBundleTests(unittest.TestCase):
             generate_report_sync_bundle(self.repository)
         forbidden.unlink()
 
+        # A controlled research title may discuss secret handling without being a
+        # credential file or directory. Its content still passes the credential scanner.
+        secret_topic = self._write(
+            "analysis_report/research/24_secret_claim_contract.md",
+            b"# Secret claim contract\nNo credential values.\n",
+        )
+        generate_report_sync_bundle(self.repository)
+        secret_topic.unlink()
+
         manifest_path = self.repository / "analysis_report/notion_sync_manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["pages"][0]["localFiles"][0]["path"] = "analysis_report/../.env"
         self._write_json("analysis_report/notion_sync_manifest.json", manifest)
         with self.assertRaisesRegex(ReportSyncBundleError, "path_invalid"):
+            generate_report_sync_bundle(self.repository)
+
+        self._write_previous_manifests()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["pages"][0]["localFiles"][0]["path"] = "analysis_report/secrets/evidence.md"
+        self._write_json("analysis_report/notion_sync_manifest.json", manifest)
+        with self.assertRaisesRegex(ReportSyncBundleError, "sensitive_path_forbidden"):
             generate_report_sync_bundle(self.repository)
 
         self._write_previous_manifests()
