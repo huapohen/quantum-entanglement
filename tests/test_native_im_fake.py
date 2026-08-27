@@ -16,6 +16,7 @@ from quantum_entanglement.native_im_fake import (
     FAKE_IM_PROVIDER,
     FakeIMAdapter,
     FakeIMOutboundDisabledError,
+    FakeIMReceiverCollisionError,
     FakeIMTestOutboundPermit,
 )
 from quantum_entanglement.native_im_gateway import (
@@ -26,6 +27,8 @@ from quantum_entanglement.native_im_gateway import (
 from tests.test_native_im_contract import (
     acceptance_query,
     action_command,
+    action_intent,
+    action_receipt,
     attachment,
     capability,
     content,
@@ -238,13 +241,53 @@ def test_fake_test_outbound_permit_is_immutable_process_local_and_unserializable
 
 
 @pytest.mark.asyncio
-async def test_fake_for_test_returns_admissible_terminal_rejection() -> None:
+async def test_fake_receiver_accepts_once_and_replays_the_same_effect() -> None:
     snapshot = capability()
     fake = outbound_adapter(snapshot=snapshot)
     request = dispatch_request(command=action_command(capability=snapshot))
-    result = await fake.dispatch(request)
-    assert result.state == "rejected"
-    assert validate_im_dispatch_result_v1(request, result) is result
+    first = await fake.dispatch(request)
+    assert first.state == "succeeded"
+    assert validate_im_dispatch_result_v1(request, first) is first
+    assert fake.accepted_effect_count == 1
+
+    second_request = dispatch_request(
+        command=request.command,
+        dispatch_attempt_id="test-dispatch-attempt-2",
+        attempt_number=2,
+        fence_id="test-fence-2",
+        fence_revision="test-fence-revision-2",
+    )
+    second = await fake.dispatch(second_request)
+    assert validate_im_dispatch_result_v1(second_request, second) is second
+    assert second.provider_operation_id == first.provider_operation_id
+    assert second.provider_message == first.provider_message
+    assert second.receiver_evidence_digest == first.receiver_evidence_digest
+    assert second.dispatch_request_digest != first.dispatch_request_digest
+    assert fake.accepted_effect_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_receiver_rejects_changed_intent_without_second_effect() -> None:
+    snapshot = capability()
+    fake = outbound_adapter(snapshot=snapshot)
+    request = dispatch_request(command=action_command(capability=snapshot))
+    await fake.dispatch(request)
+    changed_intent = action_intent(
+        content=content(segments=(text_segment(text="changed body"),), attachments=())
+    )
+    changed_command = action_command(intent=changed_intent, capability=snapshot)
+    assert changed_command.idempotency_key == request.command.idempotency_key
+    assert changed_command.intent_digest != request.command.intent_digest
+    changed_request = dispatch_request(
+        command=changed_command,
+        dispatch_attempt_id="test-dispatch-attempt-2",
+        attempt_number=2,
+    )
+    with pytest.raises(
+        FakeIMReceiverCollisionError, match="^fake IM receiver idempotency collision$"
+    ):
+        await fake.dispatch(changed_request)
+    assert fake.accepted_effect_count == 1
 
 
 @pytest.mark.asyncio
@@ -255,6 +298,26 @@ async def test_fake_for_test_returns_capability_possible_acceptance_result() -> 
     query = acceptance_query(request=request)
     result = await fake.query_acceptance(query)
     assert result.state == "reconciled_rejected"
+    assert validate_im_acceptance_result_v1(query, request, snapshot, result) is result
+
+
+@pytest.mark.asyncio
+async def test_fake_query_reconciles_the_exact_accepted_effect() -> None:
+    snapshot = capability()
+    fake = outbound_adapter(snapshot=snapshot)
+    request = dispatch_request(command=action_command(capability=snapshot))
+    dispatched = await fake.dispatch(request)
+    unknown = action_receipt(
+        "effect_unknown",
+        request=request,
+        provider_operation_id=dispatched.provider_operation_id,
+    )
+    query = acceptance_query("provider_operation_id", request=request, source=unknown)
+    result = await fake.query_acceptance(query)
+    assert result.state == "reconciled_succeeded"
+    assert result.provider_operation_id == dispatched.provider_operation_id
+    assert result.provider_message == dispatched.provider_message
+    assert result.receiver_evidence_digest == dispatched.receiver_evidence_digest
     assert validate_im_acceptance_result_v1(query, request, snapshot, result) is result
 
 
@@ -273,7 +336,7 @@ async def test_fake_import_and_runtime_open_no_network(monkeypatch) -> None:
         if isinstance(node, ast.ImportFrom) and node.level == 0
     }
     assert imported_roots == {"hashlib", "os"}
-    assert imported_from == {"__future__", "typing"}
+    assert imported_from == {"__future__", "dataclasses", "typing"}
 
     def deny_network(*args, **kwargs):
         raise AssertionError("network capability was opened")

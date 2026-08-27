@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import dataclass
 from typing import NoReturn
 
 from .native_im import (
@@ -14,6 +15,7 @@ from .native_im import (
     IMDispatchRequestV1,
     IMInboundPageV1,
     IMInboundReadRequestV1,
+    IMMessageRefV1,
     IMVerifiedInboundEnvelopeV1,
 )
 
@@ -25,6 +27,20 @@ _OUTBOUND_PERMIT_SENTINEL = object()
 
 class FakeIMOutboundDisabledError(RuntimeError):
     """Raised before the default fake observes any outbound request content."""
+
+
+class FakeIMReceiverCollisionError(RuntimeError):
+    """Raised when a fake receiver identity is reused for a different effect."""
+
+
+@dataclass(frozen=True)
+class _FakeAcceptedEffect:
+    action_id: str
+    idempotency_key: str
+    intent_digest: str
+    provider_operation_id: str
+    provider_message: IMMessageRefV1 | None
+    receiver_evidence_digest: str
 
 
 class FakeIMTestOutboundPermit:
@@ -72,6 +88,8 @@ class FakeIMAdapter:
         "_capability",
         "_envelopes",
         "_outbound_permit",
+        "_receiver_by_action",
+        "_receiver_by_key",
     )
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -115,6 +133,8 @@ class FakeIMAdapter:
         self._capability = capability
         self._envelopes = envelopes
         self._outbound_permit: FakeIMTestOutboundPermit | None = None
+        self._receiver_by_action: dict[tuple[str, ...], _FakeAcceptedEffect] = {}
+        self._receiver_by_key: dict[tuple[str, ...], _FakeAcceptedEffect] = {}
 
     @classmethod
     def for_test(
@@ -163,6 +183,10 @@ class FakeIMAdapter:
             "FakeIMAdapter(provider='qe.fake-im.v1', "
             f"envelopes={len(self._envelopes)}, outbound='disabled')"
         )
+
+    @property
+    def accepted_effect_count(self) -> int:
+        return len(self._receiver_by_action)
 
     async def capability_snapshot(self, request: IMCapabilityRequestV1) -> IMCapabilitySnapshotV1:
         _require_exact(request, IMCapabilityRequestV1, "capability request")
@@ -226,15 +250,39 @@ class FakeIMAdapter:
             raise FakeIMOutboundDisabledError("fake IM outbound is disabled")
         _require_exact(request, IMDispatchRequestV1, "dispatch request")
         request.command.validate_capability_binding(self._capability)
-        digest = self._outbound_digest("terminal-rejection", request.canonical_bytes())
+        intent = request.command.intent
+        scope = self._scope
+        action_key = scope + (intent.action_id,)
+        idempotency_key = scope + (request.command.idempotency_key,)
+        by_action = self._receiver_by_action.get(action_key)
+        by_key = self._receiver_by_key.get(idempotency_key)
+        if by_action is not None and (
+            by_action.idempotency_key != request.command.idempotency_key
+            or by_action.intent_digest != request.command.intent_digest
+        ):
+            raise FakeIMReceiverCollisionError("fake IM receiver idempotency collision")
+        if by_key is not None and (
+            by_key.action_id != intent.action_id
+            or by_key.intent_digest != request.command.intent_digest
+        ):
+            raise FakeIMReceiverCollisionError("fake IM receiver idempotency collision")
+        if by_action is not None and by_key is not None and by_action is not by_key:
+            raise FakeIMReceiverCollisionError("fake IM receiver ledger conflict")
+
+        effect = by_action or by_key
+        if effect is None:
+            effect = self._accept_effect(request)
+            self._receiver_by_action[action_key] = effect
+            self._receiver_by_key[idempotency_key] = effect
+        receipt_digest = self._outbound_digest("dispatch-receipt", request.canonical_bytes())
         return IMActionReceiptV1(
             schema_version=1,
-            receipt_id=f"test-fake-receipt-{digest}",
-            tenant_id=request.command.intent.tenant_id,
-            workspace_id=request.command.intent.workspace_id,
+            receipt_id=f"test-fake-receipt-{receipt_digest}",
+            tenant_id=intent.tenant_id,
+            workspace_id=intent.workspace_id,
             provider=FAKE_IM_PROVIDER,
-            channel_id=request.command.intent.conversation.channel_id,
-            action_id=request.command.intent.action_id,
+            channel_id=intent.conversation.channel_id,
+            action_id=intent.action_id,
             command_id=request.command.command_id,
             dispatch_attempt_id=request.dispatch_attempt_id,
             dispatch_request_digest=request.canonical_digest(),
@@ -242,11 +290,11 @@ class FakeIMAdapter:
             command_digest=request.command_digest,
             idempotency_key=request.command.idempotency_key,
             attempt_number=request.attempt_number,
-            state="rejected",
-            provider_operation_id=None,
-            provider_message=None,
-            receiver_evidence_digest=digest,
-            error_code="terminal_not_accepted",
+            state="succeeded",
+            provider_operation_id=effect.provider_operation_id,
+            provider_message=effect.provider_message,
+            receiver_evidence_digest=effect.receiver_evidence_digest,
+            error_code=None,
             retry_after_seconds=None,
             observed_at=_FAKE_OBSERVED_AT,
             correlation_id=request.correlation_id,
@@ -260,13 +308,36 @@ class FakeIMAdapter:
         _require_exact(query, IMAcceptanceQueryV1, "acceptance query")
         if self._model_scope(query) != self._scope:
             raise ValueError("acceptance query scope does not match the fake scope")
+        effect = self._receiver_by_action.get(self._scope + (query.action_id,))
+        by_key = self._receiver_by_key.get(self._scope + (query.idempotency_key,))
+        if effect is not None and (
+            effect.idempotency_key != query.idempotency_key
+            or effect.intent_digest != query.intent_digest
+        ):
+            raise FakeIMReceiverCollisionError("fake IM receiver query collision")
+        if by_key is not None and (
+            by_key.action_id != query.action_id or by_key.intent_digest != query.intent_digest
+        ):
+            raise FakeIMReceiverCollisionError("fake IM receiver query collision")
+        if effect is not None and by_key is not None and effect is not by_key:
+            raise FakeIMReceiverCollisionError("fake IM receiver ledger conflict")
+        effect = effect or by_key
+        if (
+            effect is not None
+            and query.lookup_mode == "provider_operation_id"
+            and query.provider_operation_id != effect.provider_operation_id
+        ):
+            raise FakeIMReceiverCollisionError("fake IM receiver provider operation conflict")
         authoritative = any(
             lookup.lookup_mode == query.lookup_mode
             and lookup.negative_acceptance_mode == "authoritative_terminal"
             for operation in self._capability.operations
             for lookup in operation.acceptance_lookups
         )
-        state = "reconciled_rejected" if authoritative else "effect_unknown"
+        if effect is not None:
+            state = "reconciled_succeeded"
+        else:
+            state = "reconciled_rejected" if authoritative else "effect_unknown"
         digest = self._outbound_digest("acceptance-query", query.canonical_bytes())
         return IMActionReceiptV1(
             schema_version=1,
@@ -284,10 +355,24 @@ class FakeIMAdapter:
             idempotency_key=query.idempotency_key,
             attempt_number=query.attempt_number,
             state=state,
-            provider_operation_id=query.provider_operation_id,
-            provider_message=None,
-            receiver_evidence_digest=digest if authoritative else None,
-            error_code=("terminal_not_accepted" if authoritative else "query_not_final"),
+            provider_operation_id=(
+                effect.provider_operation_id if effect is not None else query.provider_operation_id
+            ),
+            provider_message=(None if effect is None else effect.provider_message),
+            receiver_evidence_digest=(
+                effect.receiver_evidence_digest
+                if effect is not None
+                else digest
+                if authoritative
+                else None
+            ),
+            error_code=(
+                None
+                if effect is not None
+                else "terminal_not_accepted"
+                if authoritative
+                else "acceptance_not_final"
+            ),
             retry_after_seconds=None,
             observed_at=_FAKE_OBSERVED_AT,
             correlation_id=query.correlation_id,
@@ -301,10 +386,35 @@ class FakeIMAdapter:
             f"quantum-entanglement.native-im.fake/{domain}/1\n".encode() + body
         ).hexdigest()
 
+    def _accept_effect(self, request: IMDispatchRequestV1) -> _FakeAcceptedEffect:
+        intent = request.command.intent
+        evidence = self._outbound_digest(
+            "accepted-effect", request.command.intent_digest.encode("ascii")
+        )
+        operation_id = f"test-fake-operation-{evidence}"
+        provider_message = None
+        if intent.operation == "send_message":
+            provider_message = IMMessageRefV1(
+                schema_version=1,
+                conversation=intent.conversation,
+                message_id=f"test-fake-message-{evidence}",
+                revision="test-fake-message-revision-1",
+                created_at=_FAKE_OBSERVED_AT,
+            )
+        return _FakeAcceptedEffect(
+            action_id=intent.action_id,
+            idempotency_key=request.command.idempotency_key,
+            intent_digest=request.command.intent_digest,
+            provider_operation_id=operation_id,
+            provider_message=provider_message,
+            receiver_evidence_digest=evidence,
+        )
+
 
 __all__ = [
     "FAKE_IM_PROVIDER",
     "FakeIMAdapter",
     "FakeIMOutboundDisabledError",
+    "FakeIMReceiverCollisionError",
     "FakeIMTestOutboundPermit",
 ]
