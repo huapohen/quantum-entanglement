@@ -781,6 +781,105 @@
       }
     }
   ],
+  "stageReviewSync": {
+    "stage": "native-im-e1-contract-executable",
+    "syncedAt": "2026-08-27T21:36:45Z",
+    "semanticBaselineCommit": "2d681336bde45fe4c65d6b6c7ad35503b15e815f",
+    "sourceCandidateCommit": "7620200f8e378507b1f592d6d34744080250d2ea",
+    "branch": "mainline_continue_quantum_entanglement",
+    "parent": {
+      "pageId": "3c9ead4b-996e-8108-aea6-c97c694d6587",
+      "url": "https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204",
+      "title": "Quantum Entanglement｜mainline_continue 独立审阅空间"
+    },
+    "children": [
+      {
+        "key": "native-im-e1-contract-executable",
+        "pageId": "3c9ead4b-996e-81a3-a5b0-e415cfdc616d",
+        "url": "https://app.notion.com/p/3c9ead4b996e81a3a5b0e415cfdc616d?pvs=204",
+        "sourcePath": "docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md",
+        "sourceSha256": "e5b087821342a955037999f567b5b8d932fca1e9445c769ee19e2511d6a7f99c",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-evidence",
+        "pageId": "3c9ead4b-996e-81e7-b797-d2beae571f5f",
+        "url": "https://app.notion.com/p/3c9ead4b996e81e7b797d2beae571f5f?pvs=204",
+        "sourcePath": "analysis_report/research/22_native_im_e1_contract_executable_evidence.md",
+        "sourceSha256": "b0a9ccad3948203853f8ae63e497be922c54bae386679ac18d073daebe8dfd8c",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-early-integration-plan",
+        "pageId": "3c9ead4b-996e-8187-a258-e7d162618a2e",
+        "url": "https://app.notion.com/p/3c9ead4b996e8187a258e7d162618a2e?pvs=204",
+        "sourcePath": "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md",
+        "sourceSha256": "acc813df2ad31834e73ba5e0b81ce4e62937444446c18ca260850c3d21f5542f",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-prerequisites",
+        "pageId": "3c9ead4b-996e-81b3-83f4-cafebeb9d008",
+        "url": "https://app.notion.com/p/3c9ead4b996e81b383f4cafebeb9d008?pvs=204",
+        "sourcePath": "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
+        "sourceSha256": "385c0ec64ed35a01c9549cd6db81b8dd265f040224a56d825b5793abed7cfdcc",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-next-stage-plan",
+        "pageId": "3c9ead4b-996e-81f5-9af7-d5f75bc41a7b",
+        "url": "https://app.notion.com/p/3c9ead4b996e81f59af7d5f75bc41a7b?pvs=204",
+        "sourcePath": "analysis_report/NEXT_STAGE_PLAN.md",
+        "sourceSha256": "bb0cffaec164d11f132d7a2410a2349d7fe739e3fcbb795abe79a66aab4a67ea",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-readiness",
+        "pageId": "3c9ead4b-996e-819b-bb02-f206122941c2",
+        "url": "https://app.notion.com/p/3c9ead4b996e819bbb02f206122941c2?pvs=204",
+        "sourcePath": "docs/production/CURRENT_READINESS.md",
+        "sourceSha256": "575040f60752b63c26822c688db37a7fd9b84725e49df3f734e189c950aaacd4",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-report-index",
+        "pageId": "3c9ead4b-996e-81d3-9fb6-d5cf6d364fe0",
+        "url": "https://app.notion.com/p/3c9ead4b996e81d39fb6d5cf6d364fe0?pvs=204",
+        "sourcePath": "analysis_report/README.md",
+        "sourceSha256": "de5ea6774f4144d7509814a0f7f06667aa0573cd4cd730b92b127c1ac8d8748c",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-changelog",
+        "pageId": "3c9ead4b-996e-81d0-9c85-fa64b2beb563",
+        "url": "https://app.notion.com/p/3c9ead4b996e81d09c85fa64b2beb563?pvs=204",
+        "sourcePath": "CHANGELOG.md",
+        "sourceSha256": "99dadcade7a20f0ac59ee9963e8ed3fc4a64dd874b00078cdaa0904970854518",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-branch-catalog",
+        "pageId": "3c9ead4b-996e-81c8-9d1f-ed42248fc74a",
+        "url": "https://app.notion.com/p/3c9ead4b996e81c89d1fed42248fc74a?pvs=204",
+        "sourcePath": "BRANCH_CATALOG.md",
+        "digestPinned": false,
+        "reason": "the generated catalog is refreshed after sync-bookkeeping commits to avoid a self-referential catalog cycle",
+        "remoteReadbackVerified": true
+      }
+    ],
+    "remoteReadback": {
+      "verified": true,
+      "pageCount": 10,
+      "markerChecks": 20,
+      "missingMarkers": [],
+      "finalBranchHeadLocation": "parent page callout and remote branch"
+    },
+    "safety": {
+      "yuque": "not-touched",
+      "feishuAndWeCom": "no-send-reply-comment-mention-upload-or-webhook",
+      "realNativeIm": "no-provider-endpoint-credential-webhook-socket-read-or-send"
+    }
+  },
   "verificationSummary": {
     "pageCount": 33,
     "controlledSourcePageCount": 32,
