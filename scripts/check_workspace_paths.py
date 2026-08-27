@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from collections.abc import Iterable, Sequence
@@ -62,7 +63,8 @@ def find_obsolete_paths(repo: Path, relative_paths: Iterable[str]) -> tuple[Find
         content = (repo / relative_path).read_text(encoding="utf-8")
         for line_number, line in enumerate(content.splitlines(), start=1):
             for obsolete_path in OBSOLETE_PATHS:
-                if obsolete_path in line and obsolete_path not in exemptions:
+                pattern = re.compile(re.escape(obsolete_path) + r"(?![A-Za-z0-9_.-])")
+                if pattern.search(line) is not None and obsolete_path not in exemptions:
                     findings.append(Finding(relative_path, line_number, obsolete_path))
     return tuple(findings)
 
