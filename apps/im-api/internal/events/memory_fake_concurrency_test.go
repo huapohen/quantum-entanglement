@@ -247,7 +247,7 @@ func TestVolatileMemoryStoreReadersObserveWholeBatchAndCanceledWaiterWritesNothi
 	clockEntered := make(chan struct{})
 	clockRelease := make(chan struct{})
 	var enterOnce sync.Once
-	store, err := NewVolatileMemoryStore("atomic-visibility", func() time.Time {
+	store, err := NewVolatileMemoryStore("atomic-visibility", func(context.Context) time.Time {
 		enterOnce.Do(func() { close(clockEntered) })
 		<-clockRelease
 		return contractTime

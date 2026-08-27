@@ -224,7 +224,7 @@ func TestVolatileMemoryStoreCursorBindsKindScopeAndNamespace(t *testing.T) {
 		t.Fatalf("duplicate-field cursor error = %v, want %v", err, ErrInvalidCursor)
 	}
 
-	otherStore, err := NewVolatileMemoryStore("other-namespace", func() time.Time { return contractTime })
+	otherStore, err := NewVolatileMemoryStore("other-namespace", func(context.Context) time.Time { return contractTime })
 	if err != nil {
 		t.Fatalf("new other store: %v", err)
 	}
@@ -270,11 +270,11 @@ func TestVolatileMemoryStoreRebuildIsDeterministicButFreshStoreIsEmpty(t *testin
 		eventForScope(t, "evt-1", "key-1", "tenant-acme", workspace, "task:a"),
 		eventForScope(t, "evt-2", "key-2", "tenant-acme", workspace, "task:a"),
 	}
-	first, err := NewVolatileMemoryStore("rebuild-fixture", func() time.Time { return contractTime })
+	first, err := NewVolatileMemoryStore("rebuild-fixture", func(context.Context) time.Time { return contractTime })
 	if err != nil {
 		t.Fatalf("new first store: %v", err)
 	}
-	second, err := NewVolatileMemoryStore("rebuild-fixture", func() time.Time { return contractTime })
+	second, err := NewVolatileMemoryStore("rebuild-fixture", func(context.Context) time.Time { return contractTime })
 	if err != nil {
 		t.Fatalf("new second store: %v", err)
 	}

@@ -22,7 +22,9 @@ const (
 	cursorSchemaVersion   = 1
 )
 
-type StoreClock func() time.Time
+// StoreClock is a trusted fake dependency. It must return promptly and honor cancellation; a Go
+// callback that ignores ctx cannot be forcibly terminated by VolatileMemoryStore.
+type StoreClock func(context.Context) time.Time
 
 type eventScope struct {
 	tenant       string
@@ -95,7 +97,7 @@ func (store *VolatileMemoryStore) AppendBatch(ctx context.Context, batch AppendB
 		return AppendResult{}, err
 	}
 
-	request, digest, identities, err := snapshotAppendRequest(batch)
+	request, digest, identities, err := snapshotAppendRequest(ctx, batch)
 	if err != nil {
 		return AppendResult{}, err
 	}
@@ -121,7 +123,7 @@ func (store *VolatileMemoryStore) AppendBatch(ctx context.Context, batch AppendB
 	if currentVersion > math.MaxUint64-batchSize || store.globalPosition > math.MaxUint64-batchSize {
 		return AppendResult{}, ErrStoreCapacity
 	}
-	recordedAt, err := store.readClock()
+	recordedAt, err := store.readClock(ctx)
 	if err != nil {
 		return AppendResult{}, err
 	}
@@ -212,7 +214,12 @@ func (store *VolatileMemoryStore) ReadGlobalPage(ctx context.Context, query Glob
 
 	pageEvents := make([]StoredEvent, 0, query.Limit)
 	hasMore := false
-	for _, event := range store.global {
+	for index, event := range store.global {
+		if index%64 == 0 {
+			if err := contextError(ctx); err != nil {
+				return GlobalPage{}, err
+			}
+		}
 		if event.GlobalPosition <= after || !eventMatchesGlobalQuery(event, query) {
 			continue
 		}
@@ -261,21 +268,30 @@ func (store *VolatileMemoryStore) findRetry(
 	return matched, true, false
 }
 
-func (store *VolatileMemoryStore) readClock() (value time.Time, err error) {
+func (store *VolatileMemoryStore) readClock(ctx context.Context) (value time.Time, err error) {
+	if err := contextError(ctx); err != nil {
+		return time.Time{}, err
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			value = time.Time{}
 			err = ErrStoreClock
 		}
 	}()
-	value = normalizeEventTime(store.clock())
+	value = normalizeEventTime(store.clock(ctx))
+	if err := contextError(ctx); err != nil {
+		return time.Time{}, err
+	}
 	if !validEventTime(value) || (!store.lastRecordedAt.IsZero() && value.Before(store.lastRecordedAt)) {
 		return time.Time{}, ErrStoreClock
 	}
 	return value, nil
 }
 
-func snapshotAppendRequest(batch AppendBatch) (AppendBatch, SHA256Digest, []retryIdentity, error) {
+func snapshotAppendRequest(
+	ctx context.Context,
+	batch AppendBatch,
+) (AppendBatch, SHA256Digest, []retryIdentity, error) {
 	snapshot := AppendBatch{
 		TenantID: batch.TenantID, WorkspaceID: cloneStringPointer(batch.WorkspaceID),
 		StreamID: batch.StreamID, ExpectedVersion: batch.ExpectedVersion,
@@ -289,7 +305,12 @@ func snapshotAppendRequest(batch AppendBatch) (AppendBatch, SHA256Digest, []retr
 		Digest         SHA256Digest `json:"digest"`
 	}
 	canonicalEvents := make([]canonicalEvent, 0, len(batch.Events))
-	for _, event := range batch.Events {
+	for index, event := range batch.Events {
+		if index%16 == 0 {
+			if err := contextError(ctx); err != nil {
+				return AppendBatch{}, "", nil, err
+			}
+		}
 		eventSnapshot := snapshotEvent(event)
 		eventDigest, err := DigestEventToAppend(eventSnapshot)
 		if err != nil {

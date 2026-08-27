@@ -25,7 +25,7 @@ func (store characteristicsOverrideStore) Characteristics() StoreCharacteristics
 	return store.characteristics
 }
 
-func (clock *scriptedStoreClock) Now() time.Time {
+func (clock *scriptedStoreClock) Now(_ context.Context) time.Time {
 	clock.mu.Lock()
 	defer clock.mu.Unlock()
 	clock.calls++
@@ -48,7 +48,7 @@ func (clock *scriptedStoreClock) Calls() int {
 func TestVolatileMemoryStoreDeclaresItsNonProductionBoundaries(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewVolatileMemoryStore("", func() time.Time { return contractTime }); !errors.Is(err, ErrInvalidStore) {
+	if _, err := NewVolatileMemoryStore("", func(context.Context) time.Time { return contractTime }); !errors.Is(err, ErrInvalidStore) {
 		t.Fatalf("empty instance error = %v, want %v", err, ErrInvalidStore)
 	}
 	if _, err := NewVolatileMemoryStore("test-instance", nil); !errors.Is(err, ErrStoreClock) {
@@ -268,7 +268,7 @@ func TestVolatileMemoryStoreRevisionContextAndClockFailuresWriteNothing(t *testi
 func TestVolatileMemoryStoreContainsClockPanic(t *testing.T) {
 	t.Parallel()
 
-	store, err := NewVolatileMemoryStore("panic-clock", func() time.Time { panic("clock secret must not escape") })
+	store, err := NewVolatileMemoryStore("panic-clock", func(context.Context) time.Time { panic("clock secret must not escape") })
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -284,6 +284,50 @@ func TestVolatileMemoryStoreContainsClockPanic(t *testing.T) {
 	}
 	if len(page.Events) != 0 {
 		t.Fatalf("panic clock wrote events: %#v", page.Events)
+	}
+}
+
+func TestVolatileMemoryStoreClockCanCooperateWithContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	clockEntered := make(chan struct{})
+	var enterOnce sync.Once
+	store, err := NewVolatileMemoryStore("cancel-clock", func(ctx context.Context) time.Time {
+		enterOnce.Do(func() { close(clockEntered) })
+		<-ctx.Done()
+		return time.Time{}
+	})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	batch := validBatch(t, 0, validEvent(t, "evt-1", "key-1"))
+	appendDone := make(chan error, 1)
+	go func() {
+		_, appendErr := store.AppendBatch(ctx, batch)
+		appendDone <- appendErr
+	}()
+	select {
+	case <-clockEntered:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("append did not enter cooperative clock")
+	}
+	cancel()
+	select {
+	case appendErr := <-appendDone:
+		if !errors.Is(appendErr, context.Canceled) {
+			t.Fatalf("append error = %v, want %v", appendErr, context.Canceled)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cooperative clock did not return after cancellation")
+	}
+	page, err := store.ReadStreamPage(context.Background(), StreamQuery{
+		TenantID: "tenant-acme", WorkspaceID: stringPointer("workspace-acme"),
+		StreamID: "task:task-1", Limit: 1,
+	})
+	if err != nil || len(page.Events) != 0 {
+		t.Fatalf("cancelled clock page = %#v, err=%v", page, err)
 	}
 }
 
