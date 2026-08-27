@@ -21,11 +21,18 @@ Current endpoint:
 
 ```text
 GET /health/live -> HTTP 200 {"status":"ok"}
+GET /api/v1/system/ping -> HTTP 200 business envelope
 ```
 
 Health endpoints use normal HTTP status semantics. Business APIs will use the versioned HTTP 200 envelope
 defined in `docs/wanwork_im/ARCHITECTURE.md`; a health response never proves provider delivery, Agent
 completion, Artifact acceptance, or Task closure.
+
+Every reachable business endpoint returns a stable `code/data/message/requestId` envelope. Authentication,
+authorization, validation, conflict, rate-limit, and dependency-before-effect failures use HTTP 200 with a
+non-success business code. Unknown errors, panics, and JSON encoding failures collapse to `50001` without
+serializing their causes. Provider `effect_unknown` will be a successful command response containing an honest
+Action status; it is not misreported as `50301` and never retried blindly.
 
 ## Offline verification after dependencies are cached
 
