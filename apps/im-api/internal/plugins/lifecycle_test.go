@@ -197,6 +197,13 @@ func TestEffectScopeRetainsOnlyFailedCleanupForRetry(t *testing.T) {
 
 	scope := newEffectScope()
 	attempts := 0
+	successes := 0
+	if err := scope.Defer("success", func(context.Context) error {
+		successes++
+		return nil
+	}); err != nil {
+		t.Fatalf("register successful cleanup: %v", err)
+	}
 	if err := scope.Defer("retry", func(context.Context) error {
 		attempts++
 		if attempts == 1 {
@@ -209,11 +216,101 @@ func TestEffectScopeRetainsOnlyFailedCleanupForRetry(t *testing.T) {
 	if err := scope.cleanup(context.Background(), time.Second); err == nil {
 		t.Fatal("first cleanup succeeded, want retryable failure")
 	}
+	if err := scope.Defer("late", func(context.Context) error { return nil }); !errors.Is(err, ErrInvalidEffect) {
+		t.Fatalf("registration after failed cleanup error = %v, want %v", err, ErrInvalidEffect)
+	}
+	if scope.state != effectScopeClosing || successes != 1 {
+		t.Fatalf("failed cleanup state/successes = %q/%d", scope.state, successes)
+	}
 	if err := scope.cleanup(context.Background(), time.Second); err != nil {
 		t.Fatalf("retry cleanup: %v", err)
 	}
-	if attempts != 2 {
-		t.Fatalf("cleanup attempts = %d, want 2", attempts)
+	if attempts != 2 || successes != 1 || scope.state != effectScopeClosed {
+		t.Fatalf("cleanup attempts/successes/state = %d/%d/%q", attempts, successes, scope.state)
+	}
+}
+
+func TestEffectScopeRejectsLateRegistrationDuringAndAfterCleanup(t *testing.T) {
+	t.Parallel()
+
+	scope := newEffectScope()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	if err := scope.Defer("held", func(context.Context) error {
+		close(started)
+		<-release
+		return nil
+	}); err != nil {
+		t.Fatalf("register held cleanup: %v", err)
+	}
+	scope.beginClosing()
+	if err := scope.Defer("during-drain", func(context.Context) error { return nil }); !errors.Is(err, ErrInvalidEffect) {
+		t.Fatalf("registration after closing error = %v, want %v", err, ErrInvalidEffect)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- scope.cleanup(context.Background(), time.Second)
+	}()
+	<-started
+	if err := scope.Defer("during-cleanup", func(context.Context) error { return nil }); !errors.Is(err, ErrInvalidEffect) {
+		t.Fatalf("registration during cleanup error = %v, want %v", err, ErrInvalidEffect)
+	}
+	if err := scope.cleanup(context.Background(), time.Second); !errors.Is(err, ErrInvalidEffect) {
+		t.Fatalf("concurrent cleanup error = %v, want %v", err, ErrInvalidEffect)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("outer cleanup: %v", err)
+	}
+	if err := scope.Defer("after-close", func(context.Context) error { return nil }); !errors.Is(err, ErrInvalidEffect) {
+		t.Fatalf("registration after close error = %v, want %v", err, ErrInvalidEffect)
+	}
+	if err := scope.cleanup(context.Background(), time.Second); err != nil {
+		t.Fatalf("closed cleanup should be idempotent: %v", err)
+	}
+}
+
+func TestEffectScopeRejectsRecursiveCleanup(t *testing.T) {
+	t.Parallel()
+
+	scope := newEffectScope()
+	var recursiveErr error
+	if err := scope.Defer("recursive", func(context.Context) error {
+		recursiveErr = scope.cleanup(context.Background(), time.Second)
+		return nil
+	}); err != nil {
+		t.Fatalf("register recursive cleanup: %v", err)
+	}
+	if err := scope.cleanup(context.Background(), time.Second); err != nil {
+		t.Fatalf("outer cleanup: %v", err)
+	}
+	if !errors.Is(recursiveErr, ErrInvalidEffect) || scope.state != effectScopeClosed {
+		t.Fatalf("recursive error/state = %v/%q", recursiveErr, scope.state)
+	}
+}
+
+func TestStopPluginsClosesEffectRegistrationBeforeDrain(t *testing.T) {
+	t.Parallel()
+
+	scope := newEffectScope()
+	cleaned := 0
+	if err := scope.Defer("initial", func(context.Context) error {
+		cleaned++
+		return nil
+	}); err != nil {
+		t.Fatalf("register initial cleanup: %v", err)
+	}
+	instance := &shutdownRegistrationInstance{effects: scope}
+	err := stopPlugins(context.Background(), []runningPlugin{{
+		id: "shutdown.fake.v1", instance: instance,
+		timeouts: LifecycleTimeouts{Drain: time.Second, Stop: time.Second}, effects: scope,
+	}})
+	if err != nil {
+		t.Fatalf("stop plugins: %v", err)
+	}
+	if !errors.Is(instance.registrationErr, ErrInvalidEffect) || cleaned != 1 ||
+		scope.state != effectScopeClosed {
+		t.Fatalf("late registration/cleaned/state = %v/%d/%q", instance.registrationErr, cleaned, scope.state)
 	}
 }
 
@@ -515,6 +612,19 @@ type fakeInstance struct {
 	failureMu                  sync.Mutex
 	failedOnce                 bool
 }
+
+type shutdownRegistrationInstance struct {
+	effects         Effects
+	registrationErr error
+}
+
+func (*shutdownRegistrationInstance) Start(context.Context, Effects) error { return nil }
+func (*shutdownRegistrationInstance) Ready(context.Context) error          { return nil }
+func (instance *shutdownRegistrationInstance) Drain(context.Context) error {
+	instance.registrationErr = instance.effects.Defer("late", func(context.Context) error { return nil })
+	return nil
+}
+func (*shutdownRegistrationInstance) Stop(context.Context) error { return nil }
 
 func (instance *fakeInstance) Start(ctx context.Context, effects Effects) error {
 	call := "start:" + string(instance.id)

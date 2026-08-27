@@ -246,6 +246,9 @@ func stopPlugins(ctx context.Context, plugins []runningPlugin) error {
 	slices.Reverse(reversed)
 	var failures []error
 	for _, plugin := range reversed {
+		plugin.effects.beginClosing()
+	}
+	for _, plugin := range reversed {
 		if err := callWithTimeout(cleanupCtx, plugin.timeouts.Drain, plugin.instance.Drain); err != nil {
 			failures = append(failures, fmt.Errorf("drain plugin %s: %w", plugin.id, err))
 		}
@@ -275,19 +278,29 @@ type registeredEffect struct {
 }
 
 type effectScope struct {
-	mu      sync.Mutex
-	effects []registeredEffect
-	labels  map[string]struct{}
+	mu                sync.Mutex
+	state             effectScopeState
+	cleanupInProgress bool
+	effects           []registeredEffect
+	labels            map[string]struct{}
 }
 
+type effectScopeState string
+
+const (
+	effectScopeOpen    effectScopeState = "open"
+	effectScopeClosing effectScopeState = "closing"
+	effectScopeClosed  effectScopeState = "closed"
+)
+
 func newEffectScope() *effectScope {
-	return &effectScope{labels: make(map[string]struct{})}
+	return &effectScope{state: effectScopeOpen, labels: make(map[string]struct{})}
 }
 
 func (scope *effectScope) Defer(label string, cleanup func(context.Context) error) error {
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if label == "" || cleanup == nil {
+	if scope.state != effectScopeOpen || label == "" || cleanup == nil {
 		return ErrInvalidEffect
 	}
 	if _, exists := scope.labels[label]; exists {
@@ -298,8 +311,28 @@ func (scope *effectScope) Defer(label string, cleanup func(context.Context) erro
 	return nil
 }
 
+func (scope *effectScope) beginClosing() {
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if scope.state == effectScopeOpen {
+		scope.state = effectScopeClosing
+	}
+}
+
 func (scope *effectScope) cleanup(parent context.Context, timeout time.Duration) error {
 	scope.mu.Lock()
+	if scope.state == effectScopeClosed {
+		scope.mu.Unlock()
+		return nil
+	}
+	if scope.cleanupInProgress {
+		scope.mu.Unlock()
+		return ErrInvalidEffect
+	}
+	if scope.state == effectScopeOpen {
+		scope.state = effectScopeClosing
+	}
+	scope.cleanupInProgress = true
 	effects := slices.Clone(scope.effects)
 	scope.mu.Unlock()
 	slices.Reverse(effects)
@@ -314,6 +347,7 @@ func (scope *effectScope) cleanup(parent context.Context, timeout time.Duration)
 		cleaned[effect.label] = struct{}{}
 	}
 	scope.mu.Lock()
+	scope.cleanupInProgress = false
 	retained := make([]registeredEffect, 0, len(scope.effects))
 	for _, effect := range scope.effects {
 		if _, wasCleaned := cleaned[effect.label]; wasCleaned {
@@ -323,6 +357,9 @@ func (scope *effectScope) cleanup(parent context.Context, timeout time.Duration)
 		retained = append(retained, effect)
 	}
 	scope.effects = retained
+	if len(scope.effects) == 0 {
+		scope.state = effectScopeClosed
+	}
 	scope.mu.Unlock()
 	return errors.Join(failures...)
 }
