@@ -5,7 +5,7 @@
 ## Notion 专题与证据导航
 
 - [00｜范围、证据与核心发现](https://app.notion.com/p/3c1ead4b996e81c991e5f915de1828bd)
-- [01｜静然实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
+- [01｜v0版实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
 - [02｜LangGraph、Harness 与框架深潜](https://app.notion.com/p/3c1ead4b996e81ed961ed6ae6ff3a8de)
 - [03｜Agent 协议全景与选型](https://app.notion.com/p/3c1ead4b996e81c49a7ac20751c89cc7)
 - [04｜多 Agent 竞品全景](https://app.notion.com/p/3c1ead4b996e811fa520ed44582eeb1b)
@@ -65,7 +65,7 @@ Clawith 增量调研绑定固定源码 `45fc701c366c69f89dff26d91d6a4a9cbc38e6f8
 - 上下文：选择、预算、来源、压缩、遗漏和跨 Agent 传递；
 - 状态：平台/Agent/LangGraph/IM 分别持有什么；
 - 人机治理：授权、风险、审批、审计与不可逆动作；
-- 技术组合：静然实现、DeepSeek Harness、LangGraph、LangChain、Deep Agents；
+- 技术组合：v0版实现、DeepSeek Harness、LangGraph、LangChain、Deep Agents；
 - 产品路径：如何避免“先建空平台”，先让用户得到真实业务结果。
 
 “日报 Agent”不属于本次业务范围，仅保留“先做可见成果，再平台化”的策略背景。
@@ -83,7 +83,7 @@ Clawith 增量调研绑定固定源码 `45fc701c366c69f89dff26d91d6a4a9cbc38e6f8
 
 | 项目 | commit/version | 用途 |
 | --- | --- | --- |
-| 静然 `agent_atore_demo` | `8c477e0` | 现有产品/编排实现审计 |
+| v0版 `agent_atore_demo` | `8c477e0` | 现有产品/编排实现审计 |
 | DeepSeek Harness | `99f6f02` / `0.1.0-rc.7` | 插件式 Harness 与 session event |
 | LangGraph | `1e44bda` / `1.2.11` | graph/checkpoint/interrupt |
 | LangChain | `2019bf5` / `1.3.15` | model/tool/message/middleware |
@@ -369,9 +369,9 @@ ToolPort
   - NativeToolAdapter
 ```
 源码级比较见 [02｜LangGraph、Harness 与框架深潜](https://app.notion.com/p/3c1ead4b996e81ed961ed6ae6ff3a8de)。
-## 8. 静然实现审计
+## 8. v0版实现审计
 ### 8.1 已经做对的部分
-静然仓库不是空壳，包含：
+v0版仓库不是空壳，包含：
 - LangGraph 显式图、意图路由、DAG 派发、inspect gate 和验收；
 - A2A 风格 JSON-RPC/SSE 远程 Agent；
 - blackboard、主 Agent 压缩上下文、子 Agent 精确上下文的分层；
@@ -391,7 +391,7 @@ ToolPort
 - 外部注册入口要重点检查 SSRF 和 URL 安全；
 - checkpoint、数据库副作用和 IM 投递不是原子；
 - 需要显式 task attempt、outbox、幂等和凭据边界。
-建议复用纯逻辑和节点思想，以新领域内核为主干逐个迁移。阶段审计见 [01｜静然实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)。
+建议复用纯逻辑和节点思想，以新领域内核为主干逐个迁移。阶段审计见 [01｜v0版实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)。
 ## 9. 当前代码实现
 ### 9.1 已完成模块
 
@@ -577,7 +577,7 @@ worker crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式
 ## 15. 证据与附录
 专题研究：
 - [00｜范围、证据与核心发现](https://app.notion.com/p/3c1ead4b996e81c991e5f915de1828bd)
-- [01｜静然实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
+- [01｜v0版实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
 - [02｜LangGraph、Harness 与框架深潜](https://app.notion.com/p/3c1ead4b996e81ed961ed6ae6ff3a8de)
 - [03｜Agent 协议全景与选型](https://app.notion.com/p/3c1ead4b996e81c49a7ac20751c89cc7)
 - [04｜多 Agent 竞品全景](https://app.notion.com/p/3c1ead4b996e811fa520ed44582eeb1b)
@@ -611,7 +611,7 @@ worker crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式
 如果只做群聊外壳，竞争会落到模型和 UI；如果只做通用框架，用户看不到价值。真正有机会形成世界级产品的中间层，是把开放 Agent runtime 与真实组织工作连接起来，并让协作过程像数据库事务一样可靠、像群聊一样自然、像优秀团队一样可理解和可接管。
 ## Sources
 - [00｜范围、证据与核心发现](https://app.notion.com/p/3c1ead4b996e81c991e5f915de1828bd)
-- [01｜静然实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
+- [01｜v0版实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
 - [02｜LangGraph、Harness 与框架深潜](https://app.notion.com/p/3c1ead4b996e81ed961ed6ae6ff3a8de)
 - [03｜Agent 协议全景与选型](https://app.notion.com/p/3c1ead4b996e81c49a7ac20751c89cc7)
 - [04｜多 Agent 竞品全景](https://app.notion.com/p/3c1ead4b996e811fa520ed44582eeb1b)

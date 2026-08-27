@@ -11,7 +11,7 @@
 - 截止日期、测试数和提交号均以最近一次同步记录为准。
 - 飞书与企微只读，禁止通过该项目发送消息。
 - [00｜范围、证据与核心发现](https://app.notion.com/p/3c1ead4b996e81c991e5f915de1828bd)
-- [01｜静然实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
+- [01｜v0版实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
 - [02｜LangGraph、Harness 与框架深潜](https://app.notion.com/p/3c1ead4b996e81ed961ed6ae6ff3a8de)
 - [03｜Agent 协议全景与选型](https://app.notion.com/p/3c1ead4b996e81c49a7ac20751c89cc7)
 - [04｜多 Agent 竞品全景](https://app.notion.com/p/3c1ead4b996e811fa520ed44582eeb1b)
@@ -21,7 +21,7 @@
 ## 报告导航
 - **主报告**：[综合报告｜人与多 Agent 群聊协同产品：调研、架构与实现](https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44)
 - [00｜范围、证据与核心发现](https://app.notion.com/p/3c1ead4b996e81c991e5f915de1828bd)
-- [01｜静然实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
+- [01｜v0版实现源码审计](https://app.notion.com/p/3c1ead4b996e813db62ae91daada97d2)
 - [02｜LangGraph、Harness 与框架深潜](https://app.notion.com/p/3c1ead4b996e81ed961ed6ae6ff3a8de)
 - [03｜Agent 协议全景与选型](https://app.notion.com/p/3c1ead4b996e81c49a7ac20751c89cc7)
 - [04｜多 Agent 竞品全景](https://app.notion.com/p/3c1ead4b996e811fa520ed44582eeb1b)

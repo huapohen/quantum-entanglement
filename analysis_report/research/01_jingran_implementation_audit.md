@@ -1,4 +1,4 @@
-# 静然 `agent_atore_demo` 实现审计
+# v0版 `agent_atore_demo` 实现审计
 
 > 审计对象：`references/agent_atore_demo` 当前本地快照  
 > 审计日期：2026-08-19  

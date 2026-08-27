@@ -9,7 +9,7 @@
 3. 哪些协作决策必须由确定性系统计算，哪些才交给 LLM？
 4. `@Agent`、自动规划、Agent 接力、人工审批与失败恢复如何共存？
 5. A2A、ACP、MCP 等外部协议与内部协作协议如何分层，是否需要自研协议？
-6. DeepSeek Harness、LangGraph、LangChain、Deep Agents 与静然实现分别适合哪一层？
+6. DeepSeek Harness、LangGraph、LangChain、Deep Agents 与 v0版实现分别适合哪一层？
 7. 什么样的产品路径能先产生真实可见的业务结果，再演进为协作平台？
 “日报 Agent”不属于本次产品范围；只保留“先交付可见业务结果，再平台化”的策略启示。
 ## 2. 指令优先级与资料边界
@@ -18,7 +18,7 @@
 - 飞书和企微只读；不得发送、回复、评论、@、上传或向任何人/群询问。
 - 可以读取“10 亿美金俱乐部”历史消息，但只提取与本课题相关的信息。
 - 不记录、复述或提交完整 API Key；只允许按上级 `AGENTS.md` 的前缀与短指纹规则做本机排障。
-- 静然仓库与开源参考仓库作为研究副本，放在 `references/` 且不提交到本仓库。
+- v0版仓库与开源参考仓库作为研究副本，放在 `references/` 且不提交到本仓库。
 - 本地报告是单一真相源；Notion 内容必须与其同步，而不是独立维护两份互相漂移的正文。
 ## 3. 证据分级
 为避免把产品宣传、内部讨论和源码事实混为一谈，报告使用四级证据：
@@ -46,7 +46,7 @@
 | `screenshots/07_yuque_products_rows_12_16.jpeg` | Pi Agent、Gotaa Pi.Agent、CodexLoom、Coze 3.0、OpenAgents | C |
 | `screenshots/08_yuque_im_provider_comparison.jpeg` | 腾讯 IM、融云、网易云信、环信、声网 IM 对比 | C |
 | `screenshots/09_yuque_technical_options.jpeg` | Flutter/Tauri/RN 与 IM 组合技术方案对比 | C |
-| `references/agent_atore_demo@8c477e0` | 静然实现：LangGraph、A2A、任务图、artifact 版本、SSE 前端 | A |
+| `references/agent_atore_demo@8c477e0` | v0版实现：LangGraph、A2A、任务图、artifact 版本、SSE 前端 | A |
 | `references/deepseek-harness@99f6f02` | 插件式 Harness 与 Cordis 生命周期 | A |
 | `references/langgraph@1e44bda` | 图运行时、checkpoint、interrupt、store | A |
 | `references/langchain@2019bf5` | 模型、工具、消息与集成抽象 | A |
@@ -90,7 +90,7 @@
 ## 8. 尚待补强的证据
 - 14 个竞品仍需逐一回到官方一手资料核对版本、许可证和当前可用性。
 - A2A/ACP/ANP/AGNTCY 的版本变化快，最终协议表需记录采集日期与规范版本。
-- 静然实现需要运行级审计：数据库迁移、并发竞争、断线恢复和实际 A2A 兼容性。
+- v0版实现需要运行级审计：数据库迁移、并发竞争、断线恢复和实际 A2A 兼容性。
 - IM 选型表属于内部初筛，正式采购前还需验证 Agent 独立身份、服务端代发、webhook 顺序、历史消息、国内合规和成本模型。
 
 ---

@@ -133,7 +133,7 @@ LangGraph checkpointer 保存每个 thread/checkpoint namespace 的 channel valu
 4. resume 后读取批准凭证；
 5. 由 outbox/幂等 action executor 执行副作用。
 
-静然实现把 interrupt 独占为单节点的方向是正确的；WanWork bridge 还必须把 LangGraph interrupt 映射成统一 Needs You，而不是为每张图重新发明 UI。
+v0版实现把 interrupt 独占为单节点的方向是正确的；WanWork bridge 还必须把 LangGraph interrupt 映射成统一 Needs You，而不是为每张图重新发明 UI。
 
 ### 3.4 LangGraph 适合与不适合
 
@@ -223,7 +223,7 @@ WanWork Domain Kernel
 1. 继续用本项目 dependency-free runtime 固化领域语义和测试。
 2. 用 DSH headless/SDK 做最薄 `AgentRuntimePort` proof-of-concept，不 fork DSH。
 3. 用现有 `LangGraphBridge` 对一个 Needs You 流程做 Postgres checkpoint 集成测试。
-4. 把静然实现中的 planner、@ handler、impact check 迁成领域 command handler 或 graph node。
+4. 把 v0版实现中的 planner、@ handler、impact check 迁成领域 command handler 或 graph node。
 5. 引入 outbox，把 event/artifact commit 与异步 runtime dispatch 解耦。
 6. 增加 adapter contract suite：同一个测试对 InProcess、DSH、DeepAgents、A2A 运行。
 7. 上线前固定依赖版本并建立上游升级矩阵；DSH 0.1 RC 只允许隔离试用。

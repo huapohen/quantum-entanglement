@@ -74,7 +74,7 @@ Clawith 增量调研绑定固定源码 `45fc701c366c69f89dff26d91d6a4a9cbc38e6f8
 - 上下文：选择、预算、来源、压缩、遗漏和跨 Agent 传递；
 - 状态：平台/Agent/LangGraph/IM 分别持有什么；
 - 人机治理：授权、风险、审批、审计与不可逆动作；
-- 技术组合：静然实现、DeepSeek Harness、LangGraph、LangChain、Deep Agents；
+- 技术组合：v0版实现、DeepSeek Harness、LangGraph、LangChain、Deep Agents；
 - 产品路径：如何避免“先建空平台”，先让用户得到真实业务结果。
 
 “日报 Agent”不属于本次业务范围，仅保留“先做可见成果，再平台化”的策略背景。
@@ -92,7 +92,7 @@ Clawith 增量调研绑定固定源码 `45fc701c366c69f89dff26d91d6a4a9cbc38e6f8
 
 | 项目 | commit/version | 用途 |
 |---|---|---|
-| 静然 `agent_atore_demo` | `8c477e0` | 现有产品/编排实现审计 |
+| v0版 `agent_atore_demo` | `8c477e0` | 现有产品/编排实现审计 |
 | DeepSeek Harness | `99f6f02` / `0.1.0-rc.7` | 插件式 Harness 与 session event |
 | LangGraph | `1e44bda` / `1.2.11` | graph/checkpoint/interrupt |
 | LangChain | `2019bf5` / `1.3.15` | model/tool/message/middleware |
@@ -492,11 +492,11 @@ ToolPort
 
 源码级比较见 `research/02_framework_deepdive.md`。
 
-## 8. 静然实现审计
+## 8. v0版实现审计
 
 ### 8.1 已经做对的部分
 
-静然仓库不是空壳，包含：
+v0版仓库不是空壳，包含：
 
 - LangGraph 显式图、意图路由、DAG 派发、inspect gate 和验收；
 - A2A 风格 JSON-RPC/SSE 远程 Agent；

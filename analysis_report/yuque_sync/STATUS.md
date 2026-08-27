@@ -4,6 +4,10 @@
 
 ## 当前状态
 
+- 2026-08-27 用户已自行把 Notion 与私人语雀中的对应标题/正文术语统一为“v0版”，并明确
+  要求本轮不再访问或修改这两个远端。本地传输源已同步使用新术语；助手没有对这次人工
+  更名执行远端写入或回读，因此 `mapping.json` 对该标题只记录
+  `user_reported_remote_rename_not_read_back`，不把用户报告伪装成实时验证。
 - 2026-08-27 已把 Clawith 增量纳入 5 个本地语雀传输源：综合报告、竞品全景、目标架构、
   截图证据，以及完整 Clawith 专题 `source/14_clawith_competitive_analysis.md`。
 - 06:16 的本地增量进一步把 Skill 渐进披露、模型能力事实及其生产门禁写入竞品、架构、
@@ -17,8 +21,9 @@
 - 当前全局共有 6 个源在私人语雀为 `local_pending`：上述 5 个 Clawith 源，以及此前已变化但
   尚未远端同步的 `source/05_protocols.md`。本轮整体状态为 `partial`：尚未执行远端写入，也
   没有进行实时远端回读。下列“已完成”只描述 2026-08-24 的历史快照，不包含当前增量。
-- `mapping.json` 的 15 个历史远端对象、slug、已回读摘要和 verification 均保持不变；
-  新的 `current_local_delta` 只登记当前本地摘要与 pending 状态，不伪造 Clawith 远端对象。
+- `mapping.json` 的 15 个历史远端对象、slug、已回读摘要和正文 verification 均保持不变；
+  唯一标题标签按用户报告更新为“v0版”，并显式标成未回读。新的 `current_local_delta` 只登记
+  当前本地摘要与 pending 状态，不伪造 Clawith 远端对象。
 - `mapping.json` / `progress.json` 为兼容既有读取方保留原 `sync_status` / `status` 字段；
   它们只描述 2026-08-24 历史快照。当前状态必须读取新增的 `current_content_status=partial`
   与 `current_local_delta.status=partial`，禁止把旧值 `complete_manual_sync` 解读为当前内容已同步。

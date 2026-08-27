@@ -123,5 +123,5 @@ python3 -m pip install -e '.[langgraph]'
 
 ## 参考实现
 
-本地 `references/` 中保留静然的 `agent_atore_demo`、DeepSeek Harness、LangGraph、
+本地 `references/` 中保留 v0版的 `agent_atore_demo`、DeepSeek Harness、LangGraph、
 LangChain 和 Deep Agents 的浅克隆，便于逐行核对；它们不被复制进本仓库，也不改变原许可证。

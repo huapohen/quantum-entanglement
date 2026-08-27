@@ -21,7 +21,7 @@
 | 文件 | 状态 | 内容 |
 |---|---|---|
 | `research/00_scope_evidence_and_findings.md` | 已完成首版 | 研究边界、证据分级、群聊发现、核心结论 |
-| `research/01_jingran_implementation_audit.md` | 已完成首版，持续补充 | 静然 `agent_atore_demo` 源码与生产化差距 |
+| `research/01_jingran_implementation_audit.md` | 已完成首版，持续补充 | v0版 `agent_atore_demo` 源码与生产化差距 |
 | `research/02_framework_deepdive.md` | 已完成首版 | DeepSeek Harness、LangGraph、LangChain、Deep Agents |
 | `research/03_protocol_landscape.md` | 已完成首版 | A2A、ACP、MCP、ANP、AGNTCY 与内部协议边界 |
 | `research/04_competitor_landscape.md` | 已完成首版 | 14 个竞品的编排、协作、通信、上下文与开放性 |
