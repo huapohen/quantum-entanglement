@@ -8,6 +8,7 @@ import pytest
 
 from quantum_entanglement.native_im import (
     IMAttachmentRefV1,
+    IMCapabilityRequestV1,
     IMConversationRefV1,
     IMMembershipChangeV1,
     IMMessageContentV1,
@@ -15,6 +16,8 @@ from quantum_entanglement.native_im import (
     IMMessageSegmentV1,
     IMParticipantRefV1,
     IMReactionRefV1,
+    IMVerifiedInboundEnvelopeV1,
+    InboundIMEventV1,
 )
 
 SCHEMA = 1
@@ -123,6 +126,48 @@ def reaction(**changes: object) -> IMReactionRefV1:
     return IMReactionRefV1(**values)  # type: ignore[arg-type]
 
 
+def inbound_event(**changes: object) -> InboundIMEventV1:
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "event_id": "test-event-1",
+        "event_type": "message.created",
+        "cursor": "test-cursor-1",
+        "sequence_number": 1,
+        "conversation": conversation(),
+        "message": message(),
+        "sender": participant(),
+        "content": content(),
+        "reaction": None,
+        "membership_change": None,
+        "occurred_at": TIME,
+        "first_received_at": TIME,
+        "ingress_request_id": "test-ingress-request-1",
+        "correlation_id": "test-correlation-1",
+        "causation_id": None,
+        "transport_evidence_digest": "b" * 64,
+    }
+    values.update(changes)
+    return InboundIMEventV1(**values)  # type: ignore[arg-type]
+
+
+def verified_envelope(**changes: object) -> IMVerifiedInboundEnvelopeV1:
+    event = changes.pop("event", inbound_event())
+    assert type(event) is InboundIMEventV1
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "event": event,
+        "event_digest": event.canonical_digest(),
+        "verification_id": "test-verification-1",
+        "verifier_id": "test-verifier-1",
+        "authentication_evidence_digest": "c" * 64,
+        "tenant_mapping_revision": "test-tenant-mapping-1",
+        "verified_at": TIME,
+        "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+    }
+    values.update(changes)
+    return IMVerifiedInboundEnvelopeV1(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -135,6 +180,16 @@ def reaction(**changes: object) -> IMReactionRefV1:
         message(),
         reaction(),
         IMMembershipChangeV1(SCHEMA, participant(), "left", "test-membership-1"),
+        inbound_event(),
+        verified_envelope(),
+        IMCapabilityRequestV1(
+            SCHEMA,
+            "test-tenant",
+            "test-workspace",
+            "qe.fake-im.v1",
+            "test-channel",
+            "test-capability-request-1",
+        ),
     ],
 )
 def test_reference_models_round_trip_through_dict_and_noncanonical_json(value: object) -> None:
@@ -249,3 +304,65 @@ def test_exact_classes_are_required_for_public_and_nested_values() -> None:
         ConversationSubclass.from_dict(conversation().to_dict())
     with pytest.raises(TypeError, match="exact"):
         replace(message(), conversation=object())
+
+
+@pytest.mark.parametrize(
+    ("event_type", "changes"),
+    [
+        ("message.created", {}),
+        ("message.edited", {}),
+        ("message.deleted", {"content": None, "sender": None}),
+        (
+            "reaction.added",
+            {"content": None, "reaction": reaction()},
+        ),
+        (
+            "reaction.removed",
+            {"content": None, "reaction": reaction()},
+        ),
+        (
+            "membership.changed",
+            {
+                "message": None,
+                "content": None,
+                "reaction": None,
+                "membership_change": IMMembershipChangeV1(
+                    SCHEMA, participant(), "left", "test-membership-1"
+                ),
+            },
+        ),
+    ],
+)
+def test_inbound_event_type_matrix_accepts_only_frozen_combinations(
+    event_type: str, changes: dict[str, object]
+) -> None:
+    assert inbound_event(event_type=event_type, **changes).event_type == event_type
+
+
+def test_inbound_event_rejects_matrix_and_scope_drift() -> None:
+    for changes in (
+        {"content": None},
+        {"reaction": reaction()},
+        {"event_type": "message.deleted", "content": content()},
+        {
+            "message": message(conversation=conversation(channel_id="test-other-channel")),
+        },
+        {"sender": participant(channel_id="test-other-channel")},
+        {"reaction": reaction(channel_id="test-other-channel"), "content": None},
+        {"content": content(attachments=(attachment(channel_id="test-other-channel"),))},
+    ):
+        with pytest.raises(ValueError):
+            inbound_event(**changes)
+
+
+def test_verified_envelope_binds_exact_event_digest_and_traceparent() -> None:
+    envelope = verified_envelope()
+    decoded = IMVerifiedInboundEnvelopeV1.from_dict(envelope.to_dict())
+    assert decoded == envelope
+    assert "hello" not in repr(envelope)
+    with pytest.raises(ValueError, match="eventDigest"):
+        verified_envelope(event_digest="d" * 64)
+    with pytest.raises(ValueError, match="traceparent"):
+        verified_envelope(traceparent="")
+    changed_event = replace(inbound_event(), sequence_number=2)
+    assert changed_event.canonical_digest() != inbound_event().canonical_digest()

@@ -29,6 +29,7 @@ from ._native_im_codec import (
     _plain_list,
     _schema_version,
     _timestamp,
+    _traceparent,
 )
 
 _MAX_REFERENCE_BYTES = 3 * 1_024 * 1_024
@@ -40,6 +41,14 @@ _MAX_ATTACHMENTS = 64
 _PARTICIPANT_KINDS = {"human", "agent", "service"}
 _SEGMENT_KINDS = {"text", "mention"}
 _MEMBERSHIP_CHANGE_KINDS = {"joined", "left", "role_changed", "suspended", "restored"}
+_INBOUND_EVENT_TYPES = {
+    "message.created",
+    "message.edited",
+    "message.deleted",
+    "reaction.added",
+    "reaction.removed",
+    "membership.changed",
+}
 
 _CONVERSATION_FIELDS = {
     "schemaVersion",
@@ -92,6 +101,44 @@ _MEMBERSHIP_CHANGE_FIELDS = {
     "changeKind",
     "previousMembershipRevision",
 }
+_INBOUND_EVENT_FIELDS = {
+    "schemaVersion",
+    "eventId",
+    "eventType",
+    "cursor",
+    "sequenceNumber",
+    "conversation",
+    "message",
+    "sender",
+    "content",
+    "reaction",
+    "membershipChange",
+    "occurredAt",
+    "firstReceivedAt",
+    "ingressRequestId",
+    "correlationId",
+    "causationId",
+    "transportEvidenceDigest",
+}
+_VERIFIED_ENVELOPE_FIELDS = {
+    "schemaVersion",
+    "event",
+    "eventDigest",
+    "verificationId",
+    "verifierId",
+    "authenticationEvidenceDigest",
+    "tenantMappingRevision",
+    "verifiedAt",
+    "traceparent",
+}
+_CAPABILITY_REQUEST_FIELDS = {
+    "schemaVersion",
+    "tenantId",
+    "workspaceId",
+    "provider",
+    "channelId",
+    "requestId",
+}
 
 _WireT = TypeVar("_WireT", bound="_NativeIMWireValue")
 
@@ -139,6 +186,12 @@ def _optional_display_text(value: object, label: str) -> str | None:
     return _display_text(value, label)
 
 
+def _optional_traceparent(value: object, label: str) -> str | None:
+    if value is None:
+        return None
+    return _traceparent(value, label)
+
+
 def _require_exact_model(value: object, expected: type, label: str) -> None:
     if type(value) is not expected:
         raise TypeError(f"{label} must use the exact V1 model class")
@@ -148,6 +201,10 @@ def _require_exact_tuple(value: object, label: str) -> tuple[object, ...]:
     if type(value) is not tuple:
         raise TypeError(f"{label} must be an immutable tuple")
     return value
+
+
+def _scope(value: Any) -> Tuple[str, str, str, str]:
+    return (value.tenant_id, value.workspace_id, value.provider, value.channel_id)
 
 
 @dataclass(frozen=True)
@@ -576,7 +633,279 @@ class IMMembershipChangeV1(_NativeIMWireValue):
         )
 
 
+@dataclass(frozen=True)
+class InboundIMEventV1(_NativeIMWireValue):
+    schema_version: int
+    event_id: str
+    event_type: str
+    cursor: str
+    sequence_number: int
+    conversation: IMConversationRefV1
+    message: IMMessageRefV1 | None
+    sender: IMParticipantRefV1 | None
+    content: IMMessageContentV1 | None = field(repr=False)
+    reaction: IMReactionRefV1 | None
+    membership_change: IMMembershipChangeV1 | None
+    occurred_at: str
+    first_received_at: str
+    ingress_request_id: str
+    correlation_id: str
+    causation_id: str | None
+    transport_evidence_digest: str
+
+    _MODEL_NAME: ClassVar[str] = "InboundIMEventV1"
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, InboundIMEventV1, "inbound event")
+        _schema_version(self.schema_version)
+        _id(self.event_id, "eventId")
+        _enum(self.event_type, _INBOUND_EVENT_TYPES, "eventType")
+        _id(self.cursor, "cursor")
+        _non_negative_integer(self.sequence_number, "sequenceNumber")
+        _require_exact_model(self.conversation, IMConversationRefV1, "conversation")
+        if self.message is not None:
+            _require_exact_model(self.message, IMMessageRefV1, "message")
+        if self.sender is not None:
+            _require_exact_model(self.sender, IMParticipantRefV1, "sender")
+        if self.content is not None:
+            _require_exact_model(self.content, IMMessageContentV1, "content")
+        if self.reaction is not None:
+            _require_exact_model(self.reaction, IMReactionRefV1, "reaction")
+        if self.membership_change is not None:
+            _require_exact_model(
+                self.membership_change,
+                IMMembershipChangeV1,
+                "membershipChange",
+            )
+        self._validate_event_matrix()
+        expected_scope = _scope(self.conversation)
+        if self.message is not None and self.message.conversation != self.conversation:
+            raise ValueError("message conversation does not match inbound event conversation")
+        for nested, label in (
+            (self.sender, "sender"),
+            (self.reaction, "reaction"),
+        ):
+            if nested is not None and _scope(nested) != expected_scope:
+                raise ValueError(f"{label} scope does not match inbound event scope")
+        if self.membership_change is not None and (
+            _scope(self.membership_change.subject) != expected_scope
+        ):
+            raise ValueError("membership change scope does not match inbound event scope")
+        if self.content is not None:
+            for attachment in self.content.attachments:
+                if _scope(attachment) != expected_scope:
+                    raise ValueError("attachment scope does not match inbound event scope")
+        _timestamp(self.occurred_at, "occurredAt")
+        _timestamp(self.first_received_at, "firstReceivedAt")
+        _id(self.ingress_request_id, "ingressRequestId")
+        _id(self.correlation_id, "correlationId")
+        _optional_id(self.causation_id, "causationId")
+        _digest(self.transport_evidence_digest, "transportEvidenceDigest")
+        self.canonical_bytes()
+
+    def _validate_event_matrix(self) -> None:
+        values = (self.message, self.sender, self.content, self.reaction, self.membership_change)
+        if self.event_type in {"message.created", "message.edited"}:
+            valid = all(item is not None for item in values[:3]) and all(
+                item is None for item in values[3:]
+            )
+        elif self.event_type == "message.deleted":
+            valid = (
+                self.message is not None
+                and self.content is None
+                and self.reaction is None
+                and self.membership_change is None
+            )
+        elif self.event_type in {"reaction.added", "reaction.removed"}:
+            valid = (
+                self.message is not None
+                and self.sender is not None
+                and self.content is None
+                and self.reaction is not None
+                and self.membership_change is None
+            )
+        else:
+            valid = (
+                self.message is None
+                and self.content is None
+                and self.reaction is None
+                and self.membership_change is not None
+            )
+        if not valid:
+            raise ValueError("inbound event fields do not match its eventType matrix")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "eventId": self.event_id,
+            "eventType": self.event_type,
+            "cursor": self.cursor,
+            "sequenceNumber": self.sequence_number,
+            "conversation": self.conversation.to_dict(),
+            "message": None if self.message is None else self.message.to_dict(),
+            "sender": None if self.sender is None else self.sender.to_dict(),
+            "content": None if self.content is None else self.content.to_dict(),
+            "reaction": None if self.reaction is None else self.reaction.to_dict(),
+            "membershipChange": (
+                None if self.membership_change is None else self.membership_change.to_dict()
+            ),
+            "occurredAt": self.occurred_at,
+            "firstReceivedAt": self.first_received_at,
+            "ingressRequestId": self.ingress_request_id,
+            "correlationId": self.correlation_id,
+            "causationId": self.causation_id,
+            "transportEvidenceDigest": self.transport_evidence_digest,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> InboundIMEventV1:
+        if cls is not InboundIMEventV1:
+            raise TypeError("inbound event decoder requires the exact V1 class")
+        body = _plain_dict(value, _INBOUND_EVENT_FIELDS, "inbound event")
+        return cls(
+            schema_version=body["schemaVersion"],
+            event_id=body["eventId"],
+            event_type=body["eventType"],
+            cursor=body["cursor"],
+            sequence_number=body["sequenceNumber"],
+            conversation=IMConversationRefV1.from_dict(body["conversation"]),
+            message=(
+                None if body["message"] is None else IMMessageRefV1.from_dict(body["message"])
+            ),
+            sender=(
+                None if body["sender"] is None else IMParticipantRefV1.from_dict(body["sender"])
+            ),
+            content=(
+                None if body["content"] is None else IMMessageContentV1.from_dict(body["content"])
+            ),
+            reaction=(
+                None if body["reaction"] is None else IMReactionRefV1.from_dict(body["reaction"])
+            ),
+            membership_change=(
+                None
+                if body["membershipChange"] is None
+                else IMMembershipChangeV1.from_dict(body["membershipChange"])
+            ),
+            occurred_at=body["occurredAt"],
+            first_received_at=body["firstReceivedAt"],
+            ingress_request_id=body["ingressRequestId"],
+            correlation_id=body["correlationId"],
+            causation_id=body["causationId"],
+            transport_evidence_digest=body["transportEvidenceDigest"],
+        )
+
+
+@dataclass(frozen=True)
+class IMVerifiedInboundEnvelopeV1(_NativeIMWireValue):
+    schema_version: int
+    event: InboundIMEventV1 = field(repr=False)
+    event_digest: str
+    verification_id: str
+    verifier_id: str
+    authentication_evidence_digest: str
+    tenant_mapping_revision: str
+    verified_at: str
+    traceparent: str | None
+
+    _MODEL_NAME: ClassVar[str] = "IMVerifiedInboundEnvelopeV1"
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMVerifiedInboundEnvelopeV1, "verified inbound envelope")
+        _schema_version(self.schema_version)
+        _require_exact_model(self.event, InboundIMEventV1, "event")
+        _digest(self.event_digest, "eventDigest")
+        if self.event_digest != self.event.canonical_digest():
+            raise ValueError("eventDigest does not match the exact inbound event")
+        _id(self.verification_id, "verificationId")
+        _id(self.verifier_id, "verifierId")
+        _digest(self.authentication_evidence_digest, "authenticationEvidenceDigest")
+        _id(self.tenant_mapping_revision, "tenantMappingRevision")
+        _timestamp(self.verified_at, "verifiedAt")
+        _optional_traceparent(self.traceparent, "traceparent")
+        self.canonical_bytes()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "event": self.event.to_dict(),
+            "eventDigest": self.event_digest,
+            "verificationId": self.verification_id,
+            "verifierId": self.verifier_id,
+            "authenticationEvidenceDigest": self.authentication_evidence_digest,
+            "tenantMappingRevision": self.tenant_mapping_revision,
+            "verifiedAt": self.verified_at,
+            "traceparent": self.traceparent,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMVerifiedInboundEnvelopeV1:
+        if cls is not IMVerifiedInboundEnvelopeV1:
+            raise TypeError("verified envelope decoder requires the exact V1 class")
+        body = _plain_dict(value, _VERIFIED_ENVELOPE_FIELDS, "verified inbound envelope")
+        return cls(
+            schema_version=body["schemaVersion"],
+            event=InboundIMEventV1.from_dict(body["event"]),
+            event_digest=body["eventDigest"],
+            verification_id=body["verificationId"],
+            verifier_id=body["verifierId"],
+            authentication_evidence_digest=body["authenticationEvidenceDigest"],
+            tenant_mapping_revision=body["tenantMappingRevision"],
+            verified_at=body["verifiedAt"],
+            traceparent=body["traceparent"],
+        )
+
+
+@dataclass(frozen=True)
+class IMCapabilityRequestV1(_NativeIMWireValue):
+    schema_version: int
+    tenant_id: str
+    workspace_id: str
+    provider: str
+    channel_id: str
+    request_id: str
+
+    _MODEL_NAME: ClassVar[str] = "IMCapabilityRequestV1"
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMCapabilityRequestV1, "capability request")
+        _schema_version(self.schema_version)
+        for value, label in (
+            (self.tenant_id, "tenantId"),
+            (self.workspace_id, "workspaceId"),
+            (self.provider, "provider"),
+            (self.channel_id, "channelId"),
+            (self.request_id, "requestId"),
+        ):
+            _id(value, label)
+        self.canonical_bytes()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "provider": self.provider,
+            "channelId": self.channel_id,
+            "requestId": self.request_id,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMCapabilityRequestV1:
+        if cls is not IMCapabilityRequestV1:
+            raise TypeError("capability request decoder requires the exact V1 class")
+        body = _plain_dict(value, _CAPABILITY_REQUEST_FIELDS, "capability request")
+        return cls(
+            schema_version=body["schemaVersion"],
+            tenant_id=body["tenantId"],
+            workspace_id=body["workspaceId"],
+            provider=body["provider"],
+            channel_id=body["channelId"],
+            request_id=body["requestId"],
+        )
+
+
 __all__ = [
+    "IMCapabilityRequestV1",
     "IMAttachmentRefV1",
     "IMConversationRefV1",
     "IMMembershipChangeV1",
@@ -585,5 +914,7 @@ __all__ = [
     "IMMessageSegmentV1",
     "IMParticipantRefV1",
     "IMReactionRefV1",
+    "IMVerifiedInboundEnvelopeV1",
+    "InboundIMEventV1",
     "NATIVE_IM_SCHEMA_VERSION",
 ]
