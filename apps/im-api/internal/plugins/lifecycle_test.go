@@ -181,6 +181,125 @@ func TestRollbackCallbacksObserveStoppingStateWithoutHostLock(t *testing.T) {
 	}
 }
 
+func TestConfigurePanicBecomesCodeOnlyLifecycleFailure(t *testing.T) {
+	t.Parallel()
+
+	const canary = "configure-panic-secret-canary"
+	log := newCallLog()
+	host := lifecyclePanicHost(log, "configure:panic.b.v1", canary)
+	err, escaped := captureLifecyclePanic(func() error {
+		return host.Start(context.Background())
+	})
+	if escaped != nil {
+		t.Fatalf("configure panic escaped host: %T", escaped)
+	}
+	if !errors.Is(err, ErrLifecyclePanic) {
+		t.Fatalf("configure error = %v, want %v", err, ErrLifecyclePanic)
+	}
+	if strings.Contains(err.Error(), canary) {
+		t.Fatalf("configure error leaked panic payload: %v", err)
+	}
+	if state := host.State(); state != HostStateFailed {
+		t.Fatalf("state after configure panic = %q, want %q", state, HostStateFailed)
+	}
+}
+
+func TestStartAndReadyPanicsRollbackWithoutPayloadDisclosure(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name     string
+		panicAt  string
+		required []string
+	}{
+		{
+			name:    "start",
+			panicAt: "start:panic.b.v1",
+			required: []string{
+				"drain:panic.b.v1", "drain:panic.a.v1",
+				"stop:panic.b.v1", "stop:panic.a.v1",
+				"cleanup:panic.b.v1", "cleanup:panic.a.v1",
+			},
+		},
+		{
+			name:    "ready",
+			panicAt: "ready:panic.b.v1",
+			required: []string{
+				"drain:panic.c.v1", "drain:panic.b.v1", "drain:panic.a.v1",
+				"stop:panic.c.v1", "stop:panic.b.v1", "stop:panic.a.v1",
+				"cleanup:panic.c.v1", "cleanup:panic.b.v1", "cleanup:panic.a.v1",
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			const canary = "startup-panic-secret-canary"
+			log := newCallLog()
+			host := lifecyclePanicHost(log, testCase.panicAt, canary)
+			err, escaped := captureLifecyclePanic(func() error {
+				return host.Start(context.Background())
+			})
+			if escaped != nil {
+				t.Fatalf("%s panic escaped host: %T", testCase.name, escaped)
+			}
+			if !errors.Is(err, ErrLifecyclePanic) {
+				t.Fatalf("%s error = %v, want %v", testCase.name, err, ErrLifecyclePanic)
+			}
+			if strings.Contains(err.Error(), canary) {
+				t.Fatalf("%s error leaked panic payload: %v", testCase.name, err)
+			}
+			if state := host.State(); state != HostStateFailed {
+				t.Fatalf("state after %s panic = %q, want %q", testCase.name, state, HostStateFailed)
+			}
+			for _, required := range testCase.required {
+				if !slices.Contains(log.snapshot(), required) {
+					t.Fatalf("%s calls %v do not contain %q", testCase.name, log.snapshot(), required)
+				}
+			}
+		})
+	}
+}
+
+func TestShutdownPanicsDoNotSkipRemainingCallbacks(t *testing.T) {
+	t.Parallel()
+
+	for _, phase := range []string{"drain", "stop", "cleanup"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			const canary = "shutdown-panic-secret-canary"
+			log := newCallLog()
+			host := lifecyclePanicHost(log, phase+":panic.c.v1", canary)
+			if err := host.Start(context.Background()); err != nil {
+				t.Fatalf("start host: %v", err)
+			}
+			err, escaped := captureLifecyclePanic(func() error {
+				return host.Stop(context.Background())
+			})
+			if escaped != nil {
+				t.Fatalf("%s panic escaped host: %T", phase, escaped)
+			}
+			if !errors.Is(err, ErrLifecyclePanic) {
+				t.Fatalf("%s error = %v, want %v", phase, err, ErrLifecyclePanic)
+			}
+			if strings.Contains(err.Error(), canary) {
+				t.Fatalf("%s error leaked panic payload: %v", phase, err)
+			}
+			if state := host.State(); state != HostStateFailed {
+				t.Fatalf("state after %s panic = %q, want %q", phase, state, HostStateFailed)
+			}
+			for _, required := range []string{
+				"drain:panic.c.v1", "drain:panic.b.v1", "drain:panic.a.v1",
+				"stop:panic.c.v1", "stop:panic.b.v1", "stop:panic.a.v1",
+				"cleanup:panic.c.v1", "cleanup:panic.b.v1", "cleanup:panic.a.v1",
+			} {
+				if !slices.Contains(log.snapshot(), required) {
+					t.Fatalf("%s calls %v do not contain %q", phase, log.snapshot(), required)
+				}
+			}
+		})
+	}
+}
+
 func TestHostRollsBackPartialStartAndReadyFailures(t *testing.T) {
 	t.Parallel()
 
@@ -979,6 +1098,92 @@ func awaitLifecycleResult(t *testing.T, label string, result <-chan error) error
 		t.Fatalf("timed out waiting for %s", label)
 		return nil
 	}
+}
+
+func lifecyclePanicHost(log *callLog, panicAt string, panicValue any) *Host {
+	activation := make([]activationEntry, 0, 3)
+	for _, id := range []PluginID{"panic.a.v1", "panic.b.v1", "panic.c.v1"} {
+		pluginID := id
+		activation = append(activation, activationEntry{
+			id: pluginID,
+			factory: lifecycleFactoryFunc(func(PluginConfig) (Instance, error) {
+				call := "configure:" + string(pluginID)
+				log.add(call)
+				if call == panicAt {
+					panic(panicValue)
+				}
+				return &panicLifecycleInstance{
+					id:         pluginID,
+					log:        log,
+					panicAt:    panicAt,
+					panicValue: panicValue,
+				}, nil
+			}),
+			timeouts: LifecycleTimeouts{
+				Start: time.Second,
+				Ready: time.Second,
+				Drain: time.Second,
+				Stop:  time.Second,
+			},
+		})
+	}
+	return &Host{activation: activation, state: HostStateNew}
+}
+
+type panicLifecycleInstance struct {
+	id         PluginID
+	log        *callLog
+	panicAt    string
+	panicValue any
+}
+
+func (instance *panicLifecycleInstance) Start(_ context.Context, effects Effects) error {
+	call := "start:" + string(instance.id)
+	instance.log.add(call)
+	if err := effects.Defer("resource", func(context.Context) error {
+		cleanupCall := "cleanup:" + string(instance.id)
+		instance.log.add(cleanupCall)
+		instance.panicIfRequested(cleanupCall)
+		return nil
+	}); err != nil {
+		return err
+	}
+	instance.panicIfRequested(call)
+	return nil
+}
+
+func (instance *panicLifecycleInstance) Ready(context.Context) error {
+	call := "ready:" + string(instance.id)
+	instance.log.add(call)
+	instance.panicIfRequested(call)
+	return nil
+}
+
+func (instance *panicLifecycleInstance) Drain(context.Context) error {
+	call := "drain:" + string(instance.id)
+	instance.log.add(call)
+	instance.panicIfRequested(call)
+	return nil
+}
+
+func (instance *panicLifecycleInstance) Stop(context.Context) error {
+	call := "stop:" + string(instance.id)
+	instance.log.add(call)
+	instance.panicIfRequested(call)
+	return nil
+}
+
+func (instance *panicLifecycleInstance) panicIfRequested(call string) {
+	if call == instance.panicAt {
+		panic(instance.panicValue)
+	}
+}
+
+func captureLifecyclePanic(operation func() error) (err error, escaped any) {
+	defer func() {
+		escaped = recover()
+	}()
+	return operation(), nil
 }
 
 func countCalls(calls []string, target string) int {

@@ -13,6 +13,7 @@ var (
 	ErrInvalidLifecycle  = errors.New("invalid plugin host lifecycle transition")
 	ErrInvalidEffect     = errors.New("invalid plugin lifecycle effect")
 	ErrInvalidActivation = errors.New("invalid effective plugin activation")
+	ErrLifecyclePanic    = errors.New("plugin lifecycle callback panicked")
 )
 
 type HostState string
@@ -111,7 +112,10 @@ func (host *Host) Start(ctx context.Context) error {
 			host.mu.Unlock()
 			return fmt.Errorf("plugin %s: %w", selected.id, ErrMissingFactory)
 		}
-		instance, configureErr := selected.factory.Configure(cloneConfig(selected.config))
+		instance, configureErr := configurePlugin(
+			selected.factory,
+			cloneConfig(selected.config),
+		)
 		if configureErr != nil {
 			host.mu.Lock()
 			host.state = HostStateFailed
@@ -290,9 +294,28 @@ func stopPlugins(ctx context.Context, plugins []runningPlugin) error {
 	return errors.Join(failures...)
 }
 
-func callWithTimeout(parent context.Context, timeout time.Duration, operation func(context.Context) error) error {
+func configurePlugin(factory Factory, config PluginConfig) (instance Instance, err error) {
+	defer func() {
+		if recover() != nil {
+			instance = nil
+			err = ErrLifecyclePanic
+		}
+	}()
+	return factory.Configure(config)
+}
+
+func callWithTimeout(
+	parent context.Context,
+	timeout time.Duration,
+	operation func(context.Context) error,
+) (err error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	defer func() {
+		if recover() != nil {
+			err = ErrLifecyclePanic
+		}
+	}()
 	return operation(ctx)
 }
 
