@@ -70,6 +70,7 @@ def enabled_environment() -> dict[str, str]:
         "QE_NATIVE_IM_READ_PATH": "/v1/inbound-events",
         "QE_NATIVE_IM_CREDENTIAL_REF": "file://native-im-read-credential",
         "QE_NATIVE_IM_VERIFICATION_SECRET_REF": "file://native-im-verification-key",
+        "QE_NATIVE_IM_VERIFICATION_KEY_ID": "test-verification-key-1",
         "QE_NATIVE_IM_PAGE_LIMIT": "100",
         "QE_NATIVE_IM_MAX_RESPONSE_BYTES": "8388608",
         "QE_NATIVE_IM_CONNECT_TIMEOUT_MS": "5000",
@@ -269,6 +270,7 @@ def test_enabled_configuration_parses_exact_inbound_only_snapshot() -> None:
     assert configuration.verification_secret_ref == SecretRef.parse(
         "file://native-im-verification-key"
     )
+    assert configuration.verification_key_id == "test-verification-key-1"
     assert configuration.outbound_mode == "disabled"
     assert configuration.redirect_mode == "deny"
 
@@ -282,6 +284,7 @@ def test_enabled_configuration_repr_and_errors_hide_all_sensitive_values() -> No
         "QE_NATIVE_IM_APPROVED_ADDRESSES",
         "QE_NATIVE_IM_CREDENTIAL_REF",
         "QE_NATIVE_IM_VERIFICATION_SECRET_REF",
+        "QE_NATIVE_IM_VERIFICATION_KEY_ID",
         "QE_NATIVE_IM_PROFILE_DIGEST",
     ):
         assert values[field_name] not in rendered
