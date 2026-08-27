@@ -1,6 +1,6 @@
 # 原生 IM Provider-Neutral Contract V1
 
-> 状态：V1 文档冻结候选；`IM-P0 CONTRACT_READY` 尚未达成
+> 状态：V1 文档已冻结；`IM-P0 CONTRACT_READY` 尚未达成
 >
 > 日期：2026-08-27（Asia/Shanghai）
 >
@@ -912,12 +912,18 @@ Capability 的更小上限始终覆盖平台上限。Encoder 在分配或深拷�
 
 它们分别在 IM-P1、P2、P3 和接入后 Gate A–E 推进，不能反向污染或绕过 V1 contract。
 
-本文只有在以下条件同时成立后才从“文档冻结候选”改为“文档冻结”：
+本文的文档冻结门禁如下，已在 2026-08-27 全部完成：
 
 1. 独立协议、schema 和仓库边界审计无 unresolved blocking finding；
 2. 文档术语、路径、diff 和 Markdown 检查通过；
 3. 文档提交已推送 GitHub；
 4. 私人 Notion 完整语义镜像、原始 Markdown 附件和远端 marker 回读完成。
+
+冻结证据基线为 GitHub `main@a583a58fe43b20ae0d2372bbb8e032ea66f4c570`、三路独立审计无
+blocking finding，以及 Notion 页面
+`https://app.notion.com/p/3c9ead4b996e8114985cce2cc5af2b63` 的全文/表格/图/附件 marker
+回读。此后的 V1 字段、enum、canonical 或状态语义变更必须按第 2.1 节升 V2；实现 bugfix 不能
+借“兼容”名义改变冻结 wire contract。
 
 `IM-P0 CONTRACT_READY` 还要求本文对应的值模型、strict codec、golden vectors、fake adapter 和全部
 P0 contract tests 进入主线并完成相同的 GitHub + Notion 闭环。文档冻结不等于 P0 完成，更不
