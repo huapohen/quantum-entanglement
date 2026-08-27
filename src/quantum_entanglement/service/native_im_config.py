@@ -15,6 +15,12 @@ from dataclasses import dataclass, field
 from itertools import islice
 
 from quantum_entanglement._native_im_codec import _digest, _id, _timestamp
+from quantum_entanglement.native_im_provider_profile import (
+    IMProviderProfileBindingError,
+    IMProviderProfileV1,
+    evaluate_e2_profile_readiness_v1,
+    validate_profile_binding_v1,
+)
 
 from .secrets import SecretRef
 
@@ -73,6 +79,16 @@ class NativeIMConfigurationError(ValueError):
         self.code = code
         self.field = field
         super().__init__(f"{code} ({field})")
+
+
+class NativeIMSandboxPreflightError(ValueError):
+    """A redacted mismatch between approved config, profile, scope, limits, or time."""
+
+    __slots__ = ("code",)
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
 
 
 def _fingerprint(domain: str, value: str) -> str:
@@ -583,6 +599,60 @@ class NativeIMSandboxConfig:
         )
 
 
+def validate_native_im_sandbox_preflight_v1(
+    configuration: NativeIMInboundOnlyConfigV1,
+    profile: IMProviderProfileV1,
+    *,
+    now: str,
+) -> None:
+    """Bind approved config to one ready profile without reading secrets or using network."""
+
+    if type(configuration) is not NativeIMInboundOnlyConfigV1:
+        raise TypeError("preflight requires the exact inbound-only configuration")
+    if type(profile) is not IMProviderProfileV1:
+        raise TypeError("preflight requires the exact provider profile")
+    try:
+        _timestamp(now, "now")
+    except (TypeError, ValueError):
+        raise NativeIMSandboxPreflightError("native_im_preflight_clock_invalid") from None
+    if configuration.approval_expires_at <= now:
+        raise NativeIMSandboxPreflightError("native_im_preflight_approval_expired") from None
+    if configuration.profile_id != profile.profile_id:
+        raise NativeIMSandboxPreflightError("native_im_preflight_profile_mismatch") from None
+    try:
+        validate_profile_binding_v1(
+            profile,
+            expected_revision=configuration.profile_revision,
+            expected_digest=configuration.profile_digest,
+        )
+    except IMProviderProfileBindingError:
+        raise NativeIMSandboxPreflightError("native_im_preflight_profile_mismatch") from None
+    configured_scope = (
+        configuration.tenant_id,
+        configuration.workspace_id,
+        configuration.provider,
+        configuration.channel_id,
+    )
+    profile_scope = (
+        profile.tenant_id,
+        profile.workspace_id,
+        profile.provider,
+        profile.channel_id,
+    )
+    if configured_scope != profile_scope:
+        raise NativeIMSandboxPreflightError("native_im_preflight_scope_mismatch") from None
+    if evaluate_e2_profile_readiness_v1(profile):
+        raise NativeIMSandboxPreflightError("native_im_preflight_profile_not_ready") from None
+    if configuration.page_limit > profile.limits.max_page_events:
+        raise NativeIMSandboxPreflightError(
+            "native_im_preflight_page_limit_exceeds_profile"
+        ) from None
+    if configuration.max_response_bytes > profile.limits.max_raw_page_bytes:
+        raise NativeIMSandboxPreflightError(
+            "native_im_preflight_response_limit_exceeds_profile"
+        ) from None
+
+
 __all__ = [
     "CanonicalAbsolutePath",
     "CanonicalHTTPSOrigin",
@@ -592,5 +662,7 @@ __all__ = [
     "NativeIMDisabledConfigV1",
     "NativeIMInboundOnlyConfigV1",
     "NativeIMSandboxConfig",
+    "NativeIMSandboxPreflightError",
     "parse_approved_ip_addresses",
+    "validate_native_im_sandbox_preflight_v1",
 ]

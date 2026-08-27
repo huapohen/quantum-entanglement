@@ -20,7 +20,9 @@ from .native_im_config import (
     NativeIMDisabledConfigV1,
     NativeIMInboundOnlyConfigV1,
     NativeIMSandboxConfig,
+    NativeIMSandboxPreflightError,
     parse_approved_ip_addresses,
+    validate_native_im_sandbox_preflight_v1,
 )
 from .redaction import RedactionPolicy, Redactor
 from .secrets import (
@@ -46,6 +48,7 @@ __all__ = [
     "NativeIMDisabledConfigV1",
     "NativeIMInboundOnlyConfigV1",
     "NativeIMSandboxConfig",
+    "NativeIMSandboxPreflightError",
     "RuntimeMode",
     "RedactionPolicy",
     "Redactor",
@@ -59,4 +62,5 @@ __all__ = [
     "SafeLogger",
     "ServiceConfig",
     "parse_approved_ip_addresses",
+    "validate_native_im_sandbox_preflight_v1",
 ]

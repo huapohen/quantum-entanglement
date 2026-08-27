@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 
 import pytest
 
@@ -12,9 +13,12 @@ from quantum_entanglement.service.native_im_config import (
     NativeIMDisabledConfigV1,
     NativeIMInboundOnlyConfigV1,
     NativeIMSandboxConfig,
+    NativeIMSandboxPreflightError,
     parse_approved_ip_addresses,
+    validate_native_im_sandbox_preflight_v1,
 )
 from quantum_entanglement.service.secrets import SecretRef
+from tests.test_native_im_provider_profile import profile
 
 
 class ChangingEnvironment(Mapping[str, str]):
@@ -73,6 +77,26 @@ def enabled_environment() -> dict[str, str]:
         "QE_NATIVE_IM_OUTBOUND_MODE": "disabled",
         "QE_NATIVE_IM_REDIRECT_MODE": "deny",
     }
+
+
+def bound_configuration(**environment_changes: str) -> NativeIMInboundOnlyConfigV1:
+    provider_profile = profile()
+    values = enabled_environment()
+    values.update(
+        {
+            "QE_NATIVE_IM_PROFILE_ID": provider_profile.profile_id,
+            "QE_NATIVE_IM_PROFILE_REVISION": provider_profile.revision,
+            "QE_NATIVE_IM_PROFILE_DIGEST": provider_profile.canonical_digest(),
+            "QE_NATIVE_IM_PROVIDER": provider_profile.provider,
+            "QE_NATIVE_IM_TENANT_ID": provider_profile.tenant_id,
+            "QE_NATIVE_IM_WORKSPACE_ID": provider_profile.workspace_id,
+            "QE_NATIVE_IM_CHANNEL_ID": provider_profile.channel_id,
+            **environment_changes,
+        }
+    )
+    configuration = NativeIMSandboxConfig.from_environment(values)
+    assert type(configuration) is NativeIMInboundOnlyConfigV1
+    return configuration
 
 
 def test_https_origin_requires_one_canonical_dns_authority_and_explicit_port() -> None:
@@ -389,4 +413,108 @@ def test_direct_config_models_reject_bool_as_integer_and_subclass_values() -> No
                 **baseline.__dict__,
                 "origin": OriginSubclass(host=baseline.origin.host, port=baseline.origin.port),
             }
+        )
+
+
+def test_preflight_binds_exact_profile_scope_limits_and_unexpired_approval() -> None:
+    provider_profile = profile()
+    validate_native_im_sandbox_preflight_v1(
+        bound_configuration(),
+        provider_profile,
+        now="2026-08-28T12:00:00.000001Z",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "changed", "expected_code"),
+    (
+        ("profile_id", "other-profile", "native_im_preflight_profile_mismatch"),
+        ("profile_revision", "other-revision", "native_im_preflight_profile_mismatch"),
+        ("profile_digest", "f" * 64, "native_im_preflight_profile_mismatch"),
+        ("tenant_id", "other-tenant", "native_im_preflight_scope_mismatch"),
+        ("workspace_id", "other-workspace", "native_im_preflight_scope_mismatch"),
+        ("provider", "other-provider", "native_im_preflight_scope_mismatch"),
+        ("channel_id", "other-channel", "native_im_preflight_scope_mismatch"),
+    ),
+)
+def test_preflight_rejects_every_profile_and_scope_binding_drift(
+    field_name: str, changed: str, expected_code: str
+) -> None:
+    with pytest.raises(NativeIMSandboxPreflightError) as raised:
+        validate_native_im_sandbox_preflight_v1(
+            replace(bound_configuration(), **{field_name: changed}),
+            profile(),
+            now="2026-08-28T12:00:00.000001Z",
+        )
+    assert raised.value.code == expected_code
+    assert changed not in str(raised.value)
+
+
+def test_preflight_rejects_expired_or_invalid_injected_time() -> None:
+    for now, expected_code in (
+        ("2026-09-28T00:00:00.000001Z", "native_im_preflight_approval_expired"),
+        ("2026-09-28T00:00:00Z", "native_im_preflight_clock_invalid"),
+    ):
+        with pytest.raises(NativeIMSandboxPreflightError) as raised:
+            validate_native_im_sandbox_preflight_v1(
+                bound_configuration(),
+                profile(),
+                now=now,
+            )
+        assert raised.value.code == expected_code
+
+
+def test_preflight_rejects_unready_profile_after_exact_digest_binding() -> None:
+    provider_profile = replace(profile(), environment_class="production")
+    configuration = replace(
+        bound_configuration(),
+        profile_digest=provider_profile.canonical_digest(),
+    )
+    with pytest.raises(NativeIMSandboxPreflightError) as raised:
+        validate_native_im_sandbox_preflight_v1(
+            configuration,
+            provider_profile,
+            now="2026-08-28T12:00:00.000001Z",
+        )
+    assert raised.value.code == "native_im_preflight_profile_not_ready"
+
+
+def test_preflight_never_expands_provider_page_or_response_limits() -> None:
+    for configuration, expected_code in (
+        (
+            replace(bound_configuration(), page_limit=101),
+            "native_im_preflight_page_limit_exceeds_profile",
+        ),
+        (
+            replace(bound_configuration(), max_response_bytes=8 * 1_024 * 1_024 + 1),
+            "native_im_preflight_response_limit_exceeds_profile",
+        ),
+    ):
+        with pytest.raises(NativeIMSandboxPreflightError) as raised:
+            validate_native_im_sandbox_preflight_v1(
+                configuration,
+                profile(),
+                now="2026-08-28T12:00:00.000001Z",
+            )
+        assert raised.value.code == expected_code
+
+
+def test_preflight_rejects_subclasses_before_reading_fields() -> None:
+    class ConfigSubclass(NativeIMInboundOnlyConfigV1):
+        pass
+
+    class ProfileSubclass(type(profile())):
+        pass
+
+    with pytest.raises(TypeError):
+        validate_native_im_sandbox_preflight_v1(
+            object.__new__(ConfigSubclass),
+            profile(),
+            now="2026-08-28T12:00:00.000001Z",
+        )
+    with pytest.raises(TypeError):
+        validate_native_im_sandbox_preflight_v1(
+            bound_configuration(),
+            object.__new__(ProfileSubclass),
+            now="2026-08-28T12:00:00.000001Z",
         )
