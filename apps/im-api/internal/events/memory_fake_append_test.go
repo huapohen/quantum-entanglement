@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"errors"
+	"math"
 	"reflect"
 	"sync"
 	"testing"
@@ -248,6 +249,125 @@ func TestVolatileMemoryStoreContainsClockPanic(t *testing.T) {
 	}
 	if len(page.Events) != 0 {
 		t.Fatalf("panic clock wrote events: %#v", page.Events)
+	}
+}
+
+func TestVolatileMemoryStoreRejectsRetrySubsetSupersetAndReorder(t *testing.T) {
+	t.Parallel()
+
+	clock := &scriptedStoreClock{values: []time.Time{contractTime}}
+	store, err := NewVolatileMemoryStore("retry-shapes", clock.Now)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	first := validEvent(t, "evt-1", "key-1")
+	second := validEvent(t, "evt-2", "key-2")
+	third := validEvent(t, "evt-3", "key-3")
+	if _, err := store.AppendBatch(context.Background(), validBatch(t, 0, first, second)); err != nil {
+		t.Fatalf("initial append: %v", err)
+	}
+	testCases := []struct {
+		name  string
+		batch AppendBatch
+	}{
+		{name: "subset", batch: validBatch(t, 0, snapshotEvent(first))},
+		{name: "superset", batch: validBatch(t, 0, snapshotEvent(first), snapshotEvent(second), third)},
+		{name: "reorder", batch: validBatch(t, 0, snapshotEvent(second), snapshotEvent(first))},
+		{
+			name: "event id with changed idempotency key",
+			batch: func() AppendBatch {
+				event := snapshotEvent(first)
+				event.IdempotencyKey = stringPointer("key-drift")
+				return validBatch(t, 0, event)
+			}(),
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := store.AppendBatch(context.Background(), testCase.batch); !errors.Is(err, ErrIdempotencyConflict) {
+				t.Fatalf("error = %v, want %v", err, ErrIdempotencyConflict)
+			}
+		})
+	}
+	if clock.Calls() != 1 {
+		t.Fatalf("retry shape conflict consumed clock: %d", clock.Calls())
+	}
+	page, err := store.ReadStreamPage(context.Background(), StreamQuery{
+		TenantID: first.TenantID, WorkspaceID: cloneStringPointer(first.WorkspaceID),
+		StreamID: first.StreamID, Limit: maxPageEvents,
+	})
+	if err != nil || !reflect.DeepEqual(eventIDs(page.Events), []string{"evt-1", "evt-2"}) {
+		t.Fatalf("retry shape conflict changed store: %#v, err=%v", page, err)
+	}
+}
+
+func TestVolatileMemoryStoreInvalidBatchAndCapacityAreAtomic(t *testing.T) {
+	t.Parallel()
+
+	clock := &scriptedStoreClock{values: []time.Time{contractTime}}
+	store, err := NewVolatileMemoryStore("validation-atomicity", clock.Now)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	first := validEvent(t, "evt-1", "key-1")
+	invalid := validEvent(t, "evt-invalid", "key-invalid")
+	invalid.EventType = "INVALID EVENT TYPE"
+	if _, err := store.AppendBatch(context.Background(), validBatch(t, 0, first, invalid)); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("invalid batch error = %v, want %v", err, ErrInvalidBatch)
+	}
+	if clock.Calls() != 0 {
+		t.Fatalf("invalid batch consumed clock: %d", clock.Calls())
+	}
+	result, err := store.AppendBatch(context.Background(), validBatch(t, 0, first))
+	if err != nil || result.Events[0].Sequence != 1 || result.Events[0].GlobalPosition != 1 {
+		t.Fatalf("append after invalid batch = %#v, err=%v", result, err)
+	}
+
+	overflowClock := &scriptedStoreClock{values: []time.Time{contractTime}}
+	overflow, err := NewVolatileMemoryStore("capacity-atomicity", overflowClock.Now)
+	if err != nil {
+		t.Fatalf("new overflow store: %v", err)
+	}
+	overflow.globalPosition = math.MaxUint64 - 1
+	if _, err := overflow.AppendBatch(context.Background(), validBatch(
+		t, 0, validEvent(t, "evt-a", "key-a"), validEvent(t, "evt-b", "key-b"),
+	)); !errors.Is(err, ErrStoreCapacity) {
+		t.Fatalf("overflow error = %v, want %v", err, ErrStoreCapacity)
+	}
+	if overflowClock.Calls() != 0 || len(overflow.global) != 0 || len(overflow.streams) != 0 ||
+		len(overflow.retries) != 0 || !overflow.lastRecordedAt.IsZero() || overflow.globalPosition != math.MaxUint64-1 {
+		t.Fatalf("overflow mutated store: %#v", overflow)
+	}
+}
+
+func TestVolatileMemoryStoreAcceptsEqualClockButRejectsOutOfRangeYear(t *testing.T) {
+	t.Parallel()
+
+	clock := &scriptedStoreClock{values: []time.Time{
+		contractTime,
+		contractTime,
+		time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC),
+	}}
+	store, err := NewVolatileMemoryStore("clock-boundaries", clock.Now)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if _, err := store.AppendBatch(context.Background(), validBatch(t, 0, validEvent(t, "evt-1", "key-1"))); err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+	second, err := store.AppendBatch(context.Background(), validBatch(t, 1, validEvent(t, "evt-2", "key-2")))
+	if err != nil || !second.Events[0].RecordedAt.Equal(contractTime) {
+		t.Fatalf("equal clock append = %#v, err=%v", second, err)
+	}
+	if _, err := store.AppendBatch(context.Background(), validBatch(t, 2, validEvent(t, "evt-3", "key-3"))); !errors.Is(err, ErrStoreClock) {
+		t.Fatalf("out-of-range clock error = %v, want %v", err, ErrStoreClock)
+	}
+	page, err := store.ReadStreamPage(context.Background(), StreamQuery{
+		TenantID: "tenant-acme", WorkspaceID: stringPointer("workspace-acme"),
+		StreamID: "task:task-1", Limit: maxPageEvents,
+	})
+	if err != nil || len(page.Events) != 2 {
+		t.Fatalf("clock boundary page = %#v, err=%v", page, err)
 	}
 }
 
