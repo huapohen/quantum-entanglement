@@ -16,6 +16,7 @@ from quantum_entanglement.native_im import (
     IMCapabilitySnapshotV1,
     IMConversationRefV1,
     IMDispatchRequestV1,
+    IMDispatchUnknownObservationV1,
     IMInboundPageV1,
     IMInboundReadRequestV1,
     IMMembershipChangeV1,
@@ -412,6 +413,26 @@ def action_receipt(state: str = "succeeded", **changes: object) -> IMActionRecei
     return IMActionReceiptV1(**values)  # type: ignore[arg-type]
 
 
+def dispatch_unknown_observation(
+    reason: str = "dispatch_timeout", **changes: object
+) -> IMDispatchUnknownObservationV1:
+    request = changes.pop("dispatch_request", dispatch_request())
+    assert type(request) is IMDispatchRequestV1
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "observation_id": "test-observation-1",
+        "dispatch_request": request,
+        "dispatch_request_digest": request.canonical_digest(),
+        "reason": reason,
+        "observed_at": "2026-08-28T00:00:02.000001Z",
+        "correlation_id": request.correlation_id,
+        "causation_id": request.dispatch_attempt_id,
+        "traceparent": request.traceparent,
+    }
+    values.update(changes)
+    return IMDispatchUnknownObservationV1(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -458,6 +479,7 @@ def action_receipt(state: str = "succeeded", **changes: object) -> IMActionRecei
         action_receipt("effect_unknown"),
         action_receipt("reconciled_succeeded"),
         action_receipt("reconciled_rejected"),
+        dispatch_unknown_observation(),
     ],
 )
 def test_reference_models_round_trip_through_dict_and_noncanonical_json(value: object) -> None:
@@ -1531,3 +1553,79 @@ def test_action_receipt_decode_is_exact_fresh_and_bounded(
         action_receipt()
     with pytest.raises(ValueError, match="byte limit"):
         IMActionReceiptV1.from_json_bytes(encoded)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "dispatch_timeout",
+        "dispatch_cancelled",
+        "connector_exception",
+        "dispatcher_recovery",
+        "process_crash_recovery",
+    ],
+)
+def test_dispatch_unknown_observation_accepts_exact_local_reasons(reason: str) -> None:
+    observation = dispatch_unknown_observation(reason)
+    assert observation.reason == reason
+    assert IMDispatchUnknownObservationV1.from_dict(observation.to_dict()) == observation
+
+
+def test_dispatch_unknown_observation_binds_exact_request_digest_and_trace() -> None:
+    observation = dispatch_unknown_observation()
+    assert observation.dispatch_request_digest == observation.dispatch_request.canonical_digest()
+    assert observation.causation_id == observation.dispatch_request.dispatch_attempt_id
+    null_trace_request = dispatch_request(
+        command=action_command(intent=action_intent(traceparent=None))
+    )
+    assert dispatch_unknown_observation(dispatch_request=null_trace_request).traceparent is None
+    for changes in (
+        {"dispatch_request_digest": "d" * 64},
+        {"correlation_id": "test-correlation-other"},
+        {"causation_id": observation.dispatch_request.command.command_id},
+        {"causation_id": observation.dispatch_request.command.intent.action_id},
+        {"traceparent": None},
+        {"reason": "provider_said_not_accepted"},
+        {"observed_at": "2026-08-28T00:00:02Z"},
+    ):
+        with pytest.raises(ValueError):
+            dispatch_unknown_observation(**changes)
+
+
+def test_dispatch_unknown_observation_is_historical_fresh_and_repr_safe() -> None:
+    observation = dispatch_unknown_observation()
+    assert observation.observed_at > observation.dispatch_request.command.expires_at
+    wire = observation.to_dict()
+    wire["dispatchRequest"]["command"]["intent"]["content"]["segments"][0]["text"] = "mutated"  # type: ignore[index]
+    assert observation.dispatch_request.command.intent.content is not None
+    assert observation.dispatch_request.command.intent.content.segments[0].text == "hello\nworld"
+    assert "hello" not in repr(observation)
+    assert "test-object-1" not in repr(observation)
+
+
+def test_dispatch_unknown_observation_decode_is_exact_and_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observation = dispatch_unknown_observation()
+    wire = observation.to_dict()
+    for changed in (
+        {**wire, "effectBoundaryEntered": True},
+        {key: item for key, item in wire.items() if key != "observationId"},
+        dict(wire, schemaVersion=True),
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            IMDispatchUnknownObservationV1.from_dict(changed)
+    with pytest.raises(ValueError, match="duplicate"):
+        IMDispatchUnknownObservationV1.from_json_bytes(b'{"schemaVersion":1,"schemaVersion":1}')
+    with pytest.raises(TypeError, match="exact"):
+        replace(observation, dispatch_request=object())
+    encoded = observation.canonical_bytes()
+    monkeypatch.setattr(
+        IMDispatchUnknownObservationV1,
+        "_MAX_CANONICAL_BYTES",
+        len(encoded) - 1,
+    )
+    with pytest.raises(ValueError, match="canonical byte limit"):
+        dispatch_unknown_observation()
+    with pytest.raises(ValueError, match="byte limit"):
+        IMDispatchUnknownObservationV1.from_json_bytes(encoded)
