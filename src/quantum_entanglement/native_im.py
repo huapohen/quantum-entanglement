@@ -43,6 +43,7 @@ _MAX_ATTACHMENTS = 64
 _MAX_INBOUND_ENVELOPES = 1_000
 _MAX_INBOUND_PAGE_BYTES = 16 * 1_024 * 1_024
 _MAX_ACTION_BYTES = 3 * 1_024 * 1_024
+_MAX_RECEIPT_BYTES = 256 * 1_024
 
 _PARTICIPANT_KINDS = {"human", "agent", "service"}
 _SEGMENT_KINDS = {"text", "mention"}
@@ -66,6 +67,39 @@ _LOOKUP_MODES = {"idempotency_key", "provider_operation_id"}
 _NEGATIVE_ACCEPTANCE_MODES = {"authoritative_terminal", "unavailable"}
 _REVISION_MODES = {"not_applicable", "required_cas", "provider_best_effort"}
 _IDEMPOTENCY_MODES = {"receiver_deduplicated", "not_supported"}
+_RECEIPT_STATES = {
+    "succeeded",
+    "rejected",
+    "retryable_not_accepted",
+    "effect_unknown",
+    "reconciled_succeeded",
+    "reconciled_rejected",
+}
+_DISPATCH_RECEIPT_STATES = {
+    "succeeded",
+    "rejected",
+    "retryable_not_accepted",
+    "effect_unknown",
+}
+_TERMINAL_ERROR_CODES = {
+    "terminal_permission_denied",
+    "terminal_invalid_target",
+    "terminal_revision_conflict",
+    "terminal_unsupported",
+    "terminal_not_accepted",
+}
+_TRANSIENT_NOT_ACCEPTED_ERROR_CODES = {
+    "rate_limited_not_accepted",
+    "temporarily_unavailable_not_accepted",
+}
+_UNKNOWN_ERROR_CODES = {
+    "delivery_outcome_unknown",
+    "acceptance_not_final",
+    "acceptance_retention_expired",
+}
+_RECEIPT_ERROR_CODES = (
+    _TERMINAL_ERROR_CODES | _TRANSIENT_NOT_ACCEPTED_ERROR_CODES | _UNKNOWN_ERROR_CODES
+)
 
 _CONVERSATION_FIELDS = {
     "schemaVersion",
@@ -262,6 +296,32 @@ _DISPATCH_REQUEST_FIELDS = {
     "fenceRevision",
     "claimedAt",
     "dispatchDeadlineAt",
+    "correlationId",
+    "causationId",
+    "traceparent",
+}
+_ACTION_RECEIPT_FIELDS = {
+    "schemaVersion",
+    "receiptId",
+    "tenantId",
+    "workspaceId",
+    "provider",
+    "channelId",
+    "actionId",
+    "commandId",
+    "dispatchAttemptId",
+    "dispatchRequestDigest",
+    "intentDigest",
+    "commandDigest",
+    "idempotencyKey",
+    "attemptNumber",
+    "state",
+    "providerOperationId",
+    "providerMessage",
+    "receiverEvidenceDigest",
+    "errorCode",
+    "retryAfterSeconds",
+    "observedAt",
     "correlationId",
     "causationId",
     "traceparent",
@@ -1862,10 +1922,228 @@ class IMDispatchRequestV1(_NativeIMWireValue):
         )
 
 
+@dataclass(frozen=True)
+class IMActionReceiptV1(_NativeIMWireValue):
+    schema_version: int
+    receipt_id: str
+    tenant_id: str
+    workspace_id: str
+    provider: str
+    channel_id: str
+    action_id: str
+    command_id: str
+    dispatch_attempt_id: str
+    dispatch_request_digest: str
+    intent_digest: str
+    command_digest: str
+    idempotency_key: str
+    attempt_number: int
+    state: str
+    provider_operation_id: str | None
+    provider_message: IMMessageRefV1 | None
+    receiver_evidence_digest: str | None = field(repr=False)
+    error_code: str | None
+    retry_after_seconds: int | None
+    observed_at: str
+    correlation_id: str
+    causation_id: str
+    traceparent: str | None
+
+    _MODEL_NAME: ClassVar[str] = "IMActionReceiptV1"
+    _MAX_CANONICAL_BYTES: ClassVar[int] = _MAX_RECEIPT_BYTES
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMActionReceiptV1, "action receipt")
+        _schema_version(self.schema_version)
+        for value, label in (
+            (self.receipt_id, "receiptId"),
+            (self.tenant_id, "tenantId"),
+            (self.workspace_id, "workspaceId"),
+            (self.provider, "provider"),
+            (self.channel_id, "channelId"),
+            (self.action_id, "actionId"),
+            (self.command_id, "commandId"),
+            (self.dispatch_attempt_id, "dispatchAttemptId"),
+            (self.correlation_id, "correlationId"),
+            (self.causation_id, "causationId"),
+        ):
+            _id(value, label)
+        _digest(self.dispatch_request_digest, "dispatchRequestDigest")
+        _digest(self.intent_digest, "intentDigest")
+        _digest(self.command_digest, "commandDigest")
+        _digest(self.idempotency_key, "idempotencyKey")
+        _positive_integer(self.attempt_number, "attemptNumber")
+        _enum(self.state, _RECEIPT_STATES, "state")
+        _optional_id(self.provider_operation_id, "providerOperationId")
+        if self.provider_message is not None:
+            _require_exact_model(self.provider_message, IMMessageRefV1, "providerMessage")
+            if _scope(self.provider_message.conversation) != _scope(self):
+                raise ValueError("provider message scope does not match the action receipt")
+        if self.receiver_evidence_digest is not None:
+            _digest(self.receiver_evidence_digest, "receiverEvidenceDigest")
+        if self.error_code is not None:
+            _enum(self.error_code, _RECEIPT_ERROR_CODES, "errorCode")
+        if self.retry_after_seconds is not None:
+            _positive_integer(self.retry_after_seconds, "retryAfterSeconds")
+        self._validate_state_matrix()
+        _timestamp(self.observed_at, "observedAt")
+        _optional_traceparent(self.traceparent, "traceparent")
+        self.canonical_bytes()
+
+    def _validate_state_matrix(self) -> None:
+        if self.state in {"succeeded", "reconciled_succeeded"}:
+            valid = (
+                self.receiver_evidence_digest is not None
+                and (self.provider_operation_id is not None or self.provider_message is not None)
+                and self.error_code is None
+                and self.retry_after_seconds is None
+            )
+        elif self.state == "rejected":
+            valid = (
+                self.receiver_evidence_digest is not None
+                and self.provider_message is None
+                and self.error_code in _TERMINAL_ERROR_CODES
+                and self.retry_after_seconds is None
+            )
+        elif self.state == "retryable_not_accepted":
+            valid = (
+                self.receiver_evidence_digest is not None
+                and self.provider_operation_id is None
+                and self.provider_message is None
+                and self.error_code in _TRANSIENT_NOT_ACCEPTED_ERROR_CODES
+                and (
+                    self.error_code != "rate_limited_not_accepted"
+                    or self.retry_after_seconds is not None
+                )
+            )
+        elif self.state == "effect_unknown":
+            valid = (
+                self.provider_message is None
+                and self.error_code in _UNKNOWN_ERROR_CODES
+                and self.retry_after_seconds is None
+            )
+        elif self.state == "reconciled_rejected":
+            valid = (
+                self.receiver_evidence_digest is not None
+                and self.provider_message is None
+                and self.error_code in _TERMINAL_ERROR_CODES
+                and self.retry_after_seconds is None
+            )
+        else:  # pragma: no cover - the state enum validator fails first.
+            valid = False
+        if not valid:
+            raise ValueError("action receipt fields do not match its state matrix")
+
+    def validate_dispatch_binding(self, request: IMDispatchRequestV1) -> None:
+        """Bind a dispatch receipt to the exact durable request returned by store lookup."""
+
+        _require_exact_model(request, IMDispatchRequestV1, "dispatch request")
+        if self.state not in _DISPATCH_RECEIPT_STATES:
+            raise ValueError("dispatch cannot return a reconciled receipt state")
+        command = request.command
+        intent = command.intent
+        expected_scope = _scope(intent.conversation)
+        if _scope(self) != expected_scope:
+            raise ValueError("action receipt scope does not match its dispatch request")
+        bindings = (
+            (self.action_id, intent.action_id, "actionId"),
+            (self.command_id, command.command_id, "commandId"),
+            (self.dispatch_attempt_id, request.dispatch_attempt_id, "dispatchAttemptId"),
+            (
+                self.dispatch_request_digest,
+                request.canonical_digest(),
+                "dispatchRequestDigest",
+            ),
+            (self.intent_digest, command.intent_digest, "intentDigest"),
+            (self.command_digest, request.command_digest, "commandDigest"),
+            (self.idempotency_key, command.idempotency_key, "idempotencyKey"),
+            (self.attempt_number, request.attempt_number, "attemptNumber"),
+            (self.correlation_id, command.correlation_id, "correlationId"),
+            (self.traceparent, command.traceparent, "traceparent"),
+        )
+        for actual, expected, label in bindings:
+            if actual != expected:
+                raise ValueError(f"{label} does not match the dispatch request")
+        if self.causation_id != request.dispatch_attempt_id:
+            raise ValueError("dispatch receipt causationId must equal the dispatch attempt ID")
+        if (
+            self.provider_message is not None
+            and self.provider_message.conversation != intent.conversation
+        ):
+            raise ValueError("provider message conversation does not match the action intent")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "receiptId": self.receipt_id,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "provider": self.provider,
+            "channelId": self.channel_id,
+            "actionId": self.action_id,
+            "commandId": self.command_id,
+            "dispatchAttemptId": self.dispatch_attempt_id,
+            "dispatchRequestDigest": self.dispatch_request_digest,
+            "intentDigest": self.intent_digest,
+            "commandDigest": self.command_digest,
+            "idempotencyKey": self.idempotency_key,
+            "attemptNumber": self.attempt_number,
+            "state": self.state,
+            "providerOperationId": self.provider_operation_id,
+            "providerMessage": (
+                None if self.provider_message is None else self.provider_message.to_dict()
+            ),
+            "receiverEvidenceDigest": self.receiver_evidence_digest,
+            "errorCode": self.error_code,
+            "retryAfterSeconds": self.retry_after_seconds,
+            "observedAt": self.observed_at,
+            "correlationId": self.correlation_id,
+            "causationId": self.causation_id,
+            "traceparent": self.traceparent,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMActionReceiptV1:
+        if cls is not IMActionReceiptV1:
+            raise TypeError("action receipt decoder requires the exact V1 class")
+        body = _plain_dict(value, _ACTION_RECEIPT_FIELDS, "action receipt")
+        return cls(
+            schema_version=body["schemaVersion"],
+            receipt_id=body["receiptId"],
+            tenant_id=body["tenantId"],
+            workspace_id=body["workspaceId"],
+            provider=body["provider"],
+            channel_id=body["channelId"],
+            action_id=body["actionId"],
+            command_id=body["commandId"],
+            dispatch_attempt_id=body["dispatchAttemptId"],
+            dispatch_request_digest=body["dispatchRequestDigest"],
+            intent_digest=body["intentDigest"],
+            command_digest=body["commandDigest"],
+            idempotency_key=body["idempotencyKey"],
+            attempt_number=body["attemptNumber"],
+            state=body["state"],
+            provider_operation_id=body["providerOperationId"],
+            provider_message=(
+                None
+                if body["providerMessage"] is None
+                else IMMessageRefV1.from_dict(body["providerMessage"])
+            ),
+            receiver_evidence_digest=body["receiverEvidenceDigest"],
+            error_code=body["errorCode"],
+            retry_after_seconds=body["retryAfterSeconds"],
+            observed_at=body["observedAt"],
+            correlation_id=body["correlationId"],
+            causation_id=body["causationId"],
+            traceparent=body["traceparent"],
+        )
+
+
 __all__ = [
     "IMAcceptanceLookupCapabilityV1",
     "IMActionCommandV1",
     "IMActionIntentV1",
+    "IMActionReceiptV1",
     "IMCapabilityRequestV1",
     "IMAttachmentRefV1",
     "IMCapabilitySnapshotV1",
