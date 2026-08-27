@@ -2413,7 +2413,7 @@ class IMAcceptanceQueryV1(_NativeIMWireValue):
             raise ValueError("unknownSourceId does not match the action receipt")
         if receipt.state != "effect_unknown":
             raise ValueError("acceptance query source receipt must be effect_unknown")
-        receipt._validate_request_binding_values(request)
+        receipt.validate_dispatch_binding(request)
         if self.lookup_mode == "provider_operation_id" and (
             self.provider_operation_id != receipt.provider_operation_id
         ):

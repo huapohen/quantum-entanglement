@@ -1742,6 +1742,8 @@ def test_acceptance_query_binds_effect_unknown_receipt_source() -> None:
     for invalid_source in (
         action_receipt("succeeded", request=request),
         replace(source, receipt_id="test-receipt-other"),
+        replace(source, causation_id="test-wrong-causation"),
+        replace(source, causation_id="test-previous-query"),
     ):
         with pytest.raises(ValueError):
             idempotency.validate_receipt_source_binding(invalid_source, request)
