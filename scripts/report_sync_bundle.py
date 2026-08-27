@@ -162,6 +162,7 @@ _CANONICAL_EXACT_PATHS = frozenset(
         "analysis_report/multi_agent_collaboration_report.md",
         "analysis_report/screenshots/README.md",
         "analysis_report/screenshots/manifest.json",
+        "docs/architecture/NATIVE_IM_CONTRACT_V1.md",
         "docs/TERMINOLOGY.md",
     }
 )
@@ -969,6 +970,7 @@ def _collect_sources(
         ("canonical-source", "analysis_report/README.md"),
         ("canonical-source", "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md"),
         ("canonical-source", "analysis_report/multi_agent_collaboration_report.md"),
+        ("canonical-source", "docs/architecture/NATIVE_IM_CONTRACT_V1.md"),
         ("canonical-source", "docs/TERMINOLOGY.md"),
     ]
     paths.extend(

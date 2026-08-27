@@ -62,6 +62,10 @@ class ReportSyncBundleTests(unittest.TestCase):
             "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md",
             b"# Stage acceptance\n",
         )
+        self._write(
+            "docs/architecture/NATIVE_IM_CONTRACT_V1.md",
+            b"# Native IM provider contract V1\n",
+        )
         self._write("docs/TERMINOLOGY.md", b"# Terminology\n")
         self._write("analysis_report/research/00_scope.md", b"# Scope\n")
         self._write("analysis_report/research/08_new_evidence.md", b"# New\n")
@@ -126,6 +130,7 @@ class ReportSyncBundleTests(unittest.TestCase):
         pages = []
         for key, paths in (
             ("project-home", ["analysis_report/README.md"]),
+            ("native-im-contract-v1", ["docs/architecture/NATIVE_IM_CONTRACT_V1.md"]),
             (
                 "comprehensive-report",
                 ["analysis_report/multi_agent_collaboration_report.md"],
@@ -262,9 +267,9 @@ class ReportSyncBundleTests(unittest.TestCase):
             {"unmanifestedPolicy": "fail-closed"},
         )
         source_summary = cast(dict[str, Any], first["sourceSummary"])
-        self.assertEqual(source_summary["count"], 11)
-        self.assertEqual(source_summary["sourceTargetCount"], 12)
-        self.assertEqual(source_summary["notionTargetCount"], 10)
+        self.assertEqual(source_summary["count"], 12)
+        self.assertEqual(source_summary["sourceTargetCount"], 13)
+        self.assertEqual(source_summary["notionTargetCount"], 11)
         self.assertEqual(source_summary["yuqueTargetCount"], 2)
 
         path = self._save_bundle(first)
@@ -288,6 +293,14 @@ class ReportSyncBundleTests(unittest.TestCase):
             (path, "notion")
         ]
         self.assertEqual(target["targetPageKey"], "native-im-integration-prerequisites")
+        self.assertEqual(target["targetStatus"], "historical_manifest_claim_digest_match")
+
+    def test_native_im_provider_contract_is_an_allowlisted_canonical_source(self) -> None:
+        path = "docs/architecture/NATIVE_IM_CONTRACT_V1.md"
+        target = self._source_targets(generate_report_sync_bundle(self.repository))[
+            (path, "notion")
+        ]
+        self.assertEqual(target["targetPageKey"], "native-im-contract-v1")
         self.assertEqual(target["targetStatus"], "historical_manifest_claim_digest_match")
 
     def test_notion_manifest_v2_remote_readback_is_accepted(self) -> None:
