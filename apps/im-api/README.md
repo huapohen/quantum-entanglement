@@ -38,6 +38,18 @@ non-success business code. Unknown errors, panics, and JSON encoding failures co
 serializing their causes. Provider `effect_unknown` will be a successful command response containing an honest
 Action status; it is not misreported as `50301` and never retried blindly.
 
+## Plugin admission and dependency plan
+
+`internal/plugins` freezes the first DeepSeek Harness-inspired boundary without allowing arbitrary dynamic Go
+code. A plugin supplies a manifest; the host separately owns the package digest, provenance, SBOM, approval,
+and revocation record. Registration fails if those records do not match. Required ports resolve to exactly one
+provider (or an explicitly pinned provider), and the resulting bindings and topological order are deterministic
+regardless of discovery or map iteration order. Missing, ambiguous, invalid, duplicate, self-dependent, and
+cyclic compositions fail before any plugin can start.
+
+This is only admission and planning. It does not yet claim that resources have been started, rolled back, or
+disposed; lifecycle effects are the next independently tested commit.
+
 ## Offline verification after dependencies are cached
 
 ```bash
