@@ -84,7 +84,6 @@ func (store *VolatileMemoryStore) Characteristics() StoreCharacteristics {
 		DeterministicGivenInputsClockAndSchedule: true,
 		PersistsAcrossRestart:                    false,
 		TamperEvident:                            false,
-		ProvidesActionReceipts:                   false,
 	}
 }
 

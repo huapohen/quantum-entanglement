@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"time"
@@ -26,11 +27,11 @@ var (
 // self-declared characteristics into proof; production adapters still require their own crash,
 // restore, and evidence conformance gates.
 func ValidateStoreRequirements(store EventStore, requirements StoreRequirements) error {
-	if store == nil {
+	if eventStoreIsNil(store) || !validStoreRequirements(requirements) {
 		return ErrStoreRequirements
 	}
 	characteristics := store.Characteristics()
-	if requirements.Durability != "" && characteristics.Durability != requirements.Durability {
+	if !validStoreCharacteristics(characteristics) || characteristics.Durability != requirements.Durability {
 		return ErrStoreRequirements
 	}
 	if requirements.PersistsAcrossRestart && !characteristics.PersistsAcrossRestart {
@@ -39,10 +40,42 @@ func ValidateStoreRequirements(store EventStore, requirements StoreRequirements)
 	if requirements.TamperEvident && !characteristics.TamperEvident {
 		return ErrStoreRequirements
 	}
-	if requirements.ProvidesActionReceipts && !characteristics.ProvidesActionReceipts {
-		return ErrStoreRequirements
-	}
 	return nil
+}
+
+func validStoreRequirements(requirements StoreRequirements) bool {
+	switch requirements.Durability {
+	case StoreDurabilityVolatile:
+		return !requirements.PersistsAcrossRestart
+	case StoreDurabilityDurable:
+		return true
+	default:
+		return false
+	}
+}
+
+func validStoreCharacteristics(characteristics StoreCharacteristics) bool {
+	switch characteristics.Durability {
+	case StoreDurabilityVolatile:
+		return !characteristics.PersistsAcrossRestart
+	case StoreDurabilityDurable:
+		return characteristics.PersistsAcrossRestart
+	default:
+		return false
+	}
+}
+
+func eventStoreIsNil(store EventStore) bool {
+	if store == nil {
+		return true
+	}
+	value := reflect.ValueOf(store)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 type canonicalEventPayload struct {

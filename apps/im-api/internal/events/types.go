@@ -143,14 +143,12 @@ type StoreCharacteristics struct {
 	DeterministicGivenInputsClockAndSchedule bool
 	PersistsAcrossRestart                    bool
 	TamperEvident                            bool
-	ProvidesActionReceipts                   bool
 }
 
 type StoreRequirements struct {
-	Durability             StoreDurability
-	PersistsAcrossRestart  bool
-	TamperEvident          bool
-	ProvidesActionReceipts bool
+	Durability            StoreDurability
+	PersistsAcrossRestart bool
+	TamperEvident         bool
 }
 
 type EventStore interface {

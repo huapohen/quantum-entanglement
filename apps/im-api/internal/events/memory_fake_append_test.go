@@ -16,6 +16,15 @@ type scriptedStoreClock struct {
 	calls  int
 }
 
+type characteristicsOverrideStore struct {
+	EventStore
+	characteristics StoreCharacteristics
+}
+
+func (store characteristicsOverrideStore) Characteristics() StoreCharacteristics {
+	return store.characteristics
+}
+
 func (clock *scriptedStoreClock) Now() time.Time {
 	clock.mu.Lock()
 	defer clock.mu.Unlock()
@@ -52,7 +61,6 @@ func TestVolatileMemoryStoreDeclaresItsNonProductionBoundaries(t *testing.T) {
 		DeterministicGivenInputsClockAndSchedule: true,
 		PersistsAcrossRestart:                    false,
 		TamperEvident:                            false,
-		ProvidesActionReceipts:                   false,
 	}
 	if got != want {
 		t.Fatalf("characteristics = %#v, want %#v", got, want)
@@ -62,10 +70,37 @@ func TestVolatileMemoryStoreDeclaresItsNonProductionBoundaries(t *testing.T) {
 	}
 	production := StoreRequirements{
 		Durability: StoreDurabilityDurable, PersistsAcrossRestart: true,
-		TamperEvident: true, ProvidesActionReceipts: true,
+		TamperEvident: true,
 	}
 	if err := ValidateStoreRequirements(store, production); !errors.Is(err, ErrStoreRequirements) {
 		t.Fatalf("production requirement error = %v, want %v", err, ErrStoreRequirements)
+	}
+	invalidRequirements := []StoreRequirements{
+		{},
+		{Durability: "unknown"},
+		{Durability: StoreDurabilityVolatile, PersistsAcrossRestart: true},
+	}
+	for _, requirements := range invalidRequirements {
+		if err := ValidateStoreRequirements(store, requirements); !errors.Is(err, ErrStoreRequirements) {
+			t.Fatalf("invalid requirements %#v error = %v, want %v", requirements, err, ErrStoreRequirements)
+		}
+	}
+	var typedNil *VolatileMemoryStore
+	if err := ValidateStoreRequirements(typedNil, StoreRequirements{Durability: StoreDurabilityVolatile}); !errors.Is(err, ErrStoreRequirements) {
+		t.Fatalf("typed nil error = %v, want %v", err, ErrStoreRequirements)
+	}
+	invalidCharacteristics := []StoreCharacteristics{
+		{Durability: "unknown"},
+		{Durability: StoreDurabilityVolatile, PersistsAcrossRestart: true},
+		{Durability: StoreDurabilityDurable, PersistsAcrossRestart: false},
+	}
+	for _, characteristics := range invalidCharacteristics {
+		override := characteristicsOverrideStore{EventStore: store, characteristics: characteristics}
+		if err := ValidateStoreRequirements(
+			override, StoreRequirements{Durability: characteristics.Durability},
+		); !errors.Is(err, ErrStoreRequirements) {
+			t.Fatalf("invalid characteristics %#v error = %v, want %v", characteristics, err, ErrStoreRequirements)
+		}
 	}
 }
 
