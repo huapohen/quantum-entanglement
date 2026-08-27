@@ -13,7 +13,8 @@
 
 ### W0：研究审计、冻结需求/架构和审阅空间
 
-交付：研究来源快照与可追溯矩阵、产品需求、架构、API、安全、provider profile、Notion 私人顶层页。
+交付：31/31 独立报告覆盖账本、AgentSpace evidence delta、研究来源快照与可追溯矩阵、产品需求、
+架构、API、安全、provider profile、Notion 私人顶层页。
 
 出口：关键不变量、M0/V1 边界、Task/Thread/Attempt/Acceptance 分层、三类身份、Agent 普通用户策略、
 `ext_info` schema、HTTP 200 envelope 和子群语义无歧义。
@@ -30,6 +31,9 @@
 - health/readiness 与 graceful shutdown；
 - unit、race、lint 和 secret canary。
 
+W1 Plugin Host 只允许随 host 编译、由平台准入的可信内建插件；不实现也不暗示第三方 App/
+Extension 任意代码生态。第三方可执行包不得加载进 API/Gateway/Plugin Host 主进程。
+
 出口：零 credential、零网络的 fake composition 可启动，所有业务错误 HTTP 200；effective snapshot
 具备 source/digest/golden/diff，首次启动与扩权等待外部 admission；所有 required plugins ready 前不
 暴露 route，半启动/ready 失败可逆序回滚；event fake 可确定性 replay/rebuild，但不宣称持久化。
@@ -40,7 +44,10 @@
 Agent definition/release/installation、thread、BusinessTask、Attempt、Budget、NeedsYou、Artifact/
 Acceptance、GovernedMemory、SkillPackageVersion/ActivationReceipt/MaterializationManifest、
 CapabilityDefinitionVersion/AgentCapabilityAssignmentRevision/ExecutionBinding、inbox/outbox/action/evidence
-models，`AgentPresenceLease/RuntimeIncarnation`、`DataRouteDescriptor/ConsentReceipt`、
+models，`ContentObservation/ProvenanceEdge/TaintLabel/AuthorityClass/DeclassificationDecision`、
+`ConversationRepresentationPolicyRevision/ConversationMandate/DisclosureRule/CommitmentLimit`、
+`PromotionIntent/PromotionAttempt/PromotionReceipt/RollbackReceipt`、`AgentPresenceLease/RuntimeIncarnation`、
+`DataRouteDescriptor/OrganizationProcessingApproval/PersonalAcknowledgement`、
 `RoutineDefinition/MissedRunPolicy/ScheduleOccurrence`，以及 event stream/event/projection checkpoint migrations。
 
 出口：空库/非空库 migration、rollback/restore、transaction、dedupe、revision 和 tenant isolation
@@ -66,11 +73,14 @@ Acceptance、Action Ledger、unknown reconcile 与 Evidence Bundle。
 M0 后同阶段继续交付受治理的 Skill activation 与 Tool execution binding；它们不阻塞首个零网络
 垂直切片，但对应的领域对象和 port 必须已在 W2 冻结。
 
+同阶段在 M0 验收后增量实现通用 Promotion Transaction 和第三方可执行包隔离；M0 本身只要求
+accepted Artifact reference 由真人发布回父群。Agent fork/transfer、跨组织 federation 继续延后。
+
 Runtime/Planner 只产出 typed ActionProposal；独立 Executor/Egress Broker 承担授权后 dispatch、
 SSRF/redirect/credential forwarding 防护和 provider receipt/reconcile。
 
-M0 后补 Routine/presence 产品面；data-route revision 与 consent 必须在 Agent 首次真实数据处理前完成，
-不能因 Routine UI 延后而延后该安全门。
+M0 后补 Routine/presence 产品面；data-route revision、组织数据处理批准与适用的个人告知/确认必须
+在 Agent 首次真实数据处理前完成，不能因 Routine UI 延后而延后该安全门。
 
 出口：重复 mention 不重复建群/Task/调用；Agent 回复只进子群；父群只出现受限卡片；execution
 succeeded 不冒充 accepted；参数变化使批准失效；dispatch 故障不产生重复副作用。
@@ -103,6 +113,7 @@ review、Task recovery 不是藏在聊天正文里的文本。
   -> Agent 以普通 IM 用户投影入群
   -> 重复 @Agent webhook 只创建一个 Task/子群/Invocation
   -> membership + delegation + budget admission
+  -> source + authority class + taint path admission
   -> fake runtime progress
   -> 参数 hash 绑定的 Needs You
   -> approve/edit/reject receipt
@@ -113,7 +124,8 @@ review、Task recovery 不是藏在聊天正文里的文本。
 ```
 
 同一 E2E 必须注入 duplicate、out-of-order、ACK loss、worker crash、旧批准改参、跨 tenant 访问、
-Agent release 撤销、预算超限和审计暂时不可用；高风险 policy/approval/intent/receipt append 不可用时
+Agent release 撤销、预算超限、prompt injection/taint 丢失和审计暂时不可用；高风险
+policy/approval/intent/receipt append 不可用时
 预期结果固定为 dispatch 前 fail-closed，不能静默降级。证据包必须能解释每次最终状态。M0 不接真实 outbound。
 
 ## 4. 第一批小提交

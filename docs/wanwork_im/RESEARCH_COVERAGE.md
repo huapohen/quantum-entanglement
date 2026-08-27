@@ -77,7 +77,47 @@ README、产品目录和 WanWork RQ-001～RQ-038。这一差异已被视为显�
 | 39 | `tutti-vm/research_report.md` | 1,436 | `51af72a312f8b3fc3bf86e96e3fd8a8f5c5d2a4ee0eb62944f35fc9f52bda19d` | D：共享 workstate、能力 lease、冲突语义；云 Room/本地边界分开 |
 | 40 | `youmind/research_report.md` | 878 | `ed224545e95cd21a7db00f99b7bc7fd24b9c4f28ca4f745e5feb983b7c3fe020` | C/D：Artifact OS、Skill SOP、上下文/隐私路由；渠道声明不可外推 |
 
-## 4. 覆盖与变更门禁
+## 4. 31/31 独立报告处置账本
+
+`直接` 表示已有独立 RQ；`加强` 表示本轮给既有 RQ 增加了直接证据或更严格边界；`组合` 表示只
+通过总报告形成当前需求，原产品本身不另造功能；`延后` 表示保留扩展点和触发条件。测试列是目标
+验收合同，不表示这些测试当前均已实现。
+
+| 独立报告 | 处置 | 对应合同 | 目标验收/阶段 |
+|---|---|---|---|
+| AgentSpace | 加强 + 直接增量 | RQ-011/012/014/017/023/026/040/041 | W0 delta；W2 promotion/taint；queue/approval/audit fault matrix |
+| AgentTeams | 直接 | RQ-002/004/015/024/026/034 | 状态分离、room≠audit、Planner 无执行权 |
+| Clawith | 直接 | RQ-002/005/006/008/012/014/027/031/032/035 | Handoff/Needs You/Skill/Tool/unknown fixtures |
+| CodexLoom | 加强 | RQ-001/002/015/026/039 | 内部/外部会话差异代表权与 disclosure 测试 |
+| Coze / Coze Studio | 组合 | RQ-007/015/017/023 | 不复制大而全 builder；M0 只验窄闭环 |
+| DeepSeek Harness | 直接 | RQ-008/009/010/011 | plugin lifecycle/effective config/event spine 门禁 |
+| FloatIM / Floatboat | 直接 | RQ-005/017/037/038 | 普通 Agent member、presence、route disclosure |
+| Gottao PI.Agent | 组合 + 延后 | RQ-023/026；exit portability 后置 | outcome/cost/evidence；供应商退出条件出现后立项 |
+| holaOS | 直接 | RQ-016/018/021/028/033/035/038 | Environment projection、secret/data-route/egress |
+| Internet Court Skill | 组合 + 延后 | RQ-020/026/041；market/escrow/dispute 后置 | mandate/evidence/remedy seam；真实交易需求前不实施 |
+| KiroCrew | 加强 | RQ-008/017/031/042 | Tool gate 与 App process isolation 负向测试 |
+| Mindra | 组合 | RQ-003/014/017/018 | 企业 badge 不替代默认配置、报告 scope 和 POC |
+| Multica | 组合 + 加强 | RQ-025/034/042 | worktree 不冒充 OS/secret/network isolation |
+| NEAR AI Agent Market | 延后 | RQ-015/026；marketplace/settlement/dispute 后置 | 真实买卖方与履约证据出现后重新评估 |
+| Omnigent | 加强 | RQ-019/033 | harness capability matrix/conformance；不静默降级 |
+| Open Connector | 直接 | RQ-012/013/021/022/032/035 | scope/action-time enforcement、unknown/reconcile |
+| OpenAgents | 直接 | RQ-004/019/023/028/030/036 | workspace/Task/Routine/inbox；拒绝 owner token/fail-open |
+| OpenBot | 组合 + 加强 | RQ-014/026/034/042 | audit-before-act、attention、computer/runtime 隔离 |
+| OpenWorker | 组合 + 加强 | RQ-018/031/041/042 | local≠private、内容 taint、App/Skill 信任类分离 |
+| Orca | 直接 | RQ-025/029/037 | worktree/resource lease、移动 capability、unverifiable |
+| Pi Agent | 组合 + 加强 | RQ-008/019/031/042 | 小内核 seam；同权 extension/安装脚本隔离 |
+| A2A | 直接 | RQ-012/013/015/019/020/022/030 | adapter/task/artifact/peer trust 对抗测试 |
+| ACP 双义项 | 直接 | RQ-019/030 | 协议名称/version/schema/draft lint 与 fixture |
+| MCP | 加强（修复仅快照） | RQ-019/020/022/031/032/035/041/042 | current-spec conformance、Registry≠trust、tool-result taint |
+| 千问 AI 平台 | 组合 | RQ-017/019/023/038 | Skill/cloud action/data policy/cost/compatibility 约束 |
+| Raft / Slock | 加强 | RQ-004/025/026/039/041 | 会话代表权、跨界 taint、activity≠audit |
+| Sandbase Harness | 直接 | RQ-011/018/022/025/035/042 | sandbox/credential/replay 模块必须有执行点证据 |
+| Agent 安全与治理 | 直接 | RQ-003/016/018/020/021/026/035/041/042 | 七层控制栈与攻击语料门禁 |
+| Todos | 组合 + 加强 | RQ-014/015/023/040 | Plan/Diff、Artifact/acceptance、promotion fault matrix |
+| Tutti VM | 组合 + 加强 | RQ-021/025/029/039/042 | Room/Agent lease/云数据/App isolation；lending 后置 |
+| YouMind | 组合 + 加强 | RQ-015/017/040 | Artifact/Skill 候选晋升；渠道隐私声明不外推 |
+
+## 5. 覆盖与变更门禁
 
 1. `RESEARCH_TRACEABILITY.md` 只承载会改变产品/API/安全/验收的硬映射；本文件证明所有研究源都
    已被盘点，不要求把 40 份材料各制造一个功能。

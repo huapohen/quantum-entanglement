@@ -67,6 +67,7 @@ Atomic Result Authority 的最大强度参考，不再作为提前接入前的�
 | `research/19_six_agent_collaboration_protocols_and_bottom_layer_design.md` | 当前协议选型：2026-08-26 | A2A 1.0（`v1.0.1` release）、stateless MCP 2026-07-28、BeeAI ACP、ANP、AGNTCY、FIPA ACL/Contract Net 六项边界，WanWork canonical envelope 设计、现状差距与落地顺序 |
 | `research/20_clawith_competitive_analysis.md` | Clawith 固定源码深研：2026-08-26 | 基于官网、官方文档和 `dataelement/Clawith@45fc701c` 的产品、群聊、长期身份、Aware/Pulse、Experience Library、Skills/MCP、治理与部署审计；明确可借鉴项、不可照搬项和 WanWork 优先级 |
 | `research/21_atomic_invocation_start_release_evidence.md` | 当前 atomic start 发布证据：`a1fd355` | first-claim/start 的代码、提交、Python 3.9/3.12/3.13、BEGIN/COMMIT/ROLLBACK ACK-loss、双连接、spawn/fork、backup/token canary 与未关闭 worker/result/action/Gate A–E 边界 |
+| `research/22_2output_research_absorption_audit.md` | 当前调研吸收审计：2026-08-28 | `2output` 的 40/40 Markdown、31/31 独立报告处置、AgentSpace evidence delta、RQ-039～RQ-042、Egress 架构修正及 M0/W1/W2+ 门禁 |
 
 ## 已归档截图
 

@@ -21,6 +21,9 @@
    Action Ledger、Artifact 验收和 Evidence Graph 始终使用平台 canonical model。
 9. **Planner 不持有执行权**：模型/runtime 只能产生 typed proposal；policy/approval、privileged executor、
    egress broker 和 receipt verification 位于独立平台边界，不能由 prompt 绕过。
+10. **Action Plane 与 Egress Broker 分责**：Action Plane 决定副作用是否获权并保证 durable 状态；
+    Egress Broker 强制所有 HTTP/SSE/MCP/provider 网络路径的目标、credential、数据与响应预算。认证、
+    实时和模型调用也必须经过 Egress，不能因为“不是写操作”就直连外部 provider。
 
 ## 2. 组件图
 
@@ -75,7 +78,7 @@ flowchart TB
     Desktop --> Envelope
     Mobile --> Envelope
     Envelope --> Auth
-    Auth --> Clerk
+    Auth --> Egress
     Envelope --> IMAPI
     IMAPI --> Org
     IMAPI --> Conv
@@ -95,13 +98,15 @@ flowchart TB
     Proposal --> Action
     Action --> Executor
     Executor --> Egress
+    Realtime --> Egress
+    Runtime --> Egress
+    Egress --> Clerk
     Egress --> Rong
+    Egress --> Models
     Egress --> Tools
     Egress --> Peers
-    Realtime --> Rong
-    Runtime --> Models
     Plugins -. lifecycle .-> Auth
-    Plugins -. lifecycle .-> Rong
+    Plugins -. lifecycle .-> Realtime
     Plugins -. lifecycle .-> Runtime
 ```
 
@@ -158,12 +163,15 @@ Domain port 不暴露 SDK client、HTTP session、数据库 connection、JWT lib
 | Actor/Agent | external link、definition、release、installation、status | identity/store schema |
 | AgentPresence | lease/incarnation、working/waiting/takeover、runtime liveness projection | coordination/presence schema |
 | Conversation | membership、ACL、parent/root、provider projection | IM domain schema |
+| ConversationRepresentation | mandate、audience/purpose、disclosure、speech act/commitment limits | identity/policy schema |
 | BusinessTask | mandate、capability、budget、context、plan、closure | QE task/event store |
 | Attempt | runtime/profile/model/plugin revisions、environment revision、effective config 与 Run capability/egress snapshot digest、lease、checkpoint | QE runtime store |
 | NeedsYou | frozen action、parameter hash、risk、assignee、decision | QE attention store |
 | Artifact | immutable version、hash、lineage、scan、acceptance | QE metadata + object store |
 | Action | intent、approval、attempt、external ref、receipt、reconcile | platform Action Ledger |
 | Memory | provenance、scope、TTL、conflict、use lineage、deletion | QE governed-memory store |
+| ContentAuthority | observation、provenance edge、taint、authority、declassification | QE evidence/policy store |
+| Promotion | source Artifact、validation、target revision、receipt/rollback | QE artifact/action store |
 | Routine | definition、timezone、trigger/missed-run policy、occurrence key、budget | scheduler/domain schema |
 
 这些“store”可以在 modular monolith 中由同一个 PostgreSQL 集群的不同 schema/transactional outbox
@@ -197,6 +205,22 @@ identity + task/mandate + environmentRevision
 Hot prompt、warm checkpoint、cold canonical state 是不同数据层；换模型或 runtime 时从受界限的
 canonical state 恢复，不能把全量 transcript 当 Environment。任何输入/Artifact/Memory/Skill 只有经过
 promotion boundary 才能进入长期 authored/adaptive state，避免一次 prompt injection 永久污染环境。
+
+### 4.4 Content authority 与 Promotion Transaction
+
+输入内容的来源和 authority 与其语义内容分开存储：
+
+```text
+ContentObservation(source, digest, authority, taint)
+  -> ProvenanceEdge(copy | quote | summarize | tool_result | agent_handoff)
+  -> Plan / ActionProposal / Artifact
+  -> explicit DeclassificationDecision（可选、最小范围）
+```
+
+复制、摘要或通过 MCP/Agent 转发不会自动清除 taint；缺少来源元数据的高风险动作失败关闭。Runtime
+完成只创建候选 Artifact。晋升到文档、知识、Skill、Memory 或外部系统必须创建独立
+`PromotionIntent`，经过 validation、目标 base revision/CAS、授权和 durable receipt 后才成为权威；
+任何失败/rollback 都保留原 Artifact digest 与 evidence。
 
 ## 5. Everything-is-a-plugin
 
@@ -249,6 +273,11 @@ application service 写 domain tables；把消息正文、token 或 attachment U
 插件可替换的是实现，不可替换的是 `DomainCommand`、event envelope、authorization、Task/Action/
 Artifact invariants。Agent Store 中“可安装”也不等于可信：代码插件、Skill、MCP server、Agent
 definition 分别进入 `CapabilityBOM + provenance + digest + scan + verdict + revocation` 准入链。
+
+W1 Plugin Host 只加载随 host 编译并由平台 admission 固定的可信内建插件。`SKILL.md`、Tool definition
+和真正执行任意代码的 App/Extension/Plugin package 是不同信任类；第三方可执行包不得进入 API/
+Gateway/Plugin Host 主进程。后续生态使用独立 `ExecutionIsolationProfile` 与 process/UID/container/
+microVM 边界，安装 lifecycle script 同样按可执行代码处理。
 
 ### 5.1 Skill package 与 Tool execution binding
 
@@ -460,6 +489,11 @@ SSE endpoint、origin/auth header、domain/port、response bytes/time/schema 做
 声明的 `effect/dataClass/approval/retry/idempotency/reconcile` 执行，不能把所有 MCP 一刀切为安全读或
 默认可重试写。高风险 action 的 policy、approval、intent 或审计事件写入失败时绝不 dispatch。
 
+Action Plane 只控制有副作用的授权与一致性；Egress Broker 控制所有网络。Clerk JWKS/session、融云
+realtime、模型推理、只读 Tool、SSE 和 connector read 同样经 broker，绑定 `DataRouteDescriptor`、
+credential lease、DNS/IP/connection target、response bytes/time/schema 和审计。二者不能合并成一个
+“HTTP client”，也不能让 `Runtime -> Models`、`Auth -> Clerk` 或 `Realtime -> RongCloud` 旁路。
+
 ### 8.3 Needs You、Artifact 与 Evidence
 
 - Needs You 保存风险、损失上限、截止、可逆性、参数 hash/diff、选择、assignee、SLA 与 decision
@@ -491,7 +525,7 @@ index 必须可以从 canonical source 重建。
 | 未读/已读 | 平台聚合 + provider evidence | SDK 实时体验 |
 | Agent definition/installation/version | PostgreSQL | 融云普通用户 display projection |
 | Agent presence/runtime liveness | coordination/presence store | 融云 online 只作不可信观察证据 |
-| Data route/consent | identity/store + policy receipt | 成员卡/安装页只读披露 |
+| Data route/approval/notice | identity/store + organization policy/personal acknowledgement receipt | 成员卡/安装页只读披露 |
 | BusinessTask/invocation/Artifact/Needs You/Memory | QE authoritative stores（同属平台，可与 IM 共用 PostgreSQL 集群但不双主） | IM 工作卡/引用消息/受限 projection |
 | Routine/ScheduleOccurrence | scheduler/domain store | IM 通知/任务卡只读投影 |
 | action command/receipt/unknown | PostgreSQL durable action tables | provider receipt evidence |
@@ -539,10 +573,11 @@ Agent 已完成、Artifact 已验收或外部副作用已经发生。
 object store、telemetry 和 backup 各自处理何种数据、地区、保留、训练/再利用口径与删除路径。
 “本地存储”“self-hosted”或“sandbox”都不能自动推导为离线、平台不可见或隔离成立。
 
-每个 Agent release/installation 另有版本化 `DataRouteDescriptor` 和 `ConsentReceipt`，声明 operator、
-host、region、model/embedding provider、retention/training/telemetry/third-party forwarding。路线 revision
-进入 installation/Attempt/evidence；任何扩大或未知路线默认阻断升级/首次交互，重新经过组织 policy 与
-human consent，不能从消息或 provider metadata 猜测同意。
+每个 Agent release/installation 另有版本化 `DataRouteDescriptor`、`OrganizationProcessingApproval`
+和适用场景下的 `PersonalAcknowledgement`，声明 operator、host、region、model/embedding provider、
+retention/training/telemetry/third-party forwarding。路线 revision 进入 installation/Attempt/evidence；
+任何扩大或未知路线默认阻断升级/首次交互，重新经过组织 policy，并按场景更新个人告知/确认；不能
+从消息或 provider metadata 猜测同意。
 
 ## 12. 部署演进
 
