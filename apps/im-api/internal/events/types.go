@@ -139,11 +139,11 @@ const (
 // StoreCharacteristics is part of the EventStore port so a production composition can reject a
 // contract fake instead of trusting a concrete implementation name.
 type StoreCharacteristics struct {
-	Durability                       StoreDurability
-	DeterministicGivenInputsAndClock bool
-	PersistsAcrossRestart            bool
-	TamperEvident                    bool
-	ProvidesActionReceipts           bool
+	Durability                               StoreDurability
+	DeterministicGivenInputsClockAndSchedule bool
+	PersistsAcrossRestart                    bool
+	TamperEvident                            bool
+	ProvidesActionReceipts                   bool
 }
 
 type StoreRequirements struct {

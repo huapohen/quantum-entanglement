@@ -48,11 +48,11 @@ func TestVolatileMemoryStoreDeclaresItsNonProductionBoundaries(t *testing.T) {
 	store := newVolatileStore(t, contractTime)
 	got := store.Characteristics()
 	want := StoreCharacteristics{
-		Durability:                       StoreDurabilityVolatile,
-		DeterministicGivenInputsAndClock: true,
-		PersistsAcrossRestart:            false,
-		TamperEvident:                    false,
-		ProvidesActionReceipts:           false,
+		Durability:                               StoreDurabilityVolatile,
+		DeterministicGivenInputsClockAndSchedule: true,
+		PersistsAcrossRestart:                    false,
+		TamperEvident:                            false,
+		ProvidesActionReceipts:                   false,
 	}
 	if got != want {
 		t.Fatalf("characteristics = %#v, want %#v", got, want)

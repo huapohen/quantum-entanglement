@@ -76,11 +76,11 @@ func NewVolatileMemoryStore(instanceID string, clock StoreClock) (*VolatileMemor
 
 func (store *VolatileMemoryStore) Characteristics() StoreCharacteristics {
 	return StoreCharacteristics{
-		Durability:                       StoreDurabilityVolatile,
-		DeterministicGivenInputsAndClock: true,
-		PersistsAcrossRestart:            false,
-		TamperEvident:                    false,
-		ProvidesActionReceipts:           false,
+		Durability:                               StoreDurabilityVolatile,
+		DeterministicGivenInputsClockAndSchedule: true,
+		PersistsAcrossRestart:                    false,
+		TamperEvident:                            false,
+		ProvidesActionReceipts:                   false,
 	}
 }
 
