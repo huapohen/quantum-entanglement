@@ -80,7 +80,7 @@ inside the checkout makes the repository dirty and the verifier correctly reject
 The command list is fixed in code; the CLI does not accept arbitrary commands and does not
 invoke a shell:
 
-1. `python3 -m unittest discover -s tests -q`
+1. `python3 -m pytest -q`
 2. `python3 examples/group_chat_demo.py --compact`
 3. `python3 -m compileall -q src tests scripts`
 4. `ruff check src tests scripts`

@@ -24,7 +24,7 @@ class DependencyLockWorkflowTests(unittest.TestCase):
         verify = self.test_job.index("python scripts/verify_dependency_locks.py")
         install = self.test_job.index('-r "${{ matrix.lockfile }}"')
         package = self.test_job.index("--no-build-isolation")
-        tests = self.test_job.index("python -m unittest discover")
+        tests = self.test_job.index("python -m pytest -q")
 
         self.assertLess(verify, install)
         self.assertLess(install, package)

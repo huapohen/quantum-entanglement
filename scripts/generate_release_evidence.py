@@ -65,7 +65,7 @@ def default_gates(python_executable: str = sys.executable) -> Tuple[Gate, ...]:
     return (
         Gate(
             name="unit-tests",
-            argv=(python_executable, "-m", "unittest", "discover", "-s", "tests", "-q"),
+            argv=(python_executable, "-m", "pytest", "-q"),
             record_executable_basename=True,
             include_repository_source=True,
         ),

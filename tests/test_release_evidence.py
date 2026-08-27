@@ -224,6 +224,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
             ["unit-tests", "deterministic-demo", "compileall", "ruff", "diff-check"],
         )
         self.assertEqual(gates[0].argv[0], "/private/runtime/python3")
+        self.assertEqual(gates[0].argv[1:], ("-m", "pytest", "-q"))
         self.assertTrue(gates[0].record_executable_basename)
         self.assertEqual(gates[2].argv[-1], "scripts")
         self.assertEqual(gates[3].argv[-1], "scripts")

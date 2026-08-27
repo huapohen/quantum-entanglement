@@ -113,7 +113,7 @@ Clawith 的 Notion 与语雀条目均为 `local_pending`，不构成远端写入
 ## 开发验证
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m pytest -q
 PYTHONPATH=src python3 examples/group_chat_demo.py
 ```
 
