@@ -88,6 +88,8 @@ W5 Web/PWA；W6 Desktop/Mobile；W7 生产加固与交付。
 | RQ-028 | **RongCloud 是 transport/projection，不是 business source of truth。** `openagents/research_report.md:341-363,466-528`; `holaos/research_report.md:595-607` | `InboundChannelBinding/ExternalIdentityMapping/ProviderProjection/TransportReceipt`；平台持有 organization、ACL、admitted message、Task、Artifact。 | webhook authenticate/dedupe、成员映射、附件 malware/prompt-injection、wrong-group/output DLP、kill switch。 | W0/W2/W3 | provider history/group 被删除或伪造时平台权限不变；fake↔RongCloud adapter 不改变 canonical contract。 |
 | RQ-029 | **移动审批应签结构化 capability，不搬运泛化终端权限。** `orca/research_report.md:319-325,667-669` | `AttentionPresentation/ApprovalCapability/DeviceSession`；移动端展示 diff、风险、资源、可逆性和测试证据。 | device revoke、短 session、生物/step-up auth、task/action scope；高风险独立 capability。 | W5/W6 | 丢失/撤销设备不能批准；一次审批不能换成文件、Git、shell 或其他资源泛权限。 |
 | RQ-030 | **不自造新的公网 Agent wire 协议；自行设计平台内部信任合同。** `_portfolio/master_research_report.md:516-580`; `openagents/research_report.md:466-528` | 自研 canonical mandate、Task、Action Ledger、Artifact Acceptance、Evidence/Recovery；外部以 MCP/A2A/Agent Client Protocol adapter 接入。 | adapter 只翻译，不拥有 authority；版本/conformance/peer trust 单独准入。 | W0，W4+按需 | 内部合同不依赖任一 provider/protocol；真实跨组织需求出现前不发布伪标准。 |
+| RQ-031 | **Skill 必须渐进披露，并把一次激活冻结到不可变包快照。** `clawith/research_report.md:356-401` | `SkillPackageVersion/ActivationReceipt/MaterializationManifest`；catalog 只投影轻量索引，完整读取 `SKILL.md` 后才激活，辅助文件按 manifest 物化。 | receipt 绑定 `packageVersion + objectVersion + contentDigest`；Run 中途升级不漂移；部分物化、摘要不符、未审核包 fail-closed。 | W2 建模；M0 后 W4/W7 实现 | 同一 Run 激活后修改上游 Skill，后续 step 仍读取原字节；缺任一必需文件不能执行；未批准包不能产生 activation receipt。 |
+| RQ-032 | **Tool Definition、Agent Assignment 与一次 Execution Binding 是三种授权对象。** `clawith/research_report.md:403-419` | `CapabilityDefinitionVersion/AgentCapabilityAssignmentRevision/ExecutionBinding(routeDigest,credentialRef,policyRevision)`；执行前重验 assignment/route/credential/membership。 | secret 仅保存 opaque ref；stale assignment、route drift、跨 Agent 绑定、未批准参数在 action-time fail-closed。 | W2 建模；W4/W7 实现 | 运行前禁用 assignment 可阻断旧 Run；route 漂移触发重新准入；checkpoint/event/模型/IM 中 secret canary 为零。 |
 
 ## 4. 明确吸收与明确拒绝
 
@@ -115,7 +117,7 @@ W5 Web/PWA；W6 Desktop/Mobile；W7 生产加固与交付。
 
 ## 6. 冻结与变更纪律
 
-1. 改动 RQ-001 至 RQ-030 任一结论，必须同时修改 PRD/Architecture/contract/test，并单独 commit；
+1. 改动 RQ-001 至 RQ-032 任一结论，必须同时修改 PRD/Architecture/contract/test，并单独 commit；
 2. 研究源文件变化时先比对 SHA-256，再进行 evidence delta review，不能静默沿用旧行号；
 3. 若 provider/协议官方合同不支持稳定 ID、acceptance query、签名、cursor 或幂等，标记
    `unsupported/unverified`，不得让 adapter 猜测；

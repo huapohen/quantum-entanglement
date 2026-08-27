@@ -37,7 +37,9 @@
 
 交付：组织、actor、human/workload/delegation、conversation、membership、message、reaction、read state、
 Agent definition/release/installation、thread、BusinessTask、Attempt、Budget、NeedsYou、Artifact/
-Acceptance、GovernedMemory、inbox/outbox/action/evidence models 与 migrations。
+Acceptance、GovernedMemory、SkillPackageVersion/ActivationReceipt/MaterializationManifest、
+CapabilityDefinitionVersion/AgentCapabilityAssignmentRevision/ExecutionBinding、inbox/outbox/action/evidence
+models 与 migrations。
 
 出口：空库/非空库 migration、rollback/restore、transaction、dedupe、revision 和 tenant isolation
 测试通过；Task、Thread、Attempt、Action 与 Acceptance 状态不会互相冒充。
@@ -55,6 +57,9 @@ resume；伪造 `ext_info` 不改变平台 authorization。
 交付：Agent catalog/trust passport/install/member/offboard API、普通用户 provisioning、mention admission、
 thread aggregate、Task/Attempt、子群 command、QE invocation bridge、Budget、Needs You、Artifact/
 Acceptance、Action Ledger、unknown reconcile 与 Evidence Bundle。
+
+M0 后同阶段继续交付受治理的 Skill activation 与 Tool execution binding；它们不阻塞首个零网络
+垂直切片，但对应的领域对象和 port 必须已在 W2 冻结。
 
 出口：重复 mention 不重复建群/Task/调用；Agent 回复只进子群；父群只出现受限卡片；execution
 succeeded 不冒充 accepted；参数变化使批准失效；dispatch 故障不产生重复副作用。
@@ -114,6 +119,7 @@ Agent release 撤销、预算超限和审计暂时不可用；证据包必须能
 11. `test: freeze ext info canonical codecs`
 12. `feat: add fake IM provider port`
 13. `test: prove fake provider has no network or credentials`
+14. `docs: freeze Skill activation and Tool execution binding contracts`
 
 任何一个条目若同时包含合同、实现、迁移、故障矩阵和 UI，应继续拆成小提交；列表是顺序约束，
 不是要求把一整项压成一个大 commit。

@@ -216,6 +216,34 @@ application service 写 domain tables；把消息正文、token 或 attachment U
 Artifact invariants。Agent Store 中“可安装”也不等于可信：代码插件、Skill、MCP server、Agent
 definition 分别进入 `CapabilityBOM + provenance + digest + scan + verdict + revocation` 准入链。
 
+### 5.1 Skill package 与 Tool execution binding
+
+插件装配 seam 不等于 Tool 授权 seam。平台分别持有：
+
+```text
+SkillPackageVersion
+  -> catalog projection (name/description/version only)
+  -> complete SKILL.md read
+  -> ActivationReceipt(packageVersion, objectVersion, contentDigest)
+  -> MaterializationManifest(required files and digests)
+  -> immutable Run snapshot
+
+CapabilityDefinitionVersion
+  -> AgentCapabilityAssignmentRevision
+  -> ExecutionBinding(routeDigest, credentialRef, policyRevision)
+  -> action-time authorization
+  -> ActionIntent / Receipt
+```
+
+Active Skill 只能从 receipt 指向的不可变对象读取；部分 tree、摘要漂移或未审核包一律不进入可执行
+上下文。模型看见 catalog entry 不代表激活，完整读取主文件不代表其脚本自动获权，激活 Skill 也不
+提升当前 Run 的 capability snapshot。
+
+Capability definition 定义 schema/effect/data class；assignment 决定某 Agent 在 tenant/workspace 的
+显式可用范围；execution binding 冻结本次 route 与 opaque credential ref。执行器在每个 action 前
+重新读取 assignment revision、membership、policy、credential 和 route，任何 stale/disabled/drift
+都拒绝。长期 secret 只由 broker 在执行边界 JIT 解析，不进入 checkpoint/event/model/IM metadata。
+
 ## 6. Identity 与 `ext_info`
 
 ### 6.1 平台主体

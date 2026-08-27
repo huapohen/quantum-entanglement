@@ -123,6 +123,28 @@ Clerk session 不能充当 Agent 的长期授权，provider service credential �
   proof；不能用“删除融云用户”冒充完整离职；
 - 历史消息和 Artifact 保持原 producer/version，不因升级或重装被改写。
 
+### 4.4 Skill 激活与 Tool 授权
+
+Skill 不是一段永久塞进 prompt 的文本，也不能因为 Agent “知道它存在”就视为已经获得能力：
+
+1. catalog 只向 Run 投影名称、描述、来源、版本和最小索引；
+2. 模型或 planner 明确选择后，必须完整读取主 `SKILL.md`，形成 activation receipt；
+3. receipt 绑定 `skillPackageVersion + objectVersion + contentDigest`，整次 Run 从不可变快照读取；
+4. 脚本、模板、图片和参考资料按 manifest 物化；任何必需文件缺失、超限、摘要不符都 fail-closed；
+5. Run 中途升级、撤回或覆盖 Skill 不改变已激活字节；新 Run 必须重新 admission/activation；
+6. 第三方 Skill 只能由 Agent 提交安装提案，不能绕过组织的来源、扫描、审批、隔离和撤销策略。
+
+Tool/MCP 能力必须拆成三个权威对象，不能用“已安装”同时表达定义、授权和一次执行：
+
+| 层 | 权威内容 | Run/Action 冻结内容 |
+|---|---|---|
+| Capability Definition Version | 输入/输出 schema、effect、provider、数据分类、route contract | `capabilityVersionId` |
+| Agent Capability Assignment Revision | 哪个 Agent 在何 tenant/workspace 可用、策略、配额和状态 | `assignmentRevision` |
+| Execution Binding | 本次 route、credential ref、policy、deadline、idempotency/reconcile | `routeDigest + credentialRef + policyRevision` |
+
+执行前必须重新校验 membership、Agent/assignment 状态、route digest、credential lease 和 action policy；
+checkpoint、消息、Artifact、event 和模型上下文只保存 opaque credential reference，绝不保存 secret。
+
 ## 5. `@Agent` 工作子群
 
 ### 5.1 触发规则
@@ -240,6 +262,8 @@ M0 只实现最小 provenance/scope/TTL/use-lineage；组织级共享记忆、�
   防止 confused deputy；
 - 插件、Skill、MCP server、模型和镜像在进入私有 catalog 前需 provenance、digest、签名状态、
   CBOM/SBOM、capability manifest、扫描、兼容矩阵、policy verdict 和撤销状态。
+- Skill 未产生绑定不可变包快照的 activation receipt 时不得执行；Tool definition 存在、Agent 已安装或
+  模型生成 tool call 都不等于本次 execution binding 已获授权。
 
 ## 10. 关键页面
 
@@ -289,6 +313,8 @@ Attention inbox、Artifact review queue 和任务恢复入口。
 - tenant isolation、action-time authorization、offboarding、backup/restore、RTO/RPO、retention 和
   deletion proof 有故障注入或恢复演练证据；
 - 插件/Agent/镜像供应链 admission 与撤销可演示，未知来源默认拒绝；
+- Skill 激活在 Run 中途升级后字节不漂移，部分物化失败关闭；stale Tool assignment、route drift、
+  跨 Agent assignment 和 checkpoint secret canary 全部被拒绝；
 - 日志、trace、Notion 和 Git secret canary 通过；消息正文、token、永久附件 URL 不进入普通日志；
 - 只有专用融云 sandbox、明确 allowlist、限额、kill switch、reconcile 和用户对该具体目标的新授权
   都成立时，才允许真实 outbound；通过 M0/V1 不自动满足本 Gate。
