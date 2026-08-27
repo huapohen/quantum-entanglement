@@ -8,6 +8,7 @@ composition roots must establish those facts at their dedicated boundaries.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, Tuple, Type, TypeVar, cast
 
@@ -1609,6 +1610,21 @@ class IMActionIntentV1(_NativeIMWireValue):
         )
 
 
+def derive_im_idempotency_key_v1(intent: IMActionIntentV1) -> str:
+    """Derive the frozen receiver key from one exact, already validated action intent."""
+
+    _require_exact_model(intent, IMActionIntentV1, "action intent")
+    body = {
+        "actionId": intent.action_id,
+        "channelId": intent.conversation.channel_id,
+        "provider": intent.conversation.provider,
+        "tenantId": intent.tenant_id,
+        "workspaceId": intent.workspace_id,
+    }
+    domain = b"quantum-entanglement.native-im/idempotency-key/1\n"
+    return hashlib.sha256(domain + _canonical_json_bytes(body)).hexdigest()
+
+
 __all__ = [
     "IMAcceptanceLookupCapabilityV1",
     "IMActionIntentV1",
@@ -1628,4 +1644,5 @@ __all__ = [
     "IMVerifiedInboundEnvelopeV1",
     "InboundIMEventV1",
     "NATIVE_IM_SCHEMA_VERSION",
+    "derive_im_idempotency_key_v1",
 ]

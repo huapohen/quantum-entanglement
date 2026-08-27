@@ -24,6 +24,7 @@ from quantum_entanglement.native_im import (
     IMReactionRefV1,
     IMVerifiedInboundEnvelopeV1,
     InboundIMEventV1,
+    derive_im_idempotency_key_v1,
 )
 
 SCHEMA = 1
@@ -961,3 +962,48 @@ def test_action_intent_preflights_canonical_and_raw_byte_limits(
         action_intent()
     with pytest.raises(ValueError, match="byte limit"):
         IMActionIntentV1.from_json_bytes(encoded)
+
+
+def test_native_im_idempotency_key_matches_frozen_domain_vector() -> None:
+    intent = action_intent()
+    assert derive_im_idempotency_key_v1(intent) == (
+        "ff19f1f4ce9b043052b2ba6ac9f36f1bf105e46743b00e44891c61f9172fcaea"
+    )
+    assert derive_im_idempotency_key_v1(intent) != intent.canonical_digest()
+
+
+def test_native_im_idempotency_key_changes_only_with_exact_action_scope() -> None:
+    base = action_intent()
+    base_key = derive_im_idempotency_key_v1(base)
+    same_key_intents = (
+        action_intent(actor_id="test-actor-2"),
+        action_intent(delegator_id="test-delegator-1"),
+        action_intent(content=content(segments=(text_segment("changed"),), attachments=())),
+        action_intent(correlation_id="test-correlation-2"),
+    )
+    assert all(derive_im_idempotency_key_v1(item) == base_key for item in same_key_intents)
+
+    changed_scope_intents = (
+        action_intent(action_id="test-action-2"),
+        action_intent(
+            tenant_id="test-tenant-2",
+            conversation=conversation(tenant_id="test-tenant-2"),
+            content=content(segments=(text_segment(),), attachments=()),
+        ),
+        action_intent(
+            workspace_id="test-workspace-2",
+            conversation=conversation(workspace_id="test-workspace-2"),
+            content=content(segments=(text_segment(),), attachments=()),
+        ),
+        action_intent(
+            conversation=conversation(provider="qe.fake-im-v2"),
+            content=content(segments=(text_segment(),), attachments=()),
+        ),
+        action_intent(
+            conversation=conversation(channel_id="test-channel-2"),
+            content=content(segments=(text_segment(),), attachments=()),
+        ),
+    )
+    assert all(derive_im_idempotency_key_v1(item) != base_key for item in changed_scope_intents)
+    with pytest.raises(TypeError, match="exact"):
+        derive_im_idempotency_key_v1(object())  # type: ignore[arg-type]
