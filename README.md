@@ -118,7 +118,7 @@ source、73 个 target mapping、57 个 Notion source mapping、16 个语雀 loc
 ## 开发验证
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m pytest -q
 PYTHONPATH=src python3 examples/group_chat_demo.py
 ```
 

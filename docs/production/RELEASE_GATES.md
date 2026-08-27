@@ -47,7 +47,7 @@ The following commands define the current local baseline:
 
 ```bash
 python3 scripts/verify_dependency_locks.py --repository-root .
-PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'
+PYTHONPATH=src python3 -m pytest -q
 ruff check src tests scripts
 ruff format --check src tests scripts
 PYTHONPATH=src mypy --strict src/quantum_entanglement
