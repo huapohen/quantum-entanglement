@@ -18,7 +18,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Set, Tuple, cast
+from typing import Any, Dict, Mapping, Set, SupportsIndex, Tuple, cast
 
 from ._artifact_codec import (
     MAX_ARTIFACT_IDENTITY_CHARACTERS,
@@ -205,6 +205,8 @@ _RESULT_RECEIPT_FIELDS = frozenset(
         "receiptDigest",
     )
 )
+
+_RESULT_OBSERVED_FIELDS = frozenset(("receipt",))
 
 
 def _exact_dict(value: object, fields: Set[str], label: str) -> Dict[str, Any]:
@@ -1464,6 +1466,53 @@ def _result_receipt_snapshot(receipt: object) -> ScopedInvocationResultReceiptV2
     return ScopedInvocationResultReceiptV2.from_dict(
         ScopedInvocationResultReceiptV2.to_dict(receipt)
     )
+
+
+@dataclass(frozen=True)
+class ScopedInvocationResultObservedV2:
+    """Capability-free observation value for one schema-2 result receipt.
+
+    Default copy and trusted-pickle reconstruction re-run the exact receipt codec.  A
+    caller-controlled pickle dispatch table is executable input and is not a validation
+    boundary.  Codec validity does not prove durable readback; production code may return
+    this type only after store verification.  It deliberately carries no fresh-commit
+    authority.
+    """
+
+    __slots__ = ("receipt",)
+
+    receipt: ScopedInvocationResultReceiptV2
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationResultObservedV2:
+            raise TypeError("result observation must be exact ScopedInvocationResultObservedV2")
+        object.__setattr__(self, "receipt", _result_receipt_snapshot(self.receipt))
+
+    def to_dict(self) -> Dict[str, object]:
+        ScopedInvocationResultObservedV2.__post_init__(self)
+        return {"receipt": ScopedInvocationResultReceiptV2.to_dict(self.receipt)}
+
+    @classmethod
+    def from_dict(cls, value: object) -> ScopedInvocationResultObservedV2:
+        if cls is not ScopedInvocationResultObservedV2:
+            raise TypeError("result observation decoder requires the exact schema-2 class")
+        raw = _exact_dict(value, set(_RESULT_OBSERVED_FIELDS), "scoped result observation")
+        return cls(receipt=ScopedInvocationResultReceiptV2.from_dict(raw["receipt"]))
+
+    def __reduce__(self) -> Tuple[object, Tuple[object, ...]]:
+        return (
+            _decode_scoped_invocation_result_observed_v2,
+            (ScopedInvocationResultObservedV2.to_dict(self),),
+        )
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> Tuple[object, Tuple[object, ...]]:
+        return ScopedInvocationResultObservedV2.__reduce__(self)
+
+
+def _decode_scoped_invocation_result_observed_v2(
+    value: object,
+) -> ScopedInvocationResultObservedV2:
+    return ScopedInvocationResultObservedV2.from_dict(value)
 
 
 @dataclass(frozen=True)
