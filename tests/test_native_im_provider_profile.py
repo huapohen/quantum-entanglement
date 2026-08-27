@@ -13,8 +13,11 @@ from quantum_entanglement.native_im_provider_profile import (
     IMProviderIdentityMappingV1,
     IMProviderLimitProfileV1,
     IMProviderOperationProfileV1,
+    IMProviderProfileBindingError,
     IMProviderProfileV1,
     IMProviderResumeProfileV1,
+    evaluate_e2_profile_readiness_v1,
+    validate_profile_binding_v1,
 )
 
 SCHEMA = 1
@@ -191,6 +194,78 @@ def profile(**changes: object) -> IMProviderProfileV1:
     }
     values.update(changes)
     return IMProviderProfileV1(**values)  # type: ignore[arg-type]
+
+
+def identity_with_status(canonical_field: str, status: str) -> IMProviderIdentityMappingV1:
+    if status == "supported":
+        return identity_mapping(canonical_field)
+    return identity_mapping(
+        canonical_field,
+        status=status,
+        provider_json_pointer=None,
+        mapping_mode=None,
+        provider_scope=None,
+        evidence_digest=EVIDENCE if status == "unsupported" else None,
+    )
+
+
+def event_with_status(event_type: str, status: str) -> IMProviderEventMappingV1:
+    if status == "supported":
+        return event_mapping(event_type)
+    return event_mapping(
+        event_type,
+        status=status,
+        provider_event_type=None,
+        evidence_digest=EVIDENCE if status == "unsupported" else None,
+    )
+
+
+def feature_with_status(name: str, status: str) -> IMProviderFeatureV1:
+    return feature(
+        name,
+        status=status,
+        evidence_digest=None if status == "unverified" else EVIDENCE,
+    )
+
+
+def replace_identity_status(
+    value: IMProviderProfileV1, canonical_field: str, status: str
+) -> IMProviderProfileV1:
+    return replace(
+        value,
+        identity_mappings=tuple(
+            identity_with_status(mapping.canonical_field, status)
+            if mapping.canonical_field == canonical_field
+            else mapping
+            for mapping in value.identity_mappings
+        ),
+    )
+
+
+def replace_event_status(
+    value: IMProviderProfileV1, event_type: str, status: str
+) -> IMProviderProfileV1:
+    return replace(
+        value,
+        event_mappings=tuple(
+            event_with_status(mapping.event_type, status)
+            if mapping.event_type == event_type
+            else mapping
+            for mapping in value.event_mappings
+        ),
+    )
+
+
+def replace_feature_status(
+    value: IMProviderProfileV1, name: str, status: str
+) -> IMProviderProfileV1:
+    return replace(
+        value,
+        features=tuple(
+            feature_with_status(item.feature, status) if item.feature == name else item
+            for item in value.features
+        ),
+    )
 
 
 def test_profile_round_trip_and_domain_separated_digest_are_stable() -> None:
@@ -472,3 +547,161 @@ def test_repr_omits_provider_paths_evidence_tables_and_source_digest() -> None:
     assert "/private/canary" not in rendered
     assert EVIDENCE not in rendered
     assert "b" * 64 not in rendered
+
+
+def test_complete_verified_sandbox_profile_has_no_e2_readiness_blockers() -> None:
+    assert evaluate_e2_profile_readiness_v1(profile()) == ()
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    (
+        ({"environment_class": "production"}, "environment_not_sandbox"),
+        ({"allowed_conversation_ids": ()}, "allowed_conversation_scope_empty"),
+        ({"source_evidence_digest": None}, "source_evidence_unverified"),
+    ),
+)
+def test_e2_readiness_reports_stable_top_level_blockers(
+    changes: dict[str, object], expected: str
+) -> None:
+    blockers = evaluate_e2_profile_readiness_v1(profile(**changes))
+    assert expected in blockers
+    assert blockers == tuple(sorted(blockers, key=lambda value: value.encode("utf-8")))
+
+
+@pytest.mark.parametrize("status", ("unsupported", "unverified"))
+def test_e2_readiness_requires_verified_authentication_and_resume(status: str) -> None:
+    evidence = EVIDENCE if status == "unsupported" else None
+    auth_value = authentication(
+        status=status,
+        verifier_contract_id=None,
+        signature_mode=None,
+        timestamp_mode=None,
+        nonce_mode=None,
+        endpoint_binding_mode=None,
+        replay_window_seconds=None,
+        key_rotation_mode=None,
+        evidence_digest=evidence,
+    )
+    resume_value = resume(
+        status=status,
+        dedupe_scope=None,
+        cursor_mode=None,
+        sequence_mode=None,
+        snapshot_mode=None,
+        event_id_retention_seconds=None,
+        cursor_retention_seconds=None,
+        snapshot_retention_seconds=None,
+        evidence_digest=evidence,
+    )
+    assert "authentication_not_supported" in evaluate_e2_profile_readiness_v1(
+        profile(authentication=auth_value)
+    )
+    assert "resume_not_supported" in evaluate_e2_profile_readiness_v1(profile(resume=resume_value))
+
+
+def test_e2_readiness_requires_explicit_event_and_feature_knowledge() -> None:
+    value = replace_event_status(profile(), "message.created", "unverified")
+    assert "event_mapping_unverified:message.created" in evaluate_e2_profile_readiness_v1(value)
+
+    value = replace_feature_status(profile(), "mentions", "unverified")
+    assert "feature_unverified:mentions" in evaluate_e2_profile_readiness_v1(value)
+
+    all_unsupported = profile(
+        event_mappings=tuple(event_with_status(name, "unsupported") for name in EVENT_TYPES)
+    )
+    assert "event_mapping_none_supported" in evaluate_e2_profile_readiness_v1(all_unsupported)
+
+
+@pytest.mark.parametrize(
+    "canonical_field",
+    (
+        "tenantId",
+        "workspaceId",
+        "channelId",
+        "conversationId",
+        "participantId",
+        "eventId",
+        "cursor",
+        "sequenceNumber",
+        "snapshotToken",
+    ),
+)
+@pytest.mark.parametrize("status", ("unsupported", "unverified"))
+def test_e2_readiness_requires_every_core_identity_mapping(
+    canonical_field: str, status: str
+) -> None:
+    value = replace_identity_status(profile(), canonical_field, status)
+    assert f"identity_mapping_not_supported:{canonical_field}" in evaluate_e2_profile_readiness_v1(
+        value
+    )
+
+
+def test_e2_readiness_applies_event_and_feature_conditional_mappings() -> None:
+    value = profile()
+    cases = (
+        ("messageId", value),
+        ("messageRevision", value),
+        ("reactionKey", value),
+        ("membershipRevision", value),
+        (
+            "attachmentId",
+            replace_feature_status(value, "attachments", "supported"),
+        ),
+        (
+            "attachmentVersion",
+            replace_feature_status(value, "attachments", "supported"),
+        ),
+        ("threadId", replace_feature_status(value, "threads", "supported")),
+    )
+    for canonical_field, baseline in cases:
+        changed = replace_identity_status(baseline, canonical_field, "unsupported")
+        assert (
+            f"identity_mapping_not_supported:{canonical_field}"
+            in evaluate_e2_profile_readiness_v1(changed)
+        )
+
+    attachments_unsupported = replace_identity_status(value, "attachmentId", "unsupported")
+    threads_unsupported = replace_identity_status(value, "threadId", "unverified")
+    assert "identity_mapping_not_supported:attachmentId" not in evaluate_e2_profile_readiness_v1(
+        attachments_unsupported
+    )
+    assert "identity_mapping_not_supported:threadId" not in evaluate_e2_profile_readiness_v1(
+        threads_unsupported
+    )
+
+
+def test_profile_binding_requires_exact_revision_and_digest_without_value_leakage() -> None:
+    value = profile()
+    validate_profile_binding_v1(
+        value,
+        expected_revision=value.revision,
+        expected_digest=value.canonical_digest(),
+    )
+    for revision, digest in (
+        ("test-revision-other", value.canonical_digest()),
+        (value.revision, "f" * 64),
+    ):
+        with pytest.raises(IMProviderProfileBindingError) as raised:
+            validate_profile_binding_v1(
+                value,
+                expected_revision=revision,
+                expected_digest=digest,
+            )
+        assert revision not in str(raised.value)
+        assert digest not in str(raised.value)
+
+
+def test_readiness_and_binding_reject_profile_subclasses_before_field_access() -> None:
+    class ProfileSubclass(IMProviderProfileV1):
+        pass
+
+    hostile = object.__new__(ProfileSubclass)
+    with pytest.raises(TypeError):
+        evaluate_e2_profile_readiness_v1(hostile)
+    with pytest.raises(TypeError):
+        validate_profile_binding_v1(
+            hostile,
+            expected_revision="test-revision",
+            expected_digest="a" * 64,
+        )
