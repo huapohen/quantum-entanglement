@@ -196,13 +196,18 @@ Planner 不能直持 provider credential。Action Plane 与 Egress 互补，不�
 
 ## 8. 当前实现状态与下一步
 
-本轮没有把研究审计混进代码提交。当前已独立完成：
+研究审计与代码继续保持独立提交。当前已完成：
 
 - `b666cbb feat: freeze scoped event append contracts`
 - strict canonical object payload、raw payload SHA-256、immutable inline/reference payload；
 - caller/store event fields 分离、scope/batch 校验、canonical event digest；
+- `5b34357 fix: activate only effective plugins`：只启动 effective selection；
+- `cbb7ecc fix: retain failed plugin cleanup for retry`：独立有界清理 context 与失败重试；
+- `ed9a709 fix: bind effective configs to admitted manifests`：host-computed manifest digest、approved
+  manifest binding、admission revision、Effective v2、frozen activation snapshot；
 - 专项普通测试、race 和 vet 通过。
 
-W1 接下来仍按生产风险优先：先修 Plugin Host 的 effective selection、cleanup context、manifest digest
-和 secret-reference admission 四个 P0，再实现明确标记为 volatile fake 的 memory EventStore。W2 领域
-建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；不会用“文档已经写了”代替测试。
+Plugin Host 四个 P0 已完成前三项。W1 接下来先完成 secret-reference admission P0，再处理 Registry
+freeze/snapshot、effect scope 状态和 callback/timeout 等 P1，然后实现明确标记为 volatile fake 的 memory
+EventStore。W2 领域建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；不会用“文档
+已经写了”代替测试。

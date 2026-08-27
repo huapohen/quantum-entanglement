@@ -239,7 +239,9 @@ discovered -> validated -> configured -> started -> ready -> draining -> stopped
 - 网络、文件、数据库和外部 action 范围。
 
 插件 manifest 只是 capability claim；artifact digest、provenance、SBOM、组织 approval 与 revocation
-由 host-owned package/admission record 保存并核对，插件不能自证可信。
+由 host-owned package/admission record 保存并核对，插件不能自证可信。Host 对完整 normalized manifest
+计算独立摘要；package record 必须以 `ApprovedManifestDigest + AdmissionRevision` 绑定本次批准，不能让
+相同 ID/version 或 artifact 静默复用不同运行行为的旧批准。
 
 插件装配沿用 DeepSeek Harness 值得保留的三层思想，但冻结平台自己的语义：
 
@@ -249,9 +251,12 @@ profile -> ordered bundles -> tenant overlay -> EffectiveConfiguration
 ```
 
 相同 row ID 由后层整行替换，不做 deep merge；删除必须使用显式 tombstone；同层重复 row、跨租户
-overlay、prompt/CLI/home patch 一律拒绝。启动前生成不含 secret 的 immutable effective snapshot、
-source/digest、capability/egress/secret-ref/artifact/schema/binding diff 和依赖 DAG；Attempt 保存最终 digest。
-未批准扩权、依赖循环、host API/schema 不兼容或 digest 漂移直接拒绝。
+overlay、prompt/CLI/home patch 一律拒绝。启动前生成 immutable effective snapshot；P0-4 secret admission
+必须保证普通 value 不能承载 secret、canonical 只保存 broker 验证过的安全 handle/fingerprint。Snapshot 生成
+source/digest、capability/egress/secret-ref/artifact/schema/binding/manifest/admission diff 和依赖 DAG；
+Attempt 保存最终 digest。Effective v2 的 row 同时绑定 manifest digest 与 admission revision；Host 构造时
+冻结选中 factory/config/timeout 的 activation snapshot，启动不回读 Registry。未批准扩权、依赖循环、
+host API/schema 不兼容、manifest/admission/revocation 或其他 digest 漂移直接拒绝。
 
 所有 required plugins 都 ready 后才开放组合 readiness/route；draining 立即拒绝新工作，对 in-flight 按
 deadline 收敛。启动或 ready 失败按逆依赖 drain→stop→host-owned effect cleanup，终态统一为 `stopped`
