@@ -6,7 +6,7 @@
 >
 > 开发分支：`dev_wanwork_quantum_entanglement`
 >
-> 审计基线：`73116ae`；Event contract 提交：`b666cbb`；当前 Plugin lifecycle 增量：`3b8e02e`
+> 审计基线：`73116ae`；Event contract 提交：`b666cbb`；当前 Plugin lifecycle 增量：`2d97f0a`
 
 ## 1. 最终结论
 
@@ -214,12 +214,14 @@ Planner 不能直持 provider credential。Action Plane 与 Egress 互补，不�
   effect 注册、迟到/递归 cleanup 拒绝与失败项精确重试；
 - `3b8e02e fix: invoke plugin lifecycle callbacks without host lock`：所有 plugin lifecycle/effect callback
   在 Host mutex 外执行，starting/stopping 可观察，reentrant/concurrent Start/Stop 快速拒绝且 owner 唯一；
+- `2d97f0a fix: contain plugin lifecycle callback panics`：Configure/Start/Ready panic 固定脱敏并回滚；
+  Drain/Stop/cleanup panic 不跳过其他回收；panic payload 不进入 error；
 - 专项普通测试、race 和 vet 通过。
 
 Plugin Host 四个 P0 已全部完成，P1-1 Registry freeze/snapshot、P1-2 effect scope 状态与 P1-3 callback
-locking/reentrancy 也已完成。
+locking/reentrancy、P1-4 panic containment 也已完成。
 这里的“完成”不包括 action-time JIT Secret lease、第三方执行隔离或真实 connector。W1 接下来处理
-callback panic/timeout honesty 等 P1，然后实现明确标记为 volatile fake 的 memory
+timeout honesty/强制隔离边界等 P1，然后实现明确标记为 volatile fake 的 memory
 EventStore。W2 领域建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；不会用“文档
 已经写了”代替测试。P0-4 的完整证据映射见
 [`24_secret_claim_admission_implementation.md`](24_secret_claim_admission_implementation.md)。

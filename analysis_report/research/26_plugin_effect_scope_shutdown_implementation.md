@@ -3,7 +3,8 @@
 > 状态：W1 P1-2 已在 `0f00b47` 实现。
 >
 > 边界：本阶段冻结 effect 注册与精确重试语义；Host lifecycle callback 持锁已在后续提交
-> `3b8e02e` 修复并由专题 27 记录。callback panic 与忽略 context 的强制隔离仍未完成。
+> `3b8e02e` 修复并由专题 27 记录；callback panic 已在 `2d97f0a` 修复并由专题 28 记录。忽略
+> context 的强制隔离仍未完成。
 
 ## 1. 研究证据与产品合同
 
@@ -85,10 +86,12 @@ git diff --check
 ## 5. 仍未完成
 
 1. `callWithTimeout` 只传递 context，callback 忽略 context 时不能强制返回；
-2. callback panic 尚未统一转换为安全错误并保证 rollback；
+2. 当前 goroutine callback panic 已转成固定、无 payload error，并保证 rollback/继续 cleanup；插件
+   自建 goroutine、fatal runtime error 与 process crash 仍未隔离；
 3. trusted built-in 与第三方 plugin 仍需不同 process/UID/container/microVM 隔离等级；
 4. effect label 仍只是进程内清理 identity，不是 durable external action receipt。
 
 Host mutex 下的外部 callback 已由 `3b8e02e` 移除，并冻结 concurrent Start/Stop/State 与 reentrant call
 状态机；证据见 [`27_plugin_host_callback_locking_implementation.md`](27_plugin_host_callback_locking_implementation.md)。
-下一提交处理 panic，再冻结忽略 context 时只能依靠进程隔离强制终止的边界。
+Panic containment 已在 `2d97f0a` 完成，证据见专题 28。下一提交冻结忽略 context 时只能依靠进程
+隔离强制终止的边界。

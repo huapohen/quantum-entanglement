@@ -31,6 +31,7 @@
 - Registry builder/freeze/runtime 分期、完整 definition graph 重验与 late registration 拒绝；
 - effect scope `open/closing/closed`、Drain 前关闭注册与失败 cleanup 精确重试；
 - lifecycle callback 在 Host mutex 外执行、starting/stopping 单 owner 与 reentrant/concurrent 快速拒绝；
+- lifecycle callback panic 固定脱敏，Start/Ready 保证 rollback，shutdown panic 不跳过后续回收；
 - durable event port、`EventToAppend/StoredEvent`、opaque cursor、deterministic fake 和 projection skeleton；
 - health/readiness 与 graceful shutdown；
 - unit、race、lint 和 secret canary。

@@ -283,6 +283,11 @@ Host mutex 只用于校验和发布 `new/starting/ready/stopping/stopped/failed`
 claim；callback 内查询 State 不死锁，误重入或并发 Start/Stop 立即失败，不能抢占 rollback/cleanup。
 这只解决可信内建插件的进程内锁纪律，不替代第三方代码隔离，也不能强杀忽略 context 的 callback。
 
+当前 goroutine 内的 Configure/Start/Ready/Drain/Stop/effect cleanup panic 统一转换为固定
+`ErrLifecyclePanic`，不格式化或返回可能含 Secret/消息的 panic payload。Start/Ready panic 仍进入逆序
+rollback；Drain/Stop/cleanup 单项 panic 只形成 joined error，不跳过其他插件和后续清理。这个 recover
+不覆盖插件自行创建的 goroutine、fatal runtime error、进程退出或忽略 context 的无限阻塞。
+
 V1 预留插件种类：
 
 - `auth.clerk.v1`、`auth.fake.v1`；

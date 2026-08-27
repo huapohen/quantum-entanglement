@@ -3,7 +3,8 @@
 > 状态：W1 P1-3 已在 `3b8e02e` 实现。
 >
 > 边界：本阶段解决宿主 mutex 下调用 plugin callback 导致的死锁、状态不可观察与生命周期所有权争用；
-> callback panic、无视 context 的无限阻塞、第三方代码进程隔离和 durable external effect receipt 尚未完成。
+> callback panic 已在后续提交 `2d97f0a` 完成，证据见专题 28；无视 context 的无限阻塞、第三方代码
+> 进程隔离和 durable external effect receipt 尚未完成。
 
 ## 1. 一级研究证据如何转成合同
 
@@ -119,16 +120,17 @@ git diff --check
 
 1. `callWithTimeout` 仍只是把 deadline 放入 context；callback 忽略 context 时，Go 无法安全强杀 goroutine；
 2. `Factory.Configure` 接口当前没有 context/timeout；
-3. callback panic 尚未统一 recover、分类并触发完整 rollback；
-4. 可信内建 callback 仍在 API 进程内运行，panic、CPU/memory exhaustion 和进程级故障半径未隔离；
+3. 当前 goroutine callback panic 已由 `2d97f0a` 转成固定、无 payload 的 error 并保证 rollback/继续
+   cleanup；插件自行创建的 goroutine、fatal runtime error 和 process crash 仍未隔离；
+4. 可信内建 callback 仍在 API 进程内运行，CPU/memory exhaustion 和进程级故障半径未隔离；
 5. effect cleanup identity 是进程内对象，不是跨重启 action receipt，也不能证明外部副作用已撤销；
 6. 本阶段没有开放真实融云 outbound，也没有发送任何飞书、企微、机器人或 webhook 消息。
 
 ## 6. 下一步顺序
 
-1. 独立提交实现 lifecycle callback panic 安全转换，证明 Start/Ready panic 仍 rollback，Drain/Stop/cleanup
-   panic 不跳过后续回收；
-2. 冻结 timeout 的诚实语义：context 是协作取消，不宣称强制终止；记录 callback phase/plugin/deadline，
+1. lifecycle callback panic 安全转换已在 `2d97f0a` 完成，证据见
+   [`28_plugin_lifecycle_panic_containment_implementation.md`](28_plugin_lifecycle_panic_containment_implementation.md)；
+2. 下一步冻结 timeout 的诚实语义：context 是协作取消，不宣称强制终止；记录 callback phase/plugin/deadline，
    但错误和日志不得泄漏 Secret；
 3. 为第三方/不可信 plugin 建立 process/UID/container/microVM 隔离与 supervisor kill boundary；
 4. 随后实现明确标记为 volatile 的 deterministic MemoryFake EventStore，不能冒充 W2 持久化。
