@@ -94,6 +94,16 @@ from .invocation_worker import (
     ScopedInvocationWorkerAdmissionV3,
 )
 from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
+from .native_im_nonce_store import (
+    NativeIMNonceCommitAmbiguityError,
+    NativeIMNonceIntegrityError,
+    NativeIMNonceStoreClosedError,
+    NativeIMNonceStorePoisonedError,
+    NativeIMNonceStoreProcessMismatchError,
+    NativeIMNonceTransactionError,
+    SQLiteNativeIMInboxStore,
+    SQLiteNativeIMNonceReplayGuard,
+)
 from .plugins import HookPoint, KernelPlugin, PluginManager
 from .policy import ApprovalRequest, NeedsYouQueue, PolicyDecision, PolicyEngine, PolicyOutcome
 from .protocol import (
@@ -291,6 +301,12 @@ __all__ = [
     "MentionRouter",
     "Member",
     "MemberStatus",
+    "NativeIMNonceCommitAmbiguityError",
+    "NativeIMNonceIntegrityError",
+    "NativeIMNonceStoreClosedError",
+    "NativeIMNonceStorePoisonedError",
+    "NativeIMNonceStoreProcessMismatchError",
+    "NativeIMNonceTransactionError",
     "NeedsYouQueue",
     "OrchestratorKernel",
     "OutboxMessage",
@@ -317,6 +333,8 @@ __all__ = [
     "RoutedChatMessage",
     "SQLiteArtifactStore",
     "SQLiteEventStore",
+    "SQLiteNativeIMInboxStore",
+    "SQLiteNativeIMNonceReplayGuard",
     "SQLiteRevocationRevisionGuard",
     "SCOPED_INVOCATION_EXECUTION_MANIFEST_DOMAIN",
     "SCOPED_INVOCATION_EXECUTION_MANIFEST_SCHEMA_VERSION",
