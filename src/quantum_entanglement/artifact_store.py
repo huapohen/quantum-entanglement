@@ -26,13 +26,14 @@ from datetime import datetime, timezone
 from typing import Any, Optional, Tuple, cast
 from urllib.parse import quote
 
+from ._artifact_codec import MAX_ARTIFACT_IDENTITY_CHARACTERS
 from .migrations import apply_sqlite_migrations, current_schema_version
 from .protocol import new_id, utc_now
 
 _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
 )
-_MAX_IDENTIFIER_LENGTH = 512
+_MAX_IDENTIFIER_LENGTH = MAX_ARTIFACT_IDENTITY_CHARACTERS
 _MAX_MEDIA_TYPE_LENGTH = 255
 _MAX_METADATA_CONTAINER_DEPTH = 64
 _MAX_METADATA_NODES = 10_000

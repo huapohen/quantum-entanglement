@@ -7,6 +7,7 @@ import unittest
 from quantum_entanglement import artifact_store as artifact_store_module
 from quantum_entanglement._artifact_codec import (
     ARTIFACT_METADATA_DOMAIN_V1,
+    MAX_ARTIFACT_IDENTITY_CHARACTERS,
     ArtifactMetadataCodecTooLargeError,
     artifact_blob_digest_v1,
     artifact_metadata_digest_v1,
@@ -17,6 +18,13 @@ from quantum_entanglement._artifact_codec import (
 
 
 class ArtifactCanonicalCodecTests(unittest.TestCase):
+    def test_artifact_identity_limit_is_shared_with_persistence(self) -> None:
+        self.assertEqual(MAX_ARTIFACT_IDENTITY_CHARACTERS, 512)
+        self.assertEqual(
+            artifact_store_module._MAX_IDENTIFIER_LENGTH,
+            MAX_ARTIFACT_IDENTITY_CHARACTERS,
+        )
+
     def test_golden_metadata_blob_and_legacy_request_digests(self) -> None:
         metadata = canonical_artifact_metadata_v1({"β": [True, None], "a": 1})
         content = b"hello\x00world"

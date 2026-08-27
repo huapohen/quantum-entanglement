@@ -18,6 +18,7 @@ from types import MappingProxyType
 from typing import Dict, Mapping, cast
 
 ARTIFACT_METADATA_DOMAIN_V1 = "quantum-entanglement.artifact-metadata/1\n"
+MAX_ARTIFACT_IDENTITY_CHARACTERS = 512
 MAX_ARTIFACT_METADATA_BYTES = 65_536
 MAX_ARTIFACT_METADATA_DEPTH = 64
 MAX_ARTIFACT_METADATA_NODES = 10_000
