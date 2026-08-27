@@ -28,11 +28,17 @@ from ._artifact_codec import (
     canonical_artifact_metadata_v1,
     decode_canonical_artifact_metadata_v1,
 )
-from .invocation_execution import EffectClass, ScopedInvocationStartReceiptV3
+from .invocation_execution import (
+    CANONICAL_ORCHESTRATOR_ACTOR_ID,
+    EffectClass,
+    ScopedInvocationStartReceiptV3,
+)
+from .protocol import TaskStatus
 
 SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_ACCEPTANCE_REQUEST_SCHEMA_VERSION = 2
+SCOPED_INVOCATION_RESULT_TERMINAL_TRANSITION_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_MANIFEST_DOMAIN = "quantum-entanglement.invocation-result-manifest/2\n"
 ACTION_RECEIPT_SET_DOMAIN = "quantum-entanglement.action-receipt-set/1\n"
 SCOPED_INVOCATION_RESULT_ARTIFACT_CANDIDATE_DOMAIN = (
@@ -43,6 +49,9 @@ SCOPED_INVOCATION_RESULT_ACCEPTANCE_REQUEST_DOMAIN = (
     "quantum-entanglement.invocation-result-acceptance-request/2\n"
 )
 SCOPED_INVOCATION_START_RECEIPT_DIGEST_DOMAIN = "quantum-entanglement.invocation-start-receipt/3\n"
+SCOPED_INVOCATION_RESULT_TERMINAL_TRANSITION_DOMAIN = (
+    "quantum-entanglement.invocation-result-terminal-transition/2\n"
+)
 TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE = "task.invocation.result.accepted"
 TASK_STATUS_CHANGED_EVENT_TYPE = "task.status.changed"
 EMPTY_ACTION_RECEIPT_SET_DIGEST = hashlib.sha256(
@@ -153,6 +162,31 @@ _RESULT_EVIDENCE_FIELDS = frozenset(
         "requestDigest",
         "acceptedAt",
         "artifactCount",
+    )
+)
+
+_TERMINAL_TRANSITION_FIELDS = frozenset(
+    (
+        "schemaVersion",
+        "transitionKind",
+        "tenantId",
+        "workspaceId",
+        "invocationId",
+        "sessionId",
+        "planId",
+        "taskId",
+        "agentId",
+        "jobIdempotencyKey",
+        "runtimeRevision",
+        "correlationId",
+        "previous",
+        "current",
+        "reason",
+        "runningTaskRevision",
+        "terminalTaskRevision",
+        "resultReceiptId",
+        "resultEventId",
+        "resultEvidenceDigest",
     )
 )
 
@@ -941,6 +975,183 @@ def _result_evidence_snapshot(evidence: object) -> ScopedInvocationResultEvidenc
 
 
 @dataclass(frozen=True)
+class ScopedInvocationResultTerminalTransitionV2:
+    """Capability-free scoped schema-2 intent for one result-bound terminal event."""
+
+    schema_version: int
+    transition_kind: str
+    tenant_id: str
+    workspace_id: str
+    invocation_id: str
+    session_id: str
+    plan_id: str
+    task_id: str
+    agent_id: str
+    job_idempotency_key: str
+    runtime_revision: str
+    correlation_id: str
+    previous: TaskStatus
+    current: TaskStatus
+    reason: None
+    running_task_revision: int
+    terminal_task_revision: int
+    result_receipt_id: str
+    result_event_id: str
+    result_evidence_digest: str
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationResultTerminalTransitionV2:
+            raise TypeError(
+                "terminal transition must be exact ScopedInvocationResultTerminalTransitionV2"
+            )
+        if type(self.schema_version) is not int:
+            raise TypeError("schemaVersion must be an exact integer")
+        if self.schema_version != SCOPED_INVOCATION_RESULT_TERMINAL_TRANSITION_SCHEMA_VERSION:
+            raise ValueError("schemaVersion is unsupported")
+        if type(self.transition_kind) is not str:
+            raise TypeError("transitionKind must be a plain string")
+        if self.transition_kind != "attempt_bound_result_accepted":
+            raise ValueError("transitionKind must be attempt_bound_result_accepted")
+        for label, value in (
+            ("tenantId", self.tenant_id),
+            ("workspaceId", self.workspace_id),
+            ("invocationId", self.invocation_id),
+            ("sessionId", self.session_id),
+            ("planId", self.plan_id),
+            ("taskId", self.task_id),
+            ("agentId", self.agent_id),
+            ("jobIdempotencyKey", self.job_idempotency_key),
+            ("runtimeRevision", self.runtime_revision),
+            ("correlationId", self.correlation_id),
+            ("resultReceiptId", self.result_receipt_id),
+            ("resultEventId", self.result_event_id),
+        ):
+            _text(value, label)
+        if type(self.previous) is not TaskStatus or self.previous is not TaskStatus.RUNNING:
+            raise ValueError("previous must be the exact RUNNING task status")
+        if type(self.current) is not TaskStatus or self.current is not TaskStatus.COMPLETED:
+            raise ValueError("current must be the exact COMPLETED task status")
+        if self.reason is not None:
+            raise ValueError("reason must be null for accepted result completion")
+        running_revision = _positive_integer(
+            self.running_task_revision,
+            "runningTaskRevision",
+        )
+        terminal_revision = _positive_integer(
+            self.terminal_task_revision,
+            "terminalTaskRevision",
+        )
+        if running_revision >= _MAX_SQLITE_INTEGER or terminal_revision != running_revision + 1:
+            raise ValueError("terminalTaskRevision must immediately follow runningTaskRevision")
+        _digest(self.result_evidence_digest, "resultEvidenceDigest")
+        _text("session:" + self.session_id, "terminal streamId")
+        _text(
+            f"task-status:{self.task_id}:{terminal_revision}",
+            "terminal idempotencyKey",
+        )
+
+    @property
+    def stream_id(self) -> str:
+        ScopedInvocationResultTerminalTransitionV2.__post_init__(self)
+        return "session:" + self.session_id
+
+    @property
+    def actor_id(self) -> str:
+        ScopedInvocationResultTerminalTransitionV2.__post_init__(self)
+        return CANONICAL_ORCHESTRATOR_ACTOR_ID
+
+    @property
+    def causation_id(self) -> str:
+        ScopedInvocationResultTerminalTransitionV2.__post_init__(self)
+        return self.result_event_id
+
+    @property
+    def idempotency_key(self) -> str:
+        ScopedInvocationResultTerminalTransitionV2.__post_init__(self)
+        return f"task-status:{self.task_id}:{self.terminal_task_revision}"
+
+    def to_dict(self) -> Dict[str, object]:
+        ScopedInvocationResultTerminalTransitionV2.__post_init__(self)
+        return {
+            "schemaVersion": self.schema_version,
+            "transitionKind": self.transition_kind,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "invocationId": self.invocation_id,
+            "sessionId": self.session_id,
+            "planId": self.plan_id,
+            "taskId": self.task_id,
+            "agentId": self.agent_id,
+            "jobIdempotencyKey": self.job_idempotency_key,
+            "runtimeRevision": self.runtime_revision,
+            "correlationId": self.correlation_id,
+            "previous": self.previous.value,
+            "current": self.current.value,
+            "reason": self.reason,
+            "runningTaskRevision": self.running_task_revision,
+            "terminalTaskRevision": self.terminal_task_revision,
+            "resultReceiptId": self.result_receipt_id,
+            "resultEventId": self.result_event_id,
+            "resultEvidenceDigest": self.result_evidence_digest,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> ScopedInvocationResultTerminalTransitionV2:
+        if cls is not ScopedInvocationResultTerminalTransitionV2:
+            raise TypeError("terminal transition decoder requires the exact schema-2 class")
+        raw = _exact_dict(value, set(_TERMINAL_TRANSITION_FIELDS), "terminal transition")
+        previous = raw["previous"]
+        current = raw["current"]
+        if type(previous) is not str or type(current) is not str:
+            raise TypeError("terminal transition statuses must be plain strings")
+        if previous != TaskStatus.RUNNING.value or current != TaskStatus.COMPLETED.value:
+            raise ValueError("terminal transition must be exactly RUNNING to COMPLETED")
+        return cls(
+            schema_version=raw["schemaVersion"],
+            transition_kind=raw["transitionKind"],
+            tenant_id=raw["tenantId"],
+            workspace_id=raw["workspaceId"],
+            invocation_id=raw["invocationId"],
+            session_id=raw["sessionId"],
+            plan_id=raw["planId"],
+            task_id=raw["taskId"],
+            agent_id=raw["agentId"],
+            job_idempotency_key=raw["jobIdempotencyKey"],
+            runtime_revision=raw["runtimeRevision"],
+            correlation_id=raw["correlationId"],
+            previous=TaskStatus.RUNNING,
+            current=TaskStatus.COMPLETED,
+            reason=raw["reason"],
+            running_task_revision=raw["runningTaskRevision"],
+            terminal_task_revision=raw["terminalTaskRevision"],
+            result_receipt_id=raw["resultReceiptId"],
+            result_event_id=raw["resultEventId"],
+            result_evidence_digest=raw["resultEvidenceDigest"],
+        )
+
+    def canonical_bytes(self) -> bytes:
+        snapshot = _terminal_transition_snapshot(self)
+        return _canonical_json_bytes(ScopedInvocationResultTerminalTransitionV2.to_dict(snapshot))
+
+    def canonical_digest(self) -> str:
+        snapshot = _terminal_transition_snapshot(self)
+        return hashlib.sha256(
+            SCOPED_INVOCATION_RESULT_TERMINAL_TRANSITION_DOMAIN.encode("utf-8")
+            + _canonical_json_bytes(ScopedInvocationResultTerminalTransitionV2.to_dict(snapshot))
+        ).hexdigest()
+
+
+def _terminal_transition_snapshot(
+    transition: object,
+) -> ScopedInvocationResultTerminalTransitionV2:
+    if type(transition) is not ScopedInvocationResultTerminalTransitionV2:
+        raise TypeError("transition must be exact ScopedInvocationResultTerminalTransitionV2")
+    return ScopedInvocationResultTerminalTransitionV2.from_dict(
+        ScopedInvocationResultTerminalTransitionV2.to_dict(transition)
+    )
+
+
+@dataclass(frozen=True)
 class ScopedInvocationResultManifestV2:
     """Canonical schema-2 proposal for one scoped invocation result."""
 
@@ -1383,6 +1594,128 @@ def _acceptance_request_identity_dict(
         ],
         "expectedStreamVersion": request.expected_stream_version,
     }
+
+
+def build_scoped_invocation_result_terminal_transition_v2(
+    request: object,
+    evidence: object,
+    *,
+    result_event_id: object,
+) -> ScopedInvocationResultTerminalTransitionV2:
+    """Build one exact result-bound terminal payload without granting store authority."""
+
+    request_snapshot = _acceptance_request_snapshot(request)
+    evidence_snapshot = _result_evidence_snapshot(evidence)
+    event_id = _text(result_event_id, "resultEventId")
+    if event_id == request_snapshot.start_receipt.event_id:
+        raise ValueError("resultEventId must differ from the invocation-start eventId")
+
+    manifest = request_snapshot.manifest
+    start_evidence = request_snapshot.start_receipt.evidence
+    request_digest = ScopedInvocationResultAcceptanceRequestV2.canonical_digest(request_snapshot)
+    manifest_digest = ScopedInvocationResultManifestV2.canonical_digest(manifest)
+    start_receipt_digest = scoped_invocation_start_receipt_digest_v3(request_snapshot.start_receipt)
+    bindings = (
+        (evidence_snapshot.tenant_id, manifest.tenant_id, "tenantId"),
+        (evidence_snapshot.workspace_id, manifest.workspace_id, "workspaceId"),
+        (evidence_snapshot.invocation_id, manifest.invocation_id, "invocationId"),
+        (evidence_snapshot.session_id, manifest.session_id, "sessionId"),
+        (evidence_snapshot.plan_id, manifest.plan_id, "planId"),
+        (evidence_snapshot.task_id, manifest.task_id, "taskId"),
+        (evidence_snapshot.agent_id, manifest.agent_id, "agentId"),
+        (
+            evidence_snapshot.job_idempotency_key,
+            manifest.job_idempotency_key,
+            "jobIdempotencyKey",
+        ),
+        (evidence_snapshot.attempt_id, start_evidence.attempt_id, "attemptId"),
+        (
+            evidence_snapshot.attempt_number,
+            start_evidence.attempt_number,
+            "attemptNumber",
+        ),
+        (evidence_snapshot.lease_epoch, start_evidence.lease_epoch, "leaseEpoch"),
+        (evidence_snapshot.worker_id, start_evidence.worker_id, "workerId"),
+        (
+            evidence_snapshot.lease_token_digest,
+            start_evidence.lease_token_digest,
+            "leaseTokenDigest",
+        ),
+        (
+            evidence_snapshot.start_receipt_digest,
+            start_receipt_digest,
+            "startReceiptDigest",
+        ),
+        (
+            evidence_snapshot.execution_manifest_digest,
+            manifest.execution_manifest_digest,
+            "executionManifestDigest",
+        ),
+        (
+            evidence_snapshot.result_manifest_schema_version,
+            manifest.schema_version,
+            "resultManifestSchemaVersion",
+        ),
+        (
+            evidence_snapshot.result_manifest_digest,
+            manifest_digest,
+            "resultManifestDigest",
+        ),
+        (evidence_snapshot.result_ref, manifest.result_ref, "resultRef"),
+        (evidence_snapshot.effect_class, manifest.effect_class, "effectClass"),
+        (
+            evidence_snapshot.action_receipt_set_digest,
+            manifest.action_receipt_set_digest,
+            "actionReceiptSetDigest",
+        ),
+        (
+            evidence_snapshot.acceptance_idempotency_key,
+            request_snapshot.acceptance_idempotency_key,
+            "acceptanceIdempotencyKey",
+        ),
+        (evidence_snapshot.request_digest, request_digest, "requestDigest"),
+        (
+            evidence_snapshot.artifact_count,
+            len(request_snapshot.artifact_candidates),
+            "artifactCount",
+        ),
+        (
+            evidence_snapshot.running_task_revision,
+            manifest.task_revision,
+            "runningTaskRevision",
+        ),
+        (
+            evidence_snapshot.terminal_task_revision,
+            manifest.task_revision + 1,
+            "terminalTaskRevision",
+        ),
+    )
+    for actual, expected, label in bindings:
+        if actual != expected:
+            raise ValueError(f"result evidence {label} does not match the acceptance request")
+
+    return ScopedInvocationResultTerminalTransitionV2(
+        schema_version=SCOPED_INVOCATION_RESULT_TERMINAL_TRANSITION_SCHEMA_VERSION,
+        transition_kind="attempt_bound_result_accepted",
+        tenant_id=manifest.tenant_id,
+        workspace_id=manifest.workspace_id,
+        invocation_id=manifest.invocation_id,
+        session_id=manifest.session_id,
+        plan_id=manifest.plan_id,
+        task_id=manifest.task_id,
+        agent_id=manifest.agent_id,
+        job_idempotency_key=manifest.job_idempotency_key,
+        runtime_revision=manifest.runtime_revision,
+        correlation_id=manifest.correlation_id,
+        previous=TaskStatus.RUNNING,
+        current=TaskStatus.COMPLETED,
+        reason=None,
+        running_task_revision=evidence_snapshot.running_task_revision,
+        terminal_task_revision=evidence_snapshot.terminal_task_revision,
+        result_receipt_id=evidence_snapshot.receipt_id,
+        result_event_id=event_id,
+        result_evidence_digest=ScopedInvocationResultEvidenceV2.canonical_digest(evidence_snapshot),
+    )
 
 
 __all__ = [
