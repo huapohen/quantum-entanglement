@@ -196,7 +196,7 @@ provider ACK 丢失进入 `effect_unknown` 并查询接受状态，不能盲重�
 | Capability | tools/data/actions、audience、constraints、expiry |
 | Budget | token、money、compute、wall time、attempt、human attention |
 | Context | 输入版本、来源、taint、许可、retention |
-| Plan/Execution | 计划版本、依赖、runtime/model/plugin 版本、checkpoint |
+| Plan/Execution | 计划版本、依赖、runtime/model/plugin、environment、effective config、Run capability/egress snapshot digest、checkpoint |
 | Artifact/Acceptance | schema、hash、lineage、verifier、rubric、threshold |
 | Evidence/Recovery | policy、approval、action receipt、idempotency、retry、compensation |
 | Closure | accepted/rejected/cancelled、cost、residual risk、revocation/delete proof |
@@ -255,6 +255,10 @@ M0 只实现最小 provenance/scope/TTL/use-lineage；组织级共享记忆、�
 
 - 所有 connector/IM 动作先形成 canonical intent、参数 hash、policy decision、credential lease 和
   durable command，执行后保存 provider acceptance evidence 与 receipt；
+- Planner/model/runtime 只能提出 typed `ActionProposal`，不能持有 provider credential 或绕过
+  Action Plane 直连 Tools/Peers/RongCloud；privileged executor 只消费已持久化、已授权的 canonical action；
+- 所有 HTTP/SSE/MCP/connector 出网经过统一 egress broker：DNS/IP 与连接目标 pin，拒绝
+  localhost/private/metadata，redirect/SSE 每跳重验，跨 origin 剥离认证，并限制响应字节、时间和 schema；
 - timeout/断连/ACK 丢失进入 `effect_unknown`；没有 authoritative negative finality 时不得盲重试；
 - MCP 只标准化 Host/Client 与 Server 的能力调用，A2A 只标准化 Agent 间 Task/Artifact 互操作，
   Client ACP 只用于 Client/Editor 与 coding Agent；支持协议不等于信任、授权、验收或赔付；
@@ -291,6 +295,8 @@ Attention inbox、Artifact review queue 和任务恢复入口。
 - 一个 Needs You 可冻结参数、拒绝/修改/批准并留下 receipt；
 - 一个 Artifact 可经独立 verifier 接受或退回，接受后由真人显式发布引用回父群；
 - action timeout 可演示 `effect_unknown -> reconcile -> accepted|not_accepted|manual_review`；
+- 高风险 action 的 policy/approval/intent/receipt durable append 任一步不可用时，必须在 dispatch 前
+  fail-closed；不能用普通日志补写冒充完整审计；
 - Web 在 1440px 和 390px 可完整走通以上闭环，合同、测试、截图、运行手册和 Notion 回读齐全。
 
 ### 11.2 V1 企业完备性

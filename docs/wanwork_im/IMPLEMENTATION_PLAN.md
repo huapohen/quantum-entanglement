@@ -26,12 +26,13 @@
 - config、request ID、business envelope、error taxonomy；
 - plugin lifecycle/registry；
 - effective profile/bundle/tenant overlay 与 capability diff；
-- durable event envelope、cursor 和 projection skeleton；
+- durable event port、`EventToAppend/StoredEvent`、opaque cursor、deterministic fake 和 projection skeleton；
 - health/readiness 与 graceful shutdown；
 - unit、race、lint 和 secret canary。
 
-出口：零 credential、零网络的 fake composition 可启动，所有业务错误 HTTP 200；插件半启动失败可
-逆序回滚，event projection 可从空库重建。
+出口：零 credential、零网络的 fake composition 可启动，所有业务错误 HTTP 200；effective snapshot
+具备 source/digest/golden/diff，首次启动与扩权等待外部 admission；所有 required plugins ready 前不
+暴露 route，半启动/ready 失败可逆序回滚；event fake 可确定性 replay/rebuild，但不宣称持久化。
 
 ### W2：IM Domain 与 PostgreSQL
 
@@ -39,10 +40,12 @@
 Agent definition/release/installation、thread、BusinessTask、Attempt、Budget、NeedsYou、Artifact/
 Acceptance、GovernedMemory、SkillPackageVersion/ActivationReceipt/MaterializationManifest、
 CapabilityDefinitionVersion/AgentCapabilityAssignmentRevision/ExecutionBinding、inbox/outbox/action/evidence
-models 与 migrations。
+models，以及 event stream/event/projection checkpoint migrations。
 
 出口：空库/非空库 migration、rollback/restore、transaction、dedupe、revision 和 tenant isolation
 测试通过；Task、Thread、Attempt、Action 与 Acceptance 状态不会互相冒充。
+PostgreSQL event store 还必须通过 expected-revision transaction、crash/reopen、kill-9/restore 和
+projection 清库重建；W1 memory fake 不能代替该门禁。
 
 ### W3：Clerk 与融云 adapter
 
@@ -60,6 +63,8 @@ Acceptance、Action Ledger、unknown reconcile 与 Evidence Bundle。
 
 M0 后同阶段继续交付受治理的 Skill activation 与 Tool execution binding；它们不阻塞首个零网络
 垂直切片，但对应的领域对象和 port 必须已在 W2 冻结。
+Runtime/Planner 只产出 typed ActionProposal；独立 Executor/Egress Broker 承担授权后 dispatch、
+SSRF/redirect/credential forwarding 防护和 provider receipt/reconcile。
 
 出口：重复 mention 不重复建群/Task/调用；Agent 回复只进子群；父群只出现受限卡片；execution
 succeeded 不冒充 accepted；参数变化使批准失效；dispatch 故障不产生重复副作用。
@@ -102,7 +107,8 @@ review、Task recovery 不是藏在聊天正文里的文本。
 ```
 
 同一 E2E 必须注入 duplicate、out-of-order、ACK loss、worker crash、旧批准改参、跨 tenant 访问、
-Agent release 撤销、预算超限和审计暂时不可用；证据包必须能解释每次最终状态。M0 不接真实 outbound。
+Agent release 撤销、预算超限和审计暂时不可用；高风险 policy/approval/intent/receipt append 不可用时
+预期结果固定为 dispatch 前 fail-closed，不能静默降级。证据包必须能解释每次最终状态。M0 不接真实 outbound。
 
 ## 4. 第一批小提交
 
@@ -113,13 +119,15 @@ Agent release 撤销、预算超限和审计暂时不可用；证据包必须能
 5. `feat: define stable business response envelopes`
 6. `feat: add deterministic plugin lifecycle registry`
 7. `test: freeze plugin and envelope fault matrices`
-8. `feat: add durable event envelope and cursor`
-9. `test: prove event projections rebuild deterministically`
-10. `feat: define IM identity and conversation values`
-11. `test: freeze ext info canonical codecs`
-12. `feat: add fake IM provider port`
-13. `test: prove fake provider has no network or credentials`
-14. `docs: freeze Skill activation and Tool execution binding contracts`
+8. `feat: compose immutable effective plugin configurations`
+9. `test: freeze composition precedence and escalation diff`
+10. `feat: add event store port envelope and opaque cursor`
+11. `test: prove in-memory event projections rebuild deterministically`
+12. `feat: define IM identity and conversation values`
+13. `test: freeze ext info canonical codecs`
+14. `feat: add fake IM provider port`
+15. `test: prove fake provider has no network or credentials`
+16. `docs: freeze Skill activation and Tool execution binding contracts`
 
 任何一个条目若同时包含合同、实现、迁移、故障矩阵和 UI，应继续拆成小提交；列表是顺序约束，
 不是要求把一整项压成一个大 commit。

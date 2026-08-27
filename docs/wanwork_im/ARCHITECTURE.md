@@ -19,6 +19,8 @@
    Task 都是投影或执行句柄；只有 Business Task 承载 mandate、budget、acceptance 和 closure。
 8. **协议互通不等于信任互通**：MCP/A2A/Agent Client Protocol 只进入 adapter；身份委托、策略、
    Action Ledger、Artifact 验收和 Evidence Graph 始终使用平台 canonical model。
+9. **Planner 不持有执行权**：模型/runtime 只能产生 typed proposal；policy/approval、privileged executor、
+   egress broker 和 receipt verification 位于独立平台边界，不能由 prompt 绕过。
 
 ## 2. 组件图
 
@@ -46,7 +48,10 @@ flowchart TB
       Task[Business Task Spine]
       Attention[Needs You]
       Memory[Governed Memory]
+      Proposal[Typed Action Proposal]
       Action[Durable Action Plane]
+      Executor[Privileged Executor]
+      Egress[Egress Broker]
       Plugins[Plugin Host]
     end
 
@@ -84,13 +89,17 @@ flowchart TB
     Invocation --> Runtime
     Runtime --> Artifact
     Runtime --> Memory
+    Runtime --> Proposal
     Artifact --> Attention
     Artifact --> Action
-    Action --> Rong
+    Proposal --> Action
+    Action --> Executor
+    Executor --> Egress
+    Egress --> Rong
+    Egress --> Tools
+    Egress --> Peers
     Realtime --> Rong
     Runtime --> Models
-    Runtime --> Tools
-    Runtime --> Peers
     Plugins -. lifecycle .-> Auth
     Plugins -. lifecycle .-> Rong
     Plugins -. lifecycle .-> Runtime
@@ -149,7 +158,7 @@ Domain port 不暴露 SDK client、HTTP session、数据库 connection、JWT lib
 | Actor/Agent | external link、definition、release、installation、status | identity/store schema |
 | Conversation | membership、ACL、parent/root、provider projection | IM domain schema |
 | BusinessTask | mandate、capability、budget、context、plan、closure | QE task/event store |
-| Attempt | runtime/profile/model/plugin revisions、lease、checkpoint | QE runtime store |
+| Attempt | runtime/profile/model/plugin revisions、environment revision、effective config 与 Run capability/egress snapshot digest、lease、checkpoint | QE runtime store |
 | NeedsYou | frozen action、parameter hash、risk、assignee、decision | QE attention store |
 | Artifact | immutable version、hash、lineage、scan、acceptance | QE metadata + object store |
 | Action | intent、approval、attempt、external ref、receipt、reconcile | platform Action Ledger |
@@ -172,6 +181,21 @@ draft -> planned -> authorized -> running
 accepted。Thread provisioning、runtime liveness 和 provider delivery 各有独立状态机，不能用 Task
 状态掩盖。
 
+### 4.3 Environment 与 Run compilation
+
+长期 `EnvironmentRevision` 和一次 `Attempt` 分离。每次 Run 由 projection compiler 冻结：
+
+```text
+identity + task/mandate + environmentRevision
+  + effectiveConfigurationDigest + model/runtime revisions
+  + RunCapabilitySnapshot + ProjectedContextManifest
+  -> immutable Attempt compilation receipt
+```
+
+Hot prompt、warm checkpoint、cold canonical state 是不同数据层；换模型或 runtime 时从受界限的
+canonical state 恢复，不能把全量 transcript 当 Environment。任何输入/Artifact/Memory/Skill 只有经过
+promotion boundary 才能进入长期 authored/adaptive state，避免一次 prompt injection 永久污染环境。
+
 ## 5. Everything-is-a-plugin
 
 插件不是一个任意 `map[string]any` 回调集合，而是有版本、依赖、能力和生命周期的组件：
@@ -186,19 +210,27 @@ discovered -> validated -> configured -> started -> ready -> draining -> stopped
 - capability manifest 和依赖插件；
 - config schema 与 secret reference names；
 - start/health/drain/stop timeout；
-- 网络、文件、数据库和外部 action 范围；
-- provenance、digest、SBOM 和组织批准状态。
+- 网络、文件、数据库和外部 action 范围。
+
+插件 manifest 只是 capability claim；artifact digest、provenance、SBOM、组织 approval 与 revocation
+由 host-owned package/admission record 保存并核对，插件不能自证可信。
 
 插件装配沿用 DeepSeek Harness 值得保留的三层思想，但冻结平台自己的语义：
 
 ```text
 Plugin definition -> Provider binding -> Consumer port
-Profile + Bundle + tenant overlay -> EffectiveConfiguration
+profile -> ordered bundles -> tenant overlay -> EffectiveConfiguration
 ```
 
-启动前必须生成不含 secret 的 effective config、capability/egress diff 和依赖 DAG；依赖循环、host
-API 不兼容、未批准 capability 或 digest 漂移直接拒绝。启动失败按逆序原子回滚，drain/stop/dispose
-后不能残留 route、listener、timer、lease 或 provider handle。
+相同 row ID 由后层整行替换，不做 deep merge；删除必须使用显式 tombstone；同层重复 row、跨租户
+overlay、prompt/CLI/home patch 一律拒绝。启动前生成不含 secret 的 immutable effective snapshot、
+source/digest、capability/egress/secret-ref/artifact/schema/binding diff 和依赖 DAG；Attempt 保存最终 digest。
+未批准扩权、依赖循环、host API/schema 不兼容或 digest 漂移直接拒绝。
+
+所有 required plugins 都 ready 后才开放组合 readiness/route；draining 立即拒绝新工作，对 in-flight 按
+deadline 收敛。启动或 ready 失败按逆依赖 drain→stop→host-owned effect cleanup，终态统一为 `stopped`
+或 `failed`，不再另造含义不清的 `dispose` 状态；任何阶段失败都不能残留 route、listener、timer、
+lease 或 provider handle。
 
 V1 预留插件种类：
 
@@ -352,6 +384,11 @@ EventEnvelope
 - unknown event/version 原样保留并停止有副作用的投影，禁止静默丢弃；
 - 普通 telemetry、业务审计和 tamper-evident evidence 分开保存，采样 trace 不能造成证据断链。
 
+W1 只冻结 `EventToAppend`/`StoredEvent`、`EventStore` port、opaque cursor 和确定性 in-memory fake；fake
+只证明 exact retry/conflict/paging/replay/projection contract，不宣称 durability。W2 交付 PostgreSQL
+stream/event/projection-checkpoint migrations、expected revision 事务和 crash/reopen/kill-9 恢复；从空
+projection 重建的来源必须是该 durable store。调用方不能提供 sequence/global position/recordedAt。
+
 ## 8. `@Agent` 子群时序
 
 ```mermaid
@@ -410,6 +447,12 @@ digest 和 receiver receipt。审批只绑定 canonical payload、policy revisio
 外部系统通常只能提供 at-least-once delivery，平台不得宣传 exactly-once。timeout、5xx、连接中断、
 ACK loss 都可能是 `effect_unknown`；没有 authoritative negative finality 时禁止盲重试。取消只是一项
 请求，已发生的副作用单独 reconcile/compensate，UI 不得把 cancelled 显示为“全部撤销”。
+
+Runtime/Planner 只提交 `ActionProposal`。Policy/Approval 成功并 durable append intent 后，独立 Executor
+才可通过 Egress Broker dispatch；Runtime 不读取长期 provider secret。Broker 对 DNS/IP、redirect、
+SSE endpoint、origin/auth header、domain/port、response bytes/time/schema 做统一约束，并按 capability
+声明的 `effect/dataClass/approval/retry/idempotency/reconcile` 执行，不能把所有 MCP 一刀切为安全读或
+默认可重试写。高风险 action 的 policy、approval、intent 或审计事件写入失败时绝不 dispatch。
 
 ### 8.3 Needs You、Artifact 与 Evidence
 
