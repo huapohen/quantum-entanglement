@@ -252,6 +252,20 @@ _ACTION_COMMAND_FIELDS = {
     "causationId",
     "traceparent",
 }
+_DISPATCH_REQUEST_FIELDS = {
+    "schemaVersion",
+    "dispatchAttemptId",
+    "command",
+    "commandDigest",
+    "attemptNumber",
+    "fenceId",
+    "fenceRevision",
+    "claimedAt",
+    "dispatchDeadlineAt",
+    "correlationId",
+    "causationId",
+    "traceparent",
+}
 
 _WireT = TypeVar("_WireT", bound="_NativeIMWireValue")
 
@@ -1765,6 +1779,89 @@ class IMActionCommandV1(_NativeIMWireValue):
         )
 
 
+@dataclass(frozen=True)
+class IMDispatchRequestV1(_NativeIMWireValue):
+    schema_version: int
+    dispatch_attempt_id: str
+    command: IMActionCommandV1 = field(repr=False)
+    command_digest: str
+    attempt_number: int
+    fence_id: str
+    fence_revision: str
+    claimed_at: str
+    dispatch_deadline_at: str
+    correlation_id: str
+    causation_id: str
+    traceparent: str | None
+
+    _MODEL_NAME: ClassVar[str] = "IMDispatchRequestV1"
+    _MAX_CANONICAL_BYTES: ClassVar[int] = _MAX_ACTION_BYTES
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMDispatchRequestV1, "dispatch request")
+        _schema_version(self.schema_version)
+        _id(self.dispatch_attempt_id, "dispatchAttemptId")
+        _require_exact_model(self.command, IMActionCommandV1, "command")
+        _digest(self.command_digest, "commandDigest")
+        if self.command_digest != self.command.canonical_digest():
+            raise ValueError("commandDigest does not match the exact action command")
+        _positive_integer(self.attempt_number, "attemptNumber")
+        _id(self.fence_id, "fenceId")
+        _id(self.fence_revision, "fenceRevision")
+        _timestamp(self.claimed_at, "claimedAt")
+        _timestamp(self.dispatch_deadline_at, "dispatchDeadlineAt")
+        if self.claimed_at >= self.dispatch_deadline_at:
+            raise ValueError("claimedAt must be earlier than dispatchDeadlineAt")
+        if self.dispatch_deadline_at > self.command.expires_at:
+            raise ValueError("dispatchDeadlineAt must not exceed command expiresAt")
+        _id(self.correlation_id, "correlationId")
+        _id(self.causation_id, "causationId")
+        _optional_traceparent(self.traceparent, "traceparent")
+        if self.correlation_id != self.command.correlation_id:
+            raise ValueError("correlationId does not match the action command")
+        if self.causation_id != self.command.command_id:
+            raise ValueError("causationId must equal the command ID")
+        if self.traceparent != self.command.traceparent:
+            raise ValueError("traceparent does not match the action command")
+        self.canonical_bytes()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "dispatchAttemptId": self.dispatch_attempt_id,
+            "command": self.command.to_dict(),
+            "commandDigest": self.command_digest,
+            "attemptNumber": self.attempt_number,
+            "fenceId": self.fence_id,
+            "fenceRevision": self.fence_revision,
+            "claimedAt": self.claimed_at,
+            "dispatchDeadlineAt": self.dispatch_deadline_at,
+            "correlationId": self.correlation_id,
+            "causationId": self.causation_id,
+            "traceparent": self.traceparent,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMDispatchRequestV1:
+        if cls is not IMDispatchRequestV1:
+            raise TypeError("dispatch request decoder requires the exact V1 class")
+        body = _plain_dict(value, _DISPATCH_REQUEST_FIELDS, "dispatch request")
+        return cls(
+            schema_version=body["schemaVersion"],
+            dispatch_attempt_id=body["dispatchAttemptId"],
+            command=IMActionCommandV1.from_dict(body["command"]),
+            command_digest=body["commandDigest"],
+            attempt_number=body["attemptNumber"],
+            fence_id=body["fenceId"],
+            fence_revision=body["fenceRevision"],
+            claimed_at=body["claimedAt"],
+            dispatch_deadline_at=body["dispatchDeadlineAt"],
+            correlation_id=body["correlationId"],
+            causation_id=body["causationId"],
+            traceparent=body["traceparent"],
+        )
+
+
 __all__ = [
     "IMAcceptanceLookupCapabilityV1",
     "IMActionCommandV1",
@@ -1773,6 +1870,7 @@ __all__ = [
     "IMAttachmentRefV1",
     "IMCapabilitySnapshotV1",
     "IMConversationRefV1",
+    "IMDispatchRequestV1",
     "IMInboundPageV1",
     "IMInboundReadRequestV1",
     "IMMembershipChangeV1",
