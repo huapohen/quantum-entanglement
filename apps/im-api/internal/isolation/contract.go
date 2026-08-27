@@ -154,9 +154,12 @@ const (
 	ProcessStarting        ProcessState = "starting"
 	ProcessRunning         ProcessState = "running"
 	ProcessCancelRequested ProcessState = "cancel_requested"
+	ProcessGraceWait       ProcessState = "grace_wait"
 	ProcessKillRequested   ProcessState = "kill_requested"
 	ProcessExited          ProcessState = "exited"
+	ProcessReaping         ProcessState = "reaping"
 	ProcessReaped          ProcessState = "reaped"
+	ProcessReleased        ProcessState = "released"
 	ProcessQuarantined     ProcessState = "quarantined"
 )
 
@@ -325,8 +328,9 @@ func validProcessInstance(instance ProcessInstance) bool {
 		return false
 	}
 	switch instance.State {
-	case ProcessStarting, ProcessRunning, ProcessCancelRequested, ProcessKillRequested,
-		ProcessExited, ProcessReaped, ProcessQuarantined:
+	case ProcessStarting, ProcessRunning, ProcessCancelRequested, ProcessGraceWait,
+		ProcessKillRequested, ProcessExited, ProcessReaping, ProcessReaped,
+		ProcessReleased, ProcessQuarantined:
 		return true
 	default:
 		return false
