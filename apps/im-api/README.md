@@ -38,7 +38,7 @@ non-success business code. Unknown errors, panics, and JSON encoding failures co
 serializing their causes. Provider `effect_unknown` will be a successful command response containing an honest
 Action status; it is not misreported as `50301` and never retried blindly.
 
-## Plugin admission and dependency plan
+## Plugin admission, dependency plan, and reversible lifecycle
 
 `internal/plugins` freezes the first DeepSeek Harness-inspired boundary without allowing arbitrary dynamic Go
 code. A plugin supplies a manifest; the host separately owns the package digest, provenance, SBOM, approval,
@@ -47,8 +47,17 @@ provider (or an explicitly pinned provider), and the resulting bindings and topo
 regardless of discovery or map iteration order. Missing, ambiguous, invalid, duplicate, self-dependent, and
 cyclic compositions fail before any plugin can start.
 
-This is only admission and planning. It does not yet claim that resources have been started, rolled back, or
-disposed; lifecycle effects are the next independently tested commit.
+The host configures every plugin without side effects, then starts and probes readiness in deterministic
+topological order. A plugin must register every acquired listener, timer, lease, handle, or route with its
+host-owned effect scope. A start/readiness failure, explicit stop, or cleanup failure triggers best-effort
+drain, stop, and effect cleanup in reverse dependency/registration order. Cleanup continues after individual
+failures and returns their joined error; repeated stop is idempotent. Lifecycle calls have manifest-owned
+deadlines and plugins must honor the supplied cancellation context.
+
+Only factories compiled into this binary are supported in this stage. This boundary does not load arbitrary Go
+plugins, does not permit plugin manifests to self-attest trust, and does not yet perform live hot reload. The
+next configuration-composition stage will promote a candidate only after its complete plan is ready, leaving
+the last-known-good digest unchanged on failure.
 
 ## Offline verification after dependencies are cached
 

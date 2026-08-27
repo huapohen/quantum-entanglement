@@ -4,6 +4,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 )
 
 const (
@@ -173,6 +174,12 @@ func testManifest(id PluginID, provides []PortID, requires []PortRequirement) Ma
 		Egress:             []string{"none"},
 		SecretRefNames:     []string{},
 		ConfigSchemaDigest: testSchemaDigest,
+		Timeouts: LifecycleTimeouts{
+			Start: time.Second,
+			Ready: time.Second,
+			Drain: time.Second,
+			Stop:  time.Second,
+		},
 	}
 }
 

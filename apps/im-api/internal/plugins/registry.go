@@ -16,6 +16,7 @@ var (
 	ErrAmbiguousProvider   = errors.New("required plugin port has multiple providers")
 	ErrInvalidProvider     = errors.New("pinned provider does not provide required port")
 	ErrDependencyCycle     = errors.New("plugin dependency cycle")
+	ErrMissingFactory      = errors.New("plugin factory is missing")
 	pluginIDPattern        = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*\.v[1-9][0-9]*$`)
 	portIDPattern          = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+\.v[1-9][0-9]*$`)
 	capabilityIDPattern    = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$`)
@@ -31,6 +32,7 @@ type Registry struct {
 type entry struct {
 	manifest      Manifest
 	packageRecord PackageRecord
+	factory       Factory
 }
 
 func NewRegistry() *Registry {
@@ -38,6 +40,21 @@ func NewRegistry() *Registry {
 }
 
 func (registry *Registry) Register(manifest Manifest, packageRecord PackageRecord) error {
+	return registry.register(manifest, packageRecord, nil)
+}
+
+func (registry *Registry) RegisterFactory(factory Factory, packageRecord PackageRecord) error {
+	if factory == nil {
+		return ErrMissingFactory
+	}
+	return registry.register(factory.Manifest(), packageRecord, factory)
+}
+
+func (registry *Registry) register(
+	manifest Manifest,
+	packageRecord PackageRecord,
+	factory Factory,
+) error {
 	normalized, err := normalizeManifest(manifest)
 	if err != nil {
 		return err
@@ -48,7 +65,11 @@ func (registry *Registry) Register(manifest Manifest, packageRecord PackageRecor
 	if _, exists := registry.entries[normalized.ID]; exists {
 		return fmt.Errorf("%w: %s", ErrDuplicatePlugin, normalized.ID)
 	}
-	registry.entries[normalized.ID] = entry{manifest: normalized, packageRecord: packageRecord}
+	registry.entries[normalized.ID] = entry{
+		manifest:      normalized,
+		packageRecord: packageRecord,
+		factory:       factory,
+	}
 	return nil
 }
 
@@ -116,7 +137,8 @@ func normalizeManifest(manifest Manifest) (Manifest, error) {
 	if !pluginIDPattern.MatchString(string(manifest.ID)) ||
 		!semanticVersionPattern.MatchString(manifest.Version) ||
 		manifest.HostAPI != HostAPIV1 ||
-		!sha256DigestPattern.MatchString(manifest.ConfigSchemaDigest) {
+		!sha256DigestPattern.MatchString(manifest.ConfigSchemaDigest) ||
+		!validTimeouts(manifest.Timeouts) {
 		return Manifest{}, ErrInvalidManifest
 	}
 
@@ -146,6 +168,10 @@ func normalizeManifest(manifest Manifest) (Manifest, error) {
 	slices.Sort(normalized.Egress)
 	slices.Sort(normalized.SecretRefNames)
 	return normalized, nil
+}
+
+func validTimeouts(timeouts LifecycleTimeouts) bool {
+	return timeouts.Start > 0 && timeouts.Ready > 0 && timeouts.Drain > 0 && timeouts.Stop > 0
 }
 
 func validatePackageRecord(manifest Manifest, packageRecord PackageRecord) error {

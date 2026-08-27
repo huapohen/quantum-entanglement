@@ -1,5 +1,10 @@
 package plugins
 
+import (
+	"context"
+	"time"
+)
+
 type PluginID string
 type PortID string
 type CapabilityID string
@@ -18,6 +23,14 @@ type Manifest struct {
 	Egress             []string
 	SecretRefNames     []string
 	ConfigSchemaDigest string
+	Timeouts           LifecycleTimeouts
+}
+
+type LifecycleTimeouts struct {
+	Start time.Duration
+	Ready time.Duration
+	Drain time.Duration
+	Stop  time.Duration
 }
 
 type PortRequirement struct {
@@ -44,4 +57,25 @@ type PortBinding struct {
 type Plan struct {
 	Order    []PluginID
 	Bindings []PortBinding
+}
+
+type PluginConfig struct {
+	Values     map[string]string
+	SecretRefs map[string]string
+}
+
+type Factory interface {
+	Manifest() Manifest
+	Configure(PluginConfig) (Instance, error)
+}
+
+type Instance interface {
+	Start(context.Context, Effects) error
+	Ready(context.Context) error
+	Drain(context.Context) error
+	Stop(context.Context) error
+}
+
+type Effects interface {
+	Defer(label string, cleanup func(context.Context) error) error
 }
