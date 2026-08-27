@@ -15,6 +15,7 @@ from scripts.branch_catalog import (
     branch_worktree_root,
     catalog_main_baseline,
     catalog_tip_baseline,
+    catalog_worktree_baselines,
     git,
     load_purposes,
     render_catalog,
@@ -99,6 +100,21 @@ class BranchCatalogTests(unittest.TestCase):
                 catalog_tip_baseline(root, linked / "BRANCH_CATALOG.md", tip),
                 baseline,
             )
+            normalized = catalog_worktree_baselines(
+                root,
+                linked / "BRANCH_CATALOG.md",
+                [
+                    WorktreeRecord(
+                        path=str(linked),
+                        head=tip,
+                        branch="review",
+                        prunable=False,
+                        exists=True,
+                        clean=True,
+                    )
+                ],
+            )
+            self.assertEqual(normalized[0].head, baseline)
 
     def test_archive_source_name_recovers_original_branch(self) -> None:
         self.assertEqual(

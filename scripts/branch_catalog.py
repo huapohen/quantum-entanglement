@@ -9,7 +9,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -240,6 +240,14 @@ def catalog_tip_baseline(repo: Path, output: Path, tip: str) -> str:
         return tip
     parent = git(repo, "rev-parse", f"{tip}^", check=False)
     return parent.stdout.strip() if parent.returncode == 0 else tip
+
+
+def catalog_worktree_baselines(
+    repo: Path,
+    output: Path,
+    worktrees: Sequence[WorktreeRecord],
+) -> list[WorktreeRecord]:
+    return [replace(item, head=catalog_tip_baseline(repo, output, item.head)) for item in worktrees]
 
 
 def collect_branches(
@@ -538,6 +546,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         purposes = load_purposes(args.metadata.resolve())
         worktrees = parse_worktrees(repo)
         output = args.output.resolve()
+        worktrees = catalog_worktree_baselines(repo, output, worktrees)
         main_oid = catalog_main_baseline(repo, output)
         branches = collect_branches(
             repo,
