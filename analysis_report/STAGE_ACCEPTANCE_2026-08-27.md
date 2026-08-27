@@ -48,7 +48,8 @@
 | 其他活动临时分支 | 0 | 已完成分支均已归档后删除 |
 
 权威目录见仓库根部 `BRANCH_CATALOG.md`；生命周期规则见
-`docs/BRANCH_WORKSPACE.md`。后续临时 worktree 只能放在仓库内 `worktrees/`，完成后必须按
+`docs/BRANCH_WORKSPACE.md`。后续临时 worktree 只能放在
+`/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/`，完成后必须按
 “提交 → 验证 → 合回 main → 推送 → 必要时同 SHA 归档 → 删除 worktree 和阶段分支”的顺序
 收口。
 

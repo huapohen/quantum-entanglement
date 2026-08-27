@@ -44,9 +44,11 @@ examples/                   可运行的人与 Agent 群聊协作示例
 docs/                       架构、协议与决策记录
 analysis_report/            调研总报告、专题研究和原始截图证据
 references/                 本地只读参考仓库（被 .gitignore 排除）
-worktrees/                  本地历史分支 worktree（被 .gitignore 排除）
 artifacts/                  本地评审、发布与旧管理仓库证据（被 .gitignore 排除）
 ```
+
+临时 worktree 不再放入仓库目录；统一使用
+`/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/`，阶段完成后移除。
 
 分支用途、时间节点和推荐用法见 [`BRANCH_CATALOG.md`](BRANCH_CATALOG.md)，本次目录迁移的
 可审计记录见 [`MIGRATION_MANIFEST.md`](MIGRATION_MANIFEST.md)。正式主线就是当前仓库根目录的

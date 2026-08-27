@@ -8,7 +8,9 @@
 
 该文档由 `scripts/branch_catalog.py` 根据 Git 引用和 worktree 状态生成。分支的人工用途说明
 维护在 `docs/branch_catalog_metadata.json`。说明来源、生成工具和生成结果全部由主仓库提交、
-评审并推送；大体积 `worktrees/` 和 `artifacts/` 仍由 `.gitignore` 排除。
+评审并推送；临时 worktree 统一放在仓库外的
+`/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/`，仓库内
+`artifacts/` 仍由 `.gitignore` 排除。
 
 为避免“生成目录—提交目录—main SHA 改变—目录立刻过期”的循环，若 `origin/main` 最新提交
 只修改 `BRANCH_CATALOG.md`，生成器会把它的父提交作为目录基线。下一次真实代码或文档提交

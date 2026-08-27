@@ -9,7 +9,8 @@
 - [`BRANCH_CATALOG.md`](../BRANCH_CATALOG.md)：55 个远端分支的时间节点、用途、相对 `main`
   的关系、推荐用法以及本机 worktree 路径。
 - 当前目录根：唯一正式主线仓库；日常开发、启动体验和恢复主线任务只使用这里。
-- `worktrees/`：只用于未完成的临时阶段工作区；完成后必须合并、推送并移除。
+- `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/`：只用于未完成的
+  临时阶段工作区；完成后必须合并、推送并移除。
 - `artifacts/qe-opauth-review-v6/`：操作授权评审遗留资料；不是 Git worktree。
 - `artifacts/qe_release_evidence/`：早期发布证据 JSON；不是 Git worktree。
 
@@ -30,7 +31,9 @@ cd /Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement
 
 脚本会更新仓库根目录的 `BRANCH_CATALOG.md`。新分支如果需要人工用途说明，编辑
 `docs/branch_catalog_metadata.json` 后重新运行脚本。说明元数据、生成工具、目录和迁移清单
-现在全部由同一个主代码仓库管理并推送 GitHub；`worktrees/` 与 `artifacts/` 保持本地忽略。
+现在全部由同一个主代码仓库管理并推送 GitHub；临时 worktree 统一位于仓库外的
+`/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/`，仓库内
+`artifacts/` 保持本地忽略。
 
 ## Worktree 收尾规则
 
