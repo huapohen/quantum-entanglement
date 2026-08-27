@@ -97,6 +97,13 @@ _UNKNOWN_ERROR_CODES = {
     "acceptance_not_final",
     "acceptance_retention_expired",
 }
+_DISPATCH_UNKNOWN_REASONS = {
+    "dispatch_timeout",
+    "dispatch_cancelled",
+    "connector_exception",
+    "dispatcher_recovery",
+    "process_crash_recovery",
+}
 _RECEIPT_ERROR_CODES = (
     _TERMINAL_ERROR_CODES | _TRANSIENT_NOT_ACCEPTED_ERROR_CODES | _UNKNOWN_ERROR_CODES
 )
@@ -321,6 +328,17 @@ _ACTION_RECEIPT_FIELDS = {
     "receiverEvidenceDigest",
     "errorCode",
     "retryAfterSeconds",
+    "observedAt",
+    "correlationId",
+    "causationId",
+    "traceparent",
+}
+_DISPATCH_UNKNOWN_OBSERVATION_FIELDS = {
+    "schemaVersion",
+    "observationId",
+    "dispatchRequest",
+    "dispatchRequestDigest",
+    "reason",
     "observedAt",
     "correlationId",
     "causationId",
@@ -2139,6 +2157,82 @@ class IMActionReceiptV1(_NativeIMWireValue):
         )
 
 
+@dataclass(frozen=True)
+class IMDispatchUnknownObservationV1(_NativeIMWireValue):
+    schema_version: int
+    observation_id: str
+    dispatch_request: IMDispatchRequestV1 = field(repr=False)
+    dispatch_request_digest: str
+    reason: str
+    observed_at: str
+    correlation_id: str
+    causation_id: str
+    traceparent: str | None
+
+    _MODEL_NAME: ClassVar[str] = "IMDispatchUnknownObservationV1"
+    _MAX_CANONICAL_BYTES: ClassVar[int] = _MAX_ACTION_BYTES
+
+    def __post_init__(self) -> None:
+        _require_exact_model(
+            self,
+            IMDispatchUnknownObservationV1,
+            "dispatch unknown observation",
+        )
+        _schema_version(self.schema_version)
+        _id(self.observation_id, "observationId")
+        _require_exact_model(self.dispatch_request, IMDispatchRequestV1, "dispatchRequest")
+        _digest(self.dispatch_request_digest, "dispatchRequestDigest")
+        if self.dispatch_request_digest != self.dispatch_request.canonical_digest():
+            raise ValueError("dispatchRequestDigest does not match the exact dispatch request")
+        _enum(self.reason, _DISPATCH_UNKNOWN_REASONS, "reason")
+        _timestamp(self.observed_at, "observedAt")
+        _id(self.correlation_id, "correlationId")
+        _id(self.causation_id, "causationId")
+        _optional_traceparent(self.traceparent, "traceparent")
+        command = self.dispatch_request.command
+        if self.correlation_id != command.correlation_id:
+            raise ValueError("correlationId does not match the dispatch request")
+        if self.causation_id != self.dispatch_request.dispatch_attempt_id:
+            raise ValueError("causationId must equal the dispatch attempt ID")
+        if self.traceparent != command.traceparent:
+            raise ValueError("traceparent does not match the dispatch request")
+        self.canonical_bytes()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "observationId": self.observation_id,
+            "dispatchRequest": self.dispatch_request.to_dict(),
+            "dispatchRequestDigest": self.dispatch_request_digest,
+            "reason": self.reason,
+            "observedAt": self.observed_at,
+            "correlationId": self.correlation_id,
+            "causationId": self.causation_id,
+            "traceparent": self.traceparent,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMDispatchUnknownObservationV1:
+        if cls is not IMDispatchUnknownObservationV1:
+            raise TypeError("dispatch unknown observation decoder requires the exact V1 class")
+        body = _plain_dict(
+            value,
+            _DISPATCH_UNKNOWN_OBSERVATION_FIELDS,
+            "dispatch unknown observation",
+        )
+        return cls(
+            schema_version=body["schemaVersion"],
+            observation_id=body["observationId"],
+            dispatch_request=IMDispatchRequestV1.from_dict(body["dispatchRequest"]),
+            dispatch_request_digest=body["dispatchRequestDigest"],
+            reason=body["reason"],
+            observed_at=body["observedAt"],
+            correlation_id=body["correlationId"],
+            causation_id=body["causationId"],
+            traceparent=body["traceparent"],
+        )
+
+
 __all__ = [
     "IMAcceptanceLookupCapabilityV1",
     "IMActionCommandV1",
@@ -2149,6 +2243,7 @@ __all__ = [
     "IMCapabilitySnapshotV1",
     "IMConversationRefV1",
     "IMDispatchRequestV1",
+    "IMDispatchUnknownObservationV1",
     "IMInboundPageV1",
     "IMInboundReadRequestV1",
     "IMMembershipChangeV1",
