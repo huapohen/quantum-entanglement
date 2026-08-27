@@ -24,6 +24,7 @@ IM 测试后端的受控集成，并允许在最小安全切片通过后开展 *
 | 工作区 | clean |
 | worktree | 仅主 worktree |
 | 原生 IM V1 文档 | 已冻结并完成三路独立审计 |
+| 基线 GitHub Actions | CI `33061647883` success；package `33061647937` success |
 | `IM-P0 CONTRACT_READY` | **未完成** |
 | 原生 IM 实现模块/契约测试/迁移 | 尚不存在 |
 | Heartbeat worker | admission 模型存在，但 dispatch 明确保持 disabled |
@@ -35,6 +36,8 @@ IM 测试后端的受控集成，并允许在最小安全切片通过后开展 *
 - `docs/architecture/NATIVE_IM_CONTRACT_V1.md`
 - 合同冻结提交：`250ec56286a09d40de61d460b40fdbd9843e14d6`
 - 当前同步库存提交：`1d399e555fb0416f9c6225811269b9e5a2407728`
+- 合同文件：930 行、46,021 bytes、SHA-256
+  `99031ad243112122e987e84658ff93daf33b3285ea1468039f9d59dc8048167a`
 
 当前实现具有可复用的 durable invocation lease、Result Receipt/Observed、Artifact、SQLite
 transaction、Outbox 与 process-identity 基础，但它们不能被解释为 IM Action Plane 已完成。尤其是
@@ -73,6 +76,17 @@ pre-native-im-20260827-200010
 
 bundle 文件、SHA-256 和 `git bundle verify` 结果在生成后写入同目录的 manifest；bundle 不进入
 项目 Git，避免仓库递归备份自身。
+
+本次生成结果：
+
+```text
+file: quantum-entanglement-pre-native-im-20260827-200010.bundle
+size: 11,523,917 bytes
+sha256: 3506afdb7ac65a0c733eac0a16c83abefed9c84fed75685b296254d8ff64d7eb
+git bundle verify: ok, complete history
+clone smoke HEAD: 5be87eb5fdff5f1d6c8e7a1f9ee1de9fbca70902
+clone smoke backup branch/tag: 1d399e555fb0416f9c6225811269b9e5a2407728
+```
 
 ## 4. 非破坏式恢复
 
@@ -125,6 +139,9 @@ contract probe -> health -> inbound read -> dedupe -> cursor resume
 
 ## 6. 后续执行顺序
 
+详细阶段、文件、测试矩阵、提交顺序、可停点和工期以
+`analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 为执行源。本节只保留总顺序：
+
 1. 先完成 V1 值模型、strict codec、golden vectors 和 authenticated fake adapter；
 2. 增加 inbound-only sandbox adapter 与 contract probe，不注册 outbound；
 3. 用 fake/sandbox 完成 auth、dedupe、ordering、cursor、disconnect 和 bounded-input 矩阵；
@@ -134,7 +151,14 @@ contract probe -> health -> inbound read -> dedupe -> cursor resume
    conversation 的显式 outbound 测试授权；
 7. 每个小改变仍独立 commit；GitHub 持续备份，Notion 改为每个稳定阶段结束后批量同步并远端回读。
 
-## 7. 决策影响
+## 7. 基线时的同步治理滞后
+
+代码备份不受此问题影响，但在 `1d399e5` 基线时，本地 `notion_sync_manifest.json` 和报告索引仍
+停留在旧的 30 页/`4cf28da` 记录；已经存在的 V1 合同 Notion 页也尚未写入本地 manifest。
+这是同步治理台账滞后，不是代码或合同丢失。提前接入开工前的本轮收口将补入合同页、检查点页、
+执行计划页、备份分支目录和新的远端回读证据。
+
+## 8. 决策影响
 
 这一决定把“何时开始观察真实 sandbox 协议”前移，但没有把安全事实层、作用域、幂等、恢复和
 outbound 证明删除。预期收益是尽早发现 IM 后端的身份、cursor、ACK、acceptance query 与
