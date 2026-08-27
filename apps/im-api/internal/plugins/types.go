@@ -8,6 +8,10 @@ import (
 type PluginID string
 type PortID string
 type CapabilityID string
+type SecretReference struct {
+	Broker      string
+	ReferenceID string
+}
 
 const HostAPIV1 = "wanwork.plugin-host/v1"
 
@@ -61,7 +65,19 @@ type Plan struct {
 
 type PluginConfig struct {
 	Values     map[string]string
-	SecretRefs map[string]string
+	SecretRefs map[string]SecretReference
+}
+
+// ConfigSchema is host-owned. A plugin may name a schema digest but cannot provide or approve
+// the validator that decides which values are accepted and which defaults are materialized.
+type ConfigSchema interface {
+	ValidateAndMaterialize(PluginConfig) (PluginConfig, error)
+}
+
+type ConfigSchemaFunc func(PluginConfig) (PluginConfig, error)
+
+func (function ConfigSchemaFunc) ValidateAndMaterialize(config PluginConfig) (PluginConfig, error) {
+	return function(config)
 }
 
 type Factory interface {

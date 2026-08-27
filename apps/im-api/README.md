@@ -55,9 +55,27 @@ failures and returns their joined error; repeated stop is idempotent. Lifecycle 
 deadlines and plugins must honor the supplied cancellation context.
 
 Only factories compiled into this binary are supported in this stage. This boundary does not load arbitrary Go
-plugins, does not permit plugin manifests to self-attest trust, and does not yet perform live hot reload. The
-next configuration-composition stage will promote a candidate only after its complete plan is ready, leaving
-the last-known-good digest unchanged on failure.
+plugins, does not permit plugin manifests to self-attest trust, and does not yet perform live hot reload.
+
+## Effective configuration composition
+
+The pure composition boundary applies exactly one profile, ordered bundles, and an optional tenant-bound
+overlay. A later layer can replace an earlier row only by repeating the complete row; deletion requires an
+explicit tombstone. Home, CLI, prompt, and ambient-environment patches are not accepted. Layer IDs, row IDs,
+tenant scope, admitted plugin version, artifact digest, and host-owned configuration schema are all validated
+before dependency resolution. Registering a package does not activate it: only the final selected rows enter the
+dependency plan.
+
+The result is an immutable snapshot containing source revisions/digests, fully materialized configuration,
+capabilities, egress declarations, opaque secret references, provider bindings, canonical bytes, and a
+domain-separated SHA-256 digest. Getters return deep copies. A checked-in golden vector freezes canonical
+encoding. Candidate diffing is row- and plugin-scoped and reports configuration, binding, capability, egress,
+secret-reference fingerprint, artifact, and schema changes. Initial startup treats every claim as newly added;
+configuration cannot self-approve its own expansion.
+
+This stage intentionally stops before durable last-known-good promotion and live reload. The activation stage
+will bind an external host-owned admission receipt to the base/candidate/diff digests, start only the immutable
+candidate, wait for the composition-wide readiness barrier, and promote it with durable compare-and-swap.
 
 ## Offline verification after dependencies are cached
 

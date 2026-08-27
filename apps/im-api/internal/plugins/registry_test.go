@@ -163,6 +163,49 @@ func TestRegisterRejectsUntrustedPackageClaims(t *testing.T) {
 	}
 }
 
+func TestRegisterConfigSchemaIsHostOwnedAndDigestPinned(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	schema := ConfigSchemaFunc(func(config PluginConfig) (PluginConfig, error) { return config, nil })
+	if err := registry.RegisterConfigSchema(testSchemaDigest, schema); err != nil {
+		t.Fatalf("register schema: %v", err)
+	}
+	if err := registry.RegisterConfigSchema(testSchemaDigest, schema); !errors.Is(err, ErrDuplicateSchema) {
+		t.Fatalf("duplicate schema error = %v, want %v", err, ErrDuplicateSchema)
+	}
+	if err := NewRegistry().RegisterConfigSchema("not-a-digest", schema); !errors.Is(err, ErrInvalidManifest) {
+		t.Fatalf("invalid digest error = %v, want %v", err, ErrInvalidManifest)
+	}
+	if err := NewRegistry().RegisterConfigSchema(testSchemaDigest, nil); !errors.Is(err, ErrInvalidManifest) {
+		t.Fatalf("nil schema error = %v, want %v", err, ErrInvalidManifest)
+	}
+}
+
+func TestResolveSelectionDoesNotActivateEveryRegisteredPlugin(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, manifest := range []Manifest{
+		testManifest("auth.fake.v1", []PortID{"auth.verify.v1"}, nil),
+		testManifest("im.fake.v1", []PortID{"im.transport.v1"}, nil),
+	} {
+		if err := registry.Register(manifest, admittedPackage(manifest)); err != nil {
+			t.Fatalf("register %s: %v", manifest.ID, err)
+		}
+	}
+	plan, err := registry.ResolveSelection([]PluginID{"im.fake.v1"})
+	if err != nil {
+		t.Fatalf("resolve selection: %v", err)
+	}
+	if !slices.Equal(plan.Order, []PluginID{"im.fake.v1"}) {
+		t.Fatalf("order = %v", plan.Order)
+	}
+	if _, err := registry.ResolveSelection([]PluginID{"missing.fake.v1"}); !errors.Is(err, ErrUnknownPlugin) {
+		t.Fatalf("unknown selection error = %v, want %v", err, ErrUnknownPlugin)
+	}
+}
+
 func testManifest(id PluginID, provides []PortID, requires []PortRequirement) Manifest {
 	return Manifest{
 		ID:                 id,
@@ -171,7 +214,7 @@ func testManifest(id PluginID, provides []PortID, requires []PortRequirement) Ma
 		Provides:           provides,
 		Requires:           requires,
 		Capabilities:       []CapabilityID{"runtime.local"},
-		Egress:             []string{"none"},
+		Egress:             []string{},
 		SecretRefNames:     []string{},
 		ConfigSchemaDigest: testSchemaDigest,
 		Timeouts: LifecycleTimeouts{

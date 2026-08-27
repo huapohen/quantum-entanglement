@@ -17,6 +17,7 @@ var (
 	ErrInvalidProvider     = errors.New("pinned provider does not provide required port")
 	ErrDependencyCycle     = errors.New("plugin dependency cycle")
 	ErrMissingFactory      = errors.New("plugin factory is missing")
+	ErrDuplicateSchema     = errors.New("duplicate plugin configuration schema")
 	pluginIDPattern        = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*\.v[1-9][0-9]*$`)
 	portIDPattern          = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+\.v[1-9][0-9]*$`)
 	capabilityIDPattern    = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$`)
@@ -27,6 +28,7 @@ var (
 
 type Registry struct {
 	entries map[PluginID]entry
+	schemas map[string]ConfigSchema
 }
 
 type entry struct {
@@ -36,7 +38,21 @@ type entry struct {
 }
 
 func NewRegistry() *Registry {
-	return &Registry{entries: make(map[PluginID]entry)}
+	return &Registry{
+		entries: make(map[PluginID]entry),
+		schemas: make(map[string]ConfigSchema),
+	}
+}
+
+func (registry *Registry) RegisterConfigSchema(digest string, schema ConfigSchema) error {
+	if registry == nil || !sha256DigestPattern.MatchString(digest) || schema == nil {
+		return ErrInvalidManifest
+	}
+	if _, exists := registry.schemas[digest]; exists {
+		return fmt.Errorf("%w: %s", ErrDuplicateSchema, digest)
+	}
+	registry.schemas[digest] = schema
+	return nil
 }
 
 func (registry *Registry) Register(manifest Manifest, packageRecord PackageRecord) error {
@@ -131,6 +147,28 @@ func (registry *Registry) Resolve() (Plan, error) {
 		return bindings[left].ProviderID < bindings[right].ProviderID
 	})
 	return Plan{Order: order, Bindings: bindings}, nil
+}
+
+// ResolveSelection resolves only the plugins selected by an effective configuration. Merely
+// registering an admitted package must never make it active.
+func (registry *Registry) ResolveSelection(selected []PluginID) (Plan, error) {
+	if registry == nil {
+		return Plan{}, ErrInvalidManifest
+	}
+	selection := NewRegistry()
+	seen := make(map[PluginID]struct{}, len(selected))
+	for _, pluginID := range selected {
+		if _, exists := seen[pluginID]; exists {
+			return Plan{}, fmt.Errorf("%w: %s", ErrDuplicatePlugin, pluginID)
+		}
+		seen[pluginID] = struct{}{}
+		registered, exists := registry.entries[pluginID]
+		if !exists {
+			return Plan{}, fmt.Errorf("%w: %s", ErrUnknownPlugin, pluginID)
+		}
+		selection.entries[pluginID] = registered
+	}
+	return selection.Resolve()
 }
 
 func normalizeManifest(manifest Manifest) (Manifest, error) {

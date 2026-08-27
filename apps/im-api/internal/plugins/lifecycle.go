@@ -230,7 +230,7 @@ func cloneConfigs(configs map[PluginID]PluginConfig) map[PluginID]PluginConfig {
 func cloneConfig(config PluginConfig) PluginConfig {
 	return PluginConfig{
 		Values:     cloneStringMap(config.Values),
-		SecretRefs: cloneStringMap(config.SecretRefs),
+		SecretRefs: cloneSecretReferences(config.SecretRefs),
 	}
 }
 
@@ -239,6 +239,17 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneSecretReferences(values map[string]SecretReference) map[string]SecretReference {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]SecretReference, len(values))
 	for key, value := range values {
 		cloned[key] = value
 	}
