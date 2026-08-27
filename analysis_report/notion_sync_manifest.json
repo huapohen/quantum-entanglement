@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-27T05:37:24.618Z",
+  "syncedAt": "2026-08-27T08:53:25Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private main + local repository",
     "remoteRepresentation": "semantic-mirror",
@@ -13,7 +13,7 @@
       "preserve-existing-screenshot-image-blocks-and-append-10-through-26"
     ],
     "safety": {
-      "notion": "explicitly-authorized-private-workspace-write-and-readback",
+      "notion": "standing-user-required-private-workspace-sync-and-readback-before-next-action",
       "yuque": "not-touched",
       "feishuAndWeCom": "no-send-reply-comment-mention-upload-or-webhook",
       "screenshots": "restricted-internal-unredacted-originals",
@@ -21,9 +21,9 @@
     }
   },
   "sourceControl": {
-    "notionContentBaselineCommit": "8ab98aa5837226f0c1d8788eec350fe580f32180",
-    "manifestPreparedFromCommit": "fdd4bc94a8dd55da2597b1423801d286170cd854",
-    "manifestPreparedFromTree": "3ec4f27c35ebff31771744b7a9134cf345112e6c"
+    "notionContentBaselineCommit": "4cf28dadda7db33002dea76b27eeda9f33986817",
+    "manifestPreparedFromCommit": "4cf28dadda7db33002dea76b27eeda9f33986817",
+    "manifestPreparedFromTree": "e4588171fcda99afebe3bf87df27dae5d24a142b"
   },
   "pages": [
     {
@@ -33,20 +33,19 @@
       "localFiles": [
         {
           "path": "analysis_report/README.md",
-          "sha256": "f54bbc948a155b92943a6ebb943ebdfaa49d50c1d5e98ece9ba054fef95a7a7c"
+          "sha256": "77f32e6427e1db9a191b704fd84eeaabdadc5adce2b944c0629abe923930b5f3"
         }
       ],
       "updateMode": "targeted-preserve-child-pages-and-database",
       "remoteReadback": {
         "verified": true,
         "title": "🪢 Quantum Entanglement｜人 + 多 Agent 协同办公",
-        "contentLength": 7589,
+        "contentLength": 8087,
         "expectedMarkers": [
-          "8ab98aa5837226f0c1d8788eec350fe580f32180",
-          "1499 tests",
-          "阶段验收｜v0版安全停点",
-          "20｜Clawith 竞品深研",
-          "Gate A–E"
+          "任何本地文档、代码、决策、计划或验收动作",
+          "4cf28dadda7db33002dea76b27eeda9f33986817",
+          "当前项目镜像共 30 页",
+          "原生 IM 接入前必做｜P0–P3 与接入后 TODO"
         ],
         "missingMarkers": []
       }
@@ -613,17 +612,45 @@
       "localFiles": [
         {
           "path": "analysis_report/NEXT_STAGE_PLAN.md",
-          "sha256": "c25ece9c924665d68b02fe178b623d1c4c9dd9e165409222df291d9089153609"
+          "sha256": "3b47d661d976fbbbd16367a8ffbffbda302c884f078f59611232e6577b84bbcc"
         }
       ],
-      "updateMode": "created-full-semantic-mirror",
+      "updateMode": "targeted-update-native-im-scheduling-note",
       "remoteReadback": {
         "verified": true,
         "title": "🗓️ 下一阶段计划｜参考复评到 Atomic Result Writer",
-        "contentLength": 23390,
+        "contentLength": 23649,
         "expectedMarkers": [
-          "analysis_report/NEXT_STAGE_PLAN.md",
-          "8ab98aa5837226f0c1d8788eec350fe580f32180"
+          "原生 IM 调度说明（2026-08-27）",
+          "4cf28dadda7db33002dea76b27eeda9f33986817",
+          "3c9ead4b996e81638c43e48ecc2e0bcc"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "native-im-integration-prerequisites",
+      "pageId": "3c9ead4b-996e-8163-8c43-e48ecc2e0bcc",
+      "url": "https://app.notion.com/p/3c9ead4b996e81638c43e48ecc2e0bcc?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
+          "sha256": "31c279ab93ec0e80c8a407042b9577caf9e5451d76c058a12b5031697d31826d"
+        }
+      ],
+      "updateMode": "created-full-semantic-mirror-with-exact-markdown-attachment",
+      "remoteReadback": {
+        "verified": true,
+        "title": "📡 原生 IM 接入前必做｜P0–P3 与接入后 TODO",
+        "contentLength": 14649,
+        "expectedMarkers": [
+          "NATIVE_IM_INTEGRATION_PREREQUISITES.md",
+          "本地原始 Markdown",
+          "IM-P0 CONTRACT_READY",
+          "IM-P3 SANDBOX_READY",
+          "Action Command/Receipt",
+          "SERVICE_BOUNDARY.md",
+          "## 11. 决策摘要"
         ],
         "missingMarkers": []
       }
@@ -671,12 +698,12 @@
     }
   ],
   "verificationSummary": {
-    "pageCount": 29,
-    "controlledSourcePageCount": 28,
+    "pageCount": 30,
+    "controlledSourcePageCount": 29,
     "auxiliaryDerivedPageCount": 1,
-    "existingPagesUpdated": 13,
-    "newPagesCreated": 16,
-    "readbackVerified": 29,
+    "existingPagesUpdated": 3,
+    "newPagesCreated": 1,
+    "readbackVerified": 4,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 27,
     "screenshotImagesAddedThisSync": 17,
