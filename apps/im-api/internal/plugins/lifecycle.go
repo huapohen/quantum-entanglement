@@ -174,7 +174,32 @@ func activationRowsMatchRegistry(registry *Registry, configuration EffectiveConf
 			registered.packageRecord.Revoked ||
 			row.ConfigSchemaDigest != registered.manifest.ConfigSchemaDigest ||
 			!slices.Equal(row.Capabilities, registered.manifest.Capabilities) ||
-			!slices.Equal(row.Egress, registered.manifest.Egress) {
+			!slices.Equal(row.Egress, registered.manifest.Egress) ||
+			!activationSecretBindingsMatchRegistry(registry, configuration.tenantID, row) {
+			return false
+		}
+	}
+	return true
+}
+
+func activationSecretBindingsMatchRegistry(
+	registry *Registry,
+	tenantID string,
+	row EffectiveRow,
+) bool {
+	registry.secretClaimMu.Lock()
+	defer registry.secretClaimMu.Unlock()
+	for logicalName, binding := range row.Config.SecretBindings {
+		record, exists := registry.secretClaims[binding.ClaimDigest]
+		if !exists || record.revoked || record.view != binding ||
+			record.request.TenantID != tenantID || record.request.RowID != row.RowID ||
+			record.request.PluginID != row.PluginID ||
+			record.request.PluginVersion != row.PluginVersion ||
+			record.request.ArtifactDigest != row.ArtifactDigest ||
+			record.request.ManifestDigest != row.ManifestDigest ||
+			record.request.AdmissionRevision != row.AdmissionRevision ||
+			record.request.ConfigSchemaDigest != row.ConfigSchemaDigest ||
+			record.request.LogicalName != logicalName {
 			return false
 		}
 	}
@@ -307,8 +332,8 @@ func cloneConfigs(configs map[PluginID]PluginConfig) map[PluginID]PluginConfig {
 
 func cloneConfig(config PluginConfig) PluginConfig {
 	return PluginConfig{
-		Values:     cloneStringMap(config.Values),
-		SecretRefs: cloneSecretReferences(config.SecretRefs),
+		Values:         cloneStringMap(config.Values),
+		SecretBindings: cloneSecretBindings(config.SecretBindings),
 	}
 }
 
@@ -323,11 +348,11 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return cloned
 }
 
-func cloneSecretReferences(values map[string]SecretReference) map[string]SecretReference {
+func cloneSecretBindings(values map[string]SecretBindingView) map[string]SecretBindingView {
 	if values == nil {
 		return nil
 	}
-	cloned := make(map[string]SecretReference, len(values))
+	cloned := make(map[string]SecretBindingView, len(values))
 	for key, value := range values {
 		cloned[key] = value
 	}

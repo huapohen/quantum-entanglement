@@ -8,9 +8,58 @@ import (
 type PluginID string
 type PortID string
 type CapabilityID string
-type SecretReference struct {
-	Broker      string
-	ReferenceID string
+
+type SecretClaimReference struct {
+	ClaimDigest   string
+	ClaimRevision uint64
+}
+
+// SecretBindingView is identity and audit metadata, not a bearer capability. Possessing this
+// value never authorizes secret resolution; a future action-time scoped resolver is a separate API.
+type SecretBindingView struct {
+	BrokerID               string
+	BrokerDefinitionDigest string
+	ClaimDigest            string
+	ClaimRevision          uint64
+	BindingFingerprint     string
+	BrokerPolicyRevision   uint64
+	ScopeDigest            string
+}
+
+type SecretClaimRequest struct {
+	IdempotencyKey       string
+	TenantID             string
+	RowID                RowID
+	PluginID             PluginID
+	PluginVersion        string
+	ArtifactDigest       string
+	ManifestDigest       string
+	AdmissionRevision    uint64
+	ConfigSchemaDigest   string
+	LogicalName          string
+	BrokerID             string
+	Purpose              string
+	Audience             string
+	PresentedReferenceID string
+}
+
+type SecretReferenceAdmissionBroker interface {
+	ValidateReference(SecretClaimRequest) error
+}
+
+type SecretReferenceAdmissionBrokerFunc func(SecretClaimRequest) error
+
+func (function SecretReferenceAdmissionBrokerFunc) ValidateReference(request SecretClaimRequest) error {
+	return function(request)
+}
+
+type SecretBrokerDefinition struct {
+	SchemaVersion        uint32
+	ID                   string
+	Version              string
+	ImplementationDigest string
+	PolicyRevision       uint64
+	SupportedPurposes    []string
 }
 
 const HostAPIV1 = "wanwork.plugin-host/v1"
@@ -65,21 +114,44 @@ type Plan struct {
 	Bindings []PortBinding
 }
 
+type ConfigurationInput struct {
+	Values       map[string]string
+	SecretClaims map[string]SecretClaimReference
+}
+
 type PluginConfig struct {
-	Values     map[string]string
-	SecretRefs map[string]SecretReference
+	Values         map[string]string
+	SecretBindings map[string]SecretBindingView
 }
 
-// ConfigSchema is host-owned. A plugin may name a schema digest but cannot provide or approve
-// the validator that decides which values are accepted and which defaults are materialized.
-type ConfigSchema interface {
-	ValidateAndMaterialize(PluginConfig) (PluginConfig, error)
+type ConfigValueKind string
+
+const ConfigValueEnum ConfigValueKind = "enum"
+
+type ConfigValueField struct {
+	Name       string
+	Kind       ConfigValueKind
+	Required   bool
+	HasDefault bool
+	Default    string
+	Enum       []string
 }
 
-type ConfigSchemaFunc func(PluginConfig) (PluginConfig, error)
+type ConfigSecretField struct {
+	Name           string
+	Required       bool
+	Purpose        string
+	Audience       string
+	AllowedBrokers []string
+}
 
-func (function ConfigSchemaFunc) ValidateAndMaterialize(config PluginConfig) (PluginConfig, error) {
-	return function(config)
+// ConfigSchemaDefinition is declarative and host-owned. W1 deliberately supports only bounded
+// enums for ordinary canonical-public values; arbitrary free-form strings fail closed.
+type ConfigSchemaDefinition struct {
+	SchemaVersion uint32
+	ID            string
+	ValueFields   []ConfigValueField
+	SecretFields  []ConfigSecretField
 }
 
 type Factory interface {

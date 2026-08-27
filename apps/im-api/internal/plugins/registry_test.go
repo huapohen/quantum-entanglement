@@ -9,9 +9,14 @@ import (
 	"time"
 )
 
-const (
-	testSchemaDigest   = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	testArtifactDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+const testArtifactDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+var (
+	testConfigSchemaDefinition = ConfigSchemaDefinition{
+		SchemaVersion: configSchemaVersion,
+		ID:            "test.fake.config.v1",
+	}
+	testSchemaDigest = mustTestSchemaDigest(testConfigSchemaDefinition)
 )
 
 func TestResolveIsDeterministicAcrossRegistrationOrder(t *testing.T) {
@@ -178,7 +183,7 @@ func TestManifestDigestIsCanonicalCompleteAndDomainSeparated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("digest manifest: %v", err)
 	}
-	const wantDigest = "sha256:da176c9aa0cf176a6fe4aa36e14e35e627fe7e0b79f6ac4ac275fef3be010eff"
+	const wantDigest = "sha256:24b280244cdad62d5f019537451e7df05ca0eab6954b7b5f064e7ecdf83fd89a"
 	if digest != wantDigest {
 		t.Fatalf("manifest digest = %s", digest)
 	}
@@ -339,18 +344,30 @@ func TestRegisterConfigSchemaIsHostOwnedAndDigestPinned(t *testing.T) {
 	t.Parallel()
 
 	registry := NewRegistry()
-	schema := ConfigSchemaFunc(func(config PluginConfig) (PluginConfig, error) { return config, nil })
-	if err := registry.RegisterConfigSchema(testSchemaDigest, schema); err != nil {
+	if err := registry.RegisterConfigSchema(testSchemaDigest, testConfigSchemaDefinition); err != nil {
 		t.Fatalf("register schema: %v", err)
 	}
-	if err := registry.RegisterConfigSchema(testSchemaDigest, schema); !errors.Is(err, ErrDuplicateSchema) {
+	if err := registry.RegisterConfigSchema(testSchemaDigest, testConfigSchemaDefinition); !errors.Is(err, ErrDuplicateSchema) {
 		t.Fatalf("duplicate schema error = %v, want %v", err, ErrDuplicateSchema)
 	}
-	if err := NewRegistry().RegisterConfigSchema("not-a-digest", schema); !errors.Is(err, ErrInvalidManifest) {
-		t.Fatalf("invalid digest error = %v, want %v", err, ErrInvalidManifest)
+	if err := NewRegistry().RegisterConfigSchema("not-a-digest", testConfigSchemaDefinition); !errors.Is(err, ErrInvalidConfigSchema) {
+		t.Fatalf("invalid digest error = %v, want %v", err, ErrInvalidConfigSchema)
 	}
-	if err := NewRegistry().RegisterConfigSchema(testSchemaDigest, nil); !errors.Is(err, ErrInvalidManifest) {
-		t.Fatalf("nil schema error = %v, want %v", err, ErrInvalidManifest)
+	if err := NewRegistry().RegisterConfigSchema(testArtifactDigest, testConfigSchemaDefinition); !errors.Is(err, ErrInvalidConfigSchema) {
+		t.Fatalf("mismatched definition digest error = %v, want %v", err, ErrInvalidConfigSchema)
+	}
+	if err := NewRegistry().RegisterConfigSchema(testSchemaDigest, ConfigSchemaDefinition{}); !errors.Is(err, ErrInvalidConfigSchema) {
+		t.Fatalf("zero schema error = %v, want %v", err, ErrInvalidConfigSchema)
+	}
+	ambiguousDefault := ConfigSchemaDefinition{
+		SchemaVersion: configSchemaVersion,
+		ID:            "ambiguous.fake.config.v1",
+		ValueFields: []ConfigValueField{{
+			Name: "mode", Kind: ConfigValueEnum, Default: "unused", Enum: []string{"unused"},
+		}},
+	}
+	if _, err := normalizeConfigSchemaDefinition(ambiguousDefault); !errors.Is(err, ErrInvalidConfigSchema) {
+		t.Fatalf("inactive default error = %v, want %v", err, ErrInvalidConfigSchema)
 	}
 }
 

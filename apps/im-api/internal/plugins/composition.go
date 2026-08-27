@@ -33,7 +33,8 @@ var (
 )
 
 const (
-	effectiveConfigurationSchemaVersion uint32 = 2
+	effectiveConfigurationSchemaVersion uint32 = 3
+	configurationLayerSchemaVersion     uint32 = 2
 	maxConfigurationLayers                     = 64
 	maxConfigurationRows                       = 512
 	maxConfigValues                            = 128
@@ -43,8 +44,8 @@ const (
 	maxScopeIDBytes                            = 128
 	maxConfigurationIDBytes                    = 128
 
-	layerDigestDomain     = "wanwork.im/configuration-layer/1\n"
-	effectiveDigestDomain = "wanwork.im/effective-configuration/2\n"
+	layerDigestDomain     = "wanwork.im/configuration-layer/2\n"
+	effectiveDigestDomain = "wanwork.im/effective-configuration/3\n"
 )
 
 type RowID string
@@ -73,7 +74,7 @@ type ConfigurationRow struct {
 	PluginID       PluginID
 	PluginVersion  string
 	ArtifactDigest string
-	Config         PluginConfig
+	Config         ConfigurationInput
 }
 
 type Composition struct {
@@ -274,7 +275,7 @@ func (registry *Registry) Compose(
 		if err := validateLayerScope(composition.TenantID, selectedLayer); err != nil {
 			return CompositionResult{}, err
 		}
-		normalized, materializedRows, err := registry.normalizeLayer(selectedLayer.layer)
+		normalized, materializedRows, err := registry.normalizeLayer(composition.TenantID, selectedLayer.layer)
 		if err != nil {
 			return CompositionResult{}, fmt.Errorf("layer %s: %w", selectedLayer.layer.ID, err)
 		}
@@ -347,6 +348,22 @@ type layerWithKind struct {
 	layer ConfigurationLayer
 }
 
+type normalizedConfigurationLayer struct {
+	ID       string
+	Revision uint64
+	TenantID string
+	Rows     []normalizedConfigurationRow
+}
+
+type normalizedConfigurationRow struct {
+	RowID          RowID
+	Operation      RowOperation
+	PluginID       PluginID
+	PluginVersion  string
+	ArtifactDigest string
+	Config         PluginConfig
+}
+
 func validateLayerScope(tenantID string, selected layerWithKind) error {
 	switch selected.kind {
 	case LayerKindProfile, LayerKindBundle:
@@ -364,29 +381,30 @@ func validateLayerScope(tenantID string, selected layerWithKind) error {
 }
 
 func (registry *Registry) normalizeLayer(
+	tenantID string,
 	layer ConfigurationLayer,
-) (ConfigurationLayer, map[RowID]EffectiveRow, error) {
+) (normalizedConfigurationLayer, map[RowID]EffectiveRow, error) {
 	if !validConfigurationID(layer.ID) ||
 		layer.Revision == 0 ||
 		len(layer.Rows) > maxConfigurationRows {
-		return ConfigurationLayer{}, nil, ErrInvalidComposition
+		return normalizedConfigurationLayer{}, nil, ErrInvalidComposition
 	}
-	normalized := ConfigurationLayer{
+	normalized := normalizedConfigurationLayer{
 		ID:       layer.ID,
 		Revision: layer.Revision,
 		TenantID: layer.TenantID,
-		Rows:     make([]ConfigurationRow, 0, len(layer.Rows)),
+		Rows:     make([]normalizedConfigurationRow, 0, len(layer.Rows)),
 	}
 	materializedRows := make(map[RowID]EffectiveRow, len(layer.Rows))
 	seenRows := make(map[RowID]struct{}, len(layer.Rows))
 	for _, row := range layer.Rows {
 		if _, exists := seenRows[row.RowID]; exists {
-			return ConfigurationLayer{}, nil, fmt.Errorf("%w: %s", ErrDuplicateRow, row.RowID)
+			return normalizedConfigurationLayer{}, nil, fmt.Errorf("%w: %s", ErrDuplicateRow, row.RowID)
 		}
 		seenRows[row.RowID] = struct{}{}
-		normalizedRow, effectiveRow, err := registry.normalizeConfigurationRow(row)
+		normalizedRow, effectiveRow, err := registry.normalizeConfigurationRow(tenantID, row)
 		if err != nil {
-			return ConfigurationLayer{}, nil, err
+			return normalizedConfigurationLayer{}, nil, err
 		}
 		normalized.Rows = append(normalized.Rows, normalizedRow)
 		if normalizedRow.Operation == RowUpsert {
@@ -400,50 +418,50 @@ func (registry *Registry) normalizeLayer(
 }
 
 func (registry *Registry) normalizeConfigurationRow(
+	tenantID string,
 	row ConfigurationRow,
-) (ConfigurationRow, EffectiveRow, error) {
+) (normalizedConfigurationRow, EffectiveRow, error) {
 	if !validConfigurationID(string(row.RowID)) {
-		return ConfigurationRow{}, EffectiveRow{}, ErrInvalidPluginConfig
+		return normalizedConfigurationRow{}, EffectiveRow{}, ErrInvalidPluginConfig
 	}
 	if row.Operation == RowRemove {
 		if row.PluginID != "" || row.PluginVersion != "" || row.ArtifactDigest != "" ||
-			len(row.Config.Values) != 0 || len(row.Config.SecretRefs) != 0 {
-			return ConfigurationRow{}, EffectiveRow{}, ErrInvalidPluginConfig
+			len(row.Config.Values) != 0 || len(row.Config.SecretClaims) != 0 {
+			return normalizedConfigurationRow{}, EffectiveRow{}, ErrInvalidPluginConfig
 		}
-		return ConfigurationRow{RowID: row.RowID, Operation: RowRemove}, EffectiveRow{}, nil
+		return normalizedConfigurationRow{RowID: row.RowID, Operation: RowRemove}, EffectiveRow{}, nil
 	}
 	if row.Operation != RowUpsert {
-		return ConfigurationRow{}, EffectiveRow{}, ErrInvalidPluginConfig
+		return normalizedConfigurationRow{}, EffectiveRow{}, ErrInvalidPluginConfig
 	}
 	registered, exists := registry.entries[row.PluginID]
 	if !exists {
-		return ConfigurationRow{}, EffectiveRow{}, fmt.Errorf("%w: %s", ErrUnknownPlugin, row.PluginID)
+		return normalizedConfigurationRow{}, EffectiveRow{}, fmt.Errorf("%w: %s", ErrUnknownPlugin, row.PluginID)
 	}
 	if row.PluginVersion != registered.packageRecord.Version {
-		return ConfigurationRow{}, EffectiveRow{}, fmt.Errorf("%w: %s", ErrPluginVersionDrift, row.PluginID)
+		return normalizedConfigurationRow{}, EffectiveRow{}, fmt.Errorf("%w: %s", ErrPluginVersionDrift, row.PluginID)
 	}
 	if row.ArtifactDigest != registered.packageRecord.ArtifactDigest {
-		return ConfigurationRow{}, EffectiveRow{}, fmt.Errorf("%w: %s", ErrArtifactDigestDrift, row.PluginID)
+		return normalizedConfigurationRow{}, EffectiveRow{}, fmt.Errorf("%w: %s", ErrArtifactDigestDrift, row.PluginID)
 	}
-	if err := validatePluginConfigShape(registered.manifest, row.Config); err != nil {
-		return ConfigurationRow{}, EffectiveRow{}, fmt.Errorf("plugin %s: %w", row.PluginID, err)
-	}
-	schema := registry.schemas[registered.manifest.ConfigSchemaDigest]
-	if schema == nil {
-		return ConfigurationRow{}, EffectiveRow{}, fmt.Errorf(
+	schema, schemaExists := registry.schemas[registered.manifest.ConfigSchemaDigest]
+	if !schemaExists {
+		return normalizedConfigurationRow{}, EffectiveRow{}, fmt.Errorf(
 			"plugin %s: %w",
 			row.PluginID,
 			ErrMissingConfigSchema,
 		)
 	}
-	materializedConfig, err := schema.ValidateAndMaterialize(cloneConfig(row.Config))
+	materializedConfig, err := registry.materializeConfigurationInput(
+		tenantID,
+		registered,
+		row,
+		schema,
+	)
 	if err != nil {
-		return ConfigurationRow{}, EffectiveRow{}, fmt.Errorf("plugin %s: %w", row.PluginID, ErrInvalidPluginConfig)
+		return normalizedConfigurationRow{}, EffectiveRow{}, fmt.Errorf("plugin %s: %w", row.PluginID, err)
 	}
-	if err := validatePluginConfigShape(registered.manifest, materializedConfig); err != nil {
-		return ConfigurationRow{}, EffectiveRow{}, fmt.Errorf("plugin %s: %w", row.PluginID, err)
-	}
-	normalized := ConfigurationRow{
+	normalized := normalizedConfigurationRow{
 		RowID:          row.RowID,
 		Operation:      RowUpsert,
 		PluginID:       row.PluginID,
@@ -466,34 +484,126 @@ func (registry *Registry) normalizeConfigurationRow(
 	return normalized, effective, nil
 }
 
-func validatePluginConfigShape(manifest Manifest, config PluginConfig) error {
-	if len(config.Values) > maxConfigValues || len(config.SecretRefs) > maxSecretReferences {
+func validatePluginConfigShape(
+	schema ConfigSchemaDefinition,
+	config ConfigurationInput,
+) error {
+	if len(config.Values) > maxConfigValues || len(config.SecretClaims) > maxSecretReferences {
 		return ErrInvalidPluginConfig
 	}
+	valueFields := make(map[string]ConfigValueField, len(schema.ValueFields))
+	for _, field := range schema.ValueFields {
+		valueFields[field.Name] = field
+	}
 	for key, value := range config.Values {
+		field, declared := valueFields[key]
 		if len(key) > maxConfigurationIDBytes ||
 			!configKeyPattern.MatchString(key) ||
 			sensitiveKeyPattern.MatchString(key) ||
+			!declared ||
 			!utf8.ValidString(value) ||
-			len(value) > maxConfigValueBytes {
+			len(value) > maxConfigValueBytes ||
+			field.Kind != ConfigValueEnum ||
+			!slices.Contains(field.Enum, value) {
 			return ErrInvalidPluginConfig
 		}
 	}
-	declaredSecretRefs := make(map[string]struct{}, len(manifest.SecretRefNames))
-	for _, name := range manifest.SecretRefNames {
-		declaredSecretRefs[name] = struct{}{}
+	secretFields := make(map[string]ConfigSecretField, len(schema.SecretFields))
+	for _, field := range schema.SecretFields {
+		secretFields[field.Name] = field
 	}
-	if len(config.SecretRefs) != len(declaredSecretRefs) {
-		return ErrInvalidPluginConfig
-	}
-	for name, reference := range config.SecretRefs {
-		if _, exists := declaredSecretRefs[name]; !exists ||
-			!secretBrokerPattern.MatchString(reference.Broker) ||
-			!validOpaqueReferenceID(reference.ReferenceID) {
+	for name, reference := range config.SecretClaims {
+		if _, exists := secretFields[name]; !exists ||
+			!sha256DigestPattern.MatchString(reference.ClaimDigest) ||
+			reference.ClaimRevision == 0 {
 			return ErrInvalidPluginConfig
 		}
 	}
 	return nil
+}
+
+func (registry *Registry) materializeConfigurationInput(
+	tenantID string,
+	registered entry,
+	row ConfigurationRow,
+	schema ConfigSchemaDefinition,
+) (PluginConfig, error) {
+	if err := validatePluginConfigShape(schema, row.Config); err != nil ||
+		!schemaMatchesManifestSecrets(schema, registered.manifest) {
+		return PluginConfig{}, ErrInvalidPluginConfig
+	}
+	values := cloneStringMap(row.Config.Values)
+	if values == nil {
+		values = make(map[string]string)
+	}
+	for _, field := range schema.ValueFields {
+		value, exists := values[field.Name]
+		if !exists && field.HasDefault {
+			values[field.Name] = field.Default
+			continue
+		}
+		if !exists && field.Required {
+			return PluginConfig{}, ErrInvalidPluginConfig
+		}
+		if exists && !slices.Contains(field.Enum, value) {
+			return PluginConfig{}, ErrInvalidPluginConfig
+		}
+	}
+	bindings := make(map[string]SecretBindingView, len(row.Config.SecretClaims))
+	for _, field := range schema.SecretFields {
+		reference, exists := row.Config.SecretClaims[field.Name]
+		if !exists && field.Required {
+			return PluginConfig{}, ErrSecretClaimDenied
+		}
+		if !exists {
+			continue
+		}
+		binding, err := registry.resolveSecretClaim(tenantID, registered, row, field, reference)
+		if err != nil {
+			return PluginConfig{}, err
+		}
+		bindings[field.Name] = binding
+	}
+	return PluginConfig{Values: values, SecretBindings: bindings}, nil
+}
+
+func schemaMatchesManifestSecrets(schema ConfigSchemaDefinition, manifest Manifest) bool {
+	names := make([]string, 0, len(schema.SecretFields))
+	for _, field := range schema.SecretFields {
+		names = append(names, field.Name)
+	}
+	slices.Sort(names)
+	return slices.Equal(names, manifest.SecretRefNames)
+}
+
+func (registry *Registry) resolveSecretClaim(
+	tenantID string,
+	registered entry,
+	row ConfigurationRow,
+	field ConfigSecretField,
+	reference SecretClaimReference,
+) (SecretBindingView, error) {
+	registry.secretClaimMu.Lock()
+	record, exists := registry.secretClaims[reference.ClaimDigest]
+	registry.secretClaimMu.Unlock()
+	if !exists || record.revoked || record.view.ClaimRevision != reference.ClaimRevision ||
+		record.request.TenantID != tenantID || record.request.RowID != row.RowID ||
+		record.request.PluginID != row.PluginID || record.request.PluginVersion != row.PluginVersion ||
+		record.request.ArtifactDigest != row.ArtifactDigest ||
+		record.request.ManifestDigest != registered.manifestDigest ||
+		record.request.AdmissionRevision != registered.packageRecord.AdmissionRevision ||
+		record.request.ConfigSchemaDigest != registered.manifest.ConfigSchemaDigest ||
+		record.request.LogicalName != field.Name || record.request.Purpose != field.Purpose ||
+		record.request.Audience != field.Audience ||
+		!slices.Contains(field.AllowedBrokers, record.request.BrokerID) {
+		return SecretBindingView{}, ErrSecretClaimDenied
+	}
+	broker, brokerExists := registry.secretBrokers[record.request.BrokerID]
+	if !brokerExists || broker.digest != record.view.BrokerDefinitionDigest ||
+		broker.definition.PolicyRevision != record.view.BrokerPolicyRevision {
+		return SecretBindingView{}, ErrSecretClaimDenied
+	}
+	return record.view, nil
 }
 
 func validOpaqueReferenceID(value string) bool {
@@ -569,6 +679,17 @@ func validEffectiveTrustBindings(rows []EffectiveRow) bool {
 		if !sha256DigestPattern.MatchString(row.ManifestDigest) || row.AdmissionRevision == 0 {
 			return false
 		}
+		for _, binding := range row.Config.SecretBindings {
+			if !secretBrokerPattern.MatchString(binding.BrokerID) ||
+				!sha256DigestPattern.MatchString(binding.BrokerDefinitionDigest) ||
+				!sha256DigestPattern.MatchString(binding.ClaimDigest) ||
+				binding.ClaimRevision == 0 ||
+				!hmacSHA256Pattern.MatchString(binding.BindingFingerprint) ||
+				binding.BrokerPolicyRevision == 0 ||
+				!sha256DigestPattern.MatchString(binding.ScopeDigest) {
+				return false
+			}
+		}
 	}
 	return true
 }
@@ -597,25 +718,26 @@ func cloneEffectiveRow(row EffectiveRow) EffectiveRow {
 }
 
 type canonicalLayer struct {
-	ID       string         `json:"id"`
-	Revision uint64         `json:"revision"`
-	TenantID string         `json:"tenantId"`
-	Rows     []canonicalRow `json:"rows"`
+	SchemaVersion uint32         `json:"schemaVersion"`
+	ID            string         `json:"id"`
+	Revision      uint64         `json:"revision"`
+	TenantID      string         `json:"tenantId"`
+	Rows          []canonicalRow `json:"rows"`
 }
 
 type canonicalRow struct {
-	RowID              RowID                `json:"rowId"`
-	Operation          RowOperation         `json:"operation,omitempty"`
-	PluginID           PluginID             `json:"pluginId,omitempty"`
-	PluginVersion      string               `json:"pluginVersion,omitempty"`
-	ArtifactDigest     string               `json:"artifactDigest,omitempty"`
-	ManifestDigest     string               `json:"manifestDigest,omitempty"`
-	AdmissionRevision  uint64               `json:"admissionRevision,omitempty"`
-	ConfigSchemaDigest string               `json:"configSchemaDigest,omitempty"`
-	Values             []canonicalValue     `json:"values"`
-	SecretRefs         []canonicalSecretRef `json:"secretRefs"`
-	Capabilities       []CapabilityID       `json:"capabilities,omitempty"`
-	Egress             []string             `json:"egress,omitempty"`
+	RowID              RowID                    `json:"rowId"`
+	Operation          RowOperation             `json:"operation,omitempty"`
+	PluginID           PluginID                 `json:"pluginId,omitempty"`
+	PluginVersion      string                   `json:"pluginVersion,omitempty"`
+	ArtifactDigest     string                   `json:"artifactDigest,omitempty"`
+	ManifestDigest     string                   `json:"manifestDigest,omitempty"`
+	AdmissionRevision  uint64                   `json:"admissionRevision,omitempty"`
+	ConfigSchemaDigest string                   `json:"configSchemaDigest,omitempty"`
+	Values             []canonicalValue         `json:"values"`
+	SecretBindings     []canonicalSecretBinding `json:"secretBindings"`
+	Capabilities       []CapabilityID           `json:"capabilities,omitempty"`
+	Egress             []string                 `json:"egress,omitempty"`
 }
 
 type canonicalValue struct {
@@ -623,10 +745,15 @@ type canonicalValue struct {
 	Value string `json:"value"`
 }
 
-type canonicalSecretRef struct {
-	Name        string `json:"name"`
-	Broker      string `json:"broker"`
-	ReferenceID string `json:"referenceId"`
+type canonicalSecretBinding struct {
+	Name                   string `json:"name"`
+	BrokerID               string `json:"brokerId"`
+	BrokerDefinitionDigest string `json:"brokerDefinitionDigest"`
+	ClaimDigest            string `json:"claimDigest"`
+	ClaimRevision          uint64 `json:"claimRevision"`
+	BindingFingerprint     string `json:"bindingFingerprint"`
+	BrokerPolicyRevision   uint64 `json:"brokerPolicyRevision"`
+	ScopeDigest            string `json:"scopeDigest"`
 }
 
 type canonicalSource struct {
@@ -651,16 +778,17 @@ type canonicalEffectiveConfiguration struct {
 	Bindings      []canonicalBinding `json:"bindings"`
 }
 
-func digestConfigurationLayer(layer ConfigurationLayer) (string, error) {
+func digestConfigurationLayer(layer normalizedConfigurationLayer) (string, error) {
 	rows := make([]canonicalRow, 0, len(layer.Rows))
 	for _, row := range layer.Rows {
 		rows = append(rows, canonicalizeConfigurationRow(row))
 	}
 	canonical, err := marshalCanonical(canonicalLayer{
-		ID:       layer.ID,
-		Revision: layer.Revision,
-		TenantID: layer.TenantID,
-		Rows:     rows,
+		SchemaVersion: configurationLayerSchemaVersion,
+		ID:            layer.ID,
+		Revision:      layer.Revision,
+		TenantID:      layer.TenantID,
+		Rows:          rows,
 	})
 	if err != nil {
 		return "", err
@@ -705,7 +833,7 @@ func canonicalEffectiveConfigurationBytes(configuration EffectiveConfiguration) 
 	})
 }
 
-func canonicalizeConfigurationRow(row ConfigurationRow) canonicalRow {
+func canonicalizeConfigurationRow(row normalizedConfigurationRow) canonicalRow {
 	return canonicalRow{
 		RowID:          row.RowID,
 		Operation:      row.Operation,
@@ -713,7 +841,7 @@ func canonicalizeConfigurationRow(row ConfigurationRow) canonicalRow {
 		PluginVersion:  row.PluginVersion,
 		ArtifactDigest: row.ArtifactDigest,
 		Values:         canonicalValues(row.Config.Values),
-		SecretRefs:     canonicalSecretRefs(row.Config.SecretRefs),
+		SecretBindings: canonicalSecretBindings(row.Config.SecretBindings),
 	}
 }
 
@@ -727,7 +855,7 @@ func canonicalizeEffectiveRow(row EffectiveRow) canonicalRow {
 		AdmissionRevision:  row.AdmissionRevision,
 		ConfigSchemaDigest: row.ConfigSchemaDigest,
 		Values:             canonicalValues(row.Config.Values),
-		SecretRefs:         canonicalSecretRefs(row.Config.SecretRefs),
+		SecretBindings:     canonicalSecretBindings(row.Config.SecretBindings),
 		Capabilities:       nonNilCapabilitySlice(row.Capabilities),
 		Egress:             nonNilStringSlice(row.Egress),
 	}
@@ -746,17 +874,22 @@ func canonicalValues(values map[string]string) []canonicalValue {
 	return canonical
 }
 
-func canonicalSecretRefs(values map[string]SecretReference) []canonicalSecretRef {
+func canonicalSecretBindings(values map[string]SecretBindingView) []canonicalSecretBinding {
 	names := make([]string, 0, len(values))
 	for name := range values {
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	canonical := make([]canonicalSecretRef, 0, len(names))
+	canonical := make([]canonicalSecretBinding, 0, len(names))
 	for _, name := range names {
-		reference := values[name]
-		canonical = append(canonical, canonicalSecretRef{
-			Name: name, Broker: reference.Broker, ReferenceID: reference.ReferenceID,
+		binding := values[name]
+		canonical = append(canonical, canonicalSecretBinding{
+			Name: name, BrokerID: binding.BrokerID,
+			BrokerDefinitionDigest: binding.BrokerDefinitionDigest,
+			ClaimDigest:            binding.ClaimDigest, ClaimRevision: binding.ClaimRevision,
+			BindingFingerprint:   binding.BindingFingerprint,
+			BrokerPolicyRevision: binding.BrokerPolicyRevision,
+			ScopeDigest:          binding.ScopeDigest,
 		})
 	}
 	return canonical
@@ -970,12 +1103,12 @@ func diffSecretReferences(
 		after, afterExists := afterRows[rowID]
 		names := make(map[string]struct{})
 		if beforeExists {
-			for name := range before.Config.SecretRefs {
+			for name := range before.Config.SecretBindings {
 				names[name] = struct{}{}
 			}
 		}
 		if afterExists {
-			for name := range after.Config.SecretRefs {
+			for name := range after.Config.SecretBindings {
 				names[name] = struct{}{}
 			}
 		}
@@ -985,20 +1118,20 @@ func diffSecretReferences(
 		}
 		slices.Sort(orderedNames)
 		for _, name := range orderedNames {
-			beforeRef, beforeRefExists := before.Config.SecretRefs[name]
-			afterRef, afterRefExists := after.Config.SecretRefs[name]
+			beforeRef, beforeRefExists := before.Config.SecretBindings[name]
+			afterRef, afterRefExists := after.Config.SecretBindings[name]
 			change := SecretRefChange{RowID: rowID, LogicalName: name}
 			switch {
 			case !beforeRefExists && afterRefExists:
 				change.Kind, change.PluginID = SecretRefAdded, after.PluginID
-				change.AfterFingerprint = secretReferenceFingerprint(afterRef)
+				change.AfterFingerprint = secretBindingFingerprint(afterRef)
 			case beforeRefExists && !afterRefExists:
 				change.Kind, change.PluginID = SecretRefRemoved, before.PluginID
-				change.BeforeFingerprint = secretReferenceFingerprint(beforeRef)
+				change.BeforeFingerprint = secretBindingFingerprint(beforeRef)
 			case beforeRef != afterRef || before.PluginID != after.PluginID:
 				change.Kind, change.PluginID = SecretRefRetargeted, after.PluginID
-				change.BeforeFingerprint = secretReferenceFingerprint(beforeRef)
-				change.AfterFingerprint = secretReferenceFingerprint(afterRef)
+				change.BeforeFingerprint = secretBindingFingerprint(beforeRef)
+				change.AfterFingerprint = secretBindingFingerprint(afterRef)
 			default:
 				continue
 			}
@@ -1008,10 +1141,14 @@ func diffSecretReferences(
 	return changes
 }
 
-func secretReferenceFingerprint(reference SecretReference) string {
-	return digestBytes("wanwork.im/secret-reference-fingerprint/1\n", []byte(
-		reference.Broker+"\x00"+reference.ReferenceID,
-	))
+func secretBindingFingerprint(binding SecretBindingView) string {
+	canonical, _ := marshalCanonical(canonicalSecretBinding{
+		BrokerID: binding.BrokerID, BrokerDefinitionDigest: binding.BrokerDefinitionDigest,
+		ClaimDigest: binding.ClaimDigest, ClaimRevision: binding.ClaimRevision,
+		BindingFingerprint:   binding.BindingFingerprint,
+		BrokerPolicyRevision: binding.BrokerPolicyRevision, ScopeDigest: binding.ScopeDigest,
+	})
+	return digestBytes("wanwork.im/secret-binding-view/1\n", canonical)
 }
 
 func diffArtifacts(
@@ -1089,13 +1226,13 @@ func addedBindings(before *EffectiveConfiguration, after *EffectiveConfiguration
 
 func effectiveRowDigest(row EffectiveRow) string {
 	canonical, _ := marshalCanonical(canonicalizeEffectiveRow(row))
-	return digestBytes("wanwork.im/effective-row/2\n", canonical)
+	return digestBytes("wanwork.im/effective-row/3\n", canonical)
 }
 
 func pluginConfigDigest(config PluginConfig) string {
 	canonical, _ := marshalCanonical(struct {
-		Values     []canonicalValue     `json:"values"`
-		SecretRefs []canonicalSecretRef `json:"secretRefs"`
-	}{Values: canonicalValues(config.Values), SecretRefs: canonicalSecretRefs(config.SecretRefs)})
-	return digestBytes("wanwork.im/plugin-config/1\n", canonical)
+		Values         []canonicalValue         `json:"values"`
+		SecretBindings []canonicalSecretBinding `json:"secretBindings"`
+	}{Values: canonicalValues(config.Values), SecretBindings: canonicalSecretBindings(config.SecretBindings)})
+	return digestBytes("wanwork.im/plugin-config/2\n", canonical)
 }

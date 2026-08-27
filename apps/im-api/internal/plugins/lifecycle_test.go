@@ -436,10 +436,7 @@ func lifecycleHost(t *testing.T, log *callLog, failAt string) *Host {
 
 func registerLifecycleSchema(t *testing.T, registry *Registry) {
 	t.Helper()
-	schema := ConfigSchemaFunc(func(config PluginConfig) (PluginConfig, error) {
-		return cloneConfig(config), nil
-	})
-	if err := registry.RegisterConfigSchema(testSchemaDigest, schema); err != nil {
+	if err := registry.RegisterConfigSchema(testSchemaDigest, testConfigSchemaDefinition); err != nil {
 		t.Fatalf("register lifecycle schema: %v", err)
 	}
 }
@@ -467,7 +464,7 @@ func lifecycleConfiguration(
 			PluginID:       manifest.ID,
 			PluginVersion:  manifest.Version,
 			ArtifactDigest: testArtifactDigest,
-			Config:         PluginConfig{},
+			Config:         ConfigurationInput{},
 		})
 	}
 	result, err := registry.Compose(Composition{
