@@ -322,8 +322,10 @@ git diff --check
 - 真实融云 outbound 继续关闭；
 - 不向飞书、企微、机器人或 webhook 发送消息。
 
-## 10. 下一小阶段
+## 10. 后续状态
 
-W1 下一项恢复到既定顺序：实现明确标记 `durability=volatile` 的 deterministic MemoryFake EventStore，
-冻结 append/read/replay/projection/cursor 语义；它同样不能冒充 PostgreSQL durability。第三方 supervisor 的
-真实 wire/service/OS backend 仍按 W4/W7 门禁推进，不在 W1 偷跑成同进程 executor。
+后续 W1 P1-7 已在 `a4ac9bd`～`4118746` 完成明确标记 `durability=volatile` 的
+`VolatileMemoryStore`，冻结 append/read/exact-retry/scoped-cursor 与 test-only event backfill 语义；完整证据见
+[`31_volatile_memory_event_store_implementation.md`](31_volatile_memory_event_store_implementation.md)。它没有
+production projection engine，同样不能冒充 PostgreSQL durability。第三方 supervisor 的真实 wire/service/
+OS backend 仍按 W4/W7 门禁推进，不在 W1 偷跑成同进程 executor。

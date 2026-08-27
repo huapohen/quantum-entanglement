@@ -36,7 +36,8 @@
 - 第三方执行隔离 data/IPC contract：host-owned refs、generation/fence、idempotent operation、
   cancel→grace→kill→wait/reap/release receipt 与 operator-visible quarantine；
 - deterministic isolation fake 明确标记 `durability=volatile/isolation=none/executesCode=false`，只验证合同；
-- durable event port、`EventToAppend/StoredEvent`、opaque cursor、deterministic fake 和 projection skeleton；
+- event port、`EventToAppend/StoredEvent`、opaque cursor 与明确为 volatile 的 deterministic contract fake；
+  当前没有 production projection engine；
 - health/readiness 与 graceful shutdown；
 - unit、race、lint 和 secret canary。
 
@@ -49,7 +50,9 @@ host path、raw secret 或 process handle。
 出口：零 credential、零网络的 fake composition 可启动，所有业务错误 HTTP 200；effective snapshot
 具备 source/digest/golden/diff，manifest/package/Secret claim 均经 host-owned admission，首次扩权需新的
 批准快照；raw locator 不进入 canonical/Factory，binding view 不具备 Secret 使用权；所有 required plugins
-ready 前不暴露 route，半启动/ready 失败可逆序回滚；event fake 可确定性 replay/rebuild，但不宣称持久化。
+ready 前不暴露 route，半启动/ready 失败可逆序回滚；向 fresh event fake 重放相同 append fixture 可得到
+相同 StoredEvent，page backfill 可驱动 test-only pure reducer，但不宣称持久化、production projection、
+SSE live replay 或 Agent/model/tool 重执行。
 隔离合同还要求：同一 generation 并发 launch 只有一个 owner；old fence 不得控制新 incarnation；kill ACK
 没有 exact wait/reap/release 时必须 quarantine；effectful process 即使 released 也保持 unknown/reconcile。
 
@@ -157,8 +160,11 @@ policy/approval/intent/receipt append 不可用时
 7. `test: freeze plugin and envelope fault matrices`
 8. `feat: compose immutable effective plugin configurations`
 9. `test: freeze composition precedence and escalation diff`
-10. `feat: add event store port envelope and opaque cursor`
-11. `test: prove in-memory event projections rebuild deterministically`
+10. `feat: add event store port envelope and opaque cursor`（`b666cbb` 起冻结 port；W1 P1-7 完成）
+11. `feat/test: add volatile memory event store and prove deterministic event backfill`（`a4ac9bd`、
+    `a0a8eea`、`034124f`、`b17bf1d`、`4a4aedb`、`9c6c457`、`f0040ea`、`0cec339`、`479bab5`、`51b5cb8`、
+    `a472642`、`4118746`；没有 production
+    projection engine）
 12. `feat: define IM identity and conversation values`
 13. `test: freeze ext info canonical codecs`
 14. `feat: add fake IM provider port`

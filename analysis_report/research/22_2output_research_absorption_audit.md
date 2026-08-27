@@ -6,7 +6,7 @@
 >
 > 开发分支：`dev_wanwork_quantum_entanglement`
 >
-> 审计基线：`73116ae`；Event contract 提交：`b666cbb`；当前 Plugin lifecycle 增量：`eafd3da`
+> 审计基线：`73116ae`；Event contract 提交：`b666cbb`；当前 W1 P1-7 EventStore fake：`4118746`
 
 ## 1. 最终结论
 
@@ -224,14 +224,21 @@ Planner 不能直持 provider credential。Action Plane 与 Egress 互补，不�
   cancel/kill/exit/reap/release 分层 receipt，kill 不冒充 external effect negative finality；
 - `d32079c test: add volatile isolation supervisor fake`：fake 明示 `durability=volatile/isolation=none/
   executesCode=false`，覆盖 exact idempotency、并发 generation CAS、old fence、quarantine 与 reconcile；
+- `a4ac9bd`～`4118746`：`VolatileMemoryStore` 明示 non-production characteristics；整批 expected revision、
+  ordered exact retry/conflict、store-owned sequence/global position/recorded time、scope/namespace cursor、
+  严格 admission、cooperative context、失败原子性、不可变快照、64 路 CAS/replay、128 stream global order
+  与 test-only pure backfill fixture；
 - 专项普通测试、race 和 vet 通过。
 
 Plugin Host 四个 P0 已全部完成，P1-1 Registry freeze/snapshot、P1-2 effect scope 状态与 P1-3 callback
 locking/reentrancy、P1-4 panic containment、P1-5 cooperative deadline honesty、P1-6 第三方执行隔离
-data/IPC/receipt 合同与 hostile fake 也已完成。
+data/IPC/receipt 合同与 hostile fake、P1-7 volatile Memory EventStore 合同 fake 也已完成。
 这里的“完成”不包括 action-time JIT Secret lease、真实独立 supervisor、process/container/microVM backend、
-OS conformance 或真实 connector；fake 不是 sandbox。W1 接下来实现明确标记为 volatile 的 memory
-EventStore。W2 领域建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；不会用“文档
-已经写了”代替测试。P0-4 的完整证据映射见
+OS conformance 或真实 connector；fake 不是 sandbox，也不是 durable store。P1-7 的 deterministic 只表示
+相同 fixture 输入/clock/call schedule 得到相同 StoredEvent，test-only reducer 可从 page backfill 重建；没有
+production projection engine、SSE live replay 或 Agent/model/tool 重执行。W1 接下来冻结 IM identity/
+conversation value contracts。W2 领域建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；
+不会用“文档已经写了”代替测试。P0-4 的完整证据映射见
 [`24_secret_claim_admission_implementation.md`](24_secret_claim_admission_implementation.md)，P1-6 证据见
-[`30_third_party_execution_isolation_contract.md`](30_third_party_execution_isolation_contract.md)。
+[`30_third_party_execution_isolation_contract.md`](30_third_party_execution_isolation_contract.md)，P1-7 证据见
+[`31_volatile_memory_event_store_implementation.md`](31_volatile_memory_event_store_implementation.md)。

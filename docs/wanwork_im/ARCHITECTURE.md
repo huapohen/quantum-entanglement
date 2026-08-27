@@ -492,10 +492,30 @@ EventEnvelope
 - unknown event/version 原样保留并停止有副作用的投影，禁止静默丢弃；
 - 普通 telemetry、业务审计和 tamper-evident evidence 分开保存，采样 trace 不能造成证据断链。
 
-W1 只冻结 `EventToAppend`/`StoredEvent`、`EventStore` port、opaque cursor 和确定性 in-memory fake；fake
-只证明 exact retry/conflict/paging/replay/projection contract，不宣称 durability。W2 交付 PostgreSQL
-stream/event/projection-checkpoint migrations、expected revision 事务和 crash/reopen/kill-9 恢复；从空
-projection 重建的来源必须是该 durable store。调用方不能提供 sequence/global position/recordedAt。
+W1 P1-7 已冻结 `EventToAppend`/`StoredEvent`、`EventStore` port、scope-bound opaque cursor 和明确标记为
+volatile 的 `VolatileMemoryStore`。`EventStore.Characteristics()` 是 port 合同的一部分，要求 durable、
+restart persistence、tamper evidence 或 Action receipt 的 production composition 会拒绝该 fake。
+
+fake 的整批 append 在单一临界区执行：先做 ordered exact-retry/conflict，再做 expected revision、capacity、
+injected clock 和 context 检查，最后一起发布 stream/global/retry indexes。store 独占 sequence、global
+position 和 recorded time；caller 的 input、append/replay result 与所有 page 都是深快照。并发相同 revision
+只有一个 owner，读者只能看到整个 batch 之前或之后。
+
+cursor 绑定 caller-provided deterministic namespace、stream/global query kind、tenant、workspace
+presence/value、stream 和 exclusive position；跨 kind/scope/namespace、截断、超长、unknown/duplicate field
+或 future position 均失败关闭。相同 namespace + 相同重建事件会复现旧 cursor；它不是自动的 process
+incarnation fence，需要拒绝旧 cursor 时必须注入新 namespace。
+cursor 中的 SHA-256 只是 fake checksum，不是签名、MAC、鉴权或公网 bearer 安全证明。`WorkspaceID=nil`
+是 tenant-root 精确 scope，不是跨 workspace 通配符。
+
+相同 fixture 可向新 fake 重放相同 append 输入，得到相同 StoredEvent；测试还证明 page backfill 可驱动纯
+fixture reducer 得到相同结果，并在 unknown schema 时停止且保留 source event。这不等于已有 production
+projection engine、SSE backfill+live、Agent/model/tool deterministic re-execution 或外部副作用 replay。
+
+W2 仍须交付 PostgreSQL stream/event/projection-checkpoint migrations、expected revision 真实事务和
+crash/reopen/kill-9/backup-restore 门禁；从空 production projection 重建的来源必须是该 durable store。
+调用方始终不能提供 sequence/global position/recordedAt。完整证据见
+`analysis_report/research/31_volatile_memory_event_store_implementation.md`。
 
 ## 8. `@Agent` 子群时序
 

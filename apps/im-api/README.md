@@ -108,6 +108,35 @@ readback evidence.
 it is not a process, container, or microVM sandbox. Real supervisor IPC, durable operation state, signed
 receipts, process/container/microVM backends, and OS-level hostile conformance remain W4/W7 gates.
 
+## Volatile event-store contract fake
+
+`internal/events` defines the `EventStore` port and `VolatileMemoryStore`. The fake atomically appends one exact
+tenant/workspace/stream batch, owns sequence/global position/recorded time, checks expected revision, returns
+the original stored facts for an exact retry, and rejects identity or request drift. Stream and global pages use
+opaque cursors bound to a caller-provided deterministic namespace, query kind, exact tenant/workspace scope,
+stream, and position.
+Input, append/replay results, and pages are detached snapshots.
+
+The port exposes `StoreCharacteristics`, so `ValidateStoreRequirements` rejects empty, unknown,
+contradictory, typed-nil, durable restart-persistence, or tamper-evidence admissions for this fake. The current
+application has no EventStore production composition yet; every future production factory must invoke the
+guard and pass provider-specific crash/restore conformance. Action receipts deliberately remain a separate
+Action Plane port and are not an EventStore characteristic. The fake's actual guarantees are limited:
+
+```text
+durability              = volatile
+persistsAcrossRestart   = false
+tamperEvident           = false
+```
+
+The cursor digest is a strict fake checksum, not a signature, MAC, authentication mechanism, authorization
+grant, or public bearer token. Base64 fields are not confidential, and reusing the same namespace with the same
+rebuilt events intentionally reproduces cursor values; supply a new namespace when old cursors must fail.
+Deterministic fixture backfill is not deterministic Agent/model/tool execution,
+SSE live replay, or external-effect recovery. PostgreSQL transactions, projection checkpoints,
+crash/reopen/kill-9, backup/restore, retention/encryption, and tamper-evident evidence remain W2/W7 gates. Do
+not use `VolatileMemoryStore` as a production event source of truth.
+
 ## Offline verification after dependencies are cached
 
 ```bash
@@ -115,6 +144,8 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
   go test ./apps/im-api/...
 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
   go test -race ./apps/im-api/internal/isolation/...
+GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
+  go test -race ./apps/im-api/internal/events/...
 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
   go vet ./apps/im-api/...
 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
