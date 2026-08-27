@@ -1,9 +1,10 @@
 # 调研与证据索引
 
 本目录是本地报告的单一真相源。报告正文会在研究、实现和验证完成后汇总为
-`multi_agent_collaboration_report.md`，并使用相同章节结构同步到 Notion。
+`multi_agent_collaboration_report.md`。Notion 与语雀不再由本任务自动维护；只有用户再次
+明确授权远端写入时，才会基于本地真相源另行执行同步与回读验证。
 
-## Notion 镜像
+## Notion 历史镜像（只读索引）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
