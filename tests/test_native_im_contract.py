@@ -8,6 +8,7 @@ import pytest
 
 from quantum_entanglement.native_im import (
     IMAcceptanceLookupCapabilityV1,
+    IMAcceptanceQueryV1,
     IMActionCommandV1,
     IMActionIntentV1,
     IMActionReceiptV1,
@@ -433,6 +434,53 @@ def dispatch_unknown_observation(
     return IMDispatchUnknownObservationV1(**values)  # type: ignore[arg-type]
 
 
+def acceptance_query(
+    lookup_mode: str = "idempotency_key", **changes: object
+) -> IMAcceptanceQueryV1:
+    request = changes.pop("request", dispatch_request())
+    assert type(request) is IMDispatchRequestV1
+    source = changes.pop("source", action_receipt("effect_unknown", request=request))
+    if type(source) is IMActionReceiptV1:
+        source_type = "action_receipt"
+        source_id = source.receipt_id
+        source_provider_operation_id = source.provider_operation_id
+    else:
+        assert type(source) is IMDispatchUnknownObservationV1
+        source_type = "dispatch_unknown_observation"
+        source_id = source.observation_id
+        source_provider_operation_id = None
+    command = request.command
+    intent = command.intent
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "query_id": "test-query-1",
+        "unknown_source_type": source_type,
+        "unknown_source_id": source_id,
+        "tenant_id": intent.tenant_id,
+        "workspace_id": intent.workspace_id,
+        "provider": intent.conversation.provider,
+        "channel_id": intent.conversation.channel_id,
+        "action_id": intent.action_id,
+        "command_id": command.command_id,
+        "dispatch_attempt_id": request.dispatch_attempt_id,
+        "dispatch_request_digest": request.canonical_digest(),
+        "intent_digest": command.intent_digest,
+        "command_digest": request.command_digest,
+        "idempotency_key": command.idempotency_key,
+        "attempt_number": request.attempt_number,
+        "lookup_mode": lookup_mode,
+        "provider_operation_id": (
+            source_provider_operation_id if lookup_mode == "provider_operation_id" else None
+        ),
+        "requested_at": "2026-08-28T00:00:03.000001Z",
+        "correlation_id": command.correlation_id,
+        "causation_id": source_id,
+        "traceparent": command.traceparent,
+    }
+    values.update(changes)
+    return IMAcceptanceQueryV1(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -480,6 +528,11 @@ def dispatch_unknown_observation(
         action_receipt("reconciled_succeeded"),
         action_receipt("reconciled_rejected"),
         dispatch_unknown_observation(),
+        acceptance_query(),
+        acceptance_query("provider_operation_id"),
+        acceptance_query(
+            source=dispatch_unknown_observation(),
+        ),
     ],
 )
 def test_reference_models_round_trip_through_dict_and_noncanonical_json(value: object) -> None:
@@ -1629,3 +1682,292 @@ def test_dispatch_unknown_observation_decode_is_exact_and_bounded(
         dispatch_unknown_observation()
     with pytest.raises(ValueError, match="byte limit"):
         IMDispatchUnknownObservationV1.from_json_bytes(encoded)
+
+
+def test_acceptance_query_requires_exact_lookup_and_provider_operation_matrix() -> None:
+    assert acceptance_query().provider_operation_id is None
+    assert acceptance_query("provider_operation_id").provider_operation_id is not None
+    for lookup_mode, changes in (
+        ("idempotency_key", {"provider_operation_id": "test-provider-operation-1"}),
+        ("provider_operation_id", {"provider_operation_id": None}),
+        ("future_lookup", {}),
+    ):
+        with pytest.raises(ValueError):
+            acceptance_query(lookup_mode, **changes)
+    with pytest.raises(ValueError, match="unknown source"):
+        acceptance_query(causation_id="test-other-source")
+
+
+def test_acceptance_query_rejects_every_dispatch_request_identity_drift() -> None:
+    request = dispatch_request()
+    query = acceptance_query(request=request)
+    query.validate_request_binding(request)
+    changed_queries = (
+        replace(query, tenant_id="test-other-tenant"),
+        replace(query, workspace_id="test-other-workspace"),
+        replace(query, provider="qe.other-im.v1"),
+        replace(query, channel_id="test-other-channel"),
+        replace(query, action_id="test-action-other"),
+        replace(query, command_id="test-command-other"),
+        replace(query, dispatch_attempt_id="test-attempt-other"),
+        replace(query, dispatch_request_digest="d" * 64),
+        replace(query, intent_digest="d" * 64),
+        replace(query, command_digest="d" * 64),
+        replace(query, idempotency_key="d" * 64),
+        replace(query, attempt_number=2),
+        replace(query, correlation_id="test-correlation-other"),
+        replace(query, traceparent=None),
+    )
+    for changed in changed_queries:
+        with pytest.raises(ValueError):
+            changed.validate_request_binding(request)
+    null_trace_request = dispatch_request(
+        command=action_command(intent=action_intent(traceparent=None))
+    )
+    acceptance_query(request=null_trace_request).validate_request_binding(null_trace_request)
+
+
+def test_acceptance_query_binds_effect_unknown_receipt_source() -> None:
+    request = dispatch_request()
+    source = action_receipt(
+        "effect_unknown",
+        request=request,
+        provider_operation_id="test-provider-operation-1",
+    )
+    idempotency = acceptance_query(request=request, source=source)
+    idempotency.validate_receipt_source_binding(source, request)
+    provider = acceptance_query("provider_operation_id", request=request, source=source)
+    provider.validate_receipt_source_binding(source, request)
+
+    for invalid_source in (
+        action_receipt("succeeded", request=request),
+        replace(source, receipt_id="test-receipt-other"),
+    ):
+        with pytest.raises(ValueError):
+            idempotency.validate_receipt_source_binding(invalid_source, request)
+    with pytest.raises(ValueError, match="select"):
+        replace(
+            idempotency,
+            unknown_source_type="dispatch_unknown_observation",
+        ).validate_receipt_source_binding(source, request)
+    with pytest.raises(ValueError, match="providerOperationId"):
+        replace(
+            provider,
+            provider_operation_id="test-provider-operation-other",
+        ).validate_receipt_source_binding(source, request)
+    no_provider_id = action_receipt(
+        "effect_unknown",
+        request=request,
+        provider_operation_id=None,
+    )
+    with pytest.raises(ValueError, match="providerOperationId"):
+        provider.validate_receipt_source_binding(no_provider_id, request)
+
+
+def test_acceptance_query_binds_local_observation_source_to_idempotency_only() -> None:
+    request = dispatch_request()
+    source = dispatch_unknown_observation(dispatch_request=request)
+    query = acceptance_query(request=request, source=source)
+    query.validate_observation_source_binding(source, request)
+    with pytest.raises(ValueError, match="provider operation"):
+        acceptance_query(
+            "provider_operation_id",
+            request=request,
+            source=source,
+            provider_operation_id="test-provider-operation-1",
+        ).validate_observation_source_binding(source, request)
+    with pytest.raises(ValueError, match="select"):
+        replace(query, unknown_source_type="action_receipt").validate_observation_source_binding(
+            source, request
+        )
+    with pytest.raises(ValueError, match="unknownSourceId"):
+        replace(
+            query,
+            unknown_source_id="test-observation-other",
+            causation_id="test-observation-other",
+        ).validate_observation_source_binding(source, request)
+    other_request = replace(request, dispatch_attempt_id="test-attempt-other")
+    other_source = dispatch_unknown_observation(dispatch_request=other_request)
+    with pytest.raises(ValueError, match="same request"):
+        query.validate_observation_source_binding(other_source, request)
+
+
+def test_acceptance_query_selects_only_exact_operation_lookup_capability() -> None:
+    snapshot = capability()
+    request = dispatch_request(command=action_command(capability=snapshot))
+    source = action_receipt("effect_unknown", request=request)
+    idempotency = acceptance_query(request=request, source=source)
+    assert (
+        idempotency.validate_capability_binding(snapshot, request).lookup_mode == "idempotency_key"
+    )
+    provider = acceptance_query("provider_operation_id", request=request, source=source)
+    assert (
+        provider.validate_capability_binding(snapshot, request).lookup_mode
+        == "provider_operation_id"
+    )
+
+    provider_only_operation = operation(
+        idempotency_mode="not_supported",
+        acceptance_lookups=(lookup("provider_operation_id"),),
+    )
+    provider_only_snapshot = capability(
+        operations=(provider_only_operation,),
+        idempotency_retention_seconds=None,
+    )
+    provider_only_request = dispatch_request(
+        command=action_command(capability=provider_only_snapshot)
+    )
+    provider_only_source = action_receipt("effect_unknown", request=provider_only_request)
+    unsupported = acceptance_query(
+        request=provider_only_request,
+        source=provider_only_source,
+    )
+    with pytest.raises(ValueError, match="does not support"):
+        unsupported.validate_capability_binding(
+            provider_only_snapshot,
+            provider_only_request,
+        )
+
+    other_operation_only = capability(
+        operations=(
+            operation("add_reaction"),
+            provider_only_operation,
+        ),
+        idempotency_retention_seconds=3_600,
+    )
+    selected_send_request = dispatch_request(
+        command=action_command(capability=other_operation_only)
+    )
+    selected_send_query = acceptance_query(request=selected_send_request)
+    with pytest.raises(ValueError, match="does not support"):
+        selected_send_query.validate_capability_binding(
+            other_operation_only,
+            selected_send_request,
+        )
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["reconciled_succeeded", "reconciled_rejected", "effect_unknown"],
+)
+def test_query_receipt_binding_accepts_only_query_states(state: str) -> None:
+    request = dispatch_request()
+    query = acceptance_query(request=request)
+    receipt = action_receipt(
+        state,
+        request=request,
+        causation_id=query.query_id,
+    )
+    receipt.validate_query_binding(query, request)
+    for dispatch_only in ("succeeded", "rejected", "retryable_not_accepted"):
+        with pytest.raises(ValueError, match="dispatch-only"):
+            action_receipt(
+                dispatch_only,
+                request=request,
+                causation_id=query.query_id,
+            ).validate_query_binding(query, request)
+    with pytest.raises(ValueError, match="query ID"):
+        replace(receipt, causation_id="test-query-other").validate_query_binding(query, request)
+
+
+def test_query_receipt_provider_message_binds_exact_intent_conversation() -> None:
+    request = dispatch_request()
+    query = acceptance_query(request=request)
+    drift = action_receipt(
+        "reconciled_succeeded",
+        request=request,
+        causation_id=query.query_id,
+        provider_operation_id=None,
+        provider_message=message(
+            conversation=conversation(conversation_id="test-other-conversation")
+        ),
+    )
+    with pytest.raises(ValueError, match="conversation"):
+        drift.validate_query_binding(query, request)
+
+
+def test_query_reconciled_rejection_requires_same_mode_authoritative_profile() -> None:
+    unavailable_idempotency = lookup(
+        "idempotency_key",
+        negative_acceptance_mode="unavailable",
+    )
+    authoritative_provider = lookup("provider_operation_id")
+    snapshot = capability(
+        operations=(
+            operation(
+                acceptance_lookups=(
+                    unavailable_idempotency,
+                    authoritative_provider,
+                )
+            ),
+        ),
+    )
+    request = dispatch_request(command=action_command(capability=snapshot))
+    source = action_receipt("effect_unknown", request=request)
+    query = acceptance_query(request=request, source=source)
+    rejected = action_receipt(
+        "reconciled_rejected",
+        request=request,
+        causation_id=query.query_id,
+    )
+    with pytest.raises(ValueError, match="final negative"):
+        rejected.validate_query_capability_binding(query, request, snapshot)
+    unknown = action_receipt(
+        "effect_unknown",
+        request=request,
+        causation_id=query.query_id,
+        error_code="acceptance_not_final",
+    )
+    assert (
+        unknown.validate_query_capability_binding(query, request, snapshot)
+        == unavailable_idempotency
+    )
+
+    authoritative_snapshot = capability()
+    authoritative_request = dispatch_request(
+        command=action_command(capability=authoritative_snapshot)
+    )
+    authoritative_source = action_receipt(
+        "effect_unknown",
+        request=authoritative_request,
+    )
+    authoritative_query = acceptance_query(
+        request=authoritative_request,
+        source=authoritative_source,
+    )
+    authoritative_rejection = action_receipt(
+        "reconciled_rejected",
+        request=authoritative_request,
+        causation_id=authoritative_query.query_id,
+    )
+    assert (
+        authoritative_rejection.validate_query_capability_binding(
+            authoritative_query,
+            authoritative_request,
+            authoritative_snapshot,
+        ).negative_acceptance_mode
+        == "authoritative_terminal"
+    )
+
+
+def test_acceptance_query_decode_is_exact_historical_and_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query = acceptance_query()
+    assert query.requested_at > dispatch_request().command.expires_at
+    wire = query.to_dict()
+    for changed in (
+        {**wire, "receiverEvidenceDigest": "e" * 64},
+        {key: item for key, item in wire.items() if key != "queryId"},
+        dict(wire, schemaVersion=True),
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            IMAcceptanceQueryV1.from_dict(changed)
+    with pytest.raises(ValueError, match="duplicate"):
+        IMAcceptanceQueryV1.from_json_bytes(b'{"schemaVersion":1,"schemaVersion":1}')
+    encoded = query.canonical_bytes()
+    monkeypatch.setattr(IMAcceptanceQueryV1, "_MAX_CANONICAL_BYTES", len(encoded) - 1)
+    with pytest.raises(ValueError, match="canonical byte limit"):
+        acceptance_query()
+    with pytest.raises(ValueError, match="byte limit"):
+        IMAcceptanceQueryV1.from_json_bytes(encoded)
