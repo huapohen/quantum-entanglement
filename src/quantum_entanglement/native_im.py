@@ -39,6 +39,8 @@ _MAX_MESSAGE_CONTENT_BYTES = 2 * 1_024 * 1_024
 _MAX_ROLE_IDS = 1_024
 _MAX_MESSAGE_SEGMENTS = 4_096
 _MAX_ATTACHMENTS = 64
+_MAX_INBOUND_ENVELOPES = 1_000
+_MAX_INBOUND_PAGE_BYTES = 16 * 1_024 * 1_024
 
 _PARTICIPANT_KINDS = {"human", "agent", "service"}
 _SEGMENT_KINDS = {"text", "mention"}
@@ -183,6 +185,34 @@ _CAPABILITY_SNAPSHOT_FIELDS = {
     "maxTextBytes",
     "maxAttachments",
     "maxAttachmentBytes",
+}
+_INBOUND_READ_REQUEST_FIELDS = {
+    "schemaVersion",
+    "tenantId",
+    "workspaceId",
+    "provider",
+    "channelId",
+    "afterCursor",
+    "afterSequence",
+    "snapshotToken",
+    "limit",
+    "readRequestId",
+}
+_INBOUND_PAGE_FIELDS = {
+    "schemaVersion",
+    "tenantId",
+    "workspaceId",
+    "provider",
+    "channelId",
+    "readRequestId",
+    "readRequestDigest",
+    "snapshotToken",
+    "envelopes",
+    "nextCursor",
+    "nextSequence",
+    "hasMore",
+    "capabilityRevision",
+    "capabilityDigest",
 }
 
 _WireT = TypeVar("_WireT", bound="_NativeIMWireValue")
@@ -1183,12 +1213,249 @@ class IMCapabilitySnapshotV1(_NativeIMWireValue):
         )
 
 
+@dataclass(frozen=True)
+class IMInboundReadRequestV1(_NativeIMWireValue):
+    schema_version: int
+    tenant_id: str
+    workspace_id: str
+    provider: str
+    channel_id: str
+    after_cursor: str | None
+    after_sequence: int | None
+    snapshot_token: str | None
+    limit: int
+    read_request_id: str
+
+    _MODEL_NAME: ClassVar[str] = "IMInboundReadRequestV1"
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMInboundReadRequestV1, "inbound read request")
+        _schema_version(self.schema_version)
+        for value, label in (
+            (self.tenant_id, "tenantId"),
+            (self.workspace_id, "workspaceId"),
+            (self.provider, "provider"),
+            (self.channel_id, "channelId"),
+            (self.read_request_id, "readRequestId"),
+        ):
+            _id(value, label)
+        _optional_id(self.after_cursor, "afterCursor")
+        if self.after_sequence is not None:
+            _non_negative_integer(self.after_sequence, "afterSequence")
+        if (self.after_cursor is None) != (self.after_sequence is None):
+            raise ValueError("afterCursor and afterSequence must be null or present together")
+        _optional_id(self.snapshot_token, "snapshotToken")
+        if self.snapshot_token is not None and self.after_cursor is None:
+            raise ValueError("snapshotToken continuation requires an after pair")
+        _positive_integer(self.limit, "limit")
+        if self.limit > _MAX_INBOUND_ENVELOPES:
+            raise ValueError("limit exceeds the V1 maximum")
+        self.canonical_bytes()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "provider": self.provider,
+            "channelId": self.channel_id,
+            "afterCursor": self.after_cursor,
+            "afterSequence": self.after_sequence,
+            "snapshotToken": self.snapshot_token,
+            "limit": self.limit,
+            "readRequestId": self.read_request_id,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMInboundReadRequestV1:
+        if cls is not IMInboundReadRequestV1:
+            raise TypeError("inbound read request decoder requires the exact V1 class")
+        body = _plain_dict(value, _INBOUND_READ_REQUEST_FIELDS, "inbound read request")
+        return cls(
+            schema_version=body["schemaVersion"],
+            tenant_id=body["tenantId"],
+            workspace_id=body["workspaceId"],
+            provider=body["provider"],
+            channel_id=body["channelId"],
+            after_cursor=body["afterCursor"],
+            after_sequence=body["afterSequence"],
+            snapshot_token=body["snapshotToken"],
+            limit=body["limit"],
+            read_request_id=body["readRequestId"],
+        )
+
+
+@dataclass(frozen=True)
+class IMInboundPageV1(_NativeIMWireValue):
+    schema_version: int
+    tenant_id: str
+    workspace_id: str
+    provider: str
+    channel_id: str
+    read_request_id: str
+    read_request_digest: str
+    snapshot_token: str
+    envelopes: Tuple[IMVerifiedInboundEnvelopeV1, ...] = field(repr=False)
+    next_cursor: str | None
+    next_sequence: int | None
+    has_more: bool
+    capability_revision: str
+    capability_digest: str
+
+    _MODEL_NAME: ClassVar[str] = "IMInboundPageV1"
+    _MAX_CANONICAL_BYTES: ClassVar[int] = _MAX_INBOUND_PAGE_BYTES
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMInboundPageV1, "inbound page")
+        _schema_version(self.schema_version)
+        for value, label in (
+            (self.tenant_id, "tenantId"),
+            (self.workspace_id, "workspaceId"),
+            (self.provider, "provider"),
+            (self.channel_id, "channelId"),
+            (self.read_request_id, "readRequestId"),
+            (self.snapshot_token, "snapshotToken"),
+            (self.capability_revision, "capabilityRevision"),
+        ):
+            _id(value, label)
+        _digest(self.read_request_digest, "readRequestDigest")
+        _digest(self.capability_digest, "capabilityDigest")
+        _require_exact_tuple(self.envelopes, "envelopes")
+        if len(self.envelopes) > _MAX_INBOUND_ENVELOPES:
+            raise NativeIMCodecTooLargeError("envelopes exceeds its item limit")
+        expected_scope = _scope(self)
+        previous_sequence: int | None = None
+        event_ids: set[str] = set()
+        envelope_canonical_bytes = 0
+        for index, envelope in enumerate(self.envelopes):
+            _require_exact_model(
+                envelope,
+                IMVerifiedInboundEnvelopeV1,
+                f"envelopes[{index}]",
+            )
+            event = envelope.event
+            if _scope(event.conversation) != expected_scope:
+                raise ValueError("envelope scope does not match inbound page scope")
+            if previous_sequence is not None and event.sequence_number <= previous_sequence:
+                raise ValueError("inbound page sequenceNumber values must strictly increase")
+            if event.event_id in event_ids:
+                raise ValueError("inbound page eventId values must be unique")
+            event_ids.add(event.event_id)
+            previous_sequence = event.sequence_number
+            envelope_canonical_bytes += len(envelope.canonical_bytes())
+            if envelope_canonical_bytes > self._MAX_CANONICAL_BYTES:
+                raise NativeIMCodecTooLargeError(
+                    "inbound page envelopes exceed its canonical byte limit"
+                )
+        _optional_id(self.next_cursor, "nextCursor")
+        if self.next_sequence is not None:
+            _non_negative_integer(self.next_sequence, "nextSequence")
+        if (self.next_cursor is None) != (self.next_sequence is None):
+            raise ValueError("nextCursor and nextSequence must be null or present together")
+        _boolean(self.has_more, "hasMore")
+        if self.envelopes:
+            final_event = self.envelopes[-1].event
+            if (self.next_cursor, self.next_sequence) != (
+                final_event.cursor,
+                final_event.sequence_number,
+            ):
+                raise ValueError("next pair must equal the final inbound event")
+        elif self.has_more:
+            raise ValueError("hasMore requires a non-empty inbound page")
+        self.canonical_bytes()
+
+    def validate_request_binding(self, request: IMInboundReadRequestV1) -> None:
+        _require_exact_model(request, IMInboundReadRequestV1, "inbound read request")
+        if _scope(self) != _scope(request):
+            raise ValueError("inbound page scope does not match its read request")
+        if self.read_request_id != request.read_request_id:
+            raise ValueError("readRequestId does not match its read request")
+        if self.read_request_digest != request.canonical_digest():
+            raise ValueError("readRequestDigest does not match its read request")
+        if request.snapshot_token is not None and self.snapshot_token != request.snapshot_token:
+            raise ValueError("snapshotToken does not continue the requested snapshot")
+        if len(self.envelopes) > request.limit:
+            raise ValueError("inbound page exceeds the requested limit")
+        if self.envelopes:
+            if (
+                request.after_sequence is not None
+                and self.envelopes[0].event.sequence_number <= request.after_sequence
+            ):
+                raise ValueError("first inbound sequence does not advance the request")
+            if self.has_more and (self.next_cursor, self.next_sequence) == (
+                request.after_cursor,
+                request.after_sequence,
+            ):
+                raise ValueError("hasMore page does not advance its resume pair")
+        elif (self.next_cursor, self.next_sequence) != (
+            request.after_cursor,
+            request.after_sequence,
+        ):
+            raise ValueError("empty page must preserve the request resume pair")
+
+    def validate_capability_binding(self, capability: IMCapabilitySnapshotV1) -> None:
+        _require_exact_model(capability, IMCapabilitySnapshotV1, "capability snapshot")
+        if _scope(self) != _scope(capability):
+            raise ValueError("inbound page scope does not match its capability snapshot")
+        if self.capability_revision != capability.revision:
+            raise ValueError("capabilityRevision does not match its snapshot")
+        if self.capability_digest != capability.canonical_digest():
+            raise ValueError("capabilityDigest does not match its snapshot")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "provider": self.provider,
+            "channelId": self.channel_id,
+            "readRequestId": self.read_request_id,
+            "readRequestDigest": self.read_request_digest,
+            "snapshotToken": self.snapshot_token,
+            "envelopes": [envelope.to_dict() for envelope in self.envelopes],
+            "nextCursor": self.next_cursor,
+            "nextSequence": self.next_sequence,
+            "hasMore": self.has_more,
+            "capabilityRevision": self.capability_revision,
+            "capabilityDigest": self.capability_digest,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMInboundPageV1:
+        if cls is not IMInboundPageV1:
+            raise TypeError("inbound page decoder requires the exact V1 class")
+        body = _plain_dict(value, _INBOUND_PAGE_FIELDS, "inbound page")
+        envelopes = _plain_list(
+            body["envelopes"],
+            "envelopes",
+            maximum_items=_MAX_INBOUND_ENVELOPES,
+        )
+        return cls(
+            schema_version=body["schemaVersion"],
+            tenant_id=body["tenantId"],
+            workspace_id=body["workspaceId"],
+            provider=body["provider"],
+            channel_id=body["channelId"],
+            read_request_id=body["readRequestId"],
+            read_request_digest=body["readRequestDigest"],
+            snapshot_token=body["snapshotToken"],
+            envelopes=tuple(IMVerifiedInboundEnvelopeV1.from_dict(item) for item in envelopes),
+            next_cursor=body["nextCursor"],
+            next_sequence=body["nextSequence"],
+            has_more=body["hasMore"],
+            capability_revision=body["capabilityRevision"],
+            capability_digest=body["capabilityDigest"],
+        )
+
+
 __all__ = [
     "IMAcceptanceLookupCapabilityV1",
     "IMCapabilityRequestV1",
     "IMAttachmentRefV1",
     "IMCapabilitySnapshotV1",
     "IMConversationRefV1",
+    "IMInboundPageV1",
+    "IMInboundReadRequestV1",
     "IMMembershipChangeV1",
     "IMMessageContentV1",
     "IMMessageRefV1",

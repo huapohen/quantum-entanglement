@@ -12,6 +12,8 @@ from quantum_entanglement.native_im import (
     IMCapabilityRequestV1,
     IMCapabilitySnapshotV1,
     IMConversationRefV1,
+    IMInboundPageV1,
+    IMInboundReadRequestV1,
     IMMembershipChangeV1,
     IMMessageContentV1,
     IMMessageRefV1,
@@ -224,6 +226,53 @@ def capability(**changes: object) -> IMCapabilitySnapshotV1:
     return IMCapabilitySnapshotV1(**values)  # type: ignore[arg-type]
 
 
+def inbound_read_request(**changes: object) -> IMInboundReadRequestV1:
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "tenant_id": "test-tenant",
+        "workspace_id": "test-workspace",
+        "provider": "qe.fake-im.v1",
+        "channel_id": "test-channel",
+        "after_cursor": None,
+        "after_sequence": None,
+        "snapshot_token": None,
+        "limit": 100,
+        "read_request_id": "test-read-request-1",
+    }
+    values.update(changes)
+    return IMInboundReadRequestV1(**values)  # type: ignore[arg-type]
+
+
+def inbound_page(**changes: object) -> IMInboundPageV1:
+    request = changes.pop("request", inbound_read_request())
+    snapshot = changes.pop("capability", capability())
+    envelopes = changes.pop("envelopes", (verified_envelope(),))
+    assert type(request) is IMInboundReadRequestV1
+    assert type(snapshot) is IMCapabilitySnapshotV1
+    assert type(envelopes) is tuple
+    final_event = envelopes[-1].event if envelopes else None
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "tenant_id": request.tenant_id,
+        "workspace_id": request.workspace_id,
+        "provider": request.provider,
+        "channel_id": request.channel_id,
+        "read_request_id": request.read_request_id,
+        "read_request_digest": request.canonical_digest(),
+        "snapshot_token": request.snapshot_token or "test-snapshot-1",
+        "envelopes": envelopes,
+        "next_cursor": final_event.cursor if final_event is not None else request.after_cursor,
+        "next_sequence": (
+            final_event.sequence_number if final_event is not None else request.after_sequence
+        ),
+        "has_more": bool(envelopes),
+        "capability_revision": snapshot.revision,
+        "capability_digest": snapshot.canonical_digest(),
+    }
+    values.update(changes)
+    return IMInboundPageV1(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -249,6 +298,13 @@ def capability(**changes: object) -> IMCapabilitySnapshotV1:
         lookup(),
         operation(),
         capability(),
+        inbound_read_request(),
+        inbound_read_request(
+            after_cursor="test-cursor-1",
+            after_sequence=1,
+            snapshot_token="test-snapshot-1",
+        ),
+        inbound_page(),
     ],
 )
 def test_reference_models_round_trip_through_dict_and_noncanonical_json(value: object) -> None:
@@ -508,3 +564,216 @@ def test_capability_snapshot_binds_sorted_operations_and_retention() -> None:
             operations=(no_dedup_operation,),
             idempotency_retention_seconds=10,
         )
+
+
+def test_inbound_read_request_requires_exact_resume_pair_and_limit() -> None:
+    continuation = inbound_read_request(
+        after_cursor="test-cursor-1",
+        after_sequence=1,
+        snapshot_token="test-snapshot-1",
+        limit=1_000,
+    )
+    assert continuation.after_cursor == "test-cursor-1"
+    assert continuation.after_sequence == 1
+    for changes in (
+        {"after_cursor": "test-cursor-1"},
+        {"after_sequence": 1},
+        {"snapshot_token": "test-snapshot-1"},
+        {"limit": 0},
+        {"limit": 1_001},
+        {"limit": True},
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            inbound_read_request(**changes)
+
+    assert (
+        inbound_read_request(
+            after_cursor="test-stable-cursor-1",
+            after_sequence=1,
+            snapshot_token=None,
+        ).snapshot_token
+        is None
+    )
+
+
+def test_inbound_page_round_trip_preserves_immutable_nested_values() -> None:
+    first = verified_envelope()
+    second = verified_envelope(
+        event=inbound_event(
+            event_id="test-event-2",
+            cursor="test-cursor-2",
+            sequence_number=2,
+        ),
+        verification_id="test-verification-2",
+    )
+    page = inbound_page(envelopes=(first, second), has_more=False)
+    decoded = IMInboundPageV1.from_json_bytes(
+        json.dumps(page.to_dict(), ensure_ascii=False, indent=2).encode()
+    )
+    assert decoded == page
+    assert decoded.envelopes == (first, second)
+    assert type(decoded.envelopes) is tuple
+    assert decoded.next_cursor == "test-cursor-2"
+    assert decoded.next_sequence == 2
+
+
+def test_inbound_page_rejects_scope_sequence_event_and_next_pair_drift() -> None:
+    first = verified_envelope()
+    second = verified_envelope(
+        event=inbound_event(
+            event_id="test-event-2",
+            cursor="test-cursor-2",
+            sequence_number=2,
+        ),
+        verification_id="test-verification-2",
+    )
+    duplicate_sequence = verified_envelope(
+        event=inbound_event(event_id="test-event-2", cursor="test-cursor-2"),
+        verification_id="test-verification-2",
+    )
+    duplicate_event = verified_envelope(
+        event=inbound_event(cursor="test-cursor-2", sequence_number=2),
+        verification_id="test-verification-2",
+    )
+    other_scope = verified_envelope(
+        event=inbound_event(
+            event_id="test-event-2",
+            cursor="test-cursor-2",
+            sequence_number=2,
+            conversation=conversation(channel_id="test-other-channel"),
+            message=message(conversation=conversation(channel_id="test-other-channel")),
+            sender=participant(channel_id="test-other-channel"),
+            content=content(attachments=(attachment(channel_id="test-other-channel"),)),
+        ),
+        verification_id="test-verification-2",
+    )
+    for changes in (
+        {"envelopes": (first, duplicate_sequence)},
+        {"envelopes": (first, duplicate_event)},
+        {"envelopes": (other_scope,)},
+        {"envelopes": (first, second), "next_cursor": "test-cursor-1"},
+        {"envelopes": (first, second), "next_sequence": 1},
+        {"envelopes": (), "has_more": True},
+    ):
+        with pytest.raises(ValueError):
+            inbound_page(**changes)
+    for changes in (
+        {"next_cursor": None, "next_sequence": 1},
+        {"next_cursor": "test-cursor-1", "next_sequence": None},
+        {"next_sequence": -1},
+        {"next_sequence": True},
+        {"has_more": 1},
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            inbound_page(**changes)
+    with pytest.raises(TypeError, match="immutable tuple"):
+        replace(inbound_page(), envelopes=[first])
+
+
+def test_inbound_page_validates_request_resume_and_snapshot_bindings() -> None:
+    request = inbound_read_request(
+        after_cursor="test-cursor-1",
+        after_sequence=1,
+        snapshot_token="test-snapshot-1",
+    )
+    next_envelope = verified_envelope(
+        event=inbound_event(
+            event_id="test-event-2",
+            cursor="test-cursor-2",
+            sequence_number=2,
+        ),
+        verification_id="test-verification-2",
+    )
+    page = inbound_page(request=request, envelopes=(next_envelope,))
+    page.validate_request_binding(request)
+
+    invalid_pages = (
+        inbound_page(request=request, read_request_id="test-read-request-other"),
+        inbound_page(request=request, read_request_digest="d" * 64),
+        inbound_page(
+            request=request,
+            envelopes=(),
+            has_more=False,
+            channel_id="test-other-channel",
+        ),
+        inbound_page(request=request, snapshot_token="test-snapshot-other"),
+        inbound_page(request=request),
+    )
+    for invalid in invalid_pages:
+        with pytest.raises(ValueError):
+            invalid.validate_request_binding(request)
+
+    limited_request = inbound_read_request(limit=1)
+    second_envelope = verified_envelope(
+        event=inbound_event(
+            event_id="test-event-2",
+            cursor="test-cursor-2",
+            sequence_number=2,
+        ),
+        verification_id="test-verification-2",
+    )
+    oversized_page = inbound_page(
+        request=limited_request,
+        envelopes=(verified_envelope(), second_envelope),
+    )
+    with pytest.raises(ValueError, match="requested limit"):
+        oversized_page.validate_request_binding(limited_request)
+
+
+def test_empty_inbound_page_preserves_request_pair_and_has_no_more() -> None:
+    initial = inbound_read_request()
+    inbound_page(
+        request=initial,
+        envelopes=(),
+        next_cursor=None,
+        next_sequence=None,
+        has_more=False,
+    ).validate_request_binding(initial)
+
+    continuation = inbound_read_request(
+        after_cursor="test-cursor-4",
+        after_sequence=4,
+        snapshot_token="test-snapshot-1",
+    )
+    empty = inbound_page(request=continuation, envelopes=(), has_more=False)
+    empty.validate_request_binding(continuation)
+    for changes in (
+        {"next_cursor": None, "next_sequence": None},
+        {"next_cursor": "test-cursor-5", "next_sequence": 5},
+    ):
+        invalid = inbound_page(
+            request=continuation,
+            envelopes=(),
+            has_more=False,
+            **changes,
+        )
+        with pytest.raises(ValueError, match="preserve"):
+            invalid.validate_request_binding(continuation)
+
+
+def test_inbound_page_binds_exact_capability_revision_digest_and_scope() -> None:
+    snapshot = capability()
+    page = inbound_page(capability=snapshot)
+    page.validate_capability_binding(snapshot)
+    for invalid in (
+        inbound_page(capability_revision="test-capability-other"),
+        inbound_page(capability_digest="d" * 64),
+        inbound_page(
+            envelopes=(),
+            has_more=False,
+            channel_id="test-other-channel",
+        ),
+    ):
+        with pytest.raises(ValueError):
+            invalid.validate_capability_binding(snapshot)
+
+
+def test_inbound_page_preflights_nested_and_raw_byte_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = inbound_page().canonical_bytes()
+    monkeypatch.setattr(IMInboundPageV1, "_MAX_CANONICAL_BYTES", len(encoded) - 1)
+    with pytest.raises(ValueError, match="canonical byte limit"):
+        inbound_page()
+    with pytest.raises(ValueError, match="byte limit"):
+        IMInboundPageV1.from_json_bytes(encoded)
