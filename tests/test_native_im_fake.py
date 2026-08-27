@@ -15,6 +15,7 @@ from quantum_entanglement.native_im import IMInboundReadRequestV1
 from quantum_entanglement.native_im_fake import (
     FAKE_IM_PROVIDER,
     FakeIMAdapter,
+    FakeIMEffectBoundaryError,
     FakeIMFaultScript,
     FakeIMOutboundDisabledError,
     FakeIMReceiverCollisionError,
@@ -34,6 +35,7 @@ from tests.test_native_im_contract import (
     capability,
     content,
     dispatch_request,
+    dispatch_unknown_observation,
     inbound_event,
     text_segment,
     verified_envelope,
@@ -363,6 +365,27 @@ async def test_fake_ack_loss_stays_unknown_then_reconciles_without_redispatch() 
     reconciled = await fake.query_acceptance(query)
     assert reconciled.state == "reconciled_succeeded"
     assert reconciled.provider_operation_id == unknown.provider_operation_id
+    assert validate_im_acceptance_result_v1(query, request, snapshot, reconciled) is reconciled
+    assert fake.accepted_effect_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_exception_after_accept_reconciles_from_local_observation() -> None:
+    snapshot = capability()
+    fake = outbound_adapter(
+        snapshot=snapshot,
+        fault_script=FakeIMFaultScript(dispatch_steps=("raise_after_accept",)),
+    )
+    request = dispatch_request(command=action_command(capability=snapshot))
+    with pytest.raises(FakeIMEffectBoundaryError, match="^fake IM effect outcome is unknown$"):
+        await fake.dispatch(request)
+    assert fake.accepted_effect_count == 1
+
+    local_unknown = dispatch_unknown_observation(dispatch_request=request)
+    query = acceptance_query(request=request, source=local_unknown)
+    query.validate_observation_source_binding(local_unknown, request)
+    reconciled = await fake.query_acceptance(query)
+    assert reconciled.state == "reconciled_succeeded"
     assert validate_im_acceptance_result_v1(query, request, snapshot, reconciled) is reconciled
     assert fake.accepted_effect_count == 1
 

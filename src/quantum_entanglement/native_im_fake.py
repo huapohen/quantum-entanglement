@@ -26,6 +26,7 @@ _OUTBOUND_PERMIT_SENTINEL = object()
 _DISPATCH_FAULT_STEPS = {
     "accept",
     "ack_loss_after_accept",
+    "raise_after_accept",
     "effect_unknown",
     "terminal_reject",
     "temporary_nack",
@@ -45,6 +46,10 @@ class FakeIMOutboundDisabledError(RuntimeError):
 
 class FakeIMReceiverCollisionError(RuntimeError):
     """Raised when a fake receiver identity is reused for a different effect."""
+
+
+class FakeIMEffectBoundaryError(RuntimeError):
+    """Raised after the fake has accepted an effect but before returning a receipt."""
 
 
 @dataclass(frozen=True)
@@ -324,10 +329,16 @@ class FakeIMAdapter:
             raise FakeIMReceiverCollisionError("fake IM receiver ledger conflict")
 
         effect = by_action or by_key
-        if effect is None and fault_step in {"accept", "ack_loss_after_accept"}:
+        if effect is None and fault_step in {
+            "accept",
+            "ack_loss_after_accept",
+            "raise_after_accept",
+        }:
             effect = self._accept_effect(request)
             self._receiver_by_action[action_key] = effect
             self._receiver_by_key[idempotency_key] = effect
+        if fault_step == "raise_after_accept":
+            raise FakeIMEffectBoundaryError("fake IM effect outcome is unknown")
 
         if effect is not None and fault_step not in {
             "ack_loss_after_accept",
@@ -542,6 +553,7 @@ class FakeIMAdapter:
 __all__ = [
     "FAKE_IM_PROVIDER",
     "FakeIMAdapter",
+    "FakeIMEffectBoundaryError",
     "FakeIMFaultScript",
     "FakeIMOutboundDisabledError",
     "FakeIMReceiverCollisionError",
