@@ -95,6 +95,30 @@ def initialize_schema_prefix(
         bootstrap_legacy_domain_migration_metadata(connection, clock=lambda: T0)
 
 
+def initialize_event_store_schema_prefix(
+    path: str,
+    migration_count: int,
+    shape: str,
+) -> sqlite3.Connection:
+    if migration_count < 3 or migration_count > len(MIGRATIONS):
+        raise ValueError("event-store prefix helper supports migration counts 3 through current")
+    event_store = SQLiteEventStore(path, clock=lambda: T0)
+    event_store.close()
+    connection = sqlite3.connect(path)
+    for migration in reversed(MIGRATIONS[migration_count:]):
+        connection.executescript(migration_text(migration.filename.replace(".up.sql", ".down.sql")))
+        connection.execute(
+            "DELETE FROM qe_schema_migrations WHERE version = ?",
+            (migration.version,),
+        )
+    connection.commit()
+    if shape != "sidecar_absent":
+        install_domain_migration_sidecar(connection)
+    if shape == "bridged_prefix":
+        bootstrap_legacy_domain_migration_metadata(connection, clock=lambda: T0)
+    return connection
+
+
 class BackupManifestV2SnapshotTests(unittest.TestCase):
     def capture_semantic_boundary_control(
         self,
@@ -171,8 +195,8 @@ class BackupManifestV2SnapshotTests(unittest.TestCase):
         self.assertIs(type(snapshot), BackupManifestV2Snapshot)
         self.assertEqual(snapshot.schema_state.shape, "bridged_prefix")
         self.assertEqual(len(snapshot.schema_state.applied_migrations), len(MIGRATIONS))
-        self.assertEqual(len(snapshot.registry_topology.present_profiles), 9)
-        self.assertEqual(len(snapshot.registry_topology.schema_objects), 63)
+        self.assertEqual(len(snapshot.registry_topology.present_profiles), 10)
+        self.assertEqual(len(snapshot.registry_topology.schema_objects), 85)
         self.assertEqual(
             tuple(item.profile for item in snapshot.registry_topology.present_profiles),
             tuple(profile.name for profile in BACKUP_TOPOLOGY_REGISTRY.profiles),
@@ -230,26 +254,20 @@ class BackupManifestV2SnapshotTests(unittest.TestCase):
             (4, "sidecar_absent"),
             (4, "legacy_prefix"),
             (4, "bridged_prefix"),
+            (5, "sidecar_absent"),
+            (5, "legacy_prefix"),
+            (5, "bridged_prefix"),
         )
         for migration_count, shape in cases:
             with self.subTest(migration_count=migration_count, shape=shape):
                 with tempfile.TemporaryDirectory() as tempdir:
                     path = str(Path(tempdir) / "prefix.sqlite3")
                     if migration_count >= 3:
-                        event_store = SQLiteEventStore(path, clock=lambda: T0)
-                        event_store.close()
-                        connection = sqlite3.connect(path)
-                        for migration in reversed(MIGRATIONS[migration_count:]):
-                            connection.executescript(
-                                migration_text(migration.filename.replace(".up.sql", ".down.sql"))
-                            )
-                        if shape != "sidecar_absent":
-                            install_domain_migration_sidecar(connection)
-                        if shape == "bridged_prefix":
-                            bootstrap_legacy_domain_migration_metadata(
-                                connection,
-                                clock=lambda: T0,
-                            )
+                        connection = initialize_event_store_schema_prefix(
+                            path,
+                            migration_count,
+                            shape,
+                        )
                     else:
                         connection = sqlite3.connect(path)
                         initialize_schema_prefix(connection, migration_count, shape)

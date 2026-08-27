@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS native_im_inbound_checkpoints;
+DROP TABLE IF EXISTS native_im_inbound_read_events;
+DROP INDEX IF EXISTS idx_native_im_inbound_reads_checkpoint_revision;
+DROP INDEX IF EXISTS idx_native_im_inbound_reads_one_prepared;
+DROP TABLE IF EXISTS native_im_inbound_reads;
+DROP TABLE IF EXISTS native_im_inbox_verifications;
+DROP TABLE IF EXISTS native_im_inbox_events;
+DROP INDEX IF EXISTS idx_native_im_auth_nonces_expiry;
+DROP TABLE IF EXISTS native_im_auth_nonces;

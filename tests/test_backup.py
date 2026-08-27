@@ -641,7 +641,7 @@ class SQLiteBackupTests(unittest.TestCase):
 
         backup, manifest_path, created = self.create_backup()
         self.assertEqual(created.table_counts["invocation_admissions"], 1)
-        self.assertEqual([item["version"] for item in created.migrations], [1, 2, 3, 4])
+        self.assertEqual([item["version"] for item in created.migrations], [1, 2, 3, 4, 5])
 
         destination = self.root / "restore-admission" / "state.sqlite3"
         restored = restore_sqlite_backup(
@@ -669,6 +669,8 @@ class SQLiteBackupTests(unittest.TestCase):
         with SQLiteEventStore(str(self.source), clock=lambda: T0):
             pass
         with closing(sqlite3.connect(self.source, isolation_level=None)) as connection:
+            connection.executescript(migration_text("0005_native_im_inbox.down.sql"))
+            connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 5")
             connection.executescript(migration_text("0004_invocation_admissions.down.sql"))
             connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 4")
 
@@ -684,7 +686,7 @@ class SQLiteBackupTests(unittest.TestCase):
         )
         self.assertEqual(restored, created)
         with SQLiteEventStore(str(destination), clock=lambda: T0) as upgraded:
-            self.assertEqual(current_schema_version(upgraded._connection), 4)
+            self.assertEqual(current_schema_version(upgraded._connection), 5)
             self.assertEqual(
                 upgraded._connection.execute(
                     "SELECT COUNT(*) FROM invocation_admissions"

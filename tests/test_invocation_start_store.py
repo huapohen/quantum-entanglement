@@ -1757,7 +1757,7 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
                     "SELECT version FROM qe_schema_migrations ORDER BY version"
                 ).fetchall()
             ],
-            [1, 2, 3, 4],
+            [1, 2, 3, 4, 5],
         )
         self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
         self.assertNotIn(canary.encode("utf-8"), restored_path.read_bytes())

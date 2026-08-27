@@ -1071,6 +1071,7 @@ _LEGACY_COORDINATES: Mapping[int, Tuple[str, int]] = {
     2: ("artifacts", 1),
     3: ("delivery", 1),
     4: ("admission", 1),
+    5: ("native_im_inbox", 1),
 }
 
 _LEGACY_OWNED_OBJECTS: Mapping[int, Tuple[Tuple[str, str], ...]] = {
@@ -1099,6 +1100,17 @@ _LEGACY_OWNED_OBJECTS: Mapping[int, Tuple[Tuple[str, str], ...]] = {
         ("index", "idx_invocation_admissions_stream"),
         ("table", "invocation_admissions"),
     ),
+    5: (
+        ("index", "idx_native_im_auth_nonces_expiry"),
+        ("index", "idx_native_im_inbound_reads_checkpoint_revision"),
+        ("index", "idx_native_im_inbound_reads_one_prepared"),
+        ("table", "native_im_auth_nonces"),
+        ("table", "native_im_inbound_checkpoints"),
+        ("table", "native_im_inbound_read_events"),
+        ("table", "native_im_inbound_reads"),
+        ("table", "native_im_inbox_events"),
+        ("table", "native_im_inbox_verifications"),
+    ),
 }
 
 _LEGACY_DEPENDENCIES: Mapping[int, Tuple[int, ...]] = {
@@ -1106,6 +1118,7 @@ _LEGACY_DEPENDENCIES: Mapping[int, Tuple[int, ...]] = {
     2: (),
     3: (),
     4: (1,),
+    5: (),
 }
 
 

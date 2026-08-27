@@ -24,6 +24,7 @@ BACKUP_TOPOLOGY_PROFILE_FORMAT = "qe.sqlite-topology-profile/1"
 
 EVENT_STORE_CORE_PROFILE = "qe.event-store-core/1"
 INVOCATION_ADMISSION_PROFILE = "qe.domain-migration-0004/1"
+NATIVE_IM_INBOX_PROFILE = "qe.domain-migration-0005/1"
 PROJECTION_STORE_PROFILE = "qe.projection-store/1"
 REVOCATION_GUARD_PROFILE = "qe.revocation-guard/1"
 LEGACY_MIGRATION_LEDGER_PROFILE = "qe.legacy-migration-ledger/1"
@@ -34,6 +35,7 @@ _DOMAIN_MIGRATION_PROFILE_NAMES = (
     "qe.domain-migration-0002/1",
     "qe.domain-migration-0003/1",
     INVOCATION_ADMISSION_PROFILE,
+    NATIVE_IM_INBOX_PROFILE,
 )
 _PRESENCE_MODE = "atomic"
 _MAX_PROFILE_COUNT = 64
@@ -701,6 +703,141 @@ _DOMAIN_MIGRATION_4 = _profile(
     dependencies=(EVENT_STORE_CORE_PROFILE, _DOMAIN_MIGRATION_PROFILE_NAMES[0]),
 )
 
+_DOMAIN_MIGRATION_5 = _profile(
+    NATIVE_IM_INBOX_PROFILE,
+    "native_im_inbox",
+    (
+        (
+            "index",
+            "idx_native_im_auth_nonces_expiry",
+            "native_im_auth_nonces",
+            "323462ff2d109b7fe2f11b462f91a9052c86d5e02edbbc47a649b7111aa6b0d9",
+        ),
+        (
+            "index",
+            "idx_native_im_inbound_reads_checkpoint_revision",
+            "native_im_inbound_reads",
+            "0127035bacff4a3e8fb704b0b7220877c260ba710040c611dfacdeee9dba1f6b",
+        ),
+        (
+            "index",
+            "idx_native_im_inbound_reads_one_prepared",
+            "native_im_inbound_reads",
+            "c4805b46b43a7d06929eec80b11cb76c0d092ec5635169acf752e5d88d1888f4",
+        ),
+        ("index", "sqlite_autoindex_native_im_auth_nonces_1", "native_im_auth_nonces", None),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbound_checkpoints_1",
+            "native_im_inbound_checkpoints",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbound_read_events_1",
+            "native_im_inbound_read_events",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbound_read_events_2",
+            "native_im_inbound_read_events",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbound_read_events_3",
+            "native_im_inbound_read_events",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbound_reads_1",
+            "native_im_inbound_reads",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbound_reads_2",
+            "native_im_inbound_reads",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbound_reads_3",
+            "native_im_inbound_reads",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbox_events_1",
+            "native_im_inbox_events",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbox_events_2",
+            "native_im_inbox_events",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbox_events_3",
+            "native_im_inbox_events",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbox_verifications_1",
+            "native_im_inbox_verifications",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbox_verifications_2",
+            "native_im_inbox_verifications",
+            None,
+        ),
+        (
+            "table",
+            "native_im_auth_nonces",
+            "native_im_auth_nonces",
+            "86988b66057f4c7aceb9a9ef308acd397ff9ccd233d2b197e8c958268c98ef50",
+        ),
+        (
+            "table",
+            "native_im_inbound_checkpoints",
+            "native_im_inbound_checkpoints",
+            "1603813989e9f31ce36fd677c1cdec7e9c93462af42e6793cd4f541c31eeb55d",
+        ),
+        (
+            "table",
+            "native_im_inbound_read_events",
+            "native_im_inbound_read_events",
+            "549d1c3b1af823352f10955aa4b824bf461c543c2e3f8b2fbeed3c37cf265b4f",
+        ),
+        (
+            "table",
+            "native_im_inbound_reads",
+            "native_im_inbound_reads",
+            "c778416cb47f7728aed885851d142342cb66a3dd30f863cf99ce438b328ae268",
+        ),
+        (
+            "table",
+            "native_im_inbox_events",
+            "native_im_inbox_events",
+            "291d7a252fc404a584ba3350bb51d2ee3fb86d6db613e142262d0d2bfba51bb3",
+        ),
+        (
+            "table",
+            "native_im_inbox_verifications",
+            "native_im_inbox_verifications",
+            "0c1b7075810c92b865e5eb6998ee0cecf51474832a14f7643b3a3aa05c287d55",
+        ),
+    ),
+    migration_id=5,
+)
+
 _DOMAIN_MIGRATION_2 = _profile(
     _DOMAIN_MIGRATION_PROFILE_NAMES[1],
     "artifacts",
@@ -808,6 +945,7 @@ BACKUP_TOPOLOGY_REGISTRY = TrustedBackupTopologyRegistry(
             (
                 _EVENT_STORE_CORE,
                 _DOMAIN_MIGRATION_4,
+                _DOMAIN_MIGRATION_5,
                 _PROJECTION_STORE,
                 _REVOCATION_GUARD,
                 _LEGACY_MIGRATION_LEDGER,
@@ -856,6 +994,7 @@ __all__ = [
     "DOMAIN_MIGRATION_SIDECAR_PROFILE",
     "EVENT_STORE_CORE_PROFILE",
     "INVOCATION_ADMISSION_PROFILE",
+    "NATIVE_IM_INBOX_PROFILE",
     "LEGACY_MIGRATION_LEDGER_PROFILE",
     "PROJECTION_STORE_PROFILE",
     "REVOCATION_GUARD_PROFILE",
