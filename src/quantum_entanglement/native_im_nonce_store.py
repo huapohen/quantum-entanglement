@@ -15,11 +15,22 @@ import sqlite3
 import threading
 import traceback as traceback_module
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any, Callable, Iterator, NoReturn, Optional, SupportsIndex, Tuple
 
 from . import process_identity as _process_identity
-from ._native_im_codec import _digest, _id, _timestamp
+from ._native_im_codec import NATIVE_IM_SCHEMA_VERSION, _digest, _id, _timestamp
 from .migrations import apply_sqlite_migrations
+from .native_im import IMInboundReadRequestV1
+from .native_im_inbox import (
+    NativeIMInboundCheckpointConflictError,
+    NativeIMInboundCheckpointV1,
+    NativeIMInboundCommitAmbiguityError,
+    NativeIMInboundConflictError,
+    NativeIMInboundReadPreparationV1,
+    NativeIMInboundTransactionError,
+    NativeIMScopeV1,
+)
 from .protocol import utc_now
 from .store import SQLiteEventStore
 
@@ -81,17 +92,89 @@ class NativeIMNonceStoreProcessMismatchError(RuntimeError):
         super().__init__(self.code)
 
 
-class _NonceTransactionSignal(BaseException):
+class NativeIMInboxStoreIntegrityError(NativeIMInboundConflictError):
+    """Durable native-IM inbox rows are partial, malformed, or contradictory."""
+
+    code = "native_im_inbox_store_integrity_failed"
+
+    def __init__(self) -> None:
+        super().__init__("native IM inbox state is not one canonical durable graph")
+
+
+class _NativeIMStoreTransactionSignal(BaseException):
     """Private, data-free transaction outcome signal."""
 
     __slots__ = ("kind",)
 
     def __init__(self, kind: str) -> None:
-        super().__init__("native IM nonce transaction signal")
+        super().__init__("native IM store transaction signal")
         self.kind = kind
 
 
 _NATIVE_IM_NONCE_STORE_QUARANTINE: list[object] = []
+
+_INBOUND_READ_COLUMNS = (
+    "tenant_id",
+    "workspace_id",
+    "provider",
+    "channel_id",
+    "read_request_id",
+    "read_request_digest",
+    "request_json",
+    "base_checkpoint_revision",
+    "after_cursor",
+    "after_sequence",
+    "request_snapshot_token",
+    "status",
+    "prepared_at",
+    "page_digest",
+    "response_snapshot_token",
+    "next_cursor",
+    "next_sequence",
+    "continuation_snapshot_token",
+    "has_more",
+    "envelope_count",
+    "event_manifest_sha256",
+    "capability_revision",
+    "capability_digest",
+    "admitted_checkpoint_revision",
+    "admitted_at",
+)
+
+_CHECKPOINT_COLUMNS = (
+    "tenant_id",
+    "workspace_id",
+    "provider",
+    "channel_id",
+    "after_cursor",
+    "after_sequence",
+    "continuation_snapshot_token",
+    "checkpoint_revision",
+    "last_read_request_digest",
+    "last_page_digest",
+    "updated_at",
+)
+
+
+@dataclass(frozen=True)
+class _NativeIMInboundReadRecord:
+    request: IMInboundReadRequestV1
+    read_request_digest: str
+    base_checkpoint_revision: int
+    status: str
+    prepared_at: str
+    page_digest: Optional[str]
+    response_snapshot_token: Optional[str]
+    next_cursor: Optional[str]
+    next_sequence: Optional[int]
+    continuation_snapshot_token: Optional[str]
+    has_more: Optional[bool]
+    envelope_count: Optional[int]
+    event_manifest_sha256: Optional[str]
+    capability_revision: Optional[str]
+    capability_digest: Optional[str]
+    admitted_checkpoint_revision: Optional[int]
+    admitted_at: Optional[str]
 
 
 def _detach_exception(error: BaseException) -> None:
@@ -132,6 +215,48 @@ def _scope_snapshot(value: object) -> Tuple[str, str, str, str]:
         _id(value[2], "provider"),
         _id(value[3], "channelId"),
     )
+
+
+def _persisted_integer(value: object, label: str, *, minimum: int = 0) -> int:
+    if type(value) is not int or value < minimum or value > (1 << 63) - 1:
+        raise ValueError(f"persisted {label} is not a supported SQLite integer")
+    return value
+
+
+def _persisted_optional_id(value: object, label: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _id(value, label)
+
+
+def _persisted_optional_digest(value: object, label: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _digest(value, label)
+
+
+def _persisted_optional_integer(value: object, label: str) -> Optional[int]:
+    if value is None:
+        return None
+    return _persisted_integer(value, label)
+
+
+def _raise_clean_inbound_error(kind: str) -> NoReturn:
+    error_type: type[BaseException]
+    if kind == "integrity":
+        error_type = NativeIMInboxStoreIntegrityError
+    elif kind == "transaction":
+        error_type = NativeIMInboundTransactionError
+    elif kind == "ambiguous":
+        error_type = NativeIMInboundCommitAmbiguityError
+    else:  # pragma: no cover - private callers use a closed enum.
+        raise RuntimeError("unsupported native IM inbound error kind") from None
+    try:
+        raise error_type() from None
+    except BaseException as public_error:
+        if type(public_error) is error_type:
+            public_error.__context__ = None
+        raise
 
 
 class SQLiteNativeIMInboxStore:
@@ -298,8 +423,8 @@ class SQLiteNativeIMInboxStore:
                 _detach_exception(begin_error)
                 if not rolled_back:
                     self._poisoned = True
-                    raise _NonceTransactionSignal("ambiguous") from None
-                raise _NonceTransactionSignal("transaction") from None
+                    raise _NativeIMStoreTransactionSignal("ambiguous") from None
+                raise _NativeIMStoreTransactionSignal("transaction") from None
             try:
                 yield connection
             except BaseException as body_error:
@@ -313,7 +438,7 @@ class SQLiteNativeIMInboxStore:
                 if not rolled_back:
                     self._poisoned = True
                     _detach_exception(body_error)
-                    raise _NonceTransactionSignal("ambiguous") from None
+                    raise _NativeIMStoreTransactionSignal("ambiguous") from None
                 raise
             else:
                 self._require_current_process()
@@ -333,15 +458,15 @@ class SQLiteNativeIMInboxStore:
                         _detach_exception(rollback_error)
                     _detach_exception(commit_error)
                     if transaction_was_open and rolled_back:
-                        raise _NonceTransactionSignal("transaction") from None
+                        raise _NativeIMStoreTransactionSignal("transaction") from None
                     self._poisoned = True
-                    raise _NonceTransactionSignal("ambiguous") from None
+                    raise _NativeIMStoreTransactionSignal("ambiguous") from None
         finally:
             if self._process_is_current():
                 lock.release()
 
     @staticmethod
-    def _validated_row(row: sqlite3.Row) -> Tuple[str, ...]:
+    def _validated_nonce_row(row: sqlite3.Row) -> Tuple[str, ...]:
         try:
             scope = (
                 _id(row["tenant_id"], "persisted tenantId"),
@@ -376,7 +501,7 @@ class SQLiteNativeIMInboxStore:
             claimed_at,
         )
 
-    def _claim_in_transaction(
+    def _claim_nonce_in_transaction(
         self,
         connection: sqlite3.Connection,
         *,
@@ -405,7 +530,7 @@ class SQLiteNativeIMInboxStore:
             self._profile_digest,
         )
         if row is not None:
-            persisted = self._validated_row(row)
+            persisted = self._validated_nonce_row(row)
             if persisted[:-1] != expected_binding:
                 raise NativeIMNonceIntegrityError() from None
             return False
@@ -439,9 +564,555 @@ class SQLiteNativeIMInboxStore:
         ).fetchone()
         if readback is None:
             raise NativeIMNonceIntegrityError() from None
-        if self._validated_row(readback) != (*expected_binding, claimed_at):
+        if self._validated_nonce_row(readback) != (*expected_binding, claimed_at):
             raise NativeIMNonceIntegrityError() from None
         return True
+
+    @staticmethod
+    def _validated_inbound_read_row(row: sqlite3.Row) -> _NativeIMInboundReadRecord:
+        try:
+            if tuple(row.keys()) != _INBOUND_READ_COLUMNS:
+                raise ValueError("persisted inbound read columns differ")
+            tenant_id = _id(row["tenant_id"], "persisted tenantId")
+            workspace_id = _id(row["workspace_id"], "persisted workspaceId")
+            provider = _id(row["provider"], "persisted provider")
+            channel_id = _id(row["channel_id"], "persisted channelId")
+            read_request_id = _id(row["read_request_id"], "persisted readRequestId")
+            read_request_digest = _digest(
+                row["read_request_digest"],
+                "persisted readRequestDigest",
+            )
+            request_json = row["request_json"]
+            if type(request_json) is not str:
+                raise TypeError("persisted requestJson must use SQLite TEXT storage")
+            request_bytes = request_json.encode("utf-8")
+            request = IMInboundReadRequestV1.from_json_bytes(request_bytes)
+            if request.canonical_bytes() != request_bytes:
+                raise ValueError("persisted requestJson is not canonical")
+            if request.canonical_digest() != read_request_digest:
+                raise ValueError("persisted request digest differs")
+            if (
+                request.tenant_id,
+                request.workspace_id,
+                request.provider,
+                request.channel_id,
+                request.read_request_id,
+            ) != (
+                tenant_id,
+                workspace_id,
+                provider,
+                channel_id,
+                read_request_id,
+            ):
+                raise ValueError("persisted request identity differs")
+            after_cursor = _persisted_optional_id(
+                row["after_cursor"],
+                "persisted afterCursor",
+            )
+            after_sequence = _persisted_optional_integer(
+                row["after_sequence"],
+                "persisted afterSequence",
+            )
+            request_snapshot_token = _persisted_optional_id(
+                row["request_snapshot_token"],
+                "persisted requestSnapshotToken",
+            )
+            if (
+                request.after_cursor,
+                request.after_sequence,
+                request.snapshot_token,
+            ) != (after_cursor, after_sequence, request_snapshot_token):
+                raise ValueError("persisted request resume fields differ")
+            base_checkpoint_revision = _persisted_integer(
+                row["base_checkpoint_revision"],
+                "baseCheckpointRevision",
+            )
+            status = row["status"]
+            if type(status) is not str or status not in {"prepared", "admitted"}:
+                raise ValueError("persisted inbound read status is invalid")
+            prepared_at = _timestamp(row["prepared_at"], "persisted preparedAt")
+            page_digest = _persisted_optional_digest(
+                row["page_digest"],
+                "persisted pageDigest",
+            )
+            response_snapshot_token = _persisted_optional_id(
+                row["response_snapshot_token"],
+                "persisted responseSnapshotToken",
+            )
+            next_cursor = _persisted_optional_id(
+                row["next_cursor"],
+                "persisted nextCursor",
+            )
+            next_sequence = _persisted_optional_integer(
+                row["next_sequence"],
+                "persisted nextSequence",
+            )
+            continuation_snapshot_token = _persisted_optional_id(
+                row["continuation_snapshot_token"],
+                "persisted continuationSnapshotToken",
+            )
+            has_more_value = row["has_more"]
+            if has_more_value is None:
+                has_more = None
+            elif type(has_more_value) is int and has_more_value in {0, 1}:
+                has_more = bool(has_more_value)
+            else:
+                raise ValueError("persisted hasMore is invalid")
+            envelope_count = _persisted_optional_integer(
+                row["envelope_count"],
+                "persisted envelopeCount",
+            )
+            if envelope_count is not None and envelope_count > 1_000:
+                raise ValueError("persisted envelopeCount exceeds its bound")
+            event_manifest_sha256 = _persisted_optional_digest(
+                row["event_manifest_sha256"],
+                "persisted eventManifestSha256",
+            )
+            capability_revision = _persisted_optional_id(
+                row["capability_revision"],
+                "persisted capabilityRevision",
+            )
+            capability_digest = _persisted_optional_digest(
+                row["capability_digest"],
+                "persisted capabilityDigest",
+            )
+            admitted_checkpoint_revision = _persisted_optional_integer(
+                row["admitted_checkpoint_revision"],
+                "persisted admittedCheckpointRevision",
+            )
+            admitted_at_value = row["admitted_at"]
+            admitted_at = (
+                None
+                if admitted_at_value is None
+                else _timestamp(admitted_at_value, "persisted admittedAt")
+            )
+
+            admitted_values = (
+                page_digest,
+                response_snapshot_token,
+                has_more,
+                envelope_count,
+                event_manifest_sha256,
+                capability_revision,
+                capability_digest,
+                admitted_checkpoint_revision,
+                admitted_at,
+            )
+            if status == "prepared":
+                if any(value is not None for value in admitted_values) or any(
+                    value is not None
+                    for value in (
+                        next_cursor,
+                        next_sequence,
+                        continuation_snapshot_token,
+                    )
+                ):
+                    raise ValueError("prepared inbound read carries admitted fields")
+            else:
+                if any(value is None for value in admitted_values):
+                    raise ValueError("admitted inbound read lacks required fields")
+                if (next_cursor is None) != (next_sequence is None):
+                    raise ValueError("admitted next cursor pair is partial")
+                if admitted_checkpoint_revision != base_checkpoint_revision + 1:
+                    raise ValueError("admitted checkpoint revision is not consecutive")
+                if (
+                    request.snapshot_token is not None
+                    and response_snapshot_token != request.snapshot_token
+                ):
+                    raise ValueError("admitted page changed its requested snapshot")
+                if envelope_count is not None and envelope_count > request.limit:
+                    raise ValueError("admitted page exceeds the requested limit")
+                if envelope_count and next_cursor is None:
+                    raise ValueError("non-empty admitted page lacks its next cursor pair")
+                if (
+                    envelope_count
+                    and request.after_sequence is not None
+                    and (next_sequence is None or next_sequence <= request.after_sequence)
+                ):
+                    raise ValueError("admitted page does not advance its sequence")
+                if has_more:
+                    if (
+                        continuation_snapshot_token != response_snapshot_token
+                        or next_cursor is None
+                        or envelope_count == 0
+                    ):
+                        raise ValueError("continuing page state is contradictory")
+                elif continuation_snapshot_token is not None:
+                    raise ValueError("terminal page retained a continuation snapshot")
+                if envelope_count == 0 and (
+                    next_cursor,
+                    next_sequence,
+                ) != (request.after_cursor, request.after_sequence):
+                    raise ValueError("empty page changed its resume cursor")
+        except (
+            IndexError,
+            KeyError,
+            TypeError,
+            UnicodeError,
+            ValueError,
+        ):
+            raise NativeIMInboxStoreIntegrityError() from None
+        return _NativeIMInboundReadRecord(
+            request=request,
+            read_request_digest=read_request_digest,
+            base_checkpoint_revision=base_checkpoint_revision,
+            status=status,
+            prepared_at=prepared_at,
+            page_digest=page_digest,
+            response_snapshot_token=response_snapshot_token,
+            next_cursor=next_cursor,
+            next_sequence=next_sequence,
+            continuation_snapshot_token=continuation_snapshot_token,
+            has_more=has_more,
+            envelope_count=envelope_count,
+            event_manifest_sha256=event_manifest_sha256,
+            capability_revision=capability_revision,
+            capability_digest=capability_digest,
+            admitted_checkpoint_revision=admitted_checkpoint_revision,
+            admitted_at=admitted_at,
+        )
+
+    def _load_inbound_checkpoint(
+        self,
+        connection: sqlite3.Connection,
+        scope: NativeIMScopeV1,
+    ) -> Optional[NativeIMInboundCheckpointV1]:
+        admitted_summary = connection.execute(
+            """
+            SELECT COUNT(*) AS row_count,
+                   MAX(admitted_checkpoint_revision) AS maximum_revision
+            FROM native_im_inbound_reads
+            WHERE tenant_id = ? AND workspace_id = ?
+              AND provider = ? AND channel_id = ? AND status = 'admitted'
+            """,
+            (
+                scope.tenant_id,
+                scope.workspace_id,
+                scope.provider,
+                scope.channel_id,
+            ),
+        ).fetchone()
+        if admitted_summary is None:
+            raise NativeIMInboxStoreIntegrityError() from None
+        try:
+            admitted_count = _persisted_integer(
+                admitted_summary["row_count"],
+                "admitted read count",
+            )
+            maximum_revision = _persisted_optional_integer(
+                admitted_summary["maximum_revision"],
+                "maximum admitted checkpoint revision",
+            )
+            if (admitted_count == 0) != (maximum_revision is None):
+                raise ValueError("admitted read summary is contradictory")
+            if maximum_revision is not None and admitted_count != maximum_revision:
+                raise ValueError("admitted checkpoint revisions are not contiguous")
+        except (IndexError, KeyError, TypeError, ValueError):
+            raise NativeIMInboxStoreIntegrityError() from None
+
+        row = connection.execute(
+            """
+            SELECT * FROM native_im_inbound_checkpoints
+            WHERE tenant_id = ? AND workspace_id = ?
+              AND provider = ? AND channel_id = ?
+            """,
+            (
+                scope.tenant_id,
+                scope.workspace_id,
+                scope.provider,
+                scope.channel_id,
+            ),
+        ).fetchone()
+        if row is None:
+            if admitted_count:
+                raise NativeIMInboxStoreIntegrityError() from None
+            return None
+        try:
+            if tuple(row.keys()) != _CHECKPOINT_COLUMNS:
+                raise ValueError("persisted checkpoint columns differ")
+            persisted_scope = NativeIMScopeV1(
+                schema_version=NATIVE_IM_SCHEMA_VERSION,
+                tenant_id=_id(row["tenant_id"], "persisted checkpoint tenantId"),
+                workspace_id=_id(
+                    row["workspace_id"],
+                    "persisted checkpoint workspaceId",
+                ),
+                provider=_id(row["provider"], "persisted checkpoint provider"),
+                channel_id=_id(
+                    row["channel_id"],
+                    "persisted checkpoint channelId",
+                ),
+            )
+            if persisted_scope != scope:
+                raise ValueError("persisted checkpoint scope differs")
+            checkpoint = NativeIMInboundCheckpointV1(
+                schema_version=NATIVE_IM_SCHEMA_VERSION,
+                scope=persisted_scope,
+                after_cursor=_persisted_optional_id(
+                    row["after_cursor"],
+                    "persisted checkpoint afterCursor",
+                ),
+                after_sequence=_persisted_optional_integer(
+                    row["after_sequence"],
+                    "persisted checkpoint afterSequence",
+                ),
+                continuation_snapshot_token=_persisted_optional_id(
+                    row["continuation_snapshot_token"],
+                    "persisted checkpoint continuationSnapshotToken",
+                ),
+                checkpoint_revision=_persisted_integer(
+                    row["checkpoint_revision"],
+                    "checkpointRevision",
+                    minimum=1,
+                ),
+                last_read_request_digest=_digest(
+                    row["last_read_request_digest"],
+                    "persisted checkpoint lastReadRequestDigest",
+                ),
+                last_page_digest=_digest(
+                    row["last_page_digest"],
+                    "persisted checkpoint lastPageDigest",
+                ),
+                updated_at=_timestamp(
+                    row["updated_at"],
+                    "persisted checkpoint updatedAt",
+                ),
+            )
+        except (IndexError, KeyError, TypeError, ValueError):
+            raise NativeIMInboxStoreIntegrityError() from None
+
+        if maximum_revision != checkpoint.checkpoint_revision:
+            raise NativeIMInboxStoreIntegrityError() from None
+
+        read_row = connection.execute(
+            """
+            SELECT * FROM native_im_inbound_reads
+            WHERE tenant_id = ? AND workspace_id = ? AND provider = ?
+              AND channel_id = ? AND read_request_digest = ?
+            """,
+            (
+                scope.tenant_id,
+                scope.workspace_id,
+                scope.provider,
+                scope.channel_id,
+                checkpoint.last_read_request_digest,
+            ),
+        ).fetchone()
+        if read_row is None:
+            raise NativeIMInboxStoreIntegrityError() from None
+        record = self._validated_inbound_read_row(read_row)
+        if (
+            record.status != "admitted"
+            or record.page_digest != checkpoint.last_page_digest
+            or record.admitted_checkpoint_revision != checkpoint.checkpoint_revision
+            or (record.next_cursor, record.next_sequence)
+            != (checkpoint.after_cursor, checkpoint.after_sequence)
+            or record.continuation_snapshot_token != checkpoint.continuation_snapshot_token
+            or record.admitted_at != checkpoint.updated_at
+        ):
+            raise NativeIMInboxStoreIntegrityError() from None
+        return checkpoint
+
+    @staticmethod
+    def _checkpoint_matches_request(
+        checkpoint: Optional[NativeIMInboundCheckpointV1],
+        record: _NativeIMInboundReadRecord,
+    ) -> bool:
+        if checkpoint is None:
+            return record.base_checkpoint_revision == 0 and (
+                record.request.after_cursor,
+                record.request.after_sequence,
+                record.request.snapshot_token,
+            ) == (None, None, None)
+        return record.base_checkpoint_revision == checkpoint.checkpoint_revision and (
+            record.request.after_cursor,
+            record.request.after_sequence,
+            record.request.snapshot_token,
+        ) == (
+            checkpoint.after_cursor,
+            checkpoint.after_sequence,
+            checkpoint.continuation_snapshot_token,
+        )
+
+    def prepare_native_im_inbound_read(
+        self,
+        request: IMInboundReadRequestV1,
+    ) -> NativeIMInboundReadPreparationV1:
+        """Persist one capability-free read request without invoking a provider."""
+
+        self._require_operational()
+        if type(request) is not IMInboundReadRequestV1:
+            raise TypeError("request must be an exact IMInboundReadRequestV1")
+        request_bytes = request.canonical_bytes()
+        request_snapshot = IMInboundReadRequestV1.from_json_bytes(request_bytes)
+        request_digest = request_snapshot.canonical_digest()
+        request_json = request_bytes.decode("utf-8")
+        scope = NativeIMScopeV1(
+            schema_version=NATIVE_IM_SCHEMA_VERSION,
+            tenant_id=request_snapshot.tenant_id,
+            workspace_id=request_snapshot.workspace_id,
+            provider=request_snapshot.provider,
+            channel_id=request_snapshot.channel_id,
+        )
+        scope_values = (
+            scope.tenant_id,
+            scope.workspace_id,
+            scope.provider,
+            scope.channel_id,
+        )
+        result: Optional[NativeIMInboundReadPreparationV1] = None
+        fixed_error_kind: Optional[str] = None
+        try:
+            with self._write_transaction() as connection:
+                candidates = connection.execute(
+                    """
+                    SELECT * FROM native_im_inbound_reads
+                    WHERE tenant_id = ? AND workspace_id = ?
+                      AND provider = ? AND channel_id = ?
+                      AND (read_request_id = ? OR read_request_digest = ?)
+                    ORDER BY read_request_digest
+                    """,
+                    (*scope_values, request_snapshot.read_request_id, request_digest),
+                ).fetchall()
+                if len(candidates) > 1:
+                    raise NativeIMInboundConflictError(
+                        "native IM read identities are bound to different rows"
+                    )
+                if candidates:
+                    record = self._validated_inbound_read_row(candidates[0])
+                    if (
+                        record.read_request_digest != request_digest
+                        or record.request != request_snapshot
+                    ):
+                        raise NativeIMInboundConflictError(
+                            "native IM read identity is already bound differently"
+                        )
+                    checkpoint = self._load_inbound_checkpoint(connection, scope)
+                    if record.status == "prepared":
+                        if not self._checkpoint_matches_request(checkpoint, record):
+                            raise NativeIMInboxStoreIntegrityError() from None
+                    elif checkpoint is None:
+                        raise NativeIMInboxStoreIntegrityError() from None
+                    result = NativeIMInboundReadPreparationV1(
+                        schema_version=NATIVE_IM_SCHEMA_VERSION,
+                        scope=scope,
+                        read_request_id=request_snapshot.read_request_id,
+                        read_request_digest=request_digest,
+                        base_checkpoint_revision=record.base_checkpoint_revision,
+                        read_status=record.status,
+                        disposition="observed_replay",
+                        prepared_at=record.prepared_at,
+                    )
+                else:
+                    prepared_rows = connection.execute(
+                        """
+                        SELECT * FROM native_im_inbound_reads
+                        WHERE tenant_id = ? AND workspace_id = ?
+                          AND provider = ? AND channel_id = ?
+                          AND status = 'prepared'
+                        """,
+                        scope_values,
+                    ).fetchall()
+                    if len(prepared_rows) > 1:
+                        raise NativeIMInboxStoreIntegrityError() from None
+                    if prepared_rows:
+                        existing_prepared = self._validated_inbound_read_row(prepared_rows[0])
+                        checkpoint = self._load_inbound_checkpoint(connection, scope)
+                        if not self._checkpoint_matches_request(checkpoint, existing_prepared):
+                            raise NativeIMInboxStoreIntegrityError() from None
+                        raise NativeIMInboundConflictError(
+                            "native IM scope already has a different prepared read"
+                        )
+                    checkpoint = self._load_inbound_checkpoint(connection, scope)
+                    expected_resume: Tuple[Optional[str], Optional[int], Optional[str]]
+                    if checkpoint is None:
+                        base_checkpoint_revision = 0
+                        expected_resume = (None, None, None)
+                    else:
+                        base_checkpoint_revision = checkpoint.checkpoint_revision
+                        expected_resume = (
+                            checkpoint.after_cursor,
+                            checkpoint.after_sequence,
+                            checkpoint.continuation_snapshot_token,
+                        )
+                    requested_resume = (
+                        request_snapshot.after_cursor,
+                        request_snapshot.after_sequence,
+                        request_snapshot.snapshot_token,
+                    )
+                    if requested_resume != expected_resume:
+                        raise NativeIMInboundCheckpointConflictError(
+                            "native IM read does not match the durable checkpoint"
+                        )
+                    prepared_at_raw = self._clock()
+                    self._require_current_process()
+                    prepared_at = _timestamp(prepared_at_raw, "clock")
+                    inserted = connection.execute(
+                        """
+                        INSERT INTO native_im_inbound_reads (
+                            tenant_id, workspace_id, provider, channel_id,
+                            read_request_id, read_request_digest, request_json,
+                            base_checkpoint_revision, after_cursor, after_sequence,
+                            request_snapshot_token, status, prepared_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?)
+                        """,
+                        (
+                            *scope_values,
+                            request_snapshot.read_request_id,
+                            request_digest,
+                            request_json,
+                            base_checkpoint_revision,
+                            request_snapshot.after_cursor,
+                            request_snapshot.after_sequence,
+                            request_snapshot.snapshot_token,
+                            prepared_at,
+                        ),
+                    )
+                    if inserted.rowcount != 1:
+                        raise NativeIMInboxStoreIntegrityError() from None
+                    readback = connection.execute(
+                        """
+                        SELECT * FROM native_im_inbound_reads
+                        WHERE tenant_id = ? AND workspace_id = ?
+                          AND provider = ? AND channel_id = ?
+                          AND read_request_digest = ?
+                        """,
+                        (*scope_values, request_digest),
+                    ).fetchone()
+                    if readback is None:
+                        raise NativeIMInboxStoreIntegrityError() from None
+                    record = self._validated_inbound_read_row(readback)
+                    if (
+                        record.request != request_snapshot
+                        or record.base_checkpoint_revision != base_checkpoint_revision
+                        or record.status != "prepared"
+                        or record.prepared_at != prepared_at
+                    ):
+                        raise NativeIMInboxStoreIntegrityError() from None
+                    result = NativeIMInboundReadPreparationV1(
+                        schema_version=NATIVE_IM_SCHEMA_VERSION,
+                        scope=scope,
+                        read_request_id=request_snapshot.read_request_id,
+                        read_request_digest=request_digest,
+                        base_checkpoint_revision=base_checkpoint_revision,
+                        read_status="prepared",
+                        disposition="fresh_observation",
+                        prepared_at=prepared_at,
+                    )
+        except _NativeIMStoreTransactionSignal as error:
+            fixed_error_kind = error.kind
+            _detach_exception(error)
+        except sqlite3.IntegrityError as error:
+            fixed_error_kind = "integrity"
+            _detach_exception(error)
+        except sqlite3.Error as error:
+            fixed_error_kind = "transaction"
+            _detach_exception(error)
+        if fixed_error_kind is not None:
+            _raise_clean_inbound_error(fixed_error_kind)
+        if type(result) is not NativeIMInboundReadPreparationV1:
+            raise RuntimeError("native IM read preparation completed without a result")
+        return result
 
     def claim(
         self,
@@ -471,7 +1142,7 @@ class SQLiteNativeIMInboxStore:
         fixed_error_kind: Optional[str] = None
         try:
             with self._write_transaction() as connection:
-                result = self._claim_in_transaction(
+                result = self._claim_nonce_in_transaction(
                     connection,
                     scope=scope_value,
                     key_id=key_id_value,
@@ -480,7 +1151,7 @@ class SQLiteNativeIMInboxStore:
                     expires_at=expires_at_value,
                     authentication_evidence_digest=evidence_digest_value,
                 )
-        except _NonceTransactionSignal as error:
+        except _NativeIMStoreTransactionSignal as error:
             fixed_error_kind = error.kind
             _detach_exception(error)
         except sqlite3.Error as error:
@@ -536,6 +1207,7 @@ class SQLiteNativeIMNonceReplayGuard(SQLiteNativeIMInboxStore):
 
 
 __all__ = [
+    "NativeIMInboxStoreIntegrityError",
     "NativeIMNonceCommitAmbiguityError",
     "NativeIMNonceIntegrityError",
     "NativeIMNonceStoreClosedError",
