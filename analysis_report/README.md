@@ -26,6 +26,8 @@
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
 - 当前批次已完成 Notion 写入和远端回读；语雀仍未操作。
+- E1 / Level A 本地与 GitHub 文档目前领先上述 Notion 基线；完成本轮最终门禁后统一同步并远端
+  回读，在回读完成前不把 Notion 描述为已经包含 E1 收口。
 
 ## 当前阶段交付
 
@@ -33,13 +35,14 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
-| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 原路线已由提前接入调度修订 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界 |
+| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | P0 provider-neutral/fake 已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；真实 provider profile 和 E2 尚未开始 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
-| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | 当前执行入口 | E0–E5、Level A–D、文件/迁移/测试/提交序列、可停点、工期与 outbound 授权边界 |
+| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | E1 已完成，等待阶段验收 | E0–E5、Level A–D、已交付 E1 文件/证据、E2 下一提交序列、可停点与 outbound 授权边界 |
+| `../docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md` | E1 生产说明已完成 | 四方法 port、zero-network fake、permit/ledger/ACK-loss、验证、回退和 E2 硬停止边界 |
 
-当前接入前代码基线已经安全备份。后续以 `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 为执行源，先
-完成 Level A 合同可执行，再到 Level B sandbox inbound-only；`NEXT_STAGE_PLAN.md` 继续作为 E3
-Atomic Result Authority 的最大强度参考，不再作为提前接入前的串行总清单。
+当前接入前代码基线已经安全备份，Level A 合同可执行已在 `7620200` 完成。完成文档、GitHub、
+Notion 收口并经用户验收后，下一步才是 Level B sandbox inbound-only；`NEXT_STAGE_PLAN.md` 继续作为
+E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前的串行总清单。
 
 ## 专题研究
 
@@ -67,6 +70,7 @@ Atomic Result Authority 的最大强度参考，不再作为提前接入前的�
 | `research/19_six_agent_collaboration_protocols_and_bottom_layer_design.md` | 当前协议选型：2026-08-26 | A2A 1.0（`v1.0.1` release）、stateless MCP 2026-07-28、BeeAI ACP、ANP、AGNTCY、FIPA ACL/Contract Net 六项边界，WanWork canonical envelope 设计、现状差距与落地顺序 |
 | `research/20_clawith_competitive_analysis.md` | Clawith 固定源码深研：2026-08-26 | 基于官网、官方文档和 `dataelement/Clawith@45fc701c` 的产品、群聊、长期身份、Aware/Pulse、Experience Library、Skills/MCP、治理与部署审计；明确可借鉴项、不可照搬项和 WanWork 优先级 |
 | `research/21_atomic_invocation_start_release_evidence.md` | 当前 atomic start 发布证据：`a1fd355` | first-claim/start 的代码、提交、Python 3.9/3.12/3.13、BEGIN/COMMIT/ROLLBACK ACK-loss、双连接、spawn/fork、backup/token canary 与未关闭 worker/result/action/Gate A–E 边界 |
+| `research/22_native_im_e1_contract_executable_evidence.md` | 原生 IM E1 证据：`7620200` | 21 个 V1 wire model、23 vectors、四方法 port、默认拒绝 fake、receiver 双账本、ACK-loss/query、271 项专项矩阵、三版本/full gate 与 E2 未开始边界 |
 
 ## 已归档截图
 
