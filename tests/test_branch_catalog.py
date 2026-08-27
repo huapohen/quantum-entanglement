@@ -12,6 +12,7 @@ from scripts.branch_catalog import (
     branch_category,
     branch_hub_root,
     branch_purpose,
+    branch_worktree_root,
     catalog_main_baseline,
     git,
     load_purposes,
@@ -25,6 +26,7 @@ class BranchCatalogTests(unittest.TestCase):
         original = Path("/workspace/execute/quantum_entanglement")
         nested = Path("/workspace/execute/infinite/quantum_entanglement/main")
         flattened = Path("/workspace/execute/infinite/quantum_entanglement")
+        linked = Path("/workspace/execute/infinite/worktrees/quantum_entanglement/native-im-review")
         self.assertEqual(
             branch_hub_root(original),
             Path("/workspace/execute/infinite/quantum_entanglement"),
@@ -36,6 +38,14 @@ class BranchCatalogTests(unittest.TestCase):
         self.assertEqual(
             branch_hub_root(flattened),
             Path("/workspace/execute/infinite/quantum_entanglement"),
+        )
+        self.assertEqual(
+            branch_hub_root(linked),
+            Path("/workspace/execute/infinite/quantum_entanglement"),
+        )
+        self.assertEqual(
+            branch_worktree_root(linked),
+            Path("/workspace/execute/infinite/worktrees/quantum_entanglement"),
         )
 
     def test_catalog_baseline_skips_a_catalog_only_tip(self) -> None:

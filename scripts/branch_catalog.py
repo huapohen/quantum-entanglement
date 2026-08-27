@@ -258,7 +258,18 @@ def branch_hub_root(repo: Path) -> Path:
         and repo.parent.parent.name == "infinite"
     ):
         return repo.parent
+    if (
+        repo.parent.name == "quantum_entanglement"
+        and repo.parent.parent.name == "worktrees"
+        and repo.parent.parent.parent.name == "infinite"
+    ):
+        return repo.parent.parent.parent / repo.parent.name
     return repo.parent / "infinite" / repo.name
+
+
+def branch_worktree_root(repo: Path) -> Path:
+    hub_root = branch_hub_root(repo)
+    return hub_root.parent / "worktrees" / hub_root.name
 
 
 def render_catalog(
@@ -268,7 +279,7 @@ def render_catalog(
     tags: Sequence[tuple[str, str, str, str]],
 ) -> str:
     main = next(branch for branch in branches if branch.name == "main")
-    hub_root = branch_hub_root(repo)
+    worktree_root = branch_worktree_root(repo)
     archive_count = sum(branch.name.startswith("archive/") for branch in branches)
     historical_count = len(branches) - archive_count - 1
     auxiliary_worktree_count = sum(
@@ -277,12 +288,12 @@ def render_catalog(
     if auxiliary_worktree_count:
         worktree_summary = (
             f"`main` 固定在 `{repo}`。当前另有 {auxiliary_worktree_count} 个辅助 linked "
-            f"worktree；它们统一位于 `{hub_root / 'worktrees'}`，完成后必须合并、推送并移除。"
+            f"worktree；它们统一位于 `{worktree_root}`，完成后必须合并、推送并移除。"
         )
     else:
         worktree_summary = (
             f"`main` 固定在 `{repo}`。当前没有辅助 linked worktree；后续临时 worktree "
-            f"统一创建在 `{hub_root / 'worktrees'}`，完成后必须合并、推送并移除。"
+            f"统一创建在 `{worktree_root}`，完成后必须合并、推送并移除。"
         )
     lines = [
         "# Quantum Entanglement 分支与 Worktree 导航",
@@ -410,7 +421,7 @@ def render_catalog(
             "```bash",
             f"cd {repo}",
             "git fetch origin",
-            f"git worktree add {hub_root / 'worktrees'}/<目录名> \\",
+            f"git worktree add {worktree_root}/<目录名> \\",
             "  -b codex/<任务名> origin/main",
             "```",
             "",
@@ -433,7 +444,7 @@ def render_catalog(
             "",
             "1. `main` 永远是唯一默认主线；阶段分支不能自封为发布分支。",
             "2. 每个小改动继续独立提交；阶段完成后合并回 `main` 并推送远端。",
-            f"3. 新 worktree 一律建在 `{hub_root / 'worktrees'}`。",
+            f"3. 新 worktree 一律建在 `{worktree_root}`。",
             "4. 推送成功后删除已完成的本地 worktree 和本地阶段分支，不长期堆积。",
             "5. 删除远端 active 分支前，必须确认提交已进入 `main` 或已有同 SHA 的 "
             "`archive/*` 冻结引用。",
