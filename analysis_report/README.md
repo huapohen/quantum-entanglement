@@ -5,7 +5,7 @@
 计划或验收动作形成稳定检查点后，都必须同步到私人 Notion 并完成远端回读，回读完成前不进入
 下一项工作。语雀仍只在用户另行明确授权时操作。
 
-## Notion 镜像（2026-08-27 已回读）
+## Notion 镜像（2026-08-28 E1 已回读）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -26,8 +26,14 @@
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
 - 当前批次已完成 Notion 写入和远端回读；语雀仍未操作。
-- E1 / Level A 本地与 GitHub 文档目前领先上述 Notion 基线；完成本轮最终门禁后统一同步并远端
-  回读，在回读完成前不把 Notion 描述为已经包含 E1 收口。
+- E1 独立审阅空间：<https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204>。
+  该空间已同步 1 个父审阅页和 9 个完整语义镜像子页，覆盖 P0 可执行合同、E1 调研证据、
+  E1–E5 计划、P0–P3 分界、下一阶段、readiness、调研索引、changelog 和分支目录。
+- E1 Notion 语义基线为评审分支 `2d681336bde45fe4c65d6b6c7ad35503b15e815f`，核心源码候选为
+  `7620200f8e378507b1f592d6d34744080250d2ea`。父页和 9 个子页已逐页 fetch 回读；20 个预期
+  marker 全部命中，0 个缺失。
+- 同步后的 README/manifest/目录收口提交只更新台账和动态分支导航，不改变 E1 wire、fake、
+  测试或 Gate 状态；最终 Git bookkeeping HEAD 以独立审阅父页顶部和远端分支回读为准。
 
 ## 当前阶段交付
 
