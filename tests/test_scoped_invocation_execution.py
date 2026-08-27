@@ -815,6 +815,29 @@ class ScopedInvocationStartCapabilityTests(unittest.TestCase):
         self.assertEqual(decoded.evidence.workspace_id, evidence.workspace_id)
         self.assertNotIn(LEASE_TOKEN, json.dumps(decoded.to_dict(), sort_keys=True))
 
+    def test_receipt_snapshot_ignores_instance_method_shadowing(self) -> None:
+        evidence = ScopedInvocationStartEvidenceV3.from_dict(valid_scoped_start_dict())
+        forged_evidence = replace(evidence, worker_id="worker-forged")
+        object.__setattr__(evidence, "to_dict", forged_evidence.to_dict)
+
+        receipt = ScopedInvocationStartReceiptV3(
+            event_id="event-scoped-invocation-started-1",
+            stream_id="session:" + evidence.session_id,
+            sequence=3,
+            global_position=17,
+            evidence=evidence,
+        )
+        forged_receipt = replace(receipt, event_id="event-forged")
+        object.__setattr__(receipt, "to_dict", forged_receipt.to_dict)
+
+        wire = ScopedInvocationStartReceiptV3.to_dict(receipt)
+        self.assertEqual(wire["eventId"], "event-scoped-invocation-started-1")
+        self.assertEqual(wire["evidence"]["workerId"], evidence.worker_id)  # type: ignore[index]
+
+        claim = ScopedInvocationStartClaimedV3(receipt, valid_scoped_lease())
+        self.assertEqual(claim.receipt.event_id, "event-scoped-invocation-started-1")
+        self.assertEqual(claim.receipt.evidence.worker_id, evidence.worker_id)
+
     def test_receipt_coordinates_and_exact_wire_shape_fail_closed(self) -> None:
         receipt = valid_scoped_start_receipt()
         baseline = receipt.to_dict()

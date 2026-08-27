@@ -1685,7 +1685,9 @@ class ScopedInvocationStartReceiptV3:
             raise TypeError(
                 "scoped start receipt evidence must be exact ScopedInvocationStartEvidenceV3"
             )
-        evidence = ScopedInvocationStartEvidenceV3.from_dict(self.evidence.to_dict())
+        evidence = ScopedInvocationStartEvidenceV3.from_dict(
+            ScopedInvocationStartEvidenceV3.to_dict(self.evidence)
+        )
         if stream_id != "session:" + evidence.session_id:
             raise ValueError("scoped start receipt streamId does not match its evidence sessionId")
         object.__setattr__(self, "event_id", event_id)
@@ -1703,7 +1705,7 @@ class ScopedInvocationStartReceiptV3:
             "streamId": self.stream_id,
             "sequence": self.sequence,
             "globalPosition": self.global_position,
-            "evidence": self.evidence.to_dict(),
+            "evidence": ScopedInvocationStartEvidenceV3.to_dict(self.evidence),
         }
 
     @classmethod
@@ -1727,7 +1729,7 @@ def _scoped_invocation_start_receipt_snapshot(
 ) -> ScopedInvocationStartReceiptV3:
     if type(receipt) is not ScopedInvocationStartReceiptV3:
         raise TypeError("receipt must be an exact ScopedInvocationStartReceiptV3")
-    return ScopedInvocationStartReceiptV3.from_dict(receipt.to_dict())
+    return ScopedInvocationStartReceiptV3.from_dict(ScopedInvocationStartReceiptV3.to_dict(receipt))
 
 
 def _validate_scoped_start_lease_binding(
