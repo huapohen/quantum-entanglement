@@ -57,6 +57,7 @@ _ENABLED_CONFIG_KEYS = frozenset(
         "QE_NATIVE_IM_READ_PATH",
         "QE_NATIVE_IM_CREDENTIAL_REF",
         "QE_NATIVE_IM_VERIFICATION_SECRET_REF",
+        "QE_NATIVE_IM_VERIFICATION_KEY_ID",
         "QE_NATIVE_IM_PAGE_LIMIT",
         "QE_NATIVE_IM_MAX_RESPONSE_BYTES",
         "QE_NATIVE_IM_CONNECT_TIMEOUT_MS",
@@ -299,6 +300,7 @@ class NativeIMInboundOnlyConfigV1:
     read_path: CanonicalAbsolutePath = field(repr=False)
     credential_ref: SecretRef = field(repr=False)
     verification_secret_ref: SecretRef = field(repr=False)
+    verification_key_id: str
     page_limit: int
     max_response_bytes: int
     connect_timeout_ms: int
@@ -327,6 +329,7 @@ class NativeIMInboundOnlyConfigV1:
             (self.tenant_id, "QE_NATIVE_IM_TENANT_ID"),
             (self.workspace_id, "QE_NATIVE_IM_WORKSPACE_ID"),
             (self.channel_id, "QE_NATIVE_IM_CHANNEL_ID"),
+            (self.verification_key_id, "QE_NATIVE_IM_VERIFICATION_KEY_ID"),
         ):
             try:
                 _id(value, field_name)
@@ -446,6 +449,7 @@ class NativeIMInboundOnlyConfigV1:
                 self.read_path.fingerprint,
                 self.credential_ref.fingerprint,
                 self.verification_secret_ref.fingerprint,
+                self.verification_key_id,
                 str(self.page_limit),
                 str(self.max_response_bytes),
                 str(self.connect_timeout_ms),
@@ -582,6 +586,7 @@ class NativeIMSandboxConfig:
             read_path=read_path,
             credential_ref=credential_ref,
             verification_secret_ref=verification_ref,
+            verification_key_id=values["QE_NATIVE_IM_VERIFICATION_KEY_ID"],
             page_limit=cls._parse_integer(
                 values["QE_NATIVE_IM_PAGE_LIMIT"], "QE_NATIVE_IM_PAGE_LIMIT"
             ),
