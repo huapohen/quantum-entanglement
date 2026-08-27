@@ -54,6 +54,10 @@ drain, stop, and effect cleanup in reverse dependency/registration order. Cleanu
 failures and returns their joined error; repeated stop is idempotent. Lifecycle calls have manifest-owned
 deadlines and plugins must honor the supplied cancellation context.
 
+Effect scopes transition `open -> closing -> closed`. Shutdown closes every scope before the first Drain call,
+so Drain, Stop, concurrent cleanup, and cleanup callbacks cannot register effects outside the cleanup snapshot.
+Failed callbacks remain in the closed-for-registration scope and are the only callbacks retried by a later Stop.
+
 Only factories compiled into this binary are supported in this stage. This boundary does not load arbitrary Go
 plugins, does not permit plugin manifests to self-attest trust, and does not yet perform live hot reload.
 

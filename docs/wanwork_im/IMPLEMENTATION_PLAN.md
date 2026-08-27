@@ -29,6 +29,7 @@
 - effective profile/bundle/tenant overlay 与 capability diff；
 - host-owned manifest/admission、declarative config schema 与 Secret claim admission；
 - Registry builder/freeze/runtime 分期、完整 definition graph 重验与 late registration 拒绝；
+- effect scope `open/closing/closed`、Drain 前关闭注册与失败 cleanup 精确重试；
 - durable event port、`EventToAppend/StoredEvent`、opaque cursor、deterministic fake 和 projection skeleton；
 - health/readiness 与 graceful shutdown；
 - unit、race、lint 和 secret canary。

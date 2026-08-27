@@ -71,6 +71,7 @@ Atomic Result Authority 的最大强度参考，不再作为提前接入前的�
 | `research/23_plugin_manifest_admission_implementation.md` | W1 P0-3 历史实现证据：`ed9a709` | host-computed manifest digest、PackageRecord exact admission、Effective v2 与 frozen activation；当前 Secret 增量由专题 24 接续 |
 | `research/24_secret_claim_admission_implementation.md` | W1 P0-4 当前实现证据：`211ada7` | `2output` Secret/credential/plugin 证据到 claim admission、Effective v3、anti-replay/revocation/canary/golden 门禁及 action-time JIT lease 未完成边界 |
 | `research/25_plugin_registry_freeze_implementation.md` | W1 P1-1 当前实现证据：`e2f82be` | Registry builder→Freeze→runtime 合同、完整 definition graph 重验、不可变快照、late registration 拒绝与 concurrent race 证据 |
+| `research/26_plugin_effect_scope_shutdown_implementation.md` | W1 P1-2 当前实现证据：`0f00b47` | effect scope `open→closing→closed`、Drain 前关闭注册、迟到/递归 cleanup 拒绝与失败项精确重试 |
 
 ## 已归档截图
 

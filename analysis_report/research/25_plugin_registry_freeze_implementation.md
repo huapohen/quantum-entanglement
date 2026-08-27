@@ -146,6 +146,5 @@ git diff --check
 
 ## 8. 下一步
 
-W1 下一个独立提交处理 effect scope `open -> closing -> closed`：cleanup 一旦开始，迟到的
-`Effects.Defer` 必须失败，避免插件在资源回收快照之后注册永不清理的新 effect。随后处理 Host callback
-持锁/reentrancy 和忽略 context 的隔离边界。
+W1 effect scope `open -> closing -> closed` 已在 `0f00b47` 完成，证据见专题 26。下一个独立提交
+处理 Host callback 持锁/reentrancy，再处理忽略 context 的隔离边界。

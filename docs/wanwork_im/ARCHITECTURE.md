@@ -274,6 +274,10 @@ deadline 收敛。启动或 ready 失败按逆依赖 drain→stop→host-owned e
 或 `failed`，不再另造含义不清的 `dispose` 状态；任何阶段失败都不能残留 route、listener、timer、
 lease 或 provider handle。
 
+Effect scope 在 shutdown 的第一个 Drain 前统一从 `open` 转为 `closing`，此后任何 `Defer` 失败；
+cleanup 失败只保留失败项并允许精确重试，全部成功后进入 `closed`。插件不能在 Drain/Stop/callback
+期间注册逃出本轮 cleanup snapshot 的新资源。
+
 V1 预留插件种类：
 
 - `auth.clerk.v1`、`auth.fake.v1`；
