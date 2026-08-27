@@ -249,6 +249,11 @@ def verify() -> int:
     errors: list[str] = []
     try:
         manifest = _load_json(MANIFEST_PATH.read_bytes(), filename="manifest.json")
+        _assert_equal(
+            set(manifest),
+            {"idempotencyKey", "schemaVersion", "vectors"},
+            "manifest fields drift",
+        )
         _require_exact_type(
             manifest.get("schemaVersion"), int, "manifest schemaVersion must be an integer"
         )
@@ -311,8 +316,18 @@ def verify() -> int:
         if type(idempotency) is not dict:
             raise ValueError("manifest idempotencyKey must be an object")
         _assert_equal(
+            set(idempotency),
+            {"intentFilename", "value"},
+            "manifest idempotencyKey fields drift",
+        )
+        _assert_equal(
             idempotency.get("intentFilename"), "action_intent.json", "idempotency intent drift"
         )
+        _require_exact_type(
+            idempotency.get("value"), str, "manifest idempotencyKey value must be a string"
+        )
+        if re.fullmatch(r"[0-9a-f]{64}", idempotency["value"]) is None:
+            raise ValueError("manifest idempotencyKey value must be lowercase SHA-256")
         intent_document = documents["action_intent.json"]
         body = {
             "actionId": intent_document["actionId"],

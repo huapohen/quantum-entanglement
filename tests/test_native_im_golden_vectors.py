@@ -136,6 +136,8 @@ def test_committed_idempotency_key_uses_only_the_frozen_exact_body() -> None:
 
 
 def test_golden_verifier_is_read_only() -> None:
+    verifier_path = REPOSITORY_ROOT / "scripts" / "verify_native_im_v1_golden.py"
+    verifier_before = verifier_path.read_bytes()
     before = {path.name: path.read_bytes() for path in sorted(FIXTURE_DIRECTORY.iterdir())}
     environment = dict(os.environ)
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -153,6 +155,7 @@ def test_golden_verifier_is_read_only() -> None:
     assert completed.stdout.strip() == "native IM V1 golden vectors verified: 23 vectors"
     after = {path.name: path.read_bytes() for path in sorted(FIXTURE_DIRECTORY.iterdir())}
     assert after == before
+    assert verifier_path.read_bytes() == verifier_before
 
     rejected_write = subprocess.run(
         [sys.executable, "scripts/verify_native_im_v1_golden.py", "--write"],
@@ -166,3 +169,4 @@ def test_golden_verifier_is_read_only() -> None:
     assert rejected_write.returncode != 0
     assert "--write" not in rejected_write.stdout
     assert {path.name: path.read_bytes() for path in sorted(FIXTURE_DIRECTORY.iterdir())} == before
+    assert verifier_path.read_bytes() == verifier_before
