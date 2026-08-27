@@ -236,7 +236,7 @@ SHA-256 短指纹，不得输出完整 Key。
 - exactly-once 外部副作用已经实现；
 - SQLite 结果图已经由原子 writer 写入；
 - 多租户生产身份、KMS、HA、RPO/RTO、容量、SLO 或 Kubernetes 已验证；
-- Gate A–E 任一已经关闭；
+- Gate A–E 任一已经开放或通过；
 - 产品达到生产商用级别。
 
 更完整的生产边界以 `docs/production/CURRENT_READINESS.md`、
