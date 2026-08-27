@@ -12,6 +12,16 @@ from .logging import (
     SafeLogCatalog,
     SafeLogger,
 )
+from .native_im_config import (
+    CanonicalAbsolutePath,
+    CanonicalHTTPSOrigin,
+    NativeIMConfigurationError,
+    NativeIMConfigV1,
+    NativeIMDisabledConfigV1,
+    NativeIMInboundOnlyConfigV1,
+    NativeIMSandboxConfig,
+    parse_approved_ip_addresses,
+)
 from .redaction import RedactionPolicy, Redactor
 from .secrets import (
     FileSecretProvider,
@@ -25,10 +35,17 @@ from .secrets import (
 
 __all__ = [
     "ConfigurationError",
+    "CanonicalAbsolutePath",
+    "CanonicalHTTPSOrigin",
     "FileSecretProvider",
     "LogEventSchema",
     "LogField",
     "LogFieldKind",
+    "NativeIMConfigV1",
+    "NativeIMConfigurationError",
+    "NativeIMDisabledConfigV1",
+    "NativeIMInboundOnlyConfigV1",
+    "NativeIMSandboxConfig",
     "RuntimeMode",
     "RedactionPolicy",
     "Redactor",
@@ -41,4 +58,5 @@ __all__ = [
     "SafeLogCatalog",
     "SafeLogger",
     "ServiceConfig",
+    "parse_approved_ip_addresses",
 ]
