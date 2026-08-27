@@ -8,7 +8,7 @@
 
 | 文件 | 状态 | 本地库存口径 | 说明 |
 |---|---|---|---|
-| `checkpoint-20260827-notion-v2-readback-final.json` | `current` | 44 source、45 source-target、27 images | Notion v2 清单覆盖 28 个固定源页面、29 个固定本地源文件，并单列 1 个自引用规避的派生分支目录页；29 页均已回读。Notion 诊断无 extra/missing/stale；已执行 `--verify` |
+| `checkpoint-20260828-native-im-early-integration-readback.json` | `current` | 以文件内 inventory 为准 | `f99f176` 提前接入批次：33 页 Notion 镜像台账、两张新页面、四张治理页更新、冻结合同原样回读、备份分支/标签与 E0–E5 marker；生成后执行 `--verify` |
 
 `current` 是本目录唯一应被当前文档、发布检查和人工审阅当作 latest 的 checkpoint。生成与验证
 命令见仓库根 [`README.md`](../../README.md)；不得在生成后继续修改它所覆盖的报告、语雀传输源、
@@ -18,6 +18,7 @@
 
 | 文件 | 状态 | 生成 commit | 历史边界 |
 |---|---|---|---|
+| `checkpoint-20260827-notion-v2-readback-final.json` | `superseded` | `1d399e5` 之前的同步基线 | 29 页固定库存与派生分支目录的最终 v2 回读；早于 V1 合同、提前接入检查点和 E0–E5 执行计划进入 33 页镜像 |
 | `checkpoint-20260827-notion-v2-readback.json` | `superseded` | `fdd4bc9` | 首次 v2 回读库存；曾把最终生成的分支目录纳入固定摘要，形成目录/manifest 自引用风险，已由 final 版本改为独立派生页登记 |
 | `checkpoint-20260827-v0-stage-acceptance-final.json` | `superseded` | `d67036a` | 审计修正后的最终 v0版阶段库存；早于用户重新授权 Notion 全量同步、29 页回读和 v2 manifest |
 | `checkpoint-20260827-v0-stage-acceptance.json` | `superseded` | `d06af05` | 首次 v0版阶段验收库存；早于 Gate 措辞修正、远端镜像 opt-in 政策及活动报告路径收口 |

@@ -15,15 +15,17 @@
 - 当前实现证据：<https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853?pvs=204>
 - 原生 IM 接入决策：<https://app.notion.com/p/3c9ead4b996e81638c43e48ecc2e0bcc?pvs=204>
 - 原生 IM V1 合同：<https://app.notion.com/p/3c9ead4b996e8114985cce2cc5af2b63?pvs=204>
-- 最近完整全量同步：2026-08-27；29 个固定页面全部回读通过。随后新增接入决策页和 V1 合同页，
-  远端当前共 31 页；合同正文与原始 Markdown 附件已回读确认。
-- `1d399e5` 同步库存 marker 已写入首页、接入决策和合同页，但该三页最后一次 marker fetch 尚未
-  形成新的本地 readback checkpoint。
-- 提前接入检查点与详细执行计划已进入 GitHub；Notion 新增/更新批次因当前连接器 OAuth
-  `invalid_client` 暂待重新授权，不能声明已经同步。
+- 提前接入检查点：<https://app.notion.com/p/3c9ead4b996e8103b53bf10409f08e1d?pvs=204>
+- 提前接入执行计划：<https://app.notion.com/p/3c9ead4b996e818fb220c66126181863?pvs=204>
+- 最近稳定批次同步：2026-08-28；32 个固定页面与 1 个派生分支目录页共 33 页。项目首页、接入
+  决策、下一阶段计划、分支目录、冻结合同、提前接入检查点与 E0–E5 计划已联合回读。
+- 当前 Notion 同步基线为 GitHub `main@f99f176bfa9cd14abf7e3c51d971b9682dc49230`；新建两页的
+  完整语义镜像、Notion 原生表格/图、关联页、原始 Markdown 附件和远端 marker 均已确认。
+- 冻结合同正文没有为同步台账而改写；其本地原始文件 SHA-256 为
+  `99031ad243112122e987e84658ff93daf33b3285ea1468039f9d59dc8048167a`。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
-- 当前已验证远端内容与最新 GitHub `main` 之间存在上述待同步增量；语雀仍未操作。
+- 当前批次已完成 Notion 写入和远端回读；语雀仍未操作。
 
 ## 当前阶段交付
 
