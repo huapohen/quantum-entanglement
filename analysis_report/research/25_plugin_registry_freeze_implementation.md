@@ -146,5 +146,6 @@ git diff --check
 
 ## 8. 下一步
 
-W1 effect scope `open -> closing -> closed` 已在 `0f00b47` 完成，证据见专题 26。下一个独立提交
-处理 Host callback 持锁/reentrancy，再处理忽略 context 的隔离边界。
+W1 effect scope `open -> closing -> closed` 已在 `0f00b47` 完成，证据见专题 26；Host callback
+持锁/reentrancy 已在 `3b8e02e` 完成，证据见专题 27。下一个独立提交处理 callback panic，再冻结
+忽略 context 时只能依靠进程隔离强制终止的边界。

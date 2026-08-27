@@ -278,6 +278,11 @@ Effect scope 在 shutdown 的第一个 Drain 前统一从 `open` 转为 `closing
 cleanup 失败只保留失败项并允许精确重试，全部成功后进入 `closed`。插件不能在 Drain/Stop/callback
 期间注册逃出本轮 cleanup snapshot 的新资源。
 
+Host mutex 只用于校验和发布 `new/starting/ready/stopping/stopped/failed` 与 started snapshot，不在锁内
+调用 Configure/Start/Ready/Drain/Stop/effect cleanup。`starting`/`stopping` 同时是唯一 lifecycle owner
+claim；callback 内查询 State 不死锁，误重入或并发 Start/Stop 立即失败，不能抢占 rollback/cleanup。
+这只解决可信内建插件的进程内锁纪律，不替代第三方代码隔离，也不能强杀忽略 context 的 callback。
+
 V1 预留插件种类：
 
 - `auth.clerk.v1`、`auth.fake.v1`；
