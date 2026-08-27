@@ -96,25 +96,32 @@ func (host *Host) State() HostState {
 
 func (host *Host) Start(ctx context.Context) error {
 	host.mu.Lock()
-	defer host.mu.Unlock()
 	if host.state != HostStateNew {
+		host.mu.Unlock()
 		return ErrInvalidLifecycle
 	}
 	host.state = HostStateStarting
+	host.mu.Unlock()
 
 	configured := make([]runningPlugin, 0, len(host.activation))
 	for _, selected := range host.activation {
 		if selected.factory == nil {
+			host.mu.Lock()
 			host.state = HostStateFailed
+			host.mu.Unlock()
 			return fmt.Errorf("plugin %s: %w", selected.id, ErrMissingFactory)
 		}
 		instance, configureErr := selected.factory.Configure(cloneConfig(selected.config))
 		if configureErr != nil {
+			host.mu.Lock()
 			host.state = HostStateFailed
+			host.mu.Unlock()
 			return fmt.Errorf("configure plugin %s: %w", selected.id, configureErr)
 		}
 		if instance == nil {
+			host.mu.Lock()
 			host.state = HostStateFailed
+			host.mu.Unlock()
 			return fmt.Errorf("configure plugin %s: %w", selected.id, ErrMissingFactory)
 		}
 		configured = append(configured, runningPlugin{
@@ -126,7 +133,9 @@ func (host *Host) Start(ctx context.Context) error {
 	}
 
 	for index := range configured {
+		host.mu.Lock()
 		host.started = append(host.started, configured[index])
+		host.mu.Unlock()
 		if startErr := callWithTimeout(
 			ctx,
 			configured[index].timeouts.Start,
@@ -152,7 +161,9 @@ func (host *Host) Start(ctx context.Context) error {
 			)
 		}
 	}
+	host.mu.Lock()
 	host.state = HostStateReady
+	host.mu.Unlock()
 	return nil
 }
 
@@ -213,15 +224,21 @@ func activationSecretBindingsMatchRegistry(
 
 func (host *Host) Stop(ctx context.Context) error {
 	host.mu.Lock()
-	defer host.mu.Unlock()
 	if host.state == HostStateStopped {
+		host.mu.Unlock()
 		return nil
 	}
 	if host.state != HostStateReady && !(host.state == HostStateFailed && len(host.started) > 0) {
+		host.mu.Unlock()
 		return ErrInvalidLifecycle
 	}
 	host.state = HostStateStopping
-	err := stopPlugins(ctx, host.started)
+	started := slices.Clone(host.started)
+	host.mu.Unlock()
+
+	err := stopPlugins(ctx, started)
+	host.mu.Lock()
+	defer host.mu.Unlock()
 	if err != nil {
 		host.state = HostStateFailed
 		return err
@@ -232,7 +249,14 @@ func (host *Host) Stop(ctx context.Context) error {
 }
 
 func (host *Host) failAndRollback(ctx context.Context, cause error) error {
-	rollbackErr := stopPlugins(ctx, host.started)
+	host.mu.Lock()
+	host.state = HostStateStopping
+	started := slices.Clone(host.started)
+	host.mu.Unlock()
+
+	rollbackErr := stopPlugins(ctx, started)
+	host.mu.Lock()
+	defer host.mu.Unlock()
 	if rollbackErr == nil {
 		host.started = nil
 	}

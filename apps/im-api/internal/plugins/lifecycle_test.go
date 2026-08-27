@@ -42,6 +42,145 @@ func TestHostStartsAndStopsInDeterministicReverseOrder(t *testing.T) {
 	}
 }
 
+func TestLifecycleCallbacksObserveStateWithoutHostLockAndRejectReentrancy(t *testing.T) {
+	t.Parallel()
+
+	observer := &lifecycleStateObserver{}
+	host := directLifecycleHost(lifecycleFactoryFunc(func(PluginConfig) (Instance, error) {
+		if err := observer.observe("configure", HostStateStarting); err != nil {
+			return nil, err
+		}
+		return &observingLifecycleInstance{observer: observer}, nil
+	}))
+	observer.host = host
+
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- host.Start(context.Background())
+	}()
+	if err := awaitLifecycleResult(t, "start callbacks", startDone); err != nil {
+		t.Fatalf("start host: %v", err)
+	}
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- host.Stop(context.Background())
+	}()
+	if err := awaitLifecycleResult(t, "stop callbacks", stopDone); err != nil {
+		t.Fatalf("stop host: %v", err)
+	}
+
+	want := []string{"configure", "start", "ready", "drain", "stop", "cleanup"}
+	if observed := observer.snapshot(); !slices.Equal(observed, want) {
+		t.Fatalf("observed callbacks = %v, want %v", observed, want)
+	}
+}
+
+func TestBlockedStartKeepsLifecycleStateObservableAndSingleOwned(t *testing.T) {
+	t.Parallel()
+
+	instance := newBlockingLifecycleInstance()
+	host := directLifecycleHost(lifecycleFactoryFunc(func(PluginConfig) (Instance, error) {
+		return instance, nil
+	}))
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- host.Start(context.Background())
+	}()
+	awaitLifecycleSignal(t, "plugin start", instance.startEntered)
+
+	if state := host.State(); state != HostStateStarting {
+		t.Fatalf("state during blocked start = %q, want %q", state, HostStateStarting)
+	}
+	concurrentStart := make(chan error, 1)
+	go func() {
+		concurrentStart <- host.Start(context.Background())
+	}()
+	if err := awaitLifecycleResult(t, "concurrent start", concurrentStart); !errors.Is(err, ErrInvalidLifecycle) {
+		t.Fatalf("concurrent start error = %v, want %v", err, ErrInvalidLifecycle)
+	}
+	concurrentStop := make(chan error, 1)
+	go func() {
+		concurrentStop <- host.Stop(context.Background())
+	}()
+	if err := awaitLifecycleResult(t, "stop during start", concurrentStop); !errors.Is(err, ErrInvalidLifecycle) {
+		t.Fatalf("stop during start error = %v, want %v", err, ErrInvalidLifecycle)
+	}
+
+	close(instance.startRelease)
+	if err := awaitLifecycleResult(t, "outer start", startDone); err != nil {
+		t.Fatalf("outer start: %v", err)
+	}
+	close(instance.drainRelease)
+	if err := host.Stop(context.Background()); err != nil {
+		t.Fatalf("stop host: %v", err)
+	}
+}
+
+func TestBlockedStopKeepsLifecycleStateObservableAndSingleOwned(t *testing.T) {
+	t.Parallel()
+
+	instance := newBlockingLifecycleInstance()
+	close(instance.startRelease)
+	host := directLifecycleHost(lifecycleFactoryFunc(func(PluginConfig) (Instance, error) {
+		return instance, nil
+	}))
+	if err := host.Start(context.Background()); err != nil {
+		t.Fatalf("start host: %v", err)
+	}
+
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- host.Stop(context.Background())
+	}()
+	awaitLifecycleSignal(t, "plugin drain", instance.drainEntered)
+	if state := host.State(); state != HostStateStopping {
+		t.Fatalf("state during blocked stop = %q, want %q", state, HostStateStopping)
+	}
+	concurrentStop := make(chan error, 1)
+	go func() {
+		concurrentStop <- host.Stop(context.Background())
+	}()
+	if err := awaitLifecycleResult(t, "concurrent stop", concurrentStop); !errors.Is(err, ErrInvalidLifecycle) {
+		t.Fatalf("concurrent stop error = %v, want %v", err, ErrInvalidLifecycle)
+	}
+	if calls := instance.drainCalls(); calls != 1 {
+		t.Fatalf("drain calls while blocked = %d, want 1", calls)
+	}
+
+	close(instance.drainRelease)
+	if err := awaitLifecycleResult(t, "outer stop", stopDone); err != nil {
+		t.Fatalf("outer stop: %v", err)
+	}
+	if calls := instance.drainCalls(); calls != 1 {
+		t.Fatalf("final drain calls = %d, want 1", calls)
+	}
+}
+
+func TestRollbackCallbacksObserveStoppingStateWithoutHostLock(t *testing.T) {
+	t.Parallel()
+
+	observer := &lifecycleStateObserver{}
+	host := directLifecycleHost(lifecycleFactoryFunc(func(PluginConfig) (Instance, error) {
+		return &rollbackObservingInstance{observer: observer}, nil
+	}))
+	observer.host = host
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- host.Start(context.Background())
+	}()
+	if err := awaitLifecycleResult(t, "rollback callbacks", startDone); err == nil ||
+		!strings.Contains(err.Error(), "force rollback") {
+		t.Fatalf("start error = %v, want forced rollback", err)
+	}
+	if state := host.State(); state != HostStateFailed {
+		t.Fatalf("state after rollback = %q, want %q", state, HostStateFailed)
+	}
+	want := []string{"drain", "stop", "cleanup"}
+	if observed := observer.snapshot(); !slices.Equal(observed, want) {
+		t.Fatalf("rollback callbacks = %v, want %v", observed, want)
+	}
+}
+
 func TestHostRollsBackPartialStartAndReadyFailures(t *testing.T) {
 	t.Parallel()
 
@@ -675,6 +814,171 @@ func (instance *fakeInstance) failure(call string) error {
 		return errors.New("injected one-time failure")
 	}
 	return nil
+}
+
+type lifecycleFactoryFunc func(PluginConfig) (Instance, error)
+
+func (lifecycleFactoryFunc) Manifest() Manifest {
+	return Manifest{}
+}
+
+func (factory lifecycleFactoryFunc) Configure(config PluginConfig) (Instance, error) {
+	return factory(config)
+}
+
+func directLifecycleHost(factory Factory) *Host {
+	return &Host{
+		activation: []activationEntry{{
+			id:      "direct.fake.v1",
+			factory: factory,
+			timeouts: LifecycleTimeouts{
+				Start: time.Second,
+				Ready: time.Second,
+				Drain: time.Second,
+				Stop:  time.Second,
+			},
+		}},
+		state: HostStateNew,
+	}
+}
+
+type lifecycleStateObserver struct {
+	host *Host
+	mu   sync.Mutex
+	seen []string
+}
+
+func (observer *lifecycleStateObserver) observe(callback string, want HostState) error {
+	if state := observer.host.State(); state != want {
+		return fmt.Errorf("%s observed state %q, want %q", callback, state, want)
+	}
+	if err := observer.host.Start(context.Background()); !errors.Is(err, ErrInvalidLifecycle) {
+		return fmt.Errorf("%s reentrant start: %w", callback, err)
+	}
+	if err := observer.host.Stop(context.Background()); !errors.Is(err, ErrInvalidLifecycle) {
+		return fmt.Errorf("%s reentrant stop: %w", callback, err)
+	}
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	observer.seen = append(observer.seen, callback)
+	return nil
+}
+
+func (observer *lifecycleStateObserver) snapshot() []string {
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	return slices.Clone(observer.seen)
+}
+
+type observingLifecycleInstance struct {
+	observer *lifecycleStateObserver
+}
+
+func (instance *observingLifecycleInstance) Start(_ context.Context, effects Effects) error {
+	if err := instance.observer.observe("start", HostStateStarting); err != nil {
+		return err
+	}
+	return effects.Defer("observe-cleanup", func(context.Context) error {
+		return instance.observer.observe("cleanup", HostStateStopping)
+	})
+}
+
+func (instance *observingLifecycleInstance) Ready(context.Context) error {
+	return instance.observer.observe("ready", HostStateStarting)
+}
+
+func (instance *observingLifecycleInstance) Drain(context.Context) error {
+	return instance.observer.observe("drain", HostStateStopping)
+}
+
+func (instance *observingLifecycleInstance) Stop(context.Context) error {
+	return instance.observer.observe("stop", HostStateStopping)
+}
+
+type blockingLifecycleInstance struct {
+	startEntered chan struct{}
+	startRelease chan struct{}
+	drainEntered chan struct{}
+	drainRelease chan struct{}
+	drainMu      sync.Mutex
+	drains       int
+}
+
+func newBlockingLifecycleInstance() *blockingLifecycleInstance {
+	return &blockingLifecycleInstance{
+		startEntered: make(chan struct{}),
+		startRelease: make(chan struct{}),
+		drainEntered: make(chan struct{}),
+		drainRelease: make(chan struct{}),
+	}
+}
+
+func (instance *blockingLifecycleInstance) Start(context.Context, Effects) error {
+	close(instance.startEntered)
+	<-instance.startRelease
+	return nil
+}
+
+func (*blockingLifecycleInstance) Ready(context.Context) error { return nil }
+
+func (instance *blockingLifecycleInstance) Drain(context.Context) error {
+	instance.drainMu.Lock()
+	instance.drains++
+	instance.drainMu.Unlock()
+	close(instance.drainEntered)
+	<-instance.drainRelease
+	return nil
+}
+
+func (*blockingLifecycleInstance) Stop(context.Context) error { return nil }
+
+func (instance *blockingLifecycleInstance) drainCalls() int {
+	instance.drainMu.Lock()
+	defer instance.drainMu.Unlock()
+	return instance.drains
+}
+
+type rollbackObservingInstance struct {
+	observer *lifecycleStateObserver
+}
+
+func (instance *rollbackObservingInstance) Start(_ context.Context, effects Effects) error {
+	if err := effects.Defer("observe-rollback-cleanup", func(context.Context) error {
+		return instance.observer.observe("cleanup", HostStateStopping)
+	}); err != nil {
+		return err
+	}
+	return errors.New("force rollback")
+}
+
+func (*rollbackObservingInstance) Ready(context.Context) error { return nil }
+
+func (instance *rollbackObservingInstance) Drain(context.Context) error {
+	return instance.observer.observe("drain", HostStateStopping)
+}
+
+func (instance *rollbackObservingInstance) Stop(context.Context) error {
+	return instance.observer.observe("stop", HostStateStopping)
+}
+
+func awaitLifecycleSignal(t *testing.T, label string, signal <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", label)
+	}
+}
+
+func awaitLifecycleResult(t *testing.T, label string, result <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", label)
+		return nil
+	}
 }
 
 func countCalls(calls []string, target string) int {
