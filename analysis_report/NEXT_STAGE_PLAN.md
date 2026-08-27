@@ -5,6 +5,11 @@
 > 当前状态：**计划已冻结，尚未开始下一阶段实现，等待阶段验收/新增参考项目。**  
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
+> 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
+> 不是“完成全部内容后才能开始 IM”的串行清单。原生 IM 的接入前硬要求、可延期加固和接入后
+> TODO 以 [`NATIVE_IM_INTEGRATION_PREREQUISITES.md`](./NATIVE_IM_INTEGRATION_PREREQUISITES.md)
+> 为准；两份文档都不授权真实外部发送。
+
 ## 1. 下一阶段的唯一目标
 
 把当前 capability-free 的 result contract 连接到一个真正可验证的 SQLite durable graph，

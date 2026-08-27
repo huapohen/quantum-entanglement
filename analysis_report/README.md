@@ -26,8 +26,12 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
+| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 决策已冻结，待实施 | 原生 IM 接入的 P0–P3 必做里程碑、验收清单、NO-GO 条件及接入后 TODO 分界 |
 
-当前可以安全停下；新增参考项目综合评估完成前，不进入下一阶段 writer 实现。
+当前可以安全停下。后续若启动原生 IM 路线，以
+`NATIVE_IM_INTEGRATION_PREREQUISITES.md` 作为接入顺序与范围的决策源；
+`NEXT_STAGE_PLAN.md` 继续作为 Atomic Result Authority 的最大强度实现参考，不再把其中全部
+加固项解释为原生 IM 专用沙箱介入前置。
 
 ## 专题研究
 
