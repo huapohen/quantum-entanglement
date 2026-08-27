@@ -53,6 +53,10 @@ class ReportSyncBundleTests(unittest.TestCase):
             "analysis_report/multi_agent_collaboration_report.md",
             b"# Collaboration\n",
         )
+        self._write(
+            "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
+            b"# Native IM integration prerequisites\n",
+        )
         self._write("analysis_report/NEXT_STAGE_PLAN.md", b"# Next stage\n")
         self._write(
             "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md",
@@ -219,6 +223,7 @@ class ReportSyncBundleTests(unittest.TestCase):
             target for path, target in pages if path == "analysis_report/research/00_scope.md"
         }
         self.assertEqual(canonical_targets, {"notion", "yuque"})
+
         self.assertEqual(
             pages[("analysis_report/research/00_scope.md", "yuque")]["targetStatus"],
             "historical_manifest_claim_digest_match",
@@ -257,13 +262,33 @@ class ReportSyncBundleTests(unittest.TestCase):
             {"unmanifestedPolicy": "fail-closed"},
         )
         source_summary = cast(dict[str, Any], first["sourceSummary"])
-        self.assertEqual(source_summary["count"], 10)
-        self.assertEqual(source_summary["sourceTargetCount"], 11)
-        self.assertEqual(source_summary["notionTargetCount"], 9)
+        self.assertEqual(source_summary["count"], 11)
+        self.assertEqual(source_summary["sourceTargetCount"], 12)
+        self.assertEqual(source_summary["notionTargetCount"], 10)
         self.assertEqual(source_summary["yuqueTargetCount"], 2)
 
         path = self._save_bundle(first)
         self.assertEqual(verify_report_sync_bundle(self.repository, path), first)
+
+    def test_native_im_integration_decision_is_an_allowlisted_canonical_source(self) -> None:
+        path = "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md"
+        self._write(path, b"# Native IM integration prerequisites\n")
+        manifest_path = self.repository / "analysis_report/notion_sync_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["pages"].append(
+            {
+                "key": "native-im-integration-prerequisites",
+                "localFiles": [{"path": path, "sha256": self._raw_hash(path)}],
+                "readback": {"verified": True},
+            }
+        )
+        self._write_json("analysis_report/notion_sync_manifest.json", manifest)
+
+        target = self._source_targets(generate_report_sync_bundle(self.repository))[
+            (path, "notion")
+        ]
+        self.assertEqual(target["targetPageKey"], "native-im-integration-prerequisites")
+        self.assertEqual(target["targetStatus"], "historical_manifest_claim_digest_match")
 
     def test_notion_manifest_v2_remote_readback_is_accepted(self) -> None:
         manifest_path = self.repository / "analysis_report/notion_sync_manifest.json"

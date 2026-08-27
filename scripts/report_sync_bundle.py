@@ -155,6 +155,7 @@ _EXPLICIT_CREDENTIAL_PLACEHOLDERS = frozenset(
 _ENVIRONMENT_REFERENCE_PATTERN = re.compile(r"(?:\$[A-Z][A-Z0-9_]*|\$\{[A-Z][A-Z0-9_]*\})")
 _CANONICAL_EXACT_PATHS = frozenset(
     {
+        "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
         "analysis_report/NEXT_STAGE_PLAN.md",
         "analysis_report/README.md",
         "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md",
@@ -963,6 +964,7 @@ def _collect_sources(
     session: _PinnedReadSession,
 ) -> tuple[list[SourceFile], dict[str, SourceFile]]:
     paths: list[tuple[str, str]] = [
+        ("canonical-source", "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md"),
         ("canonical-source", "analysis_report/NEXT_STAGE_PLAN.md"),
         ("canonical-source", "analysis_report/README.md"),
         ("canonical-source", "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md"),
