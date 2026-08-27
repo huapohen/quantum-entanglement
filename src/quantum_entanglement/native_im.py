@@ -233,6 +233,25 @@ _ACTION_INTENT_FIELDS = {
     "causationId",
     "traceparent",
 }
+_ACTION_COMMAND_FIELDS = {
+    "schemaVersion",
+    "commandId",
+    "intent",
+    "intentDigest",
+    "idempotencyKey",
+    "authorizationDecisionId",
+    "authorizationRevision",
+    "approvalDecisionId",
+    "approvalRevision",
+    "policyRevision",
+    "capabilityRevision",
+    "capabilityDigest",
+    "authorizedAt",
+    "expiresAt",
+    "correlationId",
+    "causationId",
+    "traceparent",
+}
 
 _WireT = TypeVar("_WireT", bound="_NativeIMWireValue")
 
@@ -1625,8 +1644,130 @@ def derive_im_idempotency_key_v1(intent: IMActionIntentV1) -> str:
     return hashlib.sha256(domain + _canonical_json_bytes(body)).hexdigest()
 
 
+@dataclass(frozen=True)
+class IMActionCommandV1(_NativeIMWireValue):
+    schema_version: int
+    command_id: str
+    intent: IMActionIntentV1 = field(repr=False)
+    intent_digest: str
+    idempotency_key: str
+    authorization_decision_id: str
+    authorization_revision: str
+    approval_decision_id: str | None
+    approval_revision: str | None
+    policy_revision: str
+    capability_revision: str
+    capability_digest: str
+    authorized_at: str
+    expires_at: str
+    correlation_id: str
+    causation_id: str
+    traceparent: str | None
+
+    _MODEL_NAME: ClassVar[str] = "IMActionCommandV1"
+    _MAX_CANONICAL_BYTES: ClassVar[int] = _MAX_ACTION_BYTES
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMActionCommandV1, "action command")
+        _schema_version(self.schema_version)
+        _id(self.command_id, "commandId")
+        _require_exact_model(self.intent, IMActionIntentV1, "intent")
+        _digest(self.intent_digest, "intentDigest")
+        if self.intent_digest != self.intent.canonical_digest():
+            raise ValueError("intentDigest does not match the exact action intent")
+        _digest(self.idempotency_key, "idempotencyKey")
+        if self.idempotency_key != derive_im_idempotency_key_v1(self.intent):
+            raise ValueError("idempotencyKey does not match the exact action scope")
+        for value, label in (
+            (self.authorization_decision_id, "authorizationDecisionId"),
+            (self.authorization_revision, "authorizationRevision"),
+            (self.policy_revision, "policyRevision"),
+            (self.capability_revision, "capabilityRevision"),
+            (self.correlation_id, "correlationId"),
+            (self.causation_id, "causationId"),
+        ):
+            _id(value, label)
+        _optional_id(self.approval_decision_id, "approvalDecisionId")
+        _optional_id(self.approval_revision, "approvalRevision")
+        if (self.approval_decision_id is None) != (self.approval_revision is None):
+            raise ValueError("approval decision ID and revision must be null or present together")
+        _digest(self.capability_digest, "capabilityDigest")
+        _timestamp(self.authorized_at, "authorizedAt")
+        _timestamp(self.expires_at, "expiresAt")
+        if self.authorized_at >= self.expires_at:
+            raise ValueError("authorizedAt must be earlier than expiresAt")
+        _optional_traceparent(self.traceparent, "traceparent")
+        if self.correlation_id != self.intent.correlation_id:
+            raise ValueError("correlationId does not match the action intent")
+        if self.causation_id != self.intent.action_id:
+            raise ValueError("causationId must equal the action ID")
+        if self.traceparent != self.intent.traceparent:
+            raise ValueError("traceparent does not match the action intent")
+        self.canonical_bytes()
+
+    def validate_capability_binding(self, capability: IMCapabilitySnapshotV1) -> None:
+        """Validate a snapshot binding after the caller has read it from a trusted store."""
+
+        _require_exact_model(capability, IMCapabilitySnapshotV1, "capability snapshot")
+        if _scope(self.intent.conversation) != _scope(capability):
+            raise ValueError("action command scope does not match its capability snapshot")
+        if self.capability_revision != capability.revision:
+            raise ValueError("capabilityRevision does not match its snapshot")
+        if self.capability_digest != capability.canonical_digest():
+            raise ValueError("capabilityDigest does not match its snapshot")
+        if not any(profile.operation == self.intent.operation for profile in capability.operations):
+            raise ValueError("capability snapshot does not enable the action operation")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "commandId": self.command_id,
+            "intent": self.intent.to_dict(),
+            "intentDigest": self.intent_digest,
+            "idempotencyKey": self.idempotency_key,
+            "authorizationDecisionId": self.authorization_decision_id,
+            "authorizationRevision": self.authorization_revision,
+            "approvalDecisionId": self.approval_decision_id,
+            "approvalRevision": self.approval_revision,
+            "policyRevision": self.policy_revision,
+            "capabilityRevision": self.capability_revision,
+            "capabilityDigest": self.capability_digest,
+            "authorizedAt": self.authorized_at,
+            "expiresAt": self.expires_at,
+            "correlationId": self.correlation_id,
+            "causationId": self.causation_id,
+            "traceparent": self.traceparent,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMActionCommandV1:
+        if cls is not IMActionCommandV1:
+            raise TypeError("action command decoder requires the exact V1 class")
+        body = _plain_dict(value, _ACTION_COMMAND_FIELDS, "action command")
+        return cls(
+            schema_version=body["schemaVersion"],
+            command_id=body["commandId"],
+            intent=IMActionIntentV1.from_dict(body["intent"]),
+            intent_digest=body["intentDigest"],
+            idempotency_key=body["idempotencyKey"],
+            authorization_decision_id=body["authorizationDecisionId"],
+            authorization_revision=body["authorizationRevision"],
+            approval_decision_id=body["approvalDecisionId"],
+            approval_revision=body["approvalRevision"],
+            policy_revision=body["policyRevision"],
+            capability_revision=body["capabilityRevision"],
+            capability_digest=body["capabilityDigest"],
+            authorized_at=body["authorizedAt"],
+            expires_at=body["expiresAt"],
+            correlation_id=body["correlationId"],
+            causation_id=body["causationId"],
+            traceparent=body["traceparent"],
+        )
+
+
 __all__ = [
     "IMAcceptanceLookupCapabilityV1",
+    "IMActionCommandV1",
     "IMActionIntentV1",
     "IMCapabilityRequestV1",
     "IMAttachmentRefV1",

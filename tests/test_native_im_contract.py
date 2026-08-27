@@ -8,6 +8,7 @@ import pytest
 
 from quantum_entanglement.native_im import (
     IMAcceptanceLookupCapabilityV1,
+    IMActionCommandV1,
     IMActionIntentV1,
     IMAttachmentRefV1,
     IMCapabilityRequestV1,
@@ -29,6 +30,7 @@ from quantum_entanglement.native_im import (
 
 SCHEMA = 1
 TIME = "2026-08-28T00:00:00.000001Z"
+LATER_TIME = "2026-08-28T00:00:01.000001Z"
 
 
 def conversation(**changes: object) -> IMConversationRefV1:
@@ -310,6 +312,34 @@ def action_intent(**changes: object) -> IMActionIntentV1:
     return IMActionIntentV1(**values)  # type: ignore[arg-type]
 
 
+def action_command(**changes: object) -> IMActionCommandV1:
+    intent = changes.pop("intent", action_intent())
+    snapshot = changes.pop("capability", capability())
+    assert type(intent) is IMActionIntentV1
+    assert type(snapshot) is IMCapabilitySnapshotV1
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "command_id": "test-command-1",
+        "intent": intent,
+        "intent_digest": intent.canonical_digest(),
+        "idempotency_key": derive_im_idempotency_key_v1(intent),
+        "authorization_decision_id": "test-authorization-decision-1",
+        "authorization_revision": "test-authorization-revision-1",
+        "approval_decision_id": None,
+        "approval_revision": None,
+        "policy_revision": "test-policy-revision-1",
+        "capability_revision": snapshot.revision,
+        "capability_digest": snapshot.canonical_digest(),
+        "authorized_at": TIME,
+        "expires_at": LATER_TIME,
+        "correlation_id": intent.correlation_id,
+        "causation_id": intent.action_id,
+        "traceparent": intent.traceparent,
+    }
+    values.update(changes)
+    return IMActionCommandV1(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -344,6 +374,11 @@ def action_intent(**changes: object) -> IMActionIntentV1:
         inbound_page(),
         action_intent(),
         action_intent(operation="edit_message", delegator_id="test-delegator-1"),
+        action_command(),
+        action_command(
+            approval_decision_id="test-approval-decision-1",
+            approval_revision="test-approval-revision-1",
+        ),
     ],
 )
 def test_reference_models_round_trip_through_dict_and_noncanonical_json(value: object) -> None:
@@ -1007,3 +1042,97 @@ def test_native_im_idempotency_key_changes_only_with_exact_action_scope() -> Non
     assert all(derive_im_idempotency_key_v1(item) != base_key for item in changed_scope_intents)
     with pytest.raises(TypeError, match="exact"):
         derive_im_idempotency_key_v1(object())  # type: ignore[arg-type]
+
+
+def test_action_command_binds_intent_digest_idempotency_and_trace_context() -> None:
+    command = action_command()
+    assert command.intent_digest == command.intent.canonical_digest()
+    assert command.idempotency_key == derive_im_idempotency_key_v1(command.intent)
+    assert command.causation_id == command.intent.action_id
+    for changes in (
+        {"intent_digest": "d" * 64},
+        {"idempotency_key": "d" * 64},
+        {"correlation_id": "test-correlation-other"},
+        {"causation_id": command.intent.causation_id},
+        {"traceparent": None},
+    ):
+        with pytest.raises(ValueError):
+            action_command(**changes)
+
+
+def test_action_command_requires_exact_approval_pair_and_time_window() -> None:
+    approved = action_command(
+        approval_decision_id="test-approval-decision-1",
+        approval_revision="test-approval-revision-1",
+    )
+    assert approved.approval_revision == "test-approval-revision-1"
+    for changes in (
+        {"approval_decision_id": "test-approval-decision-1"},
+        {"approval_revision": "test-approval-revision-1"},
+        {"authorized_at": LATER_TIME, "expires_at": TIME},
+        {"authorized_at": TIME, "expires_at": TIME},
+        {"expires_at": "2026-08-28T00:00:01Z"},
+    ):
+        with pytest.raises(ValueError):
+            action_command(**changes)
+    historical = action_command(
+        authorized_at="2020-01-01T00:00:00.000000Z",
+        expires_at="2020-01-01T00:00:01.000000Z",
+    )
+    assert IMActionCommandV1.from_dict(historical.to_dict()) == historical
+
+
+def test_action_command_validates_trusted_capability_binding() -> None:
+    snapshot = capability()
+    command = action_command(capability=snapshot)
+    command.validate_capability_binding(snapshot)
+    invalid_snapshots = (
+        capability(tenant_id="test-other-tenant"),
+        capability(workspace_id="test-other-workspace"),
+        capability(provider="qe.other-im.v1"),
+        capability(channel_id="test-other-channel"),
+        capability(revision="test-capability-other"),
+        capability(supports_threads=False),
+        capability(operations=(operation("edit_message"),)),
+    )
+    for invalid in invalid_snapshots:
+        with pytest.raises(ValueError):
+            command.validate_capability_binding(invalid)
+    missing_operation = capability(operations=(operation("edit_message"),))
+    command_bound_to_missing_operation = action_command(capability=missing_operation)
+    with pytest.raises(ValueError, match="does not enable"):
+        command_bound_to_missing_operation.validate_capability_binding(missing_operation)
+    with pytest.raises(TypeError, match="exact"):
+        command.validate_capability_binding(object())  # type: ignore[arg-type]
+
+
+def test_action_command_decode_is_exact_fresh_and_repr_safe() -> None:
+    command = action_command()
+    wire = command.to_dict()
+    for changed in (
+        {**wire, "future": True},
+        {key: item for key, item in wire.items() if key != "commandId"},
+        dict(wire, schemaVersion=True),
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            IMActionCommandV1.from_dict(changed)
+    with pytest.raises(ValueError, match="duplicate"):
+        IMActionCommandV1.from_json_bytes(b'{"schemaVersion":1,"schemaVersion":1}')
+    with pytest.raises(TypeError, match="exact"):
+        replace(command, intent=object())
+    wire["intent"]["content"]["segments"][0]["text"] = "mutated"  # type: ignore[index]
+    assert command.intent.content is not None
+    assert command.intent.content.segments[0].text == "hello\nworld"
+    assert "hello" not in repr(command)
+    assert "test-object-1" not in repr(command)
+
+
+def test_action_command_preflights_canonical_and_raw_byte_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = action_command().canonical_bytes()
+    monkeypatch.setattr(IMActionCommandV1, "_MAX_CANONICAL_BYTES", len(encoded) - 1)
+    with pytest.raises(ValueError, match="canonical byte limit"):
+        action_command()
+    with pytest.raises(ValueError, match="byte limit"):
+        IMActionCommandV1.from_json_bytes(encoded)
