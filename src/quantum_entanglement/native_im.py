@@ -41,6 +41,7 @@ _MAX_MESSAGE_SEGMENTS = 4_096
 _MAX_ATTACHMENTS = 64
 _MAX_INBOUND_ENVELOPES = 1_000
 _MAX_INBOUND_PAGE_BYTES = 16 * 1_024 * 1_024
+_MAX_ACTION_BYTES = 3 * 1_024 * 1_024
 
 _PARTICIPANT_KINDS = {"human", "agent", "service"}
 _SEGMENT_KINDS = {"text", "mention"}
@@ -213,6 +214,23 @@ _INBOUND_PAGE_FIELDS = {
     "hasMore",
     "capabilityRevision",
     "capabilityDigest",
+}
+_ACTION_INTENT_FIELDS = {
+    "schemaVersion",
+    "actionId",
+    "tenantId",
+    "workspaceId",
+    "actorId",
+    "delegatorId",
+    "conversation",
+    "operation",
+    "targetMessage",
+    "content",
+    "reaction",
+    "createdAt",
+    "correlationId",
+    "causationId",
+    "traceparent",
 }
 
 _WireT = TypeVar("_WireT", bound="_NativeIMWireValue")
@@ -1448,8 +1466,152 @@ class IMInboundPageV1(_NativeIMWireValue):
         )
 
 
+@dataclass(frozen=True)
+class IMActionIntentV1(_NativeIMWireValue):
+    schema_version: int
+    action_id: str
+    tenant_id: str
+    workspace_id: str
+    actor_id: str
+    delegator_id: str | None
+    conversation: IMConversationRefV1
+    operation: str
+    target_message: IMMessageRefV1 | None
+    content: IMMessageContentV1 | None = field(repr=False)
+    reaction: IMReactionRefV1 | None
+    created_at: str
+    correlation_id: str
+    causation_id: str
+    traceparent: str | None
+
+    _MODEL_NAME: ClassVar[str] = "IMActionIntentV1"
+    _MAX_CANONICAL_BYTES: ClassVar[int] = _MAX_ACTION_BYTES
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMActionIntentV1, "action intent")
+        _schema_version(self.schema_version)
+        for value, label in (
+            (self.action_id, "actionId"),
+            (self.tenant_id, "tenantId"),
+            (self.workspace_id, "workspaceId"),
+            (self.actor_id, "actorId"),
+            (self.correlation_id, "correlationId"),
+            (self.causation_id, "causationId"),
+        ):
+            _id(value, label)
+        _optional_id(self.delegator_id, "delegatorId")
+        _require_exact_model(self.conversation, IMConversationRefV1, "conversation")
+        _enum(self.operation, _OPERATIONS, "operation")
+        if self.target_message is not None:
+            _require_exact_model(self.target_message, IMMessageRefV1, "targetMessage")
+        if self.content is not None:
+            _require_exact_model(self.content, IMMessageContentV1, "content")
+        if self.reaction is not None:
+            _require_exact_model(self.reaction, IMReactionRefV1, "reaction")
+        self._validate_operation_matrix()
+        if (self.tenant_id, self.workspace_id) != (
+            self.conversation.tenant_id,
+            self.conversation.workspace_id,
+        ):
+            raise ValueError("action intent tenant/workspace does not match its conversation")
+        if (
+            self.target_message is not None
+            and self.target_message.conversation != self.conversation
+        ):
+            raise ValueError("target message conversation does not match the action intent")
+        expected_scope = _scope(self.conversation)
+        if self.reaction is not None and _scope(self.reaction) != expected_scope:
+            raise ValueError("reaction scope does not match the action intent")
+        if self.content is not None:
+            for attachment in self.content.attachments:
+                if _scope(attachment) != expected_scope:
+                    raise ValueError("attachment scope does not match the action intent")
+        _timestamp(self.created_at, "createdAt")
+        _optional_traceparent(self.traceparent, "traceparent")
+        self.canonical_bytes()
+
+    def _validate_operation_matrix(self) -> None:
+        if self.operation == "send_message":
+            valid = (
+                self.target_message is None and self.content is not None and self.reaction is None
+            )
+        elif self.operation == "edit_message":
+            valid = (
+                self.target_message is not None
+                and self.content is not None
+                and self.reaction is None
+            )
+        elif self.operation == "delete_message":
+            valid = (
+                self.target_message is not None and self.content is None and self.reaction is None
+            )
+        elif self.operation in {"add_reaction", "remove_reaction"}:
+            valid = (
+                self.target_message is not None
+                and self.content is None
+                and self.reaction is not None
+            )
+        else:  # pragma: no cover - the enum validator fails first; retain fail-closed locality.
+            valid = False
+        if not valid:
+            raise ValueError("action intent fields do not match its operation matrix")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "actionId": self.action_id,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "actorId": self.actor_id,
+            "delegatorId": self.delegator_id,
+            "conversation": self.conversation.to_dict(),
+            "operation": self.operation,
+            "targetMessage": (
+                None if self.target_message is None else self.target_message.to_dict()
+            ),
+            "content": None if self.content is None else self.content.to_dict(),
+            "reaction": None if self.reaction is None else self.reaction.to_dict(),
+            "createdAt": self.created_at,
+            "correlationId": self.correlation_id,
+            "causationId": self.causation_id,
+            "traceparent": self.traceparent,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMActionIntentV1:
+        if cls is not IMActionIntentV1:
+            raise TypeError("action intent decoder requires the exact V1 class")
+        body = _plain_dict(value, _ACTION_INTENT_FIELDS, "action intent")
+        return cls(
+            schema_version=body["schemaVersion"],
+            action_id=body["actionId"],
+            tenant_id=body["tenantId"],
+            workspace_id=body["workspaceId"],
+            actor_id=body["actorId"],
+            delegator_id=body["delegatorId"],
+            conversation=IMConversationRefV1.from_dict(body["conversation"]),
+            operation=body["operation"],
+            target_message=(
+                None
+                if body["targetMessage"] is None
+                else IMMessageRefV1.from_dict(body["targetMessage"])
+            ),
+            content=(
+                None if body["content"] is None else IMMessageContentV1.from_dict(body["content"])
+            ),
+            reaction=(
+                None if body["reaction"] is None else IMReactionRefV1.from_dict(body["reaction"])
+            ),
+            created_at=body["createdAt"],
+            correlation_id=body["correlationId"],
+            causation_id=body["causationId"],
+            traceparent=body["traceparent"],
+        )
+
+
 __all__ = [
     "IMAcceptanceLookupCapabilityV1",
+    "IMActionIntentV1",
     "IMCapabilityRequestV1",
     "IMAttachmentRefV1",
     "IMCapabilitySnapshotV1",
