@@ -27,6 +27,7 @@
 - config、request ID、business envelope、error taxonomy；
 - plugin lifecycle/registry；
 - effective profile/bundle/tenant overlay 与 capability diff；
+- host-owned manifest/admission、declarative config schema 与 Secret claim admission；
 - durable event port、`EventToAppend/StoredEvent`、opaque cursor、deterministic fake 和 projection skeleton；
 - health/readiness 与 graceful shutdown；
 - unit、race、lint 和 secret canary。
@@ -35,8 +36,12 @@ W1 Plugin Host 只允许随 host 编译、由平台准入的可信内建插件�
 Extension 任意代码生态。第三方可执行包不得加载进 API/Gateway/Plugin Host 主进程。
 
 出口：零 credential、零网络的 fake composition 可启动，所有业务错误 HTTP 200；effective snapshot
-具备 source/digest/golden/diff，首次启动与扩权等待外部 admission；所有 required plugins ready 前不
-暴露 route，半启动/ready 失败可逆序回滚；event fake 可确定性 replay/rebuild，但不宣称持久化。
+具备 source/digest/golden/diff，manifest/package/Secret claim 均经 host-owned admission，首次扩权需新的
+批准快照；raw locator 不进入 canonical/Factory，binding view 不具备 Secret 使用权；所有 required plugins
+ready 前不暴露 route，半启动/ready 失败可逆序回滚；event fake 可确定性 replay/rebuild，但不宣称持久化。
+
+W1 的 Secret admission 不等于 action-time credential。KMS/Keychain、跨重启持久 claim、JIT short-lived
+lease/token exchange、trusted executor 和 provider receipt 仍在 W2/W4/W7 按 Action Plane 实现。
 
 ### W2：IM Domain 与 PostgreSQL
 

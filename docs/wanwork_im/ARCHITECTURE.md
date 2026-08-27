@@ -251,12 +251,18 @@ profile -> ordered bundles -> tenant overlay -> EffectiveConfiguration
 ```
 
 相同 row ID 由后层整行替换，不做 deep merge；删除必须使用显式 tombstone；同层重复 row、跨租户
-overlay、prompt/CLI/home patch 一律拒绝。启动前生成 immutable effective snapshot；P0-4 secret admission
-必须保证普通 value 不能承载 secret、canonical 只保存 broker 验证过的安全 handle/fingerprint。Snapshot 生成
-source/digest、capability/egress/secret-ref/artifact/schema/binding/manifest/admission diff 和依赖 DAG；
-Attempt 保存最终 digest。Effective v2 的 row 同时绑定 manifest digest 与 admission revision；Host 构造时
+overlay、prompt/CLI/home patch 一律拒绝。启动前生成 immutable effective snapshot。P0-4 已把 raw Secret
+locator 限制在 trusted broker admission；配置只携带 claim digest/revision，Compose 重新校验 tenant、row、
+plugin、artifact、manifest、admission、schema、logical name、broker、purpose 和 audience，canonical/Factory
+只保存不可取 Secret 的 binding view/fingerprint。Snapshot 生成 source/digest、capability/egress/secret/
+artifact/schema/binding/manifest/admission diff 和依赖 DAG；Attempt 保存最终 digest。Effective v3 的 row
+同时绑定 manifest digest、admission revision 和 Secret binding view；Host 构造时
 冻结选中 factory/config/timeout 的 activation snapshot，启动不回读 Registry。未批准扩权、依赖循环、
 host API/schema 不兼容、manifest/admission/revocation 或其他 digest 漂移直接拒绝。
+
+当前 binding view 明确不是 bearer，也没有 material resolver。真实凭据使用必须在 W2/W4 Action Plane
+建立后，经 action-time policy、JIT short-lived lease/token exchange、trusted executor 和 provider receipt
+单独闭环；不得由 P0-4 的准入引用冒充。
 
 所有 required plugins 都 ready 后才开放组合 readiness/route；draining 立即拒绝新工作，对 in-flight 按
 deadline 收敛。启动或 ready 失败按逆依赖 drain→stop→host-owned effect cleanup，终态统一为 `stopped`

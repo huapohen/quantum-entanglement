@@ -6,7 +6,7 @@
 >
 > 开发分支：`dev_wanwork_quantum_entanglement`
 >
-> 审计基线：`73116ae`；Event contract 提交：`b666cbb`
+> 审计基线：`73116ae`；Event contract 提交：`b666cbb`；当前 Plugin Secret 增量：`211ada7`
 
 ## 1. 最终结论
 
@@ -205,9 +205,14 @@ Planner 不能直持 provider credential。Action Plane 与 Egress 互补，不�
 - `cbb7ecc fix: retain failed plugin cleanup for retry`：独立有界清理 context 与失败重试；
 - `ed9a709 fix: bind effective configs to admitted manifests`：host-computed manifest digest、approved
   manifest binding、admission revision、Effective v2、frozen activation snapshot；
+- `211ada7 fix: admit secret claims outside plugin composition`：raw locator 只进入准入 broker，
+  tenant/row/plugin/manifest/admission/schema/purpose/audience exact bind，Effective v3、撤销和 Secret
+  canary/golden/anti-replay 负向矩阵；
 - 专项普通测试、race 和 vet 通过。
 
-Plugin Host 四个 P0 已完成前三项。W1 接下来先完成 secret-reference admission P0，再处理 Registry
+Plugin Host 四个 P0 已全部完成。这里的“全部”只指 W1 已冻结的四个 P0，不包括 action-time JIT
+Secret lease、Registry freeze、第三方执行隔离或真实 connector。W1 接下来处理 Registry
 freeze/snapshot、effect scope 状态和 callback/timeout 等 P1，然后实现明确标记为 volatile fake 的 memory
 EventStore。W2 领域建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；不会用“文档
-已经写了”代替测试。
+已经写了”代替测试。P0-4 的完整证据映射见
+[`24_secret_claim_admission_implementation.md`](24_secret_claim_admission_implementation.md)。

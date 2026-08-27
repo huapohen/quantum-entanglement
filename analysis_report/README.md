@@ -68,6 +68,8 @@ Atomic Result Authority 的最大强度参考，不再作为提前接入前的�
 | `research/20_clawith_competitive_analysis.md` | Clawith 固定源码深研：2026-08-26 | 基于官网、官方文档和 `dataelement/Clawith@45fc701c` 的产品、群聊、长期身份、Aware/Pulse、Experience Library、Skills/MCP、治理与部署审计；明确可借鉴项、不可照搬项和 WanWork 优先级 |
 | `research/21_atomic_invocation_start_release_evidence.md` | 当前 atomic start 发布证据：`a1fd355` | first-claim/start 的代码、提交、Python 3.9/3.12/3.13、BEGIN/COMMIT/ROLLBACK ACK-loss、双连接、spawn/fork、backup/token canary 与未关闭 worker/result/action/Gate A–E 边界 |
 | `research/22_2output_research_absorption_audit.md` | 当前调研吸收审计：2026-08-28 | `2output` 的 40/40 Markdown、31/31 独立报告处置、AgentSpace evidence delta、RQ-039～RQ-042、Egress 架构修正及 M0/W1/W2+ 门禁 |
+| `research/23_plugin_manifest_admission_implementation.md` | W1 P0-3 历史实现证据：`ed9a709` | host-computed manifest digest、PackageRecord exact admission、Effective v2 与 frozen activation；当前 Secret 增量由专题 24 接续 |
+| `research/24_secret_claim_admission_implementation.md` | W1 P0-4 当前实现证据：`211ada7` | `2output` Secret/credential/plugin 证据到 claim admission、Effective v3、anti-replay/revocation/canary/golden 门禁及 action-time JIT lease 未完成边界 |
 
 ## 已归档截图
 
