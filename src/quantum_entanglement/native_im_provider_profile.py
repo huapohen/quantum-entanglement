@@ -925,8 +925,102 @@ class IMProviderProfileV1(_ProviderProfileWireValue):
         )
 
 
+class IMProviderProfileBindingError(ValueError):
+    """A caller-provided profile identity does not bind the exact trusted value."""
+
+
+_CORE_E2_IDENTITY_MAPPINGS = {
+    "channelId",
+    "conversationId",
+    "cursor",
+    "eventId",
+    "participantId",
+    "sequenceNumber",
+    "snapshotToken",
+    "tenantId",
+    "workspaceId",
+}
+_MESSAGE_EVENT_TYPES = {"message.created", "message.deleted", "message.edited"}
+_MESSAGE_REVISION_EVENT_TYPES = {"message.deleted", "message.edited"}
+_REACTION_EVENT_TYPES = {"reaction.added", "reaction.removed"}
+
+
+def evaluate_e2_profile_readiness_v1(profile: IMProviderProfileV1) -> Tuple[str, ...]:
+    """Return stable fail-closed blockers without granting connection authority.
+
+    The evaluator distinguishes a schema-valid provider record from one that has enough
+    verified facts for the later E2 sandbox preflight.  An empty result is necessary but
+    not sufficient to connect: deployment config, approval expiry, endpoint policy,
+    credential purpose, kill-switch state, and transport gates remain separate.
+    """
+
+    _require_exact_model(profile, IMProviderProfileV1, "provider profile")
+    blockers: list[str] = []
+    if profile.environment_class != "sandbox":
+        blockers.append("environment_not_sandbox")
+    if not profile.allowed_conversation_ids:
+        blockers.append("allowed_conversation_scope_empty")
+    if profile.source_evidence_digest is None:
+        blockers.append("source_evidence_unverified")
+    if profile.authentication.status != "supported":
+        blockers.append("authentication_not_supported")
+    if profile.resume.status != "supported":
+        blockers.append("resume_not_supported")
+
+    identity_status = {
+        mapping.canonical_field: mapping.status for mapping in profile.identity_mappings
+    }
+    event_status = {mapping.event_type: mapping.status for mapping in profile.event_mappings}
+    feature_status = {feature.feature: feature.status for feature in profile.features}
+
+    required_identity = set(_CORE_E2_IDENTITY_MAPPINGS)
+    supported_events = {
+        event_type for event_type, status in event_status.items() if status == "supported"
+    }
+    if not supported_events:
+        blockers.append("event_mapping_none_supported")
+    for event_type, status in event_status.items():
+        if status == "unverified":
+            blockers.append(f"event_mapping_unverified:{event_type}")
+    if supported_events & (_MESSAGE_EVENT_TYPES | _REACTION_EVENT_TYPES):
+        required_identity.add("messageId")
+    if supported_events & _MESSAGE_REVISION_EVENT_TYPES:
+        required_identity.add("messageRevision")
+    if supported_events & _REACTION_EVENT_TYPES:
+        required_identity.add("reactionKey")
+    if "membership.changed" in supported_events:
+        required_identity.add("membershipRevision")
+    for feature_name, status in feature_status.items():
+        if status == "unverified":
+            blockers.append(f"feature_unverified:{feature_name}")
+    if feature_status["attachments"] == "supported":
+        required_identity.update(("attachmentId", "attachmentVersion"))
+    if feature_status["threads"] == "supported":
+        required_identity.add("threadId")
+    for canonical_field in required_identity:
+        if identity_status[canonical_field] != "supported":
+            blockers.append(f"identity_mapping_not_supported:{canonical_field}")
+    return tuple(sorted(set(blockers), key=lambda value: value.encode("utf-8")))
+
+
+def validate_profile_binding_v1(
+    profile: IMProviderProfileV1,
+    *,
+    expected_revision: str,
+    expected_digest: str,
+) -> None:
+    """Require an exact revision and canonical digest without exposing either on failure."""
+
+    _require_exact_model(profile, IMProviderProfileV1, "provider profile")
+    _id(expected_revision, "expectedRevision")
+    _digest(expected_digest, "expectedDigest")
+    if profile.revision != expected_revision or profile.canonical_digest() != expected_digest:
+        raise IMProviderProfileBindingError("native IM provider profile binding mismatch") from None
+
+
 __all__ = [
     "IMProviderAuthenticationProfileV1",
+    "IMProviderProfileBindingError",
     "IMProviderEventMappingV1",
     "IMProviderFeatureV1",
     "IMProviderIdentityMappingV1",
@@ -935,4 +1029,6 @@ __all__ = [
     "IMProviderProfileV1",
     "IMProviderResumeProfileV1",
     "NATIVE_IM_SCHEMA_VERSION",
+    "evaluate_e2_profile_readiness_v1",
+    "validate_profile_binding_v1",
 ]
