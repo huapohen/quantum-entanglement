@@ -228,7 +228,7 @@ Schema 2 binds:
 | execution proof | manifest, envelope, context, authorization and runtime digests/revision |
 | causal proof | correlation/causation identities inherited from canonical admission |
 
-The immutable schema-2 event is the start receipt for this slice. No migration 5 or parallel
+The immutable schema-2 event is the start receipt for this slice. No result migration 6 or parallel
 receipt table is added. This avoids bypassing the currently disabled native/domain migration and
 operational backup-v2 release boundary. A dedicated table may be introduced only after its
 migration executor, topology, writer, verifier, restore reconciliation and rollback evidence are

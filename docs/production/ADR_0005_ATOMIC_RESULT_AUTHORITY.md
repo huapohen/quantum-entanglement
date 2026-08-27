@@ -9,6 +9,11 @@
   [`DOMAIN_SCOPED_MIGRATIONS.md`](../architecture/DOMAIN_SCOPED_MIGRATIONS.md), and
   [`SQLITE_BACKUP_MANIFEST_V2_CODEC.md`](../architecture/SQLITE_BACKUP_MANIFEST_V2_CODEC.md)
 
+> 2026-08-27 sequencing addendum: ADR number `0005` is unchanged, but SQL migration identity 5
+> is now reserved for the earlier native-IM durable inbox. Atomic invocation results move to
+> migration 6; native-IM actions use migration 7. This addendum changes ordering, not the result
+> authority semantics in this ADR.
+
 ## Context
 
 Atomic admission and first claim/start now commit a queued invocation, running attempt and
@@ -158,17 +163,18 @@ Feishu, WeCom, bots, webhooks and all real connectors remain prohibited througho
 
 ### 5. Migration identity and topology
 
-Legacy migration IDs 1–4 are immutable. The next global migration identity is reserved only when
-the native executor is ready:
+Legacy migration IDs 1–4 are immutable. The early native-IM integration plan reserves migration 5
+for `native_im_inbox`. The result graph described by this ADR uses the next identity only when the
+native executor is ready:
 
 ```text
-migration_id: 5
+migration_id: 6
 domain: invocation_results
 domain_version: 1
 kind: native
 ```
 
-This is a design coordinate, not permission to add `0005` to the legacy bootstrap registry today.
+This is a design coordinate, not permission to add `0006` to the legacy bootstrap registry today.
 Before registration, the release must include:
 
 1. native/sparse dependency planning and a default-deny executor;
@@ -273,7 +279,7 @@ Costs:
   complete graph.
 - **Infer scope from current authorization:** current state can drift and the digest is opaque.
 - **Dual-write ArtifactLedger and SQLiteArtifactStore:** creates two authorities and new split brain.
-- **Add migration 5 to legacy bootstrap:** bypasses sparse dependency, fleet-floor and backup-v2
+- **Add result migration 6 to legacy bootstrap:** bypasses sparse dependency, fleet-floor and backup-v2
   release safety.
 - **Enable the worker because handlers are pure:** a label or code-review claim is not durable
   completion or retry evidence.

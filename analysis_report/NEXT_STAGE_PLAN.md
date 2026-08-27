@@ -2,13 +2,15 @@
 
 > 计划版本：2026-08-27-stage-pause-v1  
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点  
-> 当前状态：**计划已冻结，尚未开始下一阶段实现，等待阶段验收/新增参考项目。**  
+> 当前状态：**最大强度 Result Authority 参考计划已冻结；原生 IM 提前接入计划已经启动。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
 > 不是“完成全部内容后才能开始 IM”的串行清单。原生 IM 的接入前硬要求、可延期加固和接入后
 > TODO 以 [`NATIVE_IM_INTEGRATION_PREREQUISITES.md`](./NATIVE_IM_INTEGRATION_PREREQUISITES.md)
-> 为准；两份文档都不授权真实外部发送。
+> 为准。2026-08-27 用户决定提前做 sandbox inbound-only 后，当前执行入口改为
+> [`NATIVE_IM_EARLY_INTEGRATION_PLAN.md`](./NATIVE_IM_EARLY_INTEGRATION_PLAN.md)；本文件的必要
+> 子集在其 E3 阶段使用。三份文档都不授权真实外部发送。
 
 ## 1. 下一阶段的唯一目标
 
@@ -19,7 +21,7 @@
 2. 结果图早已存在、重放、重开、恢复或由其他进程写入：只返回 `ObservedV2`；
 3. COMMIT outcome 不明确、数据部分存在或任一绑定漂移：隔离当前 store，失败关闭，不返回成功。
 
-该目标闭合前，不启用 worker dispatch、真实 connector、migration 5 或任何“已经 exactly
+该目标闭合前，不启用 worker dispatch、outbound connector、result migration 6 或任何“已经 exactly
 once”的产品声明。
 
 ## 2. 已冻结、不得回退的架构决策
@@ -296,7 +298,7 @@ standalone `SQLiteInvocationAttemptStore.complete()` 对 canonical scoped job �
 
 ### 8.1 目标
 
-准备 result durable graph 所需 schema 和跨组件事务原语，但仍不把 migration 5 注册进 legacy
+准备 result durable graph 所需 schema 和跨组件事务原语，但仍不把 result migration 6 注册进 legacy
 bootstrap。
 
 ### 8.2 Schema 候选
@@ -328,7 +330,8 @@ bootstrap。
 - sparse upgrade、fleet floor、旧版本 reader/writer 兼容矩阵明确；
 - 空库与非空库 upgrade/restore/reopen/reconcile 均有测试；
 - downgrade/rollback 策略不删除已经接受的结果图；
-- 这些完成前 migration 5 继续 disabled。
+- 这些完成前 result migration 6 继续 disabled。`0005` 已由提前接入计划冻结给
+  `native_im_inbox`；Action Plane 使用 `0007`。
 
 ### 小步提交建议
 
@@ -634,7 +637,9 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 
 ### 15.2 Worktree
 
-- 并行工作只在仓库 `worktrees/` 下建短生命周期 worktree；
+- 并行工作只在
+  `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/` 下建短生命周期
+  worktree；
 - 每个 worktree 只负责一个不重叠主题；
 - 不让多个 Agent 同时编辑 `store.py` 的同一区域；
 - 合并前 rebase/cherry-pick 到最新 main，独立全量验证；
@@ -684,22 +689,26 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | M7 Accepted | fresh ACK 唯一 mint 点通过 | migration/worker promotion |
 | M8 Integration | 独立 release evidence 通过 | 生产 Gate 仍需分别审批 |
 
-当前停在 **M0 之前的稳定检查点**。用户加入新参考项目后，应先完成 M0，不从 M1 中途开始。
+本计划不再作为当前串行开工入口。提前接入路线先执行 E1/E2；达到 E3 时，从本计划抽取
+M1–M7 的必要 Result Authority 子集。若用户新增会改变底层 result/store 方向的参考项目，仍先做
+M0 delta review，不从原子 writer 中途改变合同。
 
 ## 18. 远端文档策略
 
-本地主仓继续作为 canonical source。Notion 和私人语雀的本次术语更新由用户手动完成；在用户
-再次明确要求前：
+本地主仓继续作为 canonical source。用户已经重新授权私人 Notion；同步节奏调整为每个 E1–E5
+稳定阶段结束后批量更新并远端回读，不再阻塞每个小 commit。私人语雀仍只有用户另行明确授权时
+才操作：
 
-- 不自动写入或持续同步；
-- 不声称实时 readback；
-- 新报告先落本地并进入 Git；
-- 需要远端同步时再按明确范围执行或交给用户手动完成；
+- 新报告先落本地、进入 Git 并推送 GitHub；
+- 阶段末同步 Notion 页面、附件、manifest/checkpoint 并逐页 fetch 回读；
+- 回读未完成时只声明“已写入待核验”，不能声明同步闭环；
+- 不自动操作私人语雀；
 - 永远不向飞书、企微、任何人、任何群聊、bot 或 webhook 发送消息。
 
 ## 19. 启动下一阶段时的第一组命令
 
-用户验收并提供新增参考项目后，从以下只读检查开始：
+需要恢复本最大强度 Result Authority 路线时，从以下只读检查开始；当前原生 IM 开工命令以
+`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 第 10 节为准：
 
 ```bash
 cd /Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement

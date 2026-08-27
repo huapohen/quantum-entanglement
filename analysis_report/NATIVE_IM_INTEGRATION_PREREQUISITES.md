@@ -11,6 +11,13 @@
 > 安全边界：本文不授权向飞书、企微、原生 IM 或任何个人、机器人、群聊、bot、webhook
 > 发送消息。真实测试环境写入必须另获用户明确授权。
 
+> **2026-08-27 提前接入调度修订：** 用户已决定把独立 IM 专用沙箱的 inbound-only 合同验证
+> 前移。当前执行顺序改由
+> [`NATIVE_IM_EARLY_INTEGRATION_PLAN.md`](./NATIVE_IM_EARLY_INTEGRATION_PLAN.md) 定义：完成
+> strict codec、verified/digest-bound durable inbox、只读权限机械隔离和 sandbox 批准记录后，可在
+> `IM-P1`/`IM-P2` 全部闭合前进行 health/read/dedupe/resume。此修订不允许入站驱动 Agent，也不
+> 允许任何 outbound；Agent draft、Action Plane 和受控发送仍分别按后续门禁推进。
+
 ## 1. 最终决策
 
 不采用以下两个极端方案：
@@ -35,8 +42,11 @@
     -> 联调后再完成私有试点、商用与 GA TODO
 ```
 
-**正式介入原生 IM 专用沙箱的唯一前置里程碑是 `IM-P3 SANDBOX_READY`。** 不要求先通过
-Gate C–E，也不要求先完成 PostgreSQL、HA/Kubernetes、完整商用容量和供应链晋级。
+原路线把 `IM-P3 SANDBOX_READY` 作为所有真实网络介入的唯一前置。提前接入修订后，只有
+**sandbox inbound-only observation** 可按新计划的 Level B 前移；让入站驱动 Agent 或开放任一
+outbound 仍不得借此绕过 `IM-P1`、`IM-P2` 及对应的 action-time authorization/Receipt 门禁。
+无论哪条路线，都不要求先通过 Gate C–E，也不要求先完成 PostgreSQL、HA/Kubernetes、完整商用
+容量和供应链晋级。
 
 这里的“介入原生 IM”特指：连接独立 IM 后端的专用测试环境，用测试 tenant、测试账号、测试
 conversation 和非敏感合成数据完成真实网络端到端联调。它不等于接入生产数据、开放公网、
@@ -287,8 +297,9 @@ flowchart LR
   数据等级、操作人、截止时间、kill switch 和回退触发条件；
 - [ ] 在用户另行明确授权前，真实 outbound 仍保持关闭。
 
-满足以上条件，开始原生 IM 专用沙箱接入。未满足时可以继续写 adapter 和 contract test，但不能让
-原生 IM 事件驱动实际 Agent 执行或发送。
+满足以上条件，开始原生 IM 专用沙箱的 Agent/action 端到端接入。提前调度只允许在新计划 Level B
+门禁通过后先做 inbound-only observation；未满足本节条件时，原生 IM 事件仍不能驱动实际 Agent
+执行或发送。
 
 ## 8. 接入后再做的 TODO
 
@@ -368,9 +379,10 @@ flowchart LR
 1. **现在开始** IM contract、provider-neutral port、fake adapter 和契约测试；
 2. **接入前完成** 精简 Result Writer/Recovery、PURE Worker、Action Receipt 和 authenticated fake
    E2E；
-3. **达到 IM-P3 后介入** 原生 IM 专用沙箱，不等待完整 M8、Gate C–E 或 GA 工程；
-4. **接入后继续** provider 语义、全租户安全、部署恢复、容量可观测和 HA；
-5. **真实发送永远单独授权**，Result Receipt、测试通过或用户给予的电脑控制权限都不能替代
+3. **Level B 提前介入只读 sandbox**，完成 health/read/dedupe/resume 后停在 durable inbox；
+4. **达到 IM-P3 后介入 Agent/action E2E**，不等待完整 M8、Gate C–E 或 GA 工程；
+5. **接入后继续** provider 语义、全租户安全、部署恢复、容量可观测和 HA；
+6. **真实发送永远单独授权**，Result Receipt、测试通过或用户给予的电脑控制权限都不能替代
    connector-specific send authorization。
 
 这条路线同时控制两类风险：既不在底层证明上无限等待产品反馈，也不把不完整的执行和副作用
