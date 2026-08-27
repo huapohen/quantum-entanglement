@@ -23,6 +23,20 @@ FAKE_IM_PROVIDER = "qe.fake-im.v1"
 _FAKE_SNAPSHOT_TOKEN = "test-fake-im-snapshot-v1"
 _FAKE_OBSERVED_AT = "2026-08-28T00:00:02.000001Z"
 _OUTBOUND_PERMIT_SENTINEL = object()
+_DISPATCH_FAULT_STEPS = {
+    "accept",
+    "ack_loss_after_accept",
+    "effect_unknown",
+    "terminal_reject",
+    "temporary_nack",
+    "rate_limited_nack",
+}
+_QUERY_FAULT_STEPS = {
+    "ledger",
+    "not_final",
+    "retention_expired",
+    "authoritative_negative",
+}
 
 
 class FakeIMOutboundDisabledError(RuntimeError):
@@ -41,6 +55,35 @@ class _FakeAcceptedEffect:
     provider_operation_id: str
     provider_message: IMMessageRefV1 | None
     receiver_evidence_digest: str
+
+
+@dataclass(frozen=True)
+class FakeIMFaultScript:
+    """Finite deterministic fault steps; exhausted sequences return to ledger truth."""
+
+    dispatch_steps: tuple[str, ...] = ()
+    query_steps: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.dispatch_steps) is not tuple or type(self.query_steps) is not tuple:
+            raise TypeError("fake IM fault steps must be exact immutable tuples")
+        if len(self.dispatch_steps) > 1_000 or len(self.query_steps) > 1_000:
+            raise ValueError("fake IM fault script exceeds its step limit")
+        if any(
+            type(step) is not str or step not in _DISPATCH_FAULT_STEPS
+            for step in self.dispatch_steps
+        ):
+            raise ValueError("fake IM dispatch fault step is unsupported")
+        if any(
+            type(step) is not str or step not in _QUERY_FAULT_STEPS for step in self.query_steps
+        ):
+            raise ValueError("fake IM query fault step is unsupported")
+
+    def __repr__(self) -> str:
+        return (
+            f"FakeIMFaultScript(dispatch_steps={len(self.dispatch_steps)}, "
+            f"query_steps={len(self.query_steps)})"
+        )
 
 
 class FakeIMTestOutboundPermit:
@@ -90,6 +133,9 @@ class FakeIMAdapter:
         "_outbound_permit",
         "_receiver_by_action",
         "_receiver_by_key",
+        "_fault_script",
+        "_dispatch_fault_index",
+        "_query_fault_index",
     )
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -135,6 +181,9 @@ class FakeIMAdapter:
         self._outbound_permit: FakeIMTestOutboundPermit | None = None
         self._receiver_by_action: dict[tuple[str, ...], _FakeAcceptedEffect] = {}
         self._receiver_by_key: dict[tuple[str, ...], _FakeAcceptedEffect] = {}
+        self._fault_script = FakeIMFaultScript()
+        self._dispatch_fault_index = 0
+        self._query_fault_index = 0
 
     @classmethod
     def for_test(
@@ -146,10 +195,13 @@ class FakeIMAdapter:
         capability: IMCapabilitySnapshotV1,
         envelopes: tuple[IMVerifiedInboundEnvelopeV1, ...],
         outbound_permit: FakeIMTestOutboundPermit,
+        fault_script: FakeIMFaultScript | None = None,
     ) -> FakeIMAdapter:
         _require_exact(outbound_permit, FakeIMTestOutboundPermit, "outbound permit")
         if not outbound_permit._is_current():
             raise FakeIMOutboundDisabledError("fake IM outbound permit is not process-current")
+        selected_faults = FakeIMFaultScript() if fault_script is None else fault_script
+        _require_exact(selected_faults, FakeIMFaultScript, "fault script")
         adapter = cls(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
@@ -158,6 +210,7 @@ class FakeIMAdapter:
             envelopes=envelopes,
         )
         object.__setattr__(adapter, "_outbound_permit", outbound_permit)
+        object.__setattr__(adapter, "_fault_script", selected_faults)
         return adapter
 
     @property
@@ -250,6 +303,7 @@ class FakeIMAdapter:
             raise FakeIMOutboundDisabledError("fake IM outbound is disabled")
         _require_exact(request, IMDispatchRequestV1, "dispatch request")
         request.command.validate_capability_binding(self._capability)
+        fault_step = self._next_dispatch_fault()
         intent = request.command.intent
         scope = self._scope
         action_key = scope + (intent.action_id,)
@@ -270,11 +324,57 @@ class FakeIMAdapter:
             raise FakeIMReceiverCollisionError("fake IM receiver ledger conflict")
 
         effect = by_action or by_key
-        if effect is None:
+        if effect is None and fault_step in {"accept", "ack_loss_after_accept"}:
             effect = self._accept_effect(request)
             self._receiver_by_action[action_key] = effect
             self._receiver_by_key[idempotency_key] = effect
-        receipt_digest = self._outbound_digest("dispatch-receipt", request.canonical_bytes())
+
+        if effect is not None and fault_step not in {
+            "ack_loss_after_accept",
+            "effect_unknown",
+        }:
+            state = "succeeded"
+        elif fault_step == "terminal_reject":
+            state = "rejected"
+        elif fault_step in {"temporary_nack", "rate_limited_nack"}:
+            state = "retryable_not_accepted"
+        else:
+            state = "effect_unknown"
+
+        evidence = self._outbound_digest(f"dispatch-{fault_step}", request.canonical_bytes())
+        if state == "succeeded":
+            assert effect is not None
+            provider_operation_id = effect.provider_operation_id
+            provider_message = effect.provider_message
+            receiver_evidence_digest = effect.receiver_evidence_digest
+            error_code = None
+            retry_after_seconds = None
+        elif state == "rejected":
+            provider_operation_id = None
+            provider_message = None
+            receiver_evidence_digest = evidence
+            error_code = "terminal_not_accepted"
+            retry_after_seconds = None
+        elif state == "retryable_not_accepted":
+            provider_operation_id = None
+            provider_message = None
+            receiver_evidence_digest = evidence
+            error_code = (
+                "rate_limited_not_accepted"
+                if fault_step == "rate_limited_nack"
+                else "temporarily_unavailable_not_accepted"
+            )
+            retry_after_seconds = 1
+        else:
+            provider_operation_id = None if effect is None else effect.provider_operation_id
+            provider_message = None
+            receiver_evidence_digest = None
+            error_code = "delivery_outcome_unknown"
+            retry_after_seconds = None
+
+        receipt_digest = self._outbound_digest(
+            f"dispatch-receipt-{state}", request.canonical_bytes()
+        )
         return IMActionReceiptV1(
             schema_version=1,
             receipt_id=f"test-fake-receipt-{receipt_digest}",
@@ -290,12 +390,12 @@ class FakeIMAdapter:
             command_digest=request.command_digest,
             idempotency_key=request.command.idempotency_key,
             attempt_number=request.attempt_number,
-            state="succeeded",
-            provider_operation_id=effect.provider_operation_id,
-            provider_message=effect.provider_message,
-            receiver_evidence_digest=effect.receiver_evidence_digest,
-            error_code=None,
-            retry_after_seconds=None,
+            state=state,
+            provider_operation_id=provider_operation_id,
+            provider_message=provider_message,
+            receiver_evidence_digest=receiver_evidence_digest,
+            error_code=error_code,
+            retry_after_seconds=retry_after_seconds,
             observed_at=_FAKE_OBSERVED_AT,
             correlation_id=request.correlation_id,
             causation_id=request.dispatch_attempt_id,
@@ -308,6 +408,7 @@ class FakeIMAdapter:
         _require_exact(query, IMAcceptanceQueryV1, "acceptance query")
         if self._model_scope(query) != self._scope:
             raise ValueError("acceptance query scope does not match the fake scope")
+        fault_step = self._next_query_fault()
         effect = self._receiver_by_action.get(self._scope + (query.action_id,))
         by_key = self._receiver_by_key.get(self._scope + (query.idempotency_key,))
         if effect is not None and (
@@ -334,11 +435,38 @@ class FakeIMAdapter:
             for operation in self._capability.operations
             for lookup in operation.acceptance_lookups
         )
-        if effect is not None:
+        forced_unknown = fault_step in {"not_final", "retention_expired"}
+        if effect is not None and not forced_unknown:
             state = "reconciled_succeeded"
+        elif forced_unknown:
+            state = "effect_unknown"
         else:
             state = "reconciled_rejected" if authoritative else "effect_unknown"
-        digest = self._outbound_digest("acceptance-query", query.canonical_bytes())
+        digest = self._outbound_digest(f"acceptance-query-{fault_step}", query.canonical_bytes())
+        provider_operation_id: str | None
+        provider_message: IMMessageRefV1 | None
+        receiver_evidence_digest: str | None
+        error_code: str | None
+        if state == "reconciled_succeeded":
+            assert effect is not None
+            provider_operation_id = effect.provider_operation_id
+            provider_message = effect.provider_message
+            receiver_evidence_digest = effect.receiver_evidence_digest
+            error_code = None
+        elif state == "reconciled_rejected":
+            provider_operation_id = query.provider_operation_id
+            provider_message = None
+            receiver_evidence_digest = digest
+            error_code = "terminal_not_accepted"
+        else:
+            provider_operation_id = query.provider_operation_id
+            provider_message = None
+            receiver_evidence_digest = None
+            error_code = (
+                "acceptance_retention_expired"
+                if fault_step == "retention_expired"
+                else "acceptance_not_final"
+            )
         return IMActionReceiptV1(
             schema_version=1,
             receipt_id=f"test-fake-receipt-{digest}",
@@ -355,24 +483,10 @@ class FakeIMAdapter:
             idempotency_key=query.idempotency_key,
             attempt_number=query.attempt_number,
             state=state,
-            provider_operation_id=(
-                effect.provider_operation_id if effect is not None else query.provider_operation_id
-            ),
-            provider_message=(None if effect is None else effect.provider_message),
-            receiver_evidence_digest=(
-                effect.receiver_evidence_digest
-                if effect is not None
-                else digest
-                if authoritative
-                else None
-            ),
-            error_code=(
-                None
-                if effect is not None
-                else "terminal_not_accepted"
-                if authoritative
-                else "acceptance_not_final"
-            ),
+            provider_operation_id=provider_operation_id,
+            provider_message=provider_message,
+            receiver_evidence_digest=receiver_evidence_digest,
+            error_code=error_code,
             retry_after_seconds=None,
             observed_at=_FAKE_OBSERVED_AT,
             correlation_id=query.correlation_id,
@@ -385,6 +499,20 @@ class FakeIMAdapter:
         return hashlib.sha256(
             f"quantum-entanglement.native-im.fake/{domain}/1\n".encode() + body
         ).hexdigest()
+
+    def _next_dispatch_fault(self) -> str:
+        index = self._dispatch_fault_index
+        object.__setattr__(self, "_dispatch_fault_index", index + 1)
+        if index < len(self._fault_script.dispatch_steps):
+            return self._fault_script.dispatch_steps[index]
+        return "accept"
+
+    def _next_query_fault(self) -> str:
+        index = self._query_fault_index
+        object.__setattr__(self, "_query_fault_index", index + 1)
+        if index < len(self._fault_script.query_steps):
+            return self._fault_script.query_steps[index]
+        return "ledger"
 
     def _accept_effect(self, request: IMDispatchRequestV1) -> _FakeAcceptedEffect:
         intent = request.command.intent
@@ -414,6 +542,7 @@ class FakeIMAdapter:
 __all__ = [
     "FAKE_IM_PROVIDER",
     "FakeIMAdapter",
+    "FakeIMFaultScript",
     "FakeIMOutboundDisabledError",
     "FakeIMReceiverCollisionError",
     "FakeIMTestOutboundPermit",
