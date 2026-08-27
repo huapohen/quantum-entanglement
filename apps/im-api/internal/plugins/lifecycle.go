@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrInvalidLifecycle = errors.New("invalid plugin host lifecycle transition")
-	ErrInvalidEffect    = errors.New("invalid plugin lifecycle effect")
+	ErrInvalidLifecycle  = errors.New("invalid plugin host lifecycle transition")
+	ErrInvalidEffect     = errors.New("invalid plugin lifecycle effect")
+	ErrInvalidActivation = errors.New("invalid effective plugin activation")
 )
 
 type HostState string
@@ -26,11 +27,11 @@ const (
 )
 
 type Host struct {
-	mu       sync.Mutex
-	registry *Registry
-	configs  map[PluginID]PluginConfig
-	state    HostState
-	started  []runningPlugin
+	mu            sync.Mutex
+	registry      *Registry
+	configuration EffectiveConfiguration
+	state         HostState
+	started       []runningPlugin
 }
 
 type runningPlugin struct {
@@ -40,12 +41,26 @@ type runningPlugin struct {
 	effects  *effectScope
 }
 
-func NewHost(registry *Registry, configs map[PluginID]PluginConfig) *Host {
-	return &Host{
-		registry: registry,
-		configs:  cloneConfigs(configs),
-		state:    HostStateNew,
+func NewHost(registry *Registry, configuration EffectiveConfiguration) (*Host, error) {
+	if registry == nil || validateEffectiveBaseline(configuration) != nil {
+		return nil, ErrInvalidActivation
 	}
+	resolved, err := registry.ResolveSelection(configuration.plan.Order)
+	if err != nil || !slices.Equal(resolved.Order, configuration.plan.Order) ||
+		!slices.Equal(resolved.Bindings, configuration.plan.Bindings) ||
+		!activationRowsMatchRegistry(registry, configuration) {
+		return nil, ErrInvalidActivation
+	}
+	snapshot, err := newEffectiveConfiguration(
+		configuration.tenantID,
+		configuration.sources,
+		configuration.rows,
+		configuration.plan,
+	)
+	if err != nil || snapshot.digest != configuration.digest {
+		return nil, ErrInvalidActivation
+	}
+	return &Host{registry: registry, configuration: snapshot, state: HostStateNew}, nil
 }
 
 func (host *Host) State() HostState {
@@ -62,11 +77,8 @@ func (host *Host) Start(ctx context.Context) error {
 	}
 	host.state = HostStateStarting
 
-	plan, err := host.registry.Resolve()
-	if err != nil {
-		host.state = HostStateFailed
-		return err
-	}
+	plan := host.configuration.plan
+	configs := host.configuration.PluginConfigs()
 	configured := make([]runningPlugin, 0, len(plan.Order))
 	for _, pluginID := range plan.Order {
 		registered := host.registry.entries[pluginID]
@@ -74,7 +86,7 @@ func (host *Host) Start(ctx context.Context) error {
 			host.state = HostStateFailed
 			return fmt.Errorf("plugin %s: %w", pluginID, ErrMissingFactory)
 		}
-		instance, configureErr := registered.factory.Configure(cloneConfig(host.configs[pluginID]))
+		instance, configureErr := registered.factory.Configure(cloneConfig(configs[pluginID]))
 		if configureErr != nil {
 			host.state = HostStateFailed
 			return fmt.Errorf("configure plugin %s: %w", pluginID, configureErr)
@@ -120,6 +132,32 @@ func (host *Host) Start(ctx context.Context) error {
 	}
 	host.state = HostStateReady
 	return nil
+}
+
+func activationRowsMatchRegistry(registry *Registry, configuration EffectiveConfiguration) bool {
+	if len(configuration.rows) != len(configuration.plan.Order) {
+		return false
+	}
+	rows := make(map[PluginID]EffectiveRow, len(configuration.rows))
+	for _, row := range configuration.rows {
+		if _, exists := rows[row.PluginID]; exists {
+			return false
+		}
+		rows[row.PluginID] = row
+	}
+	for _, pluginID := range configuration.plan.Order {
+		row, rowExists := rows[pluginID]
+		registered, pluginExists := registry.entries[pluginID]
+		if !rowExists || !pluginExists ||
+			row.PluginVersion != registered.manifest.Version ||
+			row.ArtifactDigest != registered.packageRecord.ArtifactDigest ||
+			row.ConfigSchemaDigest != registered.manifest.ConfigSchemaDigest ||
+			!slices.Equal(row.Capabilities, registered.manifest.Capabilities) ||
+			!slices.Equal(row.Egress, registered.manifest.Egress) {
+			return false
+		}
+	}
+	return true
 }
 
 func (host *Host) Stop(ctx context.Context) error {

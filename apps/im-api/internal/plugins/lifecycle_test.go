@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -98,10 +99,11 @@ func TestHostRejectsMissingFactoryAndRepeatedStart(t *testing.T) {
 
 	manifest := testManifest("im.fake.v1", []PortID{"im.transport.v1"}, nil)
 	registry := NewRegistry()
+	registerLifecycleSchema(t, registry)
 	if err := registry.Register(manifest, admittedPackage(manifest)); err != nil {
 		t.Fatalf("register manifest: %v", err)
 	}
-	host := NewHost(registry, nil)
+	host := lifecycleHostFromSelection(t, registry, []Manifest{manifest})
 	if err := host.Start(context.Background()); !errors.Is(err, ErrMissingFactory) {
 		t.Fatalf("start error = %v, want %v", err, ErrMissingFactory)
 	}
@@ -117,6 +119,7 @@ func TestLifecycleTimeoutTriggersRollback(t *testing.T) {
 	manifest := testManifest("slow.fake.v1", []PortID{"runtime.invoke.v1"}, nil)
 	manifest.Timeouts.Start = 5 * time.Millisecond
 	registry := NewRegistry()
+	registerLifecycleSchema(t, registry)
 	factory := &fakeFactory{
 		manifest: manifest,
 		log:      log,
@@ -125,7 +128,7 @@ func TestLifecycleTimeoutTriggersRollback(t *testing.T) {
 	if err := registry.RegisterFactory(factory, admittedPackage(manifest)); err != nil {
 		t.Fatalf("register factory: %v", err)
 	}
-	host := NewHost(registry, nil)
+	host := lifecycleHostFromSelection(t, registry, []Manifest{manifest})
 	if err := host.Start(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("start error = %v, want deadline exceeded", err)
 	}
@@ -159,6 +162,55 @@ func TestEffectScopeRejectsInvalidAndDuplicateLabels(t *testing.T) {
 	}
 }
 
+func TestHostStartsOnlyPluginsFrozenInEffectiveConfiguration(t *testing.T) {
+	t.Parallel()
+
+	log := newCallLog()
+	selected := testManifest("selected.fake.v1", []PortID{"runtime.invoke.v1"}, nil)
+	extra := testManifest("extra.fake.v1", []PortID{"unused.port.v1"}, nil)
+	registry := NewRegistry()
+	registerLifecycleSchema(t, registry)
+	for _, manifest := range []Manifest{selected, extra} {
+		if err := registry.RegisterFactory(
+			&fakeFactory{manifest: manifest, log: log},
+			admittedPackage(manifest),
+		); err != nil {
+			t.Fatalf("register %s: %v", manifest.ID, err)
+		}
+	}
+	host := lifecycleHostFromSelection(t, registry, []Manifest{selected})
+	if err := host.Start(context.Background()); err != nil {
+		t.Fatalf("start host: %v", err)
+	}
+	if err := host.Stop(context.Background()); err != nil {
+		t.Fatalf("stop host: %v", err)
+	}
+	for _, call := range log.snapshot() {
+		if strings.Contains(call, string(extra.ID)) {
+			t.Fatalf("unselected plugin activated: %v", log.snapshot())
+		}
+	}
+}
+
+func TestNewHostRejectsTamperedEffectiveConfiguration(t *testing.T) {
+	t.Parallel()
+
+	manifest := testManifest("selected.fake.v1", []PortID{"runtime.invoke.v1"}, nil)
+	registry := NewRegistry()
+	registerLifecycleSchema(t, registry)
+	if err := registry.RegisterFactory(
+		&fakeFactory{manifest: manifest, log: newCallLog()},
+		admittedPackage(manifest),
+	); err != nil {
+		t.Fatalf("register factory: %v", err)
+	}
+	configuration := lifecycleConfiguration(t, registry, []Manifest{manifest})
+	configuration.plan.Order = append(configuration.plan.Order, "missing.fake.v1")
+	if _, err := NewHost(registry, configuration); !errors.Is(err, ErrInvalidActivation) {
+		t.Fatalf("new host error = %v, want %v", err, ErrInvalidActivation)
+	}
+}
+
 func lifecycleHost(t *testing.T, log *callLog, failAt string) *Host {
 	t.Helper()
 
@@ -171,13 +223,60 @@ func lifecycleHost(t *testing.T, log *callLog, failAt string) *Host {
 		}),
 	}
 	registry := NewRegistry()
+	registerLifecycleSchema(t, registry)
 	for _, manifest := range manifests {
 		factory := &fakeFactory{manifest: manifest, log: log, failAt: failAt}
 		if err := registry.RegisterFactory(factory, admittedPackage(manifest)); err != nil {
 			t.Fatalf("register %s: %v", manifest.ID, err)
 		}
 	}
-	return NewHost(registry, nil)
+	return lifecycleHostFromSelection(t, registry, manifests)
+}
+
+func registerLifecycleSchema(t *testing.T, registry *Registry) {
+	t.Helper()
+	schema := ConfigSchemaFunc(func(config PluginConfig) (PluginConfig, error) {
+		return cloneConfig(config), nil
+	})
+	if err := registry.RegisterConfigSchema(testSchemaDigest, schema); err != nil {
+		t.Fatalf("register lifecycle schema: %v", err)
+	}
+}
+
+func lifecycleHostFromSelection(t *testing.T, registry *Registry, manifests []Manifest) *Host {
+	t.Helper()
+	host, err := NewHost(registry, lifecycleConfiguration(t, registry, manifests))
+	if err != nil {
+		t.Fatalf("new host: %v", err)
+	}
+	return host
+}
+
+func lifecycleConfiguration(
+	t *testing.T,
+	registry *Registry,
+	manifests []Manifest,
+) EffectiveConfiguration {
+	t.Helper()
+	rows := make([]ConfigurationRow, 0, len(manifests))
+	for index, manifest := range manifests {
+		rows = append(rows, ConfigurationRow{
+			RowID:          RowID(fmt.Sprintf("plugin.%d", index)),
+			Operation:      RowUpsert,
+			PluginID:       manifest.ID,
+			PluginVersion:  manifest.Version,
+			ArtifactDigest: testArtifactDigest,
+			Config:         PluginConfig{},
+		})
+	}
+	result, err := registry.Compose(Composition{
+		TenantID: "tenant-lifecycle",
+		Profile:  ConfigurationLayer{ID: "profile.lifecycle", Revision: 1, Rows: rows},
+	}, nil)
+	if err != nil {
+		t.Fatalf("compose lifecycle configuration: %v", err)
+	}
+	return result.Candidate
 }
 
 type fakeFactory struct {
