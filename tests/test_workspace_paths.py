@@ -33,6 +33,33 @@ class WorkspacePathAuditTests(unittest.TestCase):
             self.assertEqual(findings[0].path, "scripts/launch.sh")
             self.assertEqual(findings[0].line, 1)
 
+    def test_accepts_mainline_linked_worktree_name(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = root / "docs" / "current.md"
+            document.parent.mkdir()
+            document.write_text(
+                "/workspace/execute/infinite/worktrees/quantum_entanglement/"
+                "mainline_continue_quantum_entanglement\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(find_obsolete_paths(root, ["docs/current.md"]), ())
+
+    def test_rejects_obsolete_main_subdirectory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = root / "docs" / "obsolete.md"
+            document.parent.mkdir()
+            document.write_text(
+                f"/workspace/execute/infinite/{OBSOLETE_PATHS[1]}/scripts/start.sh\n",
+                encoding="utf-8",
+            )
+
+            findings = find_obsolete_paths(root, ["docs/obsolete.md"])
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].obsolete_path, OBSOLETE_PATHS[1])
+
     def test_allows_documented_migration_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
