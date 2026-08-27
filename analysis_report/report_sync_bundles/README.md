@@ -8,7 +8,7 @@
 
 | 文件 | 状态 | 本地库存口径 | 说明 |
 |---|---|---|---|
-| `checkpoint-20260827-notion-v2-readback.json` | `current` | 45 source、46 source-target、27 images | Notion v2 清单覆盖 29 个已逐页回读页面和 30 个本地源文件；Notion 诊断无 extra/missing/stale。checkpoint 生成器本身仍为本地只读，不重复访问远端；实时回读证据由 v2 control manifest 提供；已执行 `--verify` |
+| `checkpoint-20260827-notion-v2-readback-final.json` | `current` | 44 source、45 source-target、27 images | Notion v2 清单覆盖 28 个固定源页面、29 个固定本地源文件，并单列 1 个自引用规避的派生分支目录页；29 页均已回读。Notion 诊断无 extra/missing/stale；已执行 `--verify` |
 
 `current` 是本目录唯一应被当前文档、发布检查和人工审阅当作 latest 的 checkpoint。生成与验证
 命令见仓库根 [`README.md`](../../README.md)；不得在生成后继续修改它所覆盖的报告、语雀传输源、
@@ -18,6 +18,7 @@
 
 | 文件 | 状态 | 生成 commit | 历史边界 |
 |---|---|---|---|
+| `checkpoint-20260827-notion-v2-readback.json` | `superseded` | `fdd4bc9` | 首次 v2 回读库存；曾把最终生成的分支目录纳入固定摘要，形成目录/manifest 自引用风险，已由 final 版本改为独立派生页登记 |
 | `checkpoint-20260827-v0-stage-acceptance-final.json` | `superseded` | `d67036a` | 审计修正后的最终 v0版阶段库存；早于用户重新授权 Notion 全量同步、29 页回读和 v2 manifest |
 | `checkpoint-20260827-v0-stage-acceptance.json` | `superseded` | `d06af05` | 首次 v0版阶段验收库存；早于 Gate 措辞修正、远端镜像 opt-in 政策及活动报告路径收口 |
 | `checkpoint-20260827-clawith-delivery-blueprint.json` | `superseded` | `bc72d07` | Scoped atomic start/worker authority 既有边界，加上 Clawith 部门样板、运行时/发布源码复核和第 26 张官网证据；早于 v0版术语统一、Result Receipt/Observed 安全停点及阶段收口文档 |
@@ -27,7 +28,7 @@
 | `checkpoint-20260827-clawith.json` | `superseded` | `15a77d3` | Clawith 传输源后续更新前的 schema v3 库存；其 Yuque mapping control 也早于 local-sync-ledger |
 
 `superseded` 只表示该文件不再描述当前 HEAD，也不得再被选作 latest；它不表示文件损坏或历史
-证据失效。七个旧 JSON 必须保持原样：不得覆盖、删除、重命名或手工修改。后续每个阶段继续使用
+证据失效。八个旧 JSON 必须保持原样：不得覆盖、删除、重命名或手工修改。后续每个阶段继续使用
 新的 checkpoint 文件名，保留完整时间序列。
 
 ## 验证历史 checkpoint
