@@ -10,6 +10,7 @@ from quantum_entanglement.native_im import (
     IMAcceptanceLookupCapabilityV1,
     IMActionCommandV1,
     IMActionIntentV1,
+    IMActionReceiptV1,
     IMAttachmentRefV1,
     IMCapabilityRequestV1,
     IMCapabilitySnapshotV1,
@@ -362,6 +363,55 @@ def dispatch_request(**changes: object) -> IMDispatchRequestV1:
     return IMDispatchRequestV1(**values)  # type: ignore[arg-type]
 
 
+def action_receipt(state: str = "succeeded", **changes: object) -> IMActionReceiptV1:
+    request = changes.pop("request", dispatch_request())
+    assert type(request) is IMDispatchRequestV1
+    command = request.command
+    intent = command.intent
+    provider_operation_id: str | None = "test-provider-operation-1"
+    provider_message: IMMessageRefV1 | None = None
+    evidence: str | None = "e" * 64
+    error_code: str | None = None
+    retry_after_seconds: int | None = None
+    if state in {"rejected", "reconciled_rejected"}:
+        provider_operation_id = None
+        error_code = "terminal_not_accepted"
+    elif state == "retryable_not_accepted":
+        provider_operation_id = None
+        error_code = "temporarily_unavailable_not_accepted"
+    elif state == "effect_unknown":
+        evidence = None
+        error_code = "delivery_outcome_unknown"
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "receipt_id": "test-receipt-1",
+        "tenant_id": intent.tenant_id,
+        "workspace_id": intent.workspace_id,
+        "provider": intent.conversation.provider,
+        "channel_id": intent.conversation.channel_id,
+        "action_id": intent.action_id,
+        "command_id": command.command_id,
+        "dispatch_attempt_id": request.dispatch_attempt_id,
+        "dispatch_request_digest": request.canonical_digest(),
+        "intent_digest": command.intent_digest,
+        "command_digest": request.command_digest,
+        "idempotency_key": command.idempotency_key,
+        "attempt_number": request.attempt_number,
+        "state": state,
+        "provider_operation_id": provider_operation_id,
+        "provider_message": provider_message,
+        "receiver_evidence_digest": evidence,
+        "error_code": error_code,
+        "retry_after_seconds": retry_after_seconds,
+        "observed_at": "2026-08-28T00:00:02.000001Z",
+        "correlation_id": command.correlation_id,
+        "causation_id": request.dispatch_attempt_id,
+        "traceparent": command.traceparent,
+    }
+    values.update(changes)
+    return IMActionReceiptV1(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -402,6 +452,12 @@ def dispatch_request(**changes: object) -> IMDispatchRequestV1:
             approval_revision="test-approval-revision-1",
         ),
         dispatch_request(),
+        action_receipt("succeeded"),
+        action_receipt("rejected"),
+        action_receipt("retryable_not_accepted"),
+        action_receipt("effect_unknown"),
+        action_receipt("reconciled_succeeded"),
+        action_receipt("reconciled_rejected"),
     ],
 )
 def test_reference_models_round_trip_through_dict_and_noncanonical_json(value: object) -> None:
@@ -1247,3 +1303,231 @@ def test_dispatch_request_preflights_canonical_and_raw_byte_limits(
         dispatch_request()
     with pytest.raises(ValueError, match="byte limit"):
         IMDispatchRequestV1.from_json_bytes(encoded)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "succeeded",
+        "rejected",
+        "retryable_not_accepted",
+        "effect_unknown",
+        "reconciled_succeeded",
+        "reconciled_rejected",
+    ],
+)
+def test_action_receipt_accepts_each_frozen_state_matrix(state: str) -> None:
+    receipt = action_receipt(state)
+    assert receipt.state == state
+    assert IMActionReceiptV1.from_dict(receipt.to_dict()) == receipt
+
+
+@pytest.mark.parametrize("state", ["succeeded", "reconciled_succeeded"])
+def test_success_receipt_requires_evidence_and_one_provider_identity(state: str) -> None:
+    assert action_receipt(state, provider_message=message()).provider_message is not None
+    assert (
+        action_receipt(
+            state,
+            provider_operation_id=None,
+            provider_message=message(),
+        ).provider_operation_id
+        is None
+    )
+    for changes in (
+        {"receiver_evidence_digest": None},
+        {"provider_operation_id": None, "provider_message": None},
+        {"error_code": "terminal_not_accepted"},
+        {"retry_after_seconds": 1},
+    ):
+        with pytest.raises(ValueError):
+            action_receipt(state, **changes)
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "terminal_permission_denied",
+        "terminal_invalid_target",
+        "terminal_revision_conflict",
+        "terminal_unsupported",
+        "terminal_not_accepted",
+    ],
+)
+@pytest.mark.parametrize("state", ["rejected", "reconciled_rejected"])
+def test_terminal_receipt_states_accept_only_terminal_evidence(state: str, error_code: str) -> None:
+    receipt = action_receipt(
+        state,
+        error_code=error_code,
+        provider_operation_id="test-provider-operation-1",
+    )
+    assert receipt.error_code == error_code
+    for changes in (
+        {"receiver_evidence_digest": None},
+        {"provider_message": message()},
+        {"error_code": None},
+        {"error_code": "delivery_outcome_unknown"},
+        {"retry_after_seconds": 1},
+    ):
+        with pytest.raises(ValueError):
+            action_receipt(state, **changes)
+
+
+def test_retryable_not_accepted_requires_authoritative_transient_shape() -> None:
+    assert (
+        action_receipt(
+            "retryable_not_accepted",
+            error_code="temporarily_unavailable_not_accepted",
+            retry_after_seconds=None,
+        ).retry_after_seconds
+        is None
+    )
+    assert (
+        action_receipt(
+            "retryable_not_accepted",
+            error_code="temporarily_unavailable_not_accepted",
+            retry_after_seconds=3,
+        ).retry_after_seconds
+        == 3
+    )
+    assert (
+        action_receipt(
+            "retryable_not_accepted",
+            error_code="rate_limited_not_accepted",
+            retry_after_seconds=10,
+        ).retry_after_seconds
+        == 10
+    )
+    for changes in (
+        {"receiver_evidence_digest": None},
+        {"provider_operation_id": "test-provider-operation-1"},
+        {"provider_message": message()},
+        {"error_code": "rate_limited_not_accepted", "retry_after_seconds": None},
+        {"error_code": "terminal_not_accepted"},
+        {"error_code": "delivery_outcome_unknown"},
+        {"retry_after_seconds": 0},
+        {"retry_after_seconds": True},
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            action_receipt("retryable_not_accepted", **changes)
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "delivery_outcome_unknown",
+        "acceptance_not_final",
+        "acceptance_retention_expired",
+    ],
+)
+def test_effect_unknown_accepts_only_unknown_partial_evidence(error_code: str) -> None:
+    assert (
+        action_receipt(
+            "effect_unknown",
+            error_code=error_code,
+            provider_operation_id=None,
+            receiver_evidence_digest=None,
+        ).provider_operation_id
+        is None
+    )
+    assert (
+        action_receipt(
+            "effect_unknown",
+            error_code=error_code,
+            provider_operation_id="test-provider-operation-1",
+            receiver_evidence_digest="e" * 64,
+        ).error_code
+        == error_code
+    )
+    for changes in (
+        {"provider_message": message()},
+        {"error_code": None},
+        {"error_code": "terminal_not_accepted"},
+        {"error_code": "temporarily_unavailable_not_accepted"},
+        {"retry_after_seconds": 1},
+    ):
+        with pytest.raises(ValueError):
+            action_receipt("effect_unknown", **changes)
+
+
+def test_action_receipt_rejects_unknown_state_error_and_provider_message_scope() -> None:
+    for changes in (
+        {"state": "future_state"},
+        {"error_code": "provider_free_text"},
+        {"provider_message": message(conversation=conversation(channel_id="test-other"))},
+        {"attempt_number": True},
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            action_receipt(**changes)
+
+
+def test_dispatch_receipt_binding_rejects_every_durable_identity_drift() -> None:
+    request = dispatch_request()
+    receipt = action_receipt(request=request)
+    receipt.validate_dispatch_binding(request)
+    changed_receipts = (
+        replace(receipt, tenant_id="test-other-tenant"),
+        replace(receipt, workspace_id="test-other-workspace"),
+        replace(receipt, provider="qe.other-im.v1"),
+        replace(receipt, channel_id="test-other-channel"),
+        replace(receipt, action_id="test-action-other"),
+        replace(receipt, command_id="test-command-other"),
+        replace(receipt, dispatch_attempt_id="test-attempt-other"),
+        replace(receipt, dispatch_request_digest="d" * 64),
+        replace(receipt, intent_digest="d" * 64),
+        replace(receipt, command_digest="d" * 64),
+        replace(receipt, idempotency_key="d" * 64),
+        replace(receipt, attempt_number=2),
+        replace(receipt, correlation_id="test-correlation-other"),
+        replace(receipt, causation_id="test-causation-other"),
+        replace(receipt, traceparent=None),
+    )
+    for changed in changed_receipts:
+        with pytest.raises(ValueError):
+            changed.validate_dispatch_binding(request)
+    provider_message_drift = action_receipt(
+        request=request,
+        provider_operation_id=None,
+        provider_message=message(
+            conversation=conversation(conversation_id="test-other-conversation")
+        ),
+    )
+    with pytest.raises(ValueError, match="conversation"):
+        provider_message_drift.validate_dispatch_binding(request)
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["succeeded", "rejected", "retryable_not_accepted", "effect_unknown"],
+)
+def test_dispatch_binding_accepts_only_dispatch_receipt_states(state: str) -> None:
+    request = dispatch_request()
+    action_receipt(state, request=request).validate_dispatch_binding(request)
+    for reconciled in ("reconciled_succeeded", "reconciled_rejected"):
+        with pytest.raises(ValueError, match="reconciled"):
+            action_receipt(reconciled, request=request).validate_dispatch_binding(request)
+
+
+def test_action_receipt_decode_is_exact_fresh_and_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipt = action_receipt()
+    wire = receipt.to_dict()
+    for changed in (
+        {**wire, "providerErrorText": "must-not-enter-wire"},
+        {key: item for key, item in wire.items() if key != "receiptId"},
+        dict(wire, schemaVersion=True),
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            IMActionReceiptV1.from_dict(changed)
+    with pytest.raises(ValueError, match="duplicate"):
+        IMActionReceiptV1.from_json_bytes(b'{"schemaVersion":1,"schemaVersion":1}')
+    with pytest.raises(TypeError, match="exact"):
+        replace(receipt, provider_message=object())
+    assert receipt.observed_at > dispatch_request().command.expires_at
+    assert "e" * 64 not in repr(receipt)
+    encoded = receipt.canonical_bytes()
+    monkeypatch.setattr(IMActionReceiptV1, "_MAX_CANONICAL_BYTES", len(encoded) - 1)
+    with pytest.raises(ValueError, match="canonical byte limit"):
+        action_receipt()
+    with pytest.raises(ValueError, match="byte limit"):
+        IMActionReceiptV1.from_json_bytes(encoded)
