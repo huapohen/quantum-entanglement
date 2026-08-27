@@ -1,0 +1,1 @@
+{"channelId":"test-channel","displayName":"测试成员","membershipRevision":"test-membership-2","participantId":"test-human","participantKind":"human","provider":"qe.fake-im.v1","roleIds":["test-role-a","test-role-b"],"schemaVersion":1,"tenantId":"test-tenant","workspaceId":"test-workspace"}

@@ -1,0 +1,1 @@
+{"consistencySeconds":5,"lookupMode":"idempotency_key","negativeAcceptanceMode":"authoritative_terminal","retentionSeconds":3600,"schemaVersion":1}

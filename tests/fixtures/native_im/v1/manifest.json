@@ -1,0 +1,147 @@
+{
+  "idempotencyKey": {
+    "intentFilename": "action_intent.json",
+    "value": "ff19f1f4ce9b043052b2ba6ac9f36f1bf105e46743b00e44891c61f9172fcaea"
+  },
+  "schemaVersion": 1,
+  "vectors": [
+    {
+      "byteLength": 182,
+      "digest": "f9e325f5fa4654ebb1429f6375f2d9e5869ea6357b97f3c1d06095903e011185",
+      "filename": "conversation_ref.json",
+      "model": "IMConversationRefV1"
+    },
+    {
+      "byteLength": 294,
+      "digest": "c3f899ed074a93f5422174a2cfe6ad89ffa37e79e67d8a56ccde86465440c45a",
+      "filename": "participant_ref.json",
+      "model": "IMParticipantRefV1"
+    },
+    {
+      "byteLength": 346,
+      "digest": "147c42a9fae7e4241acdd6c63b663030ed4480eb627388fe07b9329b25e887df",
+      "filename": "attachment_ref.json",
+      "model": "IMAttachmentRefV1"
+    },
+    {
+      "byteLength": 76,
+      "digest": "2a971c165a9438b03a0fc8784ddb1b16287c850c7352fe30d9fa665de774b8b1",
+      "filename": "message_segment_text.json",
+      "model": "IMMessageSegmentV1"
+    },
+    {
+      "byteLength": 77,
+      "digest": "83cfae30ec6ea721c7d098a82d92c81546565b50d2bf060ddd08bf54acad93a5",
+      "filename": "message_segment_mention.json",
+      "model": "IMMessageSegmentV1"
+    },
+    {
+      "byteLength": 619,
+      "digest": "9a3d88b400fdd4e6fe7f3afadee4ee61453cbf68395a4382a7d8e6ad62b9e9da",
+      "filename": "message_content.json",
+      "model": "IMMessageContentV1"
+    },
+    {
+      "byteLength": 323,
+      "digest": "36284813bbbd66c91843fd5eda64448cdbe2d7a707deaf49ceabdfa6dd70b848",
+      "filename": "message_ref.json",
+      "model": "IMMessageRefV1"
+    },
+    {
+      "byteLength": 159,
+      "digest": "a7aeb603deeac3d4ef1d90e190a1ab3fa4cc1bfbfd89f0ceffc6089dcde977f4",
+      "filename": "reaction_ref.json",
+      "model": "IMReactionRefV1"
+    },
+    {
+      "byteLength": 393,
+      "digest": "3a086983d77a9146a2bd439af32ff6897ad5ccea14759feed65a540bfcf871d4",
+      "filename": "membership_change.json",
+      "model": "IMMembershipChangeV1"
+    },
+    {
+      "byteLength": 1908,
+      "digest": "1af9be7de8ea5f49445fc67e1f8003c6445f65674dd6edac0872665a7d885b20",
+      "filename": "inbound_event.json",
+      "model": "InboundIMEventV1"
+    },
+    {
+      "byteLength": 2348,
+      "digest": "4e324e5249c42a1977b5b94ceae89e9f0967723e19375595aba18720a043780c",
+      "filename": "verified_inbound_envelope.json",
+      "model": "IMVerifiedInboundEnvelopeV1"
+    },
+    {
+      "byteLength": 169,
+      "digest": "3df0502576d1f278297131708a15d62eed47269e0a114932812faaa805e510a9",
+      "filename": "capability_request.json",
+      "model": "IMCapabilityRequestV1"
+    },
+    {
+      "byteLength": 147,
+      "digest": "a2485e5ff5ed55d8940773989287fd8854f8f7f08c7f5be3b7fd1808b7441eb2",
+      "filename": "acceptance_lookup_capability.json",
+      "model": "IMAcceptanceLookupCapabilityV1"
+    },
+    {
+      "byteLength": 444,
+      "digest": "4f4a70ff6e1d852d26c533f432d98f0c0207c545342fc98160f0d65a6a39bf83",
+      "filename": "operation_capability.json",
+      "model": "IMOperationCapabilityV1"
+    },
+    {
+      "byteLength": 872,
+      "digest": "ec43e1485131e5910497ae4e2bdc02e24c0c500e016b227b1b5be2668f73723d",
+      "filename": "capability_snapshot.json",
+      "model": "IMCapabilitySnapshotV1"
+    },
+    {
+      "byteLength": 240,
+      "digest": "628eda4ff0e87947c951eb286ee6056d7019b8c7b1ab2c2ec2a3b0ea0d5503af",
+      "filename": "inbound_read_request.json",
+      "model": "IMInboundReadRequestV1"
+    },
+    {
+      "byteLength": 2839,
+      "digest": "cd0c77515283dc8a3c8ef5f1cfb39ab23acf69389d84ea654f2d72f7dda4d756",
+      "filename": "inbound_page.json",
+      "model": "IMInboundPageV1"
+    },
+    {
+      "byteLength": 1222,
+      "digest": "4d39e4ee9fe7ddc43c90b009b747f37e05224c5f76a04b01123bc87158abdbfb",
+      "filename": "action_intent.json",
+      "model": "IMActionIntentV1"
+    },
+    {
+      "byteLength": 2005,
+      "digest": "70dd6616def7b5f5cc222e83e20734a0127486bb3ac2fb660beaeb4f392b1ff8",
+      "filename": "action_command.json",
+      "model": "IMActionCommandV1"
+    },
+    {
+      "byteLength": 2480,
+      "digest": "a4adcad3309c7520521cbba8db4fc8c7a81b154d7bfd306a61569669824e1bc9",
+      "filename": "dispatch_request.json",
+      "model": "IMDispatchRequestV1"
+    },
+    {
+      "byteLength": 1002,
+      "digest": "7e2896d33c8b3818337059bfa936d2006bf1be1b026ddf65fa28e95ca4254535",
+      "filename": "action_receipt.json",
+      "model": "IMActionReceiptV1"
+    },
+    {
+      "byteLength": 2866,
+      "digest": "6482e452dd2ae3a1ef070b06566c53563707c70bd3b3eb5c315fafdf7f051d29",
+      "filename": "dispatch_unknown_observation.json",
+      "model": "IMDispatchUnknownObservationV1"
+    },
+    {
+      "byteLength": 957,
+      "digest": "766296107dab9c3c6d09311547f6f53042b680abb6e0a136721ef75fafda2af5",
+      "filename": "acceptance_query.json",
+      "model": "IMAcceptanceQueryV1"
+    }
+  ]
+}
