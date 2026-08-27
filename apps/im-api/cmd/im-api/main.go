@@ -6,17 +6,16 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	wanworkapp "github.com/huapohen/quantum-entanglement/apps/im-api/internal/app"
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/config"
 )
 
-const defaultListenAddress = "127.0.0.1:18080"
-
 func main() {
-	listenAddress := os.Getenv("WANWORK_IM_LISTEN_ADDRESS")
-	if listenAddress == "" {
-		listenAddress = defaultListenAddress
+	settings, err := config.Load(os.LookupEnv)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	if err := wanworkapp.New().Listen(listenAddress, fiber.ListenConfig{
+	if err := wanworkapp.New().Listen(settings.ListenAddress(), fiber.ListenConfig{
 		DisableStartupMessage: true,
 	}); err != nil {
 		log.Fatal(err)

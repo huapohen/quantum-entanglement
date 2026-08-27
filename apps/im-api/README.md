@@ -17,6 +17,10 @@ WANWORK_IM_LISTEN_ADDRESS=127.0.0.1:19080 \
   GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-api
 ```
 
+The current immutable configuration reads only `WANWORK_IM_LISTEN_ADDRESS`, accepts only numeric loopback
+hosts, fixes auth/IM providers to their fake implementations, and fixes outbound to `disabled`. Clerk,
+RongCloud, model, endpoint, and credential environment variables are intentionally not read in this stage.
+
 Current endpoint:
 
 ```text
