@@ -22,8 +22,8 @@
   },
   "sourceControl": {
     "notionContentBaselineCommit": "8ab98aa5837226f0c1d8788eec350fe580f32180",
-    "manifestPreparedFromCommit": "88cac7e33081edec77a931240944792a0fd134b7",
-    "manifestPreparedFromTree": "db71a0fa48aa8cd9a6ec962d277420e0273a614d"
+    "manifestPreparedFromCommit": "fdd4bc94a8dd55da2597b1423801d286170cd854",
+    "manifestPreparedFromTree": "3ec4f27c35ebff31771744b7a9134cf345112e6c"
   },
   "pages": [
     {
@@ -629,28 +629,6 @@
       }
     },
     {
-      "key": "branch-catalog",
-      "pageId": "3c9ead4b-996e-81bc-8053-cf1e844dccdb",
-      "url": "https://app.notion.com/p/3c9ead4b996e81bc8053cf1e844dccdb?pvs=204",
-      "localFiles": [
-        {
-          "path": "BRANCH_CATALOG.md",
-          "sha256": "3ac4508dd33da2e1eb781b11f19b5271c43c7878c2e47d53b06c227ddff1de71"
-        }
-      ],
-      "updateMode": "created-full-semantic-mirror",
-      "remoteReadback": {
-        "verified": true,
-        "title": "🌿 分支与版本目录｜main、archive 与 worktree",
-        "contentLength": 17314,
-        "expectedMarkers": [
-          "BRANCH_CATALOG.md",
-          "8ab98aa5837226f0c1d8788eec350fe580f32180"
-        ],
-        "missingMarkers": []
-      }
-    },
-    {
       "key": "terminology",
       "pageId": "3c9ead4b-996e-8164-9eec-fe3f7a163e3e",
       "url": "https://app.notion.com/p/3c9ead4b996e81649eecfe3f7a163e3e?pvs=204",
@@ -673,8 +651,29 @@
       }
     }
   ],
+  "auxiliaryDerivedPages": [
+    {
+      "key": "branch-catalog",
+      "pageId": "3c9ead4b-996e-81bc-8053-cf1e844dccdb",
+      "url": "https://app.notion.com/p/3c9ead4b996e81bc8053cf1e844dccdb?pvs=204",
+      "sourcePath": "BRANCH_CATALOG.md",
+      "digestPinned": false,
+      "reason": "generated branch catalog is finalized after all other evidence commits to avoid a self-referential manifest/catalog cycle",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🌿 分支与版本目录｜main、archive 与 worktree",
+        "expectedMarkers": [
+          "BRANCH_CATALOG.md",
+          "main"
+        ],
+        "missingMarkers": []
+      }
+    }
+  ],
   "verificationSummary": {
     "pageCount": 29,
+    "controlledSourcePageCount": 28,
+    "auxiliaryDerivedPageCount": 1,
     "existingPagesUpdated": 13,
     "newPagesCreated": 16,
     "readbackVerified": 29,

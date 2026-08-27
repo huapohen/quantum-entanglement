@@ -53,7 +53,6 @@ class ReportSyncBundleTests(unittest.TestCase):
             "analysis_report/multi_agent_collaboration_report.md",
             b"# Collaboration\n",
         )
-        self._write("BRANCH_CATALOG.md", b"# Branch catalog\n")
         self._write("analysis_report/NEXT_STAGE_PLAN.md", b"# Next stage\n")
         self._write(
             "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md",
@@ -258,9 +257,9 @@ class ReportSyncBundleTests(unittest.TestCase):
             {"unmanifestedPolicy": "fail-closed"},
         )
         source_summary = cast(dict[str, Any], first["sourceSummary"])
-        self.assertEqual(source_summary["count"], 11)
-        self.assertEqual(source_summary["sourceTargetCount"], 12)
-        self.assertEqual(source_summary["notionTargetCount"], 10)
+        self.assertEqual(source_summary["count"], 10)
+        self.assertEqual(source_summary["sourceTargetCount"], 11)
+        self.assertEqual(source_summary["notionTargetCount"], 9)
         self.assertEqual(source_summary["yuqueTargetCount"], 2)
 
         path = self._save_bundle(first)
