@@ -8,7 +8,7 @@
 
 | 文件 | 状态 | 本地库存口径 | 说明 |
 |---|---|---|---|
-| `checkpoint-20260827-v0-stage-acceptance.json` | `current` | 41 source、42 source-target、27 images | v0版术语统一、Result Receipt/Observed 安全停点、阶段验收与下一阶段计划落盘后的 schema v3 库存；Notion/语雀人工更名只按用户报告记录，未执行实时远端回读；已对生成内容执行 `--verify` |
+| `checkpoint-20260827-v0-stage-acceptance-final.json` | `current` | 41 source、42 source-target、27 images | v0版术语与活动报告路径收口、Result Receipt/Observed 安全停点、阶段验收审计修正后的 schema v3 库存；Notion/语雀不自动维护，未执行实时远端写入或回读；已对生成内容执行 `--verify` |
 
 `current` 是本目录唯一应被当前文档、发布检查和人工审阅当作 latest 的 checkpoint。生成与验证
 命令见仓库根 [`README.md`](../../README.md)；不得在生成后继续修改它所覆盖的报告、语雀传输源、
@@ -18,6 +18,7 @@
 
 | 文件 | 状态 | 生成 commit | 历史边界 |
 |---|---|---|---|
+| `checkpoint-20260827-v0-stage-acceptance.json` | `superseded` | `d06af05` | 首次 v0版阶段验收库存；早于 Gate 措辞修正、远端镜像 opt-in 政策及活动报告路径收口 |
 | `checkpoint-20260827-clawith-delivery-blueprint.json` | `superseded` | `bc72d07` | Scoped atomic start/worker authority 既有边界，加上 Clawith 部门样板、运行时/发布源码复核和第 26 张官网证据；早于 v0版术语统一、Result Receipt/Observed 安全停点及阶段收口文档 |
 | `checkpoint-20260827-scoped-start-clawith-worker-authority.json` | `superseded` | `e5c68e2` | Scoped atomic start、worker authority 和前 26 张图片的库存；早于部门级交付样板、第 26 张 Clawith 增量图片及后续源码复核 |
 | `checkpoint-20260827-atomic-start-clawith-qa.json` | `superseded` | `6327b18` | Atomic invocation start 发布证据、Clawith QA 修正及截图 20–25 收口时的库存；早于后续 scoped-start 与 worker authority 文档修正 |
@@ -25,7 +26,7 @@
 | `checkpoint-20260827-clawith.json` | `superseded` | `15a77d3` | Clawith 传输源后续更新前的 schema v3 库存；其 Yuque mapping control 也早于 local-sync-ledger |
 
 `superseded` 只表示该文件不再描述当前 HEAD，也不得再被选作 latest；它不表示文件损坏或历史
-证据失效。五个旧 JSON 必须保持原样：不得覆盖、删除、重命名或手工修改。后续每个阶段继续使用
+证据失效。六个旧 JSON 必须保持原样：不得覆盖、删除、重命名或手工修改。后续每个阶段继续使用
 新的 checkpoint 文件名，保留完整时间序列。
 
 ## 验证历史 checkpoint
