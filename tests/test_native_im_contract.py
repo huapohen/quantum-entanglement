@@ -7,13 +7,16 @@ from dataclasses import replace
 import pytest
 
 from quantum_entanglement.native_im import (
+    IMAcceptanceLookupCapabilityV1,
     IMAttachmentRefV1,
     IMCapabilityRequestV1,
+    IMCapabilitySnapshotV1,
     IMConversationRefV1,
     IMMembershipChangeV1,
     IMMessageContentV1,
     IMMessageRefV1,
     IMMessageSegmentV1,
+    IMOperationCapabilityV1,
     IMParticipantRefV1,
     IMReactionRefV1,
     IMVerifiedInboundEnvelopeV1,
@@ -168,6 +171,59 @@ def verified_envelope(**changes: object) -> IMVerifiedInboundEnvelopeV1:
     return IMVerifiedInboundEnvelopeV1(**values)  # type: ignore[arg-type]
 
 
+def lookup(
+    lookup_mode: str = "idempotency_key", **changes: object
+) -> IMAcceptanceLookupCapabilityV1:
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "lookup_mode": lookup_mode,
+        "negative_acceptance_mode": "authoritative_terminal",
+        "retention_seconds": 3_600,
+        "consistency_seconds": 5,
+    }
+    values.update(changes)
+    return IMAcceptanceLookupCapabilityV1(**values)  # type: ignore[arg-type]
+
+
+def operation(name: str = "send_message", **changes: object) -> IMOperationCapabilityV1:
+    no_revision = {"send_message", "add_reaction", "remove_reaction"}
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "operation": name,
+        "revision_mode": "not_applicable" if name in no_revision else "required_cas",
+        "idempotency_mode": "receiver_deduplicated",
+        "acceptance_lookups": (
+            lookup("idempotency_key"),
+            lookup("provider_operation_id"),
+        ),
+    }
+    values.update(changes)
+    return IMOperationCapabilityV1(**values)  # type: ignore[arg-type]
+
+
+def capability(**changes: object) -> IMCapabilitySnapshotV1:
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "tenant_id": "test-tenant",
+        "workspace_id": "test-workspace",
+        "provider": "qe.fake-im.v1",
+        "channel_id": "test-channel",
+        "revision": "test-capability-1",
+        "observed_at": TIME,
+        "operations": (operation("send_message"),),
+        "idempotency_retention_seconds": 3_600,
+        "supports_threads": True,
+        "supports_mentions": True,
+        "supports_attachments": True,
+        "supports_membership_events": True,
+        "max_text_bytes": 1_024,
+        "max_attachments": 4,
+        "max_attachment_bytes": 1_048_576,
+    }
+    values.update(changes)
+    return IMCapabilitySnapshotV1(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -190,6 +246,9 @@ def verified_envelope(**changes: object) -> IMVerifiedInboundEnvelopeV1:
             "test-channel",
             "test-capability-request-1",
         ),
+        lookup(),
+        operation(),
+        capability(),
     ],
 )
 def test_reference_models_round_trip_through_dict_and_noncanonical_json(value: object) -> None:
@@ -366,3 +425,86 @@ def test_verified_envelope_binds_exact_event_digest_and_traceparent() -> None:
         verified_envelope(traceparent="")
     changed_event = replace(inbound_event(), sequence_number=2)
     assert changed_event.canonical_digest() != inbound_event().canonical_digest()
+
+
+def test_acceptance_lookup_windows_are_exact_signed_64_bit_values() -> None:
+    assert lookup().consistency_seconds < lookup().retention_seconds
+    for changes in (
+        {"retention_seconds": 0},
+        {"retention_seconds": True},
+        {"consistency_seconds": -1},
+        {"consistency_seconds": 3_600},
+        {"lookup_mode": "future"},
+        {"negative_acceptance_mode": "eventually_probable"},
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            lookup(**changes)
+
+
+@pytest.mark.parametrize(
+    ("name", "revision_mode"),
+    [
+        ("send_message", "not_applicable"),
+        ("add_reaction", "not_applicable"),
+        ("remove_reaction", "not_applicable"),
+        ("edit_message", "required_cas"),
+        ("delete_message", "provider_best_effort"),
+    ],
+)
+def test_operation_revision_matrix(name: str, revision_mode: str) -> None:
+    assert operation(name, revision_mode=revision_mode).revision_mode == revision_mode
+
+
+def test_operation_capability_rejects_order_duplicates_and_impossible_guarantees() -> None:
+    idempotency = lookup("idempotency_key")
+    provider = lookup("provider_operation_id")
+    for changes in (
+        {"acceptance_lookups": (provider, idempotency)},
+        {"acceptance_lookups": (idempotency, idempotency)},
+        {
+            "idempotency_mode": "not_supported",
+            "acceptance_lookups": (idempotency,),
+        },
+        {"revision_mode": "required_cas"},
+    ):
+        with pytest.raises(ValueError):
+            operation(**changes)
+    with pytest.raises(ValueError):
+        operation("edit_message", revision_mode="not_applicable")
+    no_dedup = operation(
+        idempotency_mode="not_supported",
+        acceptance_lookups=(provider,),
+    )
+    assert no_dedup.idempotency_mode == "not_supported"
+
+
+def test_capability_snapshot_binds_sorted_operations_and_retention() -> None:
+    add_reaction = operation("add_reaction")
+    send = operation("send_message")
+    assert capability(operations=(add_reaction, send)).operations == (add_reaction, send)
+    for changes in (
+        {"operations": (send, add_reaction)},
+        {"operations": (send, send)},
+        {"idempotency_retention_seconds": None},
+        {"supports_threads": 1},
+        {"max_text_bytes": True},
+        {"max_attachments": -1},
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            capability(**changes)
+    no_dedup_operation = operation(
+        idempotency_mode="not_supported",
+        acceptance_lookups=(lookup("provider_operation_id"),),
+    )
+    assert (
+        capability(
+            operations=(no_dedup_operation,),
+            idempotency_retention_seconds=None,
+        ).idempotency_retention_seconds
+        is None
+    )
+    with pytest.raises(ValueError):
+        capability(
+            operations=(no_dedup_operation,),
+            idempotency_retention_seconds=10,
+        )

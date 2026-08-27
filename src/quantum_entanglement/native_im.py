@@ -14,6 +14,7 @@ from typing import Any, ClassVar, Dict, Tuple, Type, TypeVar, cast
 from ._native_im_codec import (
     NATIVE_IM_SCHEMA_VERSION,
     NativeIMCodecTooLargeError,
+    _boolean,
     _canonical_json_bytes,
     _decode_json_bytes,
     _digest,
@@ -27,6 +28,7 @@ from ._native_im_codec import (
     _ordered_unique_text,
     _plain_dict,
     _plain_list,
+    _positive_integer,
     _schema_version,
     _timestamp,
     _traceparent,
@@ -49,6 +51,17 @@ _INBOUND_EVENT_TYPES = {
     "reaction.removed",
     "membership.changed",
 }
+_OPERATIONS = {
+    "send_message",
+    "edit_message",
+    "delete_message",
+    "add_reaction",
+    "remove_reaction",
+}
+_LOOKUP_MODES = {"idempotency_key", "provider_operation_id"}
+_NEGATIVE_ACCEPTANCE_MODES = {"authoritative_terminal", "unavailable"}
+_REVISION_MODES = {"not_applicable", "required_cas", "provider_best_effort"}
+_IDEMPOTENCY_MODES = {"receiver_deduplicated", "not_supported"}
 
 _CONVERSATION_FIELDS = {
     "schemaVersion",
@@ -138,6 +151,38 @@ _CAPABILITY_REQUEST_FIELDS = {
     "provider",
     "channelId",
     "requestId",
+}
+_ACCEPTANCE_LOOKUP_FIELDS = {
+    "schemaVersion",
+    "lookupMode",
+    "negativeAcceptanceMode",
+    "retentionSeconds",
+    "consistencySeconds",
+}
+_OPERATION_CAPABILITY_FIELDS = {
+    "schemaVersion",
+    "operation",
+    "revisionMode",
+    "idempotencyMode",
+    "acceptanceLookups",
+}
+_CAPABILITY_SNAPSHOT_FIELDS = {
+    "schemaVersion",
+    "tenantId",
+    "workspaceId",
+    "provider",
+    "channelId",
+    "revision",
+    "observedAt",
+    "operations",
+    "idempotencyRetentionSeconds",
+    "supportsThreads",
+    "supportsMentions",
+    "supportsAttachments",
+    "supportsMembershipEvents",
+    "maxTextBytes",
+    "maxAttachments",
+    "maxAttachmentBytes",
 }
 
 _WireT = TypeVar("_WireT", bound="_NativeIMWireValue")
@@ -904,14 +949,251 @@ class IMCapabilityRequestV1(_NativeIMWireValue):
         )
 
 
+@dataclass(frozen=True)
+class IMAcceptanceLookupCapabilityV1(_NativeIMWireValue):
+    schema_version: int
+    lookup_mode: str
+    negative_acceptance_mode: str
+    retention_seconds: int
+    consistency_seconds: int
+
+    _MODEL_NAME: ClassVar[str] = "IMAcceptanceLookupCapabilityV1"
+
+    def __post_init__(self) -> None:
+        _require_exact_model(
+            self,
+            IMAcceptanceLookupCapabilityV1,
+            "acceptance lookup capability",
+        )
+        _schema_version(self.schema_version)
+        _enum(self.lookup_mode, _LOOKUP_MODES, "lookupMode")
+        _enum(
+            self.negative_acceptance_mode,
+            _NEGATIVE_ACCEPTANCE_MODES,
+            "negativeAcceptanceMode",
+        )
+        _positive_integer(self.retention_seconds, "retentionSeconds")
+        _non_negative_integer(self.consistency_seconds, "consistencySeconds")
+        if self.consistency_seconds >= self.retention_seconds:
+            raise ValueError("consistencySeconds must be less than retentionSeconds")
+        self.canonical_bytes()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "lookupMode": self.lookup_mode,
+            "negativeAcceptanceMode": self.negative_acceptance_mode,
+            "retentionSeconds": self.retention_seconds,
+            "consistencySeconds": self.consistency_seconds,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMAcceptanceLookupCapabilityV1:
+        if cls is not IMAcceptanceLookupCapabilityV1:
+            raise TypeError("acceptance lookup decoder requires the exact V1 class")
+        body = _plain_dict(value, _ACCEPTANCE_LOOKUP_FIELDS, "acceptance lookup capability")
+        return cls(
+            schema_version=body["schemaVersion"],
+            lookup_mode=body["lookupMode"],
+            negative_acceptance_mode=body["negativeAcceptanceMode"],
+            retention_seconds=body["retentionSeconds"],
+            consistency_seconds=body["consistencySeconds"],
+        )
+
+
+@dataclass(frozen=True)
+class IMOperationCapabilityV1(_NativeIMWireValue):
+    schema_version: int
+    operation: str
+    revision_mode: str
+    idempotency_mode: str
+    acceptance_lookups: Tuple[IMAcceptanceLookupCapabilityV1, ...]
+
+    _MODEL_NAME: ClassVar[str] = "IMOperationCapabilityV1"
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMOperationCapabilityV1, "operation capability")
+        _schema_version(self.schema_version)
+        _enum(self.operation, _OPERATIONS, "operation")
+        _enum(self.revision_mode, _REVISION_MODES, "revisionMode")
+        _enum(self.idempotency_mode, _IDEMPOTENCY_MODES, "idempotencyMode")
+        if self.operation in {"send_message", "add_reaction", "remove_reaction"}:
+            if self.revision_mode != "not_applicable":
+                raise ValueError(
+                    "send and reaction operations require not_applicable revision mode"
+                )
+        elif self.revision_mode == "not_applicable":
+            raise ValueError("edit and delete operations require a revision mode")
+        _require_exact_tuple(self.acceptance_lookups, "acceptanceLookups")
+        if len(self.acceptance_lookups) > len(_LOOKUP_MODES):
+            raise NativeIMCodecTooLargeError("acceptanceLookups exceeds its item limit")
+        for index, lookup in enumerate(self.acceptance_lookups):
+            _require_exact_model(
+                lookup,
+                IMAcceptanceLookupCapabilityV1,
+                f"acceptanceLookups[{index}]",
+            )
+        lookup_modes = tuple(lookup.lookup_mode for lookup in self.acceptance_lookups)
+        _ordered_unique_text(lookup_modes, "acceptanceLookups")
+        if "idempotency_key" in lookup_modes and self.idempotency_mode != "receiver_deduplicated":
+            raise ValueError("idempotency_key lookup requires receiver_deduplicated idempotency")
+        self.canonical_bytes()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "operation": self.operation,
+            "revisionMode": self.revision_mode,
+            "idempotencyMode": self.idempotency_mode,
+            "acceptanceLookups": [lookup.to_dict() for lookup in self.acceptance_lookups],
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMOperationCapabilityV1:
+        if cls is not IMOperationCapabilityV1:
+            raise TypeError("operation capability decoder requires the exact V1 class")
+        body = _plain_dict(value, _OPERATION_CAPABILITY_FIELDS, "operation capability")
+        lookups = _plain_list(
+            body["acceptanceLookups"],
+            "acceptanceLookups",
+            maximum_items=len(_LOOKUP_MODES),
+        )
+        return cls(
+            schema_version=body["schemaVersion"],
+            operation=body["operation"],
+            revision_mode=body["revisionMode"],
+            idempotency_mode=body["idempotencyMode"],
+            acceptance_lookups=tuple(
+                IMAcceptanceLookupCapabilityV1.from_dict(item) for item in lookups
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class IMCapabilitySnapshotV1(_NativeIMWireValue):
+    schema_version: int
+    tenant_id: str
+    workspace_id: str
+    provider: str
+    channel_id: str
+    revision: str
+    observed_at: str
+    operations: Tuple[IMOperationCapabilityV1, ...]
+    idempotency_retention_seconds: int | None
+    supports_threads: bool
+    supports_mentions: bool
+    supports_attachments: bool
+    supports_membership_events: bool
+    max_text_bytes: int
+    max_attachments: int
+    max_attachment_bytes: int
+
+    _MODEL_NAME: ClassVar[str] = "IMCapabilitySnapshotV1"
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMCapabilitySnapshotV1, "capability snapshot")
+        _schema_version(self.schema_version)
+        for value, label in (
+            (self.tenant_id, "tenantId"),
+            (self.workspace_id, "workspaceId"),
+            (self.provider, "provider"),
+            (self.channel_id, "channelId"),
+            (self.revision, "revision"),
+        ):
+            _id(value, label)
+        _timestamp(self.observed_at, "observedAt")
+        _require_exact_tuple(self.operations, "operations")
+        if len(self.operations) > len(_OPERATIONS):
+            raise NativeIMCodecTooLargeError("operations exceeds its item limit")
+        for index, operation in enumerate(self.operations):
+            _require_exact_model(
+                operation,
+                IMOperationCapabilityV1,
+                f"operations[{index}]",
+            )
+        operation_names = tuple(operation.operation for operation in self.operations)
+        _ordered_unique_text(operation_names, "operations")
+        has_receiver_idempotency = any(
+            operation.idempotency_mode == "receiver_deduplicated" for operation in self.operations
+        )
+        if has_receiver_idempotency:
+            if self.idempotency_retention_seconds is None:
+                raise ValueError("receiver-deduplicated capability requires retention")
+            _positive_integer(
+                self.idempotency_retention_seconds,
+                "idempotencyRetentionSeconds",
+            )
+        elif self.idempotency_retention_seconds is not None:
+            raise ValueError("idempotency retention requires a receiver-deduplicated operation")
+        for boolean, label in (
+            (self.supports_threads, "supportsThreads"),
+            (self.supports_mentions, "supportsMentions"),
+            (self.supports_attachments, "supportsAttachments"),
+            (self.supports_membership_events, "supportsMembershipEvents"),
+        ):
+            _boolean(boolean, label)
+        _non_negative_integer(self.max_text_bytes, "maxTextBytes")
+        _non_negative_integer(self.max_attachments, "maxAttachments")
+        _non_negative_integer(self.max_attachment_bytes, "maxAttachmentBytes")
+        self.canonical_bytes()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "provider": self.provider,
+            "channelId": self.channel_id,
+            "revision": self.revision,
+            "observedAt": self.observed_at,
+            "operations": [operation.to_dict() for operation in self.operations],
+            "idempotencyRetentionSeconds": self.idempotency_retention_seconds,
+            "supportsThreads": self.supports_threads,
+            "supportsMentions": self.supports_mentions,
+            "supportsAttachments": self.supports_attachments,
+            "supportsMembershipEvents": self.supports_membership_events,
+            "maxTextBytes": self.max_text_bytes,
+            "maxAttachments": self.max_attachments,
+            "maxAttachmentBytes": self.max_attachment_bytes,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMCapabilitySnapshotV1:
+        if cls is not IMCapabilitySnapshotV1:
+            raise TypeError("capability snapshot decoder requires the exact V1 class")
+        body = _plain_dict(value, _CAPABILITY_SNAPSHOT_FIELDS, "capability snapshot")
+        operations = _plain_list(body["operations"], "operations", maximum_items=len(_OPERATIONS))
+        return cls(
+            schema_version=body["schemaVersion"],
+            tenant_id=body["tenantId"],
+            workspace_id=body["workspaceId"],
+            provider=body["provider"],
+            channel_id=body["channelId"],
+            revision=body["revision"],
+            observed_at=body["observedAt"],
+            operations=tuple(IMOperationCapabilityV1.from_dict(item) for item in operations),
+            idempotency_retention_seconds=body["idempotencyRetentionSeconds"],
+            supports_threads=body["supportsThreads"],
+            supports_mentions=body["supportsMentions"],
+            supports_attachments=body["supportsAttachments"],
+            supports_membership_events=body["supportsMembershipEvents"],
+            max_text_bytes=body["maxTextBytes"],
+            max_attachments=body["maxAttachments"],
+            max_attachment_bytes=body["maxAttachmentBytes"],
+        )
+
+
 __all__ = [
+    "IMAcceptanceLookupCapabilityV1",
     "IMCapabilityRequestV1",
     "IMAttachmentRefV1",
+    "IMCapabilitySnapshotV1",
     "IMConversationRefV1",
     "IMMembershipChangeV1",
     "IMMessageContentV1",
     "IMMessageRefV1",
     "IMMessageSegmentV1",
+    "IMOperationCapabilityV1",
     "IMParticipantRefV1",
     "IMReactionRefV1",
     "IMVerifiedInboundEnvelopeV1",
