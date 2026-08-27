@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Iterator, Mapping
 
 import pytest
 
@@ -8,8 +9,70 @@ from quantum_entanglement.service.native_im_config import (
     CanonicalAbsolutePath,
     CanonicalHTTPSOrigin,
     NativeIMConfigurationError,
+    NativeIMDisabledConfigV1,
+    NativeIMInboundOnlyConfigV1,
+    NativeIMSandboxConfig,
     parse_approved_ip_addresses,
 )
+from quantum_entanglement.service.secrets import SecretRef
+
+
+class ChangingEnvironment(Mapping[str, str]):
+    def __init__(self, values: dict[str, str]) -> None:
+        self.values = values
+        self.reads: dict[str, int] = {}
+
+    def __getitem__(self, key: str) -> str:
+        self.reads[key] = self.reads.get(key, 0) + 1
+        if self.reads[key] > 1:
+            return "changed-after-first-read"
+        return self.values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.values)
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+
+def disabled_environment() -> dict[str, str]:
+    return {
+        "PATH": "/host/path",
+        "QE_CONNECTOR": "fake",
+        "QE_NATIVE_IM_CONFIG_VERSION": "1",
+        "QE_NATIVE_IM_ENABLED": "false",
+    }
+
+
+def enabled_environment() -> dict[str, str]:
+    return {
+        "PATH": "/host/path",
+        "QE_CONNECTOR": "fake",
+        "QE_NATIVE_IM_CONFIG_VERSION": "1",
+        "QE_NATIVE_IM_ENABLED": "true",
+        "QE_NATIVE_IM_MODE": "inbound_only",
+        "QE_NATIVE_IM_PROFILE_ID": "test-profile",
+        "QE_NATIVE_IM_PROFILE_REVISION": "test-revision-1",
+        "QE_NATIVE_IM_PROFILE_DIGEST": "a" * 64,
+        "QE_NATIVE_IM_APPROVAL_ID": "test-approval",
+        "QE_NATIVE_IM_APPROVAL_EXPIRES_AT": "2026-09-28T00:00:00.000001Z",
+        "QE_NATIVE_IM_PROVIDER": "test-provider",
+        "QE_NATIVE_IM_TENANT_ID": "test-tenant",
+        "QE_NATIVE_IM_WORKSPACE_ID": "test-workspace",
+        "QE_NATIVE_IM_CHANNEL_ID": "test-channel",
+        "QE_NATIVE_IM_ORIGIN": "https://sandbox.im.example.com:443",
+        "QE_NATIVE_IM_APPROVED_ADDRESSES": "2001:4860:4860::8888,8.8.8.8",
+        "QE_NATIVE_IM_HEALTH_PATH": "/v1/health",
+        "QE_NATIVE_IM_READ_PATH": "/v1/inbound-events",
+        "QE_NATIVE_IM_CREDENTIAL_REF": "file://native-im-read-credential",
+        "QE_NATIVE_IM_VERIFICATION_SECRET_REF": "file://native-im-verification-key",
+        "QE_NATIVE_IM_PAGE_LIMIT": "100",
+        "QE_NATIVE_IM_MAX_RESPONSE_BYTES": "8388608",
+        "QE_NATIVE_IM_CONNECT_TIMEOUT_MS": "5000",
+        "QE_NATIVE_IM_READ_TIMEOUT_MS": "30000",
+        "QE_NATIVE_IM_OUTBOUND_MODE": "disabled",
+        "QE_NATIVE_IM_REDIRECT_MODE": "deny",
+    }
 
 
 def test_https_origin_requires_one_canonical_dns_authority_and_explicit_port() -> None:
@@ -143,3 +206,187 @@ def test_approved_addresses_enforce_a_hard_item_limit() -> None:
     with pytest.raises(NativeIMConfigurationError) as raised:
         parse_approved_ip_addresses(addresses)
     assert raised.value.code == "native_im_addresses_too_many"
+
+
+def test_disabled_configuration_has_no_endpoint_or_secret_surface() -> None:
+    configuration = NativeIMSandboxConfig.from_environment(disabled_environment())
+
+    assert type(configuration) is NativeIMDisabledConfigV1
+    assert configuration.enabled is False
+    assert len(configuration.fingerprint) == 16
+    assert not hasattr(configuration, "origin")
+    assert not hasattr(configuration, "credential_ref")
+
+
+def test_disabled_configuration_rejects_dormant_endpoint_or_secret_fields() -> None:
+    canary = "credential-canary-must-not-render"
+    values = disabled_environment()
+    values["QE_NATIVE_IM_CREDENTIAL_REF"] = canary
+    with pytest.raises(NativeIMConfigurationError) as raised:
+        NativeIMSandboxConfig.from_environment(values)
+    assert raised.value.code == "native_im_configuration_unknown_field"
+    assert canary not in f"{raised.value!r} {raised.value}"
+
+
+def test_enabled_configuration_parses_exact_inbound_only_snapshot() -> None:
+    configuration = NativeIMSandboxConfig.from_environment(enabled_environment())
+
+    assert type(configuration) is NativeIMInboundOnlyConfigV1
+    assert configuration.enabled is True
+    assert configuration.mode == "inbound_only"
+    assert configuration.origin.canonical == "https://sandbox.im.example.com:443"
+    assert configuration.health_path.canonical == "/v1/health"
+    assert configuration.read_path.canonical == "/v1/inbound-events"
+    assert configuration.approved_addresses == (
+        ipaddress.ip_address("2001:4860:4860::8888"),
+        ipaddress.ip_address("8.8.8.8"),
+    )
+    assert configuration.credential_ref == SecretRef.parse("file://native-im-read-credential")
+    assert configuration.verification_secret_ref == SecretRef.parse(
+        "file://native-im-verification-key"
+    )
+    assert configuration.outbound_mode == "disabled"
+    assert configuration.redirect_mode == "deny"
+
+
+def test_enabled_configuration_repr_and_errors_hide_all_sensitive_values() -> None:
+    values = enabled_environment()
+    configuration = NativeIMSandboxConfig.from_environment(values)
+    rendered = repr(configuration)
+    for field_name in (
+        "QE_NATIVE_IM_ORIGIN",
+        "QE_NATIVE_IM_APPROVED_ADDRESSES",
+        "QE_NATIVE_IM_CREDENTIAL_REF",
+        "QE_NATIVE_IM_VERIFICATION_SECRET_REF",
+        "QE_NATIVE_IM_PROFILE_DIGEST",
+    ):
+        assert values[field_name] not in rendered
+    assert len(configuration.fingerprint) == 16
+
+    canary = "secret-value-canary"
+    values["QE_NATIVE_IM_VERIFICATION_SECRET_REF"] = canary
+    with pytest.raises(NativeIMConfigurationError) as raised:
+        NativeIMSandboxConfig.from_environment(values)
+    assert canary not in f"{raised.value!r} {raised.value}"
+
+
+def test_environment_snapshot_reads_each_native_field_exactly_once() -> None:
+    changing = ChangingEnvironment(enabled_environment())
+    configuration = NativeIMSandboxConfig.from_environment(changing)
+
+    assert type(configuration) is NativeIMInboundOnlyConfigV1
+    assert all(
+        count == 1 for key, count in changing.reads.items() if key.startswith("QE_NATIVE_IM_")
+    )
+    assert set(changing.reads) == {
+        key for key in changing.values if key.startswith("QE_NATIVE_IM_")
+    }
+
+
+def test_parser_ignores_other_namespaces_but_rejects_unknown_native_names() -> None:
+    values = disabled_environment()
+    values["AWS_SECRET_ACCESS_KEY"] = "not-read"
+    values["QE_UNRELATED"] = "owned-by-another-parser"
+    NativeIMSandboxConfig.from_environment(values)
+
+    values["QE_NATIVE_IM_FUTURE"] = "must-not-render"
+    with pytest.raises(NativeIMConfigurationError) as raised:
+        NativeIMSandboxConfig.from_environment(values)
+    assert raised.value.code == "native_im_configuration_unknown_field"
+    assert "FUTURE" not in str(raised.value)
+
+
+def test_enabled_configuration_requires_every_exact_field() -> None:
+    for field_name in sorted(
+        key for key in enabled_environment() if key.startswith("QE_NATIVE_IM_")
+    ):
+        values = enabled_environment()
+        del values[field_name]
+        with pytest.raises(NativeIMConfigurationError) as raised:
+            NativeIMSandboxConfig.from_environment(values)
+        assert raised.value.code == "native_im_configuration_missing_field"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected_code"),
+    (
+        ("QE_NATIVE_IM_CONFIG_VERSION", "2", "native_im_configuration_version_unsupported"),
+        ("QE_NATIVE_IM_ENABLED", "yes", "native_im_configuration_boolean_invalid"),
+        ("QE_NATIVE_IM_MODE", "outbound", "native_im_mode_forbidden"),
+        ("QE_NATIVE_IM_PROFILE_DIGEST", "A" * 64, "native_im_configuration_digest_invalid"),
+        (
+            "QE_NATIVE_IM_APPROVAL_EXPIRES_AT",
+            "2026-09-28T00:00:00Z",
+            "native_im_configuration_timestamp_invalid",
+        ),
+        ("QE_NATIVE_IM_PAGE_LIMIT", "0", "native_im_configuration_integer_out_of_range"),
+        ("QE_NATIVE_IM_PAGE_LIMIT", "1001", "native_im_configuration_integer_out_of_range"),
+        ("QE_NATIVE_IM_PAGE_LIMIT", "01", "native_im_configuration_integer_invalid"),
+        (
+            "QE_NATIVE_IM_MAX_RESPONSE_BYTES",
+            "1023",
+            "native_im_configuration_integer_out_of_range",
+        ),
+        (
+            "QE_NATIVE_IM_CONNECT_TIMEOUT_MS",
+            "99",
+            "native_im_configuration_integer_out_of_range",
+        ),
+        (
+            "QE_NATIVE_IM_READ_TIMEOUT_MS",
+            "120001",
+            "native_im_configuration_integer_out_of_range",
+        ),
+        ("QE_NATIVE_IM_OUTBOUND_MODE", "enabled", "native_im_outbound_mode_forbidden"),
+        ("QE_NATIVE_IM_REDIRECT_MODE", "follow", "native_im_redirect_mode_forbidden"),
+    ),
+)
+def test_enabled_configuration_fails_closed_on_scalar_drift(
+    field_name: str, value: str, expected_code: str
+) -> None:
+    values = enabled_environment()
+    values[field_name] = value
+    with pytest.raises(NativeIMConfigurationError) as raised:
+        NativeIMSandboxConfig.from_environment(values)
+    assert raised.value.code == expected_code
+    assert value not in str(raised.value)
+
+
+def test_enabled_configuration_requires_distinct_paths_and_secret_purposes() -> None:
+    values = enabled_environment()
+    values["QE_NATIVE_IM_READ_PATH"] = values["QE_NATIVE_IM_HEALTH_PATH"]
+    with pytest.raises(NativeIMConfigurationError) as paths:
+        NativeIMSandboxConfig.from_environment(values)
+    assert paths.value.code == "native_im_configuration_paths_not_distinct"
+
+    values = enabled_environment()
+    values["QE_NATIVE_IM_VERIFICATION_SECRET_REF"] = values["QE_NATIVE_IM_CREDENTIAL_REF"]
+    with pytest.raises(NativeIMConfigurationError) as secrets:
+        NativeIMSandboxConfig.from_environment(values)
+    assert secrets.value.code == "native_im_secret_purpose_alias_forbidden"
+
+
+def test_enabled_configuration_accepts_only_file_secret_references() -> None:
+    values = enabled_environment()
+    values["QE_NATIVE_IM_CREDENTIAL_REF"] = "vault://native-im-read-credential"
+    with pytest.raises(NativeIMConfigurationError) as raised:
+        NativeIMSandboxConfig.from_environment(values)
+    assert raised.value.code == "native_im_secret_scheme_forbidden"
+
+
+def test_direct_config_models_reject_bool_as_integer_and_subclass_values() -> None:
+    with pytest.raises(NativeIMConfigurationError):
+        NativeIMDisabledConfigV1(schema_version=True, enabled=False)  # type: ignore[arg-type]
+
+    class OriginSubclass(CanonicalHTTPSOrigin):
+        pass
+
+    baseline = NativeIMSandboxConfig.from_environment(enabled_environment())
+    assert type(baseline) is NativeIMInboundOnlyConfigV1
+    with pytest.raises(NativeIMConfigurationError):
+        NativeIMInboundOnlyConfigV1(
+            **{
+                **baseline.__dict__,
+                "origin": OriginSubclass(host=baseline.origin.host, port=baseline.origin.port),
+            }
+        )
