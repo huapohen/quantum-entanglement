@@ -31,7 +31,11 @@ from ._native_im_codec import (
     _timestamp,
     _utf8_text,
 )
-from .native_im import IMOperationCapabilityV1
+from .native_im import (
+    IMCapabilityRequestV1,
+    IMCapabilitySnapshotV1,
+    IMOperationCapabilityV1,
+)
 
 _MAX_PROFILE_BYTES = 256 * 1_024
 _MAX_PROFILE_COMPONENT_BYTES = 64 * 1_024
@@ -929,6 +933,20 @@ class IMProviderProfileBindingError(ValueError):
     """A caller-provided profile identity does not bind the exact trusted value."""
 
 
+class IMProviderProfileNotReadyError(ValueError):
+    """A valid profile lacks facts required by the E2 inbound-only boundary."""
+
+    def __init__(self, blockers: Tuple[str, ...]) -> None:
+        if type(blockers) is not tuple or not blockers:
+            raise TypeError("profile readiness blockers must be a non-empty exact tuple")
+        self.blockers = blockers
+        super().__init__("native IM provider profile is not E2 ready")
+
+
+class IMProviderProfileScopeError(ValueError):
+    """A capability request does not match the complete pinned profile scope."""
+
+
 _CORE_E2_IDENTITY_MAPPINGS = {
     "channelId",
     "conversationId",
@@ -1018,17 +1036,73 @@ def validate_profile_binding_v1(
         raise IMProviderProfileBindingError("native IM provider profile binding mismatch") from None
 
 
+def derive_inbound_only_capability_snapshot_v1(
+    profile: IMProviderProfileV1,
+    request: IMCapabilityRequestV1,
+    *,
+    observed_at: str,
+) -> IMCapabilitySnapshotV1:
+    """Project verified inbound facts while mechanically omitting all outbound operations."""
+
+    _require_exact_model(profile, IMProviderProfileV1, "provider profile")
+    _require_exact_model(request, IMCapabilityRequestV1, "capability request")
+    blockers = evaluate_e2_profile_readiness_v1(profile)
+    if blockers:
+        raise IMProviderProfileNotReadyError(blockers) from None
+    profile_scope = (
+        profile.tenant_id,
+        profile.workspace_id,
+        profile.provider,
+        profile.channel_id,
+    )
+    request_scope = (
+        request.tenant_id,
+        request.workspace_id,
+        request.provider,
+        request.channel_id,
+    )
+    if profile_scope != request_scope:
+        raise IMProviderProfileScopeError("native IM provider profile scope mismatch") from None
+    feature_status = {feature.feature: feature.status for feature in profile.features}
+    event_status = {mapping.event_type: mapping.status for mapping in profile.event_mappings}
+    supports_attachments = feature_status["attachments"] == "supported"
+    return IMCapabilitySnapshotV1(
+        schema_version=NATIVE_IM_SCHEMA_VERSION,
+        tenant_id=profile.tenant_id,
+        workspace_id=profile.workspace_id,
+        provider=profile.provider,
+        channel_id=profile.channel_id,
+        revision=profile.revision,
+        observed_at=observed_at,
+        operations=(),
+        idempotency_retention_seconds=None,
+        supports_threads=feature_status["threads"] == "supported",
+        supports_mentions=feature_status["mentions"] == "supported",
+        supports_attachments=supports_attachments,
+        supports_membership_events=(
+            feature_status["membership_events"] == "supported"
+            and event_status["membership.changed"] == "supported"
+        ),
+        max_text_bytes=profile.limits.max_text_bytes,
+        max_attachments=profile.limits.max_attachments if supports_attachments else 0,
+        max_attachment_bytes=(profile.limits.max_attachment_bytes if supports_attachments else 0),
+    )
+
+
 __all__ = [
     "IMProviderAuthenticationProfileV1",
-    "IMProviderProfileBindingError",
     "IMProviderEventMappingV1",
     "IMProviderFeatureV1",
     "IMProviderIdentityMappingV1",
     "IMProviderLimitProfileV1",
     "IMProviderOperationProfileV1",
+    "IMProviderProfileBindingError",
+    "IMProviderProfileNotReadyError",
+    "IMProviderProfileScopeError",
     "IMProviderProfileV1",
     "IMProviderResumeProfileV1",
     "NATIVE_IM_SCHEMA_VERSION",
+    "derive_inbound_only_capability_snapshot_v1",
     "evaluate_e2_profile_readiness_v1",
     "validate_profile_binding_v1",
 ]
