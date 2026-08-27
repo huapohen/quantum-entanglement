@@ -166,39 +166,46 @@ func (host *Host) Stop(ctx context.Context) error {
 	if host.state == HostStateStopped {
 		return nil
 	}
-	if host.state != HostStateReady {
+	if host.state != HostStateReady && !(host.state == HostStateFailed && len(host.started) > 0) {
 		return ErrInvalidLifecycle
 	}
 	host.state = HostStateStopping
 	err := stopPlugins(ctx, host.started)
+	if err != nil {
+		host.state = HostStateFailed
+		return err
+	}
 	host.started = nil
 	host.state = HostStateStopped
-	return err
+	return nil
 }
 
 func (host *Host) failAndRollback(ctx context.Context, cause error) error {
 	rollbackErr := stopPlugins(ctx, host.started)
-	host.started = nil
+	if rollbackErr == nil {
+		host.started = nil
+	}
 	host.state = HostStateFailed
 	return errors.Join(cause, rollbackErr)
 }
 
 func stopPlugins(ctx context.Context, plugins []runningPlugin) error {
+	cleanupCtx := context.WithoutCancel(ctx)
 	reversed := slices.Clone(plugins)
 	slices.Reverse(reversed)
 	var failures []error
 	for _, plugin := range reversed {
-		if err := callWithTimeout(ctx, plugin.timeouts.Drain, plugin.instance.Drain); err != nil {
+		if err := callWithTimeout(cleanupCtx, plugin.timeouts.Drain, plugin.instance.Drain); err != nil {
 			failures = append(failures, fmt.Errorf("drain plugin %s: %w", plugin.id, err))
 		}
 	}
 	for _, plugin := range reversed {
-		if err := callWithTimeout(ctx, plugin.timeouts.Stop, plugin.instance.Stop); err != nil {
+		if err := callWithTimeout(cleanupCtx, plugin.timeouts.Stop, plugin.instance.Stop); err != nil {
 			failures = append(failures, fmt.Errorf("stop plugin %s: %w", plugin.id, err))
 		}
 	}
 	for _, plugin := range reversed {
-		if err := plugin.effects.cleanup(ctx, plugin.timeouts.Stop); err != nil {
+		if err := plugin.effects.cleanup(cleanupCtx, plugin.timeouts.Stop); err != nil {
 			failures = append(failures, fmt.Errorf("cleanup plugin %s: %w", plugin.id, err))
 		}
 	}
@@ -243,17 +250,29 @@ func (scope *effectScope) Defer(label string, cleanup func(context.Context) erro
 func (scope *effectScope) cleanup(parent context.Context, timeout time.Duration) error {
 	scope.mu.Lock()
 	effects := slices.Clone(scope.effects)
-	scope.effects = nil
-	scope.labels = make(map[string]struct{})
 	scope.mu.Unlock()
 	slices.Reverse(effects)
 
 	var failures []error
+	cleaned := make(map[string]struct{}, len(effects))
 	for _, effect := range effects {
 		if err := callWithTimeout(parent, timeout, effect.cleanup); err != nil {
 			failures = append(failures, fmt.Errorf("effect %s: %w", effect.label, err))
+			continue
 		}
+		cleaned[effect.label] = struct{}{}
 	}
+	scope.mu.Lock()
+	retained := make([]registeredEffect, 0, len(scope.effects))
+	for _, effect := range scope.effects {
+		if _, wasCleaned := cleaned[effect.label]; wasCleaned {
+			delete(scope.labels, effect.label)
+			continue
+		}
+		retained = append(retained, effect)
+	}
+	scope.effects = retained
+	scope.mu.Unlock()
 	return errors.Join(failures...)
 }
 

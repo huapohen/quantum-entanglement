@@ -82,6 +82,9 @@ func TestCleanupFailureDoesNotSkipRemainingEffectsOrPlugins(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "injected failure") {
 		t.Fatalf("stop error = %v, want joined cleanup failure", err)
 	}
+	if host.State() != HostStateFailed {
+		t.Fatalf("state = %q, want retryable %q", host.State(), HostStateFailed)
+	}
 	calls := log.snapshot()
 	for _, required := range []string{
 		"cleanup:runtime.fake.v1",
@@ -91,6 +94,126 @@ func TestCleanupFailureDoesNotSkipRemainingEffectsOrPlugins(t *testing.T) {
 		if !slices.Contains(calls, required) {
 			t.Fatalf("calls %v do not contain %q", calls, required)
 		}
+	}
+}
+
+func TestCancelledStopUsesIndependentBoundedCleanupContext(t *testing.T) {
+	t.Parallel()
+
+	log := newCallLog()
+	manifest := testManifest("cleanup.fake.v1", []PortID{"runtime.invoke.v1"}, nil)
+	registry := NewRegistry()
+	registerLifecycleSchema(t, registry)
+	factory := &fakeFactory{
+		manifest:                   manifest,
+		log:                        log,
+		cleanupRequiresLiveContext: true,
+	}
+	if err := registry.RegisterFactory(factory, admittedPackage(manifest)); err != nil {
+		t.Fatalf("register factory: %v", err)
+	}
+	host := lifecycleHostFromSelection(t, registry, []Manifest{manifest})
+	if err := host.Start(context.Background()); err != nil {
+		t.Fatalf("start host: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := host.Stop(ctx); err != nil {
+		t.Fatalf("stop with cancelled caller context: %v", err)
+	}
+	if host.State() != HostStateStopped ||
+		!slices.Contains(log.snapshot(), "cleanup:cleanup.fake.v1") {
+		t.Fatalf("state/calls = %q/%v", host.State(), log.snapshot())
+	}
+}
+
+func TestCancelledStartRollbackUsesIndependentCleanupContext(t *testing.T) {
+	t.Parallel()
+
+	log := newCallLog()
+	manifest := testManifest("rollback.fake.v1", []PortID{"runtime.invoke.v1"}, nil)
+	registry := NewRegistry()
+	registerLifecycleSchema(t, registry)
+	factory := &fakeFactory{
+		manifest:                   manifest,
+		log:                        log,
+		blockAt:                    "start:rollback.fake.v1",
+		cleanupRequiresLiveContext: true,
+	}
+	if err := registry.RegisterFactory(factory, admittedPackage(manifest)); err != nil {
+		t.Fatalf("register factory: %v", err)
+	}
+	host := lifecycleHostFromSelection(t, registry, []Manifest{manifest})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := host.Start(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("start error = %v, want %v", err, context.Canceled)
+	}
+	if host.State() != HostStateFailed ||
+		!slices.Contains(log.snapshot(), "cleanup:rollback.fake.v1") {
+		t.Fatalf("state/calls = %q/%v", host.State(), log.snapshot())
+	}
+}
+
+func TestFailedCleanupIsRetainedAndStopCanRetry(t *testing.T) {
+	t.Parallel()
+
+	log := newCallLog()
+	manifest := testManifest("retry.fake.v1", []PortID{"runtime.invoke.v1"}, nil)
+	registry := NewRegistry()
+	registerLifecycleSchema(t, registry)
+	factory := &fakeFactory{
+		manifest:   manifest,
+		log:        log,
+		failOnceAt: "cleanup:retry.fake.v1",
+	}
+	if err := registry.RegisterFactory(factory, admittedPackage(manifest)); err != nil {
+		t.Fatalf("register factory: %v", err)
+	}
+	host := lifecycleHostFromSelection(t, registry, []Manifest{manifest})
+	if err := host.Start(context.Background()); err != nil {
+		t.Fatalf("start host: %v", err)
+	}
+	if err := host.Stop(context.Background()); err == nil {
+		t.Fatal("first stop succeeded, want injected cleanup failure")
+	}
+	if host.State() != HostStateFailed {
+		t.Fatalf("state = %q, want %q", host.State(), HostStateFailed)
+	}
+	if err := host.Stop(context.Background()); err != nil {
+		t.Fatalf("retry stop: %v", err)
+	}
+	if host.State() != HostStateStopped {
+		t.Fatalf("state = %q, want %q", host.State(), HostStateStopped)
+	}
+	cleanupCall := "cleanup:retry.fake.v1"
+	if calls := log.snapshot(); countCalls(calls, cleanupCall) != 2 {
+		t.Fatalf("cleanup retry calls = %v", calls)
+	}
+}
+
+func TestEffectScopeRetainsOnlyFailedCleanupForRetry(t *testing.T) {
+	t.Parallel()
+
+	scope := newEffectScope()
+	attempts := 0
+	if err := scope.Defer("retry", func(context.Context) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("retry cleanup")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("register cleanup: %v", err)
+	}
+	if err := scope.cleanup(context.Background(), time.Second); err == nil {
+		t.Fatal("first cleanup succeeded, want retryable failure")
+	}
+	if err := scope.cleanup(context.Background(), time.Second); err != nil {
+		t.Fatalf("retry cleanup: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("cleanup attempts = %d, want 2", attempts)
 	}
 }
 
@@ -280,10 +403,12 @@ func lifecycleConfiguration(
 }
 
 type fakeFactory struct {
-	manifest Manifest
-	log      *callLog
-	failAt   string
-	blockAt  string
+	manifest                   Manifest
+	log                        *callLog
+	failAt                     string
+	failOnceAt                 string
+	blockAt                    string
+	cleanupRequiresLiveContext bool
 }
 
 func (factory *fakeFactory) Manifest() Manifest {
@@ -293,26 +418,35 @@ func (factory *fakeFactory) Manifest() Manifest {
 func (factory *fakeFactory) Configure(PluginConfig) (Instance, error) {
 	factory.log.add("configure:" + string(factory.manifest.ID))
 	return &fakeInstance{
-		id:      factory.manifest.ID,
-		log:     factory.log,
-		failAt:  factory.failAt,
-		blockAt: factory.blockAt,
+		id:                         factory.manifest.ID,
+		log:                        factory.log,
+		failAt:                     factory.failAt,
+		failOnceAt:                 factory.failOnceAt,
+		blockAt:                    factory.blockAt,
+		cleanupRequiresLiveContext: factory.cleanupRequiresLiveContext,
 	}, nil
 }
 
 type fakeInstance struct {
-	id      PluginID
-	log     *callLog
-	failAt  string
-	blockAt string
+	id                         PluginID
+	log                        *callLog
+	failAt                     string
+	failOnceAt                 string
+	blockAt                    string
+	cleanupRequiresLiveContext bool
+	failureMu                  sync.Mutex
+	failedOnce                 bool
 }
 
 func (instance *fakeInstance) Start(ctx context.Context, effects Effects) error {
 	call := "start:" + string(instance.id)
 	instance.log.add(call)
-	if err := effects.Defer("resource", func(context.Context) error {
+	if err := effects.Defer("resource", func(cleanupCtx context.Context) error {
 		cleanupCall := "cleanup:" + string(instance.id)
 		instance.log.add(cleanupCall)
+		if instance.cleanupRequiresLiveContext && cleanupCtx.Err() != nil {
+			return cleanupCtx.Err()
+		}
 		return instance.failure(cleanupCall)
 	}); err != nil {
 		return err
@@ -343,10 +477,26 @@ func (instance *fakeInstance) Stop(context.Context) error {
 }
 
 func (instance *fakeInstance) failure(call string) error {
+	instance.failureMu.Lock()
+	defer instance.failureMu.Unlock()
 	if instance.failAt == call {
 		return errors.New("injected failure")
 	}
+	if instance.failOnceAt == call && !instance.failedOnce {
+		instance.failedOnce = true
+		return errors.New("injected one-time failure")
+	}
 	return nil
+}
+
+func countCalls(calls []string, target string) int {
+	count := 0
+	for _, call := range calls {
+		if call == target {
+			count++
+		}
+	}
+	return count
 }
 
 type callLog struct {
