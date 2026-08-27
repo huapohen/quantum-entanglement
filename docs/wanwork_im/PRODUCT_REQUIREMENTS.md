@@ -88,6 +88,20 @@ Clerk session 不能充当 Agent 的长期授权，provider service credential �
 - 多端通知去重、静默时段和组织策略覆盖；
 - 下载授权短时、最小 scope，不在消息 `ext_info` 放永久 URL。
 
+### 3.5 Agent Presence 与 Routine
+
+Provider online 只说明传输连接存在，不等于 Agent 可接任务。目录、群成员卡和工作子群分别投影：
+
+- `offline | online | working | waiting | human_takeover | unverifiable` 的用户可理解状态；
+- `AgentPresenceLease` 的 incarnation、heartbeat、expiry 和可接新工作标志；
+- execution-host 的 runtime liveness；断网/观测失败只能进入 `unverifiable`，不能推导 exited 或重跑；
+- human takeover 后旧 runtime/claim 被 fencing，不能继续写终态或产生新副作用。
+
+V1 支持受治理的 Routine，但不把它塞进 M0 首个垂直切片：`RoutineDefinition` 冻结 owner、时区、
+trigger、Task template、预算、审批策略和暂停状态；`MissedRunPolicy` 明确错过后 skip/run-once/backfill
+边界；每个 `ScheduleOccurrence` 有稳定 occurrence key。scheduler 重启、夏令时、重复 tick、预算耗尽
+和 Agent offboard 都不得导致重复任务或无主执行。
+
 ## 4. Agent Store
 
 ### 4.1 Agent 商品/能力卡
@@ -98,6 +112,8 @@ Clerk session 不能充当 Agent 的长期授权，provider service credential �
 - 名称、头像、简介、适用场景、输入/输出和示例 Artifact；
 - 模型、运行位置、支持协议、工具和数据类型；
 - capability manifest、网络/文件/工具权限、数据去向和保留策略；
+- 版本化 `DataRouteDescriptor`：运营主体、Agent host、地区、模型/embedding 商、训练/再利用、保留、
+  telemetry 和第三方转发；未知项显式显示 unknown；
 - 价格/预算、延迟、质量、成功率和可用性；指标必须同时标注时间窗、样本量、verifier、来源和
   `self-reported/verified`，无证据时显示未知；
 - 签名、来源、SBOM、扫描、兼容矩阵和撤销状态；
@@ -106,12 +122,16 @@ Clerk session 不能充当 Agent 的长期授权，provider service credential �
 ### 4.2 认领、安装与入群
 
 1. 用户认领或组织管理员批准某个 Agent 版本；
-2. 平台创建组织级 Agent installation，冻结版本与 capability snapshot；
+2. 平台创建组织级 Agent installation，冻结版本、capability snapshot、`dataRouteRevision` 与组织
+   policy verdict；首次交互或路线扩大时生成版本化 consent receipt；
 3. 创建平台 Agent actor，并在融云注册同 ID 映射的普通用户；
 4. 通过 `ext_info` 写入限长的非秘密主体 metadata；
 5. 管理员把 Agent 像真人一样加入群聊；
 6. 群策略决定 `mention_only` 或受控的 `all_messages`；V1 默认 `mention_only`；
 7. 升级、暂停、移除和撤销都产生审计事件，不能静默替换版本。
+
+Agent host、模型商、地区、训练/保留或第三方转发变化都视为 data-route drift；超出已有组织批准
+envelope 时，升级和首次交互必须阻断并重新 consent，不能只更新卡片文案后继续发送数据。
 
 ### 4.3 离职、撤权与版本退役
 
@@ -272,7 +292,7 @@ M0 只实现最小 provenance/scope/TTL/use-lineage；组织级共享记忆、�
 ## 10. 关键页面
 
 1. 登录/组织选择；
-2. 工作台：会话、未读、搜索、Needs You 和最近 Artifact；
+2. 工作台：会话、未读、搜索、Needs You、Routine 和最近 Artifact；
 3. 单聊/群聊：消息、成员、文件、公告和 Agent 工作卡；
 4. Agent 工作子群：执行时间线、任务图、上下文来源、Artifact 和审批；
 5. Agent Store：发现、详情、权限清单、认领/安装/升级；
@@ -304,7 +324,10 @@ Attention inbox、Artifact review queue 和任务恢复入口。
 - 两个真人可创建组织、单聊和群聊并完成基本消息操作；
 - 同一消息在重复 webhook、断线重连和 cursor resume 后只接纳一次；
 - Agent 作为普通用户进入群成员目录，UI 和审计能稳定区分主体类型；
+- provider online、Agent presence lease 与 runtime liveness 可区分；不可验证/接管后的旧 runtime 不接新任务；
 - 用户可从 Agent Store 安装 Agent 并把它加入群；
+- Agent data route 可从成员卡回看；路线变更触发新的 policy/consent decision；
+- Routine 跨时区和 scheduler 重启只产生唯一 occurrence，错过策略和预算耗尽状态可解释；
 - `@Agent` 创建唯一工作子群，同一个 mention 重放不创建第二个群或 invocation；
 - Agent 回复只进入子群，父群只出现受限工作卡；
 - 业务错误全部使用 HTTP 200 envelope，测试覆盖 auth、validation、conflict 和 provider error；

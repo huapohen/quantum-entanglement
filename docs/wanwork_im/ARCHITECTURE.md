@@ -156,6 +156,7 @@ Domain port 不暴露 SDK client、HTTP session、数据库 connection、JWT lib
 |---|---|---|
 | Organization | membership、role、policy、retention、region | IM domain PostgreSQL schema |
 | Actor/Agent | external link、definition、release、installation、status | identity/store schema |
+| AgentPresence | lease/incarnation、working/waiting/takeover、runtime liveness projection | coordination/presence schema |
 | Conversation | membership、ACL、parent/root、provider projection | IM domain schema |
 | BusinessTask | mandate、capability、budget、context、plan、closure | QE task/event store |
 | Attempt | runtime/profile/model/plugin revisions、environment revision、effective config 与 Run capability/egress snapshot digest、lease、checkpoint | QE runtime store |
@@ -163,6 +164,7 @@ Domain port 不暴露 SDK client、HTTP session、数据库 connection、JWT lib
 | Artifact | immutable version、hash、lineage、scan、acceptance | QE metadata + object store |
 | Action | intent、approval、attempt、external ref、receipt、reconcile | platform Action Ledger |
 | Memory | provenance、scope、TTL、conflict、use lineage、deletion | QE governed-memory store |
+| Routine | definition、timezone、trigger/missed-run policy、occurrence key、budget | scheduler/domain schema |
 
 这些“store”可以在 modular monolith 中由同一个 PostgreSQL 集群的不同 schema/transactional outbox
 实现，但每个对象只有上表一个 owner。其他 bounded context 只保存 versioned reference/projection，
@@ -305,6 +307,10 @@ HumanPrincipal -> DelegationGrant(task, purpose, audience, capability, expiry)
 委托链只能缩权。Task 取消、human 离职、Agent installation 撤销、policy revision 变化都会阻断
 新 lease；已发生动作仍通过原 actor/subject/task chain 追责。融云 `ext_info` 的 `subjectType` 仅是
 显示投影，伪造它不能改变 authorization。
+
+`AgentPresenceLease`、execution-host `RuntimeLiveness` 与融云 online status 独立。presence lease 过期
+或 runtime `unverifiable` 时停止新 admission，但没有当前 incarnation 的正面退出证据就不能启动第二
+实例。human takeover 会推进 fencing generation，旧 runtime 即使恢复连接也不能提交终态/副作用。
 
 ### 6.2 融云用户 `ext_info`
 
@@ -484,7 +490,10 @@ index 必须可以从 canonical source 重建。
 | 消息接纳和 provider mapping | PostgreSQL | 融云负责 transport/history copy |
 | 未读/已读 | 平台聚合 + provider evidence | SDK 实时体验 |
 | Agent definition/installation/version | PostgreSQL | 融云普通用户 display projection |
+| Agent presence/runtime liveness | coordination/presence store | 融云 online 只作不可信观察证据 |
+| Data route/consent | identity/store + policy receipt | 成员卡/安装页只读披露 |
 | BusinessTask/invocation/Artifact/Needs You/Memory | QE authoritative stores（同属平台，可与 IM 共用 PostgreSQL 集群但不双主） | IM 工作卡/引用消息/受限 projection |
+| Routine/ScheduleOccurrence | scheduler/domain store | IM 通知/任务卡只读投影 |
 | action command/receipt/unknown | PostgreSQL durable action tables | provider receipt evidence |
 | credential | secret provider | 从不进入 domain/event/Notion/Git |
 
@@ -529,6 +538,11 @@ Agent 已完成、Artifact 已验收或外部副作用已经发生。
 每个 tenant 还需要可审阅的 Data Flow/Nutrition Label：Clerk、融云、模型、embedding、MCP/A2A、
 object store、telemetry 和 backup 各自处理何种数据、地区、保留、训练/再利用口径与删除路径。
 “本地存储”“self-hosted”或“sandbox”都不能自动推导为离线、平台不可见或隔离成立。
+
+每个 Agent release/installation 另有版本化 `DataRouteDescriptor` 和 `ConsentReceipt`，声明 operator、
+host、region、model/embedding provider、retention/training/telemetry/third-party forwarding。路线 revision
+进入 installation/Attempt/evidence；任何扩大或未知路线默认阻断升级/首次交互，重新经过组织 policy 与
+human consent，不能从消息或 provider metadata 猜测同意。
 
 ## 12. 部署演进
 

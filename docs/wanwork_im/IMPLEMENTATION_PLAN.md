@@ -40,10 +40,12 @@
 Agent definition/release/installation、thread、BusinessTask、Attempt、Budget、NeedsYou、Artifact/
 Acceptance、GovernedMemory、SkillPackageVersion/ActivationReceipt/MaterializationManifest、
 CapabilityDefinitionVersion/AgentCapabilityAssignmentRevision/ExecutionBinding、inbox/outbox/action/evidence
-models，以及 event stream/event/projection checkpoint migrations。
+models，`AgentPresenceLease/RuntimeIncarnation`、`DataRouteDescriptor/ConsentReceipt`、
+`RoutineDefinition/MissedRunPolicy/ScheduleOccurrence`，以及 event stream/event/projection checkpoint migrations。
 
 出口：空库/非空库 migration、rollback/restore、transaction、dedupe、revision 和 tenant isolation
 测试通过；Task、Thread、Attempt、Action 与 Acceptance 状态不会互相冒充。
+
 PostgreSQL event store 还必须通过 expected-revision transaction、crash/reopen、kill-9/restore 和
 projection 清库重建；W1 memory fake 不能代替该门禁。
 
@@ -63,8 +65,12 @@ Acceptance、Action Ledger、unknown reconcile 与 Evidence Bundle。
 
 M0 后同阶段继续交付受治理的 Skill activation 与 Tool execution binding；它们不阻塞首个零网络
 垂直切片，但对应的领域对象和 port 必须已在 W2 冻结。
+
 Runtime/Planner 只产出 typed ActionProposal；独立 Executor/Egress Broker 承担授权后 dispatch、
 SSRF/redirect/credential forwarding 防护和 provider receipt/reconcile。
+
+M0 后补 Routine/presence 产品面；data-route revision 与 consent 必须在 Agent 首次真实数据处理前完成，
+不能因 Routine UI 延后而延后该安全门。
 
 出口：重复 mention 不重复建群/Task/调用；Agent 回复只进子群；父群只出现受限卡片；execution
 succeeded 不冒充 accepted；参数变化使批准失效；dispatch 故障不产生重复副作用。

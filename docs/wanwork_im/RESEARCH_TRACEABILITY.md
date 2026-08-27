@@ -93,6 +93,9 @@ W5 Web/PWA；W6 Desktop/Mobile；W7 生产加固与交付。
 | RQ-033 | **长期单位是 Environment；每次 Run 只消费受治理的 projection。** `holaos/research_report.md:215-255,461-488` | `EnvironmentRevision/RunCompilation/RunCapabilitySnapshot/ProjectedContextManifest`；Attempt 冻结 environment/effective config/model/runtime/capability/egress digests。 | hot/warm/cold 分层；projection compiler 最小化可见/可做范围；promotion boundary 阻止未审核内容进入 durable state。 | W1 effective config；W2 建模；W4 runtime | 换模型/runtime 后从 bounded canonical state 恢复；未投影能力从任何 adapter 入口都失败；未 promotion 内容不进入长期环境。 |
 | RQ-034 | **Planner/model 不能持有 privileged actuator 权限。** `agentteams/research_report.md:373-404,431-450` | `ActionProposal -> PolicyDecision/Approval -> ExecutorCommand -> ActionReceipt`；Runtime 只提 typed proposal，Executor 独立。 | Runtime 无 provider credential/Docker socket/宿主 home；执行器按 tenant/task/capability/参数 action-time 重验。 | W2 Action port；W4 实现；W7 硬化 | prompt injection 不能从 Runtime 直达副作用；绕过 Action Plane 的 Tools/Peers/RongCloud 路径为零。 |
 | RQ-035 | **所有 MCP/connector 出网必须经过统一 Egress Broker。** `clawith/research_report.md:439-452`; `holaos/research_report.md:571-587` | `EgressIntent/ResolvedTarget/ConnectionLease/ResponseBudget`；per-capability `effect/dataClass/approval/retry/idempotency/reconcile`。 | DNS/IP pin、private/metadata 拒绝、redirect/SSE 每跳重验、跨 origin 剥离认证、domain/port allowlist、响应 byte/time/schema 上限。 | W2 port；M0 可 fake；W4/W7 实现 | SSRF/rebinding/redirect/credential forwarding/oversize/slow stream 全拒绝；MCP 写响应丢失进入 unknown 而非换 transport 重放。 |
+| RQ-036 | **Routine/Timer 是独立产品对象，不只是底层 schedule occurrence。** `openagents/research_report.md:174-190` | `RoutineDefinition/TriggerPolicy/MissedRunPolicy/ScheduleOccurrence`；冻结 owner、timezone、Task template、budget、approval 和 pause state。 | stable occurrence key、scheduler lease/fence、DST/错过边界、bounded backfill；offboard/预算耗尽停止新 occurrence。 | W2 建模；M0 后 W4/W5 实现 | scheduler 重启/重复 tick/DST 不重复 Task；skip/run-once/backfill 可预测；预算耗尽和撤权后零新执行。 |
+| RQ-037 | **Agent Presence、provider online 与 runtime liveness 是三种状态。** `floatim-floatboat/research_report.md:896-913`; `orca/research_report.md:239-255` | `AgentPresenceLease(online/working/waiting/human_takeover/unverifiable)`、`RuntimeIncarnation/Liveness`；群/目录只投影。 | lease expiry 停止新 admission；unverifiable 不判 exited/不重跑；human takeover 推进 fence，旧 runtime 不能写终态。 | W2 建模；W4 实现 | 断网显示 unverifiable 且不启动第二实例；过期 Agent 不接任务；takeover 后旧 incarnation 恢复也无法产生副作用。 |
+| RQ-038 | **每条 Agent 数据路线必须版本化披露并在变化时重新 consent。** `floatim-floatboat/research_report.md:502-517`; `holaos/research_report.md:595-607` | `DataRouteDescriptor/ProcessingRoute/ConsentReceipt`；installation/Attempt 冻结 route revision，成员卡可回看 operator/host/region/model/retention/training。 | unknown host/route 默认拒绝；组织 allowlist/DLP；路线扩大或 host/model/region/training/retention 变化重新 policy/consent。 | W2 模型；W3/W4 接入 | 未知第三方 host 不能交互；route revision 变化使旧 consent 无效；抓包/evidence 与披露一致。 |
 
 ## 4. 明确吸收与明确拒绝
 
@@ -120,7 +123,7 @@ W5 Web/PWA；W6 Desktop/Mobile；W7 生产加固与交付。
 
 ## 6. 冻结与变更纪律
 
-1. 改动 RQ-001 至 RQ-035 任一结论，必须同时修改 PRD/Architecture/contract/test，并单独 commit；
+1. 改动 RQ-001 至 RQ-038 任一结论，必须同时修改 PRD/Architecture/contract/test，并单独 commit；
 2. 研究源文件变化时先比对 SHA-256，再进行 evidence delta review，不能静默沿用旧行号；
 3. 若 provider/协议官方合同不支持稳定 ID、acceptance query、签名、cursor 或幂等，标记
    `unsupported/unverified`，不得让 adapter 猜测；
