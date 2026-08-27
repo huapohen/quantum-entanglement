@@ -79,6 +79,8 @@ type Manifest struct {
 	Timeouts           LifecycleTimeouts
 }
 
+// LifecycleTimeouts become context deadlines for cooperative in-process callbacks. They are
+// not forced termination limits; hostile code requires an isolated supervisor boundary.
 type LifecycleTimeouts struct {
 	Start time.Duration
 	Ready time.Duration

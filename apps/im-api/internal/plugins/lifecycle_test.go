@@ -621,6 +621,84 @@ func TestLifecycleTimeoutTriggersRollback(t *testing.T) {
 	}
 }
 
+func TestLifecycleDeadlineIsCooperativeDuringStart(t *testing.T) {
+	t.Parallel()
+
+	instance := newDeadlineHoldingInstance("start")
+	host := directLifecycleHost(lifecycleFactoryFunc(func(PluginConfig) (Instance, error) {
+		return instance, nil
+	}))
+	host.activation[0].timeouts.Start = 5 * time.Millisecond
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- host.Start(context.Background())
+	}()
+	awaitLifecycleSignal(t, "start deadline observation", instance.deadlineObserved)
+	assertLifecycleCallStillBlocked(t, "start callback after its deadline", startDone)
+	if state := host.State(); state != HostStateStarting {
+		t.Fatalf("state after start deadline = %q, want %q", state, HostStateStarting)
+	}
+	concurrentStart := make(chan error, 1)
+	go func() {
+		concurrentStart <- host.Start(context.Background())
+	}()
+	if err := awaitLifecycleResult(t, "start during non-cooperative callback", concurrentStart); !errors.Is(err, ErrInvalidLifecycle) {
+		t.Fatalf("concurrent start error = %v, want %v", err, ErrInvalidLifecycle)
+	}
+	concurrentStop := make(chan error, 1)
+	go func() {
+		concurrentStop <- host.Stop(context.Background())
+	}()
+	if err := awaitLifecycleResult(t, "stop during non-cooperative start", concurrentStop); !errors.Is(err, ErrInvalidLifecycle) {
+		t.Fatalf("concurrent stop error = %v, want %v", err, ErrInvalidLifecycle)
+	}
+
+	close(instance.release)
+	if err := awaitLifecycleResult(t, "released start callback", startDone); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("released start error = %v, want %v", err, context.DeadlineExceeded)
+	}
+	if state := host.State(); state != HostStateFailed {
+		t.Fatalf("state after released start = %q, want %q", state, HostStateFailed)
+	}
+}
+
+func TestLifecycleDeadlineIsCooperativeDuringStop(t *testing.T) {
+	t.Parallel()
+
+	instance := newDeadlineHoldingInstance("drain")
+	host := directLifecycleHost(lifecycleFactoryFunc(func(PluginConfig) (Instance, error) {
+		return instance, nil
+	}))
+	host.activation[0].timeouts.Drain = 5 * time.Millisecond
+	if err := host.Start(context.Background()); err != nil {
+		t.Fatalf("start host: %v", err)
+	}
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- host.Stop(context.Background())
+	}()
+	awaitLifecycleSignal(t, "drain deadline observation", instance.deadlineObserved)
+	assertLifecycleCallStillBlocked(t, "drain callback after its deadline", stopDone)
+	if state := host.State(); state != HostStateStopping {
+		t.Fatalf("state after drain deadline = %q, want %q", state, HostStateStopping)
+	}
+	concurrentStop := make(chan error, 1)
+	go func() {
+		concurrentStop <- host.Stop(context.Background())
+	}()
+	if err := awaitLifecycleResult(t, "stop during non-cooperative drain", concurrentStop); !errors.Is(err, ErrInvalidLifecycle) {
+		t.Fatalf("concurrent stop error = %v, want %v", err, ErrInvalidLifecycle)
+	}
+
+	close(instance.release)
+	if err := awaitLifecycleResult(t, "released drain callback", stopDone); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("released stop error = %v, want %v", err, context.DeadlineExceeded)
+	}
+	if state := host.State(); state != HostStateFailed {
+		t.Fatalf("state after released drain = %q, want %q", state, HostStateFailed)
+	}
+}
+
 func TestEffectScopeRejectsInvalidAndDuplicateLabels(t *testing.T) {
 	t.Parallel()
 
@@ -1099,6 +1177,51 @@ func awaitLifecycleResult(t *testing.T, label string, result <-chan error) error
 		return nil
 	}
 }
+
+func assertLifecycleCallStillBlocked(t *testing.T, label string, result <-chan error) {
+	t.Helper()
+	select {
+	case err := <-result:
+		t.Fatalf("%s returned before callback release: %v", label, err)
+	default:
+	}
+}
+
+type deadlineHoldingInstance struct {
+	holdPhase        string
+	deadlineObserved chan struct{}
+	release          chan struct{}
+}
+
+func newDeadlineHoldingInstance(holdPhase string) *deadlineHoldingInstance {
+	return &deadlineHoldingInstance{
+		holdPhase:        holdPhase,
+		deadlineObserved: make(chan struct{}),
+		release:          make(chan struct{}),
+	}
+}
+
+func (instance *deadlineHoldingInstance) hold(ctx context.Context, phase string) error {
+	if instance.holdPhase != phase {
+		return nil
+	}
+	<-ctx.Done()
+	close(instance.deadlineObserved)
+	<-instance.release
+	return ctx.Err()
+}
+
+func (instance *deadlineHoldingInstance) Start(ctx context.Context, _ Effects) error {
+	return instance.hold(ctx, "start")
+}
+
+func (*deadlineHoldingInstance) Ready(context.Context) error { return nil }
+
+func (instance *deadlineHoldingInstance) Drain(ctx context.Context) error {
+	return instance.hold(ctx, "drain")
+}
+
+func (*deadlineHoldingInstance) Stop(context.Context) error { return nil }
 
 func lifecyclePanicHost(log *callLog, panicAt string, panicValue any) *Host {
 	activation := make([]activationEntry, 0, 3)

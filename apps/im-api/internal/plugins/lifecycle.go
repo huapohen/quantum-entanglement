@@ -140,7 +140,7 @@ func (host *Host) Start(ctx context.Context) error {
 		host.mu.Lock()
 		host.started = append(host.started, configured[index])
 		host.mu.Unlock()
-		if startErr := callWithTimeout(
+		if startErr := callWithDeadline(
 			ctx,
 			configured[index].timeouts.Start,
 			func(callCtx context.Context) error {
@@ -154,7 +154,7 @@ func (host *Host) Start(ctx context.Context) error {
 		}
 	}
 	for index := range configured {
-		if readyErr := callWithTimeout(
+		if readyErr := callWithDeadline(
 			ctx,
 			configured[index].timeouts.Ready,
 			configured[index].instance.Ready,
@@ -277,12 +277,12 @@ func stopPlugins(ctx context.Context, plugins []runningPlugin) error {
 		plugin.effects.beginClosing()
 	}
 	for _, plugin := range reversed {
-		if err := callWithTimeout(cleanupCtx, plugin.timeouts.Drain, plugin.instance.Drain); err != nil {
+		if err := callWithDeadline(cleanupCtx, plugin.timeouts.Drain, plugin.instance.Drain); err != nil {
 			failures = append(failures, fmt.Errorf("drain plugin %s: %w", plugin.id, err))
 		}
 	}
 	for _, plugin := range reversed {
-		if err := callWithTimeout(cleanupCtx, plugin.timeouts.Stop, plugin.instance.Stop); err != nil {
+		if err := callWithDeadline(cleanupCtx, plugin.timeouts.Stop, plugin.instance.Stop); err != nil {
 			failures = append(failures, fmt.Errorf("stop plugin %s: %w", plugin.id, err))
 		}
 	}
@@ -304,7 +304,9 @@ func configurePlugin(factory Factory, config PluginConfig) (instance Instance, e
 	return factory.Configure(config)
 }
 
-func callWithTimeout(
+// callWithDeadline supplies cooperative cancellation to an in-process callback. It does not
+// force the callback to return; untrusted or non-cooperative code requires process isolation.
+func callWithDeadline(
 	parent context.Context,
 	timeout time.Duration,
 	operation func(context.Context) error,
@@ -387,7 +389,7 @@ func (scope *effectScope) cleanup(parent context.Context, timeout time.Duration)
 	var failures []error
 	cleaned := make(map[string]struct{}, len(effects))
 	for _, effect := range effects {
-		if err := callWithTimeout(parent, timeout, effect.cleanup); err != nil {
+		if err := callWithDeadline(parent, timeout, effect.cleanup); err != nil {
 			failures = append(failures, fmt.Errorf("effect %s: %w", effect.label, err))
 			continue
 		}
