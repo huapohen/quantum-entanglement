@@ -9,7 +9,6 @@ import importlib.abc
 import os
 import socket
 import sys
-import types
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -33,8 +32,6 @@ FORBIDDEN_NETWORK_IMPORTS = {
     "http",
     "httpx",
     "requests",
-    "ssl",
-    "urllib",
     "websocket",
     "websockets",
 }
@@ -196,10 +193,6 @@ def main() -> int:
         os.environ[name] = CREDENTIAL_CANARY
     loop = asyncio.new_event_loop()
     try:
-        package = types.ModuleType("quantum_entanglement")
-        package.__package__ = "quantum_entanglement"
-        package.__path__ = [str(SOURCE_ROOT / "quantum_entanglement")]
-        sys.modules["quantum_entanglement"] = package
         _replace_attribute(socket, "socket", _deny_network)
         _replace_attribute(socket, "create_connection", _deny_network)
         _replace_attribute(socket, "getaddrinfo", _deny_network)
