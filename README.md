@@ -54,6 +54,12 @@ artifacts/                  本地评审、发布与旧管理仓库证据（被 
 可审计记录见 [`MIGRATION_MANIFEST.md`](MIGRATION_MANIFEST.md)。正式主线就是当前仓库根目录的
 `main`，不存在额外的 `main/` 嵌套仓库。
 
+## WanWork 原生 IM 开发分支
+
+`dev_wanwork_quantum_entanglement` 在独立 worktree 中从零实现与 Quantum Entanglement 合一的企业
+IM。本分支不自动合并 `main`，真实聊天 outbound 默认关闭。研究审计、M0/V1 边界、产品需求、
+架构和实施门禁从 [`docs/wanwork_im/README.md`](docs/wanwork_im/README.md) 开始阅读。
+
 ## 本地产品试用
 
 想先从产品界面体验当前协作切片，运行：
