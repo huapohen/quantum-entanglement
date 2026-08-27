@@ -10,6 +10,7 @@ commit the complete receipt graph before any result becomes authoritative.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import math
 import re
@@ -39,6 +40,7 @@ SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_ACCEPTANCE_REQUEST_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_TERMINAL_TRANSITION_SCHEMA_VERSION = 2
+SCOPED_INVOCATION_RESULT_RECEIPT_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_MANIFEST_DOMAIN = "quantum-entanglement.invocation-result-manifest/2\n"
 ACTION_RECEIPT_SET_DOMAIN = "quantum-entanglement.action-receipt-set/1\n"
 SCOPED_INVOCATION_RESULT_ARTIFACT_CANDIDATE_DOMAIN = (
@@ -52,6 +54,7 @@ SCOPED_INVOCATION_START_RECEIPT_DIGEST_DOMAIN = "quantum-entanglement.invocation
 SCOPED_INVOCATION_RESULT_TERMINAL_TRANSITION_DOMAIN = (
     "quantum-entanglement.invocation-result-terminal-transition/2\n"
 )
+SCOPED_INVOCATION_RESULT_RECEIPT_DOMAIN = "quantum-entanglement.invocation-result-receipt/2\n"
 TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE = "task.invocation.result.accepted"
 TASK_STATUS_CHANGED_EVENT_TYPE = "task.status.changed"
 EMPTY_ACTION_RECEIPT_SET_DIGEST = hashlib.sha256(
@@ -187,6 +190,19 @@ _TERMINAL_TRANSITION_FIELDS = frozenset(
         "resultReceiptId",
         "resultEventId",
         "resultEvidenceDigest",
+    )
+)
+
+_RESULT_RECEIPT_FIELDS = frozenset(
+    (
+        "schemaVersion",
+        "receiptId",
+        "startReceipt",
+        "evidence",
+        "resultEvent",
+        "terminalEvent",
+        "terminalTransition",
+        "receiptDigest",
     )
 )
 
@@ -1151,6 +1167,305 @@ def _terminal_transition_snapshot(
     )
 
 
+def _result_start_receipt_snapshot(receipt: object) -> ScopedInvocationStartReceiptV3:
+    if type(receipt) is not ScopedInvocationStartReceiptV3:
+        raise TypeError("startReceipt must be exact ScopedInvocationStartReceiptV3")
+    return ScopedInvocationStartReceiptV3.from_dict(ScopedInvocationStartReceiptV3.to_dict(receipt))
+
+
+def _validate_result_receipt_graph(
+    *,
+    receipt_id: str,
+    start_receipt: ScopedInvocationStartReceiptV3,
+    evidence: ScopedInvocationResultEvidenceV2,
+    result_event: ScopedInvocationResultEventCoordinatesV2,
+    terminal_event: ScopedInvocationResultEventCoordinatesV2,
+    terminal_transition: ScopedInvocationResultTerminalTransitionV2,
+) -> None:
+    start_evidence = start_receipt.evidence
+    start_bindings = (
+        (evidence.tenant_id, start_evidence.tenant_id, "tenantId"),
+        (evidence.workspace_id, start_evidence.workspace_id, "workspaceId"),
+        (evidence.invocation_id, start_evidence.invocation_id, "invocationId"),
+        (evidence.session_id, start_evidence.session_id, "sessionId"),
+        (evidence.plan_id, start_evidence.plan_id, "planId"),
+        (evidence.task_id, start_evidence.task_id, "taskId"),
+        (evidence.agent_id, start_evidence.agent_id, "agentId"),
+        (
+            evidence.job_idempotency_key,
+            start_evidence.job_idempotency_key,
+            "jobIdempotencyKey",
+        ),
+        (evidence.attempt_id, start_evidence.attempt_id, "attemptId"),
+        (evidence.attempt_number, start_evidence.attempt_number, "attemptNumber"),
+        (evidence.lease_epoch, start_evidence.lease_epoch, "leaseEpoch"),
+        (evidence.worker_id, start_evidence.worker_id, "workerId"),
+        (
+            evidence.lease_token_digest,
+            start_evidence.lease_token_digest,
+            "leaseTokenDigest",
+        ),
+        (
+            evidence.execution_manifest_digest,
+            start_evidence.manifest_digest,
+            "executionManifestDigest",
+        ),
+    )
+    for actual, expected, label in start_bindings:
+        if actual != expected:
+            raise ValueError(f"result receipt evidence {label} does not match startReceipt")
+    if evidence.start_receipt_digest != scoped_invocation_start_receipt_digest_v3(start_receipt):
+        raise ValueError("result receipt evidence startReceiptDigest does not match startReceipt")
+    if evidence.accepted_at < start_evidence.claimed_at:
+        raise ValueError("result receipt acceptedAt must not precede the start claim")
+
+    transition_bindings = (
+        (terminal_transition.tenant_id, evidence.tenant_id, "tenantId"),
+        (terminal_transition.workspace_id, evidence.workspace_id, "workspaceId"),
+        (terminal_transition.invocation_id, evidence.invocation_id, "invocationId"),
+        (terminal_transition.session_id, evidence.session_id, "sessionId"),
+        (terminal_transition.plan_id, evidence.plan_id, "planId"),
+        (terminal_transition.task_id, evidence.task_id, "taskId"),
+        (terminal_transition.agent_id, evidence.agent_id, "agentId"),
+        (
+            terminal_transition.job_idempotency_key,
+            evidence.job_idempotency_key,
+            "jobIdempotencyKey",
+        ),
+        (
+            terminal_transition.runtime_revision,
+            start_evidence.runtime_revision,
+            "runtimeRevision",
+        ),
+        (
+            terminal_transition.correlation_id,
+            start_evidence.correlation_id,
+            "correlationId",
+        ),
+        (
+            terminal_transition.running_task_revision,
+            evidence.running_task_revision,
+            "runningTaskRevision",
+        ),
+        (
+            terminal_transition.terminal_task_revision,
+            evidence.terminal_task_revision,
+            "terminalTaskRevision",
+        ),
+        (
+            terminal_transition.result_receipt_id,
+            evidence.receipt_id,
+            "resultReceiptId",
+        ),
+        (
+            terminal_transition.result_evidence_digest,
+            ScopedInvocationResultEvidenceV2.canonical_digest(evidence),
+            "resultEvidenceDigest",
+        ),
+        (terminal_transition.result_event_id, result_event.event_id, "resultEventId"),
+    )
+    for actual, expected, label in transition_bindings:
+        if actual != expected:
+            raise ValueError(f"result receipt terminalTransition {label} is misbound")
+
+    if receipt_id != evidence.receipt_id or receipt_id != terminal_transition.result_receipt_id:
+        raise ValueError("result receipt receiptId is misbound")
+    expected_stream_id = start_receipt.stream_id
+    if expected_stream_id != "session:" + evidence.session_id:
+        raise ValueError("result receipt start stream is misbound")
+    if terminal_transition.stream_id != expected_stream_id:
+        raise ValueError("result receipt terminalTransition stream is misbound")
+    if result_event.stream_id != expected_stream_id:
+        raise ValueError("result receipt result event stream is misbound")
+    if terminal_event.stream_id != expected_stream_id:
+        raise ValueError("result receipt terminal event stream is misbound")
+    if result_event.event_type != TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE:
+        raise ValueError("result receipt result event type is unsupported")
+    if terminal_event.event_type != TASK_STATUS_CHANGED_EVENT_TYPE:
+        raise ValueError("result receipt terminal event type is unsupported")
+    if len({start_receipt.event_id, result_event.event_id, terminal_event.event_id}) != 3:
+        raise ValueError("result receipt event IDs must be distinct")
+    if result_event.sequence <= start_receipt.sequence:
+        raise ValueError("result receipt result event must follow the start stream sequence")
+    if result_event.global_position <= start_receipt.global_position:
+        raise ValueError("result receipt result event must follow the start global position")
+    if terminal_event.sequence != result_event.sequence + 1:
+        raise ValueError("result receipt terminal stream sequence must follow the result event")
+    if terminal_event.global_position != result_event.global_position + 1:
+        raise ValueError("result receipt terminal global position must follow the result event")
+    if terminal_event.event_envelope_digest == result_event.event_envelope_digest:
+        raise ValueError("result receipt event envelope digests must be distinct")
+
+
+def _result_receipt_identity_dict(
+    *,
+    schema_version: int,
+    receipt_id: str,
+    start_receipt: ScopedInvocationStartReceiptV3,
+    evidence: ScopedInvocationResultEvidenceV2,
+    result_event: ScopedInvocationResultEventCoordinatesV2,
+    terminal_event: ScopedInvocationResultEventCoordinatesV2,
+    terminal_transition: ScopedInvocationResultTerminalTransitionV2,
+) -> Dict[str, object]:
+    return {
+        "schemaVersion": schema_version,
+        "receiptId": receipt_id,
+        "startReceipt": ScopedInvocationStartReceiptV3.to_dict(start_receipt),
+        "evidence": ScopedInvocationResultEvidenceV2.to_dict(evidence),
+        "resultEvent": ScopedInvocationResultEventCoordinatesV2.to_dict(result_event),
+        "terminalEvent": ScopedInvocationResultEventCoordinatesV2.to_dict(terminal_event),
+        "terminalTransition": ScopedInvocationResultTerminalTransitionV2.to_dict(
+            terminal_transition
+        ),
+    }
+
+
+def _result_receipt_digest_from_parts(
+    *,
+    schema_version: int,
+    receipt_id: str,
+    start_receipt: ScopedInvocationStartReceiptV3,
+    evidence: ScopedInvocationResultEvidenceV2,
+    result_event: ScopedInvocationResultEventCoordinatesV2,
+    terminal_event: ScopedInvocationResultEventCoordinatesV2,
+    terminal_transition: ScopedInvocationResultTerminalTransitionV2,
+) -> str:
+    return hashlib.sha256(
+        SCOPED_INVOCATION_RESULT_RECEIPT_DOMAIN.encode("utf-8")
+        + _canonical_json_bytes(
+            _result_receipt_identity_dict(
+                schema_version=schema_version,
+                receipt_id=receipt_id,
+                start_receipt=start_receipt,
+                evidence=evidence,
+                result_event=result_event,
+                terminal_event=terminal_event,
+                terminal_transition=terminal_transition,
+            )
+        )
+    ).hexdigest()
+
+
+@dataclass(frozen=True)
+class ScopedInvocationResultReceiptV2:
+    """Capability-free, self-verifying value for one store-shaped result event graph.
+
+    Codec validity alone grants no authority.  A store must reconstruct and verify the
+    complete persisted request, Artifact, event, job, attempt, and outbox graph before it
+    may return this value as an accepted or observed outcome.
+    """
+
+    schema_version: int
+    receipt_id: str
+    start_receipt: ScopedInvocationStartReceiptV3 = field(repr=False)
+    evidence: ScopedInvocationResultEvidenceV2 = field(repr=False)
+    result_event: ScopedInvocationResultEventCoordinatesV2
+    terminal_event: ScopedInvocationResultEventCoordinatesV2
+    terminal_transition: ScopedInvocationResultTerminalTransitionV2 = field(repr=False)
+    receipt_digest: str
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationResultReceiptV2:
+            raise TypeError("result receipt must be exact ScopedInvocationResultReceiptV2")
+        if type(self.schema_version) is not int:
+            raise TypeError("schemaVersion must be an exact integer")
+        if self.schema_version != SCOPED_INVOCATION_RESULT_RECEIPT_SCHEMA_VERSION:
+            raise ValueError("schemaVersion is unsupported")
+        receipt_id = _text(self.receipt_id, "receiptId")
+        start_receipt = _result_start_receipt_snapshot(self.start_receipt)
+        evidence = _result_evidence_snapshot(self.evidence)
+        result_event = _result_event_coordinates_snapshot(self.result_event)
+        terminal_event = _result_event_coordinates_snapshot(self.terminal_event)
+        terminal_transition = _terminal_transition_snapshot(self.terminal_transition)
+        receipt_digest = _digest(self.receipt_digest, "receiptDigest")
+        _validate_result_receipt_graph(
+            receipt_id=receipt_id,
+            start_receipt=start_receipt,
+            evidence=evidence,
+            result_event=result_event,
+            terminal_event=terminal_event,
+            terminal_transition=terminal_transition,
+        )
+        expected_digest = _result_receipt_digest_from_parts(
+            schema_version=self.schema_version,
+            receipt_id=receipt_id,
+            start_receipt=start_receipt,
+            evidence=evidence,
+            result_event=result_event,
+            terminal_event=terminal_event,
+            terminal_transition=terminal_transition,
+        )
+        if not hmac.compare_digest(receipt_digest, expected_digest):
+            raise ValueError("receiptDigest does not match the canonical result receipt graph")
+        object.__setattr__(self, "receipt_id", receipt_id)
+        object.__setattr__(self, "start_receipt", start_receipt)
+        object.__setattr__(self, "evidence", evidence)
+        object.__setattr__(self, "result_event", result_event)
+        object.__setattr__(self, "terminal_event", terminal_event)
+        object.__setattr__(self, "terminal_transition", terminal_transition)
+        object.__setattr__(self, "receipt_digest", receipt_digest)
+
+    def to_dict(self) -> Dict[str, object]:
+        ScopedInvocationResultReceiptV2.__post_init__(self)
+        value = _result_receipt_identity_dict(
+            schema_version=self.schema_version,
+            receipt_id=self.receipt_id,
+            start_receipt=self.start_receipt,
+            evidence=self.evidence,
+            result_event=self.result_event,
+            terminal_event=self.terminal_event,
+            terminal_transition=self.terminal_transition,
+        )
+        value["receiptDigest"] = self.receipt_digest
+        return value
+
+    @classmethod
+    def from_dict(cls, value: object) -> ScopedInvocationResultReceiptV2:
+        if cls is not ScopedInvocationResultReceiptV2:
+            raise TypeError("result receipt decoder requires the exact schema-2 class")
+        raw = _exact_dict(value, set(_RESULT_RECEIPT_FIELDS), "scoped result receipt")
+        return cls(
+            schema_version=raw["schemaVersion"],
+            receipt_id=raw["receiptId"],
+            start_receipt=ScopedInvocationStartReceiptV3.from_dict(raw["startReceipt"]),
+            evidence=ScopedInvocationResultEvidenceV2.from_dict(raw["evidence"]),
+            result_event=ScopedInvocationResultEventCoordinatesV2.from_dict(raw["resultEvent"]),
+            terminal_event=ScopedInvocationResultEventCoordinatesV2.from_dict(raw["terminalEvent"]),
+            terminal_transition=ScopedInvocationResultTerminalTransitionV2.from_dict(
+                raw["terminalTransition"]
+            ),
+            receipt_digest=raw["receiptDigest"],
+        )
+
+    def canonical_bytes(self) -> bytes:
+        """Return the receipt-digest body; the self digest is intentionally excluded."""
+
+        snapshot = _result_receipt_snapshot(self)
+        return _canonical_json_bytes(
+            _result_receipt_identity_dict(
+                schema_version=snapshot.schema_version,
+                receipt_id=snapshot.receipt_id,
+                start_receipt=snapshot.start_receipt,
+                evidence=snapshot.evidence,
+                result_event=snapshot.result_event,
+                terminal_event=snapshot.terminal_event,
+                terminal_transition=snapshot.terminal_transition,
+            )
+        )
+
+    def canonical_digest(self) -> str:
+        snapshot = _result_receipt_snapshot(self)
+        return snapshot.receipt_digest
+
+
+def _result_receipt_snapshot(receipt: object) -> ScopedInvocationResultReceiptV2:
+    if type(receipt) is not ScopedInvocationResultReceiptV2:
+        raise TypeError("receipt must be exact ScopedInvocationResultReceiptV2")
+    return ScopedInvocationResultReceiptV2.from_dict(
+        ScopedInvocationResultReceiptV2.to_dict(receipt)
+    )
+
+
 @dataclass(frozen=True)
 class ScopedInvocationResultManifestV2:
     """Canonical schema-2 proposal for one scoped invocation result."""
@@ -1715,6 +2030,69 @@ def build_scoped_invocation_result_terminal_transition_v2(
         result_receipt_id=evidence_snapshot.receipt_id,
         result_event_id=event_id,
         result_evidence_digest=ScopedInvocationResultEvidenceV2.canonical_digest(evidence_snapshot),
+    )
+
+
+def build_scoped_invocation_result_receipt_v2(
+    request: object,
+    evidence: object,
+    *,
+    result_event: object,
+    terminal_event: object,
+    terminal_transition: object,
+) -> ScopedInvocationResultReceiptV2:
+    """Build a capability-free receipt value from one exact store-shaped event graph.
+
+    The caller must still be a store boundary that validates these coordinates and opaque
+    envelope digests against durable rows in one consistent snapshot.  This pure builder
+    intentionally does not grant fresh-commit or replay authority.
+    """
+
+    request_snapshot = _acceptance_request_snapshot(request)
+    evidence_snapshot = _result_evidence_snapshot(evidence)
+    result_coordinates = _result_event_coordinates_snapshot(result_event)
+    terminal_coordinates = _result_event_coordinates_snapshot(terminal_event)
+    transition_snapshot = _terminal_transition_snapshot(terminal_transition)
+    expected_transition = build_scoped_invocation_result_terminal_transition_v2(
+        request_snapshot,
+        evidence_snapshot,
+        result_event_id=result_coordinates.event_id,
+    )
+    if transition_snapshot != expected_transition:
+        raise ValueError("terminalTransition does not match the exact acceptance request")
+    if result_coordinates.sequence != request_snapshot.expected_stream_version + 1:
+        raise ValueError("result event sequence does not follow expectedStreamVersion")
+    if terminal_coordinates.sequence != request_snapshot.expected_stream_version + 2:
+        raise ValueError("terminal event sequence does not follow expectedStreamVersion")
+
+    receipt_id = evidence_snapshot.receipt_id
+    start_receipt = _result_start_receipt_snapshot(request_snapshot.start_receipt)
+    _validate_result_receipt_graph(
+        receipt_id=receipt_id,
+        start_receipt=start_receipt,
+        evidence=evidence_snapshot,
+        result_event=result_coordinates,
+        terminal_event=terminal_coordinates,
+        terminal_transition=transition_snapshot,
+    )
+    receipt_digest = _result_receipt_digest_from_parts(
+        schema_version=SCOPED_INVOCATION_RESULT_RECEIPT_SCHEMA_VERSION,
+        receipt_id=receipt_id,
+        start_receipt=start_receipt,
+        evidence=evidence_snapshot,
+        result_event=result_coordinates,
+        terminal_event=terminal_coordinates,
+        terminal_transition=transition_snapshot,
+    )
+    return ScopedInvocationResultReceiptV2(
+        schema_version=SCOPED_INVOCATION_RESULT_RECEIPT_SCHEMA_VERSION,
+        receipt_id=receipt_id,
+        start_receipt=start_receipt,
+        evidence=evidence_snapshot,
+        result_event=result_coordinates,
+        terminal_event=terminal_coordinates,
+        terminal_transition=transition_snapshot,
+        receipt_digest=receipt_digest,
     )
 
 
