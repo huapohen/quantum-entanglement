@@ -20,6 +20,7 @@ from types import MappingProxyType
 from typing import Any, Dict, Mapping, Set, Tuple, cast
 
 from ._artifact_codec import (
+    MAX_ARTIFACT_IDENTITY_CHARACTERS,
     CanonicalArtifactMetadataV1,
     artifact_blob_digest_v1,
     artifact_metadata_digest_v1,
@@ -27,16 +28,21 @@ from ._artifact_codec import (
     canonical_artifact_metadata_v1,
     decode_canonical_artifact_metadata_v1,
 )
-from .invocation_execution import EffectClass
+from .invocation_execution import EffectClass, ScopedInvocationStartReceiptV3
 
 SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION = 2
+SCOPED_INVOCATION_RESULT_ACCEPTANCE_REQUEST_SCHEMA_VERSION = 2
 SCOPED_INVOCATION_RESULT_MANIFEST_DOMAIN = "quantum-entanglement.invocation-result-manifest/2\n"
 ACTION_RECEIPT_SET_DOMAIN = "quantum-entanglement.action-receipt-set/1\n"
 SCOPED_INVOCATION_RESULT_ARTIFACT_CANDIDATE_DOMAIN = (
     "quantum-entanglement.invocation-result-artifact-candidate/2\n"
 )
 SCOPED_INVOCATION_RESULT_EVIDENCE_DOMAIN = "quantum-entanglement.invocation-result-evidence/2\n"
+SCOPED_INVOCATION_RESULT_ACCEPTANCE_REQUEST_DOMAIN = (
+    "quantum-entanglement.invocation-result-acceptance-request/2\n"
+)
+SCOPED_INVOCATION_START_RECEIPT_DIGEST_DOMAIN = "quantum-entanglement.invocation-start-receipt/3\n"
 TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE = "task.invocation.result.accepted"
 TASK_STATUS_CHANGED_EVENT_TYPE = "task.status.changed"
 EMPTY_ACTION_RECEIPT_SET_DIGEST = hashlib.sha256(
@@ -49,6 +55,8 @@ _MAX_IDENTITY_BYTES = 4_096
 _MAX_MEDIA_TYPE_BYTES = 255
 _MAX_ARTIFACTS = 256
 _MAX_ARTIFACT_CONTENT_BYTES = 16 * 1024 * 1024
+_MAX_RESULT_CONTENT_BYTES = 64 * 1024 * 1024
+_MAX_RESULT_ARTIFACT_METADATA_BYTES = 1_048_576
 _MAX_MANIFEST_BYTES = 1_048_576
 _MAX_NARRATION_BYTES = 524_288
 _MAX_RESULT_METADATA_BYTES = 65_536
@@ -1091,6 +1099,269 @@ class ScopedInvocationResultManifestV2:
         return hashlib.sha256(
             SCOPED_INVOCATION_RESULT_MANIFEST_DOMAIN.encode("utf-8") + self.canonical_bytes()
         ).hexdigest()
+
+
+def scoped_invocation_start_receipt_digest_v3(receipt: object) -> str:
+    if type(receipt) is not ScopedInvocationStartReceiptV3:
+        raise TypeError("start receipt digest requires exact ScopedInvocationStartReceiptV3")
+    snapshot = ScopedInvocationStartReceiptV3.from_dict(
+        ScopedInvocationStartReceiptV3.to_dict(receipt)
+    )
+    return hashlib.sha256(
+        SCOPED_INVOCATION_START_RECEIPT_DIGEST_DOMAIN.encode("utf-8")
+        + _canonical_json_bytes(ScopedInvocationStartReceiptV3.to_dict(snapshot))
+    ).hexdigest()
+
+
+def _artifact_candidate_snapshot(
+    candidate: object,
+) -> ScopedInvocationResultArtifactCandidateV2:
+    if type(candidate) is not ScopedInvocationResultArtifactCandidateV2:
+        raise TypeError(
+            "artifact candidates require exact ScopedInvocationResultArtifactCandidateV2 values"
+        )
+    return ScopedInvocationResultArtifactCandidateV2(
+        tenant_id=candidate.tenant_id,
+        workspace_id=candidate.workspace_id,
+        session_id=candidate.session_id,
+        task_id=candidate.task_id,
+        artifact_id=candidate.artifact_id,
+        name=candidate.name,
+        media_type=candidate.media_type,
+        content=candidate.content,
+        metadata_canonical_bytes=candidate.metadata_canonical_bytes,
+        created_by=candidate.created_by,
+        idempotency_key=candidate.idempotency_key,
+        expected_head_version=candidate.expected_head_version,
+    )
+
+
+def _artifact_descriptor_snapshot(
+    descriptor: object,
+) -> ScopedInvocationResultArtifactV2:
+    if type(descriptor) is not ScopedInvocationResultArtifactV2:
+        raise TypeError(
+            "artifact descriptors require exact ScopedInvocationResultArtifactV2 values"
+        )
+    return ScopedInvocationResultArtifactV2(
+        artifact_id=descriptor.artifact_id,
+        name=descriptor.name,
+        version=descriptor.version,
+        parent_version=descriptor.parent_version,
+        media_type=descriptor.media_type,
+        blob_digest=descriptor.blob_digest,
+        byte_size=descriptor.byte_size,
+        metadata_digest=descriptor.metadata_digest,
+        created_by=descriptor.created_by,
+        idempotency_key=descriptor.idempotency_key,
+        request_digest=descriptor.request_digest,
+    )
+
+
+def _result_manifest_snapshot(manifest: object) -> ScopedInvocationResultManifestV2:
+    if type(manifest) is not ScopedInvocationResultManifestV2:
+        raise TypeError("manifest must be exact ScopedInvocationResultManifestV2")
+    if type(manifest.artifacts) is not tuple:
+        raise TypeError("artifacts must be an exact tuple")
+    if len(manifest.artifacts) > _MAX_ARTIFACTS:
+        raise ValueError("result manifest artifacts must contain at most 256 descriptors")
+    artifacts = tuple(_artifact_descriptor_snapshot(item) for item in manifest.artifacts)
+    return ScopedInvocationResultManifestV2(
+        schema_version=manifest.schema_version,
+        tenant_id=manifest.tenant_id,
+        workspace_id=manifest.workspace_id,
+        invocation_id=manifest.invocation_id,
+        session_id=manifest.session_id,
+        plan_id=manifest.plan_id,
+        task_id=manifest.task_id,
+        agent_id=manifest.agent_id,
+        job_idempotency_key=manifest.job_idempotency_key,
+        task_revision=manifest.task_revision,
+        correlation_id=manifest.correlation_id,
+        causation_id=manifest.causation_id,
+        runtime_revision=manifest.runtime_revision,
+        execution_manifest_digest=manifest.execution_manifest_digest,
+        effect_class=manifest.effect_class,
+        action_receipt_set_digest=manifest.action_receipt_set_digest,
+        result_ref=manifest.result_ref,
+        narration=manifest.narration,
+        metadata=manifest.metadata,
+        primary_artifact_id=manifest.primary_artifact_id,
+        artifacts=artifacts,
+    )
+
+
+@dataclass(frozen=True)
+class ScopedInvocationResultAcceptanceRequestV2:
+    """Capability-free exact command body for future atomic result acceptance."""
+
+    schema_version: int
+    acceptance_idempotency_key: str
+    start_receipt: ScopedInvocationStartReceiptV3 = field(repr=False)
+    manifest: ScopedInvocationResultManifestV2 = field(repr=False)
+    artifact_candidates: Tuple[ScopedInvocationResultArtifactCandidateV2, ...] = field(repr=False)
+    expected_stream_version: int
+
+    def __post_init__(self) -> None:
+        if type(self) is not ScopedInvocationResultAcceptanceRequestV2:
+            raise TypeError(
+                "acceptance request must be exact ScopedInvocationResultAcceptanceRequestV2"
+            )
+        if type(self.schema_version) is not int:
+            raise TypeError("schemaVersion must be an exact integer")
+        if self.schema_version != SCOPED_INVOCATION_RESULT_ACCEPTANCE_REQUEST_SCHEMA_VERSION:
+            raise ValueError("schemaVersion is unsupported")
+        _text(self.acceptance_idempotency_key, "acceptanceIdempotencyKey")
+        if type(self.start_receipt) is not ScopedInvocationStartReceiptV3:
+            raise TypeError("startReceipt must be exact ScopedInvocationStartReceiptV3")
+        start_receipt = ScopedInvocationStartReceiptV3.from_dict(
+            ScopedInvocationStartReceiptV3.to_dict(self.start_receipt)
+        )
+        manifest = _result_manifest_snapshot(self.manifest)
+        if type(self.artifact_candidates) is not tuple:
+            raise TypeError("artifactCandidates must be an exact tuple")
+        if len(self.artifact_candidates) > _MAX_ARTIFACTS:
+            raise ValueError("artifactCandidates must contain at most 256 values")
+        if len(self.artifact_candidates) != len(manifest.artifacts):
+            raise ValueError("artifact candidates and manifest descriptors have different counts")
+        candidate_snapshots: list[ScopedInvocationResultArtifactCandidateV2] = []
+        total_content_bytes = 0
+        total_metadata_bytes = 0
+        for item in self.artifact_candidates:
+            candidate = _artifact_candidate_snapshot(item)
+            for label, value in (
+                ("tenantId", candidate.tenant_id),
+                ("workspaceId", candidate.workspace_id),
+                ("sessionId", candidate.session_id),
+                ("taskId", candidate.task_id),
+                ("artifactId", candidate.artifact_id),
+                ("name", candidate.name),
+                ("createdBy", candidate.created_by),
+                ("idempotencyKey", candidate.idempotency_key),
+            ):
+                if len(value) > MAX_ARTIFACT_IDENTITY_CHARACTERS:
+                    raise ValueError(
+                        f"artifact candidate {label} exceeds the Artifact persistence "
+                        f"limit of {MAX_ARTIFACT_IDENTITY_CHARACTERS} characters"
+                    )
+            total_content_bytes += candidate.byte_size
+            total_metadata_bytes += len(candidate.metadata_canonical_bytes)
+            if total_content_bytes > _MAX_RESULT_CONTENT_BYTES:
+                raise ValueError("artifact candidates exceed the aggregate content byte limit")
+            if total_metadata_bytes > _MAX_RESULT_ARTIFACT_METADATA_BYTES:
+                raise ValueError("artifact candidates exceed the aggregate metadata byte limit")
+            candidate_snapshots.append(candidate)
+        candidates = tuple(candidate_snapshots)
+        expected_stream_version = _nonnegative_integer(
+            self.expected_stream_version,
+            "expectedStreamVersion",
+        )
+        if expected_stream_version < start_receipt.sequence:
+            raise ValueError("expectedStreamVersion must include the stored start event")
+        if expected_stream_version > _MAX_SQLITE_INTEGER - 2:
+            raise ValueError("expectedStreamVersion must leave space for two terminal events")
+        if manifest.task_revision >= _MAX_SQLITE_INTEGER:
+            raise ValueError("result manifest taskRevision cannot allocate a terminal revision")
+        if manifest.effect_class is not EffectClass.PURE:
+            raise ValueError("result acceptance admits only effectClass pure")
+        if manifest.action_receipt_set_digest != EMPTY_ACTION_RECEIPT_SET_DIGEST:
+            raise ValueError("result acceptance requires the empty action receipt set")
+
+        evidence = start_receipt.evidence
+        bindings = (
+            (manifest.tenant_id, evidence.tenant_id, "tenantId"),
+            (manifest.workspace_id, evidence.workspace_id, "workspaceId"),
+            (manifest.invocation_id, evidence.invocation_id, "invocationId"),
+            (manifest.session_id, evidence.session_id, "sessionId"),
+            (manifest.plan_id, evidence.plan_id, "planId"),
+            (manifest.task_id, evidence.task_id, "taskId"),
+            (manifest.agent_id, evidence.agent_id, "agentId"),
+            (
+                manifest.job_idempotency_key,
+                evidence.job_idempotency_key,
+                "jobIdempotencyKey",
+            ),
+            (
+                manifest.execution_manifest_digest,
+                evidence.manifest_digest,
+                "executionManifestDigest",
+            ),
+            (manifest.runtime_revision, evidence.runtime_revision, "runtimeRevision"),
+            (manifest.correlation_id, evidence.correlation_id, "correlationId"),
+            (manifest.causation_id, evidence.causation_id, "causationId"),
+        )
+        for actual, expected, label in bindings:
+            if actual != expected:
+                raise ValueError(f"result manifest {label} does not match the start receipt")
+
+        for ordinal, (candidate, descriptor) in enumerate(zip(candidates, manifest.artifacts)):
+            candidate_bindings = (
+                (candidate.tenant_id, manifest.tenant_id, "tenantId"),
+                (candidate.workspace_id, manifest.workspace_id, "workspaceId"),
+                (candidate.session_id, manifest.session_id, "sessionId"),
+                (candidate.task_id, manifest.task_id, "taskId"),
+                (candidate.created_by, manifest.agent_id, "createdBy"),
+            )
+            for actual, expected, label in candidate_bindings:
+                if actual != expected:
+                    raise ValueError(
+                        f"artifact candidate {ordinal} {label} does not match the result manifest"
+                    )
+            if candidate.to_descriptor() != descriptor:
+                raise ValueError(
+                    f"artifact candidate {ordinal} does not match its ordered descriptor"
+                )
+        object.__setattr__(self, "start_receipt", start_receipt)
+        object.__setattr__(self, "manifest", manifest)
+        object.__setattr__(self, "artifact_candidates", candidates)
+
+    @property
+    def start_receipt_digest(self) -> str:
+        snapshot = _acceptance_request_snapshot(self)
+        return scoped_invocation_start_receipt_digest_v3(snapshot.start_receipt)
+
+    def _identity_dict(self) -> Dict[str, object]:
+        return _acceptance_request_identity_dict(_acceptance_request_snapshot(self))
+
+    def canonical_digest(self) -> str:
+        snapshot = _acceptance_request_snapshot(self)
+        return hashlib.sha256(
+            SCOPED_INVOCATION_RESULT_ACCEPTANCE_REQUEST_DOMAIN.encode("utf-8")
+            + _canonical_json_bytes(_acceptance_request_identity_dict(snapshot))
+        ).hexdigest()
+
+
+def _acceptance_request_snapshot(
+    request: object,
+) -> ScopedInvocationResultAcceptanceRequestV2:
+    if type(request) is not ScopedInvocationResultAcceptanceRequestV2:
+        raise TypeError("request must be exact ScopedInvocationResultAcceptanceRequestV2")
+    return ScopedInvocationResultAcceptanceRequestV2(
+        schema_version=request.schema_version,
+        acceptance_idempotency_key=request.acceptance_idempotency_key,
+        start_receipt=request.start_receipt,
+        manifest=request.manifest,
+        artifact_candidates=request.artifact_candidates,
+        expected_stream_version=request.expected_stream_version,
+    )
+
+
+def _acceptance_request_identity_dict(
+    request: ScopedInvocationResultAcceptanceRequestV2,
+) -> Dict[str, object]:
+    if type(request) is not ScopedInvocationResultAcceptanceRequestV2:
+        raise TypeError("request identity requires exact ScopedInvocationResultAcceptanceRequestV2")
+    return {
+        "schemaVersion": request.schema_version,
+        "acceptanceIdempotencyKey": request.acceptance_idempotency_key,
+        "startReceiptDigest": scoped_invocation_start_receipt_digest_v3(request.start_receipt),
+        "resultManifestDigest": ScopedInvocationResultManifestV2.canonical_digest(request.manifest),
+        "artifactCandidateDigests": [
+            ScopedInvocationResultArtifactCandidateV2.canonical_digest(candidate)
+            for candidate in request.artifact_candidates
+        ],
+        "expectedStreamVersion": request.expected_stream_version,
+    }
 
 
 __all__ = [
