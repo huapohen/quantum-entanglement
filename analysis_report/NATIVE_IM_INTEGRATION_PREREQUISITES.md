@@ -1,10 +1,12 @@
 # 原生 IM 接入前必做事项与接入后 TODO 分界
 
-> 决策版本：2026-08-27-native-im-entry-v1
+> 决策版本：2026-08-28-native-im-entry-v2
 >
 > 适用仓库：`quantum_entanglement`
 >
-> 当前基线：`main@63d72bb1e937daad6c09de4ef49d721ff6ac744b`
+> 当前执行分支：`mainline_continue_quantum_entanglement`
+>
+> E1 源码证据：`7620200f8e378507b1f592d6d34744080250d2ea`
 >
 > 决策性质：原生 IM 接入的执行顺序与验收边界；不是生产发布批准
 >
@@ -18,6 +20,11 @@
 > `IM-P1`/`IM-P2` 全部闭合前进行 health/read/dedupe/resume。此修订不允许入站驱动 Agent，也不
 > 允许任何 outbound；Agent draft、Action Plane 和受控发送仍分别按后续门禁推进。
 
+> **2026-08-28 E1 收口：** E1 / Level A `CONTRACT_EXECUTABLE` 已完成，内部
+> `IM-P0 CONTRACT_READY` 只按 provider-neutral contract/fake 里程碑完成。真实 provider profile、
+> adapter、endpoint、credential 和 sandbox inbound 均未开始；完整证据见
+> [`research/22_native_im_e1_contract_executable_evidence.md`](./research/22_native_im_e1_contract_executable_evidence.md)。
+
 ## 1. 最终决策
 
 不采用以下两个极端方案：
@@ -30,10 +37,10 @@
    result writer、durable action receipt、authenticated service composition 和
    `effect_unknown` reconcile 尚未闭合，直接接入会把重复、丢失和未知效果混在一起。
 
-采用下面的垂直切片路线：
+采用下面的垂直切片路线；第一步已经完成：
 
 ```text
-现在并行冻结 IM contract + 开发 fake adapter
+已完成 provider-neutral IM contract + zero-network fake
     -> 闭合精简 Result Authority
     -> 启用 PURE/fake heartbeat worker
     -> 闭合 Action Command/Receipt
@@ -73,13 +80,14 @@ conversation 和非敏感合成数据完成真实网络端到端联调。它不�
 
 ### 2.2 真实阻断
 
-当前仍有五个会直接破坏 IM 端到端正确性的缺口：
+E1 已关闭 provider-neutral wire/port/fake 缺口。当前仍有五个会直接破坏 IM 端到端正确性的缺口：
 
 1. result/artifact/attempt/task terminal state 尚未由一个 store-owned transaction 原子接受；
 2. heartbeat worker 只有冻结合同，dispatch 明确为 disabled；
 3. 没有 durable Action Command/Receipt 及 `effect_unknown` reconcile；
 4. 没有 authenticated service composition、resumable stream 和 graceful shutdown；
-5. 没有冻结原生 IM 后端的稳定身份、幂等、ACK、游标和 acceptance 查询合同。
+5. 真实原生 IM 后端尚未提供并冻结 provider profile：稳定身份、认证、幂等、ACK、游标、限流和
+   acceptance 查询的具体保证仍未知，不能由 V1 平台合同代替或猜测。
 
 这五项决定了介入前工作；其他工作按风险放到接入后，不再混为一个无限前置清单。
 
@@ -87,7 +95,7 @@ conversation 和非敏感合成数据完成真实网络端到端联调。它不�
 
 | 里程碑 | 允许做什么 | 禁止做什么 |
 |---|---|---|
-| `IM-P0 CONTRACT_READY` | 冻结接口；实现 fake/fixture；生成契约测试 | 连接真实 endpoint、发送消息 |
+| `IM-P0 CONTRACT_READY`（provider-neutral/fake 已完成） | 冻结接口；实现 fake/fixture；生成契约测试 | 连接真实 endpoint、发送消息 |
 | `IM-P1 CORE_READY` | 本地 PURE/fake Agent 经 durable worker 完成任务 | connector 外部副作用 |
 | `IM-P2 ACTION_READY` | fake connector 完成 action receipt/unknown/reconcile | 原生 IM 网络写入 |
 | `IM-P3 SANDBOX_READY` | 介入原生 IM 专用沙箱，先入站、后受控出站 | 生产 conversation、真实客户、公开发送 |
@@ -96,6 +104,11 @@ conversation 和非敏感合成数据完成真实网络端到端联调。它不�
 A–E 已通过。
 
 ## 4. 接入前必做：IM-P0 CONTRACT_READY
+
+状态：**已完成，但只按 provider-neutral contract/fake 范围。** V1 wire、strict codec、golden、
+四方法 port、纯 admission、默认拒绝的 zero-network fake、receiver ledger 和 ACK-loss/query 故障
+语义已经执行化。真实 provider profile 和 adapter 仍属于 E2 输入，不得用本节完成状态宣称已接
+真实 IM。
 
 ### 4.1 冻结 IM 后端合同
 
@@ -118,6 +131,10 @@ IM 后端必须提供或明确拒绝以下能力，未知不能由 connector 自
 如果 receiver 不支持幂等接受或 acceptance 查询，该能力不是接入阻断，但必须在 capability 中明确
 标为 `at_least_once_only`。该情况下，任何发送超时或 ACK 丢失都必须进入 `effect_unknown`，不能
 自动盲重试，也不能宣称 exactly-once。
+
+上述问题已经编码进 provider-neutral capability、request、receipt 和 query 模型，但某个真实
+provider 的答案尚未取得。E2 必须形成版本化 provider profile；未知项标成 unsupported/unknown，
+不能把 fake capability 当作真实后端保证。
 
 ### 4.2 冻结平台侧 provider-neutral contract
 
@@ -147,12 +164,20 @@ effect_unknown
 
 ### 4.3 P0 验收条件
 
-- [ ] 合同字段、状态机、错误和能力协商形成版本化文档；
-- [ ] golden vectors 覆盖 inbound、outbound、ACK、NACK、unknown 和 reconcile；
-- [ ] fake adapter 与原生 IM adapter 共用同一 provider-neutral port；
-- [ ] connector 默认关闭，配置只允许 `fake`；
-- [ ] 没有真实 credential、endpoint、cookie 或 token 进入源码、测试、报告和 Git；
-- [ ] 合同评审不依赖向飞书、企微或任何群聊发消息询问。
+- [x] 合同字段、状态机、错误和能力协商形成冻结 V1 文档与 executable model/codec；
+- [x] 23 个代表性 positive golden vectors 覆盖主要 inbound/outbound/receipt/query 模型；ACK、NACK、
+  unknown、reconcile 和全部 union/state 矩阵由参数化 contract tests 补足；
+- [x] provider-neutral `IMGatewayPort` 已冻结为 exact 四方法，fake 已实现该 port；真实 provider
+  adapter 未开始，E2 必须实现同一 port，不能新建旁路；
+- [x] 仓库没有真实 connector 注册或网络配置；普通 fake outbound 在检查请求前默认拒绝，只有
+  进程本地、不可序列化 test permit 能产生内存 fake effect；
+- [x] 没有真实 credential、endpoint、cookie 或 token 进入源码、测试、报告和 Git；
+- [x] 合同评审不依赖向飞书、企微或任何群聊发消息询问。
+
+P0 关闭证据：Python 3.9/3.12 zero-network 通过，专项 271 tests 通过，golden verifier 23/23，
+全仓 1,775 tests（Python 3.13/3.12）通过，canonical local release evidence 5/5 且 source
+identity stable。生产说明见
+[`../docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md`](../docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md)。
 
 ## 5. 接入前必做：IM-P1 CORE_READY
 
