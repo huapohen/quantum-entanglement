@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 )
@@ -40,6 +41,7 @@ func TestResolveIsDeterministicAcrossRegistrationOrder(t *testing.T) {
 				t.Fatalf("register %s: %v", manifest.ID, err)
 			}
 		}
+		freezeRegistryForTest(t, registry)
 		plan, err := registry.Resolve()
 		if err != nil {
 			t.Fatalf("resolve plan: %v", err)
@@ -106,6 +108,7 @@ func TestResolveRejectsMissingAmbiguousAndInvalidProviders(t *testing.T) {
 					t.Fatalf("register %s: %v", manifest.ID, err)
 				}
 			}
+			freezeRegistryForTest(t, registry)
 			_, err := registry.Resolve()
 			if !errors.Is(err, testCase.wantError) {
 				t.Fatalf("resolve error = %v, want %v", err, testCase.wantError)
@@ -125,6 +128,7 @@ func TestResolveRejectsDependencyCycle(t *testing.T) {
 			t.Fatalf("register %s: %v", manifest.ID, err)
 		}
 	}
+	freezeRegistryForTest(t, registry)
 	if _, err := registry.Resolve(); !errors.Is(err, ErrDependencyCycle) {
 		t.Fatalf("resolve error = %v, want %v", err, ErrDependencyCycle)
 	}
@@ -371,6 +375,198 @@ func TestRegisterConfigSchemaIsHostOwnedAndDigestPinned(t *testing.T) {
 	}
 }
 
+func TestRegistryDefinitionReadsAndSecretClaimsRequireFreeze(t *testing.T) {
+	registry, manifest := newUnfrozenSecretRegistry(t, testSecretBrokerDefinition())
+	request := testSecretClaimRequest(registry, "im", manifest.ID, imArtifactDigest, "before-freeze")
+
+	if _, err := registry.Resolve(); !errors.Is(err, ErrRegistryNotFrozen) {
+		t.Fatalf("resolve before freeze error = %v, want %v", err, ErrRegistryNotFrozen)
+	}
+	if _, err := registry.ResolveSelection([]PluginID{manifest.ID}); !errors.Is(err, ErrRegistryNotFrozen) {
+		t.Fatalf("selection before freeze error = %v, want %v", err, ErrRegistryNotFrozen)
+	}
+	if _, err := registry.AdmitSecretClaim(request); !errors.Is(err, ErrRegistryNotFrozen) {
+		t.Fatalf("claim before freeze error = %v, want %v", err, ErrRegistryNotFrozen)
+	}
+	if err := registry.RevokeSecretClaim(SecretClaimReference{
+		ClaimDigest: testArtifactDigest, ClaimRevision: 1,
+	}); !errors.Is(err, ErrRegistryNotFrozen) {
+		t.Fatalf("revoke before freeze error = %v, want %v", err, ErrRegistryNotFrozen)
+	}
+	if _, err := registry.Compose(Composition{
+		TenantID: "tenant-acme",
+		Profile:  ConfigurationLayer{ID: "profile.unfrozen", Revision: 1},
+	}, nil); !errors.Is(err, ErrRegistryNotFrozen) {
+		t.Fatalf("compose before freeze error = %v, want %v", err, ErrRegistryNotFrozen)
+	}
+}
+
+func TestRegistryFreezeValidatesCompleteSchemaAndBrokerGraph(t *testing.T) {
+	t.Run("missing schema", func(t *testing.T) {
+		manifest := testManifest("missing-schema.fake.v1", nil, nil)
+		registry := newTestRegistry()
+		if err := registry.Register(manifest, admittedPackage(manifest)); err != nil {
+			t.Fatalf("register manifest: %v", err)
+		}
+		if err := registry.Freeze(); !errors.Is(err, ErrInvalidRegistry) {
+			t.Fatalf("freeze error = %v, want %v", err, ErrInvalidRegistry)
+		}
+	})
+
+	t.Run("manifest schema mismatch", func(t *testing.T) {
+		definition := secretAdmissionSchema()
+		registry := newTestRegistry()
+		digest := mustTestSchemaDigest(definition)
+		registerSchema(t, registry, digest, definition)
+		manifest := testManifest("schema-mismatch.fake.v1", nil, nil)
+		manifest.ConfigSchemaDigest = digest
+		if err := registry.Register(manifest, admittedPackage(manifest)); err != nil {
+			t.Fatalf("register manifest: %v", err)
+		}
+		if err := registry.Freeze(); !errors.Is(err, ErrInvalidRegistry) {
+			t.Fatalf("freeze error = %v, want %v", err, ErrInvalidRegistry)
+		}
+	})
+
+	t.Run("missing broker", func(t *testing.T) {
+		registry, _ := newUnfrozenSecretRegistryWithoutBroker(t)
+		if err := registry.Freeze(); !errors.Is(err, ErrInvalidRegistry) {
+			t.Fatalf("freeze error = %v, want %v", err, ErrInvalidRegistry)
+		}
+	})
+
+	t.Run("unsupported broker purpose", func(t *testing.T) {
+		definition := testSecretBrokerDefinition()
+		definition.SupportedPurposes = []string{"other-purpose"}
+		registry, _ := newUnfrozenSecretRegistry(t, definition)
+		if err := registry.Freeze(); !errors.Is(err, ErrInvalidRegistry) {
+			t.Fatalf("freeze error = %v, want %v", err, ErrInvalidRegistry)
+		}
+	})
+
+	t.Run("tampered broker digest", func(t *testing.T) {
+		registry, _ := newUnfrozenSecretRegistry(t, testSecretBrokerDefinition())
+		broker := registry.secretBrokers["test-broker"]
+		broker.digest = testArtifactDigest
+		registry.secretBrokers["test-broker"] = broker
+		if err := registry.Freeze(); !errors.Is(err, ErrInvalidRegistry) {
+			t.Fatalf("freeze error = %v, want %v", err, ErrInvalidRegistry)
+		}
+	})
+
+	t.Run("tampered manifest digest", func(t *testing.T) {
+		registry, manifest := newUnfrozenSecretRegistry(t, testSecretBrokerDefinition())
+		registered := registry.entries[manifest.ID]
+		registered.manifestDigest = testArtifactDigest
+		registry.entries[manifest.ID] = registered
+		if err := registry.Freeze(); !errors.Is(err, ErrInvalidRegistry) {
+			t.Fatalf("freeze error = %v, want %v", err, ErrInvalidRegistry)
+		}
+	})
+}
+
+func TestRegistryFreezeIsIdempotentAndClosesEveryRegistrationPath(t *testing.T) {
+	registry, manifest := newUnfrozenSecretRegistry(t, testSecretBrokerDefinition())
+	if err := registry.Freeze(); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	if err := registry.Freeze(); err != nil {
+		t.Fatalf("repeat freeze: %v", err)
+	}
+
+	otherSchema := emptySchemaDefinition("other.fake.config.v1")
+	otherSchemaDigest := mustTestSchemaDigest(otherSchema)
+	if err := registry.RegisterConfigSchema(otherSchemaDigest, otherSchema); !errors.Is(err, ErrRegistryFrozen) {
+		t.Fatalf("register schema after freeze error = %v, want %v", err, ErrRegistryFrozen)
+	}
+	otherBroker := testSecretBrokerDefinition()
+	otherBroker.ID = "other-broker"
+	if _, err := registry.RegisterSecretReferenceBroker(otherBroker, allowIssuedReferences); !errors.Is(err, ErrRegistryFrozen) {
+		t.Fatalf("register broker after freeze error = %v, want %v", err, ErrRegistryFrozen)
+	}
+	otherManifest := testManifest("other.fake.v1", nil, nil)
+	if err := registry.Register(otherManifest, admittedPackage(otherManifest)); !errors.Is(err, ErrRegistryFrozen) {
+		t.Fatalf("register package after freeze error = %v, want %v", err, ErrRegistryFrozen)
+	}
+	if err := registry.RegisterFactory(
+		&capturingSecretFactory{manifest: manifest}, admittedPackage(manifest),
+	); !errors.Is(err, ErrRegistryFrozen) {
+		t.Fatalf("register factory after freeze error = %v, want %v", err, ErrRegistryFrozen)
+	}
+}
+
+func TestRegistryFreezeDetachesFinalSnapshotFromBuilderMaps(t *testing.T) {
+	registry, manifest := newUnfrozenSecretRegistry(t, testSecretBrokerDefinition())
+	builderEntries := registry.entries
+	builderSchemas := registry.schemas
+	builderBrokers := registry.secretBrokers
+	if err := registry.Freeze(); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+
+	delete(builderEntries, manifest.ID)
+	delete(builderSchemas, manifest.ConfigSchemaDigest)
+	delete(builderBrokers, "test-broker")
+	if plan, err := registry.Resolve(); err != nil || !slices.Equal(plan.Order, []PluginID{manifest.ID}) {
+		t.Fatalf("frozen snapshot plan/error = %#v/%v", plan, err)
+	}
+	request := testSecretClaimRequest(
+		registry, "im", manifest.ID, imArtifactDigest, "detached-snapshot",
+	)
+	if _, err := registry.AdmitSecretClaim(request); err != nil {
+		t.Fatalf("frozen broker/schema snapshot was mutated through builder maps: %v", err)
+	}
+}
+
+func TestFrozenRegistryConcurrentReadsClaimsAndRejectedWrites(t *testing.T) {
+	registry := compositionRegistry(t, nil)
+	composition := baseComposition(t, registry)
+	request := testSecretClaimRequest(
+		registry, "im", "im.fake.v1", imArtifactDigest, "concurrent-claim",
+	)
+	wantReference, err := registry.AdmitSecretClaim(request)
+	if err != nil {
+		t.Fatalf("admit control claim: %v", err)
+	}
+	lateManifest := testManifest("late.fake.v1", nil, nil)
+
+	const workers = 32
+	errorsChannel := make(chan error, workers*4)
+	var wait sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if _, err := registry.Resolve(); err != nil {
+				errorsChannel <- err
+			}
+			if _, err := registry.Compose(composition, nil); err != nil {
+				errorsChannel <- err
+			}
+			if reference, err := registry.AdmitSecretClaim(request); err != nil {
+				errorsChannel <- err
+			} else if reference != wantReference {
+				errorsChannel <- errors.New("concurrent exact retry changed claim reference")
+			}
+			if err := registry.Register(lateManifest, admittedPackage(lateManifest)); !errors.Is(err, ErrRegistryFrozen) {
+				errorsChannel <- errors.New("frozen registry accepted or misclassified a late package")
+			}
+		}()
+	}
+	wait.Wait()
+	close(errorsChannel)
+	for err := range errorsChannel {
+		t.Errorf("concurrent registry operation: %v", err)
+	}
+}
+
+func TestRegisterFactoryRejectsTypedNil(t *testing.T) {
+	var factory *capturingSecretFactory
+	if err := newTestRegistry().RegisterFactory(factory, PackageRecord{}); !errors.Is(err, ErrMissingFactory) {
+		t.Fatalf("typed-nil factory error = %v, want %v", err, ErrMissingFactory)
+	}
+}
+
 func TestResolveSelectionDoesNotActivateEveryRegisteredPlugin(t *testing.T) {
 	t.Parallel()
 
@@ -383,6 +579,7 @@ func TestResolveSelectionDoesNotActivateEveryRegisteredPlugin(t *testing.T) {
 			t.Fatalf("register %s: %v", manifest.ID, err)
 		}
 	}
+	freezeRegistryForTest(t, registry)
 	plan, err := registry.ResolveSelection([]PluginID{"im.fake.v1"})
 	if err != nil {
 		t.Fatalf("resolve selection: %v", err)
@@ -393,6 +590,38 @@ func TestResolveSelectionDoesNotActivateEveryRegisteredPlugin(t *testing.T) {
 	if _, err := registry.ResolveSelection([]PluginID{"missing.fake.v1"}); !errors.Is(err, ErrUnknownPlugin) {
 		t.Fatalf("unknown selection error = %v, want %v", err, ErrUnknownPlugin)
 	}
+}
+
+func newUnfrozenSecretRegistry(
+	t *testing.T,
+	brokerDefinition SecretBrokerDefinition,
+) (*Registry, Manifest) {
+	t.Helper()
+	registry, manifest := newUnfrozenSecretRegistryWithoutBroker(t)
+	if _, err := registry.RegisterSecretReferenceBroker(
+		brokerDefinition,
+		allowIssuedReferences,
+	); err != nil {
+		t.Fatalf("register broker: %v", err)
+	}
+	return registry, manifest
+}
+
+func newUnfrozenSecretRegistryWithoutBroker(t *testing.T) (*Registry, Manifest) {
+	t.Helper()
+	registry := newTestRegistry()
+	definition := secretAdmissionSchema()
+	digest := mustTestSchemaDigest(definition)
+	registerSchema(t, registry, digest, definition)
+	manifest := testManifest("im.fake.v1", []PortID{"im.transport.v1"}, nil)
+	manifest.ConfigSchemaDigest = digest
+	manifest.SecretRefNames = []string{"provider_credential"}
+	packageRecord := admittedPackage(manifest)
+	packageRecord.ArtifactDigest = imArtifactDigest
+	if err := registry.Register(manifest, packageRecord); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	return registry, manifest
 }
 
 func testManifest(id PluginID, provides []PortID, requires []PortRequirement) Manifest {

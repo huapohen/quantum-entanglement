@@ -32,6 +32,9 @@ var (
 	ErrDuplicateSecretBroker = errors.New("duplicate secret reference admission broker")
 	ErrSecretClaimConflict   = errors.New("secret claim idempotency conflict")
 	ErrSecretClaimDenied     = errors.New("secret claim admission denied")
+	ErrInvalidRegistry       = errors.New("invalid plugin registry definition snapshot")
+	ErrRegistryNotFrozen     = errors.New("plugin registry definitions are not frozen")
+	ErrRegistryFrozen        = errors.New("plugin registry definitions are frozen")
 	pluginIDPattern          = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*\.v[1-9][0-9]*$`)
 	portIDPattern            = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+\.v[1-9][0-9]*$`)
 	capabilityIDPattern      = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$`)
@@ -53,6 +56,8 @@ const (
 )
 
 type Registry struct {
+	definitionsMu     sync.RWMutex
+	frozen            bool
 	entries           map[PluginID]entry
 	schemas           map[string]ConfigSchemaDefinition
 	secretBrokers     map[string]secretBrokerEntry
@@ -100,6 +105,119 @@ func newRegistryWithSecretBindingKey(key [32]byte) *Registry {
 	}
 }
 
+// Freeze validates the complete definition graph, clones it into a final private snapshot, and
+// permanently closes registration. Secret claims remain independently mutable and revocable.
+func (registry *Registry) Freeze() error {
+	if registry == nil {
+		return ErrInvalidRegistry
+	}
+	registry.definitionsMu.Lock()
+	defer registry.definitionsMu.Unlock()
+	if registry.frozen {
+		return nil
+	}
+	if !validRegistryDefinitions(registry.entries, registry.schemas, registry.secretBrokers) {
+		return ErrInvalidRegistry
+	}
+	registry.entries = cloneRegistryEntries(registry.entries)
+	registry.schemas = cloneRegistrySchemas(registry.schemas)
+	registry.secretBrokers = cloneRegistrySecretBrokers(registry.secretBrokers)
+	registry.frozen = true
+	return nil
+}
+
+func validRegistryDefinitions(
+	entries map[PluginID]entry,
+	schemas map[string]ConfigSchemaDefinition,
+	brokers map[string]secretBrokerEntry,
+) bool {
+	for digest, schema := range schemas {
+		normalized, err := normalizeConfigSchemaDefinition(schema)
+		if err != nil {
+			return false
+		}
+		computed, err := digestConfigSchemaDefinition(normalized)
+		if err != nil || computed != digest {
+			return false
+		}
+	}
+	for brokerID, registered := range brokers {
+		normalized, err := normalizeSecretBrokerDefinition(registered.definition)
+		if err != nil || normalized.ID != brokerID || isNilInterface(registered.broker) {
+			return false
+		}
+		computed, err := digestSecretBrokerDefinition(normalized)
+		if err != nil || computed != registered.digest {
+			return false
+		}
+	}
+	for pluginID, registered := range entries {
+		normalized, err := normalizeManifest(registered.manifest)
+		if err != nil || normalized.ID != pluginID {
+			return false
+		}
+		manifestDigest, err := digestNormalizedManifest(normalized)
+		if err != nil || manifestDigest != registered.manifestDigest ||
+			validatePackageRecord(normalized, manifestDigest, registered.packageRecord) != nil ||
+			(registered.factory != nil && isNilInterface(registered.factory)) {
+			return false
+		}
+		schema, exists := schemas[registered.manifest.ConfigSchemaDigest]
+		if !exists || !schemaMatchesManifestSecrets(schema, registered.manifest) {
+			return false
+		}
+		for _, field := range schema.SecretFields {
+			for _, brokerID := range field.AllowedBrokers {
+				broker, exists := brokers[brokerID]
+				if !exists || !slices.Contains(broker.definition.SupportedPurposes, field.Purpose) {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func cloneRegistryEntries(values map[PluginID]entry) map[PluginID]entry {
+	cloned := make(map[PluginID]entry, len(values))
+	for pluginID, registered := range values {
+		registered.manifest = cloneManifest(registered.manifest)
+		cloned[pluginID] = registered
+	}
+	return cloned
+}
+
+func cloneManifest(manifest Manifest) Manifest {
+	cloned := manifest
+	cloned.Provides = slices.Clone(manifest.Provides)
+	cloned.Requires = slices.Clone(manifest.Requires)
+	cloned.Capabilities = slices.Clone(manifest.Capabilities)
+	cloned.Egress = slices.Clone(manifest.Egress)
+	cloned.SecretRefNames = slices.Clone(manifest.SecretRefNames)
+	return cloned
+}
+
+func cloneRegistrySchemas(
+	values map[string]ConfigSchemaDefinition,
+) map[string]ConfigSchemaDefinition {
+	cloned := make(map[string]ConfigSchemaDefinition, len(values))
+	for digest, definition := range values {
+		cloned[digest] = cloneConfigSchemaDefinition(definition)
+	}
+	return cloned
+}
+
+func cloneRegistrySecretBrokers(values map[string]secretBrokerEntry) map[string]secretBrokerEntry {
+	cloned := make(map[string]secretBrokerEntry, len(values))
+	for brokerID, registered := range values {
+		registered.definition.SupportedPurposes = slices.Clone(
+			registered.definition.SupportedPurposes,
+		)
+		cloned[brokerID] = registered
+	}
+	return cloned
+}
+
 func (registry *Registry) RegisterConfigSchema(digest string, definition ConfigSchemaDefinition) error {
 	if registry == nil || !sha256DigestPattern.MatchString(digest) {
 		return ErrInvalidConfigSchema
@@ -111,6 +229,11 @@ func (registry *Registry) RegisterConfigSchema(digest string, definition ConfigS
 	computedDigest, err := digestConfigSchemaDefinition(normalized)
 	if err != nil || computedDigest != digest {
 		return ErrInvalidConfigSchema
+	}
+	registry.definitionsMu.Lock()
+	defer registry.definitionsMu.Unlock()
+	if registry.frozen {
+		return ErrRegistryFrozen
 	}
 	if _, exists := registry.schemas[digest]; exists {
 		return fmt.Errorf("%w: %s", ErrDuplicateSchema, digest)
@@ -133,6 +256,11 @@ func (registry *Registry) RegisterSecretReferenceBroker(
 	digest, err := digestSecretBrokerDefinition(normalized)
 	if err != nil {
 		return "", ErrInvalidSecretBroker
+	}
+	registry.definitionsMu.Lock()
+	defer registry.definitionsMu.Unlock()
+	if registry.frozen {
+		return "", ErrRegistryFrozen
 	}
 	if _, exists := registry.secretBrokers[normalized.ID]; exists {
 		return "", fmt.Errorf("%w: %s", ErrDuplicateSecretBroker, normalized.ID)
@@ -388,6 +516,11 @@ func (registry *Registry) AdmitSecretClaim(
 		!validOpaqueReferenceID(request.PresentedReferenceID) {
 		return SecretClaimReference{}, ErrSecretClaimDenied
 	}
+	registry.definitionsMu.RLock()
+	if !registry.frozen {
+		registry.definitionsMu.RUnlock()
+		return SecretClaimReference{}, ErrRegistryNotFrozen
+	}
 	registered, exists := registry.entries[request.PluginID]
 	if !exists || request.PluginVersion != registered.manifest.Version ||
 		request.ArtifactDigest != registered.packageRecord.ArtifactDigest ||
@@ -395,21 +528,26 @@ func (registry *Registry) AdmitSecretClaim(
 		request.AdmissionRevision != registered.packageRecord.AdmissionRevision ||
 		request.ConfigSchemaDigest != registered.manifest.ConfigSchemaDigest ||
 		registered.packageRecord.Revoked {
+		registry.definitionsMu.RUnlock()
 		return SecretClaimReference{}, ErrSecretClaimDenied
 	}
 	schema, exists := registry.schemas[request.ConfigSchemaDigest]
 	if !exists {
+		registry.definitionsMu.RUnlock()
 		return SecretClaimReference{}, ErrSecretClaimDenied
 	}
 	field, exists := findConfigSecretField(schema, request.LogicalName)
 	if !exists || request.Purpose != field.Purpose || request.Audience != field.Audience ||
 		!slices.Contains(field.AllowedBrokers, request.BrokerID) {
+		registry.definitionsMu.RUnlock()
 		return SecretClaimReference{}, ErrSecretClaimDenied
 	}
 	broker, exists := registry.secretBrokers[request.BrokerID]
 	if !exists || !slices.Contains(broker.definition.SupportedPurposes, request.Purpose) {
+		registry.definitionsMu.RUnlock()
 		return SecretClaimReference{}, ErrSecretClaimDenied
 	}
+	registry.definitionsMu.RUnlock()
 	locatorBinding := registry.hmacDigest(
 		secretLocatorBindingDomain,
 		[]byte(request.PresentedReferenceID),
@@ -466,6 +604,12 @@ func (registry *Registry) RevokeSecretClaim(reference SecretClaimReference) erro
 		reference.ClaimRevision == 0 {
 		return ErrSecretClaimDenied
 	}
+	registry.definitionsMu.RLock()
+	frozen := registry.frozen
+	registry.definitionsMu.RUnlock()
+	if !frozen {
+		return ErrRegistryNotFrozen
+	}
 	registry.secretClaimMu.Lock()
 	defer registry.secretClaimMu.Unlock()
 	record, exists := registry.secretClaims[reference.ClaimDigest]
@@ -516,8 +660,17 @@ func (registry *Registry) Register(manifest Manifest, packageRecord PackageRecor
 }
 
 func (registry *Registry) RegisterFactory(factory Factory, packageRecord PackageRecord) error {
-	if factory == nil {
+	if isNilInterface(factory) {
 		return ErrMissingFactory
+	}
+	if registry == nil {
+		return ErrInvalidRegistry
+	}
+	registry.definitionsMu.RLock()
+	frozen := registry.frozen
+	registry.definitionsMu.RUnlock()
+	if frozen {
+		return ErrRegistryFrozen
 	}
 	return registry.register(factory.Manifest(), packageRecord, factory)
 }
@@ -527,6 +680,9 @@ func (registry *Registry) register(
 	packageRecord PackageRecord,
 	factory Factory,
 ) error {
+	if registry == nil {
+		return ErrInvalidRegistry
+	}
 	normalized, err := normalizeManifest(manifest)
 	if err != nil {
 		return err
@@ -537,6 +693,11 @@ func (registry *Registry) register(
 	}
 	if err := validatePackageRecord(normalized, manifestDigest, packageRecord); err != nil {
 		return err
+	}
+	registry.definitionsMu.Lock()
+	defer registry.definitionsMu.Unlock()
+	if registry.frozen {
+		return ErrRegistryFrozen
 	}
 	if _, exists := registry.entries[normalized.ID]; exists {
 		return fmt.Errorf("%w: %s", ErrDuplicatePlugin, normalized.ID)
@@ -551,9 +712,21 @@ func (registry *Registry) register(
 }
 
 func (registry *Registry) Resolve() (Plan, error) {
+	if registry == nil {
+		return Plan{}, ErrInvalidRegistry
+	}
+	registry.definitionsMu.RLock()
+	defer registry.definitionsMu.RUnlock()
+	if !registry.frozen {
+		return Plan{}, ErrRegistryNotFrozen
+	}
+	return resolveRegistryEntries(registry.entries)
+}
+
+func resolveRegistryEntries(entries map[PluginID]entry) (Plan, error) {
 	providers := make(map[PortID][]PluginID)
-	pluginIDs := make([]PluginID, 0, len(registry.entries))
-	for pluginID, registered := range registry.entries {
+	pluginIDs := make([]PluginID, 0, len(entries))
+	for pluginID, registered := range entries {
 		pluginIDs = append(pluginIDs, pluginID)
 		for _, port := range registered.manifest.Provides {
 			providers[port] = append(providers[port], pluginID)
@@ -573,7 +746,7 @@ func (registry *Registry) Resolve() (Plan, error) {
 	}
 
 	for _, consumerID := range pluginIDs {
-		manifest := registry.entries[consumerID].manifest
+		manifest := entries[consumerID].manifest
 		for _, requirement := range manifest.Requires {
 			providerID, err := resolveProvider(requirement, providers)
 			if err != nil {
@@ -614,9 +787,18 @@ func (registry *Registry) Resolve() (Plan, error) {
 // registering an admitted package must never make it active.
 func (registry *Registry) ResolveSelection(selected []PluginID) (Plan, error) {
 	if registry == nil {
-		return Plan{}, ErrInvalidManifest
+		return Plan{}, ErrInvalidRegistry
 	}
-	selection := NewRegistry()
+	registry.definitionsMu.RLock()
+	defer registry.definitionsMu.RUnlock()
+	if !registry.frozen {
+		return Plan{}, ErrRegistryNotFrozen
+	}
+	return registry.resolveSelectionLocked(selected)
+}
+
+func (registry *Registry) resolveSelectionLocked(selected []PluginID) (Plan, error) {
+	selection := make(map[PluginID]entry, len(selected))
 	seen := make(map[PluginID]struct{}, len(selected))
 	for _, pluginID := range selected {
 		if _, exists := seen[pluginID]; exists {
@@ -627,9 +809,9 @@ func (registry *Registry) ResolveSelection(selected []PluginID) (Plan, error) {
 		if !exists {
 			return Plan{}, fmt.Errorf("%w: %s", ErrUnknownPlugin, pluginID)
 		}
-		selection.entries[pluginID] = registered
+		selection[pluginID] = registered
 	}
-	return selection.Resolve()
+	return resolveRegistryEntries(selection)
 }
 
 func normalizeManifest(manifest Manifest) (Manifest, error) {

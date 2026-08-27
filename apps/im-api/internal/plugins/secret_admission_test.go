@@ -117,18 +117,16 @@ func TestSecretCanariesAreRejectedFromOrdinaryValuesAndSchemaDefaults(t *testing
 }
 
 func TestSecretAdmissionRejectsUnknownBrokerAndForgedLocator(t *testing.T) {
-	schema := secretAdmissionSchema()
-	schema.SecretFields[0].AllowedBrokers = []string{"missing-broker", "test-broker"}
-	fixture := newSecretAdmissionFixture(t, schema, allowIssuedReferences)
-
+	fixture := newSecretAdmissionFixture(t, secretAdmissionSchema(), allowIssuedReferences)
 	unknown := testSecretClaimRequest(
 		fixture.registry, "im", fixture.manifest.ID, imArtifactDigest, "unknown-broker",
 	)
-	unknown.BrokerID = "missing-broker"
+	delete(fixture.registry.secretBrokers, "test-broker")
 	if _, err := fixture.registry.AdmitSecretClaim(unknown); !errors.Is(err, ErrSecretClaimDenied) {
 		t.Fatalf("unknown broker error = %v, want %v", err, ErrSecretClaimDenied)
 	}
 
+	fixture = newSecretAdmissionFixture(t, secretAdmissionSchema(), allowIssuedReferences)
 	forged := testSecretClaimRequest(
 		fixture.registry, "im", fixture.manifest.ID, imArtifactDigest, "forged-locator",
 	)
@@ -456,6 +454,7 @@ func newSecretAdmissionFixture(
 	if _, err := registry.RegisterSecretReferenceBroker(testSecretBrokerDefinition(), broker); err != nil {
 		t.Fatalf("register fixture broker: %v", err)
 	}
+	freezeRegistryForTest(t, registry)
 	return secretAdmissionFixture{
 		registry: registry,
 		manifest: manifest,

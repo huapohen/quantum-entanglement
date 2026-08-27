@@ -51,7 +51,12 @@ func NewHost(registry *Registry, configuration EffectiveConfiguration) (*Host, e
 	if registry == nil || validateEffectiveBaseline(configuration) != nil {
 		return nil, ErrInvalidActivation
 	}
-	resolved, err := registry.ResolveSelection(configuration.plan.Order)
+	registry.definitionsMu.RLock()
+	defer registry.definitionsMu.RUnlock()
+	if !registry.frozen {
+		return nil, ErrInvalidActivation
+	}
+	resolved, err := registry.resolveSelectionLocked(configuration.plan.Order)
 	if err != nil || !slices.Equal(resolved.Order, configuration.plan.Order) ||
 		!slices.Equal(resolved.Bindings, configuration.plan.Bindings) ||
 		!activationRowsMatchRegistry(registry, configuration) {

@@ -358,6 +358,7 @@ func TestNewHostRejectsManifestAndAdmissionDrift(t *testing.T) {
 	); err != nil {
 		t.Fatalf("register drifted manifest: %v", err)
 	}
+	freezeRegistryForTest(t, driftRegistry)
 	if _, err := NewHost(driftRegistry, configuration); !errors.Is(err, ErrInvalidActivation) {
 		t.Fatalf("manifest drift error = %v, want %v", err, ErrInvalidActivation)
 	}
@@ -372,6 +373,7 @@ func TestNewHostRejectsManifestAndAdmissionDrift(t *testing.T) {
 	); err != nil {
 		t.Fatalf("register revised admission: %v", err)
 	}
+	freezeRegistryForTest(t, admissionRegistry)
 	if _, err := NewHost(admissionRegistry, configuration); !errors.Is(err, ErrInvalidActivation) {
 		t.Fatalf("admission drift error = %v, want %v", err, ErrInvalidActivation)
 	}
@@ -456,6 +458,7 @@ func lifecycleConfiguration(
 	manifests []Manifest,
 ) EffectiveConfiguration {
 	t.Helper()
+	freezeRegistryForTest(t, registry)
 	rows := make([]ConfigurationRow, 0, len(manifests))
 	for index, manifest := range manifests {
 		rows = append(rows, ConfigurationRow{

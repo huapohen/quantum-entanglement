@@ -247,6 +247,11 @@ func (registry *Registry) Compose(
 	if registry == nil || !validScopeID(composition.TenantID) {
 		return CompositionResult{}, ErrInvalidComposition
 	}
+	registry.definitionsMu.RLock()
+	defer registry.definitionsMu.RUnlock()
+	if !registry.frozen {
+		return CompositionResult{}, ErrRegistryNotFrozen
+	}
 	if baseline != nil {
 		if err := validateEffectiveBaseline(*baseline); err != nil || baseline.tenantID != composition.TenantID {
 			return CompositionResult{}, ErrInvalidBaseline
@@ -328,7 +333,7 @@ func (registry *Registry) Compose(
 		selectedPlugins = append(selectedPlugins, row.PluginID)
 		rows = append(rows, cloneEffectiveRow(row))
 	}
-	plan, err := registry.ResolveSelection(selectedPlugins)
+	plan, err := registry.resolveSelectionLocked(selectedPlugins)
 	if err != nil {
 		return CompositionResult{}, fmt.Errorf("resolve effective plugin plan: %w", err)
 	}

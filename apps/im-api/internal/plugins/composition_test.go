@@ -477,6 +477,7 @@ func compositionRegistry(t *testing.T, registrationOrder []PluginID) *Registry {
 		}
 	}
 	registerTestSecretBroker(t, registry)
+	freezeRegistryForTest(t, registry)
 	return registry
 }
 
@@ -513,6 +514,7 @@ func singlePluginRegistryWithDefinition(
 		t.Fatalf("register plugin: %v", err)
 	}
 	registerTestSecretBroker(t, registry)
+	freezeRegistryForTest(t, registry)
 	return registry
 }
 
@@ -532,6 +534,7 @@ func registryWithManifest(
 		t.Fatalf("register plugin: %v", err)
 	}
 	registerTestSecretBroker(t, registry)
+	freezeRegistryForTest(t, registry)
 	return registry
 }
 
@@ -587,6 +590,25 @@ func newTestRegistry() *Registry {
 		key[index] = 0x42
 	}
 	return newRegistryWithSecretBindingKey(key)
+}
+
+func freezeRegistryForTest(t *testing.T, registry *Registry) {
+	t.Helper()
+	if _, exists := registry.schemas[testSchemaDigest]; !exists {
+		needsTestSchema := false
+		for _, registered := range registry.entries {
+			if registered.manifest.ConfigSchemaDigest == testSchemaDigest {
+				needsTestSchema = true
+				break
+			}
+		}
+		if needsTestSchema {
+			registerSchema(t, registry, testSchemaDigest, testConfigSchemaDefinition)
+		}
+	}
+	if err := registry.Freeze(); err != nil {
+		t.Fatalf("freeze registry: %v", err)
+	}
 }
 
 func registerTestSecretBroker(t *testing.T, registry *Registry) {
