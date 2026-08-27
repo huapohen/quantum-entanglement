@@ -4,7 +4,7 @@
 `multi_agent_collaboration_report.md`。Notion 与语雀不再由本任务自动维护；只有用户再次
 明确授权远端写入时，才会基于本地真相源另行执行同步与回读验证。
 
-## Notion 历史镜像（只读索引）
+## Notion 镜像（2026-08-27 已回读）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -12,12 +12,13 @@
 - 截图证据库：<https://app.notion.com/p/3c1ead4b996e8101997fecd0302714ba?pvs=204>
 - 竞品信源核验：<https://app.notion.com/p/3c1ead4b996e81f9b5eddebebc96d30a?pvs=204>
 - 当前实现证据：<https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853?pvs=204>
-- 最近完整同步：2026-08-20；综合报告、竞品全景、当前实现证据、项目导航和
-  10 张受限截图均已回读验证。其余 6 个专题页自 2026-08-19 已验证同步后未发生本地变化。
+- 最近完整同步：2026-08-27；29 个页面全部回读通过。既有主报告与专题页已更新，
+  08–21 的缺页和 4 个阶段治理页面已经补齐；截图库保留 00–09，并新增上传 10–26，
+  共 27 张受限图片。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
-- 2026-08-27 的“v0版”远端术语更新由用户手动完成；本轮助手未做远端写入或回读。当前
-  新增阶段文档只在本地主仓落盘，不能把历史同步记录解读为这些新内容已同步。
+- 本次正文同步由用户在 2026-08-27 明确重新授权；同步内容绑定 GitHub `main`
+  `8ab98aa5837226f0c1d8788eec350fe580f32180`，并已执行逐页远端回读。语雀仍未操作。
 
 ## 当前阶段交付
 
