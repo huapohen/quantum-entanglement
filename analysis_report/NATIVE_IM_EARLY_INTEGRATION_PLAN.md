@@ -1,8 +1,10 @@
 # 原生 IM 提前接入执行计划
 
-> 计划版本：2026-08-27-early-integration-v1  
+> 计划版本：2026-08-28-early-integration-v2  
 > 基线：`backup_0827_200010` / `pre-native-im-20260827-200010`  
 > 当前主线起点：`1d399e555fb0416f9c6225811269b9e5a2407728`  
+> 当前执行分支：`mainline_continue_quantum_entanglement`；E1 源码候选 `7620200`  
+> 当前阶段：E1 / Level A 已完成；E2 / Level B 尚未开始  
 > 决策状态：用户已决定提前接入独立原生 IM；先 inbound-only，再 Agent，再受控 outbound  
 > 永久限制：不向飞书、企微、任何个人、群聊、bot 或 webhook 发消息
 
@@ -13,8 +15,8 @@
 
 | 层级 | 可见结果 | 预计累计时间 | 是否真实发送 |
 |---|---|---:|---|
-| A：CONTRACT_EXECUTABLE | V1 模型、codec、golden、fake adapter 全绿 | 1.5–2.5 天 | 否 |
-| B：SANDBOX_INBOUND | 独立 IM 测试后端可 health/read/dedupe/resume | 3–5 天 | 否 |
+| A：CONTRACT_EXECUTABLE（已完成） | V1 模型、codec、golden、fake adapter 全绿 | 已完成 | 否 |
+| B：SANDBOX_INBOUND（下一阶段） | 独立 IM 测试后端可 health/read/dedupe/resume | 3–5 天 | 否 |
 | C：AGENT_DRAFT | verified inbound 可安全驱动 PURE Agent 并生成待审草稿 | 7–9 天 | 否 |
 | D：CONTROLLED_OUTBOUND | 单个 allowlisted 测试 conversation 可受控发送并对账 | 10–14 天 | 仅另行明确授权后 |
 
@@ -64,22 +66,37 @@ flowchart LR
 
 目标：完成 Level A，整个阶段零网络、零环境 credential、零真实 IM。
 
-### 4.1 拟新增文件
+状态：**已完成**。`IM-P0 CONTRACT_READY` 仅按 provider-neutral contract/fake 里程碑完成；不代表
+真实 IM 已接入。E2 sandbox inbound-only 尚未开始，Gate A–E 仍全部关闭。源码证据绑定
+`7620200f8e378507b1f592d6d34744080250d2ea`，详见：
+
+- [`../docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md`](../docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md)；
+- [`research/22_native_im_e1_contract_executable_evidence.md`](./research/22_native_im_e1_contract_executable_evidence.md)。
+
+### 4.1 已交付文件
 
 ```text
 src/quantum_entanglement/native_im.py
 src/quantum_entanglement/_native_im_codec.py
+src/quantum_entanglement/native_im_gateway.py
 src/quantum_entanglement/native_im_fake.py
 tests/fixtures/native_im/v1/*.json
+scripts/verify_native_im_v1_golden.py
+scripts/verify_native_im_zero_network.py
+tests/test_native_im_codec_primitives.py
 tests/test_native_im_contract.py
+tests/test_native_im_contract_matrix.py
 tests/test_native_im_fake.py
-tests/test_native_im_no_network.py
+tests/test_native_im_gateway.py
+tests/test_native_im_golden_vectors.py
+tests/test_native_im_zero_network_gate.py
 ```
 
-如果 `native_im.py` 超过可审查边界，再按 value/port/action 拆包；第一次提交不进行无证据的目录
-重构。
+V1 值模型保留在单一 `native_im.py` 以避免在冻结期进行无证据目录重构；codec、port 和 fake 已按
+信任边界拆开。后续如果按 V2 或独立审查单元拆包，必须保持 V1 import/bytes/digest 兼容并先增加
+迁移与跨模块 golden 证据。
 
-### 4.2 小提交顺序
+### 4.2 已执行的小提交顺序
 
 1. plain scalar、NFC/control、timestamp、signed-64-bit 和 digest primitives；
 2. conversation/participant/attachment/message segment/content/ref；
@@ -96,6 +113,11 @@ tests/test_native_im_no_network.py
 13. import graph、socket/DNS/HTTP/WebSocket 和 environment credential canary；
 14. E1 文档、测试证据、GitHub 回读和阶段末 Notion 同步。
 
+第 1–13 项已按独立提交完成；第 14 项正在本阶段收尾提交中。关键收口提交为：golden
+`d97807d`/`b6bd184`、port `fc6fea2`、fake `dfe9a33`、permit `4283e46`、receiver ledger
+`c4b376e`、ACK-loss `889c409`、zero-network `72c7ca5`/`7620200`、完整矩阵 `af58352` 和 full
+pytest gate `2295d08`。
+
 ### 4.3 验收矩阵
 
 - exact plain dict/JSON；unknown、missing、subclass、bool-as-int 全拒绝；
@@ -110,9 +132,18 @@ tests/test_native_im_no_network.py
 
 可停条件：任一模型语义需改变冻结 wire contract 时停止，提出 V2；不能用实现便利悄悄改 V1。
 
+本次没有触发 V2：冻结文档保持不变。23 个 golden vector 是代表性正向 inventory，不单独覆盖
+全部 union arm；完整 event/revision/scope/mention/digest 状态由参数化 contract tests 覆盖。专项
+共收集 271 tests；全仓在 Python 3.13/3.12 各 1,775 tests 通过，Python 3.9 通过并保留一个既有
+platform-capability skip；Ruff、strict mypy、golden、Python 3.9/3.12 zero-network 和 5/5 canonical
+local release evidence 均通过。
+
 ## 5. E2：提前接入 sandbox inbound-only
 
 目标：完成 Level B，只连接独立 IM 的专用测试后端，不驱动 Agent，不注册 outbound。
+
+状态：**尚未开始**。当前仓库没有真实 provider adapter、endpoint、credential、webhook、socket、
+HTTP/WebSocket client 或 external IM send。下面清单仍是下一阶段计划，不是已实现能力。
 
 ### 5.1 IM 后端必须提供的输入
 
@@ -283,7 +314,8 @@ sandbox 批准范围内。
   `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/` 下，合并后推 main
   并删除本地/远端活动分支；
 - `backup_0827_200010` 永不追加提交；新阶段需要恢复点时新建 `backup_MMDD_HHMMSS`；
-- 每个稳定阶段结束执行 GitHub push、远端 SHA 回读、分支目录刷新、report sync checkpoint；
+- 每个稳定阶段结束执行当前评审分支 GitHub push、远端 SHA 回读、分支目录刷新、report sync
+  checkpoint；用户验收前不自动合并 `main`；
 - Notion 按 E1/E2/E3/E4/E5 阶段末批量同步并逐页回读，不再阻塞每个小 commit；
 - 任何测试不得连接飞书、企微、真实聊天、未登记 endpoint 或使用真实客户数据。
 
@@ -299,17 +331,22 @@ python3 -m pytest
 python3 scripts/report_sync_bundle.py --verify <current-checkpoint.json>
 ```
 
-## 10. 第一轮开工清单
+## 10. 下一轮开工清单
 
-备份与本计划完成后，下一轮立即执行：
+E1 文档、GitHub 和 Notion 收口后，暂停在 Level A 供用户验收。用户明确恢复主线后，E2 按以下
+顺序开始：
 
-1. 从冻结合同抽取 V1 raw schema/golden vector inventory；
-2. 创建 `native_im.py` 的 scalar/value type 最小骨架；
-3. 创建第一个 exact plain-dict round-trip 失败测试；
-4. 实现 NFC/control/type/size 公共验证器；
-5. 逐组落 conversation/participant/message/inbound envelope；
-6. 每个小提交推 GitHub，E1 完成后集中同步 Notion；
-7. 同时向独立 IM 后端索取第 5.1 节的 sandbox contract/config，但不通过飞书或企微询问。
+1. 只读盘点本机、代码仓和 Notion 中已有的 sandbox contract/config，不通过飞书、企微或群聊
+   询问；
+2. 冻结 provider profile exact schema、unsupported capability 和 transport/auth/cursor 假设清单；
+3. 在没有真实 secret 的条件下先实现 config fail-closed、host/port/path allowlist、no redirect 和
+   `SecretRef` 边界；
+4. 实现 raw-body digest、signature/timestamp/nonce/replay verifier 和 tenant mapping；
+5. 实现 digest-bound durable inbox、整页 + cursor 原子 admission 与 migration/backup 证据；
+6. 实现 inbound-only adapter skeleton、kill switch、redaction 和 fake contract probe；
+7. 只有 sandbox endpoint class、测试 scope、数据等级、read-only credential reference、方法路径和
+   截止时间获批后，才执行 health/read/dedupe/resume；
+8. Level B 始终只产生 observation，机械阻断 Agent、tool、browser、subprocess 和 outbound。
 
-如果 IM 后端资料已经在本机、代码仓或 Notion 中，优先只读提取；缺少真实 sandbox 参数不会阻止
-E1，但会阻止 E2 的实际网络连接。
+缺少真实 sandbox 参数不会影响 E1 已完成结论，但会阻止 E2 的实际网络连接。任何 outbound 仍须
+等 E3/E4 完成后针对单一测试环境另获明确授权。
