@@ -27,14 +27,17 @@
 
 研究根目录：
 
-`automation/2026/05_08/1/2output/more/`
+`/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output/more/`
 
-该目录是本机研究证据快照，未整包复制进产品仓库；下列 SHA-256 将当前决策固定到确切内容。
+该目录是本机研究证据快照，未整包复制进产品仓库。全部 40 份 Markdown 的行数、SHA-256、角色
+和处置见 `RESEARCH_COVERAGE.md`；下表保留直接支撑既有 RQ 的核心子集。原组合导航只包含 30 份
+报告，后生成的 `agentspace/research_report.md` 是必须单独审计的 evidence delta。
 
 ## 2. 审计快照
 
 | 来源 | 行数 | SHA-256 |
 |---|---:|---|
+| `agentspace/research_report.md` | 3083 | `9698be0f74d81c2078e208a3231f3e6498965fedeb3a3aba164764279bd8f0b7` |
 | `_portfolio/master_research_report.md` | 1791 | `02366d7b7dcfdda96309b22142376217caff2b752e770e71a8a8e2d8cb8c2787` |
 | `_portfolio/product_inventory.md` | 114 | `c47d70ff371eff0454d7ba5f046444d268294a0fafaed8831e5bf9376ded550a` |
 | `floatim-floatboat/research_report.md` | 1018 | `fe239ede133ca4cc0168a20cac8e43bf0673fafb7fd1d895b69584ba82e432ac` |

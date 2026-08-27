@@ -20,6 +20,7 @@
 - [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)：产品范围、用户旅程与验收标准。
 - [ARCHITECTURE.md](ARCHITECTURE.md)：分层架构、数据所有权、插件边界和关键时序。
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)：阶段、提交序列、门禁和可停点。
+- [RESEARCH_COVERAGE.md](RESEARCH_COVERAGE.md)：`2output` 全部 40 份 Markdown 的行数、摘要、角色和处置。
 - [RESEARCH_TRACEABILITY.md](RESEARCH_TRACEABILITY.md)：用户调研快照、采纳/拒绝决策与从证据到验收的映射。
 
 后续会增加 API、数据库、融云 provider profile、Clerk 鉴权、跨端和运维文档。任何实现若与
