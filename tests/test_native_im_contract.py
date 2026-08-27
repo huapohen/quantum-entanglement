@@ -8,6 +8,7 @@ import pytest
 
 from quantum_entanglement.native_im import (
     IMAcceptanceLookupCapabilityV1,
+    IMActionIntentV1,
     IMAttachmentRefV1,
     IMCapabilityRequestV1,
     IMCapabilitySnapshotV1,
@@ -273,6 +274,41 @@ def inbound_page(**changes: object) -> IMInboundPageV1:
     return IMInboundPageV1(**values)  # type: ignore[arg-type]
 
 
+def action_intent(**changes: object) -> IMActionIntentV1:
+    operation_name = changes.get("operation", "send_message")
+    target: IMMessageRefV1 | None = None
+    body: IMMessageContentV1 | None = content()
+    reaction_value: IMReactionRefV1 | None = None
+    if operation_name == "edit_message":
+        target = message()
+    elif operation_name == "delete_message":
+        target = message()
+        body = None
+    elif operation_name in {"add_reaction", "remove_reaction"}:
+        target = message()
+        body = None
+        reaction_value = reaction()
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "action_id": "test-action-1",
+        "tenant_id": "test-tenant",
+        "workspace_id": "test-workspace",
+        "actor_id": "test-actor-1",
+        "delegator_id": None,
+        "conversation": conversation(),
+        "operation": operation_name,
+        "target_message": target,
+        "content": body,
+        "reaction": reaction_value,
+        "created_at": TIME,
+        "correlation_id": "test-correlation-1",
+        "causation_id": "test-causation-1",
+        "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+    }
+    values.update(changes)
+    return IMActionIntentV1(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -305,6 +341,8 @@ def inbound_page(**changes: object) -> IMInboundPageV1:
             snapshot_token="test-snapshot-1",
         ),
         inbound_page(),
+        action_intent(),
+        action_intent(operation="edit_message", delegator_id="test-delegator-1"),
     ],
 )
 def test_reference_models_round_trip_through_dict_and_noncanonical_json(value: object) -> None:
@@ -777,3 +815,149 @@ def test_inbound_page_preflights_nested_and_raw_byte_limits(
         inbound_page()
     with pytest.raises(ValueError, match="byte limit"):
         IMInboundPageV1.from_json_bytes(encoded)
+
+
+@pytest.mark.parametrize(
+    "operation_name",
+    [
+        "send_message",
+        "edit_message",
+        "delete_message",
+        "add_reaction",
+        "remove_reaction",
+    ],
+)
+def test_action_intent_accepts_exact_operation_matrix(operation_name: str) -> None:
+    intent = action_intent(operation=operation_name)
+    assert intent.operation == operation_name
+    assert IMActionIntentV1.from_dict(intent.to_dict()) == intent
+
+
+def test_action_intent_rejects_every_required_and_forbidden_matrix_drift() -> None:
+    invalid_changes = (
+        {"target_message": message()},
+        {"content": None},
+        {"reaction": reaction()},
+        {"operation": "edit_message", "target_message": None},
+        {"operation": "edit_message", "content": None},
+        {"operation": "edit_message", "reaction": reaction()},
+        {"operation": "delete_message", "target_message": None},
+        {"operation": "delete_message", "content": content()},
+        {"operation": "delete_message", "reaction": reaction()},
+        {"operation": "add_reaction", "target_message": None},
+        {"operation": "add_reaction", "content": content()},
+        {"operation": "add_reaction", "reaction": None},
+        {"operation": "remove_reaction", "target_message": None},
+        {"operation": "remove_reaction", "content": content()},
+        {"operation": "remove_reaction", "reaction": None},
+        {"operation": "future_operation"},
+    )
+    for changes in invalid_changes:
+        with pytest.raises(ValueError):
+            action_intent(**changes)
+
+
+def test_action_intent_rejects_scope_and_exact_conversation_drift() -> None:
+    direct_changes = (
+        {"tenant_id": "test-other-tenant"},
+        {"workspace_id": "test-other-workspace"},
+    )
+    target_conversations = (
+        conversation(tenant_id="test-other-tenant"),
+        conversation(workspace_id="test-other-workspace"),
+        conversation(provider="qe.other-im.v1"),
+        conversation(channel_id="test-other-channel"),
+        conversation(conversation_id="test-other-conversation"),
+        conversation(thread_id="test-other-thread"),
+    )
+    reaction_changes = (
+        {"tenant_id": "test-other-tenant"},
+        {"workspace_id": "test-other-workspace"},
+        {"provider": "qe.other-im.v1"},
+        {"channel_id": "test-other-channel"},
+    )
+    attachment_changes = reaction_changes
+    invalid = list(direct_changes)
+    invalid.extend(
+        {
+            "operation": "edit_message",
+            "target_message": message(conversation=changed_conversation),
+        }
+        for changed_conversation in target_conversations
+    )
+    invalid.extend(
+        {"operation": "add_reaction", "reaction": reaction(**changed)}
+        for changed in reaction_changes
+    )
+    invalid.extend(
+        {"content": content(attachments=(attachment(**changed),))} for changed in attachment_changes
+    )
+    for changes in invalid:
+        with pytest.raises(ValueError):
+            action_intent(**changes)
+
+
+def test_action_intent_decode_is_exact_and_repr_hides_effect_content() -> None:
+    intent = action_intent(delegator_id="test-delegator-1")
+    wire = intent.to_dict()
+    for changed in (
+        {**wire, "future": True},
+        {key: item for key, item in wire.items() if key != "actionId"},
+        dict(wire, schemaVersion=True),
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            IMActionIntentV1.from_dict(changed)
+    with pytest.raises(ValueError, match="duplicate"):
+        IMActionIntentV1.from_json_bytes(b'{"schemaVersion":1,"schemaVersion":1}')
+    with pytest.raises(TypeError, match="exact"):
+        replace(intent, content=object())
+    with pytest.raises(TypeError, match="exact"):
+        replace(action_intent(operation="edit_message"), target_message=object())
+    with pytest.raises(TypeError, match="exact"):
+        replace(action_intent(operation="add_reaction"), reaction=object())
+    assert "hello" not in repr(intent)
+    assert "test-object-1" not in repr(intent)
+
+
+def test_action_intent_validates_time_trace_and_digest_sensitive_identity() -> None:
+    base = action_intent()
+    for changes in (
+        {"created_at": "2026-08-28T00:00:00Z"},
+        {"traceparent": ""},
+        {"actor_id": ""},
+        {"causation_id": ""},
+    ):
+        with pytest.raises(ValueError):
+            action_intent(**changes)
+    assert action_intent(traceparent=None).traceparent is None
+    for changed in (
+        action_intent(action_id="test-action-2"),
+        action_intent(actor_id="test-actor-2"),
+        action_intent(delegator_id="test-delegator-1"),
+        action_intent(correlation_id="test-correlation-2"),
+        action_intent(causation_id="test-causation-2"),
+        action_intent(traceparent=None),
+        action_intent(conversation=conversation(conversation_id="test-conversation-2")),
+        action_intent(content=content(segments=(text_segment("changed"),), attachments=())),
+        action_intent(created_at="2026-08-28T00:00:00.000002Z"),
+        action_intent(
+            operation="edit_message",
+            target_message=message(revision="test-message-revision-2"),
+        ),
+        action_intent(
+            operation="add_reaction",
+            reaction=reaction(reaction_key="test-heart"),
+        ),
+    ):
+        assert changed.canonical_digest() != base.canonical_digest()
+
+
+def test_action_intent_preflights_canonical_and_raw_byte_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = action_intent().canonical_bytes()
+    monkeypatch.setattr(IMActionIntentV1, "_MAX_CANONICAL_BYTES", len(encoded) - 1)
+    with pytest.raises(ValueError, match="canonical byte limit"):
+        action_intent()
+    with pytest.raises(ValueError, match="byte limit"):
+        IMActionIntentV1.from_json_bytes(encoded)
