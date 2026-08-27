@@ -1,0 +1,710 @@
+# 下一阶段详细执行计划：参考项目复评后闭合 Atomic Result Authority
+
+> 计划版本：2026-08-27-stage-pause-v1  
+> 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点  
+> 当前状态：**计划已冻结，尚未开始下一阶段实现，等待阶段验收/新增参考项目。**  
+> 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
+
+## 1. 下一阶段的唯一目标
+
+把当前 capability-free 的 result contract 连接到一个真正可验证的 SQLite durable graph，
+并机械区分三种结果：
+
+1. 本调用新写完整结果图且正常收到 COMMIT ACK：返回一次性的 `AcceptedV2`；
+2. 结果图早已存在、重放、重开、恢复或由其他进程写入：只返回 `ObservedV2`；
+3. COMMIT outcome 不明确、数据部分存在或任一绑定漂移：隔离当前 store，失败关闭，不返回成功。
+
+该目标闭合前，不启用 worker dispatch、真实 connector、migration 5 或任何“已经 exactly
+once”的产品声明。
+
+## 2. 已冻结、不得回退的架构决策
+
+### 2.1 状态和权限分离
+
+- Receipt/Observed 是可序列化、capability-free 的数据与观察；
+- Accepted 是某次 store 调用在当前进程内收到 fresh COMMIT ACK 的非序列化结果分类；
+- codec-valid 不等于 durable；
+- `isinstance` 不得成为后续授权判断；
+- replay/reopen/peer process/recovery 永远不能重建 Accepted；
+- ACK 丢失不能通过读回后“补发” Accepted。
+
+### 2.2 平台持有业务事实
+
+任务状态、attempt、lease/fence、Artifact 版本、result receipt、event coordinates 与 outbox 必须
+由平台同一事务持有。LLM、LangGraph checkpoint、IM 消息和 Agent 自报完成都不是结果真相源。
+
+### 2.3 框架分层
+
+| 层 | 选择 | 不允许越界 |
+| --- | --- | --- |
+| Domain kernel | 本项目 exact state machine + event store | 不依赖上层 Agent 框架类型 |
+| Workflow | 内置 deterministic DAG / LangGraph adapter | checkpoint 不替代 durable business fact |
+| Agent loop | DeepSeek Harness/Cordis 思想，经 `AgentRuntimePort` | 插件/上下文/effect 生命周期不拥有组织任务图 |
+| 快速装配 | Deep Agents 仅作参考/生态适配 | 不成为平台 scheduler 或权限真相源 |
+| 外部 Agent | A2A adapter | 不承载内部组织授权和 Artifact CAS |
+| 工具/数据 | MCP adapter | 不把 connector credential 写入 Envelope |
+| 内部协调 | Coordination Envelope + event state machine | 不再发明另一套公网协议 |
+
+DeepSeek Harness 的核心价值应落在底层 runtime port：turn/step、session event、插件 lifecycle、
+context/tool/effect pipeline、compaction 与 sandbox/approval。LangGraph 负责长期流程和 interrupt，
+两者都不能绕过本阶段要完成的 durable result authority。
+
+## 3. 开工前的参考项目复评关口
+
+用户可能加入更多参考项目。因此下一行代码开始前，先完成一次固定输入的 reference delta
+review，避免在 store writer 写到一半时改变底层方向。
+
+### 3.1 每个新增项目的接入步骤
+
+1. 克隆到本地 `references/<repo>`；不复制其源码进本仓库；
+2. 固定 upstream URL、commit/tag、采集时间和许可证；
+3. 记录依赖树、语言/runtime、活跃度、维护者声明与安全公告；
+4. 运行项目自己的最小测试/示例，但不输入本项目凭据或真实业务数据；
+5. 按源码而不是宣传页标注真实能力；
+6. 把可复用点映射到本项目的明确层和 port；
+7. 检查 license/NOTICE/专利/商标/网络服务条款，禁止来源不明的代码搬运；
+8. 形成“采用、适配、只借鉴、拒绝”四选一结论；
+9. 单独提交研究证据，不和实现提交混在一起；
+10. 用户确认综合评估后再启动 Phase 1。
+
+### 3.2 统一评分矩阵
+
+| 维度 | 权重 | 核验问题 |
+| --- | ---: | --- |
+| Durable state/恢复 | 20 | 是否有真实事务、幂等、replay、ACK-loss 与故障注入 |
+| 多 Agent 协作语义 | 15 | Agent 是否独立身份，handoff/artifact/责任边界是否显式 |
+| Runtime 底层能力 | 15 | context/tool/effect/plugin 生命周期是否可组合、可取消、可隔离 |
+| 人机治理 | 10 | approval、Needs You、作用域权限和 action-time check 是否真实 |
+| 协议互操作 | 10 | A2A/MCP/标准版本、TCK/SDK 与 extension 保留策略 |
+| 安全边界 | 10 | tenant、credential、SSRF、sandbox、日志/DLP、供应链 |
+| 产品可见价值 | 10 | 是否能稳定产出可验收 Artifact，而非只展示聊天 |
+| 工程可采用性 | 5 | 许可证、测试、发布、维护、升级与回滚成本 |
+| 与当前内核重叠 | 5 | 是补缺口、提供替代，还是只重复已有能力 |
+
+评分不能直接决定采用。任何涉及权限、事务或外部副作用的候选，即使得分高，也必须通过本项目
+的 exact contract 与故障测试。
+
+### 3.3 复评输出
+
+新增一个独立研究文件，至少包含：
+
+- 固定版本与证据清单；
+- 组件/层级映射图；
+- 与 v0版、DeepSeek Harness、LangGraph、Deep Agents、Clawith 的差异表；
+- 可复用设计和不可采用部分；
+- 对本计划 Phase 1–8 的影响；
+- ADR 变更建议；
+- 最终 go/no-go。
+
+若新增参考不改变 result authority 底层不变量，本计划继续；若改变 event envelope、事务边界或
+authority 语义，必须先修订 ADR 和本文件，再写代码。
+
+## 4. Phase 0：重建可复现起点
+
+### 目标
+
+确认阶段验收后的 `main`、参考输入和工具链完全一致。
+
+### 提交与动作
+
+1. `docs: record reference delta assessment`
+2. `docs: decide result authority architecture after reference review`
+3. 如依赖无变化，不修改 lock；如必须新增依赖，单独提交 lock/SBOM/risk evidence。
+
+### 门禁
+
+- `git status` clean；
+- 只有正式 main worktree，或所有新增临时 worktree 均登记在统一目录；
+- Python 3.9–3.13 contract 不变；
+- 全量 pytest、ruff、mypy 通过；
+- 新项目许可证与固定 commit 有证据；
+- ADR_0005 没有与复评结论冲突。
+
+### 停止条件
+
+参考项目对 durable result authority 的影响仍不清楚时停止，不进入 codec 实现。
+
+## 5. Phase 1：Canonical Stored-Event Envelope Codec
+
+### 5.1 目标
+
+新增私有、domain-separated、capability-free 的 stored-event envelope codec。它既能从
+store-owned write snapshot 计算，也能从 SQLite 原始 row 独立重算；两条路径必须得到相同
+digest。
+
+建议模块：
+
+```text
+src/quantum_entanglement/_stored_event_envelope_codec.py
+tests/test_stored_event_envelope_codec.py
+```
+
+### 5.2 固定 envelope 字段
+
+```text
+schemaVersion
+eventId
+streamId
+eventType
+actorId
+timestamp
+correlationId
+causationId
+idempotencyKey
+payload
+sequence
+globalPosition
+```
+
+建议 domain：
+
+```text
+quantum-entanglement.stored-event-envelope/1\n
+```
+
+digest：
+
+```text
+SHA-256(domain || canonical-json-body)
+```
+
+### 5.3 必须实现的不变量
+
+- payload 根必须是 exact JSON object；
+- 写路径只接受 `_EventWriteSnapshot` 已冻结的 canonical payload bytes；
+- 读路径读取 `sqlite3.Row.payload_json` 原始 storage class 和 bytes/string；
+- 严格拒绝 duplicate key、NaN/Infinity、数组根、非 canonical 排序/空白/escape；
+- typed payload codec 重编码后必须与 durable bytes 完全一致；
+- `sequence/globalPosition` 是 exact positive signed-64-bit int，拒绝 bool-as-int；
+- timestamp 固定 UTC 微秒格式；
+- 所有文本按既有长度、NFC/control 规则验证；
+- 使用 exact class 与 class-qualified method，拒绝动态方法遮蔽；
+- Python 3.9 使用手写 slots，不使用 `dataclass(slots=True)`；
+- 不从 package `__all__` 导出；
+- 不在 events 表新增 digest 列，receipt 保存 digest，readback 时重算。
+
+### 5.4 小步提交建议
+
+1. `feat: define canonical stored event envelopes`
+2. `test: freeze stored event envelope golden vectors`
+3. `fix: reject noncanonical stored event payloads`
+4. `test: exhaust stored envelope mutation matrix`
+5. `docs: specify stored event envelope authority boundary`
+
+每个提交单独通过 focused tests；不得在本阶段引入 writer 或 Accepted。
+
+### 5.5 验收矩阵
+
+- 固定 golden bytes/digest 在 Python 3.9/3.12/3.13 一致；
+- 修改 actor、time、correlation、causation、idempotency、payload 任一叶子、sequence 或 global
+  position，digest 都改变；
+- key reorder、whitespace、escape、duplicate key、非对象根和错误 SQLite storage class 全拒绝；
+- subclass、bool-as-int、hostile adapter、instance shadow、`object.__new__` 全失败关闭；
+- 无 credential、lease token、Artifact 正文或 model narration 进入 envelope/repr/error/log。
+
+### Phase 1 出口
+
+codec-only 全量通过，且仍没有任何公共写 API 能据此签发 authority。
+
+## 6. Phase 2：Reserved Result Event Boundary
+
+### 6.1 目标
+
+在开放专用 writer 前，封锁 generic append 旁路，防止调用者直接写入看似 canonical 的结果事件。
+
+### 6.2 必须拒绝
+
+- 所有 `task.invocation.result.accepted`；
+- `task.status.changed` payload 中出现 result terminal 保留词的 exact 或 near-canonical 组合：
+  - `transitionKind`
+  - `resultReceiptId`
+  - `resultEventId`
+  - `resultEvidenceDigest`
+  - `runningTaskRevision`
+  - `terminalTaskRevision`
+
+### 6.3 必须覆盖的 generic surface
+
+- `append`
+- `append_many`
+- `append_with_outbox`
+- inbox/event 组合入口
+- invocation admission/start 组合入口
+- 任何未来公开 batch wrapper
+
+检查必须作用于 store-owned snapshot，并在 `BEGIN` 之前完成。禁止增加 public
+`trusted=True`、`allow_reserved=True` 或 caller-owned connection 逃生口。
+
+### 6.4 兼容性
+
+旧的五字段 `task.status.changed`、`READY → RUNNING` admission、demo/recovery 必须继续工作。
+standalone `SQLiteInvocationAttemptStore.complete()` 对 canonical scoped job 必须结构性拒绝，不能
+形成第二条 completion path。
+
+### 小步提交建议
+
+1. `feat: reserve canonical result event vocabulary`
+2. `test: close generic result event append bypasses`
+3. `fix: preserve legacy task status compatibility`
+4. `docs: record reserved result event boundary`
+
+### Phase 2 出口
+
+每个 public/generic 入口的零写入失败测试通过，legacy tests 无回归。
+
+## 7. Phase 3：Write-Snapshot 与 Raw-Row 双路重算
+
+### 7.1 目标
+
+让 store 在专用私有路径里：
+
+1. 对实际交给 INSERT 的 `_EventWriteSnapshot` 计算 envelope；
+2. INSERT 后拿到真实 sequence/global position；
+3. 在同一事务内 SELECT 原始 row；
+4. 从 raw row 独立重算；
+5. 两路字段、bytes 与 digest 完全一致才继续。
+
+### 7.2 禁止来源
+
+以下对象都不能作为权威 digest 来源：
+
+- caller `DomainEvent`；
+- `DomainEvent.to_dict()`；
+- `StoredEvent.to_dict()`；
+- runtime `_canonical_event_json`；
+- caller 提供的 coordinates/digest；
+- 已经过宽松 JSON decode 的普通 read model。
+
+### 7.3 小步提交建议
+
+1. `feat: derive envelopes from event write snapshots`
+2. `feat: verify envelopes from raw durable event rows`
+3. `test: reject raw row storage and byte drift`
+4. `test: reject caller event mutation around snapshots`
+5. `docs: define durable envelope readback`
+
+### Phase 3 出口
+
+两路重算契约完成，但专用 result writer 仍不公开。
+
+## 8. Phase 4：Inactive Result Schema、Artifact 事务原语与备份拓扑
+
+### 8.1 目标
+
+准备 result durable graph 所需 schema 和跨组件事务原语，但仍不把 migration 5 注册进 legacy
+bootstrap。
+
+### 8.2 Schema 候选
+
+至少覆盖：
+
+- result acceptance request/manifest digest 与 exact preimage identity；
+- result receipt、evidence 和两个 event coordinates；
+- invocation/job/attempt/result ref 绑定；
+- Artifact candidate 顺序、version/head、blob/metadata digest；
+- idempotency/conflict identity；
+- outbox/result publication identity；
+- schema version、created/accepted timestamps；
+- tenant/workspace/session/plan/task/agent/invocation 全 scope 索引与唯一约束。
+
+### 8.3 ArtifactStore 要求
+
+- 增加只供 owner store 调用的 same-connection transaction primitives；
+- caller 不能拿到 connection 或伪造“已经在事务内”；
+- blob CAS、metadata insert、head CAS 与 result graph 在同一 SQLite transaction；
+- rollback 后无孤立 metadata/head；
+- blob 暂存/清理策略有 crash evidence；
+- ordered candidates 的顺序进入 request/receipt digest。
+
+### 8.4 Migration/backup 门禁
+
+- migration 候选先走 domain migration graph，不直接追加 legacy `MIGRATIONS`；
+- backup-v2 manifest/topology 必须包含新增表、索引、trigger 与依赖；
+- sparse upgrade、fleet floor、旧版本 reader/writer 兼容矩阵明确；
+- 空库与非空库 upgrade/restore/reopen/reconcile 均有测试；
+- downgrade/rollback 策略不删除已经接受的结果图；
+- 这些完成前 migration 5 继续 disabled。
+
+### 小步提交建议
+
+1. `docs: define inactive result storage schema`
+2. `feat: add inactive result domain migration candidate`
+3. `test: freeze result schema topology`
+4. `feat: add artifact same transaction primitives`
+5. `test: prove artifact transaction rollback isolation`
+6. `feat: extend inactive backup v2 result topology`
+7. `test: reconcile nonempty result restore candidates`
+
+### Phase 4 出口
+
+schema/backup/artifact 组合证据通过，但默认 bootstrap、产品 UI 和 worker 仍不使用新路径。
+
+## 9. Phase 5：Atomic Result Acceptance Writer
+
+### 9.1 公共输入
+
+专用 store 方法只接受 exact：
+
+- `ScopedInvocationResultAcceptanceRequestV2`；
+- store-issued scoped start receipt/evidence；
+- 当前 worker/attempt 的受保护调用上下文；
+- Artifact 内容通过明确的受控输入边界进入，不把 raw body 放进 receipt/event envelope。
+
+不得接受 caller coordinates、event IDs、receipt ID、acceptedAt、fresh boolean 或 authority token。
+
+### 9.2 事务内验证顺序
+
+1. 重新加载 persisted execution-request manifest 与 digest preimage；
+2. 验证 tenant/workspace/session/plan/task/agent/invocation 全 scope；
+3. 验证 exact scoped start receipt/evidence 与 start durable row；
+4. 要求 effect class 为 `PURE` 且 `retryClass=never`；
+5. 要求任务仍是 exact `RUNNING@runningRevision`；
+6. 验证 job/attempt/attempt number/lease epoch/worker/lease token digest；
+7. 验证 deadline、heartbeat、fence 与 store process identity；
+8. 验证 ordered Artifact candidates、blob digest、metadata digest 与 expected head；
+9. 由 store 单次采样 canonical microsecond `acceptedAt`；
+10. 由 store 创建 receipt ID、result event ID、terminal event ID；
+11. 构造 exact ResultEvidenceV2 与 TerminalTransitionV2；
+12. 连续写入 result event 和 terminal event；
+13. 用 raw rows 双路重算 envelope digest；
+14. 写入 Artifact metadata/head、result receipt/ref；
+15. CAS 完成 job/attempt/task terminal state；
+16. 写入 outbox（若该阶段只做本地 durable message，则 publisher 继续 disabled）；
+17. 在同一事务内完整 readback graph；
+18. transaction body 只返回 private readback + `fresh_inserted`；
+19. transaction context 正常退出后再分类 Accepted/Observed。
+
+### 9.3 两个 canonical event
+
+Result event：
+
+```text
+type            task.invocation.result.accepted
+stream          session:<sessionId>
+actor           canonical orchestrator
+payload         exact ScopedInvocationResultEvidenceV2
+timestamp       store-owned acceptedAt
+correlation     persisted scoped manifest correlation
+causation       scoped start event ID
+idempotency     acceptanceIdempotencyKey
+```
+
+Terminal event：
+
+```text
+type            task.status.changed
+stream          same session stream
+actor           canonical orchestrator
+payload         exact ScopedInvocationResultTerminalTransitionV2
+timestamp       same acceptedAt
+correlation     same correlation
+causation       result event ID
+idempotency     task-status:<taskId>:<terminalRevision>
+```
+
+### 9.4 冲突与隔离
+
+- partial graph：integrity/conflict，不能修补后成功返回；
+- exact replay：完整验证后 Observed；
+- request/manifest/artifact drift：conflict；
+- duplicate receipt/event ID 或坐标错序：integrity failure；
+- transaction rollback 已确认：result transaction error；
+- COMMIT ACK 不明确：poison 当前 store 并抛 result-specific ambiguity；
+- ambiguity 后只能关闭并重开，新 store 全图验证后返回 Observed。
+
+### 小步提交建议
+
+writer 应拆成至少以下提交，任一提交都保持 API 不可误用：
+
+1. `feat: validate result acceptance durable prerequisites`
+2. `feat: atomically reserve result artifact heads`
+3. `feat: append canonical result event pair`
+4. `feat: persist scoped result receipts`
+5. `feat: atomically complete result job and attempt`
+6. `feat: read back complete result graphs in transaction`
+7. `fix: quarantine partial and drifting result graphs`
+8. `test: exhaust atomic result transaction faults`
+9. `docs: specify atomic result acceptance writer`
+
+### Phase 5 出口
+
+完整事务图能够在 synthetic/local SQLite 环境通过并发与 fault injection；仍不启用 Accepted 或
+产品 dispatch。
+
+## 10. Phase 6：Observed Read、Replay、Recovery 与 ACK-Loss
+
+### 10.1 API 行为
+
+```text
+read_scoped_invocation_result_v2(...) -> Optional[ObservedV2]
+accept_scoped_invocation_result_v2(exact replay) -> ObservedV2
+reopen / restart / peer process / recovery -> ObservedV2
+```
+
+读取必须在单一 bounded snapshot 中验证：
+
+- request/manifest；
+- start receipt/event/attempt；
+- Artifact chain/head/blob/metadata；
+- result/terminal raw event rows与 envelope digest；
+- receipt self-digest 与全图坐标；
+- job/attempt/task terminal result ref；
+- outbox identity；
+- 表/索引拓扑和 scope。
+
+普通 `StoredEvent` read model 不足以完成这次权威验证。
+
+### 10.2 ACK-loss 矩阵
+
+| 场景 | 本次调用 | 重开后 |
+| --- | --- | --- |
+| COMMIT 前失败且 rollback 确认 | transaction error | 无结果 |
+| COMMIT 成功并正常 ACK | fresh classification candidate | Observed |
+| COMMIT 可能成功但 ACK 丢失 | ambiguity + poison，不返回成功 | 完整图则 Observed |
+| exact peer 已先提交 | Observed | Observed |
+| partial/tampered graph | conflict/integrity | 继续失败关闭 |
+
+### 小步提交建议
+
+1. `feat: observe complete scoped result graphs`
+2. `feat: reconcile exact result acceptance replays`
+3. `fix: poison ambiguous result commit stores`
+4. `test: prove result ack loss never mints acceptance`
+5. `test: prove peer and reopen observations`
+6. `docs: define result recovery classifications`
+
+### Phase 6 出口
+
+所有 durable read/recovery path 只返回 Observed；没有 Accepted class 也能完成整套恢复验证。
+
+## 11. Phase 7：Fresh-COMMIT `AcceptedV2`
+
+### 11.1 最小语义
+
+Accepted 只包裹一份重新验证的 ReceiptV2 snapshot，不增加可持久化的 `accepted=true` 或
+`fresh=true` 字段。
+
+### 11.2 构造边界
+
+只允许在公共 store 方法满足以下全部条件后创建：
+
+1. 本调用新写了完整图；
+2. transaction body 完整 readback 通过；
+3. transaction context 正常退出；
+4. COMMIT 正常返回 ACK；
+5. post-COMMIT process/store lifecycle check 通过；
+6. 没有 control signal、ambiguity 或 cancellation 漂移。
+
+### 11.3 对象约束
+
+- manual opaque slots；
+- private store issuer token；
+- 无 `to_dict/from_dict`；
+- copy/deepcopy/pickle/reduce 全稳定 `TypeError`；
+- opaque repr/str；
+- 不提供值相等 authority；
+- fork、另一 store、token transplant、GC/id reuse、reflective tampering 均不能创建权限；
+- 推荐只作为 store 调用的即时返回分类，不被任何后续 API 接受为授权输入；
+- 如果未来必须消费它，增加 issuer weak identity registry，而不是信任 `isinstance`。
+
+### 11.4 返回矩阵
+
+| 情形 | 返回 |
+| --- | --- |
+| 本调用 fresh 写入 + 正常 COMMIT ACK | `AcceptedV2` |
+| exact replay | `ObservedV2` |
+| read/reopen/restart/recovery/peer | `ObservedV2` |
+| ACK-loss/ambiguous exit | 抛错并 poison，无成功对象 |
+| drift/partial/tamper | conflict/integrity failure |
+
+### 小步提交建议
+
+1. `feat: define process-bound result acceptance outcomes`
+2. `feat: issue result acceptance after fresh commit ack`
+3. `test: reject copied and reconstructed acceptance outcomes`
+4. `test: reject fork store and issuer transplants`
+5. `test: distinguish fresh acceptance from every replay path`
+6. `docs: freeze accepted versus observed semantics`
+
+### Phase 7 出口
+
+Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能据此自动打开生产 Gate。
+
+## 12. Phase 8：集成、迁移晋级与产品可见性
+
+该阶段只有在 Phase 1–7 独立评审通过后才开始。
+
+### 12.1 Migration 5 晋级
+
+- fleet floor 已冻结；
+- active writer/reader compatibility 已证明；
+- backup-v2/topology/restore/reconcile 完成；
+- upgrade/downgrade/rollback runbook 完成；
+- 非空生产等价快照演练有证据；
+- 才能单独提交 migration registration；
+- 注册和 worker dispatch 不能在同一提交。
+
+### 12.2 Worker dispatch
+
+- 先只接 PURE、`retryClass=never` scoped jobs；
+- dispatch 只消费 store-owned verified state，不消费 caller Accepted；
+- cancellation、heartbeat、lease expiry、process mismatch 与 shutdown 有端到端测试；
+- publisher/outbox ACK-loss 和 dead-letter 已闭合；
+- 真实外部副作用仍需 action-time authorization 和独立 receipt，不因 result writer 完成而开放。
+
+### 12.3 产品体验
+
+- 在本地 UI 显示 Accepted/Observed 分类和证据坐标；
+- 不展示内部 token/credential/digest preimage；
+- 提供 Artifact diff、结果引用、恢复来源和失败原因；
+- UI 明确区分“新提交成功”“已观察到既有结果”“提交结果未知”；
+- Gate A–E 状态继续来自 readiness truth，不由 UI 自行推断。
+
+### 12.4 文档
+
+更新：
+
+- `docs/production/ADR_0005_ATOMIC_RESULT_AUTHORITY.md`
+- `docs/production/CURRENT_READINESS.md`
+- `docs/production/RELEASE_GATES.md`
+- result writer/recovery/operations runbook
+- `docs/LOCAL_PRODUCT_TRIAL.md`
+- `analysis_report/README.md`
+- 阶段 release evidence 与 report-sync bundle
+
+## 13. 全阶段测试矩阵
+
+| 类别 | 必测内容 |
+| --- | --- |
+| Golden codec | 固定 bytes/digest，Python 3.9/3.12/3.13 一致 |
+| 字段覆盖 | 任一 envelope 字段或 payload 叶子改变都改变 digest |
+| JSON canonical | key/space/escape/duplicate/NaN/root/storage class drift 全拒绝 |
+| Exact typing | bool-as-int、subclass、unknown/missing/future schema 全拒绝 |
+| Caller forgery | method shadow、object new/setattr、伪 coordinates/digest、hostile adapter |
+| Snapshot drift | snapshot 前/中/后 caller mutation，不影响冻结写入或造成旁路 |
+| Reserved fence | 每个 generic append surface 零写入失败；legacy status 通过 |
+| Raw-row tamper | 每列、坐标、payload bytes、SQLite type 修改后 readback 失败 |
+| Cross-binding | actor/start/terminal causation、correlation、idempotency、顺序对调失败 |
+| Artifact | order、blob/metadata、head CAS、parent/version、rollback、orphan cleanup |
+| Transaction fault | 每个 insert/CAS/readback/COMMIT 前后 fault，无可见 partial graph |
+| ACK loss | durable commit + lost ACK 只能 reopen 为 Observed |
+| Concurrency | 两 connection、两 spawned process：一个 fresh，其余 Observed/conflict |
+| Process | fork/spawn/peer/reopen/store ownership/token transplant/GC id reuse |
+| Backup/migration | empty/nonempty upgrade、restore、reconcile、fleet floor、rollback |
+| Secret canary | lease/token/Key/Artifact body/narration 不进 repr/error/log/WAL/SHM |
+| UI/API | Accepted/Observed/Unknown 分类、loopback/auth/token、disconnect/retry |
+| Regression | 全量现有 pytest、ruff、mypy、distribution/branch/terminology gates |
+
+## 14. 安全与 NO-GO 门禁
+
+任何一项成立都必须停止，不能用文档措辞绕过：
+
+- durable row 不能独立重算 event envelope digest；
+- generic append 仍能写 reserved result vocabulary；
+- readback 使用 `StoredEvent.to_dict()` 替代 raw row；
+- fresh COMMIT ACK 与 replay 无法机械区分；
+- ACK-loss 会返回 Accepted；
+- Accepted 可 copy/pickle/reopen/跨 store 重建；
+- partial graph 能被自动补齐后当成 fresh success；
+- Artifact、task、attempt、event、receipt、outbox 不在同一事务；
+- migration/backup topology 对非空库不完整；
+- worker 能绕过 store verified state；
+- 日志、WAL/SHM、exception 或 UI 出现完整 credential/lease token；
+- Python 3.9 compatibility 或 supported-version matrix 失败；
+- 新参考项目许可证/来源不清楚；
+- Gate 状态没有 retained evidence 却被改成通过。
+
+## 15. 提交、Worktree 与评审纪律
+
+### 15.1 Commit
+
+- 一个独立不变量或一个测试矩阵扩展一个 commit；
+- 每个 commit 可构建、可测试、可回滚；
+- 实现、测试、文档可分开提交，但稳定阶段三者必须齐全；
+- 不用“misc”“cleanup”掩盖多个语义变化；
+- 不在同一 commit 注册 migration、开放 writer 和启用 worker；
+- 每个阶段完成后推送 `main`，远端读回 SHA。
+
+预计本计划会产生数十个小提交；数量不是目标，可审查性和每一步稳定才是目标。
+
+### 15.2 Worktree
+
+- 并行工作只在仓库 `worktrees/` 下建短生命周期 worktree；
+- 每个 worktree 只负责一个不重叠主题；
+- 不让多个 Agent 同时编辑 `store.py` 的同一区域；
+- 合并前 rebase/cherry-pick 到最新 main，独立全量验证；
+- 完成后先推 main，需要保留独立尖端时建同 SHA `archive/*`；
+- 最后 `git worktree remove`、删本地阶段分支、删远端活动分支；
+- 每次生命周期变化刷新 `BRANCH_CATALOG.md`。
+
+### 15.3 独立评审
+
+每个高风险阶段至少安排：
+
+1. 实现者自测；
+2. 独立 adversarial reviewer 做 P0/P1/P2 审计；
+3. migration/backup reviewer；
+4. process/concurrency/fault reviewer；
+5. 主线全量验证与文档事实复核。
+
+发现 P1/P2 时先补失败测试，再修实现；不能只改说明。
+
+## 16. 预期交付物
+
+实现阶段结束时至少应有：
+
+- private stored-event envelope codec；
+- reserved result event boundary；
+- write-snapshot/raw-row dual verifier；
+- inactive result schema 与 backup-v2 topology；
+- Artifact same-transaction primitives；
+- atomic result acceptance writer/readback；
+- Observed replay/recovery/ACK-loss reconciliation；
+- process-bound AcceptedV2；
+- migration/worker 的独立晋级门禁；
+- 对应单元、属性、故障、并发、process、backup、UI tests；
+- ADR、runbook、readiness、阶段证据、教程和分支目录更新。
+
+## 17. 阶段里程碑与可停点
+
+| 里程碑 | 可停条件 | 下一步授权前保持关闭 |
+| --- | --- | --- |
+| M0 参考复评 | 新项目 delta/ADR 完成 | 全部实现 |
+| M1 Codec | golden/canonical/raw JSON contract 通过 | writer、Accepted |
+| M2 Reserved fence | generic bypass 全封 | writer、Accepted |
+| M3 Store adapter | snapshot/raw-row 双验通过 | writer public API |
+| M4 Inactive schema | migration/backup/artifact 候选通过 | migration registration |
+| M5 Atomic writer | 完整事务图/fault/concurrency 通过 | Accepted、worker |
+| M6 Recovery | replay/reopen/ACK-loss 只 Observed | Accepted、worker |
+| M7 Accepted | fresh ACK 唯一 mint 点通过 | migration/worker promotion |
+| M8 Integration | 独立 release evidence 通过 | 生产 Gate 仍需分别审批 |
+
+当前停在 **M0 之前的稳定检查点**。用户加入新参考项目后，应先完成 M0，不从 M1 中途开始。
+
+## 18. 远端文档策略
+
+本地主仓继续作为 canonical source。Notion 和私人语雀的本次术语更新由用户手动完成；在用户
+再次明确要求前：
+
+- 不自动写入或持续同步；
+- 不声称实时 readback；
+- 新报告先落本地并进入 Git；
+- 需要远端同步时再按明确范围执行或交给用户手动完成；
+- 永远不向飞书、企微、任何人、任何群聊、bot 或 webhook 发送消息。
+
+## 19. 启动下一阶段时的第一组命令
+
+用户验收并提供新增参考项目后，从以下只读检查开始：
+
+```bash
+cd /Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement
+git status --short
+git worktree list --porcelain
+git branch --show-current
+git ls-remote --heads \
+  ssh://git@ssh.github.com:443/huapohen/quantum-entanglement.git \
+  refs/heads/main
+PYTHONPATH=src .venv/bin/python -m pytest
+```
+
+确认 clean baseline 后先写 reference delta assessment；没有用户新的继续指令，不进入 Phase 1。

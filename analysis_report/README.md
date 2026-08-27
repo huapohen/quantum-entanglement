@@ -15,6 +15,17 @@
   10 张受限截图均已回读验证。其余 6 个专题页自 2026-08-19 已验证同步后未发生本地变化。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
+- 2026-08-27 的“v0版”远端术语更新由用户手动完成；本轮助手未做远端写入或回读。当前
+  新增阶段文档只在本地主仓落盘，不能把历史同步记录解读为这些新内容已同步。
+
+## 当前阶段交付
+
+| 文件 | 状态 | 内容 |
+|---|---|---|
+| `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
+| `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
+
+当前可以安全停下；新增参考项目综合评估完成前，不进入下一阶段 writer 实现。
 
 ## 专题研究
 
