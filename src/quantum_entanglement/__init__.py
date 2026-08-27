@@ -95,6 +95,7 @@ from .invocation_worker import (
 )
 from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
 from .native_im_nonce_store import (
+    NativeIMInboxStoreIntegrityError,
     NativeIMNonceCommitAmbiguityError,
     NativeIMNonceIntegrityError,
     NativeIMNonceStoreClosedError,
@@ -301,6 +302,7 @@ __all__ = [
     "MentionRouter",
     "Member",
     "MemberStatus",
+    "NativeIMInboxStoreIntegrityError",
     "NativeIMNonceCommitAmbiguityError",
     "NativeIMNonceIntegrityError",
     "NativeIMNonceStoreClosedError",
