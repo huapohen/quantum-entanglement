@@ -1,7 +1,7 @@
 # Quantum Entanglement 当前生产就绪审计
 
-- 更新日期：2026-08-27
-- 审计口径：只计算本文所在主线中已提交、可复现的源码和证据
+- 更新日期：2026-08-28
+- 审计口径：只计算本文所在评审分支中已提交、可复现的源码和证据
 - 硬边界：[`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md)
 - 结论：**内核组件已形成较强验证基线，但仍不是生产服务；Gate A–E 全部关闭**
 
@@ -60,6 +60,21 @@ event store 的单组件运行合同见
 
 测试通过证明对应断言在记录环境中成立，不证明端到端生产安全、容量、SLO、RPO/RTO 或 GA。
 
+### 原生 IM E1 状态
+
+E1 / Level A `CONTRACT_EXECUTABLE` 已在源码候选 `7620200` 完成；内部
+`IM-P0 CONTRACT_READY` 仅按 provider-neutral contract/fake 里程碑完成。当前新增能力包括 21 个
+V1 wire model、strict codec、23 个代表性 positive golden vectors、exact 四方法
+`IMGatewayPort`、纯 result admission、默认 outbound 拒绝、进程本地不可序列化 fake permit、
+receiver action/key 双账本、ACK-loss/post-accept exception 与 acceptance-query 故障语义，以及
+socket/DNS/network-import/environment-credential zero-network gate。运行边界和证据见
+[`NATIVE_IM_P0_CONTRACT_EXECUTABLE.md`](./NATIVE_IM_P0_CONTRACT_EXECUTABLE.md)。
+
+这没有打开真实 IM：E2 sandbox inbound-only 尚未开始，仓库没有真实 provider adapter、endpoint、
+credential、webhook、HTTP/WebSocket client、socket connection、digest-bound durable IM inbox 或
+external IM send。Golden vectors 是代表性正向 inventory；全部 event/revision/scope/mention/digest
+union/state 矩阵由参数化 contract tests 覆盖。Gate A–E 均未因 E1 改变。
+
 ## 1. 可靠性与一致性
 
 ### 已提交能力
@@ -91,6 +106,9 @@ event store 的单组件运行合同见
 - `artifact_store.py`：tenant/workspace-scoped blob/version、digest、并发版本和恢复检查；
 - `publisher.py`：bounded callback admission、timeout、retry/dead-letter、lease deadline、ambiguity
   记录和 receiver receipt 校验；
+- `native_im.py`、`native_im_gateway.py`、`native_im_fake.py`：冻结 provider-neutral V1 wire/codec、
+  exact 四方法 port、纯 admission 和 zero-network fake；fake outbound 默认在请求检查前拒绝，测试
+  permit 只能产生内存 effect，ACK-loss/unknown 只能 acceptance query 而不能盲重发；
 - `projections.py`：exact schema、leased offsets、receipts、upcast、tamper checks、handler capability
   撤销，以及 framework table/deferred VIEW/TRIGGER/VTABLE authorizer 边界。
 
@@ -105,6 +123,8 @@ event store 的单组件运行合同见
 - Agent 返回后逐个写 artifact、result 和 completion，任一边界崩溃仍需 receipt-based reconcile；
 - succeeded attempt 没有不可变 result receipt 时不能安全自动投影 `COMPLETED`；
 - connector 不支持 receiver idempotency/fencing 时只能诚实承诺 at-least-once；
+- 原生 IM 尚无 provider profile、签名/nonce/replay verifier、durable inbox、page/cursor 原子
+  admission、真实 inbound adapter 或任何 outbound composition；E1 fake 不能替代这些能力；
 - 编排 session lock 是进程内锁，多进程/多实例调度仍可能重复调用 Agent；
 - 没有完整 crash-at-every-boundary、kill -9、long-running heartbeat 和 graceful drain E2E。
 - 共享 process identity helper 已通过真实 fork、nested fork、PID drift、fork-while-unrelated-lock、
@@ -263,13 +283,16 @@ backup、distribution、SBOM、config/secret、approval atomicity、atomic invoc
 BEGIN/COMMIT/ROLLBACK fault、ACK-loss poison/reopen、control signal、双 connection、双 spawn、
 provider fork、backup/restore 与 lease-token canary；admission 专项另覆盖 partial/full split、
 v3→v4 migration 与 non-empty receipt backup/restore。当前本地
-门禁同时执行 dependency-lock verifier、完整 unittest、locked Ruff lint/format、strict mypy、
+门禁同时执行 dependency-lock verifier、完整 pytest、locked Ruff lint/format、strict mypy、
 compileall、deterministic demo 和 diff check。
 
-当前已保留的组合证据包括：本机 Python 3.13 完整 1,320 tests，以及 GitHub clean runner 上
-Python 3.9 / 3.12 各 1,320 tests；Ruff format/check、strict mypy、compileall、canonical release
-evidence、可复现 package 与 SBOM 同轮通过。这证明该 source candidate 在记录矩阵内成立，不把
-范围外 OS、SQLite、服务级 crash/soak 或生产 Gate 推定为已通过。
+E1 源码候选 `7620200` 已保留的组合证据包括：本机 Python 3.13 完整 1,775 tests；Python
+3.12.12 完整 1,775 tests；Python 3.9.6 完整 suite 通过并有一个既有 platform-capability skip；
+locked Ruff format/check 覆盖 152 files，strict mypy 覆盖 49 source files。Native IM 专项收集并
+通过 271 tests，golden verifier 23/23，Python 3.9/3.12 zero-network 均通过；canonical local
+release evidence 5/5 通过且 commit/tree 在门禁前后稳定、checkout 始终 clean。该本地
+`releasable=true` 只证明固定 local predicate，不是生产 promotion。这些结果不把范围外 OS、
+SQLite、服务级 crash/soak、真实 IM 或生产 Gate 推定为已通过。
 
 仍缺：
 
@@ -303,23 +326,29 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
 
 ## 下一实现顺序
 
-按风险与依赖推进：
+按用户决定的提前接入顺序推进：
 
-1. 先冻结 process model：为 issuer/authorization 与核心 store 建立 pre-lock PID/epoch fence，并把
-   credential-bearing/untrusted worker 固定为 spawn/exec-before-secret-load composition；
-2. 在已完成 event/job/receipt atomic admission 与 claim + attempt + schema-2 start event + readback
+1. E1 本地文档、GitHub 和 Notion 远端回读闭环后暂停验收；E2 未获继续指令前不进入真实网络；
+2. E2 先冻结真实 sandbox provider profile，建立 HTTPS host/port/path allowlist、no redirect、
+   inbound-only `SecretRef`、signature/timestamp/nonce/replay verifier、digest-bound durable inbox 和
+   page/cursor 原子 admission；
+3. 只有 sandbox endpoint class、测试 tenant/conversation、数据等级、read-only credential reference、
+   方法路径、截止时间和 kill switch 获批后，才执行 health/read/dedupe/resume；Level B 只生成
+   observation，不驱动 Agent、tool、browser、subprocess 或 outbound；
+4. E3 在已完成 event/job/receipt atomic admission 与 claim + attempt + schema-2 start event + readback
    统一 UoW 之上，已冻结默认关闭的
    [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)；下一步先把 accepted
    result/artifact、attempt 和 terminal task state 组成单一原子验收边界，没有 result receipt 时
    绝不把 succeeded job 猜成 completed；
-3. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
+5. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
    heartbeat-supervised pure/fake worker；
-4. 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；
-5. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
-6. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
-7. 实现 authenticated loopback API、transactional command receipt、stream、health 和 SIGTERM；
-8. 完成单节点部署、upgrade/rollback、restore/non-emitting reconcile 和 clean-host evidence；
-9. 通过 Gate C 后再推进 capacity/OTel/isolation/PostgreSQL/HA/DR。
+6. E4 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；真实
+   outbound 在 E1–E4 完成且针对单一 sandbox 另获明确授权前保持不存在/关闭；
+7. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
+8. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
+9. 实现 authenticated loopback API、transactional command receipt、stream、health 和 SIGTERM；
+10. 完成单节点部署、upgrade/rollback、restore/non-emitting reconcile 和 clean-host evidence；
+11. 通过 Gate C 后再推进 capacity/OTel/isolation/PostgreSQL/HA/DR。
 
 每个独立行为及其测试单独提交；每阶段都有运行命令、失败边界、兼容/迁移、回退和证据文档。
 默认分支每次提交后保持可运行，但“可运行”不等于“可生产晋级”。
