@@ -24,6 +24,7 @@ from .native_im_config import (
     parse_approved_ip_addresses,
     validate_native_im_sandbox_preflight_v1,
 )
+from .native_im_secrets import NativeIMSecretLoader, NativeIMSecretLoadError
 from .redaction import RedactionPolicy, Redactor
 from .secrets import (
     FileSecretProvider,
@@ -49,6 +50,8 @@ __all__ = [
     "NativeIMInboundOnlyConfigV1",
     "NativeIMSandboxConfig",
     "NativeIMSandboxPreflightError",
+    "NativeIMSecretLoadError",
+    "NativeIMSecretLoader",
     "RuntimeMode",
     "RedactionPolicy",
     "Redactor",
