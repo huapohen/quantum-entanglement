@@ -14,6 +14,7 @@ from quantum_entanglement.native_im import (
     IMCapabilityRequestV1,
     IMCapabilitySnapshotV1,
     IMConversationRefV1,
+    IMDispatchRequestV1,
     IMInboundPageV1,
     IMInboundReadRequestV1,
     IMMembershipChangeV1,
@@ -340,6 +341,27 @@ def action_command(**changes: object) -> IMActionCommandV1:
     return IMActionCommandV1(**values)  # type: ignore[arg-type]
 
 
+def dispatch_request(**changes: object) -> IMDispatchRequestV1:
+    command = changes.pop("command", action_command())
+    assert type(command) is IMActionCommandV1
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "dispatch_attempt_id": "test-dispatch-attempt-1",
+        "command": command,
+        "command_digest": command.canonical_digest(),
+        "attempt_number": 1,
+        "fence_id": "test-fence-1",
+        "fence_revision": "test-fence-revision-1",
+        "claimed_at": TIME,
+        "dispatch_deadline_at": command.expires_at,
+        "correlation_id": command.correlation_id,
+        "causation_id": command.command_id,
+        "traceparent": command.traceparent,
+    }
+    values.update(changes)
+    return IMDispatchRequestV1(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -379,6 +401,7 @@ def action_command(**changes: object) -> IMActionCommandV1:
             approval_decision_id="test-approval-decision-1",
             approval_revision="test-approval-revision-1",
         ),
+        dispatch_request(),
     ],
 )
 def test_reference_models_round_trip_through_dict_and_noncanonical_json(value: object) -> None:
@@ -1136,3 +1159,91 @@ def test_action_command_preflights_canonical_and_raw_byte_limits(
         action_command()
     with pytest.raises(ValueError, match="byte limit"):
         IMActionCommandV1.from_json_bytes(encoded)
+
+
+def test_dispatch_request_binds_command_attempt_fence_and_trace_context() -> None:
+    request = dispatch_request()
+    assert request.command_digest == request.command.canonical_digest()
+    assert request.causation_id == request.command.command_id
+    assert dispatch_request(attempt_number=(1 << 63) - 1).attempt_number == (1 << 63) - 1
+    null_trace_command = action_command(intent=action_intent(traceparent=None))
+    assert dispatch_request(command=null_trace_command).traceparent is None
+    for changes in (
+        {"command_digest": "d" * 64},
+        {"dispatch_attempt_id": ""},
+        {"attempt_number": 0},
+        {"attempt_number": -1},
+        {"attempt_number": True},
+        {"attempt_number": 1.0},
+        {"attempt_number": 1 << 63},
+        {"fence_id": ""},
+        {"fence_revision": ""},
+        {"fence_revision": 1},
+        {"correlation_id": "test-correlation-other"},
+        {"causation_id": request.command.intent.action_id},
+        {"traceparent": None},
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            dispatch_request(**changes)
+
+
+def test_dispatch_request_requires_exact_claim_deadline_window() -> None:
+    command = action_command()
+    assert dispatch_request(command=command).dispatch_deadline_at == command.expires_at
+    assert (
+        dispatch_request(
+            command=command,
+            dispatch_deadline_at="2026-08-28T00:00:00.500001Z",
+        ).dispatch_deadline_at
+        < command.expires_at
+    )
+    for changes in (
+        {"claimed_at": LATER_TIME, "dispatch_deadline_at": TIME},
+        {"claimed_at": TIME, "dispatch_deadline_at": TIME},
+        {"dispatch_deadline_at": "2026-08-28T00:00:02.000001Z"},
+        {"claimed_at": "2026-08-28T00:00:00Z"},
+    ):
+        with pytest.raises(ValueError):
+            dispatch_request(command=command, **changes)
+    historical_command = action_command(
+        authorized_at="2020-01-01T00:00:00.000000Z",
+        expires_at="2020-01-01T00:00:02.000000Z",
+    )
+    historical = dispatch_request(
+        command=historical_command,
+        claimed_at="2020-01-01T00:00:00.000001Z",
+        dispatch_deadline_at="2020-01-01T00:00:01.000000Z",
+    )
+    assert IMDispatchRequestV1.from_dict(historical.to_dict()) == historical
+
+
+def test_dispatch_request_decode_is_exact_fresh_and_repr_safe() -> None:
+    request = dispatch_request()
+    wire = request.to_dict()
+    for changed in (
+        {**wire, "future": True},
+        {key: item for key, item in wire.items() if key != "dispatchAttemptId"},
+        dict(wire, schemaVersion=True),
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            IMDispatchRequestV1.from_dict(changed)
+    with pytest.raises(ValueError, match="duplicate"):
+        IMDispatchRequestV1.from_json_bytes(b'{"schemaVersion":1,"schemaVersion":1}')
+    with pytest.raises(TypeError, match="exact"):
+        replace(request, command=object())
+    wire["command"]["intent"]["content"]["segments"][0]["text"] = "mutated"  # type: ignore[index]
+    assert request.command.intent.content is not None
+    assert request.command.intent.content.segments[0].text == "hello\nworld"
+    assert "hello" not in repr(request)
+    assert "test-object-1" not in repr(request)
+
+
+def test_dispatch_request_preflights_canonical_and_raw_byte_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = dispatch_request().canonical_bytes()
+    monkeypatch.setattr(IMDispatchRequestV1, "_MAX_CANONICAL_BYTES", len(encoded) - 1)
+    with pytest.raises(ValueError, match="canonical byte limit"):
+        dispatch_request()
+    with pytest.raises(ValueError, match="byte limit"):
+        IMDispatchRequestV1.from_json_bytes(encoded)
