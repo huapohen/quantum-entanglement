@@ -183,7 +183,11 @@ class InvocationAdmissionMigrationTests(unittest.TestCase):
         )
 
     def apply_v4(self) -> int:
-        return apply_sqlite_migrations(self.connection, clock=lambda: NOW)
+        return apply_sqlite_migrations(
+            self.connection,
+            target_versions=tuple(item.version for item in MIGRATIONS[:4]),
+            clock=lambda: NOW,
+        )
 
     def insert_job(self) -> None:
         self.connection.execute(
