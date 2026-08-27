@@ -6,6 +6,10 @@ from dataclasses import replace
 import pytest
 
 from quantum_entanglement._native_im_codec import NativeIMCodecTooLargeError
+from quantum_entanglement.native_im import (
+    IMCapabilityRequestV1,
+    IMOperationCapabilityV1,
+)
 from quantum_entanglement.native_im_provider_profile import (
     IMProviderAuthenticationProfileV1,
     IMProviderEventMappingV1,
@@ -14,8 +18,11 @@ from quantum_entanglement.native_im_provider_profile import (
     IMProviderLimitProfileV1,
     IMProviderOperationProfileV1,
     IMProviderProfileBindingError,
+    IMProviderProfileNotReadyError,
+    IMProviderProfileScopeError,
     IMProviderProfileV1,
     IMProviderResumeProfileV1,
+    derive_inbound_only_capability_snapshot_v1,
     evaluate_e2_profile_readiness_v1,
     validate_profile_binding_v1,
 )
@@ -165,6 +172,19 @@ def operation(name: str = "send_message", **changes: object) -> IMProviderOperat
     }
     values.update(changes)
     return IMProviderOperationProfileV1(**values)  # type: ignore[arg-type]
+
+
+def capability_request(**changes: object) -> IMCapabilityRequestV1:
+    values: dict[str, object] = {
+        "schema_version": SCHEMA,
+        "tenant_id": "test-tenant",
+        "workspace_id": "test-workspace",
+        "provider": "test-provider",
+        "channel_id": "test-channel",
+        "request_id": "test-capability-request",
+    }
+    values.update(changes)
+    return IMCapabilityRequestV1(**values)  # type: ignore[arg-type]
 
 
 def profile(**changes: object) -> IMProviderProfileV1:
@@ -704,4 +724,135 @@ def test_readiness_and_binding_reject_profile_subclasses_before_field_access() -
             hostile,
             expected_revision="test-revision",
             expected_digest="a" * 64,
+        )
+
+
+def test_inbound_capability_projection_has_no_outbound_operation_or_retention() -> None:
+    value = profile()
+    projected = derive_inbound_only_capability_snapshot_v1(
+        value,
+        capability_request(),
+        observed_at=TIME,
+    )
+
+    assert projected.operations == ()
+    assert projected.idempotency_retention_seconds is None
+    assert projected.revision == value.revision
+    assert (
+        projected.tenant_id,
+        projected.workspace_id,
+        projected.provider,
+        projected.channel_id,
+    ) == (
+        value.tenant_id,
+        value.workspace_id,
+        value.provider,
+        value.channel_id,
+    )
+    assert projected.supports_threads is False
+    assert projected.supports_mentions is False
+    assert projected.supports_attachments is False
+    assert projected.supports_membership_events is False
+    assert projected.max_attachments == 0
+    assert projected.max_attachment_bytes == 0
+
+
+def test_inbound_projection_conservatively_maps_verified_features_and_limits() -> None:
+    value = profile(features=tuple(feature_with_status(name, "supported") for name in FEATURES))
+    projected = derive_inbound_only_capability_snapshot_v1(
+        value,
+        capability_request(),
+        observed_at=TIME,
+    )
+
+    assert projected.supports_threads is True
+    assert projected.supports_mentions is True
+    assert projected.supports_attachments is True
+    assert projected.supports_membership_events is True
+    assert projected.max_text_bytes == value.limits.max_text_bytes
+    assert projected.max_attachments == value.limits.max_attachments
+    assert projected.max_attachment_bytes == value.limits.max_attachment_bytes
+
+    no_membership_event = replace_event_status(value, "membership.changed", "unsupported")
+    projected_without_event = derive_inbound_only_capability_snapshot_v1(
+        no_membership_event,
+        capability_request(),
+        observed_at=TIME,
+    )
+    assert projected_without_event.supports_membership_events is False
+
+
+def test_inbound_projection_ignores_even_a_verified_provider_outbound_capability() -> None:
+    outbound_capability = IMOperationCapabilityV1(
+        schema_version=SCHEMA,
+        operation="send_message",
+        revision_mode="not_applicable",
+        idempotency_mode="not_supported",
+        acceptance_lookups=(),
+    )
+    value = profile(
+        operations=tuple(
+            operation(
+                item,
+                status="supported",
+                capability=outbound_capability,
+            )
+            if item == "send_message"
+            else operation(item)
+            for item in OPERATIONS
+        )
+    )
+    projected = derive_inbound_only_capability_snapshot_v1(
+        value,
+        capability_request(),
+        observed_at=TIME,
+    )
+    assert projected.operations == ()
+    assert projected.idempotency_retention_seconds is None
+
+
+@pytest.mark.parametrize(
+    ("field_name", "changed"),
+    (
+        ("tenant_id", "other-tenant"),
+        ("workspace_id", "other-workspace"),
+        ("provider", "other-provider"),
+        ("channel_id", "other-channel"),
+    ),
+)
+def test_inbound_projection_requires_all_four_scope_axes(field_name: str, changed: str) -> None:
+    with pytest.raises(IMProviderProfileScopeError) as raised:
+        derive_inbound_only_capability_snapshot_v1(
+            profile(),
+            capability_request(**{field_name: changed}),
+            observed_at=TIME,
+        )
+    assert changed not in str(raised.value)
+
+
+def test_inbound_projection_rejects_unready_profile_with_stable_blockers() -> None:
+    value = profile(environment_class="production", source_evidence_digest=None)
+    with pytest.raises(IMProviderProfileNotReadyError) as raised:
+        derive_inbound_only_capability_snapshot_v1(
+            value,
+            capability_request(),
+            observed_at=TIME,
+        )
+    assert raised.value.blockers == (
+        "environment_not_sandbox",
+        "source_evidence_unverified",
+    )
+    assert "production" not in str(raised.value)
+
+
+def test_inbound_projection_rejects_request_subclass_before_field_access() -> None:
+    class RequestSubclass(IMCapabilityRequestV1):
+        pass
+
+    hostile = object.__new__(RequestSubclass)
+    with pytest.raises(TypeError):
+        derive_inbound_only_capability_snapshot_v1(
+            profile(),
+            hostile,
+            observed_at=TIME,
         )
