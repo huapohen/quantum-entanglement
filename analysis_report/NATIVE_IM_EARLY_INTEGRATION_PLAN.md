@@ -1,10 +1,10 @@
 # 原生 IM 提前接入执行计划
 
-> 计划版本：2026-08-28-early-integration-v2  
+> 计划版本：2026-08-28-early-integration-v2
 > 基线：`backup_0827_200010` / `pre-native-im-20260827-200010`  
 > 当前主线起点：`1d399e555fb0416f9c6225811269b9e5a2407728`  
-> 当前执行分支：`mainline_continue_quantum_entanglement`；E1 源码候选 `7620200`  
-> 当前阶段：E1 / Level A 已完成；E2 / Level B 尚未开始  
+> 当前执行分支：`mainline_continue_quantum_entanglement`；E1 源码候选 `7620200`
+> 当前阶段：E1 / Level A 已完成；E2 / Level B 尚未开始
 > 决策状态：用户已决定提前接入独立原生 IM；先 inbound-only，再 Agent，再受控 outbound  
 > 永久限制：不向飞书、企微、任何个人、群聊、bot 或 webhook 发消息
 
