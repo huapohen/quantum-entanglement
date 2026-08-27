@@ -1,0 +1,252 @@
+from __future__ import annotations
+
+import ast
+import inspect
+import socket
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from quantum_entanglement.native_im import IMInboundReadRequestV1
+from quantum_entanglement.native_im_fake import (
+    FAKE_IM_PROVIDER,
+    FakeIMAdapter,
+    FakeIMOutboundDisabledError,
+)
+from quantum_entanglement.native_im_gateway import IMGatewayPort
+from tests.test_native_im_contract import (
+    attachment,
+    capability,
+    content,
+    inbound_event,
+    text_segment,
+    verified_envelope,
+)
+from tests.test_native_im_gateway import capability_request
+
+SOURCE_PATH = (
+    Path(__file__).resolve().parents[1] / "src" / "quantum_entanglement" / "native_im_fake.py"
+)
+
+
+def envelopes(count: int = 3):
+    return tuple(
+        verified_envelope(
+            event=inbound_event(
+                event_id=f"test-event-{index}",
+                cursor=f"test-cursor-{index}",
+                sequence_number=index,
+            ),
+            verification_id=f"test-verification-{index}",
+        )
+        for index in range(1, count + 1)
+    )
+
+
+def adapter(*, event_values=None, snapshot=None, **scope):
+    return FakeIMAdapter(
+        tenant_id=scope.get("tenant_id", "test-tenant"),
+        workspace_id=scope.get("workspace_id", "test-workspace"),
+        channel_id=scope.get("channel_id", "test-channel"),
+        capability=snapshot or capability(),
+        envelopes=event_values if event_values is not None else envelopes(),
+    )
+
+
+def read_request(**changes: object) -> IMInboundReadRequestV1:
+    values: dict[str, object] = {
+        "schema_version": 1,
+        "tenant_id": "test-tenant",
+        "workspace_id": "test-workspace",
+        "provider": FAKE_IM_PROVIDER,
+        "channel_id": "test-channel",
+        "after_cursor": None,
+        "after_sequence": None,
+        "snapshot_token": None,
+        "limit": 2,
+        "read_request_id": "test-read-request-1",
+    }
+    values.update(changes)
+    return IMInboundReadRequestV1(**values)  # type: ignore[arg-type]
+
+
+def test_fake_constructor_exposes_no_endpoint_or_credential_input() -> None:
+    assert tuple(inspect.signature(FakeIMAdapter).parameters) == (
+        "tenant_id",
+        "workspace_id",
+        "channel_id",
+        "capability",
+        "envelopes",
+    )
+    fake = adapter()
+    assert isinstance(fake, IMGatewayPort)
+    with pytest.raises(AttributeError):
+        fake._envelopes = ()
+    with pytest.raises(AttributeError):
+        fake.endpoint = "forbidden"  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("field", ["tenant_id", "workspace_id", "channel_id"])
+def test_fake_requires_reserved_test_scope(field: str) -> None:
+    with pytest.raises(ValueError, match="reserved test- prefix"):
+        adapter(**{field: "production-scope"})
+
+
+def test_fake_fixes_provider_and_exact_scope() -> None:
+    with pytest.raises(ValueError, match="capability scope"):
+        adapter(snapshot=replace(capability(), provider="qe.other-im.v1"))
+    with pytest.raises(ValueError, match="envelope scope"):
+        adapter(
+            tenant_id="test-other-tenant",
+            snapshot=replace(capability(), tenant_id="test-other-tenant"),
+        )
+
+
+def test_fake_requires_immutable_ordered_unique_envelopes() -> None:
+    with pytest.raises(TypeError, match="immutable tuple"):
+        adapter(event_values=list(envelopes()))
+    first = envelopes(1)[0]
+    duplicate_sequence = verified_envelope(
+        event=inbound_event(event_id="test-event-other", cursor="test-cursor-other"),
+        verification_id="test-verification-other",
+    )
+    with pytest.raises(ValueError, match="strictly increase"):
+        adapter(event_values=(first, duplicate_sequence))
+    duplicate_id = verified_envelope(
+        event=inbound_event(event_id="test-event-1", cursor="test-cursor-2", sequence_number=2),
+        verification_id="test-verification-2",
+    )
+    with pytest.raises(ValueError, match="event IDs"):
+        adapter(event_values=(first, duplicate_id))
+
+
+@pytest.mark.asyncio
+async def test_fake_capability_is_exactly_scope_bound() -> None:
+    fake = adapter()
+    snapshot = await fake.capability_snapshot(capability_request())
+    assert snapshot == capability()
+    with pytest.raises(ValueError, match="scope"):
+        await fake.capability_snapshot(capability_request(channel_id="test-other-channel"))
+
+
+@pytest.mark.asyncio
+async def test_fake_read_uses_cursor_pairs_without_process_offset() -> None:
+    fake = adapter()
+    initial = read_request()
+    first = await fake.read_inbound(initial)
+    repeated = await fake.read_inbound(initial)
+    assert first.canonical_bytes() == repeated.canonical_bytes()
+    assert tuple(envelope.event.sequence_number for envelope in first.envelopes) == (1, 2)
+    assert first.has_more is True
+    assert (first.next_cursor, first.next_sequence) == ("test-cursor-2", 2)
+
+    continuation = read_request(
+        after_cursor=first.next_cursor,
+        after_sequence=first.next_sequence,
+        snapshot_token=first.snapshot_token,
+        read_request_id="test-read-request-2",
+    )
+    second = await fake.read_inbound(continuation)
+    assert tuple(envelope.event.sequence_number for envelope in second.envelopes) == (3,)
+    assert second.has_more is False
+    assert (second.next_cursor, second.next_sequence) == ("test-cursor-3", 3)
+
+    exhausted = read_request(
+        after_cursor=second.next_cursor,
+        after_sequence=second.next_sequence,
+        snapshot_token=second.snapshot_token,
+        read_request_id="test-read-request-3",
+    )
+    empty = await fake.read_inbound(exhausted)
+    assert empty.envelopes == ()
+    assert empty.has_more is False
+    assert (empty.next_cursor, empty.next_sequence) == ("test-cursor-3", 3)
+
+
+@pytest.mark.asyncio
+async def test_fake_read_rejects_unknown_resume_or_snapshot() -> None:
+    fake = adapter()
+    with pytest.raises(ValueError, match="resume pair"):
+        await fake.read_inbound(
+            read_request(
+                after_cursor="test-cursor-unknown",
+                after_sequence=99,
+                snapshot_token="test-fake-im-snapshot-v1",
+            )
+        )
+    with pytest.raises(ValueError, match="snapshot token"):
+        await fake.read_inbound(
+            read_request(
+                after_cursor="test-cursor-1",
+                after_sequence=1,
+                snapshot_token="test-other-snapshot",
+            )
+        )
+
+
+class ExplosiveOutboundRequest:
+    def __getattribute__(self, name):
+        raise AssertionError(f"outbound request was inspected: {name}")
+
+
+@pytest.mark.asyncio
+async def test_fake_outbound_fails_before_inspecting_request() -> None:
+    fake = adapter()
+    with pytest.raises(FakeIMOutboundDisabledError, match="^fake IM outbound is disabled$"):
+        await fake.dispatch(ExplosiveOutboundRequest())  # type: ignore[arg-type]
+    with pytest.raises(FakeIMOutboundDisabledError, match="^fake IM outbound is disabled$"):
+        await fake.query_acceptance(ExplosiveOutboundRequest())  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_fake_import_and_runtime_open_no_network(monkeypatch) -> None:
+    parsed = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
+    imported_roots = {
+        alias.name.split(".", 1)[0]
+        for node in ast.walk(parsed)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    imported_from = {
+        (node.module or "").split(".", 1)[0]
+        for node in ast.walk(parsed)
+        if isinstance(node, ast.ImportFrom) and node.level == 0
+    }
+    assert imported_roots == set()
+    assert imported_from == {"__future__"}
+
+    def deny_network(*args, **kwargs):
+        raise AssertionError("network capability was opened")
+
+    monkeypatch.setattr(socket, "socket", deny_network)
+    monkeypatch.setattr(socket, "create_connection", deny_network)
+    monkeypatch.setattr(socket, "getaddrinfo", deny_network)
+    fake = adapter()
+    await fake.capability_snapshot(capability_request())
+    await fake.read_inbound(read_request())
+
+
+def test_fake_repr_and_errors_do_not_leak_payload_or_immutable_refs() -> None:
+    body_canary = "test-body-credential-canary"
+    ref_canary = "test-attachment-secret-canary"
+    event = inbound_event(
+        content=content(
+            segments=(text_segment(text=body_canary),),
+            attachments=(attachment(immutable_ref=ref_canary),),
+        )
+    )
+    fake = adapter(event_values=(verified_envelope(event=event),))
+    rendered = repr(fake)
+    assert body_canary not in rendered
+    assert ref_canary not in rendered
+    assert rendered == "FakeIMAdapter(provider='qe.fake-im.v1', envelopes=1, outbound='disabled')"
+
+
+def test_fake_has_no_outbound_configuration_surface() -> None:
+    source = SOURCE_PATH.read_text(encoding="utf-8").lower()
+    for forbidden in ("endpoint", "authorization", "webhook", "websocket", "http", "callback"):
+        assert forbidden not in source
+    constructor_parameters = inspect.signature(FakeIMAdapter).parameters
+    for forbidden in ("url", "token", "secret", "credential", "client", "transport"):
+        assert forbidden not in constructor_parameters
