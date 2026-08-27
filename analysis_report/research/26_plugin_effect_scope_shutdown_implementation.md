@@ -85,7 +85,8 @@ git diff --check
 
 ## 5. 仍未完成
 
-1. `callWithTimeout` 只传递 context，callback 忽略 context 时不能强制返回；
+1. `callWithDeadline` 只传递 context，callback 忽略 context 时不能强制返回；该语义已由 `eafd3da`
+   和专题 29 冻结，但强制隔离尚未实现；
 2. 当前 goroutine callback panic 已转成固定、无 payload error，并保证 rollback/继续 cleanup；插件
    自建 goroutine、fatal runtime error 与 process crash 仍未隔离；
 3. trusted built-in 与第三方 plugin 仍需不同 process/UID/container/microVM 隔离等级；
@@ -93,5 +94,5 @@ git diff --check
 
 Host mutex 下的外部 callback 已由 `3b8e02e` 移除，并冻结 concurrent Start/Stop/State 与 reentrant call
 状态机；证据见 [`27_plugin_host_callback_locking_implementation.md`](27_plugin_host_callback_locking_implementation.md)。
-Panic containment 已在 `2d97f0a` 完成，证据见专题 28。下一提交冻结忽略 context 时只能依靠进程
-隔离强制终止的边界。
+Panic containment 已在 `2d97f0a` 完成，证据见专题 28；deadline honesty 已在 `eafd3da` 完成，证据
+见专题 29。下一提交冻结第三方进程隔离与强制终止合同。

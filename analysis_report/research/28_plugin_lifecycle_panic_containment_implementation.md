@@ -57,7 +57,8 @@ ErrLifecyclePanic = "plugin lifecycle callback panicked"
 ```
 
 `configurePlugin` 捕获 `Factory.Configure` 的当前 goroutine panic，清空返回 instance，只返回 sentinel。
-`callWithTimeout` 捕获 Start/Ready/Drain/Stop/effect cleanup 的当前 goroutine panic，同样只返回 sentinel。
+`callWithDeadline` 捕获 Start/Ready/Drain/Stop/effect cleanup 的当前 goroutine panic，同样只返回 sentinel。
+该函数已在后续 `eafd3da` 更名，以明确它只提供 cooperative deadline；详见专题 29。
 
 外层仍可添加 host-owned plugin ID 与 phase，例如 `drain plugin runtime.fake.v1`；recover value 的类型、
 字符串和 stack 不进入返回错误。
@@ -72,7 +73,7 @@ ErrLifecyclePanic = "plugin lifecycle callback panicked"
 
 ### 3.3 Shutdown panic 不饿死后续回收
 
-`stopPlugins` 对每个 Drain、Stop 和每个 effect cleanup 独立调用 `callWithTimeout`。单项 panic 转成 error
+`stopPlugins` 对每个 Drain、Stop 和每个 effect cleanup 独立调用 `callWithDeadline`。单项 panic 转成 error
 并加入 `errors.Join`，循环继续：
 
 ```text
@@ -108,7 +109,7 @@ git diff --check
 
 1. Go `recover` 只覆盖同一 goroutine；插件自行启动的 goroutine panic 仍可撞垮整个进程；
 2. `runtime.Goexit`、fatal runtime error、SIGKILL、OOM 与 process exit 不会被这层 recover 转成 error；
-3. `callWithTimeout` 仍是 cooperative cancellation；callback 忽略 context 时不会因为 deadline 自动返回；
+3. `callWithDeadline` 是 cooperative cancellation；callback 忽略 context 时不会因为 deadline 自动返回；
 4. `Factory.Configure` 仍没有 context/timeout，且合同要求 Configure 不产生外部副作用；
 5. callback panic 可能发生在外部 effect 已经提交之后，panic error 不能证明“动作未发生”，仍需
    ActionIntent/Receipt/Unknown/Reconcile；
@@ -118,8 +119,8 @@ git diff --check
 
 ## 6. 下一步
 
-1. 冻结 timeout honesty：文档、类型与测试明确 context deadline 不是强杀；慢/忽略 context 的可信
-   callback 对 Host state、并发 admission 与 shutdown 的影响必须可观察；
-2. 为第三方/不可信 plugin 建立 supervisor + process/UID/container/microVM kill boundary；
+1. Timeout honesty 已在 `eafd3da` 冻结，证据见
+   [`29_plugin_lifecycle_cooperative_deadline_contract.md`](29_plugin_lifecycle_cooperative_deadline_contract.md)；
+2. 下一步为第三方/不可信 plugin 冻结 supervisor + process/UID/container/microVM kill boundary 合同；
 3. 再实现明确标记 volatile 的 deterministic MemoryFake EventStore；
 4. 后续继续 source-only diff drift、NFC/跨语言 canonical vectors 与完整阶段门禁。

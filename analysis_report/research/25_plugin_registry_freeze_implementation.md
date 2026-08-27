@@ -148,4 +148,5 @@ git diff --check
 
 W1 effect scope `open -> closing -> closed` 已在 `0f00b47` 完成，证据见专题 26；Host callback
 持锁/reentrancy 已在 `3b8e02e` 完成，证据见专题 27；callback panic containment 已在 `2d97f0a`
-完成，证据见专题 28。下一个独立提交冻结忽略 context 时只能依靠进程隔离强制终止的边界。
+完成，证据见专题 28；deadline honesty 已在 `eafd3da` 完成，证据见专题 29。下一个独立提交冻结
+第三方进程隔离与强制终止合同。

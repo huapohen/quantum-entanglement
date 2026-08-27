@@ -118,7 +118,7 @@ git diff --check
 
 ## 5. 没有被本提交夸大的能力
 
-1. `callWithTimeout` 仍只是把 deadline 放入 context；callback 忽略 context 时，Go 无法安全强杀 goroutine；
+1. `callWithDeadline` 只把 deadline 放入 context；callback 忽略 context 时，Go 无法安全强杀 goroutine；
 2. `Factory.Configure` 接口当前没有 context/timeout；
 3. 当前 goroutine callback panic 已由 `2d97f0a` 转成固定、无 payload 的 error 并保证 rollback/继续
    cleanup；插件自行创建的 goroutine、fatal runtime error 和 process crash 仍未隔离；
@@ -130,7 +130,7 @@ git diff --check
 
 1. lifecycle callback panic 安全转换已在 `2d97f0a` 完成，证据见
    [`28_plugin_lifecycle_panic_containment_implementation.md`](28_plugin_lifecycle_panic_containment_implementation.md)；
-2. 下一步冻结 timeout 的诚实语义：context 是协作取消，不宣称强制终止；记录 callback phase/plugin/deadline，
-   但错误和日志不得泄漏 Secret；
-3. 为第三方/不可信 plugin 建立 process/UID/container/microVM 隔离与 supervisor kill boundary；
+2. Timeout honesty 已在 `eafd3da` 冻结，证据见
+   [`29_plugin_lifecycle_cooperative_deadline_contract.md`](29_plugin_lifecycle_cooperative_deadline_contract.md)；
+3. 下一步为第三方/不可信 plugin 冻结 process/UID/container/microVM 隔离与 supervisor kill boundary；
 4. 随后实现明确标记为 volatile 的 deterministic MemoryFake EventStore，不能冒充 W2 持久化。

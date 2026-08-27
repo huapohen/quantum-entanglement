@@ -288,6 +288,11 @@ claim；callback 内查询 State 不死锁，误重入或并发 Start/Stop 立�
 rollback；Drain/Stop/cleanup 单项 panic 只形成 joined error，不跳过其他插件和后续清理。这个 recover
 不覆盖插件自行创建的 goroutine、fatal runtime error、进程退出或忽略 context 的无限阻塞。
 
+Manifest 的 Start/Ready/Drain/Stop duration 只形成 callback context deadline。实现使用
+`callWithDeadline`，不宣称 deadline 到达会让 callback、goroutine 或进程退出；callback 未返回时 Host
+保持 `starting/stopping` 并保留唯一 owner，不能提前发布 failed/stopped。强制终止必须由独立
+supervisor + process/UID/container/microVM 完成；即使进程已 kill，也不能据此推导外部 effect 未发生。
+
 V1 预留插件种类：
 
 - `auth.clerk.v1`、`auth.fake.v1`；
