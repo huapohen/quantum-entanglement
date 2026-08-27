@@ -156,7 +156,9 @@ _ENVIRONMENT_REFERENCE_PATTERN = re.compile(r"(?:\$[A-Z][A-Z0-9_]*|\$\{[A-Z][A-Z
 _CANONICAL_EXACT_PATHS = frozenset(
     {
         "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
+        "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md",
         "analysis_report/NEXT_STAGE_PLAN.md",
+        "analysis_report/PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md",
         "analysis_report/README.md",
         "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md",
         "analysis_report/multi_agent_collaboration_report.md",
@@ -966,7 +968,12 @@ def _collect_sources(
 ) -> tuple[list[SourceFile], dict[str, SourceFile]]:
     paths: list[tuple[str, str]] = [
         ("canonical-source", "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md"),
+        ("canonical-source", "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md"),
         ("canonical-source", "analysis_report/NEXT_STAGE_PLAN.md"),
+        (
+            "canonical-source",
+            "analysis_report/PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md",
+        ),
         ("canonical-source", "analysis_report/README.md"),
         ("canonical-source", "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md"),
         ("canonical-source", "analysis_report/multi_agent_collaboration_report.md"),

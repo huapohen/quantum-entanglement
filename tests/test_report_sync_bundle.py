@@ -57,7 +57,15 @@ class ReportSyncBundleTests(unittest.TestCase):
             "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
             b"# Native IM integration prerequisites\n",
         )
+        self._write(
+            "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md",
+            b"# Native IM early integration plan\n",
+        )
         self._write("analysis_report/NEXT_STAGE_PLAN.md", b"# Next stage\n")
+        self._write(
+            "analysis_report/PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md",
+            b"# Pre-native-IM early integration checkpoint\n",
+        )
         self._write(
             "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md",
             b"# Stage acceptance\n",
@@ -131,6 +139,14 @@ class ReportSyncBundleTests(unittest.TestCase):
         for key, paths in (
             ("project-home", ["analysis_report/README.md"]),
             ("native-im-contract-v1", ["docs/architecture/NATIVE_IM_CONTRACT_V1.md"]),
+            (
+                "native-im-early-integration-plan",
+                ["analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md"],
+            ),
+            (
+                "pre-native-im-early-integration-checkpoint",
+                ["analysis_report/PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md"],
+            ),
             (
                 "comprehensive-report",
                 ["analysis_report/multi_agent_collaboration_report.md"],
@@ -267,9 +283,9 @@ class ReportSyncBundleTests(unittest.TestCase):
             {"unmanifestedPolicy": "fail-closed"},
         )
         source_summary = cast(dict[str, Any], first["sourceSummary"])
-        self.assertEqual(source_summary["count"], 12)
-        self.assertEqual(source_summary["sourceTargetCount"], 13)
-        self.assertEqual(source_summary["notionTargetCount"], 11)
+        self.assertEqual(source_summary["count"], 14)
+        self.assertEqual(source_summary["sourceTargetCount"], 15)
+        self.assertEqual(source_summary["notionTargetCount"], 13)
         self.assertEqual(source_summary["yuqueTargetCount"], 2)
 
         path = self._save_bundle(first)
@@ -301,6 +317,25 @@ class ReportSyncBundleTests(unittest.TestCase):
             (path, "notion")
         ]
         self.assertEqual(target["targetPageKey"], "native-im-contract-v1")
+        self.assertEqual(target["targetStatus"], "historical_manifest_claim_digest_match")
+
+    def test_native_im_early_integration_plan_is_an_allowlisted_canonical_source(self) -> None:
+        path = "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md"
+        target = self._source_targets(generate_report_sync_bundle(self.repository))[
+            (path, "notion")
+        ]
+        self.assertEqual(target["targetPageKey"], "native-im-early-integration-plan")
+        self.assertEqual(target["targetStatus"], "historical_manifest_claim_digest_match")
+
+    def test_pre_native_im_checkpoint_is_an_allowlisted_canonical_source(self) -> None:
+        path = "analysis_report/PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md"
+        target = self._source_targets(generate_report_sync_bundle(self.repository))[
+            (path, "notion")
+        ]
+        self.assertEqual(
+            target["targetPageKey"],
+            "pre-native-im-early-integration-checkpoint",
+        )
         self.assertEqual(target["targetStatus"], "historical_manifest_claim_digest_match")
 
     def test_notion_manifest_v2_remote_readback_is_accepted(self) -> None:
