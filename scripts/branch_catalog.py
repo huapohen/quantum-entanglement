@@ -271,6 +271,19 @@ def render_catalog(
     hub_root = branch_hub_root(repo)
     archive_count = sum(branch.name.startswith("archive/") for branch in branches)
     historical_count = len(branches) - archive_count - 1
+    auxiliary_worktree_count = sum(
+        Path(item.path).resolve() != repo.resolve() for item in worktrees
+    )
+    if auxiliary_worktree_count:
+        worktree_summary = (
+            f"`main` 固定在 `{repo}`。当前另有 {auxiliary_worktree_count} 个辅助 linked "
+            f"worktree；它们统一位于 `{hub_root / 'worktrees'}`，完成后必须合并、推送并移除。"
+        )
+    else:
+        worktree_summary = (
+            f"`main` 固定在 `{repo}`。当前没有辅助 linked worktree；后续临时 worktree "
+            f"统一创建在 `{hub_root / 'worktrees'}`，完成后必须合并、推送并移除。"
+        )
     lines = [
         "# Quantum Entanglement 分支与 Worktree 导航",
         "",
@@ -353,9 +366,7 @@ def render_catalog(
             "",
             "## 本机 Worktree 目录",
             "",
-            f"`main` 固定在 `{repo}`。长期保留的历史 worktree 统一进入 "
-            f"`{hub_root / 'worktrees'}`；"
-            "`/private/tmp` 下的是可删除的临时验证工作区。",
+            worktree_summary,
             "",
             "| 状态 | 分支/模式 | HEAD | 路径 |",
             "| --- | --- | --- | --- |",
@@ -421,13 +432,15 @@ def render_catalog(
             "## 管理规则",
             "",
             "1. `main` 永远是唯一默认主线；阶段分支不能自封为发布分支。",
-            "2. 每个小改动继续独立提交，阶段完成后再进入 `main`。",
+            "2. 每个小改动继续独立提交；阶段完成后合并回 `main` 并推送远端。",
             f"3. 新 worktree 一律建在 `{hub_root / 'worktrees'}`。",
-            "4. 历史分支默认只读；需要恢复时从 `main` 新建分支并挑选提交。",
-            "5. `archive/*` 只用于保全证据，不在其中开发、不移动其尖端。",
-            "6. 删除 worktree 前先确认状态干净、提交已推送；"
+            "4. 推送成功后删除已完成的本地 worktree 和本地阶段分支，不长期堆积。",
+            "5. 删除远端 active 分支前，必须确认提交已进入 `main` 或已有同 SHA 的 "
+            "`archive/*` 冻结引用。",
+            "6. `archive/*` 只用于保全证据，不在其中开发、不移动其尖端。",
+            "7. 删除 worktree 前先确认状态干净、提交已推送；"
             "使用 `git worktree remove`，不要直接删目录。",
-            "7. 每次新增、移动或删除分支/worktree 后运行目录更新脚本并提交生成结果。",
+            "8. 每次新增、移动或删除分支/worktree 后运行目录更新脚本并提交生成结果。",
             "",
         ]
     )

@@ -146,7 +146,48 @@ class BranchCatalogTests(unittest.TestCase):
         self.assertIn("日常开发、启动体验和后续集成都只使用 `main`", rendered)
         self.assertIn("archive/2026-08-21/dangling/recovered", rendered)
         self.assertIn("正式主线工作区", rendered)
+        self.assertIn("当前没有辅助 linked worktree", rendered)
+        self.assertIn("完成后必须合并、推送并移除", rendered)
         self.assertIn("`v0.1.0`", rendered)
+
+    def test_render_catalog_counts_only_auxiliary_linked_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            main = BranchRecord(
+                name="main",
+                oid="a" * 40,
+                tip_time="2026-08-27T10:00:00+08:00",
+                subject="main checkpoint",
+                purpose="唯一正式主线。",
+                category="正式主线",
+                relation="主线目录基线",
+                ahead=0,
+                behind=0,
+                worktree=str(root),
+            )
+            worktrees = [
+                WorktreeRecord(
+                    path=str(root),
+                    head=main.oid,
+                    branch="main",
+                    prunable=False,
+                    exists=True,
+                    clean=None,
+                ),
+                WorktreeRecord(
+                    path=str(root / "worktrees" / "receipt-review"),
+                    head="b" * 40,
+                    branch="codex/receipt-review",
+                    prunable=False,
+                    exists=True,
+                    clean=True,
+                ),
+            ]
+
+            rendered = render_catalog(root, [main], worktrees, [])
+
+        self.assertIn("当前另有 1 个辅助 linked worktree", rendered)
+        self.assertIn("完成后必须合并、推送并移除", rendered)
 
     def test_render_catalog_uses_catalog_baseline_for_main_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
