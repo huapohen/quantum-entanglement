@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import ast
+import copy
 import inspect
+import os
+import pickle
 import socket
 from dataclasses import replace
 from pathlib import Path
@@ -13,12 +16,20 @@ from quantum_entanglement.native_im_fake import (
     FAKE_IM_PROVIDER,
     FakeIMAdapter,
     FakeIMOutboundDisabledError,
+    FakeIMTestOutboundPermit,
 )
-from quantum_entanglement.native_im_gateway import IMGatewayPort
+from quantum_entanglement.native_im_gateway import (
+    IMGatewayPort,
+    validate_im_acceptance_result_v1,
+    validate_im_dispatch_result_v1,
+)
 from tests.test_native_im_contract import (
+    acceptance_query,
+    action_command,
     attachment,
     capability,
     content,
+    dispatch_request,
     inbound_event,
     text_segment,
     verified_envelope,
@@ -51,6 +62,17 @@ def adapter(*, event_values=None, snapshot=None, **scope):
         channel_id=scope.get("channel_id", "test-channel"),
         capability=snapshot or capability(),
         envelopes=event_values if event_values is not None else envelopes(),
+    )
+
+
+def outbound_adapter(*, snapshot=None, outbound_permit=None):
+    return FakeIMAdapter.for_test(
+        tenant_id="test-tenant",
+        workspace_id="test-workspace",
+        channel_id="test-channel",
+        capability=snapshot or capability(),
+        envelopes=envelopes(),
+        outbound_permit=outbound_permit or FakeIMTestOutboundPermit(),
     )
 
 
@@ -199,6 +221,43 @@ async def test_fake_outbound_fails_before_inspecting_request() -> None:
         await fake.query_acceptance(ExplosiveOutboundRequest())  # type: ignore[arg-type]
 
 
+def test_fake_test_outbound_permit_is_immutable_process_local_and_unserializable(
+    monkeypatch,
+) -> None:
+    permit = FakeIMTestOutboundPermit()
+    assert repr(permit) == "FakeIMTestOutboundPermit(process_local=True)"
+    with pytest.raises(AttributeError, match="immutable"):
+        permit._process_id = os.getpid()
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(permit)
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        copy.copy(permit)
+    monkeypatch.setattr(os, "getpid", lambda: permit._process_id + 1)
+    with pytest.raises(FakeIMOutboundDisabledError, match="not process-current"):
+        outbound_adapter(outbound_permit=permit)
+
+
+@pytest.mark.asyncio
+async def test_fake_for_test_returns_admissible_terminal_rejection() -> None:
+    snapshot = capability()
+    fake = outbound_adapter(snapshot=snapshot)
+    request = dispatch_request(command=action_command(capability=snapshot))
+    result = await fake.dispatch(request)
+    assert result.state == "rejected"
+    assert validate_im_dispatch_result_v1(request, result) is result
+
+
+@pytest.mark.asyncio
+async def test_fake_for_test_returns_capability_possible_acceptance_result() -> None:
+    snapshot = capability()
+    fake = outbound_adapter(snapshot=snapshot)
+    request = dispatch_request(command=action_command(capability=snapshot))
+    query = acceptance_query(request=request)
+    result = await fake.query_acceptance(query)
+    assert result.state == "reconciled_rejected"
+    assert validate_im_acceptance_result_v1(query, request, snapshot, result) is result
+
+
 @pytest.mark.asyncio
 async def test_fake_import_and_runtime_open_no_network(monkeypatch) -> None:
     parsed = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
@@ -213,8 +272,8 @@ async def test_fake_import_and_runtime_open_no_network(monkeypatch) -> None:
         for node in ast.walk(parsed)
         if isinstance(node, ast.ImportFrom) and node.level == 0
     }
-    assert imported_roots == set()
-    assert imported_from == {"__future__"}
+    assert imported_roots == {"hashlib", "os"}
+    assert imported_from == {"__future__", "typing"}
 
     def deny_network(*args, **kwargs):
         raise AssertionError("network capability was opened")
@@ -247,6 +306,8 @@ def test_fake_has_no_outbound_configuration_surface() -> None:
     source = SOURCE_PATH.read_text(encoding="utf-8").lower()
     for forbidden in ("endpoint", "authorization", "webhook", "websocket", "http", "callback"):
         assert forbidden not in source
+    assert "os.environ" not in source
+    assert "os.getenv" not in source
     constructor_parameters = inspect.signature(FakeIMAdapter).parameters
     for forbidden in ("url", "token", "secret", "credential", "client", "transport"):
         assert forbidden not in constructor_parameters
