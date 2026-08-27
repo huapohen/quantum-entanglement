@@ -14,12 +14,12 @@ import (
 )
 
 const (
-	maxPageEvents       = 256
-	maxEncodedCursor    = 4096
-	appendDigestDomain  = "wanwork.im/volatile-memory-event-store/append/1\n"
-	cursorDigestDomain  = "wanwork.im/volatile-memory-event-store/cursor/1\n"
-	cursorEpochDomain   = "wanwork.im/volatile-memory-event-store/epoch/1\n"
-	cursorSchemaVersion = 1
+	maxPageEvents         = 256
+	maxEncodedCursor      = 4096
+	appendDigestDomain    = "wanwork.im/volatile-memory-event-store/append/1\n"
+	cursorDigestDomain    = "wanwork.im/volatile-memory-event-store/cursor/1\n"
+	cursorNamespaceDomain = "wanwork.im/volatile-memory-event-store/cursor-namespace/1\n"
+	cursorSchemaVersion   = 1
 )
 
 type StoreClock func() time.Time
@@ -47,8 +47,8 @@ type appendRecord struct {
 type VolatileMemoryStore struct {
 	mu sync.RWMutex
 
-	clock StoreClock
-	epoch SHA256Digest
+	clock           StoreClock
+	cursorNamespace SHA256Digest
 
 	streams        map[eventScope][]StoredEvent
 	global         []StoredEvent
@@ -59,18 +59,22 @@ type VolatileMemoryStore struct {
 
 var _ EventStore = (*VolatileMemoryStore)(nil)
 
-func NewVolatileMemoryStore(instanceID string, clock StoreClock) (*VolatileMemoryStore, error) {
-	if !validOpaqueText(instanceID, maxIdentifierBytes) {
+// NewVolatileMemoryStore requires a caller-owned deterministic cursor namespace. Reusing the
+// namespace with the same rebuilt event sequence intentionally reproduces cursor values; callers
+// must supply a different namespace when old cursors must be rejected. This is a test-fixture
+// contract, not a production cursor key or automatic process-incarnation identity.
+func NewVolatileMemoryStore(cursorNamespaceID string, clock StoreClock) (*VolatileMemoryStore, error) {
+	if !validOpaqueText(cursorNamespaceID, maxIdentifierBytes) {
 		return nil, ErrInvalidStore
 	}
 	if clock == nil {
 		return nil, ErrStoreClock
 	}
 	return &VolatileMemoryStore{
-		clock:   clock,
-		epoch:   digestBytes(cursorEpochDomain, []byte(instanceID)),
-		streams: make(map[eventScope][]StoredEvent),
-		retries: make(map[retryIdentity]*appendRecord),
+		clock:           clock,
+		cursorNamespace: digestBytes(cursorNamespaceDomain, []byte(cursorNamespaceID)),
+		streams:         make(map[eventScope][]StoredEvent),
+		retries:         make(map[retryIdentity]*appendRecord),
 	}, nil
 }
 
@@ -323,7 +327,7 @@ func snapshotAppendRequest(batch AppendBatch) (AppendBatch, SHA256Digest, []retr
 }
 
 type cursorBinding struct {
-	epoch        SHA256Digest
+	namespace    SHA256Digest
 	kind         string
 	tenant       string
 	workspaceSet bool
@@ -333,7 +337,7 @@ type cursorBinding struct {
 
 type cursorContent struct {
 	Version      uint32       `json:"version"`
-	Epoch        SHA256Digest `json:"epoch"`
+	Namespace    SHA256Digest `json:"namespace"`
 	Kind         string       `json:"kind"`
 	Tenant       string       `json:"tenant"`
 	WorkspaceSet bool         `json:"workspaceSet"`
@@ -349,7 +353,7 @@ type cursorEnvelope struct {
 
 func encodeCursor(binding cursorBinding, position uint64) (Cursor, error) {
 	content := cursorContent{
-		Version: cursorSchemaVersion, Epoch: binding.epoch, Kind: binding.kind, Tenant: binding.tenant,
+		Version: cursorSchemaVersion, Namespace: binding.namespace, Kind: binding.kind, Tenant: binding.tenant,
 		WorkspaceSet: binding.workspaceSet, Workspace: binding.workspace,
 		Stream: binding.stream, Position: position,
 	}
@@ -399,7 +403,7 @@ func decodeBoundCursor(cursor Cursor, binding cursorBinding) (uint64, error) {
 		return 0, ErrInvalidCursor
 	}
 	content := envelope.Content
-	if content.Version != cursorSchemaVersion || content.Epoch != binding.epoch || content.Kind != binding.kind ||
+	if content.Version != cursorSchemaVersion || content.Namespace != binding.namespace || content.Kind != binding.kind ||
 		content.Tenant != binding.tenant || content.WorkspaceSet != binding.workspaceSet ||
 		content.Workspace != binding.workspace || content.Stream != binding.stream || content.Position == 0 {
 		return 0, ErrInvalidCursor
@@ -439,7 +443,7 @@ func newEventScope(tenant string, workspace *string, stream string) eventScope {
 
 func (store *VolatileMemoryStore) cursorBindingFromScope(kind string, scope eventScope) cursorBinding {
 	return cursorBinding{
-		epoch: store.epoch, kind: kind, tenant: scope.tenant, workspaceSet: scope.workspaceSet,
+		namespace: store.cursorNamespace, kind: kind, tenant: scope.tenant, workspaceSet: scope.workspaceSet,
 		workspace: scope.workspace, stream: scope.stream,
 	}
 }

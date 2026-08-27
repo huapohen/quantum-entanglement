@@ -112,7 +112,7 @@ func TestVolatileMemoryStorePagesExactScopesWithoutGapOrDuplicate(t *testing.T) 
 	}
 }
 
-func TestVolatileMemoryStoreCursorBindsKindScopeAndIncarnation(t *testing.T) {
+func TestVolatileMemoryStoreCursorBindsKindScopeAndNamespace(t *testing.T) {
 	t.Parallel()
 
 	workspace := stringPointer("workspace-acme")
@@ -224,15 +224,15 @@ func TestVolatileMemoryStoreCursorBindsKindScopeAndIncarnation(t *testing.T) {
 		t.Fatalf("duplicate-field cursor error = %v, want %v", err, ErrInvalidCursor)
 	}
 
-	otherStore, err := NewVolatileMemoryStore("other-instance", func() time.Time { return contractTime })
+	otherStore, err := NewVolatileMemoryStore("other-namespace", func() time.Time { return contractTime })
 	if err != nil {
 		t.Fatalf("new other store: %v", err)
 	}
 	appendScopeBatch(t, otherStore, 0, event)
-	oldInstanceQuery := streamQuery
-	oldInstanceQuery.After = streamPage.Next
-	if _, err := otherStore.ReadStreamPage(context.Background(), oldInstanceQuery); !errors.Is(err, ErrInvalidCursor) {
-		t.Fatalf("old-instance cursor error = %v, want %v", err, ErrInvalidCursor)
+	otherNamespaceQuery := streamQuery
+	otherNamespaceQuery.After = streamPage.Next
+	if _, err := otherStore.ReadStreamPage(context.Background(), otherNamespaceQuery); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("other-namespace cursor error = %v, want %v", err, ErrInvalidCursor)
 	}
 }
 
