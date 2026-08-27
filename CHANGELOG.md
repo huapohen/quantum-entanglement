@@ -40,6 +40,16 @@ production gate and does not authorize a real connector or external message.
 
 ### Added
 
+- Native IM V1 provider-neutral executable contract with strict bounded codecs, 21 public wire
+  models, domain-separated canonical digests and stable idempotency derivation.
+- An exact four-method `IMGatewayPort` plus pure request/result admission gates for capability,
+  inbound page, dispatch receipt and acceptance-query receipt bindings.
+- A zero-network, read-only-by-default fake IM adapter with a process-local non-serializable test
+  permit, receiver action/key idempotency ledger, collision rejection, ACK-loss/post-accept
+  exception reconciliation, retryable NACK evidence and retention-expired query behavior.
+- Twenty-three frozen native-IM V1 golden vectors, an independent read-only oracle, exhaustive
+  event/revision/scope/mention/digest contract matrices and a fresh-process socket/DNS/network
+  import/environment-credential gate.
 - Bridge-only domain migration foundation: trusted legacy descriptors, exact sidecar
   install/bootstrap, immutable `SchemaState`, and a digest-bound closed-action planner.
 - Atomic bridge-plan application with locked source-state revalidation, an allowlisted
@@ -76,6 +86,8 @@ production gate and does not authorize a real connector or external message.
 
 ### Changed
 
+- CI and canonical local release evidence now execute the full pytest suite instead of treating
+  incomplete `unittest discover` collection as repository-wide evidence.
 - README now distinguishes the runnable `0.1.x` experiment from production guarantees and
   identifies unimplemented ACP, MCP, authentication, and crash-recovery boundaries.
 - Outbox lease time is read only after SQLite write-lock acquisition, terminal fencing
@@ -161,6 +173,9 @@ production gate and does not authorize a real connector or external message.
 
 ### In progress — not yet a shipped guarantee
 
+- Native IM E2 sandbox inbound-only: no real provider profile, adapter, endpoint, credential,
+  webhook/socket transport or durable IM inbox exists yet. Native IM external outbound remains
+  unimplemented and unauthorized; production Gates A–E remain closed.
 - Reliable outbox publishing with bounded retry, hard callback deadlines, fencing, and
   graceful shutdown.
 - Durable invocation attempt leasing, heartbeat, recovery, and terminal compare-and-set.
