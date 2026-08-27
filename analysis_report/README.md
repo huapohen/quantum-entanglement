@@ -14,15 +14,16 @@
 - 竞品信源核验：<https://app.notion.com/p/3c1ead4b996e81f9b5eddebebc96d30a?pvs=204>
 - 当前实现证据：<https://app.notion.com/p/3c1ead4b996e81669cefcf330b894853?pvs=204>
 - 原生 IM 接入决策：<https://app.notion.com/p/3c9ead4b996e81638c43e48ecc2e0bcc?pvs=204>
-- 最近完整同步：2026-08-27；29 个页面全部回读通过。既有主报告与专题页已更新，
-  08–21 的缺页和 4 个阶段治理页面已经补齐；截图库保留 00–09，并新增上传 10–26，
-  共 27 张受限图片。
-- 原生 IM 决策增量同步：新建 1 页、更新首页/下一阶段计划/分支目录 3 页，当前共 30 页；
-  4 页全部远端回读通过，原始 Markdown 附件也已回读确认。
+- 原生 IM V1 合同：<https://app.notion.com/p/3c9ead4b996e8114985cce2cc5af2b63?pvs=204>
+- 最近完整全量同步：2026-08-27；29 个固定页面全部回读通过。随后新增接入决策页和 V1 合同页，
+  远端当前共 31 页；合同正文与原始 Markdown 附件已回读确认。
+- `1d399e5` 同步库存 marker 已写入首页、接入决策和合同页，但该三页最后一次 marker fetch 尚未
+  形成新的本地 readback checkpoint。
+- 提前接入检查点与详细执行计划已进入 GitHub；Notion 新增/更新批次因当前连接器 OAuth
+  `invalid_client` 暂待重新授权，不能声明已经同步。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
-- 当前增量内容绑定 GitHub `main` `4cf28dadda7db33002dea76b27eeda9f33986817`，并已执行
-  逐页远端回读。语雀仍未操作。
+- 当前已验证远端内容与最新 GitHub `main` 之间存在上述待同步增量；语雀仍未操作。
 
 ## 当前阶段交付
 
@@ -30,12 +31,13 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
-| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 决策已冻结、Notion 已回读，待实施 | 原生 IM 接入的 P0–P3 必做里程碑、验收清单、NO-GO 条件及接入后 TODO 分界 |
+| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 原路线已由提前接入调度修订 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界 |
+| `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
+| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | 当前执行入口 | E0–E5、Level A–D、文件/迁移/测试/提交序列、可停点、工期与 outbound 授权边界 |
 
-当前可以安全停下。后续若启动原生 IM 路线，以
-`NATIVE_IM_INTEGRATION_PREREQUISITES.md` 作为接入顺序与范围的决策源；
-`NEXT_STAGE_PLAN.md` 继续作为 Atomic Result Authority 的最大强度实现参考，不再把其中全部
-加固项解释为原生 IM 专用沙箱介入前置。
+当前接入前代码基线已经安全备份。后续以 `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 为执行源，先
+完成 Level A 合同可执行，再到 Level B sandbox inbound-only；`NEXT_STAGE_PLAN.md` 继续作为 E3
+Atomic Result Authority 的最大强度参考，不再作为提前接入前的串行总清单。
 
 ## 专题研究
 
