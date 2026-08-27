@@ -15,6 +15,7 @@ from quantum_entanglement.native_im import IMInboundReadRequestV1
 from quantum_entanglement.native_im_fake import (
     FAKE_IM_PROVIDER,
     FakeIMAdapter,
+    FakeIMFaultScript,
     FakeIMOutboundDisabledError,
     FakeIMReceiverCollisionError,
     FakeIMTestOutboundPermit,
@@ -68,7 +69,7 @@ def adapter(*, event_values=None, snapshot=None, **scope):
     )
 
 
-def outbound_adapter(*, snapshot=None, outbound_permit=None):
+def outbound_adapter(*, snapshot=None, outbound_permit=None, fault_script=None):
     return FakeIMAdapter.for_test(
         tenant_id="test-tenant",
         workspace_id="test-workspace",
@@ -76,6 +77,7 @@ def outbound_adapter(*, snapshot=None, outbound_permit=None):
         capability=snapshot or capability(),
         envelopes=envelopes(),
         outbound_permit=outbound_permit or FakeIMTestOutboundPermit(),
+        fault_script=fault_script,
     )
 
 
@@ -240,6 +242,20 @@ def test_fake_test_outbound_permit_is_immutable_process_local_and_unserializable
         outbound_adapter(outbound_permit=permit)
 
 
+def test_fake_fault_script_is_closed_and_immutable() -> None:
+    script = FakeIMFaultScript(
+        dispatch_steps=("ack_loss_after_accept",),
+        query_steps=("not_final", "ledger"),
+    )
+    assert repr(script) == "FakeIMFaultScript(dispatch_steps=1, query_steps=2)"
+    with pytest.raises(TypeError, match="immutable tuples"):
+        FakeIMFaultScript(dispatch_steps=["accept"])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="dispatch fault step"):
+        FakeIMFaultScript(dispatch_steps=("future_fault",))
+    with pytest.raises(ValueError, match="query fault step"):
+        FakeIMFaultScript(query_steps=("future_fault",))
+
+
 @pytest.mark.asyncio
 async def test_fake_receiver_accepts_once_and_replays_the_same_effect() -> None:
     snapshot = capability()
@@ -318,6 +334,86 @@ async def test_fake_query_reconciles_the_exact_accepted_effect() -> None:
     assert result.provider_operation_id == dispatched.provider_operation_id
     assert result.provider_message == dispatched.provider_message
     assert result.receiver_evidence_digest == dispatched.receiver_evidence_digest
+    assert validate_im_acceptance_result_v1(query, request, snapshot, result) is result
+
+
+@pytest.mark.asyncio
+async def test_fake_ack_loss_stays_unknown_then_reconciles_without_redispatch() -> None:
+    snapshot = capability()
+    fake = outbound_adapter(
+        snapshot=snapshot,
+        fault_script=FakeIMFaultScript(
+            dispatch_steps=("ack_loss_after_accept",),
+            query_steps=("not_final", "ledger"),
+        ),
+    )
+    request = dispatch_request(command=action_command(capability=snapshot))
+    unknown = await fake.dispatch(request)
+    assert unknown.state == "effect_unknown"
+    assert unknown.provider_operation_id is not None
+    assert validate_im_dispatch_result_v1(request, unknown) is unknown
+    assert fake.accepted_effect_count == 1
+
+    query = acceptance_query("provider_operation_id", request=request, source=unknown)
+    not_final = await fake.query_acceptance(query)
+    assert not_final.state == "effect_unknown"
+    assert not_final.error_code == "acceptance_not_final"
+    assert validate_im_acceptance_result_v1(query, request, snapshot, not_final) is not_final
+
+    reconciled = await fake.query_acceptance(query)
+    assert reconciled.state == "reconciled_succeeded"
+    assert reconciled.provider_operation_id == unknown.provider_operation_id
+    assert validate_im_acceptance_result_v1(query, request, snapshot, reconciled) is reconciled
+    assert fake.accepted_effect_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fault_step", "error_code"),
+    [
+        ("temporary_nack", "temporarily_unavailable_not_accepted"),
+        ("rate_limited_nack", "rate_limited_not_accepted"),
+    ],
+)
+async def test_fake_retryable_nack_proves_no_effect_before_retry(
+    fault_step: str, error_code: str
+) -> None:
+    snapshot = capability()
+    fake = outbound_adapter(
+        snapshot=snapshot,
+        fault_script=FakeIMFaultScript(dispatch_steps=(fault_step,)),
+    )
+    request = dispatch_request(command=action_command(capability=snapshot))
+    nack = await fake.dispatch(request)
+    assert nack.state == "retryable_not_accepted"
+    assert nack.error_code == error_code
+    assert nack.receiver_evidence_digest is not None
+    assert validate_im_dispatch_result_v1(request, nack) is nack
+    assert fake.accepted_effect_count == 0
+
+    retry = dispatch_request(
+        command=request.command,
+        dispatch_attempt_id="test-dispatch-attempt-2",
+        attempt_number=2,
+    )
+    succeeded = await fake.dispatch(retry)
+    assert succeeded.state == "succeeded"
+    assert validate_im_dispatch_result_v1(retry, succeeded) is succeeded
+    assert fake.accepted_effect_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_retention_expiry_never_becomes_false_negative() -> None:
+    snapshot = capability()
+    fake = outbound_adapter(
+        snapshot=snapshot,
+        fault_script=FakeIMFaultScript(query_steps=("retention_expired",)),
+    )
+    request = dispatch_request(command=action_command(capability=snapshot))
+    query = acceptance_query(request=request)
+    result = await fake.query_acceptance(query)
+    assert result.state == "effect_unknown"
+    assert result.error_code == "acceptance_retention_expired"
     assert validate_im_acceptance_result_v1(query, request, snapshot, result) is result
 
 
