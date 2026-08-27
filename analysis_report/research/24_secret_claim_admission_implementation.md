@@ -260,7 +260,7 @@ git diff --check
 
 P0-4 后不直接接真实 Secret 或真实 IM outbound。W1 下一阶段顺序为：
 
-1. Registry freeze/immutable snapshot，关闭 Register/Compose/Resolve map race；
+1. Registry freeze/immutable snapshot 已在 `e2f82be` 完成，证据见专题 25；
 2. effect scope `open -> closing -> closed`，拒绝 cleanup 开始后的迟到注册；
 3. Host callback 不持全局 lifecycle mutex，并冻结 reentrancy/concurrency 合同；
 4. 对忽略 context 的插件建立独立进程隔离边界，in-process timeout 不冒充可强杀；

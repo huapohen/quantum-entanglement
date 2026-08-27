@@ -243,6 +243,11 @@ discovered -> validated -> configured -> started -> ready -> draining -> stopped
 计算独立摘要；package record 必须以 `ApprovedManifestDigest + AdmissionRevision` 绑定本次批准，不能让
 相同 ID/version 或 artifact 静默复用不同运行行为的旧批准。
 
+Registry 先作为 builder 接收 schema、broker 和 package/factory，随后必须显式 Freeze。Freeze 在写锁内
+重算 schema/broker/manifest digest、复核完整 definition graph，并克隆成不可变 runtime snapshot；
+Resolve/Compose/Secret claim/NewHost 在 Freeze 前全部拒绝，Freeze 后任何 late registration 失败。动态
+Secret claim/revocation 使用独立状态，不允许借“定义不可变”取消运行期撤权。
+
 插件装配沿用 DeepSeek Harness 值得保留的三层思想，但冻结平台自己的语义：
 
 ```text

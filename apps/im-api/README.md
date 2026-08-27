@@ -64,7 +64,9 @@ overlay. A later layer can replace an earlier row only by repeating the complete
 explicit tombstone. Home, CLI, prompt, and ambient-environment patches are not accepted. Layer IDs, row IDs,
 tenant scope, admitted plugin version, artifact digest, and host-owned configuration schema are all validated
 before dependency resolution. Registering a package does not activate it: only the final selected rows enter the
-dependency plan.
+dependency plan. Registration is a builder phase: `Freeze` revalidates and clones the complete schema, broker,
+manifest, and package graph, then permanently closes all registration paths. Resolve, composition, secret claim
+admission/revocation, and host construction reject an unfrozen registry.
 
 The result is an immutable snapshot containing source revisions/digests, fully materialized public
 configuration, capabilities, egress declarations, non-bearer secret binding views, provider bindings,

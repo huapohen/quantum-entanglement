@@ -208,11 +208,13 @@ Planner 不能直持 provider credential。Action Plane 与 Egress 互补，不�
 - `211ada7 fix: admit secret claims outside plugin composition`：raw locator 只进入准入 broker，
   tenant/row/plugin/manifest/admission/schema/purpose/audience exact bind，Effective v3、撤销和 Secret
   canary/golden/anti-replay 负向矩阵；
+- `e2f82be fix: freeze plugin registry definitions before use`：完整 schema/broker/package definition graph
+  重验、builder map 脱离、所有 runtime read 的 freeze 前拒绝、late registration 关闭与 concurrent race 证据；
 - 专项普通测试、race 和 vet 通过。
 
-Plugin Host 四个 P0 已全部完成。这里的“全部”只指 W1 已冻结的四个 P0，不包括 action-time JIT
-Secret lease、Registry freeze、第三方执行隔离或真实 connector。W1 接下来处理 Registry
-freeze/snapshot、effect scope 状态和 callback/timeout 等 P1，然后实现明确标记为 volatile fake 的 memory
+Plugin Host 四个 P0 已全部完成，P1-1 Registry freeze/snapshot 也已完成。这里的“完成”不包括
+action-time JIT Secret lease、第三方执行隔离或真实 connector。W1 接下来处理 effect scope 状态和
+callback/timeout 等 P1，然后实现明确标记为 volatile fake 的 memory
 EventStore。W2 领域建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；不会用“文档
 已经写了”代替测试。P0-4 的完整证据映射见
 [`24_secret_claim_admission_implementation.md`](24_secret_claim_admission_implementation.md)。

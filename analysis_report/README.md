@@ -70,6 +70,7 @@ Atomic Result Authority 的最大强度参考，不再作为提前接入前的�
 | `research/22_2output_research_absorption_audit.md` | 当前调研吸收审计：2026-08-28 | `2output` 的 40/40 Markdown、31/31 独立报告处置、AgentSpace evidence delta、RQ-039～RQ-042、Egress 架构修正及 M0/W1/W2+ 门禁 |
 | `research/23_plugin_manifest_admission_implementation.md` | W1 P0-3 历史实现证据：`ed9a709` | host-computed manifest digest、PackageRecord exact admission、Effective v2 与 frozen activation；当前 Secret 增量由专题 24 接续 |
 | `research/24_secret_claim_admission_implementation.md` | W1 P0-4 当前实现证据：`211ada7` | `2output` Secret/credential/plugin 证据到 claim admission、Effective v3、anti-replay/revocation/canary/golden 门禁及 action-time JIT lease 未完成边界 |
+| `research/25_plugin_registry_freeze_implementation.md` | W1 P1-1 当前实现证据：`e2f82be` | Registry builder→Freeze→runtime 合同、完整 definition graph 重验、不可变快照、late registration 拒绝与 concurrent race 证据 |
 
 ## 已归档截图
 
