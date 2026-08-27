@@ -81,6 +81,11 @@ _DISPATCH_RECEIPT_STATES = {
     "retryable_not_accepted",
     "effect_unknown",
 }
+_QUERY_RECEIPT_STATES = {
+    "reconciled_succeeded",
+    "reconciled_rejected",
+    "effect_unknown",
+}
 _TERMINAL_ERROR_CODES = {
     "terminal_permission_denied",
     "terminal_invalid_target",
@@ -104,6 +109,7 @@ _DISPATCH_UNKNOWN_REASONS = {
     "dispatcher_recovery",
     "process_crash_recovery",
 }
+_UNKNOWN_SOURCE_TYPES = {"action_receipt", "dispatch_unknown_observation"}
 _RECEIPT_ERROR_CODES = (
     _TERMINAL_ERROR_CODES | _TRANSIENT_NOT_ACCEPTED_ERROR_CODES | _UNKNOWN_ERROR_CODES
 )
@@ -340,6 +346,30 @@ _DISPATCH_UNKNOWN_OBSERVATION_FIELDS = {
     "dispatchRequestDigest",
     "reason",
     "observedAt",
+    "correlationId",
+    "causationId",
+    "traceparent",
+}
+_ACCEPTANCE_QUERY_FIELDS = {
+    "schemaVersion",
+    "queryId",
+    "unknownSourceType",
+    "unknownSourceId",
+    "tenantId",
+    "workspaceId",
+    "provider",
+    "channelId",
+    "actionId",
+    "commandId",
+    "dispatchAttemptId",
+    "dispatchRequestDigest",
+    "intentDigest",
+    "commandDigest",
+    "idempotencyKey",
+    "attemptNumber",
+    "lookupMode",
+    "providerOperationId",
+    "requestedAt",
     "correlationId",
     "causationId",
     "traceparent",
@@ -2058,6 +2088,12 @@ class IMActionReceiptV1(_NativeIMWireValue):
         _require_exact_model(request, IMDispatchRequestV1, "dispatch request")
         if self.state not in _DISPATCH_RECEIPT_STATES:
             raise ValueError("dispatch cannot return a reconciled receipt state")
+        self._validate_request_binding_values(request)
+        if self.causation_id != request.dispatch_attempt_id:
+            raise ValueError("dispatch receipt causationId must equal the dispatch attempt ID")
+
+    def _validate_request_binding_values(self, request: IMDispatchRequestV1) -> None:
+        _require_exact_model(request, IMDispatchRequestV1, "dispatch request")
         command = request.command
         intent = command.intent
         expected_scope = _scope(intent.conversation)
@@ -2082,13 +2118,50 @@ class IMActionReceiptV1(_NativeIMWireValue):
         for actual, expected, label in bindings:
             if actual != expected:
                 raise ValueError(f"{label} does not match the dispatch request")
-        if self.causation_id != request.dispatch_attempt_id:
-            raise ValueError("dispatch receipt causationId must equal the dispatch attempt ID")
         if (
             self.provider_message is not None
             and self.provider_message.conversation != intent.conversation
         ):
             raise ValueError("provider message conversation does not match the action intent")
+
+    def validate_query_binding(
+        self,
+        query: IMAcceptanceQueryV1,
+        request: IMDispatchRequestV1,
+    ) -> None:
+        """Validate identity only after durable query, source, and request lookup.
+
+        Call ``validate_query_capability_binding`` before admitting a reconciled result.
+        """
+
+        _require_exact_model(query, IMAcceptanceQueryV1, "acceptance query")
+        _require_exact_model(request, IMDispatchRequestV1, "dispatch request")
+        if self.state not in _QUERY_RECEIPT_STATES:
+            raise ValueError("acceptance query returned a dispatch-only receipt state")
+        query.validate_request_binding(request)
+        self._validate_request_binding_values(request)
+        if self.causation_id != query.query_id:
+            raise ValueError("query receipt causationId must equal the acceptance query ID")
+
+    def validate_query_capability_binding(
+        self,
+        query: IMAcceptanceQueryV1,
+        request: IMDispatchRequestV1,
+        capability: IMCapabilitySnapshotV1,
+    ) -> IMAcceptanceLookupCapabilityV1:
+        """Reject profile-impossible results after trusted source/request/capability lookup.
+
+        This does not prove receiver evidence authority or consistency/retention windows;
+        the durable reconciliation workflow must establish those facts separately.
+        """
+
+        self.validate_query_binding(query, request)
+        lookup_profile = query.validate_capability_binding(capability, request)
+        if self.state == "reconciled_rejected" and (
+            lookup_profile.negative_acceptance_mode != "authoritative_terminal"
+        ):
+            raise ValueError("selected lookup mode cannot produce final negative evidence")
+        return lookup_profile
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -2233,8 +2306,221 @@ class IMDispatchUnknownObservationV1(_NativeIMWireValue):
         )
 
 
+@dataclass(frozen=True)
+class IMAcceptanceQueryV1(_NativeIMWireValue):
+    schema_version: int
+    query_id: str
+    unknown_source_type: str
+    unknown_source_id: str
+    tenant_id: str
+    workspace_id: str
+    provider: str
+    channel_id: str
+    action_id: str
+    command_id: str
+    dispatch_attempt_id: str
+    dispatch_request_digest: str
+    intent_digest: str
+    command_digest: str
+    idempotency_key: str
+    attempt_number: int
+    lookup_mode: str
+    provider_operation_id: str | None
+    requested_at: str
+    correlation_id: str
+    causation_id: str
+    traceparent: str | None
+
+    _MODEL_NAME: ClassVar[str] = "IMAcceptanceQueryV1"
+    _MAX_CANONICAL_BYTES: ClassVar[int] = _MAX_RECEIPT_BYTES
+
+    def __post_init__(self) -> None:
+        _require_exact_model(self, IMAcceptanceQueryV1, "acceptance query")
+        _schema_version(self.schema_version)
+        for value, label in (
+            (self.query_id, "queryId"),
+            (self.unknown_source_id, "unknownSourceId"),
+            (self.tenant_id, "tenantId"),
+            (self.workspace_id, "workspaceId"),
+            (self.provider, "provider"),
+            (self.channel_id, "channelId"),
+            (self.action_id, "actionId"),
+            (self.command_id, "commandId"),
+            (self.dispatch_attempt_id, "dispatchAttemptId"),
+            (self.correlation_id, "correlationId"),
+            (self.causation_id, "causationId"),
+        ):
+            _id(value, label)
+        _enum(self.unknown_source_type, _UNKNOWN_SOURCE_TYPES, "unknownSourceType")
+        _digest(self.dispatch_request_digest, "dispatchRequestDigest")
+        _digest(self.intent_digest, "intentDigest")
+        _digest(self.command_digest, "commandDigest")
+        _digest(self.idempotency_key, "idempotencyKey")
+        _positive_integer(self.attempt_number, "attemptNumber")
+        _enum(self.lookup_mode, _LOOKUP_MODES, "lookupMode")
+        _optional_id(self.provider_operation_id, "providerOperationId")
+        if self.lookup_mode == "idempotency_key":
+            if self.provider_operation_id is not None:
+                raise ValueError("idempotency key lookup must not carry a provider operation ID")
+        elif self.provider_operation_id is None:
+            raise ValueError("provider operation lookup requires a provider operation ID")
+        _timestamp(self.requested_at, "requestedAt")
+        _optional_traceparent(self.traceparent, "traceparent")
+        if self.causation_id != self.unknown_source_id:
+            raise ValueError("causationId must equal the unknown source ID")
+        self.canonical_bytes()
+
+    def validate_request_binding(self, request: IMDispatchRequestV1) -> None:
+        """Bind the query to an exact request after trusted durable request lookup."""
+
+        _require_exact_model(request, IMDispatchRequestV1, "dispatch request")
+        command = request.command
+        intent = command.intent
+        if _scope(self) != _scope(intent.conversation):
+            raise ValueError("acceptance query scope does not match its dispatch request")
+        bindings = (
+            (self.action_id, intent.action_id, "actionId"),
+            (self.command_id, command.command_id, "commandId"),
+            (self.dispatch_attempt_id, request.dispatch_attempt_id, "dispatchAttemptId"),
+            (
+                self.dispatch_request_digest,
+                request.canonical_digest(),
+                "dispatchRequestDigest",
+            ),
+            (self.intent_digest, command.intent_digest, "intentDigest"),
+            (self.command_digest, request.command_digest, "commandDigest"),
+            (self.idempotency_key, command.idempotency_key, "idempotencyKey"),
+            (self.attempt_number, request.attempt_number, "attemptNumber"),
+            (self.correlation_id, command.correlation_id, "correlationId"),
+            (self.traceparent, command.traceparent, "traceparent"),
+        )
+        for actual, expected, label in bindings:
+            if actual != expected:
+                raise ValueError(f"{label} does not match the dispatch request")
+
+    def validate_receipt_source_binding(
+        self,
+        receipt: IMActionReceiptV1,
+        request: IMDispatchRequestV1,
+    ) -> None:
+        """Bind an effect-unknown receipt source after exact durable source lookup."""
+
+        _require_exact_model(receipt, IMActionReceiptV1, "action receipt")
+        self.validate_request_binding(request)
+        if self.unknown_source_type != "action_receipt":
+            raise ValueError("unknownSourceType does not select an action receipt")
+        if self.unknown_source_id != receipt.receipt_id:
+            raise ValueError("unknownSourceId does not match the action receipt")
+        if receipt.state != "effect_unknown":
+            raise ValueError("acceptance query source receipt must be effect_unknown")
+        receipt._validate_request_binding_values(request)
+        if self.lookup_mode == "provider_operation_id" and (
+            self.provider_operation_id != receipt.provider_operation_id
+        ):
+            raise ValueError("providerOperationId does not match the source receipt")
+
+    def validate_observation_source_binding(
+        self,
+        observation: IMDispatchUnknownObservationV1,
+        request: IMDispatchRequestV1,
+    ) -> None:
+        """Bind a local unknown observation after exact durable source lookup."""
+
+        _require_exact_model(
+            observation,
+            IMDispatchUnknownObservationV1,
+            "dispatch unknown observation",
+        )
+        self.validate_request_binding(request)
+        if self.unknown_source_type != "dispatch_unknown_observation":
+            raise ValueError("unknownSourceType does not select a dispatch observation")
+        if self.unknown_source_id != observation.observation_id:
+            raise ValueError("unknownSourceId does not match the dispatch observation")
+        if observation.dispatch_request != request:
+            raise ValueError("dispatch observation does not bind the same request")
+        if self.lookup_mode != "idempotency_key":
+            raise ValueError("dispatch observation cannot source a provider operation lookup")
+
+    def validate_capability_binding(
+        self,
+        capability: IMCapabilitySnapshotV1,
+        request: IMDispatchRequestV1,
+    ) -> IMAcceptanceLookupCapabilityV1:
+        """Select the exact lookup profile after trusted capability and request lookup."""
+
+        _require_exact_model(capability, IMCapabilitySnapshotV1, "capability snapshot")
+        self.validate_request_binding(request)
+        request.command.validate_capability_binding(capability)
+        operation_profile = next(
+            profile
+            for profile in capability.operations
+            if profile.operation == request.command.intent.operation
+        )
+        for lookup_profile in operation_profile.acceptance_lookups:
+            if lookup_profile.lookup_mode == self.lookup_mode:
+                return lookup_profile
+        raise ValueError("capability operation does not support the acceptance lookup mode")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": self.schema_version,
+            "queryId": self.query_id,
+            "unknownSourceType": self.unknown_source_type,
+            "unknownSourceId": self.unknown_source_id,
+            "tenantId": self.tenant_id,
+            "workspaceId": self.workspace_id,
+            "provider": self.provider,
+            "channelId": self.channel_id,
+            "actionId": self.action_id,
+            "commandId": self.command_id,
+            "dispatchAttemptId": self.dispatch_attempt_id,
+            "dispatchRequestDigest": self.dispatch_request_digest,
+            "intentDigest": self.intent_digest,
+            "commandDigest": self.command_digest,
+            "idempotencyKey": self.idempotency_key,
+            "attemptNumber": self.attempt_number,
+            "lookupMode": self.lookup_mode,
+            "providerOperationId": self.provider_operation_id,
+            "requestedAt": self.requested_at,
+            "correlationId": self.correlation_id,
+            "causationId": self.causation_id,
+            "traceparent": self.traceparent,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> IMAcceptanceQueryV1:
+        if cls is not IMAcceptanceQueryV1:
+            raise TypeError("acceptance query decoder requires the exact V1 class")
+        body = _plain_dict(value, _ACCEPTANCE_QUERY_FIELDS, "acceptance query")
+        return cls(
+            schema_version=body["schemaVersion"],
+            query_id=body["queryId"],
+            unknown_source_type=body["unknownSourceType"],
+            unknown_source_id=body["unknownSourceId"],
+            tenant_id=body["tenantId"],
+            workspace_id=body["workspaceId"],
+            provider=body["provider"],
+            channel_id=body["channelId"],
+            action_id=body["actionId"],
+            command_id=body["commandId"],
+            dispatch_attempt_id=body["dispatchAttemptId"],
+            dispatch_request_digest=body["dispatchRequestDigest"],
+            intent_digest=body["intentDigest"],
+            command_digest=body["commandDigest"],
+            idempotency_key=body["idempotencyKey"],
+            attempt_number=body["attemptNumber"],
+            lookup_mode=body["lookupMode"],
+            provider_operation_id=body["providerOperationId"],
+            requested_at=body["requestedAt"],
+            correlation_id=body["correlationId"],
+            causation_id=body["causationId"],
+            traceparent=body["traceparent"],
+        )
+
+
 __all__ = [
     "IMAcceptanceLookupCapabilityV1",
+    "IMAcceptanceQueryV1",
     "IMActionCommandV1",
     "IMActionIntentV1",
     "IMActionReceiptV1",
