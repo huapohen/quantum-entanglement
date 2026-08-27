@@ -132,39 +132,59 @@ tests/test_native_im_no_network.py
 src/quantum_entanglement/native_im_inbox.py
 src/quantum_entanglement/native_im_sandbox.py
 src/quantum_entanglement/service/native_im_config.py
+src/quantum_entanglement/store.py
+src/quantum_entanglement/migrations/0005_native_im_inbox.up.sql
+src/quantum_entanglement/migrations/0005_native_im_inbox.down.sql
 tests/test_native_im_inbox.py
 tests/test_native_im_sandbox_config.py
 tests/test_native_im_sandbox_contract.py
+tests/test_native_im_inbox_migration.py
+tests/test_native_im_inbox_backup.py
 docs/production/NATIVE_IM_SANDBOX_RUNBOOK.md
 docs/production/NATIVE_IM_SANDBOX_APPROVAL_TEMPLATE.md
 ```
 
 Provider-specific mapping放在独立 adapter 模块，不写回 provider-neutral value types。
 
+提前接入改变了原 migration 排序：编号现在冻结为 `0005_native_im_inbox`、
+`0006_atomic_invocation_results`、`0007_native_im_actions`。ADR 编号
+`ADR_0005_ATOMIC_RESULT_AUTHORITY` 是架构决策编号，不随 SQL migration 序号改变；相关计划、
+topology、backup/restore inventory 必须在注册 `0005` 前同步更新。
+
 ### 5.3 小提交顺序
 
 1. provider profile exact schema 与 unsupported capability 表；
 2. sandbox config：HTTPS/host/port/path allowlist、no redirect、credential `SecretRef`；
 3. signature/timestamp/nonce verifier 与 raw-body digest；
-4. `(tenant, workspace, provider, eventId, eventDigest)` durable inbox key；
-5. verified envelope + inbox receipt 原子 admission；
-6. cursor/snapshot/resume read model；
-7. inbound-only adapter skeleton 和 feature flag；
-8. bounded page/stream parser、disconnect/resume 和 duplicate/conflict；
-9. message-body-safe logging、secret canary、metrics/trace；
-10. kill switch、startup preflight、health/ready 与 graceful close；
-11. fake contract probe；
-12. 修订 `SERVICE_BOUNDARY.md`，只放行批准记录中的 sandbox read；
-13. 真实 sandbox health/read/dedupe/resume 验收；
-14. Level B 证据、GitHub 回读和阶段末 Notion 同步。
+4. `(tenantId, workspaceId, provider, channelId, eventId)` durable inbox 唯一键；
+5. `eventDigest` 作为该唯一记录的 immutable binding 逐值比较，同键异 digest 失败关闭；
+6. verified envelope + inbox receipt 原子 admission；
+7. 整页 envelopes、page/snapshot binding 与 cursor checkpoint 同事务提交；
+8. cursor/snapshot/resume read model；
+9. inbound-only adapter skeleton 和 feature flag；
+10. bounded page/stream parser、disconnect/resume 和 duplicate/conflict；
+11. migration registration、upgrade/downgrade、backup/restore 和 topology inventory；
+12. message-body-safe logging、secret canary、metrics/trace；
+13. kill switch、startup preflight、health/ready 与 graceful close；
+14. fake contract probe；
+15. 修订 `SERVICE_BOUNDARY.md`，只放行批准记录中的 sandbox read；
+16. 真实 sandbox health/read/dedupe/resume 验收；
+17. Level B 证据、GitHub 回读和阶段末 Notion 同步。
 
 ### 5.4 Level B 通过条件
 
 - endpoint/tenant/account/conversation 均为预登记测试对象；
 - 数据为非敏感合成数据，outbound allowlist 为空；
 - invalid signature、expired timestamp、nonce replay、digest conflict 全部失败关闭；
+- 同一完整 scope + `eventId` 只能绑定一个 `eventDigest`；整页 admission 与 cursor checkpoint
+  不得出现可观察的半提交；
+- page COMMIT ACK 不明时，重开后必须按 `readRequestDigest` 对账整页与 checkpoint，不能直接读取
+  下一页；
 - duplicate/out-of-order/disconnect/cursor resume 不丢失 accepted event，也不重复 admission；
 - 入站只形成可审计 observation，无法调用 `MentionRouter`、Agent、tool 或 connector；
+- inbound adapter 的 `dispatch/query_acceptance` 必须在检查业务请求或读取 secret 前稳定失败；读取
+  credential 本身只有 inbound read 权限，transport 只允许登记的 health/read 方法与路径且不跟随
+  redirect；
 - kill switch 关闭后不再 admission，重启仍可从 durable cursor 安全恢复；
 - 日志、错误、event、Artifact、trace、测试证据中没有 credential canary 或完整消息正文；
 - 精确 commit/tree、配置摘要、回退命令和已验证 endpoint class 已记录。
@@ -181,12 +201,16 @@ Provider-specific mapping放在独立 adapter 模块，不写回 provider-neutra
 1. private stored-event envelope codec 与 durable raw-row readback；
 2. reserved result event fence；
 3. Result/Artifact/receipt/attempt/job/task terminal state same-transaction primitives；
-4. Atomic Result Writer 与 `fresh | observed | unknown` 分类；
-5. ACK-loss/reopen/peer-process/conflict/partial-graph recovery；
-6. heartbeat-supervised PURE worker，spawn/exec-before-secret-load；
-7. verified inbox receipt 到 durable invocation 的单向 bridge；
-8. Agent 输出只形成 pending Artifact 与 `IMActionIntentV1` 草稿；
-9. UI/API 显示来源 event、result receipt、草稿和“未发送”。
+4. `0006_atomic_invocation_results` migration、topology、backup/restore 与 rollback evidence；
+5. Atomic Result Writer 与 `fresh | observed | unknown` 分类；
+6. ACK-loss/reopen/peer-process/conflict/partial-graph recovery；
+7. heartbeat-supervised PURE worker，spawn/exec-before-secret-load；
+8. verified inbox receipt 到 durable invocation 的独立单向 bridge；
+9. bridge 使用 `native-im-event:<eventDigest>` 作为 invocation idempotency，传播 event
+   correlation、以 event ID 作为 causation、原样传播 traceparent，并按有序 mention segment 与
+   scope-bound roster 解析；
+10. Agent 输出只形成 pending Artifact 与 `IMActionIntentV1` 草稿；
+11. UI/API 显示来源 event、result receipt、草稿和“未发送”。
 
 ### 6.2 硬检查
 
@@ -206,7 +230,7 @@ Provider-specific mapping放在独立 adapter 模块，不写回 provider-neutra
 
 小提交顺序：
 
-1. inactive Action Command/Receipt schema 与 migration evidence；
+1. `0007_native_im_actions` 的 inactive Action Command/Receipt schema 与 migration evidence；
 2. action-time authorization exact request/result；
 3. Intent -> durable Command 的 scope/capability/policy CAS；
 4. transactional outbox identity 与 stable receiver idempotency key；
@@ -251,9 +275,13 @@ sandbox 批准范围内。
 
 ## 9. 提交、分支、测试与同步纪律
 
-- 每个编号实现点至少一个独立 commit；先失败测试，再实现，再文档证据；
+- 本地开发保持 red→green；每个推送到 `main` 的小 commit 都必须 focused tests 通过、功能
+  default-off 且可独立回退。测试与最小实现可同一 commit，或先提交不会让门禁变红的 fixture/
+  contract inventory；
 - 高风险 codec、inbox、Atomic Result Writer、dispatcher 分别做独立 adversarial review；
-- 短生命周期 worktree 统一放在仓库 `worktrees/` 下，合并后推 main 并删除本地/远端活动分支；
+- 短生命周期 worktree 统一放在
+  `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/` 下，合并后推 main
+  并删除本地/远端活动分支；
 - `backup_0827_200010` 永不追加提交；新阶段需要恢复点时新建 `backup_MMDD_HHMMSS`；
 - 每个稳定阶段结束执行 GitHub push、远端 SHA 回读、分支目录刷新、report sync checkpoint；
 - Notion 按 E1/E2/E3/E4/E5 阶段末批量同步并逐页回读，不再阻塞每个小 commit；
