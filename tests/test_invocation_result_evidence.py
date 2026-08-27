@@ -122,6 +122,34 @@ class ScopedInvocationResultEvidenceTests(unittest.TestCase):
         self.assertEqual(evidence.canonical_digest(), expected)
         self.assertNotIn("leaseToken", repr(evidence))
 
+    def test_evidence_and_coordinate_snapshots_ignore_method_shadowing(self) -> None:
+        evidence = valid_evidence()
+        baseline_bytes = ScopedInvocationResultEvidenceV2.canonical_bytes(evidence)
+        baseline_digest = ScopedInvocationResultEvidenceV2.canonical_digest(evidence)
+        forged_evidence = valid_evidence(receipt_id="receipt-forged")
+        object.__setattr__(evidence, "to_dict", forged_evidence.to_dict)
+        object.__setattr__(evidence, "canonical_bytes", lambda: b"forged")
+
+        self.assertEqual(
+            ScopedInvocationResultEvidenceV2.canonical_bytes(evidence),
+            baseline_bytes,
+        )
+        self.assertEqual(
+            ScopedInvocationResultEvidenceV2.canonical_digest(evidence),
+            baseline_digest,
+        )
+        self.assertEqual(
+            invocation_results_module._result_evidence_snapshot(evidence).receipt_id,
+            "receipt-result-1",
+        )
+
+        coordinates = valid_coordinates()
+        forged_coordinates = valid_coordinates(event_id="event-forged")
+        object.__setattr__(coordinates, "to_dict", forged_coordinates.to_dict)
+        snapshot = invocation_results_module._result_event_coordinates_snapshot(coordinates)
+        self.assertEqual(snapshot.event_id, "event-result-1")
+        self.assertIsNot(snapshot, coordinates)
+
     def test_every_evidence_wire_field_is_required_and_future_fields_fail(self) -> None:
         wire = valid_evidence().to_dict()
         for field_name in tuple(wire):

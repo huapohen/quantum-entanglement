@@ -742,6 +742,16 @@ class ScopedInvocationResultEventCoordinatesV2:
         )
 
 
+def _result_event_coordinates_snapshot(
+    coordinates: object,
+) -> ScopedInvocationResultEventCoordinatesV2:
+    if type(coordinates) is not ScopedInvocationResultEventCoordinatesV2:
+        raise TypeError("coordinates must be exact ScopedInvocationResultEventCoordinatesV2")
+    return ScopedInvocationResultEventCoordinatesV2.from_dict(
+        ScopedInvocationResultEventCoordinatesV2.to_dict(coordinates)
+    )
+
+
 @dataclass(frozen=True)
 class ScopedInvocationResultEvidenceV2:
     """Exact schema-2 payload for the canonical accepted-result event."""
@@ -911,12 +921,23 @@ class ScopedInvocationResultEvidenceV2:
         )
 
     def canonical_bytes(self) -> bytes:
-        return _canonical_json_bytes(self.to_dict())
+        snapshot = _result_evidence_snapshot(self)
+        return _canonical_json_bytes(ScopedInvocationResultEvidenceV2.to_dict(snapshot))
 
     def canonical_digest(self) -> str:
+        snapshot = _result_evidence_snapshot(self)
         return hashlib.sha256(
-            SCOPED_INVOCATION_RESULT_EVIDENCE_DOMAIN.encode("utf-8") + self.canonical_bytes()
+            SCOPED_INVOCATION_RESULT_EVIDENCE_DOMAIN.encode("utf-8")
+            + _canonical_json_bytes(ScopedInvocationResultEvidenceV2.to_dict(snapshot))
         ).hexdigest()
+
+
+def _result_evidence_snapshot(evidence: object) -> ScopedInvocationResultEvidenceV2:
+    if type(evidence) is not ScopedInvocationResultEvidenceV2:
+        raise TypeError("evidence must be exact ScopedInvocationResultEvidenceV2")
+    return ScopedInvocationResultEvidenceV2.from_dict(
+        ScopedInvocationResultEvidenceV2.to_dict(evidence)
+    )
 
 
 @dataclass(frozen=True)
