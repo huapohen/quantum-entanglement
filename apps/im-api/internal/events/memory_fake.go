@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"time"
 )
@@ -17,25 +18,9 @@ const (
 	maxEncodedCursor    = 4096
 	appendDigestDomain  = "wanwork.im/volatile-memory-event-store/append/1\n"
 	cursorDigestDomain  = "wanwork.im/volatile-memory-event-store/cursor/1\n"
+	cursorEpochDomain   = "wanwork.im/volatile-memory-event-store/epoch/1\n"
 	cursorSchemaVersion = 1
 )
-
-type StoreDurability string
-
-const (
-	StoreDurabilityVolatile StoreDurability = "volatile"
-)
-
-// StoreCharacteristics prevents a contract fake from being mistaken for a production store.
-// VolatileMemoryStore executes no Agent code, survives no process restart, and supplies neither
-// tamper evidence nor durable Action receipts.
-type StoreCharacteristics struct {
-	Durability                       StoreDurability
-	DeterministicGivenInputsAndClock bool
-	PersistsAcrossRestart            bool
-	TamperEvident                    bool
-	ProvidesActionReceipts           bool
-}
 
 type StoreClock func() time.Time
 
@@ -63,6 +48,7 @@ type VolatileMemoryStore struct {
 	mu sync.RWMutex
 
 	clock StoreClock
+	epoch SHA256Digest
 
 	streams        map[eventScope][]StoredEvent
 	global         []StoredEvent
@@ -73,12 +59,16 @@ type VolatileMemoryStore struct {
 
 var _ EventStore = (*VolatileMemoryStore)(nil)
 
-func NewVolatileMemoryStore(clock StoreClock) (*VolatileMemoryStore, error) {
+func NewVolatileMemoryStore(instanceID string, clock StoreClock) (*VolatileMemoryStore, error) {
+	if !validOpaqueText(instanceID, maxIdentifierBytes) {
+		return nil, ErrInvalidStore
+	}
 	if clock == nil {
 		return nil, ErrStoreClock
 	}
 	return &VolatileMemoryStore{
 		clock:   clock,
+		epoch:   digestBytes(cursorEpochDomain, []byte(instanceID)),
 		streams: make(map[eventScope][]StoredEvent),
 		retries: make(map[retryIdentity]*appendRecord),
 	}, nil
@@ -124,6 +114,10 @@ func (store *VolatileMemoryStore) AppendBatch(ctx context.Context, batch AppendB
 	if request.ExpectedVersion != currentVersion {
 		return AppendResult{}, ErrRevisionConflict
 	}
+	batchSize := uint64(len(request.Events))
+	if currentVersion > math.MaxUint64-batchSize || store.globalPosition > math.MaxUint64-batchSize {
+		return AppendResult{}, ErrStoreCapacity
+	}
 	recordedAt, err := store.readClock()
 	if err != nil {
 		return AppendResult{}, err
@@ -167,7 +161,7 @@ func (store *VolatileMemoryStore) ReadStreamPage(ctx context.Context, query Stre
 		return StreamPage{}, err
 	}
 	scope := scopeFromStreamQuery(query)
-	after, err := decodeBoundCursor(query.After, cursorBindingFromScope("stream", scope))
+	after, err := decodeBoundCursor(query.After, store.cursorBindingFromScope("stream", scope))
 	if err != nil {
 		return StreamPage{}, err
 	}
@@ -183,7 +177,7 @@ func (store *VolatileMemoryStore) ReadStreamPage(ctx context.Context, query Stre
 	pageEvents := cloneStoredEvents(events[start:end])
 	page := StreamPage{Events: pageEvents, HasMore: end < len(events), Next: query.After}
 	if len(pageEvents) > 0 {
-		page.Next, err = encodeCursor(cursorBindingFromScope("stream", scope), pageEvents[len(pageEvents)-1].Sequence)
+		page.Next, err = encodeCursor(store.cursorBindingFromScope("stream", scope), pageEvents[len(pageEvents)-1].Sequence)
 		if err != nil {
 			return StreamPage{}, err
 		}
@@ -204,7 +198,7 @@ func (store *VolatileMemoryStore) ReadGlobalPage(ctx context.Context, query Glob
 	if err := contextError(ctx); err != nil {
 		return GlobalPage{}, err
 	}
-	binding := cursorBindingFromGlobalQuery(query)
+	binding := store.cursorBindingFromGlobalQuery(query)
 	after, err := decodeBoundCursor(query.After, binding)
 	if err != nil {
 		return GlobalPage{}, err
@@ -304,6 +298,7 @@ func snapshotAppendRequest(batch AppendBatch) (AppendBatch, SHA256Digest, []retr
 			Digest: eventDigest,
 		})
 		identities = append(identities, retryIdentity{scope: scope, kind: "event", value: eventSnapshot.EventID})
+		identities[len(identities)-1].scope.stream = ""
 		if eventSnapshot.IdempotencyKey != nil {
 			identities = append(identities, retryIdentity{
 				scope: scope, kind: "idempotency", value: *eventSnapshot.IdempotencyKey,
@@ -328,6 +323,7 @@ func snapshotAppendRequest(batch AppendBatch) (AppendBatch, SHA256Digest, []retr
 }
 
 type cursorBinding struct {
+	epoch        SHA256Digest
 	kind         string
 	tenant       string
 	workspaceSet bool
@@ -336,13 +332,14 @@ type cursorBinding struct {
 }
 
 type cursorContent struct {
-	Version      uint32 `json:"version"`
-	Kind         string `json:"kind"`
-	Tenant       string `json:"tenant"`
-	WorkspaceSet bool   `json:"workspaceSet"`
-	Workspace    string `json:"workspace"`
-	Stream       string `json:"stream"`
-	Position     uint64 `json:"position"`
+	Version      uint32       `json:"version"`
+	Epoch        SHA256Digest `json:"epoch"`
+	Kind         string       `json:"kind"`
+	Tenant       string       `json:"tenant"`
+	WorkspaceSet bool         `json:"workspaceSet"`
+	Workspace    string       `json:"workspace"`
+	Stream       string       `json:"stream"`
+	Position     uint64       `json:"position"`
 }
 
 type cursorEnvelope struct {
@@ -352,7 +349,7 @@ type cursorEnvelope struct {
 
 func encodeCursor(binding cursorBinding, position uint64) (Cursor, error) {
 	content := cursorContent{
-		Version: cursorSchemaVersion, Kind: binding.kind, Tenant: binding.tenant,
+		Version: cursorSchemaVersion, Epoch: binding.epoch, Kind: binding.kind, Tenant: binding.tenant,
 		WorkspaceSet: binding.workspaceSet, Workspace: binding.workspace,
 		Stream: binding.stream, Position: position,
 	}
@@ -394,7 +391,7 @@ func decodeBoundCursor(cursor Cursor, binding cursorBinding) (uint64, error) {
 		return 0, ErrInvalidCursor
 	}
 	content := envelope.Content
-	if content.Version != cursorSchemaVersion || content.Kind != binding.kind ||
+	if content.Version != cursorSchemaVersion || content.Epoch != binding.epoch || content.Kind != binding.kind ||
 		content.Tenant != binding.tenant || content.WorkspaceSet != binding.workspaceSet ||
 		content.Workspace != binding.workspace || content.Stream != binding.stream || content.Position == 0 {
 		return 0, ErrInvalidCursor
@@ -432,16 +429,16 @@ func newEventScope(tenant string, workspace *string, stream string) eventScope {
 	return scope
 }
 
-func cursorBindingFromScope(kind string, scope eventScope) cursorBinding {
+func (store *VolatileMemoryStore) cursorBindingFromScope(kind string, scope eventScope) cursorBinding {
 	return cursorBinding{
-		kind: kind, tenant: scope.tenant, workspaceSet: scope.workspaceSet,
+		epoch: store.epoch, kind: kind, tenant: scope.tenant, workspaceSet: scope.workspaceSet,
 		workspace: scope.workspace, stream: scope.stream,
 	}
 }
 
-func cursorBindingFromGlobalQuery(query GlobalQuery) cursorBinding {
+func (store *VolatileMemoryStore) cursorBindingFromGlobalQuery(query GlobalQuery) cursorBinding {
 	scope := newEventScope(query.TenantID, query.WorkspaceID, "")
-	return cursorBindingFromScope("global", scope)
+	return store.cursorBindingFromScope("global", scope)
 }
 
 func eventMatchesGlobalQuery(event StoredEvent, query GlobalQuery) bool {

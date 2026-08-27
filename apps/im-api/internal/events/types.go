@@ -15,7 +15,10 @@ var (
 	ErrIdempotencyConflict   = errors.New("event idempotency conflict")
 	ErrInvalidQuery          = errors.New("invalid event query")
 	ErrInvalidCursor         = errors.New("invalid event cursor")
+	ErrInvalidStore          = errors.New("invalid event store configuration")
+	ErrStoreRequirements     = errors.New("event store does not meet requirements")
 	ErrStoreClock            = errors.New("event store clock is invalid")
+	ErrStoreCapacity         = errors.New("event store capacity exceeded")
 	ErrProjectionUnsupported = errors.New("event projection schema is unsupported")
 )
 
@@ -126,7 +129,32 @@ type GlobalPage struct {
 	HasMore bool
 }
 
+type StoreDurability string
+
+const (
+	StoreDurabilityVolatile StoreDurability = "volatile"
+	StoreDurabilityDurable  StoreDurability = "durable"
+)
+
+// StoreCharacteristics is part of the EventStore port so a production composition can reject a
+// contract fake instead of trusting a concrete implementation name.
+type StoreCharacteristics struct {
+	Durability                       StoreDurability
+	DeterministicGivenInputsAndClock bool
+	PersistsAcrossRestart            bool
+	TamperEvident                    bool
+	ProvidesActionReceipts           bool
+}
+
+type StoreRequirements struct {
+	Durability             StoreDurability
+	PersistsAcrossRestart  bool
+	TamperEvident          bool
+	ProvidesActionReceipts bool
+}
+
 type EventStore interface {
+	Characteristics() StoreCharacteristics
 	AppendBatch(context.Context, AppendBatch) (AppendResult, error)
 	ReadStreamPage(context.Context, StreamQuery) (StreamPage, error)
 	ReadGlobalPage(context.Context, GlobalQuery) (GlobalPage, error)

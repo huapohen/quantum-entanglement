@@ -22,6 +22,29 @@ var (
 	traceparentPattern = regexp.MustCompile(`^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
 )
 
+// ValidateStoreRequirements is a fail-closed composition guard. It does not turn a provider's
+// self-declared characteristics into proof; production adapters still require their own crash,
+// restore, and evidence conformance gates.
+func ValidateStoreRequirements(store EventStore, requirements StoreRequirements) error {
+	if store == nil {
+		return ErrStoreRequirements
+	}
+	characteristics := store.Characteristics()
+	if requirements.Durability != "" && characteristics.Durability != requirements.Durability {
+		return ErrStoreRequirements
+	}
+	if requirements.PersistsAcrossRestart && !characteristics.PersistsAcrossRestart {
+		return ErrStoreRequirements
+	}
+	if requirements.TamperEvident && !characteristics.TamperEvident {
+		return ErrStoreRequirements
+	}
+	if requirements.ProvidesActionReceipts && !characteristics.ProvidesActionReceipts {
+		return ErrStoreRequirements
+	}
+	return nil
+}
+
 type canonicalEventPayload struct {
 	Kind      PayloadKind       `json:"kind"`
 	Inline    json.RawMessage   `json:"inline,omitempty"`

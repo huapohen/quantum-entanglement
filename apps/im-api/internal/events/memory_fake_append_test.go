@@ -38,7 +38,10 @@ func (clock *scriptedStoreClock) Calls() int {
 func TestVolatileMemoryStoreDeclaresItsNonProductionBoundaries(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewVolatileMemoryStore(nil); !errors.Is(err, ErrStoreClock) {
+	if _, err := NewVolatileMemoryStore("", func() time.Time { return contractTime }); !errors.Is(err, ErrInvalidStore) {
+		t.Fatalf("empty instance error = %v, want %v", err, ErrInvalidStore)
+	}
+	if _, err := NewVolatileMemoryStore("test-instance", nil); !errors.Is(err, ErrStoreClock) {
 		t.Fatalf("nil clock error = %v, want %v", err, ErrStoreClock)
 	}
 	store := newVolatileStore(t, contractTime)
@@ -53,6 +56,16 @@ func TestVolatileMemoryStoreDeclaresItsNonProductionBoundaries(t *testing.T) {
 	if got != want {
 		t.Fatalf("characteristics = %#v, want %#v", got, want)
 	}
+	if err := ValidateStoreRequirements(store, StoreRequirements{Durability: StoreDurabilityVolatile}); err != nil {
+		t.Fatalf("volatile requirement: %v", err)
+	}
+	production := StoreRequirements{
+		Durability: StoreDurabilityDurable, PersistsAcrossRestart: true,
+		TamperEvident: true, ProvidesActionReceipts: true,
+	}
+	if err := ValidateStoreRequirements(store, production); !errors.Is(err, ErrStoreRequirements) {
+		t.Fatalf("production requirement error = %v, want %v", err, ErrStoreRequirements)
+	}
 }
 
 func TestVolatileMemoryStoreAppendOwnsFactsAndExactRetry(t *testing.T) {
@@ -60,7 +73,7 @@ func TestVolatileMemoryStoreAppendOwnsFactsAndExactRetry(t *testing.T) {
 
 	recordedAt := contractTime.Add(5 * time.Minute)
 	clock := &scriptedStoreClock{values: []time.Time{recordedAt}}
-	store, err := NewVolatileMemoryStore(clock.Now)
+	store, err := NewVolatileMemoryStore("exact-retry", clock.Now)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -112,7 +125,7 @@ func TestVolatileMemoryStoreRejectsRetryDriftAndLeavesNoPartialWrite(t *testing.
 	t.Parallel()
 
 	clock := &scriptedStoreClock{values: []time.Time{contractTime, contractTime.Add(time.Second)}}
-	store, err := NewVolatileMemoryStore(clock.Now)
+	store, err := NewVolatileMemoryStore("retry-conflict", clock.Now)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -180,7 +193,7 @@ func TestVolatileMemoryStoreRevisionContextAndClockFailuresWriteNothing(t *testi
 		contractTime.Add(-time.Second),
 		contractTime.Add(time.Second),
 	}}
-	store, err := NewVolatileMemoryStore(clock.Now)
+	store, err := NewVolatileMemoryStore("failure-atomicity", clock.Now)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -219,7 +232,7 @@ func TestVolatileMemoryStoreRevisionContextAndClockFailuresWriteNothing(t *testi
 func TestVolatileMemoryStoreContainsClockPanic(t *testing.T) {
 	t.Parallel()
 
-	store, err := NewVolatileMemoryStore(func() time.Time { panic("clock secret must not escape") })
+	store, err := NewVolatileMemoryStore("panic-clock", func() time.Time { panic("clock secret must not escape") })
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -279,7 +292,7 @@ func storeSnapshotEvents(events []StoredEvent) []StoredEvent {
 func newVolatileStore(t *testing.T, values ...time.Time) *VolatileMemoryStore {
 	t.Helper()
 	clock := &scriptedStoreClock{values: values}
-	store, err := NewVolatileMemoryStore(clock.Now)
+	store, err := NewVolatileMemoryStore("test-instance", clock.Now)
 	if err != nil {
 		t.Fatalf("new volatile store: %v", err)
 	}
