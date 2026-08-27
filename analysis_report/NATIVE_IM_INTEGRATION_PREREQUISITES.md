@@ -1,12 +1,14 @@
 # 原生 IM 接入前必做事项与接入后 TODO 分界
 
-> 决策版本：2026-08-28-native-im-entry-v2
+> 决策版本：2026-08-28-native-im-entry-v3
 >
 > 适用仓库：`quantum_entanglement`
 >
 > 当前执行分支：`mainline_continue_quantum_entanglement`
 >
 > E1 源码证据：`7620200f8e378507b1f592d6d34744080250d2ea`
+>
+> E2 离线底座证据：`4ab745b1a83e3a840fe503fefc0bae58b112c95b`
 >
 > 决策性质：原生 IM 接入的执行顺序与验收边界；不是生产发布批准
 >
@@ -22,8 +24,15 @@
 
 > **2026-08-28 E1 收口：** E1 / Level A `CONTRACT_EXECUTABLE` 已完成，内部
 > `IM-P0 CONTRACT_READY` 只按 provider-neutral contract/fake 里程碑完成。真实 provider profile、
-> adapter、endpoint、credential 和 sandbox inbound 均未开始；完整证据见
+> adapter、endpoint、credential 和 sandbox inbound 当时均未开始；完整 E1 证据见
 > [`research/22_native_im_e1_contract_executable_evidence.md`](./research/22_native_im_e1_contract_executable_evidence.md)。
+
+> **2026-08-28 E2 离线底座：** exact profile schema、inbound-only config/secret reference、
+> raw-body verifier、migration 5 六表、durable nonce claim 和 exact-request replayable read
+> preparation 已推进到
+> `4ab745b`。真实 sandbox 参数和网络仍未介入；下一硬门禁是 nonce + verified page + events +
+> checkpoint 单事务 admission。证据见
+> [`research/23_native_im_e2_offline_inbox_foundation_evidence.md`](./research/23_native_im_e2_offline_inbox_foundation_evidence.md)。
 
 ## 1. 最终决策
 

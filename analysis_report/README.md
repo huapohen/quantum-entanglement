@@ -41,14 +41,16 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
-| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | P0 provider-neutral/fake 已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；真实 provider profile 和 E2 尚未开始 |
+| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | P0 provider-neutral/fake 已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；E2 离线底座已开始，真实网络仍关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
-| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | E1 已完成，等待阶段验收 | E0–E5、Level A–D、已交付 E1 文件/证据、E2 下一提交序列、可停点与 outbound 授权边界 |
+| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | E1 已完成；E2 离线底座进行中 | E0–E5、Level A–D、E2 已交付/待交付矩阵、下一原子 admission、可停点与 outbound 授权边界 |
 | `../docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md` | E1 生产说明已完成 | 四方法 port、zero-network fake、permit/ledger/ACK-loss、验证、回退和 E2 硬停止边界 |
 
-当前接入前代码基线已经安全备份，Level A 合同可执行已在 `7620200` 完成。完成文档、GitHub、
-Notion 收口并经用户验收后，下一步才是 Level B sandbox inbound-only；`NEXT_STAGE_PLAN.md` 继续作为
-E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前的串行总清单。
+当前接入前代码基线已经安全备份，Level A 合同可执行已在 `7620200` 完成并通过 Notion 回读。
+Level B 的离线 profile/config/verifier/migration/nonce/read-preparation 底座已推进到 `4ab745b`；下一
+P0 是 nonce + verified page + events + checkpoint 的单事务 admission，完成前不连接真实 sandbox。
+`NEXT_STAGE_PLAN.md` 继续作为 E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前的
+串行总清单。
 
 ## 专题研究
 
@@ -77,6 +79,7 @@ E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前�
 | `research/20_clawith_competitive_analysis.md` | Clawith 固定源码深研：2026-08-26 | 基于官网、官方文档和 `dataelement/Clawith@45fc701c` 的产品、群聊、长期身份、Aware/Pulse、Experience Library、Skills/MCP、治理与部署审计；明确可借鉴项、不可照搬项和 WanWork 优先级 |
 | `research/21_atomic_invocation_start_release_evidence.md` | 当前 atomic start 发布证据：`a1fd355` | first-claim/start 的代码、提交、Python 3.9/3.12/3.13、BEGIN/COMMIT/ROLLBACK ACK-loss、双连接、spawn/fork、backup/token canary 与未关闭 worker/result/action/Gate A–E 边界 |
 | `research/22_native_im_e1_contract_executable_evidence.md` | 原生 IM E1 证据：`7620200` | 21 个 V1 wire model、23 vectors、四方法 port、默认拒绝 fake、receiver 双账本、ACK-loss/query、271 项专项矩阵、三版本/full gate 与 E2 未开始边界 |
+| `research/23_native_im_e2_offline_inbox_foundation_evidence.md` | 原生 IM E2 离线底座：`4ab745b` | profile/config/verifier、migration 5 六表、durable nonce、read preparation、46 项专项/2,031 项全仓门禁，以及 page admission 单事务 P0 |
 
 ## 已归档截图
 

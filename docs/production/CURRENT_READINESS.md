@@ -60,7 +60,7 @@ event store 的单组件运行合同见
 
 测试通过证明对应断言在记录环境中成立，不证明端到端生产安全、容量、SLO、RPO/RTO 或 GA。
 
-### 原生 IM E1 状态
+### 原生 IM E1 与 E2 离线底座状态
 
 E1 / Level A `CONTRACT_EXECUTABLE` 已在源码候选 `7620200` 完成；内部
 `IM-P0 CONTRACT_READY` 仅按 provider-neutral contract/fake 里程碑完成。当前新增能力包括 21 个
@@ -70,10 +70,17 @@ receiver action/key 双账本、ACK-loss/post-accept exception 与 acceptance-qu
 socket/DNS/network-import/environment-credential zero-network gate。运行边界和证据见
 [`NATIVE_IM_P0_CONTRACT_EXECUTABLE.md`](./NATIVE_IM_P0_CONTRACT_EXECUTABLE.md)。
 
-这没有打开真实 IM：E2 sandbox inbound-only 尚未开始，仓库没有真实 provider adapter、endpoint、
-credential、webhook、HTTP/WebSocket client、socket connection、digest-bound durable IM inbox 或
-external IM send。Golden vectors 是代表性正向 inventory；全部 event/revision/scope/mention/digest
-union/state 矩阵由参数化 contract tests 覆盖。Gate A–E 均未因 E1 改变。
+E2 的离线底座现已推进到 `4ab745b`：exact provider profile、inbound-only config/`SecretRef`、
+raw-body verifier、migration 5 六表、profile-bound durable nonce claim，以及保留 exact request 时可
+重开 replay 并与 checkpoint 对账的 inbound read preparation 已实现。仓库没有真实 credential
+material/config/composition；read preparation 不调用 gateway、不访问 secret、不写通用 domain inbox，
+也不生成 Agent invocation。阶段证据见
+[`23_native_im_e2_offline_inbox_foundation_evidence.md`](../../analysis_report/research/23_native_im_e2_offline_inbox_foundation_evidence.md)。
+
+这仍没有打开真实 IM：仓库没有真实 provider adapter、webhook、HTTP/WebSocket client、socket
+connection 或 external IM send。nonce、verified page、event rows、read CAS 与 checkpoint 尚未组成
+同一原子事务，是连接任何 sandbox 前的 P0。Golden vectors 是代表性正向 inventory；全部
+event/revision/scope/mention/digest union/state 矩阵由参数化 contract tests 覆盖。Gate A–E 均未改变。
 
 ## 1. 可靠性与一致性
 
@@ -123,8 +130,9 @@ union/state 矩阵由参数化 contract tests 覆盖。Gate A–E 均未因 E1 �
 - Agent 返回后逐个写 artifact、result 和 completion，任一边界崩溃仍需 receipt-based reconcile；
 - succeeded attempt 没有不可变 result receipt 时不能安全自动投影 `COMPLETED`；
 - connector 不支持 receiver idempotency/fencing 时只能诚实承诺 at-least-once；
-- 原生 IM 尚无 provider profile、签名/nonce/replay verifier、durable inbox、page/cursor 原子
-  admission、真实 inbound adapter 或任何 outbound composition；E1 fake 不能替代这些能力；
+- 原生 IM 已有 provider profile、签名/timestamp/raw-body verifier、durable nonce、migration 5 inbox
+  schema 和 read preparation；但 nonce + verified page + events + checkpoint 原子 admission、真实
+  inbound adapter 和任何 outbound composition 仍不存在；E1 fake 不能替代这些能力；
 - 编排 session lock 是进程内锁，多进程/多实例调度仍可能重复调用 Agent；
 - 没有完整 crash-at-every-boundary、kill -9、long-running heartbeat 和 graceful drain E2E。
 - 共享 process identity helper 已通过真实 fork、nested fork、PID drift、fork-while-unrelated-lock、
@@ -294,6 +302,12 @@ release evidence 5/5 通过且 commit/tree 在门禁前后稳定、checkout 始�
 `releasable=true` 只证明固定 local predicate，不是生产 promotion。这些结果不把范围外 OS、
 SQLite、服务级 crash/soak、真实 IM 或生产 Gate 推定为已通过。
 
+E2 离线底座节点 `4ab745b` 又在本机 Python 3.13 完成 46/46 nonce + prepared-read 专项和
+2,031/2,031 全仓测试；dependency locks（4 targets / 74 records）、Ruff（168 files）、strict mypy
+（55 source files）、compileall、deterministic demo 与 diff check 全绿。Prepared-read matrix 覆盖
+25 列逐项 tamper、checkpoint 图、双连接竞争、ACK-loss/poison/reopen 和真实 POSIX fork。该结果仍
+不包含真实网络、provider sandbox、服务级 crash/soak 或生产批准。
+
 仍缺：
 
 - 完整的 supported OS/SQLite 组合矩阵；当前不可变 CI 只覆盖 GitHub Linux 的 Python 3.9/3.12，
@@ -328,10 +342,10 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
 
 按用户决定的提前接入顺序推进：
 
-1. E1 本地文档、GitHub 和 Notion 远端回读闭环后暂停验收；E2 未获继续指令前不进入真实网络；
-2. E2 先冻结真实 sandbox provider profile，建立 HTTPS host/port/path allowlist、no redirect、
-   inbound-only `SecretRef`、signature/timestamp/nonce/replay verifier、digest-bound durable inbox 和
-   page/cursor 原子 admission；
+1. E1 已闭环；E2 离线底座先把 durable nonce、verified page、event rows、read CAS 与 checkpoint
+   合成单一事务，并完成逐边界 rollback/ACK-loss/reopen 对账；
+2. 原子 page admission 通过后，再实现 inbound-only adapter skeleton、bounded parser、kill switch、
+   redaction 和 fake contract probe；仍不进入真实网络；
 3. 只有 sandbox endpoint class、测试 tenant/conversation、数据等级、read-only credential reference、
    方法路径、截止时间和 kill switch 获批后，才执行 health/read/dedupe/resume；Level B 只生成
    observation，不驱动 Agent、tool、browser、subprocess 或 outbound；

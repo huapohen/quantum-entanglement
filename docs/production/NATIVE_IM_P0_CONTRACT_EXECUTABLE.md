@@ -9,6 +9,11 @@
 > Safety boundary: provider-neutral models and a zero-network fake only. This document does not
 > authorize a sandbox endpoint, credential, webhook, socket connection, external IM read or send.
 
+> Historical checkpoint notice: statements below about E2 being unstarted describe source commit
+> `7620200`. E2's current offline-only progress is recorded in
+> [`23_native_im_e2_offline_inbox_foundation_evidence.md`](../../analysis_report/research/23_native_im_e2_offline_inbox_foundation_evidence.md).
+> No real sandbox network or outbound has been enabled.
+
 ## 1. Decision and exact meaning
 
 `IM-P0 CONTRACT_READY` is complete only as the provider-neutral contract/fake milestone. The
@@ -16,10 +21,10 @@ frozen V1 wire contract is executable: values can be decoded and encoded strictl
 idempotency identities can be independently reproduced, a provider adapter has one exact port,
 and receiver failure semantics can be exercised deterministically without network access.
 
-This milestone deliberately does **not** mean that a native IM has been integrated. E2 / Level B
-`SANDBOX_INBOUND` has not started. There is no real provider adapter, endpoint, credential,
-authenticator, webhook receiver, stream client, socket connection, durable IM inbox, or external
-IM send path in this candidate. Production Gates A–E remain closed.
+This milestone deliberately does **not** mean that a native IM has been integrated. At this E1
+evidence commit, E2 / Level B `SANDBOX_INBOUND` had not started. There was no real provider adapter,
+endpoint, credential, authenticator, webhook receiver, stream client, socket connection, durable
+IM inbox, or external IM send path in that candidate. Production Gates A–E remain closed.
 
 The frozen specification remains
 [`docs/architecture/NATIVE_IM_CONTRACT_V1.md`](../architecture/NATIVE_IM_CONTRACT_V1.md). This
@@ -202,10 +207,10 @@ commit; results from `7620200` do not automatically attest a later tree.
 
 ## 8. E2 handoff and hard stop
 
-E2 / Level B may begin only after an inbound-only sandbox provider profile and approval inputs are
-available. Its first implementation must add exact profile/config validation, authenticated event
-verification, a digest-bound durable inbox, atomic page/cursor admission, read-only feature flags,
-kill switch, logging redaction and backup/migration evidence.
+At the E1 evidence commit, E2 / Level B was planned to begin only after an inbound-only sandbox
+provider profile and approval inputs became available. Current E2 work has since implemented part
+of that list offline; the linked current evidence identifies atomic page/cursor admission as the
+next hard stop. Real transport still requires the recorded approval inputs.
 
 During Level B:
 

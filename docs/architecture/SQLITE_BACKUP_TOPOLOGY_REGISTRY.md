@@ -33,10 +33,10 @@ The topology profile is `qe.sqlite-topology/bridge-v1`; the registry format is
 `qe.sqlite-topology-registry/1`. The current registry digest is:
 
 ```text
-d940bea8e2a3c80cd76fc282a042667527632c236cf802fd39dab250005da2aa
+713eec98ba37ed10fc768036dc5489f91a4b02f6520821f66d566072bc6af548
 ```
 
-It contains nine profiles and 63 exact `sqlite_schema` objects:
+It contains ten profiles and 85 exact `sqlite_schema` objects:
 
 | Profile | Objects | Presence rule |
 |---|---:|---|
@@ -48,21 +48,28 @@ It contains nine profiles and 63 exact `sqlite_schema` objects:
 | `qe.domain-migration-0002/1` | 9 | required for applied migration 2 |
 | `qe.domain-migration-0003/1` | 4 | required for applied migration 3; depends on event-store core |
 | `qe.domain-migration-0004/1` | 5 | required for applied migration 4; depends on migration 1 and event-store core |
+| `qe.domain-migration-0005/1` | 22 | required for applied migration 5; durable native-IM inbox |
 | `qe.domain-migration-sidecar/1` | 4 | required when sidecar format 1 is present |
 
 The independently frozen identities that bind the new admission schema are:
 
 | Identity | SHA-256 |
 |---|---|
-| Domain-migration registry | `923e8e9c95e2da1844e79515b0a420b3397e343c57296cba561c1e8e99d96650` |
-| Backup-topology registry | `d940bea8e2a3c80cd76fc282a042667527632c236cf802fd39dab250005da2aa` |
+| Domain-migration registry | `fc53e0a9496ff2eb3a1727571ba7eec8841f3b2f829a81321ef8cd35d337eb97` |
+| Backup-topology registry | `713eec98ba37ed10fc768036dc5489f91a4b02f6520821f66d566072bc6af548` |
 | `qe.domain-migration-0004/1` profile | `5eb9ccd2ced7ac47e27db5911f82f84ff5500ce252634efe26fd3686b6488a6d` |
+| `qe.domain-migration-0005/1` profile | `976fe978e2b2c8c8a7f9fc12ca99d05dde8634d526bb03ef47a7064edfaac018` |
 
-Migration 4 is the current packaged `0004_invocation_admissions.up.sql`, owned by
+Migration 4 is the packaged `0004_invocation_admissions.up.sql`, owned by
 `admission@1`. Its domain descriptor has the semantic migration dependency `4 → 1`.
 Its topology profile additionally depends on `qe.event-store-core/1`, because the receipt
 table has foreign keys into `events`; that component prerequisite is not another durable
 domain-migration edge.
+
+Migration 5 is the current packaged `0005_native_im_inbox.up.sql`, owned by
+`native_im_inbox@1`. Its 22 topology objects cover six tables, SQLite-created
+autoindexes, the single-prepared/read-revision unique indexes, and the nonce-expiry
+index. It deliberately does not reuse the generic domain inbox.
 
 Every object binds:
 
@@ -79,7 +86,7 @@ acyclic graph. Object coordinates are globally unique.
 
 ## Domain-migration cross-binding
 
-The four migration profiles are checked against the packaged
+The five migration profiles are checked against the packaged
 `DOMAIN_MIGRATION_REGISTRY` when the module loads:
 
 1. the migration-ID sets must be identical;
@@ -132,15 +139,15 @@ not share a digest with different token/constraint semantics.
 The deterministic catalog test materializes one database containing:
 
 - event-store core schema;
-- packaged migrations 1–4 and the legacy ledger, including the invocation-admission
-  receipt table and its four indexes;
+- packaged migrations 1–5 and the legacy ledger, including the invocation-admission
+  receipt table and the dedicated native-IM inbox graph;
 - projection offsets and receipts;
 - durable revocation high-water state;
 - the exact bridge sidecar and bootstrapped metadata.
 
 It then reads every non-statistics `sqlite_schema` row and compares the complete
-`(type, name, tbl_name, DDL digest)` mapping to all nine profiles. The current result is
-63 actual objects = 63 trusted objects, with no missing, extra, or drifted coordinate.
+`(type, name, tbl_name, DDL digest)` mapping to all ten profiles. The current result is
+85 actual objects = 85 trusted objects, with no missing, extra, or drifted coordinate.
 
 The model tests additionally cover:
 

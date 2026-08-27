@@ -3,7 +3,7 @@
 > 计划版本：2026-08-28-stage-pause-v2
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
-> 当前状态：**E1 / Level A 已完成；本文件继续作为 E3 Result Authority 最大强度参考计划。**
+> 当前状态：**E1 / Level A 已完成；E2 离线 inbox 底座进行中；本文件继续作为 E3 Result Authority 最大强度参考计划。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -13,9 +13,10 @@
 > [`NATIVE_IM_EARLY_INTEGRATION_PLAN.md`](./NATIVE_IM_EARLY_INTEGRATION_PLAN.md)；本文件的必要
 > 子集在其 E3 阶段使用。三份文档都不授权真实外部发送。
 
-> E1 收口说明（2026-08-28）：provider-neutral V1 contract、strict codec、golden、四方法 port 和
-> zero-network fake 已在源码候选 `7620200` 完成。E2 sandbox inbound-only 尚未开始。当前阶段先
-> 完成文档、GitHub 与 Notion 回读并暂停验收；用户恢复主线后按提前接入计划第 10 节进入 E2。
+> E2 进展说明（2026-08-28）：provider-neutral V1 contract、strict codec、golden、四方法 port 和
+> zero-network fake 已在 `7620200` 完成；离线 profile/config/verifier/migration/nonce/read-preparation
+> 底座已推进到 `4ab745b`。下一 P0 是 nonce + verified page + events + checkpoint 单事务 admission；
+> 真实 sandbox 网络仍未连接。
 
 ## 1. 下一阶段的唯一目标
 

@@ -21,14 +21,15 @@
 
 ## 当前目标
 
-继续 `NATIVE_IM_EARLY_INTEGRATION_PLAN.md`，从 E1 `CONTRACT_EXECUTABLE` 开始：
+E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
+`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 的 E2 离线 inbox 底座：
 
-1. 把 `docs/architecture/NATIVE_IM_CONTRACT_V1.md` 的冻结合同实现为 exact Python 值模型；
-2. 实现 strict dict/JSON codec、canonical bytes、digest 与幂等键派生；
-3. 固定 golden vectors；
-4. 实现零网络 fake adapter、receiver ledger、ACK-loss 与 acceptance query；
-5. 完成 Python 3.9/3.12/3.13、全量测试、Ruff、Mypy 和零网络证据；
-6. 每个小改变独立 commit 并推送本分支；阶段结束同步独立 Notion 空间。
+1. provider profile、inbound-only config/`SecretRef` 和 raw-body verifier 已实现；
+2. migration 5 六表、backup/restore/topology registry 已实现；
+3. profile-bound durable nonce claim 已实现；
+4. 保留 exact request 时可重开 replay 并与 checkpoint 对账的 read preparation 已在 `4ab745b` 实现；
+5. 下一步把 nonce、verified page、event rows、read CAS 和 checkpoint 放入同一事务；
+6. 每个小改变独立 commit 并推送本分支；稳定节点批量同步独立 Notion 空间并回读。
 
 ## 不变边界
 
@@ -44,8 +45,8 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | E0 | 已继承 | 主线恢复分支、tag、bundle 与回读证据已完成 |
-| E1 | 进行中 | 当前实现入口 |
-| E2 | 未开始 | 专用沙箱 inbound-only |
+| E1 | 已完成 | provider-neutral 合同、fake、zero-network 证据和 Notion 回读已闭环 |
+| E2 | 进行中 | 离线底座到 `4ab745b`；真实 sandbox 未连接，page admission 原子事务仍是下一 P0 |
 | E3 | 未开始 | verified inbound → PURE Agent 草稿 |
 | E4 | 未开始 | fake-only Action Plane |
 | E5 | 未开始 | 需另行明确授权的单会话 sandbox outbound |
