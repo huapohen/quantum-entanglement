@@ -1,8 +1,9 @@
 # 下一阶段详细执行计划：参考项目复评后闭合 Atomic Result Authority
 
-> 计划版本：2026-08-27-stage-pause-v1  
-> 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点  
-> 当前状态：**最大强度 Result Authority 参考计划已冻结；原生 IM 提前接入计划已经启动。**
+> 计划版本：2026-08-28-stage-pause-v2
+> 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
+> 当前执行分支：`mainline_continue_quantum_entanglement`
+> 当前状态：**E1 / Level A 已完成；本文件继续作为 E3 Result Authority 最大强度参考计划。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -11,6 +12,10 @@
 > 为准。2026-08-27 用户决定提前做 sandbox inbound-only 后，当前执行入口改为
 > [`NATIVE_IM_EARLY_INTEGRATION_PLAN.md`](./NATIVE_IM_EARLY_INTEGRATION_PLAN.md)；本文件的必要
 > 子集在其 E3 阶段使用。三份文档都不授权真实外部发送。
+
+> E1 收口说明（2026-08-28）：provider-neutral V1 contract、strict codec、golden、四方法 port 和
+> zero-network fake 已在源码候选 `7620200` 完成。E2 sandbox inbound-only 尚未开始。当前阶段先
+> 完成文档、GitHub 与 Notion 回读并暂停验收；用户恢复主线后按提前接入计划第 10 节进入 E2。
 
 ## 1. 下一阶段的唯一目标
 
@@ -631,7 +636,7 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 - 实现、测试、文档可分开提交，但稳定阶段三者必须齐全；
 - 不用“misc”“cleanup”掩盖多个语义变化；
 - 不在同一 commit 注册 migration、开放 writer 和启用 worker；
-- 每个阶段完成后推送 `main`，远端读回 SHA。
+- 每个阶段完成后推送当前评审分支并远端读回 SHA；用户验收前不自动合并 `main`。
 
 预计本计划会产生数十个小提交；数量不是目标，可审查性和每一步稳定才是目标。
 
@@ -643,7 +648,8 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 - 每个 worktree 只负责一个不重叠主题；
 - 不让多个 Agent 同时编辑 `store.py` 的同一区域；
 - 合并前 rebase/cherry-pick 到最新 main，独立全量验证；
-- 完成后先推 main，需要保留独立尖端时建同 SHA `archive/*`；
+- 完成后先推当前评审分支；经用户验收后才合并目标分支，需要保留独立尖端时建同 SHA
+  `archive/*`；
 - 最后 `git worktree remove`、删本地阶段分支、删远端活动分支；
 - 每次生命周期变化刷新 `BRANCH_CATALOG.md`。
 
@@ -689,7 +695,8 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | M7 Accepted | fresh ACK 唯一 mint 点通过 | migration/worker promotion |
 | M8 Integration | 独立 release evidence 通过 | 生产 Gate 仍需分别审批 |
 
-本计划不再作为当前串行开工入口。提前接入路线先执行 E1/E2；达到 E3 时，从本计划抽取
+本计划不再作为当前串行开工入口。提前接入路线的 E1 已完成；用户阶段验收后先执行 E2，达到
+E3 时再从本计划抽取
 M1–M7 的必要 Result Authority 子集。若用户新增会改变底层 result/store 方向的参考项目，仍先做
 M0 delta review，不从原子 writer 中途改变合同。
 
@@ -705,20 +712,24 @@ M0 delta review，不从原子 writer 中途改变合同。
 - 不自动操作私人语雀；
 - 永远不向飞书、企微、任何人、任何群聊、bot 或 webhook 发送消息。
 
+E1 本地/GitHub 收口完成后，必须把新增生产说明、调研证据、计划状态、readiness、changelog 和
+远端分支 SHA 同步到 Notion，并 fetch 回读关键 marker；在此之前 Notion 基线仍按 `f99f176` 记录。
+
 ## 19. 启动下一阶段时的第一组命令
 
-需要恢复本最大强度 Result Authority 路线时，从以下只读检查开始；当前原生 IM 开工命令以
+需要恢复本最大强度 Result Authority 路线时，从以下只读检查开始；下一步 E2 命令与边界以
 `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 第 10 节为准：
 
 ```bash
-cd /Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement
+cd /Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement
 git status --short
 git worktree list --porcelain
 git branch --show-current
 git ls-remote --heads \
   ssh://git@ssh.github.com:443/huapohen/quantum-entanglement.git \
-  refs/heads/main
-PYTHONPATH=src .venv/bin/python -m pytest
+  refs/heads/mainline_continue_quantum_entanglement
+PYTHONPATH=src python3 -m pytest
 ```
 
-确认 clean baseline 后先写 reference delta assessment；没有用户新的继续指令，不进入 Phase 1。
+确认 clean baseline 后按 E2 只读输入盘点开始；没有用户新的继续指令，不进入真实 sandbox 网络或
+本文件 Phase 1。
