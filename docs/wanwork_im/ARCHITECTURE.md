@@ -314,6 +314,44 @@ W1 Plugin Host 只加载随 host 编译并由平台 admission 固定的可信内
 Gateway/Plugin Host 主进程。后续生态使用独立 `ExecutionIsolationProfile` 与 process/UID/container/
 microVM 边界，安装 lifecycle script 同样按可执行代码处理。
 
+### 第三方执行隔离控制合同（W1 P1-6）
+
+W1 已冻结 `apps/im-api/internal/isolation` 的 provider-neutral data/IPC contract，但没有开放第三方执行。
+API/Gateway 未来只能持 authenticated `SupervisorClient`；privileged supervisor 必须是独立服务。Launch
+只允许传 host-owned `PackageVersionRef/IsolationProfileRef/RuntimeGrantRef`、operation/request digest、
+expected previous generation、Attempt 与 input manifest digest，禁止传 raw argv、shell、env、host path、
+mount、runtime socket、raw secret、PID handle 或 callback。
+
+```mermaid
+flowchart LR
+  API["API / Gateway<br>pure IPC client"] --> SUP["Independent Supervisor"]
+  SUP --> ADM["Host-owned package/profile/grant"]
+  SUP --> ISO["UID / process / container / microVM"]
+  ISO --> ACT["Action Plane / Egress Broker"]
+  SUP --> PROC["Process receipts"]
+  ACT --> EFF["Provider receipt / reconcile"]
+  PROC -. "cannot prove effect finality" .-> EFF
+```
+
+`ProcessInstance` 使用 `ExecutionID + supervisor-assigned Generation + FenceRevision/Digest + InstanceID`；
+PID/provider transport handle 只能是 supervisor 私有观察值。相同 `OperationID + RequestDigest` exact replay，
+同 OperationID 换摘要冲突；并发 launch 由 supervisor generation CAS 保证只有一个 incarnation。
+
+停止状态机固定为 cooperative cancel → bounded grace → kill-tree → exact wait → descendant reap → grant/
+network/mount/workspace release。`KillReceipt` 只证明 kill-tree 已发出，`ExitReceipt` 才证明 exact instance
+退出，`ReapReceipt` 才证明 descendant empty，`ReleaseReceipt` 才证明本地资源释放。任一证据缺失进入
+operator-visible quarantine，不能发布 released。
+
+Process truth 与 external effect truth 分离：effectful runtime 即使 forced kill、wait、reap、release 全部
+成功，仍只能返回 `dispatched_unknown + reconcileRequired`。邮件、IM、支付、部署、工单、Git 或 DB 写入
+必须由 Action Ledger 的 provider receipt/readback 收敛，supervisor 无权据进程退出推导“动作未发生”。
+
+`internal/isolation/fake` 明确声明 `durability=volatile`、`isolation=none`、`executesCode=false`，只验证
+idempotency、generation/fence、receipt 与 quarantine，不冒充 process/container/microVM sandbox。真实 wire
+schema、durable operation ledger、signed receipt、anti-rollback、OS backend 和 fork/daemon/orphan/escape
+conformance 仍是 W4/W7 生产门禁。完整证据见
+`analysis_report/research/30_third_party_execution_isolation_contract.md`。
+
 ### 5.1 Skill package 与 Tool execution binding
 
 插件装配 seam 不等于 Tool 授权 seam。平台分别持有：

@@ -218,12 +218,20 @@ Planner 不能直持 provider credential。Action Plane 与 Egress 互补，不�
   Drain/Stop/cleanup panic 不跳过其他回收；panic payload 不进入 error；
 - `eafd3da docs: make plugin lifecycle deadlines cooperative`：`callWithDeadline` 和 Manifest 类型注释
   明确 deadline 不强杀；Start/Drain deadline 后仍占 owner 的测试冻结 starting/stopping 诚实状态；
+- `43e111e feat: freeze isolated runtime admission contracts`：`ExecutionIsolationProfile/RuntimeGrant/
+  ProcessInstance`、host-owned scope binding、profile 扩权 fail-closed 与 generation/fence identity；
+- `fccb64e feat: define fenced supervisor receipt protocol`：API 只持 pure IPC port 和 versioned refs；
+  cancel/kill/exit/reap/release 分层 receipt，kill 不冒充 external effect negative finality；
+- `d32079c test: add volatile isolation supervisor fake`：fake 明示 `durability=volatile/isolation=none/
+  executesCode=false`，覆盖 exact idempotency、并发 generation CAS、old fence、quarantine 与 reconcile；
 - 专项普通测试、race 和 vet 通过。
 
 Plugin Host 四个 P0 已全部完成，P1-1 Registry freeze/snapshot、P1-2 effect scope 状态与 P1-3 callback
-locking/reentrancy、P1-4 panic containment、P1-5 cooperative deadline honesty 也已完成。
-这里的“完成”不包括 action-time JIT Secret lease、第三方执行隔离或真实 connector。W1 接下来处理
-第三方强制隔离边界等 P1，然后实现明确标记为 volatile fake 的 memory
+locking/reentrancy、P1-4 panic containment、P1-5 cooperative deadline honesty、P1-6 第三方执行隔离
+data/IPC/receipt 合同与 hostile fake 也已完成。
+这里的“完成”不包括 action-time JIT Secret lease、真实独立 supervisor、process/container/microVM backend、
+OS conformance 或真实 connector；fake 不是 sandbox。W1 接下来实现明确标记为 volatile 的 memory
 EventStore。W2 领域建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；不会用“文档
 已经写了”代替测试。P0-4 的完整证据映射见
-[`24_secret_claim_admission_implementation.md`](24_secret_claim_admission_implementation.md)。
+[`24_secret_claim_admission_implementation.md`](24_secret_claim_admission_implementation.md)，P1-6 证据见
+[`30_third_party_execution_isolation_contract.md`](30_third_party_execution_isolation_contract.md)。

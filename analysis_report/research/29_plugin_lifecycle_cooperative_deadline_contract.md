@@ -113,6 +113,8 @@ git diff --check
 1. 当前仍只运行可信内建插件；第三方 executable package 尚未开放；
 2. `Factory.Configure` 没有 context，合同仍要求它是无外部副作用的快速构造；
 3. 本阶段没有进程 supervisor、kill receipt、resource accounting 或跨重启 recovery；
-4. 下一小阶段先冻结第三方 `ExecutionIsolationProfile/RuntimeGrant/ProcessInstance` 的最小 Go 合同和
-   hostile fake conformance tests，再选择本地 process/container/microVM provider；
-5. 真实融云 outbound 继续关闭；未向飞书、企微、机器人或 webhook 发送消息。
+4. 后续 `43e111e`、`fccb64e`、`d32079c` 已冻结第三方 `ExecutionIsolationProfile/RuntimeGrant/
+   ProcessInstance`、Supervisor receipt 协议与 hostile fake；详见
+   [`30_third_party_execution_isolation_contract.md`](30_third_party_execution_isolation_contract.md)；
+5. 真实 process/container/microVM supervisor 仍在 W4/W7，不能因 fake 通过而标成已隔离；
+6. 真实融云 outbound 继续关闭；未向飞书、企微、机器人或 webhook 发送消息。

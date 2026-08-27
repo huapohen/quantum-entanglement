@@ -33,17 +33,25 @@
 - lifecycle callback 在 Host mutex 外执行、starting/stopping 单 owner 与 reentrant/concurrent 快速拒绝；
 - lifecycle callback panic 固定脱敏，Start/Ready 保证 rollback，shutdown panic 不跳过后续回收；
 - lifecycle duration 只作为 cooperative context deadline，不冒充 goroutine/process 强制终止；
+- 第三方执行隔离 data/IPC contract：host-owned refs、generation/fence、idempotent operation、
+  cancel→grace→kill→wait/reap/release receipt 与 operator-visible quarantine；
+- deterministic isolation fake 明确标记 `durability=volatile/isolation=none/executesCode=false`，只验证合同；
 - durable event port、`EventToAppend/StoredEvent`、opaque cursor、deterministic fake 和 projection skeleton；
 - health/readiness 与 graceful shutdown；
 - unit、race、lint 和 secret canary。
 
 W1 Plugin Host 只允许随 host 编译、由平台准入的可信内建插件；不实现也不暗示第三方 App/
 Extension 任意代码生态。第三方可执行包不得加载进 API/Gateway/Plugin Host 主进程。
+W1 的 `SupervisorClient` 只是独立 privileged service 的 future IPC port；当前没有 production adapter、
+process/container/microVM backend 或第三方 launch route。API 不持 Docker/runtime socket、raw argv/env、
+host path、raw secret 或 process handle。
 
 出口：零 credential、零网络的 fake composition 可启动，所有业务错误 HTTP 200；effective snapshot
 具备 source/digest/golden/diff，manifest/package/Secret claim 均经 host-owned admission，首次扩权需新的
 批准快照；raw locator 不进入 canonical/Factory，binding view 不具备 Secret 使用权；所有 required plugins
 ready 前不暴露 route，半启动/ready 失败可逆序回滚；event fake 可确定性 replay/rebuild，但不宣称持久化。
+隔离合同还要求：同一 generation 并发 launch 只有一个 owner；old fence 不得控制新 incarnation；kill ACK
+没有 exact wait/reap/release 时必须 quarantine；effectful process 即使 released 也保持 unknown/reconcile。
 
 W1 的 Secret admission 不等于 action-time credential。KMS/Keychain、跨重启持久 claim、JIT short-lived
 lease/token exchange、trusted executor 和 provider receipt 仍在 W2/W4/W7 按 Action Plane 实现。
@@ -156,6 +164,9 @@ policy/approval/intent/receipt append 不可用时
 14. `feat: add fake IM provider port`
 15. `test: prove fake provider has no network or credentials`
 16. `docs: freeze Skill activation and Tool execution binding contracts`
+17. `feat: freeze isolated runtime admission contracts`
+18. `feat: define fenced supervisor receipt protocol`
+19. `test: add volatile isolation supervisor fake`
 
 任何一个条目若同时包含合同、实现、迁移、故障矩阵和 UI，应继续拆成小提交；列表是顺序约束，
 不是要求把一整项压成一个大 commit。

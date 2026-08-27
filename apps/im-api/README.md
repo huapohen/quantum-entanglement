@@ -89,11 +89,32 @@ durable last-known-good promotion, and live reload remain later stages. `NewHost
 package/manifest/admission/revocation and claim records, then freezes only the selected factories, configs, and
 timeouts for deterministic activation.
 
+## Third-party execution isolation contract
+
+`internal/isolation` is a data and IPC contract for a future separately deployed privileged supervisor. It is
+not another Plugin Host and does not execute third-party code in this API process. `LaunchCommand` carries only
+host-owned versioned package/profile/grant references, request identity, a previous-generation CAS expectation,
+an input manifest digest, and a deadline. It cannot carry raw argv, shell commands, ambient environment values,
+host paths, mounts, runtime sockets, secrets, process handles, or callbacks.
+
+The supervisor owns `ProcessInstance` generation and fence advancement. Termination evidence is deliberately
+split into cancel, kill-tree, exact exit, descendant reap, and runtime-resource release receipts. A kill receipt
+proves neither process exit nor external-effect finality. Any effectful execution remains
+`dispatched_unknown/reconcileRequired` after process release until the Action Plane obtains provider receipt or
+readback evidence.
+
+`internal/isolation/fake` is deterministic but explicitly reports `durability=volatile`, `isolation=none`, and
+`executesCode=false`. It tests idempotency, generation CAS, stale fencing, receipt validation, and quarantine;
+it is not a process, container, or microVM sandbox. Real supervisor IPC, durable operation state, signed
+receipts, process/container/microVM backends, and OS-level hostile conformance remain W4/W7 gates.
+
 ## Offline verification after dependencies are cached
 
 ```bash
 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
   go test ./apps/im-api/...
+GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
+  go test -race ./apps/im-api/internal/isolation/...
 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
   go vet ./apps/im-api/...
 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
