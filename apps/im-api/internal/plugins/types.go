@@ -43,13 +43,15 @@ type PortRequirement struct {
 }
 
 type PackageRecord struct {
-	PluginID       PluginID
-	Version        string
-	ArtifactDigest string
-	ProvenanceRef  string
-	SBOMRef        string
-	ApprovalRef    string
-	Revoked        bool
+	PluginID               PluginID
+	Version                string
+	ArtifactDigest         string
+	ApprovedManifestDigest string
+	AdmissionRevision      uint64
+	ProvenanceRef          string
+	SBOMRef                string
+	ApprovalRef            string
+	Revoked                bool
 }
 
 type PortBinding struct {

@@ -27,11 +27,17 @@ const (
 )
 
 type Host struct {
-	mu            sync.Mutex
-	registry      *Registry
-	configuration EffectiveConfiguration
-	state         HostState
-	started       []runningPlugin
+	mu         sync.Mutex
+	activation []activationEntry
+	state      HostState
+	started    []runningPlugin
+}
+
+type activationEntry struct {
+	id       PluginID
+	factory  Factory
+	timeouts LifecycleTimeouts
+	config   PluginConfig
 }
 
 type runningPlugin struct {
@@ -60,7 +66,21 @@ func NewHost(registry *Registry, configuration EffectiveConfiguration) (*Host, e
 	if err != nil || snapshot.digest != configuration.digest {
 		return nil, ErrInvalidActivation
 	}
-	return &Host{registry: registry, configuration: snapshot, state: HostStateNew}, nil
+	activation := make([]activationEntry, 0, len(snapshot.plan.Order))
+	configs := snapshot.PluginConfigs()
+	for _, pluginID := range snapshot.plan.Order {
+		registered := registry.entries[pluginID]
+		activation = append(activation, activationEntry{
+			id:       pluginID,
+			factory:  registered.factory,
+			timeouts: registered.manifest.Timeouts,
+			config:   cloneConfig(configs[pluginID]),
+		})
+	}
+	return &Host{
+		activation: activation,
+		state:      HostStateNew,
+	}, nil
 }
 
 func (host *Host) State() HostState {
@@ -77,28 +97,25 @@ func (host *Host) Start(ctx context.Context) error {
 	}
 	host.state = HostStateStarting
 
-	plan := host.configuration.plan
-	configs := host.configuration.PluginConfigs()
-	configured := make([]runningPlugin, 0, len(plan.Order))
-	for _, pluginID := range plan.Order {
-		registered := host.registry.entries[pluginID]
-		if registered.factory == nil {
+	configured := make([]runningPlugin, 0, len(host.activation))
+	for _, selected := range host.activation {
+		if selected.factory == nil {
 			host.state = HostStateFailed
-			return fmt.Errorf("plugin %s: %w", pluginID, ErrMissingFactory)
+			return fmt.Errorf("plugin %s: %w", selected.id, ErrMissingFactory)
 		}
-		instance, configureErr := registered.factory.Configure(cloneConfig(configs[pluginID]))
+		instance, configureErr := selected.factory.Configure(cloneConfig(selected.config))
 		if configureErr != nil {
 			host.state = HostStateFailed
-			return fmt.Errorf("configure plugin %s: %w", pluginID, configureErr)
+			return fmt.Errorf("configure plugin %s: %w", selected.id, configureErr)
 		}
 		if instance == nil {
 			host.state = HostStateFailed
-			return fmt.Errorf("configure plugin %s: %w", pluginID, ErrMissingFactory)
+			return fmt.Errorf("configure plugin %s: %w", selected.id, ErrMissingFactory)
 		}
 		configured = append(configured, runningPlugin{
-			id:       pluginID,
+			id:       selected.id,
 			instance: instance,
-			timeouts: registered.manifest.Timeouts,
+			timeouts: selected.timeouts,
 			effects:  newEffectScope(),
 		})
 	}
@@ -151,6 +168,10 @@ func activationRowsMatchRegistry(registry *Registry, configuration EffectiveConf
 		if !rowExists || !pluginExists ||
 			row.PluginVersion != registered.manifest.Version ||
 			row.ArtifactDigest != registered.packageRecord.ArtifactDigest ||
+			row.ManifestDigest != registered.manifestDigest ||
+			row.ManifestDigest != registered.packageRecord.ApprovedManifestDigest ||
+			row.AdmissionRevision != registered.packageRecord.AdmissionRevision ||
+			registered.packageRecord.Revoked ||
 			row.ConfigSchemaDigest != registered.manifest.ConfigSchemaDigest ||
 			!slices.Equal(row.Capabilities, registered.manifest.Capabilities) ||
 			!slices.Equal(row.Egress, registered.manifest.Egress) {

@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
+	"time"
+	"unicode/utf8"
 )
 
 var (
@@ -26,15 +29,22 @@ var (
 	sha256DigestPattern    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
+const (
+	manifestSchemaVersion uint32 = 1
+	maxEgressBytes               = 2048
+	maxLifecycleTimeout          = 10 * time.Minute
+)
+
 type Registry struct {
 	entries map[PluginID]entry
 	schemas map[string]ConfigSchema
 }
 
 type entry struct {
-	manifest      Manifest
-	packageRecord PackageRecord
-	factory       Factory
+	manifest       Manifest
+	manifestDigest string
+	packageRecord  PackageRecord
+	factory        Factory
 }
 
 func NewRegistry() *Registry {
@@ -75,16 +85,21 @@ func (registry *Registry) register(
 	if err != nil {
 		return err
 	}
-	if err := validatePackageRecord(normalized, packageRecord); err != nil {
+	manifestDigest, err := digestNormalizedManifest(normalized)
+	if err != nil {
+		return ErrInvalidManifest
+	}
+	if err := validatePackageRecord(normalized, manifestDigest, packageRecord); err != nil {
 		return err
 	}
 	if _, exists := registry.entries[normalized.ID]; exists {
 		return fmt.Errorf("%w: %s", ErrDuplicatePlugin, normalized.ID)
 	}
 	registry.entries[normalized.ID] = entry{
-		manifest:      normalized,
-		packageRecord: packageRecord,
-		factory:       factory,
+		manifest:       normalized,
+		manifestDigest: manifestDigest,
+		packageRecord:  packageRecord,
+		factory:        factory,
 	}
 	return nil
 }
@@ -190,7 +205,7 @@ func normalizeManifest(manifest Manifest) (Manifest, error) {
 	if !validUniquePorts(normalized.Provides) ||
 		!validUniqueRequirements(normalized.Requires) ||
 		!validUniqueCapabilities(normalized.Capabilities) ||
-		!validUniqueStrings(normalized.Egress, func(value string) bool { return value != "" }) ||
+		!validUniqueStrings(normalized.Egress, validEgressDeclaration) ||
 		!validUniqueStrings(normalized.SecretRefNames, secretReferencePattern.MatchString) {
 		return Manifest{}, ErrInvalidManifest
 	}
@@ -209,13 +224,38 @@ func normalizeManifest(manifest Manifest) (Manifest, error) {
 }
 
 func validTimeouts(timeouts LifecycleTimeouts) bool {
-	return timeouts.Start > 0 && timeouts.Ready > 0 && timeouts.Drain > 0 && timeouts.Stop > 0
+	for _, timeout := range []time.Duration{
+		timeouts.Start, timeouts.Ready, timeouts.Drain, timeouts.Stop,
+	} {
+		if timeout <= 0 || timeout > maxLifecycleTimeout || timeout%time.Millisecond != 0 {
+			return false
+		}
+	}
+	return true
 }
 
-func validatePackageRecord(manifest Manifest, packageRecord PackageRecord) error {
+func validEgressDeclaration(value string) bool {
+	if value == "" || len(value) > maxEgressBytes || !utf8.ValidString(value) || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x21 || character == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func validatePackageRecord(
+	manifest Manifest,
+	manifestDigest string,
+	packageRecord PackageRecord,
+) error {
 	if packageRecord.PluginID != manifest.ID ||
 		packageRecord.Version != manifest.Version ||
 		!sha256DigestPattern.MatchString(packageRecord.ArtifactDigest) ||
+		packageRecord.ApprovedManifestDigest != manifestDigest ||
+		packageRecord.AdmissionRevision == 0 ||
 		packageRecord.ProvenanceRef == "" ||
 		packageRecord.SBOMRef == "" ||
 		packageRecord.ApprovalRef == "" ||
@@ -223,6 +263,79 @@ func validatePackageRecord(manifest Manifest, packageRecord PackageRecord) error
 		return ErrPackageNotAdmitted
 	}
 	return nil
+}
+
+const manifestDigestDomain = "wanwork.im/plugin-manifest/1\n"
+
+type canonicalManifest struct {
+	SchemaVersion      uint32                     `json:"schemaVersion"`
+	PluginID           PluginID                   `json:"pluginId"`
+	Version            string                     `json:"version"`
+	HostAPI            string                     `json:"hostApi"`
+	Provides           []PortID                   `json:"provides"`
+	Requires           []canonicalPortRequirement `json:"requires"`
+	Capabilities       []CapabilityID             `json:"capabilities"`
+	Egress             []string                   `json:"egress"`
+	SecretRefNames     []string                   `json:"secretRefNames"`
+	ConfigSchemaDigest string                     `json:"configSchemaDigest"`
+	TimeoutsMS         canonicalLifecycleTimeouts `json:"timeoutsMs"`
+}
+
+type canonicalPortRequirement struct {
+	Port       PortID   `json:"port"`
+	ProviderID PluginID `json:"providerId"`
+}
+
+// Lifecycle admission uses bounded whole milliseconds. This keeps the canonical JSON unit
+// explicit and every valid value exactly representable by common JSON runtimes.
+type canonicalLifecycleTimeouts struct {
+	Start uint64 `json:"start"`
+	Ready uint64 `json:"ready"`
+	Drain uint64 `json:"drain"`
+	Stop  uint64 `json:"stop"`
+}
+
+func digestNormalizedManifest(manifest Manifest) (string, error) {
+	canonical, err := canonicalNormalizedManifestBytes(manifest)
+	if err != nil {
+		return "", err
+	}
+	return digestBytes(manifestDigestDomain, canonical), nil
+}
+
+func canonicalNormalizedManifestBytes(manifest Manifest) ([]byte, error) {
+	requires := make([]canonicalPortRequirement, 0, len(manifest.Requires))
+	for _, requirement := range manifest.Requires {
+		requires = append(requires, canonicalPortRequirement{
+			Port: requirement.Port, ProviderID: requirement.ProviderID,
+		})
+	}
+	return marshalCanonical(canonicalManifest{
+		SchemaVersion:      manifestSchemaVersion,
+		PluginID:           manifest.ID,
+		Version:            manifest.Version,
+		HostAPI:            manifest.HostAPI,
+		Provides:           nonNilPortSlice(manifest.Provides),
+		Requires:           requires,
+		Capabilities:       nonNilCapabilitySlice(manifest.Capabilities),
+		Egress:             nonNilStringSlice(manifest.Egress),
+		SecretRefNames:     nonNilStringSlice(manifest.SecretRefNames),
+		ConfigSchemaDigest: manifest.ConfigSchemaDigest,
+		TimeoutsMS: canonicalLifecycleTimeouts{
+			Start: uint64(manifest.Timeouts.Start / time.Millisecond),
+			Ready: uint64(manifest.Timeouts.Ready / time.Millisecond),
+			Drain: uint64(manifest.Timeouts.Drain / time.Millisecond),
+			Stop:  uint64(manifest.Timeouts.Stop / time.Millisecond),
+		},
+	})
+}
+
+func nonNilPortSlice(values []PortID) []PortID {
+	cloned := slices.Clone(values)
+	if cloned == nil {
+		return []PortID{}
+	}
+	return cloned
 }
 
 func resolveProvider(requirement PortRequirement, providers map[PortID][]PluginID) (PluginID, error) {

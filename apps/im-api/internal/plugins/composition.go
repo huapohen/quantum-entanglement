@@ -33,7 +33,7 @@ var (
 )
 
 const (
-	effectiveConfigurationSchemaVersion uint32 = 1
+	effectiveConfigurationSchemaVersion uint32 = 2
 	maxConfigurationLayers                     = 64
 	maxConfigurationRows                       = 512
 	maxConfigValues                            = 128
@@ -44,7 +44,7 @@ const (
 	maxConfigurationIDBytes                    = 128
 
 	layerDigestDomain     = "wanwork.im/configuration-layer/1\n"
-	effectiveDigestDomain = "wanwork.im/effective-configuration/1\n"
+	effectiveDigestDomain = "wanwork.im/effective-configuration/2\n"
 )
 
 type RowID string
@@ -95,6 +95,8 @@ type EffectiveRow struct {
 	PluginID           PluginID
 	PluginVersion      string
 	ArtifactDigest     string
+	ManifestDigest     string
+	AdmissionRevision  uint64
 	ConfigSchemaDigest string
 	Config             PluginConfig
 	Capabilities       []CapabilityID
@@ -195,6 +197,20 @@ type SchemaChange struct {
 	After    string
 }
 
+type ManifestChange struct {
+	RowID    RowID
+	PluginID PluginID
+	Before   string
+	After    string
+}
+
+type AdmissionChange struct {
+	RowID    RowID
+	PluginID PluginID
+	Before   uint64
+	After    uint64
+}
+
 type EffectiveConfigurationDiff struct {
 	BaseDigest          string
 	CandidateDigest     string
@@ -211,6 +227,8 @@ type EffectiveConfigurationDiff struct {
 	SecretRefs          []SecretRefChange
 	Artifacts           []ArtifactChange
 	Schemas             []SchemaChange
+	Manifests           []ManifestChange
+	Admissions          []AdmissionChange
 }
 
 type CompositionResult struct {
@@ -438,6 +456,8 @@ func (registry *Registry) normalizeConfigurationRow(
 		PluginID:           row.PluginID,
 		PluginVersion:      row.PluginVersion,
 		ArtifactDigest:     row.ArtifactDigest,
+		ManifestDigest:     registered.manifestDigest,
+		AdmissionRevision:  registered.packageRecord.AdmissionRevision,
 		ConfigSchemaDigest: registered.manifest.ConfigSchemaDigest,
 		Config:             cloneConfig(materializedConfig),
 		Capabilities:       slices.Clone(registered.manifest.Capabilities),
@@ -510,6 +530,9 @@ func newEffectiveConfiguration(
 	rows []EffectiveRow,
 	plan Plan,
 ) (EffectiveConfiguration, error) {
+	if !validEffectiveTrustBindings(rows) {
+		return EffectiveConfiguration{}, ErrInvalidComposition
+	}
 	configuration := EffectiveConfiguration{
 		schemaVersion: effectiveConfigurationSchemaVersion,
 		tenantID:      tenantID,
@@ -533,11 +556,21 @@ func validateEffectiveBaseline(configuration EffectiveConfiguration) error {
 	canonical, err := canonicalEffectiveConfigurationBytes(configuration)
 	if err != nil ||
 		configuration.schemaVersion != effectiveConfigurationSchemaVersion ||
+		!validEffectiveTrustBindings(configuration.rows) ||
 		!bytes.Equal(canonical, configuration.canonical) ||
 		digestBytes(effectiveDigestDomain, canonical) != configuration.digest {
 		return ErrInvalidBaseline
 	}
 	return nil
+}
+
+func validEffectiveTrustBindings(rows []EffectiveRow) bool {
+	for _, row := range rows {
+		if !sha256DigestPattern.MatchString(row.ManifestDigest) || row.AdmissionRevision == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func cloneEffectiveRows(rows []EffectiveRow) []EffectiveRow {
@@ -554,6 +587,8 @@ func cloneEffectiveRow(row EffectiveRow) EffectiveRow {
 		PluginID:           row.PluginID,
 		PluginVersion:      row.PluginVersion,
 		ArtifactDigest:     row.ArtifactDigest,
+		ManifestDigest:     row.ManifestDigest,
+		AdmissionRevision:  row.AdmissionRevision,
 		ConfigSchemaDigest: row.ConfigSchemaDigest,
 		Config:             cloneConfig(row.Config),
 		Capabilities:       slices.Clone(row.Capabilities),
@@ -574,6 +609,8 @@ type canonicalRow struct {
 	PluginID           PluginID             `json:"pluginId,omitempty"`
 	PluginVersion      string               `json:"pluginVersion,omitempty"`
 	ArtifactDigest     string               `json:"artifactDigest,omitempty"`
+	ManifestDigest     string               `json:"manifestDigest,omitempty"`
+	AdmissionRevision  uint64               `json:"admissionRevision,omitempty"`
 	ConfigSchemaDigest string               `json:"configSchemaDigest,omitempty"`
 	Values             []canonicalValue     `json:"values"`
 	SecretRefs         []canonicalSecretRef `json:"secretRefs"`
@@ -686,6 +723,8 @@ func canonicalizeEffectiveRow(row EffectiveRow) canonicalRow {
 		PluginID:           row.PluginID,
 		PluginVersion:      row.PluginVersion,
 		ArtifactDigest:     row.ArtifactDigest,
+		ManifestDigest:     row.ManifestDigest,
+		AdmissionRevision:  row.AdmissionRevision,
 		ConfigSchemaDigest: row.ConfigSchemaDigest,
 		Values:             canonicalValues(row.Config.Values),
 		SecretRefs:         canonicalSecretRefs(row.Config.SecretRefs),
@@ -812,9 +851,58 @@ func diffEffectiveConfigurations(
 	diff.SecretRefs = diffSecretReferences(rowIDs, beforeRows, afterRows)
 	diff.Artifacts = diffArtifacts(rowIDs, beforeRows, afterRows)
 	diff.Schemas = diffSchemas(rowIDs, beforeRows, afterRows)
+	diff.Manifests = diffManifests(rowIDs, beforeRows, afterRows)
+	diff.Admissions = diffAdmissions(rowIDs, beforeRows, afterRows)
 	diff.BindingsAdded = addedBindings(baseline, candidate)
 	diff.BindingsRemoved = addedBindings(candidate, baseline)
 	return diff
+}
+
+func diffManifests(
+	rowIDs []RowID,
+	beforeRows map[RowID]EffectiveRow,
+	afterRows map[RowID]EffectiveRow,
+) []ManifestChange {
+	changes := make([]ManifestChange, 0)
+	for _, rowID := range rowIDs {
+		before := beforeRows[rowID]
+		after := afterRows[rowID]
+		if before.ManifestDigest == after.ManifestDigest {
+			continue
+		}
+		pluginID := after.PluginID
+		if pluginID == "" {
+			pluginID = before.PluginID
+		}
+		changes = append(changes, ManifestChange{
+			RowID: rowID, PluginID: pluginID, Before: before.ManifestDigest, After: after.ManifestDigest,
+		})
+	}
+	return changes
+}
+
+func diffAdmissions(
+	rowIDs []RowID,
+	beforeRows map[RowID]EffectiveRow,
+	afterRows map[RowID]EffectiveRow,
+) []AdmissionChange {
+	changes := make([]AdmissionChange, 0)
+	for _, rowID := range rowIDs {
+		before := beforeRows[rowID]
+		after := afterRows[rowID]
+		if before.AdmissionRevision == after.AdmissionRevision {
+			continue
+		}
+		pluginID := after.PluginID
+		if pluginID == "" {
+			pluginID = before.PluginID
+		}
+		changes = append(changes, AdmissionChange{
+			RowID: rowID, PluginID: pluginID,
+			Before: before.AdmissionRevision, After: after.AdmissionRevision,
+		})
+	}
+	return changes
 }
 
 func effectiveClaims(rows map[RowID]EffectiveRow) (
@@ -1001,7 +1089,7 @@ func addedBindings(before *EffectiveConfiguration, after *EffectiveConfiguration
 
 func effectiveRowDigest(row EffectiveRow) string {
 	canonical, _ := marshalCanonical(canonicalizeEffectiveRow(row))
-	return digestBytes("wanwork.im/effective-row/1\n", canonical)
+	return digestBytes("wanwork.im/effective-row/2\n", canonical)
 }
 
 func pluginConfigDigest(config PluginConfig) string {

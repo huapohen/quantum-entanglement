@@ -334,6 +334,84 @@ func TestNewHostRejectsTamperedEffectiveConfiguration(t *testing.T) {
 	}
 }
 
+func TestNewHostRejectsManifestAndAdmissionDrift(t *testing.T) {
+	t.Parallel()
+
+	manifest := testManifest("selected.fake.v1", []PortID{"runtime.invoke.v1"}, nil)
+	baselineRegistry := NewRegistry()
+	registerLifecycleSchema(t, baselineRegistry)
+	if err := baselineRegistry.RegisterFactory(
+		&fakeFactory{manifest: manifest, log: newCallLog()},
+		admittedPackage(manifest),
+	); err != nil {
+		t.Fatalf("register baseline factory: %v", err)
+	}
+	configuration := lifecycleConfiguration(t, baselineRegistry, []Manifest{manifest})
+
+	manifestDrift := manifest
+	manifestDrift.Timeouts.Start += time.Millisecond
+	driftRegistry := NewRegistry()
+	registerLifecycleSchema(t, driftRegistry)
+	if err := driftRegistry.RegisterFactory(
+		&fakeFactory{manifest: manifestDrift, log: newCallLog()},
+		admittedPackage(manifestDrift),
+	); err != nil {
+		t.Fatalf("register drifted manifest: %v", err)
+	}
+	if _, err := NewHost(driftRegistry, configuration); !errors.Is(err, ErrInvalidActivation) {
+		t.Fatalf("manifest drift error = %v, want %v", err, ErrInvalidActivation)
+	}
+
+	admissionRegistry := NewRegistry()
+	registerLifecycleSchema(t, admissionRegistry)
+	admission := admittedPackage(manifest)
+	admission.AdmissionRevision = 2
+	if err := admissionRegistry.RegisterFactory(
+		&fakeFactory{manifest: manifest, log: newCallLog()},
+		admission,
+	); err != nil {
+		t.Fatalf("register revised admission: %v", err)
+	}
+	if _, err := NewHost(admissionRegistry, configuration); !errors.Is(err, ErrInvalidActivation) {
+		t.Fatalf("admission drift error = %v, want %v", err, ErrInvalidActivation)
+	}
+}
+
+func TestHostStartUsesFrozenActivationSnapshot(t *testing.T) {
+	t.Parallel()
+
+	originalLog := newCallLog()
+	replacementLog := newCallLog()
+	manifest := testManifest("selected.fake.v1", []PortID{"runtime.invoke.v1"}, nil)
+	registry := NewRegistry()
+	registerLifecycleSchema(t, registry)
+	if err := registry.RegisterFactory(
+		&fakeFactory{manifest: manifest, log: originalLog},
+		admittedPackage(manifest),
+	); err != nil {
+		t.Fatalf("register factory: %v", err)
+	}
+	host := lifecycleHostFromSelection(t, registry, []Manifest{manifest})
+
+	replaced := registry.entries[manifest.ID]
+	replaced.factory = &fakeFactory{manifest: manifest, log: replacementLog}
+	replaced.manifest.Timeouts.Start = time.Millisecond
+	registry.entries[manifest.ID] = replaced
+
+	if err := host.Start(context.Background()); err != nil {
+		t.Fatalf("start host: %v", err)
+	}
+	if err := host.Stop(context.Background()); err != nil {
+		t.Fatalf("stop host: %v", err)
+	}
+	if calls := originalLog.snapshot(); len(calls) == 0 {
+		t.Fatal("frozen factory was not invoked")
+	}
+	if calls := replacementLog.snapshot(); len(calls) != 0 {
+		t.Fatalf("host re-read mutable registry entry: %v", calls)
+	}
+}
+
 func lifecycleHost(t *testing.T, log *callLog, failAt string) *Host {
 	t.Helper()
 

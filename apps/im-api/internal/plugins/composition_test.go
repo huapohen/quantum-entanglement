@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -140,12 +141,12 @@ func TestEffectiveConfigurationHasGoldenCanonicalBytesAndDomainSeparatedDigest(t
 	if err != nil {
 		t.Fatalf("compose: %v", err)
 	}
-	wantCanonical, err := os.ReadFile("testdata/effective_configuration_v1.golden.json")
+	wantCanonical, err := os.ReadFile("testdata/effective_configuration_v2.golden.json")
 	if err != nil {
 		t.Fatalf("read golden canonical bytes: %v", err)
 	}
 	wantCanonical = bytes.TrimSuffix(wantCanonical, []byte("\n"))
-	const wantDigest = "sha256:495f1c65e5cb4e0c2216ddb6b824150c0503c7e0aeddeb5f4cae9ac93c81023e"
+	const wantDigest = "sha256:ae5c31ad42dc5f5763f607b051fbdf6bd1bcd7ea587b2b2d3e4bc8fb39c46bcc"
 	if got := result.Candidate.CanonicalBytes(); !bytes.Equal(got, wantCanonical) {
 		t.Fatalf("canonical bytes:\n%s", got)
 	}
@@ -344,7 +345,7 @@ func TestConfigurationDiffScopesExpansionRetargetAndSupplyChainDrift(t *testing.
 		len(diff.CapabilitiesRemoved) != 0 ||
 		len(diff.EgressAdded) != 1 || len(diff.EgressRemoved) != 1 ||
 		len(diff.SecretRefs) != 1 || diff.SecretRefs[0].Kind != SecretRefRetargeted ||
-		len(diff.Artifacts) != 1 || len(diff.Schemas) != 1 {
+		len(diff.Artifacts) != 1 || len(diff.Schemas) != 1 || len(diff.Manifests) != 1 {
 		t.Fatalf("sensitive diff = %#v", diff)
 	}
 	if diff.SecretRefs[0].BeforeFingerprint == "old-reference" ||
@@ -356,6 +357,51 @@ func TestConfigurationDiffScopesExpansionRetargetAndSupplyChainDrift(t *testing.
 	tampered.digest = testArtifactDigest
 	if _, err := newRegistry.Compose(candidateComposition, &tampered); !errors.Is(err, ErrInvalidBaseline) {
 		t.Fatalf("tampered baseline error = %v, want %v", err, ErrInvalidBaseline)
+	}
+}
+
+func TestEffectiveConfigurationBindsManifestAndAdmissionSnapshots(t *testing.T) {
+	t.Parallel()
+
+	manifest := compositionManifest(
+		"im.fake.v1", imSchemaDigest, imArtifactDigest,
+		[]PortID{"im.transport.v1"}, nil, []CapabilityID{"im.send"},
+		[]string{"https://im.invalid"}, []string{"provider_credential"},
+	)
+	composition := singlePluginComposition("manifest-binding")
+	baselineRegistry := registryWithManifest(t, manifest, imArtifactDigest, 1)
+	baselineResult, err := baselineRegistry.Compose(composition, nil)
+	if err != nil {
+		t.Fatalf("compose baseline: %v", err)
+	}
+
+	timeoutManifest := manifest
+	timeoutManifest.Timeouts.Start += time.Millisecond
+	timeoutRegistry := registryWithManifest(t, timeoutManifest, imArtifactDigest, 1)
+	timeoutResult, err := timeoutRegistry.Compose(composition, &baselineResult.Candidate)
+	if err != nil {
+		t.Fatalf("compose timeout change: %v", err)
+	}
+	if timeoutResult.Candidate.Digest() == baselineResult.Candidate.Digest() ||
+		!slices.Equal(timeoutResult.Diff.RowsChanged, []RowID{"im"}) ||
+		len(timeoutResult.Diff.Manifests) != 1 ||
+		len(timeoutResult.Diff.Admissions) != 0 ||
+		len(timeoutResult.Diff.ConfigChanged) != 0 {
+		t.Fatalf("timeout-only diff = %#v", timeoutResult.Diff)
+	}
+
+	revisionRegistry := registryWithManifest(t, manifest, imArtifactDigest, 2)
+	revisionResult, err := revisionRegistry.Compose(composition, &baselineResult.Candidate)
+	if err != nil {
+		t.Fatalf("compose admission revision: %v", err)
+	}
+	if revisionResult.Candidate.Digest() == baselineResult.Candidate.Digest() ||
+		!slices.Equal(revisionResult.Diff.RowsChanged, []RowID{"im"}) ||
+		len(revisionResult.Diff.Manifests) != 0 ||
+		len(revisionResult.Diff.Admissions) != 1 ||
+		revisionResult.Diff.Admissions[0].Before != 1 ||
+		revisionResult.Diff.Admissions[0].After != 2 {
+		t.Fatalf("admission-only diff = %#v", revisionResult.Diff)
 	}
 }
 
@@ -422,6 +468,24 @@ func singlePluginRegistry(
 	)
 	packageRecord := admittedPackage(manifest)
 	packageRecord.ArtifactDigest = artifactDigest
+	if err := registry.Register(manifest, packageRecord); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	return registry
+}
+
+func registryWithManifest(
+	t *testing.T,
+	manifest Manifest,
+	artifactDigest string,
+	admissionRevision uint64,
+) *Registry {
+	t.Helper()
+	registry := NewRegistry()
+	registerSchema(t, registry, manifest.ConfigSchemaDigest, strictSchema([]string{"mode"}, nil))
+	packageRecord := admittedPackage(manifest)
+	packageRecord.ArtifactDigest = artifactDigest
+	packageRecord.AdmissionRevision = admissionRevision
 	if err := registry.Register(manifest, packageRecord); err != nil {
 		t.Fatalf("register plugin: %v", err)
 	}
