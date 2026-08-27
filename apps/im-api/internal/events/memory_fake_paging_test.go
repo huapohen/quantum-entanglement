@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -204,6 +205,23 @@ func TestVolatileMemoryStoreCursorBindsKindScopeAndIncarnation(t *testing.T) {
 	unknownQuery.After = Cursor(base64.RawURLEncoding.EncodeToString(withUnknown))
 	if _, err := store.ReadStreamPage(context.Background(), unknownQuery); !errors.Is(err, ErrInvalidCursor) {
 		t.Fatalf("unknown-field cursor error = %v, want %v", err, ErrInvalidCursor)
+	}
+	var issued cursorEnvelope
+	if err := json.Unmarshal(decoded, &issued); err != nil {
+		t.Fatalf("unmarshal issued envelope: %v", err)
+	}
+	contentJSON, err := json.Marshal(issued.Content)
+	if err != nil {
+		t.Fatalf("marshal issued content: %v", err)
+	}
+	duplicateJSON := []byte(fmt.Sprintf(
+		`{"content":%s,"content":%s,"digest":%q}`,
+		contentJSON, contentJSON, issued.Digest,
+	))
+	duplicateQuery := streamQuery
+	duplicateQuery.After = Cursor(base64.RawURLEncoding.EncodeToString(duplicateJSON))
+	if _, err := store.ReadStreamPage(context.Background(), duplicateQuery); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("duplicate-field cursor error = %v, want %v", err, ErrInvalidCursor)
 	}
 
 	otherStore, err := NewVolatileMemoryStore("other-instance", func() time.Time { return contractTime })

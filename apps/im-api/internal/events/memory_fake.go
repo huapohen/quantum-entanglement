@@ -376,6 +376,14 @@ func decodeBoundCursor(cursor Cursor, binding cursorBinding) (uint64, error) {
 	if err != nil {
 		return 0, ErrInvalidCursor
 	}
+	strictDecoder := json.NewDecoder(bytes.NewReader(decoded))
+	strictDecoder.UseNumber()
+	if _, err := decodeStrictJSONValue(strictDecoder, 0); err != nil {
+		return 0, ErrInvalidCursor
+	}
+	if _, err := strictDecoder.Token(); !errors.Is(err, io.EOF) {
+		return 0, ErrInvalidCursor
+	}
 	decoder := json.NewDecoder(bytes.NewReader(decoded))
 	decoder.DisallowUnknownFields()
 	var envelope cursorEnvelope
