@@ -40,6 +40,7 @@ from .native_im import (
 _MAX_PROFILE_BYTES = 256 * 1_024
 _MAX_PROFILE_COMPONENT_BYTES = 64 * 1_024
 _MAX_ALLOWED_CONVERSATIONS = 128
+_MAX_REPLAY_WINDOW_SECONDS = 86_400
 
 _STATUSES = {"supported", "unsupported", "unverified"}
 _ENVIRONMENT_CLASSES = {"sandbox", "production"}
@@ -424,6 +425,11 @@ class IMProviderAuthenticationProfileV1(_ProviderProfileWireValue):
             if value is not None:
                 _enum(value, allowed, label)
         _optional_positive_integer(self.replay_window_seconds, "replayWindowSeconds")
+        if (
+            self.replay_window_seconds is not None
+            and self.replay_window_seconds > _MAX_REPLAY_WINDOW_SECONDS
+        ):
+            raise ValueError("replayWindowSeconds exceeds the E2 safety bound")
         _optional_digest(self.evidence_digest, "evidenceDigest")
         _check_three_state_details(
             status=self.status,

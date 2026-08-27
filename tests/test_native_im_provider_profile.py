@@ -455,6 +455,9 @@ def test_authentication_and_resume_require_all_supported_facts() -> None:
     ):
         with pytest.raises(ValueError):
             resume(**{field_name: None})
+    authentication(replay_window_seconds=86_400)
+    with pytest.raises(ValueError):
+        authentication(replay_window_seconds=86_401)
 
 
 def test_limits_are_exact_bounded_and_rate_limit_fields_are_atomic() -> None:
