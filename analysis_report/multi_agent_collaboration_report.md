@@ -522,7 +522,7 @@ v0版仓库不是空壳，包含：
 - checkpoint、数据库副作用和 IM 投递不是原子；
 - 需要显式 task attempt、outbox、幂等和凭据边界。
 
-建议复用纯逻辑和节点思想，以新领域内核为主干逐个迁移。阶段审计见 `research/01_jingran_implementation_audit.md`。
+建议复用纯逻辑和节点思想，以新领域内核为主干逐个迁移。阶段审计见 `research/01_v0_implementation_audit.md`。
 
 ## 9. 当前代码实现
 
@@ -801,7 +801,7 @@ crash/cancel/reconcile，以及不能确认远端 acceptance 时的显式 UNKNOW
 专题研究：
 
 - `research/00_scope_evidence_and_findings.md`
-- `research/01_jingran_implementation_audit.md`
+- `research/01_v0_implementation_audit.md`
 - `research/02_framework_deepdive.md`
 - `research/03_protocol_landscape.md`
 - `research/04_competitor_landscape.md`

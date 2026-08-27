@@ -83,4 +83,3 @@
 3. 把 `create_all()` 改为 Alembic 迁移；CI 从空库和旧库分别升级验证。
 4. 增加不依赖真实模型的协议级 fake Agent；真实模型验证作为可选 smoke test。
 5. CI 至少执行 Python lint/type/test、前端 typecheck/build、PostgreSQL 集成测试、A2A 合同测试。
-
