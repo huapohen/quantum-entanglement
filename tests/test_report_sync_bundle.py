@@ -53,6 +53,13 @@ class ReportSyncBundleTests(unittest.TestCase):
             "analysis_report/multi_agent_collaboration_report.md",
             b"# Collaboration\n",
         )
+        self._write("BRANCH_CATALOG.md", b"# Branch catalog\n")
+        self._write("analysis_report/NEXT_STAGE_PLAN.md", b"# Next stage\n")
+        self._write(
+            "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md",
+            b"# Stage acceptance\n",
+        )
+        self._write("docs/TERMINOLOGY.md", b"# Terminology\n")
         self._write("analysis_report/research/00_scope.md", b"# Scope\n")
         self._write("analysis_report/research/08_new_evidence.md", b"# New\n")
         self._write("analysis_report/screenshots/README.md", b"# Screenshots\n")
@@ -251,13 +258,30 @@ class ReportSyncBundleTests(unittest.TestCase):
             {"unmanifestedPolicy": "fail-closed"},
         )
         source_summary = cast(dict[str, Any], first["sourceSummary"])
-        self.assertEqual(source_summary["count"], 7)
-        self.assertEqual(source_summary["sourceTargetCount"], 8)
-        self.assertEqual(source_summary["notionTargetCount"], 6)
+        self.assertEqual(source_summary["count"], 11)
+        self.assertEqual(source_summary["sourceTargetCount"], 12)
+        self.assertEqual(source_summary["notionTargetCount"], 10)
         self.assertEqual(source_summary["yuqueTargetCount"], 2)
 
         path = self._save_bundle(first)
         self.assertEqual(verify_report_sync_bundle(self.repository, path), first)
+
+    def test_notion_manifest_v2_remote_readback_is_accepted(self) -> None:
+        manifest_path = self.repository / "analysis_report/notion_sync_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["version"] = 2
+        for page in manifest["pages"]:
+            page["remoteReadback"] = page.pop("readback")
+        self._write_json("analysis_report/notion_sync_manifest.json", manifest)
+
+        payload = generate_report_sync_bundle(self.repository)
+        home = self._source_targets(payload)[("analysis_report/README.md", "notion")]
+        self.assertEqual(home["targetStatus"], "historical_manifest_claim_digest_match")
+
+        manifest["version"] = 3
+        self._write_json("analysis_report/notion_sync_manifest.json", manifest)
+        with self.assertRaisesRegex(ReportSyncBundleError, "notion_manifest_invalid"):
+            generate_report_sync_bundle(self.repository)
 
     def test_source_drift_fails_verification_and_becomes_local_pending(self) -> None:
         original = generate_report_sync_bundle(self.repository)

@@ -155,10 +155,14 @@ _EXPLICIT_CREDENTIAL_PLACEHOLDERS = frozenset(
 _ENVIRONMENT_REFERENCE_PATTERN = re.compile(r"(?:\$[A-Z][A-Z0-9_]*|\$\{[A-Z][A-Z0-9_]*\})")
 _CANONICAL_EXACT_PATHS = frozenset(
     {
+        "BRANCH_CATALOG.md",
+        "analysis_report/NEXT_STAGE_PLAN.md",
         "analysis_report/README.md",
+        "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md",
         "analysis_report/multi_agent_collaboration_report.md",
         "analysis_report/screenshots/README.md",
         "analysis_report/screenshots/manifest.json",
+        "docs/TERMINOLOGY.md",
     }
 )
 _NOTION_MANIFEST_PATH = "analysis_report/notion_sync_manifest.json"
@@ -960,8 +964,12 @@ def _collect_sources(
     session: _PinnedReadSession,
 ) -> tuple[list[SourceFile], dict[str, SourceFile]]:
     paths: list[tuple[str, str]] = [
+        ("canonical-source", "BRANCH_CATALOG.md"),
+        ("canonical-source", "analysis_report/NEXT_STAGE_PLAN.md"),
         ("canonical-source", "analysis_report/README.md"),
+        ("canonical-source", "analysis_report/STAGE_ACCEPTANCE_2026-08-27.md"),
         ("canonical-source", "analysis_report/multi_agent_collaboration_report.md"),
+        ("canonical-source", "docs/TERMINOLOGY.md"),
     ]
     paths.extend(
         ("canonical-source", path) for path in _markdown_files(session, "analysis_report/research")
@@ -1056,10 +1064,11 @@ def _load_notion_references(
     payload = _require_object(
         _parse_json(raw, "notion_manifest_invalid"), "notion_manifest_invalid"
     )
+    version = payload.get("version")
     if (
         payload.get("format") != "quantum-entanglement.notion-sync-manifest"
-        or type(payload.get("version")) is not int
-        or payload.get("version") != 1
+        or type(version) is not int
+        or version not in {1, 2}
     ):
         _fail("notion_manifest_invalid")
     pages = _require_list(payload.get("pages"), "notion_manifest_invalid")
@@ -1076,7 +1085,7 @@ def _load_notion_references(
         if key in seen_keys:
             _fail("duplicate_page_key")
         seen_keys.add(key)
-        readback_value = page.get("readback")
+        readback_value = page.get("readback" if version == 1 else "remoteReadback")
         readback = _require_object(readback_value, "notion_manifest_invalid")
         manifest_claimed_readback = _require_boolean(
             readback.get("verified"), "notion_manifest_invalid"
