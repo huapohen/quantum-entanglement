@@ -14,6 +14,7 @@ from scripts.branch_catalog import (
     branch_purpose,
     branch_worktree_root,
     catalog_main_baseline,
+    catalog_tip_baseline,
     git,
     load_purposes,
     render_catalog,
@@ -71,6 +72,33 @@ class BranchCatalogTests(unittest.TestCase):
             git(root, "commit", "-m", "update payload")
             current = git(root, "rev-parse", "HEAD").stdout.strip()
             self.assertEqual(catalog_main_baseline(root, catalog, "HEAD"), current)
+
+    def test_catalog_tip_baseline_supports_linked_worktree_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "repo"
+            root.mkdir()
+            git(root, "init", "-b", "main")
+            git(root, "config", "user.name", "catalog-test")
+            git(root, "config", "user.email", "catalog-test@example.invalid")
+            payload = root / "payload.txt"
+            payload.write_text("one\n", encoding="utf-8")
+            git(root, "add", "payload.txt")
+            git(root, "commit", "-m", "initial payload")
+            baseline = git(root, "rev-parse", "HEAD").stdout.strip()
+
+            catalog = root / "BRANCH_CATALOG.md"
+            catalog.write_text("snapshot\n", encoding="utf-8")
+            git(root, "add", "BRANCH_CATALOG.md")
+            git(root, "commit", "-m", "refresh catalog")
+            tip = git(root, "rev-parse", "HEAD").stdout.strip()
+
+            linked = base / "linked"
+            git(root, "worktree", "add", "-b", "review", str(linked), "HEAD")
+            self.assertEqual(
+                catalog_tip_baseline(root, linked / "BRANCH_CATALOG.md", tip),
+                baseline,
+            )
 
     def test_archive_source_name_recovers_original_branch(self) -> None:
         self.assertEqual(

@@ -199,9 +199,39 @@ def catalog_main_baseline(
     repo: Path, output: Path, main_ref: str = "refs/remotes/origin/main"
 ) -> str:
     tip = git(repo, "rev-parse", main_ref).stdout.strip()
+    return catalog_tip_baseline(repo, output, tip)
+
+
+def _repository_relative_output(repo: Path, output: Path) -> str | None:
     try:
-        relative_output = output.resolve().relative_to(repo.resolve()).as_posix()
+        return output.resolve().relative_to(repo.resolve()).as_posix()
     except ValueError:
+        output_root_result = git(output.parent, "rev-parse", "--show-toplevel", check=False)
+        if output_root_result.returncode != 0:
+            return None
+        output_root = Path(output_root_result.stdout.strip()).resolve()
+        try:
+            relative_output = output.resolve().relative_to(output_root).as_posix()
+        except ValueError:
+            return None
+        repo_common_result = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        output_common_result = git(
+            output_root,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        )
+        if (
+            Path(repo_common_result.stdout.strip()).resolve()
+            != Path(output_common_result.stdout.strip()).resolve()
+        ):
+            return None
+        return relative_output
+
+
+def catalog_tip_baseline(repo: Path, output: Path, tip: str) -> str:
+    relative_output = _repository_relative_output(repo, output)
+    if relative_output is None:
         return tip
     changed_paths = git(
         repo, "diff-tree", "--no-commit-id", "--name-only", "-r", tip, "--"
@@ -218,12 +248,18 @@ def collect_branches(
     worktrees: Sequence[WorktreeRecord],
     *,
     main_oid: str | None = None,
+    catalog_output: Path | None = None,
 ) -> list[BranchRecord]:
     if main_oid is None:
         main_oid = git(repo, "rev-parse", "refs/remotes/origin/main").stdout.strip()
     worktree_by_branch = {item.branch: item.path for item in worktrees if item.branch}
     records: list[BranchRecord] = []
     for name, oid, tip_time, subject in remote_refs(repo):
+        if catalog_output is not None:
+            baseline_oid = catalog_tip_baseline(repo, catalog_output, oid)
+            if baseline_oid != oid:
+                oid = baseline_oid
+                tip_time, subject = commit_details(repo, oid)
         if name == "main" and oid != main_oid:
             oid = main_oid
             tip_time, subject = commit_details(repo, main_oid)
@@ -503,7 +539,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         worktrees = parse_worktrees(repo)
         output = args.output.resolve()
         main_oid = catalog_main_baseline(repo, output)
-        branches = collect_branches(repo, purposes, worktrees, main_oid=main_oid)
+        branches = collect_branches(
+            repo,
+            purposes,
+            worktrees,
+            main_oid=main_oid,
+            catalog_output=output,
+        )
         content = render_catalog(repo, branches, worktrees, tag_rows(repo))
     except (KeyError, ValueError, OSError, subprocess.SubprocessError) as exc:
         print(f"branch catalog generation failed: {exc}", file=sys.stderr)
