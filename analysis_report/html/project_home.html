@@ -296,24 +296,25 @@ bundle、恢复命令与提前接入边界；不是当前 W2 入口</td>
 路线；保留作决策溯源，不再是当前 W2 执行入口</td>
 </tr>
 <tr>
-<td><code>docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md</code></td>
-<td>当前 W2 工程入口：<code>cd92ea5</code></td>
-<td><code>0001..0005</code>、function-only writes、exact access 测试
-fixture、Go/No-Go 与生产 IaC/service wiring 等剩余 P0</td>
+<td><code>docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md</code></td>
+<td>当前 W2 工程入口：<code>5c19fdb</code></td>
+<td>strict connection policy、attested runtime pool、受控
+UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate
+A/Trusted tenant 剩余 P0</td>
 </tr>
 <tr>
-<td><code>research/34_postgres_function_only_writes_and_exact_access_checkpoint.md</code></td>
-<td>当前 W2 深度证据：<code>cd92ea5</code></td>
-<td>五函数 exact manifest、repository/receipt function-only
-wiring、access manifest、真实 login/PG18 正负向证据与未交付边界</td>
+<td><code>research/35_postgres_attested_runtime_composition_checkpoint.md</code></td>
+<td>当前 W2 深度证据：<code>5c19fdb</code></td>
+<td>12 提交台账、PG18 connection/session/ACL drift
+实证、一级调研硬映射、未交付边界与下一阶段计划</td>
 </tr>
 </tbody>
 </table>
 <p>接入前代码基线已经安全备份。<code>NATIVE_IM_EARLY_INTEGRATION_PLAN.md</code>
 中“先 Level A、再 Level B sandbox
 inbound-only”是当时的历史调度口径。当前执行源已切换为
-<code>docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md</code> 与
-Topic 34；<code>NEXT_STAGE_PLAN.md</code> 继续作为 E3 Atomic Result
+<code>docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md</code> 与 Topic
+35；<code>NEXT_STAGE_PLAN.md</code> 继续作为 E3 Atomic Result
 Authority 的最大强度参考，不是当前 W2 的串行总清单。</p>
 <h2 id="专题研究">专题研究</h2>
 <table>
@@ -557,17 +558,25 @@ href="research/33_postgres_authority_persistence_checkpoint.md"><code>research/3
 <tr>
 <td><a
 href="research/34_postgres_function_only_writes_and_exact_access_checkpoint.md"><code>research/34_postgres_function_only_writes_and_exact_access_checkpoint.md</code></a></td>
-<td>W2 当前深度证据：<code>cd92ea5</code></td>
+<td>W2 前序检查点：<code>cd92ea5</code></td>
 <td><code>0005</code>、五个 fixed function、function-only
 repository/receipt、exact access 临时测试 validator fixture、真实
-migration/runtime login 与 PostgreSQL 18.6 正负向矩阵；生产 IaC/service
-wiring/trusted tenant/resolver/recovery/event-outbox 仍未交付</td>
+migration/runtime login 与 PostgreSQL 18.6 正负向矩阵；由 Topic 35
+接续</td>
 </tr>
 <tr>
-<td><code>docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md</code></td>
-<td>当前 W2 工程入口与 Go/No-Go：<code>cd92ea5</code></td>
-<td>当前可用范围、验证命令、生产 IaC/service wiring、trusted
-tenant、active resolver、recovery 与 event/outbox 顺序</td>
+<td><a
+href="research/35_postgres_attested_runtime_composition_checkpoint.md"><code>research/35_postgres_attested_runtime_composition_checkpoint.md</code></a></td>
+<td>W2 当前深度证据：<code>5c19fdb</code></td>
+<td>strict connection policy、physical/session attestation、exact
+readiness、attested-only UoW、API gate、one-shot migrator、PG18
+normal/race/vet 与 Gate A/Trusted Participant/mention 后续计划</td>
+</tr>
+<tr>
+<td><code>docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md</code></td>
+<td>当前 W2 工程入口与 Go/No-Go：<code>5c19fdb</code></td>
+<td>当前启动/调试入口、runtime composition、验证命令、production
+cutover/rotation、trusted tenant、mention/thread/provider 顺序</td>
 </tr>
 </tbody>
 </table>
@@ -576,11 +585,11 @@ tenant、active resolver、recovery 与 event/outbox 顺序</td>
 href="screenshots/README.md"><code>screenshots/README.md</code></a> 与
 <a
 href="screenshots/manifest.json"><code>screenshots/manifest.json</code></a>。当前共归档
-31 张图；前十张是受限、
+33 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第
 10–13 张是合成本地 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是
-Clawith 公开官网、白皮书与官方文档 只读证据；最后四项是 Topic 33 与
-Topic 34 两个 W2 PostgreSQL 检查点图各自的 SVG source 与 PNG
+Clawith 公开官网、白皮书与官方文档 只读证据；最后六项是 Topic 33、Topic
+34 与 Topic 35 三个 W2 PostgreSQL 检查点图各自的 SVG source 与 PNG
 rendering，只作为报告导航图，不冒充独立运行证据。整套资料仍按项目内部证据管理。</p>
 <table>
 <colgroup>
@@ -743,6 +752,14 @@ rendering，只作为报告导航图，不冒充独立运行证据。整套资�
 / <code>.png</code></td>
 <td>一级调研 → 五函数写面 → exact access → PG18.6 故障证据 → 剩余生产
 gate</td>
+<td>仓库内 SVG 与派生 PNG；不是独立运行证据</td>
+</tr>
+<tr>
+<td><code>screenshots/35_postgres_attested_runtime_composition_map.svg</code>
+/ <code>.png</code></td>
+<td>private config → strict connection policy → physical/session
+attestation → readiness/UoW/API gate → Gate A/Trusted Participant/mention
+剩余边界</td>
 <td>仓库内 SVG 与派生 PNG；不是独立运行证据</td>
 </tr>
 </tbody>

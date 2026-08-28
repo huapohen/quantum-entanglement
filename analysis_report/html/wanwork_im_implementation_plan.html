@@ -384,12 +384,11 @@ transaction、crash/reopen、kill-9/restore 和 projection 清库重建；W1
 memory fake 不能代替该门禁。</p>
 <h4 id="w2-当前检查点2026-08-28">W2 当前检查点（2026-08-28）</h4>
 <p>当前工程入口见 <a
-href="W2_POSTGRES_AUTHORITY_CHECKPOINT.md">W2_POSTGRES_AUTHORITY_CHECKPOINT.md</a>，最新深度证据见
-<code>analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md</code>；Topic
-33
-<code>analysis_report/research/33_postgres_authority_persistence_checkpoint.md</code>
-是 <code>0001..0004</code> 的前序历史检查点。</p>
-<p>当前 code baseline 为 <code>cd92ea5</code>。当前口径必须保留：</p>
+href="W2_POSTGRES_RUNTIME_CHECKPOINT.md">W2_POSTGRES_RUNTIME_CHECKPOINT.md</a>，最新深度证据见
+<code>analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md</code>；Topic
+33/34 分别保留 <code>0001..0004</code> persistence 与
+<code>0005</code> function-only/exact-access 的前序历史检查点。</p>
+<p>当前 code baseline 为 <code>5c19fdb</code>。当前口径必须保留：</p>
 <table>
 <colgroup>
 <col style="width: 50%" />
@@ -404,16 +403,16 @@ href="W2_POSTGRES_AUTHORITY_CHECKPOINT.md">W2_POSTGRES_AUTHORITY_CHECKPOINT.md</
 <tbody>
 <tr>
 <td><code>[F]</code></td>
-<td><code>0001..0005</code>、22 张业务表、17 张 FORCE RLS 表、五个 exact
-<code>SECURITY DEFINER</code> 写函数、function-only repository/receipt
-路径与 exact access manifest 已在 PostgreSQL 18.6 普通/race
-集成测试中通过。</td>
+<td><code>0001..0005</code>、五个 exact write function、exact
+access、strict connection policy、attested runtime pool、受控
+UoW、startup/readiness/route barrier 与独立 migrator
+已形成代码路径；PostgreSQL 18.6 全包 normal/race 与 vet 通过。</td>
 </tr>
 <tr>
 <td><code>[C]</code></td>
-<td>保证仅限已登记 schema、当前四类 conversation authority
-repository、receipt、同一 PostgreSQL transaction，以及测试
-provision/access-validator fixture；这不是生产 IaC 或服务启动接线。</td>
+<td>保证仅限 explicit manifest、已登记 schema/object、当前
+repository/UoW 与测试 provision fixture；runtime composition 已接线，但
+production ownership/grant cutover、credential lifecycle 和恢复仍未交付。</td>
 </tr>
 <tr>
 <td><code>[A]</code></td>
@@ -422,9 +421,8 @@ admission、resolver 和 event/outbox 的底座。</td>
 </tr>
 <tr>
 <td><code>[U]</code></td>
-<td>生产 IaC/角色生命周期、真实 service pool/readiness wiring、Clerk
-trusted tenant、action-time resolver、restore/crash 和 event/outbox
-尚未完成。</td>
+<td>production cutover/角色轮换/旧 session drain、Clerk trusted
+tenant、action-time resolver、restore/crash 和 event/outbox 尚未完成。</td>
 </tr>
 </tbody>
 </table>
@@ -455,6 +453,17 @@ signature/owner/body digest/security attributes/search path， repository
 database/schema/table/function/default ACL、owner、role attributes、
 membership options/grantor 与额外 relation/routine；真实
 migration/runtime login 通过正负向 fixture；</li>
+<li>strict connection policy 拒绝隐式 endpoint/identity、session 与
+parser-consumed params、service/pass file、 unauthenticated TLS 与
+multi-host/fallback；</li>
+<li>attested pool 在 AfterConnect 执行
+login/database/role/session/full-catalog proof，在 PrepareConn 拒绝
+role/GUC/lock/LISTEN/transaction 污染；</li>
+<li>UnitOfWork 生产构造器只接 attested pool；API runtime 监听前必须
+Ready，业务 route effect 前有 dependency gate；</li>
+<li>migration credential 已拆到 one-shot <code>im-migrate</code>
+进程，API 不读取 migration URL；</li>
+<li>SIGINT/SIGTERM 先有界 graceful drain HTTP，再关闭 pool；</li>
 <li>真实 PG18 RLS、schema drift、64 路 exact retry、64 路 single CAS
 winner、rollback、unknown commit 和 runtime immutable-history
 fixture。</li>
@@ -463,8 +472,9 @@ fixture。</li>
 <ul>
 <li>W2 已完成；</li>
 <li>生产多租户/授权已完成；</li>
-<li>测试 provision/access-validator fixture 已经是生产 IaC、生产 role
-bootstrap 或 service readiness；</li>
+<li>测试 role provision fixture、runtime service wiring 或 one-shot
+migrator 已经等于 production IaC、完整 first-deploy cutover、credential
+rotation 或恢复；</li>
 <li>receipt 实现 provider ACK、完整结果或 exactly-once；</li>
 <li>access boolean 已构成 action-time gate；</li>
 <li>provider binding 证明融云群存在或消息送达；</li>
@@ -473,17 +483,17 @@ production event store 已持久化。</li>
 </ul>
 <h4 id="w2-接真实-im-前的-p0-顺序">W2 接真实 IM 前的 P0 顺序</h4>
 <ol type="1">
-<li>把已验证的 <code>0005</code>/function-only/exact access 合同落到生产
-IaC：显式 database owner、环境 migration/ runtime login、secret
-注入、角色轮换、cutover/旧 session 清理与 drift validator；</li>
+<li>把已验证的合同落到 production cutover/IaC：canonical
+plan、provisioner preflight、ownership/grant executor/receipt、secret
+注入、角色轮换、旧 session drain、回滚与 drift validator；</li>
 <li>Clerk verified claim → realm binding → active principal/tenant
 membership → exact Actor → path consistency 的 trusted request
 context；</li>
 <li>conversation/actor/membership/access active resolver；invoke/publish
 再叠加 installation/mandate/
 capability/budget/Artifact/Acceptance；</li>
-<li>migration/role/function manifest 与真实服务 startup/readiness/DB
-pool composition；</li>
+<li>把当前每请求 full-catalog gate 性能化为 host-owned max-staleness
+readiness monitor，并增加 explicit draining state；</li>
 <li>dump/restore、DB/process restart、kill-9、old binary/future
 schema、role restoration 演练；</li>
 <li>PostgreSQL event store/outbox/projection checkpoint、backfill+live
@@ -614,6 +624,11 @@ exact function、repository/receipt wiring 与 runtime raw-write
 <li><code>security/test: freeze exact authority access manifest</code>（<code>d911c51</code>～<code>cd92ea5</code>；测试
 provision/ validator fixture、真实 migration/runtime login 与
 ACL/role/membership/MAINTAIN drift 矩阵；生产 IaC 和 service wiring
+仍未交付）</li>
+<li><code>security/feat/test: wire attested PostgreSQL runtime composition</code>（<code>03cc94e</code>～<code>5c19fdb</code>；database-bound
+runtime validator、strict connection policy、physical/session
+attestation、attested-only UoW、readiness/ route barrier、graceful HTTP
+drain 与 one-shot migrator；production cutover/rotation/recovery
 仍未交付）</li>
 </ol>
 <p>任何一个条目若同时包含合同、实现、迁移、故障矩阵和
