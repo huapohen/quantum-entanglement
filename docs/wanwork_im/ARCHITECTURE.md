@@ -385,18 +385,31 @@ Capability definition 定义 schema/effect/data class；assignment 决定某 Age
 ### 6.1 平台主体
 
 ```text
-Actor
+ActorRef
   tenantId
   actorId
+
+ActorSnapshot
+  ActorRef
   subjectType = human | agent | system | service
-  externalIdentityRef
   displayProfile
   status
   revision
+
+ExternalIdentityRef
+  provider = clerk | rongcloud
+  providerRealmId
+  subjectId
 ```
 
 Clerk `sub` 先映射为平台 human actor，再读取组织 membership。Agent actor 由安装记录创建，不
-复用操作者的 Clerk identity。
+复用操作者的 Clerk identity。稳定 `ActorRef` 与带 revision 的 `ActorSnapshot` 分离，避免同一 Actor
+的新版 snapshot 在 equality、dedupe 或 audit join 中变成另一个身份。外部 subject 必须绑定明确的
+provider realm/app/environment；相同 provider subject 在 staging/production 或多个 app 中不能串号。
+
+Actor ID 的 prefix 与 `subjectType` 一致仍只证明 syntax，不证明 caller 可代表该 Actor、数据库记录
+存在、Agent installation 有效或 tenant/conversation membership 成立。`AgentVersion` 也只是严格 SemVer
+显示/兼容标签；不可变执行版本必须在 W2 以 release ID 和 artifact/config digest 固定。
 
 Actor 是可见业务主体；执行授权还必须另外保存：
 
@@ -416,37 +429,41 @@ HumanPrincipal -> DelegationGrant(task, purpose, audience, capability, expiry)
 
 ### 6.2 融云用户 `ext_info`
 
-string 内容是 canonical JSON：
+string 内容是 canonical JSON。下列是 exact bytes，不允许 pretty-print、重排或等价 escape：
 
 ```json
-{
-  "schemaVersion": 1,
-  "subjectType": "agent",
-  "platformActorId": "agt_...",
-  "agentDefinitionId": "agd_...",
-  "agentVersion": "1.0.0"
-}
+{"agentDefinitionId":"agd_finance","agentVersion":"1.0.0","platformActorId":"agt_finance","schemaVersion":1,"subjectType":"agent"}
 ```
 
-真人使用 `subjectType=human`，不包含 Agent 字段。解码时拒绝 unknown field、duplicate key、错误
-类型、超限、非 NFC、控制字符和秘密字段。`ext_info` 只能辅助 provider 显示和 mapping；收到
-事件后必须按 provider user ID 回查平台绑定，不能信任 payload 自报主体类型。
+真人 exact shape 为：
+
+```json
+{"platformActorId":"usr_alice","schemaVersion":1,"subjectType":"human"}
+```
+
+真人不包含 Agent 字段；`system/service` 不注册成 V1 普通聊天用户。codec 上限为 1024 UTF-8 bytes，
+只接受 flat allowlist、integer schema version、字典序 key、有效 NFC 与 exact canonical roundtrip；拒绝
+unknown、duplicate/escaped duplicate、missing/null、错误类型、trailing value、超限、Unicode 混淆、
+控制字符和秘密/授权字段。`ext_info` 只能辅助 provider 显示和 mapping；收到事件后必须按
+authenticated provider realm + user ID 回查平台 binding、Actor status 和 membership，不能信任 payload
+自报主体类型。
 
 ### 6.3 融云群 `ext_info`
 
 ```json
-{
-  "schemaVersion": 1,
-  "conversationType": "agent_thread",
-  "platformConversationId": "cnv_...",
-  "parentConversationId": "cnv_parent",
-  "rootMessageId": "msg_...",
-  "agentInvocationId": "inv_..."
-}
+{"agentInvocationId":"inv_finance","conversationType":"agent_thread","parentConversationId":"cnv_parent","platformConversationId":"cnv_thread","rootMessageId":"msg_root","schemaVersion":1}
 ```
 
-普通群不携带 parent/root/invocation 字段。组织 ID、ACL、真实消息正文、token 和永久文件 URL 不
-放入 `ext_info`。
+普通群 exact shape 为：
+
+```json
+{"conversationType":"group","platformConversationId":"cnv_product","schemaVersion":1}
+```
+
+普通群不携带 parent/root/invocation 字段，direct conversation 不使用 group `ext_info`；Agent thread
+三字段 all-or-none 且 parent 不得等于 self。parent/root/invocation 只表示 topology hint，不产生父群
+ACL 继承，也不证明 Task、membership 或 provider group 已存在。组织 ID、ACL、真实消息正文、token
+和永久文件 URL 不放入 `ext_info`。
 
 ## 7. 入站消息时序
 
