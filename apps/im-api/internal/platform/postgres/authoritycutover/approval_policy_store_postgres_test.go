@@ -17,14 +17,14 @@ func TestApprovalPolicyControlStoreContractDigestIsFrozen(t *testing.T) {
 }
 
 func TestApprovalPolicyControlStoreV2ContractDigestIsFrozen(t *testing.T) {
-	const expected = "sha256:3bce7072085b95c6a69c03584f0aac7c1a911fd9e1c413358fe908f7f2028080"
+	const expected = "sha256:538edf69be324b0c4219a59f7678aabdcd7ac622215f667494c1919362360dcc"
 	if actual := CurrentApprovalPolicyControlStoreSchemaDigestV2(); actual != expected {
 		t.Fatalf("control-store v2 contract digest = %q, want %q", actual, expected)
 	}
 }
 
 func TestApprovalPolicyControlStoreV2CatalogDigestIsFrozen(t *testing.T) {
-	const expected = "sha256:523755fe0a80dc9de6e0a8a61536875b25303bf7787ee50172218c154a1bf7ca"
+	const expected = "sha256:13161a7b2727018f0c737be572cdcffdadb10f0ef93641b0414fd5ab9741c6e7"
 	if approvalPolicyControlStoreCatalogDigestV2 != expected {
 		t.Fatalf("control-store v2 catalog digest = %q, want %q", approvalPolicyControlStoreCatalogDigestV2, expected)
 	}
@@ -254,5 +254,56 @@ func TestApprovalPolicyControlStoreV2ACLIsExactAndRoleSeparated(t *testing.T) {
 		if functionGrants[role][approvalPolicyControlStoreAdmissionFunction] {
 			t.Fatalf("v2 functional role %q can execute owner-only admission validator", role)
 		}
+	}
+}
+
+func TestPostgresApprovalExecutionFenceStoreRequiresExactFencerCredential(t *testing.T) {
+	fixture := newApprovalPolicyFixture(t)
+	digest := "sha256:" + strings.Repeat("d", 64)
+	expectation := ApprovalPolicyControlStoreExpectation{
+		ControlActivatorRole:          "wanwork_policy_control_activator",
+		ControlDatabase:               "wanwork_policy_control_prod",
+		ControlFencerRole:             "wanwork_policy_control_fencer",
+		ControlLoginRole:              "wanwork_policy_control_fencer",
+		ControlOwnerRole:              "wanwork_policy_control_owner",
+		ControlReaderRole:             "wanwork_policy_control_reader",
+		ControlPostgreSQLMajor:        migrations.AuthorityAccessPostgreSQLMajor,
+		ControlServerIdentity:         "postgres-policy-control.prod.internal",
+		ControlSystemIdentifierDigest: digest,
+		ControlTLS: TLSProfile{
+			CADigest:   digest,
+			CARef:      "trust/postgres-policy-control/generation-1",
+			Mode:       "verify-full",
+			ServerName: "postgres-policy-control.prod.internal",
+		},
+		PolicyID:     fixture.input.PolicyID,
+		PolicyTarget: fixture.input.Target,
+	}
+	pool := new(pgxpool.Pool)
+	store, err := newPostgresApprovalExecutionFenceStore(
+		pool,
+		expectation,
+		func(*pgx.Conn, PostgreSQLClusterProbeExpectation) bool { return true },
+	)
+	if err != nil || store.namespace != approvalPolicyNamespace(fixture.toSign.snapshot) {
+		t.Fatalf("new PostgreSQL fence store = (%+v, %v)", store, err)
+	}
+	for name, role := range map[string]string{
+		"activator": expectation.ControlActivatorRole,
+		"reader":    expectation.ControlReaderRole,
+		"owner":     expectation.ControlOwnerRole,
+		"unknown":   "wanwork_policy_control_unknown",
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := expectation
+			candidate.ControlLoginRole = role
+			if _, err := newPostgresApprovalExecutionFenceStore(
+				pool,
+				candidate,
+				func(*pgx.Conn, PostgreSQLClusterProbeExpectation) bool { return true },
+			); err != ErrInvalidPostgresApprovalPolicyStore {
+				t.Fatalf("constructor error = %v, want fixed %v", err, ErrInvalidPostgresApprovalPolicyStore)
+			}
+		})
 	}
 }
