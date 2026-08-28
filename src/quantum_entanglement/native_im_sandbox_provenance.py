@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Dict, cast
+from typing import Any, ClassVar, Dict, Union, cast
 
 from ._native_im_codec import (
     NativeIMCodecTooLargeError,
@@ -320,7 +320,10 @@ class NativeIMSandboxExchangeAdmissionProvenanceV1:
 
 
 NativeIMSandboxAdmissionProvenance = (
-    NativeIMSandboxAdmissionProvenanceV1 | NativeIMSandboxExchangeAdmissionProvenanceV1
+    Union[
+        NativeIMSandboxAdmissionProvenanceV1,
+        NativeIMSandboxExchangeAdmissionProvenanceV1,
+    ]
 )
 
 

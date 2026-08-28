@@ -13,6 +13,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import islice
+from typing import Union
 
 from quantum_entanglement._native_im_codec import _digest, _id, _model_digest, _timestamp
 from quantum_entanglement.native_im_provider_profile import (
@@ -71,7 +72,7 @@ _ENABLED_CONFIG_KEYS = frozenset(
 )
 _ALL_CONFIG_KEYS = _ENABLED_CONFIG_KEYS
 
-IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
 
 class NativeIMConfigurationError(ValueError):
@@ -531,7 +532,7 @@ class NativeIMInboundOnlyConfigV1:
         return f"NativeIMInboundOnlyConfigV1(fingerprint={self.fingerprint!r})"
 
 
-NativeIMConfigV1 = NativeIMDisabledConfigV1 | NativeIMInboundOnlyConfigV1
+NativeIMConfigV1 = Union[NativeIMDisabledConfigV1, NativeIMInboundOnlyConfigV1]
 
 
 class NativeIMSandboxConfig:
