@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 VERIFIER = REPOSITORY_ROOT / "scripts" / "verify_native_im_provider_bundle_tck_v1.py"
-EXPECTED_DIGEST = "7fbdec73b0bbe74e18e721c39ae623548f5dfe6dfa97bbf14c4a716bdc50d4e7"
+EXPECTED_DIGEST = "a14ef986ec7ffcfa2ed59ab0fa748d3e2181e29c067e09ffef66325b28a50368"
 
 
 def _run(seed: str, *arguments: str) -> subprocess.CompletedProcess[str]:
