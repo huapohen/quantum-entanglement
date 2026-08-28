@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120" role="img" aria-labelledby="title desc">
   <title id="title">WanWork IM PostgreSQL attested runtime composition checkpoint</title>
-  <desc id="desc">The migration credential is isolated from the API. A strict connection policy, physical connection attestation, acquisition-time session guard, exact readiness validation, controlled unit of work, and route barrier form the delivered chain. Production cutover, identity authorization, provider integration, and recovery remain open.</desc>
+  <desc id="desc">The migration credential is isolated from the API. Ambient PostgreSQL configuration, default credential files, passwordless remote URLs, and raw DSN reparsing are rejected or suppressed before a single canonical pool parse. Physical connection attestation, acquisition-time session guard, exact readiness validation, controlled unit of work, and route barrier form the delivered chain. Production cutover, identity authorization, provider integration, and recovery remain open.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#07111f"/><stop offset="1" stop-color="#12263d"/></linearGradient>
     <linearGradient id="good" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0f766e"/><stop offset="1" stop-color="#14b8a6"/></linearGradient>
@@ -13,7 +13,7 @@
   </defs>
   <rect width="1800" height="1120" rx="32" fill="url(#bg)"/>
   <text x="72" y="80" class="title">PostgreSQL Attested Runtime Composition｜Topic 35</text>
-  <text x="72" y="118" class="sub">代码基线 5c19fdb · PostgreSQL 18.6 normal / race / vet 全绿 · 不等于 production IM</text>
+  <text x="72" y="118" class="sub">代码证据基线 2d0c4a0 · PostgreSQL 18.6 normal / race / vet 全绿 · 不等于 production IM</text>
 
   <g filter="url(#shadow)">
     <rect x="72" y="178" width="370" height="190" rx="22" fill="#172554" stroke="#60a5fa" stroke-width="2"/>
@@ -25,10 +25,10 @@
 
     <rect x="505" y="178" width="370" height="190" rx="22" fill="#164e63" stroke="#22d3ee" stroke-width="2"/>
     <text x="531" y="216" class="h">Strict Connection Policy</text>
-    <text x="531" y="252" class="t">• URL / DB / login 精确绑定</text>
-    <text x="531" y="284" class="t">• 原始 key allowlist</text>
-    <text x="531" y="316" class="t">• verify-full 等价远端 TLS</text>
-    <text x="531" y="348" class="small">拒绝 parser-consumed 参数、fallback、multi-host</text>
+    <text x="531" y="252" class="t">• endpoint / DB / login / password 精确</text>
+    <text x="531" y="284" class="t">• 24 个 PG* presence 全拒绝</text>
+    <text x="531" y="316" class="t">• 压住默认 passfile / client TLS files</text>
+    <text x="531" y="348" class="small">单次 canonical parse · 拒绝 remote passwordless/fallback</text>
 
     <rect x="938" y="178" width="370" height="190" rx="22" fill="url(#good)" stroke="#5eead4" stroke-width="2"/>
     <text x="964" y="216" class="h">Physical Conn Attestation</text>
@@ -58,7 +58,7 @@
     <rect x="690" y="454" width="420" height="198" rx="22" fill="#123c3a" stroke="#2dd4bf" stroke-width="2"/>
     <text x="716" y="494" class="h">Attested Unit of Work</text>
     <text x="716" y="532" class="t">公开构造器不再接受 raw pgxpool</text>
-    <text x="716" y="566" class="t">owner / migrator pool 无法注入</text>
+    <text x="716" y="566" class="t">Pool.Acquire 仅为 trusted low-level escape</text>
     <text x="716" y="600" class="small">tenant GUC 仍只是数据库 transaction context</text>
     <text x="716" y="628" class="small">它还不是 Clerk trusted tenant authorization</text>
 
@@ -66,7 +66,7 @@
     <text x="1234" y="494" class="h">One-shot im-migrate</text>
     <text x="1234" y="532" class="t">独立 migration URL / login</text>
     <text x="1234" y="566" class="t">SET ROLE owner → Apply → exact validate</text>
-    <text x="1234" y="600" class="small">API 不读取、不保留 owner-capable credential</text>
+    <text x="1234" y="600" class="small">API 发现 migration 变量 presence（含空值）即拒绝</text>
     <text x="1234" y="628" class="small">首次 DBA ownership/grant cutover 尚未自动化</text>
   </g>
 

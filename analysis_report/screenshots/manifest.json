@@ -692,10 +692,10 @@
       "width": 1600
     },
     {
-      "byteSize": 7995,
+      "byteSize": 8205,
       "captureDate": null,
       "captureDateEvidence": "Not a captured external page or runtime viewport; this is a repository-authored SVG documentation visual, so captureDate is not applicable",
-      "contentScope": "W2 PostgreSQL attested runtime composition map connecting private configuration, strict connection policy, physical and session attestation, exact readiness, controlled Unit of Work, API route gating and the remaining Gate A, trusted Participant and mention boundaries",
+      "contentScope": "W2 PostgreSQL attested runtime composition map connecting private configuration, ambient/default-file/raw-DSN connection hardening, physical and session attestation, exact readiness, controlled Unit of Work, API route gating and the remaining Gate A, trusted Participant and mention boundaries",
       "derivation": "repository-authored-svg-documentation-visual",
       "evidenceClass": "B-local-derived-documentation-visual",
       "evidenceLimitations": [
@@ -708,16 +708,16 @@
       "mediaType": "image/svg+xml",
       "notForPublicDistribution": true,
       "redactionStatus": "not-applicable-repository-authored-diagram",
-      "sha256": "7f9e5dda9195a90ef7bf36aca00d226d65db9187de3db5a273545e2fcd386d3a",
+      "sha256": "22d75a40ee97039dbefc856805bfec04ecc1acfdc132ec3ebc57de3382890f67",
       "sourceKind": "quantum-entanglement-canonical-report-visual",
-      "sourceReference": "analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md; code-baseline:5c19fdb0d88c2d59caec3c95aee400be193b269f; archived-git:72b0f968f8e75bb8639c5621119899fe690082de",
+      "sourceReference": "analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md; code-baseline:2d0c4a069ef016c085541b3ec26426ccd6ace70b; archived-git:72b0f968f8e75bb8639c5621119899fe690082de",
       "width": 1800
     },
     {
-      "byteSize": 461527,
+      "byteSize": 471207,
       "captureDate": null,
       "captureDateEvidence": "Not a captured external page or runtime viewport; this PNG was rendered from the archived SVG in the same repository batch, so captureDate is not applicable",
-      "contentScope": "PNG rendering of the W2 attested runtime composition, PostgreSQL 18.6 evidence and remaining Gate A, trusted Participant and mention boundaries for Notion and browser review",
+      "contentScope": "PNG rendering of the W2 ambient/default-file/raw-DSN-hardened attested runtime composition, PostgreSQL 18.6 evidence and remaining Gate A, trusted Participant and mention boundaries for Notion and browser review",
       "derivation": "rsvg-convert-1800x1120-from-35-postgres-attested-runtime-composition-map-svg",
       "evidenceClass": "B-local-derived-documentation-visual",
       "evidenceLimitations": [
@@ -730,7 +730,7 @@
       "mediaType": "image/png",
       "notForPublicDistribution": true,
       "redactionStatus": "not-applicable-repository-authored-diagram",
-      "sha256": "d9236f96a13fa2dc55e4afe530438a3f8b56470922972960407b5afebd175b58",
+      "sha256": "9b5d200df3c0bafb786d3f91b6b256c5f1911ec62cd6611e23b96e7c5e9ec8f6",
       "sourceKind": "quantum-entanglement-canonical-report-visual",
       "sourceReference": "analysis_report/screenshots/35_postgres_attested_runtime_composition_map.svg; rsvg-convert -w 1800 -h 1120; archived-git:72b0f968f8e75bb8639c5621119899fe690082de",
       "width": 1800
