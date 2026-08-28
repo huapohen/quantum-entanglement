@@ -50,6 +50,7 @@ from quantum_entanglement.invocation_results import (
     ScopedInvocationResultArtifactCandidateV2,
     ScopedInvocationResultEvidenceV2,
     ScopedInvocationResultManifestV2,
+    ScopedInvocationResultReceiptV2,
     ScopedInvocationResultTerminalTransitionV2,
 )
 from quantum_entanglement.protocol import TaskStatus
@@ -2106,6 +2107,122 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                             operation()
         with self.assertRaisesRegex(RuntimeError, "no longer active"):
             completed._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_completion_readback_accepts_a_shared_preexisting_blob(self) -> None:
+        prepared = self.fresh_prepared()
+        candidate = prepared.request.artifact_candidates[0]
+        self.store._connection.execute(
+            """
+            INSERT INTO artifact_blobs (digest, content, byte_size, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                candidate.blob_digest,
+                sqlite3.Binary(candidate.content),
+                candidate.byte_size,
+                "2026-08-27T10:00:00.000000Z",
+            ),
+        )
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=(
+                "receipt_shared_blob",
+                "event_result_shared_blob",
+                "event_terminal_shared_blob",
+            ),
+        ):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as completed:
+                    self.assertIs(type(completed), _CompletedFreshResultAcceptancePlanV2)
+        self.assertEqual(
+            self.store._connection.execute("SELECT count(*) FROM artifact_blobs").fetchone()[0],
+            1,
+        )
+        self.assertEqual(
+            self.store._connection.execute("SELECT count(*) FROM artifact_versions").fetchone()[0],
+            1,
+        )
+
+    def test_completion_readback_drift_rolls_back_the_entire_graph(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        original = SQLiteEventStore._readback_result_acceptance_graph_body
+
+        def tamper(
+            store: SQLiteEventStore,
+            connection: sqlite3.Connection,
+            request: _PreparedScopedInvocationResultAcceptanceV2,
+            receipt: ScopedInvocationResultReceiptV2,
+        ) -> None:
+            connection.execute(
+                "UPDATE invocation_result_receipts SET receipt_digest = ? WHERE receipt_id = ?",
+                ("0" * 64, receipt.receipt_id),
+            )
+            original(store, connection, request, receipt)
+
+        with patch.object(SQLiteEventStore, "_readback_result_acceptance_graph_body", tamper):
+            with patch(
+                "quantum_entanglement.store.new_id",
+                side_effect=(
+                    "receipt_readback_drift",
+                    "event_result_readback_drift",
+                    "event_terminal_readback_drift",
+                ),
+            ):
+                with self.assertRaises(_ResultAcceptanceIntegrityError):
+                    with self.store._result_artifact_transaction() as handle:
+                        complete = self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction  # noqa: E501
+                        with complete(handle, prepared):
+                            self.fail("tampered result graph unexpectedly completed")
+        for table in (
+            "invocation_result_manifests",
+            "invocation_result_requests",
+            "invocation_result_event_bindings",
+            "invocation_result_receipts",
+            "invocation_result_artifacts",
+            "artifact_versions",
+            "artifact_blobs",
+        ):
+            self.assertEqual(
+                self.store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0],
+                0,
+            )
+        job = self.store._connection.execute(
+            "SELECT status FROM invocation_jobs WHERE invocation_id = ?",
+            (prepared.request.manifest.invocation_id,),
+        ).fetchone()
+        self.assertEqual(job["status"], "running")
+
+    def test_completion_readback_supports_a_narration_only_result(self) -> None:
+        prepared = self.narration_only_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=(
+                "receipt_narration_only",
+                "event_result_narration_only",
+                "event_terminal_narration_only",
+            ),
+        ):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as completed:
+                    self.assertIs(type(completed), _CompletedFreshResultAcceptancePlanV2)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM invocation_result_artifacts"
+            ).fetchone()[0],
+            0,
+        )
 
     def test_existing_graph_completion_path_does_not_cas_job_or_attempt(self) -> None:
         helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(

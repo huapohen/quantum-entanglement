@@ -1158,6 +1158,235 @@ class _EventWriteSnapshot:
     payload_json: str
 
 
+_RESULT_READBACK_MANIFEST_COLUMNS = (
+    "tenant_id",
+    "workspace_id",
+    "manifest_digest",
+    "schema_version",
+    "canonical_bytes",
+    "byte_size",
+    "created_at",
+)
+_RESULT_READBACK_REQUEST_COLUMNS = (
+    "tenant_id",
+    "workspace_id",
+    "request_digest",
+    "schema_version",
+    "acceptance_idempotency_key",
+    "request_identity_bytes",
+    "request_identity_byte_size",
+    "invocation_id",
+    "session_id",
+    "plan_id",
+    "task_id",
+    "agent_id",
+    "job_idempotency_key",
+    "start_receipt_digest",
+    "execution_manifest_digest",
+    "result_manifest_digest",
+    "expected_stream_version",
+    "running_task_revision",
+    "terminal_task_revision",
+    "correlation_id",
+    "causation_id",
+    "runtime_revision",
+    "effect_class",
+    "action_receipt_set_digest",
+    "result_ref",
+    "primary_artifact_id",
+    "artifact_count",
+    "created_at",
+)
+_RESULT_READBACK_BINDING_COLUMNS = (
+    "tenant_id",
+    "workspace_id",
+    "receipt_id",
+    "event_role",
+    "event_id",
+    "event_type",
+    "global_position",
+)
+_RESULT_READBACK_RECEIPT_COLUMNS = (
+    "tenant_id",
+    "workspace_id",
+    "receipt_id",
+    "schema_version",
+    "request_digest",
+    "invocation_id",
+    "session_id",
+    "plan_id",
+    "task_id",
+    "agent_id",
+    "job_idempotency_key",
+    "acceptance_idempotency_key",
+    "attempt_id",
+    "attempt_number",
+    "lease_epoch",
+    "worker_id",
+    "lease_token_digest",
+    "start_receipt_digest",
+    "execution_manifest_digest",
+    "result_manifest_schema_version",
+    "result_manifest_digest",
+    "result_ref",
+    "effect_class",
+    "action_receipt_set_digest",
+    "expected_stream_version",
+    "running_task_revision",
+    "terminal_task_revision",
+    "accepted_at",
+    "artifact_count",
+    "result_evidence_digest",
+    "terminal_transition_digest",
+    "receipt_digest",
+    "result_event_id",
+    "result_event_stream_id",
+    "result_event_type",
+    "result_event_timestamp",
+    "result_event_sequence",
+    "result_event_global_position",
+    "result_event_envelope_digest",
+    "terminal_event_id",
+    "terminal_event_stream_id",
+    "terminal_event_type",
+    "terminal_event_timestamp",
+    "terminal_event_sequence",
+    "terminal_event_global_position",
+    "terminal_event_envelope_digest",
+)
+_RESULT_READBACK_ARTIFACT_COLUMNS = (
+    "tenant_id",
+    "workspace_id",
+    "receipt_id",
+    "ordinal",
+    "session_id",
+    "task_id",
+    "artifact_id",
+    "name",
+    "version",
+    "parent_version",
+    "media_type",
+    "blob_digest",
+    "byte_size",
+    "metadata_digest",
+    "created_by",
+    "idempotency_key",
+    "artifact_request_digest",
+    "candidate_digest",
+)
+_RESULT_READBACK_EVENT_COLUMNS = (
+    "global_position",
+    "stream_id",
+    "sequence",
+    "event_id",
+    "event_type",
+    "actor_id",
+    "timestamp",
+    "payload_json",
+    "correlation_id",
+    "causation_id",
+    "idempotency_key",
+)
+_RESULT_READBACK_BLOB_COLUMNS = (
+    "digest",
+    "content",
+    "byte_size",
+    "created_at",
+    "digest_storage",
+    "content_storage",
+    "byte_size_storage",
+    "created_at_storage",
+    "content_length",
+)
+_RESULT_READBACK_VERSION_COLUMNS = (
+    "artifact_id",
+    "tenant_id",
+    "workspace_id",
+    "session_id",
+    "task_id",
+    "name",
+    "version",
+    "parent_version",
+    "media_type",
+    "blob_digest",
+    "byte_size",
+    "metadata_json",
+    "created_by",
+    "created_at",
+    "idempotency_key",
+    "request_digest",
+)
+_RESULT_READBACK_JOB_COLUMNS = (
+    "invocation_id",
+    "session_id",
+    "plan_id",
+    "task_id",
+    "agent_id",
+    "idempotency_key",
+    "payload_digest",
+    "priority",
+    "status",
+    "max_attempts",
+    "attempts_started",
+    "lease_epoch",
+    "requested_available_at",
+    "available_at",
+    "created_at",
+    "updated_at",
+    "lease_owner",
+    "lease_token_digest",
+    "lease_expires_at",
+    "heartbeat_at",
+    "result_ref",
+    "last_error",
+    "finished_at",
+)
+_RESULT_READBACK_ATTEMPT_COLUMNS = (
+    "attempt_id",
+    "invocation_id",
+    "attempt_number",
+    "lease_epoch",
+    "worker_id",
+    "lease_token_digest",
+    "status",
+    "started_at",
+    "heartbeat_at",
+    "lease_expires_at",
+    "finished_at",
+    "error",
+    "result_ref",
+)
+
+
+def _result_readback_row(row: object, columns: tuple[str, ...], label: str) -> sqlite3.Row:
+    if type(row) is not sqlite3.Row:
+        raise _ResultAcceptanceIntegrityError(f"result acceptance {label} row is not exact")
+    try:
+        keys = tuple(row.keys())
+    except (AttributeError, TypeError, ValueError) as error:
+        raise _ResultAcceptanceIntegrityError(
+            f"result acceptance {label} row shape is invalid"
+        ) from error
+    if keys != columns:
+        raise _ResultAcceptanceIntegrityError(f"result acceptance {label} columns are not exact")
+    return row
+
+
+def _result_readback_timestamp(value: object, label: str) -> str:
+    timestamp = _persisted_text(value, label, required=True)
+    try:
+        normalized = _normalize_invocation_timestamp(timestamp, label)
+    except (TypeError, ValueError):
+        raise _ResultAcceptanceIntegrityError(
+            f"result acceptance {label} timestamp is not canonical"
+        ) from None
+    if normalized != timestamp:
+        raise _ResultAcceptanceIntegrityError(
+            f"result acceptance {label} timestamp is not canonical"
+        )
+    return timestamp
+
+
 class _InsertedFreshResultAcceptancePlanV2:
     """Two privately verified event rows produced by one still-open owner transaction."""
 
@@ -1518,6 +1747,62 @@ class _CompletedFreshResultAcceptancePlanV2:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("completed result acceptance plans cannot be serialized")
+
+
+class _ReadbackFreshResultAcceptancePlanV2:
+    """One private receipt proven against the complete fresh durable graph."""
+
+    __slots__ = ("__active", "__receipt")
+
+    def __init__(
+        self,
+        *,
+        receipt: _ScopedInvocationResultReceiptV2,
+        token: object,
+    ) -> None:
+        if type(self) is not _ReadbackFreshResultAcceptancePlanV2:
+            raise TypeError("result acceptance readback plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("result acceptance readback plan constructor is private")
+        if type(receipt) is not _ScopedInvocationResultReceiptV2:
+            raise TypeError("result acceptance readback receipt is not exact")
+        self.__receipt = _ScopedInvocationResultReceiptV2.from_dict(
+            _ScopedInvocationResultReceiptV2.to_dict(receipt)
+        )
+        self.__active = True
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> _ScopedInvocationResultReceiptV2:
+        if type(self) is not _ReadbackFreshResultAcceptancePlanV2:
+            raise TypeError("result acceptance readback plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("result acceptance readback validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("result acceptance readback plan is no longer active")
+        receipt = self.__receipt
+        if type(receipt) is not _ScopedInvocationResultReceiptV2:
+            raise TypeError("result acceptance readback receipt is not exact")
+        return _ScopedInvocationResultReceiptV2.from_dict(
+            _ScopedInvocationResultReceiptV2.to_dict(receipt)
+        )
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("result acceptance readback plan invalidation is private")
+        self.__active = False
+        object.__setattr__(self, "_ReadbackFreshResultAcceptancePlanV2__receipt", None)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("result acceptance readback plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("result acceptance readback plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("result acceptance readback plans cannot be serialized")
 
 
 @dataclass(frozen=True)
@@ -3932,6 +4217,882 @@ class SQLiteEventStore:
                 persisted._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
     @_bind_event_store_process
+    def _readback_result_acceptance_graph_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+        receipt: _ScopedInvocationResultReceiptV2,
+    ) -> ContextManager[_ReadbackFreshResultAcceptancePlanV2]:
+        """Re-read every fresh result graph row before the owner transaction can commit."""
+
+        return self._readback_result_acceptance_graph_in_owner_transaction_inner(
+            handle,
+            prepared,
+            receipt,
+        )
+
+    @contextmanager
+    def _readback_result_acceptance_graph_in_owner_transaction_inner(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+        receipt: _ScopedInvocationResultReceiptV2,
+    ) -> Iterator[_ReadbackFreshResultAcceptancePlanV2]:
+        connection = self._connection_for_result_artifact_transaction(handle)
+        if type(prepared) is not _PreparedScopedInvocationResultAcceptanceV2:
+            raise TypeError("result acceptance readback requires exact prepared inputs")
+        if type(receipt) is not _ScopedInvocationResultReceiptV2:
+            raise TypeError("result acceptance readback requires an exact receipt")
+        prepared.verify()
+        receipt_snapshot = _ScopedInvocationResultReceiptV2.from_dict(
+            _ScopedInvocationResultReceiptV2.to_dict(receipt)
+        )
+        plan: Optional[_ReadbackFreshResultAcceptancePlanV2] = None
+        before_changes = connection.total_changes
+        if type(before_changes) is not int or before_changes < 0:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback SQLite change counter is invalid"
+            )
+        try:
+            self._readback_result_acceptance_graph_body(
+                connection,
+                prepared,
+                receipt_snapshot,
+            )
+            self._require_current_process()
+            after_changes = connection.total_changes
+            if type(after_changes) is not int or after_changes != before_changes:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback changed durable state"
+                )
+            if not connection.in_transaction:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback lost the owner transaction"
+                )
+            plan = _ReadbackFreshResultAcceptancePlanV2(
+                receipt=receipt_snapshot,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            try:
+                yield plan
+            finally:
+                plan._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        except _ResultAcceptanceIntegrityError:
+            raise
+        except (InvocationIntegrityError, sqlite3.Error, TypeError, ValueError) as error:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance complete graph readback failed"
+            ) from error
+
+    def _readback_result_acceptance_graph_body(
+        self,
+        connection: sqlite3.Connection,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+        receipt: _ScopedInvocationResultReceiptV2,
+    ) -> None:
+        """Fixed-projection, read-only verification for one just-written fresh graph."""
+
+        self._require_current_process()
+        request = prepared.request
+        manifest = request.manifest
+        evidence = receipt.evidence
+        transition = receipt.terminal_transition
+        if receipt.start_receipt != request.start_receipt:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback start receipt differs from request"
+            )
+
+        def one_row(
+            sql: str,
+            parameters: tuple[object, ...],
+            columns: tuple[str, ...],
+            label: str,
+        ) -> sqlite3.Row:
+            self._require_current_process()
+            rows = connection.execute(sql, parameters).fetchall()
+            self._require_current_process()
+            if type(rows) is not list or len(rows) != 1:
+                raise _ResultAcceptanceIntegrityError(
+                    f"result acceptance readback {label} row count is not one"
+                )
+            return _result_readback_row(rows[0], columns, label)
+
+        def compare_text(row: sqlite3.Row, name: str, expected: object) -> None:
+            actual = _persisted_text(row[name], f"result {name}", required=expected is not None)
+            if actual != expected:
+                raise _ResultAcceptanceIntegrityError(f"result acceptance readback {name} differs")
+
+        def compare_digest(row: sqlite3.Row, name: str, expected: object) -> None:
+            actual = _persisted_result_acceptance_digest(row[name], f"result {name}")
+            if actual != expected:
+                raise _ResultAcceptanceIntegrityError(
+                    f"result acceptance readback {name} digest differs"
+                )
+
+        def compare_integer(
+            row: sqlite3.Row, name: str, expected: object, *, minimum: int = 0
+        ) -> None:
+            actual = _persisted_integer(row[name], f"result {name}", minimum=minimum)
+            if actual != expected:
+                raise _ResultAcceptanceIntegrityError(f"result acceptance readback {name} differs")
+
+        def compare_optional_text(row: sqlite3.Row, name: str, expected: object) -> None:
+            actual = _persisted_optional_text(row[name], f"result {name}")
+            if actual != expected:
+                raise _ResultAcceptanceIntegrityError(f"result acceptance readback {name} differs")
+
+        accepted_at = _result_readback_timestamp(evidence.accepted_at, "accepted_at")
+        manifest_digest = manifest.canonical_digest()
+        manifest_bytes = manifest.canonical_bytes()
+        manifest_row = one_row(
+            """
+            SELECT tenant_id, workspace_id, manifest_digest, schema_version,
+                   canonical_bytes, byte_size, created_at
+            FROM main.invocation_result_manifests
+            WHERE tenant_id = ? AND workspace_id = ? AND manifest_digest = ?
+            """,
+            (manifest.tenant_id, manifest.workspace_id, manifest_digest),
+            _RESULT_READBACK_MANIFEST_COLUMNS,
+            "manifest",
+        )
+        compare_text(manifest_row, "tenant_id", manifest.tenant_id)
+        compare_text(manifest_row, "workspace_id", manifest.workspace_id)
+        compare_digest(manifest_row, "manifest_digest", manifest_digest)
+        compare_integer(manifest_row, "schema_version", manifest.schema_version)
+        canonical_manifest = manifest_row["canonical_bytes"]
+        if type(canonical_manifest) is not bytes or canonical_manifest != manifest_bytes:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback manifest canonical bytes differ"
+            )
+        compare_integer(manifest_row, "byte_size", len(manifest_bytes), minimum=1)
+        if (
+            _result_readback_timestamp(manifest_row["created_at"], "manifest created_at")
+            != accepted_at
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback manifest timestamp differs"
+            )
+        try:
+            decoded_manifest = _ScopedInvocationResultManifestV2.from_dict(
+                json.loads(canonical_manifest.decode("utf-8"), parse_constant=_reject_json_constant)
+            )
+        except (UnicodeError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback manifest cannot be decoded"
+            ) from error
+        if decoded_manifest != manifest or decoded_manifest.canonical_bytes() != canonical_manifest:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback manifest decode differs"
+            )
+
+        request_digest = request.canonical_digest()
+        request_identity_bytes = json.dumps(
+            _ScopedInvocationResultAcceptanceRequestV2._identity_dict(request),
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        request_row = one_row(
+            """
+            SELECT tenant_id, workspace_id, request_digest, schema_version,
+                   acceptance_idempotency_key, request_identity_bytes,
+                   request_identity_byte_size, invocation_id, session_id, plan_id,
+                   task_id, agent_id, job_idempotency_key, start_receipt_digest,
+                   execution_manifest_digest, result_manifest_digest,
+                   expected_stream_version, running_task_revision,
+                   terminal_task_revision, correlation_id, causation_id,
+                   runtime_revision, effect_class, action_receipt_set_digest,
+                   result_ref, primary_artifact_id, artifact_count, created_at
+            FROM main.invocation_result_requests
+            WHERE tenant_id = ? AND workspace_id = ? AND request_digest = ?
+            """,
+            (manifest.tenant_id, manifest.workspace_id, request_digest),
+            _RESULT_READBACK_REQUEST_COLUMNS,
+            "request",
+        )
+        for name, expected in (
+            ("tenant_id", manifest.tenant_id),
+            ("workspace_id", manifest.workspace_id),
+            ("acceptance_idempotency_key", request.acceptance_idempotency_key),
+            ("invocation_id", manifest.invocation_id),
+            ("session_id", manifest.session_id),
+            ("plan_id", manifest.plan_id),
+            ("task_id", manifest.task_id),
+            ("agent_id", manifest.agent_id),
+            ("job_idempotency_key", manifest.job_idempotency_key),
+            ("correlation_id", manifest.correlation_id),
+            ("causation_id", manifest.causation_id),
+            ("runtime_revision", manifest.runtime_revision),
+            ("effect_class", manifest.effect_class.value),
+            ("result_ref", manifest.result_ref),
+        ):
+            compare_text(request_row, name, expected)
+        for name, expected in (
+            ("request_digest", request_digest),
+            ("start_receipt_digest", request.start_receipt_digest),
+            ("execution_manifest_digest", manifest.execution_manifest_digest),
+            ("result_manifest_digest", manifest_digest),
+            ("action_receipt_set_digest", manifest.action_receipt_set_digest),
+        ):
+            compare_digest(request_row, name, expected)
+        if type(request_row["request_identity_bytes"]) is not bytes:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback request identity bytes are not BLOB"
+            )
+        if request_row["request_identity_bytes"] != request_identity_bytes:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback request identity bytes differ"
+            )
+        compare_integer(
+            request_row, "request_identity_byte_size", len(request_identity_bytes), minimum=1
+        )
+        compare_integer(request_row, "schema_version", request.schema_version)
+        compare_integer(
+            request_row, "expected_stream_version", request.expected_stream_version, minimum=1
+        )
+        compare_integer(
+            request_row, "running_task_revision", evidence.running_task_revision, minimum=1
+        )
+        compare_integer(
+            request_row, "terminal_task_revision", evidence.terminal_task_revision, minimum=1
+        )
+        compare_optional_text(request_row, "primary_artifact_id", manifest.primary_artifact_id)
+        compare_integer(request_row, "artifact_count", len(manifest.artifacts))
+        if (
+            _result_readback_timestamp(request_row["created_at"], "request created_at")
+            != accepted_at
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback request timestamp differs"
+            )
+
+        receipt_row = one_row(
+            """
+            SELECT tenant_id, workspace_id, receipt_id, schema_version,
+                   request_digest, invocation_id, session_id, plan_id, task_id,
+                   agent_id, job_idempotency_key, acceptance_idempotency_key,
+                   attempt_id, attempt_number, lease_epoch, worker_id,
+                   lease_token_digest, start_receipt_digest,
+                   execution_manifest_digest, result_manifest_schema_version,
+                   result_manifest_digest, result_ref, effect_class,
+                   action_receipt_set_digest, expected_stream_version,
+                   running_task_revision, terminal_task_revision, accepted_at,
+                   artifact_count, result_evidence_digest,
+                   terminal_transition_digest, receipt_digest, result_event_id,
+                   result_event_stream_id, result_event_type,
+                   result_event_timestamp, result_event_sequence,
+                   result_event_global_position, result_event_envelope_digest,
+                   terminal_event_id, terminal_event_stream_id,
+                   terminal_event_type, terminal_event_timestamp,
+                   terminal_event_sequence, terminal_event_global_position,
+                   terminal_event_envelope_digest
+            FROM main.invocation_result_receipts
+            WHERE tenant_id = ? AND workspace_id = ? AND receipt_id = ?
+            """,
+            (evidence.tenant_id, evidence.workspace_id, receipt.receipt_id),
+            _RESULT_READBACK_RECEIPT_COLUMNS,
+            "receipt",
+        )
+        for name, expected in (
+            ("tenant_id", evidence.tenant_id),
+            ("workspace_id", evidence.workspace_id),
+            ("receipt_id", receipt.receipt_id),
+            ("invocation_id", evidence.invocation_id),
+            ("session_id", evidence.session_id),
+            ("plan_id", evidence.plan_id),
+            ("task_id", evidence.task_id),
+            ("agent_id", evidence.agent_id),
+            ("job_idempotency_key", evidence.job_idempotency_key),
+            ("acceptance_idempotency_key", evidence.acceptance_idempotency_key),
+            ("attempt_id", evidence.attempt_id),
+            ("worker_id", evidence.worker_id),
+            ("result_ref", evidence.result_ref),
+            ("effect_class", evidence.effect_class.value),
+        ):
+            compare_text(receipt_row, name, expected)
+        for name, expected in (
+            ("request_digest", evidence.request_digest),
+            ("lease_token_digest", evidence.lease_token_digest),
+            ("start_receipt_digest", evidence.start_receipt_digest),
+            ("execution_manifest_digest", evidence.execution_manifest_digest),
+            ("result_manifest_digest", evidence.result_manifest_digest),
+            ("action_receipt_set_digest", evidence.action_receipt_set_digest),
+            ("result_evidence_digest", evidence.canonical_digest()),
+            ("terminal_transition_digest", transition.canonical_digest()),
+            ("receipt_digest", receipt.receipt_digest),
+            ("result_event_envelope_digest", receipt.result_event.event_envelope_digest),
+            ("terminal_event_envelope_digest", receipt.terminal_event.event_envelope_digest),
+        ):
+            compare_digest(receipt_row, name, expected)
+        for integer_name, integer_expected in (
+            ("schema_version", receipt.schema_version),
+            ("result_manifest_schema_version", manifest.schema_version),
+            ("expected_stream_version", request.expected_stream_version),
+            ("running_task_revision", evidence.running_task_revision),
+            ("terminal_task_revision", evidence.terminal_task_revision),
+            ("artifact_count", evidence.artifact_count),
+            ("attempt_number", evidence.attempt_number),
+            ("lease_epoch", evidence.lease_epoch),
+            ("result_event_sequence", receipt.result_event.sequence),
+            ("result_event_global_position", receipt.result_event.global_position),
+            ("terminal_event_sequence", receipt.terminal_event.sequence),
+            ("terminal_event_global_position", receipt.terminal_event.global_position),
+        ):
+            compare_integer(
+                receipt_row,
+                integer_name,
+                integer_expected,
+                minimum=0 if integer_name == "artifact_count" else 1,
+            )
+        if (
+            _result_readback_timestamp(receipt_row["accepted_at"], "receipt accepted_at")
+            != accepted_at
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback receipt timestamp differs"
+            )
+        if (
+            _result_readback_timestamp(
+                receipt_row["result_event_timestamp"], "result event timestamp"
+            )
+            != accepted_at
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback result event timestamp differs"
+            )
+        if (
+            _result_readback_timestamp(
+                receipt_row["terminal_event_timestamp"], "terminal event timestamp"
+            )
+            != accepted_at
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback terminal event timestamp differs"
+            )
+        for name, expected in (
+            ("result_event_id", receipt.result_event.event_id),
+            ("result_event_stream_id", receipt.result_event.stream_id),
+            ("result_event_type", receipt.result_event.event_type),
+            ("terminal_event_id", receipt.terminal_event.event_id),
+            ("terminal_event_stream_id", receipt.terminal_event.stream_id),
+            ("terminal_event_type", receipt.terminal_event.event_type),
+        ):
+            compare_text(receipt_row, name, expected)
+
+        binding_rows = connection.execute(
+            """
+            SELECT tenant_id, workspace_id, receipt_id, event_role,
+                   event_id, event_type, global_position
+            FROM main.invocation_result_event_bindings
+            WHERE tenant_id = ? AND workspace_id = ? AND receipt_id = ?
+            ORDER BY event_role
+            """,
+            (evidence.tenant_id, evidence.workspace_id, receipt.receipt_id),
+        ).fetchall()
+        if type(binding_rows) is not list or len(binding_rows) != 2:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback event binding count differs"
+            )
+        expected_bindings = {
+            "result": receipt.result_event,
+            "terminal": receipt.terminal_event,
+        }
+        seen_roles: set[str] = set()
+        for raw_binding in binding_rows:
+            row = _result_readback_row(
+                raw_binding, _RESULT_READBACK_BINDING_COLUMNS, "event binding"
+            )
+            role = _persisted_text(row["event_role"], "result event role", required=True)
+            if role in seen_roles or role not in expected_bindings:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback event binding role differs"
+                )
+            seen_roles.add(role)
+            coordinate = expected_bindings[role]
+            for name, expected in (
+                ("tenant_id", evidence.tenant_id),
+                ("workspace_id", evidence.workspace_id),
+                ("receipt_id", receipt.receipt_id),
+                ("event_id", coordinate.event_id),
+                ("event_type", coordinate.event_type),
+            ):
+                compare_text(row, name, expected)
+            compare_integer(row, "global_position", coordinate.global_position, minimum=1)
+        if seen_roles != set(expected_bindings):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback event binding roles are incomplete"
+            )
+
+        event_rows = connection.execute(
+            """
+            SELECT global_position, stream_id, sequence, event_id, event_type,
+                   actor_id, timestamp, payload_json, correlation_id,
+                   causation_id, idempotency_key
+            FROM main.events
+            WHERE event_id IN (?, ?)
+            ORDER BY global_position
+            """,
+            (receipt.result_event.event_id, receipt.terminal_event.event_id),
+        ).fetchall()
+        if type(event_rows) is not list or len(event_rows) != 2:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback event row count differs"
+            )
+        observed_event_ids: list[str] = []
+        for raw_event in event_rows:
+            event_row = _result_readback_row(raw_event, _RESULT_READBACK_EVENT_COLUMNS, "event")
+            try:
+                envelope = _stored_event_envelope_from_raw_row(event_row)
+                envelope_body = _StoredEventEnvelopeV1.to_dict(envelope)
+            except (_StoredEventEnvelopeError, TypeError, ValueError) as error:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback event envelope is invalid"
+                ) from error
+            event_id = envelope_body["eventId"]
+            observed_event_ids.append(event_id)
+            if event_id == receipt.result_event.event_id:
+                coordinate = receipt.result_event
+                expected_values = {
+                    "event_id": coordinate.event_id,
+                    "stream_id": coordinate.stream_id,
+                    "event_type": coordinate.event_type,
+                    "actor_id": CANONICAL_ORCHESTRATOR_ACTOR_ID,
+                    "timestamp": accepted_at,
+                    "correlation_id": manifest.correlation_id,
+                    "causation_id": request.start_receipt.event_id,
+                    "idempotency_key": request.acceptance_idempotency_key,
+                    "payload_json": evidence.canonical_bytes().decode("utf-8"),
+                    "sequence": coordinate.sequence,
+                    "global_position": coordinate.global_position,
+                }
+                try:
+                    decoded_payload = _ScopedInvocationResultEvidenceV2.from_dict(
+                        envelope_body["payload"]
+                    )
+                except (TypeError, ValueError) as error:
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance readback result evidence is invalid"
+                    ) from error
+                if decoded_payload != evidence:
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance readback result evidence differs"
+                    )
+            elif event_id == receipt.terminal_event.event_id:
+                coordinate = receipt.terminal_event
+                expected_values = {
+                    "event_id": coordinate.event_id,
+                    "stream_id": coordinate.stream_id,
+                    "event_type": coordinate.event_type,
+                    "actor_id": transition.actor_id,
+                    "timestamp": accepted_at,
+                    "correlation_id": transition.correlation_id,
+                    "causation_id": transition.causation_id,
+                    "idempotency_key": transition.idempotency_key,
+                    "payload_json": transition.canonical_bytes().decode("utf-8"),
+                    "sequence": coordinate.sequence,
+                    "global_position": coordinate.global_position,
+                }
+                try:
+                    decoded_terminal_payload = (
+                        _ScopedInvocationResultTerminalTransitionV2.from_dict(
+                            envelope_body["payload"]
+                        )
+                    )
+                except (TypeError, ValueError) as error:
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance readback terminal transition is invalid"
+                    ) from error
+                if decoded_terminal_payload != transition:
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance readback terminal transition differs"
+                    )
+            else:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback returned an unexpected event"
+                )
+            raw_payload_json = event_row["payload_json"]
+            if (
+                type(raw_payload_json) is not str
+                or raw_payload_json != expected_values["payload_json"]
+            ):
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback event payload bytes differ"
+                )
+            try:
+                expected_envelope = _stored_event_envelope_from_values(
+                    event_id=expected_values["event_id"],
+                    stream_id=expected_values["stream_id"],
+                    event_type=expected_values["event_type"],
+                    actor_id=expected_values["actor_id"],
+                    timestamp=expected_values["timestamp"],
+                    correlation_id=expected_values["correlation_id"],
+                    causation_id=expected_values["causation_id"],
+                    idempotency_key=expected_values["idempotency_key"],
+                    payload_json=expected_values["payload_json"],
+                    sequence=expected_values["sequence"],
+                    global_position=expected_values["global_position"],
+                )
+            except (_StoredEventEnvelopeError, TypeError, ValueError) as error:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback expected event envelope is invalid"
+                ) from error
+            if (
+                envelope_body != _StoredEventEnvelopeV1.to_dict(expected_envelope)
+                or _StoredEventEnvelopeV1.canonical_bytes(envelope)
+                != _StoredEventEnvelopeV1.canonical_bytes(expected_envelope)
+                or envelope.digest() != coordinate.event_envelope_digest
+                or envelope.digest() != expected_envelope.digest()
+            ):
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback event envelope differs"
+                )
+        if tuple(observed_event_ids) != (
+            receipt.result_event.event_id,
+            receipt.terminal_event.event_id,
+        ):
+            raise _ResultAcceptanceIntegrityError("result acceptance readback event order differs")
+
+        try:
+            rebuilt_receipt = _build_scoped_invocation_result_receipt_v2(
+                request,
+                evidence,
+                result_event=receipt.result_event,
+                terminal_event=receipt.terminal_event,
+                terminal_transition=transition,
+            )
+        except (TypeError, ValueError) as error:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback receipt cannot be rebuilt"
+            ) from error
+        if rebuilt_receipt != receipt:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback receipt differs from its event graph"
+            )
+
+        artifact_rows = connection.execute(
+            """
+            SELECT tenant_id, workspace_id, receipt_id, ordinal, session_id,
+                   task_id, artifact_id, name, version, parent_version,
+                   media_type, blob_digest, byte_size, metadata_digest,
+                   created_by, idempotency_key, artifact_request_digest,
+                   candidate_digest
+            FROM main.invocation_result_artifacts
+            WHERE tenant_id = ? AND workspace_id = ? AND receipt_id = ?
+            ORDER BY ordinal
+            """,
+            (evidence.tenant_id, evidence.workspace_id, receipt.receipt_id),
+        ).fetchall()
+        expected_items = prepared.artifact_batch.items
+        if type(artifact_rows) is not list or len(artifact_rows) != len(expected_items):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback Artifact row count differs"
+            )
+        for ordinal, raw_artifact in enumerate(artifact_rows):
+            artifact_row = _result_readback_row(
+                raw_artifact,
+                _RESULT_READBACK_ARTIFACT_COLUMNS,
+                "Artifact binding",
+            )
+            item = expected_items[ordinal]
+            descriptor = item.descriptor
+            if _persisted_integer(artifact_row["ordinal"], "result Artifact ordinal") != ordinal:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback Artifact ordinal is not contiguous"
+                )
+            for name, expected in (
+                ("tenant_id", item.tenant_id),
+                ("workspace_id", item.workspace_id),
+                ("receipt_id", receipt.receipt_id),
+                ("session_id", item.session_id),
+                ("task_id", item.task_id),
+                ("artifact_id", descriptor.artifact_id),
+                ("name", descriptor.name),
+                ("media_type", descriptor.media_type),
+                ("blob_digest", descriptor.blob_digest),
+                ("metadata_digest", descriptor.metadata_digest),
+                ("created_by", descriptor.created_by),
+                ("idempotency_key", descriptor.idempotency_key),
+                ("artifact_request_digest", descriptor.request_digest),
+                ("candidate_digest", item.candidate_sha256),
+            ):
+                compare_text(artifact_row, name, expected)
+            for integer_name, integer_expected in (
+                ("version", descriptor.version),
+                ("byte_size", descriptor.byte_size),
+            ):
+                compare_integer(artifact_row, integer_name, integer_expected)
+            parent = artifact_row["parent_version"]
+            if parent != descriptor.parent_version or (
+                parent is not None and type(parent) is not int
+            ):
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback Artifact parent differs"
+                )
+
+            version_row = one_row(
+                """
+                SELECT artifact_id, tenant_id, workspace_id, session_id, task_id,
+                       name, version, parent_version, media_type, blob_digest,
+                       byte_size, metadata_json, created_by, created_at,
+                       idempotency_key, request_digest
+                FROM main.artifact_versions
+                WHERE artifact_id = ?
+                """,
+                (descriptor.artifact_id,),
+                _RESULT_READBACK_VERSION_COLUMNS,
+                "Artifact version",
+            )
+            for name, expected in (
+                ("artifact_id", item.artifact_id),
+                ("tenant_id", item.tenant_id),
+                ("workspace_id", item.workspace_id),
+                ("session_id", item.session_id),
+                ("task_id", item.task_id),
+                ("name", item.name),
+                ("media_type", item.media_type),
+                ("blob_digest", descriptor.blob_digest),
+                ("metadata_json", item.metadata_json),
+                ("created_by", item.created_by),
+                ("idempotency_key", item.idempotency_key),
+                ("request_digest", descriptor.request_digest),
+            ):
+                compare_text(version_row, name, expected)
+            compare_integer(version_row, "version", descriptor.version, minimum=1)
+            compare_integer(version_row, "byte_size", descriptor.byte_size)
+            version_parent = version_row["parent_version"]
+            if version_parent != descriptor.parent_version or (
+                version_parent is not None and type(version_parent) is not int
+            ):
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback Artifact version parent differs"
+                )
+            if (
+                _result_readback_timestamp(version_row["created_at"], "Artifact created_at")
+                != accepted_at
+            ):
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback Artifact timestamp differs"
+                )
+            blob_row = one_row(
+                """
+                SELECT digest, content, byte_size, created_at,
+                       typeof(digest) AS digest_storage,
+                       typeof(content) AS content_storage,
+                       typeof(byte_size) AS byte_size_storage,
+                       typeof(created_at) AS created_at_storage,
+                       length(content) AS content_length
+                FROM main.artifact_blobs
+                WHERE digest = ?
+                """,
+                (descriptor.blob_digest,),
+                _RESULT_READBACK_BLOB_COLUMNS,
+                "Artifact blob",
+            )
+            for name, expected in (
+                ("digest_storage", "text"),
+                ("content_storage", "blob"),
+                ("created_at_storage", "text"),
+            ):
+                compare_text(blob_row, name, expected)
+            compare_text(blob_row, "byte_size_storage", "integer")
+            compare_text(blob_row, "digest", descriptor.blob_digest)
+            if type(blob_row["content"]) is not bytes or blob_row["content"] != item.content:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance readback Artifact blob content differs"
+                )
+            compare_integer(blob_row, "byte_size", len(item.content))
+            compare_integer(blob_row, "content_length", len(item.content))
+            _result_readback_timestamp(blob_row["created_at"], "Artifact blob created_at")
+
+        job_rows = connection.execute(
+            """
+            SELECT invocation_id, session_id, plan_id, task_id, agent_id,
+                   idempotency_key, payload_digest, priority, status,
+                   max_attempts, attempts_started, lease_epoch,
+                   requested_available_at, available_at, created_at, updated_at,
+                   lease_owner, lease_token_digest, lease_expires_at, heartbeat_at,
+                   result_ref, last_error, finished_at
+            FROM main.invocation_jobs
+            WHERE invocation_id = ?
+            """,
+            (manifest.invocation_id,),
+        ).fetchall()
+        if type(job_rows) is not list or len(job_rows) != 1:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback invocation job count differs"
+            )
+        job_row = _result_readback_row(job_rows[0], _RESULT_READBACK_JOB_COLUMNS, "job")
+        try:
+            job = SQLiteInvocationAttemptStore._row_to_job(job_row)
+        except InvocationIntegrityError as error:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback invocation job is malformed"
+            ) from error
+        if (
+            job.status is not InvocationStatus.SUCCEEDED
+            or job.invocation_id != manifest.invocation_id
+            or job.session_id != manifest.session_id
+            or job.plan_id != manifest.plan_id
+            or job.task_id != manifest.task_id
+            or job.agent_id != manifest.agent_id
+            or job.idempotency_key != manifest.job_idempotency_key
+            or job.payload_digest != evidence.execution_manifest_digest
+            or job.max_attempts != 1
+            or job.attempts_started != evidence.attempt_number
+            or job.lease_epoch != evidence.lease_epoch
+            or job.result_ref != evidence.result_ref
+            or job.updated_at != accepted_at
+            or job.finished_at != accepted_at
+            or job.lease_owner is not None
+            or job.lease_token_digest is not None
+            or job.lease_expires_at is not None
+            or job.heartbeat_at is not None
+            or job.last_error is not None
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback invocation job terminal state differs"
+            )
+
+        attempt_rows = connection.execute(
+            """
+            SELECT attempt_id, invocation_id, attempt_number, lease_epoch,
+                   worker_id, lease_token_digest, status, started_at,
+                   heartbeat_at, lease_expires_at, finished_at, error, result_ref
+            FROM main.invocation_attempts
+            WHERE invocation_id = ?
+            ORDER BY attempt_number
+            """,
+            (manifest.invocation_id,),
+        ).fetchall()
+        if type(attempt_rows) is not list or len(attempt_rows) != 1:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback invocation attempt count differs"
+            )
+        attempt_row = _result_readback_row(
+            attempt_rows[0], _RESULT_READBACK_ATTEMPT_COLUMNS, "attempt"
+        )
+        try:
+            attempt = SQLiteInvocationAttemptStore._row_to_attempt(attempt_row)
+        except InvocationIntegrityError as error:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback invocation attempt is malformed"
+            ) from error
+        if (
+            attempt.status is not AttemptStatus.SUCCEEDED
+            or attempt.attempt_id != evidence.attempt_id
+            or attempt.invocation_id != evidence.invocation_id
+            or attempt.attempt_number != evidence.attempt_number
+            or attempt.lease_epoch != evidence.lease_epoch
+            or attempt.worker_id != evidence.worker_id
+            or attempt.lease_token_digest != evidence.lease_token_digest
+            or attempt.finished_at != accepted_at
+            or attempt.result_ref != evidence.result_ref
+            or attempt.error is not None
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback invocation attempt terminal state differs"
+            )
+        try:
+            start_state = SQLiteEventStore._load_scoped_invocation_start_in_transaction(
+                self,
+                connection,
+                manifest.invocation_id,
+                fresh=False,
+            )
+        except (
+            InvocationStartConflictError,
+            InvocationIntegrityError,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback scoped start is no longer exact"
+            ) from error
+        if (
+            type(start_state) is not _ScopedInvocationStartReadback
+            or start_state.receipt != request.start_receipt
+            or start_state.job != job
+            or start_state.attempt != attempt
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback scoped start binding differs"
+            )
+
+        publication_rows = connection.execute(
+            """
+            SELECT receipt_id
+            FROM main.invocation_result_publications
+            WHERE tenant_id = ? AND workspace_id = ? AND receipt_id = ?
+            """,
+            (evidence.tenant_id, evidence.workspace_id, receipt.receipt_id),
+        ).fetchall()
+        outbox_rows = connection.execute(
+            """
+            SELECT message_id
+            FROM main.outbox
+            WHERE triggering_event_id IN (?, ?)
+               OR triggering_global_position IN (?, ?)
+            """,
+            (
+                receipt.result_event.event_id,
+                receipt.terminal_event.event_id,
+                receipt.result_event.global_position,
+                receipt.terminal_event.global_position,
+            ),
+        ).fetchall()
+        if publication_rows or outbox_rows:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback found premature publication or outbox rows"
+            )
+        orphan_rows = connection.execute(
+            """
+            SELECT 1
+            FROM main.invocation_result_event_bindings AS binding
+            LEFT JOIN main.invocation_result_receipts AS receipt
+              ON receipt.tenant_id = binding.tenant_id
+             AND receipt.workspace_id = binding.workspace_id
+             AND receipt.receipt_id = binding.receipt_id
+            WHERE receipt.receipt_id IS NULL
+            UNION ALL
+            SELECT 1
+            FROM main.invocation_result_publications AS publication
+            LEFT JOIN main.invocation_result_receipts AS receipt
+              ON receipt.tenant_id = publication.tenant_id
+             AND receipt.workspace_id = publication.workspace_id
+             AND receipt.receipt_id = publication.receipt_id
+            WHERE receipt.receipt_id IS NULL
+            LIMIT 1
+            """
+        ).fetchall()
+        if orphan_rows:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback found an orphan result graph row"
+            )
+        foreign_key_rows = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if foreign_key_rows:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback foreign-key check failed"
+            )
+        integrity_rows = connection.execute("PRAGMA integrity_check").fetchall()
+        if type(integrity_rows) is not list or len(integrity_rows) != 1:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback integrity-check result is not exact"
+            )
+        integrity_row = integrity_rows[0]
+        if type(integrity_row) is not sqlite3.Row or tuple(integrity_row.keys()) != (
+            "integrity_check",
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback integrity-check row is not exact"
+            )
+        if integrity_row["integrity_check"] != "ok":
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance readback SQLite integrity check failed"
+            )
+        self._require_current_process()
+
+    @_bind_event_store_process
     def _complete_result_acceptance_job_and_attempt_in_owner_transaction(
         self,
         handle: _ResultArtifactTransactionHandle,
@@ -4050,16 +5211,25 @@ class SQLiteEventStore:
                 raise _ResultAcceptanceIntegrityError(
                     "result acceptance terminal CAS bindings changed"
                 )
-            completed = _CompletedFreshResultAcceptancePlanV2(
-                persisted=candidate,
-                receipt=receipt,
-                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
-            )
-            self._require_current_process()
-            try:
-                yield completed
-            finally:
-                completed._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+            with self._readback_result_acceptance_graph_in_owner_transaction(
+                handle,
+                prepared,
+                receipt,
+            ) as readback:
+                if readback._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN) != receipt:
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance complete readback receipt differs"
+                    )
+                completed = _CompletedFreshResultAcceptancePlanV2(
+                    persisted=candidate,
+                    receipt=receipt,
+                    token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+                )
+                self._require_current_process()
+                try:
+                    yield completed
+                finally:
+                    completed._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
     @contextmanager
     def _transaction_inner(
