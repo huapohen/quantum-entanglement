@@ -297,6 +297,55 @@ def test_enabled_configuration_repr_and_errors_hide_all_sensitive_values() -> No
     assert canary not in f"{raised.value!r} {raised.value}"
 
 
+def test_approval_binding_digest_is_full_stable_and_not_a_diagnostic_fingerprint() -> None:
+    configuration = bound_configuration()
+
+    assert configuration.approval_binding_digest == (
+        "e01642b1477ea9f35973a3ff3baf76d68fc0eeb7805efbeb75b95e73ac347754"
+    )
+    assert len(configuration.approval_binding_digest) == 64
+    assert configuration.approval_binding_digest != configuration.fingerprint
+    assert configuration.approval_binding_digest not in repr(configuration)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "changed"),
+    (
+        ("profile_id", "other-profile"),
+        ("profile_revision", "other-revision"),
+        ("profile_digest", "f" * 64),
+        ("approval_id", "other-approval"),
+        ("approval_expires_at", "2026-09-29T00:00:00.000001Z"),
+        ("provider", "other-provider"),
+        ("tenant_id", "other-tenant"),
+        ("workspace_id", "other-workspace"),
+        ("channel_id", "other-channel"),
+        ("origin", CanonicalHTTPSOrigin.parse("https://other.im.example.com:443")),
+        ("approved_addresses", parse_approved_ip_addresses("1.1.1.1,8.8.8.8")),
+        ("health_path", CanonicalAbsolutePath.parse("/v2/health")),
+        ("read_path", CanonicalAbsolutePath.parse("/v2/inbound-events")),
+        ("credential_ref", SecretRef.parse("file://other-read-credential")),
+        ("verification_secret_ref", SecretRef.parse("file://other-verification-key")),
+        ("verification_key_id", "other-verification-key"),
+        ("page_limit", 99),
+        ("max_response_bytes", 8_388_607),
+        ("connect_timeout_ms", 4_999),
+        ("read_timeout_ms", 29_999),
+    ),
+)
+def test_approval_binding_digest_covers_every_mutable_configuration_field(
+    field_name: str,
+    changed: object,
+) -> None:
+    configuration = bound_configuration()
+    changed_configuration = replace(configuration, **{field_name: changed})
+
+    assert (
+        changed_configuration.approval_binding_digest
+        != configuration.approval_binding_digest
+    )
+
+
 def test_environment_snapshot_reads_each_native_field_exactly_once() -> None:
     changing = ChangingEnvironment(enabled_environment())
     configuration = NativeIMSandboxConfig.from_environment(changing)

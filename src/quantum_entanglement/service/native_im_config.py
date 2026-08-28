@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import islice
 
-from quantum_entanglement._native_im_codec import _digest, _id, _timestamp
+from quantum_entanglement._native_im_codec import _digest, _id, _model_digest, _timestamp
 from quantum_entanglement.native_im_provider_profile import (
     IMProviderProfileBindingError,
     IMProviderProfileV1,
@@ -426,6 +426,48 @@ class NativeIMInboundOnlyConfigV1:
             raise NativeIMConfigurationError(
                 "native_im_redirect_mode_forbidden", "QE_NATIVE_IM_REDIRECT_MODE"
             )
+
+    @property
+    def approval_binding_digest(self) -> str:
+        """Return the full, domain-separated digest an approval must bind exactly.
+
+        Unlike :attr:`fingerprint`, this value is not a diagnostic abbreviation. It
+        covers every authority-relevant configuration value, including the exact secret
+        routing references, endpoint pins, limits, and deny policies.
+        """
+
+        return _model_digest(
+            "NativeIMInboundOnlyConfigApprovalBindingV1",
+            {
+                "approvalExpiresAt": self.approval_expires_at,
+                "approvalId": self.approval_id,
+                "approvedAddresses": [
+                    address.compressed for address in self.approved_addresses
+                ],
+                "channelId": self.channel_id,
+                "connectTimeoutMs": self.connect_timeout_ms,
+                "credentialRef": self.credential_ref.canonical,
+                "enabled": self.enabled,
+                "healthPath": self.health_path.canonical,
+                "maxResponseBytes": self.max_response_bytes,
+                "mode": self.mode,
+                "origin": self.origin.canonical,
+                "outboundMode": self.outbound_mode,
+                "pageLimit": self.page_limit,
+                "profileDigest": self.profile_digest,
+                "profileId": self.profile_id,
+                "profileRevision": self.profile_revision,
+                "provider": self.provider,
+                "readPath": self.read_path.canonical,
+                "readTimeoutMs": self.read_timeout_ms,
+                "redirectMode": self.redirect_mode,
+                "schemaVersion": self.schema_version,
+                "tenantId": self.tenant_id,
+                "verificationKeyId": self.verification_key_id,
+                "verificationSecretRef": self.verification_secret_ref.canonical,
+                "workspaceId": self.workspace_id,
+            },
+        )
 
     @property
     def fingerprint(self) -> str:
