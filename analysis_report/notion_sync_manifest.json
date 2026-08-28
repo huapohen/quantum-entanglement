@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-28T07:22:44Z",
+  "syncedAt": "2026-08-28T10:56:30Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private branches + local repository",
     "remoteRepresentation": "semantic-mirror",
@@ -10,8 +10,9 @@
       "convert-markdown-tables-to-notion-xml",
       "replace-local-image-links-with-screenshot-page-links",
       "preserve-project-child-pages-and-production-database",
-      "preserve-existing-screenshot-image-blocks-and-append-10-through-26",
-      "attach-current-markdown-and-html-for-wanwork-im-review-pages"
+      "preserve-existing-screenshot-image-blocks-and-append-topic-34",
+      "attach-current-markdown-and-html-for-wanwork-im-review-pages",
+      "attach-current-w2-engineering-checkpoints-to-topic-34"
     ],
     "safety": {
       "notion": "standing-user-required-private-workspace-sync-and-readback-before-next-action",
@@ -22,9 +23,9 @@
     }
   },
   "sourceControl": {
-    "notionContentBaselineCommit": "4a465d880334b206f4503447d3fa2ccad696884d",
-    "manifestPreparedFromCommit": "c8b8cd149c6c98796a40d320f0dac4967bd3d08c",
-    "manifestPreparedFromTree": "275adc9f8ded28046569b5275cab2386594e764d"
+    "notionContentBaselineCommit": "7bb324a4a06689a496cbc99b79d23261d031bc19",
+    "manifestPreparedFromCommit": "7bb324a4a06689a496cbc99b79d23261d031bc19",
+    "manifestPreparedFromTree": "f59f1298a84fd5cee2c2caa209395eae5283caf9"
   },
   "pages": [
     {
@@ -34,14 +35,14 @@
       "localFiles": [
         {
           "path": "analysis_report/README.md",
-          "sha256": "da12f2c91a45b5926e189bd4c023561cb92a7268aee25588faa35a95318cd9bb"
+          "sha256": "849225d363c827174b5863a3351df736972400fc0288d16441964a11f39ffaa2"
         }
       ],
-      "updateMode": "targeted-preserve-child-pages-and-database",
+      "updateMode": "targeted-preserve-child-pages-and-database-with-current-source-attachment",
       "remoteReadback": {
         "verified": true,
         "title": "🪢 Quantum Entanglement｜人 + 多 Agent 协同办公",
-        "contentLength": 15858,
+        "contentLength": 17550,
         "expectedMarkers": [
           "c8b8cd1",
           "e9491cd",
@@ -79,7 +80,12 @@
           "durability=volatile",
           "EventStore 与 Action Receipt 分层",
           "提前接入原生 IM｜状态、备份与恢复检查点",
-          "原生 IM 提前接入｜E0–E5 执行计划"
+          "原生 IM 提前接入｜E0–E5 执行计划",
+          "7bb324a",
+          "cd92ea5",
+          "3caead4b996e81da91d5f684983b1b22",
+          "PROJECT_HOME_7bb324a.md",
+          "function-only writes + exact access"
         ],
         "missingMarkers": []
       }
@@ -597,18 +603,18 @@
       "localFiles": [
         {
           "path": "analysis_report/screenshots/README.md",
-          "sha256": "09bb4c29364e3c3ea0469a365d5fec99cd8b1f90d379b595cbcbf23d2505cb36"
+          "sha256": "25ae48c627bc5fed607aa9dc2bdcbf63518fdaccebb800c4d16afa188ccef4d7"
         },
         {
           "path": "analysis_report/screenshots/manifest.json",
-          "sha256": "c20ffa44fe1cbf60ad2296229d5e0606e6683fa51ac9afa972fb9b86cac32295"
+          "sha256": "caec32eefe33ba313a5a0a7ff6ed9f6c0f224b3b94b6c03ab18a9713344155b5"
         }
       ],
       "updateMode": "targeted-preserve-existing-and-attach-current-inventory",
       "remoteReadback": {
         "verified": true,
         "title": "🖼️ 证据库｜调研与产品验收截图（只读）",
-        "contentLength": 48546,
+        "contentLength": 54197,
         "expectedMarkers": [
           "29 项截图与文档图证据检查点",
           "c20ffa44fe1c",
@@ -620,7 +626,13 @@
           "主动内容和外链全部拒绝",
           "2026-08-27 增量截图",
           "26_clawith_rapid_rnd_claim_20260827",
-          "8ab98aa5837226f0c1d8788eec350fe580f32180"
+          "8ab98aa5837226f0c1d8788eec350fe580f32180",
+          "31 项截图与文档图证据检查点",
+          "d2b715afaa88",
+          "586c3b5edebf",
+          "3caead4b996e81da91d5f684983b1b22",
+          "SCREENSHOT_EVIDENCE_README_7bb324a.md",
+          "SCREENSHOT_EVIDENCE_MANIFEST_7bb324a.json"
         ],
         "missingMarkers": []
       }
@@ -841,14 +853,14 @@
       "localFiles": [
         {
           "path": "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
-          "sha256": "46411e81ffc74ee74d4707bbec526e7c5a182797d835c7ea837290b15e3c7902"
+          "sha256": "b08a69e8a6220f47359f32aafacc8d51b0758418e6fb9c7a9f72c0b81298d1ab"
         }
       ],
       "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
       "remoteReadback": {
         "verified": true,
         "title": "🔬 03｜用户调研可追溯矩阵（45 条硬映射）",
-        "contentLength": 9732,
+        "contentLength": 3201,
         "expectedMarkers": [
           "8d662bf",
           "4a465d8",
@@ -873,7 +885,14 @@
           "d8d57a8",
           "P1-7",
           "28 个事件测试",
-          "Agent 重执行"
+          "Agent 重执行",
+          "7bb324a",
+          "cd92ea5",
+          "RQ-003",
+          "RQ-034",
+          "WANWORK_IM_RESEARCH_TRACEABILITY_7bb324a.md",
+          "WANWORK_IM_RESEARCH_TRACEABILITY_7bb324a.html",
+          "3caead4b996e81da91d5f684983b1b22"
         ],
         "missingMarkers": []
       }
@@ -885,14 +904,14 @@
       "localFiles": [
         {
           "path": "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
-          "sha256": "8e4cb0547adbe3d7571b4057558123a457aec847d71cc7166884538125962da4"
+          "sha256": "3b83dba579e057807f9325f28957b3f36129b60aed5dc0076831a2c9b97742d7"
         }
       ],
       "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
       "remoteReadback": {
         "verified": true,
         "title": "🧭 04｜实施计划、提交序列与验收门禁",
-        "contentLength": 9431,
+        "contentLength": 3026,
         "expectedMarkers": [
           "8d662bf",
           "4a465d8",
@@ -916,7 +935,13 @@
           "P1-7",
           "28 个事件测试",
           "PostgreSQL durable EventStore",
-          "Action Ledger"
+          "Action Ledger",
+          "7bb324a",
+          "cd92ea5",
+          "Production IaC",
+          "WANWORK_IM_IMPLEMENTATION_PLAN_7bb324a.md",
+          "WANWORK_IM_IMPLEMENTATION_PLAN_7bb324a.html",
+          "3caead4b996e81da91d5f684983b1b22"
         ],
         "missingMarkers": []
       }
@@ -1074,14 +1099,14 @@
       "localFiles": [
         {
           "path": "analysis_report/research/33_postgres_authority_persistence_checkpoint.md",
-          "sha256": "06e50b6a09977db4b17addc062f35016a423baee4a9b85728b9e3edd6ed778b7"
+          "sha256": "130bb87975539bf3d82ae8efd20615a7689ce20d3fc37370102fe844faa6fee1"
         }
       ],
-      "updateMode": "created-comprehensive-report-with-current-markdown-html-engineering-checkpoint-and-diagram",
+      "updateMode": "preserved-historical-checkpoint-with-topic-34-successor-banner",
       "remoteReadback": {
         "verified": true,
         "title": "🐘 33｜PostgreSQL 权威持久化：Migration、Authority、Repository 与 UoW",
-        "contentLength": 14356,
+        "contentLength": 15208,
         "expectedMarkers": [
           "c8b8cd1",
           "e9491cd",
@@ -1105,7 +1130,45 @@
           "production IM",
           "exactly-once",
           "tenant GUC",
-          "W2_POSTGRES_AUTHORITY_CHECKPOINT_4a465d8.md"
+          "W2_POSTGRES_AUTHORITY_CHECKPOINT_4a465d8.md",
+          "历史检查点",
+          "0001–0004",
+          "3caead4b996e81da91d5f684983b1b22"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-34-postgres-function-only-exact-access",
+      "pageId": "3caead4b-996e-81da-91d5-f684983b1b22",
+      "url": "https://app.notion.com/p/3caead4b996e81da91d5f684983b1b22?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md",
+          "sha256": "7404b5f77312a99aaee7a5985f8a902f0a704556180ba3b34263fd03bd6d5d21"
+        }
+      ],
+      "updateMode": "created-current-semantic-mirror-with-markdown-html-w2-checkpoints-svg-and-png",
+      "remoteReadback": {
+        "verified": true,
+        "title": "34｜PostgreSQL Function-only Writes 与 Exact Access",
+        "contentLength": 9002,
+        "expectedMarkers": [
+          "7bb324a",
+          "cd92ea5",
+          "write_conversation_revision",
+          "write_provider_conversation_binding_revision",
+          "write_conversation_membership_revision",
+          "write_conversation_access_revision",
+          "write_tenant_command_receipt",
+          "PostgreSQL 18.6",
+          "NO-GO",
+          "automation/2026/05_08/1/2output",
+          "automation/2026/05_08/1/2output/more",
+          "TOPIC34_POSTGRES_FUNCTION_ONLY_EXACT_ACCESS_7bb324a.md",
+          "TOPIC34_POSTGRES_FUNCTION_ONLY_EXACT_ACCESS_7bb324a.html",
+          "W2_POSTGRES_AUTHORITY_CHECKPOINT_7bb324a.md",
+          "W2_POSTGRES_FUNCTION_WRITE_PLAN_7bb324a.md"
         ],
         "missingMarkers": []
       }
