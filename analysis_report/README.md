@@ -77,6 +77,7 @@ Atomic Result Authority 的最大强度参考，不再作为提前接入前的�
 | `research/29_plugin_lifecycle_cooperative_deadline_contract.md` | W1 P1-5 当前实现证据：`eafd3da` | context deadline 不冒充 callback return/process kill/effect finality，owner/state 直到 callback 返回才收敛 |
 | `research/30_third_party_execution_isolation_contract.md` | W1 P1-6 当前合同与 fake 证据：`43e111e`/`fccb64e`/`d32079c` | host-owned refs、Supervisor IPC、generation/fence、cancel→grace→kill→wait/reap/release receipt、operator quarantine 与 `isolation=none` deterministic fake |
 | `research/31_volatile_memory_event_store_implementation.md` | W1 P1-7 当前实现证据：`a4ac9bd`…`4118746` | volatile/non-production EventStore fake、ordered exact retry/conflict、store-owned ordering/time、scope/namespace cursor、严格 admission、cooperative context、并发/失败原子性、test-only backfill fixture 与 W2 durability/projection 边界 |
+| `research/32_im_identity_conversation_and_provider_metadata_contract.md` | W1 IM identity/conversation/metadata 合同证据：`9f55b33`…`60ebf6a` | `2output` 一级证据到 `ActorRef/Snapshot`、realm-scoped external identity、`ConversationRef/Snapshot`、Agent thread topology、零授权 canonical `ext_info`、848 个非 canonical 排列、forbidden-field canary、race/fuzz 与 W2～W4 未完成边界 |
 
 ## 已归档截图
 
