@@ -399,6 +399,24 @@ schema/migration 7、Artifact transaction primitive、writer、receipt、Observe
 详细证据见
 [`30_stored_event_envelope_store_adapter_evidence.md`](../../analysis_report/research/30_stored_event_envelope_store_adapter_evidence.md)。
 
+E3 Result Authority M4 代码封板节点 `aef5f8b` 已完成 inactive migration 7 候选、私有 backup-v2
+known topology 与 Artifact owner-transaction primitive。Migration 7 固定六张表、八个显式索引、
+31 个 autoindex 和 guarded down path，但 legacy bootstrap、默认 store 与 active migration registry
+仍停在 6。私有 backup profile 固定 45 个对象；active registry 仍保持 11 profiles / 88 objects。
+Exact owner handle 绑定 store、SQLite connection、process owner 和一次性 generation；ordered batch
+在 owner transaction 中做完整 preflight、blob/version DML、固定 readback 与 change accounting，
+任一被调用方捕获的写失败也会把 owner 标记为 rollback-only。真实 `os._exit` / SIGKILL 证据证明
+未提交 transaction 不留下 Artifact prefix。
+
+既有 Artifact version history 每次最多 64 行轻量预检；所有 TEXT 在 SQLite 层通过 storage class
+与 byte bound 后才按 `rowid` 单行物化并重算 canonical metadata、request digest、scope、lineage 与
+UTC 时间。Confirmed rollback 与 ambiguity 分开重发；ambiguous control 以
+`_ResultArtifactCommitAmbiguityError` 为直接 cause 并 poison store。M4 组合 82 tests、全仓 2639
+tests、Ruff、Mypy 和 diff-check 全绿；最终独立 reviewer 结论为 0 blocker。M4 仍不包含 migration 7
+注册、Atomic Result Writer、receipt/event/task/attempt 原子图、`ObservedV2`、`AcceptedV2`、worker 或
+真实 IM outbound；详细证据见
+[`31_inactive_result_schema_artifact_transaction_evidence.md`](../../analysis_report/research/31_inactive_result_schema_artifact_transaction_evidence.md)。
+
 仍缺：
 
 - 完整的 supported OS/SQLite 组合矩阵；当前 full-suite CI 只覆盖 GitHub Linux 的 Python
@@ -444,10 +462,11 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
    profile/mapper 和 production exchange 并通过现有 TCK，再单独修订 `SERVICE_BOUNDARY.md`；
 4. 上述批准与 full gates 完成后，才执行 health/read/dedupe/resume；Level B 只生成 observation，
    不驱动 Agent、tool、browser、subprocess 或 outbound；
-5. E3 M1 private stored-event envelope codec、M2 reserved result/terminal event fence 与 M3
-   private store adapter 已完成；下一步做 M4 inactive result schema、Artifact same-transaction
-   primitives 与 backup-v2 topology。M4 完成前不注册 migration 7、不开放 result writer；
-6. 在 M1–M4 之上再把 accepted result/artifact、attempt 和 terminal task state 组成单一原子验收
+5. E3 M1 private stored-event envelope codec、M2 reserved result/terminal event fence、M3
+   private store adapter 与 M4 inactive result schema/Artifact owner transaction/private backup
+   topology 已完成；下一步做 M5 Atomic Result Acceptance Writer，仍不注册 migration 7、不开放
+   public result writer；
+6. 在 M1–M4 之上把 accepted result/artifact、attempt 和 terminal task state 组成单一原子验收
    边界；没有 result receipt 时绝不把 succeeded job 猜成 completed。默认关闭的
    [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)保持不变；
 7. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
