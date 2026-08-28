@@ -23,7 +23,8 @@
 - 当前最后完成远端回读的 WanWork IM Notion 内容基线为
   `dev_wanwork_quantum_entanglement@7bb324a4a06689a496cbc99b79d23261d031bc19`，其 Topic 34 代码证据
   基线为 `cd92ea56493b43889f5165892b40ec36e958d44a`；分支未合并 `main`。Topic 35 `53dd38b` 以及
-  authority specification/cutover plan `ad60859` 代码与文档仍是本地/Git `local_pending` 增量，不能写成
+  authority specification/cluster probe/cutover plan v4 `91b42af` 代码与文档仍是本地/Git
+  `local_pending` 增量，不能写成
   Notion 已更新。`main@f99f176` 仍是提前
   接入历史备份基线，不代表本分支当前 W2 进度。
 - 本轮已确认两个当前 Markdown 附件从临时上传转为页面附件；所有七个更新页面均回读到 Topic 33
@@ -44,7 +45,7 @@
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 原路线已由提前接入调度修订 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 历史备份检查点 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界；不是当前 W2 入口 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | 历史调度计划 | 提前接入决策时冻结的 E0–E5/Level A–D 路线；保留作决策溯源，不再是当前 W2 执行入口 |
-| `docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md` | 当前 Gate A0 plan 入口：`ad60859` | immutable authority specification/digest、canonical plan、strict decoder、零跳过验证、No-Go 与 preflight/executor/receipt 后续顺序 |
+| `docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md` | 当前 Gate A0 plan 入口：`91b42af`，`local_pending` | physical cluster probe、managed/transient 双 authority specification、plan v4、代码派生五阶段 workflow、严格 decoder/approval/file trust、No-Go 与 preflight report/executor/receipt 后续顺序 |
 | `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口：`53dd38b` | canonical strict connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate A/Trusted tenant 剩余 P0 |
 | `research/35_postgres_attested_runtime_composition_checkpoint.md` | 当前 W2 深度证据：`53dd38b` | 30 提交台账、ambient/default-file/raw-DSN/malformed-query 安全闭环、PG18 connection/session/ACL drift 实证、一级调研硬映射、未交付边界与下一阶段计划 |
 

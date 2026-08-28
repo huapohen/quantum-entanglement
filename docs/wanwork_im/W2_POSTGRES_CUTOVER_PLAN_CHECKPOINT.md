@@ -4,13 +4,17 @@
 
 分支：`dev_wanwork_quantum_entanglement`
 
-实现基线：`8c31736cf775d5785a4e3ebbd1f9f9b1e6830c09`
+实现基线：`91b42af`（已推送 `origin/dev_wanwork_quantum_entanglement`）
+
+同步状态：`local_pending`。按 2026-08-29 最新决策，本地代码、测试、报告和 GitHub 先全部收口，Notion
+最后统一批量同步并逐页回读；本检查点当前不得解释为 Notion 已更新。
 
 ## 1. 结论
 
 Gate A0 已把原来只存在于验证器和文档中的 PostgreSQL authority 期望值收敛成 immutable production
 specification，并交付 canonical cutover plan、严格 decoder、descriptor-based 可信文件加载和 detached Ed25519
-approval verifier。plan 现在能稳定绑定 Git source、
+approval verifier。plan 现在还绑定真实 PostgreSQL 物理 cluster identity、专属 cell 的 transient cutover authority
+graph 和由代码唯一派生的五阶段 workflow。plan 能稳定绑定 Git source、
 release artifact、migration catalog、authority manifest/specification、目标数据库和 TLS 身份、三类 credential
 generation reference、备份、回滚边界、空/非空分类、五阶段步骤、审批引用、expiry 与 evidence destination；
 verified approval 进一步绑定 exact plan、审批人、deployment/cell/reference scope、key generation/fingerprint、
@@ -44,37 +48,46 @@ validator 不再单独拼接 role、membership、object 或 ACL 期望数组。�
 
 ### 2.2 Domain-separated digests
 
-当前提供三个确定性摘要入口：
+当前提供四个 authority 确定性摘要入口：
 
 - `DigestAuthorityAccessManifest`：LOGIN role 数组按 semantic set 排序；
 - `CurrentMigrationCatalogDigest`：绑定有序 version/name、up checksum 和独立 down checksum；
 - `DigestAuthorityAccessSpecification`：只接受已验证、已排序 specification。
+- `DigestAuthorityCutoverSpecification`：独立绑定 transient provisioner/database-owner/grantor/CONNECT 图，
+  不与 managed access specification 共用摘要域。
 
 摘要统一使用 `sha256:<64 lowercase hex>`，并使用不同 domain prefix，防止相同 JSON bytes 在 manifest、
 catalog、specification 与 plan 之间被当作同一语义对象。
 
-### 2.3 Canonical cutover plan
+### 2.3 Canonical cutover plan v4
 
-`authoritycutover.BuildPlan` 不接受调用方自报的 catalog/manifest/specification digest。它从 production
-migration package 重新解析 manifest、catalog 和 specification，再写入 plan。第一版 plan 明确绑定：
+`authoritycutover.BuildPlan` 不接受调用方自报的 catalog/manifest/specification digest，也不接受调用方提供
+`Steps` 或 `AbortConditions`。它从 production
+migration package 重新解析 manifest、catalog 和 specification，再写入 plan。v4 plan 明确绑定：
 
 - `planId`、source commit/tree、release artifact digest；
 - migration catalog、authority manifest/specification 和 executor/validator compatibility；
+- transient cutover specification、专属 cluster-cell topology 和 exact IaC/bootstrap grantor；
 - deployment/cell/database/server identity、PostgreSQL 18 与 `verify-full` CA/server-name binding；
+- probe 返回的 database/login/server/CA scope、primary、`pg_control_version`、`catalog_version_no` 与经过独立
+  domain hash 的 physical `system_identifier`；raw system identifier 不进入 plan；
 - provisioner/migration/runtime 三个互不共享的 typed `secret/...` reference 和 generation；
 - migration/runtime login 必须属于 manifest，provisioner login 必须与受管 authority role 隔离；
 - from/to schema version、`empty|non_empty` 显式分类；
-- preflight/bootstrap/migrate/cutover/runtime-proof 五阶段有序步骤；
+- preflight/bootstrap/migrate/cutover/runtime-proof 恰好五阶段，action 固定为 `read-authority`、
+  `create-authority`、`apply-catalog`、`converge-ownership`、`attest-runtime`；
 - 每步 action、executor、transaction class、pre/post/abort digest；
 - required backup、rollback artifact/boundary、abort condition set、evidence destination；
 - approval identity/reference、UTC second expiry 与 exact plan digest。
 
-semantic set 只限 abort conditions、credential inventory 和 manifest login roles；这些集合重排不改变 canonical
-bytes。steps 保留业务顺序，重排会改变语义或直接违反 phase order。
+preflight 的 expectation/pass/abort policy 分别使用三个独立摘要域，三者都显式
+`mutationAuthorized=false`；unknown 结果阻断，观察最长 60 秒。Decode 会从 plan 其余字段重新派生 workflow 并
+exact compare，unknown/extra/missing/reordered action、executor、事务类型、条件摘要或检查项全部拒绝。旧 v1/v2/v3
+plan 不做隐式升级。
 
 ### 2.4 Plan digest 自绑定规则
 
-为避免把 self-referential digest 定义成不可计算对象，v1 固定如下算法：
+为避免把 self-referential digest 定义成不可计算对象，v4 固定如下算法：
 
 1. 先完成全部 normalization 与语义验证；
 2. 将顶层 `planDigest` 和 `approval.exactPlanDigest` 同时置为空字符串；
@@ -145,6 +158,12 @@ trusted key policy 明确绑定：
 | `3db64d258bde9eac747416f687c5377134fe594b` | scoped key trust 与 policy evidence metadata | policy snapshot 仍需防回滚 |
 | `c0382b76cd0b5a2e3ec5f148fdad9dcf3daf9bdc` | 拒绝歧义 approval namespace | 不改变 plan digest 算法 |
 | `8c31736cf775d5785a4e3ebbd1f9f9b1e6830c09` | trusted approval file read+verify | 只返回 verified evidence |
+| `d8f431b` | 固定 database-owner cluster attributes | 仅 managed specification |
+| `939c6e7` | plan v2 绑定 physical PostgreSQL cluster | v1 严格拒绝 |
+| `0a4a760` | authenticated-TLS cluster probe 与 opaque scoped identity | 只读 RR catalog probe |
+| `879b6b4` | 独立 transient cutover authority specification/digest | 仅 dedicated cluster cell |
+| `69cae6f` | plan v3 绑定 cutover graph 与 exact grantor | v1/v2 严格拒绝 |
+| `91b42af` | plan v4 完全由代码派生五阶段 workflow 和 typed preflight policy | v1/v2/v3 严格拒绝 |
 
 ## 4. 本地验证证据
 
@@ -171,7 +190,8 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go mod verify
 - `go mod verify` 返回 `all modules verified`；
 - authoritycutover 的 Linux/Windows cross-build 通过；
 - authoritycutover/migrations/imstore/runtimepool 的 JSON 事件统计为 `skip_events=0 fail_events=0`；
-- golden plan digest：`sha256:7d833045167e66b8270513c25a1aac3a24ad7272b5d5423fa5131785bc82a564`；
+- 当前 v4 golden plan digest：`sha256:faf316aa6298717b8a26adfa65ad75dce7e041cb3a5d8b57107dd6e247ec7d1f`；
+- cutover authority golden digest：`sha256:7090823b9bf4d1f4a7303087d043265b1caa64f3d1dc2c1fa684686f582c4110`；
 - staged credential/旧称 canary 通过；没有写入完整 API key、DSN 或 credential material。
 
 该 loopback fixture 不构成 remote authenticated-TLS 或 clean-host production evidence。
@@ -184,7 +204,8 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go mod verify
 | canonical cutover plan build/decode | Go | offline contract only |
 | exact plan approval verification | Go（bounded） | Ed25519、scope/key-policy/file trust 已实现；不是 single-use execution lease |
 | policy snapshot freshness/archive | No-Go | policy 认证、防回滚、原子替换与 immutable archive 尚未实现 |
-| provisioner preflight | No-Go | SQL 前仍须冻结 cluster identity、provisioner authority graph 和 derived step expectation |
+| trusted cluster identity probe | Go（bounded） | production API 强制现有连接为 verify-full TLS；本机正向只验证 catalog 语义，不构成 remote TLS 证据 |
+| provisioner preflight report | No-Go | cluster identity、authority graph 和 derived policy 已冻结；尚未交付完整 fixed-SQL report |
 | bootstrap/cutover executor | No-Go | 不存在任何 plan 驱动的 production SQL write path |
 | receipt/unknown-result reconcile | No-Go | durable receipt schema/store/state machine 未实现 |
 | production secret injection | No-Go | hardened file/FD provider 未实现 |
@@ -194,18 +215,16 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go mod verify
 
 ## 6. 下一执行顺序
 
-1. 冻结 preflight expectation：Plan 绑定 stable PostgreSQL system identifier、provisioner login → database-owner
-   的 exact SET-role membership/grantor/role attributes，并由 production builder 推导 pre/post/abort digest；
-2. 实现 read-only provisioner `PreflightReport`，只支持 IaC 已创建的 target database；`empty` 表示 database 已存在
+1. 实现 read-only provisioner `PreflightReport`，只支持 IaC 已创建的 target database；`empty` 表示 database 已存在
    且无 migration schema/ledger/user object，不表示 database 不存在；
-3. 实现认证、不可回滚、可原子替换和长期归档的 approval policy snapshot；
-4. 冻结 receipt format/state transition、append/readback 与 unknown-result reconcile，并原子消费 approval digest；
-5. executor 只消费同一 specification，按事务/非事务 boundary 拆步，默认 dry-run；
-6. 在 PG18 fixture 做 empty/repeat/concurrent/drift/unknown-result 零跳过；
-7. 实现 hardened secret file/FD provider；
-8. 建 remote private-CA `verify-full` E2E 和 clean Linux cell；
-9. 完成 non-empty upgrade、backup/restore 与 old/future binary/schema 演练；
-10. Gate A0 全部证据收口后，才进入 Clerk trusted request context。
+2. 实现认证、不可回滚、可原子替换和长期归档的 approval policy snapshot；
+3. 冻结 receipt format/state transition、append/readback 与 unknown-result reconcile，并原子消费 approval digest；
+4. executor 只消费同一 specification，按事务/非事务 boundary 拆步，默认 dry-run；
+5. 在 PG18 fixture 做 empty/repeat/concurrent/drift/unknown-result 零跳过；
+6. 实现 hardened secret file/FD provider；
+7. 建 remote private-CA `verify-full` E2E 和 clean Linux cell；
+8. 完成 non-empty upgrade、backup/restore 与 old/future binary/schema 演练；
+9. Gate A0 全部证据收口后，才进入 Clerk trusted request context。
 
 任何一步都不得为了测试便利把 provisioner/migration secret 注入 API，或把 integration fixture 当作 production
 IaC。Notion 在本地代码、测试、文档和 Git 阶段全部收口后再批量镜像并逐页回读。
