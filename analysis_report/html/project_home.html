@@ -512,6 +512,20 @@ identity、<code>ConversationRef/Snapshot</code>、Agent thread
 topology、零授权 canonical <code>ext_info</code>、848 个非 canonical
 排列、forbidden-field canary、race/fuzz 与 W2～W4 未完成边界</td>
 </tr>
+<tr>
+<td><a href="33_postgres_authority_persistence_checkpoint.html"><code>research/33_postgres_authority_persistence_checkpoint.md</code><br />
+<code>html/33_postgres_authority_persistence_checkpoint.html</code></a></td>
+<td>W2 PostgreSQL authority persistence 检查点：<code>8d662bf</code></td>
+<td>两层 <code>2output</code> 一级证据、0001–0004、22 张业务表、17 张
+FORCE RLS 表、PG18 fail-closed migration、tenant repository、serializable/
+idempotent UoW、真实 PG/race 证据、禁止性宣称与接真实 IM 前六个 P0 gate</td>
+</tr>
+<tr>
+<td><code>docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md</code></td>
+<td>W2 工程入口与 Go/No-Go</td>
+<td>当前可用范围、测试命令、function-only writes、trusted tenant、active
+resolver、service startup、recovery 和 event/outbox 顺序</td>
+</tr>
 </tbody>
 </table>
 <h2 id="已归档截图">已归档截图</h2>
@@ -519,11 +533,12 @@ topology、零授权 canonical <code>ext_info</code>、848 个非 canonical
 href="screenshots/README.md"><code>screenshots/README.md</code></a> 与
 <a
 href="screenshots/manifest.json"><code>screenshots/manifest.json</code></a>。当前共归档
-27 张图；前十张是受限、
+29 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第
 10–13 张是合成本地 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是
 Clawith 公开官网、白皮书与官方文档
-只读证据。整套资料仍按项目内部证据管理。</p>
+只读证据；最后两项是同一 W2 PostgreSQL 检查点图的 SVG source 与 PNG
+rendering，只作为报告导航图，不冒充独立运行证据。整套资料仍按项目内部证据管理。</p>
 <table>
 <colgroup>
 <col style="width: 33%" />
@@ -673,6 +688,12 @@ Clawith 公开官网、白皮书与官方文档
 <td>部门级研发交付样板、阶段指标与 <code>3 天</code> /
 <code>6d 21h</code> 同卡片口径冲突</td>
 <td>Playwright 官网元素只读证据</td>
+</tr>
+<tr>
+<td><code>screenshots/33_postgres_authority_persistence_map.svg</code><br />
+<code>screenshots/33_postgres_authority_persistence_map.png</code></td>
+<td>一级调研→当前持久化切片→PG18 证据→六个 P0 gate</td>
+<td>Repository-authored SVG 与 rsvg 派生 PNG；不是独立运行证据</td>
 </tr>
 </tbody>
 </table>
