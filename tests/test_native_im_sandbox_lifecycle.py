@@ -44,8 +44,8 @@ from tests.test_native_im_sandbox_inbound_adapter import (
 
 
 class BlockingTransport(FixtureTransport):
-    def __init__(self, response) -> None:
-        super().__init__(response)
+    def __init__(self, response, *, health_evidence) -> None:
+        super().__init__(response, health_evidence=health_evidence)
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
 
@@ -58,8 +58,8 @@ class BlockingTransport(FixtureTransport):
 
 
 class BlockingCloseTransport(FixtureTransport):
-    def __init__(self, response) -> None:
-        super().__init__(response)
+    def __init__(self, response, *, health_evidence) -> None:
+        super().__init__(response, health_evidence=health_evidence)
         self.close_entered = asyncio.Event()
         self.close_release = asyncio.Event()
 
@@ -118,9 +118,15 @@ def lifecycle_inputs(
     )
     if blocking or blocking_close:
         blocked = (
-            BlockingTransport(transport.response)
+            BlockingTransport(
+                transport.response,
+                health_evidence=transport.health_evidence,
+            )
             if blocking
-            else BlockingCloseTransport(transport.response)
+            else BlockingCloseTransport(
+                transport.response,
+                health_evidence=transport.health_evidence,
+            )
         )
         configuration, approval_authority, approval_permit, _, _ = approved_authority_for(
             configuration,

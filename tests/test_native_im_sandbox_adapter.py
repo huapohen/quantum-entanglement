@@ -32,6 +32,7 @@ from quantum_entanglement.native_im_sandbox import (
     NativeIMSandboxAdapterProcessMismatchError,
     NativeIMSandboxDisabledError,
     compose_default_native_im_sandbox_v1,
+    derive_native_im_health_evidence_digest_v1,
     parse_native_im_inbound_page_v1,
 )
 from quantum_entanglement.service.native_im_config import NativeIMDisabledConfigV1
@@ -257,20 +258,32 @@ def test_transport_contract_is_structural_but_has_no_concrete_network_implementa
 
 
 def test_health_evidence_is_exact_bounded_and_content_free() -> None:
+    values = {
+        "healthy": True,
+        "observed_at": "2026-08-28T12:00:00.000001Z",
+        "status_code": 200,
+        "configuration_binding_digest": "1" * 64,
+        "profile_digest": "2" * 64,
+        "provider_manifest_digest": "3" * 64,
+        "transport_contract_id": "test-transport-v1",
+        "transport_contract_digest": "4" * 64,
+        "request_intent_digest": "5" * 64,
+        "exchange_security_evidence_digest": "6" * 64,
+    }
     evidence = NativeIMHealthEvidenceV1(
         schema_version=1,
-        healthy=True,
-        observed_at="2026-08-28T12:00:00.000001Z",
-        evidence_digest="a" * 64,
+        **values,
+        evidence_digest=derive_native_im_health_evidence_digest_v1(**values),
     )
     assert evidence.healthy is True
-    assert "a" * 64 not in repr(evidence)
+    assert evidence.status_code == 200
+    assert "1" * 64 not in repr(evidence)
+    assert "6" * 64 not in repr(evidence)
 
     with pytest.raises(TypeError):
         NativeIMHealthEvidenceV1(
             schema_version=1,
-            healthy=1,  # type: ignore[arg-type]
-            observed_at="2026-08-28T12:00:00.000001Z",
+            **{**values, "healthy": 1},  # type: ignore[arg-type]
             evidence_digest="a" * 64,
         )
 

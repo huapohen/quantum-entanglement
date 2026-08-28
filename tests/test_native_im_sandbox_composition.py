@@ -25,7 +25,10 @@ from quantum_entanglement.native_im_sandbox_composition import (
 )
 from tests.test_native_im_sandbox_authority import approved_authority_for
 from tests.test_native_im_sandbox_config import bound_configuration
-from tests.test_native_im_sandbox_inbound_adapter import adapter_inputs
+from tests.test_native_im_sandbox_inbound_adapter import (
+    adapter_inputs,
+    fixture_health_evidence,
+)
 
 
 def manifest_for(profile, **changes: object) -> NativeIMProviderSandboxManifestV1:
@@ -47,9 +50,7 @@ def manifest_for(profile, **changes: object) -> NativeIMProviderSandboxManifestV
 
 
 def composition_inputs(tmp_path: Path):
-    _, request, configuration, profile, transport, mapper, secrets, replay_guard = (
-        adapter_inputs()
-    )
+    _, request, configuration, profile, transport, mapper, secrets, replay_guard = adapter_inputs()
     high_water = SQLiteNativeIMSandboxApprovalHighWaterV1(
         str((tmp_path / "approved-composition.sqlite3").resolve())
     )
@@ -58,8 +59,14 @@ def composition_inputs(tmp_path: Path):
         profile,
         high_water=high_water,
     )
+    manifest = manifest_for(profile)
+    transport.health_evidence = fixture_health_evidence(
+        configuration,
+        profile,
+        provider_manifest_digest=manifest.canonical_digest(),
+    )
     registration = NativeIMProviderSandboxRegistrationV1(
-        manifest_for(profile),
+        manifest,
         transport=transport,
         mapper=mapper,
         secret_provider=secrets,
@@ -86,13 +93,16 @@ def test_manifest_round_trip_and_domain_separated_digest_are_stable() -> None:
 
     assert NativeIMProviderSandboxManifestV1.from_dict(manifest.to_dict()) == manifest
     assert NativeIMProviderSandboxManifestV1.from_json_bytes(encoded) == manifest
-    assert encoded == json.dumps(
-        manifest.to_dict(),
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
+    assert (
+        encoded
+        == json.dumps(
+            manifest.to_dict(),
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    )
     assert manifest.canonical_digest() == (
         "fa12837be989e6571f33ecdaaa0859c1107990c153c95ee04f90499181558fbe"
     )

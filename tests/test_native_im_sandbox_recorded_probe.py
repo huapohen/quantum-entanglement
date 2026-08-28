@@ -63,6 +63,7 @@ from tests.test_native_im_sandbox_authority import approved_authority_for
 from tests.test_native_im_sandbox_inbound_adapter import (
     READ_CREDENTIAL,
     RecordingSecretProvider,
+    fixture_health_evidence,
     provider_profile,
 )
 from tests.test_native_im_sandbox_lifecycle import CapturingHandler, sandbox_observer
@@ -87,8 +88,10 @@ class RecordedTransport:
     def __init__(
         self,
         plans: dict[str, tuple[NativeIMInboundRawResponseV1 | str, ...]],
+        health_evidence: NativeIMHealthEvidenceV1,
     ) -> None:
         self.plans = {key: tuple(value) for key, value in plans.items()}
+        self.health_evidence = health_evidence
         self.positions = {key: 0 for key in plans}
         self.health_calls = 0
         self.read_calls = 0
@@ -97,12 +100,7 @@ class RecordedTransport:
     async def probe_health(self, credential: SecretMaterial) -> NativeIMHealthEvidenceV1:
         self.health_calls += 1
         assert credential.view().tobytes() == READ_CREDENTIAL
-        return NativeIMHealthEvidenceV1(
-            schema_version=1,
-            healthy=True,
-            observed_at=NOW,
-            evidence_digest=hashlib.sha256(b"recorded-health-v1").hexdigest(),
-        )
+        return self.health_evidence
 
     async def read_inbound(
         self,
@@ -254,11 +252,14 @@ def make_probe_rig(
         profile_digest=profile.canonical_digest(),
         clock=lambda: NOW,
     )
-    transport = RecordedTransport(plans)
     mapper = RecordedMapper(specs)
     configuration, approval_authority, approval_permit, _, _ = approved_authority_for(
         configuration,
         profile,
+    )
+    transport = RecordedTransport(
+        plans,
+        fixture_health_evidence(configuration, profile),
     )
     adapter = NativeIMInboundOnlySandboxAdapter(
         configuration,
@@ -522,13 +523,20 @@ async def test_recorded_conflicting_replay_rolls_back_second_nonce_and_page(
 
 
 def test_recorded_probe_transport_exposes_no_endpoint_or_outbound_surface() -> None:
-    transport = RecordedTransport({"test-read": ("disconnect",)})
+    profile = provider_profile()
+    configuration = configuration_for(profile)
+    configuration, _, _, _, _ = approved_authority_for(configuration, profile)
+    transport = RecordedTransport(
+        {"test-read": ("disconnect",)},
+        fixture_health_evidence(configuration, profile),
+    )
     assert not hasattr(transport, "dispatch")
     assert not hasattr(transport, "query_acceptance")
     assert not hasattr(transport, "endpoint")
     assert set(vars(transport)) == {
         "plans",
         "positions",
+        "health_evidence",
         "health_calls",
         "read_calls",
         "close_calls",
