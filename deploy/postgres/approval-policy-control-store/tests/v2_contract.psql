@@ -25,6 +25,7 @@ DECLARE
     ];
     role_count bigint;
     dangerous_edges bigint;
+    invalid_login_posture bigint;
 BEGIN
     SELECT pg_catalog.count(*) INTO role_count
     FROM pg_catalog.pg_roles AS role_value
@@ -40,6 +41,14 @@ BEGIN
       AND role_value.rolconfig IS NULL;
     IF role_count <> 5 THEN
         RAISE EXCEPTION 'schema-v2 role posture is not exact';
+    END IF;
+    SELECT pg_catalog.count(*) INTO invalid_login_posture
+    FROM pg_catalog.pg_roles AS role_value
+    WHERE role_value.rolname = ANY(expected_roles)
+      AND role_value.rolcanlogin IS DISTINCT FROM
+          (role_value.rolname <> expected_owner);
+    IF invalid_login_posture <> 0 THEN
+        RAISE EXCEPTION 'schema-v2 login posture is not exact';
     END IF;
     SELECT pg_catalog.count(*) INTO dangerous_edges
     FROM pg_catalog.pg_auth_members AS membership
@@ -70,6 +79,14 @@ SELECT 1 / CASE WHEN
         'wanwork_policy_control.compare_and_open_approval_execution_fence(text,text,bigint,text,text,text,text,text,text,text,timestamptz,bytea)', 'EXECUTE')
     AND NOT has_function_privilege(:'fencer_role',
         'wanwork_policy_control.compare_and_issue_approval_execution_attempt(text,bytea)', 'EXECUTE')
+    AND NOT has_table_privilege(:'reader_role',
+        'wanwork_policy_control.approval_execution_attempt_record', 'SELECT')
+    AND NOT has_table_privilege(:'attempt_issuer_role',
+        'wanwork_policy_control.approval_execution_attempt_record', 'SELECT')
+    AND NOT has_table_privilege(:'fencer_role',
+        'wanwork_policy_control.approval_execution_attempt_record', 'SELECT')
+    AND NOT pg_catalog.pg_has_role(:'attempt_issuer_role', :'owner_role', 'SET')
+    AND NOT pg_catalog.pg_has_role(:'fencer_role', :'owner_role', 'SET')
     THEN 1 ELSE 0 END AS acl_contract_ok;
 
 -- Issue exactly one durable grant and prove exact-issuance retry is idempotent.
@@ -112,6 +129,8 @@ FROM wanwork_policy_control.read_approval_execution_attempt(
 RESET SESSION AUTHORIZATION;
 
 -- Materialize an admission carrying the real grant and prove the fencer accepts it.
+DELETE FROM wanwork_policy_control_test.fence_candidate
+WHERE candidate_name = 'authentic-contract';
 SELECT wanwork_policy_control_test.materialize_fence_candidate(
     'authentic-contract', :first_attempt_generation, :'first_attempt_id',
     :'first_attempt_receipt_digest', :'first_created_at'::timestamptz
