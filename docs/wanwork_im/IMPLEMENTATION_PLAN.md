@@ -90,7 +90,7 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 `analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md`；Topic 33/34 分别保留
 `0001..0004` persistence 与 `0005` function-only/exact-access 的前序历史检查点。
 
-当前 code evidence baseline 为 `2d0c4a0`。当前口径必须保留：
+当前 code evidence baseline 为 `53dd38b`。当前口径必须保留：
 
 | 标记 | 状态 |
 |---|---|
@@ -119,7 +119,8 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 - strict connection policy 拒绝 24 个 ambient `PG*` 变量的 presence（含空值）、隐式 endpoint/identity、
   remote passwordless、session 与 parser-consumed params、raw service/pass file、unauthenticated TLS 与
   multi-host/fallback；canonical parse 压住默认 `.pgpass`/client TLS file，精确比较最终 credential/endpoint，
-  重建 timeout `DialFunc`；runtime pool 不再二次解析 raw DSN；
+  重建 timeout `DialFunc`；runtime pool 不再二次解析 raw DSN；malformed raw query 与
+  `SSL_CERT_FILE/SSL_CERT_DIR` ambient trust override 也 fail closed；
 - attested pool 在 AfterConnect 执行 login/database/role/session/full-catalog proof，在 PrepareConn 拒绝
   role/GUC/lock/LISTEN/transaction 污染；
 - UnitOfWork 生产构造器只接 attested pool；`Pool.Acquire` 是有 guard 但仍能执行 runtime-role SQL 的
@@ -145,13 +146,14 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 #### W2 接真实 IM 前的 P0 顺序
 
 1. 把已验证的合同落到 production cutover/IaC：canonical plan、provisioner preflight、ownership/grant
-   executor/receipt、secret 注入、角色轮换、旧 session drain、回滚与 drift validator；
+   executor/receipt、secret 注入与 rotation 责任边界、远程 authenticated-TLS 正向 E2E、角色轮换、旧
+   session drain、回滚与 drift validator；
 2. Clerk verified claim → realm binding → active principal/tenant membership → exact Actor → path consistency
    的 trusted request context；
 3. conversation/actor/membership/access active resolver；invoke/publish 再叠加 installation/mandate/
    capability/budget/Artifact/Acceptance；
-4. 把当前每请求 full-catalog gate 性能化为 host-owned max-staleness readiness monitor，并增加 explicit
-   draining state；
+4. 把当前每请求 full-catalog gate 性能化为 host-owned、冻结最大漂移窗口的 max-staleness dependency
+   readiness monitor，并增加 explicit draining state；过期立即关闭，高风险 effect 仍独立做 action-time PEP；
 5. dump/restore、DB/process restart、kill-9、old binary/future schema、role restoration 演练；
 6. PostgreSQL event store/outbox/projection checkpoint、backfill+live 与 crash recovery；
 7. 再接 `agent_thread`、message 与 provider adapter。
@@ -285,6 +287,9 @@ policy/approval/intent/receipt append 不可用时
 31. `security/test: close ambient PostgreSQL composition gaps`（`2c65b80`～`2d0c4a0`；24 个 `PG*`
     presence、API migration credential inheritance、default passfile/client TLS file、remote password、exact
     endpoint/credential、timeout DialFunc 与 raw runtime DSN 二次解析均 fail closed）
+32. `security/test: reject malformed query and ambient system trust overrides`（`53dd38b`；raw query
+    fail-closed、`SSL_CERT_FILE/SSL_CERT_DIR` presence 拒绝；宿主 OS root store 明确属于 reviewed TCB，
+    production remote-TLS E2E 仍未交付）
 
 任何一个条目若同时包含合同、实现、迁移、故障矩阵和 UI，应继续拆成小提交；列表是顺序约束，
 不是要求把一整项压成一个大 commit。

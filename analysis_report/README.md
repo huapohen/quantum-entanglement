@@ -23,7 +23,7 @@
 - 当前最后完成远端回读的 WanWork IM Notion 内容基线为
   `dev_wanwork_quantum_entanglement@7bb324a4a06689a496cbc99b79d23261d031bc19`，其 Topic 34 代码证据
   基线为 `cd92ea56493b43889f5165892b40ec36e958d44a`；分支未合并 `main`。当前 Topic 35
-  `2d0c4a0` 代码/文档仍是本地与 Git 待同步增量，不能写成 Notion 已更新。`main@f99f176` 仍是提前
+  `53dd38b` 代码/文档仍是本地与 Git 待同步增量，不能写成 Notion 已更新。`main@f99f176` 仍是提前
   接入历史备份基线，不代表本分支当前 W2 进度。
 - 本轮已确认两个当前 Markdown 附件从临时上传转为页面附件；所有七个更新页面均回读到 Topic 33
   反链、两个基线 SHA、两层一级调研根、六项 P0 gate 与禁止性声明。没有记录临时 signed S3 URL。
@@ -42,8 +42,8 @@
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 原路线已由提前接入调度修订 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 历史备份检查点 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界；不是当前 W2 入口 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | 历史调度计划 | 提前接入决策时冻结的 E0–E5/Level A–D 路线；保留作决策溯源，不再是当前 W2 执行入口 |
-| `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口：`2d0c4a0` | canonical strict connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate A/Trusted tenant 剩余 P0 |
-| `research/35_postgres_attested_runtime_composition_checkpoint.md` | 当前 W2 深度证据：`2d0c4a0` | 25 提交台账、ambient/default-file/raw-DSN 安全闭环、PG18 connection/session/ACL drift 实证、一级调研硬映射、未交付边界与下一阶段计划 |
+| `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口：`53dd38b` | canonical strict connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate A/Trusted tenant 剩余 P0 |
+| `research/35_postgres_attested_runtime_composition_checkpoint.md` | 当前 W2 深度证据：`53dd38b` | 30 提交台账、ambient/default-file/raw-DSN/malformed-query 安全闭环、PG18 connection/session/ACL drift 实证、一级调研硬映射、未交付边界与下一阶段计划 |
 
 接入前代码基线已经安全备份。`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 中“先 Level A、再 Level B
 sandbox inbound-only”是当时的历史调度口径。当前执行源已切换为
@@ -89,8 +89,8 @@ Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清�
 | `research/32_im_identity_conversation_and_provider_metadata_contract.md` | W1 IM identity/conversation/metadata 合同证据：`9f55b33`…`60ebf6a` | `2output` 一级证据到 `ActorRef/Snapshot`、realm-scoped external identity、`ConversationRef/Snapshot`、Agent thread topology、零授权 canonical `ext_info`、848 个非 canonical 排列、forbidden-field canary、race/fuzz 与 W2～W4 未完成边界 |
 | [`research/33_postgres_authority_persistence_checkpoint.md`](research/33_postgres_authority_persistence_checkpoint.md) | W2 PostgreSQL authority persistence 历史检查点：`8d662bf` / `4a465d8` | `0001..0004` persistence substrate 的前序证据；保留作溯源，不是当前 W2 入口 |
 | [`research/34_postgres_function_only_writes_and_exact_access_checkpoint.md`](research/34_postgres_function_only_writes_and_exact_access_checkpoint.md) | W2 前序检查点：`cd92ea5` | `0005`、五个 fixed function、function-only repository/receipt、exact access 临时测试 validator fixture、真实 migration/runtime login 与 PostgreSQL 18.6 正负向矩阵；由 Topic 35 接续 |
-| [`research/35_postgres_attested_runtime_composition_checkpoint.md`](research/35_postgres_attested_runtime_composition_checkpoint.md) | W2 当前深度证据：`2d0c4a0` | canonical strict connection policy、physical/session attestation、exact readiness、attested-only UoW、API gate、one-shot migrator、PG18 normal/race/vet 与 Gate A/Trusted Participant/mention 后续计划 |
-| `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口与 Go/No-Go：`2d0c4a0` | 当前启动/调试入口、runtime composition、验证命令、production cutover/rotation、trusted tenant、mention/thread/provider 顺序 |
+| [`research/35_postgres_attested_runtime_composition_checkpoint.md`](research/35_postgres_attested_runtime_composition_checkpoint.md) | W2 当前深度证据：`53dd38b` | canonical strict connection policy、physical/session attestation、exact readiness、attested-only UoW、API gate、one-shot migrator、PG18 normal/race/vet 与 Gate A/Trusted Participant/mention 后续计划 |
+| `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口与 Go/No-Go：`53dd38b` | 当前启动/调试入口、runtime composition、验证命令、production cutover/rotation、trusted tenant、mention/thread/provider 顺序 |
 
 ## 已归档截图
 
@@ -133,7 +133,7 @@ PNG rendering，只作为报告导航图，不冒充独立运行证据。整套�
 | `screenshots/26_clawith_rapid_rnd_claim_20260827.png` | 部门级研发交付样板、阶段指标与 `3 天` / `6d 21h` 同卡片口径冲突 | Playwright 官网元素只读证据 |
 | `screenshots/33_postgres_authority_persistence_map.svg` / `.png` | 一级调研 → 当前持久化切片 → PostgreSQL 18.6 证据 → 六项 P0 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 | `screenshots/34_postgres_function_only_writes_and_exact_access_map.svg` / `.png` | 一级调研 → 五函数写面 → exact access → PG18.6 故障证据 → 剩余生产 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
-| `screenshots/35_postgres_attested_runtime_composition_map.svg` / `.png` | private config → ambient/default-file/raw-DSN hardening → physical/session attestation → readiness/UoW/API gate → Gate A/Trusted Participant/mention 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/35_postgres_attested_runtime_composition_map.svg` / `.png` | private config → ambient/default-file/raw-DSN/malformed-query hardening → physical/session attestation → readiness/UoW/API gate → Gate A/Trusted Participant/mention 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 
 ## 数据安全
 

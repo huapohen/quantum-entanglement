@@ -2,7 +2,7 @@
 
 > 历史状态：本文件冻结 `cd92ea5` 的 function-only write / exact-access 工程边界。当前 W2 入口已经前进到
 > [`W2_POSTGRES_RUNTIME_CHECKPOINT.md`](W2_POSTGRES_RUNTIME_CHECKPOINT.md)（当前 code evidence
-> baseline `2d0c4a0`）；不要再把本文件的
+> baseline `53dd38b`）；不要再把本文件的
 > “service wiring 未实现”描述当成当前事实。
 
 > 检查点日期：2026-08-28
