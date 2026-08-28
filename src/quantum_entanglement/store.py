@@ -1457,6 +1457,69 @@ class _PersistedFreshResultAcceptancePlanV2:
         raise TypeError("persisted result acceptance plans cannot be serialized")
 
 
+class _CompletedFreshResultAcceptancePlanV2:
+    """One private receipt after the owning job and attempt have reached succeeded."""
+
+    __slots__ = ("__active", "__persisted", "__receipt")
+
+    def __init__(
+        self,
+        *,
+        persisted: _PersistedFreshResultAcceptancePlanV2,
+        receipt: _ScopedInvocationResultReceiptV2,
+        token: object,
+    ) -> None:
+        if type(self) is not _CompletedFreshResultAcceptancePlanV2:
+            raise TypeError("completed result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("completed result acceptance plan constructor is private")
+        self.__persisted = persisted
+        self.__receipt = receipt
+        self.__active = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> tuple[_PersistedFreshResultAcceptancePlanV2, _ScopedInvocationResultReceiptV2]:
+        if type(self) is not _CompletedFreshResultAcceptancePlanV2:
+            raise TypeError("completed result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("completed result acceptance plan validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("completed result acceptance plan is no longer active")
+        persisted = self.__persisted
+        if type(persisted) is not _PersistedFreshResultAcceptancePlanV2:
+            raise TypeError("completed result acceptance persistence plan is not exact")
+        _receipted, expected = persisted._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        receipt = self.__receipt
+        if type(receipt) is not _ScopedInvocationResultReceiptV2:
+            raise TypeError("completed result acceptance receipt is not exact")
+        receipt_snapshot = _ScopedInvocationResultReceiptV2.from_dict(
+            _ScopedInvocationResultReceiptV2.to_dict(receipt)
+        )
+        if receipt_snapshot != expected:
+            raise ValueError("completed result acceptance receipt differs from its persisted plan")
+        return persisted, receipt_snapshot
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("completed result acceptance plan invalidation is private")
+        self.__active = False
+        object.__setattr__(self, "_CompletedFreshResultAcceptancePlanV2__persisted", None)
+        object.__setattr__(self, "_CompletedFreshResultAcceptancePlanV2__receipt", None)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("completed result acceptance plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("completed result acceptance plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("completed result acceptance plans cannot be serialized")
+
+
 @dataclass(frozen=True)
 class InvocationAdmissionResult:
     """The events and queued job committed by one atomic invocation admission."""
@@ -3520,6 +3583,40 @@ class SQLiteEventStore:
                 f"result acceptance {label} insertion changed an unexpected row count"
             )
 
+    def _update_exact_result_acceptance_row_in_owner_transaction(
+        self,
+        connection: sqlite3.Connection,
+        sql: str,
+        values: tuple[object, ...],
+        *,
+        label: str,
+    ) -> None:
+        """Require one owner-scoped CAS UPDATE with no trigger or auxiliary row side effects."""
+
+        self._require_current_process()
+        if type(connection) is not sqlite3.Connection or connection is not self._connection:
+            raise RuntimeError("result acceptance row update requires the owning connection")
+        if type(sql) is not str or not sql or type(values) is not tuple:
+            raise TypeError("result acceptance row update inputs are not exact")
+        before = connection.total_changes
+        if type(before) is not int or before < 0:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance SQLite change counter is invalid"
+            )
+        cursor = connection.execute(sql, values)
+        self._require_current_process()
+        after = connection.total_changes
+        if (
+            type(cursor) is not sqlite3.Cursor
+            or type(cursor.rowcount) is not int
+            or cursor.rowcount != 1
+            or type(after) is not int
+            or after != before + 1
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                f"result acceptance {label} update changed an unexpected row count"
+            )
+
     @_bind_event_store_process
     def _persist_result_acceptance_graph_in_owner_transaction(
         self,
@@ -3833,6 +3930,136 @@ class SQLiteEventStore:
                 yield persisted
             finally:
                 persisted._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    @_bind_event_store_process
+    def _complete_result_acceptance_job_and_attempt_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> ContextManager[
+        _ExistingResultAcceptanceGraphCandidateV2 | _CompletedFreshResultAcceptancePlanV2
+    ]:
+        """CAS the exact running job and attempt to succeeded after graph persistence."""
+
+        return self._complete_result_acceptance_job_and_attempt_in_owner_transaction_inner(
+            handle,
+            prepared,
+        )
+
+    @contextmanager
+    def _complete_result_acceptance_job_and_attempt_in_owner_transaction_inner(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> Iterator[
+        _ExistingResultAcceptanceGraphCandidateV2 | _CompletedFreshResultAcceptancePlanV2
+    ]:
+        completed: Optional[_CompletedFreshResultAcceptancePlanV2] = None
+        with self._persist_result_acceptance_graph_in_owner_transaction(
+            handle,
+            prepared,
+        ) as candidate:
+            if type(candidate) is _ExistingResultAcceptanceGraphCandidateV2:
+                yield candidate
+                return
+            if type(candidate) is not _PersistedFreshResultAcceptancePlanV2:
+                raise RuntimeError("result acceptance completion classification is not closed")
+            persisted_plan, receipt = candidate._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            receipted_plan, _ = persisted_plan._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+            evented_plan, _, _, _, _ = receipted_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            transitioned_plan, _, _ = evented_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            evidenced_plan, _ = transitioned_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            identified_plan, evidence = evidenced_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            materialized_plan, _, _, _ = identified_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            prepared_snapshot, prerequisites, accepted_at, _ = materialized_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            connection = self._connection_for_result_artifact_transaction(handle)
+            lease_digest = evidence.lease_token_digest
+            self._update_exact_result_acceptance_row_in_owner_transaction(
+                connection,
+                """
+                UPDATE invocation_jobs
+                SET status = 'succeeded', result_ref = ?, updated_at = ?, finished_at = ?,
+                    lease_owner = NULL, lease_token_digest = NULL,
+                    lease_expires_at = NULL, heartbeat_at = NULL
+                WHERE invocation_id = ? AND session_id = ? AND task_id = ?
+                  AND agent_id = ? AND status = 'running'
+                  AND attempts_started = ? AND lease_epoch = ?
+                  AND lease_owner = ? AND lease_token_digest = ?
+                  AND lease_expires_at > ? AND heartbeat_at <= ?
+                """,
+                (
+                    evidence.result_ref,
+                    accepted_at,
+                    accepted_at,
+                    evidence.invocation_id,
+                    evidence.session_id,
+                    evidence.task_id,
+                    evidence.agent_id,
+                    evidence.attempt_number,
+                    evidence.lease_epoch,
+                    evidence.worker_id,
+                    lease_digest,
+                    accepted_at,
+                    accepted_at,
+                ),
+                label="job terminal CAS",
+            )
+            self._update_exact_result_acceptance_row_in_owner_transaction(
+                connection,
+                """
+                UPDATE invocation_attempts
+                SET status = 'succeeded', finished_at = ?, result_ref = ?, error = NULL
+                WHERE attempt_id = ? AND invocation_id = ? AND attempt_number = ?
+                  AND lease_epoch = ? AND worker_id = ? AND lease_token_digest = ?
+                  AND status = 'running' AND heartbeat_at <= ? AND lease_expires_at > ?
+                """,
+                (
+                    accepted_at,
+                    evidence.result_ref,
+                    evidence.attempt_id,
+                    evidence.invocation_id,
+                    evidence.attempt_number,
+                    evidence.lease_epoch,
+                    evidence.worker_id,
+                    lease_digest,
+                    accepted_at,
+                    accepted_at,
+                ),
+                label="attempt terminal CAS",
+            )
+            self._require_current_process()
+            if (
+                prerequisites.running_task_revision + 1
+                != receipt.terminal_transition.terminal_task_revision
+                or receipt.evidence.result_ref != prepared_snapshot.request.manifest.result_ref
+            ):
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance terminal CAS bindings changed"
+                )
+            completed = _CompletedFreshResultAcceptancePlanV2(
+                persisted=candidate,
+                receipt=receipt,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            self._require_current_process()
+            try:
+                yield completed
+            finally:
+                completed._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
     @contextmanager
     def _transaction_inner(

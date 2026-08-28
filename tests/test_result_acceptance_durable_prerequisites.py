@@ -55,6 +55,7 @@ from quantum_entanglement.invocation_results import (
 from quantum_entanglement.protocol import TaskStatus
 from quantum_entanglement.store import (
     SQLiteEventStore,
+    _CompletedFreshResultAcceptancePlanV2,
     _InsertedFreshResultAcceptancePlanV2,
     _PersistedFreshResultAcceptancePlanV2,
     _ReceiptedFreshResultAcceptancePlanV2,
@@ -2046,6 +2047,151 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                 0,
             )
 
+    def test_completion_cas_moves_exact_job_and_attempt_to_succeeded(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        generated = (
+            "receipt_completed_1",
+            "event_result_completed_1",
+            "event_terminal_completed_1",
+        )
+        with patch("quantum_entanglement.store.new_id", side_effect=generated):
+            with self.store._result_artifact_transaction() as handle:
+                complete = (
+                    self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction
+                )
+                with complete(handle, prepared) as completed:
+                    self.assertIs(type(completed), _CompletedFreshResultAcceptancePlanV2)
+                    assert type(completed) is _CompletedFreshResultAcceptancePlanV2
+                    persisted, receipt = completed._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    self.assertEqual(receipt.receipt_id, generated[0])
+                    self.assertIs(type(persisted), _PersistedFreshResultAcceptancePlanV2)
+                    job = self.store._connection.execute(
+                        "SELECT status, result_ref, updated_at, finished_at, "
+                        "lease_owner, lease_token_digest, lease_expires_at, heartbeat_at "
+                        "FROM invocation_jobs WHERE invocation_id = ?",
+                        (prepared.request.manifest.invocation_id,),
+                    ).fetchone()
+                    self.assertEqual(job["status"], "succeeded")
+                    self.assertEqual(job["result_ref"], receipt.evidence.result_ref)
+                    self.assertEqual(job["updated_at"], receipt.evidence.accepted_at)
+                    self.assertEqual(job["finished_at"], receipt.evidence.accepted_at)
+                    self.assertIsNone(job["lease_owner"])
+                    self.assertIsNone(job["lease_token_digest"])
+                    self.assertIsNone(job["lease_expires_at"])
+                    self.assertIsNone(job["heartbeat_at"])
+                    attempt = self.store._connection.execute(
+                        "SELECT status, result_ref, finished_at, error, worker_id, lease_epoch "
+                        "FROM invocation_attempts WHERE attempt_id = ?",
+                        (receipt.evidence.attempt_id,),
+                    ).fetchone()
+                    self.assertEqual(attempt["status"], "succeeded")
+                    self.assertEqual(attempt["result_ref"], receipt.evidence.result_ref)
+                    self.assertEqual(attempt["finished_at"], receipt.evidence.accepted_at)
+                    self.assertIsNone(attempt["error"])
+                    self.assertEqual(attempt["worker_id"], receipt.evidence.worker_id)
+                    self.assertEqual(attempt["lease_epoch"], receipt.evidence.lease_epoch)
+                    for operation in (
+                        lambda: copy.copy(completed),
+                        lambda: copy.deepcopy(completed),
+                        lambda: pickle.dumps(completed),
+                    ):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ):
+                            operation()
+        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+            completed._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_existing_graph_completion_path_does_not_cas_job_or_attempt(self) -> None:
+        helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
+            methodName="runTest"
+        )
+        helper.store = self.store
+        helper.connection = self.store._connection
+        helper.seed_nonempty_v6_dependencies()
+        helper.apply_candidate()
+        helper.seed_complete_result_graph()
+        prepared = existing_graph_prepared(helper)
+        with patch.object(
+            SQLiteEventStore,
+            "_update_exact_result_acceptance_row_in_owner_transaction",
+            side_effect=AssertionError("existing graph must not perform terminal CAS"),
+        ) as update:
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as result:
+                    self.assertIs(type(result), _ExistingResultAcceptanceGraphCandidateV2)
+        update.assert_not_called()
+
+    def test_job_cas_trigger_side_effect_rolls_back_complete_graph(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        before_events = tuple(
+            tuple(row) for row in self.store._connection.execute("SELECT * FROM events")
+        )
+        self.store._connection.execute(
+            """
+            CREATE TRIGGER result_job_cas_side_effect
+            AFTER UPDATE OF status ON invocation_jobs
+            WHEN NEW.invocation_id = 'invocation-scoped-store-1' AND NEW.status = 'succeeded'
+            BEGIN
+                UPDATE invocation_attempts SET error = 'unexpected'
+                WHERE invocation_id = NEW.invocation_id AND status = 'running';
+            END
+            """
+        )
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=(
+                "receipt_cas_trigger",
+                "event_result_cas_trigger",
+                "event_terminal_cas_trigger",
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "changed an unexpected row count"):
+                with self.store._result_artifact_transaction() as handle:
+                    with (
+                        self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction(
+                            handle,
+                            prepared,
+                        )
+                    ):
+                        self.fail("triggered job CAS unexpectedly yielded a plan")
+        self.assertEqual(
+            tuple(tuple(row) for row in self.store._connection.execute("SELECT * FROM events")),
+            before_events,
+        )
+        for table in (
+            "invocation_result_manifests",
+            "invocation_result_requests",
+            "invocation_result_event_bindings",
+            "invocation_result_receipts",
+            "invocation_result_artifacts",
+        ):
+            self.assertEqual(
+                self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[0],
+                0,
+            )
+        job = self.store._connection.execute(
+            "SELECT status FROM invocation_jobs WHERE invocation_id = ?",
+            (prepared.request.manifest.invocation_id,),
+        ).fetchone()
+        self.assertEqual(job["status"], "running")
+        attempt = self.store._connection.execute(
+            "SELECT status, error FROM invocation_attempts WHERE attempt_id = ?",
+            (prepared.claimed.receipt.evidence.attempt_id,),
+        ).fetchone()
+        self.assertEqual(attempt["status"], "running")
+        self.assertIsNone(attempt["error"])
+
     def test_caught_event_pair_failure_still_forces_owner_transaction_rollback(self) -> None:
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
@@ -2368,9 +2514,11 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             "_construct_result_acceptance_event_pair_in_owner_transaction",
             "_ReceiptedFreshResultAcceptancePlanV2",
             "_PersistedFreshResultAcceptancePlanV2",
+            "_CompletedFreshResultAcceptancePlanV2",
             "_build_scoped_invocation_result_receipt_v2",
             "_construct_result_acceptance_receipt_in_owner_transaction",
             "_persist_result_acceptance_graph_in_owner_transaction",
+            "_complete_result_acceptance_job_and_attempt_in_owner_transaction",
             "_construct_result_acceptance_terminal_transition_in_owner_transaction",
             "accept_scoped_invocation_result_v2",
             "ScopedInvocationResultAcceptedV2",
