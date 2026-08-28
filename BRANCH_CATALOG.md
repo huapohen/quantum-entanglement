@@ -31,7 +31,7 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
-| 2026-08-28T20:12:29+08:00 | `mainline_continue_quantum_entanglement`<br>`9af3ea12dc9d` | E3 Result Authority 人工评审分支；M1 private stored-event envelope codec、372-byte Golden、三 Python verifier、2,489 项全量测试与 locked Ruff/Mypy 已封板，下一步仅允许 M2 reserved fence；M3 store adapter、writer、Accepted、worker、真实 IM 与 outbound 全关闭，不自动合并回 main。 | 未直接并入 main | 领先 196 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 2026-08-28T20:26:52+08:00 | `mainline_continue_quantum_entanglement`<br>`fb0d9291e962` | E3 Result Authority 人工评审分支；M1 private stored-event envelope codec、372-byte Golden、三 Python verifier、2,489 项全量测试与 locked Ruff/Mypy 已封板，下一步仅允许 M2 reserved fence；M3 store adapter、writer、Accepted、worker、真实 IM 与 outbound 全关闭，不自动合并回 main。 | 未直接并入 main | 领先 199 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 2026-08-28T19:55:29+08:00 | `dev_wanwork_quantum_entanglement`<br>`5c19fdb67274` | 较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。 | 未直接并入 main | 领先 173 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 2026-08-28T02:01:09+08:00 | `main`<br>`9e44dafecf5e` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 2026-08-27T18:07:00+08:00 | `backup_0827_200010`<br>`1d399e555fb0` | 2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。 | 已作为祖先进入 main | 领先 0 / 落后 12 | — |
@@ -107,7 +107,7 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | --- | --- | --- | --- |
 | 正式主线工作区 | `main` | `9e44dafecf5e` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 存在、有未提交修改 | `dev_wanwork_quantum_entanglement` | `5c19fdb67274` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
-| 存在、干净 | `mainline_continue_quantum_entanglement` | `9af3ea12dc9d` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 存在、干净 | `mainline_continue_quantum_entanglement` | `fb0d9291e962` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 
 ## 固定版本标签
 
