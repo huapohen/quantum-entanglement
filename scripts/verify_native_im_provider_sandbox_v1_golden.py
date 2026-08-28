@@ -25,13 +25,12 @@ from quantum_entanglement.native_im_sandbox_provenance import (  # noqa: E402
     NativeIMSandboxAdmissionProvenanceV1,
 )
 
-FIXTURE_ROOT = (
-    REPOSITORY_ROOT / "tests" / "fixtures" / "native_im" / "provider_sandbox" / "v1"
-)
-CONTRACT_FIXTURE_ROOT = REPOSITORY_ROOT / "tests" / "fixtures" / "native_im" / "v1"
+FIXTURE_ROOT = REPOSITORY_ROOT / "tests" / "fixtures" / "native_im" / "provider_sandbox" / "v1"
 EXPECTED_VECTORS: tuple[tuple[str, type[Any]], ...] = (
     ("approval.json", NativeIMSandboxApprovalV1),
     ("provenance.json", NativeIMSandboxAdmissionProvenanceV1),
+    ("inbound_read_request.json", IMInboundReadRequestV1),
+    ("inbound_page.json", IMInboundPageV1),
 )
 
 
@@ -83,13 +82,9 @@ def verify() -> None:
     vectors = manifest.get("vectors")
     if manifest.get("schemaVersion") != 1 or type(vectors) is not list:
         raise ValueError("provider sandbox golden manifest shape differs")
-    expected_inventory = tuple(
-        (filename, model.__name__) for filename, model in EXPECTED_VECTORS
-    )
+    expected_inventory = tuple((filename, model.__name__) for filename, model in EXPECTED_VECTORS)
     actual_inventory = tuple(
-        (entry.get("filename"), entry.get("model"))
-        for entry in vectors
-        if type(entry) is dict
+        (entry.get("filename"), entry.get("model")) for entry in vectors if type(entry) is dict
     )
     if actual_inventory != expected_inventory or len(vectors) != len(EXPECTED_VECTORS):
         raise ValueError("provider sandbox golden vector inventory differs")
@@ -117,12 +112,16 @@ def verify() -> None:
         if value.canonical_bytes() != raw:
             raise ValueError(f"provider sandbox golden model bytes differ: {filename}")
         digest = _domain_digest(model.__name__, raw)
-        if entry != {
-            "byteLength": len(raw),
-            "digest": digest,
-            "filename": filename,
-            "model": model.__name__,
-        } or value.canonical_digest() != digest:
+        if (
+            entry
+            != {
+                "byteLength": len(raw),
+                "digest": digest,
+                "filename": filename,
+                "model": model.__name__,
+            }
+            or value.canonical_digest() != digest
+        ):
             raise ValueError(f"provider sandbox golden digest differs: {filename}")
         decoded[filename] = value
 
@@ -160,18 +159,34 @@ def verify() -> None:
     )
     if provenance_binding != approval_binding:
         raise ValueError("provider sandbox provenance is not bound to its approval")
-    request = IMInboundReadRequestV1.from_json_bytes(
-        (CONTRACT_FIXTURE_ROOT / "inbound_read_request.json").read_bytes()
+    request = decoded["inbound_read_request.json"]
+    page = decoded["inbound_page.json"]
+    if type(request) is not IMInboundReadRequestV1:
+        raise ValueError("provider sandbox request decoder returned a different type")
+    if type(page) is not IMInboundPageV1:
+        raise ValueError("provider sandbox page decoder returned a different type")
+    page.validate_request_binding(request)
+    approved_scope = (
+        approval.tenant_id,
+        approval.workspace_id,
+        approval.provider,
+        approval.channel_id,
     )
-    page = IMInboundPageV1.from_json_bytes(
-        (CONTRACT_FIXTURE_ROOT / "inbound_page.json").read_bytes()
-    )
+    if (
+        (request.tenant_id, request.workspace_id, request.provider, request.channel_id)
+        != approved_scope
+        or (page.tenant_id, page.workspace_id, page.provider, page.channel_id) != approved_scope
+        or any(
+            envelope.event.conversation.conversation_id not in approval.allowed_conversation_ids
+            for envelope in page.envelopes
+        )
+    ):
+        raise ValueError("provider sandbox request/page scope differs from approval")
     if (
         provenance.read_request_digest != request.canonical_digest()
         or provenance.page_digest != page.canonical_digest()
         or any(
-            envelope.event.transport_evidence_digest
-            != provenance.transport_evidence_digest
+            envelope.event.transport_evidence_digest != provenance.transport_evidence_digest
             for envelope in page.envelopes
         )
     ):
@@ -184,7 +199,7 @@ def main() -> int:
     except (OSError, TypeError, ValueError) as error:
         print(str(error), file=sys.stderr)
         return 1
-    print("native IM provider sandbox V1 golden vectors verified: 2 vectors")
+    print("native IM provider sandbox V1 golden vectors verified: 4 vectors")
     return 0
 
 
