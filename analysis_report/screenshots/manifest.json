@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "72b0f968f8e75bb8639c5621119899fe690082de",
-  "lastImageArchivedAt": "2026-08-28T20:29:18+08:00",
+  "lastArchivedCommit": "6545972a93c6fd16a4caf7b09a5286e9373cafc4",
+  "lastImageArchivedAt": "2026-08-28T22:43:52+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -710,7 +710,7 @@
       "redactionStatus": "not-applicable-repository-authored-diagram",
       "sha256": "69b242cc433136f9df0170078de1865d930c8fc517049fb1f2ace2639491a8aa",
       "sourceKind": "quantum-entanglement-canonical-report-visual",
-      "sourceReference": "analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md; code-baseline:53dd38b4224003a415605074f25470405ebe799e; archived-git:72b0f968f8e75bb8639c5621119899fe690082de",
+      "sourceReference": "analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md; code-baseline:53dd38b4224003a415605074f25470405ebe799e; archived-git:6545972a93c6fd16a4caf7b09a5286e9373cafc4",
       "width": 1800
     },
     {
@@ -732,7 +732,7 @@
       "redactionStatus": "not-applicable-repository-authored-diagram",
       "sha256": "2ca4fa79c3d697d5589a8be09fafdd9c33cfc1adaeffdb7767b2323bea5db38d",
       "sourceKind": "quantum-entanglement-canonical-report-visual",
-      "sourceReference": "analysis_report/screenshots/35_postgres_attested_runtime_composition_map.svg; rsvg-convert -w 1800 -h 1120; archived-git:72b0f968f8e75bb8639c5621119899fe690082de",
+      "sourceReference": "analysis_report/screenshots/35_postgres_attested_runtime_composition_map.svg; rsvg-convert -w 1800 -h 1120; archived-git:6545972a93c6fd16a4caf7b09a5286e9373cafc4",
       "width": 1800
     }
   ],
