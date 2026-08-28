@@ -87,6 +87,8 @@
 | [`26_clawith_rapid_rnd_claim_20260827.png`](26_clawith_rapid_rnd_claim_20260827.png) | 1184×460 | 2026-08-26 23:34:22.005Z / 2026-08-27 07:36:23 +08:00 | `B-official-public-product-claim`；研发部门样板、阶段指标与 `3 天` / `6d 21h` 同卡片口径冲突 | `7833304a8144` |
 | [`33_postgres_authority_persistence_map.svg`](33_postgres_authority_persistence_map.svg) | 1600×1000 | 不适用 / 2026-08-28 14:13:43 +08:00 | `B-local-derived-documentation-visual`；W2 调研→持久化切片→PG18 证据→P0 gate 关系源图 | `260415ec6a89` |
 | [`33_postgres_authority_persistence_map.png`](33_postgres_authority_persistence_map.png) | 1600×1000 | 不适用 / 2026-08-28 14:13:43 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1600×1000 确定性渲染，便于 Notion 审阅 | `08f6d1a3a7ce` |
+| [`34_postgres_function_only_writes_and_exact_access_map.svg`](34_postgres_function_only_writes_and_exact_access_map.svg) | 1600×1100 | 不适用 / 2026-08-28 18:21:07 +08:00 | `B-local-derived-documentation-visual`；一级调研→五函数写面→exact access→PG18.6 故障证据→剩余生产 gate 源图 | `d2b715afaa88` |
+| [`34_postgres_function_only_writes_and_exact_access_map.png`](34_postgres_function_only_writes_and_exact_access_map.png) | 1600×1100 | 不适用 / 2026-08-28 18:21:07 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1600×1100 确定性渲染，便于 Notion 审阅 | `586c3b5edebf` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件

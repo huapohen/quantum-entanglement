@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "551899bdce6140f40eea6330eab885beb5d06c6b",
-  "lastImageArchivedAt": "2026-08-28T14:13:43+08:00",
+  "lastArchivedCommit": "97b24b20c120c968a86f533651f515e5c60f0ae9",
+  "lastImageArchivedAt": "2026-08-28T18:21:07+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -645,6 +645,50 @@
       "sha256": "08f6d1a3a7ce1af811b4003f5676d52851dee0d12fa51e2d3012e1a83c4b9c7d",
       "sourceKind": "quantum-entanglement-canonical-report-visual",
       "sourceReference": "analysis_report/screenshots/33_postgres_authority_persistence_map.svg; rsvg-convert -w 1600 -h 1000; archived-git:551899bdce6140f40eea6330eab885beb5d06c6b",
+      "width": 1600
+    },
+    {
+      "byteSize": 11063,
+      "captureDate": null,
+      "captureDateEvidence": "Not a captured external page or runtime viewport; this is a repository-authored SVG documentation visual, so captureDate is not applicable",
+      "contentScope": "W2 PostgreSQL function-only writes and exact access map connecting primary research constraints, five fixed database functions, exact roles and ACL validation, PostgreSQL 18.6 fault evidence and six remaining production gates",
+      "derivation": "repository-authored-svg-documentation-visual",
+      "evidenceClass": "B-local-derived-documentation-visual",
+      "evidenceLimitations": [
+        "A review map derived from repository facts and cited research; it is not independent runtime, database, provider, authorization or production-readiness evidence",
+        "The diagram describes a read-only validator and temporary role fixture, not production IaC, trusted tenant admission, service pool wiring, recovery completion, durable event-outbox or permission to enable real IM outbound"
+      ],
+      "filename": "34_postgres_function_only_writes_and_exact_access_map.svg",
+      "firstArchivedAt": "2026-08-28T18:21:07+08:00",
+      "height": 1100,
+      "mediaType": "image/svg+xml",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-repository-authored-diagram",
+      "sha256": "d2b715afaa8838fd8592ab4797232fe44e14f4deca3ca5bee5a2f2d78e9ae44c",
+      "sourceKind": "quantum-entanglement-canonical-report-visual",
+      "sourceReference": "analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md; code-baseline:cd92ea56493b43889f5165892b40ec36e958d44a; archived-git:97b24b20c120c968a86f533651f515e5c60f0ae9",
+      "width": 1600
+    },
+    {
+      "byteSize": 455274,
+      "captureDate": null,
+      "captureDateEvidence": "Not a captured external page or runtime viewport; this PNG was rendered from the archived SVG in the same repository batch, so captureDate is not applicable",
+      "contentScope": "PNG rendering of the W2 function-only writes, exact access validation, PostgreSQL 18.6 evidence and remaining production-gates map for Notion and browser review",
+      "derivation": "rsvg-convert-1600x1100-from-34-postgres-function-only-writes-and-exact-access-map-svg",
+      "evidenceClass": "B-local-derived-documentation-visual",
+      "evidenceLimitations": [
+        "A rendering of the sibling SVG, not additional or independent evidence",
+        "Pixel appearance does not prove production provisioning, authenticated tenancy, service startup enforcement, restore safety, provider delivery or production readiness; inspect the canonical report and code baseline"
+      ],
+      "filename": "34_postgres_function_only_writes_and_exact_access_map.png",
+      "firstArchivedAt": "2026-08-28T18:21:07+08:00",
+      "height": 1100,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-repository-authored-diagram",
+      "sha256": "586c3b5edebff75dc6d8f3f090cdf64848659f2fe7a58f337c2a38f1fca43ae2",
+      "sourceKind": "quantum-entanglement-canonical-report-visual",
+      "sourceReference": "analysis_report/screenshots/34_postgres_function_only_writes_and_exact_access_map.svg; rsvg-convert -w 1600 -h 1100; archived-git:97b24b20c120c968a86f533651f515e5c60f0ae9",
       "width": 1600
     }
   ],
