@@ -33,6 +33,7 @@ ADMITTED_AT = "2026-08-28T01:02:04.000000Z"
 EXPIRES_AT = "2026-08-28T00:05:00.000001Z"
 PROFILE_REVISION = "profile-revision-atomic-page-1"
 PROFILE_DIGEST = "1" * 64
+TAMPER_DIGEST = "0" * 64
 OBSERVATION_TABLES = (
     "native_im_auth_nonces",
     "native_im_inbox_events",
@@ -95,6 +96,19 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def _execute_mutations(
+        self,
+        *mutations: tuple[str, tuple[object, ...]],
+    ) -> None:
+        connection = sqlite3.connect(self.path)
+        try:
+            for statement, parameters in mutations:
+                cursor = connection.execute(statement, parameters)
+                self.assertEqual(cursor.rowcount, 1)
+            connection.commit()
+        finally:
+            connection.close()
+
     def _admit(self, request=None, snapshot=None, page=None, verification=None, store=None):
         request = request or inbound_read_request()
         snapshot = snapshot or capability()
@@ -114,6 +128,24 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         reads = self._rows("native_im_inbound_reads")
         self.assertEqual(len(reads), 1)
         self.assertEqual(reads[0]["status"], "prepared")
+
+    def _assert_exact_replay_rejects_tamper(
+        self,
+        *mutations: tuple[str, tuple[object, ...]],
+    ) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        verification = raw_verification()
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+        self._admit(request, snapshot, page, verification)
+        self._execute_mutations(*mutations)
+
+        with self.assertRaises(NativeIMInboxStoreIntegrityError) as raised:
+            self._admit(request, snapshot, page, verification)
+
+        self.assertIs(type(raised.exception), NativeIMInboxStoreIntegrityError)
 
     def test_fresh_page_atomically_claims_nonce_events_read_and_checkpoint(self) -> None:
         request = inbound_read_request()
@@ -344,14 +376,95 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
 
         for candidate_page, candidate_verification in cases:
             with self.subTest(page_digest=candidate_page.canonical_digest()):
-                with self.assertRaises(NativeIMInboundConflictError):
+                with self.assertRaises(NativeIMInboundConflictError) as raised:
                     self._admit(
                         request,
                         snapshot,
                         candidate_page,
                         candidate_verification,
                     )
+                self.assertIs(type(raised.exception), NativeIMInboundConflictError)
         self.assertEqual(len(self._rows("native_im_auth_nonces")), 1)
+
+    def test_replay_rejects_noncanonical_persisted_event_json(self) -> None:
+        self._assert_exact_replay_rejects_tamper(
+            ("UPDATE native_im_inbox_events SET event_json = event_json || ' '", ()),
+        )
+
+    def test_replay_rejects_event_digest_tamper(self) -> None:
+        self._assert_exact_replay_rejects_tamper(
+            ("UPDATE native_im_inbox_events SET event_digest = ?", (TAMPER_DIGEST,)),
+        )
+
+    def test_replay_rejects_verification_envelope_digest_tamper(self) -> None:
+        self._assert_exact_replay_rejects_tamper(
+            (
+                "UPDATE native_im_inbox_verifications SET envelope_digest = ?",
+                (TAMPER_DIGEST,),
+            ),
+        )
+
+    def test_replay_rejects_verification_event_binding_tamper(self) -> None:
+        self._assert_exact_replay_rejects_tamper(
+            (
+                "UPDATE native_im_inbox_verifications SET event_id = ?",
+                ("tampered-event",),
+            ),
+        )
+
+    def test_replay_rejects_invalid_persisted_verification_traceparent(self) -> None:
+        invalid_traceparent = f"00-{'0' * 32}-{'0' * 16}-01"
+        self._assert_exact_replay_rejects_tamper(
+            (
+                "UPDATE native_im_inbox_verifications SET traceparent = ?",
+                (invalid_traceparent,),
+            ),
+        )
+
+    def test_replay_rejects_read_event_ordinal_tamper(self) -> None:
+        self._assert_exact_replay_rejects_tamper(
+            ("UPDATE native_im_inbound_read_events SET ordinal = 1", ()),
+        )
+
+    def test_replay_rejects_read_event_identity_tamper(self) -> None:
+        self._assert_exact_replay_rejects_tamper(
+            (
+                "UPDATE native_im_inbound_read_events SET event_id = ?",
+                ("tampered-event",),
+            ),
+        )
+
+    def test_replay_rejects_coordinated_envelope_digest_tamper(self) -> None:
+        self._assert_exact_replay_rejects_tamper(
+            (
+                "UPDATE native_im_inbox_verifications SET envelope_digest = ?",
+                (TAMPER_DIGEST,),
+            ),
+            (
+                "UPDATE native_im_inbound_read_events SET envelope_digest = ?",
+                (TAMPER_DIGEST,),
+            ),
+        )
+
+    def test_replay_rejects_coordinated_read_and_checkpoint_page_digest_tamper(self) -> None:
+        self._assert_exact_replay_rejects_tamper(
+            (
+                "UPDATE native_im_inbound_reads SET page_digest = ?",
+                (TAMPER_DIGEST,),
+            ),
+            (
+                "UPDATE native_im_inbound_checkpoints SET last_page_digest = ?",
+                (TAMPER_DIGEST,),
+            ),
+        )
+
+    def test_replay_rejects_cross_bound_read_event_scope(self) -> None:
+        self._assert_exact_replay_rejects_tamper(
+            (
+                "UPDATE native_im_inbound_read_events SET workspace_id = ?",
+                ("tampered-workspace",),
+            ),
+        )
 
     def test_two_connections_racing_exact_page_yield_one_fresh_and_one_replay(self) -> None:
         request = inbound_read_request()
