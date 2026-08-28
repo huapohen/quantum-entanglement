@@ -145,18 +145,32 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 
 #### W2 接真实 IM 前的 P0 顺序
 
-1. 把已验证的合同落到 production cutover/IaC：canonical plan、provisioner preflight、ownership/grant
-   executor/receipt、secret 注入与 rotation 责任边界、远程 authenticated-TLS 正向 E2E、角色轮换、旧
-   session drain、回滚与 drift validator；
+本小节是接真实 provider 前唯一的串行门禁源。W2 工程检查点与专题报告只能镜像本顺序；若为了
+提早验证接口而先写 pure contract 或 zero-network fake，它们必须保持不可外发、不可把 provider group
+当事实源，也不得绕过下列汇合门禁。
+
+1. 冻结 production topology/IaC 与责任边界，并把已验证的合同落到可复核 cutover：canonical plan、
+   provisioner preflight、ownership/grant executor/receipt、secret 注入与 rotation 责任边界、远程
+   authenticated-TLS 正向 E2E、角色轮换、旧 session drain、回滚与 drift validator；
 2. Clerk verified claim → realm binding → active principal/tenant membership → exact Actor → path consistency
    的 trusted request context；
 3. conversation/actor/membership/access active resolver；invoke/publish 再叠加 installation/mandate/
    capability/budget/Artifact/Acceptance；
 4. 把当前每请求 full-catalog gate 性能化为 host-owned、冻结最大漂移窗口的 max-staleness dependency
    readiness monitor，并增加 explicit draining state；过期立即关闭，高风险 effect 仍独立做 action-time PEP；
-5. dump/restore、DB/process restart、kill-9、old binary/future schema、role restoration 演练；
+5. 真实既有数据上的 non-empty schema upgrade，以及 dump/restore、DB/process restart、kill-9、old binary/
+   future schema、role restoration 演练；
 6. PostgreSQL event store/outbox/projection checkpoint、backfill+live 与 crash recovery；
-7. 再接 `agent_thread`、message 与 provider adapter。
+7. 再实现有状态的 `agent_thread`、message、mention inbox/dedupe 与 fake-provider vertical slice；
+8. 真实 provider 还必须通过 W3 的 profile/capability matrix、callback authenticity、dedupe/resume、mapping
+   drift、sandbox config 与 inbound-only readback；任何 subgroup create/invite/send 另需用户对具体 sandbox
+   outbound 明确授权。
+
+以上只是接 provider 前的最小安全切片，不是 W2 完成清单。宣称 W2 完成前，仍须按本章 W2 交付定义
+逐批落地并验证 message/reaction/read state、Task/Attempt/Budget/NeedsYou/Artifact/Acceptance、GovernedMemory、
+Skill/Capability/ExecutionBinding、action/evidence、taint/declassification、promotion、presence/data-route/routine
+及其余已列领域对象、migration、tenant/revision/dedupe 不变量；每批都要进入 PostgreSQL schema、repository/
+UoW、故障矩阵与恢复证据，不能只停留在 Go type 或文档。
 
 membership FK 只证明 head 存在，不证明 current membership active。移除成员的 use case 必须同一 UoW
 写 `membership=removed` 与 all-false access；resolver 必须同时检查 active membership 和 permission bit。
