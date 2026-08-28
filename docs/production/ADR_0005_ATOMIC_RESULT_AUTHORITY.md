@@ -15,6 +15,12 @@
 > native-IM actions use migration 8. This addendum changes ordering, not the result authority
 > semantics in this ADR.
 
+> 2026-08-28 implementation checkpoint: Phase 1 now has a private, capability-free
+> stored-event-envelope V1 codec, a raw `sqlite3.Row` reconstruction path, frozen golden bytes and
+> a Python 3.9/3.12/3.13 read-only verifier. This is only the codec primitive. The store-owned
+> `_EventWriteSnapshot` adapter, reserved-event fence, same-transaction write/read comparison,
+> result migration 7, writer, `AcceptedV2` mint point and worker dispatch remain absent and disabled.
+
 ## Context
 
 Atomic admission and first claim/start now commit a queued invocation, running attempt and
@@ -106,6 +112,29 @@ fresh commit, but it does not retain the lease after the success CAS clears it. 
 is represented by outbox rows in the same transaction. `Observed` is capability-free. Lost commit
 acknowledgement, reopen, peer-process replay and recovery can return only an observation.
 
+The stored coordinate for each result-authority event is additionally bound to a private canonical
+stored-event envelope with the following exact V1 body:
+
+```text
+schemaVersion, eventId, streamId, eventType, actorId, timestamp,
+correlationId, causationId, idempotencyKey, payload, sequence, globalPosition
+```
+
+Its digest is
+`SHA-256("quantum-entanglement.stored-event-envelope/1\n" || canonical-json-body)`. The codec
+accepts exact canonical JSON object payload text, exact positive signed-64-bit coordinates and UTC
+microsecond timestamps; it rejects duplicate keys, non-finite numbers, alternate JSON bytes,
+SQLite storage-class drift, subclasses and malformed raw rows. It is private and serializable only
+as capability-free data: neither constructing an envelope nor presenting its digest proves an
+INSERT, COMMIT acknowledgement, acceptance or authorization.
+
+Phase 1 intentionally does not dispatch on result event type. The future private writer adapter
+must first validate the exact typed result/terminal payload contract, then build the write-side
+envelope from the store-owned frozen snapshot. It must independently reconstruct the read-side
+envelope from an explicit raw-row projection inside the same transaction and compare them. Generic
+historical event rows are not silently upgraded: their older timestamp/text contract can be wider
+than the new reserved result-event path.
+
 The schema-2 result manifest preserves the complete provider-neutral result body rather than only
 describing materialized Artifacts:
 
@@ -147,8 +176,10 @@ active scoped lease/start revalidation
 + result-ready outbox rows
 ```
 
-The receipt records both stored-event coordinate sets. Task has no SQL authority row; its durable
-terminal authority is the exact terminal event bound into this transaction and receipt.
+The receipt records both stored-event coordinate sets and both envelope digests. Readback must
+recompute each digest from the exact raw row rather than trust a caller, a read model or a digest
+column on `events`; no such column is added. Task has no SQL authority row; its durable terminal
+authority is the exact terminal event bound into this transaction and receipt.
 
 ### 4. Result versus action receipt
 
@@ -196,7 +227,7 @@ invocation_result_receipts
   receipt identity and schema version
   complete scoped invocation/start/attempt/fence binding
   result ref and manifest digest
-  result-event and terminal-event coordinates
+  result-event and terminal-event coordinates plus both stored-event envelope digests
   accepted_at, idempotency key and request digest
   UNIQUE scoped invocation
   UNIQUE attempt
@@ -243,6 +274,9 @@ The retained matrix must cover:
 
 - exact codecs: future/legacy schemas, unknown/missing fields, bool-as-int, NFC, timestamps, size,
   ordering, mutation and cyclic metadata;
+- stored-event envelope golden bytes/digest on Python 3.9/3.12/3.13, exact raw `sqlite3.Row`
+  projection/storage classes, every coordinate/payload-leaf mutation, typed result payload
+  re-encoding and write-snapshot/raw-row equality inside the owning transaction;
 - every manifest and scope binding mismatch;
 - every SQL statement, BEGIN/COMMIT/ROLLBACK acknowledgement and exact interpreter control signal;
 - stale/expired lease, late result, stream drift, duplicate/conflicting replay;
