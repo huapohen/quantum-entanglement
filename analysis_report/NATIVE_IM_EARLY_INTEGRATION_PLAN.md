@@ -1,6 +1,6 @@
 # 原生 IM 提前接入执行计划
 
-> 计划版本：2026-08-28-early-integration-v5
+> 计划版本：2026-08-28-early-integration-v6
 > 基线：`backup_0827_200010` / `pre-native-im-20260827-200010`  
 > 当前主线起点：`1d399e555fb0416f9c6225811269b9e5a2407728`  
 > 当前执行分支：`mainline_continue_quantum_entanglement`；E2 provider bundle 离线节点 `ee0666f`
@@ -17,7 +17,7 @@
 | 层级 | 可见结果 | 预计累计时间 | 是否真实发送 |
 |---|---|---:|---|
 | A：CONTRACT_EXECUTABLE（已完成） | V1 模型、codec、golden、fake adapter 全绿 | 已完成 | 否 |
-| B：SANDBOX_INBOUND（进行中） | 离线 provider bundle/TCK/provenance 已完成；真实 contract/scope/exchange 后验收 health/read/dedupe/resume | 原估 3–5 天 | 否 |
+| B：SANDBOX_INBOUND（等待真实合同输入） | 离线 provider bundle/TCK/provenance 已完成；真实 contract/scope/exchange 后验收 health/read/dedupe/resume | 合同与批准输入齐备后重新计时 | 否 |
 | C：AGENT_DRAFT | verified inbound 可安全驱动 PURE Agent 并生成待审草稿 | 7–9 天 | 否 |
 | D：CONTROLLED_OUTBOUND | 单个 allowlisted 测试 conversation 可受控发送并对账 | 10–14 天 | 仅另行明确授权后 |
 
@@ -154,6 +154,13 @@ credential material、webhook 或 external IM send。下一硬门禁是真实 pr
 - [`research/24_native_im_e2_atomic_page_admission_evidence.md`](./research/24_native_im_e2_atomic_page_admission_evidence.md)；
 - [`research/25_native_im_e2_adapter_lifecycle_offline_evidence.md`](./research/25_native_im_e2_adapter_lifecycle_offline_evidence.md)。
 - [`research/26_native_im_provider_bundle_offline_evidence.md`](./research/26_native_im_provider_bundle_offline_evidence.md)。
+- [`research/27_native_im_backend_contract_audit.md`](./research/27_native_im_backend_contract_audit.md)。
+
+独立 IM 分支已提交 `c623aea` 的源码审计确认：authority persistence 底座已经有实质进展，但当前
+HTTP composition 仍只有 loopback liveness/ping，auth/IM 强制 fake，尚无 authenticated event read、
+provider readiness、cursor/snapshot 或 endpoint/credential composition。因此本阶段不是被网络波动
+阻塞，而是等待真实 wire contract 与批准输入；不能用 `/health/live` 或内部 PostgreSQL repository
+伪造真实 provider bundle。
 
 ### 5.1 IM 后端必须提供的输入
 
