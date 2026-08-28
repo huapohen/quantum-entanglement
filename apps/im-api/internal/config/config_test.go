@@ -19,7 +19,12 @@ func TestLoadDefaultsToLoopbackFakeComposition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load defaults: %v", err)
 	}
-	if !slices.Equal(queried, []string{listenAddressVariable}) {
+	if !slices.Equal(queried, []string{
+		listenAddressVariable,
+		postgresRuntimeURLVariable,
+		postgresAuthorityManifestVariable,
+		postgresAllowInsecureLocalTestVariable,
+	}) {
 		t.Fatalf("queried environment variables = %v", queried)
 	}
 
@@ -28,9 +33,78 @@ func TestLoadDefaultsToLoopbackFakeComposition(t *testing.T) {
 		AuthProvider:  ProviderFakeAuth,
 		IMProvider:    ProviderFakeIM,
 		OutboundMode:  OutboundDisabled,
+		PostgresMode:  PostgresDisabled,
 	}
 	if loaded.Snapshot() != want {
 		t.Fatalf("snapshot = %#v, want %#v", loaded.Snapshot(), want)
+	}
+}
+
+func TestLoadBuildsPrivateRuntimePostgresComposition(t *testing.T) {
+	t.Parallel()
+	const credentialCanary = "runtime-secret-canary"
+	loaded, err := Load(mapLookup(map[string]string{
+		postgresRuntimeURLVariable: "postgresql://wanwork_app_a:" + credentialCanary +
+			"@127.0.0.1:55488/wanwork_im?sslmode=disable",
+		postgresAuthorityManifestVariable:      validAuthorityManifestJSON(),
+		postgresAllowInsecureLocalTestVariable: "true",
+	}))
+	if err != nil {
+		t.Fatalf("load runtime postgres composition: %v", err)
+	}
+	private, ok := loaded.RuntimePostgres()
+	if !ok || private.Manifest.DatabaseName != "wanwork_im" ||
+		private.Manifest.RuntimeLoginRoles[0] != "wanwork_app_a" ||
+		!private.AllowInsecureLocalhost {
+		t.Fatalf("private runtime composition = %#v present=%v", private.Manifest, ok)
+	}
+	payload, err := json.Marshal(loaded.Snapshot())
+	if err != nil {
+		t.Fatalf("marshal runtime snapshot: %v", err)
+	}
+	if loaded.Snapshot().PostgresMode != PostgresRuntime ||
+		strings.Contains(string(payload), credentialCanary) ||
+		strings.Contains(string(payload), "55488") || strings.Contains(string(payload), "postgresql") {
+		t.Fatalf("unsafe runtime public snapshot: %s", payload)
+	}
+	private.Manifest.RuntimeLoginRoles[0] = "mutated"
+	again, _ := loaded.RuntimePostgres()
+	if again.Manifest.RuntimeLoginRoles[0] != "wanwork_app_a" {
+		t.Fatal("runtime manifest aliases returned caller-owned list")
+	}
+}
+
+func TestLoadRejectsPartialOrMalformedRuntimePostgresComposition(t *testing.T) {
+	t.Parallel()
+	validURL := "postgresql://wanwork_app_a@127.0.0.1:55488/wanwork_im?sslmode=disable"
+	for name, values := range map[string]map[string]string{
+		"manifest without url": {
+			postgresAuthorityManifestVariable: validAuthorityManifestJSON(),
+		},
+		"url without manifest": {
+			postgresRuntimeURLVariable: validURL,
+		},
+		"malformed manifest": {
+			postgresRuntimeURLVariable:        validURL,
+			postgresAuthorityManifestVariable: `{`,
+		},
+		"unknown manifest field": {
+			postgresRuntimeURLVariable: validURL,
+			postgresAuthorityManifestVariable: strings.TrimSuffix(validAuthorityManifestJSON(), "}") +
+				`,"credential":"canary"}`,
+		},
+		"invalid insecure flag": {
+			postgresRuntimeURLVariable:             validURL,
+			postgresAuthorityManifestVariable:      validAuthorityManifestJSON(),
+			postgresAllowInsecureLocalTestVariable: "yes",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(mapLookup(values))
+			if !errors.Is(err, ErrInvalidPostgres) {
+				t.Fatalf("runtime config error = %v, want %v", err, ErrInvalidPostgres)
+			}
+		})
 	}
 }
 
@@ -109,4 +183,23 @@ func fixedLookup(expectedName, value string) LookupEnv {
 		}
 		return value, true
 	}
+}
+
+func mapLookup(values map[string]string) LookupEnv {
+	return func(name string) (string, bool) {
+		value, ok := values[name]
+		return value, ok
+	}
+}
+
+func validAuthorityManifestJSON() string {
+	return `{
+        "databaseName":"wanwork_im",
+        "databaseOwnerRole":"wanwork_im_provisioner",
+        "ownerRole":"wanwork_im_owner",
+        "migratorRole":"wanwork_im_migrator",
+        "runtimeRole":"wanwork_im_runtime",
+        "migrationLoginRoles":["wanwork_deploy_a"],
+        "runtimeLoginRoles":["wanwork_app_a"]
+    }`
 }
