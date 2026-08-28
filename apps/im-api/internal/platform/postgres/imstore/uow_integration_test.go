@@ -735,13 +735,8 @@ func grantStoreRole(t *testing.T, connection *pgx.Conn, quotedRole string) {
              wanwork_im.write_tenant_command_receipt(text, text, text, text, text)
          TO ` + quotedRole,
 		`GRANT SELECT ON
-             wanwork_im.provider_realms,
-             wanwork_im.tenants,
-             wanwork_im.workspaces,
-             wanwork_im.actor_heads,
-             wanwork_im.actor_snapshots,
-             wanwork_im.conversation_heads,
-             wanwork_im.conversation_snapshots,
+		     wanwork_im.conversation_heads,
+		     wanwork_im.conversation_snapshots,
              wanwork_im.provider_conversation_binding_heads,
              wanwork_im.provider_conversation_binding_snapshots,
              wanwork_im.conversation_membership_heads,
