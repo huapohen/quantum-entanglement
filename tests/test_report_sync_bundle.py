@@ -75,6 +75,15 @@ class ReportSyncBundleTests(unittest.TestCase):
             b"# Native IM provider contract V1\n",
         )
         self._write("docs/TERMINOLOGY.md", b"# Terminology\n")
+        self._write("docs/wanwork_im/ARCHITECTURE.md", b"# WanWork IM architecture\n")
+        self._write(
+            "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
+            b"# WanWork IM implementation plan\n",
+        )
+        self._write(
+            "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
+            b"# WanWork IM research traceability\n",
+        )
         self._write("analysis_report/research/00_scope.md", b"# Scope\n")
         self._write("analysis_report/research/08_new_evidence.md", b"# New\n")
         self._write("analysis_report/screenshots/README.md", b"# Screenshots\n")
@@ -283,9 +292,9 @@ class ReportSyncBundleTests(unittest.TestCase):
             {"unmanifestedPolicy": "fail-closed"},
         )
         source_summary = cast(dict[str, Any], first["sourceSummary"])
-        self.assertEqual(source_summary["count"], 14)
-        self.assertEqual(source_summary["sourceTargetCount"], 15)
-        self.assertEqual(source_summary["notionTargetCount"], 13)
+        self.assertEqual(source_summary["count"], 17)
+        self.assertEqual(source_summary["sourceTargetCount"], 18)
+        self.assertEqual(source_summary["notionTargetCount"], 16)
         self.assertEqual(source_summary["yuqueTargetCount"], 2)
 
         path = self._save_bundle(first)
@@ -318,6 +327,18 @@ class ReportSyncBundleTests(unittest.TestCase):
         ]
         self.assertEqual(target["targetPageKey"], "native-im-contract-v1")
         self.assertEqual(target["targetStatus"], "historical_manifest_claim_digest_match")
+
+    def test_wanwork_im_review_docs_are_allowlisted_canonical_sources(self) -> None:
+        pages = self._source_targets(generate_report_sync_bundle(self.repository))
+        for path in (
+            "docs/wanwork_im/ARCHITECTURE.md",
+            "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
+            "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
+        ):
+            with self.subTest(path=path):
+                target = pages[(path, "notion")]
+                self.assertIsNone(target["targetPageKey"])
+                self.assertEqual(target["targetStatus"], "local_pending")
 
     def test_native_im_early_integration_plan_is_an_allowlisted_canonical_source(self) -> None:
         path = "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md"

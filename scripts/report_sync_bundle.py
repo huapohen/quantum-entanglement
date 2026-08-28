@@ -166,6 +166,9 @@ _CANONICAL_EXACT_PATHS = frozenset(
         "analysis_report/screenshots/manifest.json",
         "docs/architecture/NATIVE_IM_CONTRACT_V1.md",
         "docs/TERMINOLOGY.md",
+        "docs/wanwork_im/ARCHITECTURE.md",
+        "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
+        "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
     }
 )
 _NOTION_MANIFEST_PATH = "analysis_report/notion_sync_manifest.json"
@@ -988,6 +991,9 @@ def _collect_sources(
         ("canonical-source", "analysis_report/multi_agent_collaboration_report.md"),
         ("canonical-source", "docs/architecture/NATIVE_IM_CONTRACT_V1.md"),
         ("canonical-source", "docs/TERMINOLOGY.md"),
+        ("canonical-source", "docs/wanwork_im/ARCHITECTURE.md"),
+        ("canonical-source", "docs/wanwork_im/IMPLEMENTATION_PLAN.md"),
+        ("canonical-source", "docs/wanwork_im/RESEARCH_TRACEABILITY.md"),
     ]
     paths.extend(
         ("canonical-source", path) for path in _markdown_files(session, "analysis_report/research")
