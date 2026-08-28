@@ -21,26 +21,33 @@ func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
 		t.Fatalf("apply authority access prerequisites: %v", err)
 	}
 	manifest := provisionAuthorityAccess(t, connection)
-	if _, err := connection.Exec(t.Context(), "SET ROLE "+pgx.Identifier{manifest.OwnerRole}.Sanitize()); err != nil {
+	authorityConfig := databaseConfig.Copy()
+	authorityConfig.User = manifest.MigrationLoginRoles[0]
+	authorityConnection, err := pgx.ConnectConfig(t.Context(), authorityConfig)
+	if err != nil {
+		t.Fatalf("connect authority migration login: %v", err)
+	}
+	defer func() { _ = authorityConnection.Close(context.Background()) }()
+	if _, err := authorityConnection.Exec(t.Context(), "SET ROLE "+pgx.Identifier{manifest.OwnerRole}.Sanitize()); err != nil {
 		t.Fatalf("set authority owner role: %v", err)
 	}
-	if _, err := Apply(t.Context(), connection); err != nil {
+	if _, err := Apply(t.Context(), authorityConnection); err != nil {
 		t.Fatalf("repeat migrations as exact owner: %v", err)
 	}
-	if err := ValidateAuthorityAccess(t.Context(), connection, manifest); err != nil {
+	if err := ValidateAuthorityAccess(t.Context(), authorityConnection, manifest); err != nil {
 		t.Fatalf("validate exact authority access: %v", err)
 	}
 
-	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+	if _, err := authorityConnection.Exec(t.Context(), "RESET ROLE"); err != nil {
 		t.Fatalf("reset authority owner role: %v", err)
 	}
-	if err := ValidateAuthorityAccess(t.Context(), connection, manifest); !errors.Is(
+	if err := ValidateAuthorityAccess(t.Context(), authorityConnection, manifest); !errors.Is(
 		err,
 		ErrAuthorityAccessDrift,
 	) {
 		t.Fatalf("wrong current role error = %v, want %v", err, ErrAuthorityAccessDrift)
 	}
-	if _, err := connection.Exec(t.Context(), "SET ROLE "+pgx.Identifier{manifest.OwnerRole}.Sanitize()); err != nil {
+	if _, err := authorityConnection.Exec(t.Context(), "SET ROLE "+pgx.Identifier{manifest.OwnerRole}.Sanitize()); err != nil {
 		t.Fatalf("restore authority owner role: %v", err)
 	}
 	quotedRuntime := pgx.Identifier{manifest.RuntimeRole}.Sanitize()
@@ -151,32 +158,33 @@ func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
 		},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
-			if _, err := connection.Exec(t.Context(), fixture.tamper); err != nil {
+			if _, err := authorityConnection.Exec(t.Context(), fixture.tamper); err != nil {
 				t.Fatalf("tamper authority access: %v", err)
 			}
-			if err := ValidateAuthorityAccess(t.Context(), connection, manifest); !errors.Is(
+			if err := ValidateAuthorityAccess(t.Context(), authorityConnection, manifest); !errors.Is(
 				err,
 				ErrAuthorityAccessDrift,
 			) {
 				t.Fatalf("authority access drift error = %v, want %v", err, ErrAuthorityAccessDrift)
 			}
-			if _, err := connection.Exec(t.Context(), fixture.repair); err != nil {
+			if _, err := authorityConnection.Exec(t.Context(), fixture.repair); err != nil {
 				t.Fatalf("repair authority access: %v", err)
 			}
-			if err := ValidateAuthorityAccess(t.Context(), connection, manifest); err != nil {
+			if err := ValidateAuthorityAccess(t.Context(), authorityConnection, manifest); err != nil {
 				t.Fatalf("validate repaired authority access: %v", err)
 			}
 		})
 	}
-	assertAdminAuthorityAccessDrift(t, connection, manifest)
-	assertDuplicateMembershipGrantorDrift(t, connection, manifest)
+	assertAdminAuthorityAccessDrift(t, connection, authorityConnection, manifest)
+	assertDuplicateMembershipGrantorDrift(t, connection, authorityConnection, manifest)
 	assertRuntimeLoginAccess(t, databaseConfig, manifest)
 	assertMigrationLoginCanSetExactOwner(t, databaseConfig, manifest)
 }
 
 func assertDuplicateMembershipGrantorDrift(
 	t *testing.T,
-	connection *pgx.Conn,
+	adminConnection *pgx.Conn,
+	validationConnection *pgx.Conn,
 	manifest AuthorityAccessManifest,
 ) {
 	t.Helper()
@@ -188,83 +196,72 @@ func assertDuplicateMembershipGrantorDrift(
 		integrationDatabaseSequence.Add(1),
 	)
 	quotedRogue := pgx.Identifier{rogueGrantor}.Sanitize()
-	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
-		t.Fatalf("reset owner before duplicate grantor drift: %v", err)
-	}
-	if _, err := connection.Exec(t.Context(),
+	if _, err := adminConnection.Exec(t.Context(),
 		"CREATE ROLE "+quotedRogue+
 			" NOLOGIN NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS",
 	); err != nil {
 		t.Fatalf("create duplicate membership grantor: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = connection.Exec(context.Background(), "RESET ROLE")
-		_, _ = connection.Exec(
+		_, _ = adminConnection.Exec(context.Background(), "RESET ROLE")
+		_, _ = adminConnection.Exec(
 			context.Background(),
 			"REVOKE "+quotedOwner+" FROM "+quotedRogue+" CASCADE",
 		)
-		_, _ = connection.Exec(context.Background(), "DROP ROLE "+quotedRogue)
+		_, _ = adminConnection.Exec(context.Background(), "DROP ROLE "+quotedRogue)
 	})
-	if _, err := connection.Exec(t.Context(),
+	if _, err := adminConnection.Exec(t.Context(),
 		"GRANT "+quotedOwner+" TO "+quotedRogue+
 			" WITH ADMIN TRUE, INHERIT FALSE, SET TRUE",
 	); err != nil {
 		t.Fatalf("grant owner admin option to duplicate grantor: %v", err)
 	}
-	if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedRogue); err != nil {
+	if _, err := adminConnection.Exec(t.Context(), "SET ROLE "+quotedRogue); err != nil {
 		t.Fatalf("set duplicate membership grantor: %v", err)
 	}
-	if _, err := connection.Exec(t.Context(),
+	if _, err := adminConnection.Exec(t.Context(),
 		"GRANT "+quotedOwner+" TO "+quotedMigrator+
 			" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE",
 	); err != nil {
 		t.Fatalf("create duplicate membership grantor row: %v", err)
 	}
-	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+	if _, err := adminConnection.Exec(t.Context(), "RESET ROLE"); err != nil {
 		t.Fatalf("reset duplicate membership grantor: %v", err)
 	}
-	if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedOwner); err != nil {
-		t.Fatalf("set owner after duplicate grantor drift: %v", err)
-	}
-	if err := ValidateAuthorityAccess(t.Context(), connection, manifest); !errors.Is(
+	if err := ValidateAuthorityAccess(t.Context(), validationConnection, manifest); !errors.Is(
 		err,
 		ErrAuthorityAccessDrift,
 	) {
 		t.Fatalf("duplicate grantor drift error = %v, want %v", err, ErrAuthorityAccessDrift)
 	}
-	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
-		t.Fatalf("reset owner before duplicate grantor repair: %v", err)
-	}
-	if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedRogue); err != nil {
+	if _, err := adminConnection.Exec(t.Context(), "SET ROLE "+quotedRogue); err != nil {
 		t.Fatalf("set duplicate membership grantor for repair: %v", err)
 	}
-	if _, err := connection.Exec(t.Context(),
+	if _, err := adminConnection.Exec(t.Context(),
 		"REVOKE "+quotedOwner+" FROM "+quotedMigrator,
 	); err != nil {
 		t.Fatalf("revoke duplicate membership grantor row: %v", err)
 	}
-	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+	if _, err := adminConnection.Exec(t.Context(), "RESET ROLE"); err != nil {
 		t.Fatalf("reset duplicate membership grantor after repair: %v", err)
 	}
-	if _, err := connection.Exec(t.Context(),
+	if _, err := adminConnection.Exec(t.Context(),
 		"REVOKE "+quotedOwner+" FROM "+quotedRogue+" CASCADE",
 	); err != nil {
 		t.Fatalf("revoke owner from duplicate grantor: %v", err)
 	}
-	if _, err := connection.Exec(t.Context(), "DROP ROLE "+quotedRogue); err != nil {
+	if _, err := adminConnection.Exec(t.Context(), "DROP ROLE "+quotedRogue); err != nil {
 		t.Fatalf("drop duplicate membership grantor: %v", err)
 	}
-	if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedOwner); err != nil {
-		t.Fatalf("restore owner after duplicate grantor repair: %v", err)
-	}
-	if err := ValidateAuthorityAccess(t.Context(), connection, manifest); err != nil {
+	if err := ValidateAuthorityAccess(t.Context(), validationConnection, manifest); err != nil {
 		t.Fatalf("validate duplicate grantor repair: %v", err)
 	}
 }
 
 func assertAdminAuthorityAccessDrift(
 	t *testing.T,
-	connection *pgx.Conn,
+	adminConnection *pgx.Conn,
+	validationConnection *pgx.Conn,
 	manifest AuthorityAccessManifest,
 ) {
 	t.Helper()
@@ -273,10 +270,7 @@ func assertAdminAuthorityAccessDrift(
 	quotedRuntime := pgx.Identifier{manifest.RuntimeRole}.Sanitize()
 	quotedRuntimeLogin := pgx.Identifier{manifest.RuntimeLoginRoles[0]}.Sanitize()
 	var databaseName string
-	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
-		t.Fatalf("reset authority owner before admin drift: %v", err)
-	}
-	if err := connection.QueryRow(t.Context(), "SELECT current_database()").Scan(&databaseName); err != nil {
+	if err := adminConnection.QueryRow(t.Context(), "SELECT current_database()").Scan(&databaseName); err != nil {
 		t.Fatalf("read authority database for admin drift: %v", err)
 	}
 	quotedDatabase := pgx.Identifier{databaseName}.Sanitize()
@@ -371,37 +365,22 @@ func assertAdminAuthorityAccessDrift(
 		},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
-			if _, err := connection.Exec(t.Context(), fixture.tamper); err != nil {
+			if _, err := adminConnection.Exec(t.Context(), fixture.tamper); err != nil {
 				t.Fatalf("tamper admin authority access: %v", err)
 			}
-			if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedOwner); err != nil {
-				t.Fatalf("set authority owner after admin tamper: %v", err)
-			}
-			if err := ValidateAuthorityAccess(t.Context(), connection, manifest); !errors.Is(
+			if err := ValidateAuthorityAccess(t.Context(), validationConnection, manifest); !errors.Is(
 				err,
 				ErrAuthorityAccessDrift,
 			) {
 				t.Fatalf("admin authority access drift error = %v, want %v", err, ErrAuthorityAccessDrift)
 			}
-			if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
-				t.Fatalf("reset authority owner after admin tamper: %v", err)
-			}
-			if _, err := connection.Exec(t.Context(), fixture.repair); err != nil {
+			if _, err := adminConnection.Exec(t.Context(), fixture.repair); err != nil {
 				t.Fatalf("repair admin authority access: %v", err)
 			}
-			if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedOwner); err != nil {
-				t.Fatalf("set authority owner after admin repair: %v", err)
-			}
-			if err := ValidateAuthorityAccess(t.Context(), connection, manifest); err != nil {
+			if err := ValidateAuthorityAccess(t.Context(), validationConnection, manifest); err != nil {
 				t.Fatalf("validate repaired admin authority access: %v", err)
 			}
-			if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
-				t.Fatalf("reset authority owner after admin repair: %v", err)
-			}
 		})
-	}
-	if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedOwner); err != nil {
-		t.Fatalf("restore authority owner after admin drift: %v", err)
 	}
 }
 
