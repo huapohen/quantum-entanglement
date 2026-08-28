@@ -2,7 +2,7 @@
   "schema_version": 1,
   "branches": {
     "main": "唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。",
-    "mainline_continue_quantum_entanglement": "原生 IM E2 provider-bundle 离线闭环的人工评审分支；Mapper、Transport、Bundle TCK 已完成，等待真实 provider 合同、测试 scope 与 production exchange 输入；不自动合并回 main。",
+    "mainline_continue_quantum_entanglement": "原生 IM E2 provider-bundle 离线闭环与独立 IM 后端合同源码复核的人工评审分支；Mapper、Transport、Bundle TCK 已完成，已确认当前后端只有 fake liveness/ping，等待真实 readiness/read 合同、测试 scope 与 production exchange 输入；不自动合并回 main。",
     "dev_wanwork_quantum_entanglement": "较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。",
     "backup_0827_200010": "2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。",
     "agent/evidence-ledger": "早期工程证据账本分支，用于汇总测试、审计和阶段结论。",
