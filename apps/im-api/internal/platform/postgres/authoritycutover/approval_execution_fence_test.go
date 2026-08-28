@@ -486,17 +486,89 @@ func TestApprovalExecutionFencerAllowsOneConcurrentApprovalConsumption(t *testin
 			t.Fatalf("unexpected concurrent error: %v", err)
 		}
 	}
+	epoch := store.nextEpochByTarget[fixture.approval.PolicyTargetDigest()]
 	if successes != 1 || conflicts != contenders-1 || len(store.states) != 1 ||
-		len(store.consumptions) != 1 || len(store.activeBySpace) != 1 || store.nextEpoch != 1 {
+		len(store.consumptions) != 1 || len(store.activeByTarget) != 1 || epoch != 1 {
 		t.Fatalf(
 			"concurrent result success=%d conflict=%d states=%d consumptions=%d active=%d epoch=%d",
 			successes,
 			conflicts,
 			len(store.states),
 			len(store.consumptions),
-			len(store.activeBySpace),
-			store.nextEpoch,
+			len(store.activeByTarget),
+			epoch,
 		)
+	}
+}
+
+func TestApprovalExecutionFenceStoreSerializesPolicyLineagesByPhysicalTarget(t *testing.T) {
+	fixture := newApprovalExecutionFenceFixture(t)
+	store := newFakeApprovalExecutionFenceStore(fixture.now)
+	first, err := newApprovalExecutionFenceCandidate(
+		fixture.plan,
+		fixture.approval,
+		fixture.report,
+		fixture.attempt,
+	)
+	if err != nil {
+		t.Fatalf("new first candidate: %v", err)
+	}
+	tokenA := domainSeparatedDigest(
+		approvalExecutionTokenDigestDomain,
+		bytes.Repeat([]byte{0x7b}, approvalExecutionTokenBytes),
+	)
+	firstNamespace := ApprovalPolicyNamespace{
+		PolicyID:     first.record.ApprovalPolicyID,
+		TargetDigest: first.record.ApprovalPolicyTargetDigest,
+	}
+	if err := store.CompareAndOpen(
+		t.Context(),
+		firstNamespace,
+		first.record.ExpectedPolicyHead,
+		first,
+		tokenA,
+	); err != nil {
+		t.Fatalf("open first lineage: %v", err)
+	}
+
+	second := first
+	second.record.ApprovalPolicyID = "approval-policy/postgres-cell-a-secondary"
+	second.record.ApprovalPolicyRevision = approvalPolicyRevision(
+		second.record.ApprovalPolicyID,
+		second.record.ApprovalPolicySequence,
+	)
+	second.record.ExpectedPolicyHead.PolicyID = second.record.ApprovalPolicyID
+	second.record.ConsumptionID = approvalConsumptionID(second.record)
+	second.record.OperationID = approvalExecutionOperationID(
+		second.record.ConsumptionID,
+		second.record.ExecutionAttemptID,
+		second.record.ExecutionAttemptReceiptDigest,
+	)
+	second.record.AdmissionDigest = approvalExecutionAdmissionDigest(second.record)
+	if !validApprovalExecutionFenceCandidate(second) {
+		t.Fatal("second policy lineage candidate is invalid")
+	}
+	secondNamespace := ApprovalPolicyNamespace{
+		PolicyID:     second.record.ApprovalPolicyID,
+		TargetDigest: second.record.ApprovalPolicyTargetDigest,
+	}
+	tokenB := domainSeparatedDigest(
+		approvalExecutionTokenDigestDomain,
+		bytes.Repeat([]byte{0x7c}, approvalExecutionTokenBytes),
+	)
+	if err := store.CompareAndOpen(
+		t.Context(),
+		secondNamespace,
+		second.record.ExpectedPolicyHead,
+		second,
+		tokenB,
+	); !errors.Is(err, ErrApprovalExecutionConflict) {
+		t.Fatalf("second policy lineage error = %v, want %v", err, ErrApprovalExecutionConflict)
+	}
+	if len(store.states) != 1 || len(store.activeByTarget) != 1 ||
+		store.nextEpochByTarget[firstNamespace.TargetDigest] != 1 {
+		t.Fatalf("target-wide fence state = records %d active %d epochs %v",
+			len(store.states), len(store.activeByTarget), store.nextEpochByTarget)
 	}
 }
 
@@ -730,22 +802,23 @@ type fakeApprovalExecutionFenceStore struct {
 	mu                sync.Mutex
 	states            map[string]ApprovalExecutionFenceStoredState
 	consumptions      map[string]string
-	activeBySpace     map[ApprovalPolicyNamespace]string
+	activeByTarget    map[string]string
 	compareCalls      int
 	loadCalls         int
 	compareErr        error
 	commitThenErr     error
 	clock             approvalExecutionClock
 	loadNotFoundCount int
-	nextEpoch         uint64
+	nextEpochByTarget map[string]uint64
 }
 
 func newFakeApprovalExecutionFenceStore(now time.Time) *fakeApprovalExecutionFenceStore {
 	return &fakeApprovalExecutionFenceStore{
-		states:        make(map[string]ApprovalExecutionFenceStoredState),
-		consumptions:  make(map[string]string),
-		activeBySpace: make(map[ApprovalPolicyNamespace]string),
-		clock:         func() time.Time { return now },
+		states:            make(map[string]ApprovalExecutionFenceStoredState),
+		consumptions:      make(map[string]string),
+		activeByTarget:    make(map[string]string),
+		clock:             func() time.Time { return now },
+		nextEpochByTarget: make(map[string]uint64),
 	}
 }
 
@@ -786,16 +859,17 @@ func (store *fakeApprovalExecutionFenceStore) CompareAndOpen(
 		namespace.PolicyID != expected.PolicyID || namespace.TargetDigest != expected.TargetDigest {
 		return ErrInvalidApprovalExecutionState
 	}
-	if _, exists := store.activeBySpace[namespace]; exists {
+	if _, exists := store.activeByTarget[namespace.TargetDigest]; exists {
 		return ErrApprovalExecutionConflict
 	}
 	if _, exists := store.consumptions[candidate.record.ConsumptionID]; exists {
 		return ErrApprovalExecutionConflict
 	}
-	store.nextEpoch++
+	store.nextEpochByTarget[namespace.TargetDigest]++
+	nextEpoch := store.nextEpochByTarget[namespace.TargetDigest]
 	record, err := sealApprovalExecutionFenceRecord(
 		candidate,
-		store.nextEpoch,
+		nextEpoch,
 		store.clock().UTC(),
 		tokenDigest,
 	)
@@ -805,7 +879,7 @@ func (store *fakeApprovalExecutionFenceStore) CompareAndOpen(
 	key := fakeApprovalExecutionFenceKey(namespace, candidate.record.OperationID)
 	store.states[key] = ApprovalExecutionFenceStoredState{Record: record}
 	store.consumptions[candidate.record.ConsumptionID] = key
-	store.activeBySpace[namespace] = key
+	store.activeByTarget[namespace.TargetDigest] = key
 	return store.commitThenErr
 }
 
