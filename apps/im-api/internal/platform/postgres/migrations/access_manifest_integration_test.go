@@ -43,6 +43,8 @@ func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
 	if _, err := connection.Exec(t.Context(), "SET ROLE "+pgx.Identifier{manifest.OwnerRole}.Sanitize()); err != nil {
 		t.Fatalf("restore authority owner role: %v", err)
 	}
+	quotedRuntime := pgx.Identifier{manifest.RuntimeRole}.Sanitize()
+	quotedRuntimeLogin := pgx.Identifier{manifest.RuntimeLoginRoles[0]}.Sanitize()
 
 	for _, fixture := range []struct {
 		name   string
@@ -52,9 +54,14 @@ func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
 		{
 			name: "raw table write grant",
 			tamper: "GRANT INSERT ON wanwork_im.conversation_heads TO " +
-				pgx.Identifier{manifest.RuntimeRole}.Sanitize(),
+				quotedRuntime,
 			repair: "REVOKE INSERT ON wanwork_im.conversation_heads FROM " +
-				pgx.Identifier{manifest.RuntimeRole}.Sanitize(),
+				quotedRuntime,
+		},
+		{
+			name:   "runtime maintain grant",
+			tamper: "GRANT MAINTAIN ON wanwork_im.conversation_heads TO " + quotedRuntime,
+			repair: "REVOKE MAINTAIN ON wanwork_im.conversation_heads FROM " + quotedRuntime,
 		},
 		{
 			name: "public function execute",
@@ -68,9 +75,35 @@ func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
 		{
 			name: "extra runtime read",
 			tamper: "GRANT SELECT ON wanwork_im.tenants TO " +
-				pgx.Identifier{manifest.RuntimeRole}.Sanitize(),
+				quotedRuntime,
 			repair: "REVOKE SELECT ON wanwork_im.tenants FROM " +
-				pgx.Identifier{manifest.RuntimeRole}.Sanitize(),
+				quotedRuntime,
+		},
+		{
+			name:   "direct login schema privilege",
+			tamper: "GRANT USAGE ON SCHEMA wanwork_im TO " + quotedRuntimeLogin,
+			repair: "REVOKE USAGE ON SCHEMA wanwork_im FROM " + quotedRuntimeLogin,
+		},
+		{
+			name:   "direct login table privilege",
+			tamper: "GRANT SELECT ON wanwork_im.conversation_heads TO " + quotedRuntimeLogin,
+			repair: "REVOKE SELECT ON wanwork_im.conversation_heads FROM " + quotedRuntimeLogin,
+		},
+		{
+			name: "direct login function privilege",
+			tamper: `GRANT EXECUTE ON FUNCTION wanwork_im.write_tenant_command_receipt(
+                text, text, text, text, text
+            ) TO ` + quotedRuntimeLogin,
+			repair: `REVOKE EXECUTE ON FUNCTION wanwork_im.write_tenant_command_receipt(
+                text, text, text, text, text
+            ) FROM ` + quotedRuntimeLogin,
+		},
+		{
+			name: "column privilege",
+			tamper: "GRANT UPDATE (current_revision) ON wanwork_im.conversation_heads TO " +
+				quotedRuntime,
+			repair: "REVOKE UPDATE (current_revision) ON wanwork_im.conversation_heads FROM " +
+				quotedRuntime,
 		},
 		{
 			name: "missing function execute",
@@ -93,6 +126,28 @@ func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
 			tamper: `CREATE FUNCTION wanwork_im.unexpected_authority_function()
                 RETURNS boolean LANGUAGE sql AS 'SELECT true'`,
 			repair: "DROP FUNCTION wanwork_im.unexpected_authority_function()",
+		},
+		{
+			name: "unexpected metadata table",
+			tamper: `CREATE TABLE wanwork_meta.unexpected_authority_table (
+                version bigint NOT NULL
+            )`,
+			repair: "DROP TABLE wanwork_meta.unexpected_authority_table",
+		},
+		{
+			name: "unexpected metadata function",
+			tamper: `CREATE FUNCTION wanwork_meta.unexpected_authority_function()
+                RETURNS boolean LANGUAGE sql AS 'SELECT true'`,
+			repair: "DROP FUNCTION wanwork_meta.unexpected_authority_function()",
+		},
+		{
+			name: "public function default privilege",
+			tamper: "ALTER DEFAULT PRIVILEGES FOR ROLE " +
+				pgx.Identifier{manifest.OwnerRole}.Sanitize() +
+				" GRANT EXECUTE ON FUNCTIONS TO PUBLIC",
+			repair: "ALTER DEFAULT PRIVILEGES FOR ROLE " +
+				pgx.Identifier{manifest.OwnerRole}.Sanitize() +
+				" REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC",
 		},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
