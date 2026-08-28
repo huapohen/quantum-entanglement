@@ -316,6 +316,8 @@ SELECT wanwork_policy_control.compare_and_activate_approval_policy(
 	case "rejected":
 		return ErrInvalidPostgresApprovalPolicyStore
 	default:
+		quarantineApprovalPolicyControlConnection(connection)
+		released = true
 		return ErrApprovalPolicyCommitUncertain
 	}
 }

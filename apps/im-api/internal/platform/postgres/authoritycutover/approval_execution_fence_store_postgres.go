@@ -211,6 +211,8 @@ SELECT wanwork_policy_control.compare_and_open_approval_execution_fence(
 	case "corrupt", "rejected":
 		return ErrInvalidApprovalExecutionState
 	default:
+		quarantineApprovalPolicyControlConnection(connection)
+		released = true
 		return ErrApprovalExecutionCommitUncertain
 	}
 }
