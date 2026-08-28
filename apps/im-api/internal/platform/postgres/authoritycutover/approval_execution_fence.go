@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ const (
 	approvalExecutionTokenDigestDomain = "wanwork.im/postgres-authority-approval-execution-token/1\n"
 	approvalExecutionTokenBytes        = 32
 	approvalExecutionReconcileTimeout  = 5 * time.Second
+	approvalMutationFenceRedacted      = "ApprovalMutationFence{redacted}"
 )
 
 var (
@@ -128,6 +130,15 @@ type ApprovalMutationFence struct {
 	record ApprovalExecutionFenceRecord
 	token  [approvalExecutionTokenBytes]byte
 }
+
+// String, GoString, and LogValue deliberately make every standard formatting and structured
+// logging path opaque. The capability token must never become observable through diagnostics.
+func (ApprovalMutationFence) String() string   { return approvalMutationFenceRedacted }
+func (ApprovalMutationFence) GoString() string { return approvalMutationFenceRedacted }
+func (ApprovalMutationFence) LogValue() slog.Value {
+	return slog.StringValue(approvalMutationFenceRedacted)
+}
+func (ApprovalMutationFence) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
 
 func (fence ApprovalMutationFence) ConsumptionID() string { return fence.record.ConsumptionID }
 func (fence ApprovalMutationFence) EvidenceRecord() ApprovalExecutionFenceRecord {

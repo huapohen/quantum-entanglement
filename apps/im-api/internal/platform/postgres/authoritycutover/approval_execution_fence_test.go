@@ -1,11 +1,13 @@
 package authoritycutover
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 	"sync"
@@ -70,6 +72,43 @@ func TestApprovalExecutionFencerConsumesApprovalAndReturnsOpaqueFence(t *testing
 	tokenCopy[0] ^= 0xff
 	if fence.tokenBytes()[0] != 0x71 {
 		t.Fatal("caller mutation escaped opaque token boundary")
+	}
+}
+
+func TestApprovalMutationFenceRedactsFormattingAndStructuredLogs(t *testing.T) {
+	fixture := newApprovalExecutionFenceFixture(t)
+	store := newFakeApprovalExecutionFenceStore()
+	fencer := mustApprovalExecutionFencer(t, store, 0x71)
+	fence, err := fencer.ConsumeAndFence(
+		t.Context(),
+		fixture.plan,
+		fixture.approval,
+		fixture.report,
+		fixture.executionAttemptID,
+		fixture.now,
+	)
+	if err != nil {
+		t.Fatalf("ConsumeAndFence: %v", err)
+	}
+
+	capabilityCanary := strings.Repeat("q", approvalExecutionTokenBytes)
+	formatted := fmt.Sprintf("%v|%+v|%#v|%s|%q", fence, fence, fence, fence, fence)
+	if strings.Contains(formatted, capabilityCanary) ||
+		strings.Contains(formatted, fixture.executionAttemptID) ||
+		formatted != "ApprovalMutationFence{redacted}|ApprovalMutationFence{redacted}|"+
+			"ApprovalMutationFence{redacted}|ApprovalMutationFence{redacted}|"+
+			`"ApprovalMutationFence{redacted}"` {
+		t.Fatalf("opaque fence formatting was not redacted: %q", formatted)
+	}
+
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	logger.Info("fence canary", "fence", fence)
+	logged := output.String()
+	if strings.Contains(logged, capabilityCanary) ||
+		strings.Contains(logged, fixture.executionAttemptID) ||
+		!strings.Contains(logged, approvalMutationFenceRedacted) {
+		t.Fatalf("opaque fence structured log was not redacted: %q", logged)
 	}
 }
 
