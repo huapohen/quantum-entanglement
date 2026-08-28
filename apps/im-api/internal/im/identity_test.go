@@ -114,6 +114,12 @@ func TestActorSnapshotRejectsSubjectPrefixMismatchAndIncompleteSnapshot(t *testi
 		{name: "missing reference", subjectType: SubjectHuman, revision: 1},
 		{name: "unknown subject", reference: reference, subjectType: SubjectType("owner"), revision: 1},
 		{name: "zero revision", reference: reference, subjectType: SubjectHuman},
+		{
+			name:        "revision exceeds PostgreSQL bigint",
+			reference:   reference,
+			subjectType: SubjectHuman,
+			revision:    maxPersistentRevision + 1,
+		},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
@@ -137,6 +143,7 @@ func TestPlatformIdentifiersRejectAmbiguousOrUnboundedText(t *testing.T) {
 		{name: "tenant wrong prefix", parse: tenantParseError, value: "org_acme"},
 		{name: "workspace empty suffix", parse: workspaceParseError, value: "wsp_"},
 		{name: "provider realm wrong prefix", parse: providerRealmParseError, value: "app_prod"},
+		{name: "human principal wrong prefix", parse: humanPrincipalParseError, value: "usr_alice"},
 		{name: "actor unknown prefix", parse: actorParseError, value: "bot_helper"},
 		{name: "agent definition whitespace", parse: agentDefinitionParseError, value: "agd_finance bot"},
 		{name: "unicode confusable", parse: actorParseError, value: "agt_ａｄｍｉｎ"},
@@ -291,6 +298,11 @@ func workspaceParseError(value string) error {
 
 func providerRealmParseError(value string) error {
 	_, err := ParseProviderRealmID(value)
+	return err
+}
+
+func humanPrincipalParseError(value string) error {
+	_, err := ParseHumanPrincipalID(value)
 	return err
 }
 

@@ -7,12 +7,7 @@ import (
 )
 
 func TestExternalIdentityBindingSeparatesProviderProofFromPlatformMapping(t *testing.T) {
-	tenant := mustTenantID(t, "ten_alpha")
-	actorID := mustActorID(t, "usr_alice")
-	actorRef, err := NewActorRef(tenant, actorID)
-	if err != nil {
-		t.Fatalf("create actor ref: %v", err)
-	}
+	principalID := mustHumanPrincipalID(t, "hpr_alice")
 	realm, err := ParseProviderRealmID("rlm_prod")
 	if err != nil {
 		t.Fatalf("parse realm: %v", err)
@@ -22,28 +17,59 @@ func TestExternalIdentityBindingSeparatesProviderProofFromPlatformMapping(t *tes
 		t.Fatalf("create external ref: %v", err)
 	}
 
-	binding, err := NewExternalIdentityBinding(
+	binding, err := NewHumanExternalIdentityBinding(
 		externalRef,
-		actorRef,
+		principalID,
 		ExternalIdentityBindingActive,
 		7,
 	)
 	if err != nil {
 		t.Fatalf("create binding: %v", err)
 	}
-	if binding.ExternalRef() != externalRef || binding.ActorRef() != actorRef ||
+	if binding.ExternalRef() != externalRef || binding.PrincipalID() != principalID ||
 		binding.Status() != ExternalIdentityBindingActive || binding.Revision() != 7 ||
 		binding.IsZero() {
 		t.Fatalf("unexpected binding: %#v", binding)
 	}
 }
 
-func TestExternalIdentityBindingRejectsRongCloudActorDrift(t *testing.T) {
-	tenant := mustTenantID(t, "ten_alpha")
-	actorRef, err := NewActorRef(tenant, mustActorID(t, "usr_alice"))
+func TestProviderActorBindingAllowsHumanAndAgentRongCloudUsers(t *testing.T) {
+	realm, err := ParseProviderRealmID("rlm_prod")
 	if err != nil {
-		t.Fatalf("create actor ref: %v", err)
+		t.Fatalf("parse realm: %v", err)
 	}
+	for _, actorText := range []string{"usr_alice", "agt_finance"} {
+		actorRef, err := NewActorRef(mustTenantID(t, "ten_alpha"), mustActorID(t, actorText))
+		if err != nil {
+			t.Fatalf("create actor ref: %v", err)
+		}
+		externalRef, err := NewExternalIdentityRef(
+			IdentityProviderRongCloud,
+			realm,
+			actorText,
+		)
+		if err != nil {
+			t.Fatalf("create external ref: %v", err)
+		}
+
+		binding, err := NewProviderActorBinding(
+			externalRef,
+			actorRef,
+			ExternalIdentityBindingActive,
+			1,
+		)
+		if err != nil {
+			t.Fatalf("create provider actor binding: %v", err)
+		}
+		if binding.ExternalRef() != externalRef || binding.ActorRef() != actorRef ||
+			binding.Status() != ExternalIdentityBindingActive || binding.Revision() != 1 ||
+			binding.IsZero() {
+			t.Fatalf("unexpected provider actor mapping: %#v", binding)
+		}
+	}
+}
+
+func TestProviderActorBindingRejectsActorDriftAndInternalSubjects(t *testing.T) {
 	realm, err := ParseProviderRealmID("rlm_prod")
 	if err != nil {
 		t.Fatalf("parse realm: %v", err)
@@ -51,29 +77,33 @@ func TestExternalIdentityBindingRejectsRongCloudActorDrift(t *testing.T) {
 	externalRef, err := NewExternalIdentityRef(
 		IdentityProviderRongCloud,
 		realm,
-		"usr_mallory",
+		"usr_alice",
 	)
 	if err != nil {
 		t.Fatalf("create external ref: %v", err)
 	}
-
-	_, err = NewExternalIdentityBinding(
-		externalRef,
-		actorRef,
-		ExternalIdentityBindingActive,
-		1,
-	)
-	if !errors.Is(err, ErrInvalidAuthority) {
-		t.Fatalf("expected fixed authority error, got %v", err)
+	for _, actorText := range []string{"usr_mallory", "sys_projection", "svc_adapter"} {
+		actorRef, actorErr := NewActorRef(
+			mustTenantID(t, "ten_alpha"),
+			mustActorID(t, actorText),
+		)
+		if actorErr != nil {
+			t.Fatalf("create actor ref: %v", actorErr)
+		}
+		value, bindingErr := NewProviderActorBinding(
+			externalRef,
+			actorRef,
+			ExternalIdentityBindingActive,
+			1,
+		)
+		if !errors.Is(bindingErr, ErrInvalidAuthority) || !value.IsZero() {
+			t.Fatalf("expected actor binding rejection, got %#v, %v", value, bindingErr)
+		}
 	}
 }
 
 func TestExternalIdentityBindingRejectsInvalidStatusAndRevision(t *testing.T) {
-	tenant := mustTenantID(t, "ten_alpha")
-	actorRef, err := NewActorRef(tenant, mustActorID(t, "usr_alice"))
-	if err != nil {
-		t.Fatalf("create actor ref: %v", err)
-	}
+	principalID := mustHumanPrincipalID(t, "hpr_alice")
 	realm, err := ParseProviderRealmID("rlm_prod")
 	if err != nil {
 		t.Fatalf("parse realm: %v", err)
@@ -90,11 +120,12 @@ func TestExternalIdentityBindingRejectsInvalidStatusAndRevision(t *testing.T) {
 	}{
 		{name: "unknown status", status: "owner", revision: 1},
 		{name: "zero revision", status: ExternalIdentityBindingActive, revision: 0},
+		{name: "revision exceeds PostgreSQL bigint", status: ExternalIdentityBindingActive, revision: maxPersistentRevision + 1},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
-			value, err := NewExternalIdentityBinding(
+			value, err := NewHumanExternalIdentityBinding(
 				externalRef,
-				actorRef,
+				principalID,
 				fixture.status,
 				fixture.revision,
 			)
@@ -102,6 +133,96 @@ func TestExternalIdentityBindingRejectsInvalidStatusAndRevision(t *testing.T) {
 				t.Fatalf("expected zero value and fixed error, got %#v, %v", value, err)
 			}
 		})
+	}
+}
+
+func TestHumanPrincipalSnapshotHasNoTenantAuthority(t *testing.T) {
+	principalID := mustHumanPrincipalID(t, "hpr_alice")
+	snapshot, err := NewHumanPrincipalSnapshot(principalID, HumanPrincipalActive, 3)
+	if err != nil {
+		t.Fatalf("create human principal snapshot: %v", err)
+	}
+	if snapshot.PrincipalID() != principalID || snapshot.Status() != HumanPrincipalActive ||
+		snapshot.Revision() != 3 || snapshot.IsZero() {
+		t.Fatalf("unexpected human principal snapshot: %#v", snapshot)
+	}
+
+	for _, fixture := range []struct {
+		name      string
+		principal HumanPrincipalID
+		status    HumanPrincipalStatus
+		revision  uint64
+	}{
+		{name: "zero principal", status: HumanPrincipalActive, revision: 1},
+		{name: "unknown status", principal: principalID, status: "owner", revision: 1},
+		{name: "zero revision", principal: principalID, status: HumanPrincipalActive},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			value, err := NewHumanPrincipalSnapshot(
+				fixture.principal,
+				fixture.status,
+				fixture.revision,
+			)
+			if !errors.Is(err, ErrInvalidAuthority) || !value.IsZero() {
+				t.Fatalf("expected zero value and fixed error, got %#v, %v", value, err)
+			}
+		})
+	}
+}
+
+func TestTenantMembershipMapsHumanPrincipalToTenantActor(t *testing.T) {
+	tenant := mustTenantID(t, "ten_alpha")
+	principalID := mustHumanPrincipalID(t, "hpr_alice")
+	actorRef, err := NewActorRef(tenant, mustActorID(t, "usr_alice"))
+	if err != nil {
+		t.Fatalf("create actor ref: %v", err)
+	}
+	membership, err := NewTenantMembershipSnapshot(
+		tenant,
+		principalID,
+		actorRef,
+		TenantMembershipAdmin,
+		TenantMembershipActive,
+		5,
+	)
+	if err != nil {
+		t.Fatalf("create tenant membership: %v", err)
+	}
+	if membership.TenantID() != tenant || membership.PrincipalID() != principalID ||
+		membership.ActorRef() != actorRef || membership.Role() != TenantMembershipAdmin ||
+		membership.Status() != TenantMembershipActive || membership.Revision() != 5 ||
+		membership.IsZero() {
+		t.Fatalf("unexpected tenant membership: %#v", membership)
+	}
+}
+
+func TestTenantMembershipRejectsCrossTenantAndNonHumanActors(t *testing.T) {
+	tenant := mustTenantID(t, "ten_alpha")
+	principalID := mustHumanPrincipalID(t, "hpr_alice")
+	humanOtherTenant, err := NewActorRef(
+		mustTenantID(t, "ten_beta"),
+		mustActorID(t, "usr_alice"),
+	)
+	if err != nil {
+		t.Fatalf("create cross-tenant actor ref: %v", err)
+	}
+	agentRef, err := NewActorRef(tenant, mustActorID(t, "agt_finance"))
+	if err != nil {
+		t.Fatalf("create agent actor ref: %v", err)
+	}
+
+	for _, actorRef := range []ActorRef{humanOtherTenant, agentRef} {
+		value, err := NewTenantMembershipSnapshot(
+			tenant,
+			principalID,
+			actorRef,
+			TenantMembershipMember,
+			TenantMembershipActive,
+			1,
+		)
+		if !errors.Is(err, ErrInvalidAuthority) || !value.IsZero() {
+			t.Fatalf("expected tenant membership rejection, got %#v, %v", value, err)
+		}
 	}
 }
 
@@ -119,6 +240,7 @@ func TestConversationMembershipIsTenantScopedAndIndependentFromTopology(t *testi
 	membership, err := NewConversationMembershipSnapshot(
 		conversationRef,
 		actorRef,
+		ConversationMembershipManager,
 		ConversationMembershipActive,
 		2,
 	)
@@ -126,6 +248,7 @@ func TestConversationMembershipIsTenantScopedAndIndependentFromTopology(t *testi
 		t.Fatalf("create membership: %v", err)
 	}
 	if membership.ConversationRef() != conversationRef || membership.ActorRef() != actorRef ||
+		membership.Role() != ConversationMembershipManager ||
 		membership.Status() != ConversationMembershipActive || membership.Revision() != 2 ||
 		membership.IsZero() {
 		t.Fatalf("unexpected membership: %#v", membership)
@@ -138,11 +261,22 @@ func TestConversationMembershipIsTenantScopedAndIndependentFromTopology(t *testi
 	value, err := NewConversationMembershipSnapshot(
 		conversationRef,
 		otherActor,
+		ConversationMembershipMember,
 		ConversationMembershipActive,
 		1,
 	)
 	if !errors.Is(err, ErrInvalidAuthority) || !value.IsZero() {
 		t.Fatalf("expected cross-tenant membership rejection, got %#v, %v", value, err)
+	}
+	value, err = NewConversationMembershipSnapshot(
+		conversationRef,
+		actorRef,
+		ConversationMembershipRole("admin"),
+		ConversationMembershipActive,
+		3,
+	)
+	if !errors.Is(err, ErrInvalidAuthority) || !value.IsZero() {
+		t.Fatalf("expected unknown conversation role rejection, got %#v, %v", value, err)
 	}
 }
 
@@ -252,4 +386,13 @@ func TestConversationAccessRejectsDuplicateUnknownAndCrossTenantValues(t *testin
 			}
 		})
 	}
+}
+
+func mustHumanPrincipalID(t *testing.T, value string) HumanPrincipalID {
+	t.Helper()
+	principalID, err := ParseHumanPrincipalID(value)
+	if err != nil {
+		t.Fatalf("parse human principal ID %q: %v", value, err)
+	}
+	return principalID
 }

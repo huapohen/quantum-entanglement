@@ -10,6 +10,7 @@ const (
 	maxPlatformIDBytes      = 128
 	maxAgentVersionBytes    = 128
 	maxExternalSubjectBytes = 256
+	maxPersistentRevision   = uint64(1<<63 - 1)
 	platformIDSeparator     = "_"
 	humanActorIDPrefix      = "usr_"
 	agentActorIDPrefix      = "agt_"
@@ -18,6 +19,7 @@ const (
 	tenantIDPrefix          = "ten_"
 	workspaceIDPrefix       = "wsp_"
 	providerRealmIDPrefix   = "rlm_"
+	humanPrincipalIDPrefix  = "hpr_"
 	agentDefinitionIDPrefix = "agd_"
 	conversationIDPrefix    = "cnv_"
 	messageIDPrefix         = "msg_"
@@ -105,6 +107,20 @@ func ParseProviderRealmID(value string) (ProviderRealmID, error) {
 
 func (value ProviderRealmID) String() string { return value.value }
 func (value ProviderRealmID) IsZero() bool   { return value.value == "" }
+
+// HumanPrincipalID identifies one global natural-person account independent of tenant
+// membership, visible Actor IDs, provider accounts, and workload/runtime identity.
+type HumanPrincipalID struct{ value string }
+
+func ParseHumanPrincipalID(value string) (HumanPrincipalID, error) {
+	if !validPrefixedPlatformID(value, humanPrincipalIDPrefix) {
+		return HumanPrincipalID{}, ErrInvalidIdentity
+	}
+	return HumanPrincipalID{value: value}, nil
+}
+
+func (value HumanPrincipalID) String() string { return value.value }
+func (value HumanPrincipalID) IsZero() bool   { return value.value == "" }
 
 type ActorID struct{ value string }
 
@@ -236,13 +252,17 @@ func NewActorSnapshot(
 	revision uint64,
 ) (ActorSnapshot, error) {
 	inferredType, ok := reference.actorID.SubjectType()
-	if reference.IsZero() || !subjectType.Valid() || revision == 0 || !ok ||
+	if reference.IsZero() || !subjectType.Valid() || !validPersistentRevision(revision) || !ok ||
 		inferredType != subjectType {
 		return ActorSnapshot{}, ErrInvalidIdentity
 	}
 	return ActorSnapshot{
 		reference: reference, subjectType: subjectType, revision: revision,
 	}, nil
+}
+
+func validPersistentRevision(revision uint64) bool {
+	return revision > 0 && revision <= maxPersistentRevision
 }
 
 func (snapshot ActorSnapshot) Ref() ActorRef            { return snapshot.reference }

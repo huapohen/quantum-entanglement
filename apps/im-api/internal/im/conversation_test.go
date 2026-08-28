@@ -160,6 +160,7 @@ func TestConversationSnapshotRejectsIncompleteOrForgedTopology(t *testing.T) {
 		{name: "zero workspace value is not absence", reference: reference, workspaceID: &WorkspaceID{}, conversationType: ConversationGroup, revision: 1},
 		{name: "unknown conversation type", reference: reference, conversationType: ConversationType("channel"), revision: 1},
 		{name: "zero revision", reference: reference, conversationType: ConversationGroup},
+		{name: "revision exceeds PostgreSQL bigint", reference: reference, conversationType: ConversationGroup, revision: maxPersistentRevision + 1},
 		{name: "direct cannot claim parent", reference: reference, conversationType: ConversationDirect, parentID: parentID, revision: 1},
 		{name: "group cannot claim invocation", reference: reference, conversationType: ConversationGroup, invocationID: invocationID, revision: 1},
 		{name: "thread missing parent", reference: reference, workspaceID: &workspaceID, conversationType: ConversationAgentThread, rootMessageID: rootMessageID, invocationID: invocationID, revision: 1},

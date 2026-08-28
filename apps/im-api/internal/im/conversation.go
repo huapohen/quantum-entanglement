@@ -104,7 +104,7 @@ func NewConversationSnapshot(
 	agentInvocationID InvocationID,
 	revision uint64,
 ) (ConversationSnapshot, error) {
-	if reference.IsZero() || !conversationType.Valid() || revision == 0 {
+	if reference.IsZero() || !conversationType.Valid() || !validPersistentRevision(revision) {
 		return ConversationSnapshot{}, ErrInvalidConversation
 	}
 
