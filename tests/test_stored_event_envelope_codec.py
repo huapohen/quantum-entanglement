@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import sqlite3
 from typing import Any
 
 import pytest
@@ -31,11 +33,57 @@ EXPECTED_CANONICAL_BYTES = (
     b'"timestamp":"2026-08-28T09:10:11.123456Z"}'
 )
 EXPECTED_DIGEST = "3d395de9f8a0ba6ac163693f17fddee035a76670392e776c0711e7e7a61491ba"
+RAW_COLUMNS = (
+    "global_position",
+    "stream_id",
+    "sequence",
+    "event_id",
+    "event_type",
+    "actor_id",
+    "timestamp",
+    "payload_json",
+    "correlation_id",
+    "causation_id",
+    "idempotency_key",
+)
+RAW_VALUES: dict[str, object] = {
+    "global_position": BASE_VALUES["global_position"],
+    "stream_id": BASE_VALUES["stream_id"],
+    "sequence": BASE_VALUES["sequence"],
+    "event_id": BASE_VALUES["event_id"],
+    "event_type": BASE_VALUES["event_type"],
+    "actor_id": BASE_VALUES["actor_id"],
+    "timestamp": BASE_VALUES["timestamp"],
+    "payload_json": BASE_VALUES["payload_json"],
+    "correlation_id": BASE_VALUES["correlation_id"],
+    "causation_id": BASE_VALUES["causation_id"],
+    "idempotency_key": BASE_VALUES["idempotency_key"],
+}
 
 
 def envelope(**overrides: object) -> codec._StoredEventEnvelopeV1:
     values = {**BASE_VALUES, **overrides}
     return codec._stored_event_envelope_from_values(**values)
+
+
+def raw_row(
+    *,
+    columns: tuple[str, ...] = RAW_COLUMNS,
+    **overrides: object,
+) -> sqlite3.Row:
+    values = {**RAW_VALUES, **overrides}
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        select_list = ", ".join(f"? AS {column}" for column in columns)
+        row = connection.execute(
+            f"SELECT {select_list}",
+            tuple(values[column] for column in columns),
+        ).fetchone()
+        assert type(row) is sqlite3.Row
+        return row
+    finally:
+        connection.close()
 
 
 def test_canonical_body_and_domain_separated_digest_are_exact() -> None:
@@ -206,3 +254,171 @@ def test_factory_rejects_unknown_or_missing_fields_at_python_boundary() -> None:
     del missing["event_id"]
     with pytest.raises(TypeError):
         codec._stored_event_envelope_from_values(**missing)
+
+
+def test_raw_sqlite_row_and_frozen_values_have_one_digest() -> None:
+    from_values = envelope()
+    from_storage = codec._stored_event_envelope_from_raw_row(raw_row())
+
+    assert from_storage is not from_values
+    assert from_storage.to_dict() == from_values.to_dict()
+    assert from_storage.canonical_bytes() == EXPECTED_CANONICAL_BYTES
+    assert from_storage.digest() == EXPECTED_DIGEST
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("global_position", 20),
+        ("stream_id", "session:beta"),
+        ("sequence", 8),
+        ("event_id", "event-result-2"),
+        ("event_type", "task.status.changed"),
+        ("actor_id", "agent:worker-2"),
+        ("timestamp", "2026-08-28T09:10:12.123456Z"),
+        (
+            "payload_json",
+            '{"artifactCount":3,"narration":"完成","nested":{"ok":true}}',
+        ),
+        ("correlation_id", None),
+        ("causation_id", None),
+        ("idempotency_key", None),
+    ),
+)
+def test_every_raw_sqlite_column_is_covered_by_the_digest(
+    field: str,
+    replacement: object,
+) -> None:
+    changed = codec._stored_event_envelope_from_raw_row(
+        raw_row(**{field: replacement})
+    )
+
+    assert changed.digest() != EXPECTED_DIGEST
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    (
+        ("global_position", "19"),
+        ("stream_id", b"session:alpha"),
+        ("sequence", 7.0),
+        ("event_id", b"event-result-1"),
+        ("event_type", 1),
+        ("actor_id", b"agent:worker-1"),
+        ("timestamp", b"2026-08-28T09:10:11.123456Z"),
+        ("payload_json", b"{}"),
+        ("correlation_id", 1),
+        ("causation_id", b"event-start-1"),
+        ("idempotency_key", 1),
+    ),
+)
+def test_raw_row_rejects_wrong_sqlite_storage_classes(
+    field: str,
+    invalid: object,
+) -> None:
+    with pytest.raises(codec.StoredEventEnvelopeTypeError):
+        codec._stored_event_envelope_from_raw_row(raw_row(**{field: invalid}))
+
+
+@pytest.mark.parametrize(
+    "columns",
+    (
+        RAW_COLUMNS[:-1],
+        RAW_COLUMNS + ("future",),
+        tuple(reversed(RAW_COLUMNS)),
+        (RAW_COLUMNS[1], RAW_COLUMNS[0], *RAW_COLUMNS[2:]),
+    ),
+)
+def test_raw_row_requires_the_exact_closed_column_projection(
+    columns: tuple[str, ...],
+) -> None:
+    overrides = {"future": "future-value"}
+    with pytest.raises(codec.StoredEventEnvelopeCanonicalError, match="columns"):
+        codec._stored_event_envelope_from_raw_row(
+            raw_row(columns=columns, **overrides)
+        )
+
+
+@pytest.mark.parametrize("invalid", ({}, tuple(RAW_VALUES.values()), object()))
+def test_raw_row_rejects_adapters_and_lookalikes(invalid: object) -> None:
+    with pytest.raises(codec.StoredEventEnvelopeTypeError, match="exact sqlite3.Row"):
+        codec._stored_event_envelope_from_raw_row(invalid)
+
+
+@pytest.mark.parametrize(
+    "payload_json",
+    (
+        "",
+        "not-json",
+        "[]",
+        "null",
+        "true",
+        "1",
+        '{"a":1,"a":2}',
+        '{"a": 1}',
+        '{ "a":1}',
+        '{"b":2,"a":1}',
+        '{"text":"\\u5b8c\\u6210"}',
+        '{"text":"line\\nfeed"}',
+        '{"value":NaN}',
+        '{"value":Infinity}',
+        '{"value":-Infinity}',
+        '{"value":-0}',
+        '{"value":01}',
+    ),
+)
+def test_noncanonical_or_non_object_payload_storage_is_rejected(payload_json: str) -> None:
+    with pytest.raises(codec.StoredEventEnvelopeError):
+        codec._stored_event_envelope_from_raw_row(raw_row(payload_json=payload_json))
+
+
+def test_payload_text_keys_and_structural_bounds_match_the_store_contract() -> None:
+    invalid_payloads = (
+        '{"%s":true}' % ("k" * 513),
+        '{"value":"%s"}' % ("x" * 65_537),
+        '{"value":%s}' % (1 << 4_096),
+        '{"e\\u0301":true}',
+        '{"value":"e\\u0301"}',
+    )
+    for payload_json in invalid_payloads:
+        with pytest.raises(codec.StoredEventEnvelopeError):
+            codec._stored_event_envelope_from_raw_row(
+                raw_row(payload_json=payload_json)
+            )
+
+
+def test_payload_depth_and_node_bounds_fail_closed() -> None:
+    too_deep: object = "leaf"
+    for _ in range(65):
+        too_deep = {"child": too_deep}
+    deep_json = json.dumps(
+        too_deep,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    wide_json = '{"items":[' + ",".join("null" for _ in range(10_000)) + "]}"
+
+    for payload_json in (deep_json, wide_json):
+        with pytest.raises(codec.StoredEventEnvelopeError):
+            codec._stored_event_envelope_from_raw_row(
+                raw_row(payload_json=payload_json)
+            )
+
+
+def test_valid_canonical_json_edge_values_remain_exact() -> None:
+    payload_json = (
+        '{"emptyKey":{"":true},"emptyString":"","float":1.5,'
+        '"negativeZero":-0.0,"space":"ordinary space"}'
+    )
+    value = codec._stored_event_envelope_from_raw_row(
+        raw_row(payload_json=payload_json)
+    )
+
+    assert value.to_dict()["payload"] == {
+        "emptyKey": {"": True},
+        "emptyString": "",
+        "float": 1.5,
+        "negativeZero": -0.0,
+        "space": "ordinary space",
+    }
