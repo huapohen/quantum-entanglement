@@ -50,6 +50,13 @@ production gate and does not authorize a real connector or external message.
 - Twenty-three frozen native-IM V1 golden vectors, an independent read-only oracle, exhaustive
   event/revision/scope/mention/digest contract matrices and a fresh-process socket/DNS/network
   import/environment-credential gate.
+- Exact native-IM provider profiles, inbound-only config/secret-reference boundaries, raw-body
+  signature/timestamp verification, migration-backed inbox tables, profile-bound durable nonce
+  claims, and checkpoint-bound replayable inbound-read preparation.
+- Atomic native-IM page admission that commits nonce evidence, canonical events, verification and
+  read-event links, prepared-read CAS, cursor/snapshot checkpoint, and independent durable-graph
+  readback in one transaction, with exact replay, ACK-loss poison/reopen reconciliation, tamper
+  detection, conflicting-race rollback, and zero gateway/Agent/network/outbound side effects.
 - Bridge-only domain migration foundation: trusted legacy descriptors, exact sidecar
   install/bootstrap, immutable `SchemaState`, and a digest-bound closed-action planner.
 - Atomic bridge-plan application with locked source-state revalidation, an allowlisted
@@ -173,9 +180,10 @@ production gate and does not authorize a real connector or external message.
 
 ### In progress — not yet a shipped guarantee
 
-- Native IM E2 sandbox inbound-only: no real provider profile, adapter, endpoint, credential,
-  webhook/socket transport or durable IM inbox exists yet. Native IM external outbound remains
-  unimplemented and unauthorized; production Gates A–E remain closed.
+- Native IM E2 sandbox inbound-only: the offline profile/auth/durable atomic inbox now exists, but
+  no default-off provider adapter/lifecycle, real endpoint, credential material, webhook/socket
+  transport or approved sandbox read exists yet. Native IM external outbound remains unimplemented
+  and unauthorized; production Gates A–E remain closed.
 - Reliable outbox publishing with bounded retry, hard callback deadlines, fencing, and
   graceful shutdown.
 - Durable invocation attempt leasing, heartbeat, recovery, and terminal compare-and-set.
