@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	schemaPostconditionDigestDomain = "wanwork.im/postgres-schema-postconditions/1\n"
-	identityAuthoritySchemaDigest   = "9a178617cbb463df31450f4302454ae4eba101dd2d2f8b2567dad7f49088c5d5"
-	conversationSchemaDigest        = "17002b4c0b7a757e23a96418634af02c517aa85a4bae415175ab33e75cff8457"
+	schemaPostconditionDigestDomain   = "wanwork.im/postgres-schema-postconditions/1\n"
+	identityAuthoritySchemaDigest     = "9a178617cbb463df31450f4302454ae4eba101dd2d2f8b2567dad7f49088c5d5"
+	conversationSchemaDigest          = "17002b4c0b7a757e23a96418634af02c517aa85a4bae415175ab33e75cff8457"
+	conversationAuthoritySchemaDigest = "b500175ab19a74fdd1f4cf810906318f9d76e1f1113cad59ec9cd0aa1dde6d34"
 )
 
 var identityAuthorityTableNames = []string{
@@ -35,6 +36,14 @@ var conversationTableNames = []string{
 	"conversation_snapshots",
 	"provider_conversation_binding_heads",
 	"provider_conversation_binding_snapshots",
+}
+
+var conversationAuthorityTableNames = []string{
+	"conversation_access_heads",
+	"conversation_access_snapshots",
+	"conversation_membership_heads",
+	"conversation_membership_snapshots",
+	"tenant_command_receipts",
 }
 
 func tableSchemaDigest(

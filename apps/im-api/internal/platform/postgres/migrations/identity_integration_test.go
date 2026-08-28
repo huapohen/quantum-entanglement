@@ -268,8 +268,8 @@ func applyMigrationsForIdentityTest(t *testing.T, connection *pgx.Conn) {
 	if err != nil {
 		t.Fatalf("Apply identity catalog: %v", err)
 	}
-	if len(state.Applied) != 3 {
-		t.Fatalf("applied migration count = %d, want 3", len(state.Applied))
+	if len(state.Applied) != 4 {
+		t.Fatalf("applied migration count = %d, want 4", len(state.Applied))
 	}
 }
 
