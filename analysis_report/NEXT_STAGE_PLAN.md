@@ -1,9 +1,9 @@
 # 下一阶段详细执行计划：参考项目复评后闭合 Atomic Result Authority
 
-> 计划版本：2026-08-29-stage-pause-v3
+> 计划版本：2026-08-29-stage-pause-v4
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
-> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec 已在 `d889751` 完成，M2 reserved fence 已在 `dd0ba54` 完成，M3 private store adapter 已在 `504824c` 完成，M4 inactive schema / Artifact owner transaction / private backup topology 已在代码节点 `c328641` 完成；下一实现节点是 M5 Atomic Result Acceptance Writer，真实 provider sandbox 未连接。**
+> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec 已在 `d889751` 完成，M2 reserved fence 已在 `dd0ba54` 完成，M3 private store adapter 已在 `504824c` 完成，M4 inactive schema / Artifact owner transaction / private backup topology 已在代码节点 `28b3d6a` 以 0 blocker 完成；下一实现节点是 M5 Atomic Result Acceptance Writer，真实 provider sandbox 未连接。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -426,9 +426,14 @@ schema/backup/artifact 组合证据通过，但默认 bootstrap、产品 UI 和 
 - 所有 Artifact SQL 显式绑定 main schema；clock 前后与最终回读冻结 main 9-object DDL/rootpage/
   schema-version snapshot 并拒绝 TEMP shadow；clock 遗留 callback 被 strict writer callback fence
   接管，依赖意外关闭 transaction 时 store poison；
+- clock 调用前建立带随机 128-bit 后缀的私有 SQLite savepoint，返回、抛错或非法时间路径都必须
+  释放同一 savepoint；`COMMIT`/`ROLLBACK` 后重新 `BEGIN` 不能用“transaction 仍打开”伪装原事务，
+  一律按 continuity ambiguity poison 并进入 reconcile-only；
 - confirmed rollback 与 ambiguous outcome 固定分类；ambiguous control 保留干净控制类型，并以
-  `_ResultArtifactCommitAmbiguityError` 为 cause，同时 poison store；
-- M4 组合 87 tests、全仓 2644 tests、Ruff、Mypy 与 diff-check 通过。完整证据见
+  `_ResultArtifactCommitAmbiguityError` 为 cause，同时 poison store；异常图读取不执行 hostile
+  属性钩子，也不会复活被 `from None` 抑制的历史 control；
+- Result Artifact 专项 55 tests、M4 组合 96 tests、全仓 2652 tests、Ruff、Mypy 与 diff-check
+  通过，最终独立 reviewer 为 0 blocker。完整证据见
   [`research/31_inactive_result_schema_artifact_transaction_evidence.md`](./research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
 这些结果只关闭 M4 私有候选节点，不授权 migration 7 注册、Atomic Result Writer、`ObservedV2`、
