@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 2 || len(second) != 2 {
+	if len(first) != 3 || len(second) != 3 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -73,6 +73,33 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if strings.Contains(strings.ToLower(identity.UpSQL), strings.ToLower(forbidden)) {
 			t.Fatalf("identity migration contains forbidden text %q", forbidden)
+		}
+	}
+
+	conversation := first[2]
+	if conversation.Version != 3 || conversation.Name != "conversation" ||
+		len(conversation.Checksum) != 64 || conversation.Checksum != second[2].Checksum ||
+		conversation.UpSQL != second[2].UpSQL || conversation.DownSQL != second[2].DownSQL {
+		t.Fatalf("unexpected deterministic conversation migration: %#v", conversation)
+	}
+	for _, marker := range []string{
+		`CREATE TABLE wanwork_im.conversation_heads`,
+		`CREATE TABLE wanwork_im.conversation_snapshots`,
+		`CREATE TABLE wanwork_im.provider_conversation_binding_heads`,
+		`DEFERRABLE INITIALLY DEFERRED`,
+		`ENABLE ROW LEVEL SECURITY`,
+		`FORCE ROW LEVEL SECURITY`,
+	} {
+		if !strings.Contains(conversation.UpSQL, marker) {
+			t.Fatalf("conversation migration missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{
+		"agent_thread", "root_message", "credential", "password", "api_key", "secret_value",
+		"endpoint", "IF NOT EXISTS",
+	} {
+		if strings.Contains(strings.ToLower(conversation.UpSQL), strings.ToLower(forbidden)) {
+			t.Fatalf("conversation migration contains forbidden text %q", forbidden)
 		}
 	}
 }

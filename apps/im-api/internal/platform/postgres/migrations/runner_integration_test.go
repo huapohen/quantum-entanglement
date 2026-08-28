@@ -37,15 +37,47 @@ func TestApplyAgainstPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatalf("repeat Apply: %v", err)
 		}
-		if len(first.Applied) != 2 || len(second.Applied) != 2 ||
-			first.Applied[0] != second.Applied[0] || first.Applied[1] != second.Applied[1] {
+		if len(first.Applied) != 3 || len(second.Applied) != 3 ||
+			first.Applied[0] != second.Applied[0] || first.Applied[1] != second.Applied[1] ||
+			first.Applied[2] != second.Applied[2] {
 			t.Fatalf("unexpected migration states: first=%#v second=%#v", first, second)
 		}
 		var rows int
 		if err := connection.QueryRow(ctx, `
 SELECT count(*)
-FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != 2 {
+FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != 3 {
 			t.Fatalf("ledger rows = %d, err = %v", rows, err)
+		}
+	})
+
+	t.Run("conversation schema digest fixture", func(t *testing.T) {
+		connection, _ := newIntegrationDatabase(t, adminURL)
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		catalog, err := Catalog()
+		if err != nil {
+			t.Fatalf("load catalog: %v", err)
+		}
+		transaction, err := connection.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+		if err != nil {
+			t.Fatalf("begin conversation migration: %v", err)
+		}
+		defer func() { _ = transaction.Rollback(context.Background()) }()
+		for _, migration := range catalog[:3] {
+			if _, err := transaction.Exec(
+				ctx,
+				migration.UpSQL,
+				pgx.QueryExecModeSimpleProtocol,
+			); err != nil {
+				t.Fatalf("apply migration %d: %v", migration.Version, err)
+			}
+		}
+		digest, err := tableSchemaDigest(ctx, transaction, conversationTableNames)
+		if err != nil {
+			t.Fatalf("digest conversation schema: %v", err)
+		}
+		if digest != conversationSchemaDigest {
+			t.Fatalf("conversation schema digest = %s, want %s", digest, conversationSchemaDigest)
 		}
 	})
 
@@ -144,7 +176,7 @@ WHERE version = 1`, strings.Repeat("0", 64)); err != nil {
 		}
 		if _, err := connection.Exec(ctx, `
 INSERT INTO wanwork_meta.schema_migrations (version, name, checksum)
-VALUES (3, 'future', $1)`, strings.Repeat("0", 64)); err != nil {
+VALUES (4, 'future', $1)`, strings.Repeat("0", 64)); err != nil {
 			t.Fatalf("insert future row: %v", err)
 		}
 		if _, err := Apply(ctx, connection); !errors.Is(err, ErrFutureSchema) {
@@ -193,7 +225,7 @@ ALTER TABLE wanwork_im.provider_realms
 		},
 		{
 			name:      "missing table",
-			tamperSQL: "DROP TABLE wanwork_im.workspaces",
+			tamperSQL: "DROP TABLE wanwork_im.workspaces CASCADE",
 		},
 	} {
 		t.Run("postcondition drift "+fixture.name, func(t *testing.T) {
@@ -245,7 +277,7 @@ ALTER TABLE wanwork_im.provider_realms
 		close(start)
 		workers.Wait()
 		for index := range connections {
-			if errorsByWorker[index] != nil || len(results[index].Applied) != 2 {
+			if errorsByWorker[index] != nil || len(results[index].Applied) != 3 {
 				t.Fatalf(
 					"migrator %d state=%#v error=%v",
 					index,

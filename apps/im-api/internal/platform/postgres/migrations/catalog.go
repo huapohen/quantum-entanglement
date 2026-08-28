@@ -37,6 +37,7 @@ type migrationSpec struct {
 var migrationSpecs = [...]migrationSpec{
 	{version: 1, name: "authority_roots"},
 	{version: 2, name: "identity_authority"},
+	{version: 3, name: "conversation"},
 }
 
 func Catalog() ([]Migration, error) {

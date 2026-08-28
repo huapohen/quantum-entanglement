@@ -75,9 +75,19 @@ func validateMigrationPostcondition(ctx context.Context, transaction pgx.Tx, ver
 		return validateAuthorityRoots(ctx, transaction)
 	case 2:
 		return validateIdentityAuthority(ctx, transaction)
+	case 3:
+		return validateConversation(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateConversation(ctx context.Context, transaction pgx.Tx) error {
+	digest, err := tableSchemaDigest(ctx, transaction, conversationTableNames)
+	if err != nil || digest != conversationSchemaDigest {
+		return ErrMigrationSchema
+	}
+	return nil
 }
 
 func validateIdentityAuthority(ctx context.Context, transaction pgx.Tx) error {
