@@ -1,9 +1,9 @@
 # 下一阶段详细执行计划：参考项目复评后闭合 Atomic Result Authority
 
-> 计划版本：2026-08-28-stage-pause-v2
+> 计划版本：2026-08-29-stage-pause-v3
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
-> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec 已在 `d889751` 完成，M2 reserved fence 已在 `dd0ba54` 完成，M3 private store adapter 已在 `504824c` 完成；下一实现节点是 M4 inactive schema / Artifact transaction primitives / backup topology；真实 provider sandbox 未连接。**
+> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec 已在 `d889751` 完成，M2 reserved fence 已在 `dd0ba54` 完成，M3 private store adapter 已在 `504824c` 完成，M4 inactive schema / Artifact owner transaction / private backup topology 已在代码节点 `aef5f8b` 完成；下一实现节点是 M5 Atomic Result Acceptance Writer，真实 provider sandbox 未连接。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -358,7 +358,7 @@ M2 已达到本阶段出口，但没有开放 M3 adapter、migration 7、result 
 M3 已达到本阶段出口，但没有 migration 7 schema/registration、Artifact same-transaction primitive、
 result writer、receipt、Observed、Accepted 或 worker。
 
-## 8. Phase 4：Inactive Result Schema、Artifact 事务原语与备份拓扑
+## 8. Phase 4：Inactive Result Schema、Artifact 事务原语与备份拓扑（已完成）
 
 ### 8.1 目标
 
@@ -410,6 +410,26 @@ bootstrap。
 ### Phase 4 出口
 
 schema/backup/artifact 组合证据通过，但默认 bootstrap、产品 UI 和 worker 仍不使用新路径。
+
+### 8.5 2026-08-29 完成证据
+
+- migration 7 只存在于 disabled domain descriptor 和 isolated rehearsal；legacy bootstrap、默认
+  `SQLiteEventStore` 与 active migration registry 仍停在 6；
+- 六张 result 候选表、八个显式索引、31 个 autoindex、down guard 与非空 v6→v7 演练已冻结；
+- 私有 backup profile 固定 45 个对象，但 active backup registry 仍是 11 profiles / 88 objects；
+- exact owner handle 绑定 store、connection、process owner 和 generation，不能 copy、pickle、跨
+  store、跨 owner context 或 fork 复用；
+- ordered Artifact batch 在 owner transaction 内完成 preflight、DML、readback 与 change accounting；
+  写中失败会把 owner 标成 rollback-only；`os._exit` / SIGKILL 不留下 committed prefix；
+- 完整 version history 使用最多 64 行一批的轻量 SQL 预检，所有 TEXT 先验证 storage class 与
+  UTF-8 byte bound，再按 `rowid` 单行读取并重算 canonical metadata、request digest 和 UTC 时间；
+- confirmed rollback 与 ambiguous outcome 固定分类；ambiguous control 保留干净控制类型，并以
+  `_ResultArtifactCommitAmbiguityError` 为 cause，同时 poison store；
+- M4 组合 82 tests、全仓 2639 tests、Ruff、Mypy 与 diff-check 通过。完整证据见
+  [`research/31_inactive_result_schema_artifact_transaction_evidence.md`](./research/31_inactive_result_schema_artifact_transaction_evidence.md)。
+
+这些结果只关闭 M4 私有候选节点，不授权 migration 7 注册、Atomic Result Writer、`ObservedV2`、
+`AcceptedV2`、worker result acceptance 或真实 IM outbound。
 
 ## 9. Phase 5：Atomic Result Acceptance Writer
 
@@ -748,15 +768,15 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | M1 Codec（已完成） | golden/canonical/raw JSON contract 通过 | writer、Accepted |
 | M2 Reserved fence（已完成） | generic bypass 全封 | writer、Accepted |
 | M3 Store adapter（已完成） | snapshot/raw-row 双验通过 | writer public API |
-| M4 Inactive schema | migration/backup/artifact 候选通过 | migration registration |
+| M4 Inactive schema（已完成） | migration/backup/artifact 候选通过 | migration registration |
 | M5 Atomic writer | 完整事务图/fault/concurrency 通过 | Accepted、worker |
 | M6 Recovery | replay/reopen/ACK-loss 只 Observed | Accepted、worker |
 | M7 Accepted | fresh ACK 唯一 mint 点通过 | migration/worker promotion |
 | M8 Integration | 独立 release evidence 通过 | 生产 Gate 仍需分别审批 |
 
-本计划现在是 E3 Result Authority 的当前串行入口。提前接入路线的 E1/E2 离线节点已完成，M1–M3
-均已形成安全停点；下一串行实现节点是 M4 inactive schema、Artifact transaction primitives 与
-backup topology，不跳过 M4 直接开放 writer 或注册 migration 7。
+本计划现在是 E3 Result Authority 的当前串行入口。提前接入路线的 E1/E2 离线节点已完成，M1–M4
+均已形成安全停点；下一串行实现节点是 M5 Atomic Result Acceptance Writer。M5 必须复用 M3 的
+stored-event adapter 与 M4 owner transaction，且仍不得注册 migration 7 或开放 worker。
 若用户新增会改变底层 result/store 方向的参考项目，仍先做 M0 delta review，不从原子 writer
 中途改变合同。
 
@@ -773,12 +793,12 @@ backup topology，不跳过 M4 直接开放 writer 或注册 migration 7。
 - 不自动操作私人语雀；
 - 永远不向飞书、企微、任何人、任何群聊、bot 或 webhook 发送消息。
 
-当前截至 `3a92f3c` 的稳定内容已经完成 Notion 同步；M2、M3 及后续本地增量只进入 Git/GitHub，
+当前截至 `3a92f3c` 的稳定内容已经完成 Notion 同步；M2、M3、M4 及后续本地增量只进入 Git/GitHub，
 不能在最终批量同步前声称已进入 Notion。
 
 ## 19. 启动下一阶段时的第一组命令
 
-继续本最大强度 Result Authority 路线时，从以下只读检查开始；下一步是本文件 Phase 4，真实 IM
+继续本最大强度 Result Authority 路线时，从以下只读检查开始；下一步是本文件 Phase 5，真实 IM
 Level B 仍以 `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 的合同输入为独立门禁：
 
 ```bash
@@ -792,6 +812,5 @@ git ls-remote --heads \
 PYTHONPATH=src python3 -m pytest
 ```
 
-确认 clean baseline 后按 Phase 4 inactive schema / Artifact transaction primitives / backup topology
-开始；没有用户新的继续指令，不进入真实 sandbox 网络，不注册 migration 7，不开放任何 writer、
-Accepted 或 worker。
+确认 clean baseline 后按 Phase 5 Atomic Result Acceptance Writer 开始；没有用户新的继续指令，
+不进入真实 sandbox 网络，不注册 migration 7，不开放任何 public writer、Accepted 或 worker。
