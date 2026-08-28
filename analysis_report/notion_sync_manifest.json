@@ -1698,8 +1698,8 @@
     "syncedAt": "2026-08-28T10:18:57Z",
     "semanticBaselineCommit": "b755356e8589ff24d4329bb7a4aefb626d0bb561",
     "semanticBaselineTree": "de1f83e5aa4054032ccb32740dca685e527b5436",
-    "syncLedgerCommit": "1de3bb85709a327298affabe803f03b11e4045d6",
-    "syncLedgerTree": "f7ec29722a394e8140a61794585c063227c69490",
+    "syncLedgerCommit": "3dd5d0a4faf2b671b9f52d5b6587677ad555b34c",
+    "syncLedgerTree": "b5f7c392df9b180a449961de6cf558fd06927190",
     "reviewedNativeImCommit": "c623aeadc0693e63c0d34602ed45ae1d2bc8099f",
     "reviewedNativeImTree": "7319fa96c2544fe9bce3e2160a77e77eec403092",
     "branch": "mainline_continue_quantum_entanglement",
@@ -1707,7 +1707,7 @@
       "pageId": "3c9ead4b-996e-8108-aea6-c97c694d6587",
       "url": "https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204",
       "title": "Quantum Entanglement｜mainline_continue 独立审阅空间",
-      "contentLength": 13130,
+      "contentLength": 13119,
       "expectedMarkers": ["b755356", "c623aea", "3caead4b996e817aab3ae63a29ecfb5c"],
       "missingMarkers": [],
       "remoteReadbackVerified": true,
@@ -1762,9 +1762,9 @@
         "key": "native-im-report-index",
         "pageId": "3c9ead4b-996e-81d3-9fb6-d5cf6d364fe0",
         "sourcePath": "analysis_report/README.md",
-        "sourceSha256": "ad49dd00c3d501d844ae62b0f21a8b5f258a77a333bc567cfc19d37ccd13505c",
-        "contentLength": 15323,
-        "expectedMarkers": ["1de3bb8", "c623aea", "41 个内容 marker", "本地原始 Markdown"],
+        "sourceSha256": "65581a771283b9e7211e84c43c34b55bad3a80ac0f32a6505c95258fa526ea24",
+        "contentLength": 15358,
+        "expectedMarkers": ["3dd5d0a", "c623aea", "49 个内容 marker", "本地原始 Markdown"],
         "missingMarkers": [],
         "remoteReadbackVerified": true
       }
@@ -1792,10 +1792,32 @@
         "remoteReadbackVerified": true
       }
     ],
+    "branchCatalogPages": [
+      {
+        "key": "native-im-branch-catalog",
+        "pageId": "3c9ead4b-996e-81c8-9d1f-ed42248fc74a",
+        "sourcePath": "BRANCH_CATALOG.md",
+        "sourceSha256": "eba3910556ca50642605bcf6a49f488f63ec9245b7f88a8ab79309c14c264340",
+        "contentLength": 19982,
+        "expectedMarkers": ["a20745d", "f5dbc46", "eba3910556ca50642605bcf6a49f488f63ec9245b7f88a8ab79309c14c264340", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "global-branch-catalog",
+        "pageId": "3c9ead4b-996e-81bc-8053-cf1e844dccdb",
+        "sourcePath": "BRANCH_CATALOG.md",
+        "sourceSha256": "eba3910556ca50642605bcf6a49f488f63ec9245b7f88a8ab79309c14c264340",
+        "contentLength": 19995,
+        "expectedMarkers": ["a20745d", "f5dbc46", "eba3910556ca50642605bcf6a49f488f63ec9245b7f88a8ab79309c14c264340", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      }
+    ],
     "projectHome": {
       "pageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
       "url": "https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204",
-      "contentLength": 16476,
+      "contentLength": 16454,
       "expectedMarkers": ["c623aea", "b755356", "3caead4b996e817aab3ae63a29ecfb5c"],
       "missingMarkers": [],
       "remoteReadbackVerified": true,
@@ -1806,13 +1828,13 @@
     },
     "remoteReadback": {
       "verified": true,
-      "pagesReadbackVerified": 9,
+      "pagesReadbackVerified": 11,
       "stageReviewPageCount": 17,
       "baseMirrorPageCount": 33,
       "totalProjectMirrorPageCount": 50,
       "newPagesCreated": 1,
-      "existingPagesUpdated": 8,
-      "markerChecks": 41,
+      "existingPagesUpdated": 10,
+      "markerChecks": 49,
       "structureChecks": 3,
       "missingMarkers": [],
       "readbackFailures": 0
@@ -1831,7 +1853,7 @@
     "auxiliaryDerivedPageCount": 1,
     "existingPagesUpdated": 14,
     "newPagesCreated": 1,
-    "readbackVerified": 9,
+    "readbackVerified": 11,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 27,
     "screenshotImagesAddedThisSync": 17,
@@ -1843,9 +1865,9 @@
       "baseMirrorPageCount": 33,
       "totalProjectMirrorPageCount": 50,
       "newPagesCreated": 1,
-      "existingPagesUpdated": 8,
-      "pagesReadbackVerified": 9,
-      "markerChecks": 41,
+      "existingPagesUpdated": 10,
+      "pagesReadbackVerified": 11,
+      "markerChecks": 49,
       "structureChecks": 3,
       "readbackFailures": 0
     }
