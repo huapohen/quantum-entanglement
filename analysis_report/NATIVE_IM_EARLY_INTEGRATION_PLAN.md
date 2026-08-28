@@ -160,7 +160,8 @@ credential material、webhook 或 external IM send。下一硬门禁是真实 pr
 HTTP composition 仍只有 loopback liveness/ping，auth/IM 强制 fake，尚无 authenticated event read、
 provider readiness、cursor/snapshot 或 endpoint/credential composition。因此本阶段不是被网络波动
 阻塞，而是等待真实 wire contract 与批准输入；不能用 `/health/live` 或内部 PostgreSQL repository
-伪造真实 provider bundle。
+伪造真实 provider bundle。封板前对已推送 `a18acd6` 的漂移复核仍只有 liveness/ping；其新增
+function-only access/role/checkpoint 提交没有改变本判断。
 
 ### 5.1 IM 后端必须提供的输入
 

@@ -89,6 +89,8 @@ auth/IM 固定 fake，未注册 authenticated event read、provider readiness、
 credential composition。`/health/live` 不能升级为 provider health evidence，内部 repository 也不能
 作为跨 bounded-context transport。逐项证据、最小 readiness/read 合同和第一轮 Level B 顺序见
 [`27_native_im_backend_contract_audit.md`](../../analysis_report/research/27_native_im_backend_contract_audit.md)。
+封板前对已推送 `a18acd6` 的同口径漂移复核仍只发现 liveness/ping；新增 PostgreSQL function-only
+access/role/checkpoint 提交没有注册 readiness/read/cursor/snapshot，当前门禁不变。
 
 这仍没有打开真实 IM：仓库没有 production HTTP/WebSocket/socket exchange、真实 credential
 material、webhook 或 external IM send。下一硬门禁是真实 provider contract、测试

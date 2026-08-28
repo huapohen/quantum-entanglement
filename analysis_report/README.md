@@ -58,7 +58,8 @@ TCK、稳定 event-source 与 transient exchange evidence 分离、增强 proven
 又在 `ee0666f` 完成。下一硬门禁是真实 IM 后端合同、测试 scope/read-only secret reference 与
 production exchange；完成前不连接真实 sandbox。对独立 IM 后端已提交 `c623aea` 的源码复核确认：
 当前公开 composition 只有 loopback liveness/ping，auth/IM 固定 fake，尚无 authenticated event read、
-cursor/snapshot 或 provider readiness；完整证据和最小交接合同见
+cursor/snapshot 或 provider readiness；封板前又对已推送 `a18acd6` 做了同口径漂移复核，新增提交
+仍未注册这些合同。完整证据和最小交接合同见
 `research/27_native_im_backend_contract_audit.md`。
 `NEXT_STAGE_PLAN.md` 继续作为 E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前的
 串行总清单。

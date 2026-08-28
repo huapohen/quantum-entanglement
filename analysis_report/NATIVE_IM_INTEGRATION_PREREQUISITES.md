@@ -59,6 +59,8 @@
 > liveness 或内部 PostgreSQL repository 冒充真实 provider 合同；Level B 的三类直接阻断保持不变。
 > 证据与最小 readiness/read 交接合同见
 > [`research/27_native_im_backend_contract_audit.md`](./research/27_native_im_backend_contract_audit.md)。
+> 封板前对该分支已推送 `a18acd6` 的同口径漂移复核仍只发现 liveness/ping；新增 PostgreSQL
+> function-only access/role/checkpoint 提交没有补出 readiness/read/cursor/snapshot 路由，NO-GO 不变。
 
 ## 1. 最终决策
 
