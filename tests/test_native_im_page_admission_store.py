@@ -238,6 +238,40 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             before,
         )
 
+    def test_empty_terminal_page_advances_checkpoint_without_event_rows(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(
+            request=request,
+            capability=snapshot,
+            envelopes=(),
+        )
+        verification = raw_verification()
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+
+        fresh = self._admit(request, snapshot, page, verification)
+
+        self.assertEqual(fresh.disposition, "fresh_observation")
+        self.assertEqual(fresh.event_receipts, ())
+        self.assertEqual(fresh.checkpoint.checkpoint_revision, 1)
+        self.assertIsNone(fresh.checkpoint.after_cursor)
+        self.assertIsNone(fresh.checkpoint.after_sequence)
+        self.assertIsNone(fresh.checkpoint.continuation_snapshot_token)
+        self.assertEqual(self._rows("native_im_inbox_events"), ())
+        self.assertEqual(self._rows("native_im_inbox_verifications"), ())
+        self.assertEqual(self._rows("native_im_inbound_read_events"), ())
+        self.assertEqual(len(self._rows("native_im_auth_nonces")), 1)
+        self.assertEqual(len(self._rows("native_im_inbound_checkpoints")), 1)
+
+        self.clock.value = True
+        self.clock.calls = 0
+        replay = self._admit(request, snapshot, page, verification)
+        self.assertEqual(replay.disposition, "observed_replay")
+        self.assertEqual(replay.checkpoint, fresh.checkpoint)
+        self.assertEqual(replay.event_receipts, ())
+        self.assertEqual(self.clock.calls, 0)
+
     def test_body_sqlite_failure_rolls_back_nonce_page_events_read_and_checkpoint(self) -> None:
         request = inbound_read_request()
         snapshot = capability()
@@ -490,6 +524,69 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         self.assertEqual(len(self._rows("native_im_inbox_events")), 1)
         self.assertEqual(len(self._rows("native_im_inbound_checkpoints")), 1)
 
+    def test_two_connections_racing_different_pages_roll_back_loser_nonce(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        first_page = inbound_page(request=request, capability=snapshot)
+        first_verification = raw_verification()
+        second_evidence_digest = "a" * 64
+        second_envelope = verified_envelope(
+            authentication_evidence_digest=second_evidence_digest,
+        )
+        second_page = inbound_page(
+            request=request,
+            capability=snapshot,
+            envelopes=(second_envelope,),
+            snapshot_token="different-response-snapshot",
+        )
+        second_verification = raw_verification(
+            nonce_digest="f" * 64,
+            body_digest="a" * 64,
+            authentication_evidence_digest=second_evidence_digest,
+        )
+        candidates = (
+            ("first", first_page, first_verification),
+            ("second", second_page, second_verification),
+        )
+        self.store.prepare_native_im_inbound_read(request)
+        second_store = self._open()
+        self.clock.value = ADMITTED_AT
+        barrier = threading.Barrier(2)
+
+        def admit(candidate, store):
+            label, page, verification = candidate
+            barrier.wait()
+            try:
+                result = self._admit(request, snapshot, page, verification, store)
+            except BaseException as error:
+                return label, type(error), None
+            return label, type(result), result.disposition
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = tuple(
+                    executor.submit(admit, candidate, store)
+                    for candidate, store in zip(candidates, (self.store, second_store), strict=True)
+                )
+                outcomes = tuple(future.result(timeout=10) for future in futures)
+        finally:
+            second_store.close()
+
+        accepted = tuple(outcome for outcome in outcomes if outcome[2] == "fresh_observation")
+        rejected = tuple(outcome for outcome in outcomes if outcome[2] is None)
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(len(rejected), 1)
+        self.assertIs(accepted[0][1], NativeIMInboundPageAdmissionResultV1)
+        self.assertIs(rejected[0][1], NativeIMInboundConflictError)
+        winning_label = accepted[0][0]
+        expected_nonce = first_verification.nonce_digest if winning_label == "first" else "f" * 64
+        nonce_rows = self._rows("native_im_auth_nonces")
+        self.assertEqual(len(nonce_rows), 1)
+        self.assertEqual(nonce_rows[0]["nonce_digest"], expected_nonce)
+        read = self._rows("native_im_inbound_reads")[0]
+        winning_page = first_page if winning_label == "first" else second_page
+        self.assertEqual(read["page_digest"], winning_page.canonical_digest())
+
     def test_historical_exact_replay_remains_valid_after_checkpoint_advances(self) -> None:
         first_request = inbound_read_request()
         snapshot = capability()
@@ -535,6 +632,24 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             second_verification,
         )
         self.assertEqual(second.checkpoint.checkpoint_revision, 2)
+        self.assertEqual(second.checkpoint.after_cursor, second_page.next_cursor)
+        self.assertEqual(second.checkpoint.after_sequence, second_page.next_sequence)
+        self.assertIsNone(second.checkpoint.continuation_snapshot_token)
+        checkpoint_row = self._rows("native_im_inbound_checkpoints")[0]
+        self.assertEqual(checkpoint_row["checkpoint_revision"], 2)
+        self.assertEqual(checkpoint_row["after_cursor"], second_page.next_cursor)
+        self.assertEqual(checkpoint_row["after_sequence"], second_page.next_sequence)
+        self.assertIsNone(checkpoint_row["continuation_snapshot_token"])
+        self.assertEqual(
+            checkpoint_row["last_read_request_digest"],
+            second_request.canonical_digest(),
+        )
+        self.assertEqual(checkpoint_row["last_page_digest"], second_page.canonical_digest())
+        admitted_reads = self._rows("native_im_inbound_reads")
+        self.assertEqual(
+            tuple(row["admitted_checkpoint_revision"] for row in admitted_reads),
+            (1, 2),
+        )
 
         self.clock.value = True
         self.clock.calls = 0
