@@ -1,9 +1,9 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-28T00:02:17Z",
+  "syncedAt": "2026-08-28T03:26:13Z",
   "syncPolicy": {
-    "localSourceOfTruth": "GitHub private main + local repository",
+    "localSourceOfTruth": "GitHub private review branch + local linked worktree",
     "remoteRepresentation": "semantic-mirror",
     "notionTransformations": [
       "remove-duplicate-document-h1",
@@ -21,9 +21,9 @@
     }
   },
   "sourceControl": {
-    "notionContentBaselineCommit": "35725e334a71bd4e52979526f04e0e8571acd45d",
-    "manifestPreparedFromCommit": "35725e334a71bd4e52979526f04e0e8571acd45d",
-    "manifestPreparedFromTree": "a10845256f38ce233d302f9943282a7d0f71a942"
+    "notionContentBaselineCommit": "d011fe8ea74eddda70575c65feb4019fa2c235b5",
+    "manifestPreparedFromCommit": "d011fe8ea74eddda70575c65feb4019fa2c235b5",
+    "manifestPreparedFromTree": "55f50d2d2f4497be2503ac0fc833ce5267dfddeb"
   },
   "pages": [
     {
@@ -33,20 +33,18 @@
       "localFiles": [
         {
           "path": "analysis_report/README.md",
-          "sha256": "cb48eb887cbc5f6ff9c506e6438f34bc055cf8b6de7cb1b541febc2dced2decb"
+          "sha256": "88e7d918f8f7cadc647bed756946132120daf33c65b3b1542af3bc21d1de00ed"
         }
       ],
       "updateMode": "targeted-preserve-child-pages-and-database",
       "remoteReadback": {
         "verified": true,
         "title": "🪢 Quantum Entanglement｜人 + 多 Agent 协同办公",
-        "contentLength": 9038,
+        "contentLength": 13947,
         "expectedMarkers": [
-          "任何本地文档、代码、决策、计划或验收动作",
-          "f99f176bfa9cd14abf7e3c51d971b9682dc49230",
-          "当前项目镜像共 **33 页**",
-          "提前接入原生 IM｜状态、备份与恢复检查点",
-          "原生 IM 提前接入｜E0–E5 执行计划"
+          "2bdaea1adddcfb3033b4678766f635d7afc242fc",
+          "3caead4b996e8165b1dfd85a6d16e6d5",
+          "2,114/2,114"
         ],
         "missingMarkers": []
       }
@@ -614,20 +612,18 @@
       "localFiles": [
         {
           "path": "analysis_report/NEXT_STAGE_PLAN.md",
-          "sha256": "2f1d00b8f032ce0fd0d542dfb27ce421538f267dcc3d9e5fc2b0e3c62ec0117b"
+          "sha256": "a1c1a6408a2893527c62a27db8f06d1506b051f9d57c912d2ca16b8f70508242"
         }
       ],
-      "updateMode": "targeted-update-native-im-scheduling-note",
+      "updateMode": "updated-full-semantic-mirror-with-exact-markdown-attachment",
       "remoteReadback": {
         "verified": true,
-        "title": "🗓️ 下一阶段计划｜参考复评到 Atomic Result Writer",
-        "contentLength": 24066,
+        "title": "🗓️ 下一阶段计划｜Provider Contract → E3 Result Authority",
+        "contentLength": 25115,
         "expectedMarkers": [
-          "原生 IM 调度说明（2026-08-28 修订）",
-          "0005_native_im_inbox",
-          "0006_atomic_invocation_results",
-          "0007_native_im_actions",
-          "f99f176bfa9cd14abf7e3c51d971b9682dc49230"
+          "2bdaea1",
+          "下一硬门禁",
+          "本地原始 Markdown"
         ],
         "missingMarkers": []
       }
@@ -639,25 +635,18 @@
       "localFiles": [
         {
           "path": "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
-          "sha256": "5ac48ca3ac205bfe29cb7d0f4708c85e1d8eb3c908162f83f261c8b2cfa7c529"
+          "sha256": "583abd6ecf5c469bdd537fe3b1800b1edcff48ebae5ede39b84fd6306469faa8"
         }
       ],
       "updateMode": "created-full-semantic-mirror-with-exact-markdown-attachment",
       "remoteReadback": {
         "verified": true,
         "title": "📡 原生 IM 接入前必做｜P0–P3 与接入后 TODO",
-        "contentLength": 16015,
+        "contentLength": 18422,
         "expectedMarkers": [
-          "NATIVE_IM_INTEGRATION_PREREQUISITES.md",
-          "本地原始 Markdown",
-          "IM-P0 CONTRACT_READY",
-          "IM-P3 SANDBOX_READY",
-          "Action Command/Receipt",
-          "SERVICE_BOUNDARY.md",
-          "## 11. 决策摘要",
-          "提前接入调度修订（2026-08-28）",
-          "Level B：SANDBOX_INBOUND",
-          "f99f176bfa9cd14abf7e3c51d971b9682dc49230"
+          "2bdaea1",
+          "research/25_native_im_e2_adapter_lifecycle_offline_evidence.md",
+          "保留的合同子页"
         ],
         "missingMarkers": []
       }
@@ -739,20 +728,17 @@
       "localFiles": [
         {
           "path": "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md",
-          "sha256": "aab3a2390ed3dd53fcb87a7f88032cb3740f250fe863afd4b58def36bd1e2f66"
+          "sha256": "3a88bc3849eadfc797e047c5e9cb05821bfa501c2b2ce121984a87a435cb2bb8"
         }
       ],
       "updateMode": "created-full-semantic-mirror-with-exact-markdown-attachment",
       "remoteReadback": {
         "verified": true,
         "title": "🚀 原生 IM 提前接入｜E0–E5 执行计划",
-        "contentLength": 13019,
+        "contentLength": 16670,
         "expectedMarkers": [
-          "f99f176bfa9cd14abf7e3c51d971b9682dc49230",
-          "NATIVE_IM_EARLY_INTEGRATION_PLAN.md",
-          "0005_native_im_inbox",
-          "0006_atomic_invocation_results",
-          "0007_native_im_actions",
+          "2bdaea1",
+          "SERVICE_BOUNDARY.md",
           "本地原始 Markdown"
         ],
         "missingMarkers": []
@@ -1278,27 +1264,218 @@
       "secretsRecorded": false
     }
   },
+  "stageReviewSyncV4": {
+    "stage": "native-im-e2-adapter-lifecycle-offline",
+    "syncedAt": "2026-08-28T03:26:13Z",
+    "semanticBaselineCommit": "c09b5fa1052b04e94a0067b7f4577d305ef8eb47",
+    "indexCommit": "d011fe8ea74eddda70575c65feb4019fa2c235b5",
+    "sourceCandidateCommit": "2bdaea1adddcfb3033b4678766f635d7afc242fc",
+    "sourceCandidateTree": "42e6bedf04a1ed971ee269676730b94882112d59",
+    "branch": "mainline_continue_quantum_entanglement",
+    "parent": {
+      "pageId": "3c9ead4b-996e-8108-aea6-c97c694d6587",
+      "url": "https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204",
+      "title": "Quantum Entanglement｜mainline_continue 独立审阅空间",
+      "expectedMarkers": [
+        "2bdaea1adddcfb3033b4678766f635d7afc242fc",
+        "下一硬门禁是 provider-specific 合同",
+        "default-off adapter/lifecycle 已完成"
+      ],
+      "missingMarkers": [],
+      "remoteReadbackVerified": true,
+      "childPageCount": 14,
+      "uniqueChildPageCount": 14,
+      "pageTagCountIncludingSelf": 15
+    },
+    "evidencePage": {
+      "key": "native-im-e2-adapter-lifecycle-offline",
+      "pageId": "3caead4b-996e-8165-b1df-d85a6d16e6d5",
+      "url": "https://app.notion.com/p/3caead4b996e8165b1dfd85a6d16e6d5?pvs=204",
+      "sourcePath": "analysis_report/research/25_native_im_e2_adapter_lifecycle_offline_evidence.md",
+      "sourceSha256": "3b2242cc7a36455439d187fe0d309ac2dda9d53cc67400c6d499bb277574840f",
+      "updateMode": "created-full-semantic-mirror-with-exact-markdown-attachment",
+      "contentLength": 12485,
+      "expectedMarkers": [
+        "2bdaea1adddcfb3033b4678766f635d7afc242fc",
+        "2,114",
+        "本地原始 Markdown"
+      ],
+      "missingMarkers": [],
+      "remoteReadbackVerified": true
+    },
+    "independentPagesUpdated": [
+      {
+        "key": "native-im-e2-workstream",
+        "pageId": "3c9ead4b-996e-815a-b745-ebbd7e4346c5",
+        "sourcePath": "analysis_report/MAINLINE_CONTINUE_WORKSTREAM.md",
+        "sourceSha256": "9f70aae2ccb29341cd73350f436afc6d7a7822c9d0f236f68192def8083e44cf",
+        "contentLength": 3054,
+        "expectedMarkers": ["2bdaea1", "provider contract/approval/transport", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-e2-contract-boundary",
+        "pageId": "3c9ead4b-996e-81a3-a5b0-e415cfdc616d",
+        "sourcePath": "docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md",
+        "sourceSha256": "8b21a6e9bc48b9f8cfba645e512522cb836282836ec8a179f80cd6a4a4c780c7",
+        "contentLength": 14844,
+        "expectedMarkers": ["2bdaea1", "25_native_im_e2_adapter_lifecycle_offline_evidence.md", "provider-specific approved transport"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-early-integration-plan",
+        "pageId": "3c9ead4b-996e-8187-a258-e7d162618a2e",
+        "sourcePath": "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md",
+        "sourceSha256": "3a88bc3849eadfc797e047c5e9cb05821bfa501c2b2ce121984a87a435cb2bb8",
+        "contentLength": 16671,
+        "expectedMarkers": ["2bdaea1", "SERVICE_BOUNDARY.md", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-prerequisites",
+        "pageId": "3c9ead4b-996e-81b3-83f4-cafebeb9d008",
+        "sourcePath": "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
+        "sourceSha256": "583abd6ecf5c469bdd537fe3b1800b1edcff48ebae5ede39b84fd6306469faa8",
+        "contentLength": 18296,
+        "expectedMarkers": ["2bdaea1", "research/25_native_im_e2_adapter_lifecycle_offline_evidence.md", "provider transport"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-next-stage-plan",
+        "pageId": "3c9ead4b-996e-81f5-9af7-d5f75bc41a7b",
+        "sourcePath": "analysis_report/NEXT_STAGE_PLAN.md",
+        "sourceSha256": "a1c1a6408a2893527c62a27db8f06d1506b051f9d57c912d2ca16b8f70508242",
+        "contentLength": 25081,
+        "expectedMarkers": ["2bdaea1", "下一硬门禁", "SERVICE_BOUNDARY.md"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-readiness",
+        "pageId": "3c9ead4b-996e-819b-bb02-f206122941c2",
+        "sourcePath": "docs/production/CURRENT_READINESS.md",
+        "sourceSha256": "693f7cefc6b2e13e6cdb797b0fe49d5e5768f5d12445eb2a1918edcb493d16ad",
+        "contentLength": 22380,
+        "expectedMarkers": ["2bdaea1", "2,114", "25_native_im_e2_adapter_lifecycle_offline_evidence.md"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-report-index",
+        "pageId": "3c9ead4b-996e-81d3-9fb6-d5cf6d364fe0",
+        "sourcePath": "analysis_report/README.md",
+        "sourceSha256": "88e7d918f8f7cadc647bed756946132120daf33c65b3b1542af3bc21d1de00ed",
+        "contentLength": 14086,
+        "expectedMarkers": ["d011fe8ea74eddda70575c65feb4019fa2c235b5", "48 个私人 Notion 页面", "research/25_native_im_e2_adapter_lifecycle_offline_evidence.md"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-changelog",
+        "pageId": "3c9ead4b-996e-81d0-9c85-fa64b2beb563",
+        "sourcePath": "CHANGELOG.md",
+        "sourceSha256": "ae38687763a8376fea4f5f92b25bb9949a4bba2522d38b54edfa3f7613a15a32",
+        "contentLength": 16393,
+        "expectedMarkers": ["Default-off native-IM sandbox composition", "process-bound, non-serializable native-IM lifecycle", "provider-specific approved"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      }
+    ],
+    "globalPagesUpdated": [
+      {
+        "key": "global-next-stage-plan",
+        "pageId": "3c9ead4b-996e-8133-91b7-e322936a1f13",
+        "sourcePath": "analysis_report/NEXT_STAGE_PLAN.md",
+        "sourceSha256": "a1c1a6408a2893527c62a27db8f06d1506b051f9d57c912d2ca16b8f70508242",
+        "contentLength": 25115,
+        "expectedMarkers": ["2bdaea1", "下一硬门禁", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "global-native-im-prerequisites",
+        "pageId": "3c9ead4b-996e-8163-8c43-e48ecc2e0bcc",
+        "sourcePath": "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
+        "sourceSha256": "583abd6ecf5c469bdd537fe3b1800b1edcff48ebae5ede39b84fd6306469faa8",
+        "contentLength": 18422,
+        "expectedMarkers": ["2bdaea1", "research/25_native_im_e2_adapter_lifecycle_offline_evidence.md", "保留的合同子页"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true,
+        "preservedChildPageId": "3c9ead4b-996e-8114-985c-ce2cc5af2b63"
+      },
+      {
+        "key": "global-native-im-early-integration-plan",
+        "pageId": "3c9ead4b-996e-818f-b220-c66126181863",
+        "sourcePath": "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md",
+        "sourceSha256": "3a88bc3849eadfc797e047c5e9cb05821bfa501c2b2ce121984a87a435cb2bb8",
+        "contentLength": 16670,
+        "expectedMarkers": ["2bdaea1", "SERVICE_BOUNDARY.md", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      }
+    ],
+    "projectHome": {
+      "pageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
+      "url": "https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204",
+      "contentLength": 13947,
+      "expectedMarkers": [
+        "2bdaea1adddcfb3033b4678766f635d7afc242fc",
+        "3caead4b996e8165b1dfd85a6d16e6d5",
+        "2,114/2,114"
+      ],
+      "missingMarkers": [],
+      "remoteReadbackVerified": true,
+      "originalChildPageCountPreserved": 32,
+      "uniqueChildPageCount": 32,
+      "originalDatabaseCountPreserved": 1,
+      "evidenceMentionPageId": "3caead4b-996e-8165-b1df-d85a6d16e6d5"
+    },
+    "remoteReadback": {
+      "verified": true,
+      "pagesReadbackVerified": 14,
+      "stageReviewPageCount": 15,
+      "baseMirrorPageCount": 33,
+      "totalProjectMirrorPageCount": 48,
+      "newPagesCreated": 1,
+      "existingPagesUpdated": 13,
+      "markerChecks": 42,
+      "structureChecks": 3,
+      "missingMarkers": [],
+      "readbackFailures": 0
+    },
+    "safety": {
+      "yuque": "not-touched",
+      "feishuAndWeCom": "no-send-reply-comment-mention-upload-or-webhook",
+      "realNativeIm": "no-provider-endpoint-credential-webhook-socket-read-or-send",
+      "agentToolOutbound": "level-b-observation-only-not-enabled",
+      "secretsRecorded": false
+    }
+  },
   "verificationSummary": {
     "pageCount": 33,
     "controlledSourcePageCount": 32,
     "auxiliaryDerivedPageCount": 1,
-    "existingPagesUpdated": 15,
+    "existingPagesUpdated": 13,
     "newPagesCreated": 1,
-    "readbackVerified": 16,
+    "readbackVerified": 14,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 27,
     "screenshotImagesAddedThisSync": 17,
     "temporarySignedImageUrlsRecorded": false,
     "secretsRecorded": false,
     "latestIncrementalSync": {
-      "stage": "native-im-e2-atomic-page-admission",
-      "stageReviewPageCount": 14,
+      "stage": "native-im-e2-adapter-lifecycle-offline",
+      "stageReviewPageCount": 15,
       "baseMirrorPageCount": 33,
-      "totalProjectMirrorPageCount": 47,
+      "totalProjectMirrorPageCount": 48,
       "newPagesCreated": 1,
-      "existingPagesUpdated": 15,
-      "pagesReadbackVerified": 16,
-      "markerChecks": 48,
+      "existingPagesUpdated": 13,
+      "pagesReadbackVerified": 14,
+      "markerChecks": 42,
       "structureChecks": 3,
       "readbackFailures": 0
     }
