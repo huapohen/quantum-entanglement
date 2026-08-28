@@ -191,6 +191,18 @@ _EVENT_STORE_ADMISSION_CONTROL_TOKEN = object()
 _EVENT_STORE_START_CONTROL_TOKEN = object()
 _EVENT_STORE_CHILD_GRAPH_QUARANTINE: List[object] = []
 _INVOCATION_ADMISSION_RECEIPT_FORMAT = "qe.invocation-admission-receipt/1"
+_RESERVED_RESULT_EVENT_TYPE = "task.invocation.result.accepted"
+_RESERVED_RESULT_TERMINAL_EVENT_TYPE = "task.status.changed"
+_RESERVED_RESULT_TERMINAL_KEY_TOKENS = frozenset(
+    (
+        "transitionkind",
+        "resultreceiptid",
+        "resulteventid",
+        "resultevidencedigest",
+        "runningtaskrevision",
+        "terminaltaskrevision",
+    )
+)
 
 
 class _EventStoreProcessMismatchSignal(BaseException):
@@ -1634,7 +1646,26 @@ class SQLiteEventStore:
             causation_id=causation_id,
             idempotency_key=idempotency_key,
         )
+        self._reject_generic_reserved_result_event(snapshot_event)
         return _EventWriteSnapshot(snapshot_event, payload.encoded)
+
+    @staticmethod
+    def _reject_generic_reserved_result_event(event: DomainEvent) -> None:
+        """Keep result authority vocabulary out of every generic append path."""
+
+        if event.event_type == _RESERVED_RESULT_EVENT_TYPE:
+            raise ValueError("generic event append cannot write reserved result authority")
+        if event.event_type != _RESERVED_RESULT_TERMINAL_EVENT_TYPE:
+            return
+        for key in event.payload:
+            normalized = unicodedata.normalize("NFKC", key).casefold()
+            token = "".join(
+                character
+                for character in normalized
+                if "a" <= character <= "z" or "0" <= character <= "9"
+            )
+            if token in _RESERVED_RESULT_TERMINAL_KEY_TOKENS:
+                raise ValueError("generic event append cannot write reserved result authority")
 
     @staticmethod
     def _snapshot_invocation_job_spec(spec: InvocationJobSpec) -> InvocationJobSpec:
