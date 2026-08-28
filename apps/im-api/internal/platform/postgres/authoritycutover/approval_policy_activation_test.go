@@ -635,3 +635,49 @@ func TestApprovalPolicyActivationRecordCanonicalDigestRejectsMutation(t *testing
 		t.Fatal("zero activation representation contains secret material")
 	}
 }
+
+func TestDecodeApprovalPolicyActivationRecordRequiresExactCanonicalEncoding(t *testing.T) {
+	fixture := newApprovalPolicyFixture(t)
+	store, _ := activatedGenesisFixture(t, fixture)
+	record := store.mustOnlyState(t).Record
+	canonical, err := marshalApprovalPolicyActivationRecordCanonical(record)
+	if err != nil {
+		t.Fatalf("marshal record: %v", err)
+	}
+	decoded, err := decodeApprovalPolicyActivationRecord(canonical)
+	if err != nil || !reflect.DeepEqual(decoded, record) {
+		t.Fatalf("decode canonical record = (%+v, %v)", decoded, err)
+	}
+
+	unknown := bytes.Replace(canonical, []byte(`{"activatedAt"`), []byte(`{"unknown":false,"activatedAt"`), 1)
+	duplicate := bytes.Replace(canonical, []byte(`{"activatedAt"`), []byte(`{"activatedAt":"2026-08-29T00:00:00Z","activatedAt"`), 1)
+	reordered := bytes.Replace(
+		canonical,
+		[]byte(`{"activatedAt":"`),
+		[]byte(`{"activationRecordDigest":"`+record.ActivationRecordDigest+`","activatedAt":"`),
+		1,
+	)
+	reordered = bytes.Replace(
+		reordered,
+		[]byte(`,"activationRecordDigest":"`+record.ActivationRecordDigest+`"`),
+		nil,
+		1,
+	)
+	for name, raw := range map[string][]byte{
+		"empty":                   nil,
+		"trailing newline":        append(slices.Clone(canonical), '\n'),
+		"unknown field":           unknown,
+		"duplicate field":         duplicate,
+		"non canonical key order": reordered,
+		"invalid utf8":            append(slices.Clone(canonical), 0xff),
+		"non nfc":                 bytes.Replace(canonical, []byte("approval-policy/postgres-cell-a"), []byte("approval-policy/postgres-cell-a/e\u0301"), 1),
+		"oversized":               bytes.Repeat([]byte{'x'}, maximumApprovalPolicyActivationRecordBytes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeApprovalPolicyActivationRecord(raw); !errors.Is(err, ErrInvalidApprovalPolicyStoreState) ||
+				err != ErrInvalidApprovalPolicyStoreState {
+				t.Fatalf("decode error = %v, want fixed %v", err, ErrInvalidApprovalPolicyStoreState)
+			}
+		})
+	}
+}

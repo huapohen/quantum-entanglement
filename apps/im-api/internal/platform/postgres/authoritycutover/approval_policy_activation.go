@@ -7,16 +7,21 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"reflect"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
-	ApprovalPolicyActivationRecordFormat = "wanwork.im.postgres-authority-approval-policy-activation/1"
-	approvalPolicyActivationDigestDomain = "wanwork.im/postgres-authority-approval-policy-activation/1\n"
-	approvalPolicyTargetDigestDomain     = "wanwork.im/postgres-authority-approval-policy-target/1\n"
+	ApprovalPolicyActivationRecordFormat       = "wanwork.im.postgres-authority-approval-policy-activation/1"
+	approvalPolicyActivationDigestDomain       = "wanwork.im/postgres-authority-approval-policy-activation/1\n"
+	approvalPolicyTargetDigestDomain           = "wanwork.im/postgres-authority-approval-policy-target/1\n"
+	maximumApprovalPolicyActivationRecordBytes = 32 * 1024
 )
 
 var (
@@ -528,6 +533,40 @@ func marshalApprovalPolicyActivationRecordCanonical(record ApprovalPolicyActivat
 		return nil, err
 	}
 	return bytes.TrimSuffix(output.Bytes(), []byte("\n")), nil
+}
+
+func decodeApprovalPolicyActivationRecord(raw []byte) (ApprovalPolicyActivationRecord, error) {
+	if len(raw) == 0 || len(raw) > maximumApprovalPolicyActivationRecordBytes ||
+		!utf8.Valid(raw) || !norm.NFC.IsNormal(raw) {
+		return ApprovalPolicyActivationRecord{}, ErrInvalidApprovalPolicyStoreState
+	}
+	structural := json.NewDecoder(bytes.NewReader(raw))
+	structural.UseNumber()
+	value, err := decodeStrictJSONValue(structural, 0)
+	if err != nil {
+		return ApprovalPolicyActivationRecord{}, ErrInvalidApprovalPolicyStoreState
+	}
+	if _, object := value.(map[string]any); !object {
+		return ApprovalPolicyActivationRecord{}, ErrInvalidApprovalPolicyStoreState
+	}
+	if _, err := structural.Token(); !errors.Is(err, io.EOF) {
+		return ApprovalPolicyActivationRecord{}, ErrInvalidApprovalPolicyStoreState
+	}
+	var record ApprovalPolicyActivationRecord
+	typed := json.NewDecoder(bytes.NewReader(raw))
+	typed.DisallowUnknownFields()
+	if err := typed.Decode(&record); err != nil {
+		return ApprovalPolicyActivationRecord{}, ErrInvalidApprovalPolicyStoreState
+	}
+	if err := typed.Decode(&struct{}{}); !errors.Is(err, io.EOF) ||
+		!validApprovalPolicyActivationRecord(record) {
+		return ApprovalPolicyActivationRecord{}, ErrInvalidApprovalPolicyStoreState
+	}
+	canonical, err := marshalApprovalPolicyActivationRecordCanonical(record)
+	if err != nil || !bytes.Equal(raw, canonical) {
+		return ApprovalPolicyActivationRecord{}, ErrInvalidApprovalPolicyStoreState
+	}
+	return record, nil
 }
 
 func digestApprovalPolicyActivationRecord(canonical []byte) string {
