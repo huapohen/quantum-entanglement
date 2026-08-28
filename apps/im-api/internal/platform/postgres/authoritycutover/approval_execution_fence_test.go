@@ -36,6 +36,8 @@ func TestApprovalExecutionFencerConsumesApprovalAndReturnsOpaqueFence(t *testing
 		fence.ExecutionAttemptID() != fixture.attempt.ID() ||
 		fence.PolicyHead() != record.ExpectedPolicyHead ||
 		fence.MutationNotAfter() != fixture.report.ExpiresAt() ||
+		!canonicalDigest.MatchString(record.AdmissionDigest) ||
+		record.AdmissionDigest == record.RecordDigest ||
 		record.ExecutionAttemptReceiptDigest != fixture.attempt.ReceiptDigest() ||
 		record.ApprovalPolicyTargetDigest != fixture.approval.PolicyTargetDigest() ||
 		!validApprovalExecutionFenceRecord(record, true) ||
@@ -267,6 +269,9 @@ func TestApprovalExecutionFenceRecordRejectsFieldAndDigestDrift(t *testing.T) {
 		t.Fatalf("sealApprovalExecutionFenceRecord: %v", err)
 	}
 	mutations := map[string]func(*ApprovalExecutionFenceRecord){
+		"admission digest": func(value *ApprovalExecutionFenceRecord) {
+			value.AdmissionDigest = "sha256:" + strings.Repeat("e", 64)
+		},
 		"approval": func(value *ApprovalExecutionFenceRecord) {
 			value.ApprovalDigest = "sha256:" + strings.Repeat("e", 64)
 		},
@@ -303,6 +308,40 @@ func TestApprovalExecutionFenceRecordRejectsFieldAndDigestDrift(t *testing.T) {
 				t.Fatal("drifted record remained valid")
 			}
 		})
+	}
+}
+
+func TestApprovalExecutionFenceAdmissionDigestRejectsSemanticRewrite(t *testing.T) {
+	fixture := newApprovalExecutionFenceFixture(t)
+	candidate, err := newApprovalExecutionFenceCandidate(
+		fixture.plan,
+		fixture.approval,
+		fixture.report,
+		fixture.attempt,
+	)
+	if err != nil {
+		t.Fatalf("newApprovalExecutionFenceCandidate: %v", err)
+	}
+	tokenDigest := domainSeparatedDigest(
+		approvalExecutionTokenDigestDomain,
+		bytes.Repeat([]byte{0x7a}, approvalExecutionTokenBytes),
+	)
+	record, err := sealApprovalExecutionFenceRecord(candidate, 11, fixture.now, tokenDigest)
+	if err != nil {
+		t.Fatalf("sealApprovalExecutionFenceRecord: %v", err)
+	}
+
+	changed := record
+	changed.PlanID = "plan-20260829-rewritten"
+	changed.AdmissionDigest = approvalExecutionAdmissionDigest(changed)
+	changed.RecordDigest = ""
+	canonical, err := marshalApprovalExecutionFenceRecordCanonical(changed)
+	if err != nil {
+		t.Fatalf("marshal rewritten record: %v", err)
+	}
+	changed.RecordDigest = domainSeparatedDigest(approvalExecutionFenceDigestDomain, canonical)
+	if validApprovalExecutionFenceRecord(changed, true) {
+		t.Fatal("semantic rewrite with recomputed admission and record digests became valid")
 	}
 }
 

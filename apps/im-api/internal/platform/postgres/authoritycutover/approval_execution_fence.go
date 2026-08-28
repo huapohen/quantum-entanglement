@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	ApprovalExecutionFenceRecordFormat = "wanwork.im.postgres-authority-approval-execution-fence/1"
+	ApprovalExecutionFenceRecordFormat = "wanwork.im.postgres-authority-approval-execution-fence/2"
 	approvalConsumptionIDDomain        = "wanwork.im/postgres-authority-approval-consumption/1\n"
 	approvalExecutionOperationIDDomain = "wanwork.im/postgres-authority-approval-operation/1\n"
-	approvalExecutionFenceDigestDomain = "wanwork.im/postgres-authority-approval-execution-fence/1\n"
+	approvalExecutionAdmissionDomain   = "wanwork.im/postgres-authority-approval-execution-admission/1\n"
+	approvalExecutionFenceDigestDomain = "wanwork.im/postgres-authority-approval-execution-fence/2\n"
 	approvalExecutionTokenDigestDomain = "wanwork.im/postgres-authority-approval-execution-token/1\n"
 	approvalExecutionTokenBytes        = 32
 	approvalExecutionReconcileTimeout  = 5 * time.Second
@@ -38,6 +39,7 @@ var (
 // JSON, logs, errors, receipts, or reports. Opening a fence does not prove that a target mutation
 // started or completed.
 type ApprovalExecutionFenceRecord struct {
+	AdmissionDigest                string             `json:"admissionDigest"`
 	ApprovalDigest                 string             `json:"approvalDigest"`
 	ApprovalExpiresAt              time.Time          `json:"approvalExpiresAt"`
 	ApprovalKeyFingerprint         string             `json:"approvalKeyFingerprint"`
@@ -297,6 +299,7 @@ func newApprovalExecutionFenceCandidate(
 		record.ExecutionAttemptID,
 		record.ExecutionAttemptReceiptDigest,
 	)
+	record.AdmissionDigest = approvalExecutionAdmissionDigest(record)
 	candidate := approvalExecutionFenceCandidate{record: record}
 	if !validApprovalExecutionFenceCandidate(candidate) ||
 		reportSnapshot.ReportDigest != record.PreflightReportDigest {
@@ -365,7 +368,19 @@ func validApprovalExecutionFenceRecord(
 }
 
 func validApprovalExecutionFenceBinding(record ApprovalExecutionFenceRecord) bool {
+	attemptRecord := ApprovalExecutionAttemptRecord{
+		AttemptGeneration:    record.ExecutionAttemptGeneration,
+		AttemptID:            record.ExecutionAttemptID,
+		AttemptReceiptDigest: record.ExecutionAttemptReceiptDigest,
+		CreatedAt:            record.ExecutionAttemptCreatedAt,
+		Format:               ApprovalExecutionAttemptRecordFormat,
+		PlanDigest:           record.PlanDigest,
+		PlanID:               record.PlanID,
+		TargetDigest:         record.ApprovalPolicyTargetDigest,
+	}
 	return record.Format == ApprovalExecutionFenceRecordFormat &&
+		canonicalDigest.MatchString(record.AdmissionDigest) &&
+		record.AdmissionDigest == approvalExecutionAdmissionDigest(record) &&
 		canonicalDigest.MatchString(record.ApprovalDigest) &&
 		canonicalPreflightTime(record.ApprovalExpiresAt) &&
 		canonicalDigest.MatchString(record.ApprovalKeyFingerprint) &&
@@ -389,6 +404,7 @@ func validApprovalExecutionFenceBinding(record ApprovalExecutionFenceRecord) boo
 		canonicalIdentity(record.ExecutionAttemptID) &&
 		strings.HasPrefix(record.ExecutionAttemptID, "execution-attempt/") &&
 		canonicalDigest.MatchString(record.ExecutionAttemptReceiptDigest) &&
+		validApprovalExecutionAttemptRecord(attemptRecord, true) &&
 		record.ExpectedPolicyHead == (ApprovalPolicyHead{
 			ActivationRecordDigest: record.ApprovalPolicyActivationDigest,
 			PolicyDigest:           record.ApprovalPolicyDigest,
@@ -421,6 +437,20 @@ func validApprovalExecutionFenceBinding(record ApprovalExecutionFenceRecord) boo
 			record.ApprovalPolicyID,
 			record.ApprovalPolicySequence,
 		)
+}
+
+func approvalExecutionAdmissionDigest(record ApprovalExecutionFenceRecord) string {
+	admission := record
+	admission.AdmissionDigest = ""
+	admission.FenceEpoch = 0
+	admission.OpenedAt = time.Time{}
+	admission.RecordDigest = ""
+	admission.TokenDigest = ""
+	canonical, err := marshalApprovalExecutionFenceRecordCanonical(admission)
+	if err != nil {
+		return ""
+	}
+	return domainSeparatedDigest(approvalExecutionAdmissionDomain, canonical)
 }
 
 func approvalExecutionReadbackMatches(
