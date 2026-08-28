@@ -4,7 +4,7 @@
 
 分支：`dev_wanwork_quantum_entanglement`
 
-实现基线：`91b42af`（已推送 `origin/dev_wanwork_quantum_entanglement`）
+实现基线：`d2f1bf0`（已推送 `origin/dev_wanwork_quantum_entanglement`）
 
 同步状态：`local_pending`。按 2026-08-29 最新决策，本地代码、测试、报告和 GitHub 先全部收口，Notion
 最后统一批量同步并逐页回读；本检查点当前不得解释为 Notion 已更新。
@@ -20,7 +20,7 @@ generation reference、备份、回滚边界、空/非空分类、五阶段步�
 verified approval 进一步绑定 exact plan、审批人、deployment/cell/reference scope、key generation/fingerprint、
 policy revision 和短时有效期。
 
-本检查点**不是 Gate A0 完成**。尚未交付 provisioner preflight、bootstrap/cutover executor、durable
+本检查点**不是 Gate A0 完成**。尚未交付 authenticated approval policy snapshot、bootstrap/cutover executor、durable
 receipt/reconcile store、hardened secret file provider、clean Linux IaC、remote authenticated-TLS 正向 E2E、
 empty/non-empty production cutover 和 restore 演练。当前代码只能构建/验证计划和审批、读取受信文件，不能执行
 数据库写入；`VerifiedApproval` 也不是 single-use lease，必须由后续 executor 在 durable fence 中原子消费。
@@ -145,6 +145,31 @@ trusted key policy 明确绑定：
 `VerifiedApproval` 不导出 signature、raw/canonical envelope 或 public key，只提供 bounded evidence metadata。它的
 `ApprovalDigest` 是 non-authenticating evidence hash，不是签名替代品，也不防重复 Verify/重复执行。
 
+### 2.8 Short-lived `PreflightReport`
+
+`ObservePreflightReport` 在 exact plan 和 `VerifiedApproval` 绑定成立后，先验证现有连接的 `verify-full` TLS、server
+name、verified root CA 与无 fallback，再在同一个 `REPEATABLE READ + READ ONLY` transaction 中执行固定 SQL。
+它精确观察：
+
+- `session_user=current_user=provisioner login`、目标数据库和只读事务属性；
+- physical system identifier digest、PG major、control/catalog version 与 primary 状态；
+- database owner 和 provisioner 的完整 cluster attributes、valid-until、global/database role setting；
+- database-owner → provisioner 的唯一 `SET=true / ADMIN=false / INHERIT=false` membership 及 exact IaC grantor；
+- provisioner 的唯一直接数据库 ACL；PG18 实测该 `CONNECT` ACL 的 catalog grantor 是 database owner，而 role
+  membership grantor 才是稳定 IaC/bootstrap login，两者不得错误合并；
+- target database owner、`datallowconn=true`、`datconnlimit=-1`、非 template；
+- user schema、relation/function/type/operator/text-search 等 namespace object、extension/FDW/publication/subscription/
+  event-trigger/default-ACL/large-object/user cast/language/transform 和 migration ledger；
+- `empty` 必须是数据库已经存在且上述 schema/ledger/user object 全空；不是“数据库不存在”；
+- backup attestation 与 release artifact 由注入的 authenticated artifact verifier 返回实际 digest。nil、error、panic
+  或非 canonical 返回一律为 `unknown`，错误正文不进入报告。
+
+报告固定包含十个有序 typed check，结果只能是 `pass|block|unknown`；block 优先于 unknown，任一非 pass 都不能通过
+`ValidatePreflightReport`。expiry 精确取 `min(plan expiry, approval expiry, observedAt+60s)`。报告只保存每项
+domain-separated evidence digest，不保存 DSN、password、raw system identifier、证书、SQL row 或 signed approval
+envelope。即使全 pass，报告仍是 `mutationAuthorized=false`，后续 executor 必须在 durable fence 内重新验证并原子
+消费 approval，不能把报告当成 write lease。
+
 ## 3. 提交分解
 
 | Commit | 内容 | 独立边界 |
@@ -164,6 +189,9 @@ trusted key policy 明确绑定：
 | `879b6b4` | 独立 transient cutover authority specification/digest | 仅 dedicated cluster cell |
 | `69cae6f` | plan v3 绑定 cutover graph 与 exact grantor | v1/v2 严格拒绝 |
 | `91b42af` | plan v4 完全由代码派生五阶段 workflow 和 typed preflight policy | v1/v2/v3 严格拒绝 |
+| `f9e2b24` | immutable short-lived PreflightReport、self digest、exact plan/approval/policy binding | 不授权 mutation |
+| `104d61f` | 按 PG18 实测区分 membership grantor 与 database ACL grantor | 不放宽 exact membership |
+| `d2f1bf0` | fixed-SQL RR/read-only observer、空库 inventory 与 artifact fail-closed seam | 无数据库写入 |
 
 ## 4. 本地验证证据
 
@@ -190,8 +218,9 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go mod verify
 - `go mod verify` 返回 `all modules verified`；
 - authoritycutover 的 Linux/Windows cross-build 通过；
 - authoritycutover/migrations/imstore/runtimepool 的 JSON 事件统计为 `skip_events=0 fail_events=0`；
-- 当前 v4 golden plan digest：`sha256:faf316aa6298717b8a26adfa65ad75dce7e041cb3a5d8b57107dd6e247ec7d1f`；
-- cutover authority golden digest：`sha256:7090823b9bf4d1f4a7303087d043265b1caa64f3d1dc2c1fa684686f582c4110`；
+- 当前 v4 golden plan digest：`sha256:a8454c2351f8dee0fc8171961b3faf4c84a85151d31ed57f9f6272046557fd07`；
+- cutover authority golden digest：`sha256:ab3d5e7755eb6d987e846fdced242b4049d1edf8659d5bb8679ad767e0983f07`；
+- preflight report golden digest：`sha256:c1f1f8535a85043746edeed50d74dbd8deb1541443d2eacaf0df485a24bf6e6e`；
 - staged credential/旧称 canary 通过；没有写入完整 API key、DSN 或 credential material。
 
 该 loopback fixture 不构成 remote authenticated-TLS 或 clean-host production evidence。
@@ -205,7 +234,7 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go mod verify
 | exact plan approval verification | Go（bounded） | Ed25519、scope/key-policy/file trust 已实现；不是 single-use execution lease |
 | policy snapshot freshness/archive | No-Go | policy 认证、防回滚、原子替换与 immutable archive 尚未实现 |
 | trusted cluster identity probe | Go（bounded） | production API 强制现有连接为 verify-full TLS；本机正向只验证 catalog 语义，不构成 remote TLS 证据 |
-| provisioner preflight report | No-Go | cluster identity、authority graph 和 derived policy 已冻结；尚未交付完整 fixed-SQL report |
+| provisioner preflight report | Go（bounded） | fixed SQL、short TTL、typed checks、真实 PG18 empty/drift 路径已交付；artifact verifier 生产实现及 executor fence 尚未交付 |
 | bootstrap/cutover executor | No-Go | 不存在任何 plan 驱动的 production SQL write path |
 | receipt/unknown-result reconcile | No-Go | durable receipt schema/store/state machine 未实现 |
 | production secret injection | No-Go | hardened file/FD provider 未实现 |
@@ -215,16 +244,14 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go mod verify
 
 ## 6. 下一执行顺序
 
-1. 实现 read-only provisioner `PreflightReport`，只支持 IaC 已创建的 target database；`empty` 表示 database 已存在
-   且无 migration schema/ledger/user object，不表示 database 不存在；
-2. 实现认证、不可回滚、可原子替换和长期归档的 approval policy snapshot；
-3. 冻结 receipt format/state transition、append/readback 与 unknown-result reconcile，并原子消费 approval digest；
-4. executor 只消费同一 specification，按事务/非事务 boundary 拆步，默认 dry-run；
-5. 在 PG18 fixture 做 empty/repeat/concurrent/drift/unknown-result 零跳过；
-6. 实现 hardened secret file/FD provider；
-7. 建 remote private-CA `verify-full` E2E 和 clean Linux cell；
-8. 完成 non-empty upgrade、backup/restore 与 old/future binary/schema 演练；
-9. Gate A0 全部证据收口后，才进入 Clerk trusted request context。
+1. 实现认证、不可回滚、可原子替换和长期归档的 approval policy snapshot；
+2. 冻结 receipt format/state transition、append/readback 与 unknown-result reconcile，并原子消费 approval digest；
+3. executor 只消费同一 specification，按事务/非事务 boundary 拆步，默认 dry-run；
+4. 在 PG18 fixture 做 empty/repeat/concurrent/drift/unknown-result 零跳过；
+5. 实现 hardened secret file/FD provider；
+6. 建 remote private-CA `verify-full` E2E 和 clean Linux cell；
+7. 完成 non-empty upgrade、backup/restore 与 old/future binary/schema 演练；
+8. Gate A0 全部证据收口后，才进入 Clerk trusted request context。
 
 任何一步都不得为了测试便利把 provisioner/migration secret 注入 API，或把 integration fixture 当作 production
 IaC。Notion 在本地代码、测试、文档和 Git 阶段全部收口后再批量镜像并逐页回读。
