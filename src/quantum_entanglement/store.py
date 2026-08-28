@@ -115,6 +115,15 @@ class EventStoreJsonTooLargeError(EventStoreJsonValueError):
     """Raised before a JSON field exceeds a structural or encoded-size limit."""
 
 
+class ReservedResultEventError(ValueError):
+    """Raised when a generic append tries to write result-authority vocabulary."""
+
+    code = "reserved_result_event"
+
+    def __init__(self) -> None:
+        super().__init__("generic event append cannot write reserved result authority")
+
+
 class InvocationAdmissionConflictError(RuntimeError):
     """Raised when an atomic event/job admission boundary is reused differently."""
 
@@ -1646,15 +1655,21 @@ class SQLiteEventStore:
             causation_id=causation_id,
             idempotency_key=idempotency_key,
         )
-        self._reject_generic_reserved_result_event(snapshot_event)
         return _EventWriteSnapshot(snapshot_event, payload.encoded)
+
+    def _snapshot_generic_event(self, event: DomainEvent) -> _EventWriteSnapshot:
+        """Freeze caller state and enforce the generic result-vocabulary fence."""
+
+        snapshot = self._snapshot_event(event)
+        self._reject_generic_reserved_result_event(snapshot.event)
+        return snapshot
 
     @staticmethod
     def _reject_generic_reserved_result_event(event: DomainEvent) -> None:
         """Keep result authority vocabulary out of every generic append path."""
 
         if event.event_type == _RESERVED_RESULT_EVENT_TYPE:
-            raise ValueError("generic event append cannot write reserved result authority")
+            raise ReservedResultEventError()
         if event.event_type != _RESERVED_RESULT_TERMINAL_EVENT_TYPE:
             return
         for key in event.payload:
@@ -1665,7 +1680,7 @@ class SQLiteEventStore:
                 if "a" <= character <= "z" or "0" <= character <= "9"
             )
             if token in _RESERVED_RESULT_TERMINAL_KEY_TOKENS:
-                raise ValueError("generic event append cannot write reserved result authority")
+                raise ReservedResultEventError()
 
     @staticmethod
     def _snapshot_invocation_job_spec(spec: InvocationJobSpec) -> InvocationJobSpec:
@@ -3329,7 +3344,7 @@ class SQLiteEventStore:
     ) -> StoredEvent:
         """Append one event, returning the existing record for an idempotent retry."""
 
-        event_snapshot = self._snapshot_event(event)
+        event_snapshot = self._snapshot_generic_event(event)
         expected_version_snapshot = (
             None
             if expected_version is None
@@ -3366,9 +3381,9 @@ class SQLiteEventStore:
         event, preserving the event-to-delivery transaction boundary.
         """
 
-        raw_batch = tuple(messages)
         self._require_current_process()
-        event_snapshot = self._snapshot_event(event)
+        event_snapshot = self._snapshot_generic_event(event)
+        raw_batch = tuple(messages)
         batch = tuple(self._snapshot_outbox_message(message) for message in raw_batch)
         expected_version_snapshot = (
             None
@@ -3471,7 +3486,7 @@ class SQLiteEventStore:
 
         consumer_id_snapshot = _caller_text(consumer_id, "consumer_id", required=True)
         message_id_snapshot = _caller_text(message_id, "message_id", required=True)
-        event_snapshot = self._snapshot_event(event)
+        event_snapshot = self._snapshot_generic_event(event)
         result_snapshot = self._snapshot_json_object(
             {} if result is None else result,
             "inbox result",
@@ -3549,7 +3564,7 @@ class SQLiteEventStore:
         raw_batch = tuple(events)
         self._require_current_process()
         stream_id_snapshot = _caller_text(stream_id, "stream_id")
-        batch = tuple(self._snapshot_event(event) for event in raw_batch)
+        batch = tuple(self._snapshot_generic_event(event) for event in raw_batch)
         if any(item.event.stream_id != stream_id_snapshot for item in batch):
             raise ValueError("all batch events must use the declared stream_id")
         if not batch:
@@ -3628,7 +3643,7 @@ class SQLiteEventStore:
 
         raw_batch = tuple(events)
         self._require_current_process()
-        batch = tuple(self._snapshot_event(event) for event in raw_batch)
+        batch = tuple(self._snapshot_generic_event(event) for event in raw_batch)
         spec_snapshot = self._snapshot_invocation_job_spec(spec)
         expected_version_snapshot = (
             None

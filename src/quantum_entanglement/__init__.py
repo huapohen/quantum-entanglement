@@ -231,6 +231,7 @@ from .store import (
     InvocationStartCommitAmbiguityError,
     InvocationStartConflictError,
     InvocationStartTransactionError,
+    ReservedResultEventError,
     SQLiteEventStore,
 )
 from .tenancy import (
@@ -453,6 +454,7 @@ __all__ = [
     "RequestContext",
     "RequestContextError",
     "RequestContextIssuer",
+    "ReservedResultEventError",
     "RiskLevel",
     "ResourceRef",
     "ResourceScope",
