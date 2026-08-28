@@ -22,6 +22,9 @@ func TestValidCASRevisionRequiresCreateOrExactSuccessor(t *testing.T) {
 		{name: "update gap", expected: 41, next: 43, want: store.ErrRevisionConflict},
 		{name: "rewind", expected: 41, next: 40, want: store.ErrRevisionConflict},
 		{name: "reuse", expected: 41, next: 41, want: store.ErrRevisionConflict},
+		{name: "PostgreSQL maximum", expected: 1<<63 - 2, next: 1<<63 - 1},
+		{name: "PostgreSQL maximum has no successor", expected: 1<<63 - 1, next: 1 << 63, want: store.ErrRevisionConflict},
+		{name: "above PostgreSQL maximum", expected: 1 << 63, next: 1<<63 + 1, want: store.ErrRevisionConflict},
 		{name: "overflow", expected: ^uint64(0), next: 0, want: store.ErrRevisionConflict},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {

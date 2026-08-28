@@ -205,16 +205,7 @@ func (repositories *tenantRepositories) validateConversationCAS(
 		!next.AgentInvocationID().IsZero() {
 		return store.ErrPersistenceUnsupported
 	}
-	if expectedRevision == 0 {
-		if next.Revision() != 1 {
-			return store.ErrRevisionConflict
-		}
-		return nil
-	}
-	if expectedRevision == ^uint64(0) || next.Revision() != expectedRevision+1 {
-		return store.ErrRevisionConflict
-	}
-	return nil
+	return validCASRevision(expectedRevision, next.Revision())
 }
 
 func (repositories *tenantRepositories) CurrentProviderBinding(
@@ -645,13 +636,17 @@ func (repositories *tenantRepositories) readError(err error) error {
 }
 
 func validCASRevision(expectedRevision uint64, nextRevision uint64) error {
+	const maxPostgresRevision uint64 = 1<<63 - 1
+	if expectedRevision > maxPostgresRevision || nextRevision > maxPostgresRevision {
+		return store.ErrRevisionConflict
+	}
 	if expectedRevision == 0 {
 		if nextRevision != 1 {
 			return store.ErrRevisionConflict
 		}
 		return nil
 	}
-	if expectedRevision == ^uint64(0) || nextRevision != expectedRevision+1 {
+	if expectedRevision == maxPostgresRevision || nextRevision != expectedRevision+1 {
 		return store.ErrRevisionConflict
 	}
 	return nil
