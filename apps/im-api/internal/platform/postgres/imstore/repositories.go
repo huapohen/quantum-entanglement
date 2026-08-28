@@ -250,70 +250,27 @@ func (repositories *tenantRepositories) CompareAndSwapProviderBinding(
 	}
 	externalReference := next.ExternalRef()
 	conversationReference := next.ConversationRef()
-	if expectedRevision == 0 {
-		if _, err := repositories.tx.Exec(ctx, `
-INSERT INTO wanwork_im.provider_conversation_binding_heads (
-    tenant_id, provider, realm_id, provider_conversation_id,
-    current_revision, current_conversation_id, current_conversation_type, current_status
-) VALUES ($1, $2, $3, $4, $5, $6, 'group', $7)`,
-			repositories.tenantID.String(),
-			string(externalReference.Provider()),
-			externalReference.RealmID().String(),
-			externalReference.SubjectID(),
-			next.Revision(),
-			conversationReference.ConversationID().String(),
-			string(next.Status()),
-		); err != nil {
-			return im.ProviderConversationBinding{}, repositories.poison(
-				mapWriteError(err, store.ErrRevisionConflict),
-			)
-		}
-	} else {
-		tag, err := repositories.tx.Exec(ctx, `
-UPDATE wanwork_im.provider_conversation_binding_heads
-SET current_revision = $5,
-    current_conversation_id = $6,
-    current_conversation_type = 'group',
-    current_status = $7
-WHERE tenant_id = $1
-  AND provider = $2
-  AND realm_id = $3
-  AND provider_conversation_id = $4
-  AND current_revision = $8`,
-			repositories.tenantID.String(),
-			string(externalReference.Provider()),
-			externalReference.RealmID().String(),
-			externalReference.SubjectID(),
-			next.Revision(),
-			conversationReference.ConversationID().String(),
-			string(next.Status()),
-			expectedRevision,
-		)
-		if err != nil {
-			return im.ProviderConversationBinding{}, repositories.poison(
-				mapWriteError(err, store.ErrRevisionConflict),
-			)
-		}
-		if tag.RowsAffected() != 1 {
-			return im.ProviderConversationBinding{}, repositories.poison(store.ErrRevisionConflict)
-		}
-	}
-	if _, err := repositories.tx.Exec(ctx, `
-INSERT INTO wanwork_im.provider_conversation_binding_snapshots (
-    tenant_id, provider, realm_id, provider_conversation_id,
-    revision, conversation_id, conversation_type, status
-) VALUES ($1, $2, $3, $4, $5, $6, 'group', $7)`,
+	var written bool
+	err := repositories.tx.QueryRow(ctx, `
+SELECT wanwork_im.write_provider_conversation_binding_revision(
+    $1, $2, $3, $4, $5, $6, $7, $8
+)`,
 		repositories.tenantID.String(),
 		string(externalReference.Provider()),
 		externalReference.RealmID().String(),
 		externalReference.SubjectID(),
-		next.Revision(),
+		int64(expectedRevision),
+		int64(next.Revision()),
 		conversationReference.ConversationID().String(),
 		string(next.Status()),
-	); err != nil {
+	).Scan(&written)
+	if err != nil {
 		return im.ProviderConversationBinding{}, repositories.poison(
 			mapWriteError(err, store.ErrRevisionConflict),
 		)
+	}
+	if !written {
+		return im.ProviderConversationBinding{}, repositories.poison(store.ErrRevisionConflict)
 	}
 	return next, nil
 }
