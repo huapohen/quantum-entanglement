@@ -351,9 +351,11 @@ func NewConversationMembershipSnapshot(
 	status ConversationMembershipStatus,
 	revision uint64,
 ) (ConversationMembershipSnapshot, error) {
+	actorType, hasActorType := actorRef.ActorID().SubjectType()
 	if conversationRef.IsZero() || actorRef.IsZero() || !role.Valid() || !status.Valid() ||
 		!validPersistentRevision(revision) ||
-		conversationRef.TenantID() != actorRef.TenantID() {
+		conversationRef.TenantID() != actorRef.TenantID() || !hasActorType ||
+		(actorType != SubjectHuman && actorType != SubjectAgent) {
 		return ConversationMembershipSnapshot{}, ErrInvalidAuthority
 	}
 	return ConversationMembershipSnapshot{

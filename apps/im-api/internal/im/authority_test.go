@@ -328,6 +328,23 @@ func TestConversationMembershipIsTenantScopedAndIndependentFromTopology(t *testi
 	if !errors.Is(err, ErrInvalidAuthority) || !value.IsZero() {
 		t.Fatalf("expected unknown conversation role rejection, got %#v, %v", value, err)
 	}
+
+	for _, actorID := range []string{"sys_scheduler", "svc_provider"} {
+		nonParticipant, actorErr := NewActorRef(tenant, mustActorID(t, actorID))
+		if actorErr != nil {
+			t.Fatalf("create non-participant actor ref: %v", actorErr)
+		}
+		value, err = NewConversationMembershipSnapshot(
+			conversationRef,
+			nonParticipant,
+			ConversationMembershipMember,
+			ConversationMembershipActive,
+			1,
+		)
+		if !errors.Is(err, ErrInvalidAuthority) || !value.IsZero() {
+			t.Fatalf("expected %s conversation membership rejection, got %#v, %v", actorID, value, err)
+		}
+	}
 }
 
 func TestConversationAccessCanonicalizesAndDetachesPermissions(t *testing.T) {
