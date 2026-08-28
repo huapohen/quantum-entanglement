@@ -528,9 +528,10 @@ def write_or_check(path: Path, content: str, check: bool) -> bool:
 
 def build_parser() -> argparse.ArgumentParser:
     script_repo = Path(__file__).resolve().parent.parent
-    default_output = branch_hub_root(script_repo) / "BRANCH_CATALOG.md"
+    catalog_repo = branch_hub_root(script_repo)
+    default_output = catalog_repo / "BRANCH_CATALOG.md"
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", type=Path, default=script_repo)
+    parser.add_argument("--repo", type=Path, default=catalog_repo)
     parser.add_argument(
         "--metadata", type=Path, default=script_repo / "docs" / "branch_catalog_metadata.json"
     )

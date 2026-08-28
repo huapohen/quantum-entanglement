@@ -13,6 +13,7 @@ from scripts.branch_catalog import (
     branch_hub_root,
     branch_purpose,
     branch_worktree_root,
+    build_parser,
     catalog_main_baseline,
     catalog_tip_baseline,
     catalog_worktree_baselines,
@@ -24,6 +25,12 @@ from scripts.branch_catalog import (
 
 
 class BranchCatalogTests(unittest.TestCase):
+    def test_parser_defaults_to_the_formal_repository_root(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args([])
+
+        self.assertEqual(args.repo, branch_hub_root(Path(__file__).resolve().parent.parent))
+
     def test_branch_hub_root_supports_all_local_layouts(self) -> None:
         original = Path("/workspace/execute/quantum_entanglement")
         nested = Path("/workspace/execute/infinite/quantum_entanglement/main")
