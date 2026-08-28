@@ -23,9 +23,11 @@ from quantum_entanglement._result_artifact_transaction import (
     _prepare_result_artifact_batch,
     _PreparedResultArtifact,
     _PreparedResultArtifactBatch,
+    _ResultArtifactCommitAmbiguityError,
     _ResultArtifactConcurrencyError,
     _ResultArtifactConflictError,
     _ResultArtifactIntegrityError,
+    _ResultArtifactTransactionError,
     _ResultArtifactTransactionHandle,
     _write_prepared_result_artifacts_in_transaction,
 )
@@ -356,6 +358,61 @@ class ResultArtifactTransactionHandleTests(unittest.TestCase):
             self.store._connection.execute("SELECT count(*) FROM artifact_versions").fetchone()[0],
             1,
         )
+
+    def test_begin_and_commit_failures_never_leak_private_transaction_signals(self) -> None:
+        transaction_code = sqlite3.SQLITE_TRANSACTION
+
+        def deny_begin(action: int, first: object, *_args: object) -> int:
+            if action == transaction_code and first == "BEGIN":
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        self.store._connection.set_authorizer(deny_begin)
+        try:
+            with self.assertRaises(_ResultArtifactTransactionError) as begin_failure:
+                with self.store._result_artifact_transaction():
+                    pass
+            self.assertIsInstance(begin_failure.exception, Exception)
+        finally:
+            self.store._connection.set_authorizer(None)
+
+        def deny_commit(action: int, first: object, *_args: object) -> int:
+            if action == transaction_code and first == "COMMIT":
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        self.store._connection.set_authorizer(deny_commit)
+        try:
+            with self.assertRaises(_ResultArtifactTransactionError) as commit_failure:
+                with self.store._result_artifact_transaction() as handle:
+                    batch = _prepare_result_artifact_batch((candidate(),))
+                    self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+            self.assertIsInstance(commit_failure.exception, Exception)
+        finally:
+            self.store._connection.set_authorizer(None)
+        self.assertEqual(
+            self.store._connection.execute("SELECT count(*) FROM artifact_versions").fetchone()[0],
+            0,
+        )
+
+    def test_unconfirmed_commit_failure_is_fixed_and_poisons_owner_store(self) -> None:
+        transaction_code = sqlite3.SQLITE_TRANSACTION
+
+        def deny_commit_and_rollback(action: int, first: object, *_args: object) -> int:
+            if action == transaction_code and first in {"COMMIT", "ROLLBACK"}:
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        self.store._connection.set_authorizer(deny_commit_and_rollback)
+        try:
+            with self.assertRaises(_ResultArtifactCommitAmbiguityError) as failure:
+                with self.store._result_artifact_transaction() as handle:
+                    batch = _prepare_result_artifact_batch((candidate(),))
+                    self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+            self.assertIsInstance(failure.exception, Exception)
+            self.assertTrue(self.store._poisoned)
+        finally:
+            self.store._connection.set_authorizer(None)
 
 
 class ResultArtifactOwnerWriteTests(unittest.TestCase):

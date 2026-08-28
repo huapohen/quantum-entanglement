@@ -40,9 +40,11 @@ from . import process_identity as _process_identity
 from ._result_artifact_transaction import (
     _RESULT_ARTIFACT_TRANSACTION_TOKEN,
     _PreparedResultArtifactBatch,
+    _ResultArtifactCommitAmbiguityError,
     _ResultArtifactConcurrencyError,
     _ResultArtifactConflictError,
     _ResultArtifactIntegrityError,
+    _ResultArtifactTransactionError,
     _ResultArtifactTransactionHandle,
     _write_prepared_result_artifacts_in_transaction,
 )
@@ -608,6 +610,12 @@ def _raise_clean_result_artifact_error(kind: str) -> NoReturn:
         error = ValueError("result Artifact write input is invalid")
     elif kind == "transaction":
         error = RuntimeError("result Artifact owner transaction is unavailable")
+    elif kind == "rolled_back":
+        error = _ResultArtifactTransactionError("result Artifact transaction was rolled back")
+    elif kind == "ambiguous":
+        error = _ResultArtifactCommitAmbiguityError(
+            "result Artifact commit outcome is unknown; reopen and reconcile"
+        )
     else:
         raise RuntimeError("unsupported result Artifact error kind") from None
     try:
@@ -1560,30 +1568,48 @@ class SQLiteEventStore:
         self._require_current_process()
         if self._active_result_artifact_transaction_generation is not None:
             raise RuntimeError("a result Artifact owner transaction is already active")
-        with self._transaction(classify_admission=True) as connection:
-            self._require_current_process()
-            if self._active_result_artifact_transaction_generation is not None:
-                raise RuntimeError("a result Artifact owner transaction became active concurrently")
-            generation = self._result_artifact_transaction_generation + 1
-            self._result_artifact_transaction_generation = generation
-            self._active_result_artifact_transaction_generation = generation
-            self._result_artifact_transaction_rollback_only = False
-            handle = _ResultArtifactTransactionHandle(
-                store=self,
-                connection=connection,
-                process_owner=self._process_owner,
-                generation=generation,
-                token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
-            )
-            try:
-                yield handle
+        transaction_outcome: Optional[str] = None
+        control: Optional[_EventStoreControlDescriptor] = None
+        try:
+            with self._transaction(classify_admission=True) as connection:
                 self._require_current_process()
-                if self._result_artifact_transaction_rollback_only is not False:
-                    raise RuntimeError("result Artifact owner transaction is rollback-only")
-            finally:
-                handle._invalidate(token=_RESULT_ARTIFACT_TRANSACTION_TOKEN)
-                self._active_result_artifact_transaction_generation = None
+                if self._active_result_artifact_transaction_generation is not None:
+                    raise RuntimeError(
+                        "a result Artifact owner transaction became active concurrently"
+                    )
+                generation = self._result_artifact_transaction_generation + 1
+                self._result_artifact_transaction_generation = generation
+                self._active_result_artifact_transaction_generation = generation
                 self._result_artifact_transaction_rollback_only = False
+                handle = _ResultArtifactTransactionHandle(
+                    store=self,
+                    connection=connection,
+                    process_owner=self._process_owner,
+                    generation=generation,
+                    token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
+                )
+                try:
+                    yield handle
+                    self._require_current_process()
+                    if self._result_artifact_transaction_rollback_only is not False:
+                        raise RuntimeError("result Artifact owner transaction is rollback-only")
+                finally:
+                    handle._invalidate(token=_RESULT_ARTIFACT_TRANSACTION_TOKEN)
+                    self._active_result_artifact_transaction_generation = None
+                    self._result_artifact_transaction_rollback_only = False
+        except _EventStoreAdmissionTransactionSignal as error:
+            classified = _take_classified_event_store_transaction_signal(error)
+            if classified is None:
+                raise
+            transaction_outcome, control = classified
+        if control is not None:
+            _raise_clean_result_artifact_control(control)
+        if transaction_outcome == "rolled_back":
+            _raise_clean_result_artifact_error("rolled_back")
+        if transaction_outcome == "ambiguous":
+            _raise_clean_result_artifact_error("ambiguous")
+        if transaction_outcome is not None:
+            raise RuntimeError("result Artifact transaction classification is invalid") from None
 
     @_bind_event_store_process
     def _connection_for_result_artifact_transaction(

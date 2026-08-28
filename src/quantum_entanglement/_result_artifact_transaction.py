@@ -71,6 +71,14 @@ class _ResultArtifactIntegrityError(RuntimeError):
     """Artifact storage or DML effects violate the owner transaction contract."""
 
 
+class _ResultArtifactTransactionError(RuntimeError):
+    """The owner transaction was confirmed rolled back."""
+
+
+class _ResultArtifactCommitAmbiguityError(RuntimeError):
+    """The owner transaction may have committed and requires reopen/reconcile."""
+
+
 class _ResultArtifactTransactionHandle:
     """One non-transferable, exit-invalidated EventStore transaction capability."""
 
