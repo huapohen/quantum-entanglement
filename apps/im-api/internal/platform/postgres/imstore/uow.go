@@ -143,6 +143,13 @@ func (unit *UnitOfWork) Execute(
 	if err != nil {
 		if errors.Is(err, store.ErrIdempotencyConflict) {
 			rollbackTransaction(transaction)
+			if err := releaseCommandLock(connection.Conn(), lockKey); err != nil {
+				lockHeld = false
+				quarantinePooledConnection(connection)
+				released = true
+				return store.CommitReceipt{}, err
+			}
+			lockHeld = false
 			release()
 			return unit.Resolve(ctx, tenantID, command)
 		}

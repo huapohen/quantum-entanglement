@@ -258,6 +258,66 @@ func TestUnitOfWorkAgainstPostgres(t *testing.T) {
 		}
 	})
 
+	t.Run("out of band receipt conflict releases command lock before pool handoff", func(t *testing.T) {
+		unit, pool := newStoreIntegrationUnit(t, adminURL)
+		tenantID := mustTenantID(t, "ten_alpha")
+		command := mustCommand(t, "conversation.create", "external-receipt", "external-request")
+		resultDigest := store.DigestBytes([]byte("external-result"))
+		var operationCalls atomic.Int64
+		receipt, err := unit.Execute(t.Context(), tenantID, command, func(
+			ctx context.Context,
+			_ store.TenantRepositories,
+		) (store.SHA256Digest, error) {
+			operationCalls.Add(1)
+			externalConfig := pool.Config().ConnConfig.Copy()
+			externalConnection, err := pgx.ConnectConfig(ctx, externalConfig)
+			if err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("connect out-of-band writer: %w", err)
+			}
+			defer func() { _ = externalConnection.Close(context.Background()) }()
+			externalTransaction, err := externalConnection.BeginTx(ctx, pgx.TxOptions{})
+			if err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("begin out-of-band writer: %w", err)
+			}
+			defer rollbackTransaction(externalTransaction)
+			if _, err := setStoreTenant(ctx, externalTransaction, tenantID.String()); err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("bind out-of-band tenant: %w", err)
+			}
+			if _, err := externalTransaction.Exec(ctx, `
+INSERT INTO wanwork_im.tenant_command_receipts (
+    tenant_id, command_kind, idempotency_key, request_sha256, result_sha256
+) VALUES ($1, $2, $3, $4, $5)`,
+				tenantID.String(),
+				command.Kind(),
+				command.IdempotencyKey(),
+				command.RequestDigest().Hex(),
+				resultDigest.Hex(),
+			); err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("insert out-of-band receipt: %w", err)
+			}
+			if err := externalTransaction.Commit(ctx); err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("commit out-of-band receipt: %w", err)
+			}
+			return resultDigest, nil
+		})
+		if err != nil || !receipt.Replayed() || receipt.ResolvedAfterUnknown() ||
+			receipt.ResultDigest() != resultDigest || operationCalls.Load() != 1 {
+			t.Fatalf("out-of-band receipt Execute = (%#v, %v), calls = %d", receipt, err, operationCalls.Load())
+		}
+
+		replayed, err := unit.Execute(t.Context(), tenantID, command, func(
+			context.Context,
+			store.TenantRepositories,
+		) (store.SHA256Digest, error) {
+			operationCalls.Add(1)
+			return store.SHA256Digest{}, errors.New("replay callback must not run")
+		})
+		if err != nil || !replayed.Replayed() || replayed.ResultDigest() != resultDigest ||
+			operationCalls.Load() != 1 {
+			t.Fatalf("out-of-band receipt replay = (%#v, %v), calls = %d", replayed, err, operationCalls.Load())
+		}
+	})
+
 	t.Run("concurrent exact retry and CAS have one writer", func(t *testing.T) {
 		unit, _ := newStoreIntegrationUnit(t, adminURL)
 		tenantID := mustTenantID(t, "ten_alpha")
