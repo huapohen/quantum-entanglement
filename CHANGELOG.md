@@ -55,6 +55,19 @@ production gate and does not authorize a real connector or external message.
   drift.
 - Clean fixed contract, integrity and concurrency outcomes that detach payload-bearing traceback
   graphs, plus exact preservation of the pre-M3 wildcard-visible store surface.
+- An inactive migration-7 result-authority candidate with six tables, eight explicit indexes,
+  isolated empty/non-empty upgrade rehearsals, guarded downgrade behavior, legacy-bootstrap fences,
+  and no active migration-registry registration.
+- A private result backup-topology profile covering 14 descriptor-owned objects plus 31 SQLite
+  autoindexes without changing the active backup registry, writer, verifier, restore path, or CLI.
+- A private exact Artifact owner-transaction handle and bounded ordered batch that bind one
+  EventStore connection/process/generation, preflight the complete batch, write/read back blob and
+  version rows, reject main/TEMP triggers, account for every DML effect, and force rollback-only
+  after a contained write failure.
+- Crash, concurrency, ambiguity and full-history evidence for the Artifact owner transaction,
+  including direct process exit/SIGKILL rollback, fixed clean transaction outcomes, 64-row bounded
+  history preflight, SQL-side TEXT storage/byte limits, and per-row canonical metadata/request/time
+  recomputation before a successor can be written.
 - Native IM V1 provider-neutral executable contract with strict bounded codecs, 21 public wire
   models, domain-separated canonical digests and stable idempotency derivation.
 - An exact four-method `IMGatewayPort` plus pure request/result admission gates for capability,
@@ -224,10 +237,10 @@ production gate and does not authorize a real connector or external message.
 ### In progress — not yet a shipped guarantee
 
 - Atomic Result Authority has completed M1 private envelope codec, M2 reserved generic-append /
-  scoped-standalone-completion fences, and M3 private store-owned snapshot/raw-row transaction
-  adapter. Inactive result schema and Artifact transaction primitives are next; migration 7
-  registration, atomic writer, Observed recovery, Accepted mint point, and worker promotion remain
-  disabled.
+  scoped-standalone-completion fences, M3 private store-owned snapshot/raw-row transaction adapter,
+  and M4 inactive result schema/private backup topology/Artifact owner transaction. M5 atomic
+  writer is next; migration 7 registration, Observed recovery, Accepted mint point, and worker
+  promotion remain disabled.
 - Native IM E2 sandbox inbound-only: the offline profile/auth/durable atomic inbox, default-off
   adapter/lifecycle/observability/recorded-probe and synthetic provider-bundle TCK nodes now exist,
   but no real provider contract/profile/mapper, production exchange, endpoint, credential material,
