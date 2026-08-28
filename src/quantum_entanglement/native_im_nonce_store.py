@@ -16,7 +16,7 @@ import threading
 import traceback as traceback_module
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator, NoReturn, Optional, SupportsIndex, Tuple
+from typing import Any, Callable, Iterator, NoReturn, Optional, SupportsIndex, Tuple, cast
 
 from . import process_identity as _process_identity
 from ._native_im_codec import NATIVE_IM_SCHEMA_VERSION, _digest, _id, _model_digest, _timestamp
@@ -40,7 +40,12 @@ from .native_im_inbox import (
     NativeIMInboxEventReceiptV1,
     NativeIMScopeV1,
 )
-from .native_im_sandbox_provenance import NativeIMSandboxAdmissionProvenanceV1
+from .native_im_sandbox_provenance import (
+    NativeIMSandboxAdmissionProvenance,
+    NativeIMSandboxAdmissionProvenanceV1,
+    NativeIMSandboxExchangeAdmissionProvenanceV1,
+    decode_native_im_sandbox_admission_provenance_v1,
+)
 from .protocol import utc_now
 from .store import SQLiteEventStore
 
@@ -288,7 +293,7 @@ class _NativeIMInboundReadEventRecord:
 @dataclass(frozen=True)
 class _NativeIMInboundProvenanceRecord:
     scope: Tuple[str, str, str, str]
-    provenance: NativeIMSandboxAdmissionProvenanceV1
+    provenance: NativeIMSandboxAdmissionProvenance
     provenance_digest: str
     admitted_at: str
 
@@ -375,12 +380,14 @@ def _raw_verification_snapshot(
     )
 
 
-def _provenance_snapshot(value: object) -> NativeIMSandboxAdmissionProvenanceV1:
-    if type(value) is not NativeIMSandboxAdmissionProvenanceV1:
-        raise TypeError(
-            "provenance must be an exact NativeIMSandboxAdmissionProvenanceV1"
-        )
-    return NativeIMSandboxAdmissionProvenanceV1.from_json_bytes(value.canonical_bytes())
+def _provenance_snapshot(value: object) -> NativeIMSandboxAdmissionProvenance:
+    if type(value) not in {
+        NativeIMSandboxAdmissionProvenanceV1,
+        NativeIMSandboxExchangeAdmissionProvenanceV1,
+    }:
+        raise TypeError("provenance must be an exact NativeIMSandboxAdmissionProvenanceV1")
+    provenance = cast(NativeIMSandboxAdmissionProvenance, value)
+    return decode_native_im_sandbox_admission_provenance_v1(provenance.canonical_bytes())
 
 
 def _validate_page_authentication_binding(
@@ -402,7 +409,7 @@ def _validate_page_authentication_binding(
 def _validate_page_provenance_binding(
     request: IMInboundReadRequestV1,
     page: IMInboundPageV1,
-    provenance: NativeIMSandboxAdmissionProvenanceV1,
+    provenance: NativeIMSandboxAdmissionProvenance,
     *,
     profile_revision: str,
     profile_digest: str,
@@ -428,6 +435,13 @@ def _validate_page_provenance_binding(
         raise NativeIMInboundConflictError(
             "native IM provenance does not match page transport evidence"
         )
+    if type(provenance) is NativeIMSandboxExchangeAdmissionProvenanceV1:
+        try:
+            provenance.read_exchange_evidence.validate_request_binding(request)
+        except (TypeError, ValueError):
+            raise NativeIMInboundConflictError(
+                "native IM exchange provenance does not match its read request"
+            ) from None
 
 
 def _event_manifest_digest(
@@ -1165,9 +1179,7 @@ class SQLiteNativeIMInboxStore:
             if type(provenance_json) is not str:
                 raise TypeError("persisted provenanceJson must use SQLite TEXT storage")
             provenance_bytes = provenance_json.encode("utf-8")
-            provenance = NativeIMSandboxAdmissionProvenanceV1.from_json_bytes(
-                provenance_bytes
-            )
+            provenance = decode_native_im_sandbox_admission_provenance_v1(provenance_bytes)
             if provenance.canonical_bytes() != provenance_bytes:
                 raise ValueError("persisted provenanceJson is not canonical")
             provenance_digest = _digest(
@@ -1481,7 +1493,7 @@ class SQLiteNativeIMInboxStore:
         connection: sqlite3.Connection,
         *,
         scope: NativeIMScopeV1,
-        provenance: NativeIMSandboxAdmissionProvenanceV1,
+        provenance: NativeIMSandboxAdmissionProvenance,
         admitted_at: str,
     ) -> None:
         scope_values = (
@@ -1551,7 +1563,7 @@ class SQLiteNativeIMInboxStore:
         *,
         request: IMInboundReadRequestV1,
         page: IMInboundPageV1,
-        provenance: NativeIMSandboxAdmissionProvenanceV1,
+        provenance: NativeIMSandboxAdmissionProvenance,
         event_manifest_sha256: str,
         disposition: str,
     ) -> NativeIMInboundPageAdmissionResultV1:
@@ -1953,7 +1965,7 @@ class SQLiteNativeIMInboxStore:
         *,
         request: IMInboundReadRequestV1,
         page: IMInboundPageV1,
-        provenance: NativeIMSandboxAdmissionProvenanceV1,
+        provenance: NativeIMSandboxAdmissionProvenance,
         event_manifest_sha256: str,
         nonce_claimed: bool,
     ) -> NativeIMInboundPageAdmissionResultV1:
@@ -2271,7 +2283,7 @@ class SQLiteNativeIMInboxStore:
         capability: IMCapabilitySnapshotV1,
         page: IMInboundPageV1,
         raw_verification: NativeIMRawVerificationResultV1,
-        provenance: NativeIMSandboxAdmissionProvenanceV1,
+        provenance: NativeIMSandboxAdmissionProvenance,
     ) -> NativeIMInboundPageAdmissionResultV1:
         """Atomically claim verified nonce evidence and admit one prepared page."""
 
@@ -2282,10 +2294,11 @@ class SQLiteNativeIMInboxStore:
             raise TypeError("capability must be an exact IMCapabilitySnapshotV1")
         if type(page) is not IMInboundPageV1:
             raise TypeError("page must be an exact IMInboundPageV1")
-        if type(provenance) is not NativeIMSandboxAdmissionProvenanceV1:
-            raise TypeError(
-                "provenance must be an exact NativeIMSandboxAdmissionProvenanceV1"
-            )
+        if type(provenance) not in {
+            NativeIMSandboxAdmissionProvenanceV1,
+            NativeIMSandboxExchangeAdmissionProvenanceV1,
+        }:
+            raise TypeError("provenance must be an exact NativeIMSandboxAdmissionProvenanceV1")
         request_snapshot = IMInboundReadRequestV1.from_json_bytes(request.canonical_bytes())
         capability_snapshot = IMCapabilitySnapshotV1.from_json_bytes(capability.canonical_bytes())
         page_snapshot = IMInboundPageV1.from_json_bytes(page.canonical_bytes())
