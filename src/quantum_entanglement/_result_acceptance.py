@@ -16,7 +16,9 @@ from .invocation_results import (
     SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION,
     ScopedInvocationResultAcceptanceRequestV2,
     ScopedInvocationResultEvidenceV2,
+    ScopedInvocationResultTerminalTransitionV2,
     _acceptance_request_snapshot,
+    build_scoped_invocation_result_terminal_transition_v2,
 )
 
 
@@ -444,7 +446,12 @@ class _IdentifiedFreshResultAcceptancePlanV2:
 class _EvidencedFreshResultAcceptancePlanV2:
     """One exact store-shaped evidence payload that remains private and non-authoritative."""
 
-    __slots__ = ("__active", "__evidence", "__identified")
+    __slots__ = (
+        "__active",
+        "__evidence",
+        "__identified",
+        "__terminal_transition_construction_started",
+    )
 
     def __init__(
         self,
@@ -459,6 +466,7 @@ class _EvidencedFreshResultAcceptancePlanV2:
             raise TypeError("evidenced result acceptance plan constructor is private")
         self.__identified = identified
         self.__evidence = evidence
+        self.__terminal_transition_construction_started = False
         self.__active = True
         self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
@@ -493,10 +501,31 @@ class _EvidencedFreshResultAcceptancePlanV2:
             raise ValueError("result acceptance evidence differs from its identified plan")
         return identified, evidence_snapshot
 
+    def _begin_terminal_transition_construction(
+        self,
+        *,
+        token: object,
+    ) -> tuple[_IdentifiedFreshResultAcceptancePlanV2, ScopedInvocationResultEvidenceV2]:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("result acceptance terminal transition construction is private")
+        if type(self) is not _EvidencedFreshResultAcceptancePlanV2:
+            raise TypeError("evidenced result acceptance plan must be exact")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("evidenced result acceptance plan is no longer active")
+        if type(self.__terminal_transition_construction_started) is not bool:
+            raise RuntimeError("result acceptance terminal transition state is invalid")
+        if self.__terminal_transition_construction_started:
+            raise RuntimeError(
+                "result acceptance terminal transition construction already started"
+            )
+        self.__terminal_transition_construction_started = True
+        return self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
     def _invalidate(self, *, token: object) -> None:
         if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
             raise TypeError("evidenced result acceptance plan invalidation is private")
         self.__active = False
+        self.__terminal_transition_construction_started = True
         object.__setattr__(
             self,
             "_EvidencedFreshResultAcceptancePlanV2__identified",
@@ -516,6 +545,84 @@ class _EvidencedFreshResultAcceptancePlanV2:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("evidenced result acceptance plans cannot be serialized")
+
+
+class _TransitionedFreshResultAcceptancePlanV2:
+    """One private exact terminal transition paired with its canonical result evidence."""
+
+    __slots__ = ("__active", "__evidenced", "__terminal_transition")
+
+    def __init__(
+        self,
+        *,
+        evidenced: _EvidencedFreshResultAcceptancePlanV2,
+        terminal_transition: ScopedInvocationResultTerminalTransitionV2,
+        token: object,
+    ) -> None:
+        if type(self) is not _TransitionedFreshResultAcceptancePlanV2:
+            raise TypeError("transitioned result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("transitioned result acceptance plan constructor is private")
+        self.__evidenced = evidenced
+        self.__terminal_transition = terminal_transition
+        self.__active = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> tuple[
+        _EvidencedFreshResultAcceptancePlanV2,
+        ScopedInvocationResultTerminalTransitionV2,
+    ]:
+        if type(self) is not _TransitionedFreshResultAcceptancePlanV2:
+            raise TypeError("transitioned result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("transitioned result acceptance plan validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("transitioned result acceptance plan is no longer active")
+        evidenced = self.__evidenced
+        if type(evidenced) is not _EvidencedFreshResultAcceptancePlanV2:
+            raise TypeError("transitioned result acceptance evidence plan is not exact")
+        terminal_transition = self.__terminal_transition
+        if type(terminal_transition) is not ScopedInvocationResultTerminalTransitionV2:
+            raise TypeError("result acceptance terminal transition is not exact")
+        transition_snapshot = ScopedInvocationResultTerminalTransitionV2.from_dict(
+            ScopedInvocationResultTerminalTransitionV2.to_dict(terminal_transition)
+        )
+        expected = _build_scoped_invocation_result_terminal_transition_from_plan_v2(
+            evidenced
+        )
+        if transition_snapshot != expected:
+            raise ValueError(
+                "result acceptance terminal transition differs from its evidenced plan"
+            )
+        return evidenced, transition_snapshot
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("transitioned result acceptance plan invalidation is private")
+        self.__active = False
+        object.__setattr__(
+            self,
+            "_TransitionedFreshResultAcceptancePlanV2__evidenced",
+            None,
+        )
+        object.__setattr__(
+            self,
+            "_TransitionedFreshResultAcceptancePlanV2__terminal_transition",
+            None,
+        )
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("transitioned result acceptance plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("transitioned result acceptance plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("transitioned result acceptance plans cannot be serialized")
 
 
 def _scoped_invocation_start_claimed_snapshot(
@@ -627,6 +734,32 @@ def _build_scoped_invocation_result_evidence_v2(
     )
     return ScopedInvocationResultEvidenceV2.from_dict(
         ScopedInvocationResultEvidenceV2.to_dict(evidence)
+    )
+
+
+def _build_scoped_invocation_result_terminal_transition_from_plan_v2(
+    evidenced: _EvidencedFreshResultAcceptancePlanV2,
+) -> ScopedInvocationResultTerminalTransitionV2:
+    """Derive the terminal payload from one exact evidence plan and its store-owned ID."""
+
+    if type(evidenced) is not _EvidencedFreshResultAcceptancePlanV2:
+        raise TypeError("terminal transition requires an exact evidenced plan")
+    identified, evidence = evidenced._validated(
+        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+    )
+    materialized, _, result_event_id, _ = identified._validated(
+        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+    )
+    prepared, _, _, _ = materialized._validated(
+        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+    )
+    transition = build_scoped_invocation_result_terminal_transition_v2(
+        prepared.request,
+        evidence,
+        result_event_id=result_event_id,
+    )
+    return ScopedInvocationResultTerminalTransitionV2.from_dict(
+        ScopedInvocationResultTerminalTransitionV2.to_dict(transition)
     )
 
 

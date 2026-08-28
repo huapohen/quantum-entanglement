@@ -23,6 +23,7 @@ from quantum_entanglement._result_acceptance import (
     _ResultAcceptanceConflictError,
     _ResultAcceptanceIntegrityError,
     _ResultAcceptanceSchemaUnavailableError,
+    _TransitionedFreshResultAcceptancePlanV2,
 )
 from quantum_entanglement._result_artifact_transaction import (
     _ResultArtifactConflictError,
@@ -42,7 +43,9 @@ from quantum_entanglement.invocation_results import (
     ScopedInvocationResultArtifactCandidateV2,
     ScopedInvocationResultEvidenceV2,
     ScopedInvocationResultManifestV2,
+    ScopedInvocationResultTerminalTransitionV2,
 )
+from quantum_entanglement.protocol import TaskStatus
 from quantum_entanglement.store import SQLiteEventStore
 from tests import test_inactive_invocation_results_migration as inactive_migration_module
 from tests.test_scoped_task_invocation_admission import (
@@ -1134,6 +1137,194 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     )
                     self.assertEqual(evidence.artifact_count, 0)
                     self.assertEqual(prepared.request.manifest.artifacts, ())
+
+    def test_fresh_terminal_transition_binds_evidence_and_store_result_event(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        accepted_at = "2026-08-27T10:00:02.000000Z"
+        self.store._clock = lambda: accepted_at
+        generated = (
+            "result_receipt_transition_1",
+            "event_result_transition_1",
+            "event_terminal_transition_1",
+        )
+
+        with patch("quantum_entanglement.store.new_id", side_effect=generated):
+            with self.store._result_artifact_transaction() as handle:
+                construct = (
+                    self.store._construct_result_acceptance_terminal_transition_in_owner_transaction
+                )
+                with construct(
+                    handle,
+                    prepared,
+                ) as transitioned:
+                    self.assertIs(
+                        type(transitioned),
+                        _TransitionedFreshResultAcceptancePlanV2,
+                    )
+                    assert type(transitioned) is _TransitionedFreshResultAcceptancePlanV2
+                    evidenced, transition = transitioned._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    identified, evidence = evidenced._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    _, receipt_id, result_event_id, terminal_event_id = (
+                        identified._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+                    )
+                    manifest = prepared.request.manifest
+                    self.assertIs(
+                        type(transition),
+                        ScopedInvocationResultTerminalTransitionV2,
+                    )
+                    self.assertEqual(
+                        (receipt_id, result_event_id, terminal_event_id),
+                        generated,
+                    )
+                    self.assertEqual(
+                        transition,
+                        ScopedInvocationResultTerminalTransitionV2.from_dict(
+                            transition.to_dict()
+                        ),
+                    )
+                    self.assertEqual(
+                        (
+                            transition.tenant_id,
+                            transition.workspace_id,
+                            transition.invocation_id,
+                            transition.session_id,
+                            transition.plan_id,
+                            transition.task_id,
+                            transition.agent_id,
+                            transition.job_idempotency_key,
+                            transition.runtime_revision,
+                            transition.correlation_id,
+                        ),
+                        (
+                            manifest.tenant_id,
+                            manifest.workspace_id,
+                            manifest.invocation_id,
+                            manifest.session_id,
+                            manifest.plan_id,
+                            manifest.task_id,
+                            manifest.agent_id,
+                            manifest.job_idempotency_key,
+                            manifest.runtime_revision,
+                            manifest.correlation_id,
+                        ),
+                    )
+                    self.assertEqual(
+                        (
+                            transition.previous,
+                            transition.current,
+                            transition.reason,
+                            transition.running_task_revision,
+                            transition.terminal_task_revision,
+                            transition.result_receipt_id,
+                            transition.result_event_id,
+                            transition.result_evidence_digest,
+                        ),
+                        (
+                            TaskStatus.RUNNING,
+                            TaskStatus.COMPLETED,
+                            None,
+                            evidence.running_task_revision,
+                            evidence.terminal_task_revision,
+                            receipt_id,
+                            result_event_id,
+                            evidence.canonical_digest(),
+                        ),
+                    )
+                    self.assertEqual(transition.stream_id, "session:" + manifest.session_id)
+                    self.assertEqual(transition.causation_id, result_event_id)
+                    self.assertEqual(
+                        transition.idempotency_key,
+                        f"task-status:{manifest.task_id}:{evidence.terminal_task_revision}",
+                    )
+                    for operation in (
+                        lambda: copy.copy(transitioned),
+                        lambda: copy.deepcopy(transitioned),
+                        lambda: pickle.dumps(transitioned),
+                    ):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ):
+                            operation()
+                    with self.assertRaisesRegex(RuntimeError, "already started"):
+                        evidenced._begin_terminal_transition_construction(
+                            token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                        )
+        for plan in (transitioned, evidenced, identified):
+            with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                plan._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_existing_graph_terminal_path_does_not_construct_fresh_payload(self) -> None:
+        helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
+            methodName="runTest"
+        )
+        helper.store = self.store
+        helper.connection = self.store._connection
+        helper.seed_nonempty_v6_dependencies()
+        helper.apply_candidate()
+        helper.seed_complete_result_graph()
+        prepared = existing_graph_prepared(helper)
+
+        with patch(
+            "quantum_entanglement.store._build_scoped_invocation_result_terminal_transition_from_plan_v2",
+            side_effect=AssertionError(
+                "existing graph must not construct a fresh terminal transition"
+            ),
+        ) as builder:
+            with self.store._result_artifact_transaction() as handle:
+                construct = (
+                    self.store._construct_result_acceptance_terminal_transition_in_owner_transaction
+                )
+                with construct(
+                    handle,
+                    prepared,
+                ) as result:
+                    self.assertIs(type(result), _ExistingResultAcceptanceGraphCandidateV2)
+        builder.assert_not_called()
+
+    def test_terminal_transition_failure_rolls_back_materialized_artifacts(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=(
+                "receipt_transition_failure",
+                "event_result_transition_failure",
+                "event_terminal_transition_failure",
+            ),
+        ), patch(
+            "quantum_entanglement.store._build_scoped_invocation_result_terminal_transition_from_plan_v2",
+            side_effect=RuntimeError("terminal transition construction failed"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "terminal transition construction failed",
+            ):
+                with self.store._result_artifact_transaction() as handle:
+                    construct = (
+                        self.store._construct_result_acceptance_terminal_transition_in_owner_transaction
+                    )
+                    with construct(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail(
+                            "failed terminal transition construction unexpectedly yielded a plan"
+                        )
+        for table in ("artifact_versions", "artifact_blobs"):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    self.store._connection.execute(
+                        f"SELECT count(*) FROM main.{table}"
+                    ).fetchone()[0],
+                    0,
+                )
 
     def test_existing_graph_evidence_path_does_not_construct_fresh_payload(self) -> None:
         helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
