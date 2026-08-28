@@ -637,6 +637,9 @@ func newStoreIntegrationUnit(t *testing.T, adminURL string) (*UnitOfWork, *pgxpo
 		t.Fatalf("create store role: %v", err)
 	}
 	grantStoreRole(t, ownerConnection, quotedRole)
+	if _, err := migrations.Apply(ctx, ownerConnection); err != nil {
+		t.Fatalf("repeat migrations after runtime grants: %v", err)
+	}
 	poolConfig, err := pgxpool.ParseConfig(adminURL)
 	if err != nil {
 		t.Fatalf("parse store pool config: %v", err)

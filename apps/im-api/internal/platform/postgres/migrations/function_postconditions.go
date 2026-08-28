@@ -25,7 +25,7 @@ type storedAuthorityFunction struct {
 	parallel           string
 	leakproof          bool
 	configuration      string
-	ownerOnlyExecute   bool
+	safeExecuteACL     bool
 	definitionDigest   string
 }
 
@@ -57,17 +57,31 @@ SELECT procedure.proname,
        procedure.proparallel::text,
        procedure.proleakproof,
        COALESCE(pg_catalog.array_to_string(procedure.proconfig, E'\n'), ''),
-       NOT EXISTS (
-           SELECT 1
-           FROM pg_catalog.aclexplode(
+		       NOT EXISTS (
+		           SELECT 1
+		           FROM pg_catalog.aclexplode(
                COALESCE(
                    procedure.proacl,
                    pg_catalog.acldefault('f', procedure.proowner)
                )
-		   ) AS acl
-		   WHERE acl.grantee <> procedure.proowner
-		      OR acl.privilege_type <> 'EXECUTE'
-		      OR acl.is_grantable
+		           ) AS acl
+		           LEFT JOIN pg_catalog.pg_roles AS grantee_role ON grantee_role.oid = acl.grantee
+		           WHERE acl.grantee = 0
+		              OR acl.privilege_type <> 'EXECUTE'
+		              OR acl.is_grantable
+		              OR (
+		                  acl.grantee <> procedure.proowner
+		                  AND (
+		                      grantee_role.oid IS NULL
+		                      OR grantee_role.rolcanlogin
+		                      OR grantee_role.rolsuper
+		                      OR grantee_role.rolinherit
+		                      OR grantee_role.rolcreatedb
+		                      OR grantee_role.rolcreaterole
+		                      OR grantee_role.rolreplication
+		                      OR grantee_role.rolbypassrls
+		                  )
+		              )
        ) AND EXISTS (
            SELECT 1
            FROM pg_catalog.aclexplode(
@@ -111,7 +125,7 @@ ORDER BY procedure.proname, pg_catalog.pg_get_function_identity_arguments(proced
 			&function.parallel,
 			&function.leakproof,
 			&function.configuration,
-			&function.ownerOnlyExecute,
+			&function.safeExecuteACL,
 			&definition,
 		); err != nil {
 			return nil, err
@@ -140,7 +154,7 @@ func exactStoredAuthorityFunctions(
 			!function.ownerIsCurrentUser || function.language != "plpgsql" ||
 			function.kind != "f" || function.volatility != "v" || !function.strict ||
 			!function.securityDefiner || function.parallel != "u" || function.leakproof ||
-			function.configuration != "search_path=pg_catalog" || !function.ownerOnlyExecute {
+			function.configuration != "search_path=pg_catalog" || !function.safeExecuteACL {
 			return false
 		}
 	}

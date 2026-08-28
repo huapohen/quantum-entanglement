@@ -26,7 +26,7 @@ func TestExactStoredAuthorityFunctionsRejectsEveryManifestDrift(t *testing.T) {
 		securityDefiner:    true,
 		parallel:           "u",
 		configuration:      "search_path=pg_catalog",
-		ownerOnlyExecute:   true,
+		safeExecuteACL:     true,
 		definitionDigest:   digest,
 	}
 	if !exactStoredAuthorityFunctions([]storedAuthorityFunction{valid}, specs) {
@@ -52,7 +52,7 @@ func TestExactStoredAuthorityFunctionsRejectsEveryManifestDrift(t *testing.T) {
 		"parallel safe":       func(value *storedAuthorityFunction) { value.parallel = "s" },
 		"leakproof":           func(value *storedAuthorityFunction) { value.leakproof = true },
 		"configuration":       func(value *storedAuthorityFunction) { value.configuration = "search_path=public" },
-		"public execute":      func(value *storedAuthorityFunction) { value.ownerOnlyExecute = false },
+		"unsafe execute ACL":  func(value *storedAuthorityFunction) { value.safeExecuteACL = false },
 		"definition checksum": func(value *storedAuthorityFunction) { value.definitionDigest = digestFunctionDefinition("other") },
 	}
 	for name, mutate := range mutations {
