@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import quantum_entanglement
 from quantum_entanglement import (
+    native_im_provider_exchange,
     native_im_sandbox,
     native_im_sandbox_approval,
     native_im_sandbox_approval_store,
@@ -17,6 +18,7 @@ from quantum_entanglement.service.native_im_config import NativeIMDisabledConfig
 def test_sandbox_modules_are_exactly_reexported_from_the_package_api() -> None:
     modules = (
         native_im_sandbox,
+        native_im_provider_exchange,
         native_im_sandbox_approval,
         native_im_sandbox_approval_store,
         native_im_sandbox_authority,
