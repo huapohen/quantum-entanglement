@@ -201,6 +201,30 @@ class ScopedInvocationCompleteFenceTests(unittest.TestCase):
             expected_error=InvocationIntegrityError,
         )
 
+    def test_stripped_scoped_markers_cannot_downgrade_to_legacy(self) -> None:
+        request, claimed = self.scoped_event_store_claim()
+        payload = request.manifest.to_dict()
+        for key in ("schemaVersion", "tenantId", "workspaceId"):
+            del payload[key]
+        self.events._connection.execute(
+            "UPDATE events SET payload_json = ? WHERE event_id = ?",
+            (
+                json.dumps(
+                    payload,
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                request.execution_requested_event_id,
+            ),
+        )
+
+        self.assert_scoped_complete_rejected(
+            claimed.lease,
+            expected_error=InvocationIntegrityError,
+        )
+
     def test_scoped_event_type_drift_fails_as_integrity_not_legacy(self) -> None:
         request, claimed = self.scoped_event_store_claim()
         self.events._connection.execute(
