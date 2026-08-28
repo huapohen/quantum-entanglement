@@ -39,14 +39,18 @@
 > candidate with six result tables, eight explicit indexes and a private backup-topology profile;
 > neither legacy bootstrap nor the active migration/backup registries can reach it. A private exact
 > owner-transaction handle can write an ordered, bounded Artifact batch on the EventStore-owned
-> SQLite transaction, verify every blob/version row, reject unexpected main/TEMP triggers, and force
-> rollback-only after any contained write failure. Existing version history is streamed in fixed
-> batches: SQLite storage classes and byte bounds are checked before each bounded raw row is
-> materialized, then canonical metadata, request digest, scope, lineage and UTC-microsecond time are
-> recomputed. Confirmed rollback and ambiguous outcomes are cleanly distinguished; an ambiguous
-> control signal carries `_ResultArtifactCommitAmbiguityError` as its direct cause and poisons the
-> store. Atomic result request/receipt/event/task/attempt publication, `ObservedV2`, `AcceptedV2`,
-> migration registration and worker dispatch remain absent and disabled.
+> SQLite transaction, verify every blob/version row, bind all Artifact SQL to `main`, reject any
+> unexpected main/TEMP topology, and force rollback-only after any contained write failure. Existing
+> version history is streamed in fixed batches: SQLite storage classes and byte bounds are checked
+> before each bounded raw row is materialized, then canonical metadata, request digest, scope,
+> lineage and UTC-microsecond time are recomputed. A writer-owned random savepoint proves that the
+> same owner transaction survives clock sampling; `COMMIT`/`ROLLBACK` followed by a fresh `BEGIN`
+> cannot masquerade as continuity. Confirmed rollback and ambiguous outcomes are cleanly
+> distinguished; an ambiguous control signal carries `_ResultArtifactCommitAmbiguityError` as its
+> direct cause and poisons the store. Exception-graph classification uses base descriptors, does not
+> execute subclass attribute hooks, and does not revive a historical control suppressed with
+> `from None`. Atomic result request/receipt/event/task/attempt publication, `ObservedV2`,
+> `AcceptedV2`, migration registration and worker dispatch remain absent and disabled.
 
 ## Context
 
