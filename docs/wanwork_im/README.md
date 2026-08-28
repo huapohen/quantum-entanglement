@@ -20,6 +20,8 @@
 - [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)：产品范围、用户旅程与验收标准。
 - [ARCHITECTURE.md](ARCHITECTURE.md)：分层架构、数据所有权、插件边界和关键时序。
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)：阶段、提交序列、门禁和可停点。
+- [POSTGRES_PRODUCTION_AUTHORITY.md](POSTGRES_PRODUCTION_AUTHORITY.md)：Gate A0 的 production
+  topology/IaC、Secret、authority cutover、receipt/reconcile、rollback 与验收合同。
 - [W2_POSTGRES_RUNTIME_CHECKPOINT.md](W2_POSTGRES_RUNTIME_CHECKPOINT.md)：当前 W2 PostgreSQL
   工程入口、attested runtime composition、Go/No-Go 与接 IM 前剩余 P0。
 - [W2_POSTGRES_AUTHORITY_CHECKPOINT.md](W2_POSTGRES_AUTHORITY_CHECKPOINT.md)：`0001..0005`、

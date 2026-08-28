@@ -173,6 +173,9 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 
 ### Gate A0：production deployment authority 与 rotation contract
 
+冻结合同见 [POSTGRES_PRODUCTION_AUTHORITY.md](POSTGRES_PRODUCTION_AUTHORITY.md)。它不构成 IaC、cutover、
+remote TLS、rotation 或 production promotion 已完成的证据。
+
 1. `docs(im): freeze production topology iac and secret responsibility boundary`
 2. `feat(im): freeze authority cutover plan format`
 3. `test(im): canonicalize cutover plan digest`
