@@ -22,8 +22,9 @@
   WanWork IM 审阅主页、调研矩阵、实施计划、2output 吸收审计、专题 32 与专题 33 已联合回读。
 - 当前最后完成远端回读的 WanWork IM Notion 内容基线为
   `dev_wanwork_quantum_entanglement@7bb324a4a06689a496cbc99b79d23261d031bc19`，其 Topic 34 代码证据
-  基线为 `cd92ea56493b43889f5165892b40ec36e958d44a`；分支未合并 `main`。当前 Topic 35
-  `53dd38b` 代码/文档仍是本地与 Git 待同步增量，不能写成 Notion 已更新。`main@f99f176` 仍是提前
+  基线为 `cd92ea56493b43889f5165892b40ec36e958d44a`；分支未合并 `main`。Topic 35 `53dd38b` 以及
+  authority specification/cutover plan `ad60859` 代码与文档仍是本地/Git `local_pending` 增量，不能写成
+  Notion 已更新。`main@f99f176` 仍是提前
   接入历史备份基线，不代表本分支当前 W2 进度。
 - 本轮已确认两个当前 Markdown 附件从临时上传转为页面附件；所有七个更新页面均回读到 Topic 33
   反链、两个基线 SHA、两层一级调研根、六项 P0 gate 与禁止性声明。没有记录临时 signed S3 URL。
@@ -31,7 +32,8 @@
   `99031ad243112122e987e84658ff93daf33b3285ea1468039f9d59dc8048167a`。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
-- 最近完成批次已完成 Notion 写入和远端回读；Topic 35 将在本阶段本地/Git 收尾后批量同步；语雀仍未操作。
+- 最近完成批次已完成 Notion 写入和远端回读；Topic 35 与 Gate A0 plan 将在本地代码/测试/文档/Git
+  全部收口后批量同步；语雀仍未操作。
 
 ## 当前阶段交付
 
@@ -42,6 +44,7 @@
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 原路线已由提前接入调度修订 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 历史备份检查点 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界；不是当前 W2 入口 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | 历史调度计划 | 提前接入决策时冻结的 E0–E5/Level A–D 路线；保留作决策溯源，不再是当前 W2 执行入口 |
+| `docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md` | 当前 Gate A0 plan 入口：`ad60859` | immutable authority specification/digest、canonical plan、strict decoder、零跳过验证、No-Go 与 preflight/executor/receipt 后续顺序 |
 | `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口：`53dd38b` | canonical strict connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate A/Trusted tenant 剩余 P0 |
 | `research/35_postgres_attested_runtime_composition_checkpoint.md` | 当前 W2 深度证据：`53dd38b` | 30 提交台账、ambient/default-file/raw-DSN/malformed-query 安全闭环、PG18 connection/session/ACL drift 实证、一级调研硬映射、未交付边界与下一阶段计划 |
 

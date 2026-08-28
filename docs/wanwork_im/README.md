@@ -22,6 +22,8 @@
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)：阶段、提交序列、门禁和可停点。
 - [POSTGRES_PRODUCTION_AUTHORITY.md](POSTGRES_PRODUCTION_AUTHORITY.md)：Gate A0 的 production
   topology/IaC、Secret、authority cutover、receipt/reconcile、rollback 与验收合同。
+- [W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md](W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md)：immutable authority
+  specification、canonical cutover plan、strict decoder、测试证据与剩余 No-Go。
 - [W2_POSTGRES_RUNTIME_CHECKPOINT.md](W2_POSTGRES_RUNTIME_CHECKPOINT.md)：当前 W2 PostgreSQL
   工程入口、attested runtime composition、Go/No-Go 与接 IM 前剩余 P0。
 - [W2_POSTGRES_AUTHORITY_CHECKPOINT.md](W2_POSTGRES_AUTHORITY_CHECKPOINT.md)：`0001..0005`、
@@ -29,7 +31,8 @@
 - [RESEARCH_COVERAGE.md](RESEARCH_COVERAGE.md)：`2output` 全部 40 份 Markdown 的行数、摘要、角色和处置。
 - [RESEARCH_TRACEABILITY.md](RESEARCH_TRACEABILITY.md)：用户调研快照、采纳/拒绝决策与从证据到验收的映射。
 
-当前深度报告与可视化（code evidence baseline `53dd38b`）：
+当前 authority/cutover plan 代码证据基线为 `ad60859`；当前深度报告与可视化仍保留
+attested runtime baseline `53dd38b`：
 
 - `analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md`；
 - `analysis_report/html/35_postgres_attested_runtime_composition_checkpoint.html`；
@@ -51,6 +54,8 @@ Topic 33 与 Topic 34 保留为 persistence/function-only/exact-access 的历史
 - 当前 `0005`、五个 function-only write、exact access manifest、attested runtime pool、startup/readiness
   route barrier 与独立 migrator 已作为受控 PostgreSQL 18.6 子集交付；role provision helper 仍是测试 fixture，
   first-deploy ownership/grant cutover 不是生产 IaC；
+- authority expectation 已收敛成 immutable specification；canonical cutover plan 与 strict decoder 已交付，
+  但 provisioner preflight、executor、durable receipt/reconcile、secret provider 与 remote TLS E2E 尚未实现；
 - strict connection policy 已拒绝 ambient `PG*` presence、remote passwordless、默认 credential/TLS file
   adoption、malformed query、ambient system-root override 与 raw DSN 二次解析；API 也拒绝继承 migration
   URL 的环境。`Pool.Acquire` 仍是 trusted low-level escape hatch，不是 tenant/action authority；

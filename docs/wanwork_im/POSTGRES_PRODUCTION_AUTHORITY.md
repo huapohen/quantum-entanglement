@@ -87,7 +87,7 @@ receipt 必须消费同一个 versioned authority specification；否则一方�
 
 ### 3.2 逻辑与网络拓扑
 
-![PostgreSQL Production Authority Gate A0 拓扑](../../analysis_report/screenshots/postgres_production_authority_topology.png)
+![PostgreSQL Production Authority Gate A0 拓扑](../../analysis_report/screenshots/36_postgres_production_authority_topology.png)
 
 ### 3.3 连接矩阵
 
@@ -333,6 +333,11 @@ generic error。receipt 证明系统观察到的 boundary，不证明外部平�
 无 owner、无 backup proof、无 exact plan approval 或 receipt destination 不可用时，cutover 必须在写入前失败。
 
 ## 10. Gate A0 验收矩阵
+
+> 2026-08-29 本地实现进度：authority specification/digest、canonical plan、自绑定 digest 和 strict decoder
+> 已由 production Go code 交付并通过全包 normal/race/vet、PG18 integration zero-skip。详细证据见
+> [W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md](W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md)。preflight、executor、
+> receipt/reconcile、secret provider、remote TLS 与 clean-host IaC 仍为 No-Go。
 
 ### 10.1 合同与单元测试
 

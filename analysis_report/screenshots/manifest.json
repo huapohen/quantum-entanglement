@@ -746,7 +746,7 @@
         "A review diagram derived from the frozen Gate A0 contract; it is not independent IaC, cutover, remote TLS, credential lifecycle, database or production-readiness evidence",
         "The diagram explicitly leaves live rotation, Clerk, RongCloud, Agent threads and messages, public traffic, high availability and production promotion unimplemented and blocked"
       ],
-      "filename": "postgres_production_authority_topology.svg",
+      "filename": "36_postgres_production_authority_topology.svg",
       "firstArchivedAt": "2026-08-29T00:10:19+08:00",
       "height": 1120,
       "mediaType": "image/svg+xml",
@@ -768,7 +768,7 @@
         "A rendering of the sibling SVG, not additional or independent evidence",
         "Pixel appearance does not prove clean-host deployment, secret injection, cutover, remote TLS, rotation, recovery, high availability, provider delivery or production readiness"
       ],
-      "filename": "postgres_production_authority_topology.png",
+      "filename": "36_postgres_production_authority_topology.png",
       "firstArchivedAt": "2026-08-29T00:10:19+08:00",
       "height": 1120,
       "mediaType": "image/png",
@@ -776,7 +776,7 @@
       "redactionStatus": "not-applicable-repository-authored-diagram",
       "sha256": "8569f0ec46fbc156b8d6e4fabb2ae0c6c4fa0a043665c455b57713ed55fbbc7b",
       "sourceKind": "quantum-entanglement-canonical-contract-visual",
-      "sourceReference": "analysis_report/screenshots/postgres_production_authority_topology.svg; rsvg-convert -w 1800 -h 1120; source-doc-git:6a2a46b82de0f459d5ae5ce4cd245da73264d38e; archived-git:3c5b6465dc2f280566d992760146fe258f3ceacc",
+      "sourceReference": "analysis_report/screenshots/36_postgres_production_authority_topology.svg; rsvg-convert -w 1800 -h 1120; source-doc-git:6a2a46b82de0f459d5ae5ce4cd245da73264d38e; archived-git:3c5b6465dc2f280566d992760146fe258f3ceacc",
       "width": 1800
     }
   ],

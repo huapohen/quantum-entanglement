@@ -84,24 +84,27 @@ models，`ContentObservation/ProvenanceEdge/TaintLabel/AuthorityClass/Declassifi
 PostgreSQL event store 还必须通过 expected-revision transaction、crash/reopen、kill-9/restore 和
 projection 清库重建；W1 memory fake 不能代替该门禁。
 
-#### W2 当前检查点（2026-08-28）
+#### W2 当前检查点（2026-08-29）
 
-当前工程入口见 [W2_POSTGRES_RUNTIME_CHECKPOINT.md](W2_POSTGRES_RUNTIME_CHECKPOINT.md)，最新深度证据见
-`analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md`；Topic 33/34 分别保留
-`0001..0004` persistence 与 `0005` function-only/exact-access 的前序历史检查点。
+当前 Gate A0 plan 工程入口见
+[W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md](W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md)，runtime composition 前序入口见
+[W2_POSTGRES_RUNTIME_CHECKPOINT.md](W2_POSTGRES_RUNTIME_CHECKPOINT.md)；Topic 33/34/35 分别保留 persistence、
+function-only/exact-access 与 attested runtime 的历史检查点。
 
-当前 code evidence baseline 为 `53dd38b`。当前口径必须保留：
+当前 code evidence baseline 为 `ad60859`。当前口径必须保留：
 
 | 标记 | 状态 |
 |---|---|
-| `[F]` | `0001..0005`、五个 exact write function、exact access、strict canonical connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier 与独立 migrator 已形成代码路径；PostgreSQL 18.6 全包 normal/race 与 vet 通过。 |
-| `[C]` | 保证仅限 explicit manifest、已登记 schema/object、当前 repository/UoW 与测试 provision fixture；runtime composition 已接线，但 production ownership/grant cutover、credential lifecycle 和恢复仍未交付。 |
+| `[F]` | `0001..0005`、五个 exact write function、exact access、strict connection policy、attested runtime、immutable authority specification、canonical cutover plan 与 strict decoder 已形成代码路径；PostgreSQL 18.6 全包 normal/race/vet、module verify 与 integration zero-skip 通过。 |
+| `[C]` | plan 只做 offline build/canonical/digest/decode；保证仍限 explicit manifest、已登记 schema/object、当前 repository/UoW 与测试 fixture。production preflight/executor/receipt/secret/IaC/remote TLS/恢复尚未交付。 |
 | `[A]` | persistence substrate 的结构方向正确，可作为 authenticated admission、resolver 和 event/outbox 的底座。 |
 | `[U]` | production cutover/角色轮换/旧 session drain、Clerk trusted tenant、action-time resolver、restore/crash 和 event/outbox 尚未完成。 |
 
 已交付的 W2 子集：
 
 - checksummed `0001..0005` migration catalog、精确 ledger、PG18 major gate、session advisory lock；
+- immutable authority specification、manifest/catalog/specification domain-separated digest；
+- canonical cutover plan、自绑定 approval/plan digest、semantic-set normalization 与 duplicate-aware strict decoder；
 - 每个新 migration 提交前累计验证全部旧 postcondition；
 - fixed `search_path`、有界 rollback/unlock/close；
 - token-aware DDL allowlist，并拒绝 `CREATE TABLE AS SELECT`、危险 DEFAULT、`set_config`/`pg_sleep`
