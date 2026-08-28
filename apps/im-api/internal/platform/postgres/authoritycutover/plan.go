@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	PlanFormat                     = "wanwork.im.postgres-authority-cutover-plan/2"
+	PlanFormat                     = "wanwork.im.postgres-authority-cutover-plan/3"
 	maximumPlanBytes               = 256 * 1024
-	planDigestDomain               = "wanwork.im/postgres-authority-cutover-plan/2\n"
+	planDigestDomain               = "wanwork.im/postgres-authority-cutover-plan/3\n"
 	postgresSystemIdentifierDomain = "wanwork.im/postgres-cluster-system-identifier/1\n"
 	maximumPlanSteps               = 128
 	maximumPlanSetValues           = 128
@@ -98,6 +98,7 @@ type PlanInput struct {
 	NonEmptyClassification NonEmptyClassification
 	PlanID                 string
 	PostgreSQLMajor        int
+	ProvisionerGrantorRole string
 	ReleaseArtifactDigest  string
 	Rollback               RollbackBoundary
 	ServerIdentity         string
@@ -148,9 +149,12 @@ type ApprovalBinding struct {
 }
 
 type AuthorityBinding struct {
+	CutoverSpecificationDigest    string            `json:"cutoverSpecificationDigest"`
+	CutoverTopology               string            `json:"cutoverTopology"`
 	ExecutorCompatibilityVersion  string            `json:"executorCompatibilityVersion"`
 	Manifest                      AuthorityManifest `json:"manifest"`
 	ManifestDigest                string            `json:"manifestDigest"`
+	ProvisionerGrantorRole        string            `json:"provisionerGrantorRole"`
 	SpecificationDigest           string            `json:"specificationDigest"`
 	ValidatorCompatibilityVersion string            `json:"validatorCompatibilityVersion"`
 }
@@ -249,6 +253,22 @@ func BuildPlan(input PlanInput) (Plan, error) {
 	if err != nil {
 		return Plan{}, ErrInvalidPlan
 	}
+	provisionerLogin, uniqueProvisioner := provisionerLoginRole(input.Credentials)
+	if !uniqueProvisioner {
+		return Plan{}, ErrInvalidPlan
+	}
+	cutoverSpecification, err := migrations.CurrentAuthorityCutoverSpecification(
+		input.AuthorityManifest,
+		provisionerLogin,
+		input.ProvisionerGrantorRole,
+	)
+	if err != nil || cutoverSpecification.ManagedAuthoritySpecificationDigest != specificationDigest {
+		return Plan{}, ErrInvalidPlan
+	}
+	cutoverSpecificationDigest, err := migrations.DigestAuthorityCutoverSpecification(cutoverSpecification)
+	if err != nil {
+		return Plan{}, ErrInvalidPlan
+	}
 	snapshot := PlanSnapshot{
 		AbortConditions: slices.Clone(input.AbortConditions),
 		Approval: ApprovalBinding{
@@ -256,9 +276,12 @@ func BuildPlan(input PlanInput) (Plan, error) {
 			Reference: input.ApprovalReference,
 		},
 		Authority: AuthorityBinding{
+			CutoverSpecificationDigest:    cutoverSpecificationDigest,
+			CutoverTopology:               cutoverSpecification.Topology,
 			ExecutorCompatibilityVersion:  specification.ExecutorCompatibilityVersion,
 			Manifest:                      authorityManifestSnapshot(input.AuthorityManifest),
 			ManifestDigest:                specification.AuthorityManifestDigest,
+			ProvisionerGrantorRole:        input.ProvisionerGrantorRole,
 			SpecificationDigest:           specificationDigest,
 			ValidatorCompatibilityVersion: specification.ValidatorCompatibilityVersion,
 		},
@@ -367,6 +390,7 @@ func validPlanSnapshot(snapshot PlanSnapshot, requireDigest bool) bool {
 		!canonicalDigest.MatchString(snapshot.Source.MigrationCatalogDigest) ||
 		!canonicalDigest.MatchString(snapshot.Authority.ManifestDigest) ||
 		!canonicalDigest.MatchString(snapshot.Authority.SpecificationDigest) ||
+		!canonicalDigest.MatchString(snapshot.Authority.CutoverSpecificationDigest) ||
 		!validAuthorityBinding(snapshot) ||
 		snapshot.Target.Database != snapshot.Authority.Manifest.DatabaseName ||
 		snapshot.Target.PostgreSQLMajor != migrations.AuthorityAccessPostgreSQLMajor ||
@@ -466,7 +490,24 @@ func validAuthorityBinding(snapshot PlanSnapshot) bool {
 		return false
 	}
 	digest, err := migrations.DigestAuthorityAccessSpecification(specification)
-	return err == nil && digest == snapshot.Authority.SpecificationDigest
+	if err != nil || digest != snapshot.Authority.SpecificationDigest {
+		return false
+	}
+	provisionerLogin, uniqueProvisioner := provisionerLoginRole(snapshot.Credentials)
+	if !uniqueProvisioner {
+		return false
+	}
+	cutover, err := migrations.CurrentAuthorityCutoverSpecification(
+		manifest,
+		provisionerLogin,
+		snapshot.Authority.ProvisionerGrantorRole,
+	)
+	if err != nil || cutover.Topology != snapshot.Authority.CutoverTopology ||
+		cutover.ManagedAuthoritySpecificationDigest != digest {
+		return false
+	}
+	cutoverDigest, err := migrations.DigestAuthorityCutoverSpecification(cutover)
+	return err == nil && cutoverDigest == snapshot.Authority.CutoverSpecificationDigest
 }
 
 func migrationsAuthorityManifest(manifest AuthorityManifest) migrations.AuthorityAccessManifest {

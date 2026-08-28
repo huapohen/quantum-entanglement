@@ -26,6 +26,9 @@ func TestBuildPlanIsDeterministicImmutableAndSemanticallyBound(t *testing.T) {
 	}
 	if snapshot.Source.MigrationCatalogDigest == "" || snapshot.Authority.ManifestDigest == "" ||
 		snapshot.Authority.SpecificationDigest == "" ||
+		snapshot.Authority.CutoverSpecificationDigest == "" ||
+		snapshot.Authority.CutoverTopology != migrations.AuthorityCutoverTopology ||
+		snapshot.Authority.ProvisionerGrantorRole != input.ProvisionerGrantorRole ||
 		!canonicalDigest.MatchString(snapshot.Target.SystemIdentifierDigest) ||
 		snapshot.Target.CatalogVersionNo <= 0 || snapshot.Target.PGControlVersion <= 0 ||
 		!snapshot.Target.PrimaryRequired {
@@ -117,6 +120,13 @@ func TestBuildPlanRejectsIncompleteOrUnsafeSemantics(t *testing.T) {
 		"provisioner authority collision": func(input *PlanInput) {
 			input.Credentials[0].LoginRole = input.AuthorityManifest.DatabaseOwnerRole
 		},
+		"grantor authority collision": func(input *PlanInput) {
+			input.ProvisionerGrantorRole = input.AuthorityManifest.OwnerRole
+		},
+		"grantor provisioner collision": func(input *PlanInput) {
+			input.ProvisionerGrantorRole = input.Credentials[0].LoginRole
+		},
+		"missing exact grantor": func(input *PlanInput) { input.ProvisionerGrantorRole = "" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -134,7 +144,7 @@ func TestPlanGoldenDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}
-	const wantDigest = "sha256:d8e7e12ec78ef11d74d6198f8c923068695991c8b75862ab3de79d6aa96352fa"
+	const wantDigest = "sha256:e922f645dfbba80b90d6af42d56bc8bfcf8a55434b0b38cf31e1f0c64397a3cf"
 	if plan.Digest() != wantDigest {
 		t.Fatalf("golden digest = %q, want %q", plan.Digest(), wantDigest)
 	}
@@ -195,6 +205,7 @@ func validPlanInput() PlanInput {
 		NonEmptyClassification: ClassificationEmpty,
 		PlanID:                 "plan-20260829-0001",
 		PostgreSQLMajor:        migrations.AuthorityAccessPostgreSQLMajor,
+		ProvisionerGrantorRole: "postgres_iac_bootstrap",
 		ReleaseArtifactDigest:  digestB,
 		Rollback: RollbackBoundary{
 			ArtifactDigest: digestC,

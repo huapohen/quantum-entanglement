@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/migrations"
 )
 
 func TestDecodePlanNormalizesDeclaredSetsAndRoundTrips(t *testing.T) {
@@ -50,13 +52,26 @@ func TestDecodePlanRejectsStructuralAndDigestDrift(t *testing.T) {
 	credentialFragment := []byte(`"credentials":[`)
 	tests := map[string][]byte{
 		"obsolete v1 format": bytes.Replace(canonical, []byte(PlanFormat), []byte("wanwork.im.postgres-authority-cutover-plan/1"), 1),
+		"obsolete v2 format": bytes.Replace(canonical, []byte(PlanFormat), []byte("wanwork.im.postgres-authority-cutover-plan/2"), 1),
 		"unknown field":      bytes.Replace(canonical, []byte(`{"abortConditions"`), []byte(`{"unknown":true,"abortConditions"`), 1),
 		"duplicate key":      bytes.Replace(canonical, planIDFragment, append(slices.Clone(planIDFragment), []byte(`,"planId":"plan-20260829-0001"`)...), 1),
 		"trailing value":     append(slices.Clone(canonical), []byte(` {}`)...),
 		"fractional integer": bytes.Replace(canonical, []byte(`"postgresqlMajor":18`), []byte(`"postgresqlMajor":18.0`), 1),
 		"null collection":    bytes.Replace(canonical, credentialFragment, []byte(`"credentials":null,"discarded":[`), 1),
-		"tampered digest":    bytes.Replace(canonical, []byte("sha256:"+strings.Repeat("a", 64)), []byte("sha256:"+strings.Repeat("f", 64)), 1),
-		"non utf8":           append(slices.Clone(canonical), 0xff),
+		"shared topology": bytes.Replace(
+			canonical,
+			[]byte(migrations.AuthorityCutoverTopology),
+			[]byte("shared-postgres-cluster"),
+			1,
+		),
+		"changed grantor": bytes.Replace(
+			canonical,
+			[]byte("postgres_iac_bootstrap"),
+			[]byte("postgres_other_bootstrap"),
+			1,
+		),
+		"tampered digest": bytes.Replace(canonical, []byte("sha256:"+strings.Repeat("a", 64)), []byte("sha256:"+strings.Repeat("f", 64)), 1),
+		"non utf8":        append(slices.Clone(canonical), 0xff),
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
