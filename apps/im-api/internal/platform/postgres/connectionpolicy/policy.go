@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -16,8 +17,40 @@ import (
 
 var (
 	ErrInvalidConfig   = errors.New("invalid PostgreSQL connection policy config")
+	ErrAmbientSettings = errors.New("ambient PostgreSQL connection settings are not admitted")
 	ErrUnsafeTransport = errors.New("PostgreSQL connection transport is not admitted")
 )
+
+// pgx v5.10 reads these libpq-compatible variables before it parses the explicit URL. Some
+// variables can redirect the endpoint, read credentials or TLS material from files, or inject
+// session parameters. The exact URL policy therefore rejects every non-empty recognized ambient
+// value before pgx can perform parsing or filesystem access.
+var ambientPostgresVariableNames = []string{
+	"PGHOST",
+	"PGPORT",
+	"PGDATABASE",
+	"PGUSER",
+	"PGPASSWORD",
+	"PGPASSFILE",
+	"PGAPPNAME",
+	"PGCONNECT_TIMEOUT",
+	"PGSSLMODE",
+	"PGSSLKEY",
+	"PGSSLCERT",
+	"PGSSLSNI",
+	"PGSSLROOTCERT",
+	"PGSSLPASSWORD",
+	"PGSSLNEGOTIATION",
+	"PGTARGETSESSIONATTRS",
+	"PGSERVICE",
+	"PGSERVICEFILE",
+	"PGTZ",
+	"PGOPTIONS",
+	"PGMINPROTOCOLVERSION",
+	"PGMAXPROTOCOLVERSION",
+	"PGCHANNELBINDING",
+	"PGREQUIREAUTH",
+}
 
 var connectionStringAllowedKeys = []string{
 	"database",
@@ -49,6 +82,9 @@ func Parse(input Config) (*pgx.ConnConfig, error) {
 		!strictConnectionStringShape(input.ConnectionString) {
 		return nil, ErrInvalidConfig
 	}
+	if ambientPostgresSettingsPresent() {
+		return nil, ErrAmbientSettings
+	}
 	parsed, err := pgx.ParseConfigWithOptions(input.ConnectionString, pgx.ParseConfigOptions{
 		ParseConfigOptions: pgconn.ParseConfigOptions{
 			ConnStringAllowedKeys: connectionStringAllowedKeys,
@@ -66,6 +102,15 @@ func Parse(input Config) (*pgx.ConnConfig, error) {
 	}
 	parsed.ConnectTimeout = input.ConnectTimeout
 	return parsed, nil
+}
+
+func ambientPostgresSettingsPresent() bool {
+	for _, name := range ambientPostgresVariableNames {
+		if value, ok := os.LookupEnv(name); ok && value != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func strictConnectionStringShape(connectionString string) bool {
