@@ -2,7 +2,7 @@
   "schema_version": 1,
   "branches": {
     "main": "唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。",
-    "mainline_continue_quantum_entanglement": "E3 Result Authority 人工评审分支；M1 private stored-event envelope codec、M2 reserved generic-append/scoped-completion fence 与 M3 private typed snapshot/raw-row store adapter 已封板，2,578 项全量测试、三 Python 209 项组合专项和 locked Ruff/Mypy 全绿，下一步仅允许 M4 inactive schema、Artifact transaction primitives 与 backup topology；migration 7 注册、writer、Observed、Accepted、worker、真实 IM 与 outbound 全关闭，不自动合并回 main。",
+    "mainline_continue_quantum_entanglement": "E3 Result Authority 人工评审分支；M1 private envelope、M2 reserved fence、M3 typed snapshot/raw-row adapter 与 M4 inactive migration 7/private backup topology/Artifact owner transaction 已封板。M4 组合 82 项、全仓 2,639 项、Ruff/Mypy/diff-check 全绿，最终独立复核为 0 blocker；下一步仅允许 M5 Atomic Result Acceptance Writer。Notion 批量同步延后；migration 7 注册、Observed、Accepted、worker、真实 IM 与 outbound 全关闭，不自动合并回 main。",
     "dev_wanwork_quantum_entanglement": "较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。",
     "backup_0827_200010": "2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。",
     "agent/evidence-ledger": "早期工程证据账本分支，用于汇总测试、审计和阶段结论。",
