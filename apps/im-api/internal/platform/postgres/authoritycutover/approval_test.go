@@ -67,6 +67,11 @@ func TestDetachedApprovalDeterministicRoundTripAndEvidenceBoundary(t *testing.T)
 		verified.KeyID() != "release-key-2026-08" || verified.PlanDigest() != fixture.plan.Digest() ||
 		verified.PlanID() != snapshot.PlanID || verified.Reference() != snapshot.Approval.Reference ||
 		verified.PolicyRevision() != fixture.trustedKey.PolicyRevision ||
+		verified.PolicyID() != fixture.verifier.policyID ||
+		verified.PolicySequence() != fixture.verifier.policySequence ||
+		verified.PolicyDigest() != fixture.verifier.policyDigest ||
+		verified.ActivationRecordDigest() != fixture.verifier.activationRecordDigest ||
+		verified.RootTrustBundleDigest() != fixture.verifier.rootTrustBundleDigest ||
 		!canonicalDigest.MatchString(verified.ApprovalDigest()) {
 		t.Fatalf("verified metadata is incomplete: %+v", verified)
 	}
@@ -99,7 +104,7 @@ func TestApprovalVerifierCopiesCallerOwnedTrustMaterial(t *testing.T) {
 	key := fixture.trustedKey
 	key.PublicKey = slices.Clone(fixture.publicKey)
 	keys := []ApprovalVerificationKey{key}
-	verifier, err := NewApprovalVerifier(keys, 0)
+	verifier, err := newApprovalVerifierForTesting(keys, 0)
 	if err != nil {
 		t.Fatalf("NewApprovalVerifier: %v", err)
 	}
@@ -126,6 +131,9 @@ func TestApprovalVerifierRejectsInvalidKeyrings(t *testing.T) {
 	badKeyID.KeyID = "Release Key"
 	badPolicyRevision := valid
 	badPolicyRevision.PolicyRevision = "revision-1"
+	mixedPolicyRevision := valid
+	mixedPolicyRevision.KeyID = "release-key-policy-fork"
+	mixedPolicyRevision.PolicyRevision = "policy/release-approvers/revision-2"
 	badScope := valid
 	badScope.Scope.ReferencePrefix = "approval/postgres-cell-a"
 	shortKey := valid
@@ -144,6 +152,7 @@ func TestApprovalVerifierRejectsInvalidKeyrings(t *testing.T) {
 		"bad generation": {keys: []ApprovalVerificationKey{badGeneration}},
 		"bad key id":     {keys: []ApprovalVerificationKey{badKeyID}},
 		"bad policy":     {keys: []ApprovalVerificationKey{badPolicyRevision}},
+		"mixed policy":   {keys: []ApprovalVerificationKey{valid, mixedPolicyRevision}},
 		"bad scope":      {keys: []ApprovalVerificationKey{badScope}},
 		"short key":      {keys: []ApprovalVerificationKey{shortKey}},
 		"revoked":        {keys: []ApprovalVerificationKey{revoked}},
@@ -170,7 +179,7 @@ func TestApprovalVerifierRejectsInvalidKeyrings(t *testing.T) {
 	}{keys: tooMany}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewApprovalVerifier(test.keys, test.skew); !errors.Is(err, ErrInvalidApprovalVerifier) {
+			if _, err := newApprovalVerifierForTesting(test.keys, test.skew); !errors.Is(err, ErrInvalidApprovalVerifier) {
 				t.Fatalf("NewApprovalVerifier error = %v, want %v", err, ErrInvalidApprovalVerifier)
 			}
 		})
@@ -178,7 +187,7 @@ func TestApprovalVerifierRejectsInvalidKeyrings(t *testing.T) {
 	atLimit := make([]ApprovalVerificationKey, maximumApprovalKeys)
 	copy(atLimit, tooMany[:maximumApprovalKeys])
 	atLimit[maximumApprovalKeys-1] = valid
-	atLimitVerifier, err := NewApprovalVerifier(atLimit, maximumApprovalClockSkew)
+	atLimitVerifier, err := newApprovalVerifierForTesting(atLimit, maximumApprovalClockSkew)
 	if err != nil {
 		t.Fatalf("NewApprovalVerifier at limit: %v", err)
 	}
@@ -265,7 +274,7 @@ func TestApprovalRejectsEveryPlanIdentityAndSignatureDrift(t *testing.T) {
 	}
 	wrongIdentityKey := fixture.trustedKey
 	wrongIdentityKey.ApproverIdentity = "release-owner/secondary"
-	wrongIdentityVerifier, err := NewApprovalVerifier([]ApprovalVerificationKey{wrongIdentityKey}, 0)
+	wrongIdentityVerifier, err := newApprovalVerifierForTesting([]ApprovalVerificationKey{wrongIdentityKey}, 0)
 	if err != nil {
 		t.Fatalf("NewApprovalVerifier wrong identity: %v", err)
 	}
@@ -300,7 +309,7 @@ func TestApprovalTrustPolicyRejectsOutOfScopeAndOutOfWindow(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			key := fixture.trustedKey
 			mutate(&key)
-			verifier, err := NewApprovalVerifier([]ApprovalVerificationKey{key}, 0)
+			verifier, err := newApprovalVerifierForTesting([]ApprovalVerificationKey{key}, 0)
 			if err != nil {
 				t.Fatalf("NewApprovalVerifier: %v", err)
 			}
@@ -338,7 +347,7 @@ func TestApprovalRejectsAmbiguousReferenceNamespaces(t *testing.T) {
 		t.Run("policy-"+strings.ReplaceAll(prefix, "/", "-"), func(t *testing.T) {
 			key := fixture.trustedKey
 			key.Scope.ReferencePrefix = prefix
-			if _, err := NewApprovalVerifier([]ApprovalVerificationKey{key}, 0); !errors.Is(err, ErrInvalidApprovalVerifier) {
+			if _, err := newApprovalVerifierForTesting([]ApprovalVerificationKey{key}, 0); !errors.Is(err, ErrInvalidApprovalVerifier) {
 				t.Fatalf("NewApprovalVerifier error = %v, want %v", err, ErrInvalidApprovalVerifier)
 			}
 		})
@@ -503,7 +512,7 @@ func newApprovalFixture(t *testing.T, clockSkew time.Duration) approvalFixture {
 			ReferencePrefix: "approval/postgres-cell-a/",
 		},
 	}
-	verifier, err := NewApprovalVerifier([]ApprovalVerificationKey{trustedKey}, clockSkew)
+	verifier, err := newApprovalVerifierForTesting([]ApprovalVerificationKey{trustedKey}, clockSkew)
 	if err != nil {
 		t.Fatalf("NewApprovalVerifier: %v", err)
 	}

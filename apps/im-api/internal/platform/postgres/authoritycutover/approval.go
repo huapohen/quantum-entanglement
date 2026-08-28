@@ -147,27 +147,86 @@ type trustedApprovalKey struct {
 	generation       string
 	notAfter         time.Time
 	notBefore        time.Time
-	policyRevision   string
 	publicKey        ed25519.PublicKey
 	scope            ApprovalVerificationScope
 }
 
 type ApprovalVerifier struct {
-	keys      map[string]trustedApprovalKey
-	clockSkew time.Duration
+	activationRecordDigest string
+	clockSkew              time.Duration
+	keys                   map[string]trustedApprovalKey
+	maximumLifetime        time.Duration
+	policyDigest           string
+	policyID               string
+	policyNotAfter         time.Time
+	policyNotBefore        time.Time
+	policyRevision         string
+	policySequence         uint64
+	rootTrustBundleDigest  string
+	target                 ApprovalPolicyTarget
+	targetBound            bool
+	verificationEnabled    bool
 }
 
-func NewApprovalVerifier(
+// newApprovalVerifierForTesting is intentionally package-private. Production composition must
+// obtain a verifier from ActivatedApprovalPolicy after durable anti-rollback activation.
+func newApprovalVerifierForTesting(
 	keys []ApprovalVerificationKey,
 	clockSkew time.Duration,
 ) (ApprovalVerifier, error) {
-	if len(keys) == 0 || len(keys) > maximumApprovalKeys || clockSkew < 0 ||
-		clockSkew > maximumApprovalClockSkew {
+	if len(keys) == 0 {
+		return ApprovalVerifier{}, ErrInvalidApprovalVerifier
+	}
+	policyRevision := keys[0].PolicyRevision
+	policyNotBefore := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	policyNotAfter := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, key := range keys[1:] {
+		if key.PolicyRevision != policyRevision {
+			return ApprovalVerifier{}, ErrInvalidApprovalVerifier
+		}
+	}
+	return newApprovalVerifier(keys, approvalVerifierPolicy{
+		activationRecordDigest: "sha256:" + strings.Repeat("1", 64),
+		clockSkew:              clockSkew,
+		maximumLifetime:        maximumApprovalLifetime,
+		policyDigest:           "sha256:" + strings.Repeat("2", 64),
+		policyID:               "approval-policy/testing",
+		policyNotAfter:         policyNotAfter,
+		policyNotBefore:        policyNotBefore,
+		policyRevision:         policyRevision,
+		policySequence:         1,
+		rootTrustBundleDigest:  "sha256:" + strings.Repeat("3", 64),
+		verificationEnabled:    true,
+	})
+}
+
+type approvalVerifierPolicy struct {
+	activationRecordDigest string
+	clockSkew              time.Duration
+	maximumLifetime        time.Duration
+	policyDigest           string
+	policyID               string
+	policyNotAfter         time.Time
+	policyNotBefore        time.Time
+	policyRevision         string
+	policySequence         uint64
+	rootTrustBundleDigest  string
+	target                 ApprovalPolicyTarget
+	targetBound            bool
+	verificationEnabled    bool
+}
+
+func newApprovalVerifier(
+	keys []ApprovalVerificationKey,
+	policy approvalVerifierPolicy,
+) (ApprovalVerifier, error) {
+	if len(keys) > maximumApprovalKeys || !validApprovalVerifierPolicy(policy) ||
+		(policy.verificationEnabled && len(keys) == 0) || (!policy.verificationEnabled && len(keys) != 0) {
 		return ApprovalVerifier{}, ErrInvalidApprovalVerifier
 	}
 	trusted := make(map[string]trustedApprovalKey, len(keys))
 	for _, key := range keys {
-		if !validApprovalVerificationKey(key) {
+		if !validApprovalVerificationKey(key) || key.PolicyRevision != policy.policyRevision {
 			return ApprovalVerifier{}, ErrInvalidApprovalVerifier
 		}
 		if _, duplicate := trusted[key.KeyID]; duplicate {
@@ -179,12 +238,26 @@ func NewApprovalVerifier(
 			generation:       key.Generation,
 			notAfter:         key.NotAfter,
 			notBefore:        key.NotBefore,
-			policyRevision:   key.PolicyRevision,
 			publicKey:        slices.Clone(key.PublicKey),
 			scope:            key.Scope,
 		}
 	}
-	return ApprovalVerifier{keys: trusted, clockSkew: clockSkew}, nil
+	return ApprovalVerifier{
+		activationRecordDigest: policy.activationRecordDigest,
+		clockSkew:              policy.clockSkew,
+		keys:                   trusted,
+		maximumLifetime:        policy.maximumLifetime,
+		policyDigest:           policy.policyDigest,
+		policyID:               policy.policyID,
+		policyNotAfter:         policy.policyNotAfter,
+		policyNotBefore:        policy.policyNotBefore,
+		policyRevision:         policy.policyRevision,
+		policySequence:         policy.policySequence,
+		rootTrustBundleDigest:  policy.rootTrustBundleDigest,
+		target:                 policy.target,
+		targetBound:            policy.targetBound,
+		verificationEnabled:    policy.verificationEnabled,
+	}, nil
 }
 
 // VerifiedApproval is the only approval form an executor may consume. It exposes a
@@ -192,21 +265,29 @@ func NewApprovalVerifier(
 // envelope. Verification is intentionally not a single-use operation: the executor must durably
 // consume ApprovalDigest with a plan-bound execution attempt before it performs any mutation.
 type VerifiedApproval struct {
-	approvalDigest   string
-	approvedAt       time.Time
-	approverIdentity string
-	cellID           string
-	deploymentID     string
-	expiresAt        time.Time
-	keyFingerprint   string
-	keyGeneration    string
-	keyID            string
-	planDigest       string
-	planID           string
-	policyRevision   string
-	reference        string
+	activationRecordDigest string
+	approvalDigest         string
+	approvedAt             time.Time
+	approverIdentity       string
+	cellID                 string
+	deploymentID           string
+	expiresAt              time.Time
+	keyFingerprint         string
+	keyGeneration          string
+	keyID                  string
+	planDigest             string
+	planID                 string
+	policyDigest           string
+	policyID               string
+	policyRevision         string
+	policySequence         uint64
+	reference              string
+	rootTrustBundleDigest  string
 }
 
+func (approval VerifiedApproval) ActivationRecordDigest() string {
+	return approval.activationRecordDigest
+}
 func (approval VerifiedApproval) ApprovalDigest() string   { return approval.approvalDigest }
 func (approval VerifiedApproval) ApprovedAt() time.Time    { return approval.approvedAt }
 func (approval VerifiedApproval) ApproverIdentity() string { return approval.approverIdentity }
@@ -218,8 +299,14 @@ func (approval VerifiedApproval) KeyGeneration() string    { return approval.key
 func (approval VerifiedApproval) KeyID() string            { return approval.keyID }
 func (approval VerifiedApproval) PlanDigest() string       { return approval.planDigest }
 func (approval VerifiedApproval) PlanID() string           { return approval.planID }
+func (approval VerifiedApproval) PolicyDigest() string     { return approval.policyDigest }
+func (approval VerifiedApproval) PolicyID() string         { return approval.policyID }
 func (approval VerifiedApproval) PolicyRevision() string   { return approval.policyRevision }
+func (approval VerifiedApproval) PolicySequence() uint64   { return approval.policySequence }
 func (approval VerifiedApproval) Reference() string        { return approval.reference }
+func (approval VerifiedApproval) RootTrustBundleDigest() string {
+	return approval.rootTrustBundleDigest
+}
 
 func (verifier ApprovalVerifier) Verify(
 	plan Plan,
@@ -229,9 +316,18 @@ func (verifier ApprovalVerifier) Verify(
 	if !validPlanSnapshot(plan.snapshot, true) {
 		return VerifiedApproval{}, ErrInvalidApproval
 	}
-	if now.IsZero() || len(verifier.keys) == 0 || verifier.clockSkew < 0 ||
-		verifier.clockSkew > maximumApprovalClockSkew {
+	if now.IsZero() || !validApprovalVerifier(verifier) {
 		return VerifiedApproval{}, ErrInvalidApprovalVerifier
+	}
+	if !verifier.verificationEnabled || len(verifier.keys) == 0 {
+		return VerifiedApproval{}, ErrUntrustedApproval
+	}
+	instant := now.UTC()
+	if instant.Before(verifier.policyNotBefore) {
+		return VerifiedApproval{}, ErrUntrustedApproval
+	}
+	if !instant.Before(verifier.policyNotAfter) {
+		return VerifiedApproval{}, ErrExpiredApproval
 	}
 	envelope, canonical, err := decodeApproval(raw)
 	if err != nil {
@@ -258,10 +354,9 @@ func (verifier ApprovalVerifier) Verify(
 		!ed25519.Verify(verificationKey.publicKey, approvalSigningMessage(unsignedCanonical), signature) {
 		return VerifiedApproval{}, ErrUntrustedApproval
 	}
-	if !validApprovalPolicyForPlan(verificationKey, envelope, planSnapshot) {
+	if !validApprovalPolicyForPlan(verifier, verificationKey, envelope, planSnapshot) {
 		return VerifiedApproval{}, ErrUntrustedApproval
 	}
-	instant := now.UTC()
 	if envelope.ApprovedAt.After(instant.Add(verifier.clockSkew)) {
 		return VerifiedApproval{}, ErrUntrustedApproval
 	}
@@ -270,19 +365,24 @@ func (verifier ApprovalVerifier) Verify(
 		return VerifiedApproval{}, ErrExpiredApproval
 	}
 	return VerifiedApproval{
-		approvalDigest:   approvalEvidenceDigest(canonical),
-		approvedAt:       envelope.ApprovedAt,
-		approverIdentity: envelope.ApproverIdentity,
-		cellID:           planSnapshot.Target.CellID,
-		deploymentID:     planSnapshot.Target.DeploymentID,
-		expiresAt:        envelope.ExpiresAt,
-		keyFingerprint:   verificationKey.fingerprint,
-		keyGeneration:    verificationKey.generation,
-		keyID:            envelope.KeyID,
-		planDigest:       envelope.PlanDigest,
-		planID:           envelope.PlanID,
-		policyRevision:   verificationKey.policyRevision,
-		reference:        envelope.Reference,
+		activationRecordDigest: verifier.activationRecordDigest,
+		approvalDigest:         approvalEvidenceDigest(canonical),
+		approvedAt:             envelope.ApprovedAt,
+		approverIdentity:       envelope.ApproverIdentity,
+		cellID:                 planSnapshot.Target.CellID,
+		deploymentID:           planSnapshot.Target.DeploymentID,
+		expiresAt:              envelope.ExpiresAt,
+		keyFingerprint:         verificationKey.fingerprint,
+		keyGeneration:          verificationKey.generation,
+		keyID:                  envelope.KeyID,
+		planDigest:             envelope.PlanDigest,
+		planID:                 envelope.PlanID,
+		policyDigest:           verifier.policyDigest,
+		policyID:               verifier.policyID,
+		policyRevision:         verifier.policyRevision,
+		policySequence:         verifier.policySequence,
+		reference:              envelope.Reference,
+		rootTrustBundleDigest:  verifier.rootTrustBundleDigest,
 	}, nil
 }
 
@@ -299,6 +399,7 @@ func validApprovalVerificationKey(key ApprovalVerificationKey) bool {
 }
 
 func validApprovalPolicyForPlan(
+	verifier ApprovalVerifier,
 	key trustedApprovalKey,
 	envelope approvalEnvelope,
 	plan PlanSnapshot,
@@ -306,7 +407,37 @@ func validApprovalPolicyForPlan(
 	return key.scope.CellID == plan.Target.CellID && key.scope.DeploymentID == plan.Target.DeploymentID &&
 		strings.HasPrefix(envelope.Reference, key.scope.ReferencePrefix) &&
 		!envelope.ApprovedAt.Before(key.notBefore) && envelope.ApprovedAt.Before(key.notAfter) &&
-		(envelope.ExpiresAt.Before(key.notAfter) || envelope.ExpiresAt.Equal(key.notAfter))
+		(envelope.ExpiresAt.Before(key.notAfter) || envelope.ExpiresAt.Equal(key.notAfter)) &&
+		!envelope.ApprovedAt.Before(verifier.policyNotBefore) &&
+		!envelope.ExpiresAt.After(verifier.policyNotAfter) &&
+		envelope.ExpiresAt.Sub(envelope.ApprovedAt) <= verifier.maximumLifetime &&
+		(!verifier.targetBound || approvalPolicyTargetMatchesPlan(verifier.target, plan))
+}
+
+func validApprovalVerifierPolicy(policy approvalVerifierPolicy) bool {
+	return canonicalDigest.MatchString(policy.activationRecordDigest) &&
+		policy.clockSkew >= 0 && policy.clockSkew <= maximumApprovalClockSkew &&
+		policy.maximumLifetime > 0 && policy.maximumLifetime <= maximumApprovalLifetime &&
+		canonicalDigest.MatchString(policy.policyDigest) && canonicalIdentity(policy.policyID) &&
+		strings.HasPrefix(policy.policyID, "approval-policy/") &&
+		canonicalPolicyTime(policy.policyNotBefore) && canonicalPolicyTime(policy.policyNotAfter) &&
+		policy.policyNotAfter.After(policy.policyNotBefore) && canonicalIdentity(policy.policyRevision) &&
+		strings.HasPrefix(policy.policyRevision, "policy/") &&
+		policy.policySequence > 0 && policy.policySequence <= maximumApprovalPolicyRevision &&
+		canonicalDigest.MatchString(policy.rootTrustBundleDigest) &&
+		(!policy.targetBound || (validApprovalPolicyTarget(policy.target) &&
+			policy.policyRevision == approvalPolicyRevision(policy.policyID, policy.policySequence)))
+}
+
+func approvalPolicyTargetMatchesPlan(target ApprovalPolicyTarget, plan PlanSnapshot) bool {
+	return target.CADigest == plan.Target.TLS.CADigest && target.CellID == plan.Target.CellID &&
+		target.CutoverTopology == plan.Authority.CutoverTopology && target.Database == plan.Target.Database &&
+		target.DeploymentID == plan.Target.DeploymentID &&
+		target.ExecutorCompatibilityVersion == plan.Authority.ExecutorCompatibilityVersion &&
+		target.PlanFormat == plan.Format && target.PostgreSQLMajor == plan.Target.PostgreSQLMajor &&
+		target.ServerIdentity == plan.Target.ServerIdentity &&
+		target.SystemIdentifierDigest == plan.Target.SystemIdentifierDigest &&
+		target.ValidatorCompatibilityVersion == plan.Authority.ValidatorCompatibilityVersion
 }
 
 // decodeApproval accepts only the exact canonical envelope emitted by Encode. This prevents

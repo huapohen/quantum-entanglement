@@ -42,25 +42,30 @@ type PreflightCheckResult struct {
 // approval and plan, but contains no DSN, password, raw cluster identifier, certificate, SQL row,
 // or reusable signed envelope.
 type PreflightReportSnapshot struct {
-	AbortPolicyDigest      string                 `json:"abortPolicyDigest"`
-	ApprovalDigest         string                 `json:"approvalDigest"`
-	ApprovalKeyFingerprint string                 `json:"approvalKeyFingerprint"`
-	ApprovalKeyGeneration  string                 `json:"approvalKeyGeneration"`
-	ApprovalKeyID          string                 `json:"approvalKeyId"`
-	ApprovalPolicyRevision string                 `json:"approvalPolicyRevision"`
-	CellID                 string                 `json:"cellId"`
-	Checks                 []PreflightCheckResult `json:"checks"`
-	DeploymentID           string                 `json:"deploymentId"`
-	ExpectationDigest      string                 `json:"expectationDigest"`
-	ExpiresAt              time.Time              `json:"expiresAt"`
-	Format                 string                 `json:"format"`
-	MutationAuthorized     bool                   `json:"mutationAuthorized"`
-	ObservedAt             time.Time              `json:"observedAt"`
-	Outcome                PreflightCheckOutcome  `json:"outcome"`
-	PassPolicyDigest       string                 `json:"passPolicyDigest"`
-	PlanDigest             string                 `json:"planDigest"`
-	PlanID                 string                 `json:"planId"`
-	ReportDigest           string                 `json:"reportDigest"`
+	AbortPolicyDigest              string                 `json:"abortPolicyDigest"`
+	ApprovalDigest                 string                 `json:"approvalDigest"`
+	ApprovalKeyFingerprint         string                 `json:"approvalKeyFingerprint"`
+	ApprovalKeyGeneration          string                 `json:"approvalKeyGeneration"`
+	ApprovalKeyID                  string                 `json:"approvalKeyId"`
+	ApprovalPolicyActivationDigest string                 `json:"approvalPolicyActivationDigest"`
+	ApprovalPolicyDigest           string                 `json:"approvalPolicyDigest"`
+	ApprovalPolicyID               string                 `json:"approvalPolicyId"`
+	ApprovalPolicyRevision         string                 `json:"approvalPolicyRevision"`
+	ApprovalPolicyRootTrustDigest  string                 `json:"approvalPolicyRootTrustDigest"`
+	ApprovalPolicySequence         uint64                 `json:"approvalPolicySequence"`
+	CellID                         string                 `json:"cellId"`
+	Checks                         []PreflightCheckResult `json:"checks"`
+	DeploymentID                   string                 `json:"deploymentId"`
+	ExpectationDigest              string                 `json:"expectationDigest"`
+	ExpiresAt                      time.Time              `json:"expiresAt"`
+	Format                         string                 `json:"format"`
+	MutationAuthorized             bool                   `json:"mutationAuthorized"`
+	ObservedAt                     time.Time              `json:"observedAt"`
+	Outcome                        PreflightCheckOutcome  `json:"outcome"`
+	PassPolicyDigest               string                 `json:"passPolicyDigest"`
+	PlanDigest                     string                 `json:"planDigest"`
+	PlanID                         string                 `json:"planId"`
+	ReportDigest                   string                 `json:"reportDigest"`
 }
 
 // PreflightReport is immutable evidence of a short-lived observation. A passing report still does
@@ -131,24 +136,29 @@ func buildPreflightReport(
 		})
 	}
 	snapshot := PreflightReportSnapshot{
-		AbortPolicyDigest:      preflightStep.AbortConditionDigest,
-		ApprovalDigest:         approval.ApprovalDigest(),
-		ApprovalKeyFingerprint: approval.KeyFingerprint(),
-		ApprovalKeyGeneration:  approval.KeyGeneration(),
-		ApprovalKeyID:          approval.KeyID(),
-		ApprovalPolicyRevision: approval.PolicyRevision(),
-		CellID:                 planSnapshot.Target.CellID,
-		Checks:                 checks,
-		DeploymentID:           planSnapshot.Target.DeploymentID,
-		ExpectationDigest:      preflightStep.PreconditionDigest,
-		ExpiresAt:              preflightReportExpiry(planSnapshot.ExpiresAt, approval.ExpiresAt(), observedAt),
-		Format:                 PreflightReportFormat,
-		MutationAuthorized:     false,
-		ObservedAt:             observedAt,
-		Outcome:                aggregatePreflightOutcome(checks),
-		PassPolicyDigest:       preflightStep.PostconditionDigest,
-		PlanDigest:             plan.Digest(),
-		PlanID:                 planSnapshot.PlanID,
+		AbortPolicyDigest:              preflightStep.AbortConditionDigest,
+		ApprovalDigest:                 approval.ApprovalDigest(),
+		ApprovalKeyFingerprint:         approval.KeyFingerprint(),
+		ApprovalKeyGeneration:          approval.KeyGeneration(),
+		ApprovalKeyID:                  approval.KeyID(),
+		ApprovalPolicyActivationDigest: approval.ActivationRecordDigest(),
+		ApprovalPolicyDigest:           approval.PolicyDigest(),
+		ApprovalPolicyID:               approval.PolicyID(),
+		ApprovalPolicyRevision:         approval.PolicyRevision(),
+		ApprovalPolicyRootTrustDigest:  approval.RootTrustBundleDigest(),
+		ApprovalPolicySequence:         approval.PolicySequence(),
+		CellID:                         planSnapshot.Target.CellID,
+		Checks:                         checks,
+		DeploymentID:                   planSnapshot.Target.DeploymentID,
+		ExpectationDigest:              preflightStep.PreconditionDigest,
+		ExpiresAt:                      preflightReportExpiry(planSnapshot.ExpiresAt, approval.ExpiresAt(), observedAt),
+		Format:                         PreflightReportFormat,
+		MutationAuthorized:             false,
+		ObservedAt:                     observedAt,
+		Outcome:                        aggregatePreflightOutcome(checks),
+		PassPolicyDigest:               preflightStep.PostconditionDigest,
+		PlanDigest:                     plan.Digest(),
+		PlanID:                         planSnapshot.PlanID,
 	}
 	return sealPreflightReport(snapshot, plan, approval)
 }
@@ -228,14 +238,25 @@ func validPreflightReportSnapshot(
 		snapshot.ApprovalKeyFingerprint != approval.KeyFingerprint() ||
 		snapshot.ApprovalKeyGeneration != approval.KeyGeneration() ||
 		snapshot.ApprovalKeyID != approval.KeyID() ||
+		snapshot.ApprovalPolicyActivationDigest != approval.ActivationRecordDigest() ||
+		snapshot.ApprovalPolicyDigest != approval.PolicyDigest() ||
+		snapshot.ApprovalPolicyID != approval.PolicyID() ||
 		snapshot.ApprovalPolicyRevision != approval.PolicyRevision() ||
+		snapshot.ApprovalPolicyRootTrustDigest != approval.RootTrustBundleDigest() ||
+		snapshot.ApprovalPolicySequence != approval.PolicySequence() ||
 		snapshot.CellID != plan.snapshot.Target.CellID ||
 		snapshot.DeploymentID != plan.snapshot.Target.DeploymentID ||
 		!canonicalDigest.MatchString(snapshot.ApprovalDigest) ||
 		!canonicalDigest.MatchString(snapshot.ApprovalKeyFingerprint) ||
 		!canonicalIdentity(snapshot.ApprovalKeyGeneration) ||
 		!canonicalIdentity(snapshot.ApprovalKeyID) ||
+		!canonicalDigest.MatchString(snapshot.ApprovalPolicyActivationDigest) ||
+		!canonicalDigest.MatchString(snapshot.ApprovalPolicyDigest) ||
+		!canonicalIdentity(snapshot.ApprovalPolicyID) ||
 		!canonicalIdentity(snapshot.ApprovalPolicyRevision) ||
+		!canonicalDigest.MatchString(snapshot.ApprovalPolicyRootTrustDigest) ||
+		snapshot.ApprovalPolicySequence == 0 ||
+		snapshot.ApprovalPolicySequence > maximumApprovalPolicyRevision ||
 		!canonicalIdentity(snapshot.CellID) || !canonicalIdentity(snapshot.DeploymentID) ||
 		!canonicalIdentity(snapshot.PlanID) || !canonicalDigest.MatchString(snapshot.PlanDigest) ||
 		!canonicalPreflightTime(snapshot.ObservedAt) || !canonicalPreflightTime(snapshot.ExpiresAt) ||
@@ -297,7 +318,11 @@ func verifiedApprovalBindsPlanAt(
 	if !canonicalPreflightTime(observedAt) || !canonicalDigest.MatchString(approval.ApprovalDigest()) ||
 		!canonicalDigest.MatchString(approval.KeyFingerprint()) ||
 		!canonicalIdentity(approval.KeyGeneration()) || !canonicalIdentity(approval.KeyID()) ||
-		!canonicalIdentity(approval.PolicyRevision()) ||
+		!canonicalDigest.MatchString(approval.ActivationRecordDigest()) ||
+		!canonicalDigest.MatchString(approval.PolicyDigest()) ||
+		!canonicalIdentity(approval.PolicyID()) || !canonicalIdentity(approval.PolicyRevision()) ||
+		!canonicalDigest.MatchString(approval.RootTrustBundleDigest()) ||
+		approval.PolicySequence() == 0 || approval.PolicySequence() > maximumApprovalPolicyRevision ||
 		!canonicalPreflightTime(approval.ApprovedAt()) ||
 		!canonicalPreflightTime(approval.ExpiresAt()) {
 		return false

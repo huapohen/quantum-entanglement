@@ -113,6 +113,107 @@ func TestApprovalPolicyActivationAdvancesExactChainAndPreservesKeyLineage(t *tes
 	}
 }
 
+func TestActivatedApprovalPolicyIsTheProductionVerifierAuthority(t *testing.T) {
+	fixture := newApprovalPolicyFixture(t)
+	store := newFakeApprovalPolicyActivationStore()
+	activator := mustApprovalPolicyActivator(t, fixture.verifier, store)
+	activated, err := activator.Activate(
+		t.Context(),
+		fixture.raw,
+		fixture.input.NotBefore.Add(30*time.Minute),
+	)
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	verifier, err := activated.NewApprovalVerifier()
+	if err != nil {
+		t.Fatalf("NewApprovalVerifier: %v", err)
+	}
+	plan, err := BuildPlan(validPlanInput())
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	approvedAt := fixture.input.NotBefore.Add(35 * time.Minute)
+	expiresAt := approvedAt.Add(10 * time.Minute)
+	toSign, err := NewApprovalToSign(plan, "release-key-2026-08", approvedAt, expiresAt)
+	if err != nil {
+		t.Fatalf("NewApprovalToSign: %v", err)
+	}
+	raw, err := toSign.Encode(ed25519.Sign(fixture.onlineKeys[0], toSign.SigningBytes()))
+	if err != nil {
+		t.Fatalf("Encode approval: %v", err)
+	}
+	verified, err := verifier.Verify(plan, raw, approvedAt.Add(5*time.Minute))
+	if err != nil {
+		t.Fatalf("Verify approval: %v", err)
+	}
+	record := activated.ActivationRecord()
+	if verified.PolicyID() != activated.PolicyID() || verified.PolicySequence() != activated.Revision() ||
+		verified.PolicyDigest() != activated.PolicyDigest() ||
+		verified.PolicyRevision() != activated.PolicyRevision() ||
+		verified.ActivationRecordDigest() != record.ActivationRecordDigest ||
+		verified.RootTrustBundleDigest() != record.RootTrustBundleDigest {
+		t.Fatalf("verified approval lost activated policy evidence: %+v", verified)
+	}
+
+	longApproval, err := NewApprovalToSign(plan, "release-key-2026-08", approvedAt, approvedAt.Add(11*time.Minute))
+	if err != nil {
+		t.Fatalf("NewApprovalToSign long: %v", err)
+	}
+	longRaw, err := longApproval.Encode(ed25519.Sign(fixture.onlineKeys[0], longApproval.SigningBytes()))
+	if err != nil {
+		t.Fatalf("Encode long approval: %v", err)
+	}
+	if _, err := verifier.Verify(plan, longRaw, approvedAt.Add(time.Minute)); !errors.Is(err, ErrUntrustedApproval) {
+		t.Fatalf("policy lifetime error = %v, want %v", err, ErrUntrustedApproval)
+	}
+
+	driftInput := validPlanInput()
+	driftInput.ServerIdentity = "postgres-other.prod.internal"
+	driftInput.TLS.ServerName = driftInput.ServerIdentity
+	driftInput.ClusterIdentity.serverIdentity = driftInput.ServerIdentity
+	driftInput.ClusterIdentity.systemIdentifier = "7678902413432981444"
+	driftPlan, err := BuildPlan(driftInput)
+	if err != nil {
+		t.Fatalf("BuildPlan drift: %v", err)
+	}
+	driftToSign, err := NewApprovalToSign(driftPlan, "release-key-2026-08", approvedAt, expiresAt)
+	if err != nil {
+		t.Fatalf("NewApprovalToSign drift: %v", err)
+	}
+	driftRaw, err := driftToSign.Encode(ed25519.Sign(fixture.onlineKeys[0], driftToSign.SigningBytes()))
+	if err != nil {
+		t.Fatalf("Encode drift: %v", err)
+	}
+	if _, err := verifier.Verify(driftPlan, driftRaw, approvedAt.Add(time.Minute)); !errors.Is(err, ErrUntrustedApproval) {
+		t.Fatalf("physical target drift error = %v, want %v", err, ErrUntrustedApproval)
+	}
+	if _, err := verifier.Verify(plan, []byte("unparsed-canary"), fixture.input.NotBefore.Add(-time.Second)); !errors.Is(err, ErrUntrustedApproval) {
+		t.Fatalf("inactive policy error = %v, want %v", err, ErrUntrustedApproval)
+	}
+	if _, err := verifier.Verify(plan, []byte("unparsed-canary"), fixture.input.NotAfter); !errors.Is(err, ErrExpiredApproval) {
+		t.Fatalf("expired policy error = %v, want %v", err, ErrExpiredApproval)
+	}
+
+	_, denyRaw, denyInput := nextApprovalPolicy(t, fixture, func(input *ApprovalPolicyInput) {
+		input.Keys[1].Status = ApprovalPolicyKeyRevoked
+		input.Keys[1].RevokedAt = input.NotBefore
+		input.Keys[1].RevocationReason = "revocation/emergency-freeze"
+		input.DenyAll = true
+	})
+	denied, err := activator.Activate(t.Context(), denyRaw, denyInput.NotBefore.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("Activate deny-all: %v", err)
+	}
+	denyVerifier, err := denied.NewApprovalVerifier()
+	if err != nil {
+		t.Fatalf("NewApprovalVerifier deny-all: %v", err)
+	}
+	if _, err := denyVerifier.Verify(plan, raw, denyInput.NotBefore.Add(time.Minute)); !errors.Is(err, ErrUntrustedApproval) {
+		t.Fatalf("deny-all verifier error = %v, want %v", err, ErrUntrustedApproval)
+	}
+}
+
 func TestApprovalPolicyActivationRejectsRollbackForkGapBrokenChainAndLineageDrift(t *testing.T) {
 	fixture := newApprovalPolicyFixture(t)
 

@@ -3,6 +3,8 @@ package authoritycutover
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -148,6 +150,67 @@ func (policy ActivatedApprovalPolicy) PolicyRevision() string {
 func (policy ActivatedApprovalPolicy) Revision() uint64 { return policy.record.Revision }
 func (policy ActivatedApprovalPolicy) Snapshot() ApprovalPolicySnapshot {
 	return policy.policy.Snapshot()
+}
+
+// NewApprovalVerifier is the only production constructor for ApprovalVerifier. Every active key
+// inherits one exact activated policy revision/digest and the verifier rechecks the policy window
+// on every approval verification. A deny-all activation returns a valid verifier that rejects all
+// approvals without an alternate keyring path.
+func (policy ActivatedApprovalPolicy) NewApprovalVerifier() (ApprovalVerifier, error) {
+	if !validApprovalPolicyActivationRecord(policy.record) ||
+		policy.policy.PolicyID() != policy.record.PolicyID ||
+		policy.policy.PolicyDigest() != policy.record.PolicyDigest ||
+		policy.policy.EnvelopeDigest() != policy.record.PolicyEnvelopeDigest ||
+		policy.policy.RootTrustBundleDigest() != policy.record.RootTrustBundleDigest ||
+		policy.policy.Revision() != policy.record.Revision {
+		return ApprovalVerifier{}, ErrInvalidApprovalVerifier
+	}
+	snapshot := policy.policy.Snapshot()
+	if !validApprovalPolicySnapshot(snapshot, true, true) ||
+		digestApprovalPolicyTarget(snapshot.Target) != policy.record.TargetDigest ||
+		policy.record.ApprovalVerificationEnabled == snapshot.DenyAll {
+		return ApprovalVerifier{}, ErrInvalidApprovalVerifier
+	}
+	keys := make([]ApprovalVerificationKey, 0, len(snapshot.Keys))
+	for _, key := range snapshot.Keys {
+		if key.Status == ApprovalPolicyKeyRevoked {
+			continue
+		}
+		publicKey, err := base64.RawURLEncoding.Strict().DecodeString(key.PublicKey)
+		if err != nil || len(publicKey) != ed25519.PublicKeySize ||
+			base64.RawURLEncoding.EncodeToString(publicKey) != key.PublicKey {
+			return ApprovalVerifier{}, ErrInvalidApprovalVerifier
+		}
+		keys = append(keys, ApprovalVerificationKey{
+			ApproverIdentity: key.ApproverIdentity,
+			Generation:       key.Generation,
+			KeyID:            key.KeyID,
+			NotAfter:         key.NotAfter,
+			NotBefore:        key.NotBefore,
+			PolicyRevision:   policy.record.PolicyRevision,
+			PublicKey:        ed25519.PublicKey(slices.Clone(publicKey)),
+			Scope: ApprovalVerificationScope{
+				CellID:          snapshot.Target.CellID,
+				DeploymentID:    snapshot.Target.DeploymentID,
+				ReferencePrefix: key.ReferencePrefix,
+			},
+		})
+	}
+	return newApprovalVerifier(keys, approvalVerifierPolicy{
+		activationRecordDigest: policy.record.ActivationRecordDigest,
+		clockSkew:              time.Duration(snapshot.ApprovalClockSkewSeconds) * time.Second,
+		maximumLifetime:        time.Duration(snapshot.MaximumApprovalLifetimeSeconds) * time.Second,
+		policyDigest:           policy.record.PolicyDigest,
+		policyID:               policy.record.PolicyID,
+		policyNotAfter:         snapshot.NotAfter,
+		policyNotBefore:        snapshot.NotBefore,
+		policyRevision:         policy.record.PolicyRevision,
+		policySequence:         policy.record.Revision,
+		rootTrustBundleDigest:  policy.record.RootTrustBundleDigest,
+		target:                 snapshot.Target,
+		targetBound:            true,
+		verificationEnabled:    policy.record.ApprovalVerificationEnabled,
+	})
 }
 
 func (activator ApprovalPolicyActivator) Activate(
@@ -408,6 +471,40 @@ func validApprovalPolicyVerifier(verifier ApprovalPolicyVerifier) bool {
 		verifier.clockSkew >= 0 && verifier.clockSkew <= maximumApprovalClockSkew &&
 		canonicalDigest.MatchString(verifier.bundleDigest) && canonicalIdentity(verifier.policyID) &&
 		validApprovalPolicyTarget(verifier.target)
+}
+
+func validApprovalVerifier(verifier ApprovalVerifier) bool {
+	if !validApprovalVerifierPolicy(approvalVerifierPolicy{
+		activationRecordDigest: verifier.activationRecordDigest,
+		clockSkew:              verifier.clockSkew,
+		maximumLifetime:        verifier.maximumLifetime,
+		policyDigest:           verifier.policyDigest,
+		policyID:               verifier.policyID,
+		policyNotAfter:         verifier.policyNotAfter,
+		policyNotBefore:        verifier.policyNotBefore,
+		policyRevision:         verifier.policyRevision,
+		policySequence:         verifier.policySequence,
+		rootTrustBundleDigest:  verifier.rootTrustBundleDigest,
+		target:                 verifier.target,
+		targetBound:            verifier.targetBound,
+		verificationEnabled:    verifier.verificationEnabled,
+	}) || len(verifier.keys) > maximumApprovalKeys ||
+		(verifier.verificationEnabled && len(verifier.keys) == 0) ||
+		(!verifier.verificationEnabled && len(verifier.keys) != 0) {
+		return false
+	}
+	for keyID, key := range verifier.keys {
+		if keyID == "" || !canonicalIdentity(keyID) ||
+			!canonicalIdentity(key.approverIdentity) || !canonicalIdentity(key.generation) ||
+			!canonicalDigest.MatchString(key.fingerprint) || len(key.publicKey) != ed25519.PublicKeySize ||
+			approvalKeyFingerprint(key.publicKey) != key.fingerprint ||
+			!canonicalPolicyTime(key.notBefore) || !canonicalPolicyTime(key.notAfter) ||
+			!key.notAfter.After(key.notBefore) || !canonicalIdentity(key.scope.CellID) ||
+			!canonicalIdentity(key.scope.DeploymentID) || !validApprovalReferencePrefix(key.scope.ReferencePrefix) {
+			return false
+		}
+	}
+	return true
 }
 
 func nilInterface(value any) bool {

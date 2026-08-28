@@ -34,7 +34,12 @@ func TestPreflightReportBindsPlanApprovalPoliciesAndShortTTL(t *testing.T) {
 		snapshot.ApprovalKeyFingerprint != approval.KeyFingerprint() ||
 		snapshot.ApprovalKeyGeneration != approval.KeyGeneration() ||
 		snapshot.ApprovalKeyID != approval.KeyID() ||
+		snapshot.ApprovalPolicyActivationDigest != approval.ActivationRecordDigest() ||
+		snapshot.ApprovalPolicyDigest != approval.PolicyDigest() ||
+		snapshot.ApprovalPolicyID != approval.PolicyID() ||
 		snapshot.ApprovalPolicyRevision != approval.PolicyRevision() ||
+		snapshot.ApprovalPolicyRootTrustDigest != approval.RootTrustBundleDigest() ||
+		snapshot.ApprovalPolicySequence != approval.PolicySequence() ||
 		snapshot.CellID != planSnapshot.Target.CellID || snapshot.DeploymentID != planSnapshot.Target.DeploymentID ||
 		snapshot.ObservedAt != fixture.now || snapshot.ExpiresAt != fixture.now.Add(time.Minute) ||
 		snapshot.ExpectationDigest != planSnapshot.Steps[0].PreconditionDigest ||
@@ -71,7 +76,7 @@ func TestPreflightReportGoldenDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildPreflightReport: %v", err)
 	}
-	const want = "sha256:c1f1f8535a85043746edeed50d74dbd8deb1541443d2eacaf0df485a24bf6e6e"
+	const want = "sha256:185bec26bdb78b40203d57d06869c6ae400e2be385a767e1f08d710412fed077"
 	if report.Digest() != want {
 		t.Fatalf("golden digest = %q, want %q", report.Digest(), want)
 	}
@@ -211,6 +216,21 @@ func TestPreflightReportRejectsPlanApprovalAndSnapshotDrift(t *testing.T) {
 		"mutation authorized": func(value *PreflightReportSnapshot) { value.MutationAuthorized = true },
 		"changed approval": func(value *PreflightReportSnapshot) {
 			value.ApprovalDigest = "sha256:" + strings.Repeat("e", 64)
+		},
+		"changed policy activation": func(value *PreflightReportSnapshot) {
+			value.ApprovalPolicyActivationDigest = "sha256:" + strings.Repeat("e", 64)
+		},
+		"changed policy digest": func(value *PreflightReportSnapshot) {
+			value.ApprovalPolicyDigest = "sha256:" + strings.Repeat("e", 64)
+		},
+		"changed policy id": func(value *PreflightReportSnapshot) {
+			value.ApprovalPolicyID = "approval-policy/other"
+		},
+		"changed policy sequence": func(value *PreflightReportSnapshot) {
+			value.ApprovalPolicySequence++
+		},
+		"changed root trust": func(value *PreflightReportSnapshot) {
+			value.ApprovalPolicyRootTrustDigest = "sha256:" + strings.Repeat("e", 64)
 		},
 		"changed expectation": func(value *PreflightReportSnapshot) {
 			value.ExpectationDigest = "sha256:" + strings.Repeat("e", 64)

@@ -499,7 +499,7 @@ func provisionPreflightPostgresFixture(t *testing.T) preflightPostgresFixture {
 	if err != nil {
 		t.Fatalf("Encode fixture approval: %v", err)
 	}
-	verifier, err := NewApprovalVerifier([]ApprovalVerificationKey{{
+	verifier, err := newApprovalVerifierForTesting([]ApprovalVerificationKey{{
 		ApproverIdentity: input.ApprovalIdentity,
 		Generation:       "generation-1",
 		KeyID:            "preflight-test-key",
