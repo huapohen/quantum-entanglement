@@ -228,6 +228,7 @@ class _MaterializedFreshResultAcceptancePlanV2:
         "__accepted_at",
         "__active",
         "__artifacts",
+        "__identity_allocation_started",
         "__prepared",
         "__prerequisites",
     )
@@ -249,6 +250,7 @@ class _MaterializedFreshResultAcceptancePlanV2:
         self.__prerequisites = prerequisites
         self.__accepted_at = accepted_at
         self.__artifacts = artifacts
+        self.__identity_allocation_started = False
         self.__active = True
         self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
@@ -291,10 +293,25 @@ class _MaterializedFreshResultAcceptancePlanV2:
             self.__artifacts,
         )
 
+    def _begin_identity_allocation(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("result acceptance identity allocation is private")
+        if type(self) is not _MaterializedFreshResultAcceptancePlanV2:
+            raise TypeError("materialized result acceptance plan must be exact")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("materialized result acceptance plan is no longer active")
+        if type(self.__identity_allocation_started) is not bool:
+            raise RuntimeError("materialized result acceptance identity state is invalid")
+        if self.__identity_allocation_started:
+            raise RuntimeError("result acceptance identity allocation already started")
+        self.__identity_allocation_started = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
     def _invalidate(self, *, token: object) -> None:
         if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
             raise TypeError("materialized result acceptance plan invalidation is private")
         self.__active = False
+        self.__identity_allocation_started = True
         object.__setattr__(
             self,
             "_MaterializedFreshResultAcceptancePlanV2__prepared",
@@ -319,6 +336,86 @@ class _MaterializedFreshResultAcceptancePlanV2:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("materialized result acceptance plans cannot be serialized")
+
+
+class _IdentifiedFreshResultAcceptancePlanV2:
+    """One store-identified fresh plan; IDs are candidates until the full graph commits."""
+
+    __slots__ = (
+        "__active",
+        "__materialized",
+        "__receipt_id",
+        "__result_event_id",
+        "__terminal_event_id",
+    )
+
+    def __init__(
+        self,
+        *,
+        materialized: _MaterializedFreshResultAcceptancePlanV2,
+        receipt_id: str,
+        result_event_id: str,
+        terminal_event_id: str,
+        token: object,
+    ) -> None:
+        if type(self) is not _IdentifiedFreshResultAcceptancePlanV2:
+            raise TypeError("identified result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("identified result acceptance plan constructor is private")
+        self.__materialized = materialized
+        self.__receipt_id = receipt_id
+        self.__result_event_id = result_event_id
+        self.__terminal_event_id = terminal_event_id
+        self.__active = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> tuple[_MaterializedFreshResultAcceptancePlanV2, str, str, str]:
+        if type(self) is not _IdentifiedFreshResultAcceptancePlanV2:
+            raise TypeError("identified result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("identified result acceptance plan validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("identified result acceptance plan is no longer active")
+        if type(self.__materialized) is not _MaterializedFreshResultAcceptancePlanV2:
+            raise TypeError("identified result acceptance materialization is not exact")
+        prepared, _, _, _ = self.__materialized._validated(
+            token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+        )
+        receipt_id = _prepared_text(self.__receipt_id, "receipt identity")
+        result_event_id = _prepared_text(self.__result_event_id, "result event identity")
+        terminal_event_id = _prepared_text(
+            self.__terminal_event_id,
+            "terminal event identity",
+        )
+        if len({receipt_id, result_event_id, terminal_event_id}) != 3:
+            raise ValueError("result acceptance store identities are not distinct")
+        start_event_id = prepared.request.start_receipt.event_id
+        if result_event_id == start_event_id or terminal_event_id == start_event_id:
+            raise ValueError("result acceptance event identity reuses the start event")
+        return self.__materialized, receipt_id, result_event_id, terminal_event_id
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("identified result acceptance plan invalidation is private")
+        self.__active = False
+        object.__setattr__(
+            self,
+            "_IdentifiedFreshResultAcceptancePlanV2__materialized",
+            None,
+        )
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("identified result acceptance plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("identified result acceptance plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("identified result acceptance plans cannot be serialized")
 
 
 def _scoped_invocation_start_claimed_snapshot(

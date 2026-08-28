@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
 import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -174,6 +173,16 @@ class _ResultArtifactCommitAmbiguityError(RuntimeError):
     """The owner transaction may have committed and requires reopen/reconcile."""
 
 
+def _validated_result_artifact_savepoint_suffix(value: object) -> str:
+    """Return one exact SQL-safe nonce allocated by the owning store."""
+
+    if type(value) is not str:
+        raise TypeError("result Artifact savepoint suffix must be an exact string")
+    if len(value) != 32 or any(character not in "0123456789abcdef" for character in value):
+        raise ValueError("result Artifact savepoint suffix must be 32 lowercase hex characters")
+    return value
+
+
 class _ResultArtifactTransactionHandle:
     """One non-transferable, exit-invalidated EventStore transaction capability."""
 
@@ -182,6 +191,7 @@ class _ResultArtifactTransactionHandle:
         "__connection",
         "__generation",
         "__process_owner",
+        "__savepoint_suffix",
         "__store",
     )
 
@@ -192,6 +202,7 @@ class _ResultArtifactTransactionHandle:
         connection: sqlite3.Connection,
         process_owner: object,
         generation: int,
+        savepoint_suffix: object,
         token: object,
     ) -> None:
         if type(self) is not _ResultArtifactTransactionHandle:
@@ -204,10 +215,14 @@ class _ResultArtifactTransactionHandle:
             )
         if type(generation) is not int or generation <= 0:
             raise ValueError("result Artifact transaction generation is invalid")
+        validated_savepoint_suffix = _validated_result_artifact_savepoint_suffix(
+            savepoint_suffix
+        )
         self.__store = store
         self.__connection: sqlite3.Connection | None = connection
         self.__process_owner = process_owner
         self.__generation = generation
+        self.__savepoint_suffix: str | None = validated_savepoint_suffix
         self.__active = True
 
     def _validated_connection(
@@ -236,6 +251,36 @@ class _ResultArtifactTransactionHandle:
             raise RuntimeError("result Artifact transaction is not open")
         return connection
 
+    def _validated_savepoint_suffix(
+        self,
+        *,
+        store: object,
+        process_owner: object,
+        generation: int,
+        token: object,
+    ) -> str:
+        if type(self) is not _ResultArtifactTransactionHandle:
+            raise TypeError("result Artifact transaction handle must be exact")
+        if token is not _RESULT_ARTIFACT_TRANSACTION_TOKEN:
+            raise TypeError("result Artifact savepoint suffix access is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("result Artifact transaction handle is no longer active")
+        if self.__store is not store or self.__process_owner is not process_owner:
+            raise RuntimeError("result Artifact transaction handle has a foreign owner")
+        if type(generation) is not int or self.__generation != generation:
+            raise RuntimeError("result Artifact transaction handle generation is not active")
+        connection = self.__connection
+        if type(connection) is not sqlite3.Connection:
+            raise RuntimeError("result Artifact transaction handle connection changed")
+        transaction_open = connection.in_transaction
+        if type(transaction_open) is not bool or not transaction_open:
+            raise RuntimeError("result Artifact transaction is not open")
+        suffix = self.__savepoint_suffix
+        try:
+            return _validated_result_artifact_savepoint_suffix(suffix)
+        except (TypeError, ValueError) as error:
+            raise RuntimeError("result Artifact transaction handle nonce changed") from error
+
     def _invalidate(self, *, token: object) -> None:
         if token is not _RESULT_ARTIFACT_TRANSACTION_TOKEN:
             raise TypeError("result Artifact transaction invalidation is private")
@@ -243,6 +288,7 @@ class _ResultArtifactTransactionHandle:
         self.__store = None
         self.__connection = None
         self.__process_owner = None
+        self.__savepoint_suffix = None
 
     def __copy__(self) -> NoReturn:
         raise TypeError("result Artifact transaction handles cannot be copied")
@@ -1343,6 +1389,7 @@ def _preflight_prepared_result_artifacts_in_transaction_body(
     *,
     process_guard: Callable[[], None],
     claim_sqlite_callbacks: Callable[[str], None],
+    savepoint_suffix: object,
 ) -> _ResultArtifactMaterializationPlan:
     _run_process_guard(process_guard)
     if type(connection) is not sqlite3.Connection or not connection.in_transaction:
@@ -1354,6 +1401,7 @@ def _preflight_prepared_result_artifacts_in_transaction_body(
         raise TypeError("result Artifact process guard must be callable")
     if not callable(claim_sqlite_callbacks):
         raise TypeError("result Artifact SQLite callback claim must be callable")
+    validated_savepoint_suffix = _validated_result_artifact_savepoint_suffix(savepoint_suffix)
     _require_exact_connection_codec(connection)
     schema_snapshot = _result_artifact_schema_snapshot(connection, process_guard)
     _run_process_guard(process_guard)
@@ -1373,7 +1421,9 @@ def _preflight_prepared_result_artifacts_in_transaction_body(
         if existing_blob is not None:
             _verify_result_artifact_blob(existing_blob, item, fresh=False, created_at=None)
         _run_process_guard(process_guard)
-    savepoint_name = f"{_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX}{secrets.token_hex(16)}"
+    savepoint_name = (
+        f"{_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX}{validated_savepoint_suffix}"
+    )
     claim_sqlite_callbacks(savepoint_name)
     _guarded_execute(
         connection,
@@ -1398,6 +1448,7 @@ def _preflight_prepared_result_artifacts_in_transaction(
     batch: _PreparedResultArtifactBatch,
     *,
     process_guard: Callable[[], None],
+    savepoint_suffix: object,
 ) -> Iterator[_ResultArtifactMaterializationPlan]:
     """Yield one opaque, transaction-bound plan without persistent DML or clock access."""
 
@@ -1412,6 +1463,7 @@ def _preflight_prepared_result_artifacts_in_transaction(
             batch,
             process_guard=process_guard,
             claim_sqlite_callbacks=claim_sqlite_callbacks,
+            savepoint_suffix=savepoint_suffix,
         )
         try:
             yield plan
@@ -1559,6 +1611,7 @@ def _write_prepared_result_artifacts_in_transaction(
     *,
     clock: Callable[[], str],
     process_guard: Callable[[], None],
+    savepoint_suffix: object,
 ) -> tuple[ScopedInvocationResultArtifactV2, ...]:
     if not callable(clock):
         raise TypeError("result Artifact transaction clock must be callable")
@@ -1568,6 +1621,7 @@ def _write_prepared_result_artifacts_in_transaction(
         connection,
         batch,
         process_guard=process_guard,
+        savepoint_suffix=savepoint_suffix,
     ) as plan:
         if not batch.items:
             return _materialize_prepared_result_artifacts_in_transaction(

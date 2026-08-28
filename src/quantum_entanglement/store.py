@@ -42,6 +42,7 @@ from ._result_acceptance import (
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
     _FreshResultAcceptanceWritePlanV2,
+    _IdentifiedFreshResultAcceptancePlanV2,
     _MaterializedFreshResultAcceptancePlanV2,
     _PreparedScopedInvocationResultAcceptanceV2,
     _ResultAcceptanceConflictError,
@@ -60,6 +61,7 @@ from ._result_artifact_transaction import (
     _ResultArtifactTransactionContinuityError,
     _ResultArtifactTransactionError,
     _ResultArtifactTransactionHandle,
+    _validated_result_artifact_savepoint_suffix,
     _write_prepared_result_artifacts_in_transaction,
 )
 from ._stored_event_envelope_codec import (
@@ -1455,6 +1457,16 @@ class SQLiteEventStore:
                 raise TypeError("max_json_bytes must be an integer")
             if max_json_bytes <= 0:
                 raise ValueError("max_json_bytes must be greater than zero")
+            result_artifact_savepoint_secret = secrets.token_bytes(32)
+            self._require_current_process()
+            if (
+                type(result_artifact_savepoint_secret) is not bytes
+                or len(result_artifact_savepoint_secret) != 32
+            ):
+                raise RuntimeError(
+                    "result Artifact savepoint secret allocation is invalid"
+                )
+            self._result_artifact_savepoint_secret = result_artifact_savepoint_secret
             self.path = path
             if path != ":memory:":
                 parent = os.path.dirname(os.path.abspath(path))
@@ -1659,32 +1671,59 @@ class SQLiteEventStore:
         transaction_outcome: Optional[str] = None
         control: Optional[_EventStoreControlDescriptor] = None
         try:
-            with self._transaction(classify_admission=True) as connection:
-                self._require_current_process()
-                if self._active_result_artifact_transaction_generation is not None:
-                    raise RuntimeError(
-                        "a result Artifact owner transaction became active concurrently"
+            with self._locked():
+                current_generation = self._result_artifact_transaction_generation
+                if (
+                    type(current_generation) is not int
+                    or current_generation < 0
+                    or current_generation >= (1 << 128) - 1
+                ):
+                    raise _ResultArtifactIntegrityError(
+                        "result Artifact transaction generation is exhausted"
                     )
-                generation = self._result_artifact_transaction_generation + 1
-                self._result_artifact_transaction_generation = generation
-                self._active_result_artifact_transaction_generation = generation
-                self._result_artifact_transaction_rollback_only = False
-                handle = _ResultArtifactTransactionHandle(
-                    store=self,
-                    connection=connection,
-                    process_owner=self._process_owner,
-                    generation=generation,
-                    token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
+                generation = current_generation + 1
+                savepoint_secret = self._result_artifact_savepoint_secret
+                if (
+                    type(savepoint_secret) is not bytes
+                    or len(savepoint_secret) != 32
+                ):
+                    raise _ResultArtifactIntegrityError(
+                        "result Artifact savepoint secret is invalid"
+                    )
+                generation_bytes = generation.to_bytes(16, byteorder="big", signed=False)
+                savepoint_suffix = _validated_result_artifact_savepoint_suffix(
+                    hashlib.sha256(
+                        b"quantum-entanglement/result-artifact-savepoint/v1\x00"
+                        + savepoint_secret
+                        + generation_bytes
+                    ).hexdigest()[:32]
                 )
-                try:
-                    yield handle
+                self._result_artifact_transaction_generation = generation
+                with self._transaction(classify_admission=True) as connection:
                     self._require_current_process()
-                    if self._result_artifact_transaction_rollback_only is not False:
-                        raise RuntimeError("result Artifact owner transaction is rollback-only")
-                finally:
-                    handle._invalidate(token=_RESULT_ARTIFACT_TRANSACTION_TOKEN)
-                    self._active_result_artifact_transaction_generation = None
+                    if self._active_result_artifact_transaction_generation is not None:
+                        raise RuntimeError(
+                            "a result Artifact owner transaction became active concurrently"
+                        )
+                    self._active_result_artifact_transaction_generation = generation
                     self._result_artifact_transaction_rollback_only = False
+                    handle = _ResultArtifactTransactionHandle(
+                        store=self,
+                        connection=connection,
+                        process_owner=self._process_owner,
+                        generation=generation,
+                        savepoint_suffix=savepoint_suffix,
+                        token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
+                    )
+                    try:
+                        yield handle
+                        self._require_current_process()
+                        if self._result_artifact_transaction_rollback_only is not False:
+                            raise RuntimeError("result Artifact owner transaction is rollback-only")
+                    finally:
+                        handle._invalidate(token=_RESULT_ARTIFACT_TRANSACTION_TOKEN)
+                        self._active_result_artifact_transaction_generation = None
+                        self._result_artifact_transaction_rollback_only = False
         except _EventStoreAdmissionTransactionSignal as error:
             classified = _take_classified_event_store_transaction_signal(error)
             if classified is None:
@@ -1718,6 +1757,22 @@ class SQLiteEventStore:
             token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
         )
 
+    @_bind_event_store_process
+    def _savepoint_suffix_for_result_artifact_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+    ) -> str:
+        self._require_current_process()
+        generation = self._active_result_artifact_transaction_generation
+        if type(generation) is not int or generation <= 0:
+            raise RuntimeError("no result Artifact owner transaction is active")
+        return handle._validated_savepoint_suffix(
+            store=self,
+            process_owner=self._process_owner,
+            generation=generation,
+            token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
+        )
+
     @_sanitize_result_artifact_errors
     @_bind_event_store_process
     def _write_result_artifacts_in_owner_transaction(
@@ -1737,6 +1792,7 @@ class SQLiteEventStore:
                 batch,
                 clock=self._now,
                 process_guard=self._require_current_process,
+                savepoint_suffix=self._savepoint_suffix_for_result_artifact_transaction(handle),
             )
             self._require_current_process()
             return result
@@ -2373,6 +2429,7 @@ class SQLiteEventStore:
             connection,
             prepared.artifact_batch,
             process_guard=self._require_current_process,
+            savepoint_suffix=self._savepoint_suffix_for_result_artifact_transaction(handle),
         ) as artifact_plan:
             plan = _FreshResultAcceptanceWritePlanV2(
                 prepared=prepared,
@@ -2537,6 +2594,217 @@ class SQLiteEventStore:
             try:
                 yield materialized
             finally:
+                materialized._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        except BaseException as error:
+            if self._process_is_current():
+                continuity_control: Optional[_EventStoreControlDescriptor] = None
+                continuity_graph: Tuple[BaseException, ...] = ()
+                if isinstance(error, _ResultArtifactTransactionContinuityError):
+                    self._poisoned = True
+                    continuity_control, continuity_graph = _result_artifact_continuity_control(
+                        error
+                    )
+                generation = self._active_result_artifact_transaction_generation
+                if type(generation) is int and generation > 0:
+                    self._result_artifact_transaction_rollback_only = True
+                if type(connection) is sqlite3.Connection:
+                    try:
+                        transaction_open = connection.in_transaction
+                    except BaseException:
+                        self._poisoned = True
+                    else:
+                        if type(transaction_open) is not bool or not transaction_open:
+                            self._poisoned = True
+                if continuity_control is not None:
+                    for graph_error in continuity_graph:
+                        _detach_exception(graph_error)
+                    raise _EventStoreAdmissionTransactionSignal(
+                        "ambiguous",
+                        control=continuity_control,
+                        token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+                    ) from None
+            raise
+
+    @_bind_event_store_process
+    def _identify_result_acceptance_write_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> ContextManager[
+        _ExistingResultAcceptanceGraphCandidateV2 | _IdentifiedFreshResultAcceptancePlanV2
+    ]:
+        """Allocate three distinct store-owned IDs only for one fresh materialized path."""
+
+        return self._identify_result_acceptance_write_in_owner_transaction_inner(
+            handle,
+            prepared,
+        )
+
+    @contextmanager
+    def _identify_result_acceptance_write_in_owner_transaction_inner(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> Iterator[
+        _ExistingResultAcceptanceGraphCandidateV2 | _IdentifiedFreshResultAcceptancePlanV2
+    ]:
+        connection: Optional[sqlite3.Connection] = None
+        materialized: Optional[_MaterializedFreshResultAcceptancePlanV2] = None
+        identified: Optional[_IdentifiedFreshResultAcceptancePlanV2] = None
+        try:
+            connection = self._connection_for_result_artifact_transaction(handle)
+            prerequisites: Optional[_FreshResultAcceptancePrerequisitesV2] = None
+            accepted_at: Optional[str] = None
+            artifacts: Optional[Tuple[_ScopedInvocationResultArtifactV2, ...]] = None
+            with self._preflight_result_acceptance_write_in_owner_transaction(
+                handle,
+                prepared,
+            ) as candidate:
+                if type(candidate) is _ExistingResultAcceptanceGraphCandidateV2:
+                    yield candidate
+                    return
+                if type(candidate) is not _FreshResultAcceptanceWritePlanV2:
+                    raise RuntimeError("result acceptance identity classification is not closed")
+                frozen, prerequisites, artifact_plan = candidate._begin_artifact_materialization(
+                    token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                )
+                before_dependency_changes = connection.total_changes
+                if type(before_dependency_changes) is not int or before_dependency_changes < 0:
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance SQLite change counter is invalid"
+                    )
+                self._require_current_process()
+                accepted_at = _normalize_invocation_timestamp(
+                    self._clock(),
+                    "result acceptance clock",
+                )
+                self._require_current_process()
+                after_clock_changes = connection.total_changes
+                if (
+                    type(after_clock_changes) is not int
+                    or after_clock_changes != before_dependency_changes
+                ):
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance clock changed durable state"
+                    )
+                if accepted_at < prerequisites.heartbeat_at:
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance clock precedes durable lease activity"
+                    )
+                if accepted_at >= prerequisites.lease_expires_at:
+                    raise _ResultAcceptanceConflictError(
+                        "result acceptance lease expired before acceptedAt"
+                    )
+                raw_receipt_id = new_id("result_receipt")
+                self._require_current_process()
+                receipt_id = _caller_invocation_identity(
+                    raw_receipt_id,
+                    "result receipt ID provider result",
+                )
+                self._require_current_process()
+                raw_result_event_id = new_id("evt")
+                self._require_current_process()
+                result_event_id = _caller_invocation_identity(
+                    raw_result_event_id,
+                    "result event ID provider result",
+                )
+                self._require_current_process()
+                raw_terminal_event_id = new_id("evt")
+                self._require_current_process()
+                terminal_event_id = _caller_invocation_identity(
+                    raw_terminal_event_id,
+                    "terminal event ID provider result",
+                )
+                self._require_current_process()
+                after_dependency_changes = connection.total_changes
+                if (
+                    type(after_dependency_changes) is not int
+                    or after_dependency_changes != before_dependency_changes
+                ):
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance identity provider changed durable state"
+                    )
+                frozen.verify()
+                _FreshResultAcceptancePrerequisitesV2.__post_init__(prerequisites)
+                if len({receipt_id, result_event_id, terminal_event_id}) != 3:
+                    raise _ResultAcceptanceConflictError(
+                        "result acceptance store-generated identities are not distinct"
+                    )
+                if (
+                    result_event_id == frozen.request.start_receipt.event_id
+                    or terminal_event_id == frozen.request.start_receipt.event_id
+                ):
+                    raise _ResultAcceptanceConflictError(
+                        "result acceptance event identity reuses the start event"
+                    )
+                artifacts = _materialize_prepared_result_artifacts_in_transaction(
+                    artifact_plan,
+                    accepted_at,
+                )
+                if artifacts != tuple(item.descriptor for item in frozen.artifact_batch.items):
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance materialized Artifact order changed"
+                    )
+            if prerequisites is None or accepted_at is None or artifacts is None:
+                raise RuntimeError(
+                    "result acceptance identified materialization state is incomplete"
+                )
+            after_dependencies = (
+                self._validate_result_acceptance_durable_prerequisites_in_transaction(
+                    connection,
+                    prepared,
+                )
+            )
+            if type(after_dependencies) is not _FreshResultAcceptancePrerequisitesV2:
+                raise _ResultAcceptanceConflictError(
+                    "result acceptance durable graph changed during identity allocation"
+                )
+            if after_dependencies != prerequisites:
+                raise _ResultAcceptanceConflictError(
+                    "result acceptance durable prerequisites changed during identity allocation"
+                )
+            receipt_collision = connection.execute(
+                """
+                SELECT 1
+                FROM main.invocation_result_receipts
+                WHERE receipt_id = ?
+                LIMIT 1
+                """,
+                (receipt_id,),
+            ).fetchone()
+            event_collision = connection.execute(
+                """
+                SELECT 1
+                FROM main.events
+                WHERE event_id IN (?, ?)
+                LIMIT 1
+                """,
+                (result_event_id, terminal_event_id),
+            ).fetchone()
+            self._require_current_process()
+            if receipt_collision is not None or event_collision is not None:
+                raise _ResultAcceptanceConflictError(
+                    "result acceptance store-generated identity is already durable"
+                )
+            materialized = _MaterializedFreshResultAcceptancePlanV2(
+                prepared=prepared,
+                prerequisites=after_dependencies,
+                accepted_at=accepted_at,
+                artifacts=artifacts,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            materialized._begin_identity_allocation(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+            identified = _IdentifiedFreshResultAcceptancePlanV2(
+                materialized=materialized,
+                receipt_id=receipt_id,
+                result_event_id=result_event_id,
+                terminal_event_id=terminal_event_id,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            try:
+                yield identified
+            finally:
+                identified._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
                 materialized._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
         except BaseException as error:
             if self._process_is_current():
@@ -6378,6 +6646,7 @@ class SQLiteEventStore:
     def close(self) -> None:
         with self._locked(allow_poisoned=True):
             self._connection.close()
+            self._result_artifact_savepoint_secret = b""
 
     @_bind_event_store_process
     def __enter__(self) -> "SQLiteEventStore":

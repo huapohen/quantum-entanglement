@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import itertools
 import multiprocessing
 import os
@@ -221,6 +222,9 @@ class ResultArtifactMaterializationPlanTests(unittest.TestCase):
                 connection,
                 batch,
                 process_guard=self.store._require_current_process,
+                savepoint_suffix=self.store._savepoint_suffix_for_result_artifact_transaction(
+                    handle
+                ),
             ) as plan:
                 self.assertIs(type(plan), _ResultArtifactMaterializationPlan)
                 self.assertNotIn("result-content", repr(plan))
@@ -256,6 +260,9 @@ class ResultArtifactMaterializationPlanTests(unittest.TestCase):
                 connection,
                 batch,
                 process_guard=self.store._require_current_process,
+                savepoint_suffix=self.store._savepoint_suffix_for_result_artifact_transaction(
+                    handle
+                ),
             ) as plan:
                 self.assertEqual(connection.total_changes, before_total_changes)
             self.assertTrue(connection.in_transaction)
@@ -279,6 +286,9 @@ class ResultArtifactMaterializationPlanTests(unittest.TestCase):
                 connection,
                 batch,
                 process_guard=self.store._require_current_process,
+                savepoint_suffix=self.store._savepoint_suffix_for_result_artifact_transaction(
+                    handle
+                ),
             ) as plan:
                 savepoints = []
                 connection.set_authorizer(None)
@@ -304,6 +314,9 @@ class ResultArtifactMaterializationPlanTests(unittest.TestCase):
                 connection,
                 batch,
                 process_guard=self.store._require_current_process,
+                savepoint_suffix=self.store._savepoint_suffix_for_result_artifact_transaction(
+                    handle
+                ),
             ) as plan:
                 with self.assertRaisesRegex(ValueError, "invalid timestamp"):
                     _materialize_prepared_result_artifacts_in_transaction(
@@ -326,6 +339,9 @@ class ResultArtifactMaterializationPlanTests(unittest.TestCase):
                 connection,
                 batch,
                 process_guard=self.store._require_current_process,
+                savepoint_suffix=self.store._savepoint_suffix_for_result_artifact_transaction(
+                    handle
+                ),
             ) as plan:
                 for operation in (
                     lambda: copy.copy(plan),
@@ -393,6 +409,7 @@ class ResultArtifactTransactionHandleTests(unittest.TestCase):
                 connection=self.store._connection,
                 process_owner=self.store._process_owner,
                 generation=1,
+                savepoint_suffix="0" * 32,
                 token=object(),
             )
 
@@ -452,10 +469,235 @@ class ResultArtifactTransactionHandleTests(unittest.TestCase):
                     connection=foreign,
                     process_owner=self.store._process_owner,
                     generation=1,
+                    savepoint_suffix="0" * 32,
                     token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
                 )
         finally:
             foreign.close()
+
+    def test_store_uses_one_derived_secret_suffix_without_runtime_entropy(self) -> None:
+        batch = _prepare_result_artifact_batch((candidate(),))
+        with patch(
+            "quantum_entanglement.store.secrets.token_bytes",
+            side_effect=AssertionError("runtime Artifact entropy must not be sampled"),
+        ), patch(
+            "quantum_entanglement.store.secrets.token_hex",
+            side_effect=AssertionError("runtime Artifact entropy must not be sampled"),
+        ):
+            with self.store._result_artifact_transaction() as handle:
+                suffix = self.store._savepoint_suffix_for_result_artifact_transaction(handle)
+                self.assertIs(type(suffix), str)
+                self.assertEqual(len(suffix), 32)
+                self.assertFalse(
+                    any(character not in "0123456789abcdef" for character in suffix)
+                )
+                self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            1,
+        )
+
+    def test_each_owner_generation_gets_a_distinct_opaque_suffix(self) -> None:
+        suffixes = []
+        for _ in range(2):
+            with self.store._result_artifact_transaction() as handle:
+                suffixes.append(
+                    self.store._savepoint_suffix_for_result_artifact_transaction(handle)
+                )
+        self.assertEqual(len(set(suffixes)), 2)
+
+    def test_fixed_secret_and_generation_have_a_locked_derivation_vector(self) -> None:
+        secret = b"v" * 32
+        with patch(
+            "quantum_entanglement.store.secrets.token_bytes",
+            return_value=secret,
+        ):
+            store = SQLiteEventStore(":memory:")
+        try:
+            with store._result_artifact_transaction() as handle:
+                actual = store._savepoint_suffix_for_result_artifact_transaction(handle)
+            expected = hashlib.sha256(
+                b"quantum-entanglement/result-artifact-savepoint/v1\x00"
+                + secret
+                + (1).to_bytes(16, byteorder="big", signed=False)
+            ).hexdigest()[:32]
+            self.assertEqual(actual, expected)
+        finally:
+            store.close()
+
+    def test_savepoint_secret_is_sampled_once_before_sqlite_connection_creation(self) -> None:
+        real_connect = sqlite3.connect
+        observations: list[tuple[int, bool]] = []
+
+        with patch(
+            "quantum_entanglement.store.sqlite3.connect",
+            wraps=real_connect,
+        ) as connect_provider:
+
+            def secret_provider(byte_count: int) -> bytes:
+                observations.append((byte_count, connect_provider.called))
+                return b"s" * 32
+
+            with patch(
+                "quantum_entanglement.store.secrets.token_bytes",
+                side_effect=secret_provider,
+            ):
+                store = SQLiteEventStore(":memory:")
+        try:
+            self.assertEqual(observations, [(32, False)])
+            self.assertEqual(connect_provider.call_count, 1)
+            with patch(
+                "quantum_entanglement.store.secrets.token_bytes",
+                side_effect=AssertionError("runtime secret resampling is forbidden"),
+            ):
+                with store._result_artifact_transaction():
+                    pass
+        finally:
+            store.close()
+
+    def test_invalid_savepoint_secret_fails_before_sqlite_connection_creation(self) -> None:
+        class BytesSubclass(bytes):
+            pass
+
+        real_connect = sqlite3.connect
+        for invalid in (b"s" * 31, BytesSubclass(b"s" * 32), "s" * 32):
+            with self.subTest(invalid_type=type(invalid)):
+                with patch(
+                    "quantum_entanglement.store.sqlite3.connect",
+                    wraps=real_connect,
+                ) as connect_provider:
+                    with patch(
+                        "quantum_entanglement.store.secrets.token_bytes",
+                        return_value=invalid,
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "secret allocation is invalid"):
+                            SQLiteEventStore(":memory:")
+                connect_provider.assert_not_called()
+
+    def test_savepoint_secret_provider_failure_creates_no_sqlite_connection(self) -> None:
+        real_connect = sqlite3.connect
+        with patch(
+            "quantum_entanglement.store.sqlite3.connect",
+            wraps=real_connect,
+        ) as connect_provider:
+            with patch(
+                "quantum_entanglement.store.secrets.token_bytes",
+                side_effect=RuntimeError("entropy unavailable"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "entropy unavailable"):
+                    SQLiteEventStore(":memory:")
+        connect_provider.assert_not_called()
+
+    def test_invalid_constructor_inputs_precede_savepoint_secret_sampling(self) -> None:
+        with patch(
+            "quantum_entanglement.store.secrets.token_bytes",
+            side_effect=AssertionError("invalid inputs must not sample entropy"),
+        ) as secret_provider:
+            with self.assertRaisesRegex(TypeError, "path must be a string"):
+                SQLiteEventStore(object())  # type: ignore[arg-type]
+            with self.assertRaisesRegex(TypeError, "clock must be callable"):
+                SQLiteEventStore(":memory:", clock=None)  # type: ignore[arg-type]
+            with self.assertRaisesRegex(TypeError, "max_json_bytes must be an integer"):
+                SQLiteEventStore(":memory:", max_json_bytes=True)
+        secret_provider.assert_not_called()
+
+    def test_begin_failure_consumes_generation_and_exhaustion_fails_before_begin(self) -> None:
+        transaction_code = sqlite3.SQLITE_TRANSACTION
+
+        def deny_begin(action: int, first: object, *_args: object) -> int:
+            if action == transaction_code and first == "BEGIN":
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        before = self.store._result_artifact_transaction_generation
+        self.store._connection.set_authorizer(deny_begin)
+        try:
+            with self.assertRaises(_ResultArtifactTransactionError):
+                with self.store._result_artifact_transaction():
+                    pass
+        finally:
+            self.store._connection.set_authorizer(None)
+        self.assertEqual(self.store._result_artifact_transaction_generation, before + 1)
+
+        self.store._result_artifact_transaction_generation = (1 << 128) - 1
+        statements: list[str] = []
+        self.store._connection.set_trace_callback(statements.append)
+        try:
+            with self.assertRaisesRegex(
+                _ResultArtifactIntegrityError,
+                "generation is exhausted",
+            ):
+                with self.store._result_artifact_transaction():
+                    pass
+        finally:
+            self.store._connection.set_trace_callback(None)
+        self.assertFalse(
+            any(statement.lstrip().upper().startswith("BEGIN") for statement in statements)
+        )
+
+    def test_private_primitive_requires_one_exact_lowercase_hex_suffix(self) -> None:
+        batch = _prepare_result_artifact_batch(())
+        connection = self.store._connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            with self.assertRaises(TypeError):
+                with _preflight_prepared_result_artifacts_in_transaction(
+                    connection,
+                    batch,
+                    process_guard=self.store._require_current_process,
+                ):  # type: ignore[call-arg]
+                    pass
+            for invalid in ("A" * 32, "a" * 31, 7):
+                with self.subTest(invalid=invalid):
+                    with self.assertRaises((TypeError, ValueError)):
+                        with _preflight_prepared_result_artifacts_in_transaction(
+                            connection,
+                            batch,
+                            process_guard=self.store._require_current_process,
+                            savepoint_suffix=invalid,
+                        ):
+                            pass
+            self.assertTrue(connection.in_transaction)
+        finally:
+            connection.execute("ROLLBACK")
+
+    def test_handle_nonce_access_is_private_owner_bound_and_exit_invalidated(self) -> None:
+        class HostileSuffix:
+            def __getattribute__(self, _name: str) -> object:
+                raise AssertionError("invalid constructor token inspected the nonce")
+
+        with self.assertRaisesRegex(TypeError, "constructor is private"):
+            _ResultArtifactTransactionHandle(
+                store=self.store,
+                connection=self.store._connection,
+                process_owner=self.store._process_owner,
+                generation=1,
+                savepoint_suffix=HostileSuffix(),
+                token=object(),
+            )
+
+        other = SQLiteEventStore(":memory:")
+        try:
+            with self.store._result_artifact_transaction() as first:
+                for operation in (
+                    lambda: copy.copy(first),
+                    lambda: copy.deepcopy(first),
+                    lambda: pickle.dumps(first),
+                ):
+                    with self.assertRaises(TypeError):
+                        operation()
+                with other._result_artifact_transaction():
+                    with self.assertRaisesRegex(RuntimeError, "foreign owner"):
+                        other._savepoint_suffix_for_result_artifact_transaction(first)
+                suffix = self.store._savepoint_suffix_for_result_artifact_transaction(first)
+                self.assertEqual(len(suffix), 32)
+            with self.assertRaisesRegex(RuntimeError, "no result Artifact owner transaction"):
+                self.store._savepoint_suffix_for_result_artifact_transaction(first)
+        finally:
+            other.close()
 
     def test_missing_owner_fails_before_inspecting_the_prepared_batch(self) -> None:
         class HostileBatch:
@@ -1574,6 +1816,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
                     batch,
                     clock=lambda: self.now,
                     process_guard=guarded,
+                    savepoint_suffix="e" * 32,
                 )
         finally:
             current = True

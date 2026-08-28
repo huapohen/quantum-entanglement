@@ -15,6 +15,7 @@ from quantum_entanglement._result_acceptance import (
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
     _FreshResultAcceptanceWritePlanV2,
+    _IdentifiedFreshResultAcceptancePlanV2,
     _MaterializedFreshResultAcceptancePlanV2,
     _prepare_scoped_invocation_result_acceptance_v2,
     _PreparedScopedInvocationResultAcceptanceV2,
@@ -665,6 +666,318 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         artifact_materialize.assert_not_called()
         self.assertEqual(self.store._connection.total_changes, before_changes)
 
+    def test_fresh_identity_plan_uses_three_store_owned_distinct_ids(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        clock_values = ["2026-08-27T10:00:02.000000Z"]
+        self.store._clock = lambda: clock_values.pop(0)
+        generated = (
+            "result_receipt_store_1",
+            "event_result_store_1",
+            "event_terminal_store_1",
+        )
+
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=generated,
+        ) as id_provider:
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._identify_result_acceptance_write_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as identified:
+                    self.assertIs(
+                        type(identified),
+                        _IdentifiedFreshResultAcceptancePlanV2,
+                    )
+                    assert type(identified) is _IdentifiedFreshResultAcceptancePlanV2
+                    materialized, receipt_id, result_event_id, terminal_event_id = (
+                        identified._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+                    )
+                    self.assertEqual(
+                        (receipt_id, result_event_id, terminal_event_id),
+                        generated,
+                    )
+                    _, _, accepted_at, artifacts = materialized._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    self.assertEqual(accepted_at, "2026-08-27T10:00:02.000000Z")
+                    self.assertEqual(
+                        artifacts,
+                        tuple(item.descriptor for item in prepared.artifact_batch.items),
+                    )
+                    for operation in (
+                        lambda: copy.copy(identified),
+                        lambda: copy.deepcopy(identified),
+                        lambda: pickle.dumps(identified),
+                    ):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ):
+                            operation()
+        self.assertEqual(clock_values, [])
+        self.assertEqual(
+            tuple(call.args for call in id_provider.call_args_list),
+            (("result_receipt",), ("evt",), ("evt",)),
+        )
+        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+            identified._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_existing_graph_identity_path_never_samples_clock_or_ids(self) -> None:
+        helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
+            methodName="runTest"
+        )
+        helper.store = self.store
+        helper.connection = self.store._connection
+        helper.seed_nonempty_v6_dependencies()
+        helper.apply_candidate()
+        helper.seed_complete_result_graph()
+        prepared = existing_graph_prepared(helper)
+        self.store._clock = lambda: (_ for _ in ()).throw(
+            AssertionError("existing graph must not sample acceptedAt")
+        )
+
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=AssertionError("existing graph must not allocate identities"),
+        ) as id_provider:
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._identify_result_acceptance_write_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as result:
+                    self.assertIs(
+                        type(result),
+                        _ExistingResultAcceptanceGraphCandidateV2,
+                    )
+        id_provider.assert_not_called()
+
+    def test_duplicate_store_ids_fail_once_and_roll_back_artifacts(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        generated = []
+
+        def duplicate_id(_prefix: str) -> str:
+            generated.append("duplicate_result_identity")
+            return "duplicate_result_identity"
+
+        with patch("quantum_entanglement.store.new_id", side_effect=duplicate_id):
+            with self.assertRaisesRegex(_ResultAcceptanceConflictError, "not distinct"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._identify_result_acceptance_write_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("duplicate store IDs unexpectedly produced a plan")
+        self.assertEqual(len(generated), 3)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_store_id_collision_rolls_back_materialized_artifacts(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=(
+                "result_receipt_collision",
+                "event-scoped-request-store-1",
+                "event_terminal_collision",
+            ),
+        ):
+            with self.assertRaisesRegex(_ResultAcceptanceConflictError, "already durable"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._identify_result_acceptance_write_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("durable ID collision unexpectedly produced a plan")
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_identity_provider_dml_is_rolled_back_with_materialized_artifacts(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        values = iter(
+            (
+                "result_receipt_store_dml",
+                "event_result_store_dml",
+                "event_terminal_store_dml",
+            )
+        )
+
+        def writing_id_provider(_prefix: str) -> str:
+            self.store._connection.execute(
+                """
+                INSERT INTO main.artifact_blobs(digest, content, byte_size, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(digest) DO NOTHING
+                """,
+                (
+                    "sha256:" + ("c" * 64),
+                    sqlite3.Binary(b"identity-provider-write"),
+                    len(b"identity-provider-write"),
+                    "2026-08-27T10:00:02.000000Z",
+                ),
+            )
+            return next(values)
+
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=writing_id_provider,
+        ):
+            with self.assertRaisesRegex(_ResultAcceptanceIntegrityError, "provider changed"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._identify_result_acceptance_write_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("identity-provider DML unexpectedly produced a plan")
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.store._connection.execute("SELECT count(*) FROM main.artifact_blobs").fetchone()[
+                0
+            ],
+            0,
+        )
+
+    def test_identity_provider_transaction_replacement_poisons_store(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        calls = []
+
+        def replacing_id_provider(prefix: str) -> str:
+            calls.append(prefix)
+            if len(calls) == 1:
+                self.store._connection.set_authorizer(None)
+                self.store._connection.execute("COMMIT")
+                self.store._connection.execute("BEGIN IMMEDIATE")
+            return f"{prefix}_replacement_{len(calls)}"
+
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=replacing_id_provider,
+        ):
+            with self.assertRaises(_ResultArtifactTransactionContinuityError):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._identify_result_acceptance_write_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("replacement identity transaction unexpectedly produced a plan")
+        self.assertEqual(calls, ["result_receipt", "evt", "evt"])
+        self.assertTrue(self.store._poisoned)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_narration_only_identity_provider_dml_has_no_durable_prefix(self) -> None:
+        prepared = self.narration_only_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        values = iter(
+            (
+                "result_receipt_narration_dml",
+                "event_result_narration_dml",
+                "event_terminal_narration_dml",
+            )
+        )
+
+        def writing_id_provider(_prefix: str) -> str:
+            self.store._connection.execute(
+                """
+                INSERT INTO main.artifact_blobs(digest, content, byte_size, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(digest) DO NOTHING
+                """,
+                (
+                    "sha256:" + ("d" * 64),
+                    sqlite3.Binary(b"narration-identity-provider-write"),
+                    len(b"narration-identity-provider-write"),
+                    "2026-08-27T10:00:02.000000Z",
+                ),
+            )
+            return next(values)
+
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=writing_id_provider,
+        ):
+            with self.assertRaisesRegex(_ResultAcceptanceIntegrityError, "provider changed"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._identify_result_acceptance_write_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("narration-only provider DML unexpectedly produced a plan")
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.store._connection.execute("SELECT count(*) FROM main.artifact_blobs").fetchone()[
+                0
+            ],
+            0,
+        )
+
+    def test_narration_only_identity_transaction_replacement_poisons_store(self) -> None:
+        prepared = self.narration_only_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        calls = []
+
+        def replacing_id_provider(prefix: str) -> str:
+            calls.append(prefix)
+            if len(calls) == 1:
+                self.store._connection.set_authorizer(None)
+                self.store._connection.execute("COMMIT")
+                self.store._connection.execute("BEGIN IMMEDIATE")
+            return f"{prefix}_narration_replacement_{len(calls)}"
+
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=replacing_id_provider,
+        ):
+            with self.assertRaises(_ResultArtifactTransactionContinuityError):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._identify_result_acceptance_write_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("narration-only replacement unexpectedly produced a plan")
+        self.assertEqual(calls, ["result_receipt", "evt", "evt"])
+        self.assertTrue(self.store._poisoned)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+
     def assert_materialization_time_rejected(
         self,
         clock_value: str,
@@ -790,6 +1103,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             "_ExistingResultAcceptanceGraphCandidateV2",
             "_FreshResultAcceptancePrerequisitesV2",
             "_FreshResultAcceptanceWritePlanV2",
+            "_IdentifiedFreshResultAcceptancePlanV2",
             "_MaterializedFreshResultAcceptancePlanV2",
             "_validate_result_acceptance_durable_prerequisites_in_transaction",
             "accept_scoped_invocation_result_v2",
