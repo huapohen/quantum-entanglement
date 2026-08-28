@@ -171,7 +171,7 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 合同、实现、故障矩阵和证据拆成更小 commit；pure contract 或 zero-network fake 可以提前编译验证，
 但不得产生 provider 状态、网络副作用或绕过汇合门禁。
 
-### Gate A：production deployment authority
+### Gate A0：production deployment authority 与 rotation contract
 
 1. `docs(im): freeze production topology iac and secret responsibility boundary`
 2. `feat(im): freeze authority cutover plan format`
@@ -183,24 +183,30 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 8. `test(im): run empty-db migrate-cutover-runtime e2e`
 9. `test(im): run non-empty schema upgrade with retained tenant data`
 10. `test(im): prove remote authenticated TLS and controlled host trust injection`
-11. `feat/test(im): stage credential rotation and prove old sessions cannot survive revoke`
 
 ### Gate B：trusted human/Agent authority
 
-12. `feat(im): define Go trusted request context`
-13. `feat(im): verify Clerk JWT and rotating JWKS`
-14. `feat(im): resolve realm binding principal membership and actor`
-15. `test(im): reject every identity and revision drift`
-16. `feat(im): require trusted tenant for persistence operations`
-17. `feat(im): enforce conversation action-time permissions`
-18. `feat(im): bind minimal Agent installation authority to Agent Actor`
-19. `test(im): freeze four-subject participant authorization matrix`
+11. `feat(im): define Go trusted request context`
+12. `feat(im): verify Clerk JWT and rotating JWKS`
+13. `feat(im): resolve realm binding principal membership and actor`
+14. `test(im): reject every identity and revision drift`
+15. `feat(im): require trusted tenant for persistence operations`
+16. `feat(im): enforce conversation action-time permissions`
+17. `feat(im): bind minimal Agent installation authority to Agent Actor`
+18. `test(im): freeze four-subject participant authorization matrix`
 
-### Gate C：readiness 与 recovery
+### Gate C0：bounded readiness 与 explicit draining
 
-20. `feat(im): add bounded dependency readiness monitor and frozen max staleness`
-21. `test(im): keep high-risk action authorization outside readiness cache`
-22. `feat(im): expose explicit draining gate state`
+19. `feat(im): add bounded dependency readiness monitor and frozen max staleness`
+20. `test(im): keep high-risk action authorization outside readiness cache`
+21. `feat(im): expose explicit draining gate state`
+
+### Gate A1：live credential rotation
+
+22. `feat/test(im): replace live pools and prove old sessions cannot survive termination and revoke`
+
+### Gate C1：recovery
+
 23. `test(im): exercise dump restore database restart and process kill-9`
 24. `test(im): prove old-binary future-schema and rolling-shutdown behavior`
 

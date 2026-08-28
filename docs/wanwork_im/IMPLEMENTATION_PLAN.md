@@ -149,20 +149,23 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 提早验证接口而先写 pure contract 或 zero-network fake，它们必须保持不可外发、不可把 provider group
 当事实源，也不得绕过下列汇合门禁。
 
-1. 冻结 production topology/IaC 与责任边界，并把已验证的合同落到可复核 cutover：canonical plan、
-   provisioner preflight、ownership/grant executor/receipt、secret 注入与 rotation 责任边界、远程
-   authenticated-TLS 正向 E2E、角色轮换、旧 session drain、回滚与 drift validator；
+1. 冻结 production topology/IaC、secret 注入与 rotation 责任边界，并把已验证的合同落到可复核
+   cutover：canonical plan、provisioner preflight、ownership/grant executor/receipt、远程
+   authenticated-TLS 正向 E2E、回滚与 drift validator；本步只冻结 rotation 合同，不执行 live pool
+   replacement、旧 session termination 或 revoke；
 2. Clerk verified claim → realm binding → active principal/tenant membership → exact Actor → path consistency
    的 trusted request context；
 3. conversation/actor/membership/access active resolver；invoke/publish 再叠加 installation/mandate/
    capability/budget/Artifact/Acceptance；
 4. 把当前每请求 full-catalog gate 性能化为 host-owned、冻结最大漂移窗口的 max-staleness dependency
    readiness monitor，并增加 explicit draining state；过期立即关闭，高风险 effect 仍独立做 action-time PEP；
-5. 真实既有数据上的 non-empty schema upgrade，以及 dump/restore、DB/process restart、kill-9、old binary/
+5. explicit draining 交付后，再演练 live credential rotation、pool replacement、旧 session
+   termination/revoke 与 consumer acknowledgement；不得用 HTTP graceful shutdown 冒充该门禁；
+6. 真实既有数据上的 non-empty schema upgrade，以及 dump/restore、DB/process restart、kill-9、old binary/
    future schema、role restoration 演练；
-6. PostgreSQL event store/outbox/projection checkpoint、backfill+live 与 crash recovery；
-7. 再实现有状态的 `agent_thread`、message、mention inbox/dedupe 与 fake-provider vertical slice；
-8. 真实 provider 还必须通过 W3 的 profile/capability matrix、callback authenticity、dedupe/resume、mapping
+7. PostgreSQL event store/outbox/projection checkpoint、backfill+live 与 crash recovery；
+8. 再实现有状态的 `agent_thread`、message、mention inbox/dedupe 与 fake-provider vertical slice；
+9. 真实 provider 还必须通过 W3 的 profile/capability matrix、callback authenticity、dedupe/resume、mapping
    drift、sandbox config 与 inbound-only readback；任何 subgroup create/invite/send 另需用户对具体 sandbox
    outbound 明确授权。
 
