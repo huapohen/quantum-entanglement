@@ -58,7 +58,7 @@ func Catalog() ([]Migration, error) {
 		}
 		upSQL := normalizeSQL(up)
 		downSQL := normalizeSQL(down)
-		if !validMigrationSQL(upSQL) || !validMigrationSQL(downSQL) {
+		if !validMigrationSQLForSpec(upSQL, spec) || !validMigrationSQLForSpec(downSQL, spec) {
 			return nil, ErrInvalidCatalog
 		}
 		digest := sha256.Sum256([]byte(migrationDigestDomain + upSQL))
@@ -78,9 +78,18 @@ func normalizeSQL(raw []byte) string {
 }
 
 func validMigrationSQL(sql string) bool {
+	return validMigrationSQLWithFunctionDDL(sql, false)
+}
+
+func validMigrationSQLForSpec(sql string, spec migrationSpec) bool {
+	allowFunctionDDL := spec.version == 5 && spec.name == "function_only_writes"
+	return validMigrationSQLWithFunctionDDL(sql, allowFunctionDDL)
+}
+
+func validMigrationSQLWithFunctionDDL(sql string, allowFunctionDDL bool) bool {
 	if strings.TrimSpace(sql) == "" || strings.ContainsRune(sql, '\x00') ||
 		strings.Contains(sql, "\r") {
 		return false
 	}
-	return validMigrationStatements(sql)
+	return validMigrationStatements(sql, allowFunctionDDL)
 }

@@ -196,3 +196,87 @@ func TestMigrationSQLLexerIgnoresCommentAndLiteralCanaries(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationSQLAllowsOnlyVersionFiveAuthorityWriteFunctions(t *testing.T) {
+	functionSQL := `CREATE FUNCTION wanwork_im.write_conversation_revision(
+    p_tenant_id text,
+    p_conversation_id text,
+    p_expected_revision bigint,
+    p_next_revision bigint,
+    p_workspace_id text,
+    p_conversation_type text,
+    p_status text
+) RETURNS boolean
+LANGUAGE plpgsql
+VOLATILE
+STRICT
+SECURITY DEFINER
+PARALLEL UNSAFE
+SET search_path TO pg_catalog
+AS $function$
+BEGIN
+    RETURN true;
+END
+$function$;
+REVOKE ALL ON FUNCTION wanwork_im.write_conversation_revision(
+    text, text, bigint, bigint, text, text, text
+) FROM PUBLIC;
+`
+	if validMigrationSQL(functionSQL) {
+		t.Fatal("ordinary migrations must reject CREATE FUNCTION")
+	}
+	if validMigrationSQLForSpec(functionSQL, migrationSpec{version: 6, name: "other"}) {
+		t.Fatal("future migrations must not inherit CREATE FUNCTION permission")
+	}
+	if validMigrationSQLForSpec(functionSQL, migrationSpec{version: 5, name: "other"}) {
+		t.Fatal("version five with a different name must reject CREATE FUNCTION")
+	}
+	if !validMigrationSQLForSpec(
+		functionSQL,
+		migrationSpec{version: 5, name: "function_only_writes"},
+	) {
+		t.Fatal("version five must accept the fixed authority function shape")
+	}
+	downSQL := `DROP FUNCTION wanwork_im.write_conversation_revision(
+    text, text, bigint, bigint, text, text, text
+);`
+	if !validMigrationSQLForSpec(
+		downSQL,
+		migrationSpec{version: 5, name: "function_only_writes"},
+	) {
+		t.Fatal("version five must accept the exact authority function drop")
+	}
+}
+
+func TestVersionFiveFunctionPolicyRejectsUnsafeVariants(t *testing.T) {
+	validSpec := migrationSpec{version: 5, name: "function_only_writes"}
+	validSQL := `CREATE FUNCTION wanwork_im.write_conversation_revision(
+    p_tenant_id text, p_conversation_id text, p_expected_revision bigint,
+    p_next_revision bigint, p_workspace_id text, p_conversation_type text, p_status text
+) RETURNS boolean LANGUAGE plpgsql VOLATILE STRICT SECURITY DEFINER PARALLEL UNSAFE
+SET search_path TO pg_catalog AS $$ BEGIN RETURN true; END $$;`
+	for _, sql := range []string{
+		strings.Replace(validSQL, "wanwork_im.", "public.", 1),
+		strings.Replace(validSQL, "write_conversation_revision", "unknown_write", 1),
+		strings.Replace(validSQL, "CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1),
+		strings.Replace(validSQL, "VOLATILE", "STABLE", 1),
+		strings.Replace(validSQL, "SECURITY DEFINER", "SECURITY INVOKER", 1),
+		strings.Replace(validSQL, "PARALLEL UNSAFE", "PARALLEL SAFE", 1),
+		strings.Replace(validSQL, "TO pg_catalog", "TO public", 1),
+		strings.Replace(validSQL, "TO pg_catalog", "TO pg_catalog, public", 1),
+		strings.Replace(validSQL, "TO pg_catalog", `TO pg_catalog, "public"`, 1),
+		strings.Replace(validSQL, "STRICT", "STRICT CALLED ON NULL INPUT", 1),
+		strings.Replace(validSQL, "SECURITY DEFINER", "SECURITY DEFINER LEAKPROOF", 1),
+		strings.Replace(validSQL, "p_tenant_id text", "p_tenant_id text DEFAULT 'tenant'", 1),
+		strings.Replace(validSQL, "p_status text", "p_status boolean", 1),
+		`DROP FUNCTION IF EXISTS wanwork_im.write_conversation_revision(text, text, bigint, bigint, text, text, text);`,
+		`DROP FUNCTION wanwork_im.write_conversation_revision(text, text, bigint, bigint, text, text, text) CASCADE;`,
+		`DROP FUNCTION wanwork_im.write_conversation_revision(text, text, bigint, bigint, text, text, text), public.other(text);`,
+		`REVOKE ALL ON FUNCTION wanwork_im.write_conversation_revision(text, text, bigint, bigint, text, text, text) FROM wanwork_im_runtime;`,
+		`REVOKE GRANT OPTION FOR ALL ON FUNCTION wanwork_im.write_conversation_revision(text, text, bigint, bigint, text, text, text) FROM PUBLIC;`,
+	} {
+		if validMigrationSQLForSpec(sql, validSpec) {
+			t.Fatalf("expected unsafe function SQL rejection: %q", sql)
+		}
+	}
+}

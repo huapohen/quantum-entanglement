@@ -2,20 +2,78 @@ package migrations
 
 import "strings"
 
-func validMigrationStatements(sql string) bool {
+type authorityWriteFunctionSpec struct {
+	argumentTokens         []string
+	identityArgumentTokens []string
+	resultToken            string
+}
+
+var authorityWriteFunctionSpecs = map[string]authorityWriteFunctionSpec{
+	"WRITE_CONVERSATION_REVISION": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_CONVERSATION_ID", "TEXT",
+			"P_EXPECTED_REVISION", "BIGINT", "P_NEXT_REVISION", "BIGINT",
+			"P_WORKSPACE_ID", "TEXT", "P_CONVERSATION_TYPE", "TEXT", "P_STATUS", "TEXT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "BIGINT", "BIGINT", "TEXT", "TEXT", "TEXT"},
+		resultToken:            "BOOLEAN",
+	},
+	"WRITE_PROVIDER_CONVERSATION_BINDING_REVISION": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_PROVIDER", "TEXT", "P_REALM_ID", "TEXT",
+			"P_PROVIDER_CONVERSATION_ID", "TEXT", "P_EXPECTED_REVISION", "BIGINT",
+			"P_NEXT_REVISION", "BIGINT", "P_CONVERSATION_ID", "TEXT", "P_STATUS", "TEXT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "TEXT", "TEXT", "BIGINT", "BIGINT", "TEXT", "TEXT"},
+		resultToken:            "BOOLEAN",
+	},
+	"WRITE_CONVERSATION_MEMBERSHIP_REVISION": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_CONVERSATION_ID", "TEXT", "P_ACTOR_ID", "TEXT",
+			"P_EXPECTED_REVISION", "BIGINT", "P_NEXT_REVISION", "BIGINT",
+			"P_ROLE", "TEXT", "P_STATUS", "TEXT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "TEXT", "BIGINT", "BIGINT", "TEXT", "TEXT"},
+		resultToken:            "BOOLEAN",
+	},
+	"WRITE_CONVERSATION_ACCESS_REVISION": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_CONVERSATION_ID", "TEXT", "P_ACTOR_ID", "TEXT",
+			"P_EXPECTED_REVISION", "BIGINT", "P_NEXT_REVISION", "BIGINT",
+			"P_CAN_READ", "BOOLEAN", "P_CAN_SEND_MESSAGE", "BOOLEAN",
+			"P_CAN_MANAGE_MEMBERS", "BOOLEAN", "P_CAN_MANAGE_CONVERSATION", "BOOLEAN",
+			"P_CAN_INVOKE_AGENT", "BOOLEAN", "P_CAN_PUBLISH_ARTIFACT_REFERENCE", "BOOLEAN",
+		},
+		identityArgumentTokens: []string{
+			"TEXT", "TEXT", "TEXT", "BIGINT", "BIGINT",
+			"BOOLEAN", "BOOLEAN", "BOOLEAN", "BOOLEAN", "BOOLEAN", "BOOLEAN",
+		},
+		resultToken: "BOOLEAN",
+	},
+	"WRITE_TENANT_COMMAND_RECEIPT": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_COMMAND_KIND", "TEXT", "P_IDEMPOTENCY_KEY", "TEXT",
+			"P_REQUEST_SHA256", "TEXT", "P_RESULT_SHA256", "TEXT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "TEXT", "TEXT", "TEXT"},
+		resultToken:            "TIMESTAMPTZ",
+	},
+}
+
+func validMigrationStatements(sql string, allowFunctionDDL bool) bool {
 	heads, ok := migrationStatementHeads(sql)
 	if !ok || len(heads) == 0 {
 		return false
 	}
 	for _, head := range heads {
-		if !allowedMigrationStatement(head) {
+		if !allowedMigrationStatement(head, allowFunctionDDL) {
 			return false
 		}
 	}
 	return true
 }
 
-func allowedMigrationStatement(head []string) bool {
+func allowedMigrationStatement(head []string, allowFunctionDDL bool) bool {
 	if len(head) < 2 {
 		return false
 	}
@@ -28,6 +86,9 @@ func allowedMigrationStatement(head []string) bool {
 	case "ALTER":
 		return head[1] == "TABLE" && !containsMigrationToken(head, "DEFAULT")
 	case "CREATE":
+		if head[1] == "FUNCTION" {
+			return allowFunctionDDL && validAuthorityWriteFunction(head)
+		}
 		if head[1] == "UNIQUE" {
 			return len(head) >= 3 && head[2] == "INDEX"
 		}
@@ -36,11 +97,138 @@ func allowedMigrationStatement(head []string) bool {
 		}
 		return head[1] == "INDEX" || head[1] == "POLICY" || head[1] == "SCHEMA"
 	case "DROP":
+		if head[1] == "FUNCTION" {
+			return allowFunctionDDL && validAuthorityWriteFunctionDrop(head)
+		}
 		return head[1] == "INDEX" || head[1] == "POLICY" || head[1] == "SCHEMA" ||
 			head[1] == "TABLE"
+	case "REVOKE":
+		return allowFunctionDDL && validAuthorityWriteFunctionRevoke(head)
 	default:
 		return false
 	}
+}
+
+func validAuthorityWriteFunction(tokens []string) bool {
+	functionName, ok := authorityWriteFunctionAt(tokens, 2)
+	if !ok ||
+		containsMigrationToken(tokens, "OR") || containsMigrationToken(tokens, "REPLACE") ||
+		containsMigrationToken(tokens, "INVOKER") || containsMigrationToken(tokens, "IMMUTABLE") ||
+		containsMigrationToken(tokens, "STABLE") || containsMigrationToken(tokens, "SAFE") ||
+		containsMigrationToken(tokens, "RESTRICTED") || containsMigrationToken(tokens, "CALLED") ||
+		containsMigrationToken(tokens, "DEFAULT") || containsMigrationToken(tokens, "LEAKPROOF") ||
+		containsMigrationToken(tokens, "QUOTED_IDENTIFIER") {
+		return false
+	}
+	spec := authorityWriteFunctionSpecs[functionName]
+	optionSuffix := []string{
+		"LANGUAGE", "PLPGSQL", "VOLATILE", "STRICT", "SECURITY", "DEFINER",
+		"PARALLEL", "UNSAFE", "SET", "SEARCH_PATH", "TO", "PG_CATALOG", "AS", "LITERAL",
+	}
+	optionOffset := len(tokens) - len(optionSuffix)
+	if optionOffset < 6 || tokens[optionOffset-2] != "RETURNS" ||
+		tokens[optionOffset-1] != spec.resultToken ||
+		!equalMigrationTokens(tokens[4:optionOffset-2], spec.argumentTokens) ||
+		!containsMigrationSequence(tokens[optionOffset:], optionSuffix...) {
+		return false
+	}
+	for _, token := range append([]string{"RETURNS"}, optionSuffix...) {
+		if migrationTokenCount(tokens, token) != 1 {
+			return false
+		}
+	}
+	return migrationTokenCount(tokens, "WANWORK_IM") == 1 &&
+		migrationAuthorityWriteFunctionCount(tokens) == 1
+}
+
+func validAuthorityWriteFunctionDrop(tokens []string) bool {
+	functionName, ok := authorityWriteFunctionAt(tokens, 2)
+	return ok && equalMigrationTokens(
+		tokens[4:],
+		authorityWriteFunctionSpecs[functionName].identityArgumentTokens,
+	) && migrationTokenCount(tokens, "WANWORK_IM") == 1 &&
+		migrationAuthorityWriteFunctionCount(tokens) == 1 &&
+		!containsMigrationToken(tokens, "CASCADE") && !containsMigrationToken(tokens, "IF") &&
+		!containsMigrationToken(tokens, "RESTRICT")
+}
+
+func validAuthorityWriteFunctionRevoke(tokens []string) bool {
+	functionName, ok := authorityWriteFunctionAt(tokens, 4)
+	return ok && len(tokens) >= 8 && tokens[1] == "ALL" && tokens[2] == "ON" &&
+		tokens[3] == "FUNCTION" && tokens[len(tokens)-2] == "FROM" &&
+		tokens[len(tokens)-1] == "PUBLIC" && migrationTokenCount(tokens, "FROM") == 1 &&
+		migrationTokenCount(tokens, "PUBLIC") == 1 &&
+		migrationTokenCount(tokens, "WANWORK_IM") == 1 &&
+		migrationAuthorityWriteFunctionCount(tokens) == 1 &&
+		equalMigrationTokens(
+			tokens[6:len(tokens)-2],
+			authorityWriteFunctionSpecs[functionName].identityArgumentTokens,
+		) &&
+		!containsMigrationToken(tokens, "GRANT")
+}
+
+func authorityWriteFunctionAt(tokens []string, offset int) (string, bool) {
+	if len(tokens) <= offset+1 || tokens[offset] != "WANWORK_IM" ||
+		!authorityWriteFunctionName(tokens[offset+1]) {
+		return "", false
+	}
+	return tokens[offset+1], true
+}
+
+func authorityWriteFunctionName(value string) bool {
+	_, exists := authorityWriteFunctionSpecs[value]
+	return exists
+}
+
+func migrationAuthorityWriteFunctionCount(tokens []string) int {
+	count := 0
+	for _, token := range tokens {
+		if authorityWriteFunctionName(token) {
+			count++
+		}
+	}
+	return count
+}
+
+func equalMigrationTokens(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func migrationTokenCount(tokens []string, expected string) int {
+	count := 0
+	for _, token := range tokens {
+		if token == expected {
+			count++
+		}
+	}
+	return count
+}
+
+func containsMigrationSequence(tokens []string, expected ...string) bool {
+	if len(expected) == 0 || len(expected) > len(tokens) {
+		return false
+	}
+	for offset := 0; offset <= len(tokens)-len(expected); offset++ {
+		matched := true
+		for index, token := range expected {
+			if tokens[offset+index] != token {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func forbiddenMigrationToken(token string) bool {
@@ -112,6 +300,7 @@ func migrationStatementHeads(sql string) ([][]string, bool) {
 			if !ok {
 				return nil, false
 			}
+			current = append(current, "QUOTED_IDENTIFIER")
 		case sql[offset] == '$':
 			next, matched, ok := skipSQLDollarQuote(sql, offset)
 			if !ok {
