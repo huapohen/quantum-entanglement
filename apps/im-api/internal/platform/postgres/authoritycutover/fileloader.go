@@ -3,6 +3,7 @@ package authoritycutover
 import (
 	"errors"
 	"io/fs"
+	"time"
 )
 
 var (
@@ -33,6 +34,26 @@ func LoadPlanFile(path string, identity TrustedFileIdentity) (Plan, error) {
 		return Plan{}, err
 	}
 	return DecodePlan(raw)
+}
+
+// VerifyApprovalFile reads an immutable approval through the same descriptor-based trust boundary
+// as LoadPlanFile and immediately verifies it. Raw approval bytes and reusable signatures never
+// cross the returned API boundary.
+func VerifyApprovalFile(
+	plan Plan,
+	path string,
+	identity TrustedFileIdentity,
+	verifier ApprovalVerifier,
+	now time.Time,
+) (VerifiedApproval, error) {
+	if !validTrustedFileIdentity(identity) {
+		return VerifiedApproval{}, ErrInvalidFileIdentity
+	}
+	raw, err := readTrustedRegularFile(path, identity, maximumApprovalBytes)
+	if err != nil {
+		return VerifiedApproval{}, err
+	}
+	return verifier.Verify(plan, raw, now)
 }
 
 func validTrustedFileIdentity(identity TrustedFileIdentity) bool {
