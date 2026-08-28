@@ -1,16 +1,19 @@
 # Quantum Entanglement 分支工作区总入口
 
 这里集中管理 Quantum Entanglement 的分支、临时 worktree 与本地评审证据，避免继续占满
-`/Users/lwblx/huapohen/agent/execute` 根目录。当前所有辅助 linked worktree 已清理，本机只保留
-正式 `main` 工作树。
+`/Users/lwblx/huapohen/agent/execute` 根目录。正式产品主线仍是 `main`；当前另外保留
+`mainline_continue_quantum_entanglement` 专用 worktree，作为原生 IM E2 provider-bundle 离线闭环的
+人工评审空间。该评审分支不会自动合并回 `main`，需要用户验收后再决定后续集成。
 
 ## 首先看什么
 
-- [`BRANCH_CATALOG.md`](../BRANCH_CATALOG.md)：55 个远端分支的时间节点、用途、相对 `main`
+- [`BRANCH_CATALOG.md`](../BRANCH_CATALOG.md)：58 个远端分支的时间节点、用途、相对 `main`
   的关系、推荐用法以及本机 worktree 路径。
-- 当前目录根：唯一正式主线仓库；日常开发、启动体验和恢复主线任务只使用这里。
-- `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/`：只用于未完成的
-  临时阶段工作区；完成后必须合并、推送并移除。
+- 正式仓库根：唯一正式主线仓库；日常开发、启动体验和恢复已批准的主线任务使用这里。
+- `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement`：
+  当前原生 IM 人工评审工作区；在用户验收和明确决定前保留，不合并 `main`、不删除。
+- `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/`：其他临时阶段工作区的统一
+  容器；是否合并必须按各分支的评审结论处理，不能机械合并。
 - `artifacts/qe-opauth-review-v6/`：操作授权评审遗留资料；不是 Git worktree。
 - `artifacts/qe_release_evidence/`：早期发布证据 JSON；不是 Git worktree。
 
@@ -38,10 +41,13 @@ cd /Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement
 ## Worktree 收尾规则
 
 1. 在 worktree 内完成小步提交和阶段验证。
-2. 合并回 `main`，重新执行与风险相称的回归检查。
-3. 先推送 `main`；需要保留独立历史尖端时，再建立并核对同 SHA 的 `archive/*`。
-4. 删除远端阶段 active 分支。
-5. 删除本地 worktree 和已合并本地分支；最终 `git worktree list` 只保留正式 `main`。
+2. 每个提交先推送对应远端分支，确保评审节点可恢复。
+3. 用户明确批准集成后，才把已审阅提交合并或挑选进入 `main`，并重新执行与风险相称的回归检查。
+4. 需要保留独立历史尖端时，建立并核对同 SHA 的 `archive/*`；随后才可删除远端阶段 active 分支。
+5. 删除本地 worktree 前必须确认状态干净、提交已推送且用户不再需要该评审空间。
+
+当前例外：`mainline_continue_quantum_entanglement` 是保留中的人工评审分支。它已推送远端，但在用户
+验收前不执行合并、归档、删分支或删 worktree。
 
 只检查文档是否需要更新：
 
