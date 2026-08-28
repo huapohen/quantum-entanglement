@@ -105,6 +105,11 @@ from .native_im_nonce_store import (
     SQLiteNativeIMInboxStore,
     SQLiteNativeIMNonceReplayGuard,
 )
+from .native_im_provider_exchange import (
+    NativeIMProviderExchangePortV1,
+    NativeIMProviderRequestIntentV1,
+    NativeIMProviderWireResponseV1,
+)
 from .native_im_sandbox import (
     NativeIMDisabledSandboxAdapter,
     NativeIMHealthEvidenceV1,
@@ -386,8 +391,11 @@ __all__ = [
     "NativeIMNonceStoreProcessMismatchError",
     "NativeIMNonceTransactionError",
     "NativeIMOutboundForbiddenError",
+    "NativeIMProviderExchangePortV1",
+    "NativeIMProviderRequestIntentV1",
     "NativeIMProviderSandboxManifestV1",
     "NativeIMProviderSandboxRegistrationV1",
+    "NativeIMProviderWireResponseV1",
     "NativeIMSandboxAdapterClosedError",
     "NativeIMSandboxAdapterProcessMismatchError",
     "NativeIMSandboxApprovalAuthorityError",
