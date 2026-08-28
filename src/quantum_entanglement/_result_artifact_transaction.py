@@ -369,7 +369,7 @@ class _ResultArtifactMaterializationPlan:
         batch: _PreparedResultArtifactBatch,
         before_total_changes: int,
         schema_snapshot: tuple[int, tuple[tuple[str, str, str, int, str | None], ...]],
-        savepoint_name: str | None,
+        savepoint_name: str,
         process_guard: Callable[[], None],
         claim_sqlite_callbacks: Callable[[str], None],
         token: object,
@@ -387,7 +387,15 @@ class _ResultArtifactMaterializationPlan:
             raise ValueError("result Artifact materialization change baseline is invalid")
         if not callable(process_guard) or not callable(claim_sqlite_callbacks):
             raise TypeError("result Artifact materialization plan callbacks are invalid")
-        if (savepoint_name is None) != (not batch.items):
+        if (
+            type(savepoint_name) is not str
+            or len(savepoint_name) != len(_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX) + 32
+            or not savepoint_name.startswith(_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX)
+            or any(
+                character not in "0123456789abcdef"
+                for character in savepoint_name[len(_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX) :]
+            )
+        ):
             raise ValueError("result Artifact materialization plan savepoint is invalid")
         self.__connection = connection
         self.__batch = batch
@@ -426,13 +434,12 @@ class _ResultArtifactMaterializationPlan:
             )
         batch.verify()
         try:
-            if self.__savepoint_name is not None:
-                _release_result_artifact_clock_savepoint(
-                    connection,
-                    self.__savepoint_name,
-                    process_guard=process_guard,
-                    claim_sqlite_callbacks=self.__claim_sqlite_callbacks,
-                )
+            _release_result_artifact_clock_savepoint(
+                connection,
+                self.__savepoint_name,
+                process_guard=process_guard,
+                claim_sqlite_callbacks=self.__claim_sqlite_callbacks,
+            )
         finally:
             self.__active = False
         return (
@@ -579,9 +586,7 @@ def _canonical_result_artifact_timestamp(value: object, *, persisted: bool) -> s
     if parsed.tzinfo is None:
         raise ValueError("result Artifact transaction clock timestamp has no timezone")
     canonical = (
-        parsed.astimezone(timezone.utc)
-        .isoformat(timespec="microseconds")
-        .replace("+00:00", "Z")
+        parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
     )
     if len(canonical.encode("ascii")) != 27:
         raise ValueError("result Artifact transaction timestamp is not canonical")
@@ -643,16 +648,12 @@ def _guarded_fetchmany(
         raise _ResultArtifactIntegrityError("result Artifact cursor must be exact")
     batch_size = _RESULT_ARTIFACT_HISTORY_FETCH_BATCH_SIZE
     if type(batch_size) is not int or not 1 <= batch_size <= 64:
-        raise _ResultArtifactIntegrityError(
-            "result Artifact history batch size is invalid"
-        )
+        raise _ResultArtifactIntegrityError("result Artifact history batch size is invalid")
     rows = cursor.fetchmany(batch_size)
     _run_process_guard(process_guard)
     _require_exact_connection_codec(connection)
     if type(rows) is not list or len(rows) > batch_size:
-        raise _ResultArtifactIntegrityError(
-            "result Artifact history batch collection is invalid"
-        )
+        raise _ResultArtifactIntegrityError("result Artifact history batch collection is invalid")
     return rows
 
 
@@ -723,8 +724,10 @@ def _result_artifact_process_progress_fence(
             return sqlite3.SQLITE_OK
         if action == sqlite3.SQLITE_PRAGMA and first == "schema_version" and second is None:
             return sqlite3.SQLITE_OK
-        if action == sqlite3.SQLITE_SAVEPOINT and first in {"BEGIN", "RELEASE"} and (
-            second == owned_savepoint_name
+        if (
+            action == sqlite3.SQLITE_SAVEPOINT
+            and first in {"BEGIN", "RELEASE"}
+            and (second == owned_savepoint_name)
         ):
             return sqlite3.SQLITE_OK
         return sqlite3.SQLITE_DENY
@@ -912,9 +915,7 @@ def _result_artifact_schema_snapshot(
                     "result Artifact explicit schema SQL is invalid"
                 ) from error
             if actual_digest != expected_digest:
-                raise _ResultArtifactIntegrityError(
-                    "result Artifact explicit schema DDL changed"
-                )
+                raise _ResultArtifactIntegrityError("result Artifact explicit schema DDL changed")
         observed.append((*coordinate, root_page, ddl_sql))
     if seen != set(_RESULT_ARTIFACT_SCHEMA_DDL_SHA256):
         raise _ResultArtifactIntegrityError("result Artifact main schema topology changed")
@@ -1127,9 +1128,7 @@ def _verify_existing_result_artifact_history(
                     or text["session_id"] != item.session_id
                     or text["name"] != item.name
                 ):
-                    raise _ResultArtifactIntegrityError(
-                        "result Artifact history scope changed"
-                    )
+                    raise _ResultArtifactIntegrityError("result Artifact history scope changed")
                 if (
                     _exact_row_integer(row, "version", minimum=1) != version
                     or _exact_row_value(row, "parent_version") != parent
@@ -1362,17 +1361,6 @@ def _preflight_prepared_result_artifacts_in_transaction_body(
     _run_process_guard(process_guard)
     if type(before_total_changes) is not int or before_total_changes < 0:
         raise _ResultArtifactIntegrityError("SQLite total-change counter is invalid")
-    if not batch.items:
-        return _ResultArtifactMaterializationPlan(
-            connection=connection,
-            batch=batch,
-            before_total_changes=before_total_changes,
-            schema_snapshot=schema_snapshot,
-            savepoint_name=None,
-            process_guard=process_guard,
-            claim_sqlite_callbacks=claim_sqlite_callbacks,
-            token=_RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN,
-        )
     for item in batch.items:
         _run_process_guard(process_guard)
         _preflight_result_artifact_identity(connection, item, process_guard)
@@ -1444,8 +1432,6 @@ def _materialize_prepared_result_artifacts_in_transaction(
     connection, batch, before_total_changes, schema_snapshot, process_guard = plan._take(
         token=_RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN
     )
-    if not batch.items:
-        return ()
     if _result_artifact_schema_snapshot(connection, process_guard) != schema_snapshot:
         raise _ResultArtifactIntegrityError(
             "result Artifact schema changed after read-only preflight"
@@ -1562,9 +1548,7 @@ def _materialize_prepared_result_artifacts_in_transaction(
             "result Artifact owner transaction closed before final readback"
         )
     if _result_artifact_schema_snapshot(connection, process_guard) != schema_snapshot:
-        raise _ResultArtifactIntegrityError(
-            "result Artifact schema changed during owner DML"
-        )
+        raise _ResultArtifactIntegrityError("result Artifact schema changed during owner DML")
     _run_process_guard(process_guard)
     return tuple(item.descriptor for item in batch.items)
 

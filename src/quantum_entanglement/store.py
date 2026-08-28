@@ -42,6 +42,7 @@ from ._result_acceptance import (
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
     _FreshResultAcceptanceWritePlanV2,
+    _MaterializedFreshResultAcceptancePlanV2,
     _PreparedScopedInvocationResultAcceptanceV2,
     _ResultAcceptanceConflictError,
     _ResultAcceptanceIntegrityError,
@@ -49,6 +50,7 @@ from ._result_acceptance import (
 )
 from ._result_artifact_transaction import (
     _RESULT_ARTIFACT_TRANSACTION_TOKEN,
+    _materialize_prepared_result_artifacts_in_transaction,
     _preflight_prepared_result_artifacts_in_transaction,
     _PreparedResultArtifactBatch,
     _ResultArtifactCommitAmbiguityError,
@@ -260,9 +262,7 @@ _EVENT_STORE_ADMISSION_CONTROL_TOKEN = object()
 _EVENT_STORE_START_CONTROL_TOKEN = object()
 _BASE_EXCEPTION_CAUSE_DESCRIPTOR: Any = BaseException.__dict__["__cause__"]
 _BASE_EXCEPTION_CONTEXT_DESCRIPTOR: Any = BaseException.__dict__["__context__"]
-_BASE_EXCEPTION_SUPPRESS_CONTEXT_DESCRIPTOR: Any = BaseException.__dict__[
-    "__suppress_context__"
-]
+_BASE_EXCEPTION_SUPPRESS_CONTEXT_DESCRIPTOR: Any = BaseException.__dict__["__suppress_context__"]
 _BASE_EXCEPTION_TRACEBACK_DESCRIPTOR: Any = BaseException.__dict__["__traceback__"]
 _EVENT_STORE_CHILD_GRAPH_QUARANTINE: List[object] = []
 _INVOCATION_ADMISSION_RECEIPT_FORMAT = "qe.invocation-admission-receipt/1"
@@ -1746,8 +1746,8 @@ class SQLiteEventStore:
                 continuity_graph: Tuple[BaseException, ...] = ()
                 if isinstance(error, _ResultArtifactTransactionContinuityError):
                     self._poisoned = True
-                    continuity_control, continuity_graph = (
-                        _result_artifact_continuity_control(error)
+                    continuity_control, continuity_graph = _result_artifact_continuity_control(
+                        error
                     )
                 if type(connection) is sqlite3.Connection:
                     try:
@@ -2142,9 +2142,7 @@ class SQLiteEventStore:
             or counts[4] != artifact_count
             or counts[5:] != (2, 1, 1, 2, 1)
         ):
-            raise _ResultAcceptanceIntegrityError(
-                "result acceptance durable graph is partial"
-            )
+            raise _ResultAcceptanceIntegrityError("result acceptance durable graph is partial")
         return _ExistingResultAcceptanceGraphCandidateV2(
             invocation_id=durable_invocation_id,
             request_digest=durable_request_digest,
@@ -2252,9 +2250,7 @@ class SQLiteEventStore:
             or job.lease_expires_at < evidence.lease_expires_at
             or job.lease_expires_at <= job.heartbeat_at
         ):
-            raise _ResultAcceptanceConflictError(
-                "result acceptance fresh lease is no longer exact"
-            )
+            raise _ResultAcceptanceConflictError("result acceptance fresh lease is no longer exact")
 
         try:
             version_row = connection.execute(
@@ -2304,9 +2300,7 @@ class SQLiteEventStore:
         return _FreshResultAcceptancePrerequisitesV2(
             invocation_id=result_manifest.invocation_id,
             request_digest=request.canonical_digest(),
-            start_receipt_digest=_scoped_invocation_start_receipt_digest_v3(
-                state.receipt
-            ),
+            start_receipt_digest=_scoped_invocation_start_receipt_digest_v3(state.receipt),
             attempt_id=attempt.attempt_id,
             lease_epoch=attempt.lease_epoch,
             worker_id=attempt.worker_id,
@@ -2322,17 +2316,12 @@ class SQLiteEventStore:
         self,
         connection: sqlite3.Connection,
         prepared: _PreparedScopedInvocationResultAcceptanceV2,
-    ) -> (
-        _ExistingResultAcceptanceGraphCandidateV2
-        | _FreshResultAcceptancePrerequisitesV2
-    ):
+    ) -> _ExistingResultAcceptanceGraphCandidateV2 | _FreshResultAcceptancePrerequisitesV2:
         """Classify existing graph first, otherwise validate fresh durable ownership."""
 
         self._require_current_process()
         if type(prepared) is not _PreparedScopedInvocationResultAcceptanceV2:
-            raise TypeError(
-                "result acceptance prerequisites require exact prepared inputs"
-            )
+            raise TypeError("result acceptance prerequisites require exact prepared inputs")
         prepared.verify()
         self._require_result_acceptance_candidate_schema_in_transaction(connection)
         existing = self._existing_result_acceptance_graph_candidate_in_transaction(
@@ -2355,8 +2344,7 @@ class SQLiteEventStore:
         handle: _ResultArtifactTransactionHandle,
         prepared: _PreparedScopedInvocationResultAcceptanceV2,
     ) -> ContextManager[
-        _ExistingResultAcceptanceGraphCandidateV2
-        | _FreshResultAcceptanceWritePlanV2
+        _ExistingResultAcceptanceGraphCandidateV2 | _FreshResultAcceptanceWritePlanV2
     ]:
         """Create no durable prefix; yield existing candidate or one fresh opaque plan."""
 
@@ -2370,24 +2358,17 @@ class SQLiteEventStore:
         self,
         handle: _ResultArtifactTransactionHandle,
         prepared: _PreparedScopedInvocationResultAcceptanceV2,
-    ) -> Iterator[
-        _ExistingResultAcceptanceGraphCandidateV2
-        | _FreshResultAcceptanceWritePlanV2
-    ]:
+    ) -> Iterator[_ExistingResultAcceptanceGraphCandidateV2 | _FreshResultAcceptanceWritePlanV2]:
         connection = self._connection_for_result_artifact_transaction(handle)
-        prerequisites = (
-            self._validate_result_acceptance_durable_prerequisites_in_transaction(
-                connection,
-                prepared,
-            )
+        prerequisites = self._validate_result_acceptance_durable_prerequisites_in_transaction(
+            connection,
+            prepared,
         )
         if type(prerequisites) is _ExistingResultAcceptanceGraphCandidateV2:
             yield prerequisites
             return
         if type(prerequisites) is not _FreshResultAcceptancePrerequisitesV2:
-            raise RuntimeError(
-                "result acceptance prerequisite classification is not closed"
-            )
+            raise RuntimeError("result acceptance prerequisite classification is not closed")
         with _preflight_prepared_result_artifacts_in_transaction(
             connection,
             prepared.artifact_batch,
@@ -2403,6 +2384,189 @@ class SQLiteEventStore:
                 yield plan
             finally:
                 plan._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    @_bind_event_store_process
+    def _consume_result_acceptance_artifact_plan_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        plan: _FreshResultAcceptanceWritePlanV2,
+    ) -> Tuple[str, Tuple[_ScopedInvocationResultArtifactV2, ...]]:
+        """Sample acceptedAt once, reject an expired lease, then consume Artifact heads."""
+
+        connection: Optional[sqlite3.Connection] = None
+        try:
+            connection = self._connection_for_result_artifact_transaction(handle)
+            if type(plan) is not _FreshResultAcceptanceWritePlanV2:
+                raise TypeError("result acceptance Artifact materialization requires an exact plan")
+            prepared, prerequisites, artifact_plan = plan._begin_artifact_materialization(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            before_clock_changes = connection.total_changes
+            if type(before_clock_changes) is not int or before_clock_changes < 0:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance SQLite change counter is invalid"
+                )
+            self._require_current_process()
+            accepted_at = _normalize_invocation_timestamp(
+                self._clock(),
+                "result acceptance clock",
+            )
+            self._require_current_process()
+            after_clock_changes = connection.total_changes
+            if type(after_clock_changes) is not int or after_clock_changes != before_clock_changes:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance clock changed durable state"
+                )
+            if accepted_at < prerequisites.heartbeat_at:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance clock precedes durable lease activity"
+                )
+            if accepted_at >= prerequisites.lease_expires_at:
+                raise _ResultAcceptanceConflictError(
+                    "result acceptance lease expired before acceptedAt"
+                )
+            artifacts = _materialize_prepared_result_artifacts_in_transaction(
+                artifact_plan,
+                accepted_at,
+            )
+            if artifacts != tuple(item.descriptor for item in prepared.artifact_batch.items):
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance materialized Artifact order changed"
+                )
+            self._require_current_process()
+            return accepted_at, artifacts
+        except BaseException as error:
+            if self._process_is_current():
+                continuity_control: Optional[_EventStoreControlDescriptor] = None
+                continuity_graph: Tuple[BaseException, ...] = ()
+                if isinstance(error, _ResultArtifactTransactionContinuityError):
+                    self._poisoned = True
+                    continuity_control, continuity_graph = _result_artifact_continuity_control(
+                        error
+                    )
+                if type(connection) is sqlite3.Connection:
+                    try:
+                        transaction_open = connection.in_transaction
+                    except BaseException:
+                        self._poisoned = True
+                    else:
+                        if type(transaction_open) is not bool or not transaction_open:
+                            self._poisoned = True
+                generation = self._active_result_artifact_transaction_generation
+                if type(generation) is int and generation > 0:
+                    self._result_artifact_transaction_rollback_only = True
+                if continuity_control is not None:
+                    for graph_error in continuity_graph:
+                        _detach_exception(graph_error)
+                    raise _EventStoreAdmissionTransactionSignal(
+                        "ambiguous",
+                        control=continuity_control,
+                        token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+                    ) from None
+            raise
+
+    @_bind_event_store_process
+    def _materialize_result_acceptance_artifacts_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> ContextManager[
+        _ExistingResultAcceptanceGraphCandidateV2 | _MaterializedFreshResultAcceptancePlanV2
+    ]:
+        """Materialize fresh Artifacts, then revalidate every durable prerequisite."""
+
+        return self._materialize_result_acceptance_artifacts_in_owner_transaction_inner(
+            handle,
+            prepared,
+        )
+
+    @contextmanager
+    def _materialize_result_acceptance_artifacts_in_owner_transaction_inner(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> Iterator[
+        _ExistingResultAcceptanceGraphCandidateV2 | _MaterializedFreshResultAcceptancePlanV2
+    ]:
+        connection: Optional[sqlite3.Connection] = None
+        materialized: Optional[_MaterializedFreshResultAcceptancePlanV2] = None
+        try:
+            connection = self._connection_for_result_artifact_transaction(handle)
+            prerequisites: Optional[_FreshResultAcceptancePrerequisitesV2] = None
+            accepted_at: Optional[str] = None
+            artifacts: Optional[Tuple[_ScopedInvocationResultArtifactV2, ...]] = None
+            with self._preflight_result_acceptance_write_in_owner_transaction(
+                handle,
+                prepared,
+            ) as candidate:
+                if type(candidate) is _ExistingResultAcceptanceGraphCandidateV2:
+                    yield candidate
+                    return
+                if type(candidate) is not _FreshResultAcceptanceWritePlanV2:
+                    raise RuntimeError("result acceptance Artifact classification is not closed")
+                _, prerequisites, _ = candidate._validated(
+                    token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                )
+                accepted_at, artifacts = (
+                    self._consume_result_acceptance_artifact_plan_in_owner_transaction(
+                        handle,
+                        candidate,
+                    )
+                )
+            if prerequisites is None or accepted_at is None or artifacts is None:
+                raise RuntimeError("result acceptance Artifact materialization state is incomplete")
+            after_clock = self._validate_result_acceptance_durable_prerequisites_in_transaction(
+                connection,
+                prepared,
+            )
+            if type(after_clock) is not _FreshResultAcceptancePrerequisitesV2:
+                raise _ResultAcceptanceConflictError(
+                    "result acceptance durable graph changed during clock sampling"
+                )
+            if after_clock != prerequisites:
+                raise _ResultAcceptanceConflictError(
+                    "result acceptance durable prerequisites changed during clock sampling"
+                )
+            materialized = _MaterializedFreshResultAcceptancePlanV2(
+                prepared=prepared,
+                prerequisites=after_clock,
+                accepted_at=accepted_at,
+                artifacts=artifacts,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            try:
+                yield materialized
+            finally:
+                materialized._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        except BaseException as error:
+            if self._process_is_current():
+                continuity_control: Optional[_EventStoreControlDescriptor] = None
+                continuity_graph: Tuple[BaseException, ...] = ()
+                if isinstance(error, _ResultArtifactTransactionContinuityError):
+                    self._poisoned = True
+                    continuity_control, continuity_graph = _result_artifact_continuity_control(
+                        error
+                    )
+                generation = self._active_result_artifact_transaction_generation
+                if type(generation) is int and generation > 0:
+                    self._result_artifact_transaction_rollback_only = True
+                if type(connection) is sqlite3.Connection:
+                    try:
+                        transaction_open = connection.in_transaction
+                    except BaseException:
+                        self._poisoned = True
+                    else:
+                        if type(transaction_open) is not bool or not transaction_open:
+                            self._poisoned = True
+                if continuity_control is not None:
+                    for graph_error in continuity_graph:
+                        _detach_exception(graph_error)
+                    raise _EventStoreAdmissionTransactionSignal(
+                        "ambiguous",
+                        control=continuity_control,
+                        token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+                    ) from None
+            raise
 
     @contextmanager
     def _transaction_inner(

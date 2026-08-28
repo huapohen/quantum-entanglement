@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import NoReturn
 
 from ._result_artifact_transaction import (
@@ -40,6 +41,22 @@ def _prepared_digest(value: object, label: str) -> str:
     if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
         raise ValueError(f"prepared result acceptance {label} is invalid")
     return digest
+
+
+def _prepared_timestamp(value: object, label: str) -> str:
+    timestamp = _prepared_text(value, label)
+    if len(timestamp) != 27 or not timestamp.endswith("Z"):
+        raise ValueError(f"prepared result acceptance {label} is invalid")
+    try:
+        parsed = datetime.fromisoformat(timestamp[:-1] + "+00:00")
+    except ValueError:
+        raise ValueError(f"prepared result acceptance {label} is invalid") from None
+    canonical = (
+        parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    )
+    if timestamp != canonical:
+        raise ValueError(f"prepared result acceptance {label} is invalid")
+    return timestamp
 
 
 @dataclass(frozen=True)
@@ -90,8 +107,10 @@ class _FreshResultAcceptancePrerequisitesV2:
             raise ValueError("prepared result acceptance lease epoch is invalid")
         _prepared_text(self.worker_id, "worker identity")
         _prepared_digest(self.lease_token_digest, "lease token digest")
-        _prepared_text(self.heartbeat_at, "heartbeat time")
-        _prepared_text(self.lease_expires_at, "lease expiry")
+        heartbeat_at = _prepared_timestamp(self.heartbeat_at, "heartbeat time")
+        lease_expires_at = _prepared_timestamp(self.lease_expires_at, "lease expiry")
+        if lease_expires_at <= heartbeat_at:
+            raise ValueError("prepared result acceptance lease is not active")
         if type(self.expected_stream_version) is not int or self.expected_stream_version < 1:
             raise ValueError("prepared result acceptance stream version is invalid")
         if type(self.running_task_revision) is not int or self.running_task_revision < 1:
@@ -107,6 +126,7 @@ class _FreshResultAcceptanceWritePlanV2:
     __slots__ = (
         "__active",
         "__artifact_plan",
+        "__materialization_started",
         "__prepared",
         "__prerequisites",
     )
@@ -134,6 +154,7 @@ class _FreshResultAcceptanceWritePlanV2:
         self.__prepared = prepared
         self.__prerequisites = prerequisites
         self.__artifact_plan = artifact_plan
+        self.__materialization_started = False
         self.__active = True
 
     def _validated(
@@ -155,10 +176,37 @@ class _FreshResultAcceptanceWritePlanV2:
         _FreshResultAcceptancePrerequisitesV2.__post_init__(self.__prerequisites)
         return self.__prepared, self.__prerequisites, self.__artifact_plan
 
+    def _begin_artifact_materialization(
+        self,
+        *,
+        token: object,
+    ) -> tuple[
+        _PreparedScopedInvocationResultAcceptanceV2,
+        _FreshResultAcceptancePrerequisitesV2,
+        _ResultArtifactMaterializationPlan,
+    ]:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("fresh result acceptance materialization is private")
+        if type(self) is not _FreshResultAcceptanceWritePlanV2:
+            raise TypeError("fresh result acceptance write plan must be exact")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("fresh result acceptance write plan is no longer active")
+        if type(self.__materialization_started) is not bool:
+            raise RuntimeError("fresh result acceptance write plan state is invalid")
+        if self.__materialization_started:
+            raise RuntimeError("fresh result acceptance materialization already started")
+        self.__materialization_started = True
+        self.__prepared.verify()
+        _FreshResultAcceptancePrerequisitesV2.__post_init__(self.__prerequisites)
+        if type(self.__artifact_plan) is not _ResultArtifactMaterializationPlan:
+            raise RuntimeError("fresh result acceptance Artifact plan is invalid")
+        return self.__prepared, self.__prerequisites, self.__artifact_plan
+
     def _invalidate(self, *, token: object) -> None:
         if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
             raise TypeError("fresh result acceptance write plan invalidation is private")
         self.__active = False
+        self.__materialization_started = True
         object.__setattr__(self, "_FreshResultAcceptanceWritePlanV2__artifact_plan", None)
         object.__setattr__(self, "_FreshResultAcceptanceWritePlanV2__prepared", None)
         object.__setattr__(self, "_FreshResultAcceptanceWritePlanV2__prerequisites", None)
@@ -171,6 +219,106 @@ class _FreshResultAcceptanceWritePlanV2:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("fresh result acceptance write plans cannot be serialized")
+
+
+class _MaterializedFreshResultAcceptancePlanV2:
+    """One post-clock, post-Artifact plan; it remains private and grants no authority."""
+
+    __slots__ = (
+        "__accepted_at",
+        "__active",
+        "__artifacts",
+        "__prepared",
+        "__prerequisites",
+    )
+
+    def __init__(
+        self,
+        *,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+        prerequisites: _FreshResultAcceptancePrerequisitesV2,
+        accepted_at: str,
+        artifacts: tuple[object, ...],
+        token: object,
+    ) -> None:
+        if type(self) is not _MaterializedFreshResultAcceptancePlanV2:
+            raise TypeError("materialized result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("materialized result acceptance plan constructor is private")
+        self.__prepared = prepared
+        self.__prerequisites = prerequisites
+        self.__accepted_at = accepted_at
+        self.__artifacts = artifacts
+        self.__active = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> tuple[
+        _PreparedScopedInvocationResultAcceptanceV2,
+        _FreshResultAcceptancePrerequisitesV2,
+        str,
+        tuple[object, ...],
+    ]:
+        if type(self) is not _MaterializedFreshResultAcceptancePlanV2:
+            raise TypeError("materialized result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("materialized result acceptance plan validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("materialized result acceptance plan is no longer active")
+        if type(self.__prepared) is not _PreparedScopedInvocationResultAcceptanceV2:
+            raise TypeError("materialized result acceptance inputs are not exact")
+        self.__prepared.verify()
+        if type(self.__prerequisites) is not _FreshResultAcceptancePrerequisitesV2:
+            raise TypeError("materialized result acceptance prerequisites are not exact")
+        _FreshResultAcceptancePrerequisitesV2.__post_init__(self.__prerequisites)
+        accepted_at = _prepared_timestamp(self.__accepted_at, "accepted time")
+        if accepted_at < self.__prerequisites.heartbeat_at:
+            raise ValueError("materialized result acceptance time precedes its heartbeat")
+        if accepted_at >= self.__prerequisites.lease_expires_at:
+            raise ValueError("materialized result acceptance time is outside its lease")
+        if type(self.__artifacts) is not tuple:
+            raise TypeError("materialized result acceptance Artifacts are not exact")
+        expected_artifacts = tuple(item.descriptor for item in self.__prepared.artifact_batch.items)
+        if self.__artifacts != expected_artifacts:
+            raise ValueError("materialized result acceptance Artifact order changed")
+        return (
+            self.__prepared,
+            self.__prerequisites,
+            accepted_at,
+            self.__artifacts,
+        )
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("materialized result acceptance plan invalidation is private")
+        self.__active = False
+        object.__setattr__(
+            self,
+            "_MaterializedFreshResultAcceptancePlanV2__prepared",
+            None,
+        )
+        object.__setattr__(
+            self,
+            "_MaterializedFreshResultAcceptancePlanV2__prerequisites",
+            None,
+        )
+        object.__setattr__(
+            self,
+            "_MaterializedFreshResultAcceptancePlanV2__artifacts",
+            (),
+        )
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("materialized result acceptance plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("materialized result acceptance plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("materialized result acceptance plans cannot be serialized")
 
 
 def _scoped_invocation_start_claimed_snapshot(

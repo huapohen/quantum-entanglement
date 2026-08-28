@@ -4,6 +4,7 @@ import copy
 import hashlib
 import pickle
 import sqlite3
+import traceback
 import unittest
 from dataclasses import replace
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from quantum_entanglement._result_acceptance import (
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
     _FreshResultAcceptanceWritePlanV2,
+    _MaterializedFreshResultAcceptancePlanV2,
     _prepare_scoped_invocation_result_acceptance_v2,
     _PreparedScopedInvocationResultAcceptanceV2,
     _ResultAcceptanceConflictError,
@@ -22,6 +24,7 @@ from quantum_entanglement._result_acceptance import (
 )
 from quantum_entanglement._result_artifact_transaction import (
     _ResultArtifactConflictError,
+    _ResultArtifactTransactionContinuityError,
 )
 from quantum_entanglement.attempts import InvocationLease
 from quantum_entanglement.invocation_execution import (
@@ -166,6 +169,22 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         return _prepare_scoped_invocation_result_acceptance_v2(
             result_request_for_claim(claimed),
             claimed,
+        )
+
+    def narration_only_prepared(self) -> _PreparedScopedInvocationResultAcceptanceV2:
+        prepared = self.fresh_prepared()
+        request = replace(
+            prepared.request,
+            manifest=replace(
+                prepared.request.manifest,
+                primary_artifact_id=None,
+                artifacts=(),
+            ),
+            artifact_candidates=(),
+        )
+        return _prepare_scoped_invocation_result_acceptance_v2(
+            request,
+            prepared.claimed,
         )
 
     def validate(
@@ -411,11 +430,367 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     )
         artifact_preflight.assert_not_called()
 
+    def test_artifact_materialization_samples_one_canonical_live_accepted_at(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        clock_values = ["2026-08-27T18:00:02+08:00"]
+        self.store._clock = lambda: clock_values.pop(0)
+
+        with self.store._result_artifact_transaction() as handle:
+            with self.store._materialize_result_acceptance_artifacts_in_owner_transaction(
+                handle,
+                prepared,
+            ) as materialized:
+                self.assertIs(
+                    type(materialized),
+                    _MaterializedFreshResultAcceptancePlanV2,
+                )
+                assert type(materialized) is _MaterializedFreshResultAcceptancePlanV2
+                frozen, prerequisites, accepted_at, artifacts = materialized._validated(
+                    token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                )
+                self.assertIs(frozen, prepared)
+                self.assertIs(type(prerequisites), _FreshResultAcceptancePrerequisitesV2)
+                lease_token = prepared.claimed.lease.lease_token
+                self.assertNotIn(lease_token, repr(materialized))
+                self.assertEqual(accepted_at, "2026-08-27T10:00:02.000000Z")
+                self.assertEqual(
+                    artifacts,
+                    tuple(item.descriptor for item in prepared.artifact_batch.items),
+                )
+                for operation in (
+                    lambda: copy.copy(materialized),
+                    lambda: copy.deepcopy(materialized),
+                    lambda: pickle.dumps(materialized),
+                ):
+                    with self.subTest(operation=operation):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ) as captured:
+                            operation()
+                        self.assertNotIn(
+                            lease_token,
+                            "".join(traceback.format_exception(captured.exception)),
+                        )
+
+        self.assertEqual(clock_values, [])
+        created_at = self.store._connection.execute(
+            "SELECT created_at FROM main.artifact_versions"
+        ).fetchone()[0]
+        self.assertEqual(created_at, accepted_at)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.invocation_result_requests"
+            ).fetchone()[0],
+            0,
+        )
+        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+            materialized._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_narration_only_materialization_uses_the_same_clock_fence(self) -> None:
+        prepared = self.narration_only_prepared()
+        install_inactive_result_schema(self.store)
+        calls = []
+
+        def clock() -> str:
+            calls.append("sampled")
+            return "2026-08-27T10:00:02.000000Z"
+
+        self.store._clock = clock
+        with self.store._result_artifact_transaction() as handle:
+            with self.store._materialize_result_acceptance_artifacts_in_owner_transaction(
+                handle,
+                prepared,
+            ) as materialized:
+                assert type(materialized) is _MaterializedFreshResultAcceptancePlanV2
+                _, _, accepted_at, artifacts = materialized._validated(
+                    token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                )
+                self.assertEqual(accepted_at, "2026-08-27T10:00:02.000000Z")
+                self.assertEqual(artifacts, ())
+        self.assertEqual(calls, ["sampled"])
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_narration_only_clock_cannot_replace_the_owner_transaction(self) -> None:
+        prepared = self.narration_only_prepared()
+        install_inactive_result_schema(self.store)
+
+        def replacing_clock() -> str:
+            self.store._connection.set_authorizer(None)
+            self.store._connection.execute("COMMIT")
+            self.store._connection.execute("BEGIN IMMEDIATE")
+            return "2026-08-27T10:00:02.000000Z"
+
+        self.store._clock = replacing_clock
+        with self.assertRaisesRegex(
+            _ResultArtifactTransactionContinuityError,
+            "changed during clock sampling",
+        ):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._materialize_result_acceptance_artifacts_in_owner_transaction(
+                    handle,
+                    prepared,
+                ):
+                    self.fail("a replacement transaction unexpectedly produced a plan")
+        self.assertTrue(self.store._poisoned)
+
+    def test_cleanup_continuity_failure_poisons_after_clock_commits_then_raises(self) -> None:
+        prepared = self.narration_only_prepared()
+        install_inactive_result_schema(self.store)
+
+        def committing_failing_clock() -> str:
+            self.store._connection.set_authorizer(None)
+            self.store._connection.execute(
+                """
+                INSERT INTO main.artifact_blobs(digest, content, byte_size, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    "sha256:" + ("b" * 64),
+                    sqlite3.Binary(b"committed-clock-write"),
+                    len(b"committed-clock-write"),
+                    "2026-08-27T10:00:02.000000Z",
+                ),
+            )
+            self.store._connection.execute("COMMIT")
+            self.store._connection.execute("BEGIN IMMEDIATE")
+            raise RuntimeError("clock failed after replacing the owner transaction")
+
+        self.store._clock = committing_failing_clock
+        with self.assertRaises(_ResultArtifactTransactionContinuityError):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._materialize_result_acceptance_artifacts_in_owner_transaction(
+                    handle,
+                    prepared,
+                ):
+                    self.fail("a failing replacement clock unexpectedly produced a plan")
+        self.assertTrue(self.store._poisoned)
+        self.assertEqual(
+            self.store._connection.execute("SELECT count(*) FROM main.artifact_blobs").fetchone()[
+                0
+            ],
+            1,
+        )
+
+    def test_narration_only_clock_dml_forces_owner_rollback(self) -> None:
+        prepared = self.narration_only_prepared()
+        install_inactive_result_schema(self.store)
+
+        def writing_clock() -> str:
+            self.store._connection.execute(
+                """
+                INSERT INTO main.artifact_blobs(digest, content, byte_size, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    "sha256:" + ("a" * 64),
+                    sqlite3.Binary(b"clock-write"),
+                    len(b"clock-write"),
+                    "2026-08-27T10:00:02.000000Z",
+                ),
+            )
+            return "2026-08-27T10:00:02.000000Z"
+
+        self.store._clock = writing_clock
+        with self.assertRaisesRegex(_ResultAcceptanceIntegrityError, "clock changed"):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._materialize_result_acceptance_artifacts_in_owner_transaction(
+                    handle,
+                    prepared,
+                ):
+                    self.fail("clock DML unexpectedly produced a materialized plan")
+        self.assertEqual(
+            self.store._connection.execute("SELECT count(*) FROM main.artifact_blobs").fetchone()[
+                0
+            ],
+            0,
+        )
+
+    def test_clock_keyboard_interrupt_is_clean_and_rolls_back(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: (_ for _ in ()).throw(KeyboardInterrupt())
+
+        with self.assertRaises(KeyboardInterrupt) as captured:
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._materialize_result_acceptance_artifacts_in_owner_transaction(
+                    handle,
+                    prepared,
+                ):
+                    self.fail("interrupted acceptedAt unexpectedly produced a plan")
+        self.assertIsNone(captured.exception.__cause__)
+        self.assertIsNone(captured.exception.__context__)
+        self.assertFalse(self.store._poisoned)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_existing_graph_materialization_path_never_samples_or_writes(self) -> None:
+        helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
+            methodName="runTest"
+        )
+        helper.store = self.store
+        helper.connection = self.store._connection
+        helper.seed_nonempty_v6_dependencies()
+        helper.apply_candidate()
+        helper.seed_complete_result_graph()
+        prepared = existing_graph_prepared(helper)
+        before_changes = self.store._connection.total_changes
+        self.store._clock = lambda: (_ for _ in ()).throw(
+            AssertionError("existing graph must not sample acceptedAt")
+        )
+
+        with patch(
+            "quantum_entanglement.store._materialize_prepared_result_artifacts_in_transaction",
+            side_effect=AssertionError("existing graph must not materialize Artifacts"),
+        ) as artifact_materialize:
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._materialize_result_acceptance_artifacts_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as result:
+                    self.assertIs(
+                        type(result),
+                        _ExistingResultAcceptanceGraphCandidateV2,
+                    )
+        artifact_materialize.assert_not_called()
+        self.assertEqual(self.store._connection.total_changes, before_changes)
+
+    def assert_materialization_time_rejected(
+        self,
+        clock_value: str,
+        error_type: type[Exception],
+        message: str,
+    ) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        calls = []
+
+        def clock() -> str:
+            calls.append(clock_value)
+            return clock_value
+
+        self.store._clock = clock
+        with self.assertRaisesRegex(error_type, message):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._materialize_result_acceptance_artifacts_in_owner_transaction(
+                    handle,
+                    prepared,
+                ):
+                    self.fail("invalid acceptedAt unexpectedly materialized Artifacts")
+        self.assertEqual(calls, [clock_value])
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_artifact_materialization_rejects_expired_clock(self) -> None:
+        self.assert_materialization_time_rejected(
+            "2026-08-27T10:01:01.000000Z",
+            _ResultAcceptanceConflictError,
+            "expired",
+        )
+
+    def test_artifact_materialization_rejects_regressing_clock(self) -> None:
+        self.assert_materialization_time_rejected(
+            "2026-08-27T10:00:00.999999Z",
+            _ResultAcceptanceIntegrityError,
+            "precedes",
+        )
+
+    def test_artifact_materialization_cannot_resample_after_failure_is_caught(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        calls = []
+
+        def expired_clock() -> str:
+            calls.append(prepared.claimed.lease.lease_expires_at)
+            return prepared.claimed.lease.lease_expires_at
+
+        self.store._clock = expired_clock
+        with self.assertRaisesRegex(RuntimeError, "rollback-only"):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._preflight_result_acceptance_write_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as plan:
+                    assert type(plan) is _FreshResultAcceptanceWritePlanV2
+                    with self.assertRaises(_ResultAcceptanceConflictError):
+                        self.store._consume_result_acceptance_artifact_plan_in_owner_transaction(
+                            handle,
+                            plan,
+                        )
+                    with self.assertRaisesRegex(RuntimeError, "already started"):
+                        self.store._consume_result_acceptance_artifact_plan_in_owner_transaction(
+                            handle,
+                            plan,
+                        )
+        self.assertEqual(calls, [prepared.claimed.lease.lease_expires_at])
+
+    def test_post_clock_durable_drift_rolls_back_materialized_artifacts(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        original = self.store._validate_result_acceptance_durable_prerequisites_in_transaction
+        validations = []
+
+        def validate(
+            connection: sqlite3.Connection,
+            frozen: _PreparedScopedInvocationResultAcceptanceV2,
+        ) -> object:
+            validations.append(connection.total_changes)
+            if len(validations) == 2:
+                connection.execute(
+                    """
+                    UPDATE invocation_jobs
+                    SET heartbeat_at = ?, updated_at = ?
+                    WHERE invocation_id = ?
+                    """,
+                    (
+                        "2026-08-27T10:00:01.500000Z",
+                        "2026-08-27T10:00:01.500000Z",
+                        prepared.request.manifest.invocation_id,
+                    ),
+                )
+            return original(connection, frozen)
+
+        with patch.object(
+            self.store,
+            "_validate_result_acceptance_durable_prerequisites_in_transaction",
+            side_effect=validate,
+        ):
+            with self.assertRaises(_ResultAcceptanceConflictError):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._materialize_result_acceptance_artifacts_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("durable drift unexpectedly produced a materialized plan")
+        self.assertEqual(len(validations), 2)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+
     def test_private_prerequisites_add_no_writer_or_accepted_export(self) -> None:
         for name in (
             "_ExistingResultAcceptanceGraphCandidateV2",
             "_FreshResultAcceptancePrerequisitesV2",
             "_FreshResultAcceptanceWritePlanV2",
+            "_MaterializedFreshResultAcceptancePlanV2",
             "_validate_result_acceptance_durable_prerequisites_in_transaction",
             "accept_scoped_invocation_result_v2",
             "ScopedInvocationResultAcceptedV2",

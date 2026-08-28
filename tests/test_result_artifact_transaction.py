@@ -30,6 +30,7 @@ from quantum_entanglement._result_artifact_transaction import (
     _ResultArtifactConflictError,
     _ResultArtifactIntegrityError,
     _ResultArtifactMaterializationPlan,
+    _ResultArtifactTransactionContinuityError,
     _ResultArtifactTransactionError,
     _ResultArtifactTransactionHandle,
     _write_prepared_result_artifacts_in_transaction,
@@ -190,6 +191,7 @@ class PreparedResultArtifactBatchTests(unittest.TestCase):
             self.assertNotIn(name, quantum_entanglement.__all__)
             self.assertFalse(hasattr(quantum_entanglement, name))
         with self.assertRaisesRegex(TypeError, "exact private class"):
+
             class PreparedSubclass(_PreparedResultArtifact):
                 pass
 
@@ -268,6 +270,30 @@ class ResultArtifactMaterializationPlanTests(unittest.TestCase):
             ).fetchone()[0],
             0,
         )
+
+    def test_empty_batch_uses_the_same_transaction_continuity_savepoint(self) -> None:
+        batch = _prepare_result_artifact_batch(())
+        with self.store._result_artifact_transaction() as handle:
+            connection = self.store._connection_for_result_artifact_transaction(handle)
+            with _preflight_prepared_result_artifacts_in_transaction(
+                connection,
+                batch,
+                process_guard=self.store._require_current_process,
+            ) as plan:
+                savepoints = []
+                connection.set_authorizer(None)
+                connection.execute("COMMIT")
+                connection.execute("BEGIN IMMEDIATE")
+                with self.assertRaisesRegex(
+                    _ResultArtifactTransactionContinuityError,
+                    "changed during clock sampling",
+                ):
+                    _materialize_prepared_result_artifacts_in_transaction(
+                        plan,
+                        "2026-08-29T00:02:03.456789Z",
+                    )
+                savepoints.append("checked")
+            self.assertEqual(savepoints, ["checked"])
 
     def test_invalid_accepted_at_consumes_no_plan_and_writes_nothing(self) -> None:
         batch = _prepare_result_artifact_batch((candidate(),))
@@ -1074,9 +1100,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
             ):
                 self.write(candidate())
         finally:
-            connection.execute(
-                "DROP TRIGGER IF EXISTS temp.clock_created_result_artifact_trigger"
-            )
+            connection.execute("DROP TRIGGER IF EXISTS temp.clock_created_result_artifact_trigger")
             connection.create_function("result_artifact_side_effect", 0, None)
 
         self.assertEqual(side_effects, [])
@@ -1328,9 +1352,9 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
                         "clock-closed",
                     )
                     self.assertEqual(
-                        recovered.execute(
-                            "SELECT count(*) FROM main.artifact_versions"
-                        ).fetchone()[0],
+                        recovered.execute("SELECT count(*) FROM main.artifact_versions").fetchone()[
+                            0
+                        ],
                         0,
                     )
                 finally:
@@ -1669,17 +1693,15 @@ class ResultArtifactConcurrentWriterTests(unittest.TestCase):
                 self.assertTrue(all(not thread.is_alive() for thread in threads))
                 self.assertEqual(sorted(outcomes), ["committed", "concurrency"])
                 self.assertEqual(
-                    stores[0]._connection.execute(
-                        "SELECT count(*) FROM main.artifact_versions"
-                    ).fetchone()[0],
+                    stores[0]
+                    ._connection.execute("SELECT count(*) FROM main.artifact_versions")
+                    .fetchone()[0],
                     1,
                 )
                 self.assertEqual(
-                    stores[0]._connection.execute(
-                        "SELECT count(*) FROM main.artifact_blobs"
-                    ).fetchone()[
-                        0
-                    ],
+                    stores[0]
+                    ._connection.execute("SELECT count(*) FROM main.artifact_blobs")
+                    .fetchone()[0],
                     1,
                 )
             finally:
