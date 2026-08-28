@@ -365,8 +365,13 @@ def test_raw_row_rejects_adapters_and_lookalikes(invalid: object) -> None:
         '{"a":1,"a":2}',
         '{"a": 1}',
         '{ "a":1}',
+        '{"a":1} ',
+        '{"a":1, "b":2}',
         '{"b":2,"a":1}',
+        '{"nested":{"a":1,"a":2}}',
+        '{"text":"\\u0061"}',
         '{"text":"\\u5b8c\\u6210"}',
+        '{"text":"a\\/b"}',
         '{"text":"line\\nfeed"}',
         '{"value":NaN}',
         '{"value":Infinity}',
@@ -395,6 +400,36 @@ def test_payload_text_keys_and_structural_bounds_match_the_store_contract() -> N
             )
 
 
+def test_payload_key_and_string_character_boundaries_match_the_event_store() -> None:
+    maximum_key = "界" * 512
+    maximum_string = "界" * 65_536
+    payload_json = json.dumps(
+        {maximum_key: maximum_string},
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+    value = envelope(payload_json=payload_json)
+
+    assert value.to_dict()["payload"] == {maximum_key: maximum_string}
+
+
+def test_payload_total_encoded_byte_limit_is_checked_before_json_decode() -> None:
+    payload_json = json.dumps(
+        {f"k{index:02d}": "界" * 65_536 for index in range(6)},
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert len(payload_json.encode("utf-8")) > 1_048_576
+
+    with pytest.raises(codec.StoredEventEnvelopeError, match="encoded byte limit"):
+        envelope(payload_json=payload_json)
+
+
 def test_payload_depth_and_node_bounds_fail_closed() -> None:
     too_deep: object = "leaf"
     for _ in range(65):
@@ -416,14 +451,15 @@ def test_payload_depth_and_node_bounds_fail_closed() -> None:
 
 def test_valid_canonical_json_edge_values_remain_exact() -> None:
     payload_json = (
-        '{"emptyKey":{"":true},"emptyString":"","float":1.5,'
-        '"negativeZero":-0.0,"space":"ordinary space"}'
+        '{"array":[true,null,"item"],"emptyKey":{"":true},"emptyString":"",'
+        '"float":1.5,"negativeZero":-0.0,"space":"ordinary space"}'
     )
     value = codec._stored_event_envelope_from_raw_row(
         raw_row(payload_json=payload_json)
     )
 
     assert value.to_dict()["payload"] == {
+        "array": [True, None, "item"],
         "emptyKey": {"": True},
         "emptyString": "",
         "float": 1.5,
@@ -485,3 +521,56 @@ def test_reflective_valid_mutation_cannot_preserve_the_original_digest() -> None
     assert value.digest() != EXPECTED_DIGEST
     assert repr(value) == "_StoredEventEnvelopeV1(<capability-free>)"
     assert not hasattr(value, "accepted")
+
+
+def test_surrogate_payload_and_identity_text_fail_without_disclosure() -> None:
+    surrogate = "\ud800"
+
+    with pytest.raises(codec.StoredEventEnvelopeError) as payload_error:
+        envelope(payload_json='{"value":"' + surrogate + '"}')
+    with pytest.raises(codec.StoredEventEnvelopeError) as identity_error:
+        envelope(event_id="event-" + surrogate)
+
+    assert surrogate not in str(payload_error.value)
+    assert surrogate not in str(identity_error.value)
+
+
+def test_hostile_sqlite_text_converter_is_rejected_before_subclass_methods() -> None:
+    class HostileString(str):
+        def encode(self, *_args: object, **_kwargs: object) -> bytes:
+            raise AssertionError("hostile adapter method must not run")
+
+        def strip(self, *_args: object, **_kwargs: object) -> str:
+            raise AssertionError("hostile adapter method must not run")
+
+    converter_name = "QE_STORED_EVENT_HOSTILE_TEXT"
+    sqlite3.register_converter(
+        converter_name,
+        lambda raw: HostileString(raw.decode("utf-8")),
+    )
+    connection = sqlite3.connect(":memory:", detect_types=sqlite3.PARSE_COLNAMES)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute(
+            f"""
+            SELECT
+                ? AS global_position,
+                ? AS stream_id,
+                ? AS sequence,
+                ? AS "event_id [{converter_name}]",
+                ? AS event_type,
+                ? AS actor_id,
+                ? AS timestamp,
+                ? AS payload_json,
+                ? AS correlation_id,
+                ? AS causation_id,
+                ? AS idempotency_key
+            """,
+            tuple(RAW_VALUES[column] for column in RAW_COLUMNS),
+        ).fetchone()
+        assert type(row) is sqlite3.Row
+        assert type(row["event_id"]) is HostileString
+        with pytest.raises(codec.StoredEventEnvelopeTypeError, match="event_id"):
+            codec._stored_event_envelope_from_raw_row(row)
+    finally:
+        connection.close()
