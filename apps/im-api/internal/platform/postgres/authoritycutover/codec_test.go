@@ -53,6 +53,7 @@ func TestDecodePlanRejectsStructuralAndDigestDrift(t *testing.T) {
 	tests := map[string][]byte{
 		"obsolete v1 format": bytes.Replace(canonical, []byte(PlanFormat), []byte("wanwork.im.postgres-authority-cutover-plan/1"), 1),
 		"obsolete v2 format": bytes.Replace(canonical, []byte(PlanFormat), []byte("wanwork.im.postgres-authority-cutover-plan/2"), 1),
+		"obsolete v3 format": bytes.Replace(canonical, []byte(PlanFormat), []byte("wanwork.im.postgres-authority-cutover-plan/3"), 1),
 		"unknown field":      bytes.Replace(canonical, []byte(`{"abortConditions"`), []byte(`{"unknown":true,"abortConditions"`), 1),
 		"duplicate key":      bytes.Replace(canonical, planIDFragment, append(slices.Clone(planIDFragment), []byte(`,"planId":"plan-20260829-0001"`)...), 1),
 		"trailing value":     append(slices.Clone(canonical), []byte(` {}`)...),

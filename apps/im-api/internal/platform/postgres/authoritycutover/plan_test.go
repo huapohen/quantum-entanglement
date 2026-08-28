@@ -36,7 +36,6 @@ func TestBuildPlanIsDeterministicImmutableAndSemanticallyBound(t *testing.T) {
 	}
 
 	reordered := validPlanInput()
-	slices.Reverse(reordered.AbortConditions)
 	slices.Reverse(reordered.Credentials)
 	slices.Reverse(reordered.AuthorityManifest.MigrationLoginRoles)
 	slices.Reverse(reordered.AuthorityManifest.RuntimeLoginRoles)
@@ -102,12 +101,8 @@ func TestBuildPlanRejectsIncompleteOrUnsafeSemantics(t *testing.T) {
 		"tls identity mismatch": func(input *PlanInput) {
 			input.TLS.ServerName = "postgres-reader.prod.internal"
 		},
-		"missing backup":            func(input *PlanInput) { input.Backup.Required = false },
-		"implicit classification":   func(input *PlanInput) { input.NonEmptyClassification = "" },
-		"reordered phases":          func(input *PlanInput) { input.Steps[0], input.Steps[1] = input.Steps[1], input.Steps[0] },
-		"missing phase":             func(input *PlanInput) { input.Steps = input.Steps[:4] },
-		"wrong executor":            func(input *PlanInput) { input.Steps[0].RequiredExecutor = ExecutorOwner },
-		"duplicate abort condition": func(input *PlanInput) { input.AbortConditions[1] = input.AbortConditions[0] },
+		"missing backup":          func(input *PlanInput) { input.Backup.Required = false },
+		"implicit classification": func(input *PlanInput) { input.NonEmptyClassification = "" },
 		"credential material shaped ref": func(input *PlanInput) {
 			input.Credentials[0].SecretRef = "postgresql://user:secret@db.invalid/postgres"
 		},
@@ -144,7 +139,7 @@ func TestPlanGoldenDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}
-	const wantDigest = "sha256:e922f645dfbba80b90d6af42d56bc8bfcf8a55434b0b38cf31e1f0c64397a3cf"
+	const wantDigest = "sha256:faf316aa6298717b8a26adfa65ad75dce7e041cb3a5d8b57107dd6e247ec7d1f"
 	if plan.Digest() != wantDigest {
 		t.Fatalf("golden digest = %q, want %q", plan.Digest(), wantDigest)
 	}
@@ -172,7 +167,6 @@ func validPlanInput() PlanInput {
 		RuntimeLoginRoles:   []string{"wanwork_im_app_login_b", "wanwork_im_app_login_a"},
 	}
 	return PlanInput{
-		AbortConditions:   []string{"drift/authority", "drift/backup", "drift/tls"},
 		ApprovalIdentity:  "release-owner/primary",
 		ApprovalReference: "approval/postgres-cell-a/20260829-0001",
 		AuthorityManifest: manifest,
@@ -215,13 +209,6 @@ func validPlanInput() PlanInput {
 		ServerIdentity: "postgres-writer.prod.internal",
 		SourceCommit:   strings.Repeat("1", 40),
 		SourceTree:     strings.Repeat("2", 40),
-		Steps: []Step{
-			{ID: "preflight-authority", Action: "read-authority", Phase: PhasePreflight, RequiredExecutor: ExecutorProvisioner, TransactionClass: TransactionReadOnlyRepeatable, PreconditionDigest: digestA, PostconditionDigest: digestB, AbortConditionDigest: digestC},
-			{ID: "bootstrap-authority", Action: "create-authority", Phase: PhaseBootstrap, RequiredExecutor: ExecutorProvisioner, TransactionClass: TransactionReconciledStep, PreconditionDigest: digestB, PostconditionDigest: digestC, AbortConditionDigest: digestD},
-			{ID: "migrate-catalog", Action: "apply-catalog", Phase: PhaseMigrate, RequiredExecutor: ExecutorMigrationToOwner, TransactionClass: TransactionMigration, PreconditionDigest: digestC, PostconditionDigest: digestD, AbortConditionDigest: digestA},
-			{ID: "cutover-ownership", Action: "converge-ownership", Phase: PhaseCutover, RequiredExecutor: ExecutorOwner, TransactionClass: TransactionTransactional, PreconditionDigest: digestD, PostconditionDigest: digestA, AbortConditionDigest: digestB},
-			{ID: "runtime-attestation", Action: "attest-runtime", Phase: PhaseRuntimeProof, RequiredExecutor: ExecutorRuntimeToRuntime, TransactionClass: TransactionReadOnly, PreconditionDigest: digestA, PostconditionDigest: digestB, AbortConditionDigest: digestC},
-		},
 		TLS: TLSProfile{
 			CADigest:   digestD,
 			CARef:      "trust/postgres-root-ca/generation-1",

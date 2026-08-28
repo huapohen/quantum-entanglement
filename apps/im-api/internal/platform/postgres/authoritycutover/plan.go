@@ -18,11 +18,10 @@ import (
 )
 
 const (
-	PlanFormat                     = "wanwork.im.postgres-authority-cutover-plan/3"
+	PlanFormat                     = "wanwork.im.postgres-authority-cutover-plan/4"
 	maximumPlanBytes               = 256 * 1024
-	planDigestDomain               = "wanwork.im/postgres-authority-cutover-plan/3\n"
+	planDigestDomain               = "wanwork.im/postgres-authority-cutover-plan/4\n"
 	postgresSystemIdentifierDomain = "wanwork.im/postgres-cluster-system-identifier/1\n"
-	maximumPlanSteps               = 128
 	maximumPlanSetValues           = 128
 )
 
@@ -83,7 +82,6 @@ const (
 // PlanInput contains semantic values only. BuildPlan resolves all derived digests from production
 // migration code and never accepts a caller-supplied authority or migration digest.
 type PlanInput struct {
-	AbortConditions        []string
 	ApprovalIdentity       string
 	ApprovalReference      string
 	AuthorityManifest      migrations.AuthorityAccessManifest
@@ -104,7 +102,6 @@ type PlanInput struct {
 	ServerIdentity         string
 	SourceCommit           string
 	SourceTree             string
-	Steps                  []Step
 	TLS                    TLSProfile
 	ToSchemaVersion        int64
 }
@@ -270,7 +267,6 @@ func BuildPlan(input PlanInput) (Plan, error) {
 		return Plan{}, ErrInvalidPlan
 	}
 	snapshot := PlanSnapshot{
-		AbortConditions: slices.Clone(input.AbortConditions),
 		Approval: ApprovalBinding{
 			Identity:  input.ApprovalIdentity,
 			Reference: input.ApprovalReference,
@@ -303,7 +299,6 @@ func BuildPlan(input PlanInput) (Plan, error) {
 			ReleaseArtifactDigest:  input.ReleaseArtifactDigest,
 			Tree:                   input.SourceTree,
 		},
-		Steps: slices.Clone(input.Steps),
 		Target: TargetBinding{
 			CatalogVersionNo:       input.ClusterIdentity.catalogVersionNo,
 			CellID:                 input.CellID,
@@ -316,6 +311,9 @@ func BuildPlan(input PlanInput) (Plan, error) {
 			SystemIdentifierDigest: digestPostgreSQLSystemIdentifier(input.ClusterIdentity.systemIdentifier),
 			TLS:                    input.TLS,
 		},
+	}
+	if err := setDerivedWorkflow(&snapshot); err != nil {
+		return Plan{}, ErrInvalidPlan
 	}
 	normalizePlan(&snapshot)
 	if !validPlanSnapshot(snapshot, false) {
@@ -400,9 +398,10 @@ func validPlanSnapshot(snapshot PlanSnapshot, requireDigest bool) bool {
 		!canonicalIdentity(snapshot.Target.ServerIdentity) || !validTLS(snapshot.Target.TLS) ||
 		snapshot.Target.TLS.ServerName != snapshot.Target.ServerIdentity ||
 		!validCredentials(snapshot.Credentials, snapshot.Authority.Manifest) ||
-		!validSchemaTransition(snapshot.SchemaTransition, currentSchemaVersion()) || !validSteps(snapshot.Steps) ||
+		!validSchemaTransition(snapshot.SchemaTransition, currentSchemaVersion()) ||
+		!validDerivedWorkflow(snapshot) ||
 		!validBackup(snapshot.Backup) || !validRollback(snapshot.Rollback, snapshot.Steps) ||
-		!validCanonicalSet(snapshot.AbortConditions) || !canonicalIdentity(snapshot.EvidenceDestination) ||
+		!canonicalIdentity(snapshot.EvidenceDestination) ||
 		!strings.HasPrefix(snapshot.EvidenceDestination, "evidence/") ||
 		!canonicalIdentity(snapshot.Approval.Identity) || !validApprovalReference(snapshot.Approval.Reference) ||
 		snapshot.ExpiresAt.IsZero() || snapshot.ExpiresAt.Location() != time.UTC ||
@@ -590,62 +589,6 @@ func currentSchemaVersion() int64 {
 		return 0
 	}
 	return catalog[len(catalog)-1].Version
-}
-
-func validSteps(steps []Step) bool {
-	if len(steps) < 5 || len(steps) > maximumPlanSteps {
-		return false
-	}
-	phaseOrder := map[CutoverPhase]int{
-		PhasePreflight: 0, PhaseBootstrap: 1, PhaseMigrate: 2, PhaseCutover: 3, PhaseRuntimeProof: 4,
-	}
-	seenPhases := [5]bool{}
-	seenIDs := make(map[string]struct{}, len(steps))
-	lastPhase := -1
-	for _, step := range steps {
-		phaseIndex, exists := phaseOrder[step.Phase]
-		if !exists || phaseIndex < lastPhase || !canonicalIdentity(step.ID) ||
-			!canonicalIdentity(step.Action) || !canonicalDigest.MatchString(step.PreconditionDigest) ||
-			!canonicalDigest.MatchString(step.PostconditionDigest) ||
-			!canonicalDigest.MatchString(step.AbortConditionDigest) {
-			return false
-		}
-		if _, duplicate := seenIDs[step.ID]; duplicate || !validStepExecution(step) {
-			return false
-		}
-		seenIDs[step.ID] = struct{}{}
-		seenPhases[phaseIndex] = true
-		lastPhase = phaseIndex
-	}
-	for _, seen := range seenPhases {
-		if !seen {
-			return false
-		}
-	}
-	return true
-}
-
-func validStepExecution(step Step) bool {
-	switch step.Phase {
-	case PhasePreflight:
-		return step.RequiredExecutor == ExecutorProvisioner &&
-			step.TransactionClass == TransactionReadOnlyRepeatable
-	case PhaseBootstrap:
-		return step.RequiredExecutor == ExecutorProvisioner &&
-			step.TransactionClass == TransactionReconciledStep
-	case PhaseMigrate:
-		return step.RequiredExecutor == ExecutorMigrationToOwner &&
-			step.TransactionClass == TransactionMigration
-	case PhaseCutover:
-		return (step.RequiredExecutor == ExecutorProvisioner || step.RequiredExecutor == ExecutorOwner) &&
-			(step.TransactionClass == TransactionTransactional ||
-				step.TransactionClass == TransactionReconciledStep)
-	case PhaseRuntimeProof:
-		return step.RequiredExecutor == ExecutorRuntimeToRuntime &&
-			step.TransactionClass == TransactionReadOnly
-	default:
-		return false
-	}
 }
 
 func validBackup(value BackupPrerequisite) bool {
