@@ -710,7 +710,7 @@
       "redactionStatus": "not-applicable-repository-authored-diagram",
       "sha256": "69b242cc433136f9df0170078de1865d930c8fc517049fb1f2ace2639491a8aa",
       "sourceKind": "quantum-entanglement-canonical-report-visual",
-      "sourceReference": "analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md; code-baseline:53dd38b62afe9530a9f9ea593561619621778ee4; archived-git:72b0f968f8e75bb8639c5621119899fe690082de",
+      "sourceReference": "analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md; code-baseline:53dd38b4224003a415605074f25470405ebe799e; archived-git:72b0f968f8e75bb8639c5621119899fe690082de",
       "width": 1800
     },
     {
