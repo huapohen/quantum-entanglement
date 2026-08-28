@@ -523,27 +523,45 @@ WHERE role_value.rolname = current_user`).Scan(&superuser, &bypassRLS, &inherit)
 			name string
 			sql  string
 		}
-		fixtures := make([]sqlFixture, 0, 41)
-		for _, tableName := range []string{
-			"conversation_heads",
-			"conversation_snapshots",
-			"provider_conversation_binding_heads",
-			"provider_conversation_binding_snapshots",
-			"conversation_membership_heads",
-			"conversation_membership_snapshots",
-			"conversation_access_heads",
-			"conversation_access_snapshots",
-			"tenant_command_receipts",
+		type tableFixture struct {
+			name         string
+			updateColumn string
+		}
+		fixtures := make([]sqlFixture, 0, 93)
+		for _, table := range []tableFixture{
+			{name: "actor_heads", updateColumn: "current_revision"},
+			{name: "actor_snapshots", updateColumn: "status"},
+			{name: "conversation_access_heads", updateColumn: "current_revision"},
+			{name: "conversation_access_snapshots", updateColumn: "can_read"},
+			{name: "conversation_heads", updateColumn: "current_revision"},
+			{name: "conversation_membership_heads", updateColumn: "current_revision"},
+			{name: "conversation_membership_snapshots", updateColumn: "status"},
+			{name: "conversation_snapshots", updateColumn: "status"},
+			{name: "human_identity_binding_heads", updateColumn: "current_revision"},
+			{name: "human_identity_binding_snapshots", updateColumn: "status"},
+			{name: "human_principal_heads", updateColumn: "current_revision"},
+			{name: "human_principal_snapshots", updateColumn: "status"},
+			{name: "provider_actor_binding_heads", updateColumn: "current_revision"},
+			{name: "provider_actor_binding_snapshots", updateColumn: "status"},
+			{name: "provider_conversation_binding_heads", updateColumn: "current_revision"},
+			{name: "provider_conversation_binding_snapshots", updateColumn: "status"},
+			{name: "provider_realms", updateColumn: "status"},
+			{name: "tenant_membership_heads", updateColumn: "current_revision"},
+			{name: "tenant_membership_snapshots", updateColumn: "status"},
+			{name: "tenant_command_receipts", updateColumn: "result_sha256"},
+			{name: "tenants", updateColumn: "status"},
+			{name: "workspaces", updateColumn: "status"},
 		} {
-			qualifiedTable := "wanwork_im." + pgx.Identifier{tableName}.Sanitize()
+			qualifiedTable := "wanwork_im." + pgx.Identifier{table.name}.Sanitize()
+			quotedUpdateColumn := pgx.Identifier{table.updateColumn}.Sanitize()
 			for _, operation := range []sqlFixture{
 				{name: "insert", sql: "INSERT INTO " + qualifiedTable + " DEFAULT VALUES"},
-				{name: "update", sql: "UPDATE " + qualifiedTable + " SET tenant_id = tenant_id WHERE false"},
+				{name: "update", sql: "UPDATE " + qualifiedTable + " SET " + quotedUpdateColumn + " = " + quotedUpdateColumn + " WHERE false"},
 				{name: "delete", sql: "DELETE FROM " + qualifiedTable + " WHERE false"},
 				{name: "truncate", sql: "TRUNCATE TABLE " + qualifiedTable},
 			} {
 				fixtures = append(fixtures, sqlFixture{
-					name: operation.name + " " + tableName,
+					name: operation.name + " " + table.name,
 					sql:  operation.sql,
 				})
 			}
