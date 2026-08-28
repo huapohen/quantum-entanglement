@@ -134,61 +134,28 @@ func (repositories *tenantRepositories) CompareAndSwapConversation(
 	}
 	reference := next.Ref()
 	conversationType := string(next.ConversationType())
-	if expectedRevision == 0 {
-		if _, err := repositories.tx.Exec(ctx, `
-INSERT INTO wanwork_im.conversation_heads (
-    tenant_id, conversation_id, conversation_type, current_revision
-) VALUES ($1, $2, $3, $4)`,
-			repositories.tenantID.String(),
-			reference.ConversationID().String(),
-			conversationType,
-			next.Revision(),
-		); err != nil {
-			return im.ConversationSnapshot{}, repositories.poison(
-				mapWriteError(err, store.ErrRevisionConflict),
-			)
-		}
-	} else {
-		tag, err := repositories.tx.Exec(ctx, `
-UPDATE wanwork_im.conversation_heads
-SET current_revision = $4
-WHERE tenant_id = $1
-  AND conversation_id = $2
-  AND conversation_type = $3
-  AND current_revision = $5`,
-			repositories.tenantID.String(),
-			reference.ConversationID().String(),
-			conversationType,
-			next.Revision(),
-			expectedRevision,
-		)
-		if err != nil {
-			return im.ConversationSnapshot{}, repositories.poison(
-				mapWriteError(err, store.ErrRevisionConflict),
-			)
-		}
-		if tag.RowsAffected() != 1 {
-			return im.ConversationSnapshot{}, repositories.poison(store.ErrRevisionConflict)
-		}
-	}
-	var workspaceValue any
+	workspaceValue := ""
 	if workspaceID, exists := next.WorkspaceID(); exists {
 		workspaceValue = workspaceID.String()
 	}
-	if _, err := repositories.tx.Exec(ctx, `
-INSERT INTO wanwork_im.conversation_snapshots (
-    tenant_id, conversation_id, revision, workspace_id, conversation_type, status
-) VALUES ($1, $2, $3, $4, $5, $6)`,
+	var written bool
+	err := repositories.tx.QueryRow(ctx, `
+SELECT wanwork_im.write_conversation_revision($1, $2, $3, $4, $5, $6, $7)`,
 		repositories.tenantID.String(),
 		reference.ConversationID().String(),
-		next.Revision(),
+		int64(expectedRevision),
+		int64(next.Revision()),
 		workspaceValue,
 		conversationType,
 		string(next.Status()),
-	); err != nil {
+	).Scan(&written)
+	if err != nil {
 		return im.ConversationSnapshot{}, repositories.poison(
 			mapWriteError(err, store.ErrRevisionConflict),
 		)
+	}
+	if !written {
+		return im.ConversationSnapshot{}, repositories.poison(store.ErrRevisionConflict)
 	}
 	return next, nil
 }

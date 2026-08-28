@@ -710,6 +710,13 @@ func grantStoreRole(t *testing.T, connection *pgx.Conn, quotedRole string) {
 	t.Helper()
 	for _, statement := range []string{
 		"GRANT USAGE ON SCHEMA wanwork_im TO " + quotedRole,
+		`GRANT EXECUTE ON FUNCTION
+             wanwork_im.write_conversation_revision(text, text, bigint, bigint, text, text, text),
+             wanwork_im.write_provider_conversation_binding_revision(text, text, text, text, bigint, bigint, text, text),
+             wanwork_im.write_conversation_membership_revision(text, text, text, bigint, bigint, text, text),
+             wanwork_im.write_conversation_access_revision(text, text, text, bigint, bigint, boolean, boolean, boolean, boolean, boolean, boolean),
+             wanwork_im.write_tenant_command_receipt(text, text, text, text, text)
+         TO ` + quotedRole,
 		`GRANT SELECT ON
              wanwork_im.provider_realms,
              wanwork_im.tenants,
