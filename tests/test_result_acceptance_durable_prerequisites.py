@@ -56,6 +56,7 @@ from quantum_entanglement.protocol import TaskStatus
 from quantum_entanglement.store import (
     SQLiteEventStore,
     _InsertedFreshResultAcceptancePlanV2,
+    _PersistedFreshResultAcceptancePlanV2,
     _ReceiptedFreshResultAcceptancePlanV2,
 )
 from tests import test_inactive_invocation_results_migration as inactive_migration_module
@@ -1869,6 +1870,182 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                 0,
             )
 
+    def test_persisted_result_graph_writes_all_local_rows_without_publication(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        generated = (
+            "receipt_persisted_1",
+            "event_result_persisted_1",
+            "event_terminal_persisted_1",
+        )
+        with patch("quantum_entanglement.store.new_id", side_effect=generated):
+            with self.store._result_artifact_transaction() as handle:
+                persist = self.store._persist_result_acceptance_graph_in_owner_transaction
+                with persist(handle, prepared) as persisted:
+                    self.assertIs(type(persisted), _PersistedFreshResultAcceptancePlanV2)
+                    assert type(persisted) is _PersistedFreshResultAcceptancePlanV2
+                    receipted, receipt = persisted._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    self.assertIs(type(receipted), _ReceiptedFreshResultAcceptancePlanV2)
+                    self.assertEqual(receipt.receipt_id, generated[0])
+                    self.assertEqual(
+                        tuple(
+                            self.store._connection.execute(
+                                f"SELECT count(*) FROM main.{table}"
+                            ).fetchone()[0]
+                            for table in (
+                                "invocation_result_manifests",
+                                "invocation_result_requests",
+                                "invocation_result_event_bindings",
+                                "invocation_result_receipts",
+                                "invocation_result_artifacts",
+                                "invocation_result_publications",
+                            )
+                        ),
+                        (1, 1, 2, 1, 1, 0),
+                    )
+                    manifest_row = self.store._connection.execute(
+                        "SELECT manifest_digest, canonical_bytes, created_at "
+                        "FROM invocation_result_manifests"
+                    ).fetchone()
+                    self.assertEqual(
+                        manifest_row["manifest_digest"], receipt.evidence.result_manifest_digest
+                    )
+                    self.assertEqual(
+                        bytes(manifest_row["canonical_bytes"]),
+                        prepared.request.manifest.canonical_bytes(),
+                    )
+                    self.assertEqual(manifest_row["created_at"], receipt.evidence.accepted_at)
+                    request_row = self.store._connection.execute(
+                        "SELECT request_digest, request_identity_bytes, created_at "
+                        "FROM invocation_result_requests"
+                    ).fetchone()
+                    self.assertEqual(request_row["request_digest"], receipt.evidence.request_digest)
+                    self.assertGreater(request_row["request_identity_bytes"], b"")
+                    self.assertEqual(request_row["created_at"], receipt.evidence.accepted_at)
+                    receipt_row = self.store._connection.execute(
+                        "SELECT receipt_id, result_event_id, terminal_event_id, receipt_digest "
+                        "FROM invocation_result_receipts"
+                    ).fetchone()
+                    self.assertEqual(receipt_row["receipt_id"], receipt.receipt_id)
+                    self.assertEqual(receipt_row["result_event_id"], receipt.result_event.event_id)
+                    self.assertEqual(
+                        receipt_row["terminal_event_id"],
+                        receipt.terminal_event.event_id,
+                    )
+                    self.assertEqual(receipt_row["receipt_digest"], receipt.receipt_digest)
+                    for operation in (
+                        lambda: copy.copy(persisted),
+                        lambda: copy.deepcopy(persisted),
+                        lambda: pickle.dumps(persisted),
+                    ):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ):
+                            operation()
+        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+            persisted._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+            receipted._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_existing_graph_persistence_path_does_not_write_any_rows(self) -> None:
+        helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
+            methodName="runTest"
+        )
+        helper.store = self.store
+        helper.connection = self.store._connection
+        helper.seed_nonempty_v6_dependencies()
+        helper.apply_candidate()
+        helper.seed_complete_result_graph()
+        prepared = existing_graph_prepared(helper)
+        before = tuple(
+            tuple(self.store._connection.execute(f"SELECT * FROM {table}"))
+            for table in (
+                "events",
+                "invocation_result_manifests",
+                "invocation_result_requests",
+                "invocation_result_event_bindings",
+                "invocation_result_receipts",
+                "invocation_result_artifacts",
+            )
+        )
+        with patch.object(
+            SQLiteEventStore,
+            "_insert_exact_result_acceptance_row_in_owner_transaction",
+            side_effect=AssertionError("existing graph must not persist rows"),
+        ) as insert:
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._persist_result_acceptance_graph_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as result:
+                    self.assertIs(type(result), _ExistingResultAcceptanceGraphCandidateV2)
+        insert.assert_not_called()
+        after = tuple(
+            tuple(self.store._connection.execute(f"SELECT * FROM {table}"))
+            for table in (
+                "events",
+                "invocation_result_manifests",
+                "invocation_result_requests",
+                "invocation_result_event_bindings",
+                "invocation_result_receipts",
+                "invocation_result_artifacts",
+            )
+        )
+        self.assertEqual(after, before)
+
+    def test_persistence_trigger_side_effect_rolls_back_complete_local_graph(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        before_events = tuple(
+            tuple(row) for row in self.store._connection.execute("SELECT * FROM events")
+        )
+        self.store._connection.execute("CREATE TABLE manifest_audit (digest TEXT NOT NULL)")
+        self.store._connection.execute(
+            """
+            CREATE TRIGGER manifest_persistence_audit
+            AFTER INSERT ON invocation_result_manifests
+            BEGIN
+                INSERT INTO manifest_audit (digest) VALUES (NEW.manifest_digest);
+            END
+            """
+        )
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=(
+                "receipt_persist_trigger",
+                "event_result_persist_trigger",
+                "event_terminal_persist_trigger",
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "changed an unexpected row count"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._persist_result_acceptance_graph_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("triggered persistence unexpectedly yielded a plan")
+        self.assertEqual(
+            tuple(tuple(row) for row in self.store._connection.execute("SELECT * FROM events")),
+            before_events,
+        )
+        for table in (
+            "invocation_result_manifests",
+            "invocation_result_requests",
+            "invocation_result_event_bindings",
+            "invocation_result_receipts",
+            "invocation_result_artifacts",
+            "manifest_audit",
+        ):
+            self.assertEqual(
+                self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[0],
+                0,
+            )
+
     def test_caught_event_pair_failure_still_forces_owner_transaction_rollback(self) -> None:
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
@@ -2190,8 +2367,10 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             "_build_scoped_invocation_result_events_from_plan_v2",
             "_construct_result_acceptance_event_pair_in_owner_transaction",
             "_ReceiptedFreshResultAcceptancePlanV2",
+            "_PersistedFreshResultAcceptancePlanV2",
             "_build_scoped_invocation_result_receipt_v2",
             "_construct_result_acceptance_receipt_in_owner_transaction",
+            "_persist_result_acceptance_graph_in_owner_transaction",
             "_construct_result_acceptance_terminal_transition_in_owner_transaction",
             "accept_scoped_invocation_result_v2",
             "ScopedInvocationResultAcceptedV2",

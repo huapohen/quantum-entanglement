@@ -128,6 +128,12 @@ from .invocation_results import (
     TASK_STATUS_CHANGED_EVENT_TYPE as _TASK_STATUS_CHANGED_EVENT_TYPE,
 )
 from .invocation_results import (
+    ScopedInvocationResultAcceptanceRequestV2 as _ScopedInvocationResultAcceptanceRequestV2,
+)
+from .invocation_results import (
+    ScopedInvocationResultArtifactCandidateV2 as _ScopedInvocationResultArtifactCandidateV2,
+)
+from .invocation_results import (
     ScopedInvocationResultArtifactV2 as _ScopedInvocationResultArtifactV2,
 )
 from .invocation_results import (
@@ -135,6 +141,9 @@ from .invocation_results import (
 )
 from .invocation_results import (
     ScopedInvocationResultEvidenceV2 as _ScopedInvocationResultEvidenceV2,
+)
+from .invocation_results import (
+    ScopedInvocationResultManifestV2 as _ScopedInvocationResultManifestV2,
 )
 from .invocation_results import (
     ScopedInvocationResultReceiptV2 as _ScopedInvocationResultReceiptV2,
@@ -1383,6 +1392,69 @@ class _ReceiptedFreshResultAcceptancePlanV2:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("receipted result acceptance plans cannot be serialized")
+
+
+class _PersistedFreshResultAcceptancePlanV2:
+    """One private receipt whose immutable graph rows were inserted in the owner transaction."""
+
+    __slots__ = ("__active", "__receipted", "__receipt")
+
+    def __init__(
+        self,
+        *,
+        receipted: _ReceiptedFreshResultAcceptancePlanV2,
+        receipt: _ScopedInvocationResultReceiptV2,
+        token: object,
+    ) -> None:
+        if type(self) is not _PersistedFreshResultAcceptancePlanV2:
+            raise TypeError("persisted result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("persisted result acceptance plan constructor is private")
+        self.__receipted = receipted
+        self.__receipt = receipt
+        self.__active = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> tuple[_ReceiptedFreshResultAcceptancePlanV2, _ScopedInvocationResultReceiptV2]:
+        if type(self) is not _PersistedFreshResultAcceptancePlanV2:
+            raise TypeError("persisted result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("persisted result acceptance plan validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("persisted result acceptance plan is no longer active")
+        receipted = self.__receipted
+        if type(receipted) is not _ReceiptedFreshResultAcceptancePlanV2:
+            raise TypeError("persisted result acceptance receipt plan is not exact")
+        _inserted, expected = receipted._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        receipt = self.__receipt
+        if type(receipt) is not _ScopedInvocationResultReceiptV2:
+            raise TypeError("persisted result acceptance receipt is not exact")
+        receipt_snapshot = _ScopedInvocationResultReceiptV2.from_dict(
+            _ScopedInvocationResultReceiptV2.to_dict(receipt)
+        )
+        if receipt_snapshot != expected:
+            raise ValueError("persisted result acceptance receipt differs from its receipt plan")
+        return receipted, receipt_snapshot
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("persisted result acceptance plan invalidation is private")
+        self.__active = False
+        object.__setattr__(self, "_PersistedFreshResultAcceptancePlanV2__receipted", None)
+        object.__setattr__(self, "_PersistedFreshResultAcceptancePlanV2__receipt", None)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("persisted result acceptance plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("persisted result acceptance plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("persisted result acceptance plans cannot be serialized")
 
 
 @dataclass(frozen=True)
@@ -3413,6 +3485,354 @@ class SQLiteEventStore:
                 yield receipted
             finally:
                 receipted._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def _insert_exact_result_acceptance_row_in_owner_transaction(
+        self,
+        connection: sqlite3.Connection,
+        sql: str,
+        values: tuple[object, ...],
+        *,
+        label: str,
+    ) -> None:
+        """Require one top-level INSERT with no trigger or auxiliary row side effects."""
+
+        self._require_current_process()
+        if type(connection) is not sqlite3.Connection or connection is not self._connection:
+            raise RuntimeError("result acceptance row insertion requires the owning connection")
+        if type(sql) is not str or not sql or type(values) is not tuple:
+            raise TypeError("result acceptance row insertion inputs are not exact")
+        before = connection.total_changes
+        if type(before) is not int or before < 0:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance SQLite change counter is invalid"
+            )
+        cursor = connection.execute(sql, values)
+        self._require_current_process()
+        after = connection.total_changes
+        if (
+            type(cursor) is not sqlite3.Cursor
+            or type(cursor.rowcount) is not int
+            or cursor.rowcount != 1
+            or type(after) is not int
+            or after != before + 1
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                f"result acceptance {label} insertion changed an unexpected row count"
+            )
+
+    @_bind_event_store_process
+    def _persist_result_acceptance_graph_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> ContextManager[
+        _ExistingResultAcceptanceGraphCandidateV2 | _PersistedFreshResultAcceptancePlanV2
+    ]:
+        """Persist manifest, request, receipt, event bindings and Artifact bindings."""
+
+        return self._persist_result_acceptance_graph_in_owner_transaction_inner(
+            handle,
+            prepared,
+        )
+
+    @contextmanager
+    def _persist_result_acceptance_graph_in_owner_transaction_inner(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> Iterator[
+        _ExistingResultAcceptanceGraphCandidateV2 | _PersistedFreshResultAcceptancePlanV2
+    ]:
+        persisted: Optional[_PersistedFreshResultAcceptancePlanV2] = None
+        with self._construct_result_acceptance_receipt_in_owner_transaction(
+            handle,
+            prepared,
+        ) as candidate:
+            if type(candidate) is _ExistingResultAcceptanceGraphCandidateV2:
+                yield candidate
+                return
+            if type(candidate) is not _ReceiptedFreshResultAcceptancePlanV2:
+                raise RuntimeError("result acceptance persistence classification is not closed")
+            inserted_plan, receipt = candidate._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+            evented_plan, _, _, _, _ = inserted_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            transitioned_plan, _, _ = evented_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            evidenced_plan, _ = transitioned_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            identified_plan, evidence = evidenced_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            materialized_plan, _, _, _ = identified_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            prepared_snapshot, prerequisites, accepted_at, artifacts = materialized_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            request = prepared_snapshot.request
+            manifest = request.manifest
+            if receipt.evidence != evidence or receipt.evidence.accepted_at != accepted_at:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance receipt differs from its materialized evidence"
+                )
+            if tuple(artifacts) != manifest.artifacts:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance materialized Artifacts differ from the manifest"
+                )
+            connection = self._connection_for_result_artifact_transaction(handle)
+            manifest_bytes = _ScopedInvocationResultManifestV2.canonical_bytes(manifest)
+            manifest_digest = _ScopedInvocationResultManifestV2.canonical_digest(manifest)
+            request_identity_bytes = json.dumps(
+                _ScopedInvocationResultAcceptanceRequestV2._identity_dict(request),
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            request_digest = _ScopedInvocationResultAcceptanceRequestV2.canonical_digest(request)
+            self._insert_exact_result_acceptance_row_in_owner_transaction(
+                connection,
+                """
+                INSERT INTO invocation_result_manifests (
+                    tenant_id, workspace_id, manifest_digest, schema_version,
+                    canonical_bytes, byte_size, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    manifest.tenant_id,
+                    manifest.workspace_id,
+                    manifest_digest,
+                    manifest.schema_version,
+                    sqlite3.Binary(manifest_bytes),
+                    len(manifest_bytes),
+                    accepted_at,
+                ),
+                label="manifest",
+            )
+            self._insert_exact_result_acceptance_row_in_owner_transaction(
+                connection,
+                """
+                INSERT INTO invocation_result_requests (
+                    tenant_id, workspace_id, request_digest, schema_version,
+                    acceptance_idempotency_key, request_identity_bytes,
+                    request_identity_byte_size, invocation_id, session_id, plan_id,
+                    task_id, agent_id, job_idempotency_key, start_receipt_digest,
+                    execution_manifest_digest, result_manifest_digest,
+                    expected_stream_version, running_task_revision,
+                    terminal_task_revision, correlation_id, causation_id,
+                    runtime_revision, effect_class, action_receipt_set_digest,
+                    result_ref, primary_artifact_id, artifact_count, created_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                (
+                    manifest.tenant_id,
+                    manifest.workspace_id,
+                    request_digest,
+                    request.schema_version,
+                    request.acceptance_idempotency_key,
+                    sqlite3.Binary(request_identity_bytes),
+                    len(request_identity_bytes),
+                    manifest.invocation_id,
+                    manifest.session_id,
+                    manifest.plan_id,
+                    manifest.task_id,
+                    manifest.agent_id,
+                    manifest.job_idempotency_key,
+                    request.start_receipt_digest,
+                    manifest.execution_manifest_digest,
+                    manifest_digest,
+                    request.expected_stream_version,
+                    evidence.running_task_revision,
+                    evidence.terminal_task_revision,
+                    manifest.correlation_id,
+                    manifest.causation_id,
+                    manifest.runtime_revision,
+                    manifest.effect_class.value,
+                    manifest.action_receipt_set_digest,
+                    manifest.result_ref,
+                    manifest.primary_artifact_id,
+                    len(artifacts),
+                    accepted_at,
+                ),
+                label="request",
+            )
+            for event_role, coordinates in (
+                ("result", receipt.result_event),
+                ("terminal", receipt.terminal_event),
+            ):
+                self._insert_exact_result_acceptance_row_in_owner_transaction(
+                    connection,
+                    """
+                    INSERT INTO invocation_result_event_bindings (
+                        tenant_id, workspace_id, receipt_id, event_role,
+                        event_id, event_type, global_position
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        evidence.tenant_id,
+                        evidence.workspace_id,
+                        receipt.receipt_id,
+                        event_role,
+                        coordinates.event_id,
+                        coordinates.event_type,
+                        coordinates.global_position,
+                    ),
+                    label=f"{event_role} event binding",
+                )
+            terminal_transition = receipt.terminal_transition
+            self._insert_exact_result_acceptance_row_in_owner_transaction(
+                connection,
+                """
+                INSERT INTO invocation_result_receipts (
+                    tenant_id, workspace_id, receipt_id, schema_version,
+                    request_digest, invocation_id, session_id, plan_id, task_id,
+                    agent_id, job_idempotency_key, acceptance_idempotency_key,
+                    attempt_id, attempt_number, lease_epoch, worker_id,
+                    lease_token_digest, start_receipt_digest,
+                    execution_manifest_digest, result_manifest_schema_version,
+                    result_manifest_digest, result_ref, effect_class,
+                    action_receipt_set_digest, expected_stream_version,
+                    running_task_revision, terminal_task_revision, accepted_at,
+                    artifact_count, result_evidence_digest,
+                    terminal_transition_digest, receipt_digest, result_event_id,
+                    result_event_stream_id, result_event_type,
+                    result_event_timestamp, result_event_sequence,
+                    result_event_global_position, result_event_envelope_digest,
+                    terminal_event_id, terminal_event_stream_id,
+                    terminal_event_type, terminal_event_timestamp,
+                    terminal_event_sequence, terminal_event_global_position,
+                    terminal_event_envelope_digest
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                (
+                    evidence.tenant_id,
+                    evidence.workspace_id,
+                    receipt.receipt_id,
+                    receipt.schema_version,
+                    evidence.request_digest,
+                    evidence.invocation_id,
+                    evidence.session_id,
+                    evidence.plan_id,
+                    evidence.task_id,
+                    evidence.agent_id,
+                    evidence.job_idempotency_key,
+                    evidence.acceptance_idempotency_key,
+                    evidence.attempt_id,
+                    evidence.attempt_number,
+                    evidence.lease_epoch,
+                    evidence.worker_id,
+                    evidence.lease_token_digest,
+                    evidence.start_receipt_digest,
+                    evidence.execution_manifest_digest,
+                    evidence.result_manifest_schema_version,
+                    evidence.result_manifest_digest,
+                    evidence.result_ref,
+                    evidence.effect_class.value,
+                    evidence.action_receipt_set_digest,
+                    request.expected_stream_version,
+                    evidence.running_task_revision,
+                    evidence.terminal_task_revision,
+                    accepted_at,
+                    evidence.artifact_count,
+                    _ScopedInvocationResultEvidenceV2.canonical_digest(evidence),
+                    _ScopedInvocationResultTerminalTransitionV2.canonical_digest(
+                        terminal_transition
+                    ),
+                    receipt.receipt_digest,
+                    receipt.result_event.event_id,
+                    receipt.result_event.stream_id,
+                    receipt.result_event.event_type,
+                    accepted_at,
+                    receipt.result_event.sequence,
+                    receipt.result_event.global_position,
+                    receipt.result_event.event_envelope_digest,
+                    receipt.terminal_event.event_id,
+                    receipt.terminal_event.stream_id,
+                    receipt.terminal_event.event_type,
+                    accepted_at,
+                    receipt.terminal_event.sequence,
+                    receipt.terminal_event.global_position,
+                    receipt.terminal_event.event_envelope_digest,
+                ),
+                label="receipt",
+            )
+            if len(request.artifact_candidates) != len(artifacts):
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance Artifact candidate count changed during persistence"
+                )
+            for ordinal, (artifact_candidate, artifact) in enumerate(
+                zip(request.artifact_candidates, artifacts)
+            ):
+                if type(artifact_candidate) is not _ScopedInvocationResultArtifactCandidateV2:
+                    raise TypeError("result acceptance Artifact candidate is not exact")
+                if type(artifact) is not _ScopedInvocationResultArtifactV2:
+                    raise TypeError("result acceptance Artifact descriptor is not exact")
+                if artifact_candidate.to_descriptor() != artifact:
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance Artifact candidate differs from its descriptor"
+                    )
+                self._insert_exact_result_acceptance_row_in_owner_transaction(
+                    connection,
+                    """
+                    INSERT INTO invocation_result_artifacts (
+                        tenant_id, workspace_id, receipt_id, ordinal, session_id,
+                        task_id, artifact_id, name, version, parent_version,
+                        media_type, blob_digest, byte_size, metadata_digest,
+                        created_by, idempotency_key, artifact_request_digest,
+                        candidate_digest
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        artifact_candidate.tenant_id,
+                        artifact_candidate.workspace_id,
+                        receipt.receipt_id,
+                        ordinal,
+                        artifact_candidate.session_id,
+                        artifact_candidate.task_id,
+                        artifact.artifact_id,
+                        artifact.name,
+                        artifact.version,
+                        artifact.parent_version,
+                        artifact.media_type,
+                        artifact.blob_digest,
+                        artifact.byte_size,
+                        artifact.metadata_digest,
+                        artifact.created_by,
+                        artifact.idempotency_key,
+                        artifact.request_digest,
+                        _ScopedInvocationResultArtifactCandidateV2.canonical_digest(
+                            artifact_candidate
+                        ),
+                    ),
+                    label=f"Artifact binding {ordinal}",
+                )
+            self._require_current_process()
+            if prerequisites.request_digest != request_digest:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance request digest changed during persistence"
+                )
+            persisted = _PersistedFreshResultAcceptancePlanV2(
+                receipted=candidate,
+                receipt=receipt,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            self._require_current_process()
+            try:
+                yield persisted
+            finally:
+                persisted._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
     @contextmanager
     def _transaction_inner(
