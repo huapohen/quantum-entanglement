@@ -5,9 +5,11 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -246,6 +248,156 @@ func TestApprovalExecutionFenceRecordRejectsFieldAndDigestDrift(t *testing.T) {
 	}
 }
 
+func TestApprovalExecutionFencerAllowsOneConcurrentApprovalConsumption(t *testing.T) {
+	fixture := newApprovalExecutionFenceFixture(t)
+	store := newFakeApprovalExecutionFenceStore()
+	var tokenSequence atomic.Uint64
+	fencer, err := newApprovalExecutionFencer(store, func(destination []byte) error {
+		sequence := tokenSequence.Add(1)
+		for index := range destination {
+			destination[index] = byte(sequence + uint64(index))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("newApprovalExecutionFencer: %v", err)
+	}
+
+	const contenders = 64
+	var wait sync.WaitGroup
+	errorsByContender := make(chan error, contenders)
+	for index := range contenders {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, err := fencer.ConsumeAndFence(
+				t.Context(),
+				fixture.plan,
+				fixture.approval,
+				fixture.report,
+				fmt.Sprintf("execution-attempt/concurrent-%02d", index),
+				fixture.now,
+			)
+			errorsByContender <- err
+		}()
+	}
+	wait.Wait()
+	close(errorsByContender)
+	successes := 0
+	conflicts := 0
+	for err := range errorsByContender {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrApprovalExecutionConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected concurrent error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != contenders-1 || len(store.states) != 1 ||
+		len(store.consumptions) != 1 || len(store.activeBySpace) != 1 || store.nextEpoch != 1 {
+		t.Fatalf(
+			"concurrent result success=%d conflict=%d states=%d consumptions=%d active=%d epoch=%d",
+			successes,
+			conflicts,
+			len(store.states),
+			len(store.consumptions),
+			len(store.activeBySpace),
+			store.nextEpoch,
+		)
+	}
+}
+
+func TestApprovalExecutionFencerUsesFreshReadbackAfterCallerCancellation(t *testing.T) {
+	fixture := newApprovalExecutionFenceFixture(t)
+	store := &cancellationApprovalExecutionFenceStore{}
+	fencer := mustApprovalExecutionFencer(t, store, 0x76)
+	ctx, cancel := context.WithCancel(context.WithValue(
+		t.Context(),
+		approvalExecutionFenceContextKey{},
+		"retained",
+	))
+	cancel()
+
+	_, err := fencer.ConsumeAndFence(
+		ctx,
+		fixture.plan,
+		fixture.approval,
+		fixture.report,
+		fixture.executionAttemptID,
+		fixture.now,
+	)
+	if !errors.Is(err, ErrApprovalExecutionCommitUncertain) {
+		t.Fatalf("canceled fence error = %v, want %v", err, ErrApprovalExecutionCommitUncertain)
+	}
+	if store.loadContextCanceled || store.loadContextValue != "retained" || store.loadCalls != 1 {
+		t.Fatalf(
+			"fresh readback canceled=%t value=%q calls=%d",
+			store.loadContextCanceled,
+			store.loadContextValue,
+			store.loadCalls,
+		)
+	}
+}
+
+func TestApprovalExecutionFencerRejectsInvalidDependenciesAndTokenSources(t *testing.T) {
+	var nilStore *fakeApprovalExecutionFenceStore
+	if _, err := NewApprovalExecutionFencer(nilStore); !errors.Is(
+		err,
+		ErrInvalidApprovalExecutionFencer,
+	) {
+		t.Fatalf("typed nil store error = %v, want %v", err, ErrInvalidApprovalExecutionFencer)
+	}
+	if _, err := newApprovalExecutionFencer(newFakeApprovalExecutionFenceStore(), nil); !errors.Is(
+		err,
+		ErrInvalidApprovalExecutionFencer,
+	) {
+		t.Fatalf("nil token source error = %v, want %v", err, ErrInvalidApprovalExecutionFencer)
+	}
+
+	fixture := newApprovalExecutionFenceFixture(t)
+	zeroStore := newFakeApprovalExecutionFenceStore()
+	zeroFencer, err := newApprovalExecutionFencer(zeroStore, func([]byte) error { return nil })
+	if err != nil {
+		t.Fatalf("new zero-token fencer: %v", err)
+	}
+	if _, err := zeroFencer.ConsumeAndFence(
+		t.Context(),
+		fixture.plan,
+		fixture.approval,
+		fixture.report,
+		fixture.executionAttemptID,
+		fixture.now,
+	); !errors.Is(err, ErrApprovalExecutionStoreUnavailable) {
+		t.Fatalf("zero token error = %v, want %v", err, ErrApprovalExecutionStoreUnavailable)
+	}
+	if zeroStore.compareCalls != 0 {
+		t.Fatal("zero token reached durable store")
+	}
+
+	const canary = "token-source-private-canary"
+	failingStore := newFakeApprovalExecutionFenceStore()
+	failingFencer, err := newApprovalExecutionFencer(failingStore, func([]byte) error {
+		return errors.New(canary)
+	})
+	if err != nil {
+		t.Fatalf("new failing-token fencer: %v", err)
+	}
+	_, sourceErr := failingFencer.ConsumeAndFence(
+		t.Context(),
+		fixture.plan,
+		fixture.approval,
+		fixture.report,
+		fixture.executionAttemptID,
+		fixture.now,
+	)
+	if !errors.Is(sourceErr, ErrApprovalExecutionStoreUnavailable) ||
+		strings.Contains(sourceErr.Error(), canary) || failingStore.compareCalls != 0 {
+		t.Fatalf("token source error was not fixed and redacted: %v", sourceErr)
+	}
+}
+
 type approvalExecutionFenceFixture struct {
 	approval           VerifiedApproval
 	executionAttemptID string
@@ -411,6 +563,38 @@ func fakeApprovalExecutionFenceKey(
 	operationID string,
 ) string {
 	return namespace.PolicyID + "\x00" + namespace.TargetDigest + "\x00" + operationID
+}
+
+type cancellationApprovalExecutionFenceStore struct {
+	loadCalls           int
+	loadContextCanceled bool
+	loadContextValue    string
+}
+
+type approvalExecutionFenceContextKey struct{}
+
+func (store *cancellationApprovalExecutionFenceStore) Load(
+	ctx context.Context,
+	_ ApprovalPolicyNamespace,
+	_ string,
+) (ApprovalExecutionFenceStoredState, error) {
+	store.loadCalls++
+	store.loadContextCanceled = ctx.Err() != nil
+	store.loadContextValue, _ = ctx.Value(approvalExecutionFenceContextKey{}).(string)
+	return ApprovalExecutionFenceStoredState{}, ErrApprovalExecutionFenceNotFound
+}
+
+func (store *cancellationApprovalExecutionFenceStore) CompareAndOpen(
+	ctx context.Context,
+	_ ApprovalPolicyNamespace,
+	_ ApprovalPolicyHead,
+	_ approvalExecutionFenceCandidate,
+	_ string,
+) error {
+	if ctx.Err() == nil {
+		return ErrApprovalExecutionStoreUnavailable
+	}
+	return ErrApprovalExecutionCommitUncertain
 }
 
 func mustJSON(t *testing.T, value any) []byte {
