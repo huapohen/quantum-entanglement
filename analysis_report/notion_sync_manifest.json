@@ -990,8 +990,8 @@
         "pageId": "3c9ead4b-996e-81c8-9d1f-ed42248fc74a",
         "url": "https://app.notion.com/p/3c9ead4b996e81c89d1fed42248fc74a?pvs=204",
         "sourcePath": "BRANCH_CATALOG.md",
-        "sourceSha256": "e439c65cf9f2e213effbb5b1a5344e6bac2c119364d5896c9aebe5ab8d07910d",
         "digestPinned": false,
+        "reason": "the generated catalog is refreshed after sync-ledger commits to avoid a self-referential manifest/catalog cycle",
         "remoteReadbackVerified": true
       }
     ],
