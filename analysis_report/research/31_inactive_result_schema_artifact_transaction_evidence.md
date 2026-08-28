@@ -2,8 +2,8 @@
 
 - 证据日期：2026-08-29
 - 执行分支：`mainline_continue_quantum_entanglement`
-- 代码封板候选：`c328641ac7f9ae13ade1e027917c4000e12824f7`
-- 固定 tree：`a657e74f697a401e2598eb9c4ca9581268b5ac27`
+- 代码封板候选：`28b3d6a26398ac42c0a65874e9f136c277204aff`
+- 固定 tree：`1ef1c8edb4da3efd991dbb7af7e843512a5da17e`
 - 结论：**M4 的私有候选已闭合；migration 7 注册、Atomic Result Writer、Observed、Accepted、
   worker result acceptance、真实 IM outbound 仍全部关闭。**
 
@@ -47,6 +47,7 @@ M4 只补这三个基础条件：
 | `bec6b87` | clock 后接管 SQLite callback 并复核 transaction/trigger | callback 不跨进 Artifact DML |
 | `97d116a` | 抽离无迁移 I/O 的 SQLite schema digest codec | 冷包导入不读取 migration SQL |
 | `c328641` | 所有 Artifact SQL 绑定 `main` 并冻结 catalog snapshot | TEMP shadow 不产生假成功 |
+| `28b3d6a` | 用随机 savepoint 验证 clock 前后事务连续性 | `COMMIT`/`ROLLBACK` 后重开事务不能假冒原事务 |
 
 ## 3. Inactive migration 7
 
@@ -156,9 +157,16 @@ TEMP trigger/同名表、替换 callback、关闭 transaction、改写其他表�
 - COMMIT/ROLLBACK 都无法确认时，固定重发 `_ResultArtifactCommitAmbiguityError` 并 poison store；
 - clock 或其他依赖意外关闭 owner transaction 时 writer 失败；因为依赖可能已经越过 rollback
   authority 提交其他写入，store 一律 poison，必须关闭、重开并人工 reconcile；
+- clock 前先在已接管 callback 的 owner transaction 中建立带 128-bit 随机后缀的私有 savepoint；
+  clock 返回、抛错或给出非法时间后，writer 都必须能在同一事务释放同名 savepoint。依赖执行
+  `COMMIT`/`ROLLBACK` 后再 `BEGIN` 虽会让 `connection.in_transaction` 继续为真，但原 savepoint
+  已消失，因此被精确归类为 transaction continuity ambiguity、poison store 并进入 reconcile-only；
 - body 控制信号在 rollback 已确认时按原 exact 类型干净重发且无 cause；rollback 无法确认时仍按
   原 exact 控制类型干净重发，但直接 cause 固定为 `_ResultArtifactCommitAmbiguityError`，提醒调用方
   必须关闭、重开并 reconcile；
+- continuity 异常图通过 `BaseException` 的底层 `__cause__` / `__context__` /
+  `__suppress_context__` descriptor 读取，不执行异常子类的 property 或 `__getattribute__` 钩子；
+  被 `raise ... from None` 明确抑制的历史 control 不会被重新解释为本次 originating control；
 - 私有 `_EventStoreAdmissionTransactionSignal` 不会越过 owner API；
 - 固定错误重发前清除 content-bearing internal traceback frames；
 - 后续 owner body 抛错会回滚整批；
@@ -171,14 +179,18 @@ TEMP trigger/同名表、替换 callback、关闭 transaction、改写其他表�
 
 ```bash
 PYTHONPATH=src .venv/bin/pytest -q \
+  tests/test_result_artifact_transaction.py
+# 55 passed
+
+PYTHONPATH=src .venv/bin/pytest -q \
   tests/test_inactive_invocation_results_migration.py \
   tests/test_inactive_invocation_results_backup_topology.py \
   tests/test_migrations.py \
   tests/test_result_artifact_transaction.py
-# 87 passed
+# 96 passed
 
 PYTHONPATH=src .venv/bin/pytest -q
-# 2644 passed
+# 2652 passed
 
 .venv/bin/ruff check .
 .venv/bin/mypy src
@@ -207,7 +219,10 @@ descriptor 而 main 表仍为 0 行。它还指出 `INSERT other_table; COMMIT` 
 authority，不能宣称 writer 可以撤销该依赖已提交的副作用。
 
 这些问题分别由 `bec6b87` 与 `c328641` 关闭；`97d116a` 确保复用 catalog digest 算法不会破坏冷包
-导入零 migration-SQL-I/O 合同。反例现在固定证明：
+导入零 migration-SQL-I/O 合同。最终复核又证明，仅检查 `connection.in_transaction` 不能识别
+clock 先终结 owner transaction、再开启新 transaction 的替换攻击。`28b3d6a` 用随机 savepoint
+连续性栅栏关闭该缺口，并同时加固 hostile 异常属性、抑制历史 control、非法时间、connection
+close 与 outer rollback failure 的 poison/control 分类。反例现在固定证明：
 
 - confirmed rollback 的 clean control 无 cause，ambiguous control 以
   `_ResultArtifactCommitAmbiguityError` 为直接 cause；
@@ -217,11 +232,18 @@ authority，不能宣称 writer 可以撤销该依赖已提交的副作用。
 - clock 创建 TEMP 同名表时 main Artifact 计数保持 0，writer 失败且 TEMP DDL 随 rollback 消失；
 - clock 提交其他表 mutation 后 writer 不会假成功，store 进入 poisoned 状态；已提交的依赖副作用
   只能在关闭、重开后 reconcile，不能伪装成可回滚；
+- clock 执行 `COMMIT + BEGIN` 或 `ROLLBACK + BEGIN` 后，即使 transaction 仍显示打开、clock 随后
+  抛错或返回非法时间，私有 savepoint 也会暴露事务替换并强制 ambiguity + poison；
+- transaction replacement 携带 exact control 时，外层只重发固定参数的干净同类 control，直接
+  cause 为 `_ResultArtifactCommitAmbiguityError` 且 context 为空；connection close 和 rollback
+  failure 组合也保持同一合同；
+- hostile 异常属性钩子不能替换 continuity 错误；被 `from None` 抑制的历史 control 不会复活；
 - package 冷导入仍不读取任何 packaged `.up.sql`。
 
-在代码节点 `c328641` 上，47 项 Result Artifact 专项、87 项 M4 组合、全仓 2644 tests、Ruff、
-Mypy 与 `git diff --check` 全绿。此前针对 `aef5f8b` 的 0-blocker 结论已被上述后续发现取代，不能
-继续把旧结论当作当前封板依据；当前依据是新反例、精确 schema snapshot 与完整回归证据。
+在代码节点 `28b3d6a` 上，55 项 Result Artifact 专项、96 项 M4 组合、全仓 2652 tests、Ruff、
+Mypy 与 `git diff --check` 全绿。最终独立 reviewer 结论为 **0 blocker**。此前针对 `aef5f8b` 的
+早期结论已被后续反例取代，不能继续作为当前封板依据；当前依据只包括截至 `28b3d6a` 的完整
+反例、精确 schema snapshot、savepoint continuity fence 与全量回归证据。
 
 这只证明 M4 私有候选达到进入 M5 的安全停点，不把 M4 描述为 active production capability。
 
