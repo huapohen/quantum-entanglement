@@ -5,7 +5,7 @@
 计划或验收动作形成稳定检查点后，都必须同步到私人 Notion 并完成远端回读，回读完成前不进入
 下一项工作。语雀仍只在用户另行明确授权时操作。
 
-## Notion 镜像（最近已回读基线：E2 adapter/lifecycle 离线节点）
+## Notion 镜像（最近已回读基线：E2 adapter/lifecycle；provider-bundle 节点待本阶段同步）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -46,17 +46,17 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
-| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | E2 离线 adapter/lifecycle 已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁是 provider contract/approval/transport，真实网络仍关闭 |
+| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | E2 provider bundle 离线闭环已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁是真实 provider contract/scope/exchange，真实网络仍关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
-| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | E1 与 E2 离线 adapter/lifecycle 已完成 | E0–E5、Level A–D、已交付矩阵、下一 provider contract/approval/transport、可停点与 outbound 授权边界 |
+| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | E1 与 E2 provider bundle 离线闭环已完成 | E0–E5、Level A–D、已交付矩阵、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
 | `../docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md` | E1 生产说明已完成 | 四方法 port、zero-network fake、permit/ledger/ACK-loss、验证、回退和 E2 硬停止边界 |
 
 当前接入前代码基线已经安全备份，Level A 合同可执行已在 `7620200` 完成并通过 Notion 回读。
 Level B 的离线 profile/config/verifier/migration/nonce/read-preparation 与整页单事务 admission 已在
-运行源码 `9cf1bfe` 完成；default-off inbound-only adapter/lifecycle、bounded parser、kill switch、
-typed observability、全链 canary 与 recorded probe 又在运行源码 `2bdaea1` 完成。下一硬门禁是冻结
-provider-specific sandbox 合同与批准输入，实现独立 approved transport + pure mapper，并单独修订
-`docs/production/SERVICE_BOUNDARY.md`；完成前不连接真实 sandbox。
+运行源码 `9cf1bfe` 完成；adapter/lifecycle 节点在 `2bdaea1` 完成；provider mapper/transport/bundle
+TCK、稳定 event-source 与 transient exchange evidence 分离、增强 provenance 和 v6 durable readback
+又在 `ee0666f` 完成。下一硬门禁是真实 IM 后端合同、测试 scope/read-only secret reference 与
+production exchange；完成前不连接真实 sandbox。
 `NEXT_STAGE_PLAN.md` 继续作为 E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前的
 串行总清单。
 
@@ -90,6 +90,7 @@ provider-specific sandbox 合同与批准输入，实现独立 approved transpor
 | `research/23_native_im_e2_offline_inbox_foundation_evidence.md` | 原生 IM E2 离线底座：`4ab745b` | profile/config/verifier、migration 5 六表、durable nonce、read preparation、46 项专项/2,031 项全仓门禁，以及 page admission 单事务 P0 |
 | `research/24_native_im_e2_atomic_page_admission_evidence.md` | 原生 IM E2 原子页运行证据：`9cf1bfe` | nonce/page/events/read/checkpoint 单事务、独立 durable readback、88 项专项/2,060 项全仓门禁、下一 adapter/lifecycle P0 |
 | `research/25_native_im_e2_adapter_lifecycle_offline_evidence.md` | 原生 IM E2 adapter/lifecycle 离线运行证据：`2bdaea1` | default-off、bounded parser、process-bound lifecycle/kill switch、typed observability、全链 canary、recorded probe、2,114 项全仓门禁与真实接入前硬边界 |
+| `research/26_native_im_provider_bundle_offline_evidence.md` | 原生 IM E2 provider bundle 离线闭环：`ee0666f` | Mapper/Transport/Bundle TCK、read-exchange evidence、增强 provenance、migration-v6 持久回读、2,386 项全仓门禁与真实 provider 接入前五项硬输入 |
 
 ## 已归档截图
 
