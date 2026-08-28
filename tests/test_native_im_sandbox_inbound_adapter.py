@@ -31,6 +31,7 @@ from quantum_entanglement.native_im_sandbox import (
     NativeIMVerifiedInboundReadV1,
 )
 from quantum_entanglement.service.native_im_config import NativeIMInboundOnlyConfigV1
+from quantum_entanglement.service.native_im_secrets import NativeIMSecretLoadError
 from quantum_entanglement.service.secrets import SecretMaterial, SecretRef
 from tests.test_native_im_auth import (
     KEY,
@@ -334,6 +335,7 @@ async def test_transport_and_mapper_failures_are_redacted_and_close_secret_lease
         await adapter.read_verified_inbound(request)
     assert transport_canary not in f"{transport_error.value!r} {transport_error.value}"
     assert transport_error.value.__cause__ is None
+    assert transport_error.value.__context__ is None
     assert secrets.materials[0].closed is True
 
     mapper_canary = "mapper-exception-body-canary"
@@ -342,7 +344,53 @@ async def test_transport_and_mapper_failures_are_redacted_and_close_secret_lease
         await adapter.read_verified_inbound(request)
     assert mapper_canary not in f"{mapper_error.value!r} {mapper_error.value}"
     assert mapper_error.value.__cause__ is None
+    assert mapper_error.value.__context__ is None
     assert all(material.closed for material in secrets.materials)
+
+
+@pytest.mark.asyncio
+async def test_hostile_secret_and_health_failures_are_redacted_and_release_leases() -> None:
+    secret_canary = "secret-provider-message-body-canary"
+    adapter, request, _, _, transport, mapper, secrets, _ = adapter_inputs(
+        secret_failure=secret_canary
+    )
+    with pytest.raises(NativeIMSecretLoadError) as secret_error:
+        await adapter.read_verified_inbound(request)
+    assert secret_error.value.code == "native_im_secret_provider_failed"
+    assert secret_canary not in f"{secret_error.value!r} {secret_error.value}"
+    assert secret_error.value.__cause__ is None
+    assert secret_error.value.__context__ is None
+    assert transport.read_calls == 0
+    assert mapper.calls == 0
+    assert secrets.materials == []
+
+    health_canary = "health-transport-secret-canary"
+    adapter, _, _, _, transport, _, secrets, _ = adapter_inputs(transport_failure=health_canary)
+    with pytest.raises(NativeIMTransportContractError) as health_error:
+        await adapter.probe_health()
+    assert health_canary not in f"{health_error.value!r} {health_error.value}"
+    assert health_error.value.__cause__ is None
+    assert health_error.value.__context__ is None
+    assert transport.health_calls == 1
+    assert len(secrets.materials) == 1
+    assert secrets.materials[0].closed is True
+
+
+@pytest.mark.asyncio
+async def test_hostile_close_failure_is_redacted_and_successfully_retryable() -> None:
+    close_canary = "close-transport-message-secret-canary"
+    adapter, _, _, _, transport, _, _, _ = adapter_inputs(transport_failure=close_canary)
+    with pytest.raises(NativeIMTransportContractError) as close_error:
+        await adapter.aclose()
+    assert close_canary not in f"{close_error.value!r} {close_error.value}"
+    assert close_error.value.__cause__ is None
+    assert close_error.value.__context__ is None
+    assert adapter.closed is False
+
+    transport.failure_canary = None
+    await adapter.aclose()
+    assert adapter.closed is True
+    assert transport.close_calls == 2
 
 
 @pytest.mark.asyncio
