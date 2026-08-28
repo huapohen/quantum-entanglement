@@ -17,14 +17,14 @@ func TestApprovalPolicyControlStoreContractDigestIsFrozen(t *testing.T) {
 }
 
 func TestApprovalPolicyControlStoreV2ContractDigestIsFrozen(t *testing.T) {
-	const expected = "sha256:4ac5b4da641d2d31d814addc964a0ccf33749996ea3f81274741827374aa8de5"
+	const expected = "sha256:86e6fd8685696f91c63dcca441a01d27152826a2f2990c5e9c0e2ef26b4eb474"
 	if actual := CurrentApprovalPolicyControlStoreSchemaDigestV2(); actual != expected {
 		t.Fatalf("control-store v2 contract digest = %q, want %q", actual, expected)
 	}
 }
 
 func TestApprovalPolicyControlStoreV2CatalogDigestIsFrozen(t *testing.T) {
-	const expected = "sha256:b2800f5eda2bd9cecceb060ae66b794074c04566f4d291dfd4a42a60d424c8c8"
+	const expected = "sha256:04d1d97ec0d0cb9b1fab51d89e4b1f4aca17d6c3408ab1fc7d7fa93e3ff49f13"
 	if approvalPolicyControlStoreCatalogDigestV2 != expected {
 		t.Fatalf("control-store v2 catalog digest = %q, want %q", approvalPolicyControlStoreCatalogDigestV2, expected)
 	}

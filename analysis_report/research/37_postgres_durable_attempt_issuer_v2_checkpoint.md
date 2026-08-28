@@ -71,8 +71,8 @@ attempt 对外仍为 opaque capability：`String`、`GoString`、`LogValue` 和 
 fresh PostgreSQL 18.6 安装后冻结的摘要：
 
 ```text
-Go contract digest:    sha256:4ac5b4da641d2d31d814addc964a0ccf33749996ea3f81274741827374aa8de5
-Catalog digest:        sha256:b2800f5eda2bd9cecceb060ae66b794074c04566f4d291dfd4a42a60d424c8c8
+Go contract digest:    sha256:86e6fd8685696f91c63dcca441a01d27152826a2f2990c5e9c0e2ef26b4eb474
+Catalog digest:        sha256:04d1d97ec0d0cb9b1fab51d89e4b1f4aca17d6c3408ab1fc7d7fa93e3ff49f13
 Attempt record format:  wanwork.im.postgres-authority-approval-execution-attempt/2
 Fence record format:   wanwork.im.postgres-authority-approval-execution-fence/3
 ```
@@ -120,4 +120,3 @@ go mod verify
 本地报告、SQL、Go、测试和 Git 提交全部完成后，再批量上传 Notion 并逐页回读。频繁编辑期间操作 Notion
 会引入网络往返、页面块重写和回读核验，通常比本地提交慢；因此本阶段以本地 Git 与 GitHub 为事实源，
 Notion 只保留待同步标记，不影响代码推进。
-

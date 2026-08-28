@@ -612,7 +612,7 @@ type approvalPolicyControlStoreContractV2 struct {
 	AdmissionMaximumBytes         int                 `json:"admissionMaximumBytes"`
 	AttemptIssueFunction          string              `json:"attemptIssueFunction"`
 	AttemptIssueFunctionArguments []string            `json:"attemptIssueFunctionArguments"`
-	AttemptIssueFunctionResult    string              `json:"attemptIssueFunctionResult"`
+	AttemptIssueFunctionResult    []string            `json:"attemptIssueFunctionResult"`
 	AttemptReadFunction           string              `json:"attemptReadFunction"`
 	AttemptReadFunctionArguments  []string            `json:"attemptReadFunctionArguments"`
 	AttemptReadFunctionResult     []string            `json:"attemptReadFunctionResult"`
@@ -697,9 +697,13 @@ func CurrentApprovalPolicyControlStoreSchemaDigestV2() string {
 		AdmissionMaximumBytes:         maximumApprovalExecutionAdmissionBytes,
 		AttemptIssueFunction:          approvalPolicyControlStoreAttemptIssueFunction,
 		AttemptIssueFunctionArguments: []string{"text", "bytea"},
-		AttemptIssueFunctionResult:    "state_status text, attempt_generation bigint, attempt_id text, attempt_issuance_id text, attempt_receipt_digest text, created_at timestamptz, canonical_attempt bytea",
-		AttemptReadFunction:           approvalPolicyControlStoreAttemptReadFunction,
-		AttemptReadFunctionArguments:  []string{"text", "text", "text"},
+		AttemptIssueFunctionResult: []string{
+			"state_status text", "attempt_generation bigint", "attempt_id text",
+			"attempt_issuance_id text", "attempt_receipt_digest text", "created_at timestamptz",
+			"canonical_attempt bytea",
+		},
+		AttemptReadFunction:          approvalPolicyControlStoreAttemptReadFunction,
+		AttemptReadFunctionArguments: []string{"text", "text", "text"},
 		AttemptReadFunctionResult: []string{
 			"state_status text", "attempt_generation bigint", "attempt_id text",
 			"attempt_issuance_id text", "attempt_receipt_digest text", "created_at timestamptz",

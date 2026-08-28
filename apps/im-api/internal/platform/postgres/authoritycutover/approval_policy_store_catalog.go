@@ -18,7 +18,7 @@ const (
 	approvalPolicyControlStoreCatalogDigestDomain   = "wanwork.im/postgres-approval-policy-control-store-catalog/1\n"
 	approvalPolicyControlStoreCatalogDigestDomainV2 = "wanwork.im/postgres-approval-policy-control-store-catalog/2\n"
 	approvalPolicyControlStoreCatalogDigest         = "sha256:8ac32cf0ef53b447fd1b152c5359f5854c4f50f7e513af1f71d19dd57d4d1ea0"
-	approvalPolicyControlStoreCatalogDigestV2       = "sha256:b2800f5eda2bd9cecceb060ae66b794074c04566f4d291dfd4a42a60d424c8c8"
+	approvalPolicyControlStoreCatalogDigestV2       = "sha256:04d1d97ec0d0cb9b1fab51d89e4b1f4aca17d6c3408ab1fc7d7fa93e3ff49f13"
 )
 
 type approvalPolicyControlStoreCatalogColumn struct {
