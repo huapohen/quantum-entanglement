@@ -525,14 +525,42 @@ func assertMigrationLoginCanSetExactOwner(
 		t.Fatalf("connect migration login: %v", err)
 	}
 	defer func() { _ = connection.Close(context.Background()) }()
+	var sessionUser, currentUser string
+	if err := connection.QueryRow(t.Context(), "SELECT session_user, current_user").Scan(
+		&sessionUser,
+		&currentUser,
+	); err != nil || sessionUser != manifest.MigrationLoginRoles[0] || currentUser != sessionUser {
+		t.Fatalf("migration login identities session=%q current=%q error=%v", sessionUser, currentUser, err)
+	}
+	var inheritedUsage bool
+	if err := connection.QueryRow(t.Context(), `
+SELECT pg_catalog.has_schema_privilege(current_user, 'wanwork_im', 'USAGE')`).Scan(
+		&inheritedUsage,
+	); err != nil || inheritedUsage {
+		t.Fatalf("migration login inherited schema usage=%v error=%v", inheritedUsage, err)
+	}
+	if _, err := connection.Exec(
+		t.Context(),
+		"SET ROLE "+pgx.Identifier{manifest.RuntimeRole}.Sanitize(),
+	); !hasPostgresCode(err, "42501") {
+		t.Fatalf("migration login set runtime error=%v, want SQLSTATE 42501", err)
+	}
 	if _, err := connection.Exec(
 		t.Context(),
 		"SET ROLE "+pgx.Identifier{manifest.OwnerRole}.Sanitize(),
 	); err != nil {
 		t.Fatalf("migration login set owner role: %v", err)
 	}
-	if _, err := Apply(t.Context(), connection); err != nil {
-		t.Fatalf("migration login repeat Apply: %v", err)
+	if err := connection.QueryRow(t.Context(), "SELECT session_user, current_user").Scan(
+		&sessionUser,
+		&currentUser,
+	); err != nil || sessionUser != manifest.MigrationLoginRoles[0] || currentUser != manifest.OwnerRole {
+		t.Fatalf("migration owner identities session=%q current=%q error=%v", sessionUser, currentUser, err)
+	}
+	for run := 1; run <= 2; run++ {
+		if _, err := Apply(t.Context(), connection); err != nil {
+			t.Fatalf("migration login repeat Apply run %d: %v", run, err)
+		}
 	}
 	if err := ValidateAuthorityAccess(t.Context(), connection, manifest); err != nil {
 		t.Fatalf("migration login validate authority access: %v", err)
