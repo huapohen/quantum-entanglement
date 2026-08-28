@@ -91,8 +91,8 @@
 | [`34_postgres_function_only_writes_and_exact_access_map.png`](34_postgres_function_only_writes_and_exact_access_map.png) | 1600×1100 | 不适用 / 2026-08-28 18:21:07 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1600×1100 确定性渲染，便于 Notion 审阅 | `586c3b5edebf` |
 | [`35_postgres_attested_runtime_composition_map.svg`](35_postgres_attested_runtime_composition_map.svg) | 1800×1120 | 不适用 / 2026-08-28 20:29:18 +08:00 | `B-local-derived-documentation-visual`；private config→ambient/default-file/raw-DSN/malformed-query hardening→physical/session attestation→readiness/UoW/API gate→剩余 P0 源图 | `69b242cc4331` |
 | [`35_postgres_attested_runtime_composition_map.png`](35_postgres_attested_runtime_composition_map.png) | 1800×1120 | 不适用 / 2026-08-28 20:29:18 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1800×1120 确定性渲染，便于 Notion 审阅 | `2ca4fa79c3d6` |
-| [`postgres_production_authority_topology.svg`](postgres_production_authority_topology.svg) | 1800×1120 | 不适用 / 2026-08-29 00:06:29 +08:00 | `B-local-derived-documentation-visual`；Gate A0 plan/SecretRef/provision/migrate/runtime/TLS/receipt/No-Go 合同源图 | `9db6fb640215` |
-| [`postgres_production_authority_topology.png`](postgres_production_authority_topology.png) | 1800×1120 | 不适用 / 2026-08-29 00:06:29 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1800×1120 确定性渲染，便于本地浏览器与后续 Notion 审阅 | `8569f0ec46fb` |
+| [`postgres_production_authority_topology.svg`](postgres_production_authority_topology.svg) | 1800×1120 | 不适用 / 2026-08-29 00:10:19 +08:00 | `B-local-derived-documentation-visual`；Gate A0 plan/SecretRef/provision/migrate/runtime/TLS/receipt/No-Go 合同源图 | `9db6fb640215` |
+| [`postgres_production_authority_topology.png`](postgres_production_authority_topology.png) | 1800×1120 | 不适用 / 2026-08-29 00:10:19 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1800×1120 确定性渲染，便于本地浏览器与后续 Notion 审阅 | `8569f0ec46fb` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件
