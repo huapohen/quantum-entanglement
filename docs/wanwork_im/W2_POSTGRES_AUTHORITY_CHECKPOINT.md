@@ -1,7 +1,8 @@
 # W2 PostgreSQL Authority Persistence 检查点
 
 > 历史状态：本文件冻结 `cd92ea5` 的 function-only write / exact-access 工程边界。当前 W2 入口已经前进到
-> [`W2_POSTGRES_RUNTIME_CHECKPOINT.md`](W2_POSTGRES_RUNTIME_CHECKPOINT.md)（`5c19fdb`）；不要再把本文件的
+> [`W2_POSTGRES_RUNTIME_CHECKPOINT.md`](W2_POSTGRES_RUNTIME_CHECKPOINT.md)（当前 code evidence
+> baseline `2d0c4a0`）；不要再把本文件的
 > “service wiring 未实现”描述当成当前事实。
 
 > 检查点日期：2026-08-28
@@ -264,5 +265,5 @@ go vet ./internal/platform/postgres/imstore
 - Repository / runtime fixture：`apps/im-api/internal/platform/postgres/imstore`
 - 生产接入总计划：`docs/wanwork_im/IMPLEMENTATION_PLAN.md`
 
-本文件随 W2 代码边界更新。Git 是 canonical source；外部知识库只是稳定检查点镜像，不能替代本地测试、
-commit 与 readback 证据。
+本文件冻结在 `cd92ea5`，不再随 W2 当前代码边界改写。Git 是 canonical source；外部知识库只是稳定
+检查点镜像，不能替代本地测试、commit 与 readback 证据。

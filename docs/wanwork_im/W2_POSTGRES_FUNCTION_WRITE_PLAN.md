@@ -319,4 +319,4 @@ outbound reconcile/ACK。现有 memory event fake 与 command receipt 不能代�
 - Repository/UoW/真实 runtime fixture：`apps/im-api/internal/platform/postgres/imstore`
 
 Git 是 canonical source。Topic 34 是历史检查点；当前稳定事实由 Topic 35、当前 W2 工程入口和后续已提交、
-已测试并回读的知识库镜像共同表达。
+已测试的 Git 证据表达。知识库只镜像已经完成阶段末同步与回读的批次，不能反向覆盖更新的本地事实。

@@ -27,7 +27,7 @@
 - [RESEARCH_COVERAGE.md](RESEARCH_COVERAGE.md)：`2output` 全部 40 份 Markdown 的行数、摘要、角色和处置。
 - [RESEARCH_TRACEABILITY.md](RESEARCH_TRACEABILITY.md)：用户调研快照、采纳/拒绝决策与从证据到验收的映射。
 
-当前深度报告与可视化（code baseline `5c19fdb`）：
+当前深度报告与可视化（code evidence baseline `2d0c4a0`）：
 
 - `analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md`；
 - `analysis_report/html/35_postgres_attested_runtime_composition_checkpoint.html`；
@@ -49,6 +49,9 @@ Topic 33 与 Topic 34 保留为 persistence/function-only/exact-access 的历史
 - 当前 `0005`、五个 function-only write、exact access manifest、attested runtime pool、startup/readiness
   route barrier 与独立 migrator 已作为受控 PostgreSQL 18.6 子集交付；role provision helper 仍是测试 fixture，
   first-deploy ownership/grant cutover 不是生产 IaC；
+- strict connection policy 已拒绝 ambient `PG*` presence、remote passwordless、默认 credential/TLS file
+  adoption 与 raw DSN 二次解析；API 也拒绝继承 migration URL 的环境。`Pool.Acquire` 仍是 trusted
+  low-level escape hatch，不是 tenant/action authority；
 - 当前 access boolean 只作为 resolver 的未来输入；production cutover/credential rotation、Clerk trusted
   tenant context、action-time resolver、recovery、event/outbox 未完成前，真实 IM outbound 保持关闭；
 - HTTP 业务响应统一为 200，但业务 `code`、`message` 和 `requestId` 必须表达真实结果；连接被

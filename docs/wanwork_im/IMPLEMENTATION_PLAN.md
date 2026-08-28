@@ -90,11 +90,11 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 `analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md`；Topic 33/34 分别保留
 `0001..0004` persistence 与 `0005` function-only/exact-access 的前序历史检查点。
 
-当前 code baseline 为 `5c19fdb`。当前口径必须保留：
+当前 code evidence baseline 为 `2d0c4a0`。当前口径必须保留：
 
 | 标记 | 状态 |
 |---|---|
-| `[F]` | `0001..0005`、五个 exact write function、exact access、strict connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier 与独立 migrator 已形成代码路径；PostgreSQL 18.6 全包 normal/race 与 vet 通过。 |
+| `[F]` | `0001..0005`、五个 exact write function、exact access、strict canonical connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier 与独立 migrator 已形成代码路径；PostgreSQL 18.6 全包 normal/race 与 vet 通过。 |
 | `[C]` | 保证仅限 explicit manifest、已登记 schema/object、当前 repository/UoW 与测试 provision fixture；runtime composition 已接线，但 production ownership/grant cutover、credential lifecycle 和恢复仍未交付。 |
 | `[A]` | persistence substrate 的结构方向正确，可作为 authenticated admission、resolver 和 event/outbox 的底座。 |
 | `[U]` | production cutover/角色轮换/旧 session drain、Clerk trusted tenant、action-time resolver、restore/crash 和 event/outbox 尚未完成。 |
@@ -116,13 +116,17 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
   repository 与 receipt 只经函数写入，runtime raw table mutation 被拒绝；
 - exact authority access manifest 验证 database/schema/table/function/default ACL、owner、role attributes、
   membership options/grantor 与额外 relation/routine；真实 migration/runtime login 通过正负向 fixture；
-- strict connection policy 拒绝隐式 endpoint/identity、session 与 parser-consumed params、service/pass file、
-  unauthenticated TLS 与 multi-host/fallback；
+- strict connection policy 拒绝 24 个 ambient `PG*` 变量的 presence（含空值）、隐式 endpoint/identity、
+  remote passwordless、session 与 parser-consumed params、raw service/pass file、unauthenticated TLS 与
+  multi-host/fallback；canonical parse 压住默认 `.pgpass`/client TLS file，精确比较最终 credential/endpoint，
+  重建 timeout `DialFunc`；runtime pool 不再二次解析 raw DSN；
 - attested pool 在 AfterConnect 执行 login/database/role/session/full-catalog proof，在 PrepareConn 拒绝
   role/GUC/lock/LISTEN/transaction 污染；
-- UnitOfWork 生产构造器只接 attested pool；API runtime 监听前必须 Ready，业务 route effect 前有
-  dependency gate；
-- migration credential 已拆到 one-shot `im-migrate` 进程，API 不读取 migration URL；
+- UnitOfWork 生产构造器只接 attested pool；`Pool.Acquire` 是有 guard 但仍能执行 runtime-role SQL 的
+  trusted low-level escape hatch，不是 tenant/action authority；API runtime 监听前必须 Ready，业务 route
+  effect 前有 dependency gate；
+- migration credential 已拆到 one-shot `im-migrate` 进程；API 不读取 migration URL，且启动环境只要存在
+  该变量（含空值）就拒绝；
 - SIGINT/SIGTERM 先有界 graceful drain HTTP，再关闭 pool；
 - 真实 PG18 RLS、schema drift、64 路 exact retry、64 路 single CAS winner、rollback、unknown commit 和
   runtime immutable-history fixture。
@@ -278,6 +282,9 @@ policy/approval/intent/receipt append 不可用时
 30. `security/feat/test: wire attested PostgreSQL runtime composition`（`03cc94e`～`5c19fdb`；database-bound
     runtime validator、strict connection policy、physical/session attestation、attested-only UoW、readiness/
     route barrier、graceful HTTP drain 与 one-shot migrator；production cutover/rotation/recovery 仍未交付）
+31. `security/test: close ambient PostgreSQL composition gaps`（`2c65b80`～`2d0c4a0`；24 个 `PG*`
+    presence、API migration credential inheritance、default passfile/client TLS file、remote password、exact
+    endpoint/credential、timeout DialFunc 与 raw runtime DSN 二次解析均 fail closed）
 
 任何一个条目若同时包含合同、实现、迁移、故障矩阵和 UI，应继续拆成小提交；列表是顺序约束，
 不是要求把一整项压成一个大 commit。

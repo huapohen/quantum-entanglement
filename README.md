@@ -94,7 +94,7 @@ python3 scripts/report_sync_bundle.py
 
 ```bash
 python3 scripts/report_sync_bundle.py \
-  --verify analysis_report/report_sync_bundles/checkpoint-20260827-clawith-delivery-blueprint.json
+  --verify analysis_report/report_sync_bundles/checkpoint-20260828-w2-postgres-function-only-exact-access-notion-readback.json
 ```
 
 下一阶段生成 checkpoint 时必须使用新的阶段文件名，不覆盖当前或历史快照：
@@ -104,16 +104,15 @@ python3 scripts/report_sync_bundle.py \
   --output analysis_report/report_sync_bundles/checkpoint-YYYYMMDD-stage-name.json
 ```
 
-`sourceTargets` 记录的是 source-target entry，不等于远端页面数；所有实时远端回读标记固定为
-`false`。当前 scoped-start + worker authority + Clawith 部门样板/源码复核 checkpoint 固定 41 个本地
-source、42 个 source-target 和 27 张图片；四个旧 checkpoint 只作为不可变历史快照保留，不再代表当前
-库存。current / superseded 关系和历史 checkout 验证方式见
+`sourceTargets` 记录的是 source-target entry，不等于远端页面数；bundle 生成器完全本地运行，所以其中
+所有实时远端回读标记固定为 `false`。当前已冻结的 latest checkpoint 是 Topic 34 / `7bb324a` 批次：
+64 个本地 source、65 个 target mapping、49 个 Notion source mapping、16 个语雀 local-pending mapping
+和 31 项图像。当前 Topic 35 增量会在本阶段完成 GitHub 推送与 Notion 批量回读后生成新文件名，不能
+覆盖这个历史快照。current / superseded 关系和历史 checkout 验证方式见
 [`analysis_report/report_sync_bundles/README.md`](analysis_report/report_sync_bundles/README.md)。
-Clawith 的 Notion 与语雀条目均为 `local_pending`，不构成远端写入或回读证明。其中
-`analysis_report/notion_sync_manifest.json` 仍是 2026-08-20 的历史回读控制文件，故意不登记
-尚未远端写入并回读的 Clawith 页面；Clawith 的确定性计划页 key 只存在于本地 checkpoint 的
-`proposedTargetPageKey`，不能当作真实 Notion 页面标识。完整字段、pinned-read 安全边界、v2→v3
-迁移和 recovery 处置见
+`analysis_report/notion_sync_manifest.json` 记录最近一次 2026-08-28 真实 Notion 回读；它与本地 bundle
+的 `liveReadbackPerformed=false` 语义不同。语雀条目继续按 mapping 的 `local_pending`/历史状态解释，
+不因 Notion 已回读而自动成立。完整字段、pinned-read 安全边界、v2→v3 迁移和 recovery 处置见
 [`docs/production/REPORT_SYNC_BUNDLE.md`](docs/production/REPORT_SYNC_BUNDLE.md)。
 
 ## 开发验证

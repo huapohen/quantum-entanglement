@@ -1,11 +1,11 @@
 # 调研与证据索引
 
 本目录是本地报告的单一真相源。报告正文会在研究、实现和验证完成后汇总为
-`multi_agent_collaboration_report.md`。自 2026-08-27 起，用户要求任何本地文档、代码、决策、
-计划或验收动作形成稳定检查点后，都必须同步到私人 Notion 并完成远端回读，回读完成前不进入
-下一项工作。语雀仍只在用户另行明确授权时操作。
+`multi_agent_collaboration_report.md`。当前采用阶段批量同步节奏：本地连续研究/实现/验证并频繁提交，
+阶段代码和文档全部完成、推送 GitHub 后，再统一同步私人 Notion 并完成一次回读。Notion 未回读前只算
+`local_pending`，不得冒充远端已更新；语雀仍只在用户另行明确授权时操作。
 
-## Notion 镜像（2026-08-27 已回读）
+## Notion 镜像（最近完成批次：2026-08-28）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -20,17 +20,18 @@
 - PostgreSQL authority 专题：<https://app.notion.com/p/3caead4b996e8183ae54f4d5abc2643d?pvs=204>
 - 最近稳定批次同步：2026-08-28；47 个受控事实源页面与 2 个派生索引页共 49 页。项目首页、
   WanWork IM 审阅主页、调研矩阵、实施计划、2output 吸收审计、专题 32 与专题 33 已联合回读。
-- 当前 WanWork IM Notion 内容基线为
-  `dev_wanwork_quantum_entanglement@4a465d880334b206f4503447d3fa2ccad696884d`，代码事实基线为
-  `8d662bf4faec1cfaa12b63f4dfc2132ae6869dbb`；分支未合并 `main`。`main@f99f176` 仍是提前接入
-  历史备份基线，不代表本分支当前 W2 进度。
+- 当前最后完成远端回读的 WanWork IM Notion 内容基线为
+  `dev_wanwork_quantum_entanglement@7bb324a4a06689a496cbc99b79d23261d031bc19`，其 Topic 34 代码证据
+  基线为 `cd92ea56493b43889f5165892b40ec36e958d44a`；分支未合并 `main`。当前 Topic 35
+  `2d0c4a0` 代码/文档仍是本地与 Git 待同步增量，不能写成 Notion 已更新。`main@f99f176` 仍是提前
+  接入历史备份基线，不代表本分支当前 W2 进度。
 - 本轮已确认两个当前 Markdown 附件从临时上传转为页面附件；所有七个更新页面均回读到 Topic 33
   反链、两个基线 SHA、两层一级调研根、六项 P0 gate 与禁止性声明。没有记录临时 signed S3 URL。
 - 冻结合同正文没有为同步台账而改写；其本地原始文件 SHA-256 为
   `99031ad243112122e987e84658ff93daf33b3285ea1468039f9d59dc8048167a`。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
-- 当前批次已完成 Notion 写入和远端回读；语雀仍未操作。
+- 最近完成批次已完成 Notion 写入和远端回读；Topic 35 将在本阶段本地/Git 收尾后批量同步；语雀仍未操作。
 
 ## 当前阶段交付
 
@@ -41,8 +42,8 @@
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 原路线已由提前接入调度修订 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 历史备份检查点 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界；不是当前 W2 入口 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | 历史调度计划 | 提前接入决策时冻结的 E0–E5/Level A–D 路线；保留作决策溯源，不再是当前 W2 执行入口 |
-| `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口：`5c19fdb` | strict connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate A/Trusted tenant 剩余 P0 |
-| `research/35_postgres_attested_runtime_composition_checkpoint.md` | 当前 W2 深度证据：`5c19fdb` | 12 提交台账、PG18 connection/session/ACL drift 实证、一级调研硬映射、未交付边界与下一阶段计划 |
+| `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口：`2d0c4a0` | canonical strict connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate A/Trusted tenant 剩余 P0 |
+| `research/35_postgres_attested_runtime_composition_checkpoint.md` | 当前 W2 深度证据：`2d0c4a0` | 25 提交台账、ambient/default-file/raw-DSN 安全闭环、PG18 connection/session/ACL drift 实证、一级调研硬映射、未交付边界与下一阶段计划 |
 
 接入前代码基线已经安全备份。`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 中“先 Level A、再 Level B
 sandbox inbound-only”是当时的历史调度口径。当前执行源已切换为
@@ -88,8 +89,8 @@ Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清�
 | `research/32_im_identity_conversation_and_provider_metadata_contract.md` | W1 IM identity/conversation/metadata 合同证据：`9f55b33`…`60ebf6a` | `2output` 一级证据到 `ActorRef/Snapshot`、realm-scoped external identity、`ConversationRef/Snapshot`、Agent thread topology、零授权 canonical `ext_info`、848 个非 canonical 排列、forbidden-field canary、race/fuzz 与 W2～W4 未完成边界 |
 | [`research/33_postgres_authority_persistence_checkpoint.md`](research/33_postgres_authority_persistence_checkpoint.md) | W2 PostgreSQL authority persistence 历史检查点：`8d662bf` / `4a465d8` | `0001..0004` persistence substrate 的前序证据；保留作溯源，不是当前 W2 入口 |
 | [`research/34_postgres_function_only_writes_and_exact_access_checkpoint.md`](research/34_postgres_function_only_writes_and_exact_access_checkpoint.md) | W2 前序检查点：`cd92ea5` | `0005`、五个 fixed function、function-only repository/receipt、exact access 临时测试 validator fixture、真实 migration/runtime login 与 PostgreSQL 18.6 正负向矩阵；由 Topic 35 接续 |
-| [`research/35_postgres_attested_runtime_composition_checkpoint.md`](research/35_postgres_attested_runtime_composition_checkpoint.md) | W2 当前深度证据：`5c19fdb` | strict connection policy、physical/session attestation、exact readiness、attested-only UoW、API gate、one-shot migrator、PG18 normal/race/vet 与 Gate A/Trusted Participant/mention 后续计划 |
-| `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口与 Go/No-Go：`5c19fdb` | 当前启动/调试入口、runtime composition、验证命令、production cutover/rotation、trusted tenant、mention/thread/provider 顺序 |
+| [`research/35_postgres_attested_runtime_composition_checkpoint.md`](research/35_postgres_attested_runtime_composition_checkpoint.md) | W2 当前深度证据：`2d0c4a0` | canonical strict connection policy、physical/session attestation、exact readiness、attested-only UoW、API gate、one-shot migrator、PG18 normal/race/vet 与 Gate A/Trusted Participant/mention 后续计划 |
+| `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口与 Go/No-Go：`2d0c4a0` | 当前启动/调试入口、runtime composition、验证命令、production cutover/rotation、trusted tenant、mention/thread/provider 顺序 |
 
 ## 已归档截图
 
@@ -132,7 +133,7 @@ PNG rendering，只作为报告导航图，不冒充独立运行证据。整套�
 | `screenshots/26_clawith_rapid_rnd_claim_20260827.png` | 部门级研发交付样板、阶段指标与 `3 天` / `6d 21h` 同卡片口径冲突 | Playwright 官网元素只读证据 |
 | `screenshots/33_postgres_authority_persistence_map.svg` / `.png` | 一级调研 → 当前持久化切片 → PostgreSQL 18.6 证据 → 六项 P0 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 | `screenshots/34_postgres_function_only_writes_and_exact_access_map.svg` / `.png` | 一级调研 → 五函数写面 → exact access → PG18.6 故障证据 → 剩余生产 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
-| `screenshots/35_postgres_attested_runtime_composition_map.svg` / `.png` | private config → strict connection policy → physical/session attestation → readiness/UoW/API gate → Gate A/Trusted Participant/mention 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/35_postgres_attested_runtime_composition_map.svg` / `.png` | private config → ambient/default-file/raw-DSN hardening → physical/session attestation → readiness/UoW/API gate → Gate A/Trusted Participant/mention 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 
 ## 数据安全
 
