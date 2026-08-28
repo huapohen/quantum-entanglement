@@ -60,7 +60,7 @@ event store 的单组件运行合同见
 
 测试通过证明对应断言在记录环境中成立，不证明端到端生产安全、容量、SLO、RPO/RTO 或 GA。
 
-### 原生 IM E1 与 E2 离线 adapter/lifecycle 状态
+### 原生 IM E1 与 E2 provider bundle 离线状态
 
 E1 / Level A `CONTRACT_EXECUTABLE` 已在源码候选 `7620200` 完成；内部
 `IM-P0 CONTRACT_READY` 仅按 provider-neutral contract/fake 里程碑完成。当前新增能力包括 21 个
@@ -74,16 +74,20 @@ E2 的离线原子 inbox 在运行源码 `9cf1bfe` 完成；其后续 default-of
 运行源码 `2bdaea1` 完成：显式 inbound-only adapter、signed raw body/canonical page 分离、bounded
 parser、process-bound kill switch/lifecycle、typed observability、全链 canary、recorded
 disconnect/resume/duplicate/out-of-order/conflict probe、取消/关闭恢复和扩展 zero-network gate 均已
-实现。admission 不调用 gateway、Agent、plugin、browser、network、subprocess 或 outbound。阶段
-证据见：
+实现。其后 provider bundle 离线节点又在 `ee0666f` 完成 Mapper/Transport/Bundle TCK、
+zero-network exchange、稳定 event-source 与 transient read-exchange evidence 分离、增强 admission
+provenance 和 migration-v6 durable readback。admission 不调用 gateway、Agent、plugin、browser、
+network、subprocess 或 outbound。阶段证据见：
 
 - [`24_native_im_e2_atomic_page_admission_evidence.md`](../../analysis_report/research/24_native_im_e2_atomic_page_admission_evidence.md)；
 - [`25_native_im_e2_adapter_lifecycle_offline_evidence.md`](../../analysis_report/research/25_native_im_e2_adapter_lifecycle_offline_evidence.md)。
+- [`26_native_im_provider_bundle_offline_evidence.md`](../../analysis_report/research/26_native_im_provider_bundle_offline_evidence.md)。
 
-这仍没有打开真实 IM：仓库没有 provider-specific HTTP/WebSocket/socket transport、真实 credential
-material、webhook 或 external IM send。下一硬门禁是冻结 endpoint/scope/data/secret/path/expiry/rollback
-批准输入，实现独立 provider transport/pure mapper，并单独修订 `SERVICE_BOUNDARY.md`。在这些条件
-完成前仍不能连接真实 endpoint。Golden vectors 是代表性正向 inventory；全部
+这仍没有打开真实 IM：仓库没有 production HTTP/WebSocket/socket exchange、真实 credential
+material、webhook 或 external IM send。下一硬门禁是真实 provider contract、测试
+endpoint/scope/data/secret/path/expiry/rollback 批准输入、真实 profile/mapper fixture 与 production
+exchange，并单独修订 `SERVICE_BOUNDARY.md`。在这些条件完成前仍不能连接真实 endpoint。Golden
+vectors 是代表性正向 inventory；全部
 event/revision/scope/mention/digest union/state 矩阵由参数化 contract tests 覆盖。Gate A–E 均未改变。
 
 ## 1. 可靠性与一致性
@@ -138,9 +142,10 @@ event/revision/scope/mention/digest union/state 矩阵由参数化 contract test
 - succeeded attempt 没有不可变 result receipt 时不能安全自动投影 `COMPLETED`；
 - connector 不支持 receiver idempotency/fencing 时只能诚实承诺 at-least-once；
 - 原生 IM 已有 provider profile、签名/timestamp/raw-body verifier、durable nonce、migration 5 inbox
-  schema、read preparation、整页单事务 admission、default-off inbound adapter/lifecycle 与 recorded
-  probe；但 provider-specific approved transport/mapper、真实 sandbox contract probe 和任何 outbound
-  composition 仍不存在；离线 probe 不能替代真实 provider 证据；
+  schema、read preparation、整页单事务 admission、default-off inbound adapter/lifecycle、recorded
+  probe、provider bundle TCK 与增强 exchange provenance；但现有 semantic provider candidate 仅用于
+  离线 TCK，真实 profile/mapper/production exchange、sandbox contract probe 和任何 outbound
+  composition 仍不存在；离线 bundle 不能替代真实 provider 证据；
 - 编排 session lock 是进程内锁，多进程/多实例调度仍可能重复调用 Agent；
 - 没有完整 crash-at-every-boundary、kill -9、long-running heartbeat 和 graceful drain E2E。
 - 共享 process identity helper 已通过真实 fork、nested fork、PID drift、fork-while-unrelated-lock、
@@ -329,6 +334,14 @@ process inheritance、cancellation/graceful close、hostile transport/mapper/sec
 message/trace/secret/nonce/signature canary。该结果仍不包含真实 provider network、service-level
 SIGTERM/soak、Agent activation、outbound 或生产批准。
 
+E2 provider bundle 离线运行节点 `ee0666f` 又完成 2,386/2,386 全仓测试、Ruff lint/format
+（207 files）、strict mypy（65 source files）和三套 fresh-process/hash-seed TCK verifier。Mapper
+TCK 为 3 accepted / 6 rejected，digest `e569232b…f5d51`；Transport TCK 为 5 accepted /
+12 rejected，digest `173a05e4…06c1d4`；Bundle digest 为 `7fbdec73…50d4e7`。矩阵覆盖 signed
+wire → HMAC → pure mapper → canonical page → enhanced provenance → atomic SQLite admission 与回读，
+并证明重复 event 的 stable source evidence 不随 exchange 漂移。该结果仍不包含真实 endpoint、
+production exchange、service-level soak、Agent activation、outbound 或生产批准。
+
 仍缺：
 
 - 完整的 supported OS/SQLite 组合矩阵；当前不可变 CI 只覆盖 GitHub Linux 的 Python 3.9/3.12，
@@ -366,10 +379,11 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
 1. E1 已闭环；E2 durable nonce、verified page、event/verification/link rows、read CAS、checkpoint
    与独立 readback 的单一事务及 rollback/ACK-loss/reopen 对账已完成；
 2. default-off inbound-only adapter、bounded parser、kill switch/lifecycle、safe logging/canary 和
-   recorded contract probe 已完成；仍未进入真实网络；
-3. 下一步冻结 sandbox endpoint class、测试 tenant/conversation、数据等级、read-only credential
-   reference、方法路径、截止时间和 kill switch，独立实现 provider transport/pure mapper，并单独
-   修订 `SERVICE_BOUNDARY.md`；
+   recorded contract probe，以及 provider Mapper/Transport/Bundle TCK 和 exchange provenance 已完成；
+   仍未进入真实网络；
+3. 下一步冻结真实 provider contract、sandbox endpoint class、测试 tenant/conversation、数据等级、
+   read-only credential reference、方法路径、截止时间和 kill switch；用真实 fixture 实现
+   profile/mapper 和 production exchange 并通过现有 TCK，再单独修订 `SERVICE_BOUNDARY.md`；
 4. 上述批准与 full gates 完成后，才执行 health/read/dedupe/resume；Level B 只生成 observation，
    不驱动 Agent、tool、browser、subprocess 或 outbound；
 5. E3 在已完成 event/job/receipt atomic admission 与 claim + attempt + schema-2 start event + readback

@@ -66,6 +66,15 @@ production gate and does not authorize a real connector or external message.
 - Typed body-free native-IM lifecycle/health/read/kill-switch observations, fixed no-label counters,
   end-to-end message/trace/secret/nonce/signature canary containment, and recorded zero-effect probes
   for disconnect/resume, duplicate, out-of-order and conflicting pages.
+- Reusable offline native-IM provider Mapper and Transport compatibility kits with fixed redacted
+  rejection contracts, exact scripted exchanges, deterministic accepted/rejected vectors, and
+  fresh-process/hash-seed verifiers.
+- Per-read exchange evidence that binds request ID/digest, cursor/sequence/snapshot, received time,
+  provider intent and exchange-security evidence while keeping stable event-source evidence outside
+  transient network identity.
+- Exchange-enhanced sandbox admission provenance with legacy canonical-JSON compatibility and
+  migration-v6 durable storage/readback, plus a zero-network provider-bundle test that closes signed
+  wire response through HMAC verification, pure mapping and atomic SQLite admission.
 - Bridge-only domain migration foundation: trusted legacy descriptors, exact sidecar
   install/bootstrap, immutable `SchemaState`, and a digest-bound closed-action planner.
 - Atomic bridge-plan application with locked source-state revalidation, an allowlisted
@@ -192,11 +201,11 @@ production gate and does not authorize a real connector or external message.
 
 ### In progress — not yet a shipped guarantee
 
-- Native IM E2 sandbox inbound-only: the offline profile/auth/durable atomic inbox and default-off
-  adapter/lifecycle/observability/recorded-probe node now exist, but no provider-specific approved
-  transport/mapper, real endpoint, credential material, webhook/socket transport or approved
-  sandbox read exists yet. Native IM external outbound remains unimplemented and unauthorized;
-  production Gates A–E remain closed.
+- Native IM E2 sandbox inbound-only: the offline profile/auth/durable atomic inbox, default-off
+  adapter/lifecycle/observability/recorded-probe and synthetic provider-bundle TCK nodes now exist,
+  but no real provider contract/profile/mapper, production exchange, endpoint, credential material,
+  webhook/socket transport or approved sandbox read exists yet. Native IM external outbound remains
+  unimplemented and unauthorized; production Gates A–E remain closed.
 - Reliable outbox publishing with bounded retry, hard callback deadlines, fencing, and
   graceful shutdown.
 - Durable invocation attempt leasing, heartbeat, recovery, and terminal compare-and-set.

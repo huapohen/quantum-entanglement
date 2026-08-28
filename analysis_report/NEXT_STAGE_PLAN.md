@@ -3,7 +3,7 @@
 > 计划版本：2026-08-28-stage-pause-v2
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
-> 当前状态：**E1 / Level A 与 E2 离线 adapter/lifecycle 节点已完成；真实 provider sandbox 未连接；本文件继续作为 E3 Result Authority 最大强度参考计划。**
+> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；真实 provider sandbox 未连接；本文件继续作为 E3 Result Authority 最大强度参考计划。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -17,8 +17,10 @@
 > zero-network fake 已在 `7620200` 完成；离线 profile/config/verifier/migration/nonce/read-preparation
 > 与整页单事务 admission 已在运行源码 `9cf1bfe` 完成；default-off inbound-only adapter/lifecycle、
 > bounded parser、process-bound kill switch、typed observability、全链 canary 与 recorded probe 又在
-> `2bdaea1` 完成。下一硬门禁是 provider-specific sandbox 合同/批准输入、独立 approved transport +
-> pure mapper，以及单独修订 `SERVICE_BOUNDARY.md`；真实 sandbox 网络仍未连接。
+> `2bdaea1` 完成；Mapper/Transport/Bundle TCK、zero-network exchange、read-exchange evidence、
+> 增强 provenance 和 migration-v6 durable readback 又在 `ee0666f` 完成。Level B 下一硬门禁只剩
+> 真实 provider contract、测试 scope/批准输入、production exchange/profile/mapper 和单独修订
+> `SERVICE_BOUNDARY.md`；真实 sandbox 网络仍未连接。
 
 ## 1. 下一阶段的唯一目标
 

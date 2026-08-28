@@ -12,6 +12,8 @@
 >
 > E2 adapter/lifecycle 离线运行证据：`2bdaea1adddcfb3033b4678766f635d7afc242fc`
 >
+> E2 provider bundle 离线闭环证据：`ee0666fe3e956234cbd653abd0ea57bdba322cb7`
+>
 > 决策性质：原生 IM 接入的执行顺序与验收边界；不是生产发布批准
 >
 > 安全边界：本文不授权向飞书、企微、原生 IM 或任何个人、机器人、群聊、bot、webhook
@@ -41,6 +43,12 @@
 > recorded disconnect/resume/duplicate/out-of-order/conflict probe、取消/关闭恢复和 zero-network gate
 > 已推进到 `2bdaea1`。真实 provider transport/mapper、批准记录和 sandbox 网络仍未介入；证据见
 > [`research/25_native_im_e2_adapter_lifecycle_offline_evidence.md`](./research/25_native_im_e2_adapter_lifecycle_offline_evidence.md)。
+
+> **2026-08-28 E2 provider bundle 离线闭环：** approved profile/config/manifest、Mapper TCK、
+> Transport TCK、zero-network exchange、稳定 event-source 与 transient read-exchange evidence 分离、
+> 增强 admission provenance、migration-v6 durable readback 和 bundle-to-atomic-admission 已推进到
+> `ee0666f`。真实 provider contract/scope/production exchange 和 sandbox 网络仍未介入；证据见
+> [`research/26_native_im_provider_bundle_offline_evidence.md`](./research/26_native_im_provider_bundle_offline_evidence.md)。
 
 ## 1. 最终决策
 
@@ -101,17 +109,27 @@ conversation 和非敏感合成数据完成真实网络端到端联调。它不�
 
 ### 2.2 真实阻断
 
-E1 已关闭 provider-neutral wire/port/fake 缺口。当前仍有五个会直接破坏 IM 端到端正确性的缺口：
+E1 已关闭 provider-neutral wire/port/fake 缺口，E2 又关闭了离线 provider bundle 的组合缺口。
+当前阻断要分两组，不能继续全部算成 Level B 前置：
+
+**Level B inbound-only 的直接阻断：**
+
+1. 真实 IM 后端尚未提供并冻结 provider contract：稳定身份、认证、事件 schema、cursor/snapshot、
+   限流、错误和维护窗口仍未知；
+2. 测试 endpoint class、tenant/workspace/channel/conversation allowlist、合成数据等级、read-only
+   `SecretRef`、审批人、截止时间和 kill switch 尚未冻结；
+3. 尚无真实 provider profile/mapper golden 和 production exchange 的 DNS/TLS/IP/redirect/timeout/
+   body-limit/credential 实现与 TCK 证据。
+
+**只阻断 Level C Agent draft / Level D outbound，不阻断 Level B observation：**
 
 1. result/artifact/attempt/task terminal state 尚未由一个 store-owned transaction 原子接受；
 2. heartbeat worker 只有冻结合同，dispatch 明确为 disabled；
 3. 没有 durable Action Command/Receipt 及 `effect_unknown` reconcile；
-4. 没有 authenticated service composition、provider-specific approved transport/mapper 和真实
-   resumable stream；离线 lifecycle 已证明 graceful close/cancellation retry，但尚不是服务级 SIGTERM；
-5. 真实原生 IM 后端尚未提供并冻结 provider profile：稳定身份、认证、幂等、ACK、游标、限流和
-   acceptance 查询的具体保证仍未知，不能由 V1 平台合同代替或猜测。
+4. 服务级 SIGTERM/drain 与 outbound authenticated composition 尚未闭合。
 
-这五项决定了介入前工作；其他工作按风险放到接入后，不再混为一个无限前置清单。
+因此 Level B 可以在前三项 provider-specific 阻断关闭后提前接入；它只形成 durable observation，
+不得驱动 Agent 或 outbound。其余工作按 E3/E4 顺序继续，不再混成无限前置清单。
 
 ## 3. 四级接入里程碑
 
@@ -427,14 +445,15 @@ logging、canary 和 recorded probe 已完成。以下 P3 条目仍按真实 ser
 
 ## 11. 决策摘要
 
-1. **已完成** IM contract、provider-neutral port、fake adapter、离线 atomic inbox 与
-   default-off adapter/lifecycle 契约测试；
-2. **接入前完成** 精简 Result Writer/Recovery、PURE Worker、Action Receipt 和 authenticated fake
-   E2E；
-3. **下一步冻结 provider-specific 批准输入后介入 Level B 只读 sandbox**，完成
-   health/read/dedupe/resume 后停在 durable inbox；
-4. **达到 IM-P3 后介入 Agent/action E2E**，不等待完整 M8、Gate C–E 或 GA 工程；
-5. **接入后继续** provider 语义、全租户安全、部署恢复、容量可观测和 HA；
+1. **已完成** IM contract、provider-neutral port、atomic inbox、default-off adapter/lifecycle 和
+   provider bundle 离线 TCK/持久 provenance 闭环；
+2. **下一步只补真实 provider-specific 三类阻断**：后端合同、测试 scope/批准输入、production
+   exchange + provider profile/mapper/TCK；
+3. **上述阻断关闭后介入 Level B 只读 sandbox**，按 health → read → dedupe → resume 验收并停在
+   durable inbox；
+4. **接入后再完成 E3/E4**：Result Writer/Recovery、PURE Worker、Action Receipt 和 authenticated
+   fake E2E，之后才允许 Agent draft/action E2E；
+5. **后续继续** provider 语义、全租户安全、部署恢复、容量可观测和 HA；
 6. **真实发送永远单独授权**，Result Receipt、测试通过或用户给予的电脑控制权限都不能替代
    connector-specific send authorization。
 

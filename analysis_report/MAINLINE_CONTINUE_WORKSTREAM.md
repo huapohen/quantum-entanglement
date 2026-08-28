@@ -33,9 +33,11 @@ E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
 6. default-off composition、显式 inbound-only adapter、bounded parser、process-bound lifecycle/
    kill switch、typed safe logging、canary、recorded probe 和 zero-network gate 已在运行源码
    `2bdaea1` 完成；
-7. 当前下一步不是打开网络，而是冻结 provider-specific sandbox 批准输入、实现独立 transport/pure
-   mapper 并修订 `SERVICE_BOUNDARY.md`；
-8. 每个小改变独立 commit 并推送本分支；稳定节点批量同步独立 Notion 空间并回读。
+7. provider approval、Mapper/Transport/Bundle TCK、zero-network exchange、read-exchange evidence、
+   pure mapper、增强 provenance 和 migration-v6 durable readback 已在 `ee0666f` 离线闭环；
+8. 当前下一步不是直接打开网络，而是取得真实 IM 后端合同和测试 scope，实现 production exchange
+   与第一个真实 provider bundle，并修订 `SERVICE_BOUNDARY.md`；
+9. 每个小改变独立 commit 并推送本分支；稳定节点批量同步独立 Notion 空间并回读。
 
 ## 不变边界
 
@@ -52,7 +54,7 @@ E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
 |---|---|---|
 | E0 | 已继承 | 主线恢复分支、tag、bundle 与回读证据已完成 |
 | E1 | 已完成 | provider-neutral 合同、fake、zero-network 证据和 Notion 回读已闭环 |
-| E2 | 进行中 | 原子 inbox `9cf1bfe` + adapter/lifecycle `2bdaea1` 离线节点已完成；真实 sandbox 未连接，下一门禁是 provider contract/approval/transport |
+| E2 | 进行中 | provider bundle 离线闭环 `ee0666f` 已完成；真实 sandbox 未连接，下一门禁是真实 provider contract/scope/production exchange |
 | E3 | 未开始 | verified inbound → PURE Agent 草稿 |
 | E4 | 未开始 | fake-only Action Plane |
 | E5 | 未开始 | 需另行明确授权的单会话 sandbox outbound |

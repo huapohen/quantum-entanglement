@@ -3,9 +3,9 @@
 > 计划版本：2026-08-28-early-integration-v5
 > 基线：`backup_0827_200010` / `pre-native-im-20260827-200010`  
 > 当前主线起点：`1d399e555fb0416f9c6225811269b9e5a2407728`  
-> 当前执行分支：`mainline_continue_quantum_entanglement`；E2 adapter/lifecycle 运行节点 `2bdaea1`
-> 当前阶段：E1 / Level A 已完成；E2 / Level B 的离线 inbox + adapter/lifecycle 节点已完成，
-> provider-specific transport、批准记录与真实 sandbox 尚未连接
+> 当前执行分支：`mainline_continue_quantum_entanglement`；E2 provider bundle 离线节点 `ee0666f`
+> 当前阶段：E1 / Level A 已完成；E2 / Level B 的离线 inbox + adapter/lifecycle + provider bundle
+> TCK/provenance 节点已完成，真实 provider contract/production exchange 与 sandbox 尚未连接
 > 决策状态：用户已决定提前接入独立原生 IM；先 inbound-only，再 Agent，再受控 outbound  
 > 永久限制：不向飞书、企微、任何个人、群聊、bot 或 webhook 发消息
 
@@ -17,7 +17,7 @@
 | 层级 | 可见结果 | 预计累计时间 | 是否真实发送 |
 |---|---|---:|---|
 | A：CONTRACT_EXECUTABLE（已完成） | V1 模型、codec、golden、fake adapter 全绿 | 已完成 | 否 |
-| B：SANDBOX_INBOUND（进行中） | 离线 inbox、adapter/lifecycle 与 recorded probe 已完成；批准 provider transport 后验收 health/read/dedupe/resume | 原估 3–5 天 | 否 |
+| B：SANDBOX_INBOUND（进行中） | 离线 provider bundle/TCK/provenance 已完成；真实 contract/scope/exchange 后验收 health/read/dedupe/resume | 原估 3–5 天 | 否 |
 | C：AGENT_DRAFT | verified inbound 可安全驱动 PURE Agent 并生成待审草稿 | 7–9 天 | 否 |
 | D：CONTROLLED_OUTBOUND | 单个 allowlisted 测试 conversation 可受控发送并对账 | 10–14 天 | 仅另行明确授权后 |
 
@@ -143,16 +143,17 @@ local release evidence 均通过。
 
 目标：完成 Level B，只连接独立 IM 的专用测试后端，不驱动 Agent，不注册 outbound。
 
-状态：**离线原子 inbox + adapter/lifecycle 节点已完成；Level B 的真实 sandbox 验收仍未开始**。
-截至运行源码 `2bdaea1`，此前 `9cf1bfe` 的单事务 admission 之上已经实现 default-off composition、
-显式 inbound-only adapter、signed provider body / canonical page 分离、bounded parser、process-bound
-lifecycle/kill switch、typed observability、全链 canary、recorded contract probe、取消/关闭恢复、
-zero-network gate 与 package public API。当前仓库仍没有 provider-specific HTTP/WebSocket/socket
-transport、真实 credential material、webhook 或 external IM send。下一硬门禁是冻结 sandbox 批准
-输入、实现独立 provider transport/pure mapper，并单独修订 `SERVICE_BOUNDARY.md`；详见：
+状态：**离线原子 inbox + adapter/lifecycle + provider bundle 节点已完成；Level B 的真实 sandbox
+验收仍未开始**。截至运行源码 `ee0666f`，在 `9cf1bfe` 单事务 admission 和 `2bdaea1`
+adapter/lifecycle 之上，又实现 provider approval/manifest、Mapper/Transport/Bundle TCK、zero-network
+exchange、pure mapper、稳定 event-source 与 transient exchange evidence 分离、增强 provenance 和
+migration-v6 durable readback。当前仓库仍没有 production HTTP/WebSocket/socket exchange、真实
+credential material、webhook 或 external IM send。下一硬门禁是真实 provider contract、测试 scope/
+批准输入和 production exchange，并单独修订 `SERVICE_BOUNDARY.md`；详见：
 
 - [`research/24_native_im_e2_atomic_page_admission_evidence.md`](./research/24_native_im_e2_atomic_page_admission_evidence.md)；
 - [`research/25_native_im_e2_adapter_lifecycle_offline_evidence.md`](./research/25_native_im_e2_adapter_lifecycle_offline_evidence.md)。
+- [`research/26_native_im_provider_bundle_offline_evidence.md`](./research/26_native_im_provider_bundle_offline_evidence.md)。
 
 ### 5.1 IM 后端必须提供的输入
 
@@ -195,12 +196,23 @@ tests/test_native_im_sandbox_observability.py
 tests/test_native_im_sandbox_canary.py
 tests/test_native_im_sandbox_recorded_probe.py
 tests/test_native_im_sandbox_public_api.py
+src/quantum_entanglement/native_im_provider_exchange.py
+src/quantum_entanglement/native_im_read_exchange.py
+src/quantum_entanglement/native_im_sandbox_provenance.py
+tests/native_im_mapper_tck.py
+tests/native_im_synthetic_provider_mapper.py
+tests/native_im_synthetic_provider_transport.py
+tests/test_native_im_provider_bundle_tck.py
+scripts/verify_native_im_provider_mapper_tck_v1.py
+scripts/verify_native_im_provider_transport_tck_v1.py
+scripts/verify_native_im_provider_bundle_tck_v1.py
 ```
 
 上列是已交付文件。Page admission、default-off adapter、bounded parser、lifecycle、observability 和
 recorded probe 均已完成。Approval record、durable approval authority、process-bound live permit、
-approved composition 与 admission provenance 已完成。仍待新增的是 provider-specific approved
-transport/pure mapper 与 sandbox runbook 实例；它们不得写入默认 composition。
+approved composition、pure mapper/transport/bundle TCK 与 enhanced admission provenance 已完成。
+仍待新增的是第一个真实 provider profile/mapper/fixture、production exchange 与 sandbox runbook；
+它们不得写入默认 composition。
 
 Provider-specific mapping放在独立 adapter 模块，不写回 provider-neutral value types。
 
@@ -232,10 +244,12 @@ topology、backup/restore inventory 必须在注册 `0005` 前同步更新。
 13. **已完成（离线 lifecycle）**：kill switch、startup preflight、health/ready、取消恢复与
     graceful close；服务级 SIGTERM/真实 dependency health 仍待 concrete composition；
 14. **已完成**：fake/recorded contract probe；
-15. **approval/provenance 基础已完成，待 provider 实现后完成**：修订 `SERVICE_BOUNDARY.md`，只放行
-    批准记录中的 sandbox read；
-16. **待批准后完成**：真实 sandbox health/read/dedupe/resume 验收；
-17. **阶段末**：Level B 证据、GitHub 回读和 Notion 同步。
+15. **离线 provider bundle 已完成**：Mapper/Transport/Bundle TCK、read-exchange evidence、增强
+    provenance 与 migration-v6 durable readback；
+16. **待真实 provider 输入后完成**：实现 production exchange/profile/mapper，修订
+    `SERVICE_BOUNDARY.md`，只放行批准记录中的 sandbox read；
+17. **待批准后完成**：真实 sandbox health/read/dedupe/resume 验收；
+18. **阶段末**：Level B 证据、GitHub 回读和 Notion 同步。
 
 ### 5.4 Level B 通过条件
 
@@ -368,15 +382,16 @@ python3 scripts/report_sync_bundle.py --verify <current-checkpoint.json>
 
 ## 10. 下一轮开工清单
 
-E1 已收口；E2 单事务 page admission 在 `9cf1bfe` 完成，default-off adapter/lifecycle 离线节点在
-运行源码 `2bdaea1` 完成。接下来按以下顺序继续：
+E1 已收口；E2 page admission 在 `9cf1bfe` 完成，adapter/lifecycle 在 `2bdaea1` 完成，provider
+bundle 离线闭环在 `ee0666f` 完成。接下来按以下顺序继续：
 
 1. 从 IM 后端取得并冻结 endpoint class/服务身份、transport、health/read 方法路径、认证/签名、
    cursor、limit、error 和维护窗口合同；
 2. 冻结测试 scope、非敏感合成数据等级、read-only `SecretRef`、审批人、截止时间、kill switch 与
    回退触发条件；
-3. 在独立 provider-specific 模块实现 transport + pure mapper，并增加 TLS/DNS/IP/redirect/timeout/
-   rate/cancellation/record-replay/canary 证据；不得加入默认 composition；
+3. 用真实合同/fixture 实现 provider profile + pure mapper，通过现有 Mapper TCK；实现拥有
+   DNS/TLS/socket/Authorization 的 production exchange，再通过 Transport/Bundle TCK；不得加入
+   默认 composition；
 4. 单独修订 `SERVICE_BOUNDARY.md`，重新执行 full gates、GitHub SHA 回读和批准记录审阅；
 5. 才执行 `health -> one read -> duplicate -> disconnect/resume -> kill switch`；
 6. Level B 始终只产生 observation，机械阻断 Agent、tool、browser、subprocess 和 outbound。
