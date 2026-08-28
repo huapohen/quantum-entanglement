@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import pickle
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +23,14 @@ from quantum_entanglement.service.native_im_config import (
 from quantum_entanglement.service.secrets import SecretRef
 from tests.test_native_im_provider_profile import profile
 from tests.test_native_im_sandbox_config import bound_configuration
+
+FIXTURE_ROOT = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "native_im"
+    / "provider_sandbox"
+    / "v1"
+)
 
 
 def sandbox_approval(**changes: object) -> NativeIMSandboxApprovalV1:
@@ -109,6 +119,41 @@ def test_approval_round_trip_and_domain_separated_digest_are_stable() -> None:
     assert approval.canonical_digest() == (
         "8229fc630a32fb2807a6e367b0da67ea0cddd1438d893a6b0556e1242921e571"
     )
+
+
+def test_committed_provider_sandbox_approval_fixture_is_canonical_and_frozen() -> None:
+    manifest_raw = (FIXTURE_ROOT / "manifest.json").read_bytes()
+    manifest = json.loads(manifest_raw)
+    assert json.dumps(
+        manifest,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode() == manifest_raw
+    assert manifest == {
+        "schemaVersion": 1,
+        "vectors": [
+            {
+                "byteLength": 2189,
+                "digest": "f3c070a2cd444a6c965fd3770b607e58605218db345cb493457dae82a50e375c",
+                "filename": "approval.json",
+                "model": "NativeIMSandboxApprovalV1",
+            }
+        ],
+    }
+    assert {path.name for path in FIXTURE_ROOT.iterdir()} == {"approval.json", "manifest.json"}
+    assert all(path.is_file() and not path.is_symlink() for path in FIXTURE_ROOT.iterdir())
+
+    approval_raw = (FIXTURE_ROOT / "approval.json").read_bytes()
+    approval = NativeIMSandboxApprovalV1.from_json_bytes(approval_raw)
+    assert approval.canonical_bytes() == approval_raw
+    assert len(approval_raw) == manifest["vectors"][0]["byteLength"]
+    independent_digest = hashlib.sha256(
+        b"quantum-entanglement.native-im/NativeIMSandboxApprovalV1/1\n" + approval_raw
+    ).hexdigest()
+    assert independent_digest == manifest["vectors"][0]["digest"]
+    assert approval.canonical_digest() == independent_digest
 
 
 def test_approval_is_inert_frozen_and_strictly_exact_typed() -> None:
