@@ -3,7 +3,7 @@
 > 计划版本：2026-08-29-stage-pause-v3
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
-> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec 已在 `d889751` 完成，M2 reserved fence 已在 `dd0ba54` 完成，M3 private store adapter 已在 `504824c` 完成，M4 inactive schema / Artifact owner transaction / private backup topology 已在代码节点 `aef5f8b` 完成；下一实现节点是 M5 Atomic Result Acceptance Writer，真实 provider sandbox 未连接。**
+> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec 已在 `d889751` 完成，M2 reserved fence 已在 `dd0ba54` 完成，M3 private store adapter 已在 `504824c` 完成，M4 inactive schema / Artifact owner transaction / private backup topology 已在代码节点 `c328641` 完成；下一实现节点是 M5 Atomic Result Acceptance Writer，真实 provider sandbox 未连接。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -423,9 +423,12 @@ schema/backup/artifact 组合证据通过，但默认 bootstrap、产品 UI 和 
   写中失败会把 owner 标成 rollback-only；`os._exit` / SIGKILL 不留下 committed prefix；
 - 完整 version history 使用最多 64 行一批的轻量 SQL 预检，所有 TEXT 先验证 storage class 与
   UTF-8 byte bound，再按 `rowid` 单行读取并重算 canonical metadata、request digest 和 UTC 时间；
+- 所有 Artifact SQL 显式绑定 main schema；clock 前后与最终回读冻结 main 9-object DDL/rootpage/
+  schema-version snapshot 并拒绝 TEMP shadow；clock 遗留 callback 被 strict writer callback fence
+  接管，依赖意外关闭 transaction 时 store poison；
 - confirmed rollback 与 ambiguous outcome 固定分类；ambiguous control 保留干净控制类型，并以
   `_ResultArtifactCommitAmbiguityError` 为 cause，同时 poison store；
-- M4 组合 82 tests、全仓 2639 tests、Ruff、Mypy 与 diff-check 通过。完整证据见
+- M4 组合 87 tests、全仓 2644 tests、Ruff、Mypy 与 diff-check 通过。完整证据见
   [`research/31_inactive_result_schema_artifact_transaction_evidence.md`](./research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
 这些结果只关闭 M4 私有候选节点，不授权 migration 7 注册、Atomic Result Writer、`ObservedV2`、
