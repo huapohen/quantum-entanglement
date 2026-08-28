@@ -160,46 +160,65 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 | `@Agent` durable child thread/Task/Invocation | 未实现 | No-Go |
 | production IM / production multitenancy | 未实现 | No-Go |
 
-## 6. 下一提交序列
+## 6. 下一垂直切片提交序列（不是 W2 完成清单）
 
-### Gate A 收尾
+唯一串行门禁以 `IMPLEMENTATION_PLAN.md` 的“W2 接真实 IM 前的 P0 顺序”为准。下面每项仍应按
+合同、实现、故障矩阵和证据拆成更小 commit；pure contract 或 zero-network fake 可以提前编译验证，
+但不得产生 provider 状态、网络副作用或绕过汇合门禁。
 
-1. `feat(im): freeze authority cutover plan format`
-2. `test(im): canonicalize cutover plan digest`
-3. `feat(im): add provisioner preflight`
-4. `feat(im): apply transactional object ownership cutover`
-5. `test(im): inject grantor and column acl drift`
-6. `feat(im): record cutover receipts and reconcile nontransactional steps`
-7. `test(im): run empty-db migrate-cutover-runtime e2e`
-8. `test(im): prove remote authenticated TLS and host trust injection`
-9. `feat(im): add bounded dependency readiness monitor and frozen max staleness`
-10. `test(im): keep high-risk action authorization outside readiness cache`
-11. `feat(im): expose explicit draining gate state`
-12. `feat(im): stage runtime credential rotation`
-13. `test(im): prove old sessions cannot survive revoke`
-14. `test(im): exercise dump restore restart and rolling shutdown`
+### Gate A：production deployment authority
 
-### Trusted tenant
+1. `docs(im): freeze production topology iac and secret responsibility boundary`
+2. `feat(im): freeze authority cutover plan format`
+3. `test(im): canonicalize cutover plan digest`
+4. `feat(im): add provisioner preflight`
+5. `feat(im): apply transactional object ownership cutover`
+6. `test(im): inject grantor and column acl drift`
+7. `feat(im): record cutover receipts and reconcile nontransactional steps`
+8. `test(im): run empty-db migrate-cutover-runtime e2e`
+9. `test(im): run non-empty schema upgrade with retained tenant data`
+10. `test(im): prove remote authenticated TLS and controlled host trust injection`
+11. `feat/test(im): stage credential rotation and prove old sessions cannot survive revoke`
 
-15. `feat(im): define Go trusted request context`
-16. `feat(im): verify Clerk JWT and rotating JWKS`
-17. `feat(im): resolve realm binding principal membership and actor`
-18. `test(im): reject every identity and revision drift`
-19. `feat(im): require trusted tenant for persistence operations`
-20. `feat(im): enforce conversation action-time permissions`
-21. `feat(im): bind minimal Agent installation authority to Agent Actor`
-22. `test(im): freeze four-subject participant authorization matrix`
+### Gate B：trusted human/Agent authority
 
-### Mention/thread/provider fake
+12. `feat(im): define Go trusted request context`
+13. `feat(im): verify Clerk JWT and rotating JWKS`
+14. `feat(im): resolve realm binding principal membership and actor`
+15. `test(im): reject every identity and revision drift`
+16. `feat(im): require trusted tenant for persistence operations`
+17. `feat(im): enforce conversation action-time permissions`
+18. `feat(im): bind minimal Agent installation authority to Agent Actor`
+19. `test(im): freeze four-subject participant authorization matrix`
 
-23. `agent_thread` persistence/independent ACL；
-24. durable mention inbox/dedupe；
-25. single mention deterministic dispatch；
-26. zero-network/outbound-disabled fake provider contract；
-27. PostgreSQL EventStore/outbox/crash-recovery gate；
-28. real provider subgroup receipt/reconcile（仅前项通过后）；
-29. Go→Python single-use narrow authorization；
-30. duplicate/out-of-order/ACK-loss/crash E2E。
+### Gate C：readiness 与 recovery
+
+20. `feat(im): add bounded dependency readiness monitor and frozen max staleness`
+21. `test(im): keep high-risk action authorization outside readiness cache`
+22. `feat(im): expose explicit draining gate state`
+23. `test(im): exercise dump restore database restart and process kill-9`
+24. `test(im): prove old-binary future-schema and rolling-shutdown behavior`
+
+### Gate D：durable mention vertical slice
+
+25. `feat/test(im): add PostgreSQL EventStore expected-revision and exact dedupe`
+26. `feat/test(im): add outbox projection checkpoint backfill and live handoff`
+27. `test(im): prove event outbox crash reopen kill-9 restore and rebuild`
+28. `feat/test(im): freeze zero-network outbound-disabled provider contract and fake`
+29. `feat/test(im): persist agent_thread message and independent ACL after durable gate`
+30. `feat/test(im): add durable mention inbox and exact dedupe`
+31. `feat/test(im): dispatch one mention deterministically through the fake`
+32. `feat/test(im): issue Go to Python single-use narrow authorization`
+33. `test(im): inject duplicate out-of-order ACK-loss and crash end to end`
+
+真实 provider 不在这份 W2 vertical-slice 序列中。进入 subgroup create/invite/send 前，必须另行通过 W3
+的 profile/capability matrix、callback authenticity、dedupe/resume、mapping drift、sandbox config 与
+inbound-only readback，并取得用户对具体 sandbox outbound 的明确授权。
+
+完成上述 33 项仍不能宣称 W2 完成。message/reaction/read state、Task/Attempt/Budget/NeedsYou/Artifact/
+Acceptance、memory/skill/capability、action/evidence、taint/declassification、promotion、presence/data-route/
+routine 以及 W2 总计划列出的其余对象，仍须分批交付 schema、repository/UoW、tenant/revision/dedupe
+不变量和恢复证据。
 
 ## 7. 研究约束
 
