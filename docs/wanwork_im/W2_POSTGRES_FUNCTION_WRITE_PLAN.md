@@ -54,11 +54,48 @@ typed Go request
 
 `0005` 只允许以下五个写函数；不提供通用 SQL、动态表名、JSON patch 或任意 procedure：
 
-1. `wanwork_im.write_conversation_revision(...) RETURNS boolean`
-2. `wanwork_im.write_provider_conversation_binding_revision(...) RETURNS boolean`
-3. `wanwork_im.write_conversation_membership_revision(...) RETURNS boolean`
-4. `wanwork_im.write_conversation_access_revision(...) RETURNS boolean`
-5. `wanwork_im.write_tenant_command_receipt(...) RETURNS timestamptz`
+| 函数 | Exact identity arguments | 返回值 |
+|---|---|---|
+| `wanwork_im.write_conversation_revision` | `text, text, bigint, bigint, text, text, text` | `boolean` |
+| `wanwork_im.write_provider_conversation_binding_revision` | `text, text, text, text, bigint, bigint, text, text` | `boolean` |
+| `wanwork_im.write_conversation_membership_revision` | `text, text, text, bigint, bigint, text, text` | `boolean` |
+| `wanwork_im.write_conversation_access_revision` | `text, text, text, bigint, bigint, boolean, boolean, boolean, boolean, boolean, boolean` | `boolean` |
+| `wanwork_im.write_tenant_command_receipt` | `text, text, text, text, text` | `timestamptz` |
+
+参数名与顺序冻结如下；migration policy、`0005` SQL、Go 调用和 postcondition 必须四处一致：
+
+```text
+write_conversation_revision(
+  p_tenant_id, p_conversation_id, p_expected_revision, p_next_revision,
+  p_workspace_id, p_conversation_type, p_status
+)
+write_provider_conversation_binding_revision(
+  p_tenant_id, p_provider, p_realm_id, p_provider_conversation_id,
+  p_expected_revision, p_next_revision, p_conversation_id, p_status
+)
+write_conversation_membership_revision(
+  p_tenant_id, p_conversation_id, p_actor_id,
+  p_expected_revision, p_next_revision, p_role, p_status
+)
+write_conversation_access_revision(
+  p_tenant_id, p_conversation_id, p_actor_id, p_expected_revision, p_next_revision,
+  p_can_read, p_can_send_message, p_can_manage_members, p_can_manage_conversation,
+  p_can_invoke_agent, p_can_publish_artifact_reference
+)
+write_tenant_command_receipt(
+  p_tenant_id, p_command_kind, p_idempotency_key, p_request_sha256, p_result_sha256
+)
+```
+
+所有函数保持 `STRICT`。`conversation.workspace_id` 是当前唯一可空业务值，因此 wire contract 固定为：
+
+- Go 侧无 workspace 时传空字符串，不传 SQL `NULL`；
+- 函数只在 snapshot `INSERT` 处执行 `NULLIF(p_workspace_id, '')`；
+- 非空 workspace ID 仍由既有外键和 Go value object 校验；
+- 任何其他参数都不使用空串表示 `NULL`。
+
+Go revision 是 `uint64`，PostgreSQL revision 是正 `bigint`。repository 在发 SQL 前必须拒绝
+`expected_revision` 或 `next_revision` 大于 `9223372036854775807`，不能把 pgx 编码失败误报为普通 store outage。
 
 四个 revision 函数固定完成：
 
@@ -108,6 +145,12 @@ fail closed，不能自动“尽力修复”。
 阶段内采用两步交付：先完成 owner-only function surface 与 repository wiring；随后提交角色/ACL manifest、
 owner transfer、runtime grants 与真实 negative tests。任何中间 commit 都保持 owner-only，不能因函数默认 ACL
 临时向 PUBLIC 开放。
+
+历史 postcondition 会在每次 `Apply` 时重验 `0001`–当前版本。现有 `0001`–`0004` 又把
+`current_user == schema/table owner` 写进了 invariant，因此禁止直接在 owner-only `0005` 之后单独转移 owner
+或授予 runtime 权限：那会让下一次启动在 pending migration 之前 fail closed。角色阶段必须作为一个原子发布单元，
+同时完成旧 postcondition owner 语义重构、owner transfer、最终 ACL、startup manifest validator 与真实角色负测；
+中间状态不得标记为 runtime-ready。
 
 ## 7. 必须通过的真实 PostgreSQL 负向测试
 
