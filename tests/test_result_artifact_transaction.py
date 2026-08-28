@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import copy
 import itertools
+import multiprocessing
 import os
 import pickle
 import select
+import signal
 import sqlite3
 import tempfile
 import threading
@@ -50,6 +52,25 @@ def candidate(
         idempotency_key=f"artifact-key-{ordinal}",
         expected_head_version=0,
     )
+
+
+def crash_result_artifact_owner_transaction(
+    path: str,
+    channel: object,
+    mode: str,
+) -> None:
+    store = SQLiteEventStore(path, clock=lambda: "2026-08-29T00:00:00.123456Z")
+    batch = _prepare_result_artifact_batch((candidate(content=b"crash-rollback-content"),))
+    with store._result_artifact_transaction() as handle:
+        store._write_result_artifacts_in_owner_transaction(handle, batch)
+        channel.send(("written", mode))
+        channel.close()
+        if mode == "exit":
+            os._exit(73)
+        if mode == "kill":
+            while True:
+                signal.pause()
+        raise ValueError("unsupported crash probe mode")
 
 
 class PreparedResultArtifactBatchTests(unittest.TestCase):
@@ -486,6 +507,53 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
                     self.write(conflict)
         self.assertEqual(self.counts(), (1, 1))
 
+    def test_crossed_artifact_identity_and_idempotency_collisions_fail_closed(self) -> None:
+        first = candidate(0)
+        second = candidate(1)
+        self.write(first, second)
+        crossed = replace(
+            candidate(2, content=b"crossed-collision"),
+            artifact_id=first.artifact_id,
+            idempotency_key=second.idempotency_key,
+        )
+        before = self.counts()
+        with self.assertRaises(_ResultArtifactConflictError):
+            self.write(crossed)
+        self.assertEqual(self.counts(), before)
+        self.assertIsNone(
+            self.store._connection.execute(
+                "SELECT digest FROM artifact_blobs WHERE digest = ?",
+                (crossed.blob_digest,),
+            ).fetchone()
+        )
+
+    def test_deleted_middle_version_gap_fails_before_successor_dml(self) -> None:
+        first = candidate(0)
+        self.write(first)
+        second = replace(candidate(1), name=first.name, expected_head_version=1)
+        self.write(second)
+        third = replace(candidate(2), name=first.name, expected_head_version=2)
+        self.write(third)
+        self.store._connection.execute(
+            "DELETE FROM artifact_versions WHERE artifact_id = ?",
+            (second.artifact_id,),
+        )
+        successor = replace(
+            candidate(3, content=b"gap-successor"),
+            name=first.name,
+            expected_head_version=3,
+        )
+        before = self.counts()
+        with self.assertRaises(_ResultArtifactIntegrityError):
+            self.write(successor)
+        self.assertEqual(self.counts(), before)
+        self.assertIsNone(
+            self.store._connection.execute(
+                "SELECT digest FROM artifact_blobs WHERE digest = ?",
+                (successor.blob_digest,),
+            ).fetchone()
+        )
+
     def test_fixed_write_error_detaches_content_bearing_internal_traceback_frames(self) -> None:
         first = candidate(0, content=b"private-content-canary")
         self.write(first)
@@ -733,6 +801,58 @@ class ResultArtifactConcurrentWriterTests(unittest.TestCase):
             finally:
                 for store in stores:
                     store.close()
+
+
+@unittest.skipUnless(hasattr(os, "kill") and hasattr(signal, "SIGKILL"), "requires POSIX")
+class ResultArtifactCrashRollbackTests(unittest.TestCase):
+    def test_process_exit_and_sigkill_leave_no_partial_artifact_transaction(self) -> None:
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as tempdir:
+            for mode in ("exit", "kill"):
+                with self.subTest(mode=mode):
+                    path = str(Path(tempdir) / f"result-artifact-{mode}.sqlite3")
+                    parent_channel, child_channel = context.Pipe(duplex=False)
+                    process = context.Process(
+                        target=crash_result_artifact_owner_transaction,
+                        args=(path, child_channel, mode),
+                    )
+                    process.start()
+                    child_channel.close()
+                    try:
+                        self.assertTrue(parent_channel.poll(10.0), "crash probe timed out")
+                        self.assertEqual(parent_channel.recv(), ("written", mode))
+                        if mode == "kill":
+                            os.kill(process.pid, signal.SIGKILL)
+                        process.join(10.0)
+                        self.assertFalse(process.is_alive(), "crash probe did not exit")
+                        expected_exitcode = 73 if mode == "exit" else -signal.SIGKILL
+                        self.assertEqual(process.exitcode, expected_exitcode)
+                    finally:
+                        parent_channel.close()
+                        if process.is_alive():
+                            process.kill()
+                            process.join(2.0)
+
+                    recovered = SQLiteEventStore(path)
+                    try:
+                        self.assertEqual(
+                            recovered._connection.execute(
+                                "SELECT count(*) FROM artifact_blobs"
+                            ).fetchone()[0],
+                            0,
+                        )
+                        self.assertEqual(
+                            recovered._connection.execute(
+                                "SELECT count(*) FROM artifact_versions"
+                            ).fetchone()[0],
+                            0,
+                        )
+                        self.assertEqual(
+                            recovered._connection.execute("PRAGMA integrity_check").fetchone()[0],
+                            "ok",
+                        )
+                    finally:
+                        recovered.close()
 
 
 if __name__ == "__main__":
