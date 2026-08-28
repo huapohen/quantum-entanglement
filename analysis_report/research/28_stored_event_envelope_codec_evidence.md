@@ -162,8 +162,9 @@ snapshot 与 raw row 独立重算并比较，durable authority 只能来自完�
 | CPython 3.13.9 (`/Users/lwblx/anaconda3/bin/python3.13`) | 1/1 vector verified |
 
 同时修复了两个会让 Python 3.9 正常 package import 在 codec 加载前失败的运行时 PEP 604 type alias。
-该修复合理改变了受保护的 provider-bundle suite source digest，已独立刷新到
-`a14ef986…a50368` 并通过 fresh-process/hash-seed verifier。
+该修复合理改变了受保护的 provider-bundle suite source digest，先独立刷新到
+`a14ef986…a50368`；锁定 Ruff 0.16.3 的最终纯格式封板又把当前 digest 刷新为
+`9e76f826…1a21ae0`，两次均通过 fresh-process/hash-seed verifier。
 
 CI 新增一个无第三方依赖的 3.9/3.12/3.13 Golden job；未来 pull request 或 main push 会继续阻止
 跨解释器漂移。本批三版本只声明 Golden verifier 通过，不把 3.9/3.12 扩大为本批全仓测试结论。
