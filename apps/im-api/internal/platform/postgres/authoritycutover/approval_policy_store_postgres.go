@@ -16,13 +16,19 @@ import (
 )
 
 const (
-	ApprovalPolicyControlStoreSchemaFormat         = "wanwork.im.postgres-approval-policy-control-store/1"
-	approvalPolicyControlStoreContractDigestDomain = "wanwork.im/postgres-approval-policy-control-store-contract/1\n"
-	approvalPolicyControlStoreSchemaName           = "wanwork_policy_control"
-	approvalPolicyControlStoreIdentityFunction     = "read_store_identity"
-	approvalPolicyControlStoreReadFunction         = "read_approval_policy_state"
-	approvalPolicyControlStoreActivateFunction     = "compare_and_activate_approval_policy"
-	approvalPolicyControlStoreCleanupTimeout       = 5 * time.Second
+	ApprovalPolicyControlStoreSchemaFormat           = "wanwork.im.postgres-approval-policy-control-store/1"
+	ApprovalPolicyControlStoreSchemaFormatV2         = "wanwork.im.postgres-approval-policy-control-store/2"
+	approvalPolicyControlStoreContractDigestDomain   = "wanwork.im/postgres-approval-policy-control-store-contract/1\n"
+	approvalPolicyControlStoreContractDigestDomainV2 = "wanwork.im/postgres-approval-policy-control-store-contract/2\n"
+	approvalPolicyControlStoreSchemaName             = "wanwork_policy_control"
+	approvalPolicyControlStoreIdentityFunction       = "read_store_identity"
+	approvalPolicyControlStoreReadFunction           = "read_approval_policy_state"
+	approvalPolicyControlStoreActivateFunction       = "compare_and_activate_approval_policy"
+	approvalPolicyControlStoreFenceReadFunction      = "read_approval_execution_fence"
+	approvalPolicyControlStoreFenceOpenFunction      = "compare_and_open_approval_execution_fence"
+	approvalPolicyControlStoreAdmissionFunction      = "approval_execution_admission_is_valid"
+	approvalPolicyControlStoreTargetLockSeed         = int64(7318470027)
+	approvalPolicyControlStoreCleanupTimeout         = 5 * time.Second
 )
 
 var (
@@ -31,7 +37,9 @@ var (
 )
 
 type ApprovalPolicyControlStoreExpectation struct {
+	ControlActivatorRole          string
 	ControlDatabase               string
+	ControlFencerRole             string
 	ControlLoginRole              string
 	ControlOwnerRole              string
 	ControlReaderRole             string
@@ -56,6 +64,7 @@ type PostgresApprovalPolicyActivationStore struct {
 	expectation     ApprovalPolicyControlStoreExpectation
 	namespace       ApprovalPolicyNamespace
 	pool            *pgxpool.Pool
+	schemaVersion   uint8
 	verifyTransport approvalPolicyControlStoreTransportVerifier
 }
 
@@ -74,6 +83,49 @@ func newPostgresApprovalPolicyActivationStore(
 	if pool == nil || verifyTransport == nil || !validApprovalPolicyControlStoreExpectation(expectation) {
 		return nil, ErrInvalidPostgresApprovalPolicyStore
 	}
+	return newPostgresApprovalPolicyActivationStoreVersion(
+		pool,
+		expectation,
+		verifyTransport,
+		1,
+	)
+}
+
+func NewPostgresApprovalPolicyActivationStoreV2(
+	pool *pgxpool.Pool,
+	expectation ApprovalPolicyControlStoreExpectation,
+) (*PostgresApprovalPolicyActivationStore, error) {
+	return newPostgresApprovalPolicyActivationStoreV2(
+		pool,
+		expectation,
+		verifyClusterTLSTransport,
+	)
+}
+
+func newPostgresApprovalPolicyActivationStoreV2(
+	pool *pgxpool.Pool,
+	expectation ApprovalPolicyControlStoreExpectation,
+	verifyTransport approvalPolicyControlStoreTransportVerifier,
+) (*PostgresApprovalPolicyActivationStore, error) {
+	if pool == nil || verifyTransport == nil ||
+		!validApprovalPolicyControlStoreExpectationV2(expectation) ||
+		expectation.ControlLoginRole != expectation.ControlActivatorRole {
+		return nil, ErrInvalidPostgresApprovalPolicyStore
+	}
+	return newPostgresApprovalPolicyActivationStoreVersion(
+		pool,
+		expectation,
+		verifyTransport,
+		2,
+	)
+}
+
+func newPostgresApprovalPolicyActivationStoreVersion(
+	pool *pgxpool.Pool,
+	expectation ApprovalPolicyControlStoreExpectation,
+	verifyTransport approvalPolicyControlStoreTransportVerifier,
+	schemaVersion uint8,
+) (*PostgresApprovalPolicyActivationStore, error) {
 	return &PostgresApprovalPolicyActivationStore{
 		expectation: expectation,
 		namespace: ApprovalPolicyNamespace{
@@ -81,6 +133,7 @@ func newPostgresApprovalPolicyActivationStore(
 			TargetDigest: digestApprovalPolicyTarget(expectation.PolicyTarget),
 		},
 		pool:            pool,
+		schemaVersion:   schemaVersion,
 		verifyTransport: verifyTransport,
 	}, nil
 }
@@ -345,6 +398,32 @@ func validApprovalPolicyControlStoreExpectation(
 		expectation.ControlSystemIdentifierDigest != expectation.PolicyTarget.SystemIdentifierDigest
 }
 
+func validApprovalPolicyControlStoreExpectationV2(
+	expectation ApprovalPolicyControlStoreExpectation,
+) bool {
+	if !validApprovalPolicyControlStoreExpectation(expectation) ||
+		!canonicalIdentity(expectation.ControlActivatorRole) ||
+		!canonicalIdentity(expectation.ControlFencerRole) {
+		return false
+	}
+	roles := []string{
+		expectation.ControlOwnerRole,
+		expectation.ControlReaderRole,
+		expectation.ControlActivatorRole,
+		expectation.ControlFencerRole,
+	}
+	for left := range roles {
+		for right := left + 1; right < len(roles); right++ {
+			if roles[left] == roles[right] {
+				return false
+			}
+		}
+	}
+	return expectation.ControlLoginRole == expectation.ControlReaderRole ||
+		expectation.ControlLoginRole == expectation.ControlActivatorRole ||
+		expectation.ControlLoginRole == expectation.ControlFencerRole
+}
+
 func validApprovalPolicyExpectedHead(
 	head ApprovalPolicyHead,
 	namespace ApprovalPolicyNamespace,
@@ -377,6 +456,29 @@ type approvalPolicyControlStoreContract struct {
 	ReaderFunctions             []string `json:"readerFunctions"`
 	Schema                      string   `json:"schema"`
 	SchemaFormat                string   `json:"schemaFormat"`
+}
+
+type approvalPolicyControlStoreContractV2 struct {
+	ActivateFunction           string              `json:"activateFunction"`
+	ActivateFunctionArguments  []string            `json:"activateFunctionArguments"`
+	ActivationRecordFormat     string              `json:"activationRecordFormat"`
+	AdmissionFunction          string              `json:"admissionFunction"`
+	AdmissionMaximumBytes      int                 `json:"admissionMaximumBytes"`
+	AttemptRecordFormat        string              `json:"attemptRecordFormat"`
+	FenceOpenFunction          string              `json:"fenceOpenFunction"`
+	FenceOpenFunctionArguments []string            `json:"fenceOpenFunctionArguments"`
+	FenceReadFunction          string              `json:"fenceReadFunction"`
+	FenceReadFunctionArguments []string            `json:"fenceReadFunctionArguments"`
+	FenceReadFunctionResult    []string            `json:"fenceReadFunctionResult"`
+	FenceRecordFormat          string              `json:"fenceRecordFormat"`
+	IdentityFunction           string              `json:"identityFunction"`
+	PolicyReadFunction         string              `json:"policyReadFunction"`
+	RoleFunctions              map[string][]string `json:"roleFunctions"`
+	Schema                     string              `json:"schema"`
+	SchemaFormat               string              `json:"schemaFormat"`
+	Tables                     []string            `json:"tables"`
+	TargetLockScope            string              `json:"targetLockScope"`
+	TargetLockSeed             int64               `json:"targetLockSeed"`
 }
 
 func CurrentApprovalPolicyControlStoreSchemaDigest() string {
@@ -415,6 +517,73 @@ func CurrentApprovalPolicyControlStoreSchemaDigest() string {
 	}
 	return domainSeparatedDigest(
 		approvalPolicyControlStoreContractDigestDomain,
+		bytes.TrimSuffix(output.Bytes(), []byte("\n")),
+	)
+}
+
+func CurrentApprovalPolicyControlStoreSchemaDigestV2() string {
+	contract := approvalPolicyControlStoreContractV2{
+		ActivateFunction: approvalPolicyControlStoreActivateFunction,
+		ActivateFunctionArguments: []string{
+			"text", "text", "bigint", "text", "text", "bigint", "text", "text", "bytea", "bytea",
+		},
+		ActivationRecordFormat: ApprovalPolicyActivationRecordFormat,
+		AdmissionFunction:      approvalPolicyControlStoreAdmissionFunction,
+		AdmissionMaximumBytes:  maximumApprovalExecutionAdmissionBytes,
+		AttemptRecordFormat:    ApprovalExecutionAttemptRecordFormat,
+		FenceOpenFunction:      approvalPolicyControlStoreFenceOpenFunction,
+		FenceOpenFunctionArguments: []string{
+			"text", "text", "bigint", "text", "text", "text", "text", "text", "text", "text",
+			"timestamptz", "bytea",
+		},
+		FenceReadFunction:          approvalPolicyControlStoreFenceReadFunction,
+		FenceReadFunctionArguments: []string{"text", "text", "text"},
+		FenceReadFunctionResult: []string{
+			"state_status text", "fence_epoch bigint", "opened_at timestamptz",
+			"token_digest text", "canonical_admission bytea",
+		},
+		FenceRecordFormat:  ApprovalExecutionFenceRecordFormat,
+		IdentityFunction:   approvalPolicyControlStoreIdentityFunction,
+		PolicyReadFunction: approvalPolicyControlStoreReadFunction,
+		RoleFunctions: map[string][]string{
+			"activator": {
+				approvalPolicyControlStoreActivateFunction,
+				approvalPolicyControlStoreIdentityFunction,
+				approvalPolicyControlStoreReadFunction,
+			},
+			"fencer": {
+				approvalPolicyControlStoreFenceOpenFunction,
+				approvalPolicyControlStoreFenceReadFunction,
+				approvalPolicyControlStoreIdentityFunction,
+				approvalPolicyControlStoreReadFunction,
+			},
+			"reader": {
+				approvalPolicyControlStoreFenceReadFunction,
+				approvalPolicyControlStoreIdentityFunction,
+				approvalPolicyControlStoreReadFunction,
+			},
+		},
+		Schema:       approvalPolicyControlStoreSchemaName,
+		SchemaFormat: ApprovalPolicyControlStoreSchemaFormatV2,
+		Tables: []string{
+			"approval_execution_fence_counter",
+			"approval_execution_fence_head",
+			"approval_execution_fence_record",
+			"approval_policy_activation_record",
+			"approval_policy_archive",
+			"approval_policy_head",
+		},
+		TargetLockScope: "physical_target_digest",
+		TargetLockSeed:  approvalPolicyControlStoreTargetLockSeed,
+	}
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(contract); err != nil {
+		return ""
+	}
+	return domainSeparatedDigest(
+		approvalPolicyControlStoreContractDigestDomainV2,
 		bytes.TrimSuffix(output.Bytes(), []byte("\n")),
 	)
 }
