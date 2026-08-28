@@ -14,20 +14,20 @@ import (
 const maxProviderMetadataBytes = 1024
 
 type userProjectionWire struct {
-	SchemaVersion     int    `json:"schemaVersion"`
-	SubjectType       string `json:"subjectType"`
-	PlatformActorID   string `json:"platformActorId"`
 	AgentDefinitionID string `json:"agentDefinitionId,omitempty"`
 	AgentVersion      string `json:"agentVersion,omitempty"`
+	PlatformActorID   string `json:"platformActorId"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	SubjectType       string `json:"subjectType"`
 }
 
 type conversationProjectionWire struct {
-	SchemaVersion          int    `json:"schemaVersion"`
-	ConversationType       string `json:"conversationType"`
-	PlatformConversationID string `json:"platformConversationId"`
-	ParentConversationID   string `json:"parentConversationId,omitempty"`
-	RootMessageID          string `json:"rootMessageId,omitempty"`
 	AgentInvocationID      string `json:"agentInvocationId,omitempty"`
+	ConversationType       string `json:"conversationType"`
+	ParentConversationID   string `json:"parentConversationId,omitempty"`
+	PlatformConversationID string `json:"platformConversationId"`
+	RootMessageID          string `json:"rootMessageId,omitempty"`
+	SchemaVersion          int    `json:"schemaVersion"`
 }
 
 func EncodeUserProjection(projection UserProjection) (string, error) {
@@ -162,6 +162,8 @@ func DecodeConversationProjection(raw string) (ConversationProjection, error) {
 }
 
 func encodeCanonical(wire any) (string, error) {
+	// Wire fields are declared in lexicographic key order, giving this bounded flat schema the same
+	// deterministic ordering rule as the relevant RFC 8785/JCS object-key subset.
 	encoded, err := json.Marshal(wire)
 	if err != nil {
 		return "", ErrInvalidProviderMetadata
