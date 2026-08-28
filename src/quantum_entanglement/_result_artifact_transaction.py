@@ -27,6 +27,7 @@ _MAX_RESULT_ARTIFACT_CONTENT_BYTES = 64 * 1024 * 1024
 _MAX_RESULT_ARTIFACT_METADATA_BYTES = 1_048_576
 _RESULT_ARTIFACT_HISTORY_FETCH_BATCH_SIZE = 64
 _RESULT_ARTIFACT_TRANSACTION_TOKEN = object()
+_RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN = object()
 _MISSING_RESULT_ARTIFACT_SCHEMA_DIGEST = object()
 _RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX = "qe_result_artifact_clock_"
 
@@ -345,6 +346,119 @@ class _PreparedResultArtifactBatch:
         if metadata_bytes > _MAX_RESULT_ARTIFACT_METADATA_BYTES:
             raise ValueError("prepared result Artifact metadata exceeds its batch limit")
         _validate_batch_identities(self.items)
+
+
+class _ResultArtifactMaterializationPlan:
+    """One transaction-bound, single-use plan produced by read-only preflight."""
+
+    __slots__ = (
+        "__active",
+        "__batch",
+        "__before_total_changes",
+        "__claim_sqlite_callbacks",
+        "__connection",
+        "__process_guard",
+        "__savepoint_name",
+        "__schema_snapshot",
+    )
+
+    def __init__(
+        self,
+        *,
+        connection: sqlite3.Connection,
+        batch: _PreparedResultArtifactBatch,
+        before_total_changes: int,
+        schema_snapshot: tuple[int, tuple[tuple[str, str, str, int, str | None], ...]],
+        savepoint_name: str | None,
+        process_guard: Callable[[], None],
+        claim_sqlite_callbacks: Callable[[str], None],
+        token: object,
+    ) -> None:
+        if type(self) is not _ResultArtifactMaterializationPlan:
+            raise TypeError("result Artifact materialization plan must be exact")
+        if token is not _RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN:
+            raise TypeError("result Artifact materialization plan constructor is private")
+        if type(connection) is not sqlite3.Connection or not connection.in_transaction:
+            raise RuntimeError("result Artifact materialization plan requires an open transaction")
+        if type(batch) is not _PreparedResultArtifactBatch:
+            raise TypeError("result Artifact materialization plan requires an exact batch")
+        batch.verify()
+        if type(before_total_changes) is not int or before_total_changes < 0:
+            raise ValueError("result Artifact materialization change baseline is invalid")
+        if not callable(process_guard) or not callable(claim_sqlite_callbacks):
+            raise TypeError("result Artifact materialization plan callbacks are invalid")
+        if (savepoint_name is None) != (not batch.items):
+            raise ValueError("result Artifact materialization plan savepoint is invalid")
+        self.__connection = connection
+        self.__batch = batch
+        self.__before_total_changes = before_total_changes
+        self.__schema_snapshot = schema_snapshot
+        self.__savepoint_name = savepoint_name
+        self.__process_guard = process_guard
+        self.__claim_sqlite_callbacks = claim_sqlite_callbacks
+        self.__active = True
+
+    def _take(
+        self,
+        *,
+        token: object,
+    ) -> tuple[
+        sqlite3.Connection,
+        _PreparedResultArtifactBatch,
+        int,
+        tuple[int, tuple[tuple[str, str, str, int, str | None], ...]],
+        Callable[[], None],
+    ]:
+        if type(self) is not _ResultArtifactMaterializationPlan:
+            raise TypeError("result Artifact materialization plan must be exact")
+        if token is not _RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN:
+            raise TypeError("result Artifact materialization plan consumption is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("result Artifact materialization plan is no longer active")
+        connection = self.__connection
+        batch = self.__batch
+        process_guard = self.__process_guard
+        _run_process_guard(process_guard)
+        if type(connection) is not sqlite3.Connection or not connection.in_transaction:
+            self.__active = False
+            raise _ResultArtifactTransactionContinuityError(
+                "result Artifact materialization transaction is no longer open"
+            )
+        batch.verify()
+        try:
+            if self.__savepoint_name is not None:
+                _release_result_artifact_clock_savepoint(
+                    connection,
+                    self.__savepoint_name,
+                    process_guard=process_guard,
+                    claim_sqlite_callbacks=self.__claim_sqlite_callbacks,
+                )
+        finally:
+            self.__active = False
+        return (
+            connection,
+            batch,
+            self.__before_total_changes,
+            self.__schema_snapshot,
+            process_guard,
+        )
+
+    def _discard(self, *, token: object) -> None:
+        self._take(token=token)
+
+    def _is_active(self, *, token: object) -> bool:
+        if token is not _RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN:
+            raise TypeError("result Artifact materialization plan inspection is private")
+        return type(self) is _ResultArtifactMaterializationPlan and self.__active is True
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("result Artifact materialization plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("result Artifact materialization plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("result Artifact materialization plans cannot be serialized")
 
 
 def _validate_batch_identities(items: tuple[_PreparedResultArtifact, ...]) -> None:
@@ -1224,30 +1338,41 @@ def _verify_result_artifact_version(
         raise _ResultArtifactIntegrityError("result Artifact metadata bytes differ")
 
 
-def _write_prepared_result_artifacts_in_transaction_body(
+def _preflight_prepared_result_artifacts_in_transaction_body(
     connection: sqlite3.Connection,
     batch: _PreparedResultArtifactBatch,
     *,
-    clock: Callable[[], str],
     process_guard: Callable[[], None],
     claim_sqlite_callbacks: Callable[[str], None],
-) -> tuple[ScopedInvocationResultArtifactV2, ...]:
+) -> _ResultArtifactMaterializationPlan:
     _run_process_guard(process_guard)
     if type(connection) is not sqlite3.Connection or not connection.in_transaction:
-        raise RuntimeError("result Artifact write requires an exact open SQLite transaction")
+        raise RuntimeError("result Artifact preflight requires an exact open SQLite transaction")
     if type(batch) is not _PreparedResultArtifactBatch:
-        raise TypeError("result Artifact write requires an exact prepared batch")
+        raise TypeError("result Artifact preflight requires an exact prepared batch")
     batch.verify()
-    if not callable(clock):
-        raise TypeError("result Artifact transaction clock must be callable")
     if not callable(process_guard):
         raise TypeError("result Artifact process guard must be callable")
     if not callable(claim_sqlite_callbacks):
         raise TypeError("result Artifact SQLite callback claim must be callable")
     _require_exact_connection_codec(connection)
     schema_snapshot = _result_artifact_schema_snapshot(connection, process_guard)
+    _run_process_guard(process_guard)
+    before_total_changes = connection.total_changes
+    _run_process_guard(process_guard)
+    if type(before_total_changes) is not int or before_total_changes < 0:
+        raise _ResultArtifactIntegrityError("SQLite total-change counter is invalid")
     if not batch.items:
-        return ()
+        return _ResultArtifactMaterializationPlan(
+            connection=connection,
+            batch=batch,
+            before_total_changes=before_total_changes,
+            schema_snapshot=schema_snapshot,
+            savepoint_name=None,
+            process_guard=process_guard,
+            claim_sqlite_callbacks=claim_sqlite_callbacks,
+            token=_RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN,
+        )
     for item in batch.items:
         _run_process_guard(process_guard)
         _preflight_result_artifact_identity(connection, item, process_guard)
@@ -1260,11 +1385,6 @@ def _write_prepared_result_artifacts_in_transaction_body(
         if existing_blob is not None:
             _verify_result_artifact_blob(existing_blob, item, fresh=False, created_at=None)
         _run_process_guard(process_guard)
-    _run_process_guard(process_guard)
-    before_total_changes = connection.total_changes
-    _run_process_guard(process_guard)
-    if type(before_total_changes) is not int:
-        raise _ResultArtifactIntegrityError("SQLite total-change counter is invalid")
     savepoint_name = f"{_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX}{secrets.token_hex(16)}"
     claim_sqlite_callbacks(savepoint_name)
     _guarded_execute(
@@ -1272,22 +1392,63 @@ def _write_prepared_result_artifacts_in_transaction_body(
         process_guard,
         f"SAVEPOINT {savepoint_name}",
     )
-    try:
-        _run_process_guard(process_guard)
-        created_at = clock()
-        _run_process_guard(process_guard)
-        created_at = _canonical_result_artifact_timestamp(created_at, persisted=False)
-        _run_process_guard(process_guard)
-    finally:
-        _release_result_artifact_clock_savepoint(
+    return _ResultArtifactMaterializationPlan(
+        connection=connection,
+        batch=batch,
+        before_total_changes=before_total_changes,
+        schema_snapshot=schema_snapshot,
+        savepoint_name=savepoint_name,
+        process_guard=process_guard,
+        claim_sqlite_callbacks=claim_sqlite_callbacks,
+        token=_RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN,
+    )
+
+
+@contextmanager
+def _preflight_prepared_result_artifacts_in_transaction(
+    connection: sqlite3.Connection,
+    batch: _PreparedResultArtifactBatch,
+    *,
+    process_guard: Callable[[], None],
+) -> Iterator[_ResultArtifactMaterializationPlan]:
+    """Yield one opaque, transaction-bound plan without persistent DML or clock access."""
+
+    if not callable(process_guard):
+        raise TypeError("result Artifact process guard must be callable")
+    with _result_artifact_process_progress_fence(
+        connection,
+        process_guard,
+    ) as claim_sqlite_callbacks:
+        plan = _preflight_prepared_result_artifacts_in_transaction_body(
             connection,
-            savepoint_name,
+            batch,
             process_guard=process_guard,
             claim_sqlite_callbacks=claim_sqlite_callbacks,
         )
+        try:
+            yield plan
+        finally:
+            if plan._is_active(token=_RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN):
+                plan._discard(token=_RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN)
+
+
+def _materialize_prepared_result_artifacts_in_transaction(
+    plan: _ResultArtifactMaterializationPlan,
+    accepted_at: object,
+) -> tuple[ScopedInvocationResultArtifactV2, ...]:
+    """Consume one preflight plan using the result graph's single acceptedAt sample."""
+
+    if type(plan) is not _ResultArtifactMaterializationPlan:
+        raise TypeError("result Artifact materialization requires an exact private plan")
+    created_at = _canonical_result_artifact_timestamp(accepted_at, persisted=False)
+    connection, batch, before_total_changes, schema_snapshot, process_guard = plan._take(
+        token=_RESULT_ARTIFACT_MATERIALIZATION_PLAN_TOKEN
+    )
+    if not batch.items:
+        return ()
     if _result_artifact_schema_snapshot(connection, process_guard) != schema_snapshot:
         raise _ResultArtifactIntegrityError(
-            "result Artifact schema changed during clock sampling"
+            "result Artifact schema changed after read-only preflight"
         )
     fresh_blobs = 0
     for item in batch.items:
@@ -1415,16 +1576,23 @@ def _write_prepared_result_artifacts_in_transaction(
     clock: Callable[[], str],
     process_guard: Callable[[], None],
 ) -> tuple[ScopedInvocationResultArtifactV2, ...]:
+    if not callable(clock):
+        raise TypeError("result Artifact transaction clock must be callable")
     if not callable(process_guard):
         raise TypeError("result Artifact process guard must be callable")
-    with _result_artifact_process_progress_fence(
+    with _preflight_prepared_result_artifacts_in_transaction(
         connection,
-        process_guard,
-    ) as claim_sqlite_callbacks:
-        return _write_prepared_result_artifacts_in_transaction_body(
-            connection,
-            batch,
-            clock=clock,
-            process_guard=process_guard,
-            claim_sqlite_callbacks=claim_sqlite_callbacks,
+        batch,
+        process_guard=process_guard,
+    ) as plan:
+        if not batch.items:
+            return _materialize_prepared_result_artifacts_in_transaction(
+                plan, "1970-01-01T00:00:00Z"
+            )
+        _run_process_guard(process_guard)
+        accepted_at = clock()
+        _run_process_guard(process_guard)
+        return _materialize_prepared_result_artifacts_in_transaction(
+            plan,
+            accepted_at,
         )

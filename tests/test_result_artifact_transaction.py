@@ -20,6 +20,8 @@ import quantum_entanglement._result_artifact_transaction as result_artifact_tran
 from quantum_entanglement._result_artifact_transaction import (
     _MAX_RESULT_ARTIFACTS,
     _RESULT_ARTIFACT_TRANSACTION_TOKEN,
+    _materialize_prepared_result_artifacts_in_transaction,
+    _preflight_prepared_result_artifacts_in_transaction,
     _prepare_result_artifact_batch,
     _PreparedResultArtifact,
     _PreparedResultArtifactBatch,
@@ -27,6 +29,7 @@ from quantum_entanglement._result_artifact_transaction import (
     _ResultArtifactConcurrencyError,
     _ResultArtifactConflictError,
     _ResultArtifactIntegrityError,
+    _ResultArtifactMaterializationPlan,
     _ResultArtifactTransactionError,
     _ResultArtifactTransactionHandle,
     _write_prepared_result_artifacts_in_transaction,
@@ -193,6 +196,130 @@ class PreparedResultArtifactBatchTests(unittest.TestCase):
             PreparedSubclass(
                 **_prepare_result_artifact_batch((candidate(),)).items[0].__dict__
             ).verify()
+
+
+class ResultArtifactMaterializationPlanTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.store = SQLiteEventStore(":memory:")
+        self.store._clock = lambda: (_ for _ in ()).throw(AssertionError("clock was called"))
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def test_read_only_preflight_then_materialize_uses_supplied_accepted_at(self) -> None:
+        accepted_at = "2026-08-29T00:02:03.456789Z"
+        first = candidate(0)
+        second = candidate(1, content=b"second-result-content")
+        batch = _prepare_result_artifact_batch((first, second))
+
+        with self.store._result_artifact_transaction() as handle:
+            connection = self.store._connection_for_result_artifact_transaction(handle)
+            before_total_changes = connection.total_changes
+            with _preflight_prepared_result_artifacts_in_transaction(
+                connection,
+                batch,
+                process_guard=self.store._require_current_process,
+            ) as plan:
+                self.assertIs(type(plan), _ResultArtifactMaterializationPlan)
+                self.assertNotIn("result-content", repr(plan))
+                self.assertEqual(connection.total_changes, before_total_changes)
+                self.assertEqual(
+                    connection.execute("SELECT count(*) FROM main.artifact_versions").fetchone()[0],
+                    0,
+                )
+                self.assertEqual(
+                    _materialize_prepared_result_artifacts_in_transaction(
+                        plan,
+                        accepted_at,
+                    ),
+                    (first.to_descriptor(), second.to_descriptor()),
+                )
+                with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                    _materialize_prepared_result_artifacts_in_transaction(
+                        plan,
+                        accepted_at,
+                    )
+
+        rows = self.store._connection.execute(
+            "SELECT created_at FROM main.artifact_versions ORDER BY artifact_id"
+        ).fetchall()
+        self.assertEqual(tuple(row[0] for row in rows), (accepted_at, accepted_at))
+
+    def test_unconsumed_plan_is_discarded_without_dml_and_cannot_escape(self) -> None:
+        batch = _prepare_result_artifact_batch((candidate(),))
+        with self.store._result_artifact_transaction() as handle:
+            connection = self.store._connection_for_result_artifact_transaction(handle)
+            before_total_changes = connection.total_changes
+            with _preflight_prepared_result_artifacts_in_transaction(
+                connection,
+                batch,
+                process_guard=self.store._require_current_process,
+            ) as plan:
+                self.assertEqual(connection.total_changes, before_total_changes)
+            self.assertTrue(connection.in_transaction)
+            with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                _materialize_prepared_result_artifacts_in_transaction(
+                    plan,
+                    "2026-08-29T00:02:03.456789Z",
+                )
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_invalid_accepted_at_consumes_no_plan_and_writes_nothing(self) -> None:
+        batch = _prepare_result_artifact_batch((candidate(),))
+        with self.store._result_artifact_transaction() as handle:
+            connection = self.store._connection_for_result_artifact_transaction(handle)
+            before_total_changes = connection.total_changes
+            with _preflight_prepared_result_artifacts_in_transaction(
+                connection,
+                batch,
+                process_guard=self.store._require_current_process,
+            ) as plan:
+                with self.assertRaisesRegex(ValueError, "invalid timestamp"):
+                    _materialize_prepared_result_artifacts_in_transaction(
+                        plan,
+                        "not-a-time",
+                    )
+            self.assertEqual(connection.total_changes, before_total_changes)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_plan_is_opaque_noncopyable_nonserializable_and_private(self) -> None:
+        batch = _prepare_result_artifact_batch((candidate(),))
+        with self.store._result_artifact_transaction() as handle:
+            connection = self.store._connection_for_result_artifact_transaction(handle)
+            with _preflight_prepared_result_artifacts_in_transaction(
+                connection,
+                batch,
+                process_guard=self.store._require_current_process,
+            ) as plan:
+                for operation in (
+                    lambda: copy.copy(plan),
+                    lambda: copy.deepcopy(plan),
+                    lambda: pickle.dumps(plan),
+                ):
+                    with self.subTest(operation=operation):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ):
+                            operation()
+        for name in (
+            "_ResultArtifactMaterializationPlan",
+            "_preflight_prepared_result_artifacts_in_transaction",
+            "_materialize_prepared_result_artifacts_in_transaction",
+        ):
+            with self.subTest(name=name):
+                self.assertNotIn(name, quantum_entanglement.__all__)
+                self.assertFalse(hasattr(quantum_entanglement, name))
 
 
 class ResultArtifactTransactionHandleTests(unittest.TestCase):
@@ -800,6 +927,10 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
                 function_names.append(cursor.tb_frame.f_code.co_name)
                 cursor = cursor.tb_next
             self.assertNotIn("_write_prepared_result_artifacts_in_transaction_body", function_names)
+            self.assertNotIn(
+                "_preflight_prepared_result_artifacts_in_transaction_body",
+                function_names,
+            )
             self.assertNotIn("_preflight_result_artifact_identity", function_names)
             self.assertNotIn("_write_result_artifacts_in_owner_transaction", function_names)
         else:
