@@ -240,6 +240,42 @@
 <header id="title-block-header">
 <h1 class="title">WanWork 原生 IM 实施计划</h1>
 </header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#原生-im-实施计划" id="toc-原生-im-实施计划">原生 IM
+实施计划</a>
+<ul>
+<li><a href="#分支与提交策略" id="toc-分支与提交策略">1.
+分支与提交策略</a></li>
+<li><a href="#阶段" id="toc-阶段">2. 阶段</a>
+<ul>
+<li><a href="#w0研究审计冻结需求架构和审阅空间"
+id="toc-w0研究审计冻结需求架构和审阅空间">W0：研究审计、冻结需求/架构和审阅空间</a></li>
+<li><a href="#w1monorepo-与-go-基础"
+id="toc-w1monorepo-与-go-基础">W1：Monorepo 与 Go 基础</a></li>
+<li><a href="#w2im-domain-与-postgresql"
+id="toc-w2im-domain-与-postgresql">W2：IM Domain 与 PostgreSQL</a></li>
+<li><a href="#w3clerk-与融云-adapter"
+id="toc-w3clerk-与融云-adapter">W3：Clerk 与融云 adapter</a></li>
+<li><a href="#w4agent-store-与-agent-子群"
+id="toc-w4agent-store-与-agent-子群">W4：Agent Store 与
+<code>@Agent</code> 子群</a></li>
+<li><a href="#w5react-webpwa" id="toc-w5react-webpwa">W5：React
+Web/PWA</a></li>
+<li><a href="#w6desktop-与-mobile"
+id="toc-w6desktop-与-mobile">W6：Desktop 与 Mobile</a></li>
+<li><a href="#w7受控集成与审阅交付"
+id="toc-w7受控集成与审阅交付">W7：受控集成与审阅交付</a></li>
+</ul></li>
+<li><a href="#m0-首个不可伪造验收脚本"
+id="toc-m0-首个不可伪造验收脚本">3. M0 首个不可伪造验收脚本</a></li>
+<li><a href="#第一批小提交" id="toc-第一批小提交">4.
+第一批小提交</a></li>
+<li><a href="#持续门禁" id="toc-持续门禁">5. 持续门禁</a></li>
+<li><a href="#停止条件" id="toc-停止条件">6. 停止条件</a></li>
+</ul></li>
+</ul>
+</nav>
 <h1 id="原生-im-实施计划">原生 IM 实施计划</h1>
 <h2 id="分支与提交策略">1. 分支与提交策略</h2>
 <ul>
@@ -346,6 +382,110 @@ isolation 测试通过；Task、Thread、Attempt、Action 与 Acceptance
 <p>PostgreSQL event store 还必须通过 expected-revision
 transaction、crash/reopen、kill-9/restore 和 projection 清库重建；W1
 memory fake 不能代替该门禁。</p>
+<h4 id="w2-当前检查点2026-08-28">W2 当前检查点（2026-08-28）</h4>
+<p>详细工程入口见 <a
+href="W2_POSTGRES_AUTHORITY_CHECKPOINT.md">W2_POSTGRES_AUTHORITY_CHECKPOINT.md</a>，深度证据见
+<code>analysis_report/research/33_postgres_authority_persistence_checkpoint.md</code>。</p>
+<p>当前 code baseline 为 <code>8d662bf</code>，文档 checkpoint
+已独立提交并推送。当前口径必须保留：</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>标记</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[F]</code></td>
+<td><code>0001..0004</code>、22 张业务表、17 张 FORCE RLS 表、PG18
+fail-closed runner、conversation authority repository/UoW 已在
+PostgreSQL 18.6 普通/race 测试中通过。</td>
+</tr>
+<tr>
+<td><code>[C]</code></td>
+<td>保证仅限已登记 schema、当前四类 conversation authority
+repository、同一 PostgreSQL transaction 和测试 runtime-role
+fixture。</td>
+</tr>
+<tr>
+<td><code>[A]</code></td>
+<td>persistence substrate 的结构方向正确，可作为 authenticated
+admission、resolver 和 event/outbox 的底座。</td>
+</tr>
+<tr>
+<td><code>[U]</code></td>
+<td>生产 role/ACL、function-only write、Clerk trusted
+tenant、action-time resolver、service startup、restore/crash 和
+event/outbox 尚未完成。</td>
+</tr>
+</tbody>
+</table>
+<p>已交付的 W2 子集：</p>
+<ul>
+<li>checksummed migration catalog、精确 ledger、PG18 major gate、session
+advisory lock；</li>
+<li>每个新 migration 提交前累计验证全部旧 postcondition；</li>
+<li>fixed <code>search_path</code>、有界 rollback/unlock/close；</li>
+<li>token-aware DDL allowlist，并拒绝
+<code>CREATE TABLE AS SELECT</code>、危险
+DEFAULT、<code>set_config</code>/<code>pg_sleep</code> 等 data-executing
+form；该 policy 仍不是不可信 SQL sandbox；</li>
+<li>authority roots、identity authority、ordinary
+<code>direct/group</code> conversation、RongCloud group binding、
+conversation membership/access、tenant command receipt；</li>
+<li>typed tenant store port、explicit tenant predicates、successor-only
+CAS、ignored-error poison；</li>
+<li>serializable UoW、same-command exact replay、request-digest
+conflict、receipt transaction、commit outcome unknown 的新连接
+readback；</li>
+<li>out-of-band receipt conflict 在 pool handoff 前释放 command advisory
+lock；</li>
+<li>真实 PG18 RLS、schema drift、64 路 exact retry、64 路 single CAS
+winner、rollback、unknown commit 和 runtime immutable-history
+fixture。</li>
+</ul>
+<p>当前禁止宣称：</p>
+<ul>
+<li>W2 已完成；</li>
+<li>生产多租户/授权已完成；</li>
+<li>receipt 实现 provider ACK、完整结果或 exactly-once；</li>
+<li>access boolean 已构成 action-time gate；</li>
+<li>provider binding 证明融云群存在或消息送达；</li>
+<li><code>agent_thread</code>、message、Task、Artifact、Acceptance 或
+production event store 已持久化。</li>
+</ul>
+<h4 id="w2-接真实-im-前的-p0-顺序">W2 接真实 IM 前的 P0 顺序</h4>
+<ol type="1">
+<li><code>0005</code>：function-only revision writes + non-login
+owner/migrator/runtime + exact named role/table/schema/ function ACL
+manifest；</li>
+<li>Clerk verified claim → realm binding → active principal/tenant
+membership → exact Actor → path consistency 的 trusted request
+context；</li>
+<li>conversation/actor/membership/access active resolver；invoke/publish
+再叠加 installation/mandate/
+capability/budget/Artifact/Acceptance；</li>
+<li>migration/role/function manifest 与真实服务 startup/readiness/DB
+pool composition；</li>
+<li>dump/restore、DB/process restart、kill-9、old binary/future
+schema、role restoration 演练；</li>
+<li>PostgreSQL event store/outbox/projection checkpoint、backfill+live
+与 crash recovery；</li>
+<li>再接 <code>agent_thread</code>、message 与 provider adapter。</li>
+</ol>
+<p>membership FK 只证明 head 存在，不证明 current membership
+active。移除成员的 use case 必须同一 UoW 写
+<code>membership=removed</code> 与 all-false access；resolver
+必须同时检查 active membership 和 permission bit。</p>
+<p>command <code>result_sha256</code> 不能重建 typed
+result。command/digest canonicalization 必须版本化；replay 或 unknown
+resolution 后必须做 typed aggregate readback 与 revision/integrity
+校验。</p>
 <h3 id="w3clerk-与融云-adapter">W3：Clerk 与融云 adapter</h3>
 <p>交付：JWKS verification、identity mapping、W1 user/group strict codec
 的 provider adapter 集成、fake adapter、融云 provider profile/capability
@@ -442,6 +582,22 @@ fields、Unicode/control、128 路 race 与 seeded fuzz）</li>
 <li><code>feat: freeze isolated runtime admission contracts</code></li>
 <li><code>feat: define fenced supervisor receipt protocol</code></li>
 <li><code>test: add volatile isolation supervisor fake</code></li>
+<li><code>feat: add checksummed Postgres authority root migration</code>（<code>8814e8d</code>）</li>
+<li><code>feat/fix: add fail-closed migration runner and cumulative schema invariants</code>
+（<code>9f72aa5</code>、<code>eac2cbb</code>、<code>bd60371</code>、<code>4afe28d</code>、<code>8d662bf</code>）</li>
+<li><code>feat/test: persist identity authority boundaries</code>（<code>457a0e1</code>、<code>d3915ca</code>）</li>
+<li><code>feat/test: persist ordinary conversation and provider routing boundaries</code>
+（<code>54f2ea0</code>、<code>1b9047b</code>、<code>371664e</code>）</li>
+<li><code>feat/test: persist conversation membership/access authority</code>
+（<code>c84f363</code>、<code>8a6e509</code>、<code>9c4a374</code>）</li>
+<li><code>feat: define tenant-bound IM store contracts and repositories</code>
+（<code>24561cc</code>、<code>69a3597</code>、<code>bf4c5d1</code>）</li>
+<li><code>feat/fix: add idempotent tenant UoW and safe receipt-conflict lock lifecycle</code>
+（<code>09511ef</code>、<code>d588695</code>）</li>
+<li><code>docs: checkpoint PostgreSQL authority persistence</code>（33
+号 Markdown/HTML、SVG/PNG 图、W2 工程入口）</li>
+<li><code>feat: restrict runtime writes to fixed database functions</code>（下一批；不得把
+raw table grants 保留为 production contract）</li>
 </ol>
 <p>任何一个条目若同时包含合同、实现、迁移、故障矩阵和
 UI，应继续拆成小提交；列表是顺序约束， 不是要求把一整项压成一个大
