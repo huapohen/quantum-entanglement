@@ -65,8 +65,11 @@ Remote connections do not accept the insecure-local exception and must pass auth
 strict connection policy requires an explicit remote password; rejects implicit endpoint/identity fields,
 `sslmode=require/prefer`, multi-host or fallback endpoints, raw service/pass files, session parameters, and
 pgx/pgxpool query/cache/lifecycle overrides; and rejects presence of every pgx-recognized `PG*` environment
-variable, including empty values. Its canonical parse suppresses default `.pgpass`/client-certificate adoption,
+variable plus `SSL_CERT_FILE/SSL_CERT_DIR`, including empty values. It rejects malformed raw query pairs instead
+of silently dropping them. Its canonical parse suppresses default `.pgpass`/client-certificate adoption,
 compares the final host/port/database/login/password exactly, and binds the configured timeout to `DialFunc`.
+Without explicit `sslrootcert`, remote TLS uses the reviewed host OS trust store; that store is host TCB, not an
+application-attested exact CA digest, and still requires a production remote-TLS E2E before deployment.
 
 Runtime endpoints:
 
@@ -93,7 +96,7 @@ command is not yet a complete production bootstrap or IaC replacement.
 
 ## Current PostgreSQL authority subset
 
-At code baseline `2d0c4a0`, `internal/platform/postgres` contains checksummed migrations `0001..0005`, 22
+At code baseline `53dd38b`, `internal/platform/postgres` contains checksummed migrations `0001..0005`, 22
 authority tables, 17 FORCE RLS tables, tenant-bound repositories/UoW, and five fixed `SECURITY DEFINER` write
 functions. Conversation, provider-binding, membership, access, and command-receipt writes go through those
 functions. The tested `NOINHERIT` runtime login can explicitly `SET ROLE` only to its exact runtime group; that

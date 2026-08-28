@@ -4,9 +4,9 @@
 >
 > 分支：`dev_wanwork_quantum_entanglement`（未合并 `main`）
 >
-> 最终代码证据基线：`2d0c4a069ef016c085541b3ec26426ccd6ace70b`
+> 最终代码证据基线：`53dd38b62afe9530a9f9ea593561619621778ee4`
 >
-> 本批提交范围：`03cc94e^..2d0c4a0`（25 个小提交；17 个代码/安全提交，8 个文档/证据提交）
+> 本批提交范围：`03cc94e^..53dd38b`（30 个小提交；19 个代码/安全/测试/运维提交，11 个文档/证据提交）
 >
 > 上一增量检查点：`analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md`
 >
@@ -25,7 +25,8 @@ authority；但当时 API 进程仍不创建数据库连接，exact validator �
 1. `AuthorityAccessManifest` 现在同时绑定明确数据库名，并可在 runtime credential 下执行完整 exact
    catalog 验证；
 2. 新增 strict connection policy：原始 DSN 只允许连接、身份、credential 与 TLS keys；database、login、
-   password、host、port 与 transport 必须精确；24 个 pgx `PG*` 变量只要存在（包括空值）就拒绝；
+   password、host、port 与 transport 必须精确；malformed raw query 整体拒绝；24 个 pgx `PG*` 和两个
+   system-root override 变量只要存在（包括空值）就拒绝；
 3. 新增 opaque attested runtime pool：每条物理连接在进入池前完成初始登录身份检查、`SET ROLE`、session
    baseline 与完整 exact validation；每次借出前再检查 session contamination；
 4. `imstore.NewUnitOfWork` 的生产构造器不再接受任意 raw `*pgxpool.Pool`，owner/migrator pool 不能从公开
@@ -64,6 +65,7 @@ authority；但当时 API 进程仍不创建数据库连接，exact validator �
 | `[F]` | manifest JSON 未知字段、尾随 JSON、非 canonical database/role、重复/交叉登录角色均拒绝。 |
 | `[F]` | connection policy 拒绝 keyword DSN、隐式 user/host/port/database/sslmode、query identity override、runtime params、service/passfile、pgx query-mode/cache 与 pgxpool lifecycle 参数。远程 URL 必须显式携带非空 password；passwordless 只允许显式开启的 loopback/Unix-socket 测试。 |
 | `[F]` | pgx 识别的 24 个 `PG*` 环境变量按 presence 拒绝，空值也拒绝。规范化连接串强制 `passfile=`，并在未显式配置时强制空 `sslcert/sslkey/sslrootcert`，从而不采用默认 `.pgpass` 或默认客户端证书材料。 |
+| `[F]` | `SSL_CERT_FILE/SSL_CERT_DIR` ambient system-root overrides 按 presence 拒绝；raw query 使用严格 `url.ParseQuery`，malformed pair 不会被静默丢弃。未显式 `sslrootcert` 时仍使用宿主 OS root store，该 store 是 reviewed host TCB，不是应用层 exact CA digest。 |
 | `[F]` | 远程只接纳 verify-full 等价配置；`sslmode=require`、`prefer` downgrade、multi-host/fallback 与远程明文拒绝。明文只允许显式开启且目标为 numeric loopback 或 absolute Unix socket 的本地测试。 |
 | `[F]` | runtime pool 只解析一次规范化 DSN，不再二次解析 raw DSN；最终 host/port/database/login/password 与原始审阅 URL 精确一致，并重建带显式 timeout 的 `DialFunc`。 |
 | `[F]` | `AfterConnect` 先要求 `session_user=current_user=configured runtime login` 和 exact database，再 `SET ROLE runtime`，固定 `search_path=pg_catalog` 与 `application_name=wanwork-im-runtime`，随后运行完整 runtime exact validator。 |
@@ -81,6 +83,7 @@ authority；但当时 API 进程仍不创建数据库连接，exact validator �
 - `[U]` 没有 deterministic ownership/grant cutover plan/executor；首次 schema apply 后的对象转交仍需 DBA 流程；
 - `[U]` 没有 runtime/migration credential rotation、双 credential overlap、旧 session drain、撤销与回滚演练；
 - `[U]` 没有 dump/restore、DB restart、process kill-9、old binary/future schema、rolling upgrade 的生产演练；
+- `[U]` 没有远程 authenticated-TLS 正向 E2E、host trust-store 责任/变更审计或显式 CA digest attestation；
 - `[U]` 当前 route barrier 每个业务请求都执行完整 catalog validation，安全但昂贵；尚未实现带 max-staleness、
   positive-success timestamp 和 drain state 的后台 readiness gate；
 - `[U]` `tenant_id` 仍由内部调用者传入 UoW。GUC 防止 transaction 内串 tenant，但没有证明 tenant 来自
@@ -130,7 +133,8 @@ WANWORK_IM_POSTGRES_RUNTIME_URL（private）
   + host-owned pool/timeouts/local-test flag
     → config.Load
     → connectionpolicy.ParsePool（single canonical parse）
-      → reject all ambient PG* presence
+      → reject all ambient PG* / system-root override presence
+      → reject malformed raw query pairs
       → exact URL endpoint/database/login/password/TLS
       → override implicit passfile/default TLS files
       → reject RuntimeParams + parser-consumed params + raw file/fallback overrides
@@ -209,7 +213,7 @@ API binary 只读取 runtime URL；migration URL 只由 `im-migrate` 读取。AP
 presence-only fail-closed 检查，不读取、不保留也不回显其值。两种 credential 的 lifetime 和进程边界已
 分离。但 first-deploy ownership/grant cutover 尚未自动化，所以当前命令不能被称为完整 production bootstrap。
 
-## 5. 25 个小提交台账
+## 5. 30 个小提交台账
 
 | # | 提交 | 内容 | 边界 |
 |---:|---|---|---|
@@ -238,6 +242,11 @@ presence-only fail-closed 检查，不读取、不保留也不回显其值。两
 | 23 | `5f5cb3e` | 增加 API/runtime/migrator ambient composition 测试 | 审计随后发现空值与默认文件缝隙。 |
 | 24 | `fa9f602` | canonical PostgreSQL parse：presence 拒绝、显式 password、默认文件压制、exact endpoint/credential、受控 DialFunc | passwordless 仅限显式本地测试。 |
 | 25 | `2d0c4a0` | runtime pool 改为单次 canonical parse | 消除 raw DSN 二次解析回流。 |
+| 26 | `e0fc4a1` | Topic 35 与 W2 工程证据更新到 canonical parse | 文档不替代安全复核。 |
+| 27 | `6516c22` | 项目索引和历史检查点口径更新 | Notion Topic 35 仍 local-pending。 |
+| 28 | `6889140` | 更新 Topic 35 SVG/PNG 和 manifest | 图像不冒充运行证据。 |
+| 29 | `657055b` | 更新 Topic 35、项目首页和实施计划 HTML | 随后继续做独立审计。 |
+| 30 | `53dd38b` | 严格拒绝 malformed query 与 ambient system-root override | host OS root store 仍是显式 TCB。 |
 
 ## 6. 验证矩阵与实跑结果
 
@@ -261,6 +270,8 @@ presence-only fail-closed 检查，不读取、不保留也不回显其值。两
 | ACL 修复但未重验 | 不沿用历史 ready | 通过：必须再次完整 Ready |
 | cancelled context / pool exhaustion | bounded `ErrNotReady` | 通过 |
 | 24 个 `PG*` 环境变量（含 empty-presence） | parse 前固定拒绝且不泄露值 | 通过 |
+| `SSL_CERT_FILE/SSL_CERT_DIR`（含 empty-presence） | parse 前固定拒绝 | 通过 |
+| malformed raw query pair | 整体固定拒绝，不静默丢弃 | 通过 |
 | 远程 passwordless URL | 固定拒绝 | 通过 |
 | 显式本地 passwordless 测试 | 允许且 password 保持为空，不采用 passfile | 通过 |
 | 默认 passfile/client TLS 文件设置 | canonical DSN 显式置空，不采用隐式材料 | 通过 |
@@ -294,16 +305,19 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
    credential；
 2. executor 只使用独立 provisioner credential，先 preflight 再 transactionally apply 可事务部分；非事务 DB/role
    操作必须有逐步 receipt 与 reconcile；
-3. 首部署 E2E：empty DB → role/db preflight → migrate → cutover → migration exact validate → runtime Open/Ready；
-4. rotation：new login membership → 双 credential overlap → 新 pool ready → business drain → terminate old sessions →
+3. 冻结 production secret injection/rotation 的平台与运维责任边界；增加真实远程 authenticated-TLS 正向 E2E，
+   不能只依赖当前 numeric-loopback disposable PostgreSQL 18.6；
+4. 首部署 E2E：empty DB → role/db preflight → migrate → cutover → migration exact validate → runtime Open/Ready；
+5. rotation：new login membership → 双 credential overlap → 新 pool ready → business drain → terminate old sessions →
    revoke old membership/CONNECT → exact validate；
-5. drift/cutover 负测：错误 grantor、duplicate membership、old role setting、column ACL、PUBLIC/TEMP/MAINTAIN、
+6. drift/cutover 负测：错误 grantor、duplicate membership、old role setting、column ACL、PUBLIC/TEMP/MAINTAIN、
    stale session；
-6. dump/restore、DB restart、process kill-9、future schema、old binary、rolling shutdown 与 pool exhaustion；
-7. 把当前每请求 full catalog check 改为 host-owned readiness monitor：只缓存最近一次成功结果，绑定 exact manifest
-   digest 与 max staleness；过期/错误/draining 一律 gate closed，业务请求只读 immutable gate snapshot。
+7. dump/restore、DB restart、process kill-9、future schema、old binary、rolling shutdown 与 pool exhaustion；
+8. 把当前每请求 full catalog check 改为 host-owned readiness monitor：只缓存最近一次成功结果，绑定 exact manifest
+   digest 与冻结的 max-staleness 窗口；过期/错误/draining 立即 gate closed。该 snapshot 只证明 dependency
+   readiness，高风险 effect 仍必须独立执行 action-time authorization，不得沿用 readiness cache。
 
-### P0-B：Trusted Clerk tenant 与 Go-native Participant authority
+### P0-B：Trusted human/Agent Participant authority
 
 1. `ClerkCredentialVerifier`：issuer/audience/azp/alg/kid/JWKS TTL/rotation/session status 全矩阵；
 2. server-owned realm → active external binding → human principal → tenant membership → exact Actor；
@@ -311,18 +325,21 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 4. UoW 不再接受 transport 的裸 TenantID；只能从 trusted context 导出受控 tenant operation；
 5. conversation action-time PEP：conversation active + membership active + exact permission，removed member 即使旧 access
    仍 true 也拒绝；
-6. human-member / human-admin / agent-member / agent-admin 四主体 CRUD 矩阵；“一等 Participant”不推导相同权限。
+6. 冻结最小 Agent definition/release/installation/status/revision，并与 Agent Actor 一一绑定；没有 active
+   installation authority 时不得出现 agent-member/agent-admin；
+7. human-member / human-admin / agent-member / agent-admin 四主体 CRUD 矩阵；“一等 Participant”不推导相同权限。
 
-### P1：Agent installation、mention 与独立工作子群
+### P1：Mention、独立工作子群与 provider vertical slice
 
-1. Agent definition/release/installation/status/revision 与 Agent Actor 一一绑定；
-2. Agent 通过融云普通用户投影；禁止 robot-account path；
-3. `agent_thread` persistence：parent/root message/invocation/installation lineage，同 tenant，独立 membership/access；
-4. unique key `(tenant,parent,rootMessage,agentInstallation)`，并发/重放只产生一个 thread/Task/Invocation；
-5. 单 Agent mention 确定性直达；多 Agent 规划结果仍由平台校验；编辑/引用/转发/duplicate callback 入矩阵；
-6. durable inbox/wake 与 lossy Activity/presence 分域；
-7. provider subgroup create/invite 使用 durable command、receipt/readback/unknown reconcile；provisioning 未成功不得启动 Agent；
-8. Go→Python QE 只签发短 TTL、single-use、exact tenant/conversation/Agent/action/audience 的内部调用授权，不序列化
+1. `agent_thread` persistence：parent/root message/invocation/installation lineage，同 tenant，独立 membership/access；
+2. unique key `(tenant,parent,rootMessage,agentInstallation)`，并发/重放只产生一个 thread/Task/Invocation；
+3. 单 Agent mention 确定性直达；多 Agent 规划结果仍由平台校验；编辑/引用/转发/duplicate callback 入矩阵；
+4. durable inbox/wake 与 lossy Activity/presence 分域；
+5. 先实现零网络、`outbound=disabled` 的 provider contract/fake；canonical `agent_thread` 必须先于 provider
+   projection，provider group 不能成为 thread 的事实源；
+6. 只有 PostgreSQL EventStore/outbox、durable command、receipt/readback/unknown reconcile 与 crash recovery
+   通过后，才允许真实 provider 普通 Agent 用户投影、subgroup create/invite/send；provisioning 未成功不得启动 Agent；
+7. Go→Python QE 只签发短 TTL、single-use、exact tenant/conversation/Agent/action/audience 的内部调用授权，不序列化
    Python opaque RequestContext，不把 ActorRef/ext_info 当 authority。
 
 ## 8. 阶段停止条件与验收建议

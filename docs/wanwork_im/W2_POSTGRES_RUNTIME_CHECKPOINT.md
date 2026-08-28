@@ -1,6 +1,6 @@
 # W2 PostgreSQL Attested Runtime Composition 工程检查点
 
-> 当前代码证据基线：`2d0c4a069ef016c085541b3ec26426ccd6ace70b`
+> 当前代码证据基线：`53dd38b62afe9530a9f9ea593561619621778ee4`
 >
 > 当前分支：`dev_wanwork_quantum_entanglement`，未合并 `main`
 >
@@ -60,7 +60,9 @@ GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-migrate
 - 远程 URL 还必须显式携带非空 password；passwordless 只允许显式开启的 loopback/Unix-socket 测试；
 - database 与 login 必须出现在 exact manifest；
 - DSN 只允许 connectivity/credential/TLS keys；
-- pgx 识别的 24 个 `PG*` 环境变量只要存在就拒绝，包括空值；
+- pgx 识别的 24 个 `PG*` 环境变量，以及 Go system-root loader 的
+  `SSL_CERT_FILE/SSL_CERT_DIR`，只要存在就拒绝，包括空值；
+- raw query 使用严格 `url.ParseQuery`；任何 malformed pair 都使整个配置失败，不会被静默丢弃；
 - 拒绝 `role/search_path/options/application_name` 等 session parameters；
 - 拒绝 pgx query-mode/cache 与 pgxpool size/lifetime/health 参数偷渡；
 - 拒绝 service/servicefile/passfile；
@@ -71,6 +73,10 @@ GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-migrate
 - 明文仅允许显式开启的 numeric loopback/absolute Unix socket 本地测试。
 - 最终 host/port/database/login/password 与审阅 URL 精确一致；connect timeout 同时冻结到字段和受控
   `DialFunc`；runtime pool 不再二次解析 raw DSN。
+
+未显式提供 `sslrootcert` 的远程连接使用宿主 OS root store；这是经审阅的 host TCB，不是应用层冻结的
+exact CA digest。两个常见环境覆盖入口已经拒绝，但 production 仍需远程 authenticated-TLS 正向 E2E、
+trust-store 责任边界和变更审计。
 
 ### 3.2 Runtime pool
 
@@ -116,6 +122,8 @@ API 进程环境只要存在 `WANWORK_IM_POSTGRES_MIGRATION_URL` 就在启动前
 - function ACL drift、repair 和 full revalidation；
 - cancellation 与 pool exhaustion；
 - 24 个 ambient `PG*` 变量及 empty-presence 拒绝；
+- `SSL_CERT_FILE/SSL_CERT_DIR` ambient trust override 拒绝；
+- malformed raw query pair 整体拒绝；
 - remote passwordless 拒绝、explicit local passwordless 测试允许；
 - default passfile/client TLS file override 与 single canonical pool parse；
 - API 拒绝 migration URL presence；
@@ -163,31 +171,35 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 5. `test(im): inject grantor and column acl drift`
 6. `feat(im): record cutover receipts and reconcile nontransactional steps`
 7. `test(im): run empty-db migrate-cutover-runtime e2e`
-8. `feat(im): add bounded readiness monitor and max staleness`
-9. `feat(im): expose explicit draining gate state`
-10. `feat(im): stage runtime credential rotation`
-11. `test(im): prove old sessions cannot survive revoke`
-12. `test(im): exercise dump restore restart and rolling shutdown`
+8. `test(im): prove remote authenticated TLS and host trust injection`
+9. `feat(im): add bounded dependency readiness monitor and frozen max staleness`
+10. `test(im): keep high-risk action authorization outside readiness cache`
+11. `feat(im): expose explicit draining gate state`
+12. `feat(im): stage runtime credential rotation`
+13. `test(im): prove old sessions cannot survive revoke`
+14. `test(im): exercise dump restore restart and rolling shutdown`
 
 ### Trusted tenant
 
-13. `feat(im): define Go trusted request context`
-14. `feat(im): verify Clerk JWT and rotating JWKS`
-15. `feat(im): resolve realm binding principal membership and actor`
-16. `test(im): reject every identity and revision drift`
-17. `feat(im): require trusted tenant for persistence operations`
-18. `feat(im): enforce conversation action-time permissions`
-19. `test(im): freeze four-subject participant authorization matrix`
+15. `feat(im): define Go trusted request context`
+16. `feat(im): verify Clerk JWT and rotating JWKS`
+17. `feat(im): resolve realm binding principal membership and actor`
+18. `test(im): reject every identity and revision drift`
+19. `feat(im): require trusted tenant for persistence operations`
+20. `feat(im): enforce conversation action-time permissions`
+21. `feat(im): bind minimal Agent installation authority to Agent Actor`
+22. `test(im): freeze four-subject participant authorization matrix`
 
 ### Mention/thread/provider fake
 
-20. Agent installation authority；
-21. `agent_thread` persistence/independent ACL；
-22. durable mention inbox/dedupe；
-23. single mention deterministic dispatch；
-24. fake provider subgroup receipt/reconcile；
-25. Go→Python single-use narrow authorization；
-26. duplicate/out-of-order/ACK-loss/crash E2E。
+23. `agent_thread` persistence/independent ACL；
+24. durable mention inbox/dedupe；
+25. single mention deterministic dispatch；
+26. zero-network/outbound-disabled fake provider contract；
+27. PostgreSQL EventStore/outbox/crash-recovery gate；
+28. real provider subgroup receipt/reconcile（仅前项通过后）；
+29. Go→Python single-use narrow authorization；
+30. duplicate/out-of-order/ACK-loss/crash E2E。
 
 ## 7. 研究约束
 
