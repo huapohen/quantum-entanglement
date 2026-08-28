@@ -25,6 +25,7 @@ BACKUP_TOPOLOGY_PROFILE_FORMAT = "qe.sqlite-topology-profile/1"
 EVENT_STORE_CORE_PROFILE = "qe.event-store-core/1"
 INVOCATION_ADMISSION_PROFILE = "qe.domain-migration-0004/1"
 NATIVE_IM_INBOX_PROFILE = "qe.domain-migration-0005/1"
+NATIVE_IM_SANDBOX_PROVENANCE_PROFILE = "qe.domain-migration-0006/1"
 PROJECTION_STORE_PROFILE = "qe.projection-store/1"
 REVOCATION_GUARD_PROFILE = "qe.revocation-guard/1"
 LEGACY_MIGRATION_LEDGER_PROFILE = "qe.legacy-migration-ledger/1"
@@ -36,6 +37,7 @@ _DOMAIN_MIGRATION_PROFILE_NAMES = (
     "qe.domain-migration-0003/1",
     INVOCATION_ADMISSION_PROFILE,
     NATIVE_IM_INBOX_PROFILE,
+    NATIVE_IM_SANDBOX_PROVENANCE_PROFILE,
 )
 _PRESENCE_MODE = "atomic"
 _MAX_PROFILE_COUNT = 64
@@ -838,6 +840,33 @@ _DOMAIN_MIGRATION_5 = _profile(
     migration_id=5,
 )
 
+_DOMAIN_MIGRATION_6 = _profile(
+    NATIVE_IM_SANDBOX_PROVENANCE_PROFILE,
+    "native_im_sandbox_provenance",
+    (
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbound_provenance_1",
+            "native_im_inbound_provenance",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_native_im_inbound_provenance_2",
+            "native_im_inbound_provenance",
+            None,
+        ),
+        (
+            "table",
+            "native_im_inbound_provenance",
+            "native_im_inbound_provenance",
+            "63ddb02170dfd6bbe67c9e6502e7df02e4d0b7e1526c87acae5f967ac6bc91c7",
+        ),
+    ),
+    migration_id=6,
+    dependencies=(NATIVE_IM_INBOX_PROFILE,),
+)
+
 _DOMAIN_MIGRATION_2 = _profile(
     _DOMAIN_MIGRATION_PROFILE_NAMES[1],
     "artifacts",
@@ -946,6 +975,7 @@ BACKUP_TOPOLOGY_REGISTRY = TrustedBackupTopologyRegistry(
                 _EVENT_STORE_CORE,
                 _DOMAIN_MIGRATION_4,
                 _DOMAIN_MIGRATION_5,
+                _DOMAIN_MIGRATION_6,
                 _PROJECTION_STORE,
                 _REVOCATION_GUARD,
                 _LEGACY_MIGRATION_LEDGER,
@@ -995,6 +1025,7 @@ __all__ = [
     "EVENT_STORE_CORE_PROFILE",
     "INVOCATION_ADMISSION_PROFILE",
     "NATIVE_IM_INBOX_PROFILE",
+    "NATIVE_IM_SANDBOX_PROVENANCE_PROFILE",
     "LEGACY_MIGRATION_LEDGER_PROFILE",
     "PROJECTION_STORE_PROFILE",
     "REVOCATION_GUARD_PROFILE",

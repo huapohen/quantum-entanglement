@@ -43,6 +43,7 @@ _CORE_TABLES = (
     "native_im_inbound_reads",
     "native_im_inbound_read_events",
     "native_im_inbound_checkpoints",
+    "native_im_inbound_provenance",
     "artifact_blobs",
     "artifact_versions",
     "projection_offsets",

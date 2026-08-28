@@ -5,10 +5,12 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 from quantum_entanglement.agent_runtime import AgentRuntimePort
+from quantum_entanglement.backup import create_sqlite_backup, restore_sqlite_backup
 from quantum_entanglement.native_im import (
     IMCapabilitySnapshotV1,
     IMInboundPageV1,
@@ -26,6 +28,9 @@ from quantum_entanglement.native_im_nonce_store import (
     NativeIMInboxStoreIntegrityError,
     NativeIMNonceStorePoisonedError,
     SQLiteNativeIMInboxStore,
+)
+from quantum_entanglement.native_im_sandbox_provenance import (
+    NativeIMSandboxAdmissionProvenanceV1,
 )
 from quantum_entanglement.plugins import PluginManager
 from quantum_entanglement.runtime import OrchestratorKernel
@@ -50,6 +55,7 @@ OBSERVATION_TABLES = (
     "native_im_inbox_verifications",
     "native_im_inbound_read_events",
     "native_im_inbound_checkpoints",
+    "native_im_inbound_provenance",
 )
 
 
@@ -77,6 +83,39 @@ def raw_verification(**changes: object) -> NativeIMRawVerificationResultV1:
     }
     values.update(changes)
     return NativeIMRawVerificationResultV1(**values)  # type: ignore[arg-type]
+
+
+def admission_provenance(
+    request: IMInboundReadRequestV1,
+    page: IMInboundPageV1,
+    **changes: object,
+) -> NativeIMSandboxAdmissionProvenanceV1:
+    transport_evidence_digest = (
+        page.envelopes[0].event.transport_evidence_digest
+        if page.envelopes
+        else "b" * 64
+    )
+    values: dict[str, object] = {
+        "schema_version": 1,
+        "approval_id": "approval-page-admission-1",
+        "authority_revision": 1,
+        "approval_digest": "2" * 64,
+        "configuration_binding_digest": "3" * 64,
+        "profile_id": "profile-page-admission-1",
+        "profile_revision": PROFILE_REVISION,
+        "profile_digest": PROFILE_DIGEST,
+        "provider_manifest_digest": "4" * 64,
+        "transport_contract_id": "transport-page-admission-v1",
+        "transport_contract_digest": "5" * 64,
+        "mapper_contract_id": "mapper-page-admission-v1",
+        "mapper_contract_digest": "6" * 64,
+        "read_request_digest": request.canonical_digest(),
+        "page_digest": page.canonical_digest(),
+        "transport_evidence_digest": transport_evidence_digest,
+        "mapping_evidence_digest": "7" * 64,
+    }
+    values.update(changes)
+    return NativeIMSandboxAdmissionProvenanceV1(**values)  # type: ignore[arg-type]
 
 
 class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
@@ -119,7 +158,15 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def _admit(self, request=None, snapshot=None, page=None, verification=None, store=None):
+    def _admit(
+        self,
+        request=None,
+        snapshot=None,
+        page=None,
+        verification=None,
+        store=None,
+        provenance=None,
+    ):
         request = request or inbound_read_request()
         snapshot = snapshot or capability()
         page = page or inbound_page(request=request, capability=snapshot)
@@ -128,6 +175,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             snapshot,
             page,
             verification or raw_verification(),
+            provenance or admission_provenance(request, page),
         )
 
     def _assert_no_admitted_observation_rows(self) -> None:
@@ -170,6 +218,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             snapshot,
             page,
             raw_verification(),
+            admission_provenance(request, page),
         )
 
         self.assertIs(type(result), NativeIMInboundPageAdmissionResultV1)
@@ -193,6 +242,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             "native_im_inbound_reads": 1,
             "native_im_inbound_read_events": 1,
             "native_im_inbound_checkpoints": 1,
+            "native_im_inbound_provenance": 1,
         }
         self.assertEqual(
             {table: len(self._rows(table)) for table in expected_counts},
@@ -217,16 +267,21 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         class VerificationSubclass(NativeIMRawVerificationResultV1):
             pass
 
+        class ProvenanceSubclass(NativeIMSandboxAdmissionProvenanceV1):
+            pass
+
         request = inbound_read_request()
         snapshot = capability()
         page = inbound_page(request=request, capability=snapshot)
         verification = raw_verification()
+        provenance = admission_provenance(request, page)
         cases = (
             (
                 object.__new__(RequestSubclass),
                 snapshot,
                 page,
                 verification,
+                provenance,
                 "request must be an exact IMInboundReadRequestV1",
             ),
             (
@@ -234,6 +289,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
                 object.__new__(CapabilitySubclass),
                 page,
                 verification,
+                provenance,
                 "capability must be an exact IMCapabilitySnapshotV1",
             ),
             (
@@ -241,6 +297,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
                 snapshot,
                 object.__new__(PageSubclass),
                 verification,
+                provenance,
                 "page must be an exact IMInboundPageV1",
             ),
             (
@@ -248,7 +305,16 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
                 snapshot,
                 page,
                 object.__new__(VerificationSubclass),
+                provenance,
                 "raw verification must be an exact NativeIMRawVerificationResultV1",
+            ),
+            (
+                request,
+                snapshot,
+                page,
+                verification,
+                object.__new__(ProvenanceSubclass),
+                "provenance must be an exact NativeIMSandboxAdmissionProvenanceV1",
             ),
         )
 
@@ -257,6 +323,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             candidate_capability,
             candidate_page,
             candidate_raw,
+            candidate_provenance,
             message,
         ) in cases:
             with self.subTest(message=message):
@@ -266,6 +333,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
                         candidate_capability,
                         candidate_page,
                         candidate_raw,
+                        candidate_provenance,
                     )
 
     def test_admission_snapshots_hostile_caller_mutation_before_transaction(self) -> None:
@@ -273,6 +341,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         snapshot = capability()
         page = inbound_page(request=request, capability=snapshot)
         verification = raw_verification()
+        provenance = admission_provenance(request, page)
         expected_request = IMInboundReadRequestV1.from_json_bytes(request.canonical_bytes())
         expected_capability = IMCapabilitySnapshotV1.from_json_bytes(snapshot.canonical_bytes())
         expected_page = IMInboundPageV1.from_json_bytes(page.canonical_bytes())
@@ -287,6 +356,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             object.__setattr__(page, "snapshot_token", "mutated-snapshot")
             object.__setattr__(page.envelopes[0].event, "event_id", "mutated-event")
             object.__setattr__(verification, "nonce_digest", "9" * 64)
+            object.__setattr__(provenance, "approval_id", "mutated-approval")
             return real_claim(connection, **kwargs)
 
         with patch.object(
@@ -299,6 +369,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
                 snapshot,
                 page,
                 verification,
+                provenance,
             )
 
         self.assertIs(type(result), NativeIMInboundPageAdmissionResultV1)
@@ -316,6 +387,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             expected_capability,
             expected_page,
             expected_verification,
+            admission_provenance(expected_request, expected_page),
         )
         self.assertEqual(replay.disposition, "observed_replay")
 
@@ -324,6 +396,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         snapshot = capability()
         page = inbound_page(request=request, capability=snapshot)
         verification = raw_verification()
+        provenance = admission_provenance(request, page)
         self.store.prepare_native_im_inbound_read(request)
         self.clock.value = ADMITTED_AT
         protected_tables = (
@@ -348,7 +421,13 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             patch("urllib.request.urlopen") as network_call,
             patch("webbrowser.open") as browser_call,
         ):
-            result = self._admit(request, snapshot, page, verification)
+            result = self._admit(
+                request,
+                snapshot,
+                page,
+                verification,
+                provenance=provenance,
+            )
 
         self.assertEqual(result.disposition, "fresh_observation")
         self.assertEqual(
@@ -376,6 +455,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         snapshot = capability()
         page = inbound_page(request=request, capability=snapshot)
         verification = raw_verification()
+        provenance = admission_provenance(request, page)
         self.store.prepare_native_im_inbound_read(request)
         self.clock.value = ADMITTED_AT
         fresh = self.store.admit_native_im_inbound_page(
@@ -383,6 +463,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             snapshot,
             page,
             verification,
+            provenance,
         )
         before = {
             table: tuple(dict(row) for row in self._rows(table))
@@ -393,6 +474,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
                 "native_im_inbound_reads",
                 "native_im_inbound_read_events",
                 "native_im_inbound_checkpoints",
+                "native_im_inbound_provenance",
             )
         }
         self.clock.value = True
@@ -403,6 +485,7 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
             snapshot,
             page,
             verification,
+            provenance,
         )
 
         self.assertEqual(replay.disposition, "observed_replay")
@@ -687,6 +770,156 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
                     )
                 self.assertIs(type(raised.exception), NativeIMInboundConflictError)
         self.assertEqual(len(self._rows("native_im_auth_nonces")), 1)
+
+    def test_replay_rejects_every_provenance_axis_drift(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        verification = raw_verification()
+        provenance = admission_provenance(request, page)
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+        fresh = self._admit(
+            request,
+            snapshot,
+            page,
+            verification,
+            provenance=provenance,
+        )
+        self.assertEqual(fresh.disposition, "fresh_observation")
+
+        changes: tuple[tuple[str, object], ...] = (
+            ("approval_id", "different-approval"),
+            ("authority_revision", 2),
+            ("approval_digest", "8" * 64),
+            ("configuration_binding_digest", "8" * 64),
+            ("profile_id", "different-profile"),
+            ("profile_revision", "different-profile-revision"),
+            ("profile_digest", "8" * 64),
+            ("provider_manifest_digest", "8" * 64),
+            ("transport_contract_id", "different-transport-contract"),
+            ("transport_contract_digest", "8" * 64),
+            ("mapper_contract_id", "different-mapper-contract"),
+            ("mapper_contract_digest", "8" * 64),
+            ("read_request_digest", "8" * 64),
+            ("page_digest", "8" * 64),
+            ("transport_evidence_digest", "8" * 64),
+            ("mapping_evidence_digest", "8" * 64),
+        )
+        for field_name, changed_value in changes:
+            with self.subTest(field=field_name):
+                candidate = replace(provenance, **{field_name: changed_value})
+                with self.assertRaises(NativeIMInboundConflictError) as raised:
+                    self._admit(
+                        request,
+                        snapshot,
+                        page,
+                        verification,
+                        provenance=candidate,
+                    )
+                self.assertIs(type(raised.exception), NativeIMInboundConflictError)
+        self.assertEqual(len(self._rows("native_im_inbound_provenance")), 1)
+
+    def test_replay_rejects_missing_or_tampered_provenance_graph(self) -> None:
+        mutations = (
+            ("DELETE FROM native_im_inbound_provenance", ()),
+            (
+                "UPDATE native_im_inbound_provenance SET provenance_json = provenance_json || ' '",
+                (),
+            ),
+            (
+                "UPDATE native_im_inbound_provenance SET approval_digest = ?",
+                (TAMPER_DIGEST,),
+            ),
+            (
+                "UPDATE native_im_inbound_provenance SET provenance_digest = ?",
+                (TAMPER_DIGEST,),
+            ),
+            (
+                "UPDATE native_im_inbound_provenance SET admitted_at = ?",
+                (PREPARED_AT,),
+            ),
+        )
+        for statement, parameters in mutations:
+            with self.subTest(statement=statement):
+                self.store.close()
+                Path(self.path).unlink(missing_ok=True)
+                Path(f"{self.path}-shm").unlink(missing_ok=True)
+                Path(f"{self.path}-wal").unlink(missing_ok=True)
+                self.store = self._open()
+                request = inbound_read_request()
+                snapshot = capability()
+                page = inbound_page(request=request, capability=snapshot)
+                verification = raw_verification()
+                self.store.prepare_native_im_inbound_read(request)
+                self.clock.value = ADMITTED_AT
+                self._admit(request, snapshot, page, verification)
+                self._execute_mutations((statement, parameters))
+
+                with self.assertRaises(NativeIMInboxStoreIntegrityError) as raised:
+                    self._admit(request, snapshot, page, verification)
+                self.assertIs(type(raised.exception), NativeIMInboxStoreIntegrityError)
+
+    def test_foreign_key_rejects_provenance_page_rebinding(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+        self._admit(request, snapshot, page)
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute("PRAGMA foreign_keys=ON")
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "UPDATE native_im_inbound_reads SET page_digest = ?",
+                    ("8" * 64,),
+                )
+        finally:
+            connection.close()
+
+    def test_backup_restore_preserves_exact_provenance_replay(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        verification = raw_verification()
+        provenance = admission_provenance(request, page)
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+        self._admit(
+            request,
+            snapshot,
+            page,
+            verification,
+            provenance=provenance,
+        )
+        backup_path = Path(self.tempdir.name) / "backup" / "snapshot.sqlite3"
+        manifest = create_sqlite_backup(self.path, backup_path, clock=lambda: ADMITTED_AT)
+        self.assertEqual(manifest.table_counts["native_im_inbound_provenance"], 1)
+        restored_path = Path(self.tempdir.name) / "restored" / "state.sqlite3"
+        restored = restore_sqlite_backup(backup_path, restored_path)
+        self.assertEqual(restored, manifest)
+        restored_store = SQLiteNativeIMInboxStore(
+            str(restored_path),
+            profile_revision=PROFILE_REVISION,
+            profile_digest=PROFILE_DIGEST,
+            clock=self.clock,
+        )
+        try:
+            self.clock.value = True
+            self.clock.calls = 0
+            replay = restored_store.admit_native_im_inbound_page(
+                request,
+                snapshot,
+                page,
+                verification,
+                provenance,
+            )
+            self.assertEqual(replay.disposition, "observed_replay")
+            self.assertEqual(replay.admitted_at, ADMITTED_AT)
+            self.assertEqual(self.clock.calls, 0)
+        finally:
+            restored_store.close()
 
     def test_replay_rejects_noncanonical_persisted_event_json(self) -> None:
         self._assert_exact_replay_rejects_tamper(

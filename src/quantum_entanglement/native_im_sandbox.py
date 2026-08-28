@@ -245,6 +245,11 @@ class NativeIMVerifiedInboundReadV1:
             self.provenance.read_request_digest != self.request.canonical_digest()
             or self.provenance.page_digest != self.page.canonical_digest()
             or self.provenance.mapping_evidence_digest != self.mapping_evidence_digest
+            or any(
+                envelope.event.transport_evidence_digest
+                != self.provenance.transport_evidence_digest
+                for envelope in self.page.envelopes
+            )
         ):
             raise ValueError("verified inbound read provenance binding mismatch")
 

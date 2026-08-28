@@ -40,6 +40,7 @@ from .native_im_inbox import (
     NativeIMInboxEventReceiptV1,
     NativeIMScopeV1,
 )
+from .native_im_sandbox_provenance import NativeIMSandboxAdmissionProvenanceV1
 from .protocol import utc_now
 from .store import SQLiteEventStore
 
@@ -207,6 +208,32 @@ _INBOUND_READ_EVENT_COLUMNS = (
     "envelope_digest",
 )
 
+_INBOUND_PROVENANCE_COLUMNS = (
+    "tenant_id",
+    "workspace_id",
+    "provider",
+    "channel_id",
+    "read_request_digest",
+    "page_digest",
+    "approval_id",
+    "authority_revision",
+    "approval_digest",
+    "configuration_binding_digest",
+    "profile_id",
+    "profile_revision",
+    "profile_digest",
+    "provider_manifest_digest",
+    "transport_contract_id",
+    "transport_contract_digest",
+    "mapper_contract_id",
+    "mapper_contract_digest",
+    "transport_evidence_digest",
+    "mapping_evidence_digest",
+    "provenance_json",
+    "provenance_digest",
+    "admitted_at",
+)
+
 
 @dataclass(frozen=True)
 class _NativeIMInboundReadRecord:
@@ -256,6 +283,14 @@ class _NativeIMInboundReadEventRecord:
     event_id: str
     verification_id: str
     envelope_digest: str
+
+
+@dataclass(frozen=True)
+class _NativeIMInboundProvenanceRecord:
+    scope: Tuple[str, str, str, str]
+    provenance: NativeIMSandboxAdmissionProvenanceV1
+    provenance_digest: str
+    admitted_at: str
 
 
 def _detach_exception(error: BaseException) -> None:
@@ -340,6 +375,14 @@ def _raw_verification_snapshot(
     )
 
 
+def _provenance_snapshot(value: object) -> NativeIMSandboxAdmissionProvenanceV1:
+    if type(value) is not NativeIMSandboxAdmissionProvenanceV1:
+        raise TypeError(
+            "provenance must be an exact NativeIMSandboxAdmissionProvenanceV1"
+        )
+    return NativeIMSandboxAdmissionProvenanceV1.from_json_bytes(value.canonical_bytes())
+
+
 def _validate_page_authentication_binding(
     page: IMInboundPageV1,
     verification: NativeIMRawVerificationResultV1,
@@ -354,6 +397,37 @@ def _validate_page_authentication_binding(
             raise NativeIMInboundConflictError(
                 "native IM page envelopes do not match raw verification evidence"
             )
+
+
+def _validate_page_provenance_binding(
+    request: IMInboundReadRequestV1,
+    page: IMInboundPageV1,
+    provenance: NativeIMSandboxAdmissionProvenanceV1,
+    *,
+    profile_revision: str,
+    profile_digest: str,
+) -> None:
+    if (
+        provenance.read_request_digest != request.canonical_digest()
+        or provenance.page_digest != page.canonical_digest()
+    ):
+        raise NativeIMInboundConflictError(
+            "native IM provenance does not match its read request and page"
+        )
+    if (
+        provenance.profile_revision != profile_revision
+        or provenance.profile_digest != profile_digest
+    ):
+        raise NativeIMInboundConflictError(
+            "native IM provenance does not match the inbox store profile"
+        )
+    if any(
+        envelope.event.transport_evidence_digest != provenance.transport_evidence_digest
+        for envelope in page.envelopes
+    ):
+        raise NativeIMInboundConflictError(
+            "native IM provenance does not match page transport evidence"
+        )
 
 
 def _event_manifest_digest(
@@ -1061,6 +1135,128 @@ class SQLiteNativeIMInboxStore:
             envelope_digest=envelope_digest,
         )
 
+    @staticmethod
+    def _validated_inbound_provenance_row(
+        row: sqlite3.Row,
+    ) -> _NativeIMInboundProvenanceRecord:
+        try:
+            if tuple(row.keys()) != _INBOUND_PROVENANCE_COLUMNS:
+                raise ValueError("persisted native IM provenance columns differ")
+            scope = (
+                _id(row["tenant_id"], "persisted provenance tenantId"),
+                _id(row["workspace_id"], "persisted provenance workspaceId"),
+                _id(row["provider"], "persisted provenance provider"),
+                _id(row["channel_id"], "persisted provenance channelId"),
+            )
+            read_request_digest = _digest(
+                row["read_request_digest"],
+                "persisted provenance readRequestDigest",
+            )
+            page_digest = _digest(
+                row["page_digest"],
+                "persisted provenance pageDigest",
+            )
+            authority_revision = _persisted_integer(
+                row["authority_revision"],
+                "provenance authorityRevision",
+                minimum=1,
+            )
+            provenance_json = row["provenance_json"]
+            if type(provenance_json) is not str:
+                raise TypeError("persisted provenanceJson must use SQLite TEXT storage")
+            provenance_bytes = provenance_json.encode("utf-8")
+            provenance = NativeIMSandboxAdmissionProvenanceV1.from_json_bytes(
+                provenance_bytes
+            )
+            if provenance.canonical_bytes() != provenance_bytes:
+                raise ValueError("persisted provenanceJson is not canonical")
+            provenance_digest = _digest(
+                row["provenance_digest"],
+                "persisted provenanceDigest",
+            )
+            if provenance.canonical_digest() != provenance_digest:
+                raise ValueError("persisted provenance digest differs")
+            expected_columns = (
+                read_request_digest,
+                page_digest,
+                _id(row["approval_id"], "persisted provenance approvalId"),
+                authority_revision,
+                _digest(row["approval_digest"], "persisted provenance approvalDigest"),
+                _digest(
+                    row["configuration_binding_digest"],
+                    "persisted provenance configurationBindingDigest",
+                ),
+                _id(row["profile_id"], "persisted provenance profileId"),
+                _id(row["profile_revision"], "persisted provenance profileRevision"),
+                _digest(row["profile_digest"], "persisted provenance profileDigest"),
+                _digest(
+                    row["provider_manifest_digest"],
+                    "persisted provenance providerManifestDigest",
+                ),
+                _id(
+                    row["transport_contract_id"],
+                    "persisted provenance transportContractId",
+                ),
+                _digest(
+                    row["transport_contract_digest"],
+                    "persisted provenance transportContractDigest",
+                ),
+                _id(
+                    row["mapper_contract_id"],
+                    "persisted provenance mapperContractId",
+                ),
+                _digest(
+                    row["mapper_contract_digest"],
+                    "persisted provenance mapperContractDigest",
+                ),
+                _digest(
+                    row["transport_evidence_digest"],
+                    "persisted provenance transportEvidenceDigest",
+                ),
+                _digest(
+                    row["mapping_evidence_digest"],
+                    "persisted provenance mappingEvidenceDigest",
+                ),
+            )
+            actual_columns = (
+                provenance.read_request_digest,
+                provenance.page_digest,
+                provenance.approval_id,
+                provenance.authority_revision,
+                provenance.approval_digest,
+                provenance.configuration_binding_digest,
+                provenance.profile_id,
+                provenance.profile_revision,
+                provenance.profile_digest,
+                provenance.provider_manifest_digest,
+                provenance.transport_contract_id,
+                provenance.transport_contract_digest,
+                provenance.mapper_contract_id,
+                provenance.mapper_contract_digest,
+                provenance.transport_evidence_digest,
+                provenance.mapping_evidence_digest,
+            )
+            if actual_columns != expected_columns:
+                raise ValueError("persisted provenance columns differ from canonical bytes")
+            admitted_at = _timestamp(
+                row["admitted_at"],
+                "persisted provenance admittedAt",
+            )
+        except (
+            IndexError,
+            KeyError,
+            TypeError,
+            UnicodeError,
+            ValueError,
+        ):
+            raise NativeIMInboxStoreIntegrityError() from None
+        return _NativeIMInboundProvenanceRecord(
+            scope=scope,
+            provenance=provenance,
+            provenance_digest=provenance_digest,
+            admitted_at=admitted_at,
+        )
+
     def _load_inbound_checkpoint(
         self,
         connection: sqlite3.Connection,
@@ -1247,12 +1443,115 @@ class SQLiteNativeIMInboxStore:
             updated_at=record.admitted_at,
         )
 
+    def _load_inbound_provenance(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        scope: NativeIMScopeV1,
+        read_request_digest: str,
+    ) -> _NativeIMInboundProvenanceRecord:
+        scope_values = (
+            scope.tenant_id,
+            scope.workspace_id,
+            scope.provider,
+            scope.channel_id,
+        )
+        rows = connection.execute(
+            """
+            SELECT * FROM native_im_inbound_provenance
+            WHERE tenant_id = ? AND workspace_id = ? AND provider = ?
+              AND channel_id = ? AND read_request_digest = ?
+            """,
+            (*scope_values, read_request_digest),
+        ).fetchall()
+        if len(rows) != 1:
+            raise NativeIMInboxStoreIntegrityError() from None
+        record = self._validated_inbound_provenance_row(rows[0])
+        if (
+            record.scope != scope_values
+            or record.provenance.read_request_digest != read_request_digest
+            or record.provenance.profile_revision != self._profile_revision
+            or record.provenance.profile_digest != self._profile_digest
+        ):
+            raise NativeIMInboxStoreIntegrityError() from None
+        return record
+
+    def _insert_inbound_provenance(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        scope: NativeIMScopeV1,
+        provenance: NativeIMSandboxAdmissionProvenanceV1,
+        admitted_at: str,
+    ) -> None:
+        scope_values = (
+            scope.tenant_id,
+            scope.workspace_id,
+            scope.provider,
+            scope.channel_id,
+        )
+        provenance_bytes = provenance.canonical_bytes()
+        provenance_digest = provenance.canonical_digest()
+        cursor = connection.execute(
+            """
+            INSERT INTO native_im_inbound_provenance (
+                tenant_id, workspace_id, provider, channel_id,
+                read_request_digest, page_digest, approval_id,
+                authority_revision, approval_digest,
+                configuration_binding_digest, profile_id, profile_revision,
+                profile_digest, provider_manifest_digest,
+                transport_contract_id, transport_contract_digest,
+                mapper_contract_id, mapper_contract_digest,
+                transport_evidence_digest, mapping_evidence_digest,
+                provenance_json, provenance_digest, admitted_at
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            (
+                *scope_values,
+                provenance.read_request_digest,
+                provenance.page_digest,
+                provenance.approval_id,
+                provenance.authority_revision,
+                provenance.approval_digest,
+                provenance.configuration_binding_digest,
+                provenance.profile_id,
+                provenance.profile_revision,
+                provenance.profile_digest,
+                provenance.provider_manifest_digest,
+                provenance.transport_contract_id,
+                provenance.transport_contract_digest,
+                provenance.mapper_contract_id,
+                provenance.mapper_contract_digest,
+                provenance.transport_evidence_digest,
+                provenance.mapping_evidence_digest,
+                provenance_bytes.decode("utf-8"),
+                provenance_digest,
+                admitted_at,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise NativeIMInboxStoreIntegrityError() from None
+        readback = self._load_inbound_provenance(
+            connection,
+            scope=scope,
+            read_request_digest=provenance.read_request_digest,
+        )
+        if (
+            readback.provenance != provenance
+            or readback.provenance_digest != provenance_digest
+            or readback.admitted_at != admitted_at
+        ):
+            raise NativeIMInboxStoreIntegrityError() from None
+
     def _readback_inbound_page_admission(
         self,
         connection: sqlite3.Connection,
         *,
         request: IMInboundReadRequestV1,
         page: IMInboundPageV1,
+        provenance: NativeIMSandboxAdmissionProvenanceV1,
         event_manifest_sha256: str,
         disposition: str,
     ) -> NativeIMInboundPageAdmissionResultV1:
@@ -1298,6 +1597,20 @@ class SQLiteNativeIMInboxStore:
         if self._load_inbound_checkpoint(connection, scope) is None:
             raise NativeIMInboxStoreIntegrityError() from None
         checkpoint = self._checkpoint_from_admitted_record(scope, record)
+        provenance_record = self._load_inbound_provenance(
+            connection,
+            scope=scope,
+            read_request_digest=record.read_request_digest,
+        )
+        if (
+            provenance_record.provenance.page_digest != record.page_digest
+            or provenance_record.admitted_at != record.admitted_at
+        ):
+            raise NativeIMInboxStoreIntegrityError() from None
+        if provenance_record.provenance != provenance:
+            raise NativeIMInboundConflictError(
+                "native IM read is already bound to different admission provenance"
+            )
         link_rows = connection.execute(
             """
             SELECT * FROM native_im_inbound_read_events
@@ -1408,6 +1721,12 @@ class SQLiteNativeIMInboxStore:
         except (TypeError, UnicodeError, ValueError):
             raise NativeIMInboxStoreIntegrityError() from None
         if persisted_page.canonical_digest() != record.page_digest:
+            raise NativeIMInboxStoreIntegrityError() from None
+        if any(
+            envelope.event.transport_evidence_digest
+            != provenance_record.provenance.transport_evidence_digest
+            for envelope in persisted_page.envelopes
+        ):
             raise NativeIMInboxStoreIntegrityError() from None
         if persisted_page != page or record.event_manifest_sha256 != event_manifest_sha256:
             raise NativeIMInboundConflictError(
@@ -1634,6 +1953,7 @@ class SQLiteNativeIMInboxStore:
         *,
         request: IMInboundReadRequestV1,
         page: IMInboundPageV1,
+        provenance: NativeIMSandboxAdmissionProvenanceV1,
         event_manifest_sha256: str,
         nonce_claimed: bool,
     ) -> NativeIMInboundPageAdmissionResultV1:
@@ -1676,6 +1996,7 @@ class SQLiteNativeIMInboxStore:
                 connection,
                 request=request,
                 page=page,
+                provenance=provenance,
                 event_manifest_sha256=event_manifest_sha256,
                 disposition="observed_replay",
             )
@@ -1738,6 +2059,12 @@ class SQLiteNativeIMInboxStore:
             raise NativeIMInboundCheckpointConflictError(
                 "native IM prepared read changed before page admission"
             )
+        self._insert_inbound_provenance(
+            connection,
+            scope=scope,
+            provenance=provenance,
+            admitted_at=admitted_at,
+        )
         checkpoint_revision = self._advance_inbound_checkpoint(
             connection,
             scope=scope,
@@ -1753,6 +2080,7 @@ class SQLiteNativeIMInboxStore:
             connection,
             request=request,
             page=page,
+            provenance=provenance,
             event_manifest_sha256=event_manifest_sha256,
             disposition="fresh_observation",
         )
@@ -1943,6 +2271,7 @@ class SQLiteNativeIMInboxStore:
         capability: IMCapabilitySnapshotV1,
         page: IMInboundPageV1,
         raw_verification: NativeIMRawVerificationResultV1,
+        provenance: NativeIMSandboxAdmissionProvenanceV1,
     ) -> NativeIMInboundPageAdmissionResultV1:
         """Atomically claim verified nonce evidence and admit one prepared page."""
 
@@ -1953,13 +2282,25 @@ class SQLiteNativeIMInboxStore:
             raise TypeError("capability must be an exact IMCapabilitySnapshotV1")
         if type(page) is not IMInboundPageV1:
             raise TypeError("page must be an exact IMInboundPageV1")
+        if type(provenance) is not NativeIMSandboxAdmissionProvenanceV1:
+            raise TypeError(
+                "provenance must be an exact NativeIMSandboxAdmissionProvenanceV1"
+            )
         request_snapshot = IMInboundReadRequestV1.from_json_bytes(request.canonical_bytes())
         capability_snapshot = IMCapabilitySnapshotV1.from_json_bytes(capability.canonical_bytes())
         page_snapshot = IMInboundPageV1.from_json_bytes(page.canonical_bytes())
         verification_snapshot = _raw_verification_snapshot(raw_verification)
+        provenance_snapshot = _provenance_snapshot(provenance)
         page_snapshot.validate_request_binding(request_snapshot)
         page_snapshot.validate_capability_binding(capability_snapshot)
         _validate_page_authentication_binding(page_snapshot, verification_snapshot)
+        _validate_page_provenance_binding(
+            request_snapshot,
+            page_snapshot,
+            provenance_snapshot,
+            profile_revision=self._profile_revision,
+            profile_digest=self._profile_digest,
+        )
         event_manifest_sha256 = _event_manifest_digest(
             page_snapshot,
             verification_snapshot,
@@ -1989,6 +2330,7 @@ class SQLiteNativeIMInboxStore:
                     connection,
                     request=request_snapshot,
                     page=page_snapshot,
+                    provenance=provenance_snapshot,
                     event_manifest_sha256=event_manifest_sha256,
                     nonce_claimed=nonce_claimed,
                 )

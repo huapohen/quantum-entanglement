@@ -57,26 +57,29 @@ from quantum_entanglement.domain_migrations import (
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
-BRIDGED_STATE_SHA256 = "bac9d9f2d7a05e71a9667f67fb6c821557e78cb7412946cb3d5cd1b7fc724015"
+BRIDGED_STATE_SHA256 = "42f6e0059266bfeb50a7e71a2f888c5500e4cb585a4fdf4793ee3d771f21a9ea"
 TOPOLOGY_FORMAT = "qe.sqlite-backup-registry-topology/1"
 STATE_DIGESTS = {
-    (0, "sidecar_absent"): "93d500810ffa690a0ef91dd7cd5c7703500d54aa4573300f23dbb6edc1a22b27",
-    (0, "empty"): "1e70dab87baeb6eaa82c5765505cb104e94bb72e526a0877a8540ffda563c8e0",
-    (1, "sidecar_absent"): "8835eea6aefdab4b8adcc3907cf7e395eb0737c481ed04ebadb30a7d1ff96d3e",
-    (1, "legacy_prefix"): "4bbcf3888dcfa119d61eb06f2d19aa6c530fb0f67d8ce5b778bbc3141c4efdbb",
-    (1, "bridged_prefix"): "580b271634f065817ee087b97a2fefa35810b160a59c200724911d0e6045c79b",
-    (2, "sidecar_absent"): "84d2dbd95af40079219bcc5119d08f72e12806cf5464665dd84bbbe987d6a347",
-    (2, "legacy_prefix"): "49688324a6209c808e51ac220123a0168ddc0e6d71e35ab439ee52eeeb06235b",
-    (2, "bridged_prefix"): "5f2a56884ce2512997f8dc958da9a44f3deadf177760c98c2df954a34a0fef3c",
-    (3, "sidecar_absent"): "8c648f89573e39cec6cfdebe80c50012f294e626e1b8ed8f875478a4e317f805",
-    (3, "legacy_prefix"): "b68e2873d106d1f4e72a174a3caa609e7a904b024f351c715585b51fb2b9d7bd",
-    (3, "bridged_prefix"): "487ddfa5765d715f60a12b642559e5f8409ae3d6e9f02c07ee3b24dac8325acb",
-    (4, "sidecar_absent"): "1dec4039e923303d6a29ea0475e825ad3c112ceeb69adf01aef2c6e54a29b5d8",
-    (4, "legacy_prefix"): "5d602b42034de887c6b20cbb15dc17398078ca80cdefbcbbef168ad0b8cc7ee8",
-    (4, "bridged_prefix"): "0825ded2833a899e54df80591d4c3eb878ca7b86bab0c1b1d53e5c365f902db0",
-    (5, "sidecar_absent"): "c5fe9012b9ecad0e7fae3cd6e39327561a365ab8b6534b09c5db247d62cb6049",
-    (5, "legacy_prefix"): "86bb8a045e03aad8073cbbedf7f3b54f6eadac9eae9eb04cb1db4ecfd75b0135",
-    (5, "bridged_prefix"): BRIDGED_STATE_SHA256,
+    (0, "sidecar_absent"): "76f1e840330068981d0ae28d10e235ce64208e6287366c217d19b677016dfb23",
+    (0, "empty"): "0962e1382358e529a6290a94761a55f5b846b7e8867681b2316a88cca7664a09",
+    (1, "sidecar_absent"): "17087eb2af4c4eaeb9eda4abb3e6ad1bb0b5baf3fa0787433b560f31ed5eef93",
+    (1, "legacy_prefix"): "78ca80b25a875c8c89828a03a6fbff76fadde0204d9867cbe36ba002defd9127",
+    (1, "bridged_prefix"): "c8c588c63897749509524c1cd2b99859903831f94f175bec4bdd7e5804533eba",
+    (2, "sidecar_absent"): "5c68b82487a049571bd51766916e99e1b78adfe1fc95bb1371b66d151297bf87",
+    (2, "legacy_prefix"): "4752c283eb5ba24f588e7ed0d35a68613d1106013f022cc47fb9df7b114ddb0c",
+    (2, "bridged_prefix"): "e878fb820a3a821348cb271362bbac2792193359c31a66b09e75ade3b4059bc5",
+    (3, "sidecar_absent"): "7acc1cbab14be0ca0f78cc596d0b10a31a8ab6c8c64f38641f381f40e1e971e3",
+    (3, "legacy_prefix"): "a71ecc767978f81d1dbc93f9f5156d0d39f2c8032df9a53fe8ca148745dd5106",
+    (3, "bridged_prefix"): "6777cd39c52272ea4c839f1259d6bcbdcf9eb0826fe1ef264e0063290a12f9b4",
+    (4, "sidecar_absent"): "115cf70f67ebeec3eacb6b56e25a937e214ff51304805baf9e93f0872c265f60",
+    (4, "legacy_prefix"): "6ce4bce6930d5a9f8e4cc2521915c7ce5832ba9123283556cc86e8ed8ffcc8ba",
+    (4, "bridged_prefix"): "08605757c32629d638ebbe7e724aedf999aa7550553666184c1e0c0717905422",
+    (5, "sidecar_absent"): "a2a754be349bf917000c3b7b7b1ba76bc08865d198fc64220b11c09d67087bae",
+    (5, "legacy_prefix"): "4956cc35cad92ff5f92f952d68b49b2cfb327c66c072493358a9d4cfc18f32a1",
+    (5, "bridged_prefix"): "3288a03c8366a4935bf02fdbf64d45bc03127044d74ff6a69ceaab6e118b5b21",
+    (6, "sidecar_absent"): "503a0fb6ef7fdc4843d118049924abef8dff5e1db5845c80ae003fde69be6e68",
+    (6, "legacy_prefix"): "fa74bf3cdf3bb3269d604fb8abd6e04c27a4bbf64a83afe5c5f4297b871ad49b",
+    (6, "bridged_prefix"): BRIDGED_STATE_SHA256,
 }
 
 
@@ -176,7 +179,12 @@ def topology_dict(
             migration_count if shape == "bridged_prefix" else 0
         )
         row_counts["qe_schema_migration_dependencies"] = (
-            1 if shape == "bridged_prefix" and migration_count >= 4 else 0
+            sum(
+                len(descriptor.dependencies)
+                for descriptor in DOMAIN_MIGRATION_REGISTRY.descriptors[:migration_count]
+            )
+            if shape == "bridged_prefix"
+            else 0
         )
     evidence = {
         "format": TOPOLOGY_FORMAT,
@@ -202,6 +210,7 @@ def valid_manifest_dict() -> dict[str, Any]:
         "2026-08-20T00:00:02Z",
         "2026-08-20T00:00:03Z",
         "2026-08-20T00:00:04Z",
+        "2026-08-20T00:00:05Z",
     )
     migrations = [
         {
@@ -253,16 +262,19 @@ def valid_manifest_dict() -> dict[str, Any]:
         "schemaState": {
             "sidecarFormat": 1,
             "shape": "bridged_prefix",
-            "legacySchemaVersion": 5,
+            "legacySchemaVersion": 6,
             "appliedMigrations": migrations,
             "domainHeads": heads,
-            "dependencyEdges": [{"migrationId": 4, "dependsOnMigrationId": 1}],
+            "dependencyEdges": [
+                {"migrationId": 4, "dependsOnMigrationId": 1},
+                {"migrationId": 6, "dependsOnMigrationId": 5},
+            ],
             "ownedSchemaDigests": owned_digests,
             "registrySha256": registry.registry_sha256,
             "stateSha256": BRIDGED_STATE_SHA256,
         },
         "registryTopology": topology_dict(
-            migration_count=5,
+            migration_count=6,
             sidecar_format=1,
             shape="bridged_prefix",
             state_sha256=BRIDGED_STATE_SHA256,
@@ -304,11 +316,16 @@ def valid_prefix_manifest_dict(migration_count: int, shape: str) -> dict[str, An
             "legacySchemaVersion": migration_count,
             "appliedMigrations": migrations,
             "domainHeads": heads,
-            "dependencyEdges": (
-                [{"migrationId": 4, "dependsOnMigrationId": 1}]
-                if metadata_recorded and migration_count >= 4
-                else []
-            ),
+            "dependencyEdges": [
+                {
+                    "migrationId": descriptor.migration_id,
+                    "dependsOnMigrationId": dependency,
+                }
+                for descriptor in DOMAIN_MIGRATION_REGISTRY.descriptors[:migration_count]
+                for dependency in descriptor.dependencies
+            ]
+            if metadata_recorded
+            else [],
             "ownedSchemaDigests": [
                 {
                     "domain": head["domain"],
@@ -466,9 +483,9 @@ print(json.dumps(observed))
         self.assertIs(type(parsed.registry_topology.present_profiles), tuple)
         self.assertIs(type(parsed.registry_topology.schema_objects), tuple)
         self.assertIs(type(parsed.registry_topology.table_counts), tuple)
-        self.assertEqual(len(parsed.schema_state.applied_migrations), 5)
-        self.assertEqual(len(parsed.registry_topology.present_profiles), 10)
-        self.assertEqual(len(parsed.registry_topology.schema_objects), 85)
+        self.assertEqual(len(parsed.schema_state.applied_migrations), 6)
+        self.assertEqual(len(parsed.registry_topology.present_profiles), 11)
+        self.assertEqual(len(parsed.registry_topology.schema_objects), 88)
         self.assertEqual(
             tuple(item.name for item in parsed.registry_topology.table_counts),
             tuple(sorted(item.name for item in parsed.registry_topology.table_counts)),
@@ -808,7 +825,7 @@ print(json.dumps(observed))
             lambda value: value["schemaState"].__setitem__("shape", "domain_sparse"),
             lambda value: value["schemaState"].__setitem__("shape", "future"),
             lambda value: value["schemaState"].__setitem__("legacySchemaVersion", True),
-            lambda value: value["schemaState"].__setitem__("legacySchemaVersion", 6),
+            lambda value: value["schemaState"].__setitem__("legacySchemaVersion", 7),
             lambda value: value["schemaState"].__setitem__("registrySha256", SHA_A),
             lambda value: value["schemaState"].__setitem__("stateSha256", SHA_A),
             lambda value: value["schemaState"]["appliedMigrations"][0].__setitem__(

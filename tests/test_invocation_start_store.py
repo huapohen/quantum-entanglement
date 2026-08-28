@@ -39,6 +39,7 @@ from quantum_entanglement.invocation_execution import (
     TaskInvocationAdmissionRequest,
     build_task_invocation_admission_request,
 )
+from quantum_entanglement.migrations import MIGRATIONS
 from quantum_entanglement.protocol import TaskStatus
 from quantum_entanglement.scheduler import TaskTransition
 from quantum_entanglement.store import (
@@ -1757,7 +1758,7 @@ class InvocationStartObservationStoreTests(unittest.TestCase):
                     "SELECT version FROM qe_schema_migrations ORDER BY version"
                 ).fetchall()
             ],
-            [1, 2, 3, 4, 5],
+            list(range(1, len(MIGRATIONS) + 1)),
         )
         self.assertNotIn(canary, "\n".join(self.store._connection.iterdump()))
         self.assertNotIn(canary.encode("utf-8"), restored_path.read_bytes())
