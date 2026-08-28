@@ -1995,6 +1995,8 @@ class SQLiteNativeIMInboxStore:
         except _NativeIMStoreTransactionSignal as error:
             fixed_error_kind = error.kind
             _detach_exception(error)
+        except NativeIMNonceStorePoisonedError:
+            raise
         except NativeIMNonceIntegrityError as error:
             fixed_error_kind = "integrity"
             _detach_exception(error)

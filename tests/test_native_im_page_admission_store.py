@@ -366,6 +366,97 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         self.assertEqual(replay.admitted_at, ADMITTED_AT)
         self.assertEqual(self.clock.calls, 0)
 
+    def test_rollback_failure_is_ambiguous_poisoned_and_recoverable_after_reopen(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        verification = raw_verification()
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+
+        with (
+            patch.object(
+                self.store,
+                "_advance_inbound_checkpoint",
+                side_effect=sqlite3.OperationalError("page-body-rollback-canary"),
+            ),
+            patch.object(
+                self.store,
+                "_rollback_write_transaction",
+                side_effect=RuntimeError("page-rollback-failure-canary"),
+            ),
+        ):
+            with self.assertRaises(NativeIMInboundCommitAmbiguityError) as raised:
+                self._admit(request, snapshot, page, verification)
+
+        self.assertIs(type(raised.exception), NativeIMInboundCommitAmbiguityError)
+        self.assertNotIn("page-body-rollback-canary", repr(raised.exception))
+        self.assertNotIn("page-rollback-failure-canary", repr(raised.exception))
+        with self.assertRaises(NativeIMNonceStorePoisonedError) as poisoned:
+            self._admit(request, snapshot, page, verification)
+        self.assertIs(type(poisoned.exception), NativeIMNonceStorePoisonedError)
+
+        self.store.close()
+        self.store = self._open()
+        self._assert_no_admitted_observation_rows()
+        admitted = self._admit(request, snapshot, page, verification)
+        self.assertEqual(admitted.disposition, "fresh_observation")
+
+    def test_waiter_blocked_behind_ambiguous_admission_rechecks_poison(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        verification = raw_verification()
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+        real_commit = self.store._commit_write_transaction
+        commit_entered = threading.Event()
+        release_commit = threading.Event()
+        waiter_started = threading.Event()
+
+        def commit_then_raise(connection):
+            commit_entered.set()
+            self.assertTrue(release_commit.wait(timeout=10))
+            real_commit(connection)
+            raise RuntimeError("page-blocked-waiter-canary")
+
+        def first_admission():
+            try:
+                self._admit(request, snapshot, page, verification)
+            except BaseException as error:
+                return type(error)
+            return "accepted"
+
+        def waiting_admission():
+            waiter_started.set()
+            try:
+                self._admit(request, snapshot, page, verification)
+            except BaseException as error:
+                return type(error)
+            return "accepted"
+
+        with patch.object(
+            self.store,
+            "_commit_write_transaction",
+            side_effect=commit_then_raise,
+        ):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                first = executor.submit(first_admission)
+                self.assertTrue(commit_entered.wait(timeout=10))
+                waiter = executor.submit(waiting_admission)
+                self.assertTrue(waiter_started.wait(timeout=10))
+                release_commit.set()
+                outcomes = (first.result(timeout=10), waiter.result(timeout=10))
+
+        self.assertEqual(
+            outcomes,
+            (NativeIMInboundCommitAmbiguityError, NativeIMNonceStorePoisonedError),
+        )
+        self.store.close()
+        self.store = self._open()
+        replay = self._admit(request, snapshot, page, verification)
+        self.assertEqual(replay.disposition, "observed_replay")
+
     def test_preclaimed_nonce_cannot_complete_a_split_prepared_page(self) -> None:
         request = inbound_read_request()
         snapshot = capability()
