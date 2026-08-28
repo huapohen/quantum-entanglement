@@ -478,7 +478,9 @@ def validate_native_im_sandbox_approval_binding_v1(
     )
     expected = (
         configuration.approval_id,
+        configuration.authority_revision,
         configuration.approval_expires_at,
+        configuration.deployment_subject_digest,
         configuration.provider,
         configuration.tenant_id,
         configuration.workspace_id,
@@ -504,7 +506,9 @@ def validate_native_im_sandbox_approval_binding_v1(
     )
     actual = (
         approval.approval_id,
+        approval.authority_revision,
         approval.expires_at,
+        approval.deployment_subject_digest,
         approval.provider,
         approval.tenant_id,
         approval.workspace_id,
@@ -528,7 +532,11 @@ def validate_native_im_sandbox_approval_binding_v1(
         approval.requests_per_window,
         approval.rate_limit_window_seconds,
     )
-    if actual != expected or approval_secret_bindings != expected_secret_bindings:
+    if (
+        actual != expected
+        or approval_secret_bindings != expected_secret_bindings
+        or approval.canonical_digest() != configuration.approval_digest
+    ):
         raise NativeIMSandboxApprovalBindingError(
             "native_im_sandbox_approval_binding_mismatch"
         ) from None

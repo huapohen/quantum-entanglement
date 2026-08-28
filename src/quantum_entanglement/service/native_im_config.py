@@ -46,7 +46,10 @@ _ENABLED_CONFIG_KEYS = frozenset(
         "QE_NATIVE_IM_PROFILE_REVISION",
         "QE_NATIVE_IM_PROFILE_DIGEST",
         "QE_NATIVE_IM_APPROVAL_ID",
+        "QE_NATIVE_IM_APPROVAL_DIGEST",
+        "QE_NATIVE_IM_AUTHORITY_REVISION",
         "QE_NATIVE_IM_APPROVAL_EXPIRES_AT",
+        "QE_NATIVE_IM_DEPLOYMENT_SUBJECT_DIGEST",
         "QE_NATIVE_IM_PROVIDER",
         "QE_NATIVE_IM_TENANT_ID",
         "QE_NATIVE_IM_WORKSPACE_ID",
@@ -289,7 +292,10 @@ class NativeIMInboundOnlyConfigV1:
     profile_revision: str
     profile_digest: str = field(repr=False)
     approval_id: str
+    approval_digest: str = field(repr=False)
+    authority_revision: int
     approval_expires_at: str
+    deployment_subject_digest: str = field(repr=False)
     provider: str
     tenant_id: str
     workspace_id: str
@@ -337,12 +343,26 @@ class NativeIMInboundOnlyConfigV1:
                 raise NativeIMConfigurationError(
                     "native_im_configuration_identifier_invalid", field_name
                 ) from None
-        try:
-            _digest(self.profile_digest, "QE_NATIVE_IM_PROFILE_DIGEST")
-        except (TypeError, ValueError):
-            raise NativeIMConfigurationError(
-                "native_im_configuration_digest_invalid", "QE_NATIVE_IM_PROFILE_DIGEST"
-            ) from None
+        for value, field_name in (
+            (self.profile_digest, "QE_NATIVE_IM_PROFILE_DIGEST"),
+            (self.approval_digest, "QE_NATIVE_IM_APPROVAL_DIGEST"),
+            (
+                self.deployment_subject_digest,
+                "QE_NATIVE_IM_DEPLOYMENT_SUBJECT_DIGEST",
+            ),
+        ):
+            try:
+                _digest(value, field_name)
+            except (TypeError, ValueError):
+                raise NativeIMConfigurationError(
+                    "native_im_configuration_digest_invalid", field_name
+                ) from None
+        _validate_exact_integer(
+            self.authority_revision,
+            "QE_NATIVE_IM_AUTHORITY_REVISION",
+            1,
+            (1 << 63) - 1,
+        )
         try:
             _timestamp(self.approval_expires_at, "QE_NATIVE_IM_APPROVAL_EXPIRES_AT")
         except (TypeError, ValueError):
@@ -432,8 +452,10 @@ class NativeIMInboundOnlyConfigV1:
         """Return the full, domain-separated digest an approval must bind exactly.
 
         Unlike :attr:`fingerprint`, this value is not a diagnostic abbreviation. It
-        covers every authority-relevant configuration value, including the exact secret
-        routing references, endpoint pins, limits, and deny policies.
+        covers every record-owned authority value, including the exact secret routing
+        references, endpoint pins, limits, and deny policies. ``approval_digest`` is the
+        outer trust anchor for that record and is deliberately excluded to avoid a digest
+        cycle; it remains covered by the full diagnostic fingerprint.
         """
 
         return _model_digest(
@@ -448,6 +470,8 @@ class NativeIMInboundOnlyConfigV1:
                 "connectTimeoutMs": self.connect_timeout_ms,
                 "credentialRef": self.credential_ref.canonical,
                 "enabled": self.enabled,
+                "authorityRevision": self.authority_revision,
+                "deploymentSubjectDigest": self.deployment_subject_digest,
                 "healthPath": self.health_path.canonical,
                 "maxResponseBytes": self.max_response_bytes,
                 "mode": self.mode,
@@ -480,7 +504,10 @@ class NativeIMInboundOnlyConfigV1:
                 self.profile_revision,
                 self.profile_digest,
                 self.approval_id,
+                self.approval_digest,
+                str(self.authority_revision),
                 self.approval_expires_at,
+                self.deployment_subject_digest,
                 self.provider,
                 self.tenant_id,
                 self.workspace_id,
@@ -617,7 +644,13 @@ class NativeIMSandboxConfig:
             profile_revision=values["QE_NATIVE_IM_PROFILE_REVISION"],
             profile_digest=values["QE_NATIVE_IM_PROFILE_DIGEST"],
             approval_id=values["QE_NATIVE_IM_APPROVAL_ID"],
+            approval_digest=values["QE_NATIVE_IM_APPROVAL_DIGEST"],
+            authority_revision=cls._parse_integer(
+                values["QE_NATIVE_IM_AUTHORITY_REVISION"],
+                "QE_NATIVE_IM_AUTHORITY_REVISION",
+            ),
             approval_expires_at=values["QE_NATIVE_IM_APPROVAL_EXPIRES_AT"],
+            deployment_subject_digest=values["QE_NATIVE_IM_DEPLOYMENT_SUBJECT_DIGEST"],
             provider=values["QE_NATIVE_IM_PROVIDER"],
             tenant_id=values["QE_NATIVE_IM_TENANT_ID"],
             workspace_id=values["QE_NATIVE_IM_WORKSPACE_ID"],
