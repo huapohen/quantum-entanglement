@@ -441,6 +441,13 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
         with self.__lock:
             return self.__generation
 
+    @property
+    def durable(self) -> bool:
+        """Whether this authority is backed by a restart-persistent high-water."""
+
+        self._require_process()
+        return self.__high_water.durable
+
     def __copy__(self) -> NoReturn:
         raise TypeError("native IM sandbox approval authorities cannot be copied")
 

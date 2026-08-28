@@ -9,7 +9,10 @@ from dataclasses import replace
 import pytest
 
 from quantum_entanglement import process_identity
-from quantum_entanglement.native_im_sandbox_approval import NativeIMSandboxApprovalV1
+from quantum_entanglement.native_im_sandbox_approval import (
+    NativeIMSandboxApprovalV1,
+    native_im_secret_reference_binding_digest,
+)
 from quantum_entanglement.native_im_sandbox_approval_store import (
     NativeIMSandboxApprovalAuthorityStateV1,
     SQLiteNativeIMSandboxApprovalHighWaterV1,
@@ -77,6 +80,76 @@ def active_inputs(**kwargs: object):
     authority, configuration, provider_profile, approval, clock = authority_inputs(**kwargs)
     permit = authority.activate(configuration, provider_profile)
     return authority, permit, configuration, provider_profile, approval, clock
+
+
+def approved_authority_for(
+    configuration,
+    provider_profile,
+    *,
+    high_water: SQLiteNativeIMSandboxApprovalHighWaterV1 | None = None,
+    now: str = NOW,
+):
+    """Build one exact offline approved test authority for arbitrary fixture scope."""
+
+    configuration = replace(
+        configuration,
+        approval_expires_at=EXPIRES,
+        authority_revision=7,
+        deployment_subject_digest="1" * 64,
+        approval_digest="a" * 64,
+    )
+    approval = sandbox_approval(
+        approval_id=configuration.approval_id,
+        authority_revision=configuration.authority_revision,
+        expires_at=configuration.approval_expires_at,
+        provider=configuration.provider,
+        tenant_id=configuration.tenant_id,
+        workspace_id=configuration.workspace_id,
+        channel_id=configuration.channel_id,
+        allowed_conversation_ids=provider_profile.allowed_conversation_ids,
+        profile_id=provider_profile.profile_id,
+        profile_revision=provider_profile.revision,
+        profile_digest=provider_profile.canonical_digest(),
+        configuration_binding_digest=configuration.approval_binding_digest,
+        deployment_subject_digest=configuration.deployment_subject_digest,
+        origin=configuration.origin.canonical,
+        approved_addresses=tuple(
+            address.compressed for address in configuration.approved_addresses
+        ),
+        health_path=configuration.health_path.canonical,
+        read_path=configuration.read_path.canonical,
+        credential_ref_binding_digest=native_im_secret_reference_binding_digest(
+            configuration.credential_ref,
+            purpose="read_credential",
+        ),
+        verification_secret_ref_binding_digest=(
+            native_im_secret_reference_binding_digest(
+                configuration.verification_secret_ref,
+                purpose="verification_secret",
+            )
+        ),
+        verification_key_id=configuration.verification_key_id,
+        page_limit=configuration.page_limit,
+        max_response_bytes=configuration.max_response_bytes,
+        connect_timeout_ms=configuration.connect_timeout_ms,
+        read_timeout_ms=configuration.read_timeout_ms,
+        requests_per_window=provider_profile.limits.requests_per_window,
+        rate_limit_window_seconds=provider_profile.limits.rate_limit_window_seconds,
+    )
+    configuration = replace(configuration, approval_digest=approval.canonical_digest())
+    store = (
+        SQLiteNativeIMSandboxApprovalHighWaterV1(":memory:")
+        if high_water is None
+        else high_water
+    )
+    authority = InMemoryNativeIMSandboxApprovalAuthorityV1(
+        approval,
+        trusted_record_digest=approval.canonical_digest(),
+        high_water=store,
+        clock=lambda: now,
+    )
+    permit = authority.activate(configuration, provider_profile)
+    return configuration, authority, permit, approval, store
 
 
 def test_authority_activates_exact_record_and_rechecks_each_allowed_operation() -> None:

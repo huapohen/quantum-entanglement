@@ -20,6 +20,7 @@ from quantum_entanglement.native_im import (
 from quantum_entanglement.native_im_gateway import IMGatewayPort
 from quantum_entanglement.native_im_provider_profile import IMProviderProfileV1
 from quantum_entanglement.native_im_sandbox import (
+    _APPROVED_COMPOSITION_TOKEN,
     NativeIMHealthEvidenceV1,
     NativeIMInboundOnlySandboxAdapter,
     NativeIMInboundRawResponseV1,
@@ -29,6 +30,9 @@ from quantum_entanglement.native_im_sandbox import (
     NativeIMSandboxAdapterProcessMismatchError,
     NativeIMTransportContractError,
     NativeIMVerifiedInboundReadV1,
+)
+from quantum_entanglement.native_im_sandbox_authority import (
+    NativeIMSandboxApprovalAuthorityError,
 )
 from quantum_entanglement.service.native_im_config import NativeIMInboundOnlyConfigV1
 from quantum_entanglement.service.native_im_secrets import NativeIMSecretLoadError
@@ -49,6 +53,7 @@ from tests.test_native_im_contract import (
     inbound_read_request,
     participant,
 )
+from tests.test_native_im_sandbox_authority import approved_authority_for
 
 TRANSPORT_EVIDENCE = "b" * 64
 MAPPING_EVIDENCE = "f" * 64
@@ -219,6 +224,10 @@ def adapter_inputs(
 ):
     profile = provider_profile()
     configuration = configuration_for(profile)
+    configuration, approval_authority, approval_permit, _, _ = approved_authority_for(
+        configuration,
+        profile,
+    )
     request = inbound_read_request(provider=profile.provider)
     metadata = metadata_for(
         configuration,
@@ -245,11 +254,14 @@ def adapter_inputs(
     adapter = NativeIMInboundOnlySandboxAdapter(
         configuration,
         profile,
+        approval_authority,
+        approval_permit,
         transport,
         mapper,
         secrets,
         replay_guard,
         clock=lambda: NOW,
+        _composition_token=_APPROVED_COMPOSITION_TOKEN,
     )
     return adapter, request, configuration, profile, transport, mapper, secrets, replay_guard
 
@@ -280,6 +292,103 @@ async def test_explicit_inbound_adapter_verifies_maps_and_returns_atomic_evidenc
     assert replay_guard.claims == 0
     assert RAW_BODY.decode() not in repr(result)
     assert isinstance(adapter, IMGatewayPort)
+
+
+@pytest.mark.asyncio
+async def test_revoked_before_read_rejects_before_request_secret_transport_or_mapper() -> None:
+    adapter, request, _, _, transport, mapper, secrets, _ = adapter_inputs()
+    authority = object.__getattribute__(
+        adapter,
+        "_NativeIMInboundOnlySandboxAdapter__approval_authority",
+    )
+    authority.revoke()
+
+    with pytest.raises(NativeIMSandboxApprovalAuthorityError) as raised:
+        await adapter.read_verified_inbound(request)
+    assert raised.value.code == "native_im_sandbox_approval_revoked"
+    assert secrets.references == []
+    assert transport.read_calls == 0
+    assert mapper.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_revocation_during_transport_closes_credential_and_blocks_mapper_and_verifier(
+) -> None:
+    adapter, request, configuration, profile, transport, mapper, secrets, replay_guard = (
+        adapter_inputs()
+    )
+    authority = object.__getattribute__(
+        adapter,
+        "_NativeIMInboundOnlySandboxAdapter__approval_authority",
+    )
+    permit = object.__getattribute__(
+        adapter,
+        "_NativeIMInboundOnlySandboxAdapter__approval_permit",
+    )
+
+    class RevokingTransport(FixtureTransport):
+        async def read_inbound(self, request, credential):
+            response = await super().read_inbound(request, credential)
+            authority.revoke()
+            return response
+
+    revoking = RevokingTransport(transport.response)
+    rebuilt = NativeIMInboundOnlySandboxAdapter(
+        configuration,
+        profile,
+        authority,
+        permit,
+        revoking,
+        mapper,
+        secrets,
+        replay_guard,
+        clock=lambda: NOW,
+        _composition_token=_APPROVED_COMPOSITION_TOKEN,
+    )
+    with pytest.raises(NativeIMSandboxApprovalAuthorityError) as raised:
+        await rebuilt.read_verified_inbound(request)
+    assert raised.value.code == "native_im_sandbox_approval_revoked"
+    assert revoking.read_calls == 1
+    assert mapper.calls == 0
+    assert secrets.references == [configuration.credential_ref]
+    assert all(material.closed for material in secrets.materials)
+
+
+@pytest.mark.asyncio
+async def test_revocation_during_mapping_blocks_page_return_after_mapping() -> None:
+    adapter, request, configuration, profile, transport, _, secrets, replay_guard = adapter_inputs()
+    authority = object.__getattribute__(
+        adapter,
+        "_NativeIMInboundOnlySandboxAdapter__approval_authority",
+    )
+    permit = object.__getattribute__(
+        adapter,
+        "_NativeIMInboundOnlySandboxAdapter__approval_permit",
+    )
+
+    class RevokingMapper(FixtureMapper):
+        def map_inbound(self, *args, **kwargs):
+            mapped = super().map_inbound(*args, **kwargs)
+            authority.revoke()
+            return mapped
+
+    mapper = RevokingMapper()
+    rebuilt = NativeIMInboundOnlySandboxAdapter(
+        configuration,
+        profile,
+        authority,
+        permit,
+        transport,
+        mapper,
+        secrets,
+        replay_guard,
+        clock=lambda: NOW,
+        _composition_token=_APPROVED_COMPOSITION_TOKEN,
+    )
+    with pytest.raises(NativeIMSandboxApprovalAuthorityError) as raised:
+        await rebuilt.read_verified_inbound(request)
+    assert raised.value.code == "native_im_sandbox_approval_revoked"
+    assert mapper.calls == 1
 
 
 @pytest.mark.asyncio

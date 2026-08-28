@@ -16,7 +16,10 @@ from quantum_entanglement.native_im_inbox import (
     NativeIMInboundPageAdmissionResultV1,
 )
 from quantum_entanglement.native_im_nonce_store import SQLiteNativeIMInboxStore
-from quantum_entanglement.native_im_sandbox import NativeIMInboundOnlySandboxAdapter
+from quantum_entanglement.native_im_sandbox import (
+    _APPROVED_COMPOSITION_TOKEN,
+    NativeIMInboundOnlySandboxAdapter,
+)
 from quantum_entanglement.native_im_sandbox_lifecycle import (
     NativeIMKillSwitchSnapshotV1,
     NativeIMKillSwitchTrippedError,
@@ -32,6 +35,7 @@ from quantum_entanglement.native_im_sandbox_observability import (
 )
 from quantum_entanglement.service.logging import SafeLogger
 from tests.test_native_im_auth import NOW
+from tests.test_native_im_sandbox_authority import approved_authority_for
 from tests.test_native_im_sandbox_inbound_adapter import (
     FixtureTransport,
     adapter_inputs,
@@ -118,14 +122,21 @@ def lifecycle_inputs(
             if blocking
             else BlockingCloseTransport(transport.response)
         )
+        configuration, approval_authority, approval_permit, _, _ = approved_authority_for(
+            configuration,
+            profile,
+        )
         adapter = NativeIMInboundOnlySandboxAdapter(
             configuration,
             profile,
+            approval_authority,
+            approval_permit,
             blocked,
             mapper,
             secrets,
             store,
             clock=lambda: NOW,
+            _composition_token=_APPROVED_COMPOSITION_TOKEN,
         )
         transport = blocked
     kill_switch = NativeIMSandboxKillSwitchV1()
@@ -143,10 +154,12 @@ async def test_lifecycle_starts_health_then_atomically_admits_and_replays_page(
         status = lifecycle.status()
         assert status.state == "stopped"
         assert status.ready is False
+        assert status.approval_current is False
 
         health = await lifecycle.start()
         assert health.healthy is True
         assert lifecycle.status().ready is True
+        assert lifecycle.status().approval_current is True
 
         fresh = await lifecycle.admit_once(request)
         replay = await lifecycle.admit_once(request)
@@ -158,6 +171,29 @@ async def test_lifecycle_starts_health_then_atomically_admits_and_replays_page(
         assert fresh.checkpoint == replay.checkpoint
         assert transport.health_calls == 1
         assert transport.read_calls == 2
+    finally:
+        await lifecycle.aclose()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_ready_status_fails_closed_immediately_after_approval_revocation(
+    tmp_path: Path,
+) -> None:
+    lifecycle, adapter, store, _, _, _ = lifecycle_inputs(tmp_path)
+    authority = object.__getattribute__(
+        adapter,
+        "_NativeIMInboundOnlySandboxAdapter__approval_authority",
+    )
+    try:
+        await lifecycle.start()
+        assert lifecycle.status().ready is True
+        authority.revoke()
+
+        status = lifecycle.status()
+        assert status.state == "ready"
+        assert status.approval_current is False
+        assert status.ready is False
     finally:
         await lifecycle.aclose()
         store.close()
