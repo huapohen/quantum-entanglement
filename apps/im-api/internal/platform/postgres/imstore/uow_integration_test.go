@@ -263,6 +263,10 @@ func TestUnitOfWorkAgainstPostgres(t *testing.T) {
 		tenantID := mustTenantID(t, "ten_alpha")
 		command := mustCommand(t, "conversation.create", "external-receipt", "external-request")
 		resultDigest := store.DigestBytes([]byte("external-result"))
+		var runtimeRole string
+		if err := pool.QueryRow(t.Context(), "SELECT current_user").Scan(&runtimeRole); err != nil {
+			t.Fatalf("read out-of-band runtime role: %v", err)
+		}
 		var operationCalls atomic.Int64
 		receipt, err := unit.Execute(t.Context(), tenantID, command, func(
 			ctx context.Context,
@@ -275,6 +279,12 @@ func TestUnitOfWorkAgainstPostgres(t *testing.T) {
 				return store.SHA256Digest{}, fmt.Errorf("connect out-of-band writer: %w", err)
 			}
 			defer func() { _ = externalConnection.Close(context.Background()) }()
+			if _, err := externalConnection.Exec(
+				ctx,
+				"SET ROLE "+pgx.Identifier{runtimeRole}.Sanitize(),
+			); err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("select out-of-band runtime role: %w", err)
+			}
 			externalTransaction, err := externalConnection.BeginTx(ctx, pgx.TxOptions{})
 			if err != nil {
 				return store.SHA256Digest{}, fmt.Errorf("begin out-of-band writer: %w", err)
