@@ -593,6 +593,96 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
                     ),
                 )
 
+    def test_existing_history_is_read_in_fixed_size_batches(self) -> None:
+        first = candidate(0)
+        self.write(first)
+        for version in range(1, 5):
+            self.write(
+                replace(
+                    candidate(version),
+                    name=first.name,
+                    expected_head_version=version,
+                )
+            )
+        successor = replace(
+            candidate(5, content=b"streamed-history-successor"),
+            name=first.name,
+            expected_head_version=5,
+        )
+
+        with (
+            patch.object(
+                result_artifact_transaction_module,
+                "_RESULT_ARTIFACT_HISTORY_FETCH_BATCH_SIZE",
+                2,
+            ),
+            patch.object(
+                result_artifact_transaction_module,
+                "_guarded_fetchmany",
+                wraps=result_artifact_transaction_module._guarded_fetchmany,
+            ) as fetchmany,
+        ):
+            self.write(successor)
+
+        self.assertEqual(fetchmany.call_count, 4)
+        self.assertEqual(self.counts(), (2, 6))
+
+    def test_oversized_history_metadata_is_rejected_before_materialization(self) -> None:
+        first = candidate(0)
+        self.write(first)
+        connection = self.store._connection
+        connection.execute(
+            "UPDATE artifact_versions SET metadata_json = ? WHERE artifact_id = ?",
+            (
+                "x" * (result_artifact_transaction_module.MAX_ARTIFACT_METADATA_BYTES + 1),
+                first.artifact_id,
+            ),
+        )
+        successor = replace(
+            candidate(1, content=b"oversized-history-successor"),
+            name=first.name,
+            expected_head_version=1,
+        )
+        batch = _prepare_result_artifact_batch((successor,))
+        real_fetchone = result_artifact_transaction_module._guarded_fetchone
+        materialized_history = False
+
+        def observe_fetchone(
+            connection: sqlite3.Connection,
+            process_guard: object,
+            sql: str,
+            parameters: tuple[object, ...] = (),
+        ) -> object:
+            nonlocal materialized_history
+            if "FROM artifact_versions" in sql and "WHERE rowid = ?" in sql:
+                materialized_history = True
+            return real_fetchone(
+                connection,
+                process_guard,  # type: ignore[arg-type]
+                sql,
+                parameters,
+            )
+
+        with (
+            patch.object(
+                result_artifact_transaction_module,
+                "_guarded_fetchone",
+                side_effect=observe_fetchone,
+            ),
+            patch.object(
+                result_artifact_transaction_module,
+                "decode_canonical_artifact_metadata_v1",
+                wraps=result_artifact_transaction_module.decode_canonical_artifact_metadata_v1,
+            ) as decode_metadata,
+            self.assertRaises(_ResultArtifactIntegrityError),
+        ):
+            with self.store._result_artifact_transaction() as handle:
+                self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+
+        self.assertFalse(materialized_history)
+        decode_metadata.assert_not_called()
+        self.assertEqual(self.counts(), (1, 1))
+
     def test_stale_head_fails_before_blob_or_version_dml(self) -> None:
         first = candidate(0)
         self.write(first)
