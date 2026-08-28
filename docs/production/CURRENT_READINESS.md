@@ -399,7 +399,7 @@ schema/migration 7、Artifact transaction primitive、writer、receipt、Observe
 详细证据见
 [`30_stored_event_envelope_store_adapter_evidence.md`](../../analysis_report/research/30_stored_event_envelope_store_adapter_evidence.md)。
 
-E3 Result Authority M4 代码封板节点 `aef5f8b` 已完成 inactive migration 7 候选、私有 backup-v2
+E3 Result Authority M4 代码封板节点 `28b3d6a` 已完成 inactive migration 7 候选、私有 backup-v2
 known topology 与 Artifact owner-transaction primitive。Migration 7 固定六张表、八个显式索引、
 31 个 autoindex 和 guarded down path，但 legacy bootstrap、默认 store 与 active migration registry
 仍停在 6。私有 backup profile 固定 45 个对象；active registry 仍保持 11 profiles / 88 objects。
@@ -411,10 +411,18 @@ Exact owner handle 绑定 store、SQLite connection、process owner 和一次性
 既有 Artifact version history 每次最多 64 行轻量预检；所有 TEXT 在 SQLite 层通过 storage class
 与 byte bound 后才按 `rowid` 单行物化并重算 canonical metadata、request digest、scope、lineage 与
 UTC 时间。Confirmed rollback 与 ambiguity 分开重发；ambiguous control 以
-`_ResultArtifactCommitAmbiguityError` 为直接 cause 并 poison store。M4 组合 82 tests、全仓 2639
-tests、Ruff、Mypy 和 diff-check 全绿；最终独立 reviewer 结论为 0 blocker。M4 仍不包含 migration 7
-注册、Atomic Result Writer、receipt/event/task/attempt 原子图、`ObservedV2`、`AcceptedV2`、worker 或
-真实 IM outbound；详细证据见
+`_ResultArtifactCommitAmbiguityError` 为直接 cause 并 poison store。全部 Artifact SQL 显式绑定
+main schema；clock 前后及最终回读冻结 main 9-object DDL/rootpage/schema-version snapshot 并拒绝
+TEMP shadow，clock 遗留 callback 被 strict writer fence 接管，依赖意外关闭 transaction 时 store
+poison。Clock 调用前建立随机、writer 独占的 SQLite savepoint，回收时必须能释放同一 savepoint；
+因此依赖用 `COMMIT`/`ROLLBACK` 后重新 `BEGIN` 伪造“transaction 仍打开”也会被识别为事务替换，
+进入 ambiguity、poison 与 reconcile-only 路径。异常图读取使用 `BaseException` 底层 descriptor，
+不会触发 hostile 属性钩子，也不会复活被 `from None` 抑制的历史 control。M4 Result Artifact 专项
+55 tests、组合 96 tests、全仓 2652 tests、Ruff、Mypy 和 diff-check 全绿；最终独立 reviewer 在
+`28b3d6a` 结论为 0 blocker。旧节点 `aef5f8b` 的 0-blocker 结论已被后续反例取代，当前封板只以
+`28b3d6a` 的完整反例与回归为依据。
+M4 仍不包含 migration 7 注册、Atomic Result Writer、receipt/event/task/attempt 原子图、
+`ObservedV2`、`AcceptedV2`、worker 或真实 IM outbound；详细证据见
 [`31_inactive_result_schema_artifact_transaction_evidence.md`](../../analysis_report/research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
 仍缺：
