@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-27T17:54:39Z",
+  "syncedAt": "2026-08-28T00:02:17Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private main + local repository",
     "remoteRepresentation": "semantic-mirror",
@@ -21,9 +21,9 @@
     }
   },
   "sourceControl": {
-    "notionContentBaselineCommit": "f99f176bfa9cd14abf7e3c51d971b9682dc49230",
-    "manifestPreparedFromCommit": "f99f176bfa9cd14abf7e3c51d971b9682dc49230",
-    "manifestPreparedFromTree": "3297eea9aa2861c75593f523383ba65d446a4d52"
+    "notionContentBaselineCommit": "35725e334a71bd4e52979526f04e0e8571acd45d",
+    "manifestPreparedFromCommit": "35725e334a71bd4e52979526f04e0e8571acd45d",
+    "manifestPreparedFromTree": "a10845256f38ce233d302f9943282a7d0f71a942"
   },
   "pages": [
     {
@@ -33,7 +33,7 @@
       "localFiles": [
         {
           "path": "analysis_report/README.md",
-          "sha256": "e1fc3c057f63db3d825f87383f19c1d8ddf68defde0890151a161b2f27539bbc"
+          "sha256": "cb48eb887cbc5f6ff9c506e6438f34bc055cf8b6de7cb1b541febc2dced2decb"
         }
       ],
       "updateMode": "targeted-preserve-child-pages-and-database",
@@ -880,6 +880,146 @@
       "realNativeIm": "no-provider-endpoint-credential-webhook-socket-read-or-send"
     }
   },
+  "stageReviewSyncV2": {
+    "stage": "native-im-e2-offline-inbox-foundation",
+    "syncedAt": "2026-08-28T00:02:17Z",
+    "semanticBaselineCommit": "35725e334a71bd4e52979526f04e0e8571acd45d",
+    "sourceCandidateCommit": "4ab745b1a83e3a840fe503fefc0bae58b112c95b",
+    "documentationCommit": "a314ceafc5e118ec195f2aeec7145df5aecf56c2",
+    "branchCatalogCommit": "35725e334a71bd4e52979526f04e0e8571acd45d",
+    "branch": "mainline_continue_quantum_entanglement",
+    "parent": {
+      "pageId": "3c9ead4b-996e-8108-aea6-c97c694d6587",
+      "url": "https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204",
+      "title": "Quantum Entanglement｜mainline_continue 独立审阅空间",
+      "remoteReadbackVerified": true
+    },
+    "children": [
+      {
+        "key": "native-im-e2-offline-inbox-foundation",
+        "pageId": "3c9ead4b-996e-8119-818e-c17c6272afec",
+        "url": "https://app.notion.com/p/3c9ead4b996e8119818ec17c6272afec?pvs=204",
+        "sourcePath": "analysis_report/research/23_native_im_e2_offline_inbox_foundation_evidence.md",
+        "sourceSha256": "c810ee6c4d59aa301380157ae5db223945d9d7458cb44b0c3b19bbc0567ca5a0",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e2-workstream",
+        "pageId": "3c9ead4b-996e-815a-b745-ebbd7e4346c5",
+        "url": "https://app.notion.com/p/3c9ead4b996e815ab745ebbd7e4346c5?pvs=204",
+        "sourcePath": "analysis_report/MAINLINE_CONTINUE_WORKSTREAM.md",
+        "sourceSha256": "f006b8ffb7177d9632cfc3b4b5f8f350ea2da3a3c15e1847e5199cba3b372c06",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e2-backup-topology",
+        "pageId": "3c9ead4b-996e-810f-85da-dac7f5ae26f3",
+        "url": "https://app.notion.com/p/3c9ead4b996e810f85dadac7f5ae26f3?pvs=204",
+        "sourcePath": "docs/architecture/SQLITE_BACKUP_TOPOLOGY_REGISTRY.md",
+        "sourceSha256": "c2c9ab796b9699b30a84779ea85732de2f6cc0679d0fcc380d9f8cd914ef6763",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-contract-executable",
+        "pageId": "3c9ead4b-996e-81a3-a5b0-e415cfdc616d",
+        "url": "https://app.notion.com/p/3c9ead4b996e81a3a5b0e415cfdc616d?pvs=204",
+        "sourcePath": "docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md",
+        "sourceSha256": "6faa23cc1eee4df674749c82c1712822003ecdec485452ffc58410da6aa62d9c",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-evidence",
+        "pageId": "3c9ead4b-996e-81e7-b797-d2beae571f5f",
+        "url": "https://app.notion.com/p/3c9ead4b996e81e7b797d2beae571f5f?pvs=204",
+        "sourcePath": "analysis_report/research/22_native_im_e1_contract_executable_evidence.md",
+        "sourceSha256": "b0a9ccad3948203853f8ae63e497be922c54bae386679ac18d073daebe8dfd8c",
+        "remoteReadbackVerified": true,
+        "historicalSnapshot": true
+      },
+      {
+        "key": "native-im-early-integration-plan",
+        "pageId": "3c9ead4b-996e-8187-a258-e7d162618a2e",
+        "url": "https://app.notion.com/p/3c9ead4b996e8187a258e7d162618a2e?pvs=204",
+        "sourcePath": "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md",
+        "sourceSha256": "b4e8021ceadbb57128d575b1d8a9ceed47c05aedcad3d43b3dd2722a4ddb31b8",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-prerequisites",
+        "pageId": "3c9ead4b-996e-81b3-83f4-cafebeb9d008",
+        "url": "https://app.notion.com/p/3c9ead4b996e81b383f4cafebeb9d008?pvs=204",
+        "sourcePath": "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
+        "sourceSha256": "90859ce227f9e75c0ab8d9a9e372e829799047735ed8ccc8a608767dc9c6fb74",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-next-stage-plan",
+        "pageId": "3c9ead4b-996e-81f5-9af7-d5f75bc41a7b",
+        "url": "https://app.notion.com/p/3c9ead4b996e81f59af7d5f75bc41a7b?pvs=204",
+        "sourcePath": "analysis_report/NEXT_STAGE_PLAN.md",
+        "sourceSha256": "1a16258f3eae600d27aa19fff818b598456f8c53855a86afdf04eb0438bcc059",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-readiness",
+        "pageId": "3c9ead4b-996e-819b-bb02-f206122941c2",
+        "url": "https://app.notion.com/p/3c9ead4b996e819bbb02f206122941c2?pvs=204",
+        "sourcePath": "docs/production/CURRENT_READINESS.md",
+        "sourceSha256": "e0e781e53201b628f417b87d6684fc0b96ee1374a99d65c2de489dd6a21cafb0",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-report-index",
+        "pageId": "3c9ead4b-996e-81d3-9fb6-d5cf6d364fe0",
+        "url": "https://app.notion.com/p/3c9ead4b996e81d39fb6d5cf6d364fe0?pvs=204",
+        "sourcePath": "analysis_report/README.md",
+        "sourceSha256": "cb48eb887cbc5f6ff9c506e6438f34bc055cf8b6de7cb1b541febc2dced2decb",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-e1-changelog",
+        "pageId": "3c9ead4b-996e-81d0-9c85-fa64b2beb563",
+        "url": "https://app.notion.com/p/3c9ead4b996e81d09c85fa64b2beb563?pvs=204",
+        "sourcePath": "CHANGELOG.md",
+        "sourceSha256": "99dadcade7a20f0ac59ee9963e8ed3fc4a64dd874b00078cdaa0904970854518",
+        "remoteReadbackVerified": true,
+        "historicalSnapshot": true
+      },
+      {
+        "key": "native-im-branch-catalog",
+        "pageId": "3c9ead4b-996e-81c8-9d1f-ed42248fc74a",
+        "url": "https://app.notion.com/p/3c9ead4b996e81c89d1fed42248fc74a?pvs=204",
+        "sourcePath": "BRANCH_CATALOG.md",
+        "sourceSha256": "e439c65cf9f2e213effbb5b1a5344e6bac2c119364d5896c9aebe5ab8d07910d",
+        "digestPinned": false,
+        "remoteReadbackVerified": true
+      }
+    ],
+    "globalPagesUpdated": [
+      "3c1ead4b-996e-81e2-89c7-dde1d597f630",
+      "3c9ead4b-996e-8133-91b7-e322936a1f13",
+      "3c9ead4b-996e-8163-8c43-e48ecc2e0bcc",
+      "3c9ead4b-996e-818f-b220-c66126181863",
+      "3c9ead4b-996e-81bc-8053-cf1e844dccdb"
+    ],
+    "remoteReadback": {
+      "verified": true,
+      "stageReviewPageCount": 13,
+      "globalPageCountUpdated": 5,
+      "newPagesCreated": 3,
+      "existingPagesUpdated": 13,
+      "markerChecks": 62,
+      "structureChecks": 2,
+      "missingMarkers": [],
+      "readbackFailures": 0
+    },
+    "safety": {
+      "yuque": "not-touched",
+      "feishuAndWeCom": "no-send-reply-comment-mention-upload-or-webhook",
+      "realNativeIm": "no-provider-endpoint-credential-webhook-socket-read-or-send",
+      "agentToolOutbound": "level-b-observation-only-not-enabled"
+    }
+  },
   "verificationSummary": {
     "pageCount": 33,
     "controlledSourcePageCount": 32,
@@ -891,6 +1031,15 @@
     "screenshotImageCountTotal": 27,
     "screenshotImagesAddedThisSync": 17,
     "temporarySignedImageUrlsRecorded": false,
-    "secretsRecorded": false
+    "secretsRecorded": false,
+    "latestIncrementalSync": {
+      "stageReviewPageCount": 13,
+      "baseMirrorPageCount": 33,
+      "totalProjectMirrorPageCount": 46,
+      "newPagesCreated": 3,
+      "existingPagesUpdated": 13,
+      "pagesReadbackVerified": 18,
+      "readbackFailures": 0
+    }
   }
 }

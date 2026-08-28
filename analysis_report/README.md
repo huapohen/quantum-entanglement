@@ -5,7 +5,7 @@
 计划或验收动作形成稳定检查点后，都必须同步到私人 Notion 并完成远端回读，回读完成前不进入
 下一项工作。语雀仍只在用户另行明确授权时操作。
 
-## Notion 镜像（2026-08-28 E1 已回读）
+## Notion 镜像（2026-08-28 E2 离线底座已回读）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -17,23 +17,27 @@
 - 原生 IM V1 合同：<https://app.notion.com/p/3c9ead4b996e8114985cce2cc5af2b63?pvs=204>
 - 提前接入检查点：<https://app.notion.com/p/3c9ead4b996e8103b53bf10409f08e1d?pvs=204>
 - 提前接入执行计划：<https://app.notion.com/p/3c9ead4b996e818fb220c66126181863?pvs=204>
-- 最近稳定批次同步：2026-08-28；32 个固定页面与 1 个派生分支目录页共 33 页。项目首页、接入
-  决策、下一阶段计划、分支目录、冻结合同、提前接入检查点与 E0–E5 计划已联合回读。
-- 当前 Notion 同步基线为 GitHub `main@f99f176bfa9cd14abf7e3c51d971b9682dc49230`；新建两页的
-  完整语义镜像、Notion 原生表格/图、关联页、原始 Markdown 附件和远端 marker 均已确认。
+- 基础镜像仍为 32 个固定页面与 1 个派生分支目录页，共 33 页；本次更新其中 5 页。独立评审
+  空间现为 1 个父页与 12 个子页，共 13 页；两处合计 46 个私人 Notion 页面。
+- E2 本次新增 3 个完整语义镜像：离线 inbox 阶段证据、独立工作流状态、SQLite backup topology；
+  更新 7 个既有评审子页，并保留 2 个 E1 历史快照页。
+- 当前 E2 Notion 内容基线为评审分支
+  `35725e334a71bd4e52979526f04e0e8571acd45d`；核心源码节点为
+  `4ab745b1a83e3a840fe503fefc0bae58b112c95b`，阶段文档节点为
+  `a314ceafc5e118ec195f2aeec7145df5aecf56c2`。未变更的基础镜像页仍保留原
+  `main@f99f176bfa9cd14abf7e3c51d971b9682dc49230` 证据语义。
+- 18 个相关页面已逐页 fetch 回读；62 个内容 marker 与 2 个父子/数据库结构检查全部命中，
+  0 个缺失、0 个回读失败。更新页均包含 committed Markdown 原件或等价源文件绑定。
 - 冻结合同正文没有为同步台账而改写；其本地原始文件 SHA-256 为
   `99031ad243112122e987e84658ff93daf33b3285ea1468039f9d59dc8048167a`。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
-- 当前批次已完成 Notion 写入和远端回读；语雀仍未操作。
-- E1 独立审阅空间：<https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204>。
-  该空间已同步 1 个父审阅页和 9 个完整语义镜像子页，覆盖 P0 可执行合同、E1 调研证据、
-  E1–E5 计划、P0–P3 分界、下一阶段、readiness、调研索引、changelog 和分支目录。
-- E1 Notion 语义基线为评审分支 `2d681336bde45fe4c65d6b6c7ad35503b15e815f`，核心源码候选为
-  `7620200f8e378507b1f592d6d34744080250d2ea`。父页和 9 个子页已逐页 fetch 回读；20 个预期
-  marker 全部命中，0 个缺失。
-- 同步后的 README/manifest/目录收口提交只更新台账和动态分支导航，不改变 E1 wire、fake、
-  测试或 Gate 状态；最终 Git bookkeeping HEAD 以独立审阅父页顶部和远端分支回读为准。
+- 当前批次已完成 Notion 写入和远端回读；语雀仍未操作，飞书/企微仍为零发送，真实 IM 网络和
+  outbound 仍未启用。
+- E1–E2 独立审阅空间：<https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204>；
+  E2 离线 inbox 阶段证据：<https://app.notion.com/p/3c9ead4b996e8119818ec17c6272afec?pvs=204>。
+- 后续 README/manifest/目录收口提交只更新同步台账与导航，不改变 `4ab745b` 的运行行为或
+  Gate 状态；最终 bookkeeping HEAD 会再次写入父页并回读。
 
 ## 当前阶段交付
 
