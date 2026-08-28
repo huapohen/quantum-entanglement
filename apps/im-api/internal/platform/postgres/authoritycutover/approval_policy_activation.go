@@ -296,6 +296,10 @@ func (activator ApprovalPolicyActivator) Activate(
 	defer cancelReconciliation()
 	readback, readbackErr := activator.store.Load(reconciliationContext, namespace)
 	if readbackErr != nil {
+		if errors.Is(readbackErr, ErrInvalidApprovalPolicyStoreState) ||
+			errors.Is(commitErr, ErrInvalidApprovalPolicyStoreState) {
+			return ActivatedApprovalPolicy{}, ErrInvalidApprovalPolicyStoreState
+		}
 		if commitErr == nil || errors.Is(commitErr, ErrApprovalPolicyCommitUncertain) {
 			return ActivatedApprovalPolicy{}, ErrApprovalPolicyCommitUncertain
 		}

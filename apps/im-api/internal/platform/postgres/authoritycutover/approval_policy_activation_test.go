@@ -359,6 +359,16 @@ func TestApprovalPolicyActivationReconcilesCommitUnknownAndNeverReturnsUnprovenS
 		}
 	})
 
+	t.Run("corrupt readback remains an integrity error", func(t *testing.T) {
+		store := newFakeApprovalPolicyActivationStore()
+		store.beforeCommitErr = ErrInvalidApprovalPolicyStoreState
+		store.failLoadAt[2] = ErrInvalidApprovalPolicyStoreState
+		activator := mustApprovalPolicyActivator(t, fixture.verifier, store)
+		if _, err := activator.Activate(t.Context(), fixture.raw, fixture.now); err != ErrInvalidApprovalPolicyStoreState {
+			t.Fatalf("corrupt readback error = %v, want fixed %v", err, ErrInvalidApprovalPolicyStoreState)
+		}
+	})
+
 	t.Run("initial load unavailable", func(t *testing.T) {
 		store := newFakeApprovalPolicyActivationStore()
 		store.failLoadAt[1] = errors.New("private provider error")
