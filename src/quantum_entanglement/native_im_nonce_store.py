@@ -1280,24 +1280,20 @@ class SQLiteNativeIMInboxStore:
         if read_row is None:
             raise NativeIMInboxStoreIntegrityError() from None
         record = self._validated_inbound_read_row(read_row)
-        expected_continuation = page.snapshot_token if page.has_more else None
         if (
             record.request != request
             or record.status != "admitted"
-            or record.page_digest != page.canonical_digest()
-            or record.response_snapshot_token != page.snapshot_token
-            or (record.next_cursor, record.next_sequence) != (page.next_cursor, page.next_sequence)
-            or record.continuation_snapshot_token != expected_continuation
-            or record.has_more is not page.has_more
-            or record.envelope_count != len(page.envelopes)
-            or record.event_manifest_sha256 != event_manifest_sha256
-            or record.capability_revision != page.capability_revision
-            or record.capability_digest != page.capability_digest
+            or record.page_digest is None
+            or record.response_snapshot_token is None
+            or record.has_more is None
+            or record.envelope_count is None
+            or record.event_manifest_sha256 is None
+            or record.capability_revision is None
+            or record.capability_digest is None
+            or record.admitted_checkpoint_revision is None
             or record.admitted_at is None
         ):
-            raise NativeIMInboundConflictError(
-                "native IM read is already bound to a different admitted page"
-            )
+            raise NativeIMInboxStoreIntegrityError() from None
 
         if self._load_inbound_checkpoint(connection, scope) is None:
             raise NativeIMInboxStoreIntegrityError() from None
@@ -1311,22 +1307,18 @@ class SQLiteNativeIMInboxStore:
             """,
             (*scope_values, record.read_request_digest),
         ).fetchall()
-        if len(link_rows) != len(page.envelopes):
+        if len(link_rows) != record.envelope_count:
             raise NativeIMInboxStoreIntegrityError() from None
 
         receipts: list[NativeIMInboxEventReceiptV1] = []
-        for ordinal, (link_row, expected_envelope) in enumerate(
-            zip(link_rows, page.envelopes, strict=True)
-        ):
+        reconstructed_envelopes: list[IMVerifiedInboundEnvelopeV1] = []
+        for ordinal, link_row in enumerate(link_rows):
             link = self._validated_inbound_read_event_row(link_row)
             if (
                 tuple(link_row[column] for column in _INBOUND_READ_EVENT_COLUMNS[:4])
                 != scope_values
                 or link_row["read_request_digest"] != record.read_request_digest
                 or link.ordinal != ordinal
-                or link.event_id != expected_envelope.event.event_id
-                or link.verification_id != expected_envelope.verification_id
-                or link.envelope_digest != expected_envelope.canonical_digest()
             ):
                 raise NativeIMInboxStoreIntegrityError() from None
 
@@ -1350,30 +1342,38 @@ class SQLiteNativeIMInboxStore:
                 raise NativeIMInboxStoreIntegrityError() from None
             event_record = self._validated_inbox_event_row(event_row)
             verification_record = self._validated_inbox_verification_row(verification_row)
-            reconstructed_envelope = IMVerifiedInboundEnvelopeV1(
-                schema_version=NATIVE_IM_SCHEMA_VERSION,
-                event=event_record.event,
-                event_digest=verification_record.event_digest,
-                verification_id=verification_record.verification_id,
-                verifier_id=verification_record.verifier_id,
-                authentication_evidence_digest=(verification_record.authentication_evidence_digest),
-                tenant_mapping_revision=verification_record.tenant_mapping_revision,
-                verified_at=verification_record.verified_at,
-                traceparent=verification_record.traceparent,
-            )
             if (
-                tuple(verification_row[column] for column in _INBOX_VERIFICATION_COLUMNS[:4])
+                tuple(event_row[column] for column in _INBOX_EVENT_COLUMNS[:4]) != scope_values
+                or tuple(verification_row[column] for column in _INBOX_VERIFICATION_COLUMNS[:4])
                 != scope_values
-                or event_record.event != expected_envelope.event
-                or event_record.event_digest != expected_envelope.event_digest
-                or event_record.admitted_at != record.admitted_at
+                or event_record.event.event_id != link.event_id
+                or verification_record.verification_id != link.verification_id
                 or verification_record.event_id != event_record.event.event_id
+                or verification_record.event_digest != event_record.event_digest
                 or verification_record.envelope_digest != link.envelope_digest
+                or event_record.admitted_at != record.admitted_at
                 or verification_record.admitted_at != record.admitted_at
-                or reconstructed_envelope != expected_envelope
-                or reconstructed_envelope.canonical_digest() != link.envelope_digest
             ):
                 raise NativeIMInboxStoreIntegrityError() from None
+            try:
+                reconstructed_envelope = IMVerifiedInboundEnvelopeV1(
+                    schema_version=NATIVE_IM_SCHEMA_VERSION,
+                    event=event_record.event,
+                    event_digest=verification_record.event_digest,
+                    verification_id=verification_record.verification_id,
+                    verifier_id=verification_record.verifier_id,
+                    authentication_evidence_digest=(
+                        verification_record.authentication_evidence_digest
+                    ),
+                    tenant_mapping_revision=verification_record.tenant_mapping_revision,
+                    verified_at=verification_record.verified_at,
+                    traceparent=verification_record.traceparent,
+                )
+            except (TypeError, UnicodeError, ValueError):
+                raise NativeIMInboxStoreIntegrityError() from None
+            if reconstructed_envelope.canonical_digest() != link.envelope_digest:
+                raise NativeIMInboxStoreIntegrityError() from None
+            reconstructed_envelopes.append(reconstructed_envelope)
             receipts.append(
                 NativeIMInboxEventReceiptV1(
                     schema_version=NATIVE_IM_SCHEMA_VERSION,
@@ -1387,12 +1387,39 @@ class SQLiteNativeIMInboxStore:
                 )
             )
 
+        try:
+            persisted_page = IMInboundPageV1(
+                schema_version=NATIVE_IM_SCHEMA_VERSION,
+                tenant_id=scope.tenant_id,
+                workspace_id=scope.workspace_id,
+                provider=scope.provider,
+                channel_id=scope.channel_id,
+                read_request_id=record.request.read_request_id,
+                read_request_digest=record.read_request_digest,
+                snapshot_token=record.response_snapshot_token,
+                envelopes=tuple(reconstructed_envelopes),
+                next_cursor=record.next_cursor,
+                next_sequence=record.next_sequence,
+                has_more=record.has_more,
+                capability_revision=record.capability_revision,
+                capability_digest=record.capability_digest,
+            )
+            persisted_page.validate_request_binding(record.request)
+        except (TypeError, UnicodeError, ValueError):
+            raise NativeIMInboxStoreIntegrityError() from None
+        if persisted_page.canonical_digest() != record.page_digest:
+            raise NativeIMInboxStoreIntegrityError() from None
+        if persisted_page != page or record.event_manifest_sha256 != event_manifest_sha256:
+            raise NativeIMInboundConflictError(
+                "native IM read is already bound to a different admitted page"
+            )
+
         return NativeIMInboundPageAdmissionResultV1(
             schema_version=NATIVE_IM_SCHEMA_VERSION,
             scope=scope,
             read_request_id=request.read_request_id,
             read_request_digest=record.read_request_digest,
-            page_digest=page.canonical_digest(),
+            page_digest=record.page_digest,
             disposition=disposition,
             checkpoint=checkpoint,
             event_receipts=tuple(receipts),
