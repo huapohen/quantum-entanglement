@@ -1,9 +1,10 @@
 # 调研与证据索引
 
 本目录是本地报告的单一真相源。报告正文会在研究、实现和验证完成后汇总为
-`multi_agent_collaboration_report.md`。自 2026-08-27 起，用户要求任何本地文档、代码、决策、
-计划或验收动作形成稳定检查点后，都必须同步到私人 Notion 并完成远端回读，回读完成前不进入
-下一项工作。语雀仍只在用户另行明确授权时操作。
+`multi_agent_collaboration_report.md`。当前截至 `3a92f3c` 的稳定内容已经同步到私人 Notion 并完成
+回读。用户在 2026-08-28 进一步确认 Notion 会影响开发速度，因此后续开发期间只更新本地文档并
+频繁 commit/push；当前计划任务全部完成后再一次性批量同步 Notion 并逐页回读。语雀仍只在用户
+另行明确授权时操作。
 
 ## Notion 镜像（最近已回读基线：E3 Result Authority M1 Stored-Event Envelope）
 
@@ -23,11 +24,12 @@
   [E3 M1 Stored-Event Envelope Codec](https://app.notion.com/p/3caead4b996e81f99b71d0bed6ac3136?pvs=204)；
   刷新全局执行计划、就绪度、索引、独立与全局分支导航，并定点更新独立父页与项目主页。
   `research/28`、ADR、计划、就绪度、索引、分支目录与 Changelog 均上传了对应完整 Markdown 原件。
-- 当前语义镜像基线为评审分支
-  `mainline_continue_quantum_entanglement@497c545b0613a15d5edf142c694ddbf00412a135`；M1 代码封板候选为
+- 当前语义镜像最终稳定基线为评审分支 `mainline_continue_quantum_entanglement@3a92f3c`；
+  M1 代码封板候选为
   `d889751e4cc3b7db548994a000a87e21688b4429`，固定 tree 为
-  `57b608ed57f47a68d1f9433104cd88d820a19929`。M2 fence、M3 store adapter、migration 7、writer、
-  Accepted、worker、真实 IM 和 outbound 均未启用。
+  `57b608ed57f47a68d1f9433104cd88d820a19929`。M2 已在本地/GitHub 的 `dd0ba54` 完成但尚未按新节奏
+  批量同步 Notion；M3 store adapter、migration 7、writer、Accepted、worker、真实 IM 和 outbound
+  均未启用。
 - 本批 8 个相关页面已逐页 fetch 回读；34 个内容 marker 与 3 个父子/数据库结构检查全部命中，
   0 个缺失、0 个回读失败。独立父页为 17 个唯一子页；项目主页保持 32 个子页块和 1 个数据库。
 - 机器可读页面映射、文件摘要和回读断言见
@@ -48,7 +50,7 @@
 | 文件 | 状态 | 内容 |
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
-| `NEXT_STAGE_PLAN.md` | M1 codec 已完成，下一步 M2 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
+| `NEXT_STAGE_PLAN.md` | M1 codec 与 M2 fence 已完成，下一步 M3 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
@@ -69,9 +71,11 @@ cursor/snapshot 或 provider readiness；封板前又对已推送 `a18acd6` 做�
 Python 3.9.6/3.12.12/3.13.9 同 digest，专项 102 tests、Python 3.13 全仓 2,489 tests 与 locked
 Ruff/Mypy 全绿；最终 formatter 封板提交为 `39732c1`，受保护的 provider-bundle suite digest 随后
 在 `f8cafd4` 刷新为 `9e76f826…1a21ae0`，证据文档推进到 `0e85f80` 后再次完成 2,489 项全量复验。
-下一步是 M2 reserved fence。M3 store adapter、migration 7、writer、Accepted、worker 和真实
-IM/outbound 均保持关闭。完整边界见
-`research/28_stored_event_envelope_codec_evidence.md`。
+M2 reserved fence 已在 `dd0ba54` 完成：五个 generic surface 在 `BEGIN` 前拒绝 reserved result
+vocabulary，standalone `complete()` 在 clock/DML 前结构拒绝 scoped job；独立复核发现的 stripped
+marker 与 type/key drift 旁路均已形成回归并修复。下一步是 M3 store adapter；migration 7、writer、
+Accepted、worker 和真实 IM/outbound 均保持关闭。完整边界见
+`research/29_reserved_result_event_boundary_evidence.md`。
 
 ## 专题研究
 
@@ -106,6 +110,7 @@ IM/outbound 均保持关闭。完整边界见
 | `research/26_native_im_provider_bundle_offline_evidence.md` | 原生 IM E2 provider bundle 离线闭环：`ee0666f` | Mapper/Transport/Bundle TCK、read-exchange evidence、增强 provenance、migration-v6 持久回读、2,386 项全仓门禁与真实 provider 接入前五项硬输入 |
 | `research/27_native_im_backend_contract_audit.md` | 独立原生 IM 后端源码合同复核：`c623aea` | 确认 authority persistence 底座可复用，但运行 composition 仍只有 fake liveness/ping；冻结 Level B readiness/read 最小合同、三类直接阻断与第一轮只读联调顺序 |
 | `research/28_stored_event_envelope_codec_evidence.md` | E3 Result Authority M1 代码证据：`d889751` | 私有 canonical envelope、exact raw SQLite row 重算、372-byte Golden、102 项专项、三 Python verifier、2,489 项全仓门禁、对抗修复及 M2/M3/authority 未完成边界 |
+| `research/29_reserved_result_event_boundary_evidence.md` | E3 Result Authority M2 代码证据：`dd0ba54` | generic `BEGIN` 前 reserved vocabulary fence、scoped standalone completion durable classifier、25 项三 Python 专项、2,514 项全仓门禁与两条逆向旁路修复 |
 
 ## 已归档截图
 

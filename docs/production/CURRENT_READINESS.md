@@ -33,9 +33,10 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 1. `SQLiteEventStore` 已能原子提交 caller-supplied `RUNNING` transition、queued job 和 admission
    receipt，并由 `claim_invocation_start(...)` 在同一 SQLite transaction 内完成 admission
    复核、job CAS、attempt、schema-2 start event 与 readback；但 `OrchestratorKernel` 尚未使用这些
-   API。Result Authority M1 已增加私有 stored-event envelope codec 与 raw-row 重算 primitive，但
-   reserved fence、真实 write-snapshot/store adapter、heartbeat-supervised worker、result/artifact
-   receipt 与 terminal projection 闭环仍不存在；
+   API。Result Authority M1 已增加私有 stored-event envelope codec 与 raw-row 重算 primitive，M2
+   已封锁 generic result vocabulary 和 scoped standalone completion 旁路；但真实
+   write-snapshot/store adapter、heartbeat-supervised worker、result/artifact receipt 与 terminal
+   projection 闭环仍不存在；
 2. events、snapshots、delivery、attempt 和 projection repository 尚未统一强制 tenant/workspace
    scope，tenant domain object 不能替代可信认证与 SQL predicate；
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
@@ -153,9 +154,10 @@ event/revision/scope/mention/digest union/state 矩阵由参数化 contract test
 - canonical admission 与 claim + attempt + schema-2 start event + readback 的统一 UoW 已实现；但
   heartbeat-supervised receipt-aware worker gate、result/artifact acceptance 和 terminal state
   仍未实现；
-- stored-event envelope M1 仅完成 exact values/raw-row codec；generic reserved-event append fence、
-  store-owned `_EventWriteSnapshot` adapter、同事务 INSERT/readback digest 比对与 exact typed result
-  payload dispatch 尚未实现，不能据此签发 receipt 或 Accepted；
+- stored-event envelope M1 已完成 exact values/raw-row codec，M2 已完成 generic reserved-event append
+  fence 与 scoped standalone completion fence；store-owned `_EventWriteSnapshot` adapter、同事务
+  INSERT/readback digest 比对与 exact typed result payload dispatch 尚未实现，不能据此签发 receipt
+  或 Accepted；
 - task `RUNNING`、attempt、artifact/result acceptance 和 terminal task state 不是端到端状态机；
 - Agent 返回后逐个写 artifact、result 和 completion，任一边界崩溃仍需 receipt-based reconcile；
 - succeeded attempt 没有不可变 result receipt 时不能安全自动投影 `COMPLETED`；
@@ -373,6 +375,16 @@ lint/format、strict Mypy、三 Python Golden 和 fresh-process/hash-seed verifi
 M1 不包含 M2 reserved fence、M3 store adapter、migration 7、writer、Accepted 或 worker；详细证据见
 [`28_stored_event_envelope_codec_evidence.md`](../../analysis_report/research/28_stored_event_envelope_codec_evidence.md)。
 
+E3 Result Authority M2 代码与对抗测试节点 `dd0ba54` 已完成 Reserved Result Event Boundary：五个
+caller-controlled generic append surface 在 `BEGIN` 前检查 store-owned snapshot；exact accepted
+event 与 terminal root-key skeleton 均失败关闭；standalone `complete()` 在 clock/DML 前按 bounded
+durable admission/execution/start graph 拒绝 scoped job。独立逆向审查发现的 stripped marker downgrade
+与 type/key coordinate drift 两条真实旁路均先形成回归再修复。M2 两文件 25 tests 已在 CPython
+3.9.6/3.12.12/3.13.9 通过；Python 3.13 全仓为 2,514/2,514 tests（79 条既有 fork warning），
+locked Ruff 0.16.3 与 Mypy 1.19.1 strict（66 source files）全绿。M2 不包含 M3 store adapter、
+migration 7、writer、Accepted 或 worker；详细证据见
+[`29_reserved_result_event_boundary_evidence.md`](../../analysis_report/research/29_reserved_result_event_boundary_evidence.md)。
+
 仍缺：
 
 - 完整的 supported OS/SQLite 组合矩阵；当前 full-suite CI 只覆盖 GitHub Linux 的 Python
@@ -418,9 +430,9 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
    profile/mapper 和 production exchange 并通过现有 TCK，再单独修订 `SERVICE_BOUNDARY.md`；
 4. 上述批准与 full gates 完成后，才执行 health/read/dedupe/resume；Level B 只生成 observation，
    不驱动 Agent、tool、browser、subprocess 或 outbound；
-5. E3 M1 private stored-event envelope codec 已完成；下一步先做 M2 reserved result/terminal event
-   fence，再做 M3 store-owned write snapshot 与 raw-row 同事务双路重算。M2/M3 未完成前不开放
-   result writer；
+5. E3 M1 private stored-event envelope codec 与 M2 reserved result/terminal event fence 已完成；
+   下一步做 M3 store-owned write snapshot 与 raw-row 同事务双路重算。M3 完成前不开放 result
+   writer；
 6. 在 M2/M3 之上再把 accepted result/artifact、attempt 和 terminal task state 组成单一原子验收
    边界；没有 result receipt 时绝不把 succeeded job 猜成 completed。默认关闭的
    [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)保持不变；

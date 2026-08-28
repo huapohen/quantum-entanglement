@@ -214,9 +214,10 @@ production gate and does not authorize a real connector or external message.
 
 ### In progress — not yet a shipped guarantee
 
-- Atomic Result Authority has completed only M1 private envelope codec. The reserved generic-append
-  fence, store-owned snapshot/raw-row transaction adapter, result migration 7, atomic writer,
-  Observed recovery, Accepted mint point, and worker promotion remain disabled.
+- Atomic Result Authority has completed M1 private envelope codec and M2 reserved generic-append /
+  scoped-standalone-completion fences. The store-owned snapshot/raw-row transaction adapter, result
+  migration 7, atomic writer, Observed recovery, Accepted mint point, and worker promotion remain
+  disabled.
 - Native IM E2 sandbox inbound-only: the offline profile/auth/durable atomic inbox, default-off
   adapter/lifecycle/observability/recorded-probe and synthetic provider-bundle TCK nodes now exist,
   but no real provider contract/profile/mapper, production exchange, endpoint, credential material,
