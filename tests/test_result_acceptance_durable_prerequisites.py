@@ -12,6 +12,7 @@ from unittest.mock import patch
 import quantum_entanglement
 from quantum_entanglement._result_acceptance import (
     _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+    _build_scoped_invocation_result_events_from_plan_v2,
     _build_scoped_invocation_result_terminal_transition_from_plan_v2,
     _EventedFreshResultAcceptancePlanV2,
     _EvidencedFreshResultAcceptancePlanV2,
@@ -1572,6 +1573,99 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                         self.fail("failed event construction unexpectedly yielded a plan")
         for table in ("artifact_versions", "artifact_blobs"):
             with self.subTest(table=table):
+                self.assertEqual(
+                    self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[
+                        0
+                    ],
+                    0,
+                )
+
+    def test_caught_event_pair_failure_still_forces_owner_transaction_rollback(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        with (
+            patch(
+                "quantum_entanglement.store.new_id",
+                side_effect=(
+                    "receipt_events_caught",
+                    "event_result_events_caught",
+                    "event_terminal_events_caught",
+                ),
+            ),
+            patch(
+                "quantum_entanglement.store._build_scoped_invocation_result_events_from_plan_v2",
+                side_effect=RuntimeError("caught event pair failure"),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "rollback-only"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.assertRaisesRegex(RuntimeError, "caught event pair failure"):
+                        construct = (
+                            self.store._construct_result_acceptance_event_pair_in_owner_transaction
+                        )
+                        with construct(handle, prepared):
+                            self.fail("caught event failure unexpectedly yielded a plan")
+        for table in ("artifact_versions", "artifact_blobs"):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[
+                        0
+                    ],
+                    0,
+                )
+
+    def test_event_stage_rejects_wrong_builder_outputs_and_rolls_back(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+
+        def drifted_pair(
+            transitioned: _TransitionedFreshResultAcceptancePlanV2,
+        ) -> tuple[DomainEvent, DomainEvent]:
+            result_event, terminal_event = _build_scoped_invocation_result_events_from_plan_v2(
+                transitioned
+            )
+            return replace(result_event, event_id="event-result-drifted"), terminal_event
+
+        cases = (
+            (
+                "wrong_type",
+                lambda _transitioned: (object(), object()),
+                TypeError,
+                "exact DomainEvent",
+            ),
+            (
+                "binding_drift",
+                drifted_pair,
+                ValueError,
+                "differs from its transitioned plan",
+            ),
+        )
+        for ordinal, (label, builder, error_type, message) in enumerate(cases, start=1):
+            with (
+                self.subTest(case=label),
+                patch(
+                    "quantum_entanglement.store.new_id",
+                    side_effect=(
+                        f"receipt_events_bad_{ordinal}",
+                        f"event_result_events_bad_{ordinal}",
+                        f"event_terminal_events_bad_{ordinal}",
+                    ),
+                ),
+                patch(
+                    "quantum_entanglement.store._build_scoped_invocation_result_events_from_plan_v2",
+                    side_effect=builder,
+                ),
+            ):
+                with self.assertRaisesRegex(error_type, message):
+                    with self.store._result_artifact_transaction() as handle:
+                        construct = (
+                            self.store._construct_result_acceptance_event_pair_in_owner_transaction
+                        )
+                        with construct(handle, prepared):
+                            self.fail("invalid event builder output unexpectedly yielded")
+            for table in ("artifact_versions", "artifact_blobs"):
                 self.assertEqual(
                     self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[
                         0
