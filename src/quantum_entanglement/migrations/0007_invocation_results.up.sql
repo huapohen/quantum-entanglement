@@ -1,47 +1,3 @@
-CREATE UNIQUE INDEX uq_invocation_jobs_result_binding
-    ON invocation_jobs(
-        invocation_id,
-        session_id,
-        plan_id,
-        task_id,
-        agent_id,
-        idempotency_key
-    );
-
-CREATE UNIQUE INDEX uq_invocation_attempts_result_binding
-    ON invocation_attempts(
-        attempt_id,
-        invocation_id,
-        attempt_number,
-        lease_epoch,
-        worker_id,
-        lease_token_digest
-    );
-
-CREATE UNIQUE INDEX uq_invocation_admissions_result_binding
-    ON invocation_admissions(
-        invocation_id,
-        session_id,
-        task_id,
-        job_idempotency_key
-    );
-
-CREATE UNIQUE INDEX uq_artifact_versions_result_binding
-    ON artifact_versions(tenant_id, workspace_id, artifact_id, version);
-
-CREATE UNIQUE INDEX uq_events_result_receipt_coordinates
-    ON events(event_id, stream_id, sequence, global_position, event_type, timestamp);
-
-CREATE UNIQUE INDEX uq_outbox_result_publication_binding
-    ON outbox(
-        message_id,
-        destination,
-        idempotency_key,
-        triggering_event_id,
-        triggering_global_position,
-        created_at
-    );
-
 CREATE TABLE invocation_result_manifests (
     tenant_id TEXT NOT NULL,
     workspace_id TEXT NOT NULL,
@@ -51,6 +7,7 @@ CREATE TABLE invocation_result_manifests (
     byte_size INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY(tenant_id, workspace_id, manifest_digest),
+    UNIQUE(manifest_digest),
     CHECK(typeof(tenant_id) = 'text' AND length(CAST(tenant_id AS BLOB)) BETWEEN 1 AND 4096),
     CHECK(typeof(workspace_id) = 'text' AND length(CAST(workspace_id AS BLOB)) BETWEEN 1 AND 4096),
     CHECK(
@@ -95,32 +52,17 @@ CREATE TABLE invocation_result_requests (
     artifact_count INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY(tenant_id, workspace_id, request_digest),
-    UNIQUE(tenant_id, workspace_id, invocation_id),
+    UNIQUE(request_digest),
+    UNIQUE(invocation_id),
     UNIQUE(tenant_id, workspace_id, session_id, task_id),
     UNIQUE(tenant_id, workspace_id, session_id, acceptance_idempotency_key),
     UNIQUE(tenant_id, workspace_id, result_ref),
-    FOREIGN KEY(
-        invocation_id,
-        session_id,
-        plan_id,
-        task_id,
-        agent_id,
-        job_idempotency_key
-    ) REFERENCES invocation_jobs(
-        invocation_id,
-        session_id,
-        plan_id,
-        task_id,
-        agent_id,
-        idempotency_key
-    ) ON UPDATE RESTRICT ON DELETE RESTRICT,
-    FOREIGN KEY(invocation_id, session_id, task_id, job_idempotency_key)
-        REFERENCES invocation_admissions(
-            invocation_id,
-            session_id,
-            task_id,
-            job_idempotency_key
-        ) ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(invocation_id)
+        REFERENCES invocation_jobs(invocation_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(invocation_id)
+        REFERENCES invocation_admissions(invocation_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
     FOREIGN KEY(tenant_id, workspace_id, result_manifest_digest)
         REFERENCES invocation_result_manifests(
             tenant_id,
@@ -211,6 +153,38 @@ CREATE INDEX idx_invocation_result_requests_scope
 CREATE INDEX idx_invocation_result_requests_manifest
     ON invocation_result_requests(tenant_id, workspace_id, result_manifest_digest);
 
+CREATE TABLE invocation_result_event_bindings (
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    receipt_id TEXT NOT NULL,
+    event_role TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    global_position INTEGER NOT NULL,
+    PRIMARY KEY(tenant_id, workspace_id, receipt_id, event_role),
+    UNIQUE(tenant_id, workspace_id, receipt_id, event_id, event_type, global_position),
+    UNIQUE(event_id),
+    UNIQUE(global_position),
+    FOREIGN KEY(event_id)
+        REFERENCES events(event_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(global_position)
+        REFERENCES events(global_position)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CHECK(typeof(tenant_id) = 'text' AND length(CAST(tenant_id AS BLOB)) BETWEEN 1 AND 4096),
+    CHECK(typeof(workspace_id) = 'text' AND length(CAST(workspace_id AS BLOB)) BETWEEN 1 AND 4096),
+    CHECK(typeof(receipt_id) = 'text' AND length(CAST(receipt_id AS BLOB)) BETWEEN 1 AND 4096),
+    CHECK(
+        (event_role = 'result' AND event_type = 'task.invocation.result.accepted')
+        OR (event_role = 'terminal' AND event_type = 'task.status.changed')
+    ),
+    CHECK(typeof(event_id) = 'text' AND length(CAST(event_id AS BLOB)) BETWEEN 1 AND 4096),
+    CHECK(
+        typeof(global_position) = 'integer'
+        AND global_position > 0
+    )
+);
+
 CREATE TABLE invocation_result_receipts (
     tenant_id TEXT NOT NULL,
     workspace_id TEXT NOT NULL,
@@ -259,14 +233,15 @@ CREATE TABLE invocation_result_receipts (
     terminal_event_global_position INTEGER NOT NULL,
     terminal_event_envelope_digest TEXT NOT NULL,
     PRIMARY KEY(tenant_id, workspace_id, receipt_id),
-    UNIQUE(tenant_id, workspace_id, invocation_id),
-    UNIQUE(tenant_id, workspace_id, attempt_id),
+    UNIQUE(receipt_id),
+    UNIQUE(invocation_id),
+    UNIQUE(attempt_id),
     UNIQUE(tenant_id, workspace_id, session_id, acceptance_idempotency_key),
     UNIQUE(tenant_id, workspace_id, result_ref),
-    UNIQUE(tenant_id, workspace_id, result_event_id),
-    UNIQUE(tenant_id, workspace_id, terminal_event_id),
-    UNIQUE(tenant_id, workspace_id, result_event_global_position),
-    UNIQUE(tenant_id, workspace_id, terminal_event_global_position),
+    UNIQUE(result_event_id),
+    UNIQUE(terminal_event_id),
+    UNIQUE(result_event_global_position),
+    UNIQUE(terminal_event_global_position),
     UNIQUE(
         tenant_id,
         workspace_id,
@@ -277,51 +252,57 @@ CREATE TABLE invocation_result_receipts (
     FOREIGN KEY(tenant_id, workspace_id, request_digest)
         REFERENCES invocation_result_requests(tenant_id, workspace_id, request_digest)
         ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(attempt_id)
+        REFERENCES invocation_attempts(attempt_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(result_event_id)
+        REFERENCES events(event_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(result_event_stream_id, result_event_sequence)
+        REFERENCES events(stream_id, sequence)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(result_event_global_position)
+        REFERENCES events(global_position)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(terminal_event_id)
+        REFERENCES events(event_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(terminal_event_stream_id, terminal_event_sequence)
+        REFERENCES events(stream_id, sequence)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(terminal_event_global_position)
+        REFERENCES events(global_position)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
     FOREIGN KEY(
-        attempt_id,
-        invocation_id,
-        attempt_number,
-        lease_epoch,
-        worker_id,
-        lease_token_digest
-    ) REFERENCES invocation_attempts(
-        attempt_id,
-        invocation_id,
-        attempt_number,
-        lease_epoch,
-        worker_id,
-        lease_token_digest
-    ) ON UPDATE RESTRICT ON DELETE RESTRICT,
-    FOREIGN KEY(
+        tenant_id,
+        workspace_id,
+        receipt_id,
         result_event_id,
-        result_event_stream_id,
-        result_event_sequence,
-        result_event_global_position,
         result_event_type,
-        result_event_timestamp
-    ) REFERENCES events(
+        result_event_global_position
+    ) REFERENCES invocation_result_event_bindings(
+        tenant_id,
+        workspace_id,
+        receipt_id,
         event_id,
-        stream_id,
-        sequence,
-        global_position,
         event_type,
-        timestamp
-    ) ON UPDATE RESTRICT ON DELETE RESTRICT,
+        global_position
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY(
+        tenant_id,
+        workspace_id,
+        receipt_id,
         terminal_event_id,
-        terminal_event_stream_id,
-        terminal_event_sequence,
-        terminal_event_global_position,
         terminal_event_type,
-        terminal_event_timestamp
-    ) REFERENCES events(
+        terminal_event_global_position
+    ) REFERENCES invocation_result_event_bindings(
+        tenant_id,
+        workspace_id,
+        receipt_id,
         event_id,
-        stream_id,
-        sequence,
-        global_position,
         event_type,
-        timestamp
-    ) ON UPDATE RESTRICT ON DELETE RESTRICT,
+        global_position
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
     CHECK(typeof(tenant_id) = 'text' AND length(CAST(tenant_id AS BLOB)) BETWEEN 1 AND 4096),
     CHECK(typeof(workspace_id) = 'text' AND length(CAST(workspace_id AS BLOB)) BETWEEN 1 AND 4096),
     CHECK(typeof(receipt_id) = 'text' AND length(CAST(receipt_id AS BLOB)) BETWEEN 1 AND 4096),
@@ -476,14 +457,14 @@ CREATE TABLE invocation_result_artifacts (
     artifact_request_digest TEXT NOT NULL,
     candidate_digest TEXT NOT NULL,
     PRIMARY KEY(tenant_id, workspace_id, receipt_id, ordinal),
-    UNIQUE(tenant_id, workspace_id, receipt_id, artifact_id),
+    UNIQUE(artifact_id),
     UNIQUE(tenant_id, workspace_id, receipt_id, name),
     UNIQUE(tenant_id, workspace_id, receipt_id, idempotency_key),
     FOREIGN KEY(tenant_id, workspace_id, receipt_id)
         REFERENCES invocation_result_receipts(tenant_id, workspace_id, receipt_id)
         ON UPDATE RESTRICT ON DELETE RESTRICT,
-    FOREIGN KEY(tenant_id, workspace_id, artifact_id, version)
-        REFERENCES artifact_versions(tenant_id, workspace_id, artifact_id, version)
+    FOREIGN KEY(artifact_id)
+        REFERENCES artifact_versions(artifact_id)
         ON UPDATE RESTRICT ON DELETE RESTRICT,
     CHECK(typeof(tenant_id) = 'text' AND length(CAST(tenant_id AS BLOB)) BETWEEN 1 AND 4096),
     CHECK(typeof(workspace_id) = 'text' AND length(CAST(workspace_id AS BLOB)) BETWEEN 1 AND 4096),
@@ -557,7 +538,9 @@ CREATE TABLE invocation_result_publications (
     triggering_global_position INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY(tenant_id, workspace_id, receipt_id),
-    UNIQUE(tenant_id, workspace_id, message_id),
+    UNIQUE(message_id),
+    UNIQUE(triggering_event_id),
+    UNIQUE(triggering_global_position),
     FOREIGN KEY(
         tenant_id,
         workspace_id,
@@ -571,21 +554,9 @@ CREATE TABLE invocation_result_publications (
         terminal_event_id,
         terminal_event_global_position
     ) ON UPDATE RESTRICT ON DELETE RESTRICT,
-    FOREIGN KEY(
-        message_id,
-        destination,
-        idempotency_key,
-        triggering_event_id,
-        triggering_global_position,
-        created_at
-    ) REFERENCES outbox(
-        message_id,
-        destination,
-        idempotency_key,
-        triggering_event_id,
-        triggering_global_position,
-        created_at
-    ) ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(message_id)
+        REFERENCES outbox(message_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
     CHECK(typeof(tenant_id) = 'text' AND length(CAST(tenant_id AS BLOB)) BETWEEN 1 AND 4096),
     CHECK(typeof(workspace_id) = 'text' AND length(CAST(workspace_id AS BLOB)) BETWEEN 1 AND 4096),
     CHECK(typeof(receipt_id) = 'text' AND length(CAST(receipt_id AS BLOB)) BETWEEN 1 AND 4096),

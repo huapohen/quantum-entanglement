@@ -55,17 +55,21 @@ erDiagram
     INVOCATION_ADMISSIONS ||--|| INVOCATION_RESULT_REQUESTS : scoped_start
     INVOCATION_RESULT_REQUESTS ||--|| INVOCATION_RESULT_RECEIPTS : accepted_graph
     INVOCATION_ATTEMPTS ||--|| INVOCATION_RESULT_RECEIPTS : fenced_attempt
-    EVENTS ||--o{ INVOCATION_RESULT_RECEIPTS : result_and_terminal
+    EVENTS ||--o| INVOCATION_RESULT_EVENT_BINDINGS : reserved_identity
+    INVOCATION_RESULT_EVENT_BINDINGS |{--o| INVOCATION_RESULT_RECEIPTS : required_pair
     INVOCATION_RESULT_RECEIPTS ||--o{ INVOCATION_RESULT_ARTIFACTS : ordered_artifacts
     ARTIFACT_VERSIONS ||--|| INVOCATION_RESULT_ARTIFACTS : materialized_version
     INVOCATION_RESULT_RECEIPTS ||--|| INVOCATION_RESULT_PUBLICATIONS : fixed_publication
     OUTBOX ||--|| INVOCATION_RESULT_PUBLICATIONS : exact_outbox_row
 ```
 
-SQL foreign keys prevent structural orphans. They do not prove that legacy parent rows carry every
-tenant/workspace binding, or that child counts equal the receipt count. The future writer and reader
-must load fixed raw projections in one snapshot and reject any missing, extra, reordered, advanced or
-cross-scope row.
+SQL foreign keys prevent accepted receipts and their materialized children from becoming structural
+orphans; an event reservation without a receipt is deliberately treated as an incomplete graph.
+Migration dependencies grant read access, not ownership, so migration 7 creates no index, trigger or
+other object on a dependency table. The existing parent keys cannot prove that separately valid event
+coordinates identify one row, that legacy parent rows carry every tenant/workspace binding, or that
+child counts equal the receipt count. The future writer and reader must load fixed raw projections in
+one snapshot and reject any missing, extra, reordered, advanced, mixed-coordinate or cross-scope row.
 
 ## 4. `invocation_result_manifests`
 
@@ -94,7 +98,7 @@ One deterministic acceptance-request identity per scoped invocation:
 - result reference, optional primary Artifact ID and exact Artifact count;
 - foreign keys to the owning job, admission and scoped manifest.
 
-Uniqueness covers scoped invocation, scoped session/task, scoped acceptance idempotency and scoped
+Uniqueness covers the globally unique invocation plus scoped session/task, acceptance idempotency and
 result reference. The future readback still verifies the complete job/admission payload because the
 legacy parent tables do not contain tenant/workspace columns.
 
@@ -107,17 +111,34 @@ One capability-free receipt graph per request:
 - accepted timestamp, result reference, Artifact count and evidence/transition/receipt digests;
 - result and terminal event IDs, types, timestamps, stream sequences, global positions and envelope
   digests;
-- foreign keys to the request, job attempt and both exact event coordinate tuples.
+- foreign keys to the request, globally unique job attempt, both event IDs, both stream/sequence pairs
+  and both global positions;
+- deferred composite foreign keys to the exact scoped result and terminal event bindings.
 
-Migration 7 owns a composite unique event index over
-`(event_id, stream_id, sequence, global_position, event_type, timestamp)`. Each receipt event foreign
-key targets that tuple, preventing a receipt from combining coordinates from different event rows.
-The result event must be `task.invocation.result.accepted`; the terminal event must be
-`task.status.changed`, immediately follow it in stream/global order and share `accepted_at`.
+The independent event foreign keys reject orphans but cannot prove that all coordinates came from the
+same row. M5 therefore re-reads a fixed raw event projection and uses the M3 envelope adapter before
+acceptance continues. SQL additionally requires the result event to be
+`task.invocation.result.accepted`, the terminal event to be `task.status.changed`, immediately follow
+it in stream/global order and share `accepted_at`.
 
-Receipt uniqueness covers the scoped invocation, attempt, scoped acceptance idempotency and scoped
-result reference. The receipt stores no plaintext lease token, `fresh` flag, accepted boolean or
-other durable capability.
+Receipt uniqueness covers the global invocation, attempt, event IDs and global positions plus scoped
+acceptance idempotency and result reference. The receipt stores no plaintext lease token, `fresh`
+flag, accepted boolean or other durable capability.
+
+### 6.1 `invocation_result_event_bindings`
+
+Two normalized identity reservations exist for every durable receipt, one `result` and one
+`terminal`. A role/type CHECK binds those roles to
+`task.invocation.result.accepted` and `task.status.changed`. A single table-wide unique domain for
+`event_id` and `global_position` prevents an identity reserved in either role from being reused in
+the other role or by another scoped result graph. The receipt's two non-null composite foreign keys
+make both reservations mandatory and bind scope, receipt, ID, type and global position together.
+
+The binding table intentionally has no reverse foreign key to the receipt, avoiding a cyclic schema
+dependency. Therefore an orphan reservation remains a partial graph that M5 fixed raw-row readback
+must reject. Migration down also refuses to proceed while any reservation remains. Independent
+foreign keys from a binding to event ID/global position still cannot prove those coordinates came
+from one raw event row; M5 verifies that equality with the envelope adapter before COMMIT.
 
 ## 7. `invocation_result_artifacts`
 
@@ -127,13 +148,12 @@ One row per ordered Artifact descriptor/candidate:
 - exact Artifact ID/name/version/parent/media type/blob digest/byte size;
 - metadata, Artifact request and in-process candidate digests;
 - created-by and Artifact idempotency identities;
-- foreign keys to the receipt and the exact scoped `artifact_versions` row.
+- foreign keys to the receipt and globally unique `artifact_versions.artifact_id`.
 
-Migration 7 owns a composite unique index over
-`artifact_versions(tenant_id, workspace_id, artifact_id, version)` so the child foreign key binds
-scope, identity and version to one raw parent row. Continuous ordinals, exact child count, primary
-Artifact binding and equality with both manifest descriptors and raw Artifact rows remain mandatory
-whole-graph readback checks.
+Each Artifact ID is globally unique in the current parent schema and may belong to only one result
+receipt. Tenant/workspace/version cannot be part of the SQL foreign key without modifying the
+dependency domain, so continuous ordinals, exact child count, primary Artifact binding and equality
+with both manifest descriptors and raw Artifact rows remain mandatory whole-graph readback checks.
 
 ## 8. `invocation_result_publications`
 
@@ -142,14 +162,16 @@ Publication is a closed, fixed one-to-one graph edge, not an optional set:
 - one row per receipt, with exact `publication_kind = 'result_terminal_outbox_v1'`;
 - scoped receipt identity, outbox message ID, destination and idempotency key;
 - canonical payload/header digests, triggering terminal event ID/global position and creation time;
-- foreign keys to the receipt and one exact outbox identity tuple.
+- a composite foreign key to the exact terminal identity of the same receipt and a foreign key to the
+  globally unique outbox message.
 
-Migration 7 owns a composite unique outbox index over message ID, destination, idempotency,
-triggering event coordinates and creation time. The receipt codec does not currently self-digest
-publication identity, so a receipt row alone must never prove the complete graph. M5 must derive the
-fixed publication deterministically and final-read both the publication and raw outbox row before
-COMMIT. Missing or extra publication is a partial graph, not success. Actual publishing remains
-disabled.
+Message ID and triggering event ID/global position are globally unique in the result graph. The
+composite receipt foreign key prevents a publication from borrowing another graph's event or even the
+same receipt's result event. The receipt codec does not currently self-digest publication identity,
+and the independent outbox foreign key does not prove one exact outbox row, so a receipt row alone
+must never prove the complete graph. M5 must derive the fixed publication deterministically and
+final-read both the publication and raw outbox row before COMMIT. Missing or extra publication is a
+partial graph, not success. Actual publishing remains disabled.
 
 ## 9. SQL and codec invariants
 
@@ -164,9 +186,13 @@ disabled.
   SQLite TEXT;
 - no permanent trigger is introduced;
 - all candidate foreign keys use `ON UPDATE RESTRICT ON DELETE RESTRICT`;
-- Artifact scope, event coordinates and outbox identity use candidate-owned composite unique indexes;
+- migration 7 never creates an object on a dependency-owned table;
+- global attempt/event/message/Artifact identities cannot be reused by another scoped result graph;
+  result and terminal event roles share one normalized uniqueness domain;
 - the down script first uses a temporary CHECK guard to reject any non-empty candidate graph, then
-  drops only candidate-owned objects. It cannot delete accepted rows silently.
+  rejects any future sidecar migration that depends on 7, drops only candidate-owned objects and
+  removes 7's outgoing dependency rows, metadata and ledger row in that order. It cannot delete
+  accepted rows silently or run without the exact sidecar prerequisite.
 
 ## 10. Registration and compatibility fences
 

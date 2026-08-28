@@ -8,6 +8,7 @@ tests and backup-topology work can bind exact package metadata before a native e
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 
 from .domain_migrations import (
@@ -86,12 +87,37 @@ class _InactiveInvocationResultsCandidate:
             )
         if self.descriptor.migration_id != self.migration.version:
             raise ValueError("inactive result candidate identities do not match")
+        if self.migration != _INVOCATION_RESULTS_MIGRATION:
+            raise ValueError("inactive result candidate migration is not exact")
+        if self.descriptor != _INACTIVE_INVOCATION_RESULTS_DESCRIPTOR:
+            raise ValueError("inactive result candidate descriptor is not exact")
         if type(self.enabled) is not bool or self.enabled:
             raise ValueError("inactive result candidate must remain disabled")
         if type(self.component_preconditions) is not tuple:
             raise TypeError("inactive result component preconditions must be an exact tuple")
         if self.component_preconditions != (_EVENT_STORE_CORE_COMPONENT,):
             raise ValueError("inactive result component preconditions are not exact")
+
+    @property
+    def candidate_sha256(self) -> str:
+        """Bind the disabled gate and component prerequisites to exact descriptor metadata."""
+
+        self.__post_init__()
+        body = json.dumps(
+            {
+                "componentPreconditions": list(self.component_preconditions),
+                "descriptorSha256": self.descriptor.descriptor_sha256,
+                "enabled": self.enabled,
+                "filename": self.migration.filename,
+                "format": "qe.inactive-domain-migration-candidate/1",
+                "migrationId": self.migration.version,
+            },
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(body).hexdigest()
 
 
 _INACTIVE_INVOCATION_RESULTS_CANDIDATE = _InactiveInvocationResultsCandidate(
