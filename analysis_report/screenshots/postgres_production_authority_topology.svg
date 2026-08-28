@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120" role="img" aria-labelledby="title desc">
+  <title id="title">WanWork IM PostgreSQL Production Authority Gate A0 topology</title>
+  <desc id="desc">A frozen but not yet implemented production authority contract. An approved canonical plan and secret references feed separate one-shot provision and migration processes plus a long-lived runtime-only API. All three use authenticated TLS to PostgreSQL 18 and emit redacted evidence. Live credential rotation is explicitly deferred until bounded readiness and draining exist. Clerk, RongCloud, Agent threads, public traffic, high availability and production promotion remain blocked.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#071426"/>
+      <stop offset="1" stop-color="#102a43"/>
+    </linearGradient>
+    <linearGradient id="control" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="runtime" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#047857"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+    <linearGradient id="warning" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#7c2d12"/>
+      <stop offset="1" stop-color="#b45309"/>
+    </linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-opacity=".32"/></filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#67e8f9"/>
+    </marker>
+    <marker id="amberArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#fbbf24"/>
+    </marker>
+    <style>
+      .title{font:700 43px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#f8fafc}
+      .sub{font:500 20px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#a5f3fc}
+      .h{font:700 24px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#f8fafc}
+      .t{font:500 18px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#dbeafe}
+      .small{font:500 15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#cbd5e1}
+      .mono{font:600 15px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#cffafe}
+      .line{stroke:#67e8f9;stroke-width:4;fill:none;marker-end:url(#arrow)}
+      .dash{stroke:#fbbf24;stroke-width:3;stroke-dasharray:10 8;fill:none;marker-end:url(#amberArrow)}
+      .muted{stroke:#64748b;stroke-width:3;stroke-dasharray:8 8;fill:none}
+    </style>
+  </defs>
+
+  <rect width="1800" height="1120" rx="32" fill="url(#bg)"/>
+  <text x="68" y="76" class="title">PostgreSQL Production Authority｜Gate A0</text>
+  <text x="68" y="114" class="sub">冻结合同 ≠ 已实现 IaC / cutover / TLS / rotation / production IM</text>
+
+  <g filter="url(#shadow)">
+    <rect x="68" y="156" width="1664" height="150" rx="24" fill="url(#control)" stroke="#93c5fd" stroke-width="2"/>
+    <text x="100" y="198" class="h">Release Control Plane</text>
+    <text x="100" y="236" class="t">canonical plan digest · source/tree/artifact/catalog/spec binding · exact approval · backup prerequisite</text>
+    <text x="100" y="270" class="small">只传 SecretRef / CA digest / authority manifest；不得携带 DSN、password、token 或 private key</text>
+
+    <rect x="1128" y="184" width="560" height="94" rx="18" fill="#172554" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="1154" y="220" class="h">Immutable Evidence</text>
+    <text x="1154" y="252" class="small">preflight · step receipt · unknown reconcile · runtime proof</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="68" y="372" width="308" height="326" rx="22" fill="#312e81" stroke="#a5b4fc" stroke-width="2"/>
+    <text x="94" y="414" class="h">Secret + Trust Boundary</text>
+    <text x="94" y="456" class="t">Provisioner SecretRef</text>
+    <text x="94" y="490" class="t">Migration SecretRef</text>
+    <text x="94" y="524" class="t">Runtime SecretRef</text>
+    <text x="94" y="558" class="t">CA Ref + Digest</text>
+    <line x1="94" y1="582" x2="350" y2="582" stroke="#818cf8"/>
+    <text x="94" y="616" class="small">owner-only file / inherited FD</text>
+    <text x="94" y="644" class="small">no argv · no env dump · no child</text>
+    <text x="94" y="672" class="small">missing / drift / TOCTOU → fail closed</text>
+
+    <rect x="438" y="372" width="362" height="326" rx="22" fill="#3f2a16" stroke="#f59e0b" stroke-width="2"/>
+    <text x="464" y="414" class="h">one-shot im-provision</text>
+    <text x="464" y="456" class="t">read-only preflight</text>
+    <text x="464" y="490" class="t">database / role bootstrap</text>
+    <text x="464" y="524" class="t">membership + DB ACL</text>
+    <text x="464" y="558" class="t">ownership / grant cutover</text>
+    <line x1="464" y1="582" x2="774" y2="582" stroke="#f59e0b"/>
+    <text x="464" y="616" class="small">nontransactional step receipt</text>
+    <text x="464" y="644" class="small">ACK loss → fresh readback</text>
+    <text x="464" y="672" class="small">never long-lived · never business ingress</text>
+
+    <rect x="862" y="372" width="362" height="326" rx="22" fill="#164e63" stroke="#22d3ee" stroke-width="2"/>
+    <text x="888" y="414" class="h">one-shot im-migrate</text>
+    <text x="888" y="456" class="t">migration login → owner</text>
+    <text x="888" y="490" class="t">checksummed catalog only</text>
+    <text x="888" y="524" class="t">schema/object/default ACL</text>
+    <text x="888" y="558" class="t">exact postcondition proof</text>
+    <line x1="888" y1="582" x2="1198" y2="582" stroke="#22d3ee"/>
+    <text x="888" y="616" class="small">no provisioner/runtime secret</text>
+    <text x="888" y="644" class="small">no permanent listener</text>
+    <text x="888" y="672" class="small">migration summary is not promotion evidence</text>
+
+    <rect x="1286" y="372" width="446" height="326" rx="22" fill="url(#runtime)" stroke="#5eead4" stroke-width="2"/>
+    <text x="1312" y="414" class="h">long-lived im-api</text>
+    <text x="1312" y="456" class="t">runtime login → runtime role</text>
+    <text x="1312" y="490" class="t">loopback listener · zero provider outbound</text>
+    <text x="1312" y="524" class="t">physical/session attestation</text>
+    <text x="1312" y="558" class="t">exact readiness + route barrier</text>
+    <line x1="1312" y1="582" x2="1706" y2="582" stroke="#5eead4"/>
+    <text x="1312" y="616" class="small">no provisioner/migration credential</text>
+    <text x="1312" y="644" class="small">no DDL / owner / raw table mutation</text>
+    <text x="1312" y="672" class="small">production mode missing DB material → reject</text>
+  </g>
+
+  <path d="M376 470 H426" class="line"/>
+  <path d="M376 520 H408 V352 H830 V520 H850" class="line"/>
+  <path d="M376 570 H396 V334 H1250 V570 H1274" class="line"/>
+  <path d="M619 360 V320 H1408 V306" class="dash"/>
+  <path d="M1043 360 V320 H1452 V306" class="dash"/>
+  <path d="M1509 360 V306" class="dash"/>
+
+  <g filter="url(#shadow)">
+    <rect x="190" y="770" width="1420" height="162" rx="24" fill="#0f2238" stroke="#38bdf8" stroke-width="2"/>
+    <text x="220" y="812" class="h">PostgreSQL 18 writer endpoint｜remote authenticated TLS (`verify-full` equivalent)</text>
+    <text x="220" y="852" class="t">databaseOwnerRole → ownerRole → migratorRole · runtimeRole；login roles NOINHERIT、无 cluster authority</text>
+    <text x="220" y="888" class="small">同一 versioned AuthoritySpecification 驱动 plan / executor / migration validator / runtime validator / receipt verifier</text>
+  </g>
+  <path d="M619 698 V758" class="line"/>
+  <path d="M1043 698 V758" class="line"/>
+  <path d="M1509 698 V758" class="line"/>
+
+  <g filter="url(#shadow)">
+    <rect x="68" y="976" width="1664" height="88" rx="20" fill="url(#warning)" stroke="#fbbf24" stroke-width="2"/>
+    <text x="98" y="1014" class="h">Live rotation 必须等待 Gate C0 explicit draining</text>
+    <text x="98" y="1046" class="small">Clerk · RongCloud · Agent thread/message/mention · public traffic · HA/multi-region · production promotion 全部 No-Go</text>
+  </g>
+
+  <text x="68" y="1096" class="mono">Evidence boundary: frozen deployment authority contract → implementation/tests/evidence still required → no real IM outbound</text>
+</svg>

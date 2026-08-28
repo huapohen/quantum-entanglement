@@ -2,7 +2,7 @@
 
 本目录保存用户原始任务截图、在飞书和语雀中以只读方式采集的研究视图、本地产品
 体验的真实浏览器验收视图，以及 Clawith 官网和官方文档的公开只读调研证据。
-`manifest.json` 当前索引 33 张图片，并固定每个文件的 SHA-256、字节数、像素尺寸、来源
+`manifest.json` 当前索引 35 张图片，并固定每个文件的 SHA-256、字节数、像素尺寸、来源
 类型、内容范围、派生关系与访问分类。
 
 ## 安全与证据边界
@@ -15,8 +15,8 @@
   真实模型生成的测试指令和模型产出，但没有真实聊天内容、客户数据或启动令牌。第 15–26
   张来自 Clawith 公开官网和官方文档，不含本项目内部数据；为避免脱离研究语境传播第三方
   页面素材，它们仍与整套证据一起按项目内部资料管理。第 26 张单独固定其部门级交付样板和
-  同卡片口径冲突。最后六项是 Topic 33、Topic 34 与 Topic 35 三个 W2 PostgreSQL 检查点图各自的
-  source SVG 与 rsvg 派生 PNG；它们是报告导航图，不是独立运行证据。
+  同卡片口径冲突。最后八项是 Topic 33、Topic 34、Topic 35 和 Gate A0 production authority 合同图
+  各自的 source SVG 与 rsvg 派生 PNG；它们是报告/合同导航图，不是独立运行证据。
 - 本轮没有伪造“已脱敏”副本。需要对外分享时，应另做 derived redacted copy，保留原件
   hash，并由人工复核不可逆模糊/裁剪区域后再发布。
 - SHA-256 能检测本地文件变化，不证明截图内容本身真实，也不是签名、时间戳服务或页面
@@ -91,6 +91,8 @@
 | [`34_postgres_function_only_writes_and_exact_access_map.png`](34_postgres_function_only_writes_and_exact_access_map.png) | 1600×1100 | 不适用 / 2026-08-28 18:21:07 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1600×1100 确定性渲染，便于 Notion 审阅 | `586c3b5edebf` |
 | [`35_postgres_attested_runtime_composition_map.svg`](35_postgres_attested_runtime_composition_map.svg) | 1800×1120 | 不适用 / 2026-08-28 20:29:18 +08:00 | `B-local-derived-documentation-visual`；private config→ambient/default-file/raw-DSN/malformed-query hardening→physical/session attestation→readiness/UoW/API gate→剩余 P0 源图 | `69b242cc4331` |
 | [`35_postgres_attested_runtime_composition_map.png`](35_postgres_attested_runtime_composition_map.png) | 1800×1120 | 不适用 / 2026-08-28 20:29:18 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1800×1120 确定性渲染，便于 Notion 审阅 | `2ca4fa79c3d6` |
+| [`postgres_production_authority_topology.svg`](postgres_production_authority_topology.svg) | 1800×1120 | 不适用 / 2026-08-29 00:06:29 +08:00 | `B-local-derived-documentation-visual`；Gate A0 plan/SecretRef/provision/migrate/runtime/TLS/receipt/No-Go 合同源图 | `9db6fb640215` |
+| [`postgres_production_authority_topology.png`](postgres_production_authority_topology.png) | 1800×1120 | 不适用 / 2026-08-29 00:06:29 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1800×1120 确定性渲染，便于本地浏览器与后续 Notion 审阅 | `8569f0ec46fb` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件

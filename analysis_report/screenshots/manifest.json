@@ -5,7 +5,7 @@
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
   "lastArchivedCommit": "6545972a93c6fd16a4caf7b09a5286e9373cafc4",
-  "lastImageArchivedAt": "2026-08-28T22:43:52+08:00",
+  "lastImageArchivedAt": "2026-08-29T00:06:29+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -733,6 +733,50 @@
       "sha256": "2ca4fa79c3d697d5589a8be09fafdd9c33cfc1adaeffdb7767b2323bea5db38d",
       "sourceKind": "quantum-entanglement-canonical-report-visual",
       "sourceReference": "analysis_report/screenshots/35_postgres_attested_runtime_composition_map.svg; rsvg-convert -w 1800 -h 1120; archived-git:6545972a93c6fd16a4caf7b09a5286e9373cafc4",
+      "width": 1800
+    },
+    {
+      "byteSize": 8510,
+      "captureDate": null,
+      "captureDateEvidence": "Not a captured external page or runtime viewport; this is a repository-authored SVG contract visual, so captureDate is not applicable",
+      "contentScope": "Gate A0 PostgreSQL production authority topology connecting canonical plan approval, isolated secret references, one-shot provisioning and migration, runtime-only API, authenticated TLS, shared authority specification, receipts and the explicit pre-draining rotation boundary",
+      "derivation": "repository-authored-svg-contract-visual",
+      "evidenceClass": "B-local-derived-documentation-visual",
+      "evidenceLimitations": [
+        "A review diagram derived from the frozen Gate A0 contract; it is not independent IaC, cutover, remote TLS, credential lifecycle, database or production-readiness evidence",
+        "The diagram explicitly leaves live rotation, Clerk, RongCloud, Agent threads and messages, public traffic, high availability and production promotion unimplemented and blocked"
+      ],
+      "filename": "postgres_production_authority_topology.svg",
+      "firstArchivedAt": "2026-08-29T00:06:29+08:00",
+      "height": 1120,
+      "mediaType": "image/svg+xml",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-repository-authored-diagram",
+      "sha256": "9db6fb640215f5b7bffc2ab3dbf1d56d443b054a42fe759bed23f9b8dccbd147",
+      "sourceKind": "quantum-entanglement-canonical-contract-visual",
+      "sourceReference": "docs/wanwork_im/POSTGRES_PRODUCTION_AUTHORITY.md; source-doc-git:6a2a46b82de0f459d5ae5ce4cd245da73264d38e",
+      "width": 1800
+    },
+    {
+      "byteSize": 423749,
+      "captureDate": null,
+      "captureDateEvidence": "Not a captured external page or runtime viewport; this PNG was rendered from the sibling repository-authored SVG, so captureDate is not applicable",
+      "contentScope": "PNG rendering of the Gate A0 PostgreSQL production authority topology for local browser and later Notion review",
+      "derivation": "rsvg-convert-1800x1120-from-postgres-production-authority-topology-svg",
+      "evidenceClass": "B-local-derived-documentation-visual",
+      "evidenceLimitations": [
+        "A rendering of the sibling SVG, not additional or independent evidence",
+        "Pixel appearance does not prove clean-host deployment, secret injection, cutover, remote TLS, rotation, recovery, high availability, provider delivery or production readiness"
+      ],
+      "filename": "postgres_production_authority_topology.png",
+      "firstArchivedAt": "2026-08-29T00:06:29+08:00",
+      "height": 1120,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-repository-authored-diagram",
+      "sha256": "8569f0ec46fbc156b8d6e4fabb2ae0c6c4fa0a043665c455b57713ed55fbbc7b",
+      "sourceKind": "quantum-entanglement-canonical-contract-visual",
+      "sourceReference": "analysis_report/screenshots/postgres_production_authority_topology.svg; rsvg-convert -w 1800 -h 1120; source-doc-git:6a2a46b82de0f459d5ae5ce4cd245da73264d38e",
       "width": 1800
     }
   ],

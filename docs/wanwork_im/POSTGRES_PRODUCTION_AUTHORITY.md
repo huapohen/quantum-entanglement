@@ -87,32 +87,7 @@ receipt 必须消费同一个 versioned authority specification；否则一方�
 
 ### 3.2 逻辑与网络拓扑
 
-```mermaid
-flowchart LR
-    Operator[Release / SRE operator]
-    Vault[Secret manager]
-    Trust[Approved CA bundle]
-    Provision[one-shot im-provision]
-    Migrate[one-shot im-migrate]
-    Proxy[local trusted ingress proxy\nGate A0 no public traffic]
-    API[non-root im-api\nloopback only]
-    DB[(PostgreSQL 18\nwriter endpoint)]
-    Evidence[immutable receipt store]
-
-    Operator -->|approved plan digest| Provision
-    Vault -->|provisioner secret ref| Provision
-    Vault -->|migration secret ref| Migrate
-    Vault -->|runtime secret ref| API
-    Trust -->|pinned trust ref/digest| Provision
-    Trust -->|pinned trust ref/digest| Migrate
-    Trust -->|pinned trust ref/digest| API
-    Provision -->|verify-full / 5432| DB
-    Migrate -->|verify-full / 5432| DB
-    API -->|verify-full / 5432| DB
-    Provision -->|redacted receipts| Evidence
-    Migrate -->|redacted summary| Evidence
-    Proxy -->|loopback| API
-```
+![PostgreSQL Production Authority Gate A0 拓扑](../../analysis_report/screenshots/postgres_production_authority_topology.png)
 
 ### 3.3 连接矩阵
 
@@ -421,4 +396,3 @@ generic error。receipt 证明系统观察到的 boundary，不证明外部平�
 - Agent Store/mention/child group：No-Go；
 - live credential rotation：No-Go，直到 explicit draining 完成；
 - HA/多 region/GA：No-Go，直到后续 deployment/recovery gate 有实测证据。
-
