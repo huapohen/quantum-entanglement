@@ -5,7 +5,7 @@
 计划或验收动作形成稳定检查点后，都必须同步到私人 Notion 并完成远端回读，回读完成前不进入
 下一项工作。语雀仍只在用户另行明确授权时操作。
 
-## Notion 镜像（最近已回读基线：E2 provider-bundle 离线闭环）
+## Notion 镜像（最近已回读基线：独立 IM 后端真实入站合同复核）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -17,27 +17,27 @@
 - 原生 IM V1 合同：<https://app.notion.com/p/3c9ead4b996e8114985cce2cc5af2b63?pvs=204>
 - 提前接入检查点：<https://app.notion.com/p/3c9ead4b996e8103b53bf10409f08e1d?pvs=204>
 - 提前接入执行计划：<https://app.notion.com/p/3c9ead4b996e818fb220c66126181863?pvs=204>
-- 基础镜像仍按 33 页计；独立评审空间现为 1 个父页与 15 个唯一子页，共 16 页；两处合计
-  49 个私人 Notion 页面。项目主页原有 32 个子页块和 1 个任务数据库在本批定点更新前后保持不变。
+- 基础镜像仍按 33 页计；独立评审空间现为 1 个父页与 16 个唯一子页，共 17 页；两处合计
+  50 个私人 Notion 页面。项目主页原有 32 个子页块和 1 个任务数据库在本批定点更新前后保持不变。
 - 本批新增 1 个完整语义镜像：
-  [E2 Provider Bundle 离线闭环证据](https://app.notion.com/p/3caead4b996e81dc9001dcd77cdf9893?pvs=204)；
-  刷新 8 个独立评审源文件页、3 个全局计划/决策镜像页和独立/全局 2 个分支导航页，定点更新
-  独立父页与项目主页；E1 合同页内容未变化，仅参与最终回读。所有源文件页都附带完整 Markdown 原件。
-- 当前 Notion 内容源基线为评审分支 `037ea1e2b987800b48c38a44db41486ee96fe564`；运行代码证据节点为
-  `ee0666fe3e956234cbd653abd0ea57bdba322cb7`，源码 tree 为
-  `56f4de1dcd8b71fa6e4a8c43757b1a386a64afc2`。其后的提交只收口 Notion 台账和动态分支目录。
-- 本批 16 个相关页面已逐页 fetch 回读；80 个内容 marker 与 3 个父子/数据库结构检查全部命中，
-  0 个缺失、0 个回读失败。独立父页为 15 个唯一子页；项目主页保持 32 个子页块和 1 个数据库。
+  [独立 IM 后端真实入站合同复核](https://app.notion.com/p/3caead4b996e817aab3ae63a29ecfb5c?pvs=204)；
+  刷新独立评审执行计划、接入分界、就绪度和索引，以及全局执行计划、接入决策；定点更新独立
+  父页与项目主页。6 个源文件镜像和新证据页都附带对应完整 Markdown 原件。
+- 当前决策/审计内容源基线为评审分支 `b755356`；被复核 IM 后端基线为
+  `dev_wanwork_quantum_entanglement@c623aeadc0693e63c0d34602ed45ae1d2bc8099f`。其后的提交只收口
+  Notion 台账和动态分支目录，不改变本次 NO-GO 判断。
+- 本批 9 个相关页面已逐页 fetch 回读；41 个内容 marker 与 3 个父子/数据库结构检查全部命中，
+  0 个缺失、0 个回读失败。独立父页为 16 个唯一子页；项目主页保持 32 个子页块和 1 个数据库。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
 - 当前批次已完成 Notion 写入和远端回读；语雀仍未操作，飞书/企微仍为零发送，真实 IM 网络和
   outbound 仍未启用。
 - E1–E2 独立审阅空间：<https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204>；
   E2 adapter/lifecycle 历史证据：<https://app.notion.com/p/3caead4b996e8165b1dfd85a6d16e6d5?pvs=204>；
-  E2 provider-bundle 当前证据：<https://app.notion.com/p/3caead4b996e81dc9001dcd77cdf9893?pvs=204>。
-- provider-bundle 的代码、测试、计划、readiness、changelog 与
-  `research/26_native_im_provider_bundle_offline_evidence.md` 已完成 Notion 同步和远端回读；
-  真实 sandbox、Agent 驱动、tool/browser/subprocess 与 outbound 仍保持关闭。
+  E2 provider-bundle 历史证据：<https://app.notion.com/p/3caead4b996e81dc9001dcd77cdf9893?pvs=204>；
+  当前合同复核证据：<https://app.notion.com/p/3caead4b996e817aab3ae63a29ecfb5c?pvs=204>。
+- `research/27_native_im_backend_contract_audit.md`、提前接入计划、接入分界、readiness 和索引已完成
+  Notion 同步和远端回读；真实 sandbox、Agent 驱动、tool/browser/subprocess 与 outbound 仍保持关闭。
 
 ## 当前阶段交付
 
@@ -45,9 +45,9 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
-| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | E2 provider bundle 离线闭环已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁是真实 provider contract/scope/exchange，真实网络仍关闭 |
+| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
-| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | E1 与 E2 provider bundle 离线闭环已完成 | E0–E5、Level A–D、已交付矩阵、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
+| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
 | `../docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md` | E1 生产说明已完成 | 四方法 port、zero-network fake、permit/ledger/ACK-loss、验证、回退和 E2 硬停止边界 |
 
 当前接入前代码基线已经安全备份，Level A 合同可执行已在 `7620200` 完成并通过 Notion 回读。
