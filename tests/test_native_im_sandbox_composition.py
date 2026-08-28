@@ -336,6 +336,7 @@ def test_direct_adapter_construction_is_rejected_before_component_or_config_use(
             object(),
             object(),
             object(),
+            object(),
             clock=lambda: "2026-08-28T12:00:00.000000Z",
             _composition_token=object(),
         )

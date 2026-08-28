@@ -160,6 +160,7 @@ async def test_message_secret_and_trace_canaries_are_contained_end_to_end(
         profile,
         approval_authority,
         approval_permit,
+        "9" * 64,
         transport,
         mapper,
         secrets,

@@ -41,10 +41,12 @@ from .native_im_provider_profile import (
     IMProviderProfileV1,
     derive_inbound_only_capability_snapshot_v1,
 )
+from .native_im_sandbox_approval import NativeIMSandboxApprovalV1
 from .native_im_sandbox_authority import (
     InMemoryNativeIMSandboxApprovalAuthorityV1,
     NativeIMSandboxApprovalPermitV1,
 )
+from .native_im_sandbox_provenance import NativeIMSandboxAdmissionProvenanceV1
 from .service.native_im_config import (
     CanonicalAbsolutePath,
     CanonicalHTTPSOrigin,
@@ -213,6 +215,7 @@ class NativeIMVerifiedInboundReadV1:
     page: IMInboundPageV1 = field(repr=False)
     raw_verification: NativeIMRawVerificationResultV1 = field(repr=False)
     mapping_evidence_digest: str
+    provenance: NativeIMSandboxAdmissionProvenanceV1 = field(repr=False)
 
     def __post_init__(self) -> None:
         if type(self) is not NativeIMVerifiedInboundReadV1:
@@ -225,6 +228,8 @@ class NativeIMVerifiedInboundReadV1:
             raise TypeError("verified inbound read page must be the exact V1 class")
         if type(self.raw_verification) is not NativeIMRawVerificationResultV1:
             raise TypeError("verified inbound read evidence must be the exact V1 class")
+        if type(self.provenance) is not NativeIMSandboxAdmissionProvenanceV1:
+            raise TypeError("verified inbound read provenance must be the exact V1 class")
         _digest(self.mapping_evidence_digest, "mappingEvidenceDigest")
         self.page.validate_request_binding(self.request)
         self.page.validate_capability_binding(self.capability)
@@ -236,6 +241,12 @@ class NativeIMVerifiedInboundReadV1:
                 or envelope.verified_at != self.raw_verification.verified_at
             ):
                 raise ValueError("verified inbound read authentication binding mismatch")
+        if (
+            self.provenance.read_request_digest != self.request.canonical_digest()
+            or self.provenance.page_digest != self.page.canonical_digest()
+            or self.provenance.mapping_evidence_digest != self.mapping_evidence_digest
+        ):
+            raise ValueError("verified inbound read provenance binding mismatch")
 
     def __repr__(self) -> str:
         return (
@@ -469,6 +480,7 @@ class NativeIMInboundOnlySandboxAdapter:
         "__approval_permit",
         "__mapper",
         "__process_id",
+        "__provider_manifest_digest",
         "__profile",
         "__secret_loader",
         "__transport",
@@ -481,6 +493,7 @@ class NativeIMInboundOnlySandboxAdapter:
         profile: IMProviderProfileV1,
         approval_authority: InMemoryNativeIMSandboxApprovalAuthorityV1,
         approval_permit: NativeIMSandboxApprovalPermitV1,
+        provider_manifest_digest: str,
         transport: NativeIMInboundTransportPort,
         mapper: NativeIMInboundMapperPort,
         secret_provider: NativeIMSecretResolverPort,
@@ -499,6 +512,7 @@ class NativeIMInboundOnlySandboxAdapter:
             raise TypeError("inbound adapter requires the exact sandbox approval authority")
         if type(approval_permit) is not NativeIMSandboxApprovalPermitV1:
             raise TypeError("inbound adapter requires the exact live approval permit")
+        _digest(provider_manifest_digest, "providerManifestDigest")
         approval_authority.require_current(approval_permit, operation="health")
         if not isinstance(transport, NativeIMInboundTransportPort):
             raise TypeError("inbound adapter requires the transport port")
@@ -515,6 +529,7 @@ class NativeIMInboundOnlySandboxAdapter:
         self.__profile = profile_snapshot
         self.__approval_authority = approval_authority
         self.__approval_permit = approval_permit
+        self.__provider_manifest_digest = provider_manifest_digest
         self.__transport = transport
         self.__mapper = mapper
         self.__secret_loader = NativeIMSecretLoader(configuration_snapshot, secret_provider)
@@ -555,9 +570,9 @@ class NativeIMInboundOnlySandboxAdapter:
             now=now,
         )
 
-    def _require_approval(self, operation: str) -> None:
+    def _require_approval(self, operation: str) -> NativeIMSandboxApprovalV1:
         self._require_open()
-        self.__approval_authority.require_current(
+        return self.__approval_authority.require_current(
             self.__approval_permit,
             operation=operation,
         )
@@ -685,13 +700,33 @@ class NativeIMInboundOnlySandboxAdapter:
             self.__configuration,
             self.__profile,
         )
-        self._require_approval("read")
+        approval = self._require_approval("read")
+        provenance = NativeIMSandboxAdmissionProvenanceV1(
+            schema_version=1,
+            approval_id=approval.approval_id,
+            authority_revision=approval.authority_revision,
+            approval_digest=approval.canonical_digest(),
+            configuration_binding_digest=approval.configuration_binding_digest,
+            profile_id=self.__profile.profile_id,
+            profile_revision=self.__profile.revision,
+            profile_digest=self.__profile.canonical_digest(),
+            provider_manifest_digest=self.__provider_manifest_digest,
+            transport_contract_id=approval.transport_contract_id,
+            transport_contract_digest=approval.transport_contract_digest,
+            mapper_contract_id=approval.mapper_contract_id,
+            mapper_contract_digest=approval.mapper_contract_digest,
+            read_request_digest=request_snapshot.canonical_digest(),
+            page_digest=page.canonical_digest(),
+            transport_evidence_digest=response.transport_evidence_digest,
+            mapping_evidence_digest=mapped.mapping_evidence_digest,
+        )
         return NativeIMVerifiedInboundReadV1(
             request=request_snapshot,
             capability=capability,
             page=page,
             raw_verification=raw_verification,
             mapping_evidence_digest=mapped.mapping_evidence_digest,
+            provenance=provenance,
         )
 
     async def read_inbound(self, request: IMInboundReadRequestV1) -> IMInboundPageV1:

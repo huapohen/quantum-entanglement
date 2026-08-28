@@ -258,6 +258,7 @@ def make_probe_rig(
         profile,
         approval_authority,
         approval_permit,
+        "9" * 64,
         transport,
         mapper,
         RecordingSecretProvider(configuration),

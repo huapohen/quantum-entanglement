@@ -256,6 +256,7 @@ def adapter_inputs(
         profile,
         approval_authority,
         approval_permit,
+        "9" * 64,
         transport,
         mapper,
         secrets,
@@ -268,7 +269,9 @@ def adapter_inputs(
 
 @pytest.mark.asyncio
 async def test_explicit_inbound_adapter_verifies_maps_and_returns_atomic_evidence() -> None:
-    adapter, request, configuration, _, transport, mapper, secrets, replay_guard = adapter_inputs()
+    adapter, request, configuration, profile, transport, mapper, secrets, replay_guard = (
+        adapter_inputs()
+    )
 
     result = await adapter.read_verified_inbound(request)
 
@@ -282,6 +285,15 @@ async def test_explicit_inbound_adapter_verifies_maps_and_returns_atomic_evidenc
     )
     assert result.page.envelopes[0].event.transport_evidence_digest == TRANSPORT_EVIDENCE
     assert result.capability.operations == ()
+    assert result.provenance.configuration_binding_digest == (
+        configuration.approval_binding_digest
+    )
+    assert result.provenance.profile_digest == profile.canonical_digest()
+    assert result.provenance.provider_manifest_digest == "9" * 64
+    assert result.provenance.read_request_digest == request.canonical_digest()
+    assert result.provenance.page_digest == result.page.canonical_digest()
+    assert result.provenance.transport_evidence_digest == TRANSPORT_EVIDENCE
+    assert result.provenance.mapping_evidence_digest == MAPPING_EVIDENCE
     assert transport.read_calls == 1
     assert mapper.calls == 1
     assert secrets.references == [
@@ -338,6 +350,7 @@ async def test_revocation_during_transport_closes_credential_and_blocks_mapper_a
         profile,
         authority,
         permit,
+        "9" * 64,
         revoking,
         mapper,
         secrets,
@@ -378,6 +391,7 @@ async def test_revocation_during_mapping_blocks_page_return_after_mapping() -> N
         profile,
         authority,
         permit,
+        "9" * 64,
         transport,
         mapper,
         secrets,

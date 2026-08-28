@@ -131,6 +131,7 @@ def lifecycle_inputs(
             profile,
             approval_authority,
             approval_permit,
+            "9" * 64,
             blocked,
             mapper,
             secrets,

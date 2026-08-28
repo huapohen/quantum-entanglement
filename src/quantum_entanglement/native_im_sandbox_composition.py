@@ -344,6 +344,7 @@ def compose_approved_native_im_sandbox_v1(
         profile,
         authority,
         permit,
+        manifest.canonical_digest(),
         transport,
         mapper,
         secret_provider,
