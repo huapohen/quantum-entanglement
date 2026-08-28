@@ -102,6 +102,56 @@ func TestProviderActorBindingRejectsActorDriftAndInternalSubjects(t *testing.T) 
 	}
 }
 
+func TestProviderConversationBindingRequiresExactTenantConversationMapping(t *testing.T) {
+	realm := mustProviderRealmID(t, "rlm_prod")
+	externalRef, err := NewProviderConversationRef(
+		IdentityProviderRongCloud,
+		realm,
+		"cnv_product",
+	)
+	if err != nil {
+		t.Fatalf("create provider conversation ref: %v", err)
+	}
+	conversationRef, err := NewConversationRef(
+		mustTenantID(t, "ten_alpha"),
+		mustConversationID(t, "cnv_product"),
+	)
+	if err != nil {
+		t.Fatalf("create conversation ref: %v", err)
+	}
+	binding, err := NewProviderConversationBinding(
+		externalRef,
+		conversationRef,
+		ExternalIdentityBindingActive,
+		2,
+	)
+	if err != nil {
+		t.Fatalf("create provider conversation binding: %v", err)
+	}
+	if binding.ExternalRef() != externalRef || binding.ConversationRef() != conversationRef ||
+		binding.Status() != ExternalIdentityBindingActive || binding.Revision() != 2 ||
+		binding.IsZero() {
+		t.Fatalf("unexpected provider conversation binding: %#v", binding)
+	}
+
+	driftedRef, err := NewConversationRef(
+		mustTenantID(t, "ten_alpha"),
+		mustConversationID(t, "cnv_other"),
+	)
+	if err != nil {
+		t.Fatalf("create drifted conversation ref: %v", err)
+	}
+	value, err := NewProviderConversationBinding(
+		externalRef,
+		driftedRef,
+		ExternalIdentityBindingActive,
+		1,
+	)
+	if !errors.Is(err, ErrInvalidAuthority) || !value.IsZero() {
+		t.Fatalf("expected provider conversation drift rejection, got %#v, %v", value, err)
+	}
+}
+
 func TestExternalIdentityBindingRejectsInvalidStatusAndRevision(t *testing.T) {
 	principalID := mustHumanPrincipalID(t, "hpr_alice")
 	realm, err := ParseProviderRealmID("rlm_prod")

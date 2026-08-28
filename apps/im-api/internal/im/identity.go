@@ -55,6 +55,23 @@ func (subjectType SubjectType) Valid() bool {
 	}
 }
 
+type ActorStatus string
+
+const (
+	ActorActive    ActorStatus = "active"
+	ActorSuspended ActorStatus = "suspended"
+	ActorRemoved   ActorStatus = "removed"
+)
+
+func (status ActorStatus) Valid() bool {
+	switch status {
+	case ActorActive, ActorSuspended, ActorRemoved:
+		return true
+	default:
+		return false
+	}
+}
+
 func (subjectType SubjectType) actorIDPrefix() string {
 	switch subjectType {
 	case SubjectHuman:
@@ -243,21 +260,24 @@ func (reference ActorRef) IsZero() bool {
 type ActorSnapshot struct {
 	reference   ActorRef
 	subjectType SubjectType
+	status      ActorStatus
 	revision    uint64
 }
 
 func NewActorSnapshot(
 	reference ActorRef,
 	subjectType SubjectType,
+	status ActorStatus,
 	revision uint64,
 ) (ActorSnapshot, error) {
 	inferredType, ok := reference.actorID.SubjectType()
-	if reference.IsZero() || !subjectType.Valid() || !validPersistentRevision(revision) || !ok ||
+	if reference.IsZero() || !subjectType.Valid() || !status.Valid() ||
+		!validPersistentRevision(revision) || !ok ||
 		inferredType != subjectType {
 		return ActorSnapshot{}, ErrInvalidIdentity
 	}
 	return ActorSnapshot{
-		reference: reference, subjectType: subjectType, revision: revision,
+		reference: reference, subjectType: subjectType, status: status, revision: revision,
 	}, nil
 }
 
@@ -267,9 +287,11 @@ func validPersistentRevision(revision uint64) bool {
 
 func (snapshot ActorSnapshot) Ref() ActorRef            { return snapshot.reference }
 func (snapshot ActorSnapshot) SubjectType() SubjectType { return snapshot.subjectType }
+func (snapshot ActorSnapshot) Status() ActorStatus      { return snapshot.status }
 func (snapshot ActorSnapshot) Revision() uint64         { return snapshot.revision }
 func (snapshot ActorSnapshot) IsZero() bool {
-	return snapshot.reference.IsZero() && snapshot.subjectType == "" && snapshot.revision == 0
+	return snapshot.reference.IsZero() && snapshot.subjectType == "" && snapshot.status == "" &&
+		snapshot.revision == 0
 }
 
 func validPrefixedPlatformID(value, prefix string) bool {

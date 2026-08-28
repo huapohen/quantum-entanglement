@@ -23,6 +23,7 @@ func TestConversationSnapshotFreezesOrdinaryAndAgentThreadTopology(t *testing.T)
 		parentID         ConversationID
 		rootMessageID    MessageID
 		invocationID     InvocationID
+		status           ConversationStatus
 		wantWorkspace    WorkspaceID
 		wantWorkspaceSet bool
 	}{
@@ -30,12 +31,14 @@ func TestConversationSnapshotFreezesOrdinaryAndAgentThreadTopology(t *testing.T)
 			name:             "direct conversation may be tenant scoped",
 			conversationID:   mustConversationID(t, "cnv_direct_alice_bob"),
 			conversationType: ConversationDirect,
+			status:           ConversationActive,
 		},
 		{
 			name:             "group conversation may be workspace scoped",
 			workspaceID:      &workspaceID,
 			conversationID:   mustConversationID(t, "cnv_product_group"),
 			conversationType: ConversationGroup,
+			status:           ConversationActive,
 			wantWorkspace:    workspaceID,
 			wantWorkspaceSet: true,
 		},
@@ -44,6 +47,7 @@ func TestConversationSnapshotFreezesOrdinaryAndAgentThreadTopology(t *testing.T)
 			workspaceID:      &workspaceID,
 			conversationID:   mustConversationID(t, "cnv_agent_thread"),
 			conversationType: ConversationAgentThread,
+			status:           ConversationActive,
 			parentID:         parentID,
 			rootMessageID:    rootMessageID,
 			invocationID:     invocationID,
@@ -62,6 +66,7 @@ func TestConversationSnapshotFreezesOrdinaryAndAgentThreadTopology(t *testing.T)
 				reference,
 				test.workspaceID,
 				test.conversationType,
+				test.status,
 				test.parentID,
 				test.rootMessageID,
 				test.invocationID,
@@ -74,6 +79,7 @@ func TestConversationSnapshotFreezesOrdinaryAndAgentThreadTopology(t *testing.T)
 			if snapshot.Ref() != reference || reference.TenantID() != tenantID ||
 				reference.ConversationID() != test.conversationID ||
 				snapshot.ConversationType() != test.conversationType ||
+				snapshot.Status() != test.status ||
 				snapshot.ParentConversationID() != test.parentID ||
 				snapshot.RootMessageID() != test.rootMessageID ||
 				snapshot.AgentInvocationID() != test.invocationID || snapshot.Revision() != 11 ||
@@ -95,11 +101,11 @@ func TestConversationReferenceRemainsStableAcrossSnapshotRevisions(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewConversationRef() error = %v", err)
 	}
-	first, err := NewConversationSnapshot(reference, nil, ConversationGroup, ConversationID{}, MessageID{}, InvocationID{}, 1)
+	first, err := NewConversationSnapshot(reference, nil, ConversationGroup, ConversationActive, ConversationID{}, MessageID{}, InvocationID{}, 1)
 	if err != nil {
 		t.Fatalf("NewConversationSnapshot(first) error = %v", err)
 	}
-	second, err := NewConversationSnapshot(reference, nil, ConversationGroup, ConversationID{}, MessageID{}, InvocationID{}, 2)
+	second, err := NewConversationSnapshot(reference, nil, ConversationGroup, ConversationArchived, ConversationID{}, MessageID{}, InvocationID{}, 2)
 	if err != nil {
 		t.Fatalf("NewConversationSnapshot(second) error = %v", err)
 	}
@@ -151,22 +157,24 @@ func TestConversationSnapshotRejectsIncompleteOrForgedTopology(t *testing.T) {
 		reference        ConversationRef
 		workspaceID      *WorkspaceID
 		conversationType ConversationType
+		status           ConversationStatus
 		parentID         ConversationID
 		rootMessageID    MessageID
 		invocationID     InvocationID
 		revision         uint64
 	}{
-		{name: "missing reference", conversationType: ConversationGroup, revision: 1},
-		{name: "zero workspace value is not absence", reference: reference, workspaceID: &WorkspaceID{}, conversationType: ConversationGroup, revision: 1},
-		{name: "unknown conversation type", reference: reference, conversationType: ConversationType("channel"), revision: 1},
-		{name: "zero revision", reference: reference, conversationType: ConversationGroup},
-		{name: "revision exceeds PostgreSQL bigint", reference: reference, conversationType: ConversationGroup, revision: maxPersistentRevision + 1},
-		{name: "direct cannot claim parent", reference: reference, conversationType: ConversationDirect, parentID: parentID, revision: 1},
-		{name: "group cannot claim invocation", reference: reference, conversationType: ConversationGroup, invocationID: invocationID, revision: 1},
-		{name: "thread missing parent", reference: reference, workspaceID: &workspaceID, conversationType: ConversationAgentThread, rootMessageID: rootMessageID, invocationID: invocationID, revision: 1},
-		{name: "thread missing root message", reference: reference, conversationType: ConversationAgentThread, parentID: parentID, invocationID: invocationID, revision: 1},
-		{name: "thread missing invocation", reference: reference, conversationType: ConversationAgentThread, parentID: parentID, rootMessageID: rootMessageID, revision: 1},
-		{name: "thread cannot parent itself", reference: reference, conversationType: ConversationAgentThread, parentID: conversationID, rootMessageID: rootMessageID, invocationID: invocationID, revision: 1},
+		{name: "missing reference", conversationType: ConversationGroup, status: ConversationActive, revision: 1},
+		{name: "zero workspace value is not absence", reference: reference, workspaceID: &WorkspaceID{}, conversationType: ConversationGroup, status: ConversationActive, revision: 1},
+		{name: "unknown conversation type", reference: reference, conversationType: ConversationType("channel"), status: ConversationActive, revision: 1},
+		{name: "unknown status", reference: reference, conversationType: ConversationGroup, status: ConversationStatus("ready"), revision: 1},
+		{name: "zero revision", reference: reference, conversationType: ConversationGroup, status: ConversationActive},
+		{name: "revision exceeds PostgreSQL bigint", reference: reference, conversationType: ConversationGroup, status: ConversationActive, revision: maxPersistentRevision + 1},
+		{name: "direct cannot claim parent", reference: reference, conversationType: ConversationDirect, status: ConversationActive, parentID: parentID, revision: 1},
+		{name: "group cannot claim invocation", reference: reference, conversationType: ConversationGroup, status: ConversationActive, invocationID: invocationID, revision: 1},
+		{name: "thread missing parent", reference: reference, workspaceID: &workspaceID, conversationType: ConversationAgentThread, status: ConversationActive, rootMessageID: rootMessageID, invocationID: invocationID, revision: 1},
+		{name: "thread missing root message", reference: reference, conversationType: ConversationAgentThread, status: ConversationActive, parentID: parentID, invocationID: invocationID, revision: 1},
+		{name: "thread missing invocation", reference: reference, conversationType: ConversationAgentThread, status: ConversationActive, parentID: parentID, rootMessageID: rootMessageID, revision: 1},
+		{name: "thread cannot parent itself", reference: reference, conversationType: ConversationAgentThread, status: ConversationActive, parentID: conversationID, rootMessageID: rootMessageID, invocationID: invocationID, revision: 1},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
@@ -175,6 +183,7 @@ func TestConversationSnapshotRejectsIncompleteOrForgedTopology(t *testing.T) {
 				test.reference,
 				test.workspaceID,
 				test.conversationType,
+				test.status,
 				test.parentID,
 				test.rootMessageID,
 				test.invocationID,
@@ -208,6 +217,46 @@ func TestConversationIdentifiersRejectAmbiguousOrUnboundedText(t *testing.T) {
 			t.Parallel()
 			if err := test.parse(test.value); !errors.Is(err, ErrInvalidConversation) {
 				t.Fatalf("parse(%q) error = %v, want ErrInvalidConversation", test.value, err)
+			}
+		})
+	}
+}
+
+func TestProviderConversationReferenceIsRealmScopedMappingMetadata(t *testing.T) {
+	t.Parallel()
+	realm := mustProviderRealmID(t, "rlm_prod")
+	reference, err := NewProviderConversationRef(
+		IdentityProviderRongCloud,
+		realm,
+		"cnv_product",
+	)
+	if err != nil {
+		t.Fatalf("NewProviderConversationRef() error = %v", err)
+	}
+	if reference.Provider() != IdentityProviderRongCloud || reference.RealmID() != realm ||
+		reference.SubjectID() != "cnv_product" || reference.IsZero() {
+		t.Fatalf("unexpected provider conversation ref: %#v", reference)
+	}
+
+	for _, fixture := range []struct {
+		name      string
+		provider  IdentityProvider
+		realm     ProviderRealmID
+		subjectID string
+	}{
+		{name: "auth provider", provider: IdentityProviderClerk, realm: realm, subjectID: "cnv_product"},
+		{name: "missing realm", provider: IdentityProviderRongCloud, subjectID: "cnv_product"},
+		{name: "not platform conversation", provider: IdentityProviderRongCloud, realm: realm, subjectID: "group_product"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Parallel()
+			value, err := NewProviderConversationRef(
+				fixture.provider,
+				fixture.realm,
+				fixture.subjectID,
+			)
+			if !errors.Is(err, ErrInvalidConversation) || !value.IsZero() {
+				t.Fatalf("expected zero value and fixed error, got %#v, %v", value, err)
 			}
 		})
 	}

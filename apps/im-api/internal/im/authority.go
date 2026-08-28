@@ -163,6 +163,51 @@ func (binding ProviderActorBinding) IsZero() bool {
 		binding.revision == 0
 }
 
+// ProviderConversationBinding is one immutable revision of the tenant-scoped RongCloud group
+// mapping. It is not a membership grant, child ACL inheritance, or delivery receipt.
+type ProviderConversationBinding struct {
+	externalRef     ProviderConversationRef
+	conversationRef ConversationRef
+	status          ExternalIdentityBindingStatus
+	revision        uint64
+}
+
+func NewProviderConversationBinding(
+	externalRef ProviderConversationRef,
+	conversationRef ConversationRef,
+	status ExternalIdentityBindingStatus,
+	revision uint64,
+) (ProviderConversationBinding, error) {
+	if externalRef.IsZero() || conversationRef.IsZero() || !status.Valid() ||
+		!validPersistentRevision(revision) ||
+		externalRef.SubjectID() != conversationRef.ConversationID().String() {
+		return ProviderConversationBinding{}, ErrInvalidAuthority
+	}
+	return ProviderConversationBinding{
+		externalRef: externalRef, conversationRef: conversationRef,
+		status: status, revision: revision,
+	}, nil
+}
+
+func (binding ProviderConversationBinding) ExternalRef() ProviderConversationRef {
+	return binding.externalRef
+}
+
+func (binding ProviderConversationBinding) ConversationRef() ConversationRef {
+	return binding.conversationRef
+}
+
+func (binding ProviderConversationBinding) Status() ExternalIdentityBindingStatus {
+	return binding.status
+}
+
+func (binding ProviderConversationBinding) Revision() uint64 { return binding.revision }
+
+func (binding ProviderConversationBinding) IsZero() bool {
+	return binding.externalRef.IsZero() && binding.conversationRef.IsZero() &&
+		binding.status == "" && binding.revision == 0
+}
+
 type TenantMembershipRole string
 
 const (

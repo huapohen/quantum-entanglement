@@ -32,12 +32,13 @@ func TestActorSnapshotBindsSubjectTypeToStableReference(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewActorRef() error = %v", err)
 			}
-			snapshot, err := NewActorSnapshot(reference, test.subjectType, 7)
+			snapshot, err := NewActorSnapshot(reference, test.subjectType, ActorActive, 7)
 			if err != nil {
 				t.Fatalf("NewActorSnapshot() error = %v", err)
 			}
 			if snapshot.Ref() != reference || reference.TenantID() != tenantID ||
 				reference.ActorID() != actorID || snapshot.SubjectType() != test.subjectType ||
+				snapshot.Status() != ActorActive ||
 				snapshot.Revision() != 7 || reference.IsZero() || snapshot.IsZero() {
 				t.Fatalf("unexpected actor reference/snapshot: %#v %#v", reference, snapshot)
 			}
@@ -52,11 +53,11 @@ func TestActorReferenceRemainsStableAcrossSnapshotRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewActorRef() error = %v", err)
 	}
-	first, err := NewActorSnapshot(reference, SubjectAgent, 1)
+	first, err := NewActorSnapshot(reference, SubjectAgent, ActorActive, 1)
 	if err != nil {
 		t.Fatalf("NewActorSnapshot(first) error = %v", err)
 	}
-	second, err := NewActorSnapshot(reference, SubjectAgent, 2)
+	second, err := NewActorSnapshot(reference, SubjectAgent, ActorSuspended, 2)
 	if err != nil {
 		t.Fatalf("NewActorSnapshot(second) error = %v", err)
 	}
@@ -108,23 +109,26 @@ func TestActorSnapshotRejectsSubjectPrefixMismatchAndIncompleteSnapshot(t *testi
 		name        string
 		reference   ActorRef
 		subjectType SubjectType
+		status      ActorStatus
 		revision    uint64
 	}{
-		{name: "human prefix cannot claim agent type", reference: reference, subjectType: SubjectAgent, revision: 1},
-		{name: "missing reference", subjectType: SubjectHuman, revision: 1},
-		{name: "unknown subject", reference: reference, subjectType: SubjectType("owner"), revision: 1},
-		{name: "zero revision", reference: reference, subjectType: SubjectHuman},
+		{name: "human prefix cannot claim agent type", reference: reference, subjectType: SubjectAgent, status: ActorActive, revision: 1},
+		{name: "missing reference", subjectType: SubjectHuman, status: ActorActive, revision: 1},
+		{name: "unknown subject", reference: reference, subjectType: SubjectType("owner"), status: ActorActive, revision: 1},
+		{name: "unknown status", reference: reference, subjectType: SubjectHuman, status: ActorStatus("ready"), revision: 1},
+		{name: "zero revision", reference: reference, subjectType: SubjectHuman, status: ActorActive},
 		{
 			name:        "revision exceeds PostgreSQL bigint",
 			reference:   reference,
 			subjectType: SubjectHuman,
+			status:      ActorActive,
 			revision:    maxPersistentRevision + 1,
 		},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			snapshot, err := NewActorSnapshot(test.reference, test.subjectType, test.revision)
+			snapshot, err := NewActorSnapshot(test.reference, test.subjectType, test.status, test.revision)
 			if !errors.Is(err, ErrInvalidIdentity) || !snapshot.IsZero() {
 				t.Fatalf("NewActorSnapshot() = (%#v, %v), want zero and ErrInvalidIdentity", snapshot, err)
 			}

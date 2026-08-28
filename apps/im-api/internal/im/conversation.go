@@ -21,6 +21,23 @@ func (conversationType ConversationType) Valid() bool {
 	}
 }
 
+type ConversationStatus string
+
+const (
+	ConversationActive   ConversationStatus = "active"
+	ConversationArchived ConversationStatus = "archived"
+	ConversationClosed   ConversationStatus = "closed"
+)
+
+func (status ConversationStatus) Valid() bool {
+	switch status {
+	case ConversationActive, ConversationArchived, ConversationClosed:
+		return true
+	default:
+		return false
+	}
+}
+
 type ConversationID struct{ value string }
 
 func ParseConversationID(value string) (ConversationID, error) {
@@ -57,6 +74,36 @@ func ParseInvocationID(value string) (InvocationID, error) {
 func (value InvocationID) String() string { return value.value }
 func (value InvocationID) IsZero() bool   { return value.value == "" }
 
+// ProviderConversationRef is realm-scoped provider mapping metadata. RongCloud V1 uses the
+// platform Conversation ID as its provider group ID, but this syntax does not prove the group
+// exists, belongs to a tenant, or grants membership.
+type ProviderConversationRef struct {
+	provider  IdentityProvider
+	realmID   ProviderRealmID
+	subjectID string
+}
+
+func NewProviderConversationRef(
+	provider IdentityProvider,
+	realmID ProviderRealmID,
+	subjectID string,
+) (ProviderConversationRef, error) {
+	if provider != IdentityProviderRongCloud || realmID.IsZero() {
+		return ProviderConversationRef{}, ErrInvalidConversation
+	}
+	if _, err := ParseConversationID(subjectID); err != nil {
+		return ProviderConversationRef{}, ErrInvalidConversation
+	}
+	return ProviderConversationRef{provider: provider, realmID: realmID, subjectID: subjectID}, nil
+}
+
+func (reference ProviderConversationRef) Provider() IdentityProvider { return reference.provider }
+func (reference ProviderConversationRef) RealmID() ProviderRealmID   { return reference.realmID }
+func (reference ProviderConversationRef) SubjectID() string          { return reference.subjectID }
+func (reference ProviderConversationRef) IsZero() bool {
+	return reference.provider == "" && reference.realmID.IsZero() && reference.subjectID == ""
+}
+
 // ConversationRef is the stable tenant-scoped collaboration-space reference. It is not a task,
 // membership grant, capability, or provider group binding.
 type ConversationRef struct {
@@ -89,6 +136,7 @@ type ConversationSnapshot struct {
 	workspaceID        WorkspaceID
 	hasWorkspace       bool
 	conversationType   ConversationType
+	status             ConversationStatus
 	parentConversation ConversationID
 	rootMessageID      MessageID
 	agentInvocationID  InvocationID
@@ -99,12 +147,14 @@ func NewConversationSnapshot(
 	reference ConversationRef,
 	workspaceID *WorkspaceID,
 	conversationType ConversationType,
+	status ConversationStatus,
 	parentConversationID ConversationID,
 	rootMessageID MessageID,
 	agentInvocationID InvocationID,
 	revision uint64,
 ) (ConversationSnapshot, error) {
-	if reference.IsZero() || !conversationType.Valid() || !validPersistentRevision(revision) {
+	if reference.IsZero() || !conversationType.Valid() || !status.Valid() ||
+		!validPersistentRevision(revision) {
 		return ConversationSnapshot{}, ErrInvalidConversation
 	}
 
@@ -139,6 +189,7 @@ func NewConversationSnapshot(
 		workspaceID:        workspace,
 		hasWorkspace:       hasWorkspace,
 		conversationType:   conversationType,
+		status:             status,
 		parentConversation: parentConversationID,
 		rootMessageID:      rootMessageID,
 		agentInvocationID:  agentInvocationID,
@@ -153,6 +204,7 @@ func (snapshot ConversationSnapshot) WorkspaceID() (WorkspaceID, bool) {
 func (snapshot ConversationSnapshot) ConversationType() ConversationType {
 	return snapshot.conversationType
 }
+func (snapshot ConversationSnapshot) Status() ConversationStatus { return snapshot.status }
 func (snapshot ConversationSnapshot) ParentConversationID() ConversationID {
 	return snapshot.parentConversation
 }
@@ -165,7 +217,8 @@ func (snapshot ConversationSnapshot) AgentInvocationID() InvocationID {
 func (snapshot ConversationSnapshot) Revision() uint64 { return snapshot.revision }
 func (snapshot ConversationSnapshot) IsZero() bool {
 	return snapshot.reference.IsZero() && snapshot.workspaceID.IsZero() && !snapshot.hasWorkspace &&
-		snapshot.conversationType == "" && snapshot.parentConversation.IsZero() &&
+		snapshot.conversationType == "" && snapshot.status == "" &&
+		snapshot.parentConversation.IsZero() &&
 		snapshot.rootMessageID.IsZero() && snapshot.agentInvocationID.IsZero() &&
 		snapshot.revision == 0
 }
