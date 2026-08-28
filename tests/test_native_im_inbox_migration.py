@@ -54,6 +54,10 @@ class NativeIMInboxMigrationTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def _downgrade_to_v4(self) -> None:
+        self.connection.executescript(
+            migration_text("0006_native_im_sandbox_provenance.down.sql")
+        )
+        self.connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 6")
         self.connection.executescript(migration_text("0005_native_im_inbox.down.sql"))
         self.connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 5")
 
@@ -242,7 +246,14 @@ class NativeIMInboxMigrationTests(unittest.TestCase):
             set(),
         )
 
-        self.assertEqual(apply_sqlite_migrations(self.connection, clock=lambda: TS0), 5)
+        self.assertEqual(
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=tuple(range(1, 6)),
+                clock=lambda: TS0,
+            ),
+            5,
+        )
         self.assertEqual(validate_sqlite_schema(self.connection), 5)
         migration = MIGRATIONS[4]
         ledger = self.connection.execute(
@@ -820,7 +831,14 @@ class NativeIMInboxMigrationTests(unittest.TestCase):
         }
         self.assertTrue(set(NATIVE_IM_TABLES).isdisjoint(remaining))
 
-        self.assertEqual(apply_sqlite_migrations(self.connection, clock=lambda: TS1), 5)
+        self.assertEqual(
+            apply_sqlite_migrations(
+                self.connection,
+                target_versions=tuple(range(1, 6)),
+                clock=lambda: TS1,
+            ),
+            5,
+        )
         self.assertEqual(validate_sqlite_schema(self.connection), 5)
         for table in NATIVE_IM_TABLES:
             with self.subTest(table=table):
@@ -841,7 +859,10 @@ class NativeIMInboxMigrationTests(unittest.TestCase):
             {table: created.table_counts[table] for table in NATIVE_IM_TABLES},
             expected_counts,
         )
-        self.assertEqual([item["version"] for item in created.migrations], [1, 2, 3, 4, 5])
+        self.assertEqual(
+            [item["version"] for item in created.migrations],
+            list(range(1, len(MIGRATIONS) + 1)),
+        )
 
         destination = self.root / "restored" / "state.sqlite3"
         restored = restore_sqlite_backup(
