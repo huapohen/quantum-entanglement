@@ -124,6 +124,70 @@ VALUES (2, 'future', $1)`, strings.Repeat("0", 64)); err != nil {
 		}
 	})
 
+	for _, fixture := range []struct {
+		name      string
+		tamperSQL string
+	}{
+		{
+			name:      "disabled row security",
+			tamperSQL: "ALTER TABLE wanwork_im.tenants DISABLE ROW LEVEL SECURITY",
+		},
+		{
+			name: "weakened tenant policy",
+			tamperSQL: `
+DROP POLICY tenants_exact_tenant ON wanwork_im.tenants;
+CREATE POLICY tenants_exact_tenant ON wanwork_im.tenants
+    USING (true)
+    WITH CHECK (true)`,
+		},
+		{
+			name: "same name weakened constraint",
+			tamperSQL: `
+ALTER TABLE wanwork_im.provider_realms
+    DROP CONSTRAINT provider_realms_status_check;
+ALTER TABLE wanwork_im.provider_realms
+    ADD CONSTRAINT provider_realms_status_check CHECK (status <> '')`,
+		},
+		{
+			name:      "extra index",
+			tamperSQL: "CREATE INDEX unexpected_workspace_index ON wanwork_im.workspaces (workspace_id)",
+		},
+		{
+			name:      "public table grant",
+			tamperSQL: "GRANT SELECT ON wanwork_im.workspaces TO PUBLIC",
+		},
+		{
+			name:      "changed default",
+			tamperSQL: "ALTER TABLE wanwork_im.workspaces ALTER COLUMN recorded_at SET DEFAULT now()",
+		},
+		{
+			name:      "missing table",
+			tamperSQL: "DROP TABLE wanwork_im.workspaces",
+		},
+	} {
+		t.Run("postcondition drift "+fixture.name, func(t *testing.T) {
+			connection, _ := newIntegrationDatabase(t, adminURL)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			if _, err := Apply(ctx, connection); err != nil {
+				t.Fatalf("seed Apply: %v", err)
+			}
+			if _, err := connection.Exec(
+				ctx,
+				fixture.tamperSQL,
+				pgx.QueryExecModeSimpleProtocol,
+			); err != nil {
+				t.Fatalf("tamper root schema: %v", err)
+			}
+			if _, err := Apply(ctx, connection); !errors.Is(err, ErrMigrationSchema) {
+				t.Fatalf("Apply postcondition drift error = %v, want %v", err, ErrMigrationSchema)
+			}
+			if connection.IsClosed() {
+				t.Fatal("deterministic postcondition drift must not quarantine the connection")
+			}
+		})
+	}
+
 	t.Run("two migrators serialize", func(t *testing.T) {
 		firstConnection, config := newIntegrationDatabase(t, adminURL)
 		secondConnection, err := pgx.ConnectConfig(t.Context(), config.Copy())

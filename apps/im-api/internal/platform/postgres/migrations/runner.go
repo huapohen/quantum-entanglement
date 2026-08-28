@@ -22,6 +22,7 @@ var (
 	ErrLedgerSchema      = errors.New("invalid PostgreSQL migration ledger schema")
 	ErrLedgerDrift       = errors.New("PostgreSQL migration ledger drift")
 	ErrFutureSchema      = errors.New("PostgreSQL schema is newer than this binary")
+	ErrMigrationSchema   = errors.New("PostgreSQL migration postcondition drift")
 	ErrMigrationFailed   = errors.New("PostgreSQL migration failed")
 	ErrCommitUnknown     = errors.New("PostgreSQL migration commit outcome is unknown")
 )
@@ -113,6 +114,9 @@ func applyLocked(ctx context.Context, connection *pgx.Conn) (State, error) {
 		return State{}, err
 	}
 	if err := validateApplied(catalog, applied); err != nil {
+		return State{}, err
+	}
+	if err := validateAppliedPostconditions(ctx, connection, applied); err != nil {
 		return State{}, err
 	}
 	for index := len(applied); index < len(catalog); index++ {
@@ -413,32 +417,21 @@ func exactLedgerRelation(relation ledgerRelation) bool {
 }
 
 func exactLedgerColumns(columns []ledgerColumn) bool {
-	if len(columns) != 4 {
-		return false
-	}
-	expected := []struct {
-		name               string
-		formatType         string
-		hasDefault         bool
-		collationNamespace string
-		collationName      string
-	}{
-		{name: "version", formatType: "bigint"},
-		{name: "name", formatType: "text", collationNamespace: "pg_catalog", collationName: "C"},
-		{name: "checksum", formatType: "text", collationNamespace: "pg_catalog", collationName: "C"},
-		{name: "applied_at", formatType: "timestamp with time zone", hasDefault: true},
-	}
-	for index, want := range expected {
-		got := columns[index]
-		if got.name != want.name || got.formatType != want.formatType || !got.notNull ||
-			(got.defaultSQL != nil) != want.hasDefault ||
-			valueOrEmpty(got.collationNamespace) != want.collationNamespace ||
-			valueOrEmpty(got.collationName) != want.collationName ||
-			got.identityKind != "" || got.generatedKind != "" {
-			return false
-		}
-	}
-	return columns[3].defaultSQL != nil && *columns[3].defaultSQL == "clock_timestamp()"
+	return exactColumns(columns, []ledgerColumn{
+		{name: "version", formatType: "bigint", notNull: true},
+		{
+			name: "name", formatType: "text", notNull: true,
+			collationNamespace: stringPointer("pg_catalog"), collationName: stringPointer("C"),
+		},
+		{
+			name: "checksum", formatType: "text", notNull: true,
+			collationNamespace: stringPointer("pg_catalog"), collationName: stringPointer("C"),
+		},
+		{
+			name: "applied_at", formatType: "timestamp with time zone", notNull: true,
+			defaultSQL: stringPointer("clock_timestamp()"),
+		},
+	})
 }
 
 func valueOrEmpty(value *string) string {
@@ -446,6 +439,31 @@ func valueOrEmpty(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
+func exactColumns(got, expected []ledgerColumn) bool {
+	if len(got) != len(expected) {
+		return false
+	}
+	for index := range expected {
+		gotColumn := got[index]
+		expectedColumn := expected[index]
+		if gotColumn.name != expectedColumn.name ||
+			gotColumn.formatType != expectedColumn.formatType ||
+			gotColumn.notNull != expectedColumn.notNull ||
+			valueOrEmpty(gotColumn.defaultSQL) != valueOrEmpty(expectedColumn.defaultSQL) ||
+			valueOrEmpty(gotColumn.collationNamespace) != valueOrEmpty(expectedColumn.collationNamespace) ||
+			valueOrEmpty(gotColumn.collationName) != valueOrEmpty(expectedColumn.collationName) ||
+			gotColumn.identityKind != expectedColumn.identityKind ||
+			gotColumn.generatedKind != expectedColumn.generatedKind {
+			return false
+		}
+	}
+	return true
 }
 
 func exactLedgerConstraints(constraints []ledgerConstraint) bool {
@@ -499,11 +517,15 @@ func exactLedgerConstraints(constraints []ledgerConstraint) bool {
 			validated:  true,
 		},
 	}
-	if len(constraints) != len(expected) {
+	return exactConstraints(constraints, expected)
+}
+
+func exactConstraints(got, expected []ledgerConstraint) bool {
+	if len(got) != len(expected) {
 		return false
 	}
 	for index := range expected {
-		if constraints[index] != expected[index] {
+		if got[index] != expected[index] {
 			return false
 		}
 	}
@@ -565,6 +587,9 @@ func applyOne(ctx context.Context, connection *pgx.Conn, migration Migration) er
 		pgx.QueryExecModeSimpleProtocol,
 	); err != nil {
 		return ErrMigrationFailed
+	}
+	if err := validateMigrationPostcondition(ctx, transaction, migration.Version); err != nil {
+		return err
 	}
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO wanwork_meta.schema_migrations (version, name, checksum)
