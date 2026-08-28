@@ -47,6 +47,7 @@ _MAX_IDENTITY_BYTES = 4_096
 _MAX_REFERENCE_BYTES = 16_384
 _MAX_ERROR_BYTES = 16_384
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
+_MAX_COMPLETION_FENCE_CANDIDATES = 64
 
 
 class InvocationConflictError(RuntimeError):
@@ -2865,19 +2866,31 @@ class SQLiteInvocationAttemptStore:
                     )
                 receipt = receipt_row
 
+        invocation_needle = '"invocationId":' + json.dumps(
+            job.invocation_id,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         rows = connection.execute(
             """
             SELECT * FROM events
             WHERE stream_id = ?
-              AND (event_type = ? OR idempotency_key = ?)
+              AND (idempotency_key = ? OR instr(payload_json, ?) > 0)
             ORDER BY global_position
+            LIMIT ?
             """,
             (
                 "session:" + job.session_id,
-                "task.execution.requested",
                 "execution-request:" + job.invocation_id,
+                invocation_needle,
+                _MAX_COMPLETION_FENCE_CANDIDATES + 1,
             ),
         ).fetchall()
+        if len(rows) > _MAX_COMPLETION_FENCE_CANDIDATES:
+            raise InvocationIntegrityError(
+                "scoped completion boundary has too many candidate events"
+            )
         if receipt is not None:
             try:
                 first_position = _persisted_integer(
@@ -2922,6 +2935,66 @@ class SQLiteInvocationAttemptStore:
             if not (targeted_by_key or targeted_by_receipt or targeted_by_payload):
                 continue
             schema_version = payload.get("schemaVersion")
+            start_like = row["event_type"] == "task.invocation.started" or row[
+                "idempotency_key"
+            ] in {
+                "invocation-start:" + job.invocation_id + ":1",
+                "invocation-started:" + job.task_id,
+            }
+            if start_like:
+                try:
+                    from .invocation_execution import (
+                        InvocationStartEvidenceV2,
+                        ScopedInvocationStartEvidenceV3,
+                    )
+
+                    if schema_version == 2:
+                        legacy_start = InvocationStartEvidenceV2.from_event_payload(
+                            row["event_type"],
+                            payload,
+                        )
+                        start_binding = (
+                            legacy_start.invocation_id,
+                            legacy_start.session_id,
+                            legacy_start.plan_id,
+                            legacy_start.task_id,
+                            legacy_start.agent_id,
+                            legacy_start.job_idempotency_key,
+                            legacy_start.manifest_digest,
+                        )
+                    elif schema_version == 3:
+                        scoped_start = ScopedInvocationStartEvidenceV3.from_event_payload(
+                            row["event_type"],
+                            payload,
+                        )
+                        start_binding = (
+                            scoped_start.invocation_id,
+                            scoped_start.session_id,
+                            scoped_start.plan_id,
+                            scoped_start.task_id,
+                            scoped_start.agent_id,
+                            scoped_start.job_idempotency_key,
+                            scoped_start.manifest_digest,
+                        )
+                    else:
+                        raise ValueError("invocation start schema is unsupported")
+                    if start_binding != (
+                        job.invocation_id,
+                        job.session_id,
+                        job.plan_id,
+                        job.task_id,
+                        job.agent_id,
+                        job.idempotency_key,
+                        job.payload_digest,
+                    ):
+                        raise ValueError("invocation start binding differs from its job")
+                except (ImportError, TypeError, ValueError):
+                    raise InvocationIntegrityError(
+                        "scoped completion boundary invocation start is inconsistent"
+                    ) from None
+                if schema_version == 3:
+                    raise InvocationCompletionPathReservedError()
+                continue
             scoped_marker = (
                 "tenantId" in payload
                 or "workspaceId" in payload
