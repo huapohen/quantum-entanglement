@@ -11,28 +11,28 @@ import quantum_entanglement
 from quantum_entanglement import _stored_event_envelope_codec as codec
 
 BASE_VALUES: dict[str, object] = {
-    "event_id": "event-result-1",
+    "event_id": "event-golden-1",
     "stream_id": "session:alpha",
-    "event_type": "task.invocation.result.accepted",
+    "event_type": "codec.golden.checked",
     "actor_id": "agent:worker-1",
     "timestamp": "2026-08-28T09:10:11.123456Z",
     "correlation_id": "corr-1",
     "causation_id": "event-start-1",
-    "idempotency_key": "result:event-1",
+    "idempotency_key": "codec:event-1",
     "payload_json": '{"artifactCount":2,"narration":"完成","nested":{"ok":true}}',
     "sequence": 7,
     "global_position": 19,
 }
 EXPECTED_CANONICAL_BYTES = (
     b'{"actorId":"agent:worker-1","causationId":"event-start-1",'
-    b'"correlationId":"corr-1","eventId":"event-result-1",'
-    b'"eventType":"task.invocation.result.accepted","globalPosition":19,'
-    b'"idempotencyKey":"result:event-1","payload":{"artifactCount":2,'
+    b'"correlationId":"corr-1","eventId":"event-golden-1",'
+    b'"eventType":"codec.golden.checked","globalPosition":19,'
+    b'"idempotencyKey":"codec:event-1","payload":{"artifactCount":2,'
     b'"narration":"\xe5\xae\x8c\xe6\x88\x90","nested":{"ok":true}},'
     b'"schemaVersion":1,"sequence":7,"streamId":"session:alpha",'
     b'"timestamp":"2026-08-28T09:10:11.123456Z"}'
 )
-EXPECTED_DIGEST = "3d395de9f8a0ba6ac163693f17fddee035a76670392e776c0711e7e7a61491ba"
+EXPECTED_DIGEST = "9a2f7b7b20dbd320adf2a3ba8818fa9a5cb15668b6d0c68567290ac74bc55e54"
 RAW_COLUMNS = (
     "global_position",
     "stream_id",
@@ -91,14 +91,14 @@ def test_canonical_body_and_domain_separated_digest_are_exact() -> None:
 
     assert value.to_dict() == {
         "schemaVersion": 1,
-        "eventId": "event-result-1",
+        "eventId": "event-golden-1",
         "streamId": "session:alpha",
-        "eventType": "task.invocation.result.accepted",
+        "eventType": "codec.golden.checked",
         "actorId": "agent:worker-1",
         "timestamp": "2026-08-28T09:10:11.123456Z",
         "correlationId": "corr-1",
         "causationId": "event-start-1",
-        "idempotencyKey": "result:event-1",
+        "idempotencyKey": "codec:event-1",
         "payload": {
             "artifactCount": 2,
             "narration": "完成",
@@ -156,7 +156,7 @@ def test_returned_payload_is_a_detached_copy_and_internal_tampering_fails_closed
 @pytest.mark.parametrize(
     ("field", "replacement"),
     (
-        ("event_id", "event-result-2"),
+        ("event_id", "event-golden-2"),
         ("stream_id", "session:beta"),
         ("event_type", "task.status.changed"),
         ("actor_id", "agent:worker-2"),
@@ -167,6 +167,14 @@ def test_returned_payload_is_a_detached_copy_and_internal_tampering_fails_closed
         (
             "payload_json",
             '{"artifactCount":3,"narration":"完成","nested":{"ok":true}}',
+        ),
+        (
+            "payload_json",
+            '{"artifactCount":2,"narration":"已完成","nested":{"ok":true}}',
+        ),
+        (
+            "payload_json",
+            '{"artifactCount":2,"narration":"完成","nested":{"ok":false}}',
         ),
         ("sequence", 8),
         ("global_position", 20),
@@ -179,7 +187,7 @@ def test_every_stored_row_field_changes_the_digest(field: str, replacement: obje
 @pytest.mark.parametrize(
     ("field", "invalid", "error"),
     (
-        ("event_id", b"event-result-1", codec.StoredEventEnvelopeTypeError),
+        ("event_id", b"event-golden-1", codec.StoredEventEnvelopeTypeError),
         ("stream_id", " session:alpha", codec.StoredEventEnvelopeCanonicalError),
         ("event_type", "", codec.StoredEventEnvelopeError),
         ("actor_id", "agent:\u0000worker", codec.StoredEventEnvelopeCanonicalError),
@@ -225,7 +233,7 @@ def test_exact_class_and_class_qualified_methods_reject_hostile_shapes() -> None
         pass
 
     with pytest.raises(codec.StoredEventEnvelopeTypeError):
-        envelope(event_id=StringSubclass("event-result-1"))
+        envelope(event_id=StringSubclass("event-golden-1"))
     with pytest.raises(codec.StoredEventEnvelopeTypeError):
         EnvelopeSubclass(**BASE_VALUES)
 
@@ -272,7 +280,7 @@ def test_raw_sqlite_row_and_frozen_values_have_one_digest() -> None:
         ("global_position", 20),
         ("stream_id", "session:beta"),
         ("sequence", 8),
-        ("event_id", "event-result-2"),
+        ("event_id", "event-golden-2"),
         ("event_type", "task.status.changed"),
         ("actor_id", "agent:worker-2"),
         ("timestamp", "2026-08-28T09:10:12.123456Z"),
@@ -302,7 +310,7 @@ def test_every_raw_sqlite_column_is_covered_by_the_digest(
         ("global_position", "19"),
         ("stream_id", b"session:alpha"),
         ("sequence", 7.0),
-        ("event_id", b"event-result-1"),
+        ("event_id", b"event-golden-1"),
         ("event_type", 1),
         ("actor_id", b"agent:worker-1"),
         ("timestamp", b"2026-08-28T09:10:11.123456Z"),
