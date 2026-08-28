@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-27T17:54:39Z",
+  "syncedAt": "2026-08-28T00:21:14Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private main + local repository",
     "remoteRepresentation": "semantic-mirror",
@@ -10,7 +10,8 @@
       "convert-markdown-tables-to-notion-xml",
       "replace-local-image-links-with-screenshot-page-links",
       "preserve-project-child-pages-and-production-database",
-      "preserve-existing-screenshot-image-blocks-and-append-10-through-26"
+      "preserve-existing-screenshot-image-blocks-and-append-10-through-26",
+      "attach-current-markdown-and-html-for-wanwork-im-review-pages"
     ],
     "safety": {
       "notion": "standing-user-required-private-workspace-sync-and-readback-before-next-action",
@@ -21,9 +22,9 @@
     }
   },
   "sourceControl": {
-    "notionContentBaselineCommit": "f99f176bfa9cd14abf7e3c51d971b9682dc49230",
-    "manifestPreparedFromCommit": "f99f176bfa9cd14abf7e3c51d971b9682dc49230",
-    "manifestPreparedFromTree": "3297eea9aa2861c75593f523383ba65d446a4d52"
+    "notionContentBaselineCommit": "d8d57a869f717275e193e88cbb19728feedea8e2",
+    "manifestPreparedFromCommit": "1d82fd1638c762ba4b4ec710e5476ad1102597e0",
+    "manifestPreparedFromTree": "2448b253d7d92c9fae6a54b9fd8c81dc020a5246"
   },
   "pages": [
     {
@@ -33,18 +34,22 @@
       "localFiles": [
         {
           "path": "analysis_report/README.md",
-          "sha256": "e1fc3c057f63db3d825f87383f19c1d8ddf68defde0890151a161b2f27539bbc"
+          "sha256": "b337124b937aa6d89a5a5dee98a37a3e1c9208aae98894322a2d531a27f63ffa"
         }
       ],
       "updateMode": "targeted-preserve-child-pages-and-database",
       "remoteReadback": {
         "verified": true,
         "title": "🪢 Quantum Entanglement｜人 + 多 Agent 协同办公",
-        "contentLength": 9038,
+        "contentLength": 11142,
         "expectedMarkers": [
           "任何本地文档、代码、决策、计划或验收动作",
           "f99f176bfa9cd14abf7e3c51d971b9682dc49230",
-          "当前项目镜像共 **33 页**",
+          "当前项目镜像共 **47 页**",
+          "d8d57a8",
+          "2output/more",
+          "durability=volatile",
+          "EventStore 与 Action Receipt 分层",
           "提前接入原生 IM｜状态、备份与恢复检查点",
           "原生 IM 提前接入｜E0–E5 执行计划"
         ],
@@ -757,9 +762,354 @@
         ],
         "missingMarkers": []
       }
+    },
+    {
+      "key": "wanwork-im-architecture",
+      "pageId": "3c9ead4b-996e-8134-8e6b-ffb583988728",
+      "url": "https://app.notion.com/p/3c9ead4b996e81348e6bffb583988728?pvs=204",
+      "localFiles": [
+        {
+          "path": "docs/wanwork_im/ARCHITECTURE.md",
+          "sha256": "b4e6090ed5dafdf5d4833af26ff66612628ca840d43ca29170200821003e8880"
+        }
+      ],
+      "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🏗️ 02｜原生 IM 架构与 DeepSeek Harness 吸收边界",
+        "contentLength": 6992,
+        "expectedMarkers": [
+          "d8d57a8",
+          "VolatileMemoryStore",
+          "caller",
+          "checksum 不是 MAC",
+          "Action receipt"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "wanwork-im-research-traceability",
+      "pageId": "3c9ead4b-996e-81a7-a972-f0fa402487cf",
+      "url": "https://app.notion.com/p/3c9ead4b996e81a7a972f0fa402487cf?pvs=204",
+      "localFiles": [
+        {
+          "path": "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
+          "sha256": "9fe82817471420950906d34d874d217ff4d81f994dbffcec428352dd46c7c008"
+        }
+      ],
+      "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🔬 03｜用户调研可追溯矩阵（42 条硬映射）",
+        "contentLength": 6493,
+        "expectedMarkers": [
+          "d8d57a8",
+          "P1-7",
+          "28 个事件测试",
+          "Agent 重执行"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "wanwork-im-implementation-plan",
+      "pageId": "3c9ead4b-996e-816e-be93-ecf74c889fd1",
+      "url": "https://app.notion.com/p/3c9ead4b996e816ebe93ecf74c889fd1?pvs=204",
+      "localFiles": [
+        {
+          "path": "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
+          "sha256": "efcaa3e6f4c1a49c0a0fd8c7bee31eb3e7de00bd7691935d7e3f3887de562725"
+        }
+      ],
+      "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🧭 04｜实施计划、提交序列与验收门禁",
+        "contentLength": 6098,
+        "expectedMarkers": [
+          "d8d57a8",
+          "P1-7",
+          "28 个事件测试",
+          "PostgreSQL durable EventStore",
+          "Action Ledger"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-22-2output-absorption-audit",
+      "pageId": "3c9ead4b-996e-81b3-b4e9-c1fade2c4b4b",
+      "url": "https://app.notion.com/p/3c9ead4b996e81b3b4e9c1fade2c4b4b?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/22_2output_research_absorption_audit.md",
+          "sha256": "4e3a343e9204249846ed2d09853f11d82d01f0b1eb4e48aa72cf746396fa411b"
+        }
+      ],
+      "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🧭 22｜2output 调研吸收与产品合同增量审计",
+        "contentLength": 4437,
+        "expectedMarkers": [
+          "d8d57a8",
+          "P1-7 Volatile Memory EventStore",
+          "checksum 不等于 MAC",
+          "Action receipt",
+          "Agent/model/tool 重执行"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-30-execution-isolation",
+      "pageId": "3c9ead4b-996e-81bb-a6bd-c690d3988e3c",
+      "url": "https://app.notion.com/p/3c9ead4b996e81bba6bdc690d3988e3c?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/30_third_party_execution_isolation_contract.md",
+          "sha256": "783141f155b6c19dcdd929926139a743c525251c4a8a83271aeabfe6ec187ed9"
+        }
+      ],
+      "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🛡️ 30｜第三方执行隔离合同：Supervisor、Fence 与 Receipt Honesty",
+        "contentLength": 5885,
+        "expectedMarkers": [
+          "d8d57a8",
+          "VolatileMemoryStore",
+          "EventStore admission",
+          "Action receipt admission",
+          "公开 checksum"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-31-volatile-memory-event-store",
+      "pageId": "3caead4b-996e-8120-b3ee-c096cbf08a17",
+      "url": "https://app.notion.com/p/3caead4b996e8120b3eec096cbf08a17?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/31_volatile_memory_event_store_implementation.md",
+          "sha256": "2d42038e7e4a5bc01e21d7841c18346aec6273518c7082584199d4063fd3b92c"
+        }
+      ],
+      "updateMode": "created-detailed-semantic-mirror-with-exact-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🧠 31｜Volatile Memory EventStore：精确重试、作用域游标与失败原子性",
+        "contentLength": 6165,
+        "expectedMarkers": [
+          "d8d57a8",
+          "durability=volatile",
+          "caller-owned deterministic namespace",
+          "checksum 是公开 SHA-256 校验，不是 MAC",
+          "Action receipt",
+          "28 个 Test",
+          "W2 PostgreSQL",
+          "production projection engine"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-23-plugin-manifest-admission",
+      "pageId": "3caead4b-996e-817b-b888-fe78aef882f7",
+      "url": "https://app.notion.com/p/3caead4b996e817bb888fe78aef882f7?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/23_plugin_manifest_admission_implementation.md",
+          "sha256": "3ddd133155f7c2285d6c1cbf63baf6196da0eece064e10a01b539912ad383388"
+        }
+      ],
+      "updateMode": "created-semantic-mirror-with-exact-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🧾 23｜Plugin Manifest 与 Admission 绑定：研究证据到 W1 实现",
+        "contentLength": 2148,
+        "expectedMarkers": [
+          "d8d57a8",
+          "host-computed digest",
+          "PackageRecord exact admission",
+          "第三方代码隔离"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-24-secret-claim-admission",
+      "pageId": "3caead4b-996e-8157-9114-f61199ffa504",
+      "url": "https://app.notion.com/p/3caead4b996e81579114f61199ffa504?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/24_secret_claim_admission_implementation.md",
+          "sha256": "90bd3ea0c3d38c9c8e3941e1cc4db35b99f16f058f96aecee28d95ecb2f69748"
+        }
+      ],
+      "updateMode": "created-semantic-mirror-with-exact-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🔐 24｜Secret Claim Admission：研究证据到 W1 P0-4 实现",
+        "contentLength": 2173,
+        "expectedMarkers": [
+          "d8d57a8",
+          "Secret locator",
+          "action-time JIT lease",
+          "不保存完整 API Key"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-25-plugin-registry-freeze",
+      "pageId": "3caead4b-996e-817a-81bf-ece286f5a257",
+      "url": "https://app.notion.com/p/3caead4b996e817a81bfece286f5a257?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/25_plugin_registry_freeze_implementation.md",
+          "sha256": "d6c69873db511b236cf68de96ba760308d2474137765508e141ad94ae5e3c3d4"
+        }
+      ],
+      "updateMode": "created-semantic-mirror-with-exact-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🧊 25｜Plugin Registry Freeze：从可变 Builder 到不可变定义快照",
+        "contentLength": 1861,
+        "expectedMarkers": [
+          "d8d57a8",
+          "Freeze()",
+          "immutable snapshot",
+          "late registration"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-26-plugin-effect-scope",
+      "pageId": "3caead4b-996e-817b-b2b0-fc488707e9c2",
+      "url": "https://app.notion.com/p/3caead4b996e817bb2b0fc488707e9c2?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/26_plugin_effect_scope_shutdown_implementation.md",
+          "sha256": "232b287d09b0ac4e91a7eba9f91b378a571958411dbc6dac26c219ed02d27079"
+        }
+      ],
+      "updateMode": "created-semantic-mirror-with-exact-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "♻️ 26｜Plugin Effect Scope Shutdown：迟到资源不能逃逸回收",
+        "contentLength": 1930,
+        "expectedMarkers": [
+          "d8d57a8",
+          "open -> closing -> closed",
+          "精确重试",
+          "Action receipt"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-27-plugin-callback-locking",
+      "pageId": "3c9ead4b-996e-8110-bb55-cd0714d225b2",
+      "url": "https://app.notion.com/p/3c9ead4b996e8110bb55cd0714d225b2?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/27_plugin_host_callback_locking_implementation.md",
+          "sha256": "f00d5bea784f0710e828f6ded088a2191d07d4052aad6c4dacba932a47ad93db"
+        }
+      ],
+      "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🔐 27｜Plugin Host Callback Locking 实现证据",
+        "contentLength": 4688,
+        "expectedMarkers": [
+          "d8d57a8",
+          "Host.mu",
+          "ErrInvalidLifecycle",
+          "Context timeout"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-28-plugin-panic-containment",
+      "pageId": "3c9ead4b-996e-81ad-bb39-f4554df59049",
+      "url": "https://app.notion.com/p/3c9ead4b996e81adbb39f4554df59049?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/28_plugin_lifecycle_panic_containment_implementation.md",
+          "sha256": "f880b2c2710034bebe2f0d068412a6cd0ec38793c584bf4c89240a73e82d609f"
+        }
+      ],
+      "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🧯 28｜Plugin Lifecycle Panic Containment 实现证据",
+        "contentLength": 2751,
+        "expectedMarkers": [
+          "d8d57a8",
+          "ErrLifecyclePanic",
+          "payload",
+          "Action Receipt"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-29-plugin-cooperative-deadline",
+      "pageId": "3c9ead4b-996e-819b-8257-fb89779d3943",
+      "url": "https://app.notion.com/p/3c9ead4b996e819b8257fb89779d3943?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/29_plugin_lifecycle_cooperative_deadline_contract.md",
+          "sha256": "54a36171f94cefd2d79e7b249831d32b016b0990efb84ab0d3355fb603e7d6fd"
+        }
+      ],
+      "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "⏳ 29｜Plugin Lifecycle Cooperative Deadline 合同",
+        "contentLength": 2687,
+        "expectedMarkers": [
+          "d8d57a8",
+          "deadline expired",
+          "callback returned",
+          "unknown/reconcile"
+        ],
+        "missingMarkers": []
+      }
     }
   ],
   "auxiliaryDerivedPages": [
+    {
+      "key": "wanwork-im-review-hub",
+      "pageId": "3c9ead4b-996e-8149-85fe-c31a36d70a67",
+      "url": "https://app.notion.com/p/3c9ead4b996e814985fec31a36d70a67?pvs=204",
+      "sourcePath": null,
+      "digestPinned": false,
+      "reason": "derived review hub composed from controlled WanWork IM child pages",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🛰️ WanWork Quantum Entanglement｜原生 IM 独立审阅空间",
+        "contentLength": 4601,
+        "expectedMarkers": [
+          "d8d57a8",
+          "P1-7 Volatile Memory EventStore",
+          "Action Receipt",
+          "专题 31",
+          "23｜Plugin Manifest",
+          "24｜Secret Claim",
+          "25｜Plugin Registry Freeze",
+          "26｜Plugin Effect Scope",
+          "31｜Volatile Memory EventStore"
+        ],
+        "missingMarkers": []
+      }
+    },
     {
       "key": "branch-catalog",
       "pageId": "3c9ead4b-996e-81bc-8053-cf1e844dccdb",
@@ -782,12 +1132,12 @@
     }
   ],
   "verificationSummary": {
-    "pageCount": 33,
-    "controlledSourcePageCount": 32,
-    "auxiliaryDerivedPageCount": 1,
-    "existingPagesUpdated": 5,
-    "newPagesCreated": 3,
-    "readbackVerified": 8,
+    "pageCount": 47,
+    "controlledSourcePageCount": 45,
+    "auxiliaryDerivedPageCount": 2,
+    "existingPagesUpdated": 10,
+    "newPagesCreated": 5,
+    "readbackVerified": 15,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 27,
     "screenshotImagesAddedThisSync": 17,
