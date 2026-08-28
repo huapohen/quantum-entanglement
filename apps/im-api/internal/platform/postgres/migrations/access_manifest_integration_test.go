@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
@@ -404,11 +405,22 @@ func assertRuntimeLoginAccess(
 	t.Helper()
 	config := databaseConfig.Copy()
 	config.User = manifest.RuntimeLoginRoles[0]
+	var notices []*pgconn.Notice
+	config.OnNotice = func(_ *pgconn.PgConn, notice *pgconn.Notice) {
+		notices = append(notices, notice)
+	}
 	connection, err := pgx.ConnectConfig(t.Context(), config)
 	if err != nil {
 		t.Fatalf("connect runtime login: %v", err)
 	}
 	defer func() { _ = connection.Close(context.Background()) }()
+	var sessionUser, currentUser string
+	if err := connection.QueryRow(t.Context(), "SELECT session_user, current_user").Scan(
+		&sessionUser,
+		&currentUser,
+	); err != nil || sessionUser != manifest.RuntimeLoginRoles[0] || currentUser != sessionUser {
+		t.Fatalf("runtime login identities session=%q current=%q error=%v", sessionUser, currentUser, err)
+	}
 	var inheritedUsage bool
 	if err := connection.QueryRow(t.Context(), `
 SELECT pg_catalog.has_schema_privilege(current_user, 'wanwork_im', 'USAGE')`).Scan(
@@ -422,13 +434,74 @@ SELECT pg_catalog.has_schema_privilege(current_user, 'wanwork_im', 'USAGE')`).Sc
 	); err != nil {
 		t.Fatalf("runtime login set exact role: %v", err)
 	}
-	var currentUser string
 	if err := connection.QueryRow(t.Context(), "SELECT current_user").Scan(&currentUser); err != nil ||
 		currentUser != manifest.RuntimeRole {
 		t.Fatalf("runtime current user=%q error=%v", currentUser, err)
 	}
+	allowedReads := make(map[string]struct{}, len(runtimeAuthorityReadTables))
+	for _, tableName := range runtimeAuthorityReadTables {
+		allowedReads[tableName] = struct{}{}
+	}
+	for _, tableName := range authorityAccessTableNames() {
+		qualifiedTable := "wanwork_im." + pgx.Identifier{tableName}.Sanitize()
+		var canSelect, canMaintain bool
+		if err := connection.QueryRow(t.Context(), `
+SELECT pg_catalog.has_table_privilege(current_user, $1, 'SELECT'),
+       pg_catalog.has_table_privilege(current_user, $1, 'MAINTAIN')`, qualifiedTable).Scan(
+			&canSelect,
+			&canMaintain,
+		); err != nil {
+			t.Fatalf("read runtime table privileges for %s: %v", tableName, err)
+		}
+		_, mustSelect := allowedReads[tableName]
+		if canSelect != mustSelect || canMaintain {
+			t.Fatalf(
+				"runtime table privileges %s select=%v/%v maintain=%v",
+				tableName,
+				canSelect,
+				mustSelect,
+				canMaintain,
+			)
+		}
+		notices = nil
+		_, analyzeErr := connection.Exec(t.Context(), "ANALYZE "+qualifiedTable)
+		if analyzeErr != nil {
+			if !hasPostgresCode(analyzeErr, "42501") {
+				t.Fatalf("runtime analyze %s error=%v, want SQLSTATE 42501", tableName, analyzeErr)
+			}
+			continue
+		}
+		skippedNotice := false
+		for _, notice := range notices {
+			if notice.Code == "01000" && notice.Severity == "WARNING" {
+				skippedNotice = true
+				break
+			}
+		}
+		if !skippedNotice {
+			noticeSummary := "none"
+			if len(notices) > 0 {
+				noticeSummary = notices[0].Code + "/" + notices[0].Severity + "/" + notices[0].Message
+			}
+			t.Fatalf(
+				"runtime analyze %s returned neither permission error nor skip warning: %s",
+				tableName,
+				noticeSummary,
+			)
+		}
+	}
+	for _, identity := range authorityFunctionSQLIdentities() {
+		var canExecute bool
+		if err := connection.QueryRow(t.Context(), `
+SELECT pg_catalog.has_function_privilege(current_user, $1, 'EXECUTE')`,
+			"wanwork_im."+identity,
+		).Scan(&canExecute); err != nil || !canExecute {
+			t.Fatalf("runtime function privilege %s=%v error=%v", identity, canExecute, err)
+		}
+	}
 	for _, statement := range []string{
 		"INSERT INTO wanwork_im.conversation_heads DEFAULT VALUES",
+		"CREATE SCHEMA runtime_escape",
 		"CREATE TEMPORARY TABLE runtime_escape (id bigint)",
 		"SET ROLE " + pgx.Identifier{manifest.OwnerRole}.Sanitize(),
 		"SET ROLE " + pgx.Identifier{manifest.MigratorRole}.Sanitize(),
