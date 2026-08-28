@@ -1,0 +1,379 @@
+from __future__ import annotations
+
+import hashlib
+from dataclasses import replace
+
+import pytest
+
+from quantum_entanglement.native_im import (
+    IMAcceptanceQueryV1,
+    IMCapabilityRequestV1,
+    IMCapabilitySnapshotV1,
+    IMDispatchRequestV1,
+    IMInboundPageV1,
+    IMInboundReadRequestV1,
+    IMMembershipChangeV1,
+    IMVerifiedInboundEnvelopeV1,
+)
+from quantum_entanglement.native_im_gateway import IMGatewayPort
+from quantum_entanglement.native_im_provider_profile import IMProviderProfileV1
+from quantum_entanglement.native_im_sandbox import (
+    NativeIMHealthEvidenceV1,
+    NativeIMInboundOnlySandboxAdapter,
+    NativeIMInboundRawResponseV1,
+    NativeIMMappedPageV1,
+    NativeIMOutboundForbiddenError,
+    NativeIMSandboxAdapterClosedError,
+    NativeIMTransportContractError,
+    NativeIMVerifiedInboundReadV1,
+)
+from quantum_entanglement.service.native_im_config import NativeIMInboundOnlyConfigV1
+from quantum_entanglement.service.secrets import SecretMaterial, SecretRef
+from tests.test_native_im_auth import (
+    KEY,
+    NOW,
+    SIGNED_UNIX_SECONDS,
+    authentication_profile,
+    configuration_for,
+    metadata_for,
+    signature_for,
+)
+from tests.test_native_im_contract import (
+    conversation,
+    inbound_event,
+    inbound_page,
+    inbound_read_request,
+    participant,
+)
+
+TRANSPORT_EVIDENCE = "b" * 64
+MAPPING_EVIDENCE = "f" * 64
+RAW_BODY = b'{"providerEvents":["test-event-1"]}'
+READ_CREDENTIAL = b"test-read-only-credential"
+
+
+class ReplayGuard:
+    def __init__(self) -> None:
+        self.claims = 0
+
+    def claim(self, **values: object) -> bool:
+        self.claims += 1
+        return True
+
+
+class RecordingSecretProvider:
+    def __init__(
+        self,
+        configuration: NativeIMInboundOnlyConfigV1,
+        *,
+        failure_canary: str | None = None,
+    ) -> None:
+        self.configuration = configuration
+        self.failure_canary = failure_canary
+        self.references: list[SecretRef] = []
+        self.materials: list[SecretMaterial] = []
+
+    def resolve(self, reference: SecretRef) -> SecretMaterial:
+        self.references.append(reference)
+        if self.failure_canary is not None:
+            raise RuntimeError(self.failure_canary)
+        value = KEY if reference == self.configuration.verification_secret_ref else READ_CREDENTIAL
+        material = SecretMaterial(value)
+        self.materials.append(material)
+        return material
+
+
+class FixtureTransport:
+    def __init__(
+        self,
+        response: NativeIMInboundRawResponseV1,
+        *,
+        failure_canary: str | None = None,
+    ) -> None:
+        self.response = response
+        self.failure_canary = failure_canary
+        self.health_calls = 0
+        self.read_calls = 0
+        self.close_calls = 0
+
+    async def probe_health(self, credential: SecretMaterial) -> NativeIMHealthEvidenceV1:
+        self.health_calls += 1
+        assert credential.view().tobytes() == READ_CREDENTIAL
+        if self.failure_canary is not None:
+            raise RuntimeError(self.failure_canary)
+        return NativeIMHealthEvidenceV1(
+            schema_version=1,
+            healthy=True,
+            observed_at=NOW,
+            evidence_digest="a" * 64,
+        )
+
+    async def read_inbound(
+        self,
+        request: IMInboundReadRequestV1,
+        credential: SecretMaterial,
+    ) -> NativeIMInboundRawResponseV1:
+        self.read_calls += 1
+        assert credential.view().tobytes() == READ_CREDENTIAL
+        if self.failure_canary is not None:
+            raise RuntimeError(self.failure_canary)
+        assert request.read_request_id == self.response.read_request_id
+        return self.response
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
+        if self.failure_canary is not None:
+            raise RuntimeError(self.failure_canary)
+
+
+class FixtureMapper:
+    def __init__(self, *, failure_canary: str | None = None) -> None:
+        self.failure_canary = failure_canary
+        self.calls = 0
+
+    def map_inbound(
+        self,
+        response: NativeIMInboundRawResponseV1,
+        request: IMInboundReadRequestV1,
+        capability: IMCapabilitySnapshotV1,
+        raw_verification: object,
+        profile: IMProviderProfileV1,
+    ) -> NativeIMMappedPageV1:
+        self.calls += 1
+        if self.failure_canary is not None:
+            raise RuntimeError(self.failure_canary)
+        verifier_id = raw_verification.verifier_id  # type: ignore[attr-defined]
+        authentication_evidence = raw_verification.authentication_evidence_digest  # type: ignore[attr-defined]
+        verified_at = raw_verification.verified_at  # type: ignore[attr-defined]
+        source_body_digest = raw_verification.body_digest  # type: ignore[attr-defined]
+        member = participant(provider=profile.provider)
+        change = IMMembershipChangeV1(
+            schema_version=1,
+            subject=member,
+            change_kind="joined",
+            previous_membership_revision=None,
+        )
+        event = inbound_event(
+            event_type="membership.changed",
+            conversation=conversation(provider=profile.provider),
+            message=None,
+            sender=None,
+            content=None,
+            reaction=None,
+            membership_change=change,
+            transport_evidence_digest=response.transport_evidence_digest,
+        )
+        envelope = IMVerifiedInboundEnvelopeV1(
+            schema_version=1,
+            event=event,
+            event_digest=event.canonical_digest(),
+            verification_id="test-verification-adapter-1",
+            verifier_id=verifier_id,
+            authentication_evidence_digest=authentication_evidence,
+            tenant_mapping_revision=profile.tenant_mapping_revision,
+            verified_at=verified_at,
+            traceparent=None,
+        )
+        page = inbound_page(
+            request=request,
+            capability=capability,
+            envelopes=(envelope,),
+        )
+        return NativeIMMappedPageV1(
+            schema_version=1,
+            source_body_digest=source_body_digest,
+            canonical_page_body=page.canonical_bytes(),
+            mapping_evidence_digest=MAPPING_EVIDENCE,
+        )
+
+
+class PoisonedRequest:
+    def __getattribute__(self, name: str) -> object:
+        raise AssertionError("outbound fence inspected a request")
+
+    def __repr__(self) -> str:
+        raise AssertionError("outbound fence rendered a request")
+
+
+def provider_profile() -> IMProviderProfileV1:
+    value = authentication_profile()
+    return replace(
+        value,
+        provider="qe.fake-im.v1",
+        tenant_mapping_revision="test-tenant-mapping-1",
+        allowed_conversation_ids=("test-conversation",),
+        features=tuple(replace(item, status="supported") for item in value.features),
+    )
+
+
+def adapter_inputs(
+    *,
+    transport_failure: str | None = None,
+    mapper_failure: str | None = None,
+    secret_failure: str | None = None,
+):
+    profile = provider_profile()
+    configuration = configuration_for(profile)
+    request = inbound_read_request(provider=profile.provider)
+    metadata = metadata_for(
+        configuration,
+        timestamp=SIGNED_UNIX_SECONDS,
+        signature=signature_for(
+            configuration,
+            body=RAW_BODY,
+            timestamp=SIGNED_UNIX_SECONDS,
+        ),
+    )
+    response = NativeIMInboundRawResponseV1(
+        schema_version=1,
+        read_request_id=request.read_request_id,
+        status_code=200,
+        metadata=metadata,
+        raw_body=RAW_BODY,
+        received_at=NOW,
+        transport_evidence_digest=TRANSPORT_EVIDENCE,
+    )
+    transport = FixtureTransport(response, failure_canary=transport_failure)
+    mapper = FixtureMapper(failure_canary=mapper_failure)
+    secrets = RecordingSecretProvider(configuration, failure_canary=secret_failure)
+    replay_guard = ReplayGuard()
+    adapter = NativeIMInboundOnlySandboxAdapter(
+        configuration,
+        profile,
+        transport,
+        mapper,
+        secrets,
+        replay_guard,
+        clock=lambda: NOW,
+    )
+    return adapter, request, configuration, profile, transport, mapper, secrets, replay_guard
+
+
+@pytest.mark.asyncio
+async def test_explicit_inbound_adapter_verifies_maps_and_returns_atomic_evidence() -> None:
+    adapter, request, configuration, _, transport, mapper, secrets, replay_guard = adapter_inputs()
+
+    result = await adapter.read_verified_inbound(request)
+
+    assert type(result) is NativeIMVerifiedInboundReadV1
+    assert type(result.page) is IMInboundPageV1
+    assert result.request == request
+    assert result.mapping_evidence_digest == MAPPING_EVIDENCE
+    assert result.raw_verification.body_digest == hashlib.sha256(RAW_BODY).hexdigest()
+    assert result.page.envelopes[0].authentication_evidence_digest == (
+        result.raw_verification.authentication_evidence_digest
+    )
+    assert result.page.envelopes[0].event.transport_evidence_digest == TRANSPORT_EVIDENCE
+    assert result.capability.operations == ()
+    assert transport.read_calls == 1
+    assert mapper.calls == 1
+    assert secrets.references == [
+        configuration.credential_ref,
+        configuration.verification_secret_ref,
+    ]
+    assert all(material.closed for material in secrets.materials)
+    assert replay_guard.claims == 0
+    assert RAW_BODY.decode() not in repr(result)
+    assert isinstance(adapter, IMGatewayPort)
+
+
+@pytest.mark.asyncio
+async def test_capability_and_health_do_not_expose_or_retain_secret_material() -> None:
+    adapter, _, configuration, profile, transport, _, secrets, _ = adapter_inputs()
+    capability_request = IMCapabilityRequestV1(
+        schema_version=1,
+        tenant_id=profile.tenant_id,
+        workspace_id=profile.workspace_id,
+        provider=profile.provider,
+        channel_id=profile.channel_id,
+        request_id="test-capability-adapter",
+    )
+
+    snapshot = await adapter.capability_snapshot(capability_request)
+    assert snapshot.operations == ()
+    assert secrets.references == []
+
+    health = await adapter.probe_health()
+    assert health.healthy is True
+    assert secrets.references == [configuration.credential_ref]
+    assert secrets.materials[0].closed is True
+    assert transport.health_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_outbound_methods_fence_before_request_clock_transport_or_secret_access() -> None:
+    adapter, _, _, _, transport, mapper, secrets, _ = adapter_inputs(
+        transport_failure="transport-canary",
+        mapper_failure="mapper-canary",
+        secret_failure="secret-canary",
+    )
+    poisoned = PoisonedRequest()
+
+    for call in (
+        adapter.dispatch(poisoned),  # type: ignore[arg-type]
+        adapter.query_acceptance(poisoned),  # type: ignore[arg-type]
+    ):
+        with pytest.raises(NativeIMOutboundForbiddenError) as raised:
+            await call
+        assert raised.value.code == "native_im_outbound_forbidden"
+        assert raised.value.__cause__ is None
+    assert secrets.references == []
+    assert transport.health_calls == transport.read_calls == 0
+    assert mapper.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_transport_and_mapper_failures_are_redacted_and_close_secret_leases() -> None:
+    transport_canary = "transport-exception-body-canary"
+    adapter, request, _, _, _, _, secrets, _ = adapter_inputs(transport_failure=transport_canary)
+    with pytest.raises(NativeIMTransportContractError) as transport_error:
+        await adapter.read_verified_inbound(request)
+    assert transport_canary not in f"{transport_error.value!r} {transport_error.value}"
+    assert transport_error.value.__cause__ is None
+    assert secrets.materials[0].closed is True
+
+    mapper_canary = "mapper-exception-body-canary"
+    adapter, request, _, _, _, _, secrets, _ = adapter_inputs(mapper_failure=mapper_canary)
+    with pytest.raises(NativeIMTransportContractError) as mapper_error:
+        await adapter.read_verified_inbound(request)
+    assert mapper_canary not in f"{mapper_error.value!r} {mapper_error.value}"
+    assert mapper_error.value.__cause__ is None
+    assert all(material.closed for material in secrets.materials)
+
+
+@pytest.mark.asyncio
+async def test_close_is_idempotent_and_closed_reads_fail_before_request_inspection() -> None:
+    adapter, _, _, _, transport, _, _, _ = adapter_inputs()
+    await adapter.aclose()
+    await adapter.aclose()
+    assert adapter.closed is True
+    assert transport.close_calls == 1
+
+    with pytest.raises(NativeIMSandboxAdapterClosedError):
+        await adapter.read_inbound(PoisonedRequest())  # type: ignore[arg-type]
+
+
+def test_inbound_adapter_constructor_rejects_subclasses_before_component_use() -> None:
+    class ConfigSubclass(NativeIMInboundOnlyConfigV1):
+        pass
+
+    _, _, _, profile, transport, mapper, secrets, replay_guard = adapter_inputs()
+    with pytest.raises(TypeError):
+        NativeIMInboundOnlySandboxAdapter(
+            object.__new__(ConfigSubclass),
+            profile,
+            transport,
+            mapper,
+            secrets,
+            replay_guard,
+            clock=lambda: NOW,
+        )
+
+
+@pytest.mark.parametrize("request_type", (IMDispatchRequestV1, IMAcceptanceQueryV1))
+def test_outbound_type_names_do_not_appear_in_adapter_state(request_type: type[object]) -> None:
+    adapter, _, configuration, _, _, _, _, _ = adapter_inputs()
+    rendered = repr(adapter)
+    assert request_type.__name__ not in rendered
+    assert configuration.origin.canonical not in rendered
+    assert configuration.credential_ref.locator not in rendered
