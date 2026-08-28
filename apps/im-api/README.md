@@ -137,6 +137,37 @@ SSE live replay, or external-effect recovery. PostgreSQL transactions, projectio
 crash/reopen/kill-9, backup/restore, retention/encryption, and tamper-evident evidence remain W2/W7 gates. Do
 not use `VolatileMemoryStore` as a production event source of truth.
 
+## IM identity, conversation, and provider metadata contracts
+
+`internal/im` now freezes syntax-level identity and conversation values. Stable tenant-scoped `ActorRef` and
+`ConversationRef` values are separate from revision-bearing snapshots. External Clerk/RongCloud subjects are
+scoped by a non-secret provider realm so the same subject in different apps/environments cannot collapse into
+one mapping. Actor ID prefixes bind to `human | agent | system | service`, but prefix agreement is not proof of
+registry existence, installation, membership, provider authentication, or authorization.
+
+Conversation snapshots allow `direct | group | agent_thread`. Direct/group values forbid thread topology;
+Agent threads require parent conversation, root message, and invocation together and reject self-parenting.
+This lineage is not Task state, membership, ACL inheritance, or proof that a provider group exists.
+
+`internal/immetadata` owns the RongCloud `ext_info` projection boundary. It accepts exactly four bounded flat
+V1 shapes: human user, Agent user, ordinary group, and Agent thread. The 1024-byte decoder requires valid
+UTF-8/NFC, exact types, lexicographically ordered allowlisted keys, and byte-for-byte canonical re-encoding.
+It rejects duplicate/escaped duplicate/unknown/missing/null fields, trailing values, noncanonical whitespace or
+escapes, Unicode ambiguity, oversized input, and authority/secret/content/evidence fields. Metadata values are
+display/reconciliation hints with zero authority; inbound adapters must still verify the callback and resolve
+provider realm/ID bindings, platform membership, Actor/Conversation status, Agent installation, and policy.
+
+Current tests include four golden vectors, all 852 key permutations (four canonical, 848 rejected), 44 classes
+of forbidden fields, Unicode/control/invalid-UTF-8 corpora, seeded fuzz properties, and a 128-goroutine race
+fixture. They prove the local codec contract only. They do not prove RongCloud's actual size limit, byte
+preservation, callback authenticity, stable readback, dedupe/resume semantics, or sandbox compatibility; those
+remain W3 provider gates and real outbound stays disabled.
+
+```bash
+GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
+  go test -race ./apps/im-api/internal/im/... ./apps/im-api/internal/immetadata/... -count=1
+```
+
 ## Offline verification after dependencies are cached
 
 ```bash
