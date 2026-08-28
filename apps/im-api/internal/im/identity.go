@@ -109,6 +109,19 @@ func ParseActorID(value string) (ActorID, error) {
 
 func (value ActorID) String() string { return value.value }
 func (value ActorID) IsZero() bool   { return value.value == "" }
+func (value ActorID) SubjectType() (SubjectType, bool) {
+	for _, subjectType := range []SubjectType{
+		SubjectHuman,
+		SubjectAgent,
+		SubjectSystem,
+		SubjectService,
+	} {
+		if strings.HasPrefix(value.value, subjectType.actorIDPrefix()) {
+			return subjectType, true
+		}
+	}
+	return "", false
+}
 
 type AgentDefinitionID struct{ value string }
 

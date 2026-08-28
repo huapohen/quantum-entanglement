@@ -24,6 +24,10 @@ func TestActorIdentityBindsSubjectTypeToStableID(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			actorID := mustActorID(t, test.actorID)
+			inferredType, ok := actorID.SubjectType()
+			if !ok || inferredType != test.subjectType {
+				t.Fatalf("ActorID.SubjectType() = (%q, %v), want (%q, true)", inferredType, ok, test.subjectType)
+			}
 			identity, err := NewActorIdentity(tenantID, actorID, test.subjectType, 7)
 			if err != nil {
 				t.Fatalf("NewActorIdentity() error = %v", err)
@@ -33,6 +37,14 @@ func TestActorIdentityBindsSubjectTypeToStableID(t *testing.T) {
 				t.Fatalf("unexpected identity: %#v", identity)
 			}
 		})
+	}
+}
+
+func TestZeroActorIdentityHasNoSubjectType(t *testing.T) {
+	t.Parallel()
+
+	if subjectType, ok := (ActorID{}).SubjectType(); ok || subjectType != "" {
+		t.Fatalf("zero ActorID.SubjectType() = (%q, %v), want empty and false", subjectType, ok)
 	}
 }
 
