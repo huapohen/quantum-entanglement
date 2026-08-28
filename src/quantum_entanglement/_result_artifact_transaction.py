@@ -10,6 +10,10 @@ from datetime import datetime, timezone
 from itertools import islice
 from typing import NoReturn
 
+from ._artifact_codec import (
+    artifact_request_digest_v1,
+    decode_canonical_artifact_metadata_v1,
+)
 from .invocation_results import (
     ScopedInvocationResultArtifactCandidateV2,
     ScopedInvocationResultArtifactV2,
@@ -523,8 +527,111 @@ def _preflight_result_artifact_head(
         raise _ResultArtifactIntegrityError(
             "result Artifact version history is not a contiguous exact lineage"
         )
+    _verify_existing_result_artifact_history(
+        connection,
+        item,
+        row_count,
+        process_guard,
+    )
     if maximum_version != item.expected_head_version:
         raise _ResultArtifactConcurrencyError("result Artifact head changed")
+
+
+def _verify_existing_result_artifact_history(
+    connection: sqlite3.Connection,
+    item: _PreparedResultArtifact,
+    row_count: int,
+    process_guard: Callable[[], None],
+) -> None:
+    raw_rows = _guarded_fetchall(
+        connection,
+        process_guard,
+        """
+        SELECT
+            artifact_id,
+            tenant_id,
+            workspace_id,
+            session_id,
+            task_id,
+            name,
+            version,
+            parent_version,
+            media_type,
+            blob_digest,
+            byte_size,
+            metadata_json,
+            created_by,
+            created_at,
+            idempotency_key,
+            request_digest
+        FROM artifact_versions
+        WHERE tenant_id = ? AND workspace_id = ?
+          AND session_id = ? AND name = ?
+        ORDER BY version ASC
+        """,
+        (item.tenant_id, item.workspace_id, item.session_id, item.name),
+    )
+    if len(raw_rows) != row_count:
+        raise _ResultArtifactIntegrityError("result Artifact history row count changed")
+    for expected_version, raw_row in enumerate(raw_rows, start=1):
+        row = _require_exact_row(raw_row, _VERSION_COLUMNS)
+        text = {
+            name: _exact_row_text(row, name)
+            for name in (
+                "artifact_id",
+                "tenant_id",
+                "workspace_id",
+                "session_id",
+                "task_id",
+                "name",
+                "media_type",
+                "blob_digest",
+                "metadata_json",
+                "created_by",
+                "created_at",
+                "idempotency_key",
+                "request_digest",
+            )
+        }
+        if any(not value for value in text.values()):
+            raise _ResultArtifactIntegrityError("result Artifact history text is empty")
+        if (
+            text["tenant_id"] != item.tenant_id
+            or text["workspace_id"] != item.workspace_id
+            or text["session_id"] != item.session_id
+            or text["name"] != item.name
+        ):
+            raise _ResultArtifactIntegrityError("result Artifact history scope changed")
+        version = _exact_row_integer(row, "version", minimum=1)
+        parent = _exact_row_value(row, "parent_version")
+        expected_parent = expected_version - 1 if expected_version > 1 else None
+        if version != expected_version or parent != expected_parent:
+            raise _ResultArtifactIntegrityError("result Artifact history lineage changed")
+        byte_size = _exact_row_integer(row, "byte_size")
+        try:
+            metadata = decode_canonical_artifact_metadata_v1(
+                text["metadata_json"].encode("utf-8")
+            )
+            request_digest = artifact_request_digest_v1(
+                tenant_id=text["tenant_id"],
+                workspace_id=text["workspace_id"],
+                session_id=text["session_id"],
+                task_id=text["task_id"],
+                name=text["name"],
+                media_type=text["media_type"],
+                blob_digest=text["blob_digest"],
+                byte_size=byte_size,
+                metadata=metadata,
+                created_by=text["created_by"],
+            )
+            _canonical_result_artifact_timestamp(text["created_at"], persisted=True)
+        except (TypeError, ValueError, UnicodeError) as error:
+            raise _ResultArtifactIntegrityError(
+                "result Artifact history violates its canonical row contract"
+            ) from error
+        if request_digest != text["request_digest"]:
+            raise _ResultArtifactIntegrityError("result Artifact history request digest changed")
+        _run_process_guard(process_guard)
 
 
 def _preflight_result_artifact_identity(

@@ -515,6 +515,47 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
             ).fetchone()
         )
 
+    def test_existing_history_timestamp_and_storage_drift_block_successors(self) -> None:
+        first = candidate(0)
+        self.write(first)
+        successor = replace(
+            candidate(1, content=b"history-contract-successor"),
+            name=first.name,
+            expected_head_version=1,
+        )
+        connection = self.store._connection
+        mutations = (
+            (
+                "timestamp",
+                "UPDATE artifact_versions SET created_at = 'not-a-timestamp' "
+                "WHERE artifact_id = ?",
+            ),
+            (
+                "metadata-storage",
+                "UPDATE artifact_versions SET metadata_json = CAST(metadata_json AS BLOB) "
+                "WHERE artifact_id = ?",
+            ),
+        )
+        for label, statement in mutations:
+            with self.subTest(label=label):
+                connection.execute(statement, (first.artifact_id,))
+                before = self.counts()
+                with self.assertRaises(_ResultArtifactIntegrityError):
+                    self.write(successor)
+                self.assertEqual(self.counts(), before)
+                connection.execute(
+                    """
+                    UPDATE artifact_versions
+                    SET metadata_json = ?, created_at = ?
+                    WHERE artifact_id = ?
+                    """,
+                    (
+                        first.metadata_canonical_bytes.decode("utf-8"),
+                        self.now,
+                        first.artifact_id,
+                    ),
+                )
+
     def test_stale_head_fails_before_blob_or_version_dml(self) -> None:
         first = candidate(0)
         self.write(first)
