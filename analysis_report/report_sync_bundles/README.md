@@ -8,7 +8,7 @@
 
 | 文件 | 状态 | 本地库存口径 | 说明 |
 |---|---|---|---|
-| `checkpoint-20260828-w2-postgres-function-only-exact-access-notion-readback.json` | `current` | 64 个本地 source、65 个 target mapping、49 个 Notion source mapping、16 个语雀 local-pending mapping、31 项图像 | `7bb324a` / `cd92ea5` W2 function-only writes 与 exact access 批次：新建 Topic 34，更新项目首页、Topic 33 历史横幅、实施计划、调研矩阵与截图证据库；六页均已真实写入并逐页 fetch 回读，精确 Markdown/HTML/W2 工程文档和 SVG/PNG 附件已放入 Notion；语雀未操作；生成后执行 `--verify` |
+| `checkpoint-20260829-gate-a0-cutover-plan-local-pending.json` | `current` | 70 个本地 source、71 个 target mapping、55 个 Notion source mapping、16 个语雀 local-pending mapping、35 项图像 | `3d81013` 本地源基线；纳入 Topic 35、Gate A0 production authority、immutable specification、canonical cutover plan/strict decoder、Topic 36 SVG/PNG 与同步源治理；生成后执行 `--verify`。全部 `liveReadbackPerformed=false`，Notion/语雀均未写入，明确为 `local_pending` |
 
 `current` 是本目录唯一应被当前文档、发布检查和人工审阅当作 latest 的 checkpoint。生成与验证
 命令见仓库根 [`README.md`](../../README.md)；不得在生成后继续修改它所覆盖的报告、语雀传输源、
@@ -18,6 +18,7 @@
 
 | 文件 | 状态 | 生成 commit | 历史边界 |
 |---|---|---|---|
+| `checkpoint-20260828-w2-postgres-function-only-exact-access-notion-readback.json` | `superseded` | `7bb324a` / `cd92ea5` | Topic 34、31 项图像和六页 Notion 回读的最近远端已核验基线；早于 Topic 35、Gate A0 authority/plan 与 35 项图像。本地 latest 已前移，但该文件仍是当前最近完成 Notion 回读的历史证据 |
 | `checkpoint-20260828-w2-postgres-notion-readback-final.json` | `superseded` | `c8b8cd1` | Topic 33 / `0001–0004` 最终批次；早于 `0005` 五函数、exact access、Topic 34、31 项图像和 `7bb324a` 六页 Notion 回读 |
 | `checkpoint-20260828-w2-postgres-notion-readback.json` | `superseded` | `25d4d6c` | Topic 33 首轮七页回读与 SVG bundle 支持检查点；早于最终 bookkeeping 回写和截图证据页 29 项库存/附件回读 |
 | `checkpoint-20260828-w1-im-contract-remote-backup-readback.json` | `superseded` | `74a01a7` | W1 IM identity/codec 远端备份回读；早于 PostgreSQL authority migration、repository、UoW 与 Topic 33 |
