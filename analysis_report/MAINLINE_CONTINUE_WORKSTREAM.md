@@ -22,7 +22,7 @@
 ## 当前目标
 
 E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
-`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 的 E2 离线 inbox 底座：
+`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 的 E2 inbound-only 垂直切片：
 
 1. provider profile、inbound-only config/`SecretRef` 和 raw-body verifier 已实现；
 2. migration 5 六表、backup/restore/topology registry 已实现；
@@ -30,9 +30,12 @@ E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
 4. 保留 exact request 时可重开 replay 并与 checkpoint 对账的 read preparation 已在 `4ab745b` 实现；
 5. nonce、verified page、event/verification/link rows、read CAS、checkpoint 与独立 readback 的
    单事务 admission 已在运行源码 `9cf1bfe` 完成；
-6. 下一步实现 default-off inbound-only adapter/lifecycle、bounded parser、kill switch、safe logging
-   和 fake contract probe；
-7. 每个小改变独立 commit 并推送本分支；稳定节点批量同步独立 Notion 空间并回读。
+6. default-off composition、显式 inbound-only adapter、bounded parser、process-bound lifecycle/
+   kill switch、typed safe logging、canary、recorded probe 和 zero-network gate 已在运行源码
+   `2bdaea1` 完成；
+7. 当前下一步不是打开网络，而是冻结 provider-specific sandbox 批准输入、实现独立 transport/pure
+   mapper 并修订 `SERVICE_BOUNDARY.md`；
+8. 每个小改变独立 commit 并推送本分支；稳定节点批量同步独立 Notion 空间并回读。
 
 ## 不变边界
 
@@ -49,7 +52,7 @@ E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
 |---|---|---|
 | E0 | 已继承 | 主线恢复分支、tag、bundle 与回读证据已完成 |
 | E1 | 已完成 | provider-neutral 合同、fake、zero-network 证据和 Notion 回读已闭环 |
-| E2 | 进行中 | 离线原子 inbox 底座到 `9cf1bfe`；真实 sandbox 未连接，default-off adapter/lifecycle 是下一 P0 |
+| E2 | 进行中 | 原子 inbox `9cf1bfe` + adapter/lifecycle `2bdaea1` 离线节点已完成；真实 sandbox 未连接，下一门禁是 provider contract/approval/transport |
 | E3 | 未开始 | verified inbound → PURE Agent 草稿 |
 | E4 | 未开始 | fake-only Action Plane |
 | E5 | 未开始 | 需另行明确授权的单会话 sandbox outbound |

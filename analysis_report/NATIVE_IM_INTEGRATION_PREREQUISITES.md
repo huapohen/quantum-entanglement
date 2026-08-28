@@ -1,6 +1,6 @@
 # 原生 IM 接入前必做事项与接入后 TODO 分界
 
-> 决策版本：2026-08-28-native-im-entry-v3
+> 决策版本：2026-08-28-native-im-entry-v4
 >
 > 适用仓库：`quantum_entanglement`
 >
@@ -9,6 +9,8 @@
 > E1 源码证据：`7620200f8e378507b1f592d6d34744080250d2ea`
 >
 > E2 原子页 admission 运行证据：`9cf1bfebe33fd5efae2933bc82027275b3313696`
+>
+> E2 adapter/lifecycle 离线运行证据：`2bdaea1adddcfb3033b4678766f635d7afc242fc`
 >
 > 决策性质：原生 IM 接入的执行顺序与验收边界；不是生产发布批准
 >
@@ -33,6 +35,12 @@
 > `9cf1bfe`。真实 sandbox 参数和网络仍未介入；下一硬门禁是 default-off inbound-only
 > adapter/lifecycle、bounded parser、kill switch、safe logging 与 fake contract probe。证据见
 > [`research/24_native_im_e2_atomic_page_admission_evidence.md`](./research/24_native_im_e2_atomic_page_admission_evidence.md)。
+
+> **2026-08-28 E2 adapter/lifecycle 离线节点：** default-off composition、显式 inbound-only
+> adapter、bounded parser、process-bound lifecycle/kill switch、typed observability、全链 canary、
+> recorded disconnect/resume/duplicate/out-of-order/conflict probe、取消/关闭恢复和 zero-network gate
+> 已推进到 `2bdaea1`。真实 provider transport/mapper、批准记录和 sandbox 网络仍未介入；证据见
+> [`research/25_native_im_e2_adapter_lifecycle_offline_evidence.md`](./research/25_native_im_e2_adapter_lifecycle_offline_evidence.md)。
 
 ## 1. 最终决策
 
@@ -80,6 +88,8 @@ conversation 和非敏感合成数据完成真实网络端到端联调。它不�
 - invocation admission，以及 job/attempt/start event 的原子首次 claim；
 - 原生 IM nonce、verified page、event/verification/link rows、read CAS 与 checkpoint 的单事务
   admission、ACK-loss 重开对账和 durable graph 独立 readback；
+- 原生 IM default-off composition、显式 inbound-only adapter、bounded parser、process-bound
+  lifecycle/kill switch、typed observability、全链 canary 与 recorded contract probe；
 - durable attempt、heartbeat、lease expiry、epoch fencing 和 stale-owner terminal CAS 原语；
 - tenant/workspace-scoped Artifact store；
 - Result Acceptance Request、Evidence、Terminal Transition、ReceiptV2 和 capability-free
@@ -96,7 +106,8 @@ E1 已关闭 provider-neutral wire/port/fake 缺口。当前仍有五个会直�
 1. result/artifact/attempt/task terminal state 尚未由一个 store-owned transaction 原子接受；
 2. heartbeat worker 只有冻结合同，dispatch 明确为 disabled；
 3. 没有 durable Action Command/Receipt 及 `effect_unknown` reconcile；
-4. 没有 authenticated service composition、resumable stream 和 graceful shutdown；
+4. 没有 authenticated service composition、provider-specific approved transport/mapper 和真实
+   resumable stream；离线 lifecycle 已证明 graceful close/cancellation retry，但尚不是服务级 SIGTERM；
 5. 真实原生 IM 后端尚未提供并冻结 provider profile：稳定身份、认证、幂等、ACK、游标、限流和
    acceptance 查询的具体保证仍未知，不能由 V1 平台合同代替或猜测。
 
@@ -178,8 +189,8 @@ effect_unknown
 - [x] 合同字段、状态机、错误和能力协商形成冻结 V1 文档与 executable model/codec；
 - [x] 23 个代表性 positive golden vectors 覆盖主要 inbound/outbound/receipt/query 模型；ACK、NACK、
   unknown、reconcile 和全部 union/state 矩阵由参数化 contract tests 补足；
-- [x] provider-neutral `IMGatewayPort` 已冻结为 exact 四方法，fake 已实现该 port；真实 provider
-  adapter 未开始，E2 必须实现同一 port，不能新建旁路；
+- [x] provider-neutral `IMGatewayPort` 已冻结为 exact 四方法；fake 和当前 generic inbound-only
+  adapter 均实现该 port；真实 provider transport/mapper 尚未开始，E2 不能新建旁路；
 - [x] 仓库没有真实 connector 注册或网络配置；普通 fake outbound 在检查请求前默认拒绝，只有
   进程本地、不可序列化 test permit 能产生内存 fake effect；
 - [x] 没有真实 credential、endpoint、cookie 或 token 进入源码、测试、报告和 Git；
@@ -293,6 +304,10 @@ flowchart LR
 - [ ] action receipt 永不由 Agent narration 或 Result Receipt 伪造。
 
 ## 7. 接入前必做：IM-P3 SANDBOX_READY
+
+E2 离线准备状态：default-off adapter、bounded parser、atomic admission、kill switch、typed safe
+logging、canary 和 recorded probe 已完成。以下 P3 条目仍按真实 service/provider E2E 口径验收，不能
+因为离线测试通过而提前勾选。
 
 ### 7.1 最小服务组合
 
@@ -412,10 +427,12 @@ flowchart LR
 
 ## 11. 决策摘要
 
-1. **现在开始** IM contract、provider-neutral port、fake adapter 和契约测试；
+1. **已完成** IM contract、provider-neutral port、fake adapter、离线 atomic inbox 与
+   default-off adapter/lifecycle 契约测试；
 2. **接入前完成** 精简 Result Writer/Recovery、PURE Worker、Action Receipt 和 authenticated fake
    E2E；
-3. **Level B 提前介入只读 sandbox**，完成 health/read/dedupe/resume 后停在 durable inbox；
+3. **下一步冻结 provider-specific 批准输入后介入 Level B 只读 sandbox**，完成
+   health/read/dedupe/resume 后停在 durable inbox；
 4. **达到 IM-P3 后介入 Agent/action E2E**，不等待完整 M8、Gate C–E 或 GA 工程；
 5. **接入后继续** provider 语义、全租户安全、部署恢复、容量可观测和 HA；
 6. **真实发送永远单独授权**，Result Receipt、测试通过或用户给予的电脑控制权限都不能替代
