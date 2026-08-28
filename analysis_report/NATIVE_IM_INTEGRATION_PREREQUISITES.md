@@ -32,7 +32,7 @@
 > **2026-08-28 E2 原子页 admission：** exact profile/config/secret reference、raw-body verifier、
 > migration 5 六表、durable nonce/read preparation，以及 nonce + verified page +
 > event/verification/link rows + read CAS + checkpoint + 独立 readback 的单事务 admission 已推进到
-> `9cf1bfe`。真实 sandbox 参数和网络仍未介入；下一硬门禁是 default-off inbound-only
+> `9cf1bfe`。真实 sandbox 参数和网络仍未介入；该节点当时的下一硬门禁是 default-off inbound-only
 > adapter/lifecycle、bounded parser、kill switch、safe logging 与 fake contract probe。证据见
 > [`research/24_native_im_e2_atomic_page_admission_evidence.md`](./research/24_native_im_e2_atomic_page_admission_evidence.md)。
 

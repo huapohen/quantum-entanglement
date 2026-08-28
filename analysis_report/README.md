@@ -48,15 +48,17 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
-| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | P0 provider-neutral/fake 已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；E2 离线原子 inbox 已完成，真实网络仍关闭 |
+| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | E2 离线 adapter/lifecycle 已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁是 provider contract/approval/transport，真实网络仍关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
-| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | E1 已完成；E2 adapter/lifecycle 进行中 | E0–E5、Level A–D、原子页已交付矩阵、下一离线 adapter/lifecycle、可停点与 outbound 授权边界 |
+| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | E1 与 E2 离线 adapter/lifecycle 已完成 | E0–E5、Level A–D、已交付矩阵、下一 provider contract/approval/transport、可停点与 outbound 授权边界 |
 | `../docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md` | E1 生产说明已完成 | 四方法 port、zero-network fake、permit/ledger/ACK-loss、验证、回退和 E2 硬停止边界 |
 
 当前接入前代码基线已经安全备份，Level A 合同可执行已在 `7620200` 完成并通过 Notion 回读。
 Level B 的离线 profile/config/verifier/migration/nonce/read-preparation 与整页单事务 admission 已在
-运行源码 `9cf1bfe` 完成；下一 P0 是 default-off inbound-only adapter/lifecycle、bounded parser、
-kill switch、safe logging 与 fake contract probe，完成前不连接真实 sandbox。
+运行源码 `9cf1bfe` 完成；default-off inbound-only adapter/lifecycle、bounded parser、kill switch、
+typed observability、全链 canary 与 recorded probe 又在运行源码 `2bdaea1` 完成。下一硬门禁是冻结
+provider-specific sandbox 合同与批准输入，实现独立 approved transport + pure mapper，并单独修订
+`docs/production/SERVICE_BOUNDARY.md`；完成前不连接真实 sandbox。
 `NEXT_STAGE_PLAN.md` 继续作为 E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前的
 串行总清单。
 
@@ -89,6 +91,7 @@ kill switch、safe logging 与 fake contract probe，完成前不连接真实 sa
 | `research/22_native_im_e1_contract_executable_evidence.md` | 原生 IM E1 证据：`7620200` | 21 个 V1 wire model、23 vectors、四方法 port、默认拒绝 fake、receiver 双账本、ACK-loss/query、271 项专项矩阵、三版本/full gate 与 E2 未开始边界 |
 | `research/23_native_im_e2_offline_inbox_foundation_evidence.md` | 原生 IM E2 离线底座：`4ab745b` | profile/config/verifier、migration 5 六表、durable nonce、read preparation、46 项专项/2,031 项全仓门禁，以及 page admission 单事务 P0 |
 | `research/24_native_im_e2_atomic_page_admission_evidence.md` | 原生 IM E2 原子页运行证据：`9cf1bfe` | nonce/page/events/read/checkpoint 单事务、独立 durable readback、88 项专项/2,060 项全仓门禁、下一 adapter/lifecycle P0 |
+| `research/25_native_im_e2_adapter_lifecycle_offline_evidence.md` | 原生 IM E2 adapter/lifecycle 离线运行证据：`2bdaea1` | default-off、bounded parser、process-bound lifecycle/kill switch、typed observability、全链 canary、recorded probe、2,114 项全仓门禁与真实接入前硬边界 |
 
 ## 已归档截图
 
