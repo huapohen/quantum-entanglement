@@ -228,6 +228,14 @@ Planner 不能直持 provider credential。Action Plane 与 Egress 互补，不�
   ordered exact retry/conflict、store-owned sequence/global position/recorded time、scope/namespace cursor、
   严格 admission、cooperative context、失败原子性、不可变快照、64 路 CAS/replay、128 stream global order
   与 test-only pure backfill fixture；
+- `9f55b33`～`60ebf6a`：W1 identity/conversation/provider metadata 纯值合同；研究复核后把稳定
+  `ActorRef/ConversationRef` 与 revision snapshot 分离，为外部 subject 增加 provider realm，冻结
+  `direct/group/agent_thread` topology 和 parent ACL 不继承边界；
+- `immetadata` 冻结 1024-byte、flat allowlist、受限 JCS 风格 canonical JSON；四种合法 shape 只有唯一
+  bytes，848 个非 canonical key permutation、unknown/duplicate/type/version/Unicode/control/oversize 和
+  44 类 authority/secret/content/evidence field 均 fail closed；
+- 128 路 metadata encode/decode race fixture 与 seeded fuzz property 通过；这些证据不证明融云实际
+  接受、原样保存、稳定回传或赋予任何权限；
 - 专项普通测试、race 和 vet 通过。
 
 Plugin Host 四个 P0 已全部完成，P1-1 Registry freeze/snapshot、P1-2 effect scope 状态与 P1-3 callback
@@ -236,9 +244,13 @@ data/IPC/receipt 合同与 hostile fake、P1-7 volatile Memory EventStore 合同
 这里的“完成”不包括 action-time JIT Secret lease、真实独立 supervisor、process/container/microVM backend、
 OS conformance 或真实 connector；fake 不是 sandbox，也不是 durable store。P1-7 的 deterministic 只表示
 相同 fixture 输入/clock/call schedule 得到相同 StoredEvent，test-only reducer 可从 page backfill 重建；没有
-production projection engine、SSE live replay 或 Agent/model/tool 重执行。W1 接下来冻结 IM identity/
-conversation value contracts。W2 领域建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；
+production projection engine、SSE live replay 或 Agent/model/tool 重执行。W1 identity/conversation 与
+strict provider metadata codec 已冻结；下一项是零网络、零凭据的 fake IM provider port，真实 Clerk/
+融云 adapter、mapping persistence、membership/ACL 和 provider sandbox contract 仍属于 W2/W3。
+W2 领域建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；
 不会用“文档已经写了”代替测试。P0-4 的完整证据映射见
 [`24_secret_claim_admission_implementation.md`](24_secret_claim_admission_implementation.md)，P1-6 证据见
 [`30_third_party_execution_isolation_contract.md`](30_third_party_execution_isolation_contract.md)，P1-7 证据见
-[`31_volatile_memory_event_store_implementation.md`](31_volatile_memory_event_store_implementation.md)。
+[`31_volatile_memory_event_store_implementation.md`](31_volatile_memory_event_store_implementation.md)，本批
+identity/conversation/provider metadata 证据见
+[`32_im_identity_conversation_and_provider_metadata_contract.md`](32_im_identity_conversation_and_provider_metadata_contract.md)。
