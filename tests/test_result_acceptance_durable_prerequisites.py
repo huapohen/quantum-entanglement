@@ -12,6 +12,7 @@ from unittest.mock import patch
 import quantum_entanglement
 from quantum_entanglement._result_acceptance import (
     _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+    _build_scoped_invocation_result_terminal_transition_from_plan_v2,
     _EvidencedFreshResultAcceptancePlanV2,
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
@@ -1326,6 +1327,94 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     0,
                 )
 
+    def test_caught_terminal_failure_still_forces_owner_transaction_rollback(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=(
+                "receipt_terminal_caught",
+                "event_result_terminal_caught",
+                "event_terminal_caught",
+            ),
+        ), patch(
+            "quantum_entanglement.store._build_scoped_invocation_result_terminal_transition_from_plan_v2",
+            side_effect=RuntimeError("caught terminal transition failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "rollback-only"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "caught terminal transition failure",
+                    ):
+                        construct = (
+                            self.store._construct_result_acceptance_terminal_transition_in_owner_transaction
+                        )
+                        with construct(handle, prepared):
+                            self.fail(
+                                "caught terminal transition failure unexpectedly yielded a plan"
+                            )
+        for table in ("artifact_versions", "artifact_blobs"):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    self.store._connection.execute(
+                        f"SELECT count(*) FROM main.{table}"
+                    ).fetchone()[0],
+                    0,
+                )
+
+    def test_terminal_stage_rejects_wrong_builder_outputs_and_rolls_back(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+
+        def drifted_transition(
+            evidenced: _EvidencedFreshResultAcceptancePlanV2,
+        ) -> ScopedInvocationResultTerminalTransitionV2:
+            transition = (
+                _build_scoped_invocation_result_terminal_transition_from_plan_v2(
+                    evidenced
+                )
+            )
+            return replace(transition, result_event_id="event-result-drifted")
+
+        cases = (
+            ("wrong_type", lambda _evidenced: object(), TypeError, "not exact"),
+            (
+                "binding_drift",
+                drifted_transition,
+                ValueError,
+                "differs from its evidenced plan",
+            ),
+        )
+        for ordinal, (label, builder, error_type, message) in enumerate(cases, start=1):
+            with self.subTest(case=label), patch(
+                "quantum_entanglement.store.new_id",
+                side_effect=(
+                    f"receipt_terminal_bad_{ordinal}",
+                    f"event_result_terminal_bad_{ordinal}",
+                    f"event_terminal_bad_{ordinal}",
+                ),
+            ), patch(
+                "quantum_entanglement.store._build_scoped_invocation_result_terminal_transition_from_plan_v2",
+                side_effect=builder,
+            ):
+                with self.assertRaisesRegex(error_type, message):
+                    with self.store._result_artifact_transaction() as handle:
+                        construct = (
+                            self.store._construct_result_acceptance_terminal_transition_in_owner_transaction
+                        )
+                        with construct(handle, prepared):
+                            self.fail("invalid terminal builder output unexpectedly yielded")
+            for table in ("artifact_versions", "artifact_blobs"):
+                self.assertEqual(
+                    self.store._connection.execute(
+                        f"SELECT count(*) FROM main.{table}"
+                    ).fetchone()[0],
+                    0,
+                )
+
     def test_existing_graph_evidence_path_does_not_construct_fresh_payload(self) -> None:
         helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
             methodName="runTest"
@@ -1544,6 +1633,9 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             "_MaterializedFreshResultAcceptancePlanV2",
             "_validate_result_acceptance_durable_prerequisites_in_transaction",
             "_build_scoped_invocation_result_evidence_v2",
+            "_TransitionedFreshResultAcceptancePlanV2",
+            "_build_scoped_invocation_result_terminal_transition_from_plan_v2",
+            "_construct_result_acceptance_terminal_transition_in_owner_transaction",
             "accept_scoped_invocation_result_v2",
             "ScopedInvocationResultAcceptedV2",
         ):

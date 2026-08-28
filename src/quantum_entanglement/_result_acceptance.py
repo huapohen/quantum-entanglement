@@ -505,7 +505,7 @@ class _EvidencedFreshResultAcceptancePlanV2:
         self,
         *,
         token: object,
-    ) -> tuple[_IdentifiedFreshResultAcceptancePlanV2, ScopedInvocationResultEvidenceV2]:
+    ) -> None:
         if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
             raise TypeError("result acceptance terminal transition construction is private")
         if type(self) is not _EvidencedFreshResultAcceptancePlanV2:
@@ -519,7 +519,7 @@ class _EvidencedFreshResultAcceptancePlanV2:
                 "result acceptance terminal transition construction already started"
             )
         self.__terminal_transition_construction_started = True
-        return self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
     def _invalidate(self, *, token: object) -> None:
         if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:

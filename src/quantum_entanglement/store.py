@@ -2940,6 +2940,7 @@ class SQLiteEventStore:
                 terminal_transition=terminal_transition,
                 token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
             )
+            self._require_current_process()
             try:
                 yield transitioned
             finally:
