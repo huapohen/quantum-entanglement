@@ -2,8 +2,8 @@
 
 - 证据日期：2026-08-29
 - 执行分支：`mainline_continue_quantum_entanglement`
-- 代码封板候选：`aef5f8be8a238b94e72674a428d7aaad29b68650`
-- 固定 tree：`f72cd558c1091d6294caa80fbfd4cea167876327`
+- 代码封板候选：`c328641ac7f9ae13ade1e027917c4000e12824f7`
+- 固定 tree：`a657e74f697a401e2598eb9c4ca9581268b5ac27`
 - 结论：**M4 的私有候选已闭合；migration 7 注册、Atomic Result Writer、Observed、Accepted、
   worker result acceptance、真实 IM outbound 仍全部关闭。**
 
@@ -44,6 +44,9 @@ M4 只补这三个基础条件：
 | `32468eb` | 扩展前验证完整 Artifact version 历史 | 损坏历史不能继续生长 |
 | `7fb71e4` | 保留 transaction control 的 ambiguity cause | clean control 不掩盖 reopen/reconcile |
 | `aef5f8b` | 有界流式验证完整 Artifact version 历史 | 超大 TEXT 不在先验边界前物化 |
+| `bec6b87` | clock 后接管 SQLite callback 并复核 transaction/trigger | callback 不跨进 Artifact DML |
+| `97d116a` | 抽离无迁移 I/O 的 SQLite schema digest codec | 冷包导入不读取 migration SQL |
+| `c328641` | 所有 Artifact SQL 绑定 `main` 并冻结 catalog snapshot | TEMP shadow 不产生假成功 |
 
 ## 3. Inactive migration 7
 
@@ -134,9 +137,16 @@ version/parent、canonical metadata、重算 request digest 与 UTC 时间。`BE
 lock 消除了预检与单行物化之间的外部写入窗口。中间 lineage、gap、历史 timestamp/metadata
 storage drift 与异常大 metadata 都在新 blob/version DML 前失败。
 
-主库或 TEMP schema 中只要存在针对 Artifact 表的 trigger，就在 DML 前拒绝。SQLite progress
-handler 在每条 VM 指令处复核 process owner，因此即使 process epoch 在 trace/SQL 边界切断，首条
-DML 也会被 interrupt；真实 fork 继承的 active handle 在触碰 SQLite 前拒绝。
+所有 Artifact preflight、DML 和 readback 都显式绑定 `main.artifact_blobs` /
+`main.artifact_versions`。Writer 在 clock 前、clock 后和最终回读后固定复核：TEMP schema 不得存在
+同名或以这两张表为 owner 的 table/view/index/trigger；main schema 必须仍是 2 张表、3 个显式索引
+和 4 个 autoindex 的精确 9-object topology；显式 DDL canonical digest、autoindex null SQL、rootpage
+与 `schema_version` snapshot 均不得漂移。
+
+Clock 返回后 writer 清除其遗留 trace callback，安装只允许本次 main Artifact read/insert、catalog
+read 与必要函数/PRAGMA 的 authorizer，并重新安装每 opcode process progress handler。clock 创建
+TEMP trigger/同名表、替换 callback、关闭 transaction、改写其他表或在 transaction 中改变 catalog
+都不能让 writer 返回成功。真实 fork 继承的 active handle 在触碰 SQLite 前拒绝。
 
 ### 5.4 失败与崩溃
 
@@ -144,6 +154,8 @@ DML 也会被 interrupt；真实 fork 继承的 active handle 在触碰 SQLite �
   也被标成 rollback-only，正常退出会强制 rollback；
 - BEGIN 失败、COMMIT 失败且 rollback 已确认，固定重发 `_ResultArtifactTransactionError`；
 - COMMIT/ROLLBACK 都无法确认时，固定重发 `_ResultArtifactCommitAmbiguityError` 并 poison store；
+- clock 或其他依赖意外关闭 owner transaction 时 writer 失败；因为依赖可能已经越过 rollback
+  authority 提交其他写入，store 一律 poison，必须关闭、重开并人工 reconcile；
 - body 控制信号在 rollback 已确认时按原 exact 类型干净重发且无 cause；rollback 无法确认时仍按
   原 exact 控制类型干净重发，但直接 cause 固定为 `_ResultArtifactCommitAmbiguityError`，提醒调用方
   必须关闭、重开并 reconcile；
@@ -163,10 +175,10 @@ PYTHONPATH=src .venv/bin/pytest -q \
   tests/test_inactive_invocation_results_backup_topology.py \
   tests/test_migrations.py \
   tests/test_result_artifact_transaction.py
-# 82 passed
+# 87 passed
 
 PYTHONPATH=src .venv/bin/pytest -q
-# 2639 passed
+# 2644 passed
 
 .venv/bin/ruff check .
 .venv/bin/mypy src
@@ -189,14 +201,27 @@ git diff --check
 高风险：ambiguous transaction 携带控制信号时丢失 ambiguity cause，以及完整历史使用无界
 `fetchall()` 并在 Python 物化后才检查 metadata 大小。它们分别由 `7fb71e4` 与 `aef5f8b` 修复。
 
-最终只读 reviewer 在代码封板 `aef5f8b` 上复跑 42 项 Result Artifact 专项、Ruff、Mypy 与
-`git diff --check`，结论为 **0 blocker**。复核明确确认：
+后续 reviewer 没有停在早期绿色结论，又复现了两类 clock/callback TOCTOU：clock 可在首次 DML 前
+留下 trigger/callback；更严重的是同名 TEMP table 可遮蔽未限定 schema 的 SQL，使 writer 返回
+descriptor 而 main 表仍为 0 行。它还指出 `INSERT other_table; COMMIT` 已越过 owner rollback
+authority，不能宣称 writer 可以撤销该依赖已提交的副作用。
+
+这些问题分别由 `bec6b87` 与 `c328641` 关闭；`97d116a` 确保复用 catalog digest 算法不会破坏冷包
+导入零 migration-SQL-I/O 合同。反例现在固定证明：
 
 - confirmed rollback 的 clean control 无 cause，ambiguous control 以
   `_ResultArtifactCommitAmbiguityError` 为直接 cause；
 - history preflight 每批硬上限为 64，超限 TEXT 不会先进入 raw-row materialization；
 - `BEGIN IMMEDIATE` 与 store lock 排除外部 writer 的 TOCTOU；
-- 游标正常/异常清理没有阻断性泄漏，process mismatch 时不触碰继承 SQLite 对象是既有刻意边界。
+- 游标正常/异常清理没有阻断性泄漏，process mismatch 时不触碰继承 SQLite 对象是既有刻意边界；
+- clock 创建 TEMP 同名表时 main Artifact 计数保持 0，writer 失败且 TEMP DDL 随 rollback 消失；
+- clock 提交其他表 mutation 后 writer 不会假成功，store 进入 poisoned 状态；已提交的依赖副作用
+  只能在关闭、重开后 reconcile，不能伪装成可回滚；
+- package 冷导入仍不读取任何 packaged `.up.sql`。
+
+在代码节点 `c328641` 上，47 项 Result Artifact 专项、87 项 M4 组合、全仓 2644 tests、Ruff、
+Mypy 与 `git diff --check` 全绿。此前针对 `aef5f8b` 的 0-blocker 结论已被上述后续发现取代，不能
+继续把旧结论当作当前封板依据；当前依据是新反例、精确 schema snapshot 与完整回归证据。
 
 这只证明 M4 私有候选达到进入 M5 的安全停点，不把 M4 描述为 active production capability。
 
