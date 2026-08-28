@@ -12,7 +12,12 @@ func TestAuthorityAccessManifestRequiresDistinctCanonicalRoles(t *testing.T) {
 	if !validAuthorityAccessManifest(valid) {
 		t.Fatal("valid authority access manifest rejected")
 	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid authority access manifest error = %v", err)
+	}
 	for name, mutate := range map[string]func(*AuthorityAccessManifest){
+		"empty database":         func(value *AuthorityAccessManifest) { value.DatabaseName = "" },
+		"uppercase database":     func(value *AuthorityAccessManifest) { value.DatabaseName = "WanWork" },
 		"empty owner":            func(value *AuthorityAccessManifest) { value.OwnerRole = "" },
 		"empty migration logins": func(value *AuthorityAccessManifest) { value.MigrationLoginRoles = nil },
 		"empty runtime logins":   func(value *AuthorityAccessManifest) { value.RuntimeLoginRoles = nil },
@@ -31,6 +36,9 @@ func TestAuthorityAccessManifestRequiresDistinctCanonicalRoles(t *testing.T) {
 			mutate(&changed)
 			if validAuthorityAccessManifest(changed) {
 				t.Fatal("invalid authority access manifest accepted")
+			}
+			if err := changed.Validate(); !errors.Is(err, ErrInvalidAuthorityAccessManifest) {
+				t.Fatalf("invalid manifest error = %v", err)
 			}
 		})
 	}

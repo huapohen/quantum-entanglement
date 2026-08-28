@@ -50,6 +50,14 @@ func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
 	if err := ValidateAuthorityAccess(t.Context(), authorityConnection, manifest); err != nil {
 		t.Fatalf("validate exact authority access: %v", err)
 	}
+	wrongDatabase := manifest
+	wrongDatabase.DatabaseName += "_wrong"
+	if err := ValidateAuthorityAccess(t.Context(), authorityConnection, wrongDatabase); !errors.Is(
+		err,
+		ErrAuthorityAccessDrift,
+	) {
+		t.Fatalf("wrong database identity error = %v, want %v", err, ErrAuthorityAccessDrift)
+	}
 
 	if _, err := authorityConnection.Exec(t.Context(), "RESET ROLE"); err != nil {
 		t.Fatalf("reset authority owner role: %v", err)
@@ -584,12 +592,18 @@ func provisionAuthorityAccess(t *testing.T, connection *pgx.Conn) AuthorityAcces
 		t.Fatalf("read authority database owner: %v", err)
 	}
 	manifest := AuthorityAccessManifest{
+		DatabaseName:        "",
 		DatabaseOwnerRole:   databaseOwner,
 		OwnerRole:           "wanwork_owner_" + suffix,
 		MigratorRole:        "wanwork_migrator_" + suffix,
 		RuntimeRole:         "wanwork_runtime_" + suffix,
 		MigrationLoginRoles: []string{"wanwork_deploy_" + suffix},
 		RuntimeLoginRoles:   []string{"wanwork_app_" + suffix},
+	}
+	if err := connection.QueryRow(t.Context(), "SELECT current_database()").Scan(
+		&manifest.DatabaseName,
+	); err != nil {
+		t.Fatalf("read authority database name: %v", err)
 	}
 	quotedRoles := make([]string, 0, 5)
 	for _, role := range authorityAccessRoleNames(manifest) {
@@ -621,11 +635,7 @@ func provisionAuthorityAccess(t *testing.T, connection *pgx.Conn) AuthorityAcces
 	grantRoleMembership(t, connection, manifest.MigratorRole, manifest.MigrationLoginRoles[0])
 	grantRoleMembership(t, connection, manifest.RuntimeRole, manifest.RuntimeLoginRoles[0])
 
-	var databaseName string
-	if err := connection.QueryRow(t.Context(), "SELECT current_database()").Scan(&databaseName); err != nil {
-		t.Fatalf("read authority database name: %v", err)
-	}
-	quotedDatabase := pgx.Identifier{databaseName}.Sanitize()
+	quotedDatabase := pgx.Identifier{manifest.DatabaseName}.Sanitize()
 	quotedOwner := pgx.Identifier{manifest.OwnerRole}.Sanitize()
 	quotedRuntime := pgx.Identifier{manifest.RuntimeRole}.Sanitize()
 	for _, statement := range []string{

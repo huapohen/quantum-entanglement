@@ -20,6 +20,7 @@ var (
 // group roles. Environment login roles are provisioned outside schema migrations and must be
 // listed explicitly so an unexpected member cannot silently gain SET ROLE authority.
 type AuthorityAccessManifest struct {
+	DatabaseName        string
 	DatabaseOwnerRole   string
 	OwnerRole           string
 	MigratorRole        string
@@ -28,8 +29,18 @@ type AuthorityAccessManifest struct {
 	RuntimeLoginRoles   []string
 }
 
+// Validate checks the environment-independent shape of the exact access manifest. It performs no
+// database I/O and never normalizes or silently drops a role supplied by the caller.
+func (manifest AuthorityAccessManifest) Validate() error {
+	if !validAuthorityAccessManifest(manifest) {
+		return ErrInvalidAuthorityAccessManifest
+	}
+	return nil
+}
+
 func DefaultAuthorityAccessManifest() AuthorityAccessManifest {
 	return AuthorityAccessManifest{
+		DatabaseName:      "wanwork_im",
 		DatabaseOwnerRole: "wanwork_im_provisioner",
 		OwnerRole:         "wanwork_im_owner",
 		MigratorRole:      "wanwork_im_migrator",
@@ -69,7 +80,7 @@ func validateAuthorityAccess(
 	manifest AuthorityAccessManifest,
 	compare authorityAccessComparator,
 ) error {
-	if ctx == nil || connection == nil || connection.IsClosed() || !validAuthorityAccessManifest(manifest) {
+	if ctx == nil || connection == nil || connection.IsClosed() || manifest.Validate() != nil {
 		return ErrInvalidAuthorityAccessManifest
 	}
 	transaction, err := connection.BeginTx(ctx, pgx.TxOptions{
@@ -95,6 +106,7 @@ func validateAuthorityAccess(
 func validAuthorityAccessManifest(manifest AuthorityAccessManifest) bool {
 	core := []string{manifest.OwnerRole, manifest.MigratorRole, manifest.RuntimeRole}
 	if len(manifest.MigrationLoginRoles) == 0 || len(manifest.RuntimeLoginRoles) == 0 ||
+		!canonicalAccessRoleName.MatchString(manifest.DatabaseName) ||
 		!canonicalAccessRoleName.MatchString(manifest.DatabaseOwnerRole) ||
 		!uniqueCanonicalAccessRoles(core) ||
 		!uniqueCanonicalAccessRoles(manifest.MigrationLoginRoles) ||
@@ -371,7 +383,8 @@ JOIN pg_catalog.pg_roles AS owner ON owner.oid = database_value.datdba
 WHERE database_value.datname = current_database()`).Scan(
 		&databaseName,
 		&databaseOwner,
-	); err != nil || databaseOwner != manifest.DatabaseOwnerRole {
+	); err != nil || databaseName != manifest.DatabaseName ||
+		databaseOwner != manifest.DatabaseOwnerRole {
 		return false
 	}
 	roles := authorityAccessRoleNames(manifest)
