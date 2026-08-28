@@ -38,6 +38,8 @@ from typing import (
 
 from . import process_identity as _process_identity
 from ._stored_event_envelope_codec import (
+    StoredEventEnvelopeError,
+    _stored_event_envelope_from_raw_row,
     _stored_event_envelope_from_values,
     _StoredEventEnvelopeV1,
 )
@@ -1695,6 +1697,125 @@ class SQLiteEventStore:
             sequence=sequence,
             global_position=global_position,
         )
+
+    @staticmethod
+    def _freeze_event_write_snapshot(
+        snapshot: _EventWriteSnapshot,
+    ) -> _EventWriteSnapshot:
+        """Detach the exact immutable values used by the private INSERT path."""
+
+        preflight = SQLiteEventStore._stored_event_envelope_from_write_snapshot(
+            snapshot,
+            sequence=1,
+            global_position=1,
+        )
+        body = _StoredEventEnvelopeV1.to_dict(preflight)
+        payload_json = object.__getattribute__(snapshot, "payload_json")
+        frozen_event = DomainEvent(
+            stream_id=cast(str, body["streamId"]),
+            event_type=cast(str, body["eventType"]),
+            payload=cast(Dict[str, Any], body["payload"]),
+            actor_id=cast(str, body["actorId"]),
+            event_id=cast(str, body["eventId"]),
+            timestamp=cast(str, body["timestamp"]),
+            correlation_id=cast(Optional[str], body["correlationId"]),
+            causation_id=cast(Optional[str], body["causationId"]),
+            idempotency_key=cast(Optional[str], body["idempotencyKey"]),
+        )
+        return _EventWriteSnapshot(frozen_event, payload_json)
+
+    def _verify_stored_event_envelope_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: _EventWriteSnapshot,
+        stored: StoredEvent,
+    ) -> _StoredEventEnvelopeV1:
+        """Compare the frozen INSERT values with the exact durable row before commit."""
+
+        self._require_current_process()
+        if type(connection) is not sqlite3.Connection or connection is not self._connection:
+            raise RuntimeError("stored event envelope verification requires the owning connection")
+        transaction_open = connection.in_transaction
+        if type(transaction_open) is not bool or not transaction_open:
+            raise RuntimeError("stored event envelope verification requires an open transaction")
+        if type(stored) is not StoredEvent:
+            raise TypeError("stored event must use its exact class")
+        try:
+            write_envelope = SQLiteEventStore._stored_event_envelope_from_write_snapshot(
+                snapshot,
+                sequence=object.__getattribute__(stored, "sequence"),
+                global_position=object.__getattribute__(stored, "global_position"),
+            )
+            row = connection.execute(
+                """
+                SELECT
+                    global_position,
+                    stream_id,
+                    sequence,
+                    event_id,
+                    event_type,
+                    actor_id,
+                    timestamp,
+                    payload_json,
+                    correlation_id,
+                    causation_id,
+                    idempotency_key
+                FROM events
+                WHERE global_position = ?
+                """,
+                (object.__getattribute__(stored, "global_position"),),
+            ).fetchone()
+            self._require_current_process()
+            if row is None:
+                raise EventStoreIntegrityError("stored event envelope readback row is missing")
+            raw_envelope = _stored_event_envelope_from_raw_row(row)
+            if (
+                _StoredEventEnvelopeV1.to_dict(write_envelope)
+                != _StoredEventEnvelopeV1.to_dict(raw_envelope)
+                or _StoredEventEnvelopeV1.canonical_bytes(write_envelope)
+                != _StoredEventEnvelopeV1.canonical_bytes(raw_envelope)
+                or _StoredEventEnvelopeV1.digest(write_envelope)
+                != _StoredEventEnvelopeV1.digest(raw_envelope)
+            ):
+                raise EventStoreIntegrityError("stored event envelope readback mismatch")
+            return raw_envelope
+        except EventStoreIntegrityError:
+            raise
+        except StoredEventEnvelopeError:
+            raise EventStoreIntegrityError("stored event envelope readback is invalid") from None
+
+    def _insert_with_verified_envelope_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: _EventWriteSnapshot,
+        expected_version: Optional[int],
+        expected_global_position: Optional[int] = None,
+    ) -> Tuple[StoredEvent, bool, _StoredEventEnvelopeV1]:
+        """Fresh-insert and verify one strict event without exposing a public writer."""
+
+        self._require_current_process()
+        if type(connection) is not sqlite3.Connection or connection is not self._connection:
+            raise RuntimeError("verified event append requires the owning connection")
+        transaction_open = connection.in_transaction
+        if type(transaction_open) is not bool or not transaction_open:
+            raise RuntimeError("verified event append requires an open transaction")
+        frozen = SQLiteEventStore._freeze_event_write_snapshot(snapshot)
+        stored, inserted = SQLiteEventStore._append_in_transaction(
+            self,
+            connection,
+            frozen,
+            expected_version,
+            expected_global_position,
+        )
+        if not inserted:
+            raise EventStoreIntegrityError("verified stored event append requires a fresh row")
+        verified = SQLiteEventStore._verify_stored_event_envelope_in_transaction(
+            self,
+            connection,
+            frozen,
+            stored,
+        )
+        return stored, inserted, verified
 
     @staticmethod
     def _reject_generic_reserved_result_event(event: DomainEvent) -> None:
