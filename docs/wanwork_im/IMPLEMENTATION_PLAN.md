@@ -38,6 +38,10 @@
 - deterministic isolation fake 明确标记 `durability=volatile/isolation=none/executesCode=false`，只验证合同；
 - event port、`EventToAppend/StoredEvent`、opaque cursor 与明确为 volatile 的 deterministic contract fake；
   当前没有 production projection engine；
+- IM identity/conversation 纯值合同：稳定 `ActorRef/ConversationRef` 与 revision snapshot 分离、
+  realm-scoped external identity、subject/prefix binding 和 `direct/group/agent_thread` topology；
+- 专用 `immetadata` codec：1024-byte、flat allowlist、受限 JCS 风格 canonical bytes、零授权
+  user/group projection，以及 golden/permutation/forbidden-field/Unicode/race/fuzz 负向矩阵；
 - health/readiness 与 graceful shutdown；
 - unit、race、lint 和 secret canary。
 
@@ -58,10 +62,13 @@ SSE live replay 或 Agent/model/tool 重执行。
 
 W1 的 Secret admission 不等于 action-time credential。KMS/Keychain、跨重启持久 claim、JIT short-lived
 lease/token exchange、trusted executor 和 provider receipt 仍在 W2/W4/W7 按 Action Plane 实现。
+同样，W1 的 identity/conversation/metadata 纯值合同不等于 persisted binding、membership/ACL、Clerk
+验证或融云兼容；真实 authority 与 provider contract 仍由 W2/W3 闭合。
 
 ### W2：IM Domain 与 PostgreSQL
 
-交付：组织、actor、human/workload/delegation、conversation、membership、message、reaction、read state、
+交付：组织、`ActorRef/Snapshot` 持久化、human/workload/delegation、realm-scoped external binding、
+conversation ref/snapshot/aggregate、独立 membership/ACL、message、reaction、read state、
 Agent definition/release/installation、thread、BusinessTask、Attempt、Budget、NeedsYou、Artifact/
 Acceptance、GovernedMemory、SkillPackageVersion/ActivationReceipt/MaterializationManifest、
 CapabilityDefinitionVersion/AgentCapabilityAssignmentRevision/ExecutionBinding、inbox/outbox/action/evidence
@@ -79,8 +86,9 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 
 ### W3：Clerk 与融云 adapter
 
-交付：JWKS verification、identity mapping、user/group `ext_info` strict codec、fake adapter、融云
-provider profile、sandbox config 和 inbound-only readback。
+交付：JWKS verification、identity mapping、W1 user/group strict codec 的 provider adapter 集成、fake
+adapter、融云 provider profile/capability matrix、sandbox config 和 inbound-only readback；核实实际
+size limit、原样保存、稳定回传、callback authenticity、dedupe/resume 和 mapping drift 行为。
 
 出口：真实 secret 不入 Git/日志/事件/Notion；fake 全矩阵通过；sandbox 只允许 health/read/dedupe/
 resume；伪造 `ext_info` 不改变平台 authorization。
@@ -165,8 +173,10 @@ policy/approval/intent/receipt append 不可用时
     `a0a8eea`、`034124f`、`b17bf1d`、`4a4aedb`、`9c6c457`、`f0040ea`、`0cec339`、`479bab5`、`51b5cb8`、
     `a472642`、`4118746`；没有 production
     projection engine）
-12. `feat: define IM identity and conversation values`
-13. `test: freeze ext info canonical codecs`
+12. `feat: define IM identity and conversation values`（`9f55b33`～`33ce779`；研究复核后拆分
+    stable ref/revision snapshot，并增加 provider realm）
+13. `test: freeze ext info canonical codecs`（`eeb05db`～`60ebf6a`；四种 golden shape、848 个
+    非 canonical 排列、44 类 forbidden fields、Unicode/control、128 路 race 与 seeded fuzz）
 14. `feat: add fake IM provider port`
 15. `test: prove fake provider has no network or credentials`
 16. `docs: freeze Skill activation and Tool execution binding contracts`
