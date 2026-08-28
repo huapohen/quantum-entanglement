@@ -22,7 +22,8 @@ The active backup surface is unchanged:
   filesystem access;
 - initialized v2 codec operations are pure and remain unreachable from the active v1
   module;
-- domain-sparse/native migration execution remains unavailable.
+- domain-sparse migration execution remains unavailable; the active legacy runner recognizes the
+  continuous packaged prefix through migration 6.
 
 Consequently this stage is safe to deploy as inert package data, but it does not close the
 backup/restore, disaster-recovery, or Gate C requirements.
@@ -33,10 +34,10 @@ The topology profile is `qe.sqlite-topology/bridge-v1`; the registry format is
 `qe.sqlite-topology-registry/1`. The current registry digest is:
 
 ```text
-713eec98ba37ed10fc768036dc5489f91a4b02f6520821f66d566072bc6af548
+39be33b24cdc79e6bd92ef4fdb5271963be724cf1a4762091d3336aa16e9a495
 ```
 
-It contains ten profiles and 85 exact `sqlite_schema` objects:
+It contains eleven profiles and 88 exact `sqlite_schema` objects:
 
 | Profile | Objects | Presence rule |
 |---|---:|---|
@@ -49,16 +50,18 @@ It contains ten profiles and 85 exact `sqlite_schema` objects:
 | `qe.domain-migration-0003/1` | 4 | required for applied migration 3; depends on event-store core |
 | `qe.domain-migration-0004/1` | 5 | required for applied migration 4; depends on migration 1 and event-store core |
 | `qe.domain-migration-0005/1` | 22 | required for applied migration 5; durable native-IM inbox |
+| `qe.domain-migration-0006/1` | 3 | required for applied migration 6; durable native-IM sandbox admission provenance |
 | `qe.domain-migration-sidecar/1` | 4 | required when sidecar format 1 is present |
 
 The independently frozen identities that bind the new admission schema are:
 
 | Identity | SHA-256 |
 |---|---|
-| Domain-migration registry | `fc53e0a9496ff2eb3a1727571ba7eec8841f3b2f829a81321ef8cd35d337eb97` |
-| Backup-topology registry | `713eec98ba37ed10fc768036dc5489f91a4b02f6520821f66d566072bc6af548` |
+| Domain-migration registry | `80dcde242e232ccf4ba8dbc05943bd405f6d224ced0aca421a12c6ce2f517036` |
+| Backup-topology registry | `39be33b24cdc79e6bd92ef4fdb5271963be724cf1a4762091d3336aa16e9a495` |
 | `qe.domain-migration-0004/1` profile | `5eb9ccd2ced7ac47e27db5911f82f84ff5500ce252634efe26fd3686b6488a6d` |
 | `qe.domain-migration-0005/1` profile | `976fe978e2b2c8c8a7f9fc12ca99d05dde8634d526bb03ef47a7064edfaac018` |
+| `qe.domain-migration-0006/1` profile | `f111f4ed2d8324736b0a58e766cba01d093a4541e47b229d699c58beaa285c48` |
 
 Migration 4 is the packaged `0004_invocation_admissions.up.sql`, owned by
 `admission@1`. Its domain descriptor has the semantic migration dependency `4 → 1`.
@@ -70,6 +73,12 @@ Migration 5 is the current packaged `0005_native_im_inbox.up.sql`, owned by
 `native_im_inbox@1`. Its 22 topology objects cover six tables, SQLite-created
 autoindexes, the single-prepared/read-revision unique indexes, and the nonce-expiry
 index. It deliberately does not reuse the generic domain inbox.
+
+Migration 6 is the current packaged `0006_native_im_sandbox_provenance.up.sql`, owned by
+`native_im_sandbox_provenance@1`. Its three topology objects cover the exact provenance table and
+its two SQLite-created autoindexes. The table binds a read/page pair to approval, profile,
+transport, mapper and evidence digests, and has a restrictive foreign key to the durable inbound
+read admitted by migration 5.
 
 Every object binds:
 
@@ -86,7 +95,7 @@ acyclic graph. Object coordinates are globally unique.
 
 ## Domain-migration cross-binding
 
-The five migration profiles are checked against the packaged
+The six migration profiles are checked against the packaged
 `DOMAIN_MIGRATION_REGISTRY` when the module loads:
 
 1. the migration-ID sets must be identical;
@@ -139,15 +148,15 @@ not share a digest with different token/constraint semantics.
 The deterministic catalog test materializes one database containing:
 
 - event-store core schema;
-- packaged migrations 1–5 and the legacy ledger, including the invocation-admission
-  receipt table and the dedicated native-IM inbox graph;
+- packaged migrations 1–6 and the legacy ledger, including the invocation-admission
+  receipt table, the dedicated native-IM inbox graph and sandbox-admission provenance;
 - projection offsets and receipts;
 - durable revocation high-water state;
 - the exact bridge sidecar and bootstrapped metadata.
 
 It then reads every non-statistics `sqlite_schema` row and compares the complete
-`(type, name, tbl_name, DDL digest)` mapping to all ten profiles. The current result is
-85 actual objects = 85 trusted objects, with no missing, extra, or drifted coordinate.
+`(type, name, tbl_name, DDL digest)` mapping to all eleven profiles. The current result is
+88 actual objects = 88 trusted objects, with no missing, extra, or drifted coordinate.
 
 The model tests additionally cover:
 
