@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that the native-IM P0 fake imports and runs without network capability."""
+"""Verify native-IM fake and sandbox imports/runtime without network capability."""
 
 from __future__ import annotations
 
@@ -19,19 +19,51 @@ FIXTURE_ROOT = REPOSITORY_ROOT / "tests" / "fixtures" / "native_im" / "v1"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-FAKE_SOURCE = SOURCE_ROOT / "quantum_entanglement" / "native_im_fake.py"
-ALLOWED_DIRECT_IMPORTS = {
-    "__future__",
-    "dataclasses",
-    "hashlib",
-    "os",
-    "typing",
+SOURCE_IMPORT_ALLOWLISTS = {
+    SOURCE_ROOT / "quantum_entanglement" / "native_im_fake.py": {
+        "__future__",
+        "dataclasses",
+        "hashlib",
+        "os",
+        "typing",
+    },
+    SOURCE_ROOT / "quantum_entanglement" / "native_im_sandbox.py": {
+        "__future__",
+        "asyncio",
+        "dataclasses",
+        "hashlib",
+        "ipaddress",
+        "os",
+        "typing",
+    },
+    SOURCE_ROOT / "quantum_entanglement" / "native_im_sandbox_lifecycle.py": {
+        "__future__",
+        "asyncio",
+        "collections",
+        "contextlib",
+        "dataclasses",
+        "os",
+        "threading",
+        "typing",
+    },
+    SOURCE_ROOT / "quantum_entanglement" / "native_im_sandbox_observability.py": {
+        "__future__",
+        "dataclasses",
+        "logging",
+        "os",
+        "threading",
+        "typing",
+    },
 }
 FORBIDDEN_NETWORK_IMPORTS = {
     "aiohttp",
-    "http",
+    "ftplib",
+    "grpc",
+    "http.client",
     "httpx",
     "requests",
+    "smtplib",
+    "urllib.request",
     "websocket",
     "websockets",
 }
@@ -59,7 +91,10 @@ class _NetworkImportBlocker(importlib.abc.MetaPathFinder):
         path: object = None,
         target: object = None,
     ) -> None:
-        if fullname.split(".", 1)[0] in FORBIDDEN_NETWORK_IMPORTS:
+        if any(
+            fullname == forbidden or fullname.startswith(forbidden + ".")
+            for forbidden in FORBIDDEN_NETWORK_IMPORTS
+        ):
             raise ImportError(f"network import blocked by native IM P0 gate: {fullname}")
         return None
 
@@ -99,6 +134,8 @@ def _replace_attribute(owner: object, name: str, value: object) -> None:
 
 
 async def _exercise() -> None:
+    import logging
+
     from quantum_entanglement.native_im import (
         IMAcceptanceQueryV1,
         IMCapabilityRequestV1,
@@ -117,6 +154,20 @@ async def _exercise() -> None:
         validate_im_dispatch_result_v1,
         validate_im_inbound_result_v1,
     )
+    from quantum_entanglement.native_im_sandbox import (
+        NativeIMSandboxDisabledError,
+        compose_default_native_im_sandbox_v1,
+    )
+    from quantum_entanglement.native_im_sandbox_lifecycle import (
+        NativeIMSandboxLifecycleV1,
+    )
+    from quantum_entanglement.native_im_sandbox_observability import (
+        NativeIMSandboxMetricsV1,
+        NativeIMSandboxObserverV1,
+        native_im_sandbox_log_catalog_v1,
+    )
+    from quantum_entanglement.service.logging import SafeLogger
+    from quantum_entanglement.service.native_im_config import NativeIMDisabledConfigV1
 
     capability = _load_fixture(IMCapabilitySnapshotV1, "capability_snapshot.json")
     envelope = _load_fixture(IMVerifiedInboundEnvelopeV1, "verified_inbound_envelope.json")
@@ -175,19 +226,57 @@ async def _exercise() -> None:
     if CREDENTIAL_CANARY in rendered:
         raise AssertionError("credential canary escaped native IM fake runtime")
 
+    disabled = compose_default_native_im_sandbox_v1(
+        NativeIMDisabledConfigV1(schema_version=1, enabled=False)
+    )
+    try:
+        await disabled.read_inbound(read_request)
+    except NativeIMSandboxDisabledError:
+        pass
+    else:
+        raise AssertionError("default sandbox unexpectedly enabled inbound transport")
+    await disabled.aclose()
+    if not disabled.closed:
+        raise AssertionError("disabled sandbox did not close")
+
+    logger = logging.Logger("native-im-zero-network-gate")
+    logger.addHandler(logging.NullHandler())
+    metrics = NativeIMSandboxMetricsV1()
+    observer = NativeIMSandboxObserverV1(
+        SafeLogger(logger, native_im_sandbox_log_catalog_v1()),
+        metrics,
+    )
+    observer.lifecycle("stopped", ready=False, kill_switch_tripped=False)
+    if metrics.snapshot().events_admitted_count != 0:
+        raise AssertionError("observer created an inbound observation")
+    if not isinstance(NativeIMSandboxLifecycleV1, type):
+        raise AssertionError("sandbox lifecycle import did not produce a type")
+
+    sandbox_rendered = "\n".join((repr(disabled), repr(observer), repr(metrics)))
+    if CREDENTIAL_CANARY in sandbox_rendered:
+        raise AssertionError("credential canary escaped native IM sandbox runtime")
+
 
 def main() -> int:
-    source = FAKE_SOURCE.read_text(encoding="utf-8")
-    if _direct_imports(source) != ALLOWED_DIRECT_IMPORTS:
-        print("native IM fake direct import allowlist drift", file=sys.stderr)
-        return 1
-    lowered = source.lower()
-    if any(word in lowered for word in FORBIDDEN_CONFIGURATION_WORDS):
-        print("native IM fake contains forbidden network configuration", file=sys.stderr)
-        return 1
-    if "os.environ" in source or "os.getenv" in source:
-        print("native IM fake contains environment credential access", file=sys.stderr)
-        return 1
+    for source_path, allowed_imports in SOURCE_IMPORT_ALLOWLISTS.items():
+        source = source_path.read_text(encoding="utf-8")
+        if _direct_imports(source) != allowed_imports:
+            print(
+                f"native IM direct import allowlist drift: {source_path.name}",
+                file=sys.stderr,
+            )
+            return 1
+        if source_path.name == "native_im_fake.py":
+            lowered = source.lower()
+            if any(word in lowered for word in FORBIDDEN_CONFIGURATION_WORDS):
+                print("native IM fake contains forbidden network configuration", file=sys.stderr)
+                return 1
+        if "os.environ" in source or "os.getenv" in source:
+            print(
+                f"native IM source contains environment access: {source_path.name}",
+                file=sys.stderr,
+            )
+            return 1
 
     for name in CREDENTIAL_ENVIRONMENT_NAMES:
         os.environ[name] = CREDENTIAL_CANARY
@@ -197,6 +286,8 @@ def main() -> int:
         _replace_attribute(socket, "create_connection", _deny_network)
         _replace_attribute(socket, "getaddrinfo", _deny_network)
         _replace_attribute(socket, "gethostbyname", _deny_network)
+        _replace_attribute(asyncio, "open_connection", _deny_network)
+        _replace_attribute(asyncio, "start_server", _deny_network)
         _replace_attribute(os, "getenv", _deny_environment)
         sys.meta_path.insert(0, _NetworkImportBlocker())
         loop.run_until_complete(_exercise())
