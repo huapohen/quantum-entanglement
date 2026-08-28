@@ -20,14 +20,100 @@ from quantum_entanglement.invocation_results import (
 )
 from quantum_entanglement.store import (
     EventStoreIntegrityError,
-    ResultEventWriteContractError,
     SQLiteEventStore,
+    _ResultEventWriteContractError,
 )
 from tests.test_invocation_result_evidence import valid_evidence
 from tests.test_invocation_result_terminal_transition import valid_transition
 
 T0 = "2026-08-28T13:14:15.123456Z"
 DEFAULT_RESULT_IDEMPOTENCY_KEY = "accept:invocation-m3-store"
+PRE_M3_STORE_WILDCARD_NAMES = frozenset(
+    {
+        "Any",
+        "AttemptStatus",
+        "CANONICAL_ORCHESTRATOR_ACTOR_ID",
+        "Callable",
+        "CancelledError",
+        "ConcurrencyError",
+        "ContextManager",
+        "Dict",
+        "DomainEvent",
+        "EventStoreIntegrityError",
+        "EventStoreJsonError",
+        "EventStoreJsonTooLargeError",
+        "EventStoreJsonTypeError",
+        "EventStoreJsonValueError",
+        "EventStoreLifecycleError",
+        "EventStorePoisonedError",
+        "InboxAppendResult",
+        "InboxReceipt",
+        "InvocationAdmissionCommitAmbiguityError",
+        "InvocationAdmissionConflictError",
+        "InvocationAdmissionResult",
+        "InvocationAdmissionTransactionError",
+        "InvocationAttempt",
+        "InvocationIntegrityError",
+        "InvocationJob",
+        "InvocationJobSpec",
+        "InvocationStartClaimed",
+        "InvocationStartCommitAmbiguityError",
+        "InvocationStartConflictError",
+        "InvocationStartEvidenceV2",
+        "InvocationStartObserved",
+        "InvocationStartReceipt",
+        "InvocationStartTransactionError",
+        "InvocationStatus",
+        "Iterable",
+        "Iterator",
+        "List",
+        "Mapping",
+        "MappingProxyType",
+        "NoReturn",
+        "Optional",
+        "OutboxAmbiguity",
+        "OutboxAmbiguityPageItem",
+        "OutboxMessage",
+        "OutboxPageItem",
+        "OutboxStatus",
+        "ReservedResultEventError",
+        "SQLiteEventStore",
+        "SQLiteInvocationAttemptStore",
+        "ScopedInvocationStartClaimedV3",
+        "ScopedInvocationStartEvidenceV3",
+        "ScopedInvocationStartObservedV3",
+        "ScopedInvocationStartReceiptV3",
+        "ScopedTaskInvocationAdmissionRequestV2",
+        "StoredEvent",
+        "StoredOutboxMessage",
+        "SupportsIndex",
+        "TASK_INVOCATION_STARTED_EVENT_TYPE",
+        "TaskInvocationAdmissionRequest",
+        "Tuple",
+        "TypeVar",
+        "Union",
+        "annotations",
+        "apply_sqlite_migrations",
+        "cast",
+        "contextmanager",
+        "dataclass",
+        "datetime",
+        "hashlib",
+        "json",
+        "math",
+        "new_id",
+        "os",
+        "secrets",
+        "sqlite3",
+        "threading",
+        "timedelta",
+        "timezone",
+        "traceback_module",
+        "unicodedata",
+        "utc_now",
+        "wraps",
+    }
+)
 
 
 def result_payload(**changes: object) -> dict[str, object]:
@@ -96,7 +182,8 @@ def append_verified(
     store: SQLiteEventStore,
     candidate: DomainEvent,
     *,
-    expected_version: int = 0,
+    expected_version: int | None = 0,
+    expected_global_position: int | None = None,
 ) -> tuple[StoredEvent, bool, codec._StoredEventEnvelopeV1]:
     snapshot = SQLiteEventStore._snapshot_event(store, candidate)
     with store._transaction() as connection:
@@ -105,11 +192,37 @@ def append_verified(
             connection,
             snapshot,
             expected_version,
+            expected_global_position,
         )
 
 
 def durable_rows(store: SQLiteEventStore) -> tuple[tuple[Any, ...], ...]:
     return tuple(tuple(row) for row in store._connection.execute("SELECT * FROM events").fetchall())
+
+
+def event_store_traceback_locals(error: BaseException) -> str:
+    """Render store-owned locals retained by one returned exception graph."""
+
+    pending = [error]
+    seen: set[int] = set()
+    values: list[str] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        traceback = current.__traceback__
+        while traceback is not None:
+            if traceback.tb_frame.f_code.co_filename == store_module.__file__:
+                values.extend(
+                    f"{name}={value!r}" for name, value in traceback.tb_frame.f_locals.items()
+                )
+            traceback = traceback.tb_next
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    return "\n".join(values)
 
 
 def test_private_adapter_accepts_only_exact_typed_result_payload_bytes() -> None:
@@ -186,6 +299,16 @@ def test_non_typed_or_misbound_reserved_snapshots_fail_before_insert() -> None:
             causation_id=valid_terminal.causation_id,
             idempotency_key="task-status:wrong:1",
         ),
+        replace(
+            valid_result,
+            event_id="event-result-without-correlation",
+            correlation_id=None,
+        ),
+        replace(
+            valid_result,
+            event_id="event-result-without-causation",
+            causation_id=None,
+        ),
     )
 
     for candidate in invalid:
@@ -193,7 +316,7 @@ def test_non_typed_or_misbound_reserved_snapshots_fail_before_insert() -> None:
             statements: list[str] = []
             store._connection.set_trace_callback(statements.append)
             try:
-                with pytest.raises(ResultEventWriteContractError):
+                with pytest.raises(_ResultEventWriteContractError):
                     append_verified(store, candidate)
             finally:
                 store._connection.set_trace_callback(None)
@@ -348,7 +471,7 @@ def test_reflective_payload_byte_drift_fails_before_insert() -> None:
         store._connection.set_trace_callback(statements.append)
         try:
             with store._transaction() as connection:
-                with pytest.raises(ResultEventWriteContractError):
+                with pytest.raises(_ResultEventWriteContractError):
                     SQLiteEventStore._insert_with_verified_envelope_in_transaction(
                         store,
                         connection,
@@ -384,7 +507,7 @@ def test_idempotent_replay_never_mints_a_verified_insert() -> None:
         before = durable_rows(store)
 
         assert inserted is True
-        with pytest.raises(EventStoreIntegrityError, match="requires a fresh row"):
+        with pytest.raises(EventStoreIntegrityError, match="verification failed"):
             append_verified(store, event())
         assert durable_rows(store) == before
 
@@ -392,7 +515,7 @@ def test_idempotent_replay_never_mints_a_verified_insert() -> None:
             event_id="event-changed",
             payload=result_payload(resultRef="result:changed"),
         )
-        with pytest.raises(EventStoreIntegrityError, match="requires a fresh row"):
+        with pytest.raises(EventStoreIntegrityError, match="verification failed"):
             append_verified(store, changed)
         assert durable_rows(store) == before
         assert first.global_position == 1
@@ -445,6 +568,169 @@ def test_raw_row_drift_or_missing_row_rolls_back(trigger_body: str) -> None:
         assert inserted is True
         assert stored.sequence == 1
         assert stored.global_position == 1
+
+
+def test_trigger_cannot_relocate_the_original_and_verify_a_replacement_row() -> None:
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        store._connection.execute(
+            """
+            CREATE TRIGGER replace_verified_row AFTER INSERT ON events
+            BEGIN
+                UPDATE events
+                SET global_position = NEW.global_position + 100,
+                    stream_id = 'session:relocated',
+                    sequence = NEW.sequence + 100,
+                    event_id = 'event-relocated',
+                    actor_id = 'actor:relocated',
+                    idempotency_key = 'accept:relocated'
+                WHERE global_position = NEW.global_position;
+                INSERT INTO events (
+                    global_position, stream_id, sequence, event_id, event_type,
+                    actor_id, timestamp, payload_json, correlation_id,
+                    causation_id, idempotency_key
+                ) VALUES (
+                    NEW.global_position, NEW.stream_id, NEW.sequence, NEW.event_id,
+                    NEW.event_type, NEW.actor_id, NEW.timestamp, NEW.payload_json,
+                    NEW.correlation_id, NEW.causation_id, NEW.idempotency_key
+                );
+            END
+            """
+        )
+
+        with pytest.raises(EventStoreIntegrityError, match="verification failed"):
+            append_verified(store, event())
+
+        assert durable_rows(store) == ()
+        assert tuple(store._connection.execute("SELECT * FROM sqlite_sequence")) == ()
+
+
+def test_before_trigger_cannot_update_an_old_row_and_ignore_the_insert() -> None:
+    seed = DomainEvent(
+        stream_id="session:seed",
+        event_type="ordinary.seed",
+        payload={"seed": True},
+        actor_id="seed",
+        event_id="event-seed",
+        timestamp=T0,
+        idempotency_key="seed:1",
+    )
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        store.append(seed, expected_version=0)
+        before = durable_rows(store)
+        store._connection.execute(
+            """
+            CREATE TRIGGER replace_old_row BEFORE INSERT ON events
+            BEGIN
+                UPDATE events
+                SET stream_id = NEW.stream_id,
+                    sequence = NEW.sequence,
+                    event_id = NEW.event_id,
+                    event_type = NEW.event_type,
+                    actor_id = NEW.actor_id,
+                    timestamp = NEW.timestamp,
+                    payload_json = NEW.payload_json,
+                    correlation_id = NEW.correlation_id,
+                    causation_id = NEW.causation_id,
+                    idempotency_key = NEW.idempotency_key
+                WHERE global_position = 1;
+                SELECT RAISE(IGNORE);
+            END
+            """
+        )
+
+        with pytest.raises(EventStoreIntegrityError, match="verification failed"):
+            append_verified(store, event())
+
+        assert durable_rows(store) == before
+
+
+def test_trigger_cannot_append_an_unverified_extra_event_row() -> None:
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        store._connection.execute(
+            """
+            CREATE TRIGGER append_extra_event AFTER INSERT ON events
+            BEGIN
+                INSERT INTO events (
+                    stream_id, sequence, event_id, event_type, actor_id, timestamp,
+                    payload_json, correlation_id, causation_id, idempotency_key
+                ) VALUES (
+                    'session:extra', 1, 'event-extra', 'ordinary.extra', 'actor:extra',
+                    NEW.timestamp, '{"extra":true}', NULL, NULL, 'extra:1'
+                );
+            END
+            """
+        )
+
+        with pytest.raises(EventStoreIntegrityError, match="verification failed"):
+            append_verified(store, event())
+
+        assert durable_rows(store) == ()
+        assert tuple(store._connection.execute("SELECT * FROM sqlite_sequence")) == ()
+        store._connection.execute("DROP TRIGGER append_extra_event")
+        stored, inserted, _verified = append_verified(store, event())
+        assert inserted is True
+        assert stored.sequence == 1
+        assert stored.global_position == 1
+
+
+def test_verified_insert_rejects_every_trigger_side_effect() -> None:
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        store._connection.execute("CREATE TABLE event_insert_audit (event_id TEXT NOT NULL)")
+        store._connection.execute(
+            """
+            CREATE TRIGGER audit_event_insert AFTER INSERT ON events
+            BEGIN
+                INSERT INTO event_insert_audit (event_id) VALUES (NEW.event_id);
+            END
+            """
+        )
+
+        with pytest.raises(EventStoreIntegrityError, match="verification failed"):
+            append_verified(store, event())
+
+        assert durable_rows(store) == ()
+        assert tuple(store._connection.execute("SELECT * FROM event_insert_audit")) == ()
+
+
+@pytest.mark.parametrize(
+    "column",
+    (
+        "stream_id",
+        "event_id",
+        "event_type",
+        "actor_id",
+        "timestamp",
+        "payload_json",
+        "correlation_id",
+        "causation_id",
+        "idempotency_key",
+    ),
+)
+def test_verifier_rejects_blob_storage_for_every_text_column(column: str) -> None:
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        snapshot = SQLiteEventStore._snapshot_event(store, event())
+        with pytest.raises(EventStoreIntegrityError, match="readback is invalid"):
+            with store._transaction() as connection:
+                stored, inserted = SQLiteEventStore._append_in_transaction(
+                    store,
+                    connection,
+                    snapshot,
+                    0,
+                )
+                assert inserted is True
+                connection.execute(
+                    f"UPDATE events SET {column} = CAST({column} AS BLOB) "
+                    "WHERE global_position = ?",
+                    (stored.global_position,),
+                )
+                SQLiteEventStore._verify_stored_event_envelope_in_transaction(
+                    store,
+                    connection,
+                    snapshot,
+                    stored,
+                )
+
+        assert durable_rows(store) == ()
 
 
 def test_two_verified_rows_bind_real_consecutive_coordinates() -> None:
@@ -525,7 +811,7 @@ def test_non_sqlite_row_readback_is_rejected_and_rolled_back() -> None:
     with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
         store._connection.row_factory = mapping_row
         try:
-            with pytest.raises(EventStoreIntegrityError, match="readback is invalid"):
+            with pytest.raises(EventStoreIntegrityError, match="verification failed"):
                 append_verified(store, event())
         finally:
             store._connection.row_factory = sqlite3.Row
@@ -554,12 +840,37 @@ def test_raw_recompute_control_signal_rolls_back_and_store_remains_usable(
         assert stored.global_position == 1
 
 
-def test_readback_failures_do_not_disclose_event_or_payload_canaries() -> None:
+def test_contract_failures_detach_every_payload_bearing_store_frame() -> None:
+    event_canary = "event-contract-private-canary"
+    value_canary = "payload-contract-private-canary"
+    digest_canary = "1234567890abcdef" * 4
+    payload = result_payload(resultRef=value_canary, leaseTokenDigest=digest_canary)
+    payload["unsupportedCanary"] = value_canary
+    candidate = event(event_id=event_canary, payload=payload)
+
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        with pytest.raises(_ResultEventWriteContractError) as raised:
+            append_verified(store, candidate)
+        assert durable_rows(store) == ()
+
+    assert raised.value.args == ("private result event append requires an exact typed payload",)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    graph = event_store_traceback_locals(raised.value)
+    for canary in (event_canary, value_canary, digest_canary):
+        assert canary not in repr(raised.value) + str(raised.value)
+        assert canary not in graph
+    for payload_frame_name in ("snapshot=", "frozen=", "event=", "payload="):
+        assert payload_frame_name not in graph
+
+
+def test_readback_failures_detach_every_payload_bearing_store_frame() -> None:
     event_canary = "event-private-canary"
     value_canary = "credential-private-canary"
+    digest_canary = "abcdef0123456789" * 4
     candidate = event(
         event_id=event_canary,
-        payload=result_payload(resultRef=value_canary),
+        payload=result_payload(resultRef=value_canary, leaseTokenDigest=digest_canary),
     )
     with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
         store._connection.execute(
@@ -574,10 +885,77 @@ def test_readback_failures_do_not_disclose_event_or_payload_canaries() -> None:
         with pytest.raises(EventStoreIntegrityError) as raised:
             append_verified(store, candidate)
 
+    assert raised.value.args == ("stored event envelope verification failed",)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
     rendered = repr(raised.value) + str(raised.value)
-    assert event_canary not in rendered
-    assert value_canary not in rendered
-    assert "resultRef" not in rendered
+    graph = event_store_traceback_locals(raised.value)
+    for canary in (event_canary, value_canary, digest_canary):
+        assert canary not in rendered
+        assert canary not in graph
+    for payload_frame_name in ("snapshot=", "frozen=", "event=", "payload="):
+        assert payload_frame_name not in graph
+
+
+@pytest.mark.parametrize(
+    ("expected_version", "expected_global_position"),
+    ((1, None), (0, 0)),
+)
+def test_concurrency_failures_detach_every_payload_bearing_store_frame(
+    expected_version: int,
+    expected_global_position: int | None,
+) -> None:
+    event_canary = "event-concurrency-private-canary"
+    value_canary = "payload-concurrency-private-canary"
+    digest_canary = "fedcba9876543210" * 4
+    candidate = event(
+        event_id=event_canary,
+        payload=result_payload(resultRef=value_canary, leaseTokenDigest=digest_canary),
+    )
+    seed = DomainEvent(
+        stream_id="session:seed",
+        event_type="ordinary.seed",
+        payload={"seed": True},
+        actor_id="actor:seed",
+        event_id="event-seed",
+        timestamp=T0,
+        idempotency_key="seed:1",
+    )
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        store.append(seed, expected_version=0)
+        before = durable_rows(store)
+        with pytest.raises(store_module.ConcurrencyError) as raised:
+            append_verified(
+                store,
+                candidate,
+                expected_version=expected_version,
+                expected_global_position=expected_global_position,
+            )
+        assert durable_rows(store) == before
+
+    assert raised.value.args == ("verified stored event append concurrency conflict",)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    graph = event_store_traceback_locals(raised.value)
+    for canary in (event_canary, value_canary, digest_canary):
+        assert canary not in repr(raised.value) + str(raised.value)
+        assert canary not in graph
+    for payload_frame_name in ("snapshot=", "frozen=", "event=", "payload="):
+        assert payload_frame_name not in graph
+
+
+@pytest.mark.parametrize("kind", ("contract", "integrity", "concurrency"))
+def test_clean_adapter_errors_drop_an_active_exception_context(kind: str) -> None:
+    canary = "active-exception-context-private-canary"
+    try:
+        raise ValueError(canary)
+    except ValueError:
+        with pytest.raises(BaseException) as raised:
+            store_module._raise_clean_stored_event_envelope_error(kind)
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert canary not in event_store_traceback_locals(raised.value)
 
 
 def test_verifier_rejects_foreign_or_closed_transaction_before_select() -> None:
@@ -602,6 +980,77 @@ def test_verifier_rejects_foreign_or_closed_transaction_before_select() -> None:
                     snapshot,
                     fake_stored,
                 )
+
+
+def test_insert_adapter_rejects_missing_or_foreign_transaction_before_insert() -> None:
+    with (
+        SQLiteEventStore(":memory:", clock=lambda: T0) as store,
+        SQLiteEventStore(":memory:", clock=lambda: T0) as other,
+    ):
+        snapshot = SQLiteEventStore._snapshot_event(store, event())
+        statements: list[str] = []
+        store._connection.set_trace_callback(statements.append)
+        try:
+            with pytest.raises(RuntimeError, match="open transaction"):
+                SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                    store,
+                    store._connection,
+                    snapshot,
+                    0,
+                )
+            with other._transaction() as foreign:
+                with pytest.raises(RuntimeError, match="owning connection"):
+                    SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                        store,
+                        foreign,
+                        snapshot,
+                        0,
+                    )
+        finally:
+            store._connection.set_trace_callback(None)
+
+        assert durable_rows(store) == ()
+        assert durable_rows(other) == ()
+        assert not any(
+            statement.lstrip().upper().startswith("INSERT INTO EVENTS") for statement in statements
+        )
+
+
+def test_insert_adapter_does_not_mislabel_a_closed_owning_connection() -> None:
+    store = SQLiteEventStore(":memory:", clock=lambda: T0)
+    snapshot = SQLiteEventStore._snapshot_event(store, event())
+    connection = store._connection
+    store.close()
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+            store,
+            connection,
+            snapshot,
+            0,
+        )
+
+
+@pytest.mark.parametrize(
+    ("expected_version", "expected_global_position"),
+    ((True, None), (0, True)),
+)
+def test_insert_adapter_rejects_boolean_coordinates_before_insert(
+    expected_version: int,
+    expected_global_position: int | None,
+) -> None:
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        snapshot = SQLiteEventStore._snapshot_event(store, event())
+        with store._transaction() as connection:
+            with pytest.raises(TypeError, match="must be an integer"):
+                SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                    store,
+                    connection,
+                    snapshot,
+                    expected_version,
+                    expected_global_position,
+                )
+        assert durable_rows(store) == ()
 
 
 def test_verifier_uses_fixed_projection_and_private_composition_only() -> None:
@@ -631,3 +1080,9 @@ def test_verifier_uses_fixed_projection_and_private_composition_only() -> None:
             signature.parameters
         ), name
     assert inspect.getsource(SQLiteEventStore).count("INSERT INTO events (") == 2
+
+
+def test_store_wildcard_surface_remains_pre_m3_compatible() -> None:
+    namespace: dict[str, object] = {}
+    exec("from quantum_entanglement.store import *", namespace)
+    assert set(namespace) - {"__builtins__"} == PRE_M3_STORE_WILDCARD_NAMES

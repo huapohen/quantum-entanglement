@@ -38,7 +38,9 @@ from typing import (
 
 from . import process_identity as _process_identity
 from ._stored_event_envelope_codec import (
-    StoredEventEnvelopeError,
+    StoredEventEnvelopeError as _StoredEventEnvelopeError,
+)
+from ._stored_event_envelope_codec import (
     _stored_event_envelope_from_raw_row,
     _stored_event_envelope_from_values,
     _StoredEventEnvelopeV1,
@@ -85,10 +87,16 @@ from .invocation_execution import (
     TaskInvocationAdmissionRequest,
 )
 from .invocation_results import (
-    TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE,
-    TASK_STATUS_CHANGED_EVENT_TYPE,
-    ScopedInvocationResultEvidenceV2,
-    ScopedInvocationResultTerminalTransitionV2,
+    TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE as _TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE,
+)
+from .invocation_results import (
+    TASK_STATUS_CHANGED_EVENT_TYPE as _TASK_STATUS_CHANGED_EVENT_TYPE,
+)
+from .invocation_results import (
+    ScopedInvocationResultEvidenceV2 as _ScopedInvocationResultEvidenceV2,
+)
+from .invocation_results import (
+    ScopedInvocationResultTerminalTransitionV2 as _ScopedInvocationResultTerminalTransitionV2,
 )
 from .migrations import apply_sqlite_migrations
 from .protocol import new_id, utc_now
@@ -136,7 +144,7 @@ class ReservedResultEventError(ValueError):
         super().__init__("generic event append cannot write reserved result authority")
 
 
-class ResultEventWriteContractError(ValueError):
+class _ResultEventWriteContractError(ValueError):
     """Raised when the private event adapter receives non-canonical result vocabulary."""
 
     code = "result_event_write_contract_invalid"
@@ -221,8 +229,8 @@ _EVENT_STORE_ADMISSION_CONTROL_TOKEN = object()
 _EVENT_STORE_START_CONTROL_TOKEN = object()
 _EVENT_STORE_CHILD_GRAPH_QUARANTINE: List[object] = []
 _INVOCATION_ADMISSION_RECEIPT_FORMAT = "qe.invocation-admission-receipt/1"
-_RESERVED_RESULT_EVENT_TYPE = TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE
-_RESERVED_RESULT_TERMINAL_EVENT_TYPE = TASK_STATUS_CHANGED_EVENT_TYPE
+_RESERVED_RESULT_EVENT_TYPE = _TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE
+_RESERVED_RESULT_TERMINAL_EVENT_TYPE = _TASK_STATUS_CHANGED_EVENT_TYPE
 _RESERVED_RESULT_TERMINAL_KEY_TOKENS = frozenset(
     (
         "transitionkind",
@@ -553,6 +561,27 @@ def _detach_exception(error: BaseException) -> None:
         traceback_module.clear_frames(error_traceback)
 
 
+def _raise_clean_stored_event_envelope_error(kind: str) -> NoReturn:
+    if kind == "contract":
+        error_type: type[BaseException] = _ResultEventWriteContractError
+    elif kind == "integrity":
+        error_type = EventStoreIntegrityError
+    elif kind == "concurrency":
+        error_type = ConcurrencyError
+    else:
+        raise RuntimeError("unsupported stored event envelope error kind") from None
+    try:
+        if error_type is _ResultEventWriteContractError:
+            raise _ResultEventWriteContractError() from None
+        if error_type is ConcurrencyError:
+            raise ConcurrencyError("verified stored event append concurrency conflict") from None
+        raise EventStoreIntegrityError("stored event envelope verification failed") from None
+    except BaseException as public_error:
+        if type(public_error) is error_type:
+            public_error.__context__ = None
+        raise
+
+
 def _take_classified_event_store_transaction_signal(
     error: BaseException,
 ) -> Optional[Tuple[str, Optional[_EventStoreControlDescriptor]]]:
@@ -575,6 +604,31 @@ def _take_classified_event_store_transaction_signal(
 
 
 _Method = TypeVar("_Method", bound=Callable[..., Any])
+
+
+def _sanitize_stored_event_envelope_errors(method: _Method) -> _Method:
+    """Reissue fixed adapter errors after payload-bearing frames and arguments unwind."""
+
+    @wraps(method)
+    def sanitized(*args: Any, **kwargs: Any) -> Any:
+        kind: Optional[str] = None
+        try:
+            return method(*args, **kwargs)
+        except _ResultEventWriteContractError as error:
+            kind = "contract"
+            _detach_exception(error)
+        except EventStoreIntegrityError as error:
+            kind = "integrity"
+            _detach_exception(error)
+        except ConcurrencyError as error:
+            kind = "concurrency"
+            _detach_exception(error)
+        del args, kwargs
+        if kind is None:
+            raise RuntimeError("stored event envelope sanitizer classification is missing")
+        _raise_clean_stored_event_envelope_error(kind)
+
+    return cast(_Method, sanitized)
 
 
 def _sanitize_invocation_admission_controls(method: _Method) -> _Method:
@@ -1751,20 +1805,24 @@ class SQLiteEventStore:
             payload_json = object.__getattribute__(frozen, "payload_json")
             payload = object.__getattribute__(event, "payload")
             event_type = object.__getattribute__(event, "event_type")
-            if event_type == TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE:
-                evidence = ScopedInvocationResultEvidenceV2.from_dict(payload)
-                typed_bytes = ScopedInvocationResultEvidenceV2.canonical_bytes(evidence)
+            if event_type == _TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE:
+                evidence = _ScopedInvocationResultEvidenceV2.from_dict(payload)
+                typed_bytes = _ScopedInvocationResultEvidenceV2.canonical_bytes(evidence)
                 if (
                     object.__getattribute__(event, "stream_id") != "session:" + evidence.session_id
                     or object.__getattribute__(event, "actor_id") != CANONICAL_ORCHESTRATOR_ACTOR_ID
                     or object.__getattribute__(event, "timestamp") != evidence.accepted_at
+                    or object.__getattribute__(event, "correlation_id") is None
+                    or object.__getattribute__(event, "causation_id") is None
                     or object.__getattribute__(event, "idempotency_key")
                     != evidence.acceptance_idempotency_key
                 ):
-                    raise ResultEventWriteContractError()
-            elif event_type == TASK_STATUS_CHANGED_EVENT_TYPE:
-                transition = ScopedInvocationResultTerminalTransitionV2.from_dict(payload)
-                typed_bytes = ScopedInvocationResultTerminalTransitionV2.canonical_bytes(transition)
+                    raise _ResultEventWriteContractError()
+            elif event_type == _TASK_STATUS_CHANGED_EVENT_TYPE:
+                transition = _ScopedInvocationResultTerminalTransitionV2.from_dict(payload)
+                typed_bytes = _ScopedInvocationResultTerminalTransitionV2.canonical_bytes(
+                    transition
+                )
                 if (
                     object.__getattribute__(event, "stream_id")
                     != "session:" + transition.session_id
@@ -1774,16 +1832,16 @@ class SQLiteEventStore:
                     or object.__getattribute__(event, "idempotency_key")
                     != f"task-status:{transition.task_id}:{transition.terminal_task_revision}"
                 ):
-                    raise ResultEventWriteContractError()
+                    raise _ResultEventWriteContractError()
             else:
-                raise ResultEventWriteContractError()
+                raise _ResultEventWriteContractError()
             if typed_bytes != payload_json.encode("utf-8"):
-                raise ResultEventWriteContractError()
+                raise _ResultEventWriteContractError()
             return frozen
-        except ResultEventWriteContractError:
+        except _ResultEventWriteContractError:
             raise
-        except (StoredEventEnvelopeError, TypeError, ValueError, UnicodeError):
-            raise ResultEventWriteContractError() from None
+        except (_StoredEventEnvelopeError, TypeError, ValueError, UnicodeError):
+            raise _ResultEventWriteContractError() from None
 
     def _verify_stored_event_envelope_in_transaction(
         self,
@@ -1842,9 +1900,10 @@ class SQLiteEventStore:
             return raw_envelope
         except EventStoreIntegrityError:
             raise
-        except StoredEventEnvelopeError:
+        except _StoredEventEnvelopeError:
             raise EventStoreIntegrityError("stored event envelope readback is invalid") from None
 
+    @_sanitize_stored_event_envelope_errors
     def _insert_with_verified_envelope_in_transaction(
         self,
         connection: sqlite3.Connection,
@@ -1860,7 +1919,20 @@ class SQLiteEventStore:
         transaction_open = connection.in_transaction
         if type(transaction_open) is not bool or not transaction_open:
             raise RuntimeError("verified event append requires an open transaction")
+        if expected_version is not None:
+            expected_version = _caller_sqlite_integer(
+                expected_version,
+                "expected_version",
+            )
+        if expected_global_position is not None:
+            expected_global_position = _caller_sqlite_integer(
+                expected_global_position,
+                "expected_global_position",
+            )
         frozen = SQLiteEventStore._freeze_typed_result_event_write_snapshot(snapshot)
+        changes_before = connection.total_changes
+        if type(changes_before) is not int or changes_before < 0:
+            raise RuntimeError("SQLite returned an invalid total change count")
         stored, inserted = SQLiteEventStore._append_in_transaction(
             self,
             connection,
@@ -1870,6 +1942,20 @@ class SQLiteEventStore:
         )
         if not inserted:
             raise EventStoreIntegrityError("verified stored event append requires a fresh row")
+        statement_changes_row = connection.execute("SELECT changes() AS change_count").fetchone()
+        if (
+            statement_changes_row is None
+            or type(statement_changes_row["change_count"]) is not int
+            or statement_changes_row["change_count"] != 1
+        ):
+            raise EventStoreIntegrityError(
+                "verified stored event append did not perform one fresh insert"
+            )
+        changes_after = connection.total_changes
+        if type(changes_after) is not int or changes_after != changes_before + 1:
+            raise EventStoreIntegrityError(
+                "verified stored event append changed an unexpected row count"
+            )
         verified = SQLiteEventStore._verify_stored_event_envelope_in_transaction(
             self,
             connection,
