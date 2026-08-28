@@ -60,6 +60,13 @@ from .service.secrets import SecretMaterial, SecretRef
 
 _MAX_RAW_RESPONSE_BYTES = 16 * 1_024 * 1_024
 _APPROVED_COMPOSITION_TOKEN = object()
+_MAPPER_REJECTION_CODES = {
+    "native_im_mapper_correlation_mismatch",
+    "native_im_mapper_limit_exceeded",
+    "native_im_mapper_payload_invalid",
+    "native_im_mapper_payload_unsupported",
+    "native_im_mapper_scope_mismatch",
+}
 
 
 class NativeIMSandboxDisabledError(RuntimeError):
@@ -95,6 +102,18 @@ class NativeIMInboundParseError(ValueError):
     __slots__ = ("code",)
 
     def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+class NativeIMMapperRejectionError(ValueError):
+    """A provider mapper's stable, content-free fail-closed rejection."""
+
+    __slots__ = ("code",)
+
+    def __init__(self, code: str) -> None:
+        if type(code) is not str or code not in _MAPPER_REJECTION_CODES:
+            raise ValueError("native IM mapper rejection code is not registered")
         self.code = code
         super().__init__(code)
 
@@ -902,6 +921,7 @@ __all__ = [
     "NativeIMInboundRawResponseV1",
     "NativeIMInboundTransportPort",
     "NativeIMMappedPageV1",
+    "NativeIMMapperRejectionError",
     "NativeIMOutboundForbiddenError",
     "NativeIMSandboxDisabledError",
     "NativeIMSecretResolverPort",
