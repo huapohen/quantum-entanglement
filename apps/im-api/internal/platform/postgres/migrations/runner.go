@@ -147,7 +147,10 @@ func bootstrapLedger(ctx context.Context, connection *pgx.Conn) error {
 	if err != nil {
 		return ErrMigrationFailed
 	}
-	defer func() { _ = transaction.Rollback(context.Background()) }()
+	defer func() { rollbackMigrationTransaction(transaction) }()
+	if err := prepareMigrationTransaction(ctx, transaction); err != nil {
+		return err
+	}
 	const bootstrapSQL = `
 CREATE SCHEMA IF NOT EXISTS wanwork_meta;
 CREATE TABLE IF NOT EXISTS wanwork_meta.schema_migrations (
@@ -580,7 +583,10 @@ func applyOne(ctx context.Context, connection *pgx.Conn, migration Migration) er
 	if err != nil {
 		return ErrMigrationFailed
 	}
-	defer func() { _ = transaction.Rollback(context.Background()) }()
+	defer func() { rollbackMigrationTransaction(transaction) }()
+	if err := prepareMigrationTransaction(ctx, transaction); err != nil {
+		return err
+	}
 	if _, err := transaction.Exec(
 		ctx,
 		migration.UpSQL,
@@ -588,8 +594,10 @@ func applyOne(ctx context.Context, connection *pgx.Conn, migration Migration) er
 	); err != nil {
 		return ErrMigrationFailed
 	}
-	if err := validateMigrationPostcondition(ctx, transaction, migration.Version); err != nil {
-		return err
+	for version := int64(1); version <= migration.Version; version++ {
+		if err := validateMigrationPostcondition(ctx, transaction, version); err != nil {
+			return err
+		}
 	}
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO wanwork_meta.schema_migrations (version, name, checksum)
@@ -600,4 +608,17 @@ VALUES ($1, $2, $3)`, migration.Version, migration.Name, migration.Checksum); er
 		return ErrCommitUnknown
 	}
 	return nil
+}
+
+func prepareMigrationTransaction(ctx context.Context, transaction pgx.Tx) error {
+	if _, err := transaction.Exec(ctx, "SET LOCAL search_path = pg_catalog"); err != nil {
+		return ErrMigrationFailed
+	}
+	return nil
+}
+
+func rollbackMigrationTransaction(transaction pgx.Tx) {
+	rollbackContext, cancel := context.WithTimeout(context.Background(), unlockTimeout)
+	defer cancel()
+	_ = transaction.Rollback(rollbackContext)
 }

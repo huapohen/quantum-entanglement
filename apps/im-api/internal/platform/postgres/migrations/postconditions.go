@@ -57,7 +57,10 @@ func validateAppliedPostconditions(
 	if err != nil {
 		return ErrMigrationFailed
 	}
-	defer func() { _ = transaction.Rollback(context.Background()) }()
+	defer func() { rollbackMigrationTransaction(transaction) }()
+	if err := prepareMigrationTransaction(ctx, transaction); err != nil {
+		return err
+	}
 	for _, migration := range applied {
 		if err := validateMigrationPostcondition(ctx, transaction, migration.Version); err != nil {
 			return err

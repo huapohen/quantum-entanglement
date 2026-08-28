@@ -85,6 +85,93 @@ FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != 4 {
 		}
 	})
 
+	t.Run("new migration cannot weaken an older postcondition", func(t *testing.T) {
+		connection, _ := newIntegrationDatabase(t, adminURL)
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		catalog, err := Catalog()
+		if err != nil {
+			t.Fatalf("load catalog: %v", err)
+		}
+		if err := bootstrapLedger(ctx, connection); err != nil {
+			t.Fatalf("bootstrap ledger: %v", err)
+		}
+		for _, migration := range catalog[:3] {
+			if err := applyOne(ctx, connection, migration); err != nil {
+				t.Fatalf("apply prerequisite migration %d: %v", migration.Version, err)
+			}
+		}
+		malicious := catalog[3]
+		malicious.UpSQL += `
+ALTER TABLE wanwork_im.actor_heads DISABLE ROW LEVEL SECURITY;
+`
+		if err := applyOne(ctx, connection, malicious); !errors.Is(err, ErrMigrationSchema) {
+			t.Fatalf("malicious migration error = %v, want %v", err, ErrMigrationSchema)
+		}
+		var rowSecurity bool
+		if err := connection.QueryRow(ctx, `
+SELECT relation.relrowsecurity
+FROM pg_catalog.pg_class AS relation
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relname = 'actor_heads'`).Scan(&rowSecurity); err != nil || !rowSecurity {
+			t.Fatalf("actor RLS after malicious rollback = %v, error = %v", rowSecurity, err)
+		}
+		var ledgerRows int
+		if err := connection.QueryRow(ctx, `
+SELECT count(*)
+FROM wanwork_meta.schema_migrations`).Scan(&ledgerRows); err != nil || ledgerRows != 3 {
+			t.Fatalf("ledger rows after malicious rollback = %d, error = %v", ledgerRows, err)
+		}
+		var authorityTable *string
+		if err := connection.QueryRow(ctx, `
+SELECT pg_catalog.to_regclass('wanwork_im.conversation_access_heads')::text`).Scan(
+			&authorityTable,
+		); err != nil || authorityTable != nil {
+			t.Fatalf("authority table after malicious rollback = %v, error = %v", authorityTable, err)
+		}
+	})
+
+	t.Run("migration transactions ignore hostile ambient search path", func(t *testing.T) {
+		connection, _ := newIntegrationDatabase(t, adminURL)
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		if _, err := connection.Exec(ctx, `
+CREATE SCHEMA hostile;
+CREATE FUNCTION hostile.clock_timestamp()
+RETURNS timestamptz
+LANGUAGE sql
+IMMUTABLE
+AS $$ SELECT '2000-01-01T00:00:00Z'::timestamptz $$;
+SET search_path = hostile, pg_catalog`, pgx.QueryExecModeSimpleProtocol); err != nil {
+			t.Fatalf("create hostile search path: %v", err)
+		}
+		if _, err := Apply(ctx, connection); err != nil {
+			t.Fatalf("Apply with hostile search path: %v", err)
+		}
+		var searchPath string
+		if err := connection.QueryRow(ctx, "SELECT current_setting('search_path')").Scan(
+			&searchPath,
+		); err != nil || searchPath != "hostile, pg_catalog" {
+			t.Fatalf("ambient search path = %q, error = %v", searchPath, err)
+		}
+		var defaultExpression string
+		if err := connection.QueryRow(ctx, `
+SELECT pg_catalog.pg_get_expr(attribute_default.adbin, attribute_default.adrelid)
+FROM pg_catalog.pg_attrdef AS attribute_default
+JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute_default.adrelid
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+JOIN pg_catalog.pg_attribute AS attribute
+  ON attribute.attrelid = relation.oid
+ AND attribute.attnum = attribute_default.adnum
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relname = 'tenants'
+  AND attribute.attname = 'recorded_at'`).Scan(&defaultExpression); err != nil ||
+			defaultExpression != "pg_catalog.clock_timestamp()" {
+			t.Fatalf("recorded_at default = %q, error = %v", defaultExpression, err)
+		}
+	})
+
 	t.Run("conversation schema digest fixture", func(t *testing.T) {
 		connection, _ := newIntegrationDatabase(t, adminURL)
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
