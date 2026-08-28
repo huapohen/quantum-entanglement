@@ -1660,8 +1660,8 @@ class SQLiteEventStore:
     def _snapshot_generic_event(self, event: DomainEvent) -> _EventWriteSnapshot:
         """Freeze caller state and enforce the generic result-vocabulary fence."""
 
-        snapshot = self._snapshot_event(event)
-        self._reject_generic_reserved_result_event(snapshot.event)
+        snapshot = SQLiteEventStore._snapshot_event(self, event)
+        SQLiteEventStore._reject_generic_reserved_result_event(snapshot.event)
         return snapshot
 
     @staticmethod
@@ -1673,7 +1673,10 @@ class SQLiteEventStore:
         if event.event_type != _RESERVED_RESULT_TERMINAL_EVENT_TYPE:
             return
         for key in event.payload:
-            normalized = unicodedata.normalize("NFKC", key).casefold()
+            normalized = unicodedata.normalize(
+                "NFKD",
+                unicodedata.normalize("NFKC", key).casefold(),
+            )
             token = "".join(
                 character
                 for character in normalized
@@ -3344,7 +3347,7 @@ class SQLiteEventStore:
     ) -> StoredEvent:
         """Append one event, returning the existing record for an idempotent retry."""
 
-        event_snapshot = self._snapshot_generic_event(event)
+        event_snapshot = SQLiteEventStore._snapshot_generic_event(self, event)
         expected_version_snapshot = (
             None
             if expected_version is None
@@ -3382,7 +3385,7 @@ class SQLiteEventStore:
         """
 
         self._require_current_process()
-        event_snapshot = self._snapshot_generic_event(event)
+        event_snapshot = SQLiteEventStore._snapshot_generic_event(self, event)
         raw_batch = tuple(messages)
         batch = tuple(self._snapshot_outbox_message(message) for message in raw_batch)
         expected_version_snapshot = (
@@ -3486,7 +3489,7 @@ class SQLiteEventStore:
 
         consumer_id_snapshot = _caller_text(consumer_id, "consumer_id", required=True)
         message_id_snapshot = _caller_text(message_id, "message_id", required=True)
-        event_snapshot = self._snapshot_generic_event(event)
+        event_snapshot = SQLiteEventStore._snapshot_generic_event(self, event)
         result_snapshot = self._snapshot_json_object(
             {} if result is None else result,
             "inbox result",
@@ -3564,7 +3567,7 @@ class SQLiteEventStore:
         raw_batch = tuple(events)
         self._require_current_process()
         stream_id_snapshot = _caller_text(stream_id, "stream_id")
-        batch = tuple(self._snapshot_generic_event(event) for event in raw_batch)
+        batch = tuple(SQLiteEventStore._snapshot_generic_event(self, event) for event in raw_batch)
         if any(item.event.stream_id != stream_id_snapshot for item in batch):
             raise ValueError("all batch events must use the declared stream_id")
         if not batch:
@@ -3643,7 +3646,7 @@ class SQLiteEventStore:
 
         raw_batch = tuple(events)
         self._require_current_process()
-        batch = tuple(self._snapshot_generic_event(event) for event in raw_batch)
+        batch = tuple(SQLiteEventStore._snapshot_generic_event(self, event) for event in raw_batch)
         spec_snapshot = self._snapshot_invocation_job_spec(spec)
         expected_version_snapshot = (
             None
