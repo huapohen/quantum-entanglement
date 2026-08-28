@@ -19,7 +19,7 @@ BASE_VALUES: dict[str, object] = {
     "correlation_id": "corr-1",
     "causation_id": "event-start-1",
     "idempotency_key": "codec:event-1",
-    "payload_json": '{"artifactCount":2,"narration":"完成","nested":{"ok":true}}',
+    "payload_json": '{"artifactCount":2,"nested":{"ok":true},"unicodeText":"完成"}',
     "sequence": 7,
     "global_position": 19,
 }
@@ -28,11 +28,11 @@ EXPECTED_CANONICAL_BYTES = (
     b'"correlationId":"corr-1","eventId":"event-golden-1",'
     b'"eventType":"codec.golden.checked","globalPosition":19,'
     b'"idempotencyKey":"codec:event-1","payload":{"artifactCount":2,'
-    b'"narration":"\xe5\xae\x8c\xe6\x88\x90","nested":{"ok":true}},'
+    b'"nested":{"ok":true},"unicodeText":"\xe5\xae\x8c\xe6\x88\x90"},'
     b'"schemaVersion":1,"sequence":7,"streamId":"session:alpha",'
     b'"timestamp":"2026-08-28T09:10:11.123456Z"}'
 )
-EXPECTED_DIGEST = "9a2f7b7b20dbd320adf2a3ba8818fa9a5cb15668b6d0c68567290ac74bc55e54"
+EXPECTED_DIGEST = "a7a2a28ed93454fe925dbdf676acd6bf758b9c5ac7afc50eeeae867d3d08e538"
 RAW_COLUMNS = (
     "global_position",
     "stream_id",
@@ -101,8 +101,8 @@ def test_canonical_body_and_domain_separated_digest_are_exact() -> None:
         "idempotencyKey": "codec:event-1",
         "payload": {
             "artifactCount": 2,
-            "narration": "完成",
             "nested": {"ok": True},
+            "unicodeText": "完成",
         },
         "sequence": 7,
         "globalPosition": 19,
@@ -139,8 +139,8 @@ def test_returned_payload_is_a_detached_copy_and_internal_tampering_fails_closed
 
     assert value.to_dict()["payload"] == {
         "artifactCount": 2,
-        "narration": "完成",
         "nested": {"ok": True},
+        "unicodeText": "完成",
     }
     assert value.digest() == EXPECTED_DIGEST
 
@@ -166,15 +166,15 @@ def test_returned_payload_is_a_detached_copy_and_internal_tampering_fails_closed
         ("idempotency_key", None),
         (
             "payload_json",
-            '{"artifactCount":3,"narration":"完成","nested":{"ok":true}}',
+            '{"artifactCount":3,"nested":{"ok":true},"unicodeText":"完成"}',
         ),
         (
             "payload_json",
-            '{"artifactCount":2,"narration":"已完成","nested":{"ok":true}}',
+            '{"artifactCount":2,"nested":{"ok":true},"unicodeText":"已完成"}',
         ),
         (
             "payload_json",
-            '{"artifactCount":2,"narration":"完成","nested":{"ok":false}}',
+            '{"artifactCount":2,"nested":{"ok":false},"unicodeText":"完成"}',
         ),
         ("sequence", 8),
         ("global_position", 20),
@@ -286,7 +286,7 @@ def test_raw_sqlite_row_and_frozen_values_have_one_digest() -> None:
         ("timestamp", "2026-08-28T09:10:12.123456Z"),
         (
             "payload_json",
-            '{"artifactCount":3,"narration":"完成","nested":{"ok":true}}',
+            '{"artifactCount":3,"nested":{"ok":true},"unicodeText":"完成"}',
         ),
         ("correlation_id", None),
         ("causation_id", None),
