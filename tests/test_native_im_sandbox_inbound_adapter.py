@@ -25,6 +25,7 @@ from quantum_entanglement.native_im_sandbox import (
     NativeIMInboundOnlySandboxAdapter,
     NativeIMInboundRawResponseV1,
     NativeIMMappedPageV1,
+    NativeIMMapperRejectionError,
     NativeIMOutboundForbiddenError,
     NativeIMSandboxAdapterClosedError,
     NativeIMSandboxAdapterProcessMismatchError,
@@ -62,6 +63,33 @@ MAPPER_CONTRACT_DIGEST = "3" * 64
 MAPPING_EVIDENCE = "ed5536a7e07a208dab7d81d09f48a167d0b8fbc187306f9db09f65896fc304f6"
 RAW_BODY = b'{"providerEvents":["test-event-1"]}'
 READ_CREDENTIAL = b"test-read-only-credential"
+
+
+def test_mapper_rejection_error_has_one_closed_redacted_code_catalog() -> None:
+    class StrSubclass(str):
+        pass
+
+    for code in (
+        "native_im_mapper_correlation_mismatch",
+        "native_im_mapper_limit_exceeded",
+        "native_im_mapper_payload_invalid",
+        "native_im_mapper_payload_unsupported",
+        "native_im_mapper_scope_mismatch",
+    ):
+        error = NativeIMMapperRejectionError(code)
+        assert error.code == code
+        assert str(error) == code
+        assert repr(error) == f"NativeIMMapperRejectionError({code!r})"
+        assert error.__cause__ is None
+        assert error.__context__ is None
+
+    for invalid in (
+        "provider-body-canary",
+        "",
+        StrSubclass("native_im_mapper_payload_invalid"),
+    ):
+        with pytest.raises(ValueError, match="not registered"):
+            NativeIMMapperRejectionError(invalid)
 
 
 class ReplayGuard:
