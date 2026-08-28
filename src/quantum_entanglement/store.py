@@ -1646,6 +1646,7 @@ class SQLiteEventStore:
         handle: _ResultArtifactTransactionHandle,
         batch: _PreparedResultArtifactBatch,
     ) -> Tuple[_ScopedInvocationResultArtifactV2, ...]:
+        connection: Optional[sqlite3.Connection] = None
         try:
             connection = self._connection_for_result_artifact_transaction(handle)
             if type(batch) is not _PreparedResultArtifactBatch:
@@ -1662,6 +1663,16 @@ class SQLiteEventStore:
             return result
         except BaseException:
             if self._process_is_current():
+                if type(connection) is sqlite3.Connection:
+                    try:
+                        transaction_open = connection.in_transaction
+                    except BaseException:
+                        self._poisoned = True
+                    else:
+                        if type(transaction_open) is not bool or not transaction_open:
+                            # A dependency that closes the private owner transaction can
+                            # have committed work outside this writer's rollback authority.
+                            self._poisoned = True
                 generation = self._active_result_artifact_transaction_generation
                 if type(generation) is int and generation > 0:
                     self._result_artifact_transaction_rollback_only = True

@@ -11,7 +11,6 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -356,7 +355,9 @@ class ResultArtifactTransactionHandleTests(unittest.TestCase):
                 os.waitpid(child_pid, 0)
 
         self.assertEqual(
-            self.store._connection.execute("SELECT count(*) FROM artifact_versions").fetchone()[0],
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
             1,
         )
 
@@ -392,7 +393,9 @@ class ResultArtifactTransactionHandleTests(unittest.TestCase):
         finally:
             self.store._connection.set_authorizer(None)
         self.assertEqual(
-            self.store._connection.execute("SELECT count(*) FROM artifact_versions").fetchone()[0],
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
             0,
         )
 
@@ -472,8 +475,8 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
     def counts(self) -> tuple[int, int]:
         connection = self.store._connection
         return (
-            connection.execute("SELECT count(*) FROM artifact_blobs").fetchone()[0],
-            connection.execute("SELECT count(*) FROM artifact_versions").fetchone()[0],
+            connection.execute("SELECT count(*) FROM main.artifact_blobs").fetchone()[0],
+            connection.execute("SELECT count(*) FROM main.artifact_versions").fetchone()[0],
         )
 
     def test_ordered_batch_commits_exact_descriptors_and_deduplicated_blob(self) -> None:
@@ -493,7 +496,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
                 metadata_json,
                 typeof(metadata_json) AS metadata_storage,
                 created_at
-            FROM artifact_versions
+            FROM main.artifact_versions
             ORDER BY artifact_id
             """
         ).fetchall()
@@ -531,7 +534,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         connection.execute("PRAGMA ignore_check_constraints=ON")
         try:
             connection.execute(
-                "UPDATE artifact_versions SET parent_version = 99 WHERE artifact_id = ?",
+                "UPDATE main.artifact_versions SET parent_version = 99 WHERE artifact_id = ?",
                 (second.artifact_id,),
             )
         finally:
@@ -548,7 +551,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         self.assertEqual(self.counts(), before)
         self.assertIsNone(
             connection.execute(
-                "SELECT digest FROM artifact_blobs WHERE digest = ?",
+                "SELECT digest FROM main.artifact_blobs WHERE digest = ?",
                 (successor.blob_digest,),
             ).fetchone()
         )
@@ -565,12 +568,12 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         mutations = (
             (
                 "timestamp",
-                "UPDATE artifact_versions SET created_at = 'not-a-timestamp' "
+                "UPDATE main.artifact_versions SET created_at = 'not-a-timestamp' "
                 "WHERE artifact_id = ?",
             ),
             (
                 "metadata-storage",
-                "UPDATE artifact_versions SET metadata_json = CAST(metadata_json AS BLOB) "
+                "UPDATE main.artifact_versions SET metadata_json = CAST(metadata_json AS BLOB) "
                 "WHERE artifact_id = ?",
             ),
         )
@@ -583,7 +586,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
                 self.assertEqual(self.counts(), before)
                 connection.execute(
                     """
-                    UPDATE artifact_versions
+                    UPDATE main.artifact_versions
                     SET metadata_json = ?, created_at = ?
                     WHERE artifact_id = ?
                     """,
@@ -633,7 +636,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         self.write(first)
         connection = self.store._connection
         connection.execute(
-            "UPDATE artifact_versions SET metadata_json = ? WHERE artifact_id = ?",
+            "UPDATE main.artifact_versions SET metadata_json = ? WHERE artifact_id = ?",
             (
                 "x" * (result_artifact_transaction_module.MAX_ARTIFACT_METADATA_BYTES + 1),
                 first.artifact_id,
@@ -655,7 +658,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
             parameters: tuple[object, ...] = (),
         ) -> object:
             nonlocal materialized_history
-            if "FROM artifact_versions" in sql and "WHERE rowid = ?" in sql:
+            if "FROM main.artifact_versions" in sql and "WHERE rowid = ?" in sql:
                 materialized_history = True
             return real_fetchone(
                 connection,
@@ -695,7 +698,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         self.assertEqual(self.counts(), before)
         self.assertIsNone(
             self.store._connection.execute(
-                "SELECT digest FROM artifact_blobs WHERE digest = ?",
+                "SELECT digest FROM main.artifact_blobs WHERE digest = ?",
                 (stale.blob_digest,),
             ).fetchone()
         )
@@ -718,7 +721,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         for item in (first, stale_second):
             self.assertIsNone(
                 self.store._connection.execute(
-                    "SELECT digest FROM artifact_blobs WHERE digest = ?",
+                    "SELECT digest FROM main.artifact_blobs WHERE digest = ?",
                     (item.blob_digest,),
                 ).fetchone()
             )
@@ -750,7 +753,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         self.assertEqual(self.counts(), before)
         self.assertIsNone(
             self.store._connection.execute(
-                "SELECT digest FROM artifact_blobs WHERE digest = ?",
+                "SELECT digest FROM main.artifact_blobs WHERE digest = ?",
                 (crossed.blob_digest,),
             ).fetchone()
         )
@@ -763,7 +766,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         third = replace(candidate(2), name=first.name, expected_head_version=2)
         self.write(third)
         self.store._connection.execute(
-            "DELETE FROM artifact_versions WHERE artifact_id = ?",
+            "DELETE FROM main.artifact_versions WHERE artifact_id = ?",
             (second.artifact_id,),
         )
         successor = replace(
@@ -777,7 +780,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         self.assertEqual(self.counts(), before)
         self.assertIsNone(
             self.store._connection.execute(
-                "SELECT digest FROM artifact_blobs WHERE digest = ?",
+                "SELECT digest FROM main.artifact_blobs WHERE digest = ?",
                 (successor.blob_digest,),
             ).fetchone()
         )
@@ -809,7 +812,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         try:
             connection.execute(
                 """
-                INSERT INTO artifact_blobs(digest, content, byte_size, created_at)
+                INSERT INTO main.artifact_blobs(digest, content, byte_size, created_at)
                 VALUES (?, ?, ?, ?)
                 """,
                 (item.blob_digest, "not-a-blob", len(item.content), self.now),
@@ -825,7 +828,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         item = candidate(0)
         self.store._connection.execute(
             """
-            INSERT INTO artifact_blobs(digest, content, byte_size, created_at)
+            INSERT INTO main.artifact_blobs(digest, content, byte_size, created_at)
             VALUES (?, ?, ?, ?)
             """,
             (
@@ -844,9 +847,9 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         self.write(candidate())
         timestamps = self.store._connection.execute(
             """
-            SELECT created_at FROM artifact_blobs
+            SELECT created_at FROM main.artifact_blobs
             UNION ALL
-            SELECT created_at FROM artifact_versions
+            SELECT created_at FROM main.artifact_versions
             """
         ).fetchall()
         self.assertEqual(
@@ -947,6 +950,64 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         self.assertEqual(side_effects, [])
         self.assertEqual(self.counts(), (0, 0))
 
+    def test_clock_created_temp_tables_cannot_shadow_main_artifact_dml(self) -> None:
+        connection = self.store._connection
+
+        def hostile_clock() -> str:
+            connection.set_progress_handler(None, 0)
+            connection.execute(
+                """
+                CREATE TEMP TABLE artifact_blobs (
+                    digest TEXT PRIMARY KEY,
+                    content BLOB NOT NULL,
+                    byte_size INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TEMP TABLE artifact_versions (
+                    artifact_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    parent_version INTEGER,
+                    media_type TEXT NOT NULL,
+                    blob_digest TEXT NOT NULL,
+                    byte_size INTEGER NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    request_digest TEXT NOT NULL
+                )
+                """
+            )
+            return self.now
+
+        self.store._clock = hostile_clock
+        with self.assertRaisesRegex(
+            _ResultArtifactIntegrityError,
+            "transaction integrity failed",
+        ):
+            self.write(candidate())
+
+        self.assertEqual(self.counts(), (0, 0))
+        self.assertIsNone(
+            connection.execute(
+                """
+                SELECT name
+                FROM temp.sqlite_temp_schema
+                WHERE name IN ('artifact_blobs', 'artifact_versions')
+                LIMIT 1
+                """
+            ).fetchone()
+        )
+
     def test_clock_owned_sqlite_callbacks_cannot_survive_into_dml(self) -> None:
         connection = self.store._connection
         callback_statements: list[str] = []
@@ -973,37 +1034,58 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         self.assertEqual(authorizer_actions, [])
         self.assertEqual(self.counts(), (1, 1))
 
-    def test_clock_cannot_close_or_mutate_the_owner_transaction(self) -> None:
+    def test_clock_database_mutation_rolls_back_the_owner_transaction(self) -> None:
         connection = self.store._connection
-        statements = (
-            "ROLLBACK",
-            "COMMIT",
-            "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
-            "VALUES ('clock-mutation', 1, '{}', '2026-08-29T00:00:00Z')",
+
+        def hostile_clock() -> str:
+            connection.execute(
+                "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
+                "VALUES ('clock-mutation', 1, '{}', '2026-08-29T00:00:00Z')"
+            )
+            return self.now
+
+        self.store._clock = hostile_clock
+        with self.assertRaisesRegex(
+            _ResultArtifactIntegrityError,
+            "transaction integrity failed",
+        ):
+            self.write(candidate())
+        self.assertEqual(self.counts(), (0, 0))
+        self.assertIsNone(
+            connection.execute(
+                "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-mutation'"
+            ).fetchone()
         )
+        self.assertFalse(connection.in_transaction)
+        self.assertFalse(self.store._poisoned)
 
-        def clock_for(statement: str) -> Callable[[], str]:
-            def hostile_clock() -> str:
-                connection.execute(statement)
-                return self.now
+    def test_clock_committed_mutation_fails_and_poisons_the_store(self) -> None:
+        connection = self.store._connection
 
-            return hostile_clock
+        def hostile_clock() -> str:
+            connection.execute(
+                "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
+                "VALUES ('clock-committed', 1, '{}', '2026-08-29T00:00:00Z')"
+            )
+            connection.execute("COMMIT")
+            return self.now
 
-        for statement in statements:
-            with self.subTest(statement=statement):
-                self.store._clock = clock_for(statement)
-                with self.assertRaisesRegex(
-                    _ResultArtifactIntegrityError,
-                    "transaction integrity failed",
-                ):
-                    self.write(candidate())
-                self.assertEqual(self.counts(), (0, 0))
-                self.assertIsNone(
-                    connection.execute(
-                        "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-mutation'"
-                    ).fetchone()
-                )
-                self.assertFalse(connection.in_transaction)
+        self.store._clock = hostile_clock
+        with self.assertRaisesRegex(
+            _ResultArtifactIntegrityError,
+            "transaction integrity failed",
+        ):
+            self.write(candidate())
+
+        self.assertEqual(self.counts(), (0, 0))
+        self.assertEqual(
+            connection.execute(
+                "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-committed'"
+            ).fetchone()[0],
+            "clock-committed",
+        )
+        self.assertFalse(connection.in_transaction)
+        self.assertTrue(self.store._poisoned)
 
     def test_sqlite_trace_boundary_process_cut_aborts_during_preflight(self) -> None:
         current = True
@@ -1067,7 +1149,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
             parameters: tuple[object, ...] = (),
         ) -> None:
             nonlocal version_inserts
-            if "INSERT INTO artifact_versions" in sql:
+            if "INSERT INTO main.artifact_versions" in sql:
                 version_inserts += 1
                 if version_inserts == 2:
                     raise sqlite3.OperationalError("injected second version failure")
@@ -1150,12 +1232,14 @@ class ResultArtifactConcurrentWriterTests(unittest.TestCase):
                 self.assertEqual(sorted(outcomes), ["committed", "concurrency"])
                 self.assertEqual(
                     stores[0]._connection.execute(
-                        "SELECT count(*) FROM artifact_versions"
+                        "SELECT count(*) FROM main.artifact_versions"
                     ).fetchone()[0],
                     1,
                 )
                 self.assertEqual(
-                    stores[0]._connection.execute("SELECT count(*) FROM artifact_blobs").fetchone()[
+                    stores[0]._connection.execute(
+                        "SELECT count(*) FROM main.artifact_blobs"
+                    ).fetchone()[
                         0
                     ],
                     1,
@@ -1199,13 +1283,13 @@ class ResultArtifactCrashRollbackTests(unittest.TestCase):
                     try:
                         self.assertEqual(
                             recovered._connection.execute(
-                                "SELECT count(*) FROM artifact_blobs"
+                                "SELECT count(*) FROM main.artifact_blobs"
                             ).fetchone()[0],
                             0,
                         )
                         self.assertEqual(
                             recovered._connection.execute(
-                                "SELECT count(*) FROM artifact_versions"
+                                "SELECT count(*) FROM main.artifact_versions"
                             ).fetchone()[0],
                             0,
                         )

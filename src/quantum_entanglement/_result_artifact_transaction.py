@@ -15,6 +15,7 @@ from ._artifact_codec import (
     artifact_request_digest_v1,
     decode_canonical_artifact_metadata_v1,
 )
+from ._sqlite_schema_codec import backup_schema_ddl_sha256
 from .invocation_results import (
     ScopedInvocationResultArtifactCandidateV2,
     ScopedInvocationResultArtifactV2,
@@ -25,6 +26,7 @@ _MAX_RESULT_ARTIFACT_CONTENT_BYTES = 64 * 1024 * 1024
 _MAX_RESULT_ARTIFACT_METADATA_BYTES = 1_048_576
 _RESULT_ARTIFACT_HISTORY_FETCH_BATCH_SIZE = 64
 _RESULT_ARTIFACT_TRANSACTION_TOKEN = object()
+_MISSING_RESULT_ARTIFACT_SCHEMA_DIGEST = object()
 
 _HEAD_AGGREGATE_COLUMNS = (
     "row_count",
@@ -32,7 +34,37 @@ _HEAD_AGGREGATE_COLUMNS = (
     "maximum_version",
     "invalid_lineage_count",
 )
-_TRIGGER_COLUMNS = ("schema_name",)
+_SCHEMA_VERSION_COLUMNS = ("schema_version",)
+_SCHEMA_OBJECT_COLUMNS = (
+    "object_type",
+    "object_name",
+    "table_name",
+    "root_page",
+    "ddl_sql",
+)
+_TEMP_SCHEMA_OBJECT_COLUMNS = ("object_type", "object_name", "table_name")
+_RESULT_ARTIFACT_TABLE_NAMES = frozenset({"artifact_blobs", "artifact_versions"})
+_RESULT_ARTIFACT_SCHEMA_DDL_SHA256 = {
+    ("index", "idx_artifact_versions_digest", "artifact_versions"): (
+        "6f96c49420ce234a4f3f93a757647613040e9432430e1e0aa0152f47ef34a6a7"
+    ),
+    ("index", "idx_artifact_versions_head", "artifact_versions"): (
+        "cb903e3efc219003501022cf9e03bc7527c09d0040878758f3a9de5caff78995"
+    ),
+    ("index", "idx_artifact_versions_task", "artifact_versions"): (
+        "56b79bb782d84f96b26087766b823a007dd04b6b2c0c521330fdc3e4aef82efb"
+    ),
+    ("index", "sqlite_autoindex_artifact_blobs_1", "artifact_blobs"): None,
+    ("index", "sqlite_autoindex_artifact_versions_1", "artifact_versions"): None,
+    ("index", "sqlite_autoindex_artifact_versions_2", "artifact_versions"): None,
+    ("index", "sqlite_autoindex_artifact_versions_3", "artifact_versions"): None,
+    ("table", "artifact_blobs", "artifact_blobs"): (
+        "2c32324870b0be6b8f5ea524575912ff0eb08be9be10cc3cae28e96069cc35e9"
+    ),
+    ("table", "artifact_versions", "artifact_versions"): (
+        "5fdaf59eed765b0f5b9ebddf1140e78d79a87803cf4d2a847a9dd596e447f9d6"
+    ),
+}
 _BLOB_COLUMNS = (
     "digest",
     "content",
@@ -541,20 +573,36 @@ def _result_artifact_process_progress_fence(
 
     def authorize(
         action: int,
-        _first: object,
-        _second: object,
-        _database: object,
+        first: object,
+        second: object,
+        database: object,
         source: object,
     ) -> int:
         try:
             process_guard()
         except BaseException:
             return sqlite3.SQLITE_DENY
-        if action in {sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_DROP_TRIGGER}:
-            return sqlite3.SQLITE_DENY
         if source is not None:
             return sqlite3.SQLITE_DENY
-        return sqlite3.SQLITE_OK
+        if action in {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_FUNCTION}:
+            return sqlite3.SQLITE_OK
+        if action == sqlite3.SQLITE_READ:
+            if database == "main" and first in {
+                "sqlite_master",
+                *_RESULT_ARTIFACT_TABLE_NAMES,
+            }:
+                return sqlite3.SQLITE_OK
+            if database == "temp" and first == "sqlite_temp_master":
+                return sqlite3.SQLITE_OK
+        if (
+            action == sqlite3.SQLITE_INSERT
+            and database == "main"
+            and first in _RESULT_ARTIFACT_TABLE_NAMES
+        ):
+            return sqlite3.SQLITE_OK
+        if action == sqlite3.SQLITE_PRAGMA and first == "schema_version" and second is None:
+            return sqlite3.SQLITE_OK
+        return sqlite3.SQLITE_DENY
 
     def claim_callbacks() -> None:
         nonlocal callbacks_claimed
@@ -581,29 +629,121 @@ def _result_artifact_process_progress_fence(
         _run_process_guard(process_guard)
 
 
-def _verify_result_artifact_trigger_topology(
+def _result_artifact_schema_snapshot(
     connection: sqlite3.Connection,
     process_guard: Callable[[], None],
-) -> None:
-    raw_trigger = _guarded_fetchone(
+) -> tuple[int, tuple[tuple[str, str, str, int, str | None], ...]]:
+    raw_temp_object = _guarded_fetchone(
         connection,
         process_guard,
         """
-        SELECT 'main' AS schema_name
-        FROM main.sqlite_schema
-        WHERE type = 'trigger' AND tbl_name IN ('artifact_blobs', 'artifact_versions')
-        UNION ALL
-        SELECT 'temp' AS schema_name
+        SELECT
+            type AS object_type,
+            name AS object_name,
+            tbl_name AS table_name
         FROM temp.sqlite_temp_schema
-        WHERE type = 'trigger' AND tbl_name IN ('artifact_blobs', 'artifact_versions')
+        WHERE
+            name IN ('artifact_blobs', 'artifact_versions')
+            OR tbl_name IN ('artifact_blobs', 'artifact_versions')
         LIMIT 1
         """,
     )
-    if raw_trigger is not None:
-        _require_exact_row(raw_trigger, _TRIGGER_COLUMNS)
+    if raw_temp_object is not None:
+        _require_exact_row(raw_temp_object, _TEMP_SCHEMA_OBJECT_COLUMNS)
         raise _ResultArtifactIntegrityError(
-            "result Artifact tables contain an unexpected trigger"
+            "result Artifact tables are shadowed by an unexpected TEMP schema object"
         )
+
+    raw_schema_version = _guarded_fetchone(
+        connection,
+        process_guard,
+        "PRAGMA main.schema_version",
+    )
+    if raw_schema_version is None:
+        raise _ResultArtifactIntegrityError("result Artifact schema version is missing")
+    schema_version_row = _require_exact_row(
+        raw_schema_version,
+        _SCHEMA_VERSION_COLUMNS,
+    )
+    schema_version = _exact_row_integer(schema_version_row, "schema_version")
+
+    raw_objects = _guarded_fetchall(
+        connection,
+        process_guard,
+        """
+        SELECT
+            type AS object_type,
+            name AS object_name,
+            tbl_name AS table_name,
+            rootpage AS root_page,
+            sql AS ddl_sql
+        FROM main.sqlite_schema
+        WHERE
+            name IN (
+                'artifact_blobs',
+                'artifact_versions',
+                'idx_artifact_versions_digest',
+                'idx_artifact_versions_head',
+                'idx_artifact_versions_task',
+                'sqlite_autoindex_artifact_blobs_1',
+                'sqlite_autoindex_artifact_versions_1',
+                'sqlite_autoindex_artifact_versions_2',
+                'sqlite_autoindex_artifact_versions_3'
+            )
+            OR tbl_name IN ('artifact_blobs', 'artifact_versions')
+        ORDER BY type, name
+        """,
+    )
+    if len(raw_objects) != len(_RESULT_ARTIFACT_SCHEMA_DDL_SHA256):
+        raise _ResultArtifactIntegrityError("result Artifact main schema topology changed")
+    observed: list[tuple[str, str, str, int, str | None]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw_object in raw_objects:
+        row = _require_exact_row(raw_object, _SCHEMA_OBJECT_COLUMNS)
+        coordinate = (
+            _exact_row_text(row, "object_type"),
+            _exact_row_text(row, "object_name"),
+            _exact_row_text(row, "table_name"),
+        )
+        if coordinate in seen:
+            raise _ResultArtifactIntegrityError(
+                "result Artifact main schema coordinates are duplicated"
+            )
+        seen.add(coordinate)
+        expected_digest = _RESULT_ARTIFACT_SCHEMA_DDL_SHA256.get(
+            coordinate,
+            _MISSING_RESULT_ARTIFACT_SCHEMA_DIGEST,
+        )
+        if expected_digest is _MISSING_RESULT_ARTIFACT_SCHEMA_DIGEST:
+            raise _ResultArtifactIntegrityError(
+                "result Artifact main schema contains an unexpected object"
+            )
+        root_page = _exact_row_integer(row, "root_page", minimum=1)
+        ddl_sql = _exact_row_value(row, "ddl_sql")
+        if expected_digest is None:
+            if ddl_sql is not None:
+                raise _ResultArtifactIntegrityError(
+                    "result Artifact autoindex unexpectedly has catalog SQL"
+                )
+        else:
+            if type(ddl_sql) is not str:
+                raise _ResultArtifactIntegrityError(
+                    "result Artifact explicit schema SQL is missing"
+                )
+            try:
+                actual_digest = backup_schema_ddl_sha256(ddl_sql)
+            except (TypeError, ValueError) as error:
+                raise _ResultArtifactIntegrityError(
+                    "result Artifact explicit schema SQL is invalid"
+                ) from error
+            if actual_digest != expected_digest:
+                raise _ResultArtifactIntegrityError(
+                    "result Artifact explicit schema DDL changed"
+                )
+        observed.append((*coordinate, root_page, ddl_sql))
+    if seen != set(_RESULT_ARTIFACT_SCHEMA_DDL_SHA256):
+        raise _ResultArtifactIntegrityError("result Artifact main schema topology changed")
+    return schema_version, tuple(observed)
 
 
 def _exact_row_text(row: sqlite3.Row, name: str) -> str:
@@ -643,7 +783,7 @@ def _preflight_result_artifact_head(
                     ELSE 1
                 END
             ), 0) AS invalid_lineage_count
-        FROM artifact_versions
+        FROM main.artifact_versions
         WHERE tenant_id = ? AND workspace_id = ?
           AND session_id = ? AND name = ?
         """,
@@ -719,7 +859,7 @@ def _verify_existing_result_artifact_history(
             length(CAST(idempotency_key AS BLOB)) AS idempotency_key_bytes,
             typeof(request_digest) AS request_digest_storage,
             length(CAST(request_digest AS BLOB)) AS request_digest_bytes
-        FROM artifact_versions
+        FROM main.artifact_versions
         WHERE tenant_id = ? AND workspace_id = ?
           AND session_id = ? AND name = ?
         ORDER BY version ASC
@@ -792,7 +932,7 @@ def _verify_existing_result_artifact_history(
                         created_at,
                         idempotency_key,
                         request_digest
-                    FROM artifact_versions
+                    FROM main.artifact_versions
                     WHERE rowid = ?
                     """,
                     (row_id,),
@@ -872,7 +1012,7 @@ def _preflight_result_artifact_identity(
         process_guard,
         """
         SELECT artifact_id
-        FROM artifact_versions
+        FROM main.artifact_versions
         WHERE artifact_id = ?
            OR (tenant_id = ? AND workspace_id = ? AND idempotency_key = ?)
         LIMIT 2
@@ -907,7 +1047,7 @@ def _select_result_artifact_blob(
             typeof(byte_size) AS byte_size_storage,
             typeof(created_at) AS created_at_storage,
             length(content) AS content_length
-        FROM artifact_blobs
+        FROM main.artifact_blobs
         WHERE digest = ?
         """,
         (digest,),
@@ -979,7 +1119,7 @@ def _verify_result_artifact_version(
             created_at,
             idempotency_key,
             request_digest
-        FROM artifact_versions
+        FROM main.artifact_versions
         WHERE artifact_id = ?
         """,
         (item.artifact_id,),
@@ -1044,7 +1184,7 @@ def _write_prepared_result_artifacts_in_transaction_body(
     if not callable(claim_sqlite_callbacks):
         raise TypeError("result Artifact SQLite callback claim must be callable")
     _require_exact_connection_codec(connection)
-    _verify_result_artifact_trigger_topology(connection, process_guard)
+    schema_snapshot = _result_artifact_schema_snapshot(connection, process_guard)
     if not batch.items:
         return ()
     for item in batch.items:
@@ -1075,14 +1215,17 @@ def _write_prepared_result_artifacts_in_transaction_body(
         raise _ResultArtifactIntegrityError(
             "result Artifact owner transaction changed during clock sampling"
         )
-    _verify_result_artifact_trigger_topology(connection, process_guard)
+    if _result_artifact_schema_snapshot(connection, process_guard) != schema_snapshot:
+        raise _ResultArtifactIntegrityError(
+            "result Artifact schema changed during clock sampling"
+        )
     fresh_blobs = 0
     for item in batch.items:
         _guarded_execute(
             connection,
             process_guard,
             """
-            INSERT INTO artifact_blobs(digest, content, byte_size, created_at)
+            INSERT INTO main.artifact_blobs(digest, content, byte_size, created_at)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(digest) DO NOTHING
             """,
@@ -1120,7 +1263,7 @@ def _write_prepared_result_artifacts_in_transaction_body(
                 connection,
                 process_guard,
                 """
-                INSERT INTO artifact_versions(
+                INSERT INTO main.artifact_versions(
                     artifact_id,
                     tenant_id,
                     workspace_id,
@@ -1187,7 +1330,10 @@ def _write_prepared_result_artifacts_in_transaction_body(
         raise _ResultArtifactIntegrityError(
             "result Artifact owner transaction closed before final readback"
         )
-    _verify_result_artifact_trigger_topology(connection, process_guard)
+    if _result_artifact_schema_snapshot(connection, process_guard) != schema_snapshot:
+        raise _ResultArtifactIntegrityError(
+            "result Artifact schema changed during owner DML"
+        )
     _run_process_guard(process_guard)
     return tuple(item.descriptor for item in batch.items)
 
