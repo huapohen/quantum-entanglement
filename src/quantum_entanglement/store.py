@@ -131,10 +131,19 @@ from .invocation_results import (
     ScopedInvocationResultArtifactV2 as _ScopedInvocationResultArtifactV2,
 )
 from .invocation_results import (
+    ScopedInvocationResultEventCoordinatesV2 as _ScopedInvocationResultEventCoordinatesV2,
+)
+from .invocation_results import (
     ScopedInvocationResultEvidenceV2 as _ScopedInvocationResultEvidenceV2,
 )
 from .invocation_results import (
+    ScopedInvocationResultReceiptV2 as _ScopedInvocationResultReceiptV2,
+)
+from .invocation_results import (
     ScopedInvocationResultTerminalTransitionV2 as _ScopedInvocationResultTerminalTransitionV2,
+)
+from .invocation_results import (
+    build_scoped_invocation_result_receipt_v2 as _build_scoped_invocation_result_receipt_v2,
 )
 from .invocation_results import (
     scoped_invocation_start_receipt_digest_v3 as _scoped_invocation_start_receipt_digest_v3,
@@ -1275,6 +1284,105 @@ class _InsertedFreshResultAcceptancePlanV2:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("inserted result acceptance plans cannot be serialized")
+
+
+class _ReceiptedFreshResultAcceptancePlanV2:
+    """One exact receipt reconstructed from freshly verified event rows."""
+
+    __slots__ = ("__active", "__inserted", "__receipt")
+
+    def __init__(
+        self,
+        *,
+        inserted: _InsertedFreshResultAcceptancePlanV2,
+        receipt: _ScopedInvocationResultReceiptV2,
+        token: object,
+    ) -> None:
+        if type(self) is not _ReceiptedFreshResultAcceptancePlanV2:
+            raise TypeError("receipted result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("receipted result acceptance plan constructor is private")
+        self.__inserted = inserted
+        self.__receipt = receipt
+        self.__active = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> tuple[_InsertedFreshResultAcceptancePlanV2, _ScopedInvocationResultReceiptV2]:
+        if type(self) is not _ReceiptedFreshResultAcceptancePlanV2:
+            raise TypeError("receipted result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("receipted result acceptance plan validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("receipted result acceptance plan is no longer active")
+        inserted = self.__inserted
+        if type(inserted) is not _InsertedFreshResultAcceptancePlanV2:
+            raise TypeError("receipted result acceptance insert plan is not exact")
+        evented, result_stored, result_envelope, terminal_stored, terminal_envelope = (
+            inserted._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        )
+        transitioned, result_event, terminal_event = evented._validated(
+            token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+        )
+        evidenced, terminal_transition = transitioned._validated(
+            token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+        )
+        identified, evidence = evidenced._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        materialized, _, _, _ = identified._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        prepared, _, _, _ = materialized._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        result_coordinates = _ScopedInvocationResultEventCoordinatesV2(
+            event_id=result_stored.event.event_id,
+            stream_id=result_stored.event.stream_id,
+            event_type=result_stored.event.event_type,
+            sequence=result_stored.sequence,
+            global_position=result_stored.global_position,
+            event_envelope_digest=_StoredEventEnvelopeV1.digest(result_envelope),
+        )
+        terminal_coordinates = _ScopedInvocationResultEventCoordinatesV2(
+            event_id=terminal_stored.event.event_id,
+            stream_id=terminal_stored.event.stream_id,
+            event_type=terminal_stored.event.event_type,
+            sequence=terminal_stored.sequence,
+            global_position=terminal_stored.global_position,
+            event_envelope_digest=_StoredEventEnvelopeV1.digest(terminal_envelope),
+        )
+        expected = _build_scoped_invocation_result_receipt_v2(
+            prepared.request,
+            evidence,
+            result_event=result_coordinates,
+            terminal_event=terminal_coordinates,
+            terminal_transition=terminal_transition,
+        )
+        receipt = self.__receipt
+        if type(receipt) is not _ScopedInvocationResultReceiptV2:
+            raise TypeError("result acceptance receipt is not exact")
+        receipt_snapshot = _ScopedInvocationResultReceiptV2.from_dict(
+            _ScopedInvocationResultReceiptV2.to_dict(receipt)
+        )
+        if receipt_snapshot != expected:
+            raise ValueError("result acceptance receipt differs from its inserted event graph")
+        if result_event != result_stored.event or terminal_event != terminal_stored.event:
+            raise ValueError("result acceptance inserted events differ from their canonical pair")
+        return inserted, receipt_snapshot
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("receipted result acceptance plan invalidation is private")
+        self.__active = False
+        object.__setattr__(self, "_ReceiptedFreshResultAcceptancePlanV2__inserted", None)
+        object.__setattr__(self, "_ReceiptedFreshResultAcceptancePlanV2__receipt", None)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("receipted result acceptance plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("receipted result acceptance plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("receipted result acceptance plans cannot be serialized")
 
 
 @dataclass(frozen=True)
@@ -3221,6 +3329,90 @@ class SQLiteEventStore:
                 yield inserted
             finally:
                 inserted._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    @_bind_event_store_process
+    def _construct_result_acceptance_receipt_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> ContextManager[
+        _ExistingResultAcceptanceGraphCandidateV2 | _ReceiptedFreshResultAcceptancePlanV2
+    ]:
+        """Construct one exact receipt from the freshly verified event pair."""
+
+        return self._construct_result_acceptance_receipt_in_owner_transaction_inner(
+            handle,
+            prepared,
+        )
+
+    @contextmanager
+    def _construct_result_acceptance_receipt_in_owner_transaction_inner(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> Iterator[
+        _ExistingResultAcceptanceGraphCandidateV2 | _ReceiptedFreshResultAcceptancePlanV2
+    ]:
+        receipted: Optional[_ReceiptedFreshResultAcceptancePlanV2] = None
+        with self._insert_result_acceptance_event_pair_in_owner_transaction(
+            handle,
+            prepared,
+        ) as candidate:
+            if type(candidate) is _ExistingResultAcceptanceGraphCandidateV2:
+                yield candidate
+                return
+            if type(candidate) is not _InsertedFreshResultAcceptancePlanV2:
+                raise RuntimeError("result acceptance receipt classification is not closed")
+            evented, result_stored, result_envelope, terminal_stored, terminal_envelope = (
+                candidate._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+            )
+            transitioned_plan, _result_event, _terminal_event = evented._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            evidenced_plan, terminal_transition = transitioned_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            identified, evidence = evidenced_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            materialized, _, _, _ = identified._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+            prepared_snapshot, _, _, _ = materialized._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            result_coordinates = _ScopedInvocationResultEventCoordinatesV2(
+                event_id=result_stored.event.event_id,
+                stream_id=result_stored.event.stream_id,
+                event_type=result_stored.event.event_type,
+                sequence=result_stored.sequence,
+                global_position=result_stored.global_position,
+                event_envelope_digest=_StoredEventEnvelopeV1.digest(result_envelope),
+            )
+            terminal_coordinates = _ScopedInvocationResultEventCoordinatesV2(
+                event_id=terminal_stored.event.event_id,
+                stream_id=terminal_stored.event.stream_id,
+                event_type=terminal_stored.event.event_type,
+                sequence=terminal_stored.sequence,
+                global_position=terminal_stored.global_position,
+                event_envelope_digest=_StoredEventEnvelopeV1.digest(terminal_envelope),
+            )
+            receipt = _build_scoped_invocation_result_receipt_v2(
+                prepared_snapshot.request,
+                evidence,
+                result_event=result_coordinates,
+                terminal_event=terminal_coordinates,
+                terminal_transition=terminal_transition,
+            )
+            self._require_current_process()
+            receipted = _ReceiptedFreshResultAcceptancePlanV2(
+                inserted=candidate,
+                receipt=receipt,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            self._require_current_process()
+            try:
+                yield receipted
+            finally:
+                receipted._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
     @contextmanager
     def _transaction_inner(

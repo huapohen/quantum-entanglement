@@ -56,6 +56,7 @@ from quantum_entanglement.protocol import TaskStatus
 from quantum_entanglement.store import (
     SQLiteEventStore,
     _InsertedFreshResultAcceptancePlanV2,
+    _ReceiptedFreshResultAcceptancePlanV2,
 )
 from tests import test_inactive_invocation_results_migration as inactive_migration_module
 from tests.test_scoped_task_invocation_admission import (
@@ -1740,6 +1741,134 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                 0,
             )
 
+    def test_receipt_plan_rebuilds_complete_graph_without_receipt_dml(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        generated = (
+            "receipt_receipted_1",
+            "event_result_receipted_1",
+            "event_terminal_receipted_1",
+        )
+
+        with patch("quantum_entanglement.store.new_id", side_effect=generated):
+            with self.store._result_artifact_transaction() as handle:
+                construct = self.store._construct_result_acceptance_receipt_in_owner_transaction
+                with construct(handle, prepared) as receipted:
+                    self.assertIs(type(receipted), _ReceiptedFreshResultAcceptancePlanV2)
+                    assert type(receipted) is _ReceiptedFreshResultAcceptancePlanV2
+                    inserted, receipt = receipted._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    evented, result_stored, result_envelope, terminal_stored, terminal_envelope = (
+                        inserted._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+                    )
+                    self.assertEqual(receipt.receipt_id, generated[0])
+                    self.assertEqual(
+                        receipt.result_event.event_id,
+                        result_stored.event.event_id,
+                    )
+                    self.assertEqual(
+                        receipt.terminal_event.event_id,
+                        terminal_stored.event.event_id,
+                    )
+                    self.assertEqual(
+                        receipt.result_event.event_envelope_digest,
+                        result_envelope.digest(),
+                    )
+                    self.assertEqual(
+                        receipt.terminal_event.event_envelope_digest,
+                        terminal_envelope.digest(),
+                    )
+                    self.assertEqual(receipt.canonical_digest(), receipt.receipt_digest)
+                    self.assertEqual(
+                        self.store._connection.execute(
+                            "SELECT count(*) FROM invocation_result_receipts"
+                        ).fetchone()[0],
+                        0,
+                    )
+                    for operation in (
+                        lambda: copy.copy(receipted),
+                        lambda: copy.deepcopy(receipted),
+                        lambda: pickle.dumps(receipted),
+                    ):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ):
+                            operation()
+        for plan in (receipted, inserted, evented):
+            with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                plan._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_existing_graph_receipt_path_does_not_build_or_insert(self) -> None:
+        helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
+            methodName="runTest"
+        )
+        helper.store = self.store
+        helper.connection = self.store._connection
+        helper.seed_nonempty_v6_dependencies()
+        helper.apply_candidate()
+        helper.seed_complete_result_graph()
+        prepared = existing_graph_prepared(helper)
+        with (
+            patch(
+                "quantum_entanglement.store._build_scoped_invocation_result_receipt_v2",
+                side_effect=AssertionError("existing graph must not build a receipt"),
+            ) as builder,
+            patch.object(
+                SQLiteEventStore,
+                "_insert_with_verified_envelope_in_transaction",
+                side_effect=AssertionError("existing graph must not insert events"),
+            ) as insert,
+        ):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._construct_result_acceptance_receipt_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as result:
+                    self.assertIs(type(result), _ExistingResultAcceptanceGraphCandidateV2)
+        builder.assert_not_called()
+        insert.assert_not_called()
+
+    def test_receipt_construction_failure_rolls_back_events_and_artifacts(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        before_events = tuple(
+            tuple(row) for row in self.store._connection.execute("SELECT * FROM events")
+        )
+        with (
+            patch(
+                "quantum_entanglement.store.new_id",
+                side_effect=(
+                    "receipt_receipt_failure",
+                    "event_result_receipt_failure",
+                    "event_terminal_receipt_failure",
+                ),
+            ),
+            patch(
+                "quantum_entanglement.store._build_scoped_invocation_result_receipt_v2",
+                side_effect=RuntimeError("receipt construction failed"),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "receipt construction failed"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._construct_result_acceptance_receipt_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("failed receipt construction unexpectedly yielded a plan")
+        self.assertEqual(
+            tuple(tuple(row) for row in self.store._connection.execute("SELECT * FROM events")),
+            before_events,
+        )
+        for table in ("artifact_versions", "artifact_blobs", "invocation_result_receipts"):
+            self.assertEqual(
+                self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[0],
+                0,
+            )
+
     def test_caught_event_pair_failure_still_forces_owner_transaction_rollback(self) -> None:
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
@@ -2060,6 +2189,9 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             "_build_scoped_invocation_result_terminal_transition_from_plan_v2",
             "_build_scoped_invocation_result_events_from_plan_v2",
             "_construct_result_acceptance_event_pair_in_owner_transaction",
+            "_ReceiptedFreshResultAcceptancePlanV2",
+            "_build_scoped_invocation_result_receipt_v2",
+            "_construct_result_acceptance_receipt_in_owner_transaction",
             "_construct_result_acceptance_terminal_transition_in_owner_transaction",
             "accept_scoped_invocation_result_v2",
             "ScopedInvocationResultAcceptedV2",
