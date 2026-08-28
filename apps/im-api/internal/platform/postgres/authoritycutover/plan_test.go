@@ -83,6 +83,10 @@ func TestBuildPlanRejectsIncompleteOrUnsafeSemantics(t *testing.T) {
 		"wrong postgres major":       func(input *PlanInput) { input.PostgreSQLMajor = 17 },
 		"cluster major mismatch":     func(input *PlanInput) { input.ClusterIdentity.postgreSQLMajor = 17 },
 		"cluster replica":            func(input *PlanInput) { input.ClusterIdentity.primary = false },
+		"cluster database mismatch":  func(input *PlanInput) { input.ClusterIdentity.database = "wanwork_im_other" },
+		"cluster login mismatch":     func(input *PlanInput) { input.ClusterIdentity.loginRole = "postgres_platform_login_other" },
+		"cluster server mismatch":    func(input *PlanInput) { input.ClusterIdentity.serverIdentity = "postgres-reader.prod.internal" },
+		"cluster ca mismatch":        func(input *PlanInput) { input.ClusterIdentity.caDigest = "sha256:" + strings.Repeat("e", 64) },
 		"missing pg control version": func(input *PlanInput) { input.ClusterIdentity.pgControlVersion = 0 },
 		"missing catalog version":    func(input *PlanInput) { input.ClusterIdentity.catalogVersionNo = 0 },
 		"leading-zero system identifier": func(input *PlanInput) {
@@ -169,10 +173,14 @@ func validPlanInput() PlanInput {
 		},
 		CellID: "postgres-cell-a",
 		ClusterIdentity: VerifiedPostgreSQLClusterIdentity{
+			caDigest:         digestD,
 			catalogVersionNo: 202509102,
+			database:         "wanwork_im",
+			loginRole:        "postgres_platform_login",
 			pgControlVersion: 1800,
 			postgreSQLMajor:  migrations.AuthorityAccessPostgreSQLMajor,
 			primary:          true,
+			serverIdentity:   "postgres-writer.prod.internal",
 			systemIdentifier: "7678902413432981333",
 		},
 		Credentials: []CredentialGeneration{

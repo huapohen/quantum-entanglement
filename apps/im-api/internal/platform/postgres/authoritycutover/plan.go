@@ -112,10 +112,14 @@ type PlanInput struct {
 // authenticated deployment inventory loader in this package. Its fields are deliberately private:
 // BuildPlan must not accept a caller-reported system identifier after approval.
 type VerifiedPostgreSQLClusterIdentity struct {
+	caDigest         string
 	catalogVersionNo int
+	database         string
+	loginRole        string
 	pgControlVersion int
 	postgreSQLMajor  int
 	primary          bool
+	serverIdentity   string
 	systemIdentifier string
 }
 
@@ -218,6 +222,8 @@ type TargetBinding struct {
 }
 
 type TLSProfile struct {
+	// CADigest is the SHA-256 digest of the raw DER root certificate in the
+	// negotiated verified chain. It is not a CA bundle file digest.
 	CADigest   string `json:"caDigest"`
 	CARef      string `json:"caRef"`
 	Mode       string `json:"mode"`
@@ -232,7 +238,7 @@ type Plan struct {
 }
 
 func BuildPlan(input PlanInput) (Plan, error) {
-	if !validVerifiedPostgreSQLClusterIdentity(input.ClusterIdentity, input.PostgreSQLMajor) {
+	if !validVerifiedPostgreSQLClusterIdentity(input.ClusterIdentity, input) {
 		return Plan{}, ErrInvalidPlan
 	}
 	specification, err := migrations.CurrentAuthorityAccessSpecification(input.AuthorityManifest)
@@ -388,15 +394,50 @@ func validPlanSnapshot(snapshot PlanSnapshot, requireDigest bool) bool {
 
 func validVerifiedPostgreSQLClusterIdentity(
 	identity VerifiedPostgreSQLClusterIdentity,
+	input PlanInput,
+) bool {
+	provisionerLogin, uniqueProvisioner := provisionerLoginRole(input.Credentials)
+	return uniqueProvisioner && validVerifiedPostgreSQLClusterIdentityForScope(
+		identity,
+		input.AuthorityManifest.DatabaseName,
+		provisionerLogin,
+		input.PostgreSQLMajor,
+		input.ServerIdentity,
+		input.TLS.CADigest,
+	)
+}
+
+func validVerifiedPostgreSQLClusterIdentityForScope(
+	identity VerifiedPostgreSQLClusterIdentity,
+	database string,
+	loginRole string,
 	postgreSQLMajor int,
+	serverIdentity string,
+	caDigest string,
 ) bool {
 	if identity.catalogVersionNo <= 0 || identity.pgControlVersion <= 0 || !identity.primary ||
-		identity.postgreSQLMajor != postgreSQLMajor ||
+		identity.postgreSQLMajor != postgreSQLMajor || identity.database != database ||
+		identity.loginRole != loginRole || identity.serverIdentity != serverIdentity ||
+		identity.caDigest != caDigest ||
 		!canonicalPostgreSQLSystemIdentifier.MatchString(identity.systemIdentifier) {
 		return false
 	}
 	_, err := strconv.ParseUint(identity.systemIdentifier, 10, 64)
 	return err == nil
+}
+
+func provisionerLoginRole(credentials []CredentialGeneration) (string, bool) {
+	value := ""
+	for _, credential := range credentials {
+		if credential.Consumer != CredentialProvisioner {
+			continue
+		}
+		if value != "" {
+			return "", false
+		}
+		value = credential.LoginRole
+	}
+	return value, canonicalIdentity(value)
 }
 
 func digestPostgreSQLSystemIdentifier(systemIdentifier string) string {
