@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "e58bc9d0b4abd3806f4e98cc1b04dd121a224ff9",
-  "lastImageArchivedAt": "2026-08-27T07:36:23+08:00",
+  "lastArchivedCommit": "551899bdce6140f40eea6330eab885beb5d06c6b",
+  "lastImageArchivedAt": "2026-08-28T14:13:43+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -602,8 +602,52 @@
       "sourceKind": "clawith-official-homepage-readonly",
       "sourceReference": "https://clawith.ai/; playwright:output/playwright/clawith/26_clawith_rapid_rnd_claim_20260827.png; captured-at:2026-08-26T23:34:22.005Z; archived-git:e58bc9d0b4abd3806f4e98cc1b04dd121a224ff9",
       "width": 1184
+    },
+    {
+      "byteSize": 10351,
+      "captureDate": null,
+      "captureDateEvidence": "Not a captured external page or runtime viewport; this is a repository-authored SVG documentation visual, so captureDate is not applicable",
+      "contentScope": "W2 PostgreSQL authority persistence map connecting primary research evidence, implemented migration/schema/repository/UoW facts, PostgreSQL 18.6 verification and six remaining production gates",
+      "derivation": "repository-authored-svg-documentation-visual",
+      "evidenceClass": "B-local-derived-documentation-visual",
+      "evidenceLimitations": [
+        "A review map derived from repository facts and cited research; it is not independent runtime, database, provider, authorization or production-readiness evidence",
+        "The diagram intentionally marks unresolved gates and must not be used to claim native IM, Clerk, RongCloud, action-time authorization, durable event/outbox or production delivery"
+      ],
+      "filename": "33_postgres_authority_persistence_map.svg",
+      "firstArchivedAt": "2026-08-28T14:13:43+08:00",
+      "height": 1000,
+      "mediaType": "image/svg+xml",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-repository-authored-diagram",
+      "sha256": "260415ec6a89e9d90ed28be2266a152839bfe67c6e9afd861399f899e780deb7",
+      "sourceKind": "quantum-entanglement-canonical-report-visual",
+      "sourceReference": "analysis_report/research/33_postgres_authority_persistence_checkpoint.md; code-baseline:8d662bf4faec1cfaa12b63f4dfc2132ae6869dbb; archived-git:551899bdce6140f40eea6330eab885beb5d06c6b",
+      "width": 1600
+    },
+    {
+      "byteSize": 385033,
+      "captureDate": null,
+      "captureDateEvidence": "Not a captured external page or runtime viewport; this PNG was rendered from the archived SVG in the same repository batch, so captureDate is not applicable",
+      "contentScope": "PNG rendering of the W2 PostgreSQL authority persistence evidence and remaining-gates map for Notion and browser review",
+      "derivation": "rsvg-convert-1600x1000-from-33-postgres-authority-persistence-map-svg",
+      "evidenceClass": "B-local-derived-documentation-visual",
+      "evidenceLimitations": [
+        "A rendering of the sibling SVG, not additional or independent evidence",
+        "Pixel appearance does not prove the linked migrations, tests, authorization gates or production state; inspect the canonical report and code baseline"
+      ],
+      "filename": "33_postgres_authority_persistence_map.png",
+      "firstArchivedAt": "2026-08-28T14:13:43+08:00",
+      "height": 1000,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-repository-authored-diagram",
+      "sha256": "08f6d1a3a7ce1af811b4003f5676d52851dee0d12fa51e2d3012e1a83c4b9c7d",
+      "sourceKind": "quantum-entanglement-canonical-report-visual",
+      "sourceReference": "analysis_report/screenshots/33_postgres_authority_persistence_map.svg; rsvg-convert -w 1600 -h 1000; archived-git:551899bdce6140f40eea6330eab885beb5d06c6b",
+      "width": 1600
     }
   ],
-  "redactionStatus": "mixed-restricted-originals-synthetic-ui-and-reviewed-model-output",
+  "redactionStatus": "mixed-restricted-originals-synthetic-ui-reviewed-model-output-and-derived-documentation-visuals",
   "schemaVersion": 3
 }
