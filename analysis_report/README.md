@@ -3,10 +3,10 @@
 本目录是本地报告的单一真相源。报告正文会在研究、实现和验证完成后汇总为
 `multi_agent_collaboration_report.md`。当前截至 `3a92f3c` 的稳定内容已经同步到私人 Notion 并完成
 回读。用户在 2026-08-28 进一步确认 Notion 会影响开发速度，因此后续开发期间只更新本地文档并
-频繁 commit/push；当前计划任务全部完成后再一次性批量同步 Notion 并逐页回读。语雀仍只在用户
-另行明确授权时操作。
+频繁 commit/push；当前计划任务全部完成后再一次性批量同步 Notion 并逐页回读。语雀按用户
+最新指令保持不操作。
 
-## Notion 镜像（最近已回读基线：E3 Result Authority M1 Stored-Event Envelope）
+## Notion 镜像（最近已回读基线：M1；本地/GitHub 已推进至 M4）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -28,8 +28,10 @@
   M1 代码封板候选为
   `d889751e4cc3b7db548994a000a87e21688b4429`，固定 tree 为
   `57b608ed57f47a68d1f9433104cd88d820a19929`。M2 已在本地/GitHub 的 `dd0ba54` 完成，M3 private
-  store adapter 已在 `504824c` 完成；两者尚未按新节奏批量同步 Notion。M4 inactive schema、
-  migration 7 注册、writer、Accepted、worker、真实 IM 和 outbound 均未启用。
+  store adapter 已在 `504824c` 完成，M4 inactive schema / Artifact owner transaction / private
+  backup topology 的代码封板为 `aef5f8b`、tree 为 `f72cd558…876327`；M2–M4 尚未按新节奏批量
+  同步 Notion。Migration 7 注册、Atomic Result Writer、Observed/Accepted、worker、真实 IM 和
+  outbound 均未启用。
 - 本批 8 个相关页面已逐页 fetch 回读；34 个内容 marker 与 3 个父子/数据库结构检查全部命中，
   0 个缺失、0 个回读失败。独立父页为 17 个唯一子页；项目主页保持 32 个子页块和 1 个数据库。
 - 机器可读页面映射、文件摘要和回读断言见
@@ -50,7 +52,7 @@
 | 文件 | 状态 | 内容 |
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
-| `NEXT_STAGE_PLAN.md` | M1–M3 已完成，下一步 M4 inactive schema | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
+| `NEXT_STAGE_PLAN.md` | M1–M4 已完成，下一步 M5 Atomic Writer | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
@@ -76,10 +78,15 @@ vocabulary，standalone `complete()` 在 clock/DML 前结构拒绝 scoped job；
 marker 与 type/key drift 旁路均已形成回归并修复。M3 private store adapter 又在 `504824c` 完成：
 exact typed snapshot 与 fixed raw `sqlite3.Row` 在 owning transaction 内独立重算并比较 fields、bytes、
 digest；trigger replacement/extra-row、storage class、caller mutation 与 exception-graph 旁路全部形成
-回归。三版本 209 项组合专项、Python 3.13 全仓 2,578 项及 Ruff/Mypy 全绿。下一步是 M4 inactive
-schema、Artifact transaction primitives 与 backup topology；migration 7 注册、writer、Accepted、worker
-和真实 IM/outbound 均保持关闭。完整边界见 `research/29_reserved_result_event_boundary_evidence.md` 与
-`research/30_stored_event_envelope_store_adapter_evidence.md`。
+回归。三版本 209 项组合专项、Python 3.13 全仓 2,578 项及 Ruff/Mypy 全绿。M4 又在代码节点
+`aef5f8b` 完成 inactive migration 7 候选、私有 45-object backup topology、Artifact owner handle、
+同事务 DML/readback、rollback-only、crash rollback、clean ambiguity classification 与 bounded
+streaming history verification；M4 组合 82 项、全仓 2,639 项、Ruff/Mypy/diff-check 全绿，最终独立
+reviewer 为 0 blocker。下一步是 M5 Atomic Result Acceptance Writer；migration 7 注册、Observed、
+Accepted、worker 和真实 IM/outbound 均保持关闭。完整边界见
+`research/29_reserved_result_event_boundary_evidence.md`、
+`research/30_stored_event_envelope_store_adapter_evidence.md` 与
+`research/31_inactive_result_schema_artifact_transaction_evidence.md`。
 
 ## 专题研究
 
@@ -116,6 +123,7 @@ schema、Artifact transaction primitives 与 backup topology；migration 7 注�
 | `research/28_stored_event_envelope_codec_evidence.md` | E3 Result Authority M1 代码证据：`d889751` | 私有 canonical envelope、exact raw SQLite row 重算、372-byte Golden、102 项专项、三 Python verifier、2,489 项全仓门禁、对抗修复及 M2/M3/authority 未完成边界 |
 | `research/29_reserved_result_event_boundary_evidence.md` | E3 Result Authority M2 代码证据：`dd0ba54` | generic `BEGIN` 前 reserved vocabulary fence、scoped standalone completion durable classifier、25 项三 Python 专项、2,514 项全仓门禁与两条逆向旁路修复 |
 | `research/30_stored_event_envelope_store_adapter_evidence.md` | E3 Result Authority M3 代码证据：`504824c` | private typed write-snapshot/raw-row 双验、fresh isolated insert、trigger/exception/API 对抗收口、209 项三 Python 组合专项与 2,578 项全仓门禁 |
+| `research/31_inactive_result_schema_artifact_transaction_evidence.md` | E3 Result Authority M4 代码证据：`aef5f8b` | inactive migration 7、private backup topology、Artifact owner transaction、crash/ambiguity/bounded-history 证据、82 项组合专项、2,639 项全仓门禁与最终 0-blocker 复核 |
 
 ## 已归档截图
 
