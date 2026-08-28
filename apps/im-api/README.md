@@ -1,50 +1,113 @@
 # WanWork IM API
 
 Go/Fiber backend for the native WanWork IM. This module is intentionally isolated from the existing Python
-package. It has a PostgreSQL authority persistence implementation and real PostgreSQL integration tests, but
-the HTTP service still starts with no production database composition, Clerk, RongCloud, model, tool, or
-outbound network adapter.
+package. The default service remains a zero-outbound local fake, while an explicit runtime mode now composes a
+strictly admitted PostgreSQL URL, an attested runtime-only pool, exact readiness, a controlled Unit of Work,
+and an API route barrier. Production IaC/cutover/credential rotation, Clerk, RongCloud, model, tool, and
+outbound adapters are still not delivered.
 
 ## Run the current scaffold
 
+From the repository root:
+
 ```bash
-GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-api
+./scripts/start_im_api.sh
 ```
 
 The default listener is loopback-only at `127.0.0.1:18080`. Override it only for an explicitly reviewed local
 environment:
 
 ```bash
-WANWORK_IM_LISTEN_ADDRESS=127.0.0.1:19080 \
-  GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-api
+WANWORK_IM_LISTEN_ADDRESS=127.0.0.1:19080 ./scripts/start_im_api.sh
 ```
 
-The current immutable configuration reads only `WANWORK_IM_LISTEN_ADDRESS`, accepts only numeric loopback
-hosts, fixes auth/IM providers to their fake implementations, and fixes outbound to `disabled`. Clerk,
-RongCloud, model, endpoint, and credential environment variables are intentionally not read in this stage.
+The script refuses to start if PostgreSQL runtime variables are already present unless
+`WANWORK_IM_ALLOW_RUNTIME_COMPOSITION=1` is set explicitly. In default mode the immutable configuration accepts
+only a numeric loopback listener, fixes auth/IM providers to their fake implementations, and fixes outbound to
+`disabled`.
+
+Verify the default mode:
+
+```bash
+curl --fail http://127.0.0.1:18080/health/live
+curl --fail http://127.0.0.1:18080/api/v1/system/ping
+```
+
+Expected responses:
+
+```text
+{"status":"ok"}
+{"code":200,"data":{"status":"ok"},"message":"ok","requestId":"req_..."}
+```
+
+## Explicit PostgreSQL runtime mode
+
+Use only a disposable local database or an explicitly reviewed environment. Never put a real URL, password,
+or manifest into a tracked script, shell history, report, screenshot, Git commit, or Notion page.
+
+```bash
+export WANWORK_IM_POSTGRES_RUNTIME_URL='postgresql://<runtime-login>:<secret>@127.0.0.1:55488/wanwork_im?sslmode=disable'
+export WANWORK_IM_POSTGRES_AUTHORITY_MANIFEST='{
+  "databaseName":"wanwork_im",
+  "databaseOwnerRole":"wanwork_im_provisioner",
+  "ownerRole":"wanwork_im_owner",
+  "migratorRole":"wanwork_im_migrator",
+  "runtimeRole":"wanwork_im_runtime",
+  "migrationLoginRoles":["<migration-login>"],
+  "runtimeLoginRoles":["<runtime-login>"]
+}'
+export WANWORK_IM_POSTGRES_ALLOW_INSECURE_LOCAL_TEST=true
+export WANWORK_IM_ALLOW_RUNTIME_COMPOSITION=1
+./scripts/start_im_api.sh
+```
+
+Remote connections do not accept the insecure-local exception and must pass authenticated TLS policy. The
+strict connection policy rejects implicit endpoint/identity fields, `sslmode=require/prefer`, multi-host or
+fallback endpoints, service/pass files, session parameters, and pgx/pgxpool query/cache/lifecycle overrides.
+
+Runtime endpoints:
+
+```text
+GET /health/live  -> process liveness only
+GET /health/ready -> HTTP 200 exact database ready; HTTP 503 otherwise
+GET /api/v1/*     -> readiness failure stays HTTP 200 envelope with code 50301
+```
+
+### One-shot migrator
+
+The API reads only the runtime URL. Schema migration uses a different process and variable:
+
+```bash
+export WANWORK_IM_POSTGRES_MIGRATION_URL='postgresql://<migration-login>:<secret>@127.0.0.1:55488/wanwork_im?sslmode=disable'
+GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-migrate
+```
+
+`im-migrate` verifies the migration login/database, selects the exact owner role, applies the checksummed
+catalog, and finally validates the exact authority manifest. On a first deployment it can apply schema and then
+fail the final validator until the separate DBA ownership/grant cutover is complete; rerun after cutover. This
+command is not yet a complete production bootstrap or IaC replacement.
 
 ## Current PostgreSQL authority subset
 
-At code baseline `cd92ea5`, `internal/platform/postgres` contains checksummed migrations `0001..0005`, 22
+At code baseline `5c19fdb`, `internal/platform/postgres` contains checksummed migrations `0001..0005`, 22
 authority tables, 17 FORCE RLS tables, tenant-bound repositories/UoW, and five fixed `SECURITY DEFINER` write
 functions. Conversation, provider-binding, membership, access, and command-receipt writes go through those
 functions. The tested `NOINHERIT` runtime login can explicitly `SET ROLE` only to its exact runtime group; that
 runtime role has only the required reads and function executions and is denied raw table mutation, `MAINTAIN`,
 schema/object creation, elevated role settings, and unlisted routines.
 
-The exact owner/role/database/schema/table/function/default-ACL validator, role provision helper, and
-migration/runtime login wiring are integration-test fixtures. They prove the bounded PostgreSQL contract; they
-are not production IaC, credential lifecycle, application pool composition, startup/readiness wiring, or a live
-service database adapter. Trusted Clerk tenant context, active authority resolution, dump/restore and crash
-recovery, PostgreSQL event store/outbox/projection checkpoints, and provider reconciliation remain unimplemented.
-See `docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md` and
-`analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md` for the current
-engineering boundary.
+The exact validator, runtime pool, startup/readiness route barrier, controlled Unit of Work, and one-shot
+migration process are now real code paths. The role provision helper remains a test fixture, not production IaC;
+first-deploy ownership/grant cutover, credential rotation/old-session drain, restore/crash exercises, trusted
+Clerk tenant context, active authority resolution, PostgreSQL event/outbox/projection checkpoints, and provider
+reconciliation remain unimplemented. See `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` and
+`analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md` for the exact boundary.
 
 Current endpoint:
 
 ```text
 GET /health/live -> HTTP 200 {"status":"ok"}
+GET /health/ready -> runtime mode only; HTTP 200 or 503
 GET /api/v1/system/ping -> HTTP 200 business envelope
 ```
 
