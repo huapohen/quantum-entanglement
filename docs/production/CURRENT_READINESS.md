@@ -60,7 +60,7 @@ event store 的单组件运行合同见
 
 测试通过证明对应断言在记录环境中成立，不证明端到端生产安全、容量、SLO、RPO/RTO 或 GA。
 
-### 原生 IM E1 与 E2 离线底座状态
+### 原生 IM E1 与 E2 离线 adapter/lifecycle 状态
 
 E1 / Level A `CONTRACT_EXECUTABLE` 已在源码候选 `7620200` 完成；内部
 `IM-P0 CONTRACT_READY` 仅按 provider-neutral contract/fake 里程碑完成。当前新增能力包括 21 个
@@ -70,17 +70,20 @@ receiver action/key 双账本、ACK-loss/post-accept exception 与 acceptance-qu
 socket/DNS/network-import/environment-credential zero-network gate。运行边界和证据见
 [`NATIVE_IM_P0_CONTRACT_EXECUTABLE.md`](./NATIVE_IM_P0_CONTRACT_EXECUTABLE.md)。
 
-E2 的离线原子 inbox 底座现已推进到运行源码 `9cf1bfe`：exact provider profile、inbound-only
-config/`SecretRef`、raw-body verifier、migration 5 六表、profile-bound durable nonce、exact-request
-read preparation，以及 nonce + verified page + event/verification/link rows + read CAS + checkpoint +
-独立 readback 的单事务 admission 已实现。仓库没有真实 credential material/config/composition；
-admission 不调用 gateway、Agent、plugin、browser、network、subprocess 或 outbound。阶段证据见
-[`24_native_im_e2_atomic_page_admission_evidence.md`](../../analysis_report/research/24_native_im_e2_atomic_page_admission_evidence.md)。
+E2 的离线原子 inbox 在运行源码 `9cf1bfe` 完成；其后续 default-off adapter/lifecycle 节点又在
+运行源码 `2bdaea1` 完成：显式 inbound-only adapter、signed raw body/canonical page 分离、bounded
+parser、process-bound kill switch/lifecycle、typed observability、全链 canary、recorded
+disconnect/resume/duplicate/out-of-order/conflict probe、取消/关闭恢复和扩展 zero-network gate 均已
+实现。admission 不调用 gateway、Agent、plugin、browser、network、subprocess 或 outbound。阶段
+证据见：
 
-这仍没有打开真实 IM：仓库没有真实 provider adapter、webhook、HTTP/WebSocket client、socket
-connection 或 external IM send。下一 P0 是 default-off inbound-only adapter/lifecycle、bounded
-parser、kill switch、safe logging 与 fake contract probe；完成并取得具体 sandbox read-only 批准前
-仍不能连接任何真实 endpoint。Golden vectors 是代表性正向 inventory；全部
+- [`24_native_im_e2_atomic_page_admission_evidence.md`](../../analysis_report/research/24_native_im_e2_atomic_page_admission_evidence.md)；
+- [`25_native_im_e2_adapter_lifecycle_offline_evidence.md`](../../analysis_report/research/25_native_im_e2_adapter_lifecycle_offline_evidence.md)。
+
+这仍没有打开真实 IM：仓库没有 provider-specific HTTP/WebSocket/socket transport、真实 credential
+material、webhook 或 external IM send。下一硬门禁是冻结 endpoint/scope/data/secret/path/expiry/rollback
+批准输入，实现独立 provider transport/pure mapper，并单独修订 `SERVICE_BOUNDARY.md`。在这些条件
+完成前仍不能连接真实 endpoint。Golden vectors 是代表性正向 inventory；全部
 event/revision/scope/mention/digest union/state 矩阵由参数化 contract tests 覆盖。Gate A–E 均未改变。
 
 ## 1. 可靠性与一致性
@@ -117,6 +120,9 @@ event/revision/scope/mention/digest union/state 矩阵由参数化 contract test
 - `native_im.py`、`native_im_gateway.py`、`native_im_fake.py`：冻结 provider-neutral V1 wire/codec、
   exact 四方法 port、纯 admission 和 zero-network fake；fake outbound 默认在请求检查前拒绝，测试
   permit 只能产生内存 effect，ACK-loss/unknown 只能 acceptance query 而不能盲重发；
+- `native_im_sandbox.py`、`native_im_sandbox_lifecycle.py`、
+  `native_im_sandbox_observability.py`：default-off composition、显式 inbound-only adapter、bounded
+  parser、process-bound kill switch/lifecycle、取消可恢复 graceful close、typed body-free log/counters；
 - `projections.py`：exact schema、leased offsets、receipts、upcast、tamper checks、handler capability
   撤销，以及 framework table/deferred VIEW/TRIGGER/VTABLE authorizer 边界。
 
@@ -132,8 +138,9 @@ event/revision/scope/mention/digest union/state 矩阵由参数化 contract test
 - succeeded attempt 没有不可变 result receipt 时不能安全自动投影 `COMPLETED`；
 - connector 不支持 receiver idempotency/fencing 时只能诚实承诺 at-least-once；
 - 原生 IM 已有 provider profile、签名/timestamp/raw-body verifier、durable nonce、migration 5 inbox
-  schema、read preparation 和整页单事务 admission；但 default-off inbound adapter/lifecycle、真实
-  sandbox contract probe 和任何 outbound composition 仍不存在；E1 fake 不能替代这些能力；
+  schema、read preparation、整页单事务 admission、default-off inbound adapter/lifecycle 与 recorded
+  probe；但 provider-specific approved transport/mapper、真实 sandbox contract probe 和任何 outbound
+  composition 仍不存在；离线 probe 不能替代真实 provider 证据；
 - 编排 session lock 是进程内锁，多进程/多实例调度仍可能重复调用 Agent；
 - 没有完整 crash-at-every-boundary、kill -9、long-running heartbeat 和 graceful drain E2E。
 - 共享 process identity helper 已通过真实 fork、nested fork、PID drift、fork-while-unrelated-lock、
@@ -218,8 +225,10 @@ Artifact repository 已把 tenant/workspace 纳入必填 predicate 和唯一键�
 
 ## 5. 服务生命周期与可观测性
 
-严格配置/secret primitive 已存在，但没有读取它们并组装完整服务的 production composition
-root。仓库现有 `examples/product_trial_server.py` 是 loopback-only `ThreadingHTTPServer` 试用
+严格配置/secret primitive 与原生 IM 的离线 process-bound lifecycle 已存在，但没有读取批准的真实
+provider 输入并组装完整服务的 production composition root。原生 IM lifecycle 证明的是注入 fixture
+下的 health/admission/kill/close，不是 `/livez`、`/readyz` 或 SIGTERM 服务合同。仓库现有
+`examples/product_trial_server.py` 是 loopback-only `ThreadingHTTPServer` 试用
 adapter，提供临时共享访问 token、Host/Origin/Fetch Metadata 防护、严格 JSON 和请求体上限；
 它不是 authenticated `/api/v1`，也没有可信主体/tenant/workspace、`/livez`、`/readyz`、startup
 preflight、admission stop、SIGTERM bounded drain、lease relinquish、structured audit store 或
@@ -311,6 +320,15 @@ deterministic demo 与 diff check 全绿。矩阵覆盖 durable graph 篡改、�
 mutation snapshot 和零 gateway/Agent/plugin/browser/network/outbound。该结果仍不包含真实网络、
 provider sandbox、服务级 crash/soak 或生产批准。
 
+E2 adapter/lifecycle 运行节点 `2bdaea1` 又完成 2,114/2,114 全仓测试（77 个既有 Python 3.13
+fork deprecation warnings）、616 项 Native IM + safe-logging 收集、66 项本节点显式文件收集、
+Ruff check/format（177 files）、strict mypy（58 source files）、golden 23/23、zero-network、
+dependency locks（4 targets / 74 records）和 compileall。矩阵覆盖 default-off、outbound fence、
+raw/mapped byte-domain 分离、atomic kill race、disconnect/resume、duplicate/out-of-order/conflict、
+process inheritance、cancellation/graceful close、hostile transport/mapper/secret、logger failure 和
+message/trace/secret/nonce/signature canary。该结果仍不包含真实 provider network、service-level
+SIGTERM/soak、Agent activation、outbound 或生产批准。
+
 仍缺：
 
 - 完整的 supported OS/SQLite 组合矩阵；当前不可变 CI 只覆盖 GitHub Linux 的 Python 3.9/3.12，
@@ -347,25 +365,27 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
 
 1. E1 已闭环；E2 durable nonce、verified page、event/verification/link rows、read CAS、checkpoint
    与独立 readback 的单一事务及 rollback/ACK-loss/reopen 对账已完成；
-2. 现在实现 default-off inbound-only adapter skeleton、bounded parser、kill switch、safe logging 和
-   fake contract probe；仍不进入真实网络；
-3. 只有 sandbox endpoint class、测试 tenant/conversation、数据等级、read-only credential reference、
-   方法路径、截止时间和 kill switch 获批后，才执行 health/read/dedupe/resume；Level B 只生成
-   observation，不驱动 Agent、tool、browser、subprocess 或 outbound；
-4. E3 在已完成 event/job/receipt atomic admission 与 claim + attempt + schema-2 start event + readback
+2. default-off inbound-only adapter、bounded parser、kill switch/lifecycle、safe logging/canary 和
+   recorded contract probe 已完成；仍未进入真实网络；
+3. 下一步冻结 sandbox endpoint class、测试 tenant/conversation、数据等级、read-only credential
+   reference、方法路径、截止时间和 kill switch，独立实现 provider transport/pure mapper，并单独
+   修订 `SERVICE_BOUNDARY.md`；
+4. 上述批准与 full gates 完成后，才执行 health/read/dedupe/resume；Level B 只生成 observation，
+   不驱动 Agent、tool、browser、subprocess 或 outbound；
+5. E3 在已完成 event/job/receipt atomic admission 与 claim + attempt + schema-2 start event + readback
    统一 UoW 之上，已冻结默认关闭的
    [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)；下一步先把 accepted
    result/artifact、attempt 和 terminal task state 组成单一原子验收边界，没有 result receipt 时
    绝不把 succeeded job 猜成 completed；
-5. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
+6. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
    heartbeat-supervised pure/fake worker；
-6. E4 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；真实
+7. E4 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；真实
    outbound 在 E1–E4 完成且针对单一 sandbox 另获明确授权前保持不存在/关闭；
-7. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
-8. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
-9. 实现 authenticated loopback API、transactional command receipt、stream、health 和 SIGTERM；
-10. 完成单节点部署、upgrade/rollback、restore/non-emitting reconcile 和 clean-host evidence；
-11. 通过 Gate C 后再推进 capacity/OTel/isolation/PostgreSQL/HA/DR。
+8. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
+9. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
+10. 实现 authenticated loopback API、transactional command receipt、stream、health 和 SIGTERM；
+11. 完成单节点部署、upgrade/rollback、restore/non-emitting reconcile 和 clean-host evidence；
+12. 通过 Gate C 后再推进 capacity/OTel/isolation/PostgreSQL/HA/DR。
 
 每个独立行为及其测试单独提交；每阶段都有运行命令、失败边界、兼容/迁移、回退和证据文档。
 默认分支每次提交后保持可运行，但“可运行”不等于“可生产晋级”。

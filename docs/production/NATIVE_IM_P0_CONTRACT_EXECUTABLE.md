@@ -10,8 +10,8 @@
 > authorize a sandbox endpoint, credential, webhook, socket connection, external IM read or send.
 
 > Historical checkpoint notice: statements below about E2 being unstarted describe source commit
-> `7620200`. E2's current offline-only progress is recorded in
-> [`23_native_im_e2_offline_inbox_foundation_evidence.md`](../../analysis_report/research/23_native_im_e2_offline_inbox_foundation_evidence.md).
+> `7620200`. E2's current offline-only progress is recorded in evidence 23–25, ending with
+> [`25_native_im_e2_adapter_lifecycle_offline_evidence.md`](../../analysis_report/research/25_native_im_e2_adapter_lifecycle_offline_evidence.md).
 > No real sandbox network or outbound has been enabled.
 
 ## 1. Decision and exact meaning
@@ -137,8 +137,10 @@ The dedicated verifier performs both static and runtime checks:
 7. rendered runtime values are checked for credential-canary escape.
 
 The gate proves the exercised P0 import and fake path is zero-network. It is not a universal OS
-sandbox and does not authorize later provider code to inherit this claim. E2 must add a separately
-reviewed inbound-only transport boundary and approval record.
+sandbox and does not authorize later provider code to inherit this claim. At current E2 source
+`2bdaea1`, the same verifier also covers direct-import allowlists and runtime blockers for sandbox,
+lifecycle and observability modules. A future provider-specific transport still requires its own
+review and approval record.
 
 ## 6. Verification evidence
 
@@ -208,10 +210,11 @@ commit; results from `7620200` do not automatically attest a later tree.
 ## 8. E2 handoff and hard stop
 
 At the E1 evidence commit, E2 / Level B was planned to begin only after an inbound-only sandbox
-provider profile and approval inputs became available. Current E2 work has since completed the
-offline atomic page/cursor admission boundary. The linked current evidence identifies a
-default-off adapter/lifecycle, bounded parser, kill switch, safe logging, and fake contract probe as
-the next hard stop. Real transport still requires the recorded approval inputs.
+provider profile and approval inputs became available. Current E2 work has since completed both the
+offline atomic page/cursor admission boundary and the default-off adapter/lifecycle, bounded parser,
+kill switch, typed observability, canary and recorded probe node. The current hard stop is a
+provider-specific approved transport/pure mapper plus a narrow `SERVICE_BOUNDARY.md` revision. Real
+transport still requires the recorded approval inputs.
 
 During Level B:
 
@@ -224,5 +227,6 @@ During Level B:
 - any request to send externally requires a later, separate and explicit user authorization after
   the durable Action Plane is complete.
 
-Until those conditions are met, E1 is the correct stopping point: executable provider-neutral
-contract, deterministic fake, zero network, and no external effect.
+Until those conditions are met, the current E2 offline node is the correct stopping point:
+executable provider-neutral contract, deterministic fake/recorded probes, atomic durable
+observation, zero real network, and no external effect.
