@@ -310,6 +310,74 @@ def test_hidden_frozen_bind_snapshot_closes_mid_insert_caller_mutation() -> None
     assert verified.to_dict()["payload"] == original_payload
 
 
+def test_caller_and_snapshot_payload_mutation_cannot_change_frozen_insert_bytes() -> None:
+    caller_payload = result_payload(resultRef="result:immutable")
+    candidate = event(payload=caller_payload)
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        snapshot = SQLiteEventStore._snapshot_event(store, candidate)
+        caller_payload["resultRef"] = "result:caller-mutated"
+        object.__setattr__(candidate, "event_id", "event-caller-mutated")
+        assert type(snapshot.event.payload) is dict
+        snapshot.event.payload["resultRef"] = "result:snapshot-payload-mutated"
+
+        with store._transaction() as connection:
+            stored, inserted, verified = (
+                SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                    store,
+                    connection,
+                    snapshot,
+                    0,
+                )
+            )
+        raw = store._connection.execute(
+            "SELECT event_id, payload_json FROM events WHERE global_position = 1"
+        ).fetchone()
+
+    assert inserted is True
+    assert stored.event.event_id == "event-m3-store"
+    assert verified.to_dict()["payload"]["resultRef"] == "result:immutable"
+    assert raw["event_id"] == "event-m3-store"
+    assert json.loads(raw["payload_json"])["resultRef"] == "result:immutable"
+
+
+def test_reflective_payload_byte_drift_fails_before_insert() -> None:
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        snapshot = SQLiteEventStore._snapshot_event(store, event())
+        object.__setattr__(snapshot, "payload_json", " " + snapshot.payload_json)
+        statements: list[str] = []
+        store._connection.set_trace_callback(statements.append)
+        try:
+            with store._transaction() as connection:
+                with pytest.raises(ResultEventWriteContractError):
+                    SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                        store,
+                        connection,
+                        snapshot,
+                        0,
+                    )
+        finally:
+            store._connection.set_trace_callback(None)
+
+        assert durable_rows(store) == ()
+        assert not any(
+            statement.lstrip().upper().startswith("INSERT INTO EVENTS") for statement in statements
+        )
+
+
+def test_instance_method_shadow_cannot_replace_private_verified_composition() -> None:
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        store._freeze_typed_result_event_write_snapshot = lambda _snapshot: object()  # type: ignore[method-assign]
+        store._append_in_transaction = lambda *_args, **_kwargs: (object(), False)  # type: ignore[method-assign]
+        store._verify_stored_event_envelope_in_transaction = lambda *_args: object()  # type: ignore[method-assign]
+
+        stored, inserted, verified = append_verified(store, event())
+
+    assert inserted is True
+    assert type(stored) is StoredEvent
+    assert type(verified) is codec._StoredEventEnvelopeV1
+    assert stored.global_position == 1
+
+
 def test_idempotent_replay_never_mints_a_verified_insert() -> None:
     with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
         first, inserted, _first_envelope = append_verified(store, event())
