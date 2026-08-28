@@ -1,6 +1,6 @@
 # W2 PostgreSQL Attested Runtime Composition 工程检查点
 
-> 当前代码基线：`5c19fdb0d88c2d59caec3c95aee400be193b269f`
+> 当前代码证据基线：`2d0c4a069ef016c085541b3ec26426ccd6ace70b`
 >
 > 当前分支：`dev_wanwork_quantum_entanglement`，未合并 `main`
 >
@@ -13,7 +13,7 @@ runtime-only credential 并在 effect 前 fail closed”。已交付的最窄链
 
 ```text
 private runtime config
-  -> shared strict connection policy
+  -> shared strict connection policy / single canonical parse
   -> pgxpool physical connection attestation
   -> acquisition-time session guard
   -> full exact catalog readiness
@@ -57,14 +57,20 @@ GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-migrate
 ### 3.1 Connection policy
 
 - URL 必须显式携带 user、host/Unix socket、port、database、sslmode；
+- 远程 URL 还必须显式携带非空 password；passwordless 只允许显式开启的 loopback/Unix-socket 测试；
 - database 与 login 必须出现在 exact manifest；
 - DSN 只允许 connectivity/credential/TLS keys；
+- pgx 识别的 24 个 `PG*` 环境变量只要存在就拒绝，包括空值；
 - 拒绝 `role/search_path/options/application_name` 等 session parameters；
 - 拒绝 pgx query-mode/cache 与 pgxpool size/lifetime/health 参数偷渡；
 - 拒绝 service/servicefile/passfile；
+- 内部 canonical DSN 强制 `passfile=`，并在 URL 未明确提供时强制空
+  `sslcert/sslkey/sslrootcert`，不采用默认 `.pgpass` 或默认客户端证书材料；
 - 拒绝 `sslmode=require`、`prefer` downgrade、multi-host/fallback；
 - 远端必须是 verify-full 等价 authenticated TLS；
 - 明文仅允许显式开启的 numeric loopback/absolute Unix socket 本地测试。
+- 最终 host/port/database/login/password 与审阅 URL 精确一致；connect timeout 同时冻结到字段和受控
+  `DialFunc`；runtime pool 不再二次解析 raw DSN。
 
 ### 3.2 Runtime pool
 
@@ -78,6 +84,10 @@ GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-migrate
 - `Ready` 每次执行 full exact validator，不以 `Ping` 或历史 success 冒充当前 ready；
 - public `UnitOfWork` constructor 不接 raw pool。
 
+`Pool.Acquire` 仍是 exported trusted low-level escape hatch：它返回经过 `PrepareConn` guard 的连接，但调用者
+仍可在 runtime role 权限内直接执行 SQL。它没有暴露底层 `*pgxpool.Pool`，却也不是 tenant、conversation
+或 action-time authority 边界；普通业务写路径必须继续使用受控 UnitOfWork 和后续 PEP。
+
 ### 3.3 Service gate
 
 | 路径 | 成功 | 失败 | 含义 |
@@ -88,6 +98,9 @@ GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-migrate
 
 SIGINT/SIGTERM 会触发 10 秒 HTTP graceful shutdown；Listen 返回后才关闭 pool。当前还没有独立 draining
 readiness state、old credential session termination 或 provider/runtime long-connection drain。
+
+API 进程环境只要存在 `WANWORK_IM_POSTGRES_MIGRATION_URL` 就在启动前拒绝，包括空值；检查只看 presence，
+不读取、不保存、不回显 migration credential。one-shot migrator 仍是唯一允许读取该变量的进程。
 
 ## 4. PostgreSQL 18.6 已验证矩阵
 
@@ -102,6 +115,10 @@ readiness state、old credential session termination 或 provider/runtime long-c
 - open transaction release；
 - function ACL drift、repair 和 full revalidation；
 - cancellation 与 pool exhaustion；
+- 24 个 ambient `PG*` 变量及 empty-presence 拒绝；
+- remote passwordless 拒绝、explicit local passwordless 测试允许；
+- default passfile/client TLS file override 与 single canonical pool parse；
+- API 拒绝 migration URL presence；
 - normal local tenant UoW 不 churn backend PID；
 - 全包 normal、全包 race、vet。
 

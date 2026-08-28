@@ -62,8 +62,11 @@ export WANWORK_IM_ALLOW_RUNTIME_COMPOSITION=1
 ```
 
 Remote connections do not accept the insecure-local exception and must pass authenticated TLS policy. The
-strict connection policy rejects implicit endpoint/identity fields, `sslmode=require/prefer`, multi-host or
-fallback endpoints, service/pass files, session parameters, and pgx/pgxpool query/cache/lifecycle overrides.
+strict connection policy requires an explicit remote password; rejects implicit endpoint/identity fields,
+`sslmode=require/prefer`, multi-host or fallback endpoints, raw service/pass files, session parameters, and
+pgx/pgxpool query/cache/lifecycle overrides; and rejects presence of every pgx-recognized `PG*` environment
+variable, including empty values. Its canonical parse suppresses default `.pgpass`/client-certificate adoption,
+compares the final host/port/database/login/password exactly, and binds the configured timeout to `DialFunc`.
 
 Runtime endpoints:
 
@@ -75,7 +78,8 @@ GET /api/v1/*     -> readiness failure stays HTTP 200 envelope with code 50301
 
 ### One-shot migrator
 
-The API reads only the runtime URL. Schema migration uses a different process and variable:
+The API reads only the runtime URL and refuses to start if the migration variable is present, even when empty.
+Schema migration uses a different process and variable:
 
 ```bash
 export WANWORK_IM_POSTGRES_MIGRATION_URL='postgresql://<migration-login>:<secret>@127.0.0.1:55488/wanwork_im?sslmode=disable'
@@ -89,7 +93,7 @@ command is not yet a complete production bootstrap or IaC replacement.
 
 ## Current PostgreSQL authority subset
 
-At code baseline `5c19fdb`, `internal/platform/postgres` contains checksummed migrations `0001..0005`, 22
+At code baseline `2d0c4a0`, `internal/platform/postgres` contains checksummed migrations `0001..0005`, 22
 authority tables, 17 FORCE RLS tables, tenant-bound repositories/UoW, and five fixed `SECURITY DEFINER` write
 functions. Conversation, provider-binding, membership, access, and command-receipt writes go through those
 functions. The tested `NOINHERIT` runtime login can explicitly `SET ROLE` only to its exact runtime group; that
@@ -102,6 +106,11 @@ first-deploy ownership/grant cutover, credential rotation/old-session drain, res
 Clerk tenant context, active authority resolution, PostgreSQL event/outbox/projection checkpoints, and provider
 reconciliation remain unimplemented. See `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` and
 `analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md` for the exact boundary.
+
+The exported `runtimepool.Pool.Acquire` is a trusted low-level escape hatch: it returns a session-guarded
+connection but still permits SQL within the runtime database role. The underlying `*pgxpool.Pool` is not
+exposed and production `UnitOfWork` construction does not accept an arbitrary raw pool, but neither fact makes
+`Acquire` a tenant or action-time authorization boundary.
 
 Current endpoint:
 

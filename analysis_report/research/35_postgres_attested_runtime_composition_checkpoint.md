@@ -4,9 +4,9 @@
 >
 > 分支：`dev_wanwork_quantum_entanglement`（未合并 `main`）
 >
-> 代码基线 / HEAD：`5c19fdb0d88c2d59caec3c95aee400be193b269f`
+> 最终代码证据基线：`2d0c4a069ef016c085541b3ec26426ccd6ace70b`
 >
-> 本批提交范围：`03cc94e^..5c19fdb`（12 个小提交）
+> 本批提交范围：`03cc94e^..2d0c4a0`（25 个小提交；17 个代码/安全提交，8 个文档/证据提交）
 >
 > 上一增量检查点：`analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md`
 >
@@ -25,7 +25,7 @@ authority；但当时 API 进程仍不创建数据库连接，exact validator �
 1. `AuthorityAccessManifest` 现在同时绑定明确数据库名，并可在 runtime credential 下执行完整 exact
    catalog 验证；
 2. 新增 strict connection policy：原始 DSN 只允许连接、身份、credential 与 TLS keys；database、login、
-   endpoint 形状与 transport 必须精确；
+   password、host、port 与 transport 必须精确；24 个 pgx `PG*` 变量只要存在（包括空值）就拒绝；
 3. 新增 opaque attested runtime pool：每条物理连接在进入池前完成初始登录身份检查、`SET ROLE`、session
    baseline 与完整 exact validation；每次借出前再检查 session contamination；
 4. `imstore.NewUnitOfWork` 的生产构造器不再接受任意 raw `*pgxpool.Pool`，owner/migrator pool 不能从公开
@@ -33,7 +33,8 @@ authority；但当时 API 进程仍不创建数据库连接，exact validator �
 5. runtime API composition 在监听端口前必须完成 `Open → Ready → UnitOfWork → NewRuntime`；
 6. runtime 模式增加 `/health/ready` 和 `/api/v1/*` route barrier；数据库失准时 health 返回 HTTP 503，
    business route 保持既定 HTTP 200 envelope 并返回 `50301`；
-7. 新增独立 `cmd/im-migrate`，migration URL 不会进入或留在 API 进程；
+7. 新增独立 `cmd/im-migrate`；API 启动时只要发现 migration URL 变量存在（包括空值）就拒绝，防止
+   owner-capable credential 被继承进长生命周期进程；
 8. SIGINT/SIGTERM 的顺序为 HTTP 有界 graceful drain，随后关闭 pool。
 
 本阶段可以诚实宣称：
@@ -61,15 +62,17 @@ authority；但当时 API 进程仍不创建数据库连接，exact validator �
 |---|---|
 | `[F]` | API runtime URL 只存在于 private config；`PublicSnapshot` 只暴露 `postgresMode=disabled/runtime`。 |
 | `[F]` | manifest JSON 未知字段、尾随 JSON、非 canonical database/role、重复/交叉登录角色均拒绝。 |
-| `[F]` | connection policy 拒绝 keyword DSN、隐式 user/host/port/database/sslmode、query identity override、runtime params、service/passfile、pgx query-mode/cache 与 pgxpool lifecycle 参数。 |
+| `[F]` | connection policy 拒绝 keyword DSN、隐式 user/host/port/database/sslmode、query identity override、runtime params、service/passfile、pgx query-mode/cache 与 pgxpool lifecycle 参数。远程 URL 必须显式携带非空 password；passwordless 只允许显式开启的 loopback/Unix-socket 测试。 |
+| `[F]` | pgx 识别的 24 个 `PG*` 环境变量按 presence 拒绝，空值也拒绝。规范化连接串强制 `passfile=`，并在未显式配置时强制空 `sslcert/sslkey/sslrootcert`，从而不采用默认 `.pgpass` 或默认客户端证书材料。 |
 | `[F]` | 远程只接纳 verify-full 等价配置；`sslmode=require`、`prefer` downgrade、multi-host/fallback 与远程明文拒绝。明文只允许显式开启且目标为 numeric loopback 或 absolute Unix socket 的本地测试。 |
+| `[F]` | runtime pool 只解析一次规范化 DSN，不再二次解析 raw DSN；最终 host/port/database/login/password 与原始审阅 URL 精确一致，并重建带显式 timeout 的 `DialFunc`。 |
 | `[F]` | `AfterConnect` 先要求 `session_user=current_user=configured runtime login` 和 exact database，再 `SET ROLE runtime`，固定 `search_path=pg_catalog` 与 `application_name=wanwork-im-runtime`，随后运行完整 runtime exact validator。 |
 | `[F]` | `PrepareConn` 每次借出检查 open/not-busy/idle transaction、session/current/database、search path、application name、tenant GUC、session settings、advisory locks 与 LISTEN；drift 返回固定错误并销毁连接。 |
 | `[F]` | 正常 `SET LOCAL wanwork.tenant_id` 事务提交后 PostgreSQL 会留下空 placeholder；当前 guard 明确允许 null/empty，拒绝任何非空 session tenant，并用同一 backend PID 证明正常 UoW 不 churn。 |
 | `[F]` | readiness 不是 `Ping`：借出已 guard 的连接后，再执行完整 exact roles/memberships/database/schema/table/function/default ACL comparator。 |
-| `[F]` | runtime pool 公开类型不暴露 raw pool；生产 UnitOfWork 构造器只接受 attested pool。 |
+| `[F]` | runtime pool 公开类型不暴露底层 `*pgxpool.Pool`；生产 UnitOfWork 构造器只接受 attested pool。`Pool.Acquire` 仍是 exported trusted low-level escape hatch，返回 guard 后的连接但可在 runtime role 权限内执行 SQL；它不是 tenant/action authority 边界。 |
 | `[F]` | runtime service 监听前必须成功组装 database readiness 与 persistence；DB 不 ready 时 `/api/v1/*` 返回业务码 `50301`，内部 drift 原因不回显。 |
-| `[F]` | `im-migrate` 使用独立 migration URL、列出的 migration login 和 owner role；API command 不读取该 URL。 |
+| `[F]` | `im-migrate` 使用独立 migration URL、列出的 migration login 和 owner role；API command 不读取其值，并拒绝继承了该变量（含空值）的启动环境。 |
 | `[F]` | 本阶段最终全包 PostgreSQL 18.6 normal、全包 `-race`、`go vet ./...` 均通过。 |
 
 ### 2.2 仍不成立的结论
@@ -126,9 +129,11 @@ WANWORK_IM_POSTGRES_RUNTIME_URL（private）
   + WANWORK_IM_POSTGRES_AUTHORITY_MANIFEST（non-secret）
   + host-owned pool/timeouts/local-test flag
     → config.Load
-    → connectionpolicy.Parse
-      → exact URL endpoint/database/login/TLS
-      → reject RuntimeParams + parser-consumed params + files/fallback
+    → connectionpolicy.ParsePool（single canonical parse）
+      → reject all ambient PG* presence
+      → exact URL endpoint/database/login/password/TLS
+      → override implicit passfile/default TLS files
+      → reject RuntimeParams + parser-consumed params + raw file/fallback overrides
     → runtimepool.Open
       → pgxpool.AfterConnect
         → initial login/database proof
@@ -174,6 +179,11 @@ WANWORK_IM_POSTGRES_RUNTIME_URL（private）
 `PrepareConn(false, ErrRuntimeConnectionDrift)` 会让当前借出失败并销毁旧物理连接；不会静默换一条连接后让污染
 事件看似不存在。下一次独立借出可以新建物理连接，并重新执行完整 `AfterConnect` attestation。
 
+`runtimepool.Pool.Acquire` 是有意保留给受信基础设施代码的低层入口：它会经过上述 guard，但拿到连接的调用者
+仍能在 runtime database role 的权限范围内直接执行 SQL。因此“opaque pool”只表示不暴露底层
+`*pgxpool.Pool` 和生产 UoW 不接受任意 raw pool，不表示 `Acquire` 自身构成 conversation/tenant/action
+授权边界。业务代码应优先通过受控 UnitOfWork；后续 PEP 仍必须在 action time 独立成立。
+
 ### 4.4 Readiness、业务错误与 graceful drain
 
 - `/health/live`：只证明进程可响应，HTTP 200；
@@ -195,10 +205,11 @@ WANWORK_IM_POSTGRES_MIGRATION_URL
   → safe summary（count/version/name；无 DSN）
 ```
 
-API binary 只读取 runtime URL；migration URL 只由 `im-migrate` 读取。两种 credential 的 lifetime 和进程边界已
+API binary 只读取 runtime URL；migration URL 只由 `im-migrate` 读取。API 启动对 migration 变量执行
+presence-only fail-closed 检查，不读取、不保留也不回显其值。两种 credential 的 lifetime 和进程边界已
 分离。但 first-deploy ownership/grant cutover 尚未自动化，所以当前命令不能被称为完整 production bootstrap。
 
-## 5. 12 个小提交台账
+## 5. 25 个小提交台账
 
 | # | 提交 | 内容 | 边界 |
 |---:|---|---|---|
@@ -214,6 +225,19 @@ API binary 只读取 runtime URL；migration URL 只由 `im-migrate` 读取。�
 | 10 | `1cc1e8b` | API startup composition 与有界 HTTP drain/pool close 顺序 | 旧 DB session rotation 未做。 |
 | 11 | `b782774` | runtime/migrator 共用 strict connection policy | 无行为扩张。 |
 | 12 | `5c19fdb` | 独立 one-shot `im-migrate` | first-deploy cutover/E2E 尚未完成。 |
+| 13 | `64f04a3` | 增加 guarded API start script | runtime composition 仍需显式 opt-in。 |
+| 14 | `72b0f96` | 发布 Topic 35 Markdown 与结构图 | 文档不替代运行证据。 |
+| 15 | `fa05a1d` | 修正 Go 验证命令的可直接运行性 | 无代码行为变化。 |
+| 16 | `89a3ce8` | 发布 W2 runtime 工程入口 | 无代码行为变化。 |
+| 17 | `c859efb` | 项目索引切换到 Topic 35 | 历史 Topic 33/34 保留。 |
+| 18 | `0e825cc` | 登记 Topic 35 SVG/PNG 与截图 manifest | 导航图不冒充测试截图。 |
+| 19 | `4f578fb` | 生成 Topic 35、项目首页和实施计划 HTML 镜像 | 派生 HTML 必须与 Markdown 同步。 |
+| 20 | `c70a0cf` | 把 function-write 文档标为历史检查点 | 当前入口保持 Topic 35。 |
+| 21 | `2c65b80` | 拒绝 pgx 识别的 24 个 ambient `PG*` 变量 | 当时先覆盖非空值。 |
+| 22 | `1f399e5` | API 启动拒绝 migration URL 环境继承 | presence-only，不读取 credential。 |
+| 23 | `5f5cb3e` | 增加 API/runtime/migrator ambient composition 测试 | 审计随后发现空值与默认文件缝隙。 |
+| 24 | `fa9f602` | canonical PostgreSQL parse：presence 拒绝、显式 password、默认文件压制、exact endpoint/credential、受控 DialFunc | passwordless 仅限显式本地测试。 |
+| 25 | `2d0c4a0` | runtime pool 改为单次 canonical parse | 消除 raw DSN 二次解析回流。 |
 
 ## 6. 验证矩阵与实跑结果
 
@@ -236,6 +260,12 @@ API binary 只读取 runtime URL；migration URL 只由 `im-migrate` 读取。�
 | function EXECUTE ACL drift | Ready 失败 | 通过 |
 | ACL 修复但未重验 | 不沿用历史 ready | 通过：必须再次完整 Ready |
 | cancelled context / pool exhaustion | bounded `ErrNotReady` | 通过 |
+| 24 个 `PG*` 环境变量（含 empty-presence） | parse 前固定拒绝且不泄露值 | 通过 |
+| 远程 passwordless URL | 固定拒绝 | 通过 |
+| 显式本地 passwordless 测试 | 允许且 password 保持为空，不采用 passfile | 通过 |
+| 默认 passfile/client TLS 文件设置 | canonical DSN 显式置空，不采用隐式材料 | 通过 |
+| runtime raw DSN 二次解析 | 不存在；`ParsePool` 单次规范化解析 | 通过 |
+| API 环境含 migration URL（含空值） | 启动前固定拒绝 | 通过 |
 
 ### 6.2 最终命令
 
