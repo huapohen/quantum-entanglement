@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"slices"
 	"strings"
@@ -13,15 +14,16 @@ import (
 )
 
 const (
-	ApprovalExecutionFenceRecordFormat = "wanwork.im.postgres-authority-approval-execution-fence/2"
-	approvalConsumptionIDDomain        = "wanwork.im/postgres-authority-approval-consumption/1\n"
-	approvalExecutionOperationIDDomain = "wanwork.im/postgres-authority-approval-operation/1\n"
-	approvalExecutionAdmissionDomain   = "wanwork.im/postgres-authority-approval-execution-admission/1\n"
-	approvalExecutionFenceDigestDomain = "wanwork.im/postgres-authority-approval-execution-fence/2\n"
-	approvalExecutionTokenDigestDomain = "wanwork.im/postgres-authority-approval-execution-token/1\n"
-	approvalExecutionTokenBytes        = 32
-	approvalExecutionReconcileTimeout  = 5 * time.Second
-	approvalMutationFenceRedacted      = "ApprovalMutationFence{redacted}"
+	ApprovalExecutionFenceRecordFormat     = "wanwork.im.postgres-authority-approval-execution-fence/2"
+	approvalConsumptionIDDomain            = "wanwork.im/postgres-authority-approval-consumption/1\n"
+	approvalExecutionOperationIDDomain     = "wanwork.im/postgres-authority-approval-operation/1\n"
+	approvalExecutionAdmissionDomain       = "wanwork.im/postgres-authority-approval-execution-admission/1\n"
+	approvalExecutionFenceDigestDomain     = "wanwork.im/postgres-authority-approval-execution-fence/2\n"
+	approvalExecutionTokenDigestDomain     = "wanwork.im/postgres-authority-approval-execution-token/1\n"
+	approvalExecutionTokenBytes            = 32
+	approvalExecutionReconcileTimeout      = 5 * time.Second
+	approvalMutationFenceRedacted          = "ApprovalMutationFence{redacted}"
+	maximumApprovalExecutionAdmissionBytes = 64 * 1024
 )
 
 var (
@@ -526,6 +528,42 @@ func marshalApprovalExecutionFenceRecordCanonical(
 		return nil, err
 	}
 	return bytes.TrimSuffix(output.Bytes(), []byte("\n")), nil
+}
+
+func marshalApprovalExecutionAdmissionCanonical(
+	candidate approvalExecutionFenceCandidate,
+) ([]byte, error) {
+	if !validApprovalExecutionFenceCandidate(candidate) {
+		return nil, ErrInvalidApprovalExecutionState
+	}
+	canonical, err := marshalApprovalExecutionFenceRecordCanonical(candidate.record)
+	if err != nil || len(canonical) == 0 || len(canonical) > maximumApprovalExecutionAdmissionBytes {
+		return nil, ErrInvalidApprovalExecutionState
+	}
+	return canonical, nil
+}
+
+func decodeApprovalExecutionAdmission(
+	raw []byte,
+) (approvalExecutionFenceCandidate, error) {
+	if len(raw) == 0 || len(raw) > maximumApprovalExecutionAdmissionBytes {
+		return approvalExecutionFenceCandidate{}, ErrInvalidApprovalExecutionState
+	}
+	var record ApprovalExecutionFenceRecord
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&record); err != nil {
+		return approvalExecutionFenceCandidate{}, ErrInvalidApprovalExecutionState
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return approvalExecutionFenceCandidate{}, ErrInvalidApprovalExecutionState
+	}
+	candidate := approvalExecutionFenceCandidate{record: record}
+	canonical, err := marshalApprovalExecutionAdmissionCanonical(candidate)
+	if err != nil || !bytes.Equal(raw, canonical) {
+		return approvalExecutionFenceCandidate{}, ErrInvalidApprovalExecutionState
+	}
+	return candidate, nil
 }
 
 func earliestApprovalExecutionExpiry(values ...time.Time) time.Time {

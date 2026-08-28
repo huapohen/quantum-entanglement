@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -342,6 +343,44 @@ func TestApprovalExecutionFenceAdmissionDigestRejectsSemanticRewrite(t *testing.
 	changed.RecordDigest = domainSeparatedDigest(approvalExecutionFenceDigestDomain, canonical)
 	if validApprovalExecutionFenceRecord(changed, true) {
 		t.Fatal("semantic rewrite with recomputed admission and record digests became valid")
+	}
+}
+
+func TestApprovalExecutionFenceAdmissionCanonicalRoundTrip(t *testing.T) {
+	fixture := newApprovalExecutionFenceFixture(t)
+	candidate, err := newApprovalExecutionFenceCandidate(
+		fixture.plan,
+		fixture.approval,
+		fixture.report,
+		fixture.attempt,
+	)
+	if err != nil {
+		t.Fatalf("newApprovalExecutionFenceCandidate: %v", err)
+	}
+	canonical, err := marshalApprovalExecutionAdmissionCanonical(candidate)
+	if err != nil {
+		t.Fatalf("marshalApprovalExecutionAdmissionCanonical: %v", err)
+	}
+	decoded, err := decodeApprovalExecutionAdmission(canonical)
+	if err != nil || decoded.record != candidate.record {
+		t.Fatalf("admission round trip mismatch: %v", err)
+	}
+
+	unknownField := slices.Clone(canonical)
+	unknownField = append(unknownField[:len(unknownField)-1], []byte(`,"unknown":true}`)...)
+	for name, raw := range map[string][]byte{
+		"empty":         nil,
+		"trailing byte": append(slices.Clone(canonical), '\n'),
+		"unknown field": unknownField,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeApprovalExecutionAdmission(raw); !errors.Is(
+				err,
+				ErrInvalidApprovalExecutionState,
+			) {
+				t.Fatalf("decode error = %v", err)
+			}
+		})
 	}
 }
 
