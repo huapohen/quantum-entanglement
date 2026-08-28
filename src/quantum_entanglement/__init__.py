@@ -110,12 +110,18 @@ from .native_im_provider_exchange import (
     NativeIMProviderRequestIntentV1,
     NativeIMProviderWireResponseV1,
 )
+from .native_im_read_exchange import (
+    NativeIMInboundReadExchangeEvidenceV1,
+    derive_native_im_read_exchange_evidence_digest_v1,
+)
 from .native_im_sandbox import (
     NativeIMDisabledSandboxAdapter,
     NativeIMHealthEvidenceV1,
+    NativeIMInboundExchangeTransportPortV1,
     NativeIMInboundMapperPort,
     NativeIMInboundOnlySandboxAdapter,
     NativeIMInboundParseError,
+    NativeIMInboundRawExchangeV1,
     NativeIMInboundRawResponseV1,
     NativeIMInboundTransportPort,
     NativeIMMappedPageV1,
@@ -379,7 +385,10 @@ __all__ = [
     "NativeIMInboundMapperPort",
     "NativeIMInboundOnlySandboxAdapter",
     "NativeIMInboundParseError",
+    "NativeIMInboundRawExchangeV1",
     "NativeIMInboundRawResponseV1",
+    "NativeIMInboundReadExchangeEvidenceV1",
+    "NativeIMInboundExchangeTransportPortV1",
     "NativeIMInboundTransportPort",
     "NativeIMKillSwitchSnapshotV1",
     "NativeIMKillSwitchTrippedError",
@@ -422,6 +431,7 @@ __all__ = [
     "NativeIMSecretResolverPort",
     "NativeIMTransportContractError",
     "NativeIMVerifiedInboundReadV1",
+    "derive_native_im_read_exchange_evidence_digest_v1",
     "NeedsYouQueue",
     "OrchestratorKernel",
     "OutboxMessage",

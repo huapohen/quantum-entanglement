@@ -41,6 +41,7 @@ from .native_im_provider_profile import (
     IMProviderProfileV1,
     derive_inbound_only_capability_snapshot_v1,
 )
+from .native_im_read_exchange import NativeIMInboundReadExchangeEvidenceV1
 from .native_im_sandbox_approval import NativeIMSandboxApprovalV1
 from .native_im_sandbox_authority import (
     InMemoryNativeIMSandboxApprovalAuthorityV1,
@@ -265,6 +266,36 @@ class NativeIMInboundRawResponseV1:
 
 
 @dataclass(frozen=True, repr=False)
+class NativeIMInboundRawExchangeV1:
+    """One raw response plus transient request-correlated exchange evidence."""
+
+    response: NativeIMInboundRawResponseV1 = field(repr=False)
+    exchange_evidence: NativeIMInboundReadExchangeEvidenceV1 = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not NativeIMInboundRawExchangeV1:
+            raise TypeError("raw inbound exchange requires the exact V1 class")
+        if type(self.response) is not NativeIMInboundRawResponseV1:
+            raise TypeError("raw inbound exchange requires an exact raw response")
+        if type(self.exchange_evidence) is not NativeIMInboundReadExchangeEvidenceV1:
+            raise TypeError("raw inbound exchange requires exact exchange evidence")
+        if (
+            self.response.read_request_id != self.exchange_evidence.read_request_id
+            or self.response.received_at != self.exchange_evidence.received_at
+            or self.response.transport_evidence_digest
+            != self.exchange_evidence.event_source_evidence_digest
+        ):
+            raise ValueError("raw inbound response does not bind its exchange evidence")
+
+    def __repr__(self) -> str:
+        return (
+            "NativeIMInboundRawExchangeV1("
+            f"body_bytes={len(self.response.raw_body)}, "
+            f"exchange={self.exchange_evidence.evidence_digest[:12]!r})"
+        )
+
+
+@dataclass(frozen=True, repr=False)
 class NativeIMMappedPageV1:
     """Canonical mapper output bound to, but distinct from, the signed provider body."""
 
@@ -400,6 +431,18 @@ class NativeIMInboundTransportPort(Protocol):
 
     async def aclose(self) -> None:
         """Close transport-owned resources without performing an external action."""
+
+
+@runtime_checkable
+class NativeIMInboundExchangeTransportPortV1(Protocol):
+    """Enhanced read seam that separates transient exchange and stable event evidence."""
+
+    async def read_inbound_exchange(
+        self,
+        request: IMInboundReadRequestV1,
+        credential: SecretMaterial,
+    ) -> NativeIMInboundRawExchangeV1:
+        """Read one exact response with request-correlated exchange evidence."""
 
 
 @runtime_checkable
@@ -1006,7 +1049,9 @@ __all__ = [
     "NativeIMInboundParseError",
     "NativeIMInboundMapperPort",
     "NativeIMInboundOnlySandboxAdapter",
+    "NativeIMInboundRawExchangeV1",
     "NativeIMInboundRawResponseV1",
+    "NativeIMInboundExchangeTransportPortV1",
     "NativeIMInboundTransportPort",
     "NativeIMMappedPageV1",
     "NativeIMMapperRejectionError",
