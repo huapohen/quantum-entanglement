@@ -29,8 +29,14 @@ from quantum_entanglement.native_im_nonce_store import (
     NativeIMNonceStorePoisonedError,
     SQLiteNativeIMInboxStore,
 )
+from quantum_entanglement.native_im_read_exchange import (
+    NativeIMInboundReadExchangeEvidenceV1,
+    derive_native_im_read_exchange_evidence_digest_v1,
+)
 from quantum_entanglement.native_im_sandbox_provenance import (
     NativeIMSandboxAdmissionProvenanceV1,
+    NativeIMSandboxExchangeAdmissionProvenanceV1,
+    decode_native_im_sandbox_admission_provenance_v1,
 )
 from quantum_entanglement.plugins import PluginManager
 from quantum_entanglement.runtime import OrchestratorKernel
@@ -91,9 +97,7 @@ def admission_provenance(
     **changes: object,
 ) -> NativeIMSandboxAdmissionProvenanceV1:
     transport_evidence_digest = (
-        page.envelopes[0].event.transport_evidence_digest
-        if page.envelopes
-        else "b" * 64
+        page.envelopes[0].event.transport_evidence_digest if page.envelopes else "b" * 64
     )
     values: dict[str, object] = {
         "schema_version": 1,
@@ -116,6 +120,44 @@ def admission_provenance(
     }
     values.update(changes)
     return NativeIMSandboxAdmissionProvenanceV1(**values)  # type: ignore[arg-type]
+
+
+def exchange_admission_provenance(
+    request: IMInboundReadRequestV1,
+    page: IMInboundPageV1,
+    *,
+    evidence_read_request_id: str | None = None,
+) -> NativeIMSandboxExchangeAdmissionProvenanceV1:
+    legacy = admission_provenance(request, page)
+    read_request_id = evidence_read_request_id or request.read_request_id
+    evidence_digest = derive_native_im_read_exchange_evidence_digest_v1(
+        read_request_id=read_request_id,
+        read_request_digest=request.canonical_digest(),
+        after_cursor=request.after_cursor,
+        after_sequence=request.after_sequence,
+        snapshot_token=request.snapshot_token,
+        received_at=ADMITTED_AT,
+        request_intent_digest="8" * 64,
+        exchange_security_evidence_digest="9" * 64,
+        event_source_evidence_digest=legacy.transport_evidence_digest,
+    )
+    exchange_evidence = NativeIMInboundReadExchangeEvidenceV1(
+        schema_version=1,
+        read_request_id=read_request_id,
+        read_request_digest=request.canonical_digest(),
+        after_cursor=request.after_cursor,
+        after_sequence=request.after_sequence,
+        snapshot_token=request.snapshot_token,
+        received_at=ADMITTED_AT,
+        request_intent_digest="8" * 64,
+        exchange_security_evidence_digest="9" * 64,
+        event_source_evidence_digest=legacy.transport_evidence_digest,
+        evidence_digest=evidence_digest,
+    )
+    return NativeIMSandboxExchangeAdmissionProvenanceV1(
+        **legacy.__dict__,
+        read_exchange_evidence=exchange_evidence,
+    )
 
 
 class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
@@ -253,6 +295,68 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         self.assertEqual(read["page_digest"], page.canonical_digest())
         self.assertEqual(read["admitted_checkpoint_revision"], 1)
         self.assertEqual(read["admitted_at"], ADMITTED_AT)
+
+    def test_exchange_provenance_persists_and_replays_without_schema_v7(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        verification = raw_verification()
+        provenance = exchange_admission_provenance(request, page)
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+
+        fresh = self.store.admit_native_im_inbound_page(
+            request,
+            snapshot,
+            page,
+            verification,
+            provenance,
+        )
+        replay = self.store.admit_native_im_inbound_page(
+            request,
+            snapshot,
+            page,
+            verification,
+            provenance,
+        )
+
+        self.assertEqual(fresh.disposition, "fresh_observation")
+        self.assertEqual(replay.disposition, "observed_replay")
+        row = self._rows("native_im_inbound_provenance")[0]
+        decoded = decode_native_im_sandbox_admission_provenance_v1(
+            row["provenance_json"].encode("utf-8")
+        )
+        self.assertIs(type(decoded), NativeIMSandboxExchangeAdmissionProvenanceV1)
+        self.assertEqual(decoded, provenance)
+        self.assertEqual(row["provenance_digest"], provenance.canonical_digest())
+        migrations = self._rows("qe_schema_migrations")
+        self.assertEqual(
+            tuple(sorted(row["version"] for row in migrations)),
+            tuple(range(1, 7)),
+        )
+
+    def test_exchange_provenance_rejects_mismatched_request_id_before_transaction(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        provenance = exchange_admission_provenance(
+            request,
+            page,
+            evidence_read_request_id="other-read-request",
+        )
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+
+        with self.assertRaises(NativeIMInboundConflictError):
+            self.store.admit_native_im_inbound_page(
+                request,
+                snapshot,
+                page,
+                raw_verification(),
+                provenance,
+            )
+
+        self._assert_no_admitted_observation_rows()
 
     def test_public_admission_rejects_subclasses_before_inspection(self) -> None:
         class RequestSubclass(IMInboundReadRequestV1):
