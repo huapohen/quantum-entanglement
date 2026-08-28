@@ -734,10 +734,7 @@ func newStoreIntegrationUnit(t *testing.T, adminURL string) (*UnitOfWork, *pgxpo
 		_, _ = adminConnection.Exec(closeContext, "DROP ROLE "+quotedLogin+", "+quotedRole)
 		_ = adminConnection.Close(closeContext)
 	})
-	unit, err := NewUnitOfWork(pool)
-	if err != nil {
-		t.Fatalf("create unit of work: %v", err)
-	}
+	unit := &UnitOfWork{pool: pool, commitHook: commitTransaction}
 	return unit, pool
 }
 

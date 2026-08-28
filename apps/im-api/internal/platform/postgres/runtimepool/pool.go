@@ -63,7 +63,9 @@ func Open(ctx context.Context, input Config) (*Pool, error) {
 	return pool, nil
 }
 
-// Acquire returns a connection only after pgxpool has re-attested its idle session state.
+// Acquire is the trusted persistence escape hatch. It returns a connection only after pgxpool
+// has re-attested its idle session state; HTTP handlers and provider adapters must not use it
+// directly.
 func (pool *Pool) Acquire(ctx context.Context) (*pgxpool.Conn, error) {
 	if pool == nil || pool.inner == nil || ctx == nil || ctx.Err() != nil {
 		return nil, ErrNotReady

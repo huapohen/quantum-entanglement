@@ -13,16 +13,24 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/runtimepool"
 )
 
 const transactionCleanupTimeout = 5 * time.Second
 
+type connectionPool interface {
+	Acquire(context.Context) (*pgxpool.Conn, error)
+}
+
 type UnitOfWork struct {
-	pool       *pgxpool.Pool
+	pool       connectionPool
 	commitHook func(context.Context, pgx.Tx) error
 }
 
-func NewUnitOfWork(pool *pgxpool.Pool) (*UnitOfWork, error) {
+// NewUnitOfWork admits only an attested runtime pool. A raw pgxpool (including an owner or
+// migrator pool) cannot be injected through the production constructor.
+func NewUnitOfWork(pool *runtimepool.Pool) (*UnitOfWork, error) {
 	if pool == nil {
 		return nil, store.ErrInvalidRequest
 	}
