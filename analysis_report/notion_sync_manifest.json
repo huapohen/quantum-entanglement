@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-28T00:21:14Z",
+  "syncedAt": "2026-08-28T01:29:03Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private main + local repository",
     "remoteRepresentation": "semantic-mirror",
@@ -22,9 +22,9 @@
     }
   },
   "sourceControl": {
-    "notionContentBaselineCommit": "d8d57a869f717275e193e88cbb19728feedea8e2",
-    "manifestPreparedFromCommit": "1d82fd1638c762ba4b4ec710e5476ad1102597e0",
-    "manifestPreparedFromTree": "2448b253d7d92c9fae6a54b9fd8c81dc020a5246"
+    "notionContentBaselineCommit": "ed9a4a10ab1818aed29b34f68a741d2f7232f80c",
+    "manifestPreparedFromCommit": "ed9a4a10ab1818aed29b34f68a741d2f7232f80c",
+    "manifestPreparedFromTree": "dd4d73591f772550d99a284ed4e028dcb130886f"
   },
   "pages": [
     {
@@ -34,18 +34,28 @@
       "localFiles": [
         {
           "path": "analysis_report/README.md",
-          "sha256": "b337124b937aa6d89a5a5dee98a37a3e1c9208aae98894322a2d531a27f63ffa"
+          "sha256": "78a6d9f2ab26bf825a3abce1f04bbb2aa5241a72de67fe7118781b1f8c75d78a"
         }
       ],
       "updateMode": "targeted-preserve-child-pages-and-database",
       "remoteReadback": {
         "verified": true,
         "title": "🪢 Quantum Entanglement｜人 + 多 Agent 协同办公",
-        "contentLength": 11142,
+        "contentLength": 12541,
         "expectedMarkers": [
           "任何本地文档、代码、决策、计划或验收动作",
           "f99f176bfa9cd14abf7e3c51d971b9682dc49230",
-          "当前项目镜像共 **47 页**",
+          "当前项目镜像共 **48 页**",
+          "46 个受控事实源页面",
+          "ed9a4a1",
+          "ActorRef / ActorSnapshot",
+          "ProviderRealmID",
+          "ConversationRef / ConversationSnapshot",
+          "848 个 non-canonical permutations",
+          "44 类禁止字段",
+          "RQ-043～RQ-045",
+          "W2 identity persistence/projection",
+          "真实 outbound 关闭",
           "d8d57a8",
           "2output/more",
           "durability=volatile",
@@ -770,15 +780,25 @@
       "localFiles": [
         {
           "path": "docs/wanwork_im/ARCHITECTURE.md",
-          "sha256": "b4e6090ed5dafdf5d4833af26ff66612628ca840d43ca29170200821003e8880"
+          "sha256": "ccb901d12b933a2ed546fdbccc5fb6d3c86ddfdb6c605b8b691507ee9192327f"
         }
       ],
       "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
       "remoteReadback": {
         "verified": true,
         "title": "🏗️ 02｜原生 IM 架构与 DeepSeek Harness 吸收边界",
-        "contentLength": 6992,
+        "contentLength": 8017,
         "expectedMarkers": [
+          "ed9a4a1",
+          "ActorRef",
+          "ActorSnapshot",
+          "ProviderRealmID",
+          "ConversationRef",
+          "ConversationSnapshot",
+          "1024-byte",
+          "零授权 projection",
+          "W2 persistence",
+          "真实 outbound 关闭",
           "d8d57a8",
           "VolatileMemoryStore",
           "caller",
@@ -795,15 +815,23 @@
       "localFiles": [
         {
           "path": "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
-          "sha256": "9fe82817471420950906d34d874d217ff4d81f994dbffcec428352dd46c7c008"
+          "sha256": "47235d7cbd41f8a072df81b05fd0e88d4c2a41bfdc16b87bbf881a9c00f2bd88"
         }
       ],
       "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
       "remoteReadback": {
         "verified": true,
-        "title": "🔬 03｜用户调研可追溯矩阵（42 条硬映射）",
-        "contentLength": 6493,
+        "title": "🔬 03｜用户调研可追溯矩阵（45 条硬映射）",
+        "contentLength": 7561,
         "expectedMarkers": [
+          "ed9a4a1",
+          "RQ-043",
+          "RQ-044",
+          "RQ-045",
+          "1024 bytes",
+          "848 个拒绝",
+          "44 类禁止字段",
+          "真实 outbound 关闭",
           "d8d57a8",
           "P1-7",
           "28 个事件测试",
@@ -819,15 +847,21 @@
       "localFiles": [
         {
           "path": "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
-          "sha256": "efcaa3e6f4c1a49c0a0fd8c7bee31eb3e7de00bd7691935d7e3f3887de562725"
+          "sha256": "c228f324eb3b750c678a9b763339b6763692c9b7197f2a643da3259360890569"
         }
       ],
       "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
       "remoteReadback": {
         "verified": true,
         "title": "🧭 04｜实施计划、提交序列与验收门禁",
-        "contentLength": 6098,
+        "contentLength": 7313,
         "expectedMarkers": [
+          "ed9a4a1",
+          "identity/conversation value contracts 与 strict provider metadata codec 已从“下一项”变为已完成",
+          "W2",
+          "W3",
+          "W4",
+          "真实 outbound 继续关闭",
           "d8d57a8",
           "P1-7",
           "28 个事件测试",
@@ -844,15 +878,23 @@
       "localFiles": [
         {
           "path": "analysis_report/research/22_2output_research_absorption_audit.md",
-          "sha256": "4e3a343e9204249846ed2d09853f11d82d01f0b1eb4e48aa72cf746396fa411b"
+          "sha256": "0f777a8645025919a2c25fab60af6ecf11ffa1e75e3f3d4fe11e1de3be9f716a"
         }
       ],
       "updateMode": "targeted-semantic-mirror-with-current-markdown-and-html-attachments",
       "remoteReadback": {
         "verified": true,
         "title": "🧭 22｜2output 调研吸收与产品合同增量审计",
-        "contentLength": 4437,
+        "contentLength": 5460,
         "expectedMarkers": [
+          "ed9a4a1",
+          "RQ-001～RQ-045",
+          "ProviderRealmID",
+          "1024 bytes",
+          "848 个非 canonical 排列",
+          "44 类 authority/secret/content/evidence 字段",
+          "W2/W3/W4 仍未完成",
+          "真实 outbound 关闭",
           "d8d57a8",
           "P1-7 Volatile Memory EventStore",
           "checksum 不等于 MAC",
@@ -911,6 +953,40 @@
           "28 个 Test",
           "W2 PostgreSQL",
           "production projection engine"
+        ],
+        "missingMarkers": []
+      }
+    },
+    {
+      "key": "research-32-im-identity-conversation-provider-metadata",
+      "pageId": "3caead4b-996e-8148-946f-e78a206cab67",
+      "url": "https://app.notion.com/p/3caead4b996e8148946fe78a206cab67?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/32_im_identity_conversation_and_provider_metadata_contract.md",
+          "sha256": "0de3e19d71f2283d2d8e33e7a69e3a7c25f1c0cc52a9a34e4800b94b36b9367e"
+        }
+      ],
+      "updateMode": "created-comprehensive-report-with-exact-markdown-and-html-attachments",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🧬 32｜IM 身份、会话拓扑与 Provider Metadata 合同",
+        "contentLength": 8595,
+        "expectedMarkers": [
+          "ed9a4a1",
+          "ActorRef / ActorSnapshot",
+          "ProviderRealmID",
+          "ConversationRef / ConversationSnapshot",
+          "848 拒绝",
+          "44 类",
+          "1024 bytes",
+          "RQ-043",
+          "RQ-044",
+          "RQ-045",
+          "W2 identity persistence/projection",
+          "W3 Clerk 与融云 adapter",
+          "W4 子群 provisioning/完整闭环",
+          "真实融云 outbound **关闭**"
         ],
         "missingMarkers": []
       }
@@ -1095,8 +1171,15 @@
       "remoteReadback": {
         "verified": true,
         "title": "🛰️ WanWork Quantum Entanglement｜原生 IM 独立审阅空间",
-        "contentLength": 4601,
+        "contentLength": 5469,
         "expectedMarkers": [
+          "ed9a4a1",
+          "ActorRef / ActorSnapshot",
+          "ProviderRealmID",
+          "ConversationRef / ConversationSnapshot",
+          "RQ-001～RQ-045",
+          "46 个受控事实源 + 2 个派生页 = 48 页",
+          "真实融云 outbound 继续关闭",
           "d8d57a8",
           "P1-7 Volatile Memory EventStore",
           "Action Receipt",
@@ -1132,12 +1215,12 @@
     }
   ],
   "verificationSummary": {
-    "pageCount": 47,
-    "controlledSourcePageCount": 45,
+    "pageCount": 48,
+    "controlledSourcePageCount": 46,
     "auxiliaryDerivedPageCount": 2,
-    "existingPagesUpdated": 10,
-    "newPagesCreated": 5,
-    "readbackVerified": 15,
+    "existingPagesUpdated": 16,
+    "newPagesCreated": 6,
+    "readbackVerified": 22,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 27,
     "screenshotImagesAddedThisSync": 17,
