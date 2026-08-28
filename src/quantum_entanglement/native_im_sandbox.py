@@ -47,7 +47,11 @@ from .native_im_sandbox_authority import (
     InMemoryNativeIMSandboxApprovalAuthorityV1,
     NativeIMSandboxApprovalPermitV1,
 )
-from .native_im_sandbox_provenance import NativeIMSandboxAdmissionProvenanceV1
+from .native_im_sandbox_provenance import (
+    NativeIMSandboxAdmissionProvenance,
+    NativeIMSandboxAdmissionProvenanceV1,
+    NativeIMSandboxExchangeAdmissionProvenanceV1,
+)
 from .service.native_im_config import (
     CanonicalAbsolutePath,
     CanonicalHTTPSOrigin,
@@ -368,7 +372,7 @@ class NativeIMVerifiedInboundReadV1:
     page: IMInboundPageV1 = field(repr=False)
     raw_verification: NativeIMRawVerificationResultV1 = field(repr=False)
     mapping_evidence_digest: str
-    provenance: NativeIMSandboxAdmissionProvenanceV1 = field(repr=False)
+    provenance: NativeIMSandboxAdmissionProvenance = field(repr=False)
 
     def __post_init__(self) -> None:
         if type(self) is not NativeIMVerifiedInboundReadV1:
@@ -381,7 +385,10 @@ class NativeIMVerifiedInboundReadV1:
             raise TypeError("verified inbound read page must be the exact V1 class")
         if type(self.raw_verification) is not NativeIMRawVerificationResultV1:
             raise TypeError("verified inbound read evidence must be the exact V1 class")
-        if type(self.provenance) is not NativeIMSandboxAdmissionProvenanceV1:
+        if type(self.provenance) not in {
+            NativeIMSandboxAdmissionProvenanceV1,
+            NativeIMSandboxExchangeAdmissionProvenanceV1,
+        }:
             raise TypeError("verified inbound read provenance must be the exact V1 class")
         _digest(self.mapping_evidence_digest, "mappingEvidenceDigest")
         self.page.validate_request_binding(self.request)
@@ -847,8 +854,20 @@ class NativeIMInboundOnlySandboxAdapter:
         credential = self.__secret_loader.resolve("read_credential")
         transport_failed = False
         response: object = None
+        exchange_evidence: NativeIMInboundReadExchangeEvidenceV1 | None = None
         try:
-            response = await self.__transport.read_inbound(request_snapshot, credential)
+            if isinstance(self.__transport, NativeIMInboundExchangeTransportPortV1):
+                observed = await self.__transport.read_inbound_exchange(
+                    request_snapshot,
+                    credential,
+                )
+                if type(observed) is not NativeIMInboundRawExchangeV1:
+                    raise TypeError("enhanced transport returned an invalid exchange")
+                observed.exchange_evidence.validate_request_binding(request_snapshot)
+                response = observed.response
+                exchange_evidence = observed.exchange_evidence
+            else:
+                response = await self.__transport.read_inbound(request_snapshot, credential)
         except Exception as error:
             transport_failed = True
             _detach_exception(error)
@@ -903,25 +922,47 @@ class NativeIMInboundOnlySandboxAdapter:
         )
         if mapped.mapping_evidence_digest != expected_mapping_evidence_digest:
             raise NativeIMTransportContractError() from None
-        provenance = NativeIMSandboxAdmissionProvenanceV1(
-            schema_version=1,
-            approval_id=approval.approval_id,
-            authority_revision=approval.authority_revision,
-            approval_digest=approval.canonical_digest(),
-            configuration_binding_digest=approval.configuration_binding_digest,
-            profile_id=self.__profile.profile_id,
-            profile_revision=self.__profile.revision,
-            profile_digest=self.__profile.canonical_digest(),
-            provider_manifest_digest=self.__provider_manifest_digest,
-            transport_contract_id=approval.transport_contract_id,
-            transport_contract_digest=approval.transport_contract_digest,
-            mapper_contract_id=approval.mapper_contract_id,
-            mapper_contract_digest=approval.mapper_contract_digest,
-            read_request_digest=request_snapshot.canonical_digest(),
-            page_digest=page.canonical_digest(),
-            transport_evidence_digest=response.transport_evidence_digest,
-            mapping_evidence_digest=mapped.mapping_evidence_digest,
-        )
+        if exchange_evidence is None:
+            provenance: NativeIMSandboxAdmissionProvenance = NativeIMSandboxAdmissionProvenanceV1(
+                schema_version=1,
+                approval_id=approval.approval_id,
+                authority_revision=approval.authority_revision,
+                approval_digest=approval.canonical_digest(),
+                configuration_binding_digest=approval.configuration_binding_digest,
+                profile_id=self.__profile.profile_id,
+                profile_revision=self.__profile.revision,
+                profile_digest=self.__profile.canonical_digest(),
+                provider_manifest_digest=self.__provider_manifest_digest,
+                transport_contract_id=approval.transport_contract_id,
+                transport_contract_digest=approval.transport_contract_digest,
+                mapper_contract_id=approval.mapper_contract_id,
+                mapper_contract_digest=approval.mapper_contract_digest,
+                read_request_digest=request_snapshot.canonical_digest(),
+                page_digest=page.canonical_digest(),
+                transport_evidence_digest=response.transport_evidence_digest,
+                mapping_evidence_digest=mapped.mapping_evidence_digest,
+            )
+        else:
+            provenance = NativeIMSandboxExchangeAdmissionProvenanceV1(
+                schema_version=1,
+                approval_id=approval.approval_id,
+                authority_revision=approval.authority_revision,
+                approval_digest=approval.canonical_digest(),
+                configuration_binding_digest=approval.configuration_binding_digest,
+                profile_id=self.__profile.profile_id,
+                profile_revision=self.__profile.revision,
+                profile_digest=self.__profile.canonical_digest(),
+                provider_manifest_digest=self.__provider_manifest_digest,
+                transport_contract_id=approval.transport_contract_id,
+                transport_contract_digest=approval.transport_contract_digest,
+                mapper_contract_id=approval.mapper_contract_id,
+                mapper_contract_digest=approval.mapper_contract_digest,
+                read_request_digest=request_snapshot.canonical_digest(),
+                page_digest=page.canonical_digest(),
+                transport_evidence_digest=response.transport_evidence_digest,
+                mapping_evidence_digest=mapped.mapping_evidence_digest,
+                read_exchange_evidence=exchange_evidence,
+            )
         return NativeIMVerifiedInboundReadV1(
             request=request_snapshot,
             capability=capability,
