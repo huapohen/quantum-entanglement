@@ -1857,12 +1857,14 @@
     "semanticBaselineTree": "0eda517dc2cf3f6832c6a218831d65471bba7495",
     "sourceCandidateCommit": "d889751e4cc3b7db548994a000a87e21688b4429",
     "sourceCandidateTree": "57b608ed57f47a68d1f9433104cd88d820a19929",
+    "syncLedgerCommit": "1c3bd594185c5a8f375318bd5be4e97601d00c2e",
+    "syncLedgerTree": "6a70fd168bf61f7cbd474cc10c53719e717a9b5c",
     "branch": "mainline_continue_quantum_entanglement",
     "parent": {
       "pageId": "3c9ead4b-996e-8108-aea6-c97c694d6587",
       "url": "https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204",
       "title": "Quantum Entanglement｜mainline_continue 独立审阅空间",
-      "contentLength": 13754,
+      "contentLength": 13991,
       "expectedMarkers": ["497c545", "d889751", "3caead4b996e81f99b71d0bed6ac3136"],
       "missingMarkers": [],
       "remoteReadbackVerified": true,
@@ -1901,9 +1903,9 @@
       },
       {
         "sourcePath": "analysis_report/README.md",
-        "sourceSha256": "092cf61f2ca93548f3331bb32da0d97613b9562a4b46449dcf7ae60bec4e1df2",
-        "attachmentId": "3caead4b-996e-8180-a20c-00b2f2b3efb6",
-        "status": "superseded-by-final-ledger-refresh"
+        "sourceSha256": "639bc551bd4930aa4f1fa8c2c5502bb373a355383134d71dcb29ed9a22cecb9d",
+        "attachmentId": "3caead4b-996e-8180-8f3f-00b2fdeae9e1",
+        "status": "final-ledger-refresh-readback-verified"
       },
       {
         "sourcePath": "BRANCH_CATALOG.md",
@@ -1940,9 +1942,9 @@
       {
         "key": "native-im-report-index",
         "pageId": "3c9ead4b-996e-81d3-9fb6-d5cf6d364fe0",
-        "contentLength": 16208,
+        "contentLength": 16646,
         "sourcePath": "analysis_report/README.md",
-        "sourceSha256": "092cf61f2ca93548f3331bb32da0d97613b9562a4b46449dcf7ae60bec4e1df2"
+        "sourceSha256": "639bc551bd4930aa4f1fa8c2c5502bb373a355383134d71dcb29ed9a22cecb9d"
       },
       {
         "key": "native-im-branch-catalog",
@@ -1962,7 +1964,7 @@
     "projectHome": {
       "pageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
       "url": "https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204",
-      "contentLength": 17853,
+      "contentLength": 18188,
       "expectedMarkers": ["497c545", "d889751", "3caead4b996e81f99b71d0bed6ac3136"],
       "missingMarkers": [],
       "remoteReadbackVerified": true,
@@ -1981,6 +1983,24 @@
       "existingPagesUpdated": 7,
       "markerChecks": 34,
       "structureChecks": 3,
+      "missingMarkers": [],
+      "readbackFailures": 0
+    },
+    "finalLedgerReadback": {
+      "verified": true,
+      "pagesReadbackVerified": 3,
+      "pageIds": [
+        "3c9ead4b-996e-81d3-9fb6-d5cf6d364fe0",
+        "3c9ead4b-996e-8108-aea6-c97c694d6587",
+        "3c1ead4b-996e-81e2-89c7-dde1d597f630"
+      ],
+      "markerChecks": 16,
+      "structureChecks": 3,
+      "readmeSha256": "639bc551bd4930aa4f1fa8c2c5502bb373a355383134d71dcb29ed9a22cecb9d",
+      "readmeAttachmentId": "3caead4b-996e-8180-8f3f-00b2fdeae9e1",
+      "independentParentUniqueChildPageCount": 17,
+      "projectHomeUniqueChildPageCount": 32,
+      "projectHomeDatabaseCount": 1,
       "missingMarkers": [],
       "readbackFailures": 0
     },
