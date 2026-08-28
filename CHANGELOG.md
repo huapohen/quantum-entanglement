@@ -68,6 +68,10 @@ production gate and does not authorize a real connector or external message.
   including direct process exit/SIGKILL rollback, fixed clean transaction outcomes, 64-row bounded
   history preflight, SQL-side TEXT storage/byte limits, and per-row canonical metadata/request/time
   recomputation before a successor can be written.
+- Main-schema-bound Artifact SQL and exact main/TEMP topology snapshots, strict takeover of
+  clock-retained SQLite callbacks, and a random savepoint continuity fence that rejects transaction
+  replacement by `COMMIT`/`ROLLBACK` plus `BEGIN`; ambiguity poisons the store while exact controls
+  retain a sanitized direct cause without hostile exception-hook or suppressed-history revival.
 - Native IM V1 provider-neutral executable contract with strict bounded codecs, 21 public wire
   models, domain-separated canonical digests and stable idempotency derivation.
 - An exact four-method `IMGatewayPort` plus pure request/result admission gates for capability,
