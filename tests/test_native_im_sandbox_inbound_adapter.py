@@ -211,6 +211,7 @@ def adapter_inputs(
     transport_failure: str | None = None,
     mapper_failure: str | None = None,
     secret_failure: str | None = None,
+    replay_guard: object | None = None,
 ):
     profile = provider_profile()
     configuration = configuration_for(profile)
@@ -236,7 +237,7 @@ def adapter_inputs(
     transport = FixtureTransport(response, failure_canary=transport_failure)
     mapper = FixtureMapper(failure_canary=mapper_failure)
     secrets = RecordingSecretProvider(configuration, failure_canary=secret_failure)
-    replay_guard = ReplayGuard()
+    replay_guard = ReplayGuard() if replay_guard is None else replay_guard
     adapter = NativeIMInboundOnlySandboxAdapter(
         configuration,
         profile,
