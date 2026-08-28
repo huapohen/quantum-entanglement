@@ -176,27 +176,9 @@ func (config *Config) loadPostgres(lookup LookupEnv) error {
 	default:
 		return ErrInvalidPostgres
 	}
-	decoder := json.NewDecoder(strings.NewReader(manifestValue))
-	decoder.DisallowUnknownFields()
-	var decoded authorityManifestJSON
-	if err := decoder.Decode(&decoded); err != nil {
-		return ErrInvalidPostgres
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return ErrInvalidPostgres
-	}
-	manifest := migrations.AuthorityAccessManifest{
-		DatabaseName:        decoded.DatabaseName,
-		DatabaseOwnerRole:   decoded.DatabaseOwnerRole,
-		OwnerRole:           decoded.OwnerRole,
-		MigratorRole:        decoded.MigratorRole,
-		RuntimeRole:         decoded.RuntimeRole,
-		MigrationLoginRoles: append([]string(nil), decoded.MigrationLoginRoles...),
-		RuntimeLoginRoles:   append([]string(nil), decoded.RuntimeLoginRoles...),
-	}
-	if manifest.Validate() != nil {
-		return ErrInvalidPostgres
+	manifest, err := ParseAuthorityManifestJSON(manifestValue)
+	if err != nil {
+		return err
 	}
 	config.runtimePool = &runtimepool.Config{
 		ConnectionString:       runtimeURL,
@@ -208,4 +190,32 @@ func (config *Config) loadPostgres(lookup LookupEnv) error {
 		AllowInsecureLocalhost: allowInsecure,
 	}
 	return nil
+}
+
+// ParseAuthorityManifestJSON decodes the non-secret exact access manifest shared by the API and
+// the one-shot migrator. It rejects unknown fields, trailing values, and non-canonical identities.
+func ParseAuthorityManifestJSON(value string) (migrations.AuthorityAccessManifest, error) {
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	var decoded authorityManifestJSON
+	if err := decoder.Decode(&decoded); err != nil {
+		return migrations.AuthorityAccessManifest{}, ErrInvalidPostgres
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return migrations.AuthorityAccessManifest{}, ErrInvalidPostgres
+	}
+	manifest := migrations.AuthorityAccessManifest{
+		DatabaseName:        decoded.DatabaseName,
+		DatabaseOwnerRole:   decoded.DatabaseOwnerRole,
+		OwnerRole:           decoded.OwnerRole,
+		MigratorRole:        decoded.MigratorRole,
+		RuntimeRole:         decoded.RuntimeRole,
+		MigrationLoginRoles: append([]string(nil), decoded.MigrationLoginRoles...),
+		RuntimeLoginRoles:   append([]string(nil), decoded.RuntimeLoginRoles...),
+	}
+	if manifest.Validate() != nil {
+		return migrations.AuthorityAccessManifest{}, ErrInvalidPostgres
+	}
+	return manifest, nil
 }
