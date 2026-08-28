@@ -107,7 +107,7 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | --- | --- | --- | --- |
 | 正式主线工作区 | `main` | `9e44dafecf5e` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 存在、有未提交修改 | `dev_wanwork_quantum_entanglement` | `3fcc7ba9d190` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
-| 存在、有未提交修改 | `mainline_continue_quantum_entanglement` | `adf7fd139426` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 存在、干净 | `mainline_continue_quantum_entanglement` | `adf7fd139426` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 
 ## 固定版本标签
 
