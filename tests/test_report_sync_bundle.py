@@ -101,6 +101,10 @@ class ReportSyncBundleTests(unittest.TestCase):
             "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md",
             b"# W2 PostgreSQL runtime checkpoint\n",
         )
+        self._write(
+            "docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md",
+            b"# W2 PostgreSQL policy control store checkpoint\n",
+        )
         self._write("analysis_report/research/00_scope.md", b"# Scope\n")
         self._write("analysis_report/research/08_new_evidence.md", b"# New\n")
         self._write("analysis_report/screenshots/README.md", b"# Screenshots\n")
@@ -309,9 +313,9 @@ class ReportSyncBundleTests(unittest.TestCase):
             {"unmanifestedPolicy": "fail-closed"},
         )
         source_summary = cast(dict[str, Any], first["sourceSummary"])
-        self.assertEqual(source_summary["count"], 22)
-        self.assertEqual(source_summary["sourceTargetCount"], 23)
-        self.assertEqual(source_summary["notionTargetCount"], 21)
+        self.assertEqual(source_summary["count"], 23)
+        self.assertEqual(source_summary["sourceTargetCount"], 24)
+        self.assertEqual(source_summary["notionTargetCount"], 22)
         self.assertEqual(source_summary["yuqueTargetCount"], 2)
 
         path = self._save_bundle(first)
@@ -355,6 +359,7 @@ class ReportSyncBundleTests(unittest.TestCase):
             "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
             "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md",
             "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md",
+            "docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md",
             "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md",
         ):
             with self.subTest(path=path):

@@ -176,6 +176,7 @@ _CANONICAL_EXACT_PATHS = frozenset(
         "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
         "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md",
         "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md",
+        "docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md",
         "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md",
     }
 )
@@ -1006,6 +1007,10 @@ def _collect_sources(
         ("canonical-source", "docs/wanwork_im/RESEARCH_TRACEABILITY.md"),
         ("canonical-source", "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md"),
         ("canonical-source", "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md"),
+        (
+            "canonical-source",
+            "docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md",
+        ),
         ("canonical-source", "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md"),
     ]
     paths.extend(
