@@ -946,6 +946,66 @@ class ReportSyncBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ReportSyncBundleError, "image_missing"):
             generate_report_sync_bundle(self.repository)
 
+    def test_repository_svg_is_bounded_and_rejects_active_or_external_content(self) -> None:
+        svg = (
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3" '
+            b'viewBox="0 0 2 3" role="img">'
+            b'<defs><linearGradient id="g"><stop offset="0"/></linearGradient></defs>'
+            b'<rect width="2" height="3" fill="url(#g)"/></svg>'
+        )
+        svg_path = self._write("analysis_report/screenshots/01_fixture.svg", svg)
+        svg_item = self._image_item(
+            "01_fixture.svg",
+            svg,
+            width=2,
+            height=3,
+            media_type="image/svg+xml",
+        )
+        svg_item["redactionStatus"] = "not-applicable-repository-authored-diagram"
+        self._write_screenshot_manifest(
+            [self._image_item("00_fixture.png", self.image, width=1, height=1), svg_item]
+        )
+        payload = generate_report_sync_bundle(self.repository)
+        images = {image["path"]: image for image in cast(list[dict[str, Any]], payload["images"])}
+        self.assertEqual(
+            images["analysis_report/screenshots/01_fixture.svg"]["mediaType"],
+            "image/svg+xml",
+        )
+
+        malicious_values = (
+            b'<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"/>',
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><script/></svg>',
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><rect fill="url(https://example.invalid/x)"/></svg>',
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><image href="data:image/png;base64,AA=="/></svg>',
+        )
+        for malicious in malicious_values:
+            with self.subTest(malicious=malicious[:24]):
+                svg_path.write_bytes(malicious)
+                item = self._image_item(
+                    "01_fixture.svg",
+                    malicious,
+                    width=2,
+                    height=3,
+                    media_type="image/svg+xml",
+                )
+                item["redactionStatus"] = "not-applicable-repository-authored-diagram"
+                self._write_screenshot_manifest(
+                    [
+                        self._image_item("00_fixture.png", self.image, width=1, height=1),
+                        item,
+                    ]
+                )
+                with self.assertRaisesRegex(ReportSyncBundleError, "image_content_invalid"):
+                    generate_report_sync_bundle(self.repository)
+
+        svg_path.write_bytes(svg)
+        svg_item["width"] = 3
+        self._write_screenshot_manifest(
+            [self._image_item("00_fixture.png", self.image, width=1, height=1), svg_item]
+        )
+        with self.assertRaisesRegex(ReportSyncBundleError, "image_dimension_drift"):
+            generate_report_sync_bundle(self.repository)
+
     def test_complete_jpeg_is_supported_but_header_only_and_truncation_are_rejected(
         self,
     ) -> None:

@@ -21,6 +21,7 @@ import stat
 import struct
 import sys
 import unicodedata
+import xml.etree.ElementTree as ET
 import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -44,18 +45,20 @@ _MAX_PATH_BYTES = 1_024
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,255}$")
 _SOURCE_FILENAME_PATTERN = re.compile(r"^[0-9]{2}_[a-z0-9][a-z0-9_]*\.md$")
-_IMAGE_FILENAME_PATTERN = re.compile(r"^[0-9]{2}_[a-z0-9][a-z0-9_]*\.(?:jpe?g|png)$")
+_IMAGE_FILENAME_PATTERN = re.compile(r"^[0-9]{2}_[a-z0-9][a-z0-9_]*\.(?:jpe?g|png|svg)$")
 _OUTPUT_FILENAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,126}\.json$")
-_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png"})
+_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/svg+xml"})
 _IMAGE_EXTENSIONS = {
     ".jpeg": "image/jpeg",
     ".jpg": "image/jpeg",
     ".png": "image/png",
+    ".svg": "image/svg+xml",
 }
 _REDACTION_STATUSES = frozenset(
     {
         "not-redacted-synthetic-local-ui",
         "not-applicable-public-webpage-in-internal-evidence-set",
+        "not-applicable-repository-authored-diagram",
         "reviewed-no-credential-model-output-restricted",
         "unredacted-restricted-original",
     }
@@ -1769,6 +1772,74 @@ def _jpeg_dimensions(raw: bytes) -> tuple[int, int]:
             saw_scan = True
 
 
+def _svg_dimensions(raw: bytes) -> tuple[int, int]:
+    try:
+        source = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        _fail("image_content_invalid")
+    folded = source.casefold()
+    if any(token in folded for token in ("<!doctype", "<!entity", "<?", "<![cdata[")):
+        _fail("image_content_invalid")
+    try:
+        root = ET.fromstring(source)
+    except ET.ParseError:
+        _fail("image_content_invalid")
+    namespace = "{http://www.w3.org/2000/svg}"
+    if root.tag != f"{namespace}svg":
+        _fail("image_content_invalid")
+
+    dimensions: list[int] = []
+    for name in ("width", "height"):
+        value = root.get(name)
+        if value is None or re.fullmatch(r"[1-9][0-9]{0,6}(?:px)?", value) is None:
+            _fail("image_content_invalid")
+        dimensions.append(int(value.removesuffix("px")))
+    width, height = dimensions
+    if width * height * 4 > _MAX_DECODED_IMAGE_BYTES:
+        _fail("image_content_invalid")
+
+    view_box = root.get("viewBox")
+    if view_box is not None:
+        values = view_box.replace(",", " ").split()
+        if values != ["0", "0", str(width), str(height)]:
+            _fail("image_content_invalid")
+
+    element_count = 0
+    pending: list[tuple[ET.Element, int]] = [(root, 1)]
+    forbidden_elements = frozenset({"a", "foreignobject", "image", "script", "use"})
+    internal_url = re.compile(r"url\(#[A-Za-z_][A-Za-z0-9_.:-]*\)")
+    unsafe_reference = re.compile(r"(?i)(?:javascript|data|https?|file):|//")
+    while pending:
+        element, depth = pending.pop()
+        element_count += 1
+        if element_count > _MAX_IMAGE_CHUNKS or depth > _MAX_JSON_NESTING_DEPTH:
+            _fail("image_content_invalid")
+        if not isinstance(element.tag, str) or not element.tag.startswith(namespace):
+            _fail("image_content_invalid")
+        local_name = element.tag[len(namespace) :].casefold()
+        if local_name in forbidden_elements or len(element.attrib) > 64:
+            _fail("image_content_invalid")
+        for raw_name, value in element.attrib.items():
+            if raw_name.startswith("{"):
+                _fail("image_content_invalid")
+            name = raw_name.casefold()
+            if name.startswith("on") or name in {"href", "src"}:
+                _fail("image_content_invalid")
+            if unsafe_reference.search(value):
+                _fail("image_content_invalid")
+            if "url(" in value.casefold() and internal_url.fullmatch(value) is None:
+                _fail("image_content_invalid")
+        for value in (element.text, element.tail):
+            if value is not None and (
+                unsafe_reference.search(value)
+                or "@import" in value.casefold()
+                or "url(" in value.casefold()
+            ):
+                _fail("image_content_invalid")
+        pending.extend((child, depth + 1) for child in element)
+    return width, height
+
+
 def _actual_image_metadata(raw: bytes) -> tuple[str, int, int]:
     png_signature = b"\x89PNG\r\n\x1a\n"
     if raw.startswith(png_signature):
@@ -1777,6 +1848,9 @@ def _actual_image_metadata(raw: bytes) -> tuple[str, int, int]:
     if raw.startswith(b"\xff\xd8"):
         width, height = _jpeg_dimensions(raw)
         return "image/jpeg", width, height
+    if raw.lstrip().startswith(b"<svg"):
+        width, height = _svg_dimensions(raw)
+        return "image/svg+xml", width, height
     _fail("image_content_invalid")
 
 
