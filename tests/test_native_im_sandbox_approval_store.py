@@ -243,6 +243,63 @@ def test_two_connections_serialize_same_exact_observation(tmp_path: Path) -> Non
         second.close()
 
 
+def test_admission_guard_holds_durable_lock_against_cross_connection_revocation(
+    tmp_path: Path,
+) -> None:
+    path = store_path(tmp_path)
+    admission_store = SQLiteNativeIMSandboxApprovalHighWaterV1(path)
+    revocation_store = SQLiteNativeIMSandboxApprovalHighWaterV1(path)
+    approved = authority_state()
+    revoked = replace(
+        approved,
+        authority_revision=8,
+        state="revoked",
+        observed_at=LATER,
+    )
+    started = threading.Event()
+    completed = threading.Event()
+
+    def revoke() -> None:
+        started.set()
+        revocation_store.observe(revoked)
+        completed.set()
+
+    try:
+        with admission_store.admission_guard(approved) as guarded:
+            thread = threading.Thread(target=revoke)
+            thread.start()
+            assert started.wait(timeout=2)
+            assert completed.wait(timeout=0.05) is False
+            assert guarded == approved
+        thread.join(timeout=2)
+        assert completed.is_set()
+        assert admission_store.current(approved.approval_id) == revoked
+    finally:
+        admission_store.close()
+        revocation_store.close()
+
+
+def test_admission_guard_rejects_revoked_input_and_rolls_back_failed_section(
+    tmp_path: Path,
+) -> None:
+    path = store_path(tmp_path)
+    approved = authority_state()
+    revoked = replace(approved, state="revoked")
+    with SQLiteNativeIMSandboxApprovalHighWaterV1(path) as store:
+        with pytest.raises(NativeIMSandboxApprovalStoreError) as state_error:
+            with store.admission_guard(revoked):
+                pass
+        assert (
+            state_error.value.code
+            == "native_im_sandbox_approval_store_admission_state_forbidden"
+        )
+
+        with pytest.raises(RuntimeError, match="admission-body-failed"):
+            with store.admission_guard(approved):
+                raise RuntimeError("admission-body-failed")
+        assert store.current(approved.approval_id) is None
+
+
 def test_store_rejects_weak_permissions_symlink_schema_trigger_and_tampered_row(
     tmp_path: Path,
 ) -> None:
