@@ -12,9 +12,9 @@
 `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/`，仓库内
 `artifacts/` 仍由 `.gitignore` 排除。
 
-为避免“生成目录—提交目录—main SHA 改变—目录立刻过期”的循环，若 `origin/main` 最新提交
-只修改 `BRANCH_CATALOG.md`，生成器会把它的父提交作为目录基线。下一次真实代码或文档提交
-仍会正常触发目录更新。
+为避免“生成目录—提交目录—分支 SHA 改变—目录立刻过期”的循环，若任一目录所列分支的
+最新一个或连续多个提交只修改 `BRANCH_CATALOG.md`，生成器会递归跳过这些提交，以最后一个
+非目录提交作为稳定目录基线。下一次真实代码或文档提交仍会正常触发目录更新。
 
 更新远端引用并重新生成：
 
