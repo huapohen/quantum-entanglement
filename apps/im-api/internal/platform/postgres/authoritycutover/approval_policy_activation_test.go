@@ -152,7 +152,8 @@ func TestActivatedApprovalPolicyIsTheProductionVerifierAuthority(t *testing.T) {
 		verified.PolicyDigest() != activated.PolicyDigest() ||
 		verified.PolicyRevision() != activated.PolicyRevision() ||
 		verified.ActivationRecordDigest() != record.ActivationRecordDigest ||
-		verified.RootTrustBundleDigest() != record.RootTrustBundleDigest {
+		verified.RootTrustBundleDigest() != record.RootTrustBundleDigest ||
+		verified.PolicyTargetDigest() != record.TargetDigest {
 		t.Fatalf("verified approval lost activated policy evidence: %+v", verified)
 	}
 

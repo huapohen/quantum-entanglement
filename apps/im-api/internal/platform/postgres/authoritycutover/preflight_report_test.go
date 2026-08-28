@@ -211,6 +211,16 @@ func TestPreflightReportRejectsPlanApprovalAndSnapshotDrift(t *testing.T) {
 	); !errors.Is(err, ErrUntrustedPreflightReport) {
 		t.Fatalf("cross-plan error = %v, want %v", err, ErrUntrustedPreflightReport)
 	}
+	targetDriftedApproval := approval
+	targetDriftedApproval.targetDigest = "sha256:" + strings.Repeat("e", 64)
+	if err := ValidatePreflightReport(
+		report,
+		fixture.plan,
+		targetDriftedApproval,
+		fixture.now,
+	); !errors.Is(err, ErrUntrustedPreflightReport) {
+		t.Fatalf("policy target drift error = %v, want %v", err, ErrUntrustedPreflightReport)
+	}
 
 	mutations := map[string]func(*PreflightReportSnapshot){
 		"mutation authorized": func(value *PreflightReportSnapshot) { value.MutationAuthorized = true },

@@ -322,9 +322,14 @@ func verifiedApprovalBindsPlanAt(
 		!canonicalDigest.MatchString(approval.PolicyDigest()) ||
 		!canonicalIdentity(approval.PolicyID()) || !canonicalIdentity(approval.PolicyRevision()) ||
 		!canonicalDigest.MatchString(approval.RootTrustBundleDigest()) ||
+		!canonicalDigest.MatchString(approval.PolicyTargetDigest()) ||
 		approval.PolicySequence() == 0 || approval.PolicySequence() > maximumApprovalPolicyRevision ||
 		!canonicalPreflightTime(approval.ApprovedAt()) ||
 		!canonicalPreflightTime(approval.ExpiresAt()) {
+		return false
+	}
+	target, err := ApprovalPolicyTargetFromPlan(plan)
+	if err != nil {
 		return false
 	}
 	snapshot := plan.Snapshot()
@@ -333,6 +338,7 @@ func verifiedApprovalBindsPlanAt(
 		approval.Reference() == snapshot.Approval.Reference &&
 		approval.CellID() == snapshot.Target.CellID &&
 		approval.DeploymentID() == snapshot.Target.DeploymentID &&
+		approval.PolicyTargetDigest() == digestApprovalPolicyTarget(target) &&
 		!observedAt.Before(approval.ApprovedAt()) && observedAt.Before(approval.ExpiresAt()) &&
 		observedAt.Before(snapshot.ExpiresAt)
 }

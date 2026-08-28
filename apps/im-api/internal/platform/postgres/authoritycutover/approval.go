@@ -283,6 +283,7 @@ type VerifiedApproval struct {
 	policySequence         uint64
 	reference              string
 	rootTrustBundleDigest  string
+	targetDigest           string
 }
 
 func (approval VerifiedApproval) ActivationRecordDigest() string {
@@ -307,6 +308,7 @@ func (approval VerifiedApproval) Reference() string        { return approval.ref
 func (approval VerifiedApproval) RootTrustBundleDigest() string {
 	return approval.rootTrustBundleDigest
 }
+func (approval VerifiedApproval) PolicyTargetDigest() string { return approval.targetDigest }
 
 func (verifier ApprovalVerifier) Verify(
 	plan Plan,
@@ -357,6 +359,14 @@ func (verifier ApprovalVerifier) Verify(
 	if !validApprovalPolicyForPlan(verifier, verificationKey, envelope, planSnapshot) {
 		return VerifiedApproval{}, ErrUntrustedApproval
 	}
+	policyTarget, err := ApprovalPolicyTargetFromPlan(plan)
+	if err != nil {
+		return VerifiedApproval{}, ErrUntrustedApproval
+	}
+	policyTargetDigest := digestApprovalPolicyTarget(policyTarget)
+	if !canonicalDigest.MatchString(policyTargetDigest) {
+		return VerifiedApproval{}, ErrUntrustedApproval
+	}
 	if envelope.ApprovedAt.After(instant.Add(verifier.clockSkew)) {
 		return VerifiedApproval{}, ErrUntrustedApproval
 	}
@@ -383,6 +393,7 @@ func (verifier ApprovalVerifier) Verify(
 		policySequence:         verifier.policySequence,
 		reference:              envelope.Reference,
 		rootTrustBundleDigest:  verifier.rootTrustBundleDigest,
+		targetDigest:           policyTargetDigest,
 	}, nil
 }
 
