@@ -84,6 +84,64 @@ models，`ContentObservation/ProvenanceEdge/TaintLabel/AuthorityClass/Declassifi
 PostgreSQL event store 还必须通过 expected-revision transaction、crash/reopen、kill-9/restore 和
 projection 清库重建；W1 memory fake 不能代替该门禁。
 
+#### W2 当前检查点（2026-08-28）
+
+详细工程入口见 [W2_POSTGRES_AUTHORITY_CHECKPOINT.md](W2_POSTGRES_AUTHORITY_CHECKPOINT.md)，深度证据见
+`analysis_report/research/33_postgres_authority_persistence_checkpoint.md`。
+
+当前 code baseline 为 `8d662bf`，文档 checkpoint 已独立提交并推送。当前口径必须保留：
+
+| 标记 | 状态 |
+|---|---|
+| `[F]` | `0001..0004`、22 张业务表、17 张 FORCE RLS 表、PG18 fail-closed runner、conversation authority repository/UoW 已在 PostgreSQL 18.6 普通/race 测试中通过。 |
+| `[C]` | 保证仅限已登记 schema、当前四类 conversation authority repository、同一 PostgreSQL transaction 和测试 runtime-role fixture。 |
+| `[A]` | persistence substrate 的结构方向正确，可作为 authenticated admission、resolver 和 event/outbox 的底座。 |
+| `[U]` | 生产 role/ACL、function-only write、Clerk trusted tenant、action-time resolver、service startup、restore/crash 和 event/outbox 尚未完成。 |
+
+已交付的 W2 子集：
+
+- checksummed migration catalog、精确 ledger、PG18 major gate、session advisory lock；
+- 每个新 migration 提交前累计验证全部旧 postcondition；
+- fixed `search_path`、有界 rollback/unlock/close；
+- token-aware DDL allowlist，并拒绝 `CREATE TABLE AS SELECT`、危险 DEFAULT、`set_config`/`pg_sleep`
+  等 data-executing form；该 policy 仍不是不可信 SQL sandbox；
+- authority roots、identity authority、ordinary `direct/group` conversation、RongCloud group binding、
+  conversation membership/access、tenant command receipt；
+- typed tenant store port、explicit tenant predicates、successor-only CAS、ignored-error poison；
+- serializable UoW、same-command exact replay、request-digest conflict、receipt transaction、commit outcome
+  unknown 的新连接 readback；
+- out-of-band receipt conflict 在 pool handoff 前释放 command advisory lock；
+- 真实 PG18 RLS、schema drift、64 路 exact retry、64 路 single CAS winner、rollback、unknown commit 和
+  runtime immutable-history fixture。
+
+当前禁止宣称：
+
+- W2 已完成；
+- 生产多租户/授权已完成；
+- receipt 实现 provider ACK、完整结果或 exactly-once；
+- access boolean 已构成 action-time gate；
+- provider binding 证明融云群存在或消息送达；
+- `agent_thread`、message、Task、Artifact、Acceptance 或 production event store 已持久化。
+
+#### W2 接真实 IM 前的 P0 顺序
+
+1. `0005`：function-only revision writes + non-login owner/migrator/runtime + exact named role/table/schema/
+   function ACL manifest；
+2. Clerk verified claim → realm binding → active principal/tenant membership → exact Actor → path consistency
+   的 trusted request context；
+3. conversation/actor/membership/access active resolver；invoke/publish 再叠加 installation/mandate/
+   capability/budget/Artifact/Acceptance；
+4. migration/role/function manifest 与真实服务 startup/readiness/DB pool composition；
+5. dump/restore、DB/process restart、kill-9、old binary/future schema、role restoration 演练；
+6. PostgreSQL event store/outbox/projection checkpoint、backfill+live 与 crash recovery；
+7. 再接 `agent_thread`、message 与 provider adapter。
+
+membership FK 只证明 head 存在，不证明 current membership active。移除成员的 use case 必须同一 UoW
+写 `membership=removed` 与 all-false access；resolver 必须同时检查 active membership 和 permission bit。
+
+command `result_sha256` 不能重建 typed result。command/digest canonicalization 必须版本化；replay 或
+unknown resolution 后必须做 typed aggregate readback 与 revision/integrity 校验。
+
 ### W3：Clerk 与融云 adapter
 
 交付：JWKS verification、identity mapping、W1 user/group strict codec 的 provider adapter 集成、fake
@@ -183,6 +241,21 @@ policy/approval/intent/receipt append 不可用时
 17. `feat: freeze isolated runtime admission contracts`
 18. `feat: define fenced supervisor receipt protocol`
 19. `test: add volatile isolation supervisor fake`
+20. `feat: add checksummed Postgres authority root migration`（`8814e8d`）
+21. `feat/fix: add fail-closed migration runner and cumulative schema invariants`
+    （`9f72aa5`、`eac2cbb`、`bd60371`、`4afe28d`、`8d662bf`）
+22. `feat/test: persist identity authority boundaries`（`457a0e1`、`d3915ca`）
+23. `feat/test: persist ordinary conversation and provider routing boundaries`
+    （`54f2ea0`、`1b9047b`、`371664e`）
+24. `feat/test: persist conversation membership/access authority`
+    （`c84f363`、`8a6e509`、`9c4a374`）
+25. `feat: define tenant-bound IM store contracts and repositories`
+    （`24561cc`、`69a3597`、`bf4c5d1`）
+26. `feat/fix: add idempotent tenant UoW and safe receipt-conflict lock lifecycle`
+    （`09511ef`、`d588695`）
+27. `docs: checkpoint PostgreSQL authority persistence`（33 号 Markdown/HTML、SVG/PNG 图、W2 工程入口）
+28. `feat: restrict runtime writes to fixed database functions`（下一批；不得把 raw table grants 保留为
+    production contract）
 
 任何一个条目若同时包含合同、实现、迁移、故障矩阵和 UI，应继续拆成小提交；列表是顺序约束，
 不是要求把一整项压成一个大 commit。
