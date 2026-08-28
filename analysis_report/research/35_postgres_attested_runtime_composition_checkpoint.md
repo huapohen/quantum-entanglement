@@ -240,6 +240,8 @@ API binary 只读取 runtime URL；migration URL 只由 `im-migrate` 读取。�
 ### 6.2 最终命令
 
 ```bash
+cd apps/im-api
+
 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
 WANWORK_TEST_POSTGRES_ADMIN_URL='postgresql://127.0.0.1:55488/postgres?sslmode=disable' \
 go test ./... -count=1 -timeout=10m

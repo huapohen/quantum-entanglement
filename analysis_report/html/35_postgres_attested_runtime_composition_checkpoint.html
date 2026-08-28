@@ -899,15 +899,17 @@ barrier</td>
 </tbody>
 </table>
 <h3 id="62-最终命令">6.2 最终命令</h3>
-<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="va">GOTOOLCHAIN</span><span class="op">=</span>local <span class="va">GOPROXY</span><span class="op">=</span>off <span class="va">GOSUMDB</span><span class="op">=</span>off <span class="dt">\</span></span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="va">WANWORK_TEST_POSTGRES_ADMIN_URL</span><span class="op">=</span><span class="st">&#39;postgresql://127.0.0.1:55488/postgres?sslmode=disable&#39;</span> <span class="dt">\</span></span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> test ./... <span class="at">-count</span><span class="op">=</span>1 <span class="at">-timeout</span><span class="op">=</span>10m</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="va">GOTOOLCHAIN</span><span class="op">=</span>local <span class="va">GOPROXY</span><span class="op">=</span>off <span class="va">GOSUMDB</span><span class="op">=</span>off <span class="dt">\</span></span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="va">WANWORK_TEST_POSTGRES_ADMIN_URL</span><span class="op">=</span><span class="st">&#39;postgresql://127.0.0.1:55488/postgres?sslmode=disable&#39;</span> <span class="dt">\</span></span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> test <span class="at">-race</span> ./... <span class="at">-count</span><span class="op">=</span>1 <span class="at">-timeout</span><span class="op">=</span>15m</span>
-<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="va">GOTOOLCHAIN</span><span class="op">=</span>local <span class="va">GOPROXY</span><span class="op">=</span>off <span class="va">GOSUMDB</span><span class="op">=</span>off <span class="ex">go</span> vet ./...</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> apps/im-api</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="va">GOTOOLCHAIN</span><span class="op">=</span>local <span class="va">GOPROXY</span><span class="op">=</span>off <span class="va">GOSUMDB</span><span class="op">=</span>off <span class="dt">\</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="va">WANWORK_TEST_POSTGRES_ADMIN_URL</span><span class="op">=</span><span class="st">&#39;postgresql://127.0.0.1:55488/postgres?sslmode=disable&#39;</span> <span class="dt">\</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> test ./... <span class="at">-count</span><span class="op">=</span>1 <span class="at">-timeout</span><span class="op">=</span>10m</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="va">GOTOOLCHAIN</span><span class="op">=</span>local <span class="va">GOPROXY</span><span class="op">=</span>off <span class="va">GOSUMDB</span><span class="op">=</span>off <span class="dt">\</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="va">WANWORK_TEST_POSTGRES_ADMIN_URL</span><span class="op">=</span><span class="st">&#39;postgresql://127.0.0.1:55488/postgres?sslmode=disable&#39;</span> <span class="dt">\</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> test <span class="at">-race</span> ./... <span class="at">-count</span><span class="op">=</span>1 <span class="at">-timeout</span><span class="op">=</span>15m</span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="va">GOTOOLCHAIN</span><span class="op">=</span>local <span class="va">GOPROXY</span><span class="op">=</span>off <span class="va">GOSUMDB</span><span class="op">=</span>off <span class="ex">go</span> vet ./...</span></code></pre></div>
 <p>结果：所有 Go package normal/race 通过，vet 无输出；本地 PostgreSQL
 版本 18.6。</p>
 <h2 id="7-下一阶段详细计划">7. 下一阶段详细计划</h2>
