@@ -11,6 +11,7 @@ import (
 const (
 	authorityManifestDigestDomain      = "wanwork.im/postgres-authority-manifest/1\n"
 	authoritySpecificationDigestDomain = "wanwork.im/postgres-authority-specification/1\n"
+	authorityCutoverDigestDomain       = "wanwork.im/postgres-cutover-authority-specification/1\n"
 	migrationCatalogDigestDomain       = "wanwork.im/postgres-migration-catalog/1\n"
 	migrationDownDigestDomain          = "wanwork.im/postgres-migration-down/1\n"
 )
@@ -93,6 +94,19 @@ func DigestAuthorityAccessSpecification(specification AuthorityAccessSpecificati
 		return "", ErrAuthorityAccessSpecification
 	}
 	return authorityDigest(authoritySpecificationDigestDomain, canonical), nil
+}
+
+// DigestAuthorityCutoverSpecification returns the independent digest of the transient,
+// dedicated-cell provisioner graph. It deliberately does not reuse the managed-access domain.
+func DigestAuthorityCutoverSpecification(specification AuthorityCutoverSpecification) (string, error) {
+	if !validAuthorityCutoverSpecification(specification) {
+		return "", ErrAuthorityCutoverSpecification
+	}
+	canonical, err := json.Marshal(specification)
+	if err != nil {
+		return "", ErrAuthorityCutoverSpecification
+	}
+	return authorityDigest(authorityCutoverDigestDomain, canonical), nil
 }
 
 func authorityDigest(domain string, canonical []byte) string {
