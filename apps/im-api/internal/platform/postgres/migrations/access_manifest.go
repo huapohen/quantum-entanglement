@@ -543,15 +543,21 @@ ORDER BY relation.relname`, []string{"r", "p", "v", "m", "S", "f"})
 	if rows.Err() != nil || !slices.Equal(actualNames, tableNames) {
 		return false
 	}
-	var metaKind, metaOwner string
+	var exactMetaRelations bool
 	if err := transaction.QueryRow(ctx, `
-SELECT relation.relkind::text, owner.rolname
+SELECT count(*) = 1
+       AND count(*) FILTER (
+           WHERE relation.relname = 'schema_migrations'
+             AND relation.relkind = 'r'
+             AND owner.rolname = $1
+       ) = 1
 FROM pg_catalog.pg_class AS relation
 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
 JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner
 WHERE namespace.nspname = 'wanwork_meta'
-  AND relation.relname = 'schema_migrations'`).Scan(&metaKind, &metaOwner); err != nil ||
-		metaKind != "r" || metaOwner != manifest.OwnerRole {
+	  AND relation.relkind = ANY($2::"char"[])`, manifest.OwnerRole, []string{"r", "p", "v", "m", "S", "f"}).Scan(
+		&exactMetaRelations,
+	); err != nil || !exactMetaRelations {
 		return false
 	}
 	actualACL, ok := readNonOwnerTableACL(ctx, transaction, manifest.OwnerRole)
