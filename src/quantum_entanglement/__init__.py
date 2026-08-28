@@ -165,6 +165,7 @@ from .native_im_sandbox_observability import (
     NativeIMSandboxObserverV1,
     native_im_sandbox_log_catalog_v1,
 )
+from .native_im_sandbox_provenance import NativeIMSandboxAdmissionProvenanceV1
 from .plugins import HookPoint, KernelPlugin, PluginManager
 from .policy import ApprovalRequest, NeedsYouQueue, PolicyDecision, PolicyEngine, PolicyOutcome
 from .protocol import (
@@ -394,6 +395,7 @@ __all__ = [
     "NativeIMSandboxApprovalStoreError",
     "NativeIMSandboxApprovalStoreIntegrityError",
     "NativeIMSandboxApprovalV1",
+    "NativeIMSandboxAdmissionProvenanceV1",
     "NativeIMSandboxCompositionError",
     "NativeIMSandboxDisabledError",
     "NativeIMSandboxKillSwitchV1",
