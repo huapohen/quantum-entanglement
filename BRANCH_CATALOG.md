@@ -1,6 +1,6 @@
 # Quantum Entanglement 分支与 Worktree 导航
 
-> 结论先行：**日常开发、启动体验和后续集成都只使用 `main`。** 除非是在做历史审计或定点恢复，不要直接在 `codex/*`、`agent/*`、`gate-*` 或 `archive/*` 上继续开发，也不要把这些分支整条合并回 `main`。
+> 结论先行：**日常开发、启动体验和后续集成都只使用 `main`。** 除非是在做历史审计或定点恢复，不要直接在 `codex/*`、`agent/*`、`gate-*` 或 `archive/*` 上继续开发，也不要把这些分支整条合并回 `main`。用户已明确指定的独立人工评审分支是例外：应使用表中对应 worktree，并在验收决定前保留、不合并、不删除。
 
 ## 你现在应该用哪个
 
@@ -31,8 +31,8 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
-| 2026-08-28T11:39:58+08:00 | `mainline_continue_quantum_entanglement`<br>`19203431635e` | 独立推进原生 IM E1–E5 的人工审阅分支；不自动合并回 main，保留专用 worktree 和独立 Notion 审阅空间。 | 未直接并入 main | 领先 112 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
-| 2026-08-28T09:38:04+08:00 | `dev_wanwork_quantum_entanglement`<br>`74a01a794ee3` | 较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。 | 未直接并入 main | 领先 82 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 2026-08-29T03:26:15+08:00 | `mainline_continue_quantum_entanglement`<br>`083eb8f92c1c` | E3 Result Authority 人工评审分支；M1 private envelope、M2 reserved fence、M3 typed snapshot/raw-row adapter 与 M4 inactive migration 7/private backup topology/Artifact owner transaction 已封板。M4 组合 82 项、全仓 2,639 项、Ruff/Mypy/diff-check 全绿，最终独立复核为 0 blocker；下一步仅允许 M5 Atomic Result Acceptance Writer。Notion 批量同步延后；migration 7 注册、Observed、Accepted、worker、真实 IM 与 outbound 全关闭，不自动合并回 main。 | 未直接并入 main | 领先 250 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 2026-08-29T03:12:57+08:00 | `dev_wanwork_quantum_entanglement`<br>`dfd289bad112` | 较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。 | 未直接并入 main | 领先 233 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 2026-08-28T02:01:09+08:00 | `main`<br>`9e44dafecf5e` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 2026-08-27T18:07:00+08:00 | `backup_0827_200010`<br>`1d399e555fb0` | 2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。 | 已作为祖先进入 main | 领先 0 / 落后 12 | — |
 | 2026-08-23T18:04:39Z | `dependabot/pip/mypy-2.3.1`<br>`fce21d09e51b` | 用途待补充；当前节点主题：build(deps-dev): bump mypy from 1.19.1 to 2.3.1 | 未直接并入 main | 领先 1 / 落后 240 | — |
@@ -101,13 +101,13 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 ## 本机 Worktree 目录
 
-`main` 固定在 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement`。当前另有 2 个辅助 linked worktree；它们统一位于 `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement`，完成后必须合并、推送并移除。
+`main` 固定在 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement`。当前另有 2 个辅助 linked worktree；它们统一位于 `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement`。每个 worktree 必须先推送，再按人工评审结论决定合并、归档或移除；保留中的人工评审 worktree 不得提前清理。
 
 | 状态 | 分支/模式 | HEAD | 路径 |
 | --- | --- | --- | --- |
 | 正式主线工作区 | `main` | `9e44dafecf5e` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 存在、干净 | `dev_wanwork_quantum_entanglement` | `c84f3636f1fe` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
-| 存在、干净 | `mainline_continue_quantum_entanglement` | `19203431635e` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 存在、有未提交修改 | `dev_wanwork_quantum_entanglement` | `dfd289bad112` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 存在、干净 | `mainline_continue_quantum_entanglement` | `083eb8f92c1c` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 
 ## 固定版本标签
 
@@ -145,9 +145,9 @@ git worktree add /Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_
 ## 管理规则
 
 1. `main` 永远是唯一默认主线；阶段分支不能自封为发布分支。
-2. 每个小改动继续独立提交；阶段完成后合并回 `main` 并推送远端。
+2. 每个小改动继续独立提交并先推送阶段分支；只有用户明确批准后才合并或挑选进入 `main`。
 3. 新 worktree 一律建在 `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement`。
-4. 推送成功后删除已完成的本地 worktree 和本地阶段分支，不长期堆积。
+4. 已完成且评审决定不再保留的 worktree，确认推送和归档状态后再删除；保留中的人工评审 worktree 不得提前清理。
 5. 删除远端 active 分支前，必须确认提交已进入 `main` 或已有同 SHA 的 `archive/*` 冻结引用。
 6. `archive/*` 只用于保全证据，不在其中开发、不移动其尖端。
 7. 删除 worktree 前先确认状态干净、提交已推送；使用 `git worktree remove`，不要直接删目录。
