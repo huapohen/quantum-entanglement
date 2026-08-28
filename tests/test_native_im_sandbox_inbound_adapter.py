@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import pickle
 from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 
@@ -24,6 +26,7 @@ from quantum_entanglement.native_im_sandbox import (
     NativeIMMappedPageV1,
     NativeIMOutboundForbiddenError,
     NativeIMSandboxAdapterClosedError,
+    NativeIMSandboxAdapterProcessMismatchError,
     NativeIMTransportContractError,
     NativeIMVerifiedInboundReadV1,
 )
@@ -352,6 +355,31 @@ async def test_close_is_idempotent_and_closed_reads_fail_before_request_inspecti
 
     with pytest.raises(NativeIMSandboxAdapterClosedError):
         await adapter.read_inbound(PoisonedRequest())  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_inbound_adapter_is_process_bound_before_request_or_component_access() -> None:
+    adapter, _, _, _, transport, mapper, secrets, _ = adapter_inputs()
+    with patch("quantum_entanglement.native_im_sandbox.os.getpid", return_value=1):
+        with pytest.raises(NativeIMSandboxAdapterProcessMismatchError):
+            await adapter.read_inbound(PoisonedRequest())  # type: ignore[arg-type]
+        with pytest.raises(NativeIMSandboxAdapterProcessMismatchError):
+            await adapter.probe_health()
+        with pytest.raises(NativeIMSandboxAdapterProcessMismatchError):
+            await adapter.aclose()
+        with pytest.raises(NativeIMSandboxAdapterProcessMismatchError):
+            _ = adapter.closed
+        with pytest.raises(NativeIMSandboxAdapterProcessMismatchError):
+            repr(adapter)
+    assert transport.health_calls == transport.read_calls == transport.close_calls == 0
+    assert mapper.calls == 0
+    assert secrets.references == []
+
+
+def test_inbound_adapter_cannot_be_serialized() -> None:
+    adapter, _, _, _, _, _, _, _ = adapter_inputs()
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(adapter)
 
 
 def test_inbound_adapter_constructor_rejects_subclasses_before_component_use() -> None:

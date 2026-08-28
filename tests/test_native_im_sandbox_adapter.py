@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import pickle
 from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 
@@ -27,6 +29,7 @@ from quantum_entanglement.native_im_sandbox import (
     NativeIMInboundRawResponseV1,
     NativeIMInboundTransportPort,
     NativeIMMappedPageV1,
+    NativeIMSandboxAdapterProcessMismatchError,
     NativeIMSandboxDisabledError,
     compose_default_native_im_sandbox_v1,
     parse_native_im_inbound_page_v1,
@@ -191,6 +194,19 @@ def test_default_composition_produces_only_a_disabled_gateway() -> None:
     assert not hasattr(adapter, "origin")
     assert not hasattr(adapter, "credential_ref")
     assert "disabled" in repr(adapter).lower()
+
+
+def test_disabled_adapter_is_process_bound_and_cannot_be_serialized() -> None:
+    adapter = compose_default_native_im_sandbox_v1(
+        NativeIMDisabledConfigV1(schema_version=1, enabled=False)
+    )
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(adapter)
+    with patch("quantum_entanglement.native_im_sandbox.os.getpid", return_value=1):
+        with pytest.raises(NativeIMSandboxAdapterProcessMismatchError):
+            _ = adapter.closed
+        with pytest.raises(NativeIMSandboxAdapterProcessMismatchError):
+            repr(adapter)
 
 
 @pytest.mark.asyncio
