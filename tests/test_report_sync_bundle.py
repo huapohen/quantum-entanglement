@@ -81,8 +81,25 @@ class ReportSyncBundleTests(unittest.TestCase):
             b"# WanWork IM implementation plan\n",
         )
         self._write(
+            "docs/wanwork_im/POSTGRES_PRODUCTION_AUTHORITY.md",
+            b"# PostgreSQL production authority\n",
+        )
+        self._write("docs/wanwork_im/README.md", b"# WanWork IM review index\n")
+        self._write(
             "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
             b"# WanWork IM research traceability\n",
+        )
+        self._write(
+            "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md",
+            b"# W2 PostgreSQL authority checkpoint\n",
+        )
+        self._write(
+            "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md",
+            b"# W2 PostgreSQL cutover plan checkpoint\n",
+        )
+        self._write(
+            "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md",
+            b"# W2 PostgreSQL runtime checkpoint\n",
         )
         self._write("analysis_report/research/00_scope.md", b"# Scope\n")
         self._write("analysis_report/research/08_new_evidence.md", b"# New\n")
@@ -292,9 +309,9 @@ class ReportSyncBundleTests(unittest.TestCase):
             {"unmanifestedPolicy": "fail-closed"},
         )
         source_summary = cast(dict[str, Any], first["sourceSummary"])
-        self.assertEqual(source_summary["count"], 17)
-        self.assertEqual(source_summary["sourceTargetCount"], 18)
-        self.assertEqual(source_summary["notionTargetCount"], 16)
+        self.assertEqual(source_summary["count"], 22)
+        self.assertEqual(source_summary["sourceTargetCount"], 23)
+        self.assertEqual(source_summary["notionTargetCount"], 21)
         self.assertEqual(source_summary["yuqueTargetCount"], 2)
 
         path = self._save_bundle(first)
@@ -333,7 +350,12 @@ class ReportSyncBundleTests(unittest.TestCase):
         for path in (
             "docs/wanwork_im/ARCHITECTURE.md",
             "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
+            "docs/wanwork_im/POSTGRES_PRODUCTION_AUTHORITY.md",
+            "docs/wanwork_im/README.md",
             "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
+            "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md",
+            "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md",
+            "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md",
         ):
             with self.subTest(path=path):
                 target = pages[(path, "notion")]
@@ -950,8 +972,9 @@ class ReportSyncBundleTests(unittest.TestCase):
         svg = (
             b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3" '
             b'viewBox="0 0 2 3" role="img">'
-            b'<defs><linearGradient id="g"><stop offset="0"/></linearGradient></defs>'
-            b'<rect width="2" height="3" fill="url(#g)"/></svg>'
+            b'<defs><linearGradient id="g"><stop offset="0"/></linearGradient>'
+            b'<style>.safe{fill:url(#g)}</style></defs>'
+            b'<rect class="safe" width="2" height="3" fill="url(#g)"/></svg>'
         )
         svg_path = self._write("analysis_report/screenshots/01_fixture.svg", svg)
         svg_item = self._image_item(

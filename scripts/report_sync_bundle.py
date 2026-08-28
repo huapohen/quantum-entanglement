@@ -171,7 +171,12 @@ _CANONICAL_EXACT_PATHS = frozenset(
         "docs/TERMINOLOGY.md",
         "docs/wanwork_im/ARCHITECTURE.md",
         "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
+        "docs/wanwork_im/POSTGRES_PRODUCTION_AUTHORITY.md",
+        "docs/wanwork_im/README.md",
         "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
+        "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md",
+        "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md",
+        "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md",
     }
 )
 _NOTION_MANIFEST_PATH = "analysis_report/notion_sync_manifest.json"
@@ -996,7 +1001,12 @@ def _collect_sources(
         ("canonical-source", "docs/TERMINOLOGY.md"),
         ("canonical-source", "docs/wanwork_im/ARCHITECTURE.md"),
         ("canonical-source", "docs/wanwork_im/IMPLEMENTATION_PLAN.md"),
+        ("canonical-source", "docs/wanwork_im/POSTGRES_PRODUCTION_AUTHORITY.md"),
+        ("canonical-source", "docs/wanwork_im/README.md"),
         ("canonical-source", "docs/wanwork_im/RESEARCH_TRACEABILITY.md"),
+        ("canonical-source", "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md"),
+        ("canonical-source", "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md"),
+        ("canonical-source", "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md"),
     ]
     paths.extend(
         ("canonical-source", path) for path in _markdown_files(session, "analysis_report/research")
@@ -1807,8 +1817,18 @@ def _svg_dimensions(raw: bytes) -> tuple[int, int]:
     element_count = 0
     pending: list[tuple[ET.Element, int]] = [(root, 1)]
     forbidden_elements = frozenset({"a", "foreignobject", "image", "script", "use"})
-    internal_url = re.compile(r"url\(#[A-Za-z_][A-Za-z0-9_.:-]*\)")
+    internal_url = re.compile(
+        r"url\(\s*#[A-Za-z_][A-Za-z0-9_.:-]*\s*\)",
+        re.IGNORECASE,
+    )
     unsafe_reference = re.compile(r"(?i)(?:javascript|data|https?|file):|//")
+
+    def only_internal_urls(value: str) -> bool:
+        if "url(" not in value.casefold():
+            return True
+        without_internal = internal_url.sub("", value)
+        return "url(" not in without_internal.casefold()
+
     while pending:
         element, depth = pending.pop()
         element_count += 1
@@ -1827,13 +1847,13 @@ def _svg_dimensions(raw: bytes) -> tuple[int, int]:
                 _fail("image_content_invalid")
             if unsafe_reference.search(value):
                 _fail("image_content_invalid")
-            if "url(" in value.casefold() and internal_url.fullmatch(value) is None:
+            if not only_internal_urls(value):
                 _fail("image_content_invalid")
         for value in (element.text, element.tail):
             if value is not None and (
                 unsafe_reference.search(value)
                 or "@import" in value.casefold()
-                or "url(" in value.casefold()
+                or not only_internal_urls(value)
             ):
                 _fail("image_content_invalid")
         pending.extend((child, depth + 1) for child in element)
