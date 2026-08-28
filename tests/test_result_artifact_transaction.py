@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import copy
 import itertools
+import pickle
+import sqlite3
 import unittest
 from dataclasses import replace
 
 import quantum_entanglement
 from quantum_entanglement._result_artifact_transaction import (
     _MAX_RESULT_ARTIFACTS,
+    _RESULT_ARTIFACT_TRANSACTION_TOKEN,
     _prepare_result_artifact_batch,
     _PreparedResultArtifact,
     _PreparedResultArtifactBatch,
+    _ResultArtifactTransactionHandle,
 )
 from quantum_entanglement.invocation_results import (
     ScopedInvocationResultArtifactCandidateV2,
 )
+from quantum_entanglement.store import SQLiteEventStore
 
 
 def candidate(
@@ -153,6 +159,116 @@ class PreparedResultArtifactBatchTests(unittest.TestCase):
             PreparedSubclass(
                 **_prepare_result_artifact_batch((candidate(),)).items[0].__dict__
             ).verify()
+
+
+class ResultArtifactTransactionHandleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.store = SQLiteEventStore(":memory:")
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def test_owner_context_yields_exact_handle_only_while_transaction_is_open(self) -> None:
+        handle: _ResultArtifactTransactionHandle
+        with self.store._result_artifact_transaction() as handle:
+            self.assertIs(type(handle), _ResultArtifactTransactionHandle)
+            connection = self.store._connection_for_result_artifact_transaction(handle)
+            self.assertIs(connection, self.store._connection)
+            self.assertTrue(connection.in_transaction)
+        self.assertFalse(self.store._connection.in_transaction)
+        with self.assertRaisesRegex(RuntimeError, "no result Artifact owner transaction"):
+            self.store._connection_for_result_artifact_transaction(handle)
+
+    def test_handle_is_bound_to_store_and_one_active_generation(self) -> None:
+        other = SQLiteEventStore(":memory:")
+        try:
+            with self.store._result_artifact_transaction() as first:
+                with other._result_artifact_transaction() as second:
+                    self.assertIs(
+                        other._connection_for_result_artifact_transaction(second),
+                        other._connection,
+                    )
+                    with self.assertRaisesRegex(RuntimeError, "foreign owner"):
+                        other._connection_for_result_artifact_transaction(first)
+                with self.assertRaisesRegex(RuntimeError, "no result Artifact owner transaction"):
+                    other._connection_for_result_artifact_transaction(second)
+                self.assertIs(
+                    self.store._connection_for_result_artifact_transaction(first),
+                    self.store._connection,
+                )
+        finally:
+            other.close()
+
+    def test_manual_begin_and_nested_context_cannot_forge_or_replace_owner(self) -> None:
+        with self.assertRaisesRegex(TypeError, "constructor is private"):
+            _ResultArtifactTransactionHandle(
+                store=self.store,
+                connection=self.store._connection,
+                process_owner=self.store._process_owner,
+                generation=1,
+                token=object(),
+            )
+
+        with self.store._result_artifact_transaction() as handle:
+            with self.assertRaisesRegex(RuntimeError, "already active"):
+                with self.store._result_artifact_transaction():
+                    pass
+            self.assertIs(
+                self.store._connection_for_result_artifact_transaction(handle),
+                self.store._connection,
+            )
+
+        self.store._connection.execute("BEGIN IMMEDIATE")
+        try:
+            with self.assertRaisesRegex(RuntimeError, "no result Artifact owner transaction"):
+                self.store._connection_for_result_artifact_transaction(handle)
+        finally:
+            self.store._connection.execute("ROLLBACK")
+
+    def test_handle_cannot_be_copied_serialized_or_reused_after_body_rollback(self) -> None:
+        handle: _ResultArtifactTransactionHandle
+        with self.assertRaisesRegex(RuntimeError, "body failure"):
+            with self.store._result_artifact_transaction() as handle:
+                for operation in (
+                    lambda: copy.copy(handle),
+                    lambda: copy.deepcopy(handle),
+                    lambda: pickle.dumps(handle),
+                ):
+                    with self.assertRaises(TypeError):
+                        operation()
+                connection = self.store._connection_for_result_artifact_transaction(handle)
+                connection.execute(
+                    """
+                    INSERT INTO snapshots(stream_id, sequence, state_json, updated_at)
+                    VALUES ('result-test', 1, '{}', '2026-08-29T00:00:00Z')
+                    """
+                )
+                raise RuntimeError("body failure")
+        self.assertFalse(self.store._connection.in_transaction)
+        self.assertIsNone(
+            self.store._connection.execute(
+                "SELECT stream_id FROM snapshots WHERE stream_id = 'result-test'"
+            ).fetchone()
+        )
+        with self.assertRaisesRegex(RuntimeError, "no result Artifact owner transaction"):
+            self.store._connection_for_result_artifact_transaction(handle)
+
+    def test_connection_type_is_exact_at_private_constructor_boundary(self) -> None:
+        class ConnectionSubclass(sqlite3.Connection):
+            pass
+
+        foreign = sqlite3.connect(":memory:", factory=ConnectionSubclass)
+        try:
+            with self.assertRaisesRegex(TypeError, "exact SQLite connection"):
+                _ResultArtifactTransactionHandle(
+                    store=self.store,
+                    connection=foreign,
+                    process_owner=self.store._process_owner,
+                    generation=1,
+                    token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
+                )
+        finally:
+            foreign.close()
 
 
 if __name__ == "__main__":

@@ -37,6 +37,10 @@ from typing import (
 )
 
 from . import process_identity as _process_identity
+from ._result_artifact_transaction import (
+    _RESULT_ARTIFACT_TRANSACTION_TOKEN,
+    _ResultArtifactTransactionHandle,
+)
 from ._stored_event_envelope_codec import (
     StoredEventEnvelopeError as _StoredEventEnvelopeError,
 )
@@ -1223,6 +1227,8 @@ class SQLiteEventStore:
     ) -> None:
         self._process_owner = _process_identity.capture_process_owner()
         self._poisoned = False
+        self._result_artifact_transaction_generation = 0
+        self._active_result_artifact_transaction_generation: Optional[int] = None
         process_mismatch = False
         connection: Optional[sqlite3.Connection] = None
         parent: Optional[str] = None
@@ -1420,6 +1426,57 @@ class SQLiteEventStore:
         return _EventStoreTransactionContext(
             self,
             self._transaction_inner(classify_admission=classify_admission),
+        )
+
+    @_bind_event_store_process
+    def _result_artifact_transaction(
+        self,
+    ) -> ContextManager[_ResultArtifactTransactionHandle]:
+        """Open one private owner transaction and yield a non-transferable handle."""
+
+        return self._result_artifact_transaction_inner()
+
+    @contextmanager
+    def _result_artifact_transaction_inner(
+        self,
+    ) -> Iterator[_ResultArtifactTransactionHandle]:
+        self._require_current_process()
+        if self._active_result_artifact_transaction_generation is not None:
+            raise RuntimeError("a result Artifact owner transaction is already active")
+        with self._transaction(classify_admission=True) as connection:
+            self._require_current_process()
+            if self._active_result_artifact_transaction_generation is not None:
+                raise RuntimeError("a result Artifact owner transaction became active concurrently")
+            generation = self._result_artifact_transaction_generation + 1
+            self._result_artifact_transaction_generation = generation
+            self._active_result_artifact_transaction_generation = generation
+            handle = _ResultArtifactTransactionHandle(
+                store=self,
+                connection=connection,
+                process_owner=self._process_owner,
+                generation=generation,
+                token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
+            )
+            try:
+                yield handle
+            finally:
+                handle._invalidate(token=_RESULT_ARTIFACT_TRANSACTION_TOKEN)
+                self._active_result_artifact_transaction_generation = None
+
+    @_bind_event_store_process
+    def _connection_for_result_artifact_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+    ) -> sqlite3.Connection:
+        self._require_current_process()
+        generation = self._active_result_artifact_transaction_generation
+        if type(generation) is not int or generation <= 0:
+            raise RuntimeError("no result Artifact owner transaction is active")
+        return handle._validated_connection(
+            store=self,
+            process_owner=self._process_owner,
+            generation=generation,
+            token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
         )
 
     @contextmanager

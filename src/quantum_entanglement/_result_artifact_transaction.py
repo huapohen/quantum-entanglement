@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import islice
+from typing import NoReturn
 
 from .invocation_results import (
     ScopedInvocationResultArtifactCandidateV2,
@@ -14,6 +16,87 @@ from .invocation_results import (
 _MAX_RESULT_ARTIFACTS = 256
 _MAX_RESULT_ARTIFACT_CONTENT_BYTES = 64 * 1024 * 1024
 _MAX_RESULT_ARTIFACT_METADATA_BYTES = 1_048_576
+_RESULT_ARTIFACT_TRANSACTION_TOKEN = object()
+
+
+class _ResultArtifactTransactionHandle:
+    """One non-transferable, exit-invalidated EventStore transaction capability."""
+
+    __slots__ = (
+        "__active",
+        "__connection",
+        "__generation",
+        "__process_owner",
+        "__store",
+    )
+
+    def __init__(
+        self,
+        *,
+        store: object,
+        connection: sqlite3.Connection,
+        process_owner: object,
+        generation: int,
+        token: object,
+    ) -> None:
+        if type(self) is not _ResultArtifactTransactionHandle:
+            raise TypeError("result Artifact transaction handle must use the exact private class")
+        if token is not _RESULT_ARTIFACT_TRANSACTION_TOKEN:
+            raise TypeError("result Artifact transaction handle constructor is private")
+        if type(connection) is not sqlite3.Connection:
+            raise TypeError(
+                "result Artifact transaction handle requires an exact SQLite connection"
+            )
+        if type(generation) is not int or generation <= 0:
+            raise ValueError("result Artifact transaction generation is invalid")
+        self.__store = store
+        self.__connection: sqlite3.Connection | None = connection
+        self.__process_owner = process_owner
+        self.__generation = generation
+        self.__active = True
+
+    def _validated_connection(
+        self,
+        *,
+        store: object,
+        process_owner: object,
+        generation: int,
+        token: object,
+    ) -> sqlite3.Connection:
+        if type(self) is not _ResultArtifactTransactionHandle:
+            raise TypeError("result Artifact transaction handle must be exact")
+        if token is not _RESULT_ARTIFACT_TRANSACTION_TOKEN:
+            raise TypeError("result Artifact transaction validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("result Artifact transaction handle is no longer active")
+        if self.__store is not store or self.__process_owner is not process_owner:
+            raise RuntimeError("result Artifact transaction handle has a foreign owner")
+        if type(generation) is not int or self.__generation != generation:
+            raise RuntimeError("result Artifact transaction handle generation is not active")
+        connection = self.__connection
+        if type(connection) is not sqlite3.Connection:
+            raise RuntimeError("result Artifact transaction handle connection changed")
+        transaction_open = connection.in_transaction
+        if type(transaction_open) is not bool or not transaction_open:
+            raise RuntimeError("result Artifact transaction is not open")
+        return connection
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ARTIFACT_TRANSACTION_TOKEN:
+            raise TypeError("result Artifact transaction invalidation is private")
+        self.__active = False
+        self.__store = None
+        self.__connection = None
+        self.__process_owner = None
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("result Artifact transaction handles cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("result Artifact transaction handles cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("result Artifact transaction handles cannot be serialized")
 
 
 @dataclass(frozen=True)
