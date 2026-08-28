@@ -53,6 +53,15 @@ class InvocationConflictError(RuntimeError):
     """Raised when an idempotency boundary is reused for different work."""
 
 
+class InvocationCompletionPathReservedError(InvocationConflictError):
+    """Raised when scoped work reaches the legacy standalone completion path."""
+
+    code = "scoped_invocation_completion_reserved"
+
+    def __init__(self, _message: Optional[str] = None) -> None:
+        super().__init__("scoped invocation completion requires atomic result authority")
+
+
 class InvocationIntegrityError(RuntimeError):
     """Raised when persisted invocation state violates its durable contract."""
 
@@ -258,6 +267,7 @@ def _safe_transaction_body_error(
 
     if type(error) not in {
         InvocationClockRegressionError,
+        InvocationCompletionPathReservedError,
         InvocationConflictError,
         InvocationIntegrityError,
         TypeError,
@@ -285,6 +295,7 @@ def _normalized_safe_transaction_body_error(
         return None
     allowed_types = (
         InvocationClockRegressionError,
+        InvocationCompletionPathReservedError,
         InvocationConflictError,
         InvocationIntegrityError,
         TypeError,
@@ -2628,6 +2639,349 @@ class SQLiteInvocationAttemptStore:
             lease_seconds=lease_seconds,
         )
 
+    @staticmethod
+    def _completion_fence_table_exists(
+        connection: sqlite3.Connection,
+        table_name: str,
+    ) -> bool:
+        row = connection.execute(
+            """
+            SELECT type FROM sqlite_schema
+            WHERE name = ?
+            """,
+            (table_name,),
+        ).fetchone()
+        if row is None:
+            return False
+        if not isinstance(row, sqlite3.Row) or row["type"] != "table":
+            raise InvocationIntegrityError("scoped completion boundary schema is inconsistent")
+        return True
+
+    @staticmethod
+    def _completion_fence_payload(payload_json: Any) -> dict[str, Any]:
+        try:
+            encoded = _persisted_text(
+                payload_json,
+                "completion fence event payload",
+                maximum_bytes=1024 * 1024,
+            )
+            payload = json.loads(encoded)
+            if type(payload) is not dict or any(type(key) is not str for key in payload):
+                raise ValueError("event payload is not a plain JSON object")
+            canonical = json.dumps(
+                payload,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            if canonical != encoded:
+                raise ValueError("event payload is not canonical JSON")
+        except (TypeError, ValueError):
+            raise InvocationIntegrityError(
+                "scoped completion boundary event payload is inconsistent"
+            ) from None
+        return cast(dict[str, Any], payload)
+
+    @staticmethod
+    def _completion_fence_job_binding_sha256(job: InvocationJob) -> str:
+        encoded = json.dumps(
+            [
+                job.invocation_id,
+                job.session_id,
+                job.plan_id,
+                job.task_id,
+                job.agent_id,
+                job.idempotency_key,
+                job.payload_digest,
+                job.priority,
+                job.max_attempts,
+                job.requested_available_at,
+            ],
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _validate_scoped_completion_receipt(
+        connection: sqlite3.Connection,
+        receipt: sqlite3.Row,
+        job: InvocationJob,
+    ) -> None:
+        try:
+            if _persisted_text(receipt["receipt_format"], "receipt format") != (
+                "qe.invocation-admission-receipt/1"
+            ):
+                raise ValueError("receipt format is unsupported")
+            if (
+                _persisted_text(receipt["invocation_id"], "receipt invocation_id")
+                != job.invocation_id
+                or _persisted_text(receipt["session_id"], "receipt session_id") != job.session_id
+                or _persisted_text(receipt["task_id"], "receipt task_id") != job.task_id
+                or _persisted_text(receipt["stream_id"], "receipt stream_id")
+                != "session:" + job.session_id
+                or _persisted_text(receipt["job_idempotency_key"], "receipt job key")
+                != job.idempotency_key
+            ):
+                raise ValueError("receipt identity differs from its job")
+            original_version = _persisted_integer(
+                receipt["original_version"],
+                "receipt original_version",
+            )
+            event_count = _persisted_integer(
+                receipt["event_count"],
+                "receipt event_count",
+                minimum=1,
+            )
+            first_sequence = _persisted_integer(
+                receipt["first_sequence"],
+                "receipt first_sequence",
+                minimum=1,
+            )
+            last_sequence = _persisted_integer(
+                receipt["last_sequence"],
+                "receipt last_sequence",
+                minimum=1,
+            )
+            first_position = _persisted_integer(
+                receipt["first_global_position"],
+                "receipt first_global_position",
+                minimum=1,
+            )
+            last_position = _persisted_integer(
+                receipt["last_global_position"],
+                "receipt last_global_position",
+                minimum=1,
+            )
+            if (
+                event_count != 2
+                or first_sequence != original_version + 1
+                or last_sequence != first_sequence + 1
+                or last_position != first_position + 1
+            ):
+                raise ValueError("receipt coordinates are inconsistent")
+            event_ids_json = _persisted_text(receipt["event_ids_json"], "receipt event IDs")
+            event_ids = json.loads(event_ids_json)
+            if (
+                type(event_ids) is not list
+                or len(event_ids) != 2
+                or any(type(event_id) is not str or not event_id for event_id in event_ids)
+                or len(set(event_ids)) != 2
+                or json.dumps(
+                    event_ids,
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                != event_ids_json
+            ):
+                raise ValueError("receipt event IDs are inconsistent")
+            rows = connection.execute(
+                """
+                SELECT * FROM events
+                WHERE global_position BETWEEN ? AND ?
+                ORDER BY global_position
+                """,
+                (first_position, last_position),
+            ).fetchall()
+            if len(rows) != 2 or any(not isinstance(row, sqlite3.Row) for row in rows):
+                raise ValueError("receipt event range is incomplete")
+            manifest: list[list[Any]] = []
+            for offset, row in enumerate(rows):
+                if (
+                    _persisted_integer(row["global_position"], "event global_position")
+                    != first_position + offset
+                    or _persisted_integer(row["sequence"], "event sequence", minimum=1)
+                    != first_sequence + offset
+                    or _persisted_text(row["stream_id"], "event stream_id")
+                    != "session:" + job.session_id
+                    or _persisted_text(row["event_id"], "event event_id") != event_ids[offset]
+                ):
+                    raise ValueError("receipt event binding is inconsistent")
+                manifest.append(
+                    [
+                        _persisted_text(row["stream_id"], "event stream_id"),
+                        _persisted_text(row["event_type"], "event event_type"),
+                        _persisted_text(row["actor_id"], "event actor_id"),
+                        _persisted_text(row["event_id"], "event event_id"),
+                        _persisted_text(row["timestamp"], "event timestamp"),
+                        _persisted_optional_text(row["correlation_id"], "event correlation_id"),
+                        _persisted_optional_text(row["causation_id"], "event causation_id"),
+                        _persisted_optional_text(row["idempotency_key"], "event idempotency key"),
+                        _persisted_text(
+                            row["payload_json"],
+                            "event payload",
+                            maximum_bytes=1024 * 1024,
+                        ),
+                    ]
+                )
+            event_manifest_sha256 = hashlib.sha256(
+                json.dumps(
+                    manifest,
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            if _persisted_digest(
+                receipt["event_manifest_sha256"],
+                "receipt event manifest digest",
+            ) != event_manifest_sha256 or _persisted_digest(
+                receipt["job_binding_sha256"],
+                "receipt job binding digest",
+            ) != SQLiteInvocationAttemptStore._completion_fence_job_binding_sha256(job):
+                raise ValueError("receipt digest binding is inconsistent")
+            _persisted_timestamp(receipt["admitted_at"], "receipt admitted_at")
+        except (IndexError, KeyError, TypeError, ValueError):
+            raise InvocationIntegrityError(
+                "scoped completion boundary admission receipt is inconsistent"
+            ) from None
+
+    @staticmethod
+    def _reject_scoped_invocation_completion(
+        connection: sqlite3.Connection,
+        job: InvocationJob,
+    ) -> None:
+        if not SQLiteInvocationAttemptStore._completion_fence_table_exists(
+            connection,
+            "events",
+        ):
+            return
+        receipt: Optional[sqlite3.Row] = None
+        if SQLiteInvocationAttemptStore._completion_fence_table_exists(
+            connection,
+            "invocation_admissions",
+        ):
+            receipt_row = connection.execute(
+                "SELECT * FROM invocation_admissions WHERE invocation_id = ?",
+                (job.invocation_id,),
+            ).fetchone()
+            if receipt_row is not None:
+                if not isinstance(receipt_row, sqlite3.Row):
+                    raise InvocationIntegrityError(
+                        "scoped completion boundary receipt row is malformed"
+                    )
+                receipt = receipt_row
+
+        rows = connection.execute(
+            """
+            SELECT * FROM events
+            WHERE stream_id = ?
+              AND (event_type = ? OR idempotency_key = ?)
+            ORDER BY global_position
+            """,
+            (
+                "session:" + job.session_id,
+                "task.execution.requested",
+                "execution-request:" + job.invocation_id,
+            ),
+        ).fetchall()
+        if receipt is not None:
+            try:
+                first_position = _persisted_integer(
+                    receipt["first_global_position"],
+                    "receipt first_global_position",
+                    minimum=1,
+                )
+            except (IndexError, KeyError, TypeError, ValueError):
+                raise InvocationIntegrityError(
+                    "scoped completion boundary receipt coordinates are inconsistent"
+                ) from None
+            if not any(
+                isinstance(row, sqlite3.Row) and row["global_position"] == first_position
+                for row in rows
+            ):
+                receipt_event = connection.execute(
+                    "SELECT * FROM events WHERE global_position = ?",
+                    (first_position,),
+                ).fetchone()
+                if receipt_event is None or not isinstance(receipt_event, sqlite3.Row):
+                    raise InvocationIntegrityError(
+                        "scoped completion boundary receipt event is missing"
+                    )
+                rows = [receipt_event, *rows]
+
+        for row in rows:
+            if not isinstance(row, sqlite3.Row):
+                raise InvocationIntegrityError("scoped completion boundary event row is malformed")
+            targeted_by_key = row["idempotency_key"] == "execution-request:" + job.invocation_id
+            targeted_by_receipt = (
+                receipt is not None and row["global_position"] == receipt["first_global_position"]
+            )
+            try:
+                payload = SQLiteInvocationAttemptStore._completion_fence_payload(
+                    row["payload_json"]
+                )
+            except InvocationIntegrityError:
+                if targeted_by_key or targeted_by_receipt:
+                    raise
+                continue
+            targeted_by_payload = payload.get("invocationId") == job.invocation_id
+            if not (targeted_by_key or targeted_by_receipt or targeted_by_payload):
+                continue
+            schema_version = payload.get("schemaVersion")
+            scoped_marker = (
+                "tenantId" in payload
+                or "workspaceId" in payload
+                or ("schemaVersion" in payload and schema_version != 1)
+            )
+            if not scoped_marker:
+                if schema_version == 1:
+                    try:
+                        from .invocation_execution import InvocationExecutionManifest
+
+                        manifest = InvocationExecutionManifest.from_event_payload(
+                            row["event_type"],
+                            payload,
+                        )
+                        if (
+                            manifest.invocation_id != job.invocation_id
+                            or manifest.session_id != job.session_id
+                            or manifest.plan_id != job.plan_id
+                            or manifest.task_id != job.task_id
+                            or manifest.agent_id != job.agent_id
+                            or manifest.job_idempotency_key != job.idempotency_key
+                            or manifest.canonical_digest() != job.payload_digest
+                        ):
+                            raise ValueError("unscoped manifest binding differs from its job")
+                    except (ImportError, TypeError, ValueError):
+                        raise InvocationIntegrityError(
+                            "scoped completion boundary legacy admission is inconsistent"
+                        ) from None
+                continue
+            try:
+                from .invocation_execution import ScopedInvocationExecutionManifestV2
+
+                scoped = ScopedInvocationExecutionManifestV2.from_event_payload(
+                    row["event_type"],
+                    payload,
+                )
+                if (
+                    scoped.invocation_id != job.invocation_id
+                    or scoped.session_id != job.session_id
+                    or scoped.plan_id != job.plan_id
+                    or scoped.task_id != job.task_id
+                    or scoped.agent_id != job.agent_id
+                    or scoped.job_idempotency_key != job.idempotency_key
+                    or scoped.canonical_digest() != job.payload_digest
+                    or row["stream_id"] != "session:" + job.session_id
+                    or row["idempotency_key"] != "execution-request:" + job.invocation_id
+                ):
+                    raise ValueError("scoped manifest binding differs from its job")
+            except (ImportError, TypeError, ValueError):
+                raise InvocationIntegrityError(
+                    "scoped completion boundary execution admission is inconsistent"
+                ) from None
+            if receipt is not None:
+                SQLiteInvocationAttemptStore._validate_scoped_completion_receipt(
+                    connection,
+                    receipt,
+                    job,
+                )
+            raise InvocationCompletionPathReservedError()
+
     def _active_owned_row(
         self,
         connection: sqlite3.Connection,
@@ -2788,6 +3142,17 @@ class SQLiteInvocationAttemptStore:
         commit_state: list[Optional[str]],
     ) -> bool:
         with self._transaction() as connection:
+            durable_row = connection.execute(
+                "SELECT * FROM invocation_jobs WHERE invocation_id = ?",
+                (lease.invocation_id,),
+            ).fetchone()
+            if durable_row is not None:
+                if not isinstance(durable_row, sqlite3.Row):
+                    raise InvocationIntegrityError("invocation job row is malformed")
+                SQLiteInvocationAttemptStore._reject_scoped_invocation_completion(
+                    connection,
+                    SQLiteInvocationAttemptStore._row_to_job(durable_row),
+                )
             normalized_now = self._now()
             job = self._active_owned_row(connection, lease, normalized_now)
             if job is None:
@@ -3101,6 +3466,7 @@ __all__ = [
     "InvocationAttempt",
     "InvocationClockRegressionError",
     "InvocationCommitAmbiguityError",
+    "InvocationCompletionPathReservedError",
     "InvocationConflictError",
     "InvocationIntegrityError",
     "InvocationJob",
