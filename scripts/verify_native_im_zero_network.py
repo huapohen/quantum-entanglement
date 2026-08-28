@@ -85,6 +85,11 @@ SOURCE_IMPORT_ALLOWLISTS = {
         "threading",
         "typing",
     },
+    SOURCE_ROOT / "quantum_entanglement" / "native_im_sandbox_provenance.py": {
+        "__future__",
+        "dataclasses",
+        "typing",
+    },
 }
 FORBIDDEN_NETWORK_IMPORTS = {
     "aiohttp",
@@ -197,6 +202,9 @@ async def _exercise() -> None:
         NativeIMSandboxObserverV1,
         native_im_sandbox_log_catalog_v1,
     )
+    from quantum_entanglement.native_im_sandbox_provenance import (
+        NativeIMSandboxAdmissionProvenanceV1,
+    )
     from quantum_entanglement.service.logging import SafeLogger
     from quantum_entanglement.service.native_im_config import NativeIMDisabledConfigV1
 
@@ -282,6 +290,8 @@ async def _exercise() -> None:
         raise AssertionError("observer created an inbound observation")
     if not isinstance(NativeIMSandboxLifecycleV1, type):
         raise AssertionError("sandbox lifecycle import did not produce a type")
+    if not isinstance(NativeIMSandboxAdmissionProvenanceV1, type):
+        raise AssertionError("sandbox provenance import did not produce a type")
 
     sandbox_rendered = "\n".join((repr(disabled), repr(observer), repr(metrics)))
     if CREDENTIAL_CANARY in sandbox_rendered:

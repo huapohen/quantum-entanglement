@@ -9,6 +9,7 @@ from quantum_entanglement import (
     native_im_sandbox_composition,
     native_im_sandbox_lifecycle,
     native_im_sandbox_observability,
+    native_im_sandbox_provenance,
 )
 from quantum_entanglement.service.native_im_config import NativeIMDisabledConfigV1
 
@@ -22,6 +23,7 @@ def test_sandbox_modules_are_exactly_reexported_from_the_package_api() -> None:
         native_im_sandbox_composition,
         native_im_sandbox_lifecycle,
         native_im_sandbox_observability,
+        native_im_sandbox_provenance,
     )
     expected_names = tuple(name for module in modules for name in module.__all__)
     assert len(expected_names) == len(set(expected_names))
