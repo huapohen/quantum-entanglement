@@ -169,8 +169,97 @@ func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
 		})
 	}
 	assertAdminAuthorityAccessDrift(t, connection, manifest)
+	assertDuplicateMembershipGrantorDrift(t, connection, manifest)
 	assertRuntimeLoginAccess(t, databaseConfig, manifest)
 	assertMigrationLoginCanSetExactOwner(t, databaseConfig, manifest)
+}
+
+func assertDuplicateMembershipGrantorDrift(
+	t *testing.T,
+	connection *pgx.Conn,
+	manifest AuthorityAccessManifest,
+) {
+	t.Helper()
+	quotedOwner := pgx.Identifier{manifest.OwnerRole}.Sanitize()
+	quotedMigrator := pgx.Identifier{manifest.MigratorRole}.Sanitize()
+	rogueGrantor := "wanwork_rogue_grantor_" + fmt.Sprintf(
+		"%d_%d",
+		os.Getpid(),
+		integrationDatabaseSequence.Add(1),
+	)
+	quotedRogue := pgx.Identifier{rogueGrantor}.Sanitize()
+	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+		t.Fatalf("reset owner before duplicate grantor drift: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(),
+		"CREATE ROLE "+quotedRogue+
+			" NOLOGIN NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS",
+	); err != nil {
+		t.Fatalf("create duplicate membership grantor: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = connection.Exec(context.Background(), "RESET ROLE")
+		_, _ = connection.Exec(
+			context.Background(),
+			"REVOKE "+quotedOwner+" FROM "+quotedRogue+" CASCADE",
+		)
+		_, _ = connection.Exec(context.Background(), "DROP ROLE "+quotedRogue)
+	})
+	if _, err := connection.Exec(t.Context(),
+		"GRANT "+quotedOwner+" TO "+quotedRogue+
+			" WITH ADMIN TRUE, INHERIT FALSE, SET TRUE",
+	); err != nil {
+		t.Fatalf("grant owner admin option to duplicate grantor: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedRogue); err != nil {
+		t.Fatalf("set duplicate membership grantor: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(),
+		"GRANT "+quotedOwner+" TO "+quotedMigrator+
+			" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE",
+	); err != nil {
+		t.Fatalf("create duplicate membership grantor row: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+		t.Fatalf("reset duplicate membership grantor: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedOwner); err != nil {
+		t.Fatalf("set owner after duplicate grantor drift: %v", err)
+	}
+	if err := ValidateAuthorityAccess(t.Context(), connection, manifest); !errors.Is(
+		err,
+		ErrAuthorityAccessDrift,
+	) {
+		t.Fatalf("duplicate grantor drift error = %v, want %v", err, ErrAuthorityAccessDrift)
+	}
+	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+		t.Fatalf("reset owner before duplicate grantor repair: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedRogue); err != nil {
+		t.Fatalf("set duplicate membership grantor for repair: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(),
+		"REVOKE "+quotedOwner+" FROM "+quotedMigrator,
+	); err != nil {
+		t.Fatalf("revoke duplicate membership grantor row: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+		t.Fatalf("reset duplicate membership grantor after repair: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(),
+		"REVOKE "+quotedOwner+" FROM "+quotedRogue+" CASCADE",
+	); err != nil {
+		t.Fatalf("revoke owner from duplicate grantor: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(), "DROP ROLE "+quotedRogue); err != nil {
+		t.Fatalf("drop duplicate membership grantor: %v", err)
+	}
+	if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedOwner); err != nil {
+		t.Fatalf("restore owner after duplicate grantor repair: %v", err)
+	}
+	if err := ValidateAuthorityAccess(t.Context(), connection, manifest); err != nil {
+		t.Fatalf("validate duplicate grantor repair: %v", err)
+	}
 }
 
 func assertAdminAuthorityAccessDrift(
