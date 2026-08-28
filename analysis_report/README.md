@@ -17,10 +17,15 @@
 - 原生 IM V1 合同：<https://app.notion.com/p/3c9ead4b996e8114985cce2cc5af2b63?pvs=204>
 - 提前接入检查点：<https://app.notion.com/p/3c9ead4b996e8103b53bf10409f08e1d?pvs=204>
 - 提前接入执行计划：<https://app.notion.com/p/3c9ead4b996e818fb220c66126181863?pvs=204>
-- 最近稳定批次同步：2026-08-28；32 个固定页面与 1 个派生分支目录页共 33 页。项目首页、接入
-  决策、下一阶段计划、分支目录、冻结合同、提前接入检查点与 E0–E5 计划已联合回读。
-- 当前 Notion 同步基线为 GitHub `main@f99f176bfa9cd14abf7e3c51d971b9682dc49230`；新建两页的
-  完整语义镜像、Notion 原生表格/图、关联页、原始 Markdown 附件和远端 marker 均已确认。
+- PostgreSQL authority 专题：<https://app.notion.com/p/3caead4b996e8183ae54f4d5abc2643d?pvs=204>
+- 最近稳定批次同步：2026-08-28；47 个受控事实源页面与 2 个派生索引页共 49 页。项目首页、
+  WanWork IM 审阅主页、调研矩阵、实施计划、2output 吸收审计、专题 32 与专题 33 已联合回读。
+- 当前 WanWork IM Notion 内容基线为
+  `dev_wanwork_quantum_entanglement@4a465d880334b206f4503447d3fa2ccad696884d`，代码事实基线为
+  `8d662bf4faec1cfaa12b63f4dfc2132ae6869dbb`；分支未合并 `main`。`main@f99f176` 仍是提前接入
+  历史备份基线，不代表本分支当前 W2 进度。
+- 本轮已确认两个当前 Markdown 附件从临时上传转为页面附件；所有七个更新页面均回读到 Topic 33
+  反链、两个基线 SHA、两层一级调研根、六项 P0 gate 与禁止性声明。没有记录临时 signed S3 URL。
 - 冻结合同正文没有为同步台账而改写；其本地原始文件 SHA-256 为
   `99031ad243112122e987e84658ff93daf33b3285ea1468039f9d59dc8048167a`。
 - 机器可读页面映射、文件摘要和回读断言见
@@ -78,15 +83,18 @@ Atomic Result Authority 的最大强度参考，不再作为提前接入前的�
 | `research/30_third_party_execution_isolation_contract.md` | W1 P1-6 当前合同与 fake 证据：`43e111e`/`fccb64e`/`d32079c` | host-owned refs、Supervisor IPC、generation/fence、cancel→grace→kill→wait/reap/release receipt、operator quarantine 与 `isolation=none` deterministic fake |
 | `research/31_volatile_memory_event_store_implementation.md` | W1 P1-7 当前实现证据：`a4ac9bd`…`4118746` | volatile/non-production EventStore fake、ordered exact retry/conflict、store-owned ordering/time、scope/namespace cursor、严格 admission、cooperative context、并发/失败原子性、test-only backfill fixture 与 W2 durability/projection 边界 |
 | `research/32_im_identity_conversation_and_provider_metadata_contract.md` | W1 IM identity/conversation/metadata 合同证据：`9f55b33`…`60ebf6a` | `2output` 一级证据到 `ActorRef/Snapshot`、realm-scoped external identity、`ConversationRef/Snapshot`、Agent thread topology、零授权 canonical `ext_info`、848 个非 canonical 排列、forbidden-field canary、race/fuzz 与 W2～W4 未完成边界 |
+| [`research/33_postgres_authority_persistence_checkpoint.md`](research/33_postgres_authority_persistence_checkpoint.md) | W2 PostgreSQL authority persistence 检查点：`8d662bf` / `4a465d8` | 两层 `2output` 一级证据、migration 0001–0004、22 张业务表、17 张 FORCE RLS 表、PG18 fail-closed migration、tenant repository、Serializable/idempotent UoW、真实 PG/race 证据、明确非声明与接真实 IM 前六项 P0 gate |
+| `docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md` | W2 工程入口与 Go/No-Go | 当前可用范围、验证命令、function-only writes、trusted tenant context、active resolver、service startup、recovery 与 event/outbox 顺序 |
 
 ## 已归档截图
 
 完整 SHA-256、尺寸、来源、证据等级和隐私边界见
 [`screenshots/README.md`](screenshots/README.md) 与
-[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 27 张图；前十张是受限、
+[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 29 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地
 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是 Clawith 公开官网、白皮书与官方文档
-只读证据。整套资料仍按项目内部证据管理。
+只读证据；最后两项是同一 W2 PostgreSQL 检查点图的 SVG source 与 PNG rendering，只作为报告
+导航图，不冒充独立运行证据。整套资料仍按项目内部证据管理。
 
 | 文件 | 内容 | 采集方式 |
 |---|---|---|
@@ -117,6 +125,7 @@ Atomic Result Authority 的最大强度参考，不再作为提前接入前的�
 | `screenshots/24_clawith_pulse_trigger_engine_20260827.png` | Pulse Trigger Engine、类型与生命周期文档 | Playwright 官方文档元素只读证据 |
 | `screenshots/25_clawith_plaza_legacy_docs_20260827.png` | 与固定源码 Experience Library 已漂移的 Plaza 旧文档 | Playwright 官方文档元素只读证据 |
 | `screenshots/26_clawith_rapid_rnd_claim_20260827.png` | 部门级研发交付样板、阶段指标与 `3 天` / `6d 21h` 同卡片口径冲突 | Playwright 官网元素只读证据 |
+| `screenshots/33_postgres_authority_persistence_map.svg` / `.png` | 一级调研 → 当前持久化切片 → PostgreSQL 18.6 证据 → 六项 P0 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 
 ## 数据安全
 
