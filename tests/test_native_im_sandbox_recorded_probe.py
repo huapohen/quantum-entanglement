@@ -34,6 +34,7 @@ from quantum_entanglement.native_im_sandbox import (
     NativeIMInboundRawResponseV1,
     NativeIMMappedPageV1,
     NativeIMTransportContractError,
+    derive_native_im_mapping_evidence_digest_v1,
 )
 from quantum_entanglement.native_im_sandbox_lifecycle import (
     NativeIMSandboxKillSwitchV1,
@@ -186,9 +187,15 @@ class RecordedMapper:
             schema_version=1,
             source_body_digest=raw_verification.body_digest,
             canonical_page_body=canonical,
-            mapping_evidence_digest=hashlib.sha256(
-                b"recorded-mapping-v1\n" + canonical
-            ).hexdigest(),
+            mapping_evidence_digest=derive_native_im_mapping_evidence_digest_v1(
+                mapper_contract_id="test-native-im-mapper-v1",
+                mapper_contract_digest="3" * 64,
+                profile_digest=profile.canonical_digest(),
+                read_request_digest=request.canonical_digest(),
+                capability_digest=capability.canonical_digest(),
+                source_body_digest=raw_verification.body_digest,
+                page_digest=page.canonical_digest(),
+            ),
         )
 
 

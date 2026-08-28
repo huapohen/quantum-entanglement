@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, NoReturn, Protocol, SupportsIndex, runtime_checkable
 
-from ._native_im_codec import _digest, _id, _schema_version, _timestamp
+from ._native_im_codec import _digest, _id, _model_digest, _schema_version, _timestamp
 from .native_im import (
     IMAcceptanceQueryV1,
     IMActionReceiptV1,
@@ -204,6 +204,42 @@ class NativeIMMappedPageV1:
             f"body_bytes={len(self.canonical_page_body)}, "
             f"evidence={self.mapping_evidence_digest[:12]!r})"
         )
+
+
+def derive_native_im_mapping_evidence_digest_v1(
+    *,
+    mapper_contract_id: str,
+    mapper_contract_digest: str,
+    profile_digest: str,
+    read_request_digest: str,
+    capability_digest: str,
+    source_body_digest: str,
+    page_digest: str,
+) -> str:
+    """Bind one mapper result to its reviewed build and every immutable input axis."""
+
+    _id(mapper_contract_id, "mapperContractId")
+    for value, label in (
+        (mapper_contract_digest, "mapperContractDigest"),
+        (profile_digest, "profileDigest"),
+        (read_request_digest, "readRequestDigest"),
+        (capability_digest, "capabilityDigest"),
+        (source_body_digest, "sourceBodyDigest"),
+        (page_digest, "pageDigest"),
+    ):
+        _digest(value, label)
+    return _model_digest(
+        "NativeIMMappingEvidenceV1",
+        {
+            "capabilityDigest": capability_digest,
+            "mapperContractDigest": mapper_contract_digest,
+            "mapperContractId": mapper_contract_id,
+            "pageDigest": page_digest,
+            "profileDigest": profile_digest,
+            "readRequestDigest": read_request_digest,
+            "sourceBodyDigest": source_body_digest,
+        },
+    )
 
 
 @dataclass(frozen=True, repr=False)
@@ -706,6 +742,17 @@ class NativeIMInboundOnlySandboxAdapter:
             self.__profile,
         )
         approval = self._require_approval("read")
+        expected_mapping_evidence_digest = derive_native_im_mapping_evidence_digest_v1(
+            mapper_contract_id=approval.mapper_contract_id,
+            mapper_contract_digest=approval.mapper_contract_digest,
+            profile_digest=self.__profile.canonical_digest(),
+            read_request_digest=request_snapshot.canonical_digest(),
+            capability_digest=capability.canonical_digest(),
+            source_body_digest=raw_verification.body_digest,
+            page_digest=page.canonical_digest(),
+        )
+        if mapped.mapping_evidence_digest != expected_mapping_evidence_digest:
+            raise NativeIMTransportContractError() from None
         provenance = NativeIMSandboxAdmissionProvenanceV1(
             schema_version=1,
             approval_id=approval.approval_id,
@@ -863,5 +910,6 @@ __all__ = [
     "NativeIMTransportContractError",
     "NativeIMVerifiedInboundReadV1",
     "compose_default_native_im_sandbox_v1",
+    "derive_native_im_mapping_evidence_digest_v1",
     "parse_native_im_inbound_page_v1",
 ]
