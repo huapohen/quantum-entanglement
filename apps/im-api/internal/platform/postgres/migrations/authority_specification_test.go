@@ -25,6 +25,8 @@ func TestCurrentAuthorityAccessSpecification(t *testing.T) {
 		t.Fatalf("specification compatibility binding = %#v", specification)
 	}
 	if specification.DatabaseOwner != (AuthorityDatabaseOwnerSpecification{
+		ConnectionLimit:   -1,
+		CreateRole:        true,
 		Database:          manifest.DatabaseName,
 		Role:              manifest.DatabaseOwnerRole,
 		PreflightRequired: true,
@@ -191,6 +193,38 @@ func TestCurrentAuthorityAccessSpecificationRejectsInvalidManifest(t *testing.T)
 				ErrAuthorityAccessSpecification,
 			) {
 				t.Fatalf("error = %v, want %v", err, ErrAuthorityAccessSpecification)
+			}
+		})
+	}
+}
+
+func TestAuthoritySpecificationRejectsDatabaseOwnerAttributeDrift(t *testing.T) {
+	mutations := map[string]func(*AuthorityDatabaseOwnerSpecification){
+		"login":           func(value *AuthorityDatabaseOwnerSpecification) { value.Login = true },
+		"superuser":       func(value *AuthorityDatabaseOwnerSpecification) { value.Superuser = true },
+		"inherit":         func(value *AuthorityDatabaseOwnerSpecification) { value.Inherit = true },
+		"missing create":  func(value *AuthorityDatabaseOwnerSpecification) { value.CreateRole = false },
+		"create database": func(value *AuthorityDatabaseOwnerSpecification) { value.CreateDatabase = true },
+		"replication":     func(value *AuthorityDatabaseOwnerSpecification) { value.Replication = true },
+		"bypass rls":      func(value *AuthorityDatabaseOwnerSpecification) { value.BypassRLS = true },
+		"connection limit": func(value *AuthorityDatabaseOwnerSpecification) {
+			value.ConnectionLimit = 1
+		},
+		"valid until": func(value *AuthorityDatabaseOwnerSpecification) { value.ValidUntil = true },
+		"settings":    func(value *AuthorityDatabaseOwnerSpecification) { value.Settings = true },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			specification, err := CurrentAuthorityAccessSpecification(specificationTestManifest())
+			if err != nil {
+				t.Fatalf("CurrentAuthorityAccessSpecification: %v", err)
+			}
+			mutate(&specification.DatabaseOwner)
+			if _, err := DigestAuthorityAccessSpecification(specification); !errors.Is(
+				err,
+				ErrAuthorityAccessSpecification,
+			) {
+				t.Fatalf("DigestAuthorityAccessSpecification error = %v, want %v", err, ErrAuthorityAccessSpecification)
 			}
 		})
 	}

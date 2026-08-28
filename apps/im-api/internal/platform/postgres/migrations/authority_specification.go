@@ -55,13 +55,24 @@ type AuthorityAccessSpecification struct {
 	FunctionsInMetadata           bool                                     `json:"functionsInMetadataSchema"`
 }
 
-// AuthorityDatabaseOwnerSpecification records the external deployment root that owns the
-// database and grants memberships. Its cluster attributes are a Gate A0 provisioner-preflight
-// responsibility and are deliberately not inferred by the migration/runtime validator.
+// AuthorityDatabaseOwnerSpecification records the exact NOLOGIN deployment root that owns the
+// database, creates the managed roles, and grants their memberships. The migration/runtime
+// validator consumes the resulting ownership and grantor graph; Gate A0 preflight consumes these
+// root attributes directly instead of maintaining a second expectation.
 type AuthorityDatabaseOwnerSpecification struct {
+	BypassRLS         bool   `json:"bypassRls"`
+	ConnectionLimit   int    `json:"connectionLimit"`
+	CreateDatabase    bool   `json:"createDatabase"`
+	CreateRole        bool   `json:"createRole"`
 	Database          string `json:"database"`
-	Role              string `json:"role"`
+	Inherit           bool   `json:"inherit"`
+	Login             bool   `json:"login"`
 	PreflightRequired bool   `json:"preflightRequired"`
+	Replication       bool   `json:"replication"`
+	Role              string `json:"role"`
+	Settings          bool   `json:"settings"`
+	Superuser         bool   `json:"superuser"`
+	ValidUntil        bool   `json:"validUntil"`
 }
 
 type AuthorityRoleSpecification struct {
@@ -139,26 +150,34 @@ func CurrentAuthorityAccessSpecification(
 		AuthorityManifestDigest:       authorityManifestDigest,
 		ExecutorCompatibilityVersion:  AuthorityAccessExecutorCompatibility,
 		ValidatorCompatibilityVersion: AuthorityAccessValidatorCompatibility,
-		DatabaseOwner: AuthorityDatabaseOwnerSpecification{
-			Database:          manifest.DatabaseName,
-			Role:              manifest.DatabaseOwnerRole,
-			PreflightRequired: true,
-		},
-		Roles:                authorityRoleSpecifications(manifest),
-		Memberships:          authorityMembershipSpecifications(manifest),
-		Objects:              authorityObjectSpecifications(manifest),
-		Privileges:           authorityPrivilegeSpecifications(manifest),
-		DefaultPrivileges:    authorityDefaultPrivilegeSpecifications(manifest),
-		UnexpectedObjects:    false,
-		UnexpectedPrivileges: false,
-		RoleSettings:         false,
-		ColumnPrivileges:     false,
-		FunctionsInMetadata:  false,
+		DatabaseOwner:                 authorityDatabaseOwnerSpecification(manifest),
+		Roles:                         authorityRoleSpecifications(manifest),
+		Memberships:                   authorityMembershipSpecifications(manifest),
+		Objects:                       authorityObjectSpecifications(manifest),
+		Privileges:                    authorityPrivilegeSpecifications(manifest),
+		DefaultPrivileges:             authorityDefaultPrivilegeSpecifications(manifest),
+		UnexpectedObjects:             false,
+		UnexpectedPrivileges:          false,
+		RoleSettings:                  false,
+		ColumnPrivileges:              false,
+		FunctionsInMetadata:           false,
 	}
 	if !validAuthorityAccessSpecification(specification) {
 		return AuthorityAccessSpecification{}, ErrAuthorityAccessSpecification
 	}
 	return specification, nil
+}
+
+func authorityDatabaseOwnerSpecification(
+	manifest AuthorityAccessManifest,
+) AuthorityDatabaseOwnerSpecification {
+	return AuthorityDatabaseOwnerSpecification{
+		ConnectionLimit:   -1,
+		CreateRole:        true,
+		Database:          manifest.DatabaseName,
+		PreflightRequired: true,
+		Role:              manifest.DatabaseOwnerRole,
+	}
 }
 
 func authorityRoleSpecifications(manifest AuthorityAccessManifest) []AuthorityRoleSpecification {
@@ -327,7 +346,10 @@ func validAuthorityAccessSpecification(specification AuthorityAccessSpecificatio
 		specification.ExecutorCompatibilityVersion != AuthorityAccessExecutorCompatibility ||
 		specification.ValidatorCompatibilityVersion != AuthorityAccessValidatorCompatibility ||
 		specification.DatabaseOwner.Database == "" || specification.DatabaseOwner.Role == "" ||
-		!specification.DatabaseOwner.PreflightRequired || len(specification.Roles) == 0 ||
+		specification.DatabaseOwner != authorityDatabaseOwnerSpecification(AuthorityAccessManifest{
+			DatabaseName:      specification.DatabaseOwner.Database,
+			DatabaseOwnerRole: specification.DatabaseOwner.Role,
+		}) || len(specification.Roles) == 0 ||
 		len(specification.Memberships) == 0 || len(specification.Objects) == 0 ||
 		len(specification.Privileges) == 0 || len(specification.DefaultPrivileges) != 1 ||
 		specification.UnexpectedObjects || specification.UnexpectedPrivileges ||
