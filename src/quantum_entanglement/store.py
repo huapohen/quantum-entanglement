@@ -1469,9 +1469,7 @@ class SQLiteEventStore:
                 type(result_artifact_savepoint_secret) is not bytes
                 or len(result_artifact_savepoint_secret) != 32
             ):
-                raise RuntimeError(
-                    "result Artifact savepoint secret allocation is invalid"
-                )
+                raise RuntimeError("result Artifact savepoint secret allocation is invalid")
             self._result_artifact_savepoint_secret = result_artifact_savepoint_secret
             self.path = path
             if path != ":memory:":
@@ -1689,10 +1687,7 @@ class SQLiteEventStore:
                     )
                 generation = current_generation + 1
                 savepoint_secret = self._result_artifact_savepoint_secret
-                if (
-                    type(savepoint_secret) is not bytes
-                    or len(savepoint_secret) != 32
-                ):
+                if type(savepoint_secret) is not bytes or len(savepoint_secret) != 32:
                     raise _ResultArtifactIntegrityError(
                         "result Artifact savepoint secret is invalid"
                     )
@@ -2933,8 +2928,8 @@ class SQLiteEventStore:
                 token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
             )
             self._require_current_process()
-            terminal_transition = (
-                _build_scoped_invocation_result_terminal_transition_from_plan_v2(candidate)
+            terminal_transition = _build_scoped_invocation_result_terminal_transition_from_plan_v2(
+                candidate
             )
             self._require_current_process()
             transitioned = _TransitionedFreshResultAcceptancePlanV2(
@@ -2968,9 +2963,7 @@ class SQLiteEventStore:
         self,
         handle: _ResultArtifactTransactionHandle,
         prepared: _PreparedScopedInvocationResultAcceptanceV2,
-    ) -> Iterator[
-        _ExistingResultAcceptanceGraphCandidateV2 | _EventedFreshResultAcceptancePlanV2
-    ]:
+    ) -> Iterator[_ExistingResultAcceptanceGraphCandidateV2 | _EventedFreshResultAcceptancePlanV2]:
         evented: Optional[_EventedFreshResultAcceptancePlanV2] = None
         with self._construct_result_acceptance_terminal_transition_in_owner_transaction(
             handle,
@@ -2981,12 +2974,10 @@ class SQLiteEventStore:
                 return
             if type(candidate) is not _TransitionedFreshResultAcceptancePlanV2:
                 raise RuntimeError("result acceptance event classification is not closed")
-            candidate._begin_event_construction(
-                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
-            )
+            candidate._begin_event_construction(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
             self._require_current_process()
-            result_event, terminal_event = (
-                _build_scoped_invocation_result_events_from_plan_v2(candidate)
+            result_event, terminal_event = _build_scoped_invocation_result_events_from_plan_v2(
+                candidate
             )
             self._require_current_process()
             evented = _EventedFreshResultAcceptancePlanV2(

@@ -521,9 +521,7 @@ class _EvidencedFreshResultAcceptancePlanV2:
         if type(self.__terminal_transition_construction_started) is not bool:
             raise RuntimeError("result acceptance terminal transition state is invalid")
         if self.__terminal_transition_construction_started:
-            raise RuntimeError(
-                "result acceptance terminal transition construction already started"
-            )
+            raise RuntimeError("result acceptance terminal transition construction already started")
         self.__terminal_transition_construction_started = True
         self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
@@ -603,9 +601,7 @@ class _TransitionedFreshResultAcceptancePlanV2:
         transition_snapshot = ScopedInvocationResultTerminalTransitionV2.from_dict(
             ScopedInvocationResultTerminalTransitionV2.to_dict(terminal_transition)
         )
-        expected = _build_scoped_invocation_result_terminal_transition_from_plan_v2(
-            evidenced
-        )
+        expected = _build_scoped_invocation_result_terminal_transition_from_plan_v2(evidenced)
         if transition_snapshot != expected:
             raise ValueError(
                 "result acceptance terminal transition differs from its evidenced plan"
@@ -693,8 +689,8 @@ class _EventedFreshResultAcceptancePlanV2:
         terminal_event = self.__terminal_event
         if type(result_event) is not DomainEvent or type(terminal_event) is not DomainEvent:
             raise TypeError("result acceptance events must be exact DomainEvent values")
-        expected_result, expected_terminal = (
-            _build_scoped_invocation_result_events_from_plan_v2(transitioned)
+        expected_result, expected_terminal = _build_scoped_invocation_result_events_from_plan_v2(
+            transitioned
         )
         if result_event != expected_result or terminal_event != expected_terminal:
             raise ValueError("result acceptance event pair differs from its transitioned plan")
@@ -849,15 +845,11 @@ def _build_scoped_invocation_result_terminal_transition_from_plan_v2(
 
     if type(evidenced) is not _EvidencedFreshResultAcceptancePlanV2:
         raise TypeError("terminal transition requires an exact evidenced plan")
-    identified, evidence = evidenced._validated(
-        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
-    )
+    identified, evidence = evidenced._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
     materialized, _, result_event_id, _ = identified._validated(
         token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
     )
-    prepared, _, _, _ = materialized._validated(
-        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
-    )
+    prepared, _, _, _ = materialized._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
     transition = build_scoped_invocation_result_terminal_transition_v2(
         prepared.request,
         evidence,
@@ -878,15 +870,11 @@ def _build_scoped_invocation_result_events_from_plan_v2(
     evidenced, terminal_transition = transitioned._validated(
         token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
     )
-    identified, evidence = evidenced._validated(
-        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
-    )
+    identified, evidence = evidenced._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
     materialized, _, result_event_id, terminal_event_id = identified._validated(
         token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
     )
-    prepared, _, accepted_at, _ = materialized._validated(
-        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
-    )
+    prepared, _, accepted_at, _ = materialized._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
     request = prepared.request
     manifest = request.manifest
     stream_id = "session:" + manifest.session_id

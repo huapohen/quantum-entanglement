@@ -1138,9 +1138,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     prepared,
                 ) as evidenced:
                     assert type(evidenced) is _EvidencedFreshResultAcceptancePlanV2
-                    _, evidence = evidenced._validated(
-                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
-                    )
+                    _, evidence = evidenced._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
                     self.assertEqual(evidence.artifact_count, 0)
                     self.assertEqual(prepared.request.manifest.artifacts, ())
 
@@ -1175,8 +1173,8 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     identified, evidence = evidenced._validated(
                         token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
                     )
-                    _, receipt_id, result_event_id, terminal_event_id = (
-                        identified._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+                    _, receipt_id, result_event_id, terminal_event_id = identified._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
                     )
                     manifest = prepared.request.manifest
                     self.assertIs(
@@ -1189,9 +1187,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         transition,
-                        ScopedInvocationResultTerminalTransitionV2.from_dict(
-                            transition.to_dict()
-                        ),
+                        ScopedInvocationResultTerminalTransitionV2.from_dict(transition.to_dict()),
                     )
                     self.assertEqual(
                         (
@@ -1297,25 +1293,26 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
         self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
-        with patch(
-            "quantum_entanglement.store.new_id",
-            side_effect=(
-                "receipt_transition_failure",
-                "event_result_transition_failure",
-                "event_terminal_transition_failure",
+        with (
+            patch(
+                "quantum_entanglement.store.new_id",
+                side_effect=(
+                    "receipt_transition_failure",
+                    "event_result_transition_failure",
+                    "event_terminal_transition_failure",
+                ),
             ),
-        ), patch(
-            "quantum_entanglement.store._build_scoped_invocation_result_terminal_transition_from_plan_v2",
-            side_effect=RuntimeError("terminal transition construction failed"),
+            patch(
+                "quantum_entanglement.store._build_scoped_invocation_result_terminal_transition_from_plan_v2",
+                side_effect=RuntimeError("terminal transition construction failed"),
+            ),
         ):
             with self.assertRaisesRegex(
                 RuntimeError,
                 "terminal transition construction failed",
             ):
                 with self.store._result_artifact_transaction() as handle:
-                    construct = (
-                        self.store._construct_result_acceptance_terminal_transition_in_owner_transaction
-                    )
+                    construct = self.store._construct_result_acceptance_terminal_transition_in_owner_transaction  # noqa: E501
                     with construct(
                         handle,
                         prepared,
@@ -1326,9 +1323,9 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         for table in ("artifact_versions", "artifact_blobs"):
             with self.subTest(table=table):
                 self.assertEqual(
-                    self.store._connection.execute(
-                        f"SELECT count(*) FROM main.{table}"
-                    ).fetchone()[0],
+                    self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[
+                        0
+                    ],
                     0,
                 )
 
@@ -1336,16 +1333,19 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
         self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
-        with patch(
-            "quantum_entanglement.store.new_id",
-            side_effect=(
-                "receipt_terminal_caught",
-                "event_result_terminal_caught",
-                "event_terminal_caught",
+        with (
+            patch(
+                "quantum_entanglement.store.new_id",
+                side_effect=(
+                    "receipt_terminal_caught",
+                    "event_result_terminal_caught",
+                    "event_terminal_caught",
+                ),
             ),
-        ), patch(
-            "quantum_entanglement.store._build_scoped_invocation_result_terminal_transition_from_plan_v2",
-            side_effect=RuntimeError("caught terminal transition failure"),
+            patch(
+                "quantum_entanglement.store._build_scoped_invocation_result_terminal_transition_from_plan_v2",
+                side_effect=RuntimeError("caught terminal transition failure"),
+            ),
         ):
             with self.assertRaisesRegex(RuntimeError, "rollback-only"):
                 with self.store._result_artifact_transaction() as handle:
@@ -1353,9 +1353,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                         RuntimeError,
                         "caught terminal transition failure",
                     ):
-                        construct = (
-                            self.store._construct_result_acceptance_terminal_transition_in_owner_transaction
-                        )
+                        construct = self.store._construct_result_acceptance_terminal_transition_in_owner_transaction  # noqa: E501
                         with construct(handle, prepared):
                             self.fail(
                                 "caught terminal transition failure unexpectedly yielded a plan"
@@ -1363,9 +1361,9 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         for table in ("artifact_versions", "artifact_blobs"):
             with self.subTest(table=table):
                 self.assertEqual(
-                    self.store._connection.execute(
-                        f"SELECT count(*) FROM main.{table}"
-                    ).fetchone()[0],
+                    self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[
+                        0
+                    ],
                     0,
                 )
 
@@ -1377,11 +1375,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         def drifted_transition(
             evidenced: _EvidencedFreshResultAcceptancePlanV2,
         ) -> ScopedInvocationResultTerminalTransitionV2:
-            transition = (
-                _build_scoped_invocation_result_terminal_transition_from_plan_v2(
-                    evidenced
-                )
-            )
+            transition = _build_scoped_invocation_result_terminal_transition_from_plan_v2(evidenced)
             return replace(transition, result_event_id="event-result-drifted")
 
         cases = (
@@ -1394,29 +1388,31 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             ),
         )
         for ordinal, (label, builder, error_type, message) in enumerate(cases, start=1):
-            with self.subTest(case=label), patch(
-                "quantum_entanglement.store.new_id",
-                side_effect=(
-                    f"receipt_terminal_bad_{ordinal}",
-                    f"event_result_terminal_bad_{ordinal}",
-                    f"event_terminal_bad_{ordinal}",
+            with (
+                self.subTest(case=label),
+                patch(
+                    "quantum_entanglement.store.new_id",
+                    side_effect=(
+                        f"receipt_terminal_bad_{ordinal}",
+                        f"event_result_terminal_bad_{ordinal}",
+                        f"event_terminal_bad_{ordinal}",
+                    ),
                 ),
-            ), patch(
-                "quantum_entanglement.store._build_scoped_invocation_result_terminal_transition_from_plan_v2",
-                side_effect=builder,
+                patch(
+                    "quantum_entanglement.store._build_scoped_invocation_result_terminal_transition_from_plan_v2",
+                    side_effect=builder,
+                ),
             ):
                 with self.assertRaisesRegex(error_type, message):
                     with self.store._result_artifact_transaction() as handle:
-                        construct = (
-                            self.store._construct_result_acceptance_terminal_transition_in_owner_transaction
-                        )
+                        construct = self.store._construct_result_acceptance_terminal_transition_in_owner_transaction  # noqa: E501
                         with construct(handle, prepared):
                             self.fail("invalid terminal builder output unexpectedly yielded")
             for table in ("artifact_versions", "artifact_blobs"):
                 self.assertEqual(
-                    self.store._connection.execute(
-                        f"SELECT count(*) FROM main.{table}"
-                    ).fetchone()[0],
+                    self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[
+                        0
+                    ],
                     0,
                 )
 
@@ -1446,8 +1442,8 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     identified, evidence = evidenced._validated(
                         token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
                     )
-                    _, receipt_id, result_event_id, terminal_event_id = (
-                        identified._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+                    _, receipt_id, result_event_id, terminal_event_id = identified._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
                     )
                     manifest = prepared.request.manifest
                     self.assertIs(type(result_event), DomainEvent)
@@ -1553,16 +1549,19 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
         self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
-        with patch(
-            "quantum_entanglement.store.new_id",
-            side_effect=(
-                "receipt_event_failure",
-                "event_result_event_failure",
-                "event_terminal_event_failure",
+        with (
+            patch(
+                "quantum_entanglement.store.new_id",
+                side_effect=(
+                    "receipt_event_failure",
+                    "event_result_event_failure",
+                    "event_terminal_event_failure",
+                ),
             ),
-        ), patch(
-            "quantum_entanglement.store._build_scoped_invocation_result_events_from_plan_v2",
-            side_effect=RuntimeError("event pair construction failed"),
+            patch(
+                "quantum_entanglement.store._build_scoped_invocation_result_events_from_plan_v2",
+                side_effect=RuntimeError("event pair construction failed"),
+            ),
         ):
             with self.assertRaisesRegex(RuntimeError, "event pair construction failed"):
                 with self.store._result_artifact_transaction() as handle:
@@ -1574,9 +1573,9 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         for table in ("artifact_versions", "artifact_blobs"):
             with self.subTest(table=table):
                 self.assertEqual(
-                    self.store._connection.execute(
-                        f"SELECT count(*) FROM main.{table}"
-                    ).fetchone()[0],
+                    self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[
+                        0
+                    ],
                     0,
                 )
 
@@ -1607,12 +1606,15 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
         self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
-        with patch(
-            "quantum_entanglement.store.new_id",
-            side_effect=("receipt_failure", "event_result_failure", "event_terminal_failure"),
-        ), patch(
-            "quantum_entanglement.store._build_scoped_invocation_result_evidence_v2",
-            side_effect=RuntimeError("evidence construction failed"),
+        with (
+            patch(
+                "quantum_entanglement.store.new_id",
+                side_effect=("receipt_failure", "event_result_failure", "event_terminal_failure"),
+            ),
+            patch(
+                "quantum_entanglement.store._build_scoped_invocation_result_evidence_v2",
+                side_effect=RuntimeError("evidence construction failed"),
+            ),
         ):
             with self.assertRaisesRegex(RuntimeError, "evidence construction failed"):
                 with self.store._result_artifact_transaction() as handle:
@@ -1628,9 +1630,9 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             0,
         )
         self.assertEqual(
-            self.store._connection.execute(
-                "SELECT count(*) FROM main.artifact_blobs"
-            ).fetchone()[0],
+            self.store._connection.execute("SELECT count(*) FROM main.artifact_blobs").fetchone()[
+                0
+            ],
             0,
         )
 
@@ -1638,12 +1640,15 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
         self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
-        with patch(
-            "quantum_entanglement.store.new_id",
-            side_effect=("receipt_caught", "event_result_caught", "event_terminal_caught"),
-        ), patch(
-            "quantum_entanglement.store._build_scoped_invocation_result_evidence_v2",
-            side_effect=RuntimeError("caught evidence failure"),
+        with (
+            patch(
+                "quantum_entanglement.store.new_id",
+                side_effect=("receipt_caught", "event_result_caught", "event_terminal_caught"),
+            ),
+            patch(
+                "quantum_entanglement.store._build_scoped_invocation_result_evidence_v2",
+                side_effect=RuntimeError("caught evidence failure"),
+            ),
         ):
             with self.assertRaisesRegex(RuntimeError, "rollback-only"):
                 with self.store._result_artifact_transaction() as handle:
@@ -1652,9 +1657,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                             handle,
                             prepared,
                         ):
-                            self.fail(
-                                "caught evidence failure unexpectedly yielded a plan"
-                            )
+                            self.fail("caught evidence failure unexpectedly yielded a plan")
         self.assertEqual(
             self.store._connection.execute(
                 "SELECT count(*) FROM main.artifact_versions"
@@ -1662,9 +1665,9 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             0,
         )
         self.assertEqual(
-            self.store._connection.execute(
-                "SELECT count(*) FROM main.artifact_blobs"
-            ).fetchone()[0],
+            self.store._connection.execute("SELECT count(*) FROM main.artifact_blobs").fetchone()[
+                0
+            ],
             0,
         )
 
