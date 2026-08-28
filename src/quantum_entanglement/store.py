@@ -37,6 +37,10 @@ from typing import (
 )
 
 from . import process_identity as _process_identity
+from ._stored_event_envelope_codec import (
+    _stored_event_envelope_from_values,
+    _StoredEventEnvelopeV1,
+)
 from .attempts import (
     AttemptStatus,
     InvocationAttempt,
@@ -1663,6 +1667,34 @@ class SQLiteEventStore:
         snapshot = SQLiteEventStore._snapshot_event(self, event)
         SQLiteEventStore._reject_generic_reserved_result_event(snapshot.event)
         return snapshot
+
+    @staticmethod
+    def _stored_event_envelope_from_write_snapshot(
+        snapshot: _EventWriteSnapshot,
+        *,
+        sequence: int,
+        global_position: int,
+    ) -> _StoredEventEnvelopeV1:
+        """Derive a capability-free envelope from one exact store-owned write snapshot."""
+
+        if type(snapshot) is not _EventWriteSnapshot:
+            raise TypeError("event write snapshot must use its exact class")
+        event = object.__getattribute__(snapshot, "event")
+        if type(event) is not DomainEvent:
+            raise TypeError("event write snapshot must contain an exact DomainEvent")
+        return _stored_event_envelope_from_values(
+            event_id=object.__getattribute__(event, "event_id"),
+            stream_id=object.__getattribute__(event, "stream_id"),
+            event_type=object.__getattribute__(event, "event_type"),
+            actor_id=object.__getattribute__(event, "actor_id"),
+            timestamp=object.__getattribute__(event, "timestamp"),
+            correlation_id=object.__getattribute__(event, "correlation_id"),
+            causation_id=object.__getattribute__(event, "causation_id"),
+            idempotency_key=object.__getattribute__(event, "idempotency_key"),
+            payload_json=object.__getattribute__(snapshot, "payload_json"),
+            sequence=sequence,
+            global_position=global_position,
+        )
 
     @staticmethod
     def _reject_generic_reserved_result_event(event: DomainEvent) -> None:
