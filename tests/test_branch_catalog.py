@@ -116,6 +116,28 @@ class BranchCatalogTests(unittest.TestCase):
             )
             self.assertEqual(normalized[0].head, baseline)
 
+    def test_catalog_baseline_skips_consecutive_catalog_only_tips(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            git(root, "init", "-b", "main")
+            git(root, "config", "user.name", "catalog-test")
+            git(root, "config", "user.email", "catalog-test@example.invalid")
+            payload = root / "payload.txt"
+            payload.write_text("one\n", encoding="utf-8")
+            git(root, "add", "payload.txt")
+            git(root, "commit", "-m", "initial payload")
+            baseline = git(root, "rev-parse", "HEAD").stdout.strip()
+
+            catalog = root / "BRANCH_CATALOG.md"
+            catalog.write_text("snapshot one\n", encoding="utf-8")
+            git(root, "add", "BRANCH_CATALOG.md")
+            git(root, "commit", "-m", "refresh catalog once")
+            catalog.write_text("snapshot two\n", encoding="utf-8")
+            git(root, "add", "BRANCH_CATALOG.md")
+            git(root, "commit", "-m", "refresh catalog twice")
+
+            self.assertEqual(catalog_main_baseline(root, catalog, "HEAD"), baseline)
+
     def test_archive_source_name_recovers_original_branch(self) -> None:
         self.assertEqual(
             archive_source_name("archive/2026-08-21/codex/service-boundary-v1"),

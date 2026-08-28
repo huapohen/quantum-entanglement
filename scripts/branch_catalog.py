@@ -233,13 +233,17 @@ def catalog_tip_baseline(repo: Path, output: Path, tip: str) -> str:
     relative_output = _repository_relative_output(repo, output)
     if relative_output is None:
         return tip
-    changed_paths = git(
-        repo, "diff-tree", "--no-commit-id", "--name-only", "-r", tip, "--"
-    ).stdout.splitlines()
-    if changed_paths != [relative_output]:
-        return tip
-    parent = git(repo, "rev-parse", f"{tip}^", check=False)
-    return parent.stdout.strip() if parent.returncode == 0 else tip
+    baseline = tip
+    while True:
+        changed_paths = git(
+            repo, "diff-tree", "--no-commit-id", "--name-only", "-r", baseline, "--"
+        ).stdout.splitlines()
+        if changed_paths != [relative_output]:
+            return baseline
+        parent = git(repo, "rev-parse", f"{baseline}^", check=False)
+        if parent.returncode != 0:
+            return baseline
+        baseline = parent.stdout.strip()
 
 
 def catalog_worktree_baselines(
