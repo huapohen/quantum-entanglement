@@ -117,7 +117,8 @@ func (approval ApprovalToSign) Encode(signature []byte) ([]byte, error) {
 }
 
 // ApprovalVerificationScope limits a controller key to one deployment, PostgreSQL cell, and
-// approval-reference namespace. ReferencePrefix must be an approval/ path ending in a slash.
+// approval-reference namespace. ReferencePrefix must be an approval/ path ending in a slash and
+// cannot contain empty, current-directory, or parent-directory segments.
 type ApprovalVerificationScope struct {
 	CellID          string
 	DeploymentID    string
@@ -294,9 +295,7 @@ func validApprovalVerificationKey(key ApprovalVerificationKey) bool {
 		key.NotAfter.Location() == time.UTC && key.NotBefore.Nanosecond() == 0 &&
 		key.NotAfter.Nanosecond() == 0 && key.NotAfter.After(key.NotBefore) &&
 		canonicalIdentity(key.Scope.CellID) && canonicalIdentity(key.Scope.DeploymentID) &&
-		canonicalIdentity(key.Scope.ReferencePrefix) &&
-		strings.HasPrefix(key.Scope.ReferencePrefix, "approval/") &&
-		strings.HasSuffix(key.Scope.ReferencePrefix, "/")
+		validApprovalReferencePrefix(key.Scope.ReferencePrefix)
 }
 
 func validApprovalPolicyForPlan(
@@ -362,8 +361,27 @@ func validUnsignedApprovalShape(envelope approvalEnvelope) bool {
 		envelope.Format == DetachedApprovalFormat && envelope.Decision == approvalDecisionApproved &&
 		canonicalIdentity(envelope.ApproverIdentity) && canonicalIdentity(envelope.KeyID) &&
 		canonicalDigest.MatchString(envelope.PlanDigest) && canonicalIdentity(envelope.PlanID) &&
-		canonicalIdentity(envelope.Reference) && envelope.Signature == "" &&
+		validApprovalReference(envelope.Reference) && envelope.Signature == "" &&
 		canonicalApprovalTimeRange(envelope.ApprovedAt, envelope.ExpiresAt)
+}
+
+func validApprovalReference(value string) bool {
+	return canonicalIdentity(value) && strings.HasPrefix(value, "approval/") &&
+		!strings.HasSuffix(value, "/") && validApprovalReferenceSegments(value)
+}
+
+func validApprovalReferencePrefix(value string) bool {
+	return canonicalIdentity(value) && strings.HasPrefix(value, "approval/") &&
+		strings.HasSuffix(value, "/") && validApprovalReferenceSegments(strings.TrimSuffix(value, "/"))
+}
+
+func validApprovalReferenceSegments(value string) bool {
+	for _, segment := range strings.Split(value, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func validSignedApproval(envelope approvalEnvelope, plan PlanSnapshot) bool {

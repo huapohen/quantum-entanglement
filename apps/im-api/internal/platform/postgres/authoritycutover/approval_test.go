@@ -311,6 +311,40 @@ func TestApprovalTrustPolicyRejectsOutOfScopeAndOutOfWindow(t *testing.T) {
 	}
 }
 
+func TestApprovalRejectsAmbiguousReferenceNamespaces(t *testing.T) {
+	fixture := newApprovalFixture(t, 0)
+	invalidReferences := []string{
+		"approval/postgres-cell-a/../release-1",
+		"approval/postgres-cell-a/./release-1",
+		"approval/postgres-cell-a//release-1",
+		"approval/postgres-cell-a/",
+	}
+	for _, reference := range invalidReferences {
+		t.Run("plan-"+strings.ReplaceAll(reference, "/", "-"), func(t *testing.T) {
+			input := validPlanInput()
+			input.ApprovalReference = reference
+			if _, err := BuildPlan(input); !errors.Is(err, ErrInvalidPlan) {
+				t.Fatalf("BuildPlan error = %v, want %v", err, ErrInvalidPlan)
+			}
+		})
+	}
+	invalidPrefixes := []string{
+		"approval/postgres-cell-a/../",
+		"approval/postgres-cell-a/./",
+		"approval/postgres-cell-a//",
+		"approval/postgres-cell-a",
+	}
+	for _, prefix := range invalidPrefixes {
+		t.Run("policy-"+strings.ReplaceAll(prefix, "/", "-"), func(t *testing.T) {
+			key := fixture.trustedKey
+			key.Scope.ReferencePrefix = prefix
+			if _, err := NewApprovalVerifier([]ApprovalVerificationKey{key}, 0); !errors.Is(err, ErrInvalidApprovalVerifier) {
+				t.Fatalf("NewApprovalVerifier error = %v, want %v", err, ErrInvalidApprovalVerifier)
+			}
+		})
+	}
+}
+
 func TestApprovalEnforcesShortLivedUTCWindowAndClockSkew(t *testing.T) {
 	plan, err := BuildPlan(validPlanInput())
 	if err != nil {

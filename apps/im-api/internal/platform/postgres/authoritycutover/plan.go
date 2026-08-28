@@ -346,8 +346,7 @@ func validPlanSnapshot(snapshot PlanSnapshot, requireDigest bool) bool {
 		!validBackup(snapshot.Backup) || !validRollback(snapshot.Rollback, snapshot.Steps) ||
 		!validCanonicalSet(snapshot.AbortConditions) || !canonicalIdentity(snapshot.EvidenceDestination) ||
 		!strings.HasPrefix(snapshot.EvidenceDestination, "evidence/") ||
-		!canonicalIdentity(snapshot.Approval.Identity) || !canonicalIdentity(snapshot.Approval.Reference) ||
-		!strings.HasPrefix(snapshot.Approval.Reference, "approval/") ||
+		!canonicalIdentity(snapshot.Approval.Identity) || !validApprovalReference(snapshot.Approval.Reference) ||
 		snapshot.ExpiresAt.IsZero() || snapshot.ExpiresAt.Location() != time.UTC ||
 		snapshot.ExpiresAt.Nanosecond() != 0 {
 		return false
