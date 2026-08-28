@@ -55,7 +55,10 @@ Level B 的离线 profile/config/verifier/migration/nonce/read-preparation 与�
 运行源码 `9cf1bfe` 完成；adapter/lifecycle 节点在 `2bdaea1` 完成；provider mapper/transport/bundle
 TCK、稳定 event-source 与 transient exchange evidence 分离、增强 provenance 和 v6 durable readback
 又在 `ee0666f` 完成。下一硬门禁是真实 IM 后端合同、测试 scope/read-only secret reference 与
-production exchange；完成前不连接真实 sandbox。
+production exchange；完成前不连接真实 sandbox。对独立 IM 后端已提交 `c623aea` 的源码复核确认：
+当前公开 composition 只有 loopback liveness/ping，auth/IM 固定 fake，尚无 authenticated event read、
+cursor/snapshot 或 provider readiness；完整证据和最小交接合同见
+`research/27_native_im_backend_contract_audit.md`。
 `NEXT_STAGE_PLAN.md` 继续作为 E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前的
 串行总清单。
 
@@ -90,6 +93,7 @@ production exchange；完成前不连接真实 sandbox。
 | `research/24_native_im_e2_atomic_page_admission_evidence.md` | 原生 IM E2 原子页运行证据：`9cf1bfe` | nonce/page/events/read/checkpoint 单事务、独立 durable readback、88 项专项/2,060 项全仓门禁、下一 adapter/lifecycle P0 |
 | `research/25_native_im_e2_adapter_lifecycle_offline_evidence.md` | 原生 IM E2 adapter/lifecycle 离线运行证据：`2bdaea1` | default-off、bounded parser、process-bound lifecycle/kill switch、typed observability、全链 canary、recorded probe、2,114 项全仓门禁与真实接入前硬边界 |
 | `research/26_native_im_provider_bundle_offline_evidence.md` | 原生 IM E2 provider bundle 离线闭环：`ee0666f` | Mapper/Transport/Bundle TCK、read-exchange evidence、增强 provenance、migration-v6 持久回读、2,386 项全仓门禁与真实 provider 接入前五项硬输入 |
+| `research/27_native_im_backend_contract_audit.md` | 独立原生 IM 后端源码合同复核：`c623aea` | 确认 authority persistence 底座可复用，但运行 composition 仍只有 fake liveness/ping；冻结 Level B readiness/read 最小合同、三类直接阻断与第一轮只读联调顺序 |
 
 ## 已归档截图
 
