@@ -259,9 +259,9 @@ class MigrationRunnerTests(unittest.TestCase):
         self.assertEqual(self.ledger_count(), 3)
         self.assertEqual(
             apply_sqlite_migrations(self.connection, clock=lambda: NOW),
-            5,
+            len(MIGRATIONS),
         )
-        self.assertEqual(self.ledger_count(), 5)
+        self.assertEqual(self.ledger_count(), len(MIGRATIONS))
 
         self.connection.execute("DELETE FROM main.qe_schema_migrations WHERE version >= 4")
         self.connection.execute("DROP INDEX idx_invocation_admissions_stream")

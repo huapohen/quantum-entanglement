@@ -1,0 +1,30 @@
+CREATE TABLE IF NOT EXISTS native_im_inbound_provenance (
+    tenant_id TEXT NOT NULL CHECK(length(tenant_id) BETWEEN 1 AND 4096),
+    workspace_id TEXT NOT NULL CHECK(length(workspace_id) BETWEEN 1 AND 4096),
+    provider TEXT NOT NULL CHECK(length(provider) BETWEEN 1 AND 4096),
+    channel_id TEXT NOT NULL CHECK(length(channel_id) BETWEEN 1 AND 4096),
+    read_request_digest TEXT NOT NULL CHECK(length(read_request_digest) = 64 AND read_request_digest NOT GLOB '*[^0-9a-f]*'),
+    page_digest TEXT NOT NULL CHECK(length(page_digest) = 64 AND page_digest NOT GLOB '*[^0-9a-f]*'),
+    approval_id TEXT NOT NULL CHECK(length(approval_id) BETWEEN 1 AND 4096),
+    authority_revision INTEGER NOT NULL CHECK(authority_revision > 0),
+    approval_digest TEXT NOT NULL CHECK(length(approval_digest) = 64 AND approval_digest NOT GLOB '*[^0-9a-f]*'),
+    configuration_binding_digest TEXT NOT NULL CHECK(length(configuration_binding_digest) = 64 AND configuration_binding_digest NOT GLOB '*[^0-9a-f]*'),
+    profile_id TEXT NOT NULL CHECK(length(profile_id) BETWEEN 1 AND 4096),
+    profile_revision TEXT NOT NULL CHECK(length(profile_revision) BETWEEN 1 AND 4096),
+    profile_digest TEXT NOT NULL CHECK(length(profile_digest) = 64 AND profile_digest NOT GLOB '*[^0-9a-f]*'),
+    provider_manifest_digest TEXT NOT NULL CHECK(length(provider_manifest_digest) = 64 AND provider_manifest_digest NOT GLOB '*[^0-9a-f]*'),
+    transport_contract_id TEXT NOT NULL CHECK(length(transport_contract_id) BETWEEN 1 AND 4096),
+    transport_contract_digest TEXT NOT NULL CHECK(length(transport_contract_digest) = 64 AND transport_contract_digest NOT GLOB '*[^0-9a-f]*'),
+    mapper_contract_id TEXT NOT NULL CHECK(length(mapper_contract_id) BETWEEN 1 AND 4096),
+    mapper_contract_digest TEXT NOT NULL CHECK(length(mapper_contract_digest) = 64 AND mapper_contract_digest NOT GLOB '*[^0-9a-f]*'),
+    transport_evidence_digest TEXT NOT NULL CHECK(length(transport_evidence_digest) = 64 AND transport_evidence_digest NOT GLOB '*[^0-9a-f]*'),
+    mapping_evidence_digest TEXT NOT NULL CHECK(length(mapping_evidence_digest) = 64 AND mapping_evidence_digest NOT GLOB '*[^0-9a-f]*'),
+    provenance_json TEXT NOT NULL CHECK(length(CAST(provenance_json AS BLOB)) BETWEEN 1 AND 32768),
+    provenance_digest TEXT NOT NULL CHECK(length(provenance_digest) = 64 AND provenance_digest NOT GLOB '*[^0-9a-f]*'),
+    admitted_at TEXT NOT NULL CHECK(length(admitted_at) = 27),
+    PRIMARY KEY (tenant_id, workspace_id, provider, channel_id, read_request_digest),
+    UNIQUE (tenant_id, workspace_id, provider, channel_id, read_request_digest, page_digest),
+    FOREIGN KEY (tenant_id, workspace_id, provider, channel_id, read_request_digest, page_digest)
+        REFERENCES native_im_inbound_reads(tenant_id, workspace_id, provider, channel_id, read_request_digest, page_digest)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+);

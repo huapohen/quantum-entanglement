@@ -314,6 +314,13 @@ class DomainMigrationRegistryTests(unittest.TestCase):
                     ("table", "native_im_inbox_verifications"),
                 ),
             ),
+            (
+                6,
+                "0006_native_im_sandbox_provenance.up.sql",
+                "9d3b1f115e4aa6cbd6f46e436d999e55fb2a3fa063c52f5d742d5193fc7ecb2a",
+                "native_im_sandbox_provenance",
+                (("table", "native_im_inbound_provenance"),),
+            ),
         )
         actual = tuple(
             (
@@ -329,9 +336,13 @@ class DomainMigrationRegistryTests(unittest.TestCase):
         for descriptor in LEGACY_DOMAIN_MIGRATIONS:
             self.assertEqual(descriptor.domain_version, 1)
             self.assertEqual(descriptor.kind, "legacy_bootstrap")
+            expected_dependencies = {
+                4: (1,),
+                6: (5,),
+            }.get(descriptor.migration_id, ())
             self.assertEqual(
                 descriptor.dependencies,
-                (1,) if descriptor.migration_id == 4 else (),
+                expected_dependencies,
             )
             self.assertNotIn(
                 ("table", "qe_schema_migrations"),
@@ -418,6 +429,9 @@ class DomainMigrationRegistryTests(unittest.TestCase):
             (5, "table", "native_im_inbox_verifications"): (
                 "0c1b7075810c92b865e5eb6998ee0cecf51474832a14f7643b3a3aa05c287d55"
             ),
+            (6, "table", "native_im_inbound_provenance"): (
+                "63ddb02170dfd6bbe67c9e6502e7df02e4d0b7e1526c87acae5f967ac6bc91c7"
+            ),
         }
         actual_ddl = {
             (
@@ -437,11 +451,12 @@ class DomainMigrationRegistryTests(unittest.TestCase):
                 "7df074851ad36dcf32da85cb68c847b8cc0b4db3fd20ad858a43cfd927bf814f",
                 "a8e116dbc3aa1a811987e868af7a1dbd0107d1f13bffce8fc2c624f8d7ed31a3",
                 "2e9957cc0374d66b227e8948b4b25b0759714ea84b154df164d9b574129524b5",
+                "f907c9a2eaabdebcd0571948b525f922932a32d8ba0c1b60515944a1c44ebf85",
             ),
         )
         self.assertEqual(
             DOMAIN_MIGRATION_REGISTRY.registry_sha256,
-            "fc53e0a9496ff2eb3a1727571ba7eec8841f3b2f829a81321ef8cd35d337eb97",
+            "80dcde242e232ccf4ba8dbc05943bd405f6d224ced0aca421a12c6ce2f517036",
         )
 
     def test_registry_is_input_order_independent_and_normalized(self) -> None:
@@ -454,6 +469,7 @@ class DomainMigrationRegistryTests(unittest.TestCase):
                 LEGACY_DOMAIN_MIGRATIONS[2],
                 LEGACY_DOMAIN_MIGRATIONS[3],
                 LEGACY_DOMAIN_MIGRATIONS[4],
+                LEGACY_DOMAIN_MIGRATIONS[5],
                 LEGACY_DOMAIN_MIGRATIONS[0],
             )
         )
@@ -461,7 +477,7 @@ class DomainMigrationRegistryTests(unittest.TestCase):
         self.assertEqual(forward, generated)
         self.assertEqual(
             tuple(item.migration_id for item in forward.descriptors),
-            (1, 2, 3, 4, 5),
+            (1, 2, 3, 4, 5, 6),
         )
 
     def test_dependency_and_owned_manifest_order_do_not_change_digests(self) -> None:
@@ -2147,8 +2163,8 @@ class DomainMigrationSchemaPlannerTests(unittest.TestCase):
         self.assertEqual(
             (absent_empty.state_sha256, absent_empty_plan.plan_sha256),
             (
-                "93d500810ffa690a0ef91dd7cd5c7703500d54aa4573300f23dbb6edc1a22b27",
-                "95e154e99111f5791c2bc68a520f106c56872845bcdc5a03daecdf3c2afb71b6",
+                "76f1e840330068981d0ae28d10e235ce64208e6287366c217d19b677016dfb23",
+                "0abcf3b8af36ee9c4ff29c736e79bb0430f1b16853c11afe0e804f3c3810bfa6",
             ),
         )
 
@@ -2168,8 +2184,8 @@ class DomainMigrationSchemaPlannerTests(unittest.TestCase):
         self.assertEqual(
             (absent_prefix.state_sha256, absent_plan.plan_sha256),
             (
-                "84d2dbd95af40079219bcc5119d08f72e12806cf5464665dd84bbbe987d6a347",
-                "8271424f5f00a8b15836ea48957294c28a08d2227a7a0a5b5dbe5b1d66bb5374",
+                "5c68b82487a049571bd51766916e99e1b78adfe1fc95bb1371b66d151297bf87",
+                "466025c0a017f0fa318d7c0f4ed7d6d1c2bb2f2215c81a6edbb1bb5257687989",
             ),
         )
 
@@ -2192,8 +2208,8 @@ class DomainMigrationSchemaPlannerTests(unittest.TestCase):
         self.assertEqual(
             (legacy_prefix.state_sha256, legacy_plan.plan_sha256),
             (
-                "49688324a6209c808e51ac220123a0168ddc0e6d71e35ab439ee52eeeb06235b",
-                "ad4ab7acb36b02d03cd0e78d81ddca115bddb181a239afdfd498cf1c485394f7",
+                "4752c283eb5ba24f588e7ed0d35a68613d1106013f022cc47fb9df7b114ddb0c",
+                "e11a8a6e6f77d9dca73cc282fd8462c5c394a00d17717a587277ee18322ffb82",
             ),
         )
 
@@ -2208,8 +2224,8 @@ class DomainMigrationSchemaPlannerTests(unittest.TestCase):
         self.assertEqual(
             (bridged_prefix.state_sha256, bridged_plan.plan_sha256),
             (
-                "5f2a56884ce2512997f8dc958da9a44f3deadf177760c98c2df954a34a0fef3c",
-                "da6f61c95a75a849b620c6dd59f9cc1feba4ce18bb56cc7d702828c9119532f0",
+                "e878fb820a3a821348cb271362bbac2792193359c31a66b09e75ade3b4059bc5",
+                "004657d4fcf47d75e6ee75fdfb36f11f147d6126fe08780e4db679e7925857cb",
             ),
         )
 
@@ -2225,8 +2241,8 @@ class DomainMigrationSchemaPlannerTests(unittest.TestCase):
             self.assertEqual(
                 (empty.state_sha256, empty_plan.plan_sha256),
                 (
-                    "1e70dab87baeb6eaa82c5765505cb104e94bb72e526a0877a8540ffda563c8e0",
-                    "e01fb3a41d5c006b7f2d96a28903b8dbbb056184c7d69dbd64d85012cc0b9bed",
+                    "0962e1382358e529a6290a94761a55f5b846b7e8867681b2316a88cca7664a09",
+                    "8d07e56afe88c599882952406aeb4604a5f460ececa52d9276e44f37592fa30f",
                 ),
             )
         finally:
@@ -3293,17 +3309,22 @@ class DomainMigrationLegacyBootstrapTests(unittest.TestCase):
                         {row.recorded_at for row in state.metadata_rows},
                         {BRIDGE_TIME},
                     )
-                    self.assertEqual(
-                        state.dependency_rows,
-                        (
+                    expected_dependencies = []
+                    if count >= 4:
+                        expected_dependencies.append(
                             DomainMigrationDependencyRow(
                                 migration_id=4,
                                 depends_on_migration_id=1,
-                            ),
+                            )
                         )
-                        if count >= 4
-                        else (),
-                    )
+                    if count >= 6:
+                        expected_dependencies.append(
+                            DomainMigrationDependencyRow(
+                                migration_id=6,
+                                depends_on_migration_id=5,
+                            )
+                        )
+                    self.assertEqual(state.dependency_rows, tuple(expected_dependencies))
                     self.assertEqual(
                         connection.execute(
                             "SELECT COUNT(*) FROM main.qe_schema_migrations"
