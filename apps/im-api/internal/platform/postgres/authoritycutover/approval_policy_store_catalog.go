@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	approvalPolicyControlStoreCatalogDigestDomain = "wanwork.im/postgres-approval-policy-control-store-catalog/1\n"
-	approvalPolicyControlStoreCatalogDigest       = "sha256:8ac32cf0ef53b447fd1b152c5359f5854c4f50f7e513af1f71d19dd57d4d1ea0"
+	approvalPolicyControlStoreCatalogDigestDomain   = "wanwork.im/postgres-approval-policy-control-store-catalog/1\n"
+	approvalPolicyControlStoreCatalogDigestDomainV2 = "wanwork.im/postgres-approval-policy-control-store-catalog/2\n"
+	approvalPolicyControlStoreCatalogDigest         = "sha256:8ac32cf0ef53b447fd1b152c5359f5854c4f50f7e513af1f71d19dd57d4d1ea0"
+	approvalPolicyControlStoreCatalogDigestV2       = "sha256:523755fe0a80dc9de6e0a8a61536875b25303bf7787ee50172218c154a1bf7ca"
 )
 
 type approvalPolicyControlStoreCatalogColumn struct {
@@ -148,10 +150,77 @@ func verifyApprovalPolicyControlStoreCatalog(
 	return transaction.Commit(ctx) == nil
 }
 
+func verifyApprovalPolicyControlStoreCatalogV2(
+	ctx context.Context,
+	connection *pgx.Conn,
+	expectation ApprovalPolicyControlStoreExpectation,
+) bool {
+	transaction, err := connection.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return false
+	}
+	defer func() { _ = transaction.Rollback(context.Background()) }()
+	digest, err := readApprovalPolicyControlStoreCatalogDigestV2(ctx, transaction)
+	if err != nil || digest != approvalPolicyControlStoreCatalogDigestV2 ||
+		!verifyApprovalPolicyControlStoreRolesAndACLV2(ctx, transaction, expectation) {
+		return false
+	}
+	return transaction.Commit(ctx) == nil
+}
+
 func verifyApprovalPolicyControlStoreRolesAndACL(
 	ctx context.Context,
 	query approvalPolicyControlStoreCatalogQuerier,
 	expectation ApprovalPolicyControlStoreExpectation,
+) bool {
+	return verifyApprovalPolicyControlStoreRolesAndACLForRoles(
+		ctx,
+		query,
+		expectation,
+		[]string{
+			expectation.ControlOwnerRole,
+			expectation.ControlReaderRole,
+			expectation.ControlLoginRole,
+		},
+		[]string{expectation.ControlReaderRole, expectation.ControlLoginRole},
+		expectedApprovalPolicyControlStoreACL(expectation),
+	)
+}
+
+func verifyApprovalPolicyControlStoreRolesAndACLV2(
+	ctx context.Context,
+	query approvalPolicyControlStoreCatalogQuerier,
+	expectation ApprovalPolicyControlStoreExpectation,
+) bool {
+	return verifyApprovalPolicyControlStoreRolesAndACLForRoles(
+		ctx,
+		query,
+		expectation,
+		[]string{
+			expectation.ControlOwnerRole,
+			expectation.ControlReaderRole,
+			expectation.ControlActivatorRole,
+			expectation.ControlFencerRole,
+		},
+		[]string{
+			expectation.ControlReaderRole,
+			expectation.ControlActivatorRole,
+			expectation.ControlFencerRole,
+		},
+		expectedApprovalPolicyControlStoreACLV2(expectation),
+	)
+}
+
+func verifyApprovalPolicyControlStoreRolesAndACLForRoles(
+	ctx context.Context,
+	query approvalPolicyControlStoreCatalogQuerier,
+	expectation ApprovalPolicyControlStoreExpectation,
+	protectedRoles []string,
+	functionalRoles []string,
+	expectedACL []approvalPolicyControlStoreACLEntry,
 ) bool {
 	roleRows, err := query.Query(ctx, `
 SELECT role_value.rolname,
@@ -167,15 +236,11 @@ SELECT role_value.rolname,
        role_value.rolconfig IS NOT NULL
 FROM pg_catalog.pg_roles AS role_value
 WHERE role_value.rolname = ANY($1::text[])
-ORDER BY role_value.rolname`, []string{
-		expectation.ControlLoginRole,
-		expectation.ControlOwnerRole,
-		expectation.ControlReaderRole,
-	})
+ORDER BY role_value.rolname`, protectedRoles)
 	if err != nil {
 		return false
 	}
-	roles := make([]approvalPolicyControlStoreRole, 0, 3)
+	roles := make([]approvalPolicyControlStoreRole, 0, len(protectedRoles))
 	for roleRows.Next() {
 		var role approvalPolicyControlStoreRole
 		if err := roleRows.Scan(
@@ -196,7 +261,7 @@ ORDER BY role_value.rolname`, []string{
 		}
 		roles = append(roles, role)
 	}
-	if roleRows.Err() != nil || len(roles) != 3 {
+	if roleRows.Err() != nil || len(roles) != len(protectedRoles) {
 		return false
 	}
 	for _, role := range roles {
@@ -207,27 +272,36 @@ ORDER BY role_value.rolname`, []string{
 			return false
 		}
 	}
-	var dangerousMemberships, ownerDefaultACLs int64
+	var dangerousMemberships, ownerDefaultACLs, unexpectedSettings int64
 	if err := query.QueryRow(ctx, `
 SELECT
     (SELECT pg_catalog.count(*)
        FROM pg_catalog.pg_auth_members AS membership
        INNER JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
       WHERE member_role.rolname = ANY($1::text[])),
-    (SELECT pg_catalog.count(*)
-       FROM pg_catalog.pg_default_acl AS default_acl
+	    (SELECT pg_catalog.count(*)
+	       FROM pg_catalog.pg_default_acl AS default_acl
        INNER JOIN pg_catalog.pg_roles AS owner_role ON owner_role.oid = default_acl.defaclrole
       WHERE owner_role.rolname = $2
         AND (default_acl.defaclnamespace = 0 OR default_acl.defaclnamespace = (
             SELECT schema_value.oid
             FROM pg_catalog.pg_namespace AS schema_value
-            WHERE schema_value.nspname = 'wanwork_policy_control'
-        )))`, []string{
-		expectation.ControlLoginRole,
-		expectation.ControlOwnerRole,
-		expectation.ControlReaderRole,
-	}, expectation.ControlOwnerRole).Scan(&dangerousMemberships, &ownerDefaultACLs); err != nil ||
-		dangerousMemberships != 0 || ownerDefaultACLs != 0 {
+	            WHERE schema_value.nspname = 'wanwork_policy_control'
+	        ))),
+	    (SELECT pg_catalog.count(*)
+	       FROM pg_catalog.pg_db_role_setting AS setting
+	       INNER JOIN pg_catalog.pg_roles AS configured_role
+	           ON configured_role.oid = setting.setrole
+	      WHERE configured_role.rolname = ANY($1::text[])
+	        AND (setting.setdatabase = 0 OR setting.setdatabase = (
+	            SELECT database_value.oid
+	            FROM pg_catalog.pg_database AS database_value
+	            WHERE database_value.datname = pg_catalog.current_database()
+	        )))`, protectedRoles, expectation.ControlOwnerRole).Scan(
+		&dangerousMemberships,
+		&ownerDefaultACLs,
+		&unexpectedSettings,
+	); err != nil || dangerousMemberships != 0 || ownerDefaultACLs != 0 || unexpectedSettings != 0 {
 		return false
 	}
 
@@ -253,17 +327,15 @@ WHERE database_value.datname = pg_catalog.current_database()`).Scan(
 		return false
 	}
 
-	var loginMemberOwner, loginSetOwner, readerMemberOwner, readerSetOwner bool
+	var dangerousOwnerAccess int64
 	if err := query.QueryRow(ctx, `
-SELECT pg_catalog.pg_has_role($1, $2, 'MEMBER'),
-       pg_catalog.pg_has_role($1, $2, 'SET'),
-       pg_catalog.pg_has_role($3, $2, 'MEMBER'),
-       pg_catalog.pg_has_role($3, $2, 'SET')`,
-		expectation.ControlLoginRole,
+SELECT pg_catalog.count(*)
+FROM pg_catalog.unnest($1::text[]) AS functional_role(role_name)
+WHERE pg_catalog.pg_has_role(functional_role.role_name, $2, 'MEMBER')
+   OR pg_catalog.pg_has_role(functional_role.role_name, $2, 'SET')`,
+		functionalRoles,
 		expectation.ControlOwnerRole,
-		expectation.ControlReaderRole,
-	).Scan(&loginMemberOwner, &loginSetOwner, &readerMemberOwner, &readerSetOwner); err != nil ||
-		loginMemberOwner || loginSetOwner || readerMemberOwner || readerSetOwner {
+	).Scan(&dangerousOwnerAccess); err != nil || dangerousOwnerAccess != 0 {
 		return false
 	}
 
@@ -294,7 +366,6 @@ WHERE schema_value.nspname = 'wanwork_policy_control'`).Scan(
 	if err != nil {
 		return false
 	}
-	expectedACL := expectedApprovalPolicyControlStoreACL(expectation)
 	return slices.Equal(actualACL, expectedACL)
 }
 
@@ -428,6 +499,89 @@ func expectedApprovalPolicyControlStoreACL(
 	return entries
 }
 
+func expectedApprovalPolicyControlStoreACLV2(
+	expectation ApprovalPolicyControlStoreExpectation,
+) []approvalPolicyControlStoreACLEntry {
+	entries := make([]approvalPolicyControlStoreACLEntry, 0, 75)
+	add := func(kind, object, grantee, privilege string) {
+		entries = append(entries, approvalPolicyControlStoreACLEntry{
+			Grantee:   grantee,
+			Grantor:   expectation.ControlOwnerRole,
+			Kind:      kind,
+			Object:    object,
+			Privilege: privilege,
+		})
+	}
+	for _, privilege := range []string{"CONNECT", "CREATE", "TEMPORARY"} {
+		add("database", expectation.ControlDatabase, expectation.ControlOwnerRole, privilege)
+	}
+	for _, role := range []string{
+		expectation.ControlReaderRole,
+		expectation.ControlActivatorRole,
+		expectation.ControlFencerRole,
+	} {
+		add("database", expectation.ControlDatabase, role, "CONNECT")
+	}
+	for _, privilege := range []string{"CREATE", "USAGE"} {
+		add("schema", approvalPolicyControlStoreSchemaName, expectation.ControlOwnerRole, privilege)
+	}
+	for _, role := range []string{
+		expectation.ControlReaderRole,
+		expectation.ControlActivatorRole,
+		expectation.ControlFencerRole,
+	} {
+		add("schema", approvalPolicyControlStoreSchemaName, role, "USAGE")
+	}
+	for _, table := range []string{
+		"approval_execution_fence_counter",
+		"approval_execution_fence_head",
+		"approval_execution_fence_record",
+		"approval_policy_activation_record",
+		"approval_policy_archive",
+		"approval_policy_head",
+	} {
+		for _, privilege := range []string{
+			"DELETE", "INSERT", "MAINTAIN", "REFERENCES", "SELECT", "TRIGGER", "TRUNCATE", "UPDATE",
+		} {
+			add("table", table, expectation.ControlOwnerRole, privilege)
+		}
+	}
+	for _, function := range []string{
+		approvalPolicyControlStoreActivateFunction,
+		approvalPolicyControlStoreAdmissionFunction,
+		approvalPolicyControlStoreFenceOpenFunction,
+		approvalPolicyControlStoreFenceReadFunction,
+		approvalPolicyControlStoreIdentityFunction,
+		approvalPolicyControlStoreReadFunction,
+	} {
+		add("function", function, expectation.ControlOwnerRole, "EXECUTE")
+	}
+	for _, function := range []string{
+		approvalPolicyControlStoreFenceReadFunction,
+		approvalPolicyControlStoreIdentityFunction,
+		approvalPolicyControlStoreReadFunction,
+	} {
+		add("function", function, expectation.ControlReaderRole, "EXECUTE")
+	}
+	for _, function := range []string{
+		approvalPolicyControlStoreActivateFunction,
+		approvalPolicyControlStoreIdentityFunction,
+		approvalPolicyControlStoreReadFunction,
+	} {
+		add("function", function, expectation.ControlActivatorRole, "EXECUTE")
+	}
+	for _, function := range []string{
+		approvalPolicyControlStoreFenceOpenFunction,
+		approvalPolicyControlStoreFenceReadFunction,
+		approvalPolicyControlStoreIdentityFunction,
+		approvalPolicyControlStoreReadFunction,
+	} {
+		add("function", function, expectation.ControlFencerRole, "EXECUTE")
+	}
+	sortApprovalPolicyControlStoreACL(entries)
+	return entries
+}
+
 func sortApprovalPolicyControlStoreACL(entries []approvalPolicyControlStoreACLEntry) {
 	slices.SortFunc(entries, func(left, right approvalPolicyControlStoreACLEntry) int {
 		return strings.Compare(
@@ -441,6 +595,29 @@ func readApprovalPolicyControlStoreCatalogDigest(
 	ctx context.Context,
 	query approvalPolicyControlStoreCatalogQuerier,
 ) (string, error) {
+	return readApprovalPolicyControlStoreCatalogDigestWithDomain(
+		ctx,
+		query,
+		approvalPolicyControlStoreCatalogDigestDomain,
+	)
+}
+
+func readApprovalPolicyControlStoreCatalogDigestV2(
+	ctx context.Context,
+	query approvalPolicyControlStoreCatalogQuerier,
+) (string, error) {
+	return readApprovalPolicyControlStoreCatalogDigestWithDomain(
+		ctx,
+		query,
+		approvalPolicyControlStoreCatalogDigestDomainV2,
+	)
+}
+
+func readApprovalPolicyControlStoreCatalogDigestWithDomain(
+	ctx context.Context,
+	query approvalPolicyControlStoreCatalogQuerier,
+	domain string,
+) (string, error) {
 	manifest, err := readApprovalPolicyControlStoreCatalogManifest(ctx, query)
 	if err != nil {
 		return "", err
@@ -452,7 +629,7 @@ func readApprovalPolicyControlStoreCatalogDigest(
 		return "", err
 	}
 	return domainSeparatedDigest(
-		approvalPolicyControlStoreCatalogDigestDomain,
+		domain,
 		bytes.TrimSuffix(canonical.Bytes(), []byte("\n")),
 	), nil
 }

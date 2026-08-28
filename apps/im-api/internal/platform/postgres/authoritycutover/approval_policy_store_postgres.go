@@ -56,6 +56,13 @@ type approvalPolicyControlStoreTransportVerifier func(
 	PostgreSQLClusterProbeExpectation,
 ) bool
 
+type approvalPolicyControlStoreSchemaVersion uint8
+
+const (
+	approvalPolicyControlStoreSchemaVersionV1 approvalPolicyControlStoreSchemaVersion = 1
+	approvalPolicyControlStoreSchemaVersionV2 approvalPolicyControlStoreSchemaVersion = 2
+)
+
 // PostgresApprovalPolicyActivationStore persists one policy namespace in a physically separate
 // PostgreSQL control cluster. It calls only fixed, schema-qualified functions and never creates or
 // migrates schema at runtime. The deployment login must have EXECUTE only; direct table writes are
@@ -64,7 +71,7 @@ type PostgresApprovalPolicyActivationStore struct {
 	expectation     ApprovalPolicyControlStoreExpectation
 	namespace       ApprovalPolicyNamespace
 	pool            *pgxpool.Pool
-	schemaVersion   uint8
+	schemaVersion   approvalPolicyControlStoreSchemaVersion
 	verifyTransport approvalPolicyControlStoreTransportVerifier
 }
 
@@ -87,7 +94,7 @@ func newPostgresApprovalPolicyActivationStore(
 		pool,
 		expectation,
 		verifyTransport,
-		1,
+		approvalPolicyControlStoreSchemaVersionV1,
 	)
 }
 
@@ -116,7 +123,7 @@ func newPostgresApprovalPolicyActivationStoreV2(
 		pool,
 		expectation,
 		verifyTransport,
-		2,
+		approvalPolicyControlStoreSchemaVersionV2,
 	)
 }
 
@@ -124,8 +131,12 @@ func newPostgresApprovalPolicyActivationStoreVersion(
 	pool *pgxpool.Pool,
 	expectation ApprovalPolicyControlStoreExpectation,
 	verifyTransport approvalPolicyControlStoreTransportVerifier,
-	schemaVersion uint8,
+	schemaVersion approvalPolicyControlStoreSchemaVersion,
 ) (*PostgresApprovalPolicyActivationStore, error) {
+	if schemaVersion != approvalPolicyControlStoreSchemaVersionV1 &&
+		schemaVersion != approvalPolicyControlStoreSchemaVersionV2 {
+		return nil, ErrInvalidPostgresApprovalPolicyStore
+	}
 	return &PostgresApprovalPolicyActivationStore{
 		expectation: expectation,
 		namespace: ApprovalPolicyNamespace{
@@ -305,6 +316,23 @@ func (store *PostgresApprovalPolicyActivationStore) verifyConnection(
 	if connection == nil || connection.IsClosed() {
 		return false
 	}
+	var (
+		expectedSchemaDigest string
+		expectedSchemaFormat string
+		verifyCatalog        func(context.Context, *pgx.Conn, ApprovalPolicyControlStoreExpectation) bool
+	)
+	switch store.schemaVersion {
+	case approvalPolicyControlStoreSchemaVersionV1:
+		expectedSchemaDigest = CurrentApprovalPolicyControlStoreSchemaDigest()
+		expectedSchemaFormat = ApprovalPolicyControlStoreSchemaFormat
+		verifyCatalog = verifyApprovalPolicyControlStoreCatalog
+	case approvalPolicyControlStoreSchemaVersionV2:
+		expectedSchemaDigest = CurrentApprovalPolicyControlStoreSchemaDigestV2()
+		expectedSchemaFormat = ApprovalPolicyControlStoreSchemaFormatV2
+		verifyCatalog = verifyApprovalPolicyControlStoreCatalogV2
+	default:
+		return false
+	}
 	probeExpectation := PostgreSQLClusterProbeExpectation{
 		Database:        store.expectation.ControlDatabase,
 		LoginRole:       store.expectation.ControlLoginRole,
@@ -363,8 +391,8 @@ FROM wanwork_policy_control.read_store_identity() AS identity`).Scan(
 	if err != nil || loginRole != store.expectation.ControlLoginRole ||
 		ownerRole != store.expectation.ControlOwnerRole ||
 		database != store.expectation.ControlDatabase || serverVersion/10000 != store.expectation.ControlPostgreSQLMajor ||
-		inRecovery || schemaFormat != ApprovalPolicyControlStoreSchemaFormat ||
-		schemaDigest != CurrentApprovalPolicyControlStoreSchemaDigest() ||
+		inRecovery || schemaFormat != expectedSchemaFormat ||
+		schemaDigest != expectedSchemaDigest ||
 		!canonicalPostgreSQLSystemIdentifier.MatchString(systemIdentifier) {
 		return false
 	}
@@ -375,33 +403,28 @@ FROM wanwork_policy_control.read_store_identity() AS identity`).Scan(
 		store.expectation.ControlSystemIdentifierDigest {
 		return false
 	}
-	return verifyApprovalPolicyControlStoreCatalog(ctx, connection, store.expectation)
+	return verifyCatalog(ctx, connection, store.expectation)
 }
 
 func validApprovalPolicyControlStoreExpectation(
 	expectation ApprovalPolicyControlStoreExpectation,
 ) bool {
-	return canonicalIdentity(expectation.ControlDatabase) &&
-		canonicalIdentity(expectation.ControlLoginRole) &&
+	return expectation.ControlActivatorRole == "" &&
+		expectation.ControlFencerRole == "" &&
+		validApprovalPolicyControlStoreExpectationCommon(expectation) &&
 		canonicalIdentity(expectation.ControlOwnerRole) &&
 		canonicalIdentity(expectation.ControlReaderRole) &&
 		expectation.ControlOwnerRole != expectation.ControlLoginRole &&
 		expectation.ControlReaderRole != expectation.ControlLoginRole &&
-		expectation.ControlReaderRole != expectation.ControlOwnerRole &&
-		expectation.ControlPostgreSQLMajor == migrations.AuthorityAccessPostgreSQLMajor &&
-		canonicalIdentity(expectation.ControlServerIdentity) &&
-		canonicalDigest.MatchString(expectation.ControlSystemIdentifierDigest) &&
-		validTLS(expectation.ControlTLS) &&
-		expectation.ControlTLS.ServerName == expectation.ControlServerIdentity &&
-		canonicalIdentity(expectation.PolicyID) && strings.HasPrefix(expectation.PolicyID, "approval-policy/") &&
-		validApprovalPolicyTarget(expectation.PolicyTarget) &&
-		expectation.ControlSystemIdentifierDigest != expectation.PolicyTarget.SystemIdentifierDigest
+		expectation.ControlReaderRole != expectation.ControlOwnerRole
 }
 
 func validApprovalPolicyControlStoreExpectationV2(
 	expectation ApprovalPolicyControlStoreExpectation,
 ) bool {
-	if !validApprovalPolicyControlStoreExpectation(expectation) ||
+	if !validApprovalPolicyControlStoreExpectationCommon(expectation) ||
+		!canonicalIdentity(expectation.ControlOwnerRole) ||
+		!canonicalIdentity(expectation.ControlReaderRole) ||
 		!canonicalIdentity(expectation.ControlActivatorRole) ||
 		!canonicalIdentity(expectation.ControlFencerRole) {
 		return false
@@ -422,6 +445,21 @@ func validApprovalPolicyControlStoreExpectationV2(
 	return expectation.ControlLoginRole == expectation.ControlReaderRole ||
 		expectation.ControlLoginRole == expectation.ControlActivatorRole ||
 		expectation.ControlLoginRole == expectation.ControlFencerRole
+}
+
+func validApprovalPolicyControlStoreExpectationCommon(
+	expectation ApprovalPolicyControlStoreExpectation,
+) bool {
+	return canonicalIdentity(expectation.ControlDatabase) &&
+		canonicalIdentity(expectation.ControlLoginRole) &&
+		expectation.ControlPostgreSQLMajor == migrations.AuthorityAccessPostgreSQLMajor &&
+		canonicalIdentity(expectation.ControlServerIdentity) &&
+		canonicalDigest.MatchString(expectation.ControlSystemIdentifierDigest) &&
+		validTLS(expectation.ControlTLS) &&
+		expectation.ControlTLS.ServerName == expectation.ControlServerIdentity &&
+		canonicalIdentity(expectation.PolicyID) && strings.HasPrefix(expectation.PolicyID, "approval-policy/") &&
+		validApprovalPolicyTarget(expectation.PolicyTarget) &&
+		expectation.ControlSystemIdentifierDigest != expectation.PolicyTarget.SystemIdentifierDigest
 }
 
 func validApprovalPolicyExpectedHead(

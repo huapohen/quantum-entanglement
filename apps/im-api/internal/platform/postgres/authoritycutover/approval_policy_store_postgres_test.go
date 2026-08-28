@@ -23,6 +23,17 @@ func TestApprovalPolicyControlStoreV2ContractDigestIsFrozen(t *testing.T) {
 	}
 }
 
+func TestApprovalPolicyControlStoreV2CatalogDigestIsFrozen(t *testing.T) {
+	const expected = "sha256:523755fe0a80dc9de6e0a8a61536875b25303bf7787ee50172218c154a1bf7ca"
+	if approvalPolicyControlStoreCatalogDigestV2 != expected {
+		t.Fatalf("control-store v2 catalog digest = %q, want %q", approvalPolicyControlStoreCatalogDigestV2, expected)
+	}
+	if approvalPolicyControlStoreCatalogDigestDomainV2 == approvalPolicyControlStoreCatalogDigestDomain ||
+		approvalPolicyControlStoreCatalogDigestV2 == approvalPolicyControlStoreCatalogDigest {
+		t.Fatal("control-store v1 and v2 catalog attestations are not domain-separated")
+	}
+}
+
 func TestPostgresApprovalPolicyStoreRequiresSeparateExactControlIdentity(t *testing.T) {
 	fixture := newApprovalPolicyFixture(t)
 	digest := "sha256:" + strings.Repeat("d", 64)
@@ -54,6 +65,12 @@ func TestPostgresApprovalPolicyStoreRequiresSeparateExactControlIdentity(t *test
 	}
 
 	mutations := map[string]func(*ApprovalPolicyControlStoreExpectation){
+		"v2 activator role supplied": func(value *ApprovalPolicyControlStoreExpectation) {
+			value.ControlActivatorRole = "wanwork_policy_control_v2_activator"
+		},
+		"v2 fencer role supplied": func(value *ApprovalPolicyControlStoreExpectation) {
+			value.ControlFencerRole = "wanwork_policy_control_v2_fencer"
+		},
 		"same physical cluster": func(value *ApprovalPolicyControlStoreExpectation) {
 			value.ControlSystemIdentifierDigest = value.PolicyTarget.SystemIdentifierDigest
 		},
@@ -159,5 +176,83 @@ func TestPostgresApprovalPolicyStoreV2RequiresFourSeparateControlRoles(t *testin
 				t.Fatalf("constructor error = %v, want fixed %v", err, ErrInvalidPostgresApprovalPolicyStore)
 			}
 		})
+	}
+}
+
+func TestApprovalPolicyControlStoreV2ACLIsExactAndRoleSeparated(t *testing.T) {
+	expectation := ApprovalPolicyControlStoreExpectation{
+		ControlActivatorRole: "control_activator",
+		ControlDatabase:      "control_database",
+		ControlFencerRole:    "control_fencer",
+		ControlOwnerRole:     "control_owner",
+		ControlReaderRole:    "control_reader",
+	}
+	entries := expectedApprovalPolicyControlStoreACLV2(expectation)
+	if len(entries) != 75 {
+		t.Fatalf("v2 ACL entries = %d, want 75", len(entries))
+	}
+	seen := make(map[string]struct{}, len(entries))
+	functionGrants := make(map[string]map[string]bool)
+	for _, entry := range entries {
+		key := entry.Kind + "\x00" + entry.Object + "\x00" + entry.Grantor + "\x00" +
+			entry.Grantee + "\x00" + entry.Privilege
+		if _, exists := seen[key]; exists {
+			t.Fatalf("duplicate v2 ACL entry: %+v", entry)
+		}
+		seen[key] = struct{}{}
+		if entry.Grantor != expectation.ControlOwnerRole || entry.Grantable {
+			t.Fatalf("untrusted v2 ACL grant: %+v", entry)
+		}
+		if entry.Kind == "function" {
+			if functionGrants[entry.Grantee] == nil {
+				functionGrants[entry.Grantee] = make(map[string]bool)
+			}
+			functionGrants[entry.Grantee][entry.Object] = true
+		}
+	}
+	expectedFunctions := map[string][]string{
+		expectation.ControlOwnerRole: {
+			approvalPolicyControlStoreActivateFunction,
+			approvalPolicyControlStoreAdmissionFunction,
+			approvalPolicyControlStoreFenceOpenFunction,
+			approvalPolicyControlStoreFenceReadFunction,
+			approvalPolicyControlStoreIdentityFunction,
+			approvalPolicyControlStoreReadFunction,
+		},
+		expectation.ControlReaderRole: {
+			approvalPolicyControlStoreFenceReadFunction,
+			approvalPolicyControlStoreIdentityFunction,
+			approvalPolicyControlStoreReadFunction,
+		},
+		expectation.ControlActivatorRole: {
+			approvalPolicyControlStoreActivateFunction,
+			approvalPolicyControlStoreIdentityFunction,
+			approvalPolicyControlStoreReadFunction,
+		},
+		expectation.ControlFencerRole: {
+			approvalPolicyControlStoreFenceOpenFunction,
+			approvalPolicyControlStoreFenceReadFunction,
+			approvalPolicyControlStoreIdentityFunction,
+			approvalPolicyControlStoreReadFunction,
+		},
+	}
+	for role, functions := range expectedFunctions {
+		if len(functionGrants[role]) != len(functions) {
+			t.Fatalf("v2 function grants for %q = %+v, want %+v", role, functionGrants[role], functions)
+		}
+		for _, function := range functions {
+			if !functionGrants[role][function] {
+				t.Fatalf("v2 role %q is missing EXECUTE on %q", role, function)
+			}
+		}
+	}
+	for _, role := range []string{
+		expectation.ControlReaderRole,
+		expectation.ControlActivatorRole,
+		expectation.ControlFencerRole,
+	} {
+		if functionGrants[role][approvalPolicyControlStoreAdmissionFunction] {
+			t.Fatalf("v2 functional role %q can execute owner-only admission validator", role)
+		}
 	}
 }
