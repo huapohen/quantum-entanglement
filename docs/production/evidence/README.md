@@ -4,6 +4,11 @@ Each promoted version has one immutable evidence record in this directory. Start
 template below, replace every placeholder, and commit the completed record with the release
 candidate. A missing, assumed, skipped, or unexplained result is a failed gate.
 
+Non-release, pre-promotion checkpoint summaries live under `checkpoints/`. They must identify
+their exact source commit/tree, state whether raw logs were retained, and list every scope
+limitation. A checkpoint summary is supporting local evidence only; it never satisfies or
+waives the release template below.
+
 Use `vMAJOR.MINOR.PATCH.md` as the filename. If a candidate is rejected, retain its evidence
 under `rejected/` with the source commit and rejection reason so later work cannot silently
 reuse the same unproven artifact.

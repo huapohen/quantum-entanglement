@@ -295,6 +295,9 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 ```
 
 结果：所有 Go package normal/race 通过，vet 无输出；本地 PostgreSQL 版本 18.6。
+本轮 17 package、858 个 terminal test pass event、零 skip/零 fail 的机器可读本地运行摘要见
+[`w2-postgres-8ca4fca.local-run.json`](../../docs/production/evidence/checkpoints/w2-postgres-8ca4fca.local-run.json)；
+该摘要不冒充 CI artifact 或 production promotion record。
 
 ## 7. 下一阶段详细计划
 

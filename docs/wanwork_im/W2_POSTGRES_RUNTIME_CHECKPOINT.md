@@ -145,6 +145,11 @@ go test -race ./... -count=1 -timeout=15m
 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 ```
 
+本轮机器可读本地运行摘要见
+[`w2-postgres-8ca4fca.local-run.json`](../production/evidence/checkpoints/w2-postgres-8ca4fca.local-run.json)：
+17 package、858 个 terminal test pass event、零 skip/零 fail，normal/race 均通过且 vet 无输出；该文件明确
+不是 CI artifact 或 production promotion record。
+
 ## 5. Go / No-Go
 
 | 能力 | 状态 | 决策 |
