@@ -521,8 +521,10 @@ def _guarded_execute(
 def _result_artifact_process_progress_fence(
     connection: sqlite3.Connection,
     process_guard: Callable[[], None],
-) -> Iterator[None]:
-    """Abort SQLite VM execution if a trace/provider fork crosses a SQL call."""
+) -> Iterator[Callable[[], None]]:
+    """Own SQLite callbacks after clock sampling and fence every later VM instruction."""
+
+    callbacks_claimed = False
 
     def progress() -> int:
         try:
@@ -531,17 +533,77 @@ def _result_artifact_process_progress_fence(
             return 1
         return 0
 
-    _run_process_guard(process_guard)
-    _require_exact_connection_codec(connection)
-    connection.set_progress_handler(progress, 1)
-    _run_process_guard(process_guard)
+    def refresh() -> None:
+        _run_process_guard(process_guard)
+        _require_exact_connection_codec(connection)
+        connection.set_progress_handler(progress, 1)
+        _run_process_guard(process_guard)
+
+    def authorize(
+        action: int,
+        _first: object,
+        _second: object,
+        _database: object,
+        source: object,
+    ) -> int:
+        try:
+            process_guard()
+        except BaseException:
+            return sqlite3.SQLITE_DENY
+        if action in {sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_DROP_TRIGGER}:
+            return sqlite3.SQLITE_DENY
+        if source is not None:
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    def claim_callbacks() -> None:
+        nonlocal callbacks_claimed
+        _run_process_guard(process_guard)
+        _require_exact_connection_codec(connection)
+        # A constructor clock may retain the store through a closure. It cannot be
+        # allowed to leave a trace/authorizer callback that changes the process fence
+        # or introduces trigger work between topology verification and Artifact DML.
+        connection.set_trace_callback(None)
+        connection.set_authorizer(authorize)
+        callbacks_claimed = True
+        refresh()
+
+    refresh()
     try:
-        yield
+        yield claim_callbacks
     finally:
         # A mismatch child must not mutate the inherited SQLite wrapper even for cleanup.
         _run_process_guard(process_guard)
+        if callbacks_claimed:
+            connection.set_authorizer(None)
+            connection.set_trace_callback(None)
         connection.set_progress_handler(None, 0)
         _run_process_guard(process_guard)
+
+
+def _verify_result_artifact_trigger_topology(
+    connection: sqlite3.Connection,
+    process_guard: Callable[[], None],
+) -> None:
+    raw_trigger = _guarded_fetchone(
+        connection,
+        process_guard,
+        """
+        SELECT 'main' AS schema_name
+        FROM main.sqlite_schema
+        WHERE type = 'trigger' AND tbl_name IN ('artifact_blobs', 'artifact_versions')
+        UNION ALL
+        SELECT 'temp' AS schema_name
+        FROM temp.sqlite_temp_schema
+        WHERE type = 'trigger' AND tbl_name IN ('artifact_blobs', 'artifact_versions')
+        LIMIT 1
+        """,
+    )
+    if raw_trigger is not None:
+        _require_exact_row(raw_trigger, _TRIGGER_COLUMNS)
+        raise _ResultArtifactIntegrityError(
+            "result Artifact tables contain an unexpected trigger"
+        )
 
 
 def _exact_row_text(row: sqlite3.Row, name: str) -> str:
@@ -967,6 +1029,7 @@ def _write_prepared_result_artifacts_in_transaction_body(
     *,
     clock: Callable[[], str],
     process_guard: Callable[[], None],
+    claim_sqlite_callbacks: Callable[[], None],
 ) -> tuple[ScopedInvocationResultArtifactV2, ...]:
     _run_process_guard(process_guard)
     if type(connection) is not sqlite3.Connection or not connection.in_transaction:
@@ -978,24 +1041,10 @@ def _write_prepared_result_artifacts_in_transaction_body(
         raise TypeError("result Artifact transaction clock must be callable")
     if not callable(process_guard):
         raise TypeError("result Artifact process guard must be callable")
+    if not callable(claim_sqlite_callbacks):
+        raise TypeError("result Artifact SQLite callback claim must be callable")
     _require_exact_connection_codec(connection)
-    raw_trigger = _guarded_fetchone(
-        connection,
-        process_guard,
-        """
-        SELECT 'main' AS schema_name
-        FROM main.sqlite_schema
-        WHERE type = 'trigger' AND tbl_name IN ('artifact_blobs', 'artifact_versions')
-        UNION ALL
-        SELECT 'temp' AS schema_name
-        FROM temp.sqlite_temp_schema
-        WHERE type = 'trigger' AND tbl_name IN ('artifact_blobs', 'artifact_versions')
-        LIMIT 1
-        """
-    )
-    if raw_trigger is not None:
-        _require_exact_row(raw_trigger, _TRIGGER_COLUMNS)
-        raise _ResultArtifactIntegrityError("result Artifact tables contain an unexpected trigger")
+    _verify_result_artifact_trigger_topology(connection, process_guard)
     if not batch.items:
         return ()
     for item in batch.items:
@@ -1020,6 +1069,13 @@ def _write_prepared_result_artifacts_in_transaction_body(
     _run_process_guard(process_guard)
     created_at = _canonical_result_artifact_timestamp(created_at, persisted=False)
     _run_process_guard(process_guard)
+    claim_sqlite_callbacks()
+    transaction_open = connection.in_transaction
+    if type(transaction_open) is not bool or not transaction_open:
+        raise _ResultArtifactIntegrityError(
+            "result Artifact owner transaction changed during clock sampling"
+        )
+    _verify_result_artifact_trigger_topology(connection, process_guard)
     fresh_blobs = 0
     for item in batch.items:
         _guarded_execute(
@@ -1126,6 +1182,12 @@ def _write_prepared_result_artifacts_in_transaction_body(
         raise _ResultArtifactIntegrityError(
             "result Artifact transaction had unexpected DML effects"
         )
+    transaction_open = connection.in_transaction
+    if type(transaction_open) is not bool or not transaction_open:
+        raise _ResultArtifactIntegrityError(
+            "result Artifact owner transaction closed before final readback"
+        )
+    _verify_result_artifact_trigger_topology(connection, process_guard)
     _run_process_guard(process_guard)
     return tuple(item.descriptor for item in batch.items)
 
@@ -1139,10 +1201,14 @@ def _write_prepared_result_artifacts_in_transaction(
 ) -> tuple[ScopedInvocationResultArtifactV2, ...]:
     if not callable(process_guard):
         raise TypeError("result Artifact process guard must be callable")
-    with _result_artifact_process_progress_fence(connection, process_guard):
+    with _result_artifact_process_progress_fence(
+        connection,
+        process_guard,
+    ) as claim_sqlite_callbacks:
         return _write_prepared_result_artifacts_in_transaction_body(
             connection,
             batch,
             clock=clock,
             process_guard=process_guard,
+            claim_sqlite_callbacks=claim_sqlite_callbacks,
         )

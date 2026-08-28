@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -381,12 +382,12 @@ class ResultArtifactTransactionHandleTests(unittest.TestCase):
                 return sqlite3.SQLITE_DENY
             return sqlite3.SQLITE_OK
 
-        self.store._connection.set_authorizer(deny_commit)
         try:
             with self.assertRaises(_ResultArtifactTransactionError) as commit_failure:
                 with self.store._result_artifact_transaction() as handle:
                     batch = _prepare_result_artifact_batch((candidate(),))
                     self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+                    self.store._connection.set_authorizer(deny_commit)
             self.assertIsInstance(commit_failure.exception, Exception)
         finally:
             self.store._connection.set_authorizer(None)
@@ -403,12 +404,12 @@ class ResultArtifactTransactionHandleTests(unittest.TestCase):
                 return sqlite3.SQLITE_DENY
             return sqlite3.SQLITE_OK
 
-        self.store._connection.set_authorizer(deny_commit_and_rollback)
         try:
             with self.assertRaises(_ResultArtifactCommitAmbiguityError) as failure:
                 with self.store._result_artifact_transaction() as handle:
                     batch = _prepare_result_artifact_batch((candidate(),))
                     self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+                    self.store._connection.set_authorizer(deny_commit_and_rollback)
             self.assertIsInstance(failure.exception, Exception)
             self.assertTrue(self.store._poisoned)
         finally:
@@ -904,7 +905,107 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
             self.write(candidate())
         self.assertEqual(self.counts(), (0, 0))
 
-    def test_sqlite_trace_boundary_process_cut_aborts_before_first_dml(self) -> None:
+    def test_clock_created_temp_trigger_is_rejected_before_external_side_effect(self) -> None:
+        connection = self.store._connection
+        side_effects: list[str] = []
+
+        def record_side_effect() -> int:
+            side_effects.append("trigger-ran")
+            return 0
+
+        def hostile_clock() -> str:
+            connection.set_progress_handler(None, 0)
+            connection.execute(
+                """
+                CREATE TEMP TRIGGER clock_created_result_artifact_trigger
+                AFTER INSERT ON main.artifact_versions
+                BEGIN
+                    SELECT result_artifact_side_effect();
+                END
+                """
+            )
+            return self.now
+
+        connection.create_function(
+            "result_artifact_side_effect",
+            0,
+            record_side_effect,
+        )
+        self.store._clock = hostile_clock
+        try:
+            with self.assertRaisesRegex(
+                _ResultArtifactIntegrityError,
+                "transaction integrity failed",
+            ):
+                self.write(candidate())
+        finally:
+            connection.execute(
+                "DROP TRIGGER IF EXISTS temp.clock_created_result_artifact_trigger"
+            )
+            connection.create_function("result_artifact_side_effect", 0, None)
+
+        self.assertEqual(side_effects, [])
+        self.assertEqual(self.counts(), (0, 0))
+
+    def test_clock_owned_sqlite_callbacks_cannot_survive_into_dml(self) -> None:
+        connection = self.store._connection
+        callback_statements: list[str] = []
+        authorizer_actions: list[int] = []
+
+        def hostile_trace(statement: str) -> None:
+            callback_statements.append(statement)
+            connection.set_progress_handler(None, 0)
+
+        def hostile_authorizer(action: int, *_args: object) -> int:
+            authorizer_actions.append(action)
+            connection.set_progress_handler(None, 0)
+            return sqlite3.SQLITE_OK
+
+        def hostile_clock() -> str:
+            connection.set_progress_handler(None, 0)
+            connection.set_trace_callback(hostile_trace)
+            connection.set_authorizer(hostile_authorizer)
+            return self.now
+
+        self.store._clock = hostile_clock
+        self.assertEqual(self.write(candidate()), (candidate().to_descriptor(),))
+        self.assertEqual(callback_statements, [])
+        self.assertEqual(authorizer_actions, [])
+        self.assertEqual(self.counts(), (1, 1))
+
+    def test_clock_cannot_close_or_mutate_the_owner_transaction(self) -> None:
+        connection = self.store._connection
+        statements = (
+            "ROLLBACK",
+            "COMMIT",
+            "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
+            "VALUES ('clock-mutation', 1, '{}', '2026-08-29T00:00:00Z')",
+        )
+
+        def clock_for(statement: str) -> Callable[[], str]:
+            def hostile_clock() -> str:
+                connection.execute(statement)
+                return self.now
+
+            return hostile_clock
+
+        for statement in statements:
+            with self.subTest(statement=statement):
+                self.store._clock = clock_for(statement)
+                with self.assertRaisesRegex(
+                    _ResultArtifactIntegrityError,
+                    "transaction integrity failed",
+                ):
+                    self.write(candidate())
+                self.assertEqual(self.counts(), (0, 0))
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-mutation'"
+                    ).fetchone()
+                )
+                self.assertFalse(connection.in_transaction)
+
+    def test_sqlite_trace_boundary_process_cut_aborts_during_preflight(self) -> None:
         current = True
         cut_seen = False
 
@@ -912,16 +1013,16 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
             if not current:
                 raise RuntimeError("simulated process-epoch cut")
 
-        def cut_on_first_insert(statement: str) -> None:
+        def cut_on_history_preflight(statement: str) -> None:
             nonlocal current, cut_seen
-            if not cut_seen and statement.lstrip().startswith("INSERT INTO artifact_blobs"):
+            if not cut_seen and "SELECT artifact_id" in statement:
                 cut_seen = True
                 current = False
 
         connection = self.store._connection
         batch = _prepare_result_artifact_batch((candidate(),))
         connection.execute("BEGIN IMMEDIATE")
-        connection.set_trace_callback(cut_on_first_insert)
+        connection.set_trace_callback(cut_on_history_preflight)
         try:
             with self.assertRaisesRegex(RuntimeError, "simulated process-epoch cut"):
                 _write_prepared_result_artifacts_in_transaction(
