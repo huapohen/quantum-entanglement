@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-28T11:45:56Z",
+  "syncedAt": "2026-08-28T12:25:06Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private review branch + local linked worktree",
     "remoteRepresentation": "semantic-mirror",
@@ -2012,6 +2012,142 @@
       "secretsRecorded": false
     }
   },
+  "postSealFormattingSync": {
+    "stage": "e3-m1-final-format-and-provider-digest-closure",
+    "syncedAt": "2026-08-28T12:25:06Z",
+    "sourceBaselineCommit": "5b5b063cfb0ee685e71c23325a062bc63d1465de",
+    "sourceBaselineTree": "00ce1765f0dc9fe82f32601907382ce16d16b05e",
+    "semanticSealCommit": "d889751e4cc3b7db548994a000a87e21688b4429",
+    "formatterCommit": "39732c1",
+    "providerBundleDigestRefreshCommit": "f8cafd4",
+    "providerBundleSuiteDigest": "9e76f826a8e8f580c3cc12ba7f2e4d69acf5e8e355f86f68ee96f5d221a21ae0",
+    "finalEvidenceCommit": "8ddd2ca",
+    "branchMetadataCommit": "9af3ea1",
+    "branchCatalogCommits": ["a76b286", "5b5b063"],
+    "branch": "mainline_continue_quantum_entanglement",
+    "attachments": [
+      {
+        "sourcePath": "analysis_report/README.md",
+        "sourceSha256": "8416701862c66fd1cd08a7962b37b8e2aadf6c2016f3b0e5e3f63be3aab5cfab",
+        "attachmentId": "3caead4b-996e-811c-bfc3-00b28b2d1f8a"
+      },
+      {
+        "sourcePath": "analysis_report/research/28_stored_event_envelope_codec_evidence.md",
+        "sourceSha256": "00a72e3524540c041ec024f715bd4c2c8f5a164f176e4e7e71b7a2565740dbee",
+        "attachmentId": "3caead4b-996e-812c-b1c1-00b21f723157"
+      },
+      {
+        "sourcePath": "docs/production/CURRENT_READINESS.md",
+        "sourceSha256": "08b0fe699348fab507016ca0b86b92605e3d6bfc066393f94bc7fe6ad89e78e1",
+        "attachmentId": "3caead4b-996e-81bd-afb5-00b22583257d"
+      },
+      {
+        "sourcePath": "CHANGELOG.md",
+        "sourceSha256": "6091a847ca1c56818f6540367dc472d3ee4198817a36cc6ff7003e8fc4b1c01f",
+        "attachmentId": "3caead4b-996e-8154-b4a2-00b263f7e120"
+      },
+      {
+        "sourcePath": "BRANCH_CATALOG.md",
+        "sourceSha256": "bb7e744d3723df87c2e6c2b9e12db81c7200a723e82c4d7f0224761ade2f3212",
+        "attachmentId": "3caead4b-996e-816e-81e9-00b2ad38e9dc",
+        "representation": "independent-review-branch-catalog"
+      },
+      {
+        "sourcePath": "BRANCH_CATALOG.md",
+        "sourceSha256": "bb7e744d3723df87c2e6c2b9e12db81c7200a723e82c4d7f0224761ade2f3212",
+        "attachmentId": "3caead4b-996e-812c-a9cb-00b2c57d9750",
+        "representation": "global-branch-catalog"
+      }
+    ],
+    "pages": [
+      {
+        "key": "e3-m1-stored-event-envelope",
+        "pageId": "3caead4b-996e-81f9-9b71-d0bed6ac3136",
+        "title": "E3｜M1 Stored-Event Envelope Codec｜d889751",
+        "contentLength": 10794,
+        "markerChecks": 5
+      },
+      {
+        "key": "native-im-readiness",
+        "pageId": "3c9ead4b-996e-819b-bb02-f206122941c2",
+        "title": "生产就绪度｜E3 M1 Codec｜Gate A–E 关闭",
+        "contentLength": 25780,
+        "markerChecks": 5
+      },
+      {
+        "key": "native-im-report-index",
+        "pageId": "3c9ead4b-996e-81d3-9fb6-d5cf6d364fe0",
+        "title": "调研与证据索引｜E3 M1｜5b5b063",
+        "contentLength": 16773,
+        "markerChecks": 6,
+        "titleUpdated": true
+      },
+      {
+        "key": "native-im-changelog",
+        "pageId": "3c9ead4b-996e-81d0-9c85-fa64b2beb563",
+        "title": "Changelog｜E3 M1｜5b5b063",
+        "contentLength": 17784,
+        "markerChecks": 4,
+        "titleUpdated": true
+      },
+      {
+        "key": "native-im-branch-catalog",
+        "pageId": "3c9ead4b-996e-81c8-9d1f-ed42248fc74a",
+        "title": "分支与 Worktree 导航｜E3 M1｜5b5b063",
+        "contentLength": 20695,
+        "markerChecks": 5,
+        "titleUpdated": true
+      },
+      {
+        "key": "global-branch-catalog",
+        "pageId": "3c9ead4b-996e-81bc-8053-cf1e844dccdb",
+        "title": "Quantum Entanglement｜分支导航｜E3 M1｜5b5b063",
+        "contentLength": 20704,
+        "markerChecks": 5,
+        "titleUpdated": true
+      },
+      {
+        "key": "independent-review-parent",
+        "pageId": "3c9ead4b-996e-8108-aea6-c97c694d6587",
+        "title": "Quantum Entanglement｜mainline_continue 独立审阅空间",
+        "contentLength": 14106,
+        "markerChecks": 5,
+        "pageTagCountIncludingSelf": 18,
+        "uniqueChildPageCount": 17
+      },
+      {
+        "key": "project-home",
+        "pageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
+        "title": "Quantum Entanglement｜人 + 多 Agent 协同办公",
+        "contentLength": 18301,
+        "markerChecks": 6,
+        "pageTagCountIncludingSelf": 33,
+        "uniqueChildPageCount": 32,
+        "databaseCount": 1
+      }
+    ],
+    "remoteReadback": {
+      "verified": true,
+      "pagesReadbackVerified": 8,
+      "stageReviewPageCount": 18,
+      "baseMirrorPageCount": 33,
+      "totalProjectMirrorPageCount": 51,
+      "newPagesCreated": 0,
+      "existingPagesUpdated": 8,
+      "titleUpdates": 4,
+      "markerChecks": 41,
+      "structureChecks": 3,
+      "missingMarkers": [],
+      "readbackFailures": 0
+    },
+    "safety": {
+      "yuque": "not-touched",
+      "feishuAndWeCom": "no-send-reply-comment-mention-upload-or-webhook",
+      "realNativeIm": "no-provider-endpoint-credential-webhook-socket-read-or-send",
+      "agentToolOutbound": "not-enabled",
+      "secretsRecorded": false
+    }
+  },
   "verificationSummary": {
     "pageCount": 33,
     "controlledSourcePageCount": 32,
@@ -2025,14 +2161,14 @@
     "temporarySignedImageUrlsRecorded": false,
     "secretsRecorded": false,
     "latestIncrementalSync": {
-      "stage": "e3-result-authority-m1-stored-event-envelope",
+      "stage": "e3-m1-final-format-and-provider-digest-closure",
       "stageReviewPageCount": 18,
       "baseMirrorPageCount": 33,
       "totalProjectMirrorPageCount": 51,
-      "newPagesCreated": 1,
-      "existingPagesUpdated": 7,
+      "newPagesCreated": 0,
+      "existingPagesUpdated": 8,
       "pagesReadbackVerified": 8,
-      "markerChecks": 34,
+      "markerChecks": 41,
       "structureChecks": 3,
       "readbackFailures": 0
     }
