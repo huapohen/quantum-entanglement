@@ -5,10 +5,12 @@ package runtimepool
 import (
 	"errors"
 	"net"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -21,6 +23,20 @@ var (
 )
 
 const maximumConnections int32 = 100
+
+var connectionStringAllowedKeys = []string{
+	"database",
+	"dbname",
+	"host",
+	"password",
+	"port",
+	"sslcert",
+	"sslkey",
+	"sslmode",
+	"sslpassword",
+	"sslrootcert",
+	"user",
+}
 
 // Config is private runtime composition input. ConnectionString can contain a credential and
 // therefore must never be logged, serialized, exposed through diagnostics, or included in an
@@ -42,7 +58,21 @@ func parseConfig(input Config) (*pgxpool.Config, error) {
 		input.ConnectTimeout <= 0 || input.PingTimeout <= 0 {
 		return nil, ErrInvalidConfig
 	}
+	if !strictConnectionStringShape(input.ConnectionString) {
+		return nil, ErrInvalidConfig
+	}
 
+	// pgx and pgxpool consume and remove some query, cache, and pool settings during parsing.
+	// Validate the original connection string first so those settings cannot evade the final
+	// RuntimeParams check. Only endpoint, identity, credential, and TLS material belong in the
+	// private DSN; lifecycle and query behavior stay host-owned.
+	if _, err := pgx.ParseConfigWithOptions(input.ConnectionString, pgx.ParseConfigOptions{
+		ParseConfigOptions: pgconn.ParseConfigOptions{
+			ConnStringAllowedKeys: connectionStringAllowedKeys,
+		},
+	}); err != nil {
+		return nil, ErrInvalidConfig
+	}
 	parsed, err := pgxpool.ParseConfig(input.ConnectionString)
 	if err != nil {
 		// pgx parse errors can retain the connection string. Do not wrap or return them.
@@ -66,34 +96,38 @@ func parseConfig(input Config) (*pgxpool.Config, error) {
 	return parsed, nil
 }
 
-func transportAdmitted(config *pgconn.Config, allowInsecureLocalhost bool) bool {
-	if config == nil {
+func strictConnectionStringShape(connectionString string) bool {
+	parsed, err := url.Parse(connectionString)
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") ||
+		parsed.Opaque != "" || parsed.Fragment != "" || parsed.User == nil ||
+		parsed.User.Username() == "" || parsed.Path == "" || parsed.Path == "/" {
 		return false
 	}
-	candidates := []*pgconn.Config{config}
-	for _, fallback := range config.Fallbacks {
-		candidate := *config
-		candidate.Host = fallback.Host
-		candidate.Port = fallback.Port
-		candidate.TLSConfig = fallback.TLSConfig
-		candidates = append(candidates, &candidate)
+	query := parsed.Query()
+	if len(query["sslmode"]) != 1 || query.Get("sslmode") == "" ||
+		query.Has("user") || query.Has("password") || query.Has("database") || query.Has("dbname") {
+		return false
 	}
-	for _, candidate := range candidates {
-		if candidate.TLSConfig != nil {
-			continue
-		}
-		if !allowInsecureLocalhost || !localPostgresHost(candidate.Host) {
-			return false
-		}
+	if parsed.Hostname() != "" {
+		return parsed.Port() != "" && !query.Has("host") && !query.Has("port")
 	}
-	return true
+	return len(query["host"]) == 1 && strings.HasPrefix(query.Get("host"), "/") &&
+		len(query["port"]) == 1 && query.Get("port") != ""
+}
+
+func transportAdmitted(config *pgconn.Config, allowInsecureLocalhost bool) bool {
+	if config == nil || len(config.Fallbacks) != 0 {
+		return false
+	}
+	if config.TLSConfig != nil && !config.TLSConfig.InsecureSkipVerify &&
+		config.TLSConfig.ServerName != "" {
+		return true
+	}
+	return allowInsecureLocalhost && localPostgresHost(config.Host)
 }
 
 func localPostgresHost(host string) bool {
 	if strings.HasPrefix(host, "/") {
-		return true
-	}
-	if host == "localhost" {
 		return true
 	}
 	address := net.ParseIP(host)

@@ -41,16 +41,12 @@ func Open(ctx context.Context, input Config) (*Pool, error) {
 	}
 	parsed.PrepareConn = func(hookContext context.Context, connection *pgx.Conn) (bool, error) {
 		if !connectionStateExact(hookContext, connection, input.Manifest, runtimeLogin) {
-			// Returning false with no error makes pgxpool destroy the contaminated connection and
-			// retry acquisition with a newly attested one.
-			return false, nil
+			// Returning false with a fixed error destroys the contaminated connection and makes
+			// authority drift visible to the current caller. A later acquisition may rebuild.
+			return false, ErrRuntimeConnectionDrift
 		}
 		return true, nil
 	}
-	parsed.AfterRelease = func(connection *pgx.Conn) bool {
-		return connection != nil && !connection.IsClosed() && connection.PgConn().TxStatus() == 'I'
-	}
-
 	inner, err := pgxpool.NewWithConfig(ctx, parsed)
 	if err != nil {
 		return nil, ErrNotReady
@@ -106,6 +102,7 @@ func attestNewConnection(
 	runtimeLogin string,
 ) error {
 	if ctx == nil || ctx.Err() != nil || connection == nil || connection.IsClosed() ||
+		connection.PgConn().IsBusy() ||
 		connection.PgConn().TxStatus() != 'I' {
 		return ErrRuntimeConnectionDrift
 	}
@@ -127,6 +124,9 @@ func attestNewConnection(
 	if _, err := connection.Exec(ctx, "SET SESSION search_path = pg_catalog"); err != nil {
 		return ErrRuntimeConnectionDrift
 	}
+	if _, err := connection.Exec(ctx, "SET SESSION application_name = 'wanwork-im-runtime'"); err != nil {
+		return ErrRuntimeConnectionDrift
+	}
 	if !connectionStateExact(ctx, connection, manifest, runtimeLogin) ||
 		migrations.ValidateRuntimeAuthorityAccess(ctx, connection, manifest) != nil ||
 		!connectionStateExact(ctx, connection, manifest, runtimeLogin) {
@@ -142,18 +142,21 @@ func connectionStateExact(
 	runtimeLogin string,
 ) bool {
 	if ctx == nil || ctx.Err() != nil || connection == nil || connection.IsClosed() ||
+		connection.PgConn().IsBusy() ||
 		connection.PgConn().TxStatus() != 'I' {
 		return false
 	}
 	var sessionUser, currentUser, databaseName string
-	var exactSearchPath, tenantSettingAbsent, advisoryLocksAbsent, listenersAbsent bool
+	var exactSearchPath, exactApplicationName, tenantSettingAbsent bool
+	var advisoryLocksAbsent, listenersAbsent bool
 	var exactSessionSettings bool
 	err := connection.QueryRow(ctx, `
 SELECT session_user,
        current_user,
        current_database(),
        current_setting('search_path') = 'pg_catalog',
-       current_setting('wanwork.tenant_id', true) IS NULL,
+	   current_setting('application_name') = 'wanwork-im-runtime',
+	   NULLIF(current_setting('wanwork.tenant_id', true), '') IS NULL,
        NOT EXISTS (
            SELECT 1
            FROM pg_catalog.pg_locks
@@ -165,11 +168,12 @@ SELECT session_user,
            SELECT pg_catalog.array_agg(setting.name ORDER BY setting.name)
            FROM pg_catalog.pg_settings AS setting
            WHERE setting.source = 'session'
-       ), ARRAY[]::text[]) = ARRAY['search_path']::text[]`).Scan(
+	   ), ARRAY[]::text[]) = ARRAY['application_name', 'search_path']::text[]`).Scan(
 		&sessionUser,
 		&currentUser,
 		&databaseName,
 		&exactSearchPath,
+		&exactApplicationName,
 		&tenantSettingAbsent,
 		&advisoryLocksAbsent,
 		&listenersAbsent,
@@ -177,7 +181,7 @@ SELECT session_user,
 	)
 	return err == nil && connection.PgConn().TxStatus() == 'I' &&
 		sessionUser == runtimeLogin && currentUser == manifest.RuntimeRole &&
-		databaseName == manifest.DatabaseName && exactSearchPath && tenantSettingAbsent &&
+		databaseName == manifest.DatabaseName && exactSearchPath && exactApplicationName && tenantSettingAbsent &&
 		advisoryLocksAbsent && listenersAbsent && exactSessionSettings
 }
 

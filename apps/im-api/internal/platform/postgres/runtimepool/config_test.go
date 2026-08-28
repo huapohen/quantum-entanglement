@@ -2,6 +2,7 @@ package runtimepool
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,67 @@ func TestParseConfigRejectsIdentityAndSessionParameterDrift(t *testing.T) {
 	}
 }
 
+func TestParseConfigRequiresExplicitURLIdentityEndpointAndTLSMode(t *testing.T) {
+	for name, connectionString := range map[string]string{
+		"keyword form":            "host=db.example.com port=5432 user=wanwork_app_a dbname=wanwork_im sslmode=verify-full",
+		"missing user":            "postgresql://db.example.com:5432/wanwork_im?sslmode=verify-full",
+		"missing host":            "postgresql://wanwork_app_a@/wanwork_im?sslmode=verify-full",
+		"missing port":            "postgresql://wanwork_app_a@db.example.com/wanwork_im?sslmode=verify-full",
+		"missing database":        "postgresql://wanwork_app_a@db.example.com:5432/?sslmode=verify-full",
+		"missing sslmode":         "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im",
+		"query identity override": "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=verify-full&user=other",
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := validConfig()
+			input.ConnectionString = connectionString
+			if _, err := parseConfig(input); !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("implicit connection config error = %v, want %v", err, ErrInvalidConfig)
+			}
+		})
+	}
+}
+
+func TestParseConfigDoesNotReturnCredentialCanary(t *testing.T) {
+	const credentialCanary = "runtime-secret-must-not-escape"
+	input := validConfig()
+	input.ConnectionString = "postgresql://wanwork_app_a:" + credentialCanary +
+		"@db.example.com:5432/wanwork_im?sslmode=verify-full&forbidden=value"
+	_, err := parseConfig(input)
+	if err != ErrInvalidConfig {
+		t.Fatalf("parse error identity = %v, want fixed sentinel", err)
+	}
+	if strings.Contains(err.Error(), credentialCanary) {
+		t.Fatal("parse error disclosed credential canary")
+	}
+}
+
+func TestParseConfigRejectsParserConsumedAndFileBackedParameters(t *testing.T) {
+	for _, parameter := range []string{
+		"default_query_exec_mode=simple_protocol",
+		"statement_cache_capacity=0",
+		"description_cache_capacity=0",
+		"pool_max_conns=2",
+		"pool_min_conns=1",
+		"pool_min_idle_conns=1",
+		"pool_max_conn_lifetime=1m",
+		"pool_max_conn_idle_time=1m",
+		"pool_health_check_period=1m",
+		"pool_max_conn_lifetime_jitter=1m",
+		"service=untrusted",
+		"servicefile=/tmp/untrusted",
+		"passfile=/tmp/untrusted",
+		"application_name=untrusted",
+	} {
+		t.Run(parameter, func(t *testing.T) {
+			input := validConfig()
+			input.ConnectionString += "&" + parameter
+			if _, err := parseConfig(input); !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("consumed parameter error = %v, want %v", err, ErrInvalidConfig)
+			}
+		})
+	}
+}
+
 func TestParseConfigRejectsInvalidManifestAndLimits(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
 		"invalid manifest": func(value *Config) { value.Manifest.RuntimeRole = "" },
@@ -84,15 +146,23 @@ func TestParseConfigRejectsInvalidManifestAndLimits(t *testing.T) {
 
 func TestParseConfigRequiresTLSExceptExplicitLocalTest(t *testing.T) {
 	remote := validConfig()
-	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com/wanwork_im?sslmode=disable"
+	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=disable"
 	if _, err := parseConfig(remote); !errors.Is(err, ErrUnsafeTransport) {
 		t.Fatalf("remote plaintext error = %v, want %v", err, ErrUnsafeTransport)
 	}
-	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com/wanwork_im?sslmode=prefer"
+	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=prefer"
 	if _, err := parseConfig(remote); !errors.Is(err, ErrUnsafeTransport) {
 		t.Fatalf("remote TLS downgrade fallback error = %v, want %v", err, ErrUnsafeTransport)
 	}
-	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com/wanwork_im?sslmode=disable"
+	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=require"
+	if _, err := parseConfig(remote); !errors.Is(err, ErrUnsafeTransport) {
+		t.Fatalf("unauthenticated TLS error = %v, want %v", err, ErrUnsafeTransport)
+	}
+	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com:5432,db2.example.com:5432/wanwork_im?sslmode=verify-full"
+	if _, err := parseConfig(remote); !errors.Is(err, ErrUnsafeTransport) {
+		t.Fatalf("unmodeled multi-host error = %v, want %v", err, ErrUnsafeTransport)
+	}
+	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=disable"
 	remote.AllowInsecureLocalhost = true
 	if _, err := parseConfig(remote); !errors.Is(err, ErrUnsafeTransport) {
 		t.Fatalf("remote plaintext exception error = %v, want %v", err, ErrUnsafeTransport)
@@ -107,6 +177,10 @@ func TestParseConfigRequiresTLSExceptExplicitLocalTest(t *testing.T) {
 	if _, err := parseConfig(local); err != nil {
 		t.Fatalf("explicit local test exception: %v", err)
 	}
+	local.ConnectionString = "postgresql://wanwork_app_a@localhost:55488/wanwork_im?sslmode=disable"
+	if _, err := parseConfig(local); !errors.Is(err, ErrUnsafeTransport) {
+		t.Fatalf("hostname local exception error = %v, want %v", err, ErrUnsafeTransport)
+	}
 }
 
 func validConfig() Config {
@@ -114,7 +188,7 @@ func validConfig() Config {
 	manifest.MigrationLoginRoles = []string{"wanwork_migration_a"}
 	manifest.RuntimeLoginRoles = []string{"wanwork_app_a"}
 	return Config{
-		ConnectionString:   "postgresql://wanwork_app_a@db.example.com/wanwork_im?sslmode=verify-full",
+		ConnectionString:   "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=verify-full",
 		Manifest:           manifest,
 		MaxConnections:     8,
 		MinIdleConnections: 1,
