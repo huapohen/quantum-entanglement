@@ -8,6 +8,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,20 +18,22 @@ import (
 )
 
 const (
-	PlanFormat           = "wanwork.im.postgres-authority-cutover-plan/1"
-	maximumPlanBytes     = 256 * 1024
-	planDigestDomain     = "wanwork.im/postgres-authority-cutover-plan/1\n"
-	maximumPlanSteps     = 128
-	maximumPlanSetValues = 128
+	PlanFormat                     = "wanwork.im.postgres-authority-cutover-plan/2"
+	maximumPlanBytes               = 256 * 1024
+	planDigestDomain               = "wanwork.im/postgres-authority-cutover-plan/2\n"
+	postgresSystemIdentifierDomain = "wanwork.im/postgres-cluster-system-identifier/1\n"
+	maximumPlanSteps               = 128
+	maximumPlanSetValues           = 128
 )
 
 var (
 	ErrInvalidPlan  = errors.New("invalid PostgreSQL authority cutover plan")
 	ErrPlanTooLarge = errors.New("PostgreSQL authority cutover plan exceeds size limit")
 
-	canonicalDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	canonicalGitID  = regexp.MustCompile(`^[0-9a-f]{40}(?:[0-9a-f]{24})?$`)
-	canonicalID     = regexp.MustCompile(`^[a-z0-9][a-z0-9._:/-]{0,255}$`)
+	canonicalDigest                     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	canonicalGitID                      = regexp.MustCompile(`^[0-9a-f]{40}(?:[0-9a-f]{24})?$`)
+	canonicalID                         = regexp.MustCompile(`^[a-z0-9][a-z0-9._:/-]{0,255}$`)
+	canonicalPostgreSQLSystemIdentifier = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 )
 
 type NonEmptyClassification string
@@ -86,6 +89,7 @@ type PlanInput struct {
 	AuthorityManifest      migrations.AuthorityAccessManifest
 	Backup                 BackupPrerequisite
 	CellID                 string
+	ClusterIdentity        VerifiedPostgreSQLClusterIdentity
 	Credentials            []CredentialGeneration
 	DeploymentID           string
 	EvidenceDestination    string
@@ -102,6 +106,17 @@ type PlanInput struct {
 	Steps                  []Step
 	TLS                    TLSProfile
 	ToSchemaVersion        int64
+}
+
+// VerifiedPostgreSQLClusterIdentity is produced only by a trusted pre-approval cluster probe or
+// authenticated deployment inventory loader in this package. Its fields are deliberately private:
+// BuildPlan must not accept a caller-reported system identifier after approval.
+type VerifiedPostgreSQLClusterIdentity struct {
+	catalogVersionNo int
+	pgControlVersion int
+	postgreSQLMajor  int
+	primary          bool
+	systemIdentifier string
 }
 
 type PlanSnapshot struct {
@@ -190,12 +205,16 @@ type Step struct {
 }
 
 type TargetBinding struct {
-	CellID          string     `json:"cellId"`
-	Database        string     `json:"database"`
-	DeploymentID    string     `json:"deploymentId"`
-	PostgreSQLMajor int        `json:"postgresqlMajor"`
-	ServerIdentity  string     `json:"serverIdentity"`
-	TLS             TLSProfile `json:"tls"`
+	CatalogVersionNo       int        `json:"catalogVersionNo"`
+	CellID                 string     `json:"cellId"`
+	Database               string     `json:"database"`
+	DeploymentID           string     `json:"deploymentId"`
+	PGControlVersion       int        `json:"pgControlVersion"`
+	PostgreSQLMajor        int        `json:"postgresqlMajor"`
+	PrimaryRequired        bool       `json:"primaryRequired"`
+	ServerIdentity         string     `json:"serverIdentity"`
+	SystemIdentifierDigest string     `json:"systemIdentifierDigest"`
+	TLS                    TLSProfile `json:"tls"`
 }
 
 type TLSProfile struct {
@@ -213,6 +232,9 @@ type Plan struct {
 }
 
 func BuildPlan(input PlanInput) (Plan, error) {
+	if !validVerifiedPostgreSQLClusterIdentity(input.ClusterIdentity, input.PostgreSQLMajor) {
+		return Plan{}, ErrInvalidPlan
+	}
 	specification, err := migrations.CurrentAuthorityAccessSpecification(input.AuthorityManifest)
 	if err != nil {
 		return Plan{}, ErrInvalidPlan
@@ -254,12 +276,16 @@ func BuildPlan(input PlanInput) (Plan, error) {
 		},
 		Steps: slices.Clone(input.Steps),
 		Target: TargetBinding{
-			CellID:          input.CellID,
-			Database:        input.AuthorityManifest.DatabaseName,
-			DeploymentID:    input.DeploymentID,
-			PostgreSQLMajor: input.PostgreSQLMajor,
-			ServerIdentity:  input.ServerIdentity,
-			TLS:             input.TLS,
+			CatalogVersionNo:       input.ClusterIdentity.catalogVersionNo,
+			CellID:                 input.CellID,
+			Database:               input.AuthorityManifest.DatabaseName,
+			DeploymentID:           input.DeploymentID,
+			PGControlVersion:       input.ClusterIdentity.pgControlVersion,
+			PostgreSQLMajor:        input.PostgreSQLMajor,
+			PrimaryRequired:        true,
+			ServerIdentity:         input.ServerIdentity,
+			SystemIdentifierDigest: digestPostgreSQLSystemIdentifier(input.ClusterIdentity.systemIdentifier),
+			TLS:                    input.TLS,
 		},
 	}
 	normalizePlan(&snapshot)
@@ -338,6 +364,8 @@ func validPlanSnapshot(snapshot PlanSnapshot, requireDigest bool) bool {
 		!validAuthorityBinding(snapshot) ||
 		snapshot.Target.Database != snapshot.Authority.Manifest.DatabaseName ||
 		snapshot.Target.PostgreSQLMajor != migrations.AuthorityAccessPostgreSQLMajor ||
+		snapshot.Target.CatalogVersionNo <= 0 || snapshot.Target.PGControlVersion <= 0 ||
+		!snapshot.Target.PrimaryRequired || !canonicalDigest.MatchString(snapshot.Target.SystemIdentifierDigest) ||
 		!canonicalIdentity(snapshot.Target.DeploymentID) || !canonicalIdentity(snapshot.Target.CellID) ||
 		!canonicalIdentity(snapshot.Target.ServerIdentity) || !validTLS(snapshot.Target.TLS) ||
 		snapshot.Target.TLS.ServerName != snapshot.Target.ServerIdentity ||
@@ -356,6 +384,26 @@ func validPlanSnapshot(snapshot PlanSnapshot, requireDigest bool) bool {
 			snapshot.Approval.ExactPlanDigest == snapshot.PlanDigest
 	}
 	return snapshot.PlanDigest == "" && snapshot.Approval.ExactPlanDigest == ""
+}
+
+func validVerifiedPostgreSQLClusterIdentity(
+	identity VerifiedPostgreSQLClusterIdentity,
+	postgreSQLMajor int,
+) bool {
+	if identity.catalogVersionNo <= 0 || identity.pgControlVersion <= 0 || !identity.primary ||
+		identity.postgreSQLMajor != postgreSQLMajor ||
+		!canonicalPostgreSQLSystemIdentifier.MatchString(identity.systemIdentifier) {
+		return false
+	}
+	_, err := strconv.ParseUint(identity.systemIdentifier, 10, 64)
+	return err == nil
+}
+
+func digestPostgreSQLSystemIdentifier(systemIdentifier string) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(postgresSystemIdentifierDomain))
+	_, _ = hash.Write([]byte(systemIdentifier))
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }
 
 func validAuthorityManifest(manifest AuthorityManifest) bool {

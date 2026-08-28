@@ -25,7 +25,10 @@ func TestBuildPlanIsDeterministicImmutableAndSemanticallyBound(t *testing.T) {
 		t.Fatalf("self-binding digest = %#v", snapshot)
 	}
 	if snapshot.Source.MigrationCatalogDigest == "" || snapshot.Authority.ManifestDigest == "" ||
-		snapshot.Authority.SpecificationDigest == "" {
+		snapshot.Authority.SpecificationDigest == "" ||
+		!canonicalDigest.MatchString(snapshot.Target.SystemIdentifierDigest) ||
+		snapshot.Target.CatalogVersionNo <= 0 || snapshot.Target.PGControlVersion <= 0 ||
+		!snapshot.Target.PrimaryRequired {
 		t.Fatalf("derived binding is incomplete: %#v", snapshot)
 	}
 
@@ -55,7 +58,7 @@ func TestBuildPlanIsDeterministicImmutableAndSemanticallyBound(t *testing.T) {
 	}
 
 	changed := validPlanInput()
-	changed.EvidenceDestination = "evidence/postgres-cell-a/revision-2"
+	changed.ClusterIdentity.systemIdentifier = "7678902413432981334"
 	third, err := BuildPlan(changed)
 	if err != nil {
 		t.Fatalf("BuildPlan changed: %v", err)
@@ -65,6 +68,9 @@ func TestBuildPlanIsDeterministicImmutableAndSemanticallyBound(t *testing.T) {
 	}
 
 	lower := strings.ToLower(string(first.CanonicalBytes()))
+	if strings.Contains(lower, validPlanInput().ClusterIdentity.systemIdentifier) {
+		t.Fatal("plan exposed the raw PostgreSQL system identifier")
+	}
 	for _, forbidden := range []string{"password", "privatekey", "connectionstring", "dsn", "token"} {
 		if strings.Contains(lower, forbidden) {
 			t.Fatalf("plan contains credential-bearing field %q", forbidden)
@@ -74,7 +80,17 @@ func TestBuildPlanIsDeterministicImmutableAndSemanticallyBound(t *testing.T) {
 
 func TestBuildPlanRejectsIncompleteOrUnsafeSemantics(t *testing.T) {
 	tests := map[string]func(*PlanInput){
-		"wrong postgres major":                    func(input *PlanInput) { input.PostgreSQLMajor = 17 },
+		"wrong postgres major":       func(input *PlanInput) { input.PostgreSQLMajor = 17 },
+		"cluster major mismatch":     func(input *PlanInput) { input.ClusterIdentity.postgreSQLMajor = 17 },
+		"cluster replica":            func(input *PlanInput) { input.ClusterIdentity.primary = false },
+		"missing pg control version": func(input *PlanInput) { input.ClusterIdentity.pgControlVersion = 0 },
+		"missing catalog version":    func(input *PlanInput) { input.ClusterIdentity.catalogVersionNo = 0 },
+		"leading-zero system identifier": func(input *PlanInput) {
+			input.ClusterIdentity.systemIdentifier = "07678902413432981333"
+		},
+		"overflow system identifier": func(input *PlanInput) {
+			input.ClusterIdentity.systemIdentifier = "18446744073709551616"
+		},
 		"transport without hostname verification": func(input *PlanInput) { input.TLS.Mode = "require" },
 		"tls identity mismatch": func(input *PlanInput) {
 			input.TLS.ServerName = "postgres-reader.prod.internal"
@@ -114,9 +130,16 @@ func TestPlanGoldenDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}
-	const wantDigest = "sha256:136f4d0fb5ca75e4fde1f992d62f37e30619b92a1816d3d32fd5153a4a10d726"
+	const wantDigest = "sha256:d8e7e12ec78ef11d74d6198f8c923068695991c8b75862ab3de79d6aa96352fa"
 	if plan.Digest() != wantDigest {
 		t.Fatalf("golden digest = %q, want %q", plan.Digest(), wantDigest)
+	}
+}
+
+func TestPostgreSQLSystemIdentifierDigestGolden(t *testing.T) {
+	const want = "sha256:261329632cfb14ee84c64d49c4a0235f290f7ba66419357a6d1471ffb50b1ebf"
+	if got := digestPostgreSQLSystemIdentifier("7678902413432981333"); got != want {
+		t.Fatalf("system identifier digest = %q, want %q", got, want)
 	}
 }
 
@@ -145,6 +168,13 @@ func validPlanInput() PlanInput {
 			Required:          true,
 		},
 		CellID: "postgres-cell-a",
+		ClusterIdentity: VerifiedPostgreSQLClusterIdentity{
+			catalogVersionNo: 202509102,
+			pgControlVersion: 1800,
+			postgreSQLMajor:  migrations.AuthorityAccessPostgreSQLMajor,
+			primary:          true,
+			systemIdentifier: "7678902413432981333",
+		},
 		Credentials: []CredentialGeneration{
 			{Consumer: CredentialProvisioner, Generation: "generation-1", LoginRole: "postgres_platform_login", SecretRef: "secret/postgres-cell-a/provisioner/generation-1"},
 			{Consumer: CredentialMigration, Generation: "generation-1", LoginRole: "wanwork_im_deploy_login_a", SecretRef: "secret/postgres-cell-a/migration/generation-1"},
