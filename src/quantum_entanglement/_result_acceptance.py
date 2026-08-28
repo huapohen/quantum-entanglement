@@ -16,6 +16,87 @@ from .invocation_results import (
 )
 
 
+class _ResultAcceptanceSchemaUnavailableError(RuntimeError):
+    """The inactive result schema is absent or not exact for private M5 work."""
+
+
+class _ResultAcceptanceConflictError(RuntimeError):
+    """A durable identity or fresh lease prerequisite differs from the request."""
+
+
+class _ResultAcceptanceIntegrityError(RuntimeError):
+    """A candidate result/start graph is partial, malformed, or contradictory."""
+
+
+def _prepared_text(value: object, label: str) -> str:
+    if type(value) is not str or not value or len(value.encode("utf-8")) > 4_096:
+        raise ValueError(f"prepared result acceptance {label} is invalid")
+    return value
+
+
+def _prepared_digest(value: object, label: str) -> str:
+    digest = _prepared_text(value, label)
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError(f"prepared result acceptance {label} is invalid")
+    return digest
+
+
+@dataclass(frozen=True)
+class _ExistingResultAcceptanceGraphCandidateV2:
+    """Structurally complete candidate that still requires exact full-graph readback."""
+
+    invocation_id: str
+    request_digest: str
+    receipt_id: str
+    receipt_digest: str
+    artifact_count: int
+
+    def __post_init__(self) -> None:
+        if type(self) is not _ExistingResultAcceptanceGraphCandidateV2:
+            raise TypeError("existing result graph candidate must use the exact private class")
+        _prepared_text(self.invocation_id, "invocation identity")
+        _prepared_digest(self.request_digest, "request digest")
+        _prepared_text(self.receipt_id, "receipt identity")
+        _prepared_digest(self.receipt_digest, "receipt digest")
+        if type(self.artifact_count) is not int or not 0 <= self.artifact_count <= 256:
+            raise ValueError("prepared result acceptance artifact count is invalid")
+
+
+@dataclass(frozen=True)
+class _FreshResultAcceptancePrerequisitesV2:
+    """Sanitized durable bindings for a fresh writer; it carries no plaintext lease."""
+
+    invocation_id: str
+    request_digest: str
+    start_receipt_digest: str
+    attempt_id: str
+    lease_epoch: int
+    worker_id: str
+    lease_token_digest: str = field(repr=False)
+    heartbeat_at: str
+    lease_expires_at: str
+    expected_stream_version: int
+    running_task_revision: int
+
+    def __post_init__(self) -> None:
+        if type(self) is not _FreshResultAcceptancePrerequisitesV2:
+            raise TypeError("fresh result prerequisites must use the exact private class")
+        _prepared_text(self.invocation_id, "invocation identity")
+        _prepared_digest(self.request_digest, "request digest")
+        _prepared_digest(self.start_receipt_digest, "start receipt digest")
+        _prepared_text(self.attempt_id, "attempt identity")
+        if type(self.lease_epoch) is not int or self.lease_epoch <= 0:
+            raise ValueError("prepared result acceptance lease epoch is invalid")
+        _prepared_text(self.worker_id, "worker identity")
+        _prepared_digest(self.lease_token_digest, "lease token digest")
+        _prepared_text(self.heartbeat_at, "heartbeat time")
+        _prepared_text(self.lease_expires_at, "lease expiry")
+        if type(self.expected_stream_version) is not int or self.expected_stream_version < 1:
+            raise ValueError("prepared result acceptance stream version is invalid")
+        if type(self.running_task_revision) is not int or self.running_task_revision < 1:
+            raise ValueError("prepared result acceptance task revision is invalid")
+
+
 def _scoped_invocation_start_claimed_snapshot(
     claimed: object,
 ) -> ScopedInvocationStartClaimedV3:

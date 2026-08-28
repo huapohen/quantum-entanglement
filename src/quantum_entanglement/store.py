@@ -37,6 +37,14 @@ from typing import (
 )
 
 from . import process_identity as _process_identity
+from ._result_acceptance import (
+    _ExistingResultAcceptanceGraphCandidateV2,
+    _FreshResultAcceptancePrerequisitesV2,
+    _PreparedScopedInvocationResultAcceptanceV2,
+    _ResultAcceptanceConflictError,
+    _ResultAcceptanceIntegrityError,
+    _ResultAcceptanceSchemaUnavailableError,
+)
 from ._result_artifact_transaction import (
     _RESULT_ARTIFACT_TRANSACTION_TOKEN,
     _PreparedResultArtifactBatch,
@@ -98,6 +106,8 @@ from .invocation_execution import (
     ScopedTaskInvocationAdmissionRequestV2,
     TaskInvocationAdmissionRequest,
 )
+from .invocation_execution import EffectClass as _EffectClass
+from .invocation_execution import RetryClass as _RetryClass
 from .invocation_results import (
     TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE as _TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE,
 )
@@ -112,6 +122,9 @@ from .invocation_results import (
 )
 from .invocation_results import (
     ScopedInvocationResultTerminalTransitionV2 as _ScopedInvocationResultTerminalTransitionV2,
+)
+from .invocation_results import (
+    scoped_invocation_start_receipt_digest_v3 as _scoped_invocation_start_receipt_digest_v3,
 )
 from .migrations import apply_sqlite_migrations
 from .protocol import new_id, utc_now
@@ -250,6 +263,14 @@ _BASE_EXCEPTION_SUPPRESS_CONTEXT_DESCRIPTOR: Any = BaseException.__dict__[
 _BASE_EXCEPTION_TRACEBACK_DESCRIPTOR: Any = BaseException.__dict__["__traceback__"]
 _EVENT_STORE_CHILD_GRAPH_QUARANTINE: List[object] = []
 _INVOCATION_ADMISSION_RECEIPT_FORMAT = "qe.invocation-admission-receipt/1"
+_RESULT_ACCEPTANCE_TABLE_NAMES = (
+    "invocation_result_artifacts",
+    "invocation_result_event_bindings",
+    "invocation_result_manifests",
+    "invocation_result_publications",
+    "invocation_result_receipts",
+    "invocation_result_requests",
+)
 _RESERVED_RESULT_EVENT_TYPE = _TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE
 _RESERVED_RESULT_TERMINAL_EVENT_TYPE = _TASK_STATUS_CHANGED_EVENT_TYPE
 _RESERVED_RESULT_TERMINAL_KEY_TOKENS = frozenset(
@@ -968,6 +989,13 @@ def _persisted_text(value: Any, field_name: str, *, required: bool = False) -> s
     if required and not value.strip():
         raise ValueError(f"persisted {field_name} must not be blank")
     return value
+
+
+def _persisted_result_acceptance_digest(value: Any, field_name: str) -> str:
+    digest = _persisted_text(value, field_name, required=True)
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError(f"persisted {field_name} is not a canonical SHA-256 digest")
+    return digest
 
 
 def _persisted_optional_text(value: Any, field_name: str) -> Optional[str]:
@@ -1740,6 +1768,583 @@ class SQLiteEventStore:
                         token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
                     ) from None
             raise
+
+    def _require_result_acceptance_candidate_schema_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+    ) -> None:
+        """Require the exact six-table inactive M5 namespace without registering it."""
+
+        self._require_current_process()
+        if (
+            type(connection) is not sqlite3.Connection
+            or connection is not self._connection
+            or not connection.in_transaction
+        ):
+            raise RuntimeError(
+                "result acceptance prerequisites require the owning open transaction"
+            )
+        try:
+            main_rows = connection.execute(
+                """
+                SELECT name
+                FROM main.sqlite_master
+                WHERE type = 'table'
+                  AND name IN (?, ?, ?, ?, ?, ?)
+                ORDER BY name
+                """,
+                _RESULT_ACCEPTANCE_TABLE_NAMES,
+            ).fetchall()
+            temp_row = connection.execute(
+                """
+                SELECT 1
+                FROM temp.sqlite_temp_master
+                WHERE name IN (?, ?, ?, ?, ?, ?)
+                   OR tbl_name IN (?, ?, ?, ?, ?, ?)
+                LIMIT 1
+                """,
+                _RESULT_ACCEPTANCE_TABLE_NAMES + _RESULT_ACCEPTANCE_TABLE_NAMES,
+            ).fetchone()
+        except sqlite3.Error:
+            raise _ResultAcceptanceSchemaUnavailableError(
+                "inactive result acceptance schema cannot be inspected"
+            ) from None
+        self._require_current_process()
+        try:
+            names = tuple(
+                _persisted_text(row["name"], "result table name", required=True)
+                for row in main_rows
+            )
+        except (IndexError, KeyError, TypeError, ValueError):
+            raise _ResultAcceptanceSchemaUnavailableError(
+                "inactive result acceptance schema is malformed"
+            ) from None
+        if names != tuple(sorted(_RESULT_ACCEPTANCE_TABLE_NAMES)) or temp_row is not None:
+            raise _ResultAcceptanceSchemaUnavailableError(
+                "inactive result acceptance schema is unavailable or shadowed"
+            )
+
+    def _existing_result_acceptance_graph_candidate_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> Optional[_ExistingResultAcceptanceGraphCandidateV2]:
+        """Classify structural existing/partial state before inspecting fresh lease state."""
+
+        request = prepared.request
+        manifest = request.manifest
+        claim_evidence = prepared.claimed.receipt.evidence
+        request_digest = request.canonical_digest()
+        result_manifest_digest = manifest.canonical_digest()
+        try:
+            request_rows = connection.execute(
+                """
+                SELECT
+                    request_digest,
+                    invocation_id,
+                    result_manifest_digest,
+                    artifact_count
+                FROM main.invocation_result_requests
+                WHERE request_digest = ?
+                   OR invocation_id = ?
+                   OR (
+                        tenant_id = ? AND workspace_id = ?
+                        AND session_id = ? AND task_id = ?
+                   )
+                   OR (
+                        tenant_id = ? AND workspace_id = ?
+                        AND session_id = ? AND acceptance_idempotency_key = ?
+                   )
+                   OR (
+                        tenant_id = ? AND workspace_id = ? AND result_ref = ?
+                   )
+                LIMIT 2
+                """,
+                (
+                    request_digest,
+                    manifest.invocation_id,
+                    manifest.tenant_id,
+                    manifest.workspace_id,
+                    manifest.session_id,
+                    manifest.task_id,
+                    manifest.tenant_id,
+                    manifest.workspace_id,
+                    manifest.session_id,
+                    request.acceptance_idempotency_key,
+                    manifest.tenant_id,
+                    manifest.workspace_id,
+                    manifest.result_ref,
+                ),
+            ).fetchall()
+            receipt_rows = connection.execute(
+                """
+                SELECT
+                    receipt_id,
+                    receipt_digest,
+                    request_digest,
+                    invocation_id,
+                    result_manifest_digest,
+                    artifact_count,
+                    result_event_id,
+                    terminal_event_id
+                FROM main.invocation_result_receipts
+                WHERE request_digest = ?
+                   OR invocation_id = ?
+                   OR attempt_id = ?
+                   OR (
+                        tenant_id = ? AND workspace_id = ?
+                        AND session_id = ? AND acceptance_idempotency_key = ?
+                   )
+                   OR (
+                        tenant_id = ? AND workspace_id = ? AND result_ref = ?
+                   )
+                LIMIT 2
+                """,
+                (
+                    request_digest,
+                    manifest.invocation_id,
+                    claim_evidence.attempt_id,
+                    manifest.tenant_id,
+                    manifest.workspace_id,
+                    manifest.session_id,
+                    request.acceptance_idempotency_key,
+                    manifest.tenant_id,
+                    manifest.workspace_id,
+                    manifest.result_ref,
+                ),
+            ).fetchall()
+        except sqlite3.Error:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance candidate identities cannot be read"
+            ) from None
+        self._require_current_process()
+
+        if len(request_rows) > 1 or len(receipt_rows) > 1:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance identities resolve to multiple durable graphs"
+            )
+        if not request_rows and not receipt_rows:
+            try:
+                partial_row = connection.execute(
+                    """
+                    SELECT 1
+                    FROM main.invocation_result_manifests
+                    WHERE tenant_id = ? AND workspace_id = ? AND manifest_digest = ?
+                    UNION ALL
+                    SELECT 1
+                    FROM main.invocation_result_artifacts
+                    WHERE tenant_id = ? AND workspace_id = ?
+                      AND session_id = ? AND task_id = ?
+                    LIMIT 1
+                    """,
+                    (
+                        manifest.tenant_id,
+                        manifest.workspace_id,
+                        result_manifest_digest,
+                        manifest.tenant_id,
+                        manifest.workspace_id,
+                        manifest.session_id,
+                        manifest.task_id,
+                    ),
+                ).fetchone()
+                orphan_row = connection.execute(
+                    """
+                    SELECT 1
+                    FROM main.invocation_result_event_bindings AS binding
+                    LEFT JOIN main.invocation_result_receipts AS receipt
+                      ON receipt.tenant_id = binding.tenant_id
+                     AND receipt.workspace_id = binding.workspace_id
+                     AND receipt.receipt_id = binding.receipt_id
+                    WHERE receipt.receipt_id IS NULL
+                    UNION ALL
+                    SELECT 1
+                    FROM main.invocation_result_publications AS publication
+                    LEFT JOIN main.invocation_result_receipts AS receipt
+                      ON receipt.tenant_id = publication.tenant_id
+                     AND receipt.workspace_id = publication.workspace_id
+                     AND receipt.receipt_id = publication.receipt_id
+                    WHERE receipt.receipt_id IS NULL
+                    LIMIT 1
+                    """
+                ).fetchone()
+            except sqlite3.Error:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance partial-graph guard cannot be read"
+                ) from None
+            self._require_current_process()
+            if partial_row is not None or orphan_row is not None:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance has a partial durable graph"
+                )
+            return None
+        if len(request_rows) != 1 or len(receipt_rows) != 1:
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance has a partial request/receipt graph"
+            )
+
+        request_row = request_rows[0]
+        receipt_row = receipt_rows[0]
+        try:
+            durable_request_digest = _persisted_result_acceptance_digest(
+                request_row["request_digest"],
+                "result request digest",
+            )
+            durable_invocation_id = _persisted_text(
+                request_row["invocation_id"],
+                "result invocation identity",
+                required=True,
+            )
+            durable_manifest_digest = _persisted_result_acceptance_digest(
+                request_row["result_manifest_digest"],
+                "result manifest digest",
+            )
+            artifact_count = _persisted_integer(
+                request_row["artifact_count"],
+                "result artifact count",
+            )
+            receipt_id = _persisted_text(
+                receipt_row["receipt_id"],
+                "result receipt identity",
+                required=True,
+            )
+            receipt_digest = _persisted_result_acceptance_digest(
+                receipt_row["receipt_digest"],
+                "result receipt digest",
+            )
+            receipt_request_digest = _persisted_result_acceptance_digest(
+                receipt_row["request_digest"],
+                "receipt request digest",
+            )
+            receipt_invocation_id = _persisted_text(
+                receipt_row["invocation_id"],
+                "receipt invocation identity",
+                required=True,
+            )
+            receipt_manifest_digest = _persisted_result_acceptance_digest(
+                receipt_row["result_manifest_digest"],
+                "receipt manifest digest",
+            )
+            receipt_artifact_count = _persisted_integer(
+                receipt_row["artifact_count"],
+                "receipt artifact count",
+            )
+            result_event_id = _persisted_text(
+                receipt_row["result_event_id"],
+                "result event identity",
+                required=True,
+            )
+            terminal_event_id = _persisted_text(
+                receipt_row["terminal_event_id"],
+                "terminal event identity",
+                required=True,
+            )
+        except (IndexError, KeyError, TypeError, ValueError):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance request/receipt rows are malformed"
+            ) from None
+        if (
+            durable_request_digest != receipt_request_digest
+            or durable_invocation_id != receipt_invocation_id
+            or durable_manifest_digest != receipt_manifest_digest
+            or artifact_count != receipt_artifact_count
+            or artifact_count > 256
+            or result_event_id == terminal_event_id
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance request/receipt bindings are contradictory"
+            )
+
+        try:
+            manifest_count = connection.execute(
+                """
+                SELECT count(*) AS row_count
+                FROM main.invocation_result_manifests
+                WHERE manifest_digest = ?
+                """,
+                (durable_manifest_digest,),
+            ).fetchone()
+            artifact_counts = connection.execute(
+                """
+                SELECT
+                    count(*) AS row_count,
+                    min(ordinal) AS minimum_ordinal,
+                    max(ordinal) AS maximum_ordinal,
+                    count(DISTINCT ordinal) AS distinct_ordinals
+                FROM main.invocation_result_artifacts
+                WHERE receipt_id = ?
+                """,
+                (receipt_id,),
+            ).fetchone()
+            binding_counts = connection.execute(
+                """
+                SELECT
+                    count(*) AS row_count,
+                    sum(CASE WHEN event_role = 'result' THEN 1 ELSE 0 END) AS result_rows,
+                    sum(CASE WHEN event_role = 'terminal' THEN 1 ELSE 0 END) AS terminal_rows
+                FROM main.invocation_result_event_bindings
+                WHERE receipt_id = ?
+                """,
+                (receipt_id,),
+            ).fetchone()
+            event_count = connection.execute(
+                """
+                SELECT count(*) AS row_count
+                FROM main.events
+                WHERE event_id IN (?, ?)
+                """,
+                (result_event_id, terminal_event_id),
+            ).fetchone()
+            publication_count = connection.execute(
+                """
+                SELECT count(*) AS row_count
+                FROM main.invocation_result_publications AS publication
+                JOIN main.outbox AS message ON message.message_id = publication.message_id
+                WHERE publication.receipt_id = ?
+                """,
+                (receipt_id,),
+            ).fetchone()
+            counts = (
+                _persisted_integer(manifest_count["row_count"], "result manifest rows"),
+                _persisted_integer(artifact_counts["row_count"], "result artifact rows"),
+                artifact_counts["minimum_ordinal"],
+                artifact_counts["maximum_ordinal"],
+                _persisted_integer(
+                    artifact_counts["distinct_ordinals"],
+                    "result distinct artifact ordinals",
+                ),
+                _persisted_integer(binding_counts["row_count"], "result event bindings"),
+                _persisted_integer(binding_counts["result_rows"], "result event-role rows"),
+                _persisted_integer(
+                    binding_counts["terminal_rows"],
+                    "terminal event-role rows",
+                ),
+                _persisted_integer(event_count["row_count"], "result durable events"),
+                _persisted_integer(
+                    publication_count["row_count"],
+                    "result publication rows",
+                ),
+            )
+        except (IndexError, KeyError, TypeError, ValueError, sqlite3.Error):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance structural graph cannot be verified"
+            ) from None
+        self._require_current_process()
+        expected_ordinals: tuple[Optional[int], Optional[int]] = (
+            (None, None) if artifact_count == 0 else (0, artifact_count - 1)
+        )
+        if (
+            counts[0] != 1
+            or counts[1] != artifact_count
+            or (counts[2], counts[3]) != expected_ordinals
+            or counts[4] != artifact_count
+            or counts[5:] != (2, 1, 1, 2, 1)
+        ):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance durable graph is partial"
+            )
+        return _ExistingResultAcceptanceGraphCandidateV2(
+            invocation_id=durable_invocation_id,
+            request_digest=durable_request_digest,
+            receipt_id=receipt_id,
+            receipt_digest=receipt_digest,
+            artifact_count=artifact_count,
+        )
+
+    def _fresh_result_acceptance_prerequisites_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> _FreshResultAcceptancePrerequisitesV2:
+        """Validate one active scoped start without reading clock or minting authority."""
+
+        request = prepared.request
+        result_manifest = request.manifest
+        claimed = prepared.claimed
+        try:
+            state = SQLiteEventStore._load_scoped_invocation_start_in_transaction(
+                self,
+                connection,
+                result_manifest.invocation_id,
+                fresh=False,
+            )
+        except InvocationStartConflictError:
+            raise _ResultAcceptanceConflictError(
+                "result acceptance scoped start is not durable and exact"
+            ) from None
+        if type(state) is not _ScopedInvocationStartReadback:
+            raise _ResultAcceptanceConflictError(
+                "result acceptance requires a durable scoped start"
+            )
+        if state.receipt != request.start_receipt or state.receipt != claimed.receipt:
+            raise _ResultAcceptanceConflictError(
+                "result acceptance start receipt differs from durable state"
+            )
+        execution_manifest = state.request.manifest
+        bindings = (
+            (result_manifest.tenant_id, execution_manifest.tenant_id),
+            (result_manifest.workspace_id, execution_manifest.workspace_id),
+            (result_manifest.invocation_id, execution_manifest.invocation_id),
+            (result_manifest.session_id, execution_manifest.session_id),
+            (result_manifest.plan_id, execution_manifest.plan_id),
+            (result_manifest.task_id, execution_manifest.task_id),
+            (result_manifest.agent_id, execution_manifest.agent_id),
+            (result_manifest.job_idempotency_key, execution_manifest.job_idempotency_key),
+            (result_manifest.task_revision, execution_manifest.task_revision),
+            (result_manifest.correlation_id, execution_manifest.correlation_id),
+            (result_manifest.causation_id, execution_manifest.causation_id),
+            (result_manifest.runtime_revision, execution_manifest.runtime_revision),
+            (
+                result_manifest.execution_manifest_digest,
+                execution_manifest.canonical_digest(),
+            ),
+        )
+        if (
+            any(actual != expected for actual, expected in bindings)
+            or execution_manifest.effect_class is not _EffectClass.PURE
+            or execution_manifest.retry_class is not _RetryClass.NEVER
+        ):
+            raise _ResultAcceptanceConflictError(
+                "result acceptance manifest differs from durable execution"
+            )
+
+        lease = claimed.lease
+        evidence = state.receipt.evidence
+        job = state.job
+        attempt = state.attempt
+        lease_token_digest = SQLiteEventStore._lease_token_digest(lease.lease_token)
+        if (
+            job.status is not InvocationStatus.RUNNING
+            or attempt.status is not AttemptStatus.RUNNING
+            or job.invocation_id != lease.invocation_id
+            or job.session_id != lease.session_id
+            or job.plan_id != lease.plan_id
+            or job.task_id != lease.task_id
+            or job.agent_id != lease.agent_id
+            or job.idempotency_key != lease.idempotency_key
+            or job.payload_digest != lease.payload_digest
+            or job.max_attempts != 1
+            or job.attempts_started != lease.attempt_number
+            or job.lease_epoch != lease.lease_epoch
+            or job.lease_owner != lease.worker_id
+            or job.lease_token_digest != lease_token_digest
+            or job.heartbeat_at is None
+            or job.lease_expires_at is None
+            or job.updated_at != job.heartbeat_at
+            or job.result_ref is not None
+            or job.last_error is not None
+            or job.finished_at is not None
+            or attempt.attempt_id != lease.attempt_id
+            or attempt.invocation_id != lease.invocation_id
+            or attempt.attempt_number != lease.attempt_number
+            or attempt.lease_epoch != lease.lease_epoch
+            or attempt.worker_id != lease.worker_id
+            or attempt.lease_token_digest != lease_token_digest
+            or attempt.heartbeat_at != job.heartbeat_at
+            or attempt.lease_expires_at != job.lease_expires_at
+            or attempt.finished_at is not None
+            or attempt.error is not None
+            or attempt.result_ref is not None
+            or lease_token_digest != evidence.lease_token_digest
+            or job.heartbeat_at < evidence.claimed_at
+            or job.lease_expires_at < evidence.lease_expires_at
+            or job.lease_expires_at <= job.heartbeat_at
+        ):
+            raise _ResultAcceptanceConflictError(
+                "result acceptance fresh lease is no longer exact"
+            )
+
+        try:
+            version_row = connection.execute(
+                """
+                SELECT coalesce(max(sequence), 0) AS stream_version
+                FROM main.events
+                WHERE stream_id = ?
+                """,
+                (state.receipt.stream_id,),
+            ).fetchone()
+            current_version = _persisted_integer(
+                version_row["stream_version"],
+                "result acceptance stream version",
+            )
+            later_status = connection.execute(
+                """
+                SELECT 1
+                FROM main.events
+                WHERE stream_id = ?
+                  AND event_type = ?
+                  AND sequence > (
+                      SELECT sequence FROM main.events WHERE event_id = ?
+                  )
+                  AND (
+                      json_extract(payload_json, '$.taskId') = ?
+                      OR json_extract(payload_json, '$.task_id') = ?
+                  )
+                LIMIT 1
+                """,
+                (
+                    state.receipt.stream_id,
+                    _TASK_STATUS_CHANGED_EVENT_TYPE,
+                    state.request.task_running_event_id,
+                    result_manifest.task_id,
+                    result_manifest.task_id,
+                ),
+            ).fetchone()
+        except (IndexError, KeyError, TypeError, ValueError, sqlite3.Error):
+            raise _ResultAcceptanceIntegrityError(
+                "result acceptance running task state cannot be verified"
+            ) from None
+        self._require_current_process()
+        if current_version != request.expected_stream_version or later_status is not None:
+            raise _ResultAcceptanceConflictError(
+                "result acceptance task is no longer at the expected RUNNING revision"
+            )
+        return _FreshResultAcceptancePrerequisitesV2(
+            invocation_id=result_manifest.invocation_id,
+            request_digest=request.canonical_digest(),
+            start_receipt_digest=_scoped_invocation_start_receipt_digest_v3(
+                state.receipt
+            ),
+            attempt_id=attempt.attempt_id,
+            lease_epoch=attempt.lease_epoch,
+            worker_id=attempt.worker_id,
+            lease_token_digest=attempt.lease_token_digest,
+            heartbeat_at=attempt.heartbeat_at,
+            lease_expires_at=attempt.lease_expires_at,
+            expected_stream_version=current_version,
+            running_task_revision=result_manifest.task_revision,
+        )
+
+    @_bind_event_store_process
+    def _validate_result_acceptance_durable_prerequisites_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> (
+        _ExistingResultAcceptanceGraphCandidateV2
+        | _FreshResultAcceptancePrerequisitesV2
+    ):
+        """Classify existing graph first, otherwise validate fresh durable ownership."""
+
+        self._require_current_process()
+        if type(prepared) is not _PreparedScopedInvocationResultAcceptanceV2:
+            raise TypeError(
+                "result acceptance prerequisites require exact prepared inputs"
+            )
+        prepared.verify()
+        self._require_result_acceptance_candidate_schema_in_transaction(connection)
+        existing = self._existing_result_acceptance_graph_candidate_in_transaction(
+            connection,
+            prepared,
+        )
+        if existing is not None:
+            self._require_current_process()
+            return existing
+        fresh = self._fresh_result_acceptance_prerequisites_in_transaction(
+            connection,
+            prepared,
+        )
+        self._require_current_process()
+        return fresh
 
     @contextmanager
     def _transaction_inner(
