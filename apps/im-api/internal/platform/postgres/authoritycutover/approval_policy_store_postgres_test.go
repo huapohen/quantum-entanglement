@@ -24,7 +24,7 @@ func TestApprovalPolicyControlStoreV2ContractDigestIsFrozen(t *testing.T) {
 }
 
 func TestApprovalPolicyControlStoreV2CatalogDigestIsFrozen(t *testing.T) {
-	const expected = "sha256:e06225e0adf9452874f0db4cdd2fb7e584d3334015ef9f7e2d77af4b011ab3ce"
+	const expected = "sha256:b2800f5eda2bd9cecceb060ae66b794074c04566f4d291dfd4a42a60d424c8c8"
 	if approvalPolicyControlStoreCatalogDigestV2 != expected {
 		t.Fatalf("control-store v2 catalog digest = %q, want %q", approvalPolicyControlStoreCatalogDigestV2, expected)
 	}

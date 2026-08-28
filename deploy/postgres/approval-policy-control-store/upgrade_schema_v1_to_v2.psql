@@ -2031,7 +2031,7 @@ AS $function$
         pg_catalog.pg_is_in_recovery(),
         control.system_identifier::text,
         'wanwork.im.postgres-approval-policy-control-store/2'::text,
-        'sha256:e5dd054b74a166fe8ad0086f6232ce2bf9c6a3fa9ce23446707689dab7b8d60c'::text
+        'sha256:4ac5b4da641d2d31d814addc964a0ccf33749996ea3f81274741827374aa8de5'::text
     FROM pg_catalog.pg_control_system() AS control
 $function$;
 
