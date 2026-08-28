@@ -280,3 +280,16 @@ SET search_path TO pg_catalog AS $$ BEGIN RETURN true; END $$;`
 		}
 	}
 }
+
+func TestFunctionOnlyWriteMigrationFilesPassExactSQLPolicy(t *testing.T) {
+	spec := migrationSpec{version: 5, name: "function_only_writes"}
+	for _, suffix := range []string{"up", "down"} {
+		raw, err := migrationFiles.ReadFile("sql/0005_function_only_writes." + suffix + ".sql")
+		if err != nil {
+			t.Fatalf("read function-only %s SQL: %v", suffix, err)
+		}
+		if !validMigrationSQLForSpec(normalizeSQL(raw), spec) {
+			t.Fatalf("function-only %s SQL rejected by exact policy", suffix)
+		}
+	}
+}
