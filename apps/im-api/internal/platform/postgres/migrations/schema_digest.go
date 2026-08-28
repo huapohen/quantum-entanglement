@@ -14,7 +14,7 @@ import (
 const (
 	schemaPostconditionDigestDomain = "wanwork.im/postgres-schema-postconditions/1\n"
 	identityAuthoritySchemaDigest   = "9a178617cbb463df31450f4302454ae4eba101dd2d2f8b2567dad7f49088c5d5"
-	conversationSchemaDigest        = "6530e2ca1a4652d28be2eb3b3a8e17611655d317eb97e70fc7445aab2e8659a7"
+	conversationSchemaDigest        = "17002b4c0b7a757e23a96418634af02c517aa85a4bae415175ab33e75cff8457"
 )
 
 var identityAuthorityTableNames = []string{
