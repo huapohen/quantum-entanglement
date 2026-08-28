@@ -1,0 +1,149 @@
+\set ON_ERROR_STOP on
+
+-- Contract smoke test for a freshly installed schema-v2 control database. Required psql
+-- variables: owner_role, reader_role, activator_role, attempt_issuer_role, fencer_role.
+-- Run v2_fixture.psql first; this script is intentionally executable by a deployment verifier and
+-- does not print credentials or canonical capability material.
+
+SELECT pg_catalog.set_config('wanwork.test.owner_role', :'owner_role', false);
+SELECT pg_catalog.set_config('wanwork.test.reader_role', :'reader_role', false);
+SELECT pg_catalog.set_config('wanwork.test.activator_role', :'activator_role', false);
+SELECT pg_catalog.set_config('wanwork.test.attempt_issuer_role', :'attempt_issuer_role', false);
+SELECT pg_catalog.set_config('wanwork.test.fencer_role', :'fencer_role', false);
+
+DO $contract$
+DECLARE
+    expected_owner text := pg_catalog.current_setting('wanwork.test.owner_role');
+    expected_reader text := pg_catalog.current_setting('wanwork.test.reader_role');
+    expected_activator text := pg_catalog.current_setting('wanwork.test.activator_role');
+    expected_attempt_issuer text :=
+        pg_catalog.current_setting('wanwork.test.attempt_issuer_role');
+    expected_fencer text := pg_catalog.current_setting('wanwork.test.fencer_role');
+    expected_roles text[] := ARRAY[
+        expected_owner, expected_reader, expected_activator, expected_attempt_issuer,
+        expected_fencer
+    ];
+    role_count bigint;
+    dangerous_edges bigint;
+BEGIN
+    SELECT pg_catalog.count(*) INTO role_count
+    FROM pg_catalog.pg_roles AS role_value
+    WHERE role_value.rolname = ANY(expected_roles)
+      AND NOT role_value.rolsuper
+      AND NOT role_value.rolinherit
+      AND NOT role_value.rolcreaterole
+      AND NOT role_value.rolcreatedb
+      AND NOT role_value.rolreplication
+      AND NOT role_value.rolbypassrls
+      AND role_value.rolconnlimit = -1
+      AND role_value.rolvaliduntil IS NULL
+      AND role_value.rolconfig IS NULL;
+    IF role_count <> 5 THEN
+        RAISE EXCEPTION 'schema-v2 role posture is not exact';
+    END IF;
+    SELECT pg_catalog.count(*) INTO dangerous_edges
+    FROM pg_catalog.pg_auth_members AS membership
+    INNER JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+    INNER JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+    WHERE member_role.rolname = ANY(expected_roles)
+       OR granted_role.rolname = ANY(expected_roles);
+    IF dangerous_edges <> 0 THEN
+        RAISE EXCEPTION 'schema-v2 protected role graph is not empty';
+    END IF;
+END
+$contract$;
+
+-- Every functional role is limited to its own fixed function set. has_function_privilege is used
+-- instead of deliberately causing permission errors, so the verifier remains ON_ERROR_STOP-safe.
+SELECT 1 / CASE WHEN
+    NOT has_function_privilege(:'reader_role',
+        'wanwork_policy_control.compare_and_issue_approval_execution_attempt(text,bytea)', 'EXECUTE')
+    AND NOT has_function_privilege(:'reader_role',
+        'wanwork_policy_control.compare_and_open_approval_execution_fence(text,text,bigint,text,text,text,text,text,text,text,timestamptz,bytea)', 'EXECUTE')
+    AND has_function_privilege(:'reader_role',
+        'wanwork_policy_control.read_approval_policy_state(text,text)', 'EXECUTE')
+    AND has_function_privilege(:'attempt_issuer_role',
+        'wanwork_policy_control.compare_and_issue_approval_execution_attempt(text,bytea)', 'EXECUTE')
+    AND NOT has_function_privilege(:'attempt_issuer_role',
+        'wanwork_policy_control.compare_and_open_approval_execution_fence(text,text,bigint,text,text,text,text,text,text,text,timestamptz,bytea)', 'EXECUTE')
+    AND has_function_privilege(:'fencer_role',
+        'wanwork_policy_control.compare_and_open_approval_execution_fence(text,text,bigint,text,text,text,text,text,text,text,timestamptz,bytea)', 'EXECUTE')
+    AND NOT has_function_privilege(:'fencer_role',
+        'wanwork_policy_control.compare_and_issue_approval_execution_attempt(text,bytea)', 'EXECUTE')
+    THEN 1 ELSE 0 END AS acl_contract_ok;
+
+-- Issue exactly one durable grant and prove exact-issuance retry is idempotent.
+SET SESSION AUTHORIZATION :"attempt_issuer_role";
+SELECT result.state_status,
+       result.attempt_generation,
+       result.attempt_id,
+       result.attempt_issuance_id,
+       result.attempt_receipt_digest,
+       result.created_at,
+       result.canonical_attempt
+FROM wanwork_policy_control_test.attempt_candidate AS candidate
+CROSS JOIN LATERAL wanwork_policy_control.compare_and_issue_approval_execution_attempt(
+    candidate.attempt_issuance_id, candidate.canonical_candidate
+) AS result
+\gset first_
+SELECT 1 / CASE WHEN :'first_state_status' = 'committed' THEN 1 ELSE 0 END AS issue_ok;
+
+SELECT 1 / CASE WHEN result.state_status = 'committed' THEN 1 ELSE 0 END AS retry_ok
+FROM wanwork_policy_control_test.attempt_candidate AS candidate
+CROSS JOIN LATERAL wanwork_policy_control.compare_and_issue_approval_execution_attempt(
+    candidate.attempt_issuance_id, candidate.canonical_candidate
+) AS result;
+RESET SESSION AUTHORIZATION;
+
+-- Readback is authoritative and must expose a canonical, sealed grant.
+SET SESSION AUTHORIZATION :"attempt_issuer_role";
+SELECT 1 / CASE WHEN state.state_status = 'present'
+    AND state.attempt_generation = :first_attempt_generation
+    AND state.attempt_id = :'first_attempt_id'
+    AND state.attempt_issuance_id = :'first_attempt_issuance_id'
+    AND state.attempt_receipt_digest = :'first_attempt_receipt_digest'
+    AND octet_length(state.canonical_attempt) BETWEEN 1 AND 65536
+    THEN 1 ELSE 0 END AS readback_ok
+FROM wanwork_policy_control.read_approval_execution_attempt(
+    'approval-policy/test',
+    'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    :'first_attempt_issuance_id'
+) AS state;
+RESET SESSION AUTHORIZATION;
+
+-- Materialize an admission carrying the real grant and prove the fencer accepts it.
+SELECT wanwork_policy_control_test.materialize_fence_candidate(
+    'authentic-contract', :first_attempt_generation, :'first_attempt_id',
+    :'first_attempt_receipt_digest', :'first_created_at'::timestamptz
+);
+SET SESSION AUTHORIZATION :"fencer_role";
+SELECT 1 / CASE WHEN result = 'committed' THEN 1 ELSE 0 END AS authentic_fence_ok
+FROM (
+    SELECT wanwork_policy_control.compare_and_open_approval_execution_fence(
+        candidate.policy_id, candidate.target_digest, 1, candidate.policy_digest,
+        candidate.activation_digest, candidate.admission_digest, candidate.operation_id,
+        candidate.consumption_id, candidate.approval_digest, candidate.token_digest,
+        candidate.mutation_not_after, candidate.canonical_admission
+    ) AS result
+    FROM wanwork_policy_control_test.fence_candidate AS candidate
+    WHERE candidate.candidate_name = 'authentic-contract'
+) AS opened;
+RESET SESSION AUTHORIZATION;
+
+-- The complete self-consistent forged receipt created by v2_fixture must fail closed at the
+-- durable-grant trust boundary.
+SET SESSION AUTHORIZATION :"fencer_role";
+SELECT 1 / CASE WHEN result = 'attempt_untrusted' THEN 1 ELSE 0 END AS forgery_rejected_ok
+FROM (
+    SELECT wanwork_policy_control.compare_and_open_approval_execution_fence(
+        candidate.policy_id, candidate.target_digest, 1, candidate.policy_digest,
+        candidate.activation_digest, candidate.admission_digest, candidate.operation_id,
+        candidate.consumption_id, candidate.approval_digest, candidate.token_digest,
+        candidate.mutation_not_after, candidate.canonical_admission
+    ) AS result
+    FROM wanwork_policy_control_test.fence_candidate AS candidate
+    WHERE candidate.candidate_name = 'forged'
+) AS rejected;
+RESET SESSION AUTHORIZATION;
+
+\echo 'schema-v2 contract smoke test passed'

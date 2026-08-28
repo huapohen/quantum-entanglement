@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -17,7 +18,7 @@ const (
 	approvalPolicyControlStoreCatalogDigestDomain   = "wanwork.im/postgres-approval-policy-control-store-catalog/1\n"
 	approvalPolicyControlStoreCatalogDigestDomainV2 = "wanwork.im/postgres-approval-policy-control-store-catalog/2\n"
 	approvalPolicyControlStoreCatalogDigest         = "sha256:8ac32cf0ef53b447fd1b152c5359f5854c4f50f7e513af1f71d19dd57d4d1ea0"
-	approvalPolicyControlStoreCatalogDigestV2       = "sha256:13161a7b2727018f0c737be572cdcffdadb10f0ef93641b0414fd5ab9741c6e7"
+	approvalPolicyControlStoreCatalogDigestV2       = "sha256:e06225e0adf9452874f0db4cdd2fb7e584d3334015ef9f7e2d77af4b011ab3ce"
 )
 
 type approvalPolicyControlStoreCatalogColumn struct {
@@ -141,7 +142,7 @@ func verifyApprovalPolicyControlStoreCatalog(
 	if err != nil {
 		return false
 	}
-	defer func() { _ = transaction.Rollback(context.Background()) }()
+	defer rollbackApprovalPolicyControlStoreCatalogTransaction(connection, transaction)
 	digest, err := readApprovalPolicyControlStoreCatalogDigest(ctx, transaction)
 	if err != nil || digest != approvalPolicyControlStoreCatalogDigest ||
 		!verifyApprovalPolicyControlStoreRolesAndACL(ctx, transaction, expectation) {
@@ -162,13 +163,34 @@ func verifyApprovalPolicyControlStoreCatalogV2(
 	if err != nil {
 		return false
 	}
-	defer func() { _ = transaction.Rollback(context.Background()) }()
+	defer rollbackApprovalPolicyControlStoreCatalogTransaction(connection, transaction)
 	digest, err := readApprovalPolicyControlStoreCatalogDigestV2(ctx, transaction)
 	if err != nil || digest != approvalPolicyControlStoreCatalogDigestV2 ||
 		!verifyApprovalPolicyControlStoreRolesAndACLV2(ctx, transaction, expectation) {
 		return false
 	}
 	return transaction.Commit(ctx) == nil
+}
+
+func rollbackApprovalPolicyControlStoreCatalogTransaction(
+	connection *pgx.Conn,
+	transaction pgx.Tx,
+) {
+	rollbackContext, cancelRollback := context.WithTimeout(
+		context.Background(),
+		approvalPolicyControlStoreCleanupTimeout,
+	)
+	err := transaction.Rollback(rollbackContext)
+	cancelRollback()
+	if err == nil || errors.Is(err, pgx.ErrTxClosed) || connection == nil || connection.IsClosed() {
+		return
+	}
+	closeContext, cancelClose := context.WithTimeout(
+		context.Background(),
+		approvalPolicyControlStoreCleanupTimeout,
+	)
+	defer cancelClose()
+	_ = connection.Close(closeContext)
 }
 
 func verifyApprovalPolicyControlStoreRolesAndACL(
@@ -203,11 +225,13 @@ func verifyApprovalPolicyControlStoreRolesAndACLV2(
 			expectation.ControlOwnerRole,
 			expectation.ControlReaderRole,
 			expectation.ControlActivatorRole,
+			expectation.ControlAttemptIssuerRole,
 			expectation.ControlFencerRole,
 		},
 		[]string{
 			expectation.ControlReaderRole,
 			expectation.ControlActivatorRole,
+			expectation.ControlAttemptIssuerRole,
 			expectation.ControlFencerRole,
 		},
 		expectedApprovalPolicyControlStoreACLV2(expectation),
@@ -275,10 +299,12 @@ ORDER BY role_value.rolname`, protectedRoles)
 	var dangerousMemberships, ownerDefaultACLs, unexpectedSettings int64
 	if err := query.QueryRow(ctx, `
 SELECT
-    (SELECT pg_catalog.count(*)
-       FROM pg_catalog.pg_auth_members AS membership
-       INNER JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
-      WHERE member_role.rolname = ANY($1::text[])),
+	    (SELECT pg_catalog.count(*)
+	       FROM pg_catalog.pg_auth_members AS membership
+	       INNER JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+	       INNER JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+	      WHERE member_role.rolname = ANY($1::text[])
+	         OR granted_role.rolname = ANY($1::text[])),
 	    (SELECT pg_catalog.count(*)
 	       FROM pg_catalog.pg_default_acl AS default_acl
        INNER JOIN pg_catalog.pg_roles AS owner_role ON owner_role.oid = default_acl.defaclrole
@@ -518,6 +544,7 @@ func expectedApprovalPolicyControlStoreACLV2(
 	for _, role := range []string{
 		expectation.ControlReaderRole,
 		expectation.ControlActivatorRole,
+		expectation.ControlAttemptIssuerRole,
 		expectation.ControlFencerRole,
 	} {
 		add("database", expectation.ControlDatabase, role, "CONNECT")
@@ -528,11 +555,14 @@ func expectedApprovalPolicyControlStoreACLV2(
 	for _, role := range []string{
 		expectation.ControlReaderRole,
 		expectation.ControlActivatorRole,
+		expectation.ControlAttemptIssuerRole,
 		expectation.ControlFencerRole,
 	} {
 		add("schema", approvalPolicyControlStoreSchemaName, role, "USAGE")
 	}
 	for _, table := range []string{
+		"approval_execution_attempt_counter",
+		"approval_execution_attempt_record",
 		"approval_execution_fence_counter",
 		"approval_execution_fence_head",
 		"approval_execution_fence_record",
@@ -549,6 +579,10 @@ func expectedApprovalPolicyControlStoreACLV2(
 	for _, function := range []string{
 		approvalPolicyControlStoreActivateFunction,
 		approvalPolicyControlStoreAdmissionFunction,
+		approvalPolicyControlStoreAttemptIssueFunction,
+		approvalPolicyControlStoreAttemptReadFunction,
+		"approval_execution_attempt_admission_is_trusted",
+		"approval_execution_attempt_is_valid",
 		approvalPolicyControlStoreFenceOpenFunction,
 		approvalPolicyControlStoreFenceReadFunction,
 		approvalPolicyControlStoreIdentityFunction,
@@ -569,6 +603,14 @@ func expectedApprovalPolicyControlStoreACLV2(
 		approvalPolicyControlStoreReadFunction,
 	} {
 		add("function", function, expectation.ControlActivatorRole, "EXECUTE")
+	}
+	for _, function := range []string{
+		approvalPolicyControlStoreAttemptIssueFunction,
+		approvalPolicyControlStoreAttemptReadFunction,
+		approvalPolicyControlStoreIdentityFunction,
+		approvalPolicyControlStoreReadFunction,
+	} {
+		add("function", function, expectation.ControlAttemptIssuerRole, "EXECUTE")
 	}
 	for _, function := range []string{
 		approvalPolicyControlStoreFenceOpenFunction,

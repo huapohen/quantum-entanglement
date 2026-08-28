@@ -14,11 +14,11 @@ import (
 )
 
 const (
-	ApprovalExecutionFenceRecordFormat     = "wanwork.im.postgres-authority-approval-execution-fence/2"
+	ApprovalExecutionFenceRecordFormat     = "wanwork.im.postgres-authority-approval-execution-fence/3"
 	approvalConsumptionIDDomain            = "wanwork.im/postgres-authority-approval-consumption/1\n"
 	approvalExecutionOperationIDDomain     = "wanwork.im/postgres-authority-approval-operation/1\n"
 	approvalExecutionAdmissionDomain       = "wanwork.im/postgres-authority-approval-execution-admission/1\n"
-	approvalExecutionFenceDigestDomain     = "wanwork.im/postgres-authority-approval-execution-fence/2\n"
+	approvalExecutionFenceDigestDomain     = "wanwork.im/postgres-authority-approval-execution-fence/3\n"
 	approvalExecutionTokenDigestDomain     = "wanwork.im/postgres-authority-approval-execution-token/1\n"
 	approvalExecutionTokenBytes            = 32
 	approvalExecutionReconcileTimeout      = 5 * time.Second
@@ -63,6 +63,7 @@ type ApprovalExecutionFenceRecord struct {
 	ExecutionAttemptCreatedAt      time.Time          `json:"executionAttemptCreatedAt"`
 	ExecutionAttemptGeneration     uint64             `json:"executionAttemptGeneration"`
 	ExecutionAttemptID             string             `json:"executionAttemptId"`
+	ExecutionAttemptIssuanceID     string             `json:"executionAttemptIssuanceId"`
 	ExecutionAttemptReceiptDigest  string             `json:"executionAttemptReceiptDigest"`
 	ExpectedPolicyHead             ApprovalPolicyHead `json:"expectedPolicyHead"`
 	FenceEpoch                     uint64             `json:"fenceEpoch"`
@@ -320,10 +321,8 @@ func newApprovalExecutionFenceCandidate(
 	planSnapshot := plan.Snapshot()
 	reportSnapshot := report.Snapshot()
 	attemptRecord := attempt.record
-	if !validApprovalExecutionAttemptRecord(attemptRecord, true) ||
-		attemptRecord.PlanID != planSnapshot.PlanID ||
-		attemptRecord.PlanDigest != plan.Digest() ||
-		attemptRecord.TargetDigest != approval.PolicyTargetDigest() {
+	expectedAttempt, err := newApprovalExecutionAttemptCandidate(plan, approval, report)
+	if err != nil || !approvalExecutionAttemptReadbackMatches(attemptRecord, expectedAttempt) {
 		return approvalExecutionFenceCandidate{}, ErrInvalidApprovalExecutionState
 	}
 	head := ApprovalPolicyHead{
@@ -352,6 +351,7 @@ func newApprovalExecutionFenceCandidate(
 		ExecutionAttemptCreatedAt:      attemptRecord.CreatedAt,
 		ExecutionAttemptGeneration:     attemptRecord.AttemptGeneration,
 		ExecutionAttemptID:             attemptRecord.AttemptID,
+		ExecutionAttemptIssuanceID:     attemptRecord.AttemptIssuanceID,
 		ExecutionAttemptReceiptDigest:  attemptRecord.AttemptReceiptDigest,
 		ExpectedPolicyHead:             head,
 		Format:                         ApprovalExecutionFenceRecordFormat,
@@ -424,6 +424,7 @@ func validApprovalExecutionFenceRecord(
 		!canonicalDigest.MatchString(record.TokenDigest) ||
 		record.OpenedAt.Before(record.ApprovedAt) ||
 		record.OpenedAt.Before(record.PreflightObservedAt) ||
+		record.OpenedAt.Before(record.ExecutionAttemptCreatedAt) ||
 		!record.OpenedAt.Before(record.MutationNotAfter) ||
 		!validApprovalExecutionFenceBinding(record) {
 		return false
@@ -443,14 +444,31 @@ func validApprovalExecutionFenceRecord(
 
 func validApprovalExecutionFenceBinding(record ApprovalExecutionFenceRecord) bool {
 	attemptRecord := ApprovalExecutionAttemptRecord{
-		AttemptGeneration:    record.ExecutionAttemptGeneration,
-		AttemptID:            record.ExecutionAttemptID,
-		AttemptReceiptDigest: record.ExecutionAttemptReceiptDigest,
-		CreatedAt:            record.ExecutionAttemptCreatedAt,
-		Format:               ApprovalExecutionAttemptRecordFormat,
-		PlanDigest:           record.PlanDigest,
-		PlanID:               record.PlanID,
-		TargetDigest:         record.ApprovalPolicyTargetDigest,
+		ApprovalDigest:                record.ApprovalDigest,
+		ApprovalExpiresAt:             record.ApprovalExpiresAt,
+		ApprovalKeyFingerprint:        record.ApprovalKeyFingerprint,
+		ApprovalKeyGeneration:         record.ApprovalKeyGeneration,
+		ApprovalKeyID:                 record.ApprovalKeyID,
+		ApprovalPolicyRevision:        record.ApprovalPolicyRevision,
+		ApprovalPolicyRootTrustDigest: record.ApprovalPolicyRootTrustDigest,
+		ApprovalReference:             record.ApprovalReference,
+		ApprovedAt:                    record.ApprovedAt,
+		ApproverIdentity:              record.ApproverIdentity,
+		AttemptGeneration:             record.ExecutionAttemptGeneration,
+		AttemptID:                     record.ExecutionAttemptID,
+		AttemptIssuanceID:             record.ExecutionAttemptIssuanceID,
+		AttemptReceiptDigest:          record.ExecutionAttemptReceiptDigest,
+		CreatedAt:                     record.ExecutionAttemptCreatedAt,
+		ExpectedPolicyHead:            record.ExpectedPolicyHead,
+		Format:                        ApprovalExecutionAttemptRecordFormat,
+		MutationNotAfter:              record.MutationNotAfter,
+		PlanDigest:                    record.PlanDigest,
+		PlanExpiresAt:                 record.PlanExpiresAt,
+		PlanID:                        record.PlanID,
+		PreflightExpiresAt:            record.PreflightExpiresAt,
+		PreflightObservedAt:           record.PreflightObservedAt,
+		PreflightReportDigest:         record.PreflightReportDigest,
+		TargetDigest:                  record.ApprovalPolicyTargetDigest,
 	}
 	return record.Format == ApprovalExecutionFenceRecordFormat &&
 		canonicalDigest.MatchString(record.AdmissionDigest) &&
@@ -477,6 +495,8 @@ func validApprovalExecutionFenceBinding(record ApprovalExecutionFenceRecord) boo
 		record.ExecutionAttemptGeneration > 0 &&
 		canonicalIdentity(record.ExecutionAttemptID) &&
 		strings.HasPrefix(record.ExecutionAttemptID, "execution-attempt/") &&
+		canonicalIdentity(record.ExecutionAttemptIssuanceID) &&
+		strings.HasPrefix(record.ExecutionAttemptIssuanceID, "execution-attempt-issuance/") &&
 		canonicalDigest.MatchString(record.ExecutionAttemptReceiptDigest) &&
 		validApprovalExecutionAttemptRecord(attemptRecord, true) &&
 		record.ExpectedPolicyHead == (ApprovalPolicyHead{
@@ -493,7 +513,7 @@ func validApprovalExecutionFenceBinding(record ApprovalExecutionFenceRecord) boo
 		canonicalIdentity(record.PlanID) &&
 		canonicalPreflightTime(record.PreflightExpiresAt) &&
 		canonicalPreflightTime(record.PreflightObservedAt) &&
-		!record.ExecutionAttemptCreatedAt.After(record.PreflightObservedAt) &&
+		!record.ExecutionAttemptCreatedAt.Before(record.PreflightObservedAt) &&
 		record.PreflightExpiresAt.After(record.PreflightObservedAt) &&
 		canonicalDigest.MatchString(record.PreflightReportDigest) &&
 		record.MutationNotAfter == earliestApprovalExecutionExpiry(

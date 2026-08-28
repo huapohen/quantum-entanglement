@@ -297,6 +297,36 @@ func TestPostgresApprovalPolicyStoreRejectsACLAndRoleGraphDrift(t *testing.T) {
 			t.Fatalf("role drift error = %v, want fixed %v", err, ErrUntrustedPostgresApprovalPolicyStore)
 		}
 	})
+
+	t.Run("alternate activator principal", func(t *testing.T) {
+		fixture := provisionApprovalPolicyControlStorePostgresFixture(t)
+		rogueRole := fixture.activatorRole + "_rogue"
+		quotedRogue := pgx.Identifier{rogueRole}.Sanitize()
+		t.Cleanup(func() {
+			_, _ = fixture.admin.Exec(context.Background(),
+				"REVOKE "+pgx.Identifier{fixture.activatorRole}.Sanitize()+" FROM "+quotedRogue,
+			)
+			_, _ = fixture.admin.Exec(context.Background(), "DROP ROLE IF EXISTS "+quotedRogue)
+		})
+		if _, err := fixture.admin.Exec(t.Context(),
+			"CREATE ROLE "+quotedRogue+
+				" NOLOGIN NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS",
+		); err != nil {
+			t.Fatalf("create alternate activator principal: %v", err)
+		}
+		if _, err := fixture.admin.Exec(t.Context(),
+			"GRANT "+pgx.Identifier{fixture.activatorRole}.Sanitize()+" TO "+quotedRogue+
+				" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE",
+		); err != nil {
+			t.Fatalf("grant activator to alternate principal: %v", err)
+		}
+		if _, err := fixture.store.Load(
+			t.Context(),
+			approvalPolicyNamespace(fixture.policy.toSign.snapshot),
+		); err != ErrUntrustedPostgresApprovalPolicyStore {
+			t.Fatalf("incoming role drift error = %v, want fixed %v", err, ErrUntrustedPostgresApprovalPolicyStore)
+		}
+	})
 }
 
 func TestPostgresApprovalPolicyStoreRejectsEveryExpectedHeadDriftWithoutOrphans(t *testing.T) {
@@ -558,6 +588,9 @@ func provisionApprovalPolicyControlStorePostgresFixture(
 	schemaSQL := renderApprovalPolicyControlStoreSchema(t, quotedOwner, quotedReader, quotedActivator)
 	if _, err := databaseAdmin.Exec(t.Context(), schemaSQL); err != nil {
 		t.Fatalf("install control-store schema: %v", err)
+	}
+	if _, err := admin.Exec(t.Context(), "REVOKE "+quotedOwner+" FROM "+quotedAdmin); err != nil {
+		t.Fatalf("remove control-store provisioner membership: %v", err)
 	}
 
 	writerConfig, err := pgxpool.ParseConfig(adminURL)

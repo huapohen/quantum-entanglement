@@ -26,6 +26,8 @@ const (
 	approvalPolicyControlStoreActivateFunction       = "compare_and_activate_approval_policy"
 	approvalPolicyControlStoreFenceReadFunction      = "read_approval_execution_fence"
 	approvalPolicyControlStoreFenceOpenFunction      = "compare_and_open_approval_execution_fence"
+	approvalPolicyControlStoreAttemptReadFunction    = "read_approval_execution_attempt"
+	approvalPolicyControlStoreAttemptIssueFunction   = "compare_and_issue_approval_execution_attempt"
 	approvalPolicyControlStoreAdmissionFunction      = "approval_execution_admission_is_valid"
 	approvalPolicyControlStoreTargetLockSeed         = int64(7318470027)
 	approvalPolicyControlStoreCleanupTimeout         = 5 * time.Second
@@ -38,6 +40,7 @@ var (
 
 type ApprovalPolicyControlStoreExpectation struct {
 	ControlActivatorRole          string
+	ControlAttemptIssuerRole      string
 	ControlDatabase               string
 	ControlFencerRole             string
 	ControlLoginRole              string
@@ -61,11 +64,12 @@ type approvalPolicyControlStoreSchemaVersion uint8
 type approvalPolicyControlStoreAccess uint8
 
 const (
-	approvalPolicyControlStoreSchemaVersionV1   approvalPolicyControlStoreSchemaVersion = 1
-	approvalPolicyControlStoreSchemaVersionV2   approvalPolicyControlStoreSchemaVersion = 2
-	approvalPolicyControlStoreAccessV1Activator approvalPolicyControlStoreAccess        = 1
-	approvalPolicyControlStoreAccessV2Activator approvalPolicyControlStoreAccess        = 2
-	approvalPolicyControlStoreAccessV2Fencer    approvalPolicyControlStoreAccess        = 3
+	approvalPolicyControlStoreSchemaVersionV1       approvalPolicyControlStoreSchemaVersion = 1
+	approvalPolicyControlStoreSchemaVersionV2       approvalPolicyControlStoreSchemaVersion = 2
+	approvalPolicyControlStoreAccessV1Activator     approvalPolicyControlStoreAccess        = 1
+	approvalPolicyControlStoreAccessV2Activator     approvalPolicyControlStoreAccess        = 2
+	approvalPolicyControlStoreAccessV2Fencer        approvalPolicyControlStoreAccess        = 3
+	approvalPolicyControlStoreAccessV2AttemptIssuer approvalPolicyControlStoreAccess        = 4
 )
 
 // PostgresApprovalPolicyActivationStore persists one policy namespace in a physically separate
@@ -172,8 +176,11 @@ func (store *PostgresApprovalPolicyActivationStore) Load(
 		return ApprovalPolicyStoredState{}, ErrApprovalPolicyStoreUnavailable
 	}
 	defer connection.Release()
-	if !store.verifyConnection(ctx, connection.Conn()) {
-		return ApprovalPolicyStoredState{}, ErrUntrustedPostgresApprovalPolicyStore
+	if err := store.verifyConnection(ctx, connection.Conn()); err != nil {
+		if errors.Is(err, ErrUntrustedPostgresApprovalPolicyStore) {
+			return ApprovalPolicyStoredState{}, ErrUntrustedPostgresApprovalPolicyStore
+		}
+		return ApprovalPolicyStoredState{}, ErrApprovalPolicyStoreUnavailable
 	}
 	var (
 		activationRecordDigest *string
@@ -278,8 +285,11 @@ func (store *PostgresApprovalPolicyActivationStore) CompareAndActivate(
 		}
 	}
 	defer release()
-	if !store.verifyConnection(ctx, connection.Conn()) {
-		return ErrUntrustedPostgresApprovalPolicyStore
+	if err := store.verifyConnection(ctx, connection.Conn()); err != nil {
+		if errors.Is(err, ErrUntrustedPostgresApprovalPolicyStore) {
+			return ErrUntrustedPostgresApprovalPolicyStore
+		}
+		return ErrApprovalPolicyStoreUnavailable
 	}
 	var outcome string
 	err = connection.QueryRow(ctx, `
@@ -325,9 +335,9 @@ SELECT wanwork_policy_control.compare_and_activate_approval_policy(
 func (store *PostgresApprovalPolicyActivationStore) verifyConnection(
 	ctx context.Context,
 	connection *pgx.Conn,
-) bool {
+) error {
 	if store == nil {
-		return false
+		return ErrUntrustedPostgresApprovalPolicyStore
 	}
 	return verifyApprovalPolicyControlStoreConnection(
 		ctx,
@@ -344,10 +354,12 @@ func verifyApprovalPolicyControlStoreConnection(
 	expectation ApprovalPolicyControlStoreExpectation,
 	access approvalPolicyControlStoreAccess,
 	verifyTransport approvalPolicyControlStoreTransportVerifier,
-) bool {
-	if connection == nil || connection.IsClosed() || verifyTransport == nil ||
-		!validApprovalPolicyControlStoreAccess(expectation, access) {
-		return false
+) error {
+	if connection == nil || connection.IsClosed() {
+		return ErrApprovalPolicyStoreUnavailable
+	}
+	if verifyTransport == nil || !validApprovalPolicyControlStoreAccess(expectation, access) {
+		return ErrUntrustedPostgresApprovalPolicyStore
 	}
 	var (
 		expectedSchemaDigest string
@@ -356,7 +368,7 @@ func verifyApprovalPolicyControlStoreConnection(
 	)
 	schemaVersion, ok := approvalPolicyControlStoreAccessSchemaVersion(access)
 	if !ok {
-		return false
+		return ErrUntrustedPostgresApprovalPolicyStore
 	}
 	switch schemaVersion {
 	case approvalPolicyControlStoreSchemaVersionV1:
@@ -368,7 +380,7 @@ func verifyApprovalPolicyControlStoreConnection(
 		expectedSchemaFormat = ApprovalPolicyControlStoreSchemaFormatV2
 		verifyCatalog = verifyApprovalPolicyControlStoreCatalogV2
 	default:
-		return false
+		return ErrUntrustedPostgresApprovalPolicyStore
 	}
 	probeExpectation := PostgreSQLClusterProbeExpectation{
 		Database:        expectation.ControlDatabase,
@@ -378,7 +390,7 @@ func verifyApprovalPolicyControlStoreConnection(
 		TLS:             expectation.ControlTLS,
 	}
 	if !verifyTransport(connection, probeExpectation) {
-		return false
+		return ErrUntrustedPostgresApprovalPolicyStore
 	}
 	var (
 		currentRole         string
@@ -392,9 +404,12 @@ SELECT session_user::text,
 		&sessionRole,
 		&currentRole,
 		&readOnlyTransaction,
-	); err != nil || sessionRole != expectation.ControlLoginRole ||
+	); err != nil {
+		return approvalPolicyControlStoreVerificationQueryError(ctx, connection)
+	}
+	if sessionRole != expectation.ControlLoginRole ||
 		currentRole != expectation.ControlLoginRole || readOnlyTransaction {
-		return false
+		return ErrUntrustedPostgresApprovalPolicyStore
 	}
 	var (
 		database         string
@@ -425,22 +440,37 @@ FROM wanwork_policy_control.read_store_identity() AS identity`).Scan(
 		&schemaFormat,
 		&schemaDigest,
 	)
-	if err != nil || loginRole != expectation.ControlLoginRole ||
-		ownerRole != expectation.ControlOwnerRole ||
+	if err != nil {
+		return approvalPolicyControlStoreVerificationQueryError(ctx, connection)
+	}
+	if loginRole != expectation.ControlLoginRole || ownerRole != expectation.ControlOwnerRole ||
 		database != expectation.ControlDatabase || serverVersion/10000 != expectation.ControlPostgreSQLMajor ||
 		inRecovery || schemaFormat != expectedSchemaFormat ||
 		schemaDigest != expectedSchemaDigest ||
 		!canonicalPostgreSQLSystemIdentifier.MatchString(systemIdentifier) {
-		return false
+		return ErrUntrustedPostgresApprovalPolicyStore
 	}
 	if _, err := strconv.ParseUint(systemIdentifier, 10, 64); err != nil {
-		return false
+		return ErrUntrustedPostgresApprovalPolicyStore
 	}
 	if digestPostgreSQLSystemIdentifier(systemIdentifier) !=
 		expectation.ControlSystemIdentifierDigest {
-		return false
+		return ErrUntrustedPostgresApprovalPolicyStore
 	}
-	return verifyCatalog(ctx, connection, expectation)
+	if !verifyCatalog(ctx, connection, expectation) {
+		return approvalPolicyControlStoreVerificationQueryError(ctx, connection)
+	}
+	return nil
+}
+
+func approvalPolicyControlStoreVerificationQueryError(
+	ctx context.Context,
+	connection *pgx.Conn,
+) error {
+	if ctx == nil || ctx.Err() != nil || connection == nil || connection.IsClosed() {
+		return ErrApprovalPolicyStoreUnavailable
+	}
+	return ErrUntrustedPostgresApprovalPolicyStore
 }
 
 func approvalPolicyControlStoreAccessSchemaVersion(
@@ -449,7 +479,8 @@ func approvalPolicyControlStoreAccessSchemaVersion(
 	switch access {
 	case approvalPolicyControlStoreAccessV1Activator:
 		return approvalPolicyControlStoreSchemaVersionV1, true
-	case approvalPolicyControlStoreAccessV2Activator, approvalPolicyControlStoreAccessV2Fencer:
+	case approvalPolicyControlStoreAccessV2Activator, approvalPolicyControlStoreAccessV2Fencer,
+		approvalPolicyControlStoreAccessV2AttemptIssuer:
 		return approvalPolicyControlStoreSchemaVersionV2, true
 	default:
 		return 0, false
@@ -469,6 +500,9 @@ func validApprovalPolicyControlStoreAccess(
 	case approvalPolicyControlStoreAccessV2Fencer:
 		return validApprovalPolicyControlStoreExpectationV2(expectation) &&
 			expectation.ControlLoginRole == expectation.ControlFencerRole
+	case approvalPolicyControlStoreAccessV2AttemptIssuer:
+		return validApprovalPolicyControlStoreExpectationV2(expectation) &&
+			expectation.ControlLoginRole == expectation.ControlAttemptIssuerRole
 	default:
 		return false
 	}
@@ -478,6 +512,7 @@ func validApprovalPolicyControlStoreExpectation(
 	expectation ApprovalPolicyControlStoreExpectation,
 ) bool {
 	return expectation.ControlActivatorRole == "" &&
+		expectation.ControlAttemptIssuerRole == "" &&
 		expectation.ControlFencerRole == "" &&
 		validApprovalPolicyControlStoreExpectationCommon(expectation) &&
 		canonicalIdentity(expectation.ControlOwnerRole) &&
@@ -494,6 +529,7 @@ func validApprovalPolicyControlStoreExpectationV2(
 		!canonicalIdentity(expectation.ControlOwnerRole) ||
 		!canonicalIdentity(expectation.ControlReaderRole) ||
 		!canonicalIdentity(expectation.ControlActivatorRole) ||
+		!canonicalIdentity(expectation.ControlAttemptIssuerRole) ||
 		!canonicalIdentity(expectation.ControlFencerRole) {
 		return false
 	}
@@ -501,6 +537,7 @@ func validApprovalPolicyControlStoreExpectationV2(
 		expectation.ControlOwnerRole,
 		expectation.ControlReaderRole,
 		expectation.ControlActivatorRole,
+		expectation.ControlAttemptIssuerRole,
 		expectation.ControlFencerRole,
 	}
 	for left := range roles {
@@ -565,36 +602,42 @@ type approvalPolicyControlStoreContract struct {
 }
 
 type approvalPolicyControlStoreContractV2 struct {
-	ActivateFunction            string              `json:"activateFunction"`
-	ActivateFunctionArguments   []string            `json:"activateFunctionArguments"`
-	ActivateFunctionResult      string              `json:"activateFunctionResult"`
-	ActivationRecordFormat      string              `json:"activationRecordFormat"`
-	AdmissionFunction           string              `json:"admissionFunction"`
-	AdmissionFunctionArguments  []string            `json:"admissionFunctionArguments"`
-	AdmissionFunctionResult     string              `json:"admissionFunctionResult"`
-	AdmissionMaximumBytes       int                 `json:"admissionMaximumBytes"`
-	AttemptRecordFormat         string              `json:"attemptRecordFormat"`
-	CanonicalPolicyMaximumBytes int                 `json:"canonicalPolicyMaximumBytes"`
-	CanonicalRecordMaximumBytes int                 `json:"canonicalRecordMaximumBytes"`
-	FenceOpenFunction           string              `json:"fenceOpenFunction"`
-	FenceOpenFunctionArguments  []string            `json:"fenceOpenFunctionArguments"`
-	FenceOpenFunctionResult     string              `json:"fenceOpenFunctionResult"`
-	FenceReadFunction           string              `json:"fenceReadFunction"`
-	FenceReadFunctionArguments  []string            `json:"fenceReadFunctionArguments"`
-	FenceReadFunctionResult     []string            `json:"fenceReadFunctionResult"`
-	FenceRecordFormat           string              `json:"fenceRecordFormat"`
-	IdentityFunction            string              `json:"identityFunction"`
-	IdentityFunctionArguments   []string            `json:"identityFunctionArguments"`
-	IdentityFunctionResult      []string            `json:"identityFunctionResult"`
-	PolicyReadFunction          string              `json:"policyReadFunction"`
-	PolicyReadFunctionArguments []string            `json:"policyReadFunctionArguments"`
-	PolicyReadFunctionResult    []string            `json:"policyReadFunctionResult"`
-	RoleFunctions               map[string][]string `json:"roleFunctions"`
-	Schema                      string              `json:"schema"`
-	SchemaFormat                string              `json:"schemaFormat"`
-	Tables                      []string            `json:"tables"`
-	TargetLockScope             string              `json:"targetLockScope"`
-	TargetLockSeed              int64               `json:"targetLockSeed"`
+	ActivateFunction              string              `json:"activateFunction"`
+	ActivateFunctionArguments     []string            `json:"activateFunctionArguments"`
+	ActivateFunctionResult        string              `json:"activateFunctionResult"`
+	ActivationRecordFormat        string              `json:"activationRecordFormat"`
+	AdmissionFunction             string              `json:"admissionFunction"`
+	AdmissionFunctionArguments    []string            `json:"admissionFunctionArguments"`
+	AdmissionFunctionResult       string              `json:"admissionFunctionResult"`
+	AdmissionMaximumBytes         int                 `json:"admissionMaximumBytes"`
+	AttemptIssueFunction          string              `json:"attemptIssueFunction"`
+	AttemptIssueFunctionArguments []string            `json:"attemptIssueFunctionArguments"`
+	AttemptIssueFunctionResult    string              `json:"attemptIssueFunctionResult"`
+	AttemptReadFunction           string              `json:"attemptReadFunction"`
+	AttemptReadFunctionArguments  []string            `json:"attemptReadFunctionArguments"`
+	AttemptReadFunctionResult     []string            `json:"attemptReadFunctionResult"`
+	AttemptRecordFormat           string              `json:"attemptRecordFormat"`
+	CanonicalPolicyMaximumBytes   int                 `json:"canonicalPolicyMaximumBytes"`
+	CanonicalRecordMaximumBytes   int                 `json:"canonicalRecordMaximumBytes"`
+	FenceOpenFunction             string              `json:"fenceOpenFunction"`
+	FenceOpenFunctionArguments    []string            `json:"fenceOpenFunctionArguments"`
+	FenceOpenFunctionResult       string              `json:"fenceOpenFunctionResult"`
+	FenceReadFunction             string              `json:"fenceReadFunction"`
+	FenceReadFunctionArguments    []string            `json:"fenceReadFunctionArguments"`
+	FenceReadFunctionResult       []string            `json:"fenceReadFunctionResult"`
+	FenceRecordFormat             string              `json:"fenceRecordFormat"`
+	IdentityFunction              string              `json:"identityFunction"`
+	IdentityFunctionArguments     []string            `json:"identityFunctionArguments"`
+	IdentityFunctionResult        []string            `json:"identityFunctionResult"`
+	PolicyReadFunction            string              `json:"policyReadFunction"`
+	PolicyReadFunctionArguments   []string            `json:"policyReadFunctionArguments"`
+	PolicyReadFunctionResult      []string            `json:"policyReadFunctionResult"`
+	RoleFunctions                 map[string][]string `json:"roleFunctions"`
+	Schema                        string              `json:"schema"`
+	SchemaFormat                  string              `json:"schemaFormat"`
+	Tables                        []string            `json:"tables"`
+	TargetLockScope               string              `json:"targetLockScope"`
+	TargetLockSeed                int64               `json:"targetLockSeed"`
 }
 
 func CurrentApprovalPolicyControlStoreSchemaDigest() string {
@@ -650,8 +693,18 @@ func CurrentApprovalPolicyControlStoreSchemaDigestV2() string {
 			"bytea", "text", "text", "bigint", "text", "text", "text", "text", "text", "text",
 			"text", "text", "text", "text", "timestamptz",
 		},
-		AdmissionFunctionResult:     "boolean",
-		AdmissionMaximumBytes:       maximumApprovalExecutionAdmissionBytes,
+		AdmissionFunctionResult:       "boolean",
+		AdmissionMaximumBytes:         maximumApprovalExecutionAdmissionBytes,
+		AttemptIssueFunction:          approvalPolicyControlStoreAttemptIssueFunction,
+		AttemptIssueFunctionArguments: []string{"text", "bytea"},
+		AttemptIssueFunctionResult:    "state_status text, attempt_generation bigint, attempt_id text, attempt_issuance_id text, attempt_receipt_digest text, created_at timestamptz, canonical_attempt bytea",
+		AttemptReadFunction:           approvalPolicyControlStoreAttemptReadFunction,
+		AttemptReadFunctionArguments:  []string{"text", "text", "text"},
+		AttemptReadFunctionResult: []string{
+			"state_status text", "attempt_generation bigint", "attempt_id text",
+			"attempt_issuance_id text", "attempt_receipt_digest text", "created_at timestamptz",
+			"canonical_attempt bytea",
+		},
 		AttemptRecordFormat:         ApprovalExecutionAttemptRecordFormat,
 		CanonicalPolicyMaximumBytes: maximumApprovalPolicyBytes,
 		CanonicalRecordMaximumBytes: maximumApprovalPolicyActivationRecordBytes,
@@ -692,6 +745,12 @@ func CurrentApprovalPolicyControlStoreSchemaDigestV2() string {
 				approvalPolicyControlStoreIdentityFunction,
 				approvalPolicyControlStoreReadFunction,
 			},
+			"attemptIssuer": {
+				approvalPolicyControlStoreAttemptIssueFunction,
+				approvalPolicyControlStoreAttemptReadFunction,
+				approvalPolicyControlStoreIdentityFunction,
+				approvalPolicyControlStoreReadFunction,
+			},
 			"reader": {
 				approvalPolicyControlStoreFenceReadFunction,
 				approvalPolicyControlStoreIdentityFunction,
@@ -701,6 +760,8 @@ func CurrentApprovalPolicyControlStoreSchemaDigestV2() string {
 		Schema:       approvalPolicyControlStoreSchemaName,
 		SchemaFormat: ApprovalPolicyControlStoreSchemaFormatV2,
 		Tables: []string{
+			"approval_execution_attempt_counter",
+			"approval_execution_attempt_record",
 			"approval_execution_fence_counter",
 			"approval_execution_fence_head",
 			"approval_execution_fence_record",

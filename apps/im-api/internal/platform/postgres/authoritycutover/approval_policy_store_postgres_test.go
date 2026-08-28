@@ -17,14 +17,14 @@ func TestApprovalPolicyControlStoreContractDigestIsFrozen(t *testing.T) {
 }
 
 func TestApprovalPolicyControlStoreV2ContractDigestIsFrozen(t *testing.T) {
-	const expected = "sha256:538edf69be324b0c4219a59f7678aabdcd7ac622215f667494c1919362360dcc"
+	const expected = "sha256:4ac5b4da641d2d31d814addc964a0ccf33749996ea3f81274741827374aa8de5"
 	if actual := CurrentApprovalPolicyControlStoreSchemaDigestV2(); actual != expected {
 		t.Fatalf("control-store v2 contract digest = %q, want %q", actual, expected)
 	}
 }
 
 func TestApprovalPolicyControlStoreV2CatalogDigestIsFrozen(t *testing.T) {
-	const expected = "sha256:13161a7b2727018f0c737be572cdcffdadb10f0ef93641b0414fd5ab9741c6e7"
+	const expected = "sha256:e06225e0adf9452874f0db4cdd2fb7e584d3334015ef9f7e2d77af4b011ab3ce"
 	if approvalPolicyControlStoreCatalogDigestV2 != expected {
 		t.Fatalf("control-store v2 catalog digest = %q, want %q", approvalPolicyControlStoreCatalogDigestV2, expected)
 	}
@@ -105,11 +105,12 @@ func TestPostgresApprovalPolicyStoreRequiresSeparateExactControlIdentity(t *test
 	}
 }
 
-func TestPostgresApprovalPolicyStoreV2RequiresFourSeparateControlRoles(t *testing.T) {
+func TestPostgresApprovalPolicyStoreV2RequiresFiveSeparateControlRoles(t *testing.T) {
 	fixture := newApprovalPolicyFixture(t)
 	digest := "sha256:" + strings.Repeat("d", 64)
 	expectation := ApprovalPolicyControlStoreExpectation{
 		ControlActivatorRole:          "wanwork_policy_control_activator",
+		ControlAttemptIssuerRole:      "wanwork_policy_control_attempt_issuer",
 		ControlDatabase:               "wanwork_policy_control_prod",
 		ControlFencerRole:             "wanwork_policy_control_fencer",
 		ControlLoginRole:              "wanwork_policy_control_activator",
@@ -163,6 +164,9 @@ func TestPostgresApprovalPolicyStoreV2RequiresFourSeparateControlRoles(t *testin
 		"missing fencer": func(value *ApprovalPolicyControlStoreExpectation) {
 			value.ControlFencerRole = ""
 		},
+		"missing attempt issuer": func(value *ApprovalPolicyControlStoreExpectation) {
+			value.ControlAttemptIssuerRole = ""
+		},
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
@@ -181,15 +185,16 @@ func TestPostgresApprovalPolicyStoreV2RequiresFourSeparateControlRoles(t *testin
 
 func TestApprovalPolicyControlStoreV2ACLIsExactAndRoleSeparated(t *testing.T) {
 	expectation := ApprovalPolicyControlStoreExpectation{
-		ControlActivatorRole: "control_activator",
-		ControlDatabase:      "control_database",
-		ControlFencerRole:    "control_fencer",
-		ControlOwnerRole:     "control_owner",
-		ControlReaderRole:    "control_reader",
+		ControlActivatorRole:     "control_activator",
+		ControlAttemptIssuerRole: "control_attempt_issuer",
+		ControlDatabase:          "control_database",
+		ControlFencerRole:        "control_fencer",
+		ControlOwnerRole:         "control_owner",
+		ControlReaderRole:        "control_reader",
 	}
 	entries := expectedApprovalPolicyControlStoreACLV2(expectation)
-	if len(entries) != 75 {
-		t.Fatalf("v2 ACL entries = %d, want 75", len(entries))
+	if len(entries) != 101 {
+		t.Fatalf("v2 ACL entries = %d, want 101", len(entries))
 	}
 	seen := make(map[string]struct{}, len(entries))
 	functionGrants := make(map[string]map[string]bool)
@@ -214,6 +219,10 @@ func TestApprovalPolicyControlStoreV2ACLIsExactAndRoleSeparated(t *testing.T) {
 		expectation.ControlOwnerRole: {
 			approvalPolicyControlStoreActivateFunction,
 			approvalPolicyControlStoreAdmissionFunction,
+			approvalPolicyControlStoreAttemptIssueFunction,
+			approvalPolicyControlStoreAttemptReadFunction,
+			"approval_execution_attempt_admission_is_trusted",
+			"approval_execution_attempt_is_valid",
 			approvalPolicyControlStoreFenceOpenFunction,
 			approvalPolicyControlStoreFenceReadFunction,
 			approvalPolicyControlStoreIdentityFunction,
@@ -226,6 +235,12 @@ func TestApprovalPolicyControlStoreV2ACLIsExactAndRoleSeparated(t *testing.T) {
 		},
 		expectation.ControlActivatorRole: {
 			approvalPolicyControlStoreActivateFunction,
+			approvalPolicyControlStoreIdentityFunction,
+			approvalPolicyControlStoreReadFunction,
+		},
+		expectation.ControlAttemptIssuerRole: {
+			approvalPolicyControlStoreAttemptIssueFunction,
+			approvalPolicyControlStoreAttemptReadFunction,
 			approvalPolicyControlStoreIdentityFunction,
 			approvalPolicyControlStoreReadFunction,
 		},
@@ -249,6 +264,7 @@ func TestApprovalPolicyControlStoreV2ACLIsExactAndRoleSeparated(t *testing.T) {
 	for _, role := range []string{
 		expectation.ControlReaderRole,
 		expectation.ControlActivatorRole,
+		expectation.ControlAttemptIssuerRole,
 		expectation.ControlFencerRole,
 	} {
 		if functionGrants[role][approvalPolicyControlStoreAdmissionFunction] {
@@ -262,6 +278,7 @@ func TestPostgresApprovalExecutionFenceStoreRequiresExactFencerCredential(t *tes
 	digest := "sha256:" + strings.Repeat("d", 64)
 	expectation := ApprovalPolicyControlStoreExpectation{
 		ControlActivatorRole:          "wanwork_policy_control_activator",
+		ControlAttemptIssuerRole:      "wanwork_policy_control_attempt_issuer",
 		ControlDatabase:               "wanwork_policy_control_prod",
 		ControlFencerRole:             "wanwork_policy_control_fencer",
 		ControlLoginRole:              "wanwork_policy_control_fencer",

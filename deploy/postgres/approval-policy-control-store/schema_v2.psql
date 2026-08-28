@@ -1,0 +1,8 @@
+\set ON_ERROR_STOP on
+
+-- Create-only schema-format-2 installation. The v1 unit remains frozen and is reused as the
+-- reviewed foundation; the explicit v1-to-v2 migration then installs the fence boundary. Both
+-- scripts fail closed on existing objects. The database and credentials must not be published to
+-- runtime clients until this complete psql invocation succeeds.
+\ir schema.psql
+\ir upgrade_schema_v1_to_v2.psql

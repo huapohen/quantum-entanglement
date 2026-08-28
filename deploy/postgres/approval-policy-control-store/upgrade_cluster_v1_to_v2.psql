@@ -1,0 +1,114 @@
+\set ON_ERROR_STOP on
+
+-- Required psql variables are the same as bootstrap_cluster_v2.psql. Run this once from an
+-- administrative connection only after the v1 store has passed its application attestation.
+-- The migration refuses to adopt pre-existing attempt issuer or fencer roles.
+
+SELECT pg_catalog.set_config('wanwork.migration.control_database', :'control_database', false);
+SELECT pg_catalog.set_config('wanwork.migration.owner_role', :'owner_role', false);
+SELECT pg_catalog.set_config('wanwork.migration.reader_role', :'reader_role', false);
+SELECT pg_catalog.set_config('wanwork.migration.activator_role', :'activator_role', false);
+SELECT pg_catalog.set_config(
+    'wanwork.migration.attempt_issuer_role', :'attempt_issuer_role', false
+);
+SELECT pg_catalog.set_config('wanwork.migration.fencer_role', :'fencer_role', false);
+
+BEGIN;
+
+DO $migration_guard$
+DECLARE
+    expected_database text := pg_catalog.current_setting('wanwork.migration.control_database');
+    expected_owner text := pg_catalog.current_setting('wanwork.migration.owner_role');
+    expected_reader text := pg_catalog.current_setting('wanwork.migration.reader_role');
+    expected_activator text := pg_catalog.current_setting('wanwork.migration.activator_role');
+    expected_attempt_issuer text :=
+        pg_catalog.current_setting('wanwork.migration.attempt_issuer_role');
+    expected_fencer text := pg_catalog.current_setting('wanwork.migration.fencer_role');
+    database_owner text;
+    database_encoding text;
+    database_is_template boolean;
+    database_allows_connections boolean;
+    database_connection_limit integer;
+    exact_role_count integer;
+    dangerous_membership_count bigint;
+BEGIN
+    SELECT pg_catalog.count(*)
+    INTO exact_role_count
+    FROM pg_catalog.pg_roles AS role_value
+    WHERE (role_value.rolname = expected_owner AND
+           NOT role_value.rolcanlogin AND NOT role_value.rolsuper AND NOT role_value.rolinherit AND
+           NOT role_value.rolcreaterole AND NOT role_value.rolcreatedb AND
+           NOT role_value.rolreplication AND NOT role_value.rolbypassrls AND
+           role_value.rolconnlimit = -1 AND role_value.rolvaliduntil IS NULL AND
+           role_value.rolconfig IS NULL)
+       OR (role_value.rolname IN (expected_reader, expected_activator) AND
+           role_value.rolcanlogin AND NOT role_value.rolsuper AND NOT role_value.rolinherit AND
+           NOT role_value.rolcreaterole AND NOT role_value.rolcreatedb AND
+           NOT role_value.rolreplication AND NOT role_value.rolbypassrls AND
+           role_value.rolconnlimit = -1 AND role_value.rolvaliduntil IS NULL AND
+           role_value.rolconfig IS NULL);
+    IF exact_role_count <> 3 OR
+       expected_owner = expected_reader OR expected_owner = expected_activator OR
+       expected_reader = expected_activator OR expected_attempt_issuer IN (
+           expected_owner, expected_reader, expected_activator
+       ) OR expected_fencer IN (
+           expected_owner, expected_reader, expected_activator, expected_attempt_issuer
+       ) THEN
+        RAISE EXCEPTION 'v1 approval-policy control roles do not match the frozen contract';
+    END IF;
+
+    SELECT owner_role.rolname,
+           pg_catalog.pg_encoding_to_char(database_value.encoding),
+           database_value.datistemplate,
+           database_value.datallowconn,
+           database_value.datconnlimit
+    INTO database_owner, database_encoding, database_is_template,
+         database_allows_connections, database_connection_limit
+    FROM pg_catalog.pg_database AS database_value
+    INNER JOIN pg_catalog.pg_roles AS owner_role ON owner_role.oid = database_value.datdba
+    WHERE database_value.datname = expected_database;
+    IF database_owner IS DISTINCT FROM expected_owner OR database_encoding IS DISTINCT FROM 'UTF8' OR
+       database_is_template IS DISTINCT FROM false OR
+       database_allows_connections IS DISTINCT FROM true OR database_connection_limit <> -1 THEN
+        RAISE EXCEPTION 'v1 approval-policy control database does not match the frozen contract';
+    END IF;
+
+    IF pg_catalog.to_regrole(expected_attempt_issuer) IS NOT NULL OR
+       pg_catalog.to_regrole(expected_fencer) IS NOT NULL THEN
+        RAISE EXCEPTION 'refusing to adopt pre-existing v2 login role';
+    END IF;
+
+    SELECT pg_catalog.count(*)
+    INTO dangerous_membership_count
+    FROM pg_catalog.pg_auth_members AS membership
+    INNER JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+    INNER JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+    WHERE member_role.rolname IN (expected_owner, expected_reader, expected_activator)
+       OR granted_role.rolname IN (expected_owner, expected_reader, expected_activator);
+    IF dangerous_membership_count <> 0 THEN
+        RAISE EXCEPTION 'v1 approval-policy control role has unexpected membership edge';
+    END IF;
+END
+$migration_guard$;
+
+CREATE ROLE :"attempt_issuer_role"
+    LOGIN NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS
+    CONNECTION LIMIT -1;
+
+CREATE ROLE :"fencer_role"
+    LOGIN NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS
+    CONNECTION LIMIT -1;
+
+REVOKE ALL ON DATABASE :"control_database" FROM :"attempt_issuer_role";
+GRANT CONNECT ON DATABASE :"control_database" TO :"attempt_issuer_role";
+REVOKE ALL ON DATABASE :"control_database" FROM :"fencer_role";
+GRANT CONNECT ON DATABASE :"control_database" TO :"fencer_role";
+
+COMMIT;
+
+RESET wanwork.migration.control_database;
+RESET wanwork.migration.owner_role;
+RESET wanwork.migration.reader_role;
+RESET wanwork.migration.activator_role;
+RESET wanwork.migration.attempt_issuer_role;
+RESET wanwork.migration.fencer_role;

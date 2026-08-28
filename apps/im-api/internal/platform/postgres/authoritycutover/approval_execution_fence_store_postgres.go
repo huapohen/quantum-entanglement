@@ -68,14 +68,17 @@ func (store *PostgresApprovalExecutionFenceStore) Load(
 		return ApprovalExecutionFenceStoredState{}, ErrApprovalExecutionStoreUnavailable
 	}
 	defer connection.Release()
-	if !verifyApprovalPolicyControlStoreConnection(
+	if err := verifyApprovalPolicyControlStoreConnection(
 		ctx,
 		connection.Conn(),
 		store.expectation,
 		approvalPolicyControlStoreAccessV2Fencer,
 		store.verifyTransport,
-	) {
-		return ApprovalExecutionFenceStoredState{}, ErrInvalidApprovalExecutionState
+	); err != nil {
+		if errors.Is(err, ErrUntrustedPostgresApprovalPolicyStore) {
+			return ApprovalExecutionFenceStoredState{}, ErrInvalidApprovalExecutionState
+		}
+		return ApprovalExecutionFenceStoredState{}, ErrApprovalExecutionStoreUnavailable
 	}
 	var (
 		canonicalAdmission []byte
@@ -169,14 +172,17 @@ func (store *PostgresApprovalExecutionFenceStore) CompareAndOpen(
 		}
 	}
 	defer release()
-	if !verifyApprovalPolicyControlStoreConnection(
+	if err := verifyApprovalPolicyControlStoreConnection(
 		ctx,
 		connection.Conn(),
 		store.expectation,
 		approvalPolicyControlStoreAccessV2Fencer,
 		store.verifyTransport,
-	) {
-		return ErrInvalidApprovalExecutionState
+	); err != nil {
+		if errors.Is(err, ErrUntrustedPostgresApprovalPolicyStore) {
+			return ErrInvalidApprovalExecutionState
+		}
+		return ErrApprovalExecutionStoreUnavailable
 	}
 	var outcome string
 	err = connection.QueryRow(ctx, `
@@ -208,7 +214,7 @@ SELECT wanwork_policy_control.compare_and_open_approval_execution_fence(
 		return ErrApprovalExecutionConflict
 	case "expired":
 		return ErrApprovalExecutionExpired
-	case "corrupt", "rejected":
+	case "corrupt", "rejected", "attempt_untrusted":
 		return ErrInvalidApprovalExecutionState
 	default:
 		quarantineApprovalPolicyControlConnection(connection)

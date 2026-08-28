@@ -40,6 +40,7 @@ func TestApprovalExecutionFencerConsumesApprovalAndReturnsOpaqueFence(t *testing
 		!canonicalDigest.MatchString(record.AdmissionDigest) ||
 		record.AdmissionDigest == record.RecordDigest ||
 		record.ExecutionAttemptReceiptDigest != fixture.attempt.ReceiptDigest() ||
+		record.ExecutionAttemptIssuanceID != fixture.attempt.IssuanceID() ||
 		record.ApprovalPolicyTargetDigest != fixture.approval.PolicyTargetDigest() ||
 		!validApprovalExecutionFenceRecord(record, true) ||
 		store.compareCalls != 1 || store.loadCalls != 1 {
@@ -169,7 +170,8 @@ func TestApprovalExecutionFencerRejectsReplayAndBindingDrift(t *testing.T) {
 	fixture := newApprovalExecutionFenceFixture(t)
 	store := newFakeApprovalExecutionFenceStore(fixture.now)
 	fencer := mustApprovalExecutionFencer(t, store, 0x74, fixture.now)
-	if _, err := fencer.ConsumeAndFence(
+	replayFencer := mustApprovalExecutionFencer(t, store, 0x75, fixture.now)
+	if _, err := replayFencer.ConsumeAndFence(
 		t.Context(),
 		fixture.plan,
 		fixture.approval,
@@ -183,7 +185,9 @@ func TestApprovalExecutionFencerRejectsReplayAndBindingDrift(t *testing.T) {
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		mustIssueApprovalExecutionAttempt(t, fixture.attemptIssuer, fixture.plan),
+		mustIssueApprovalExecutionAttempt(
+			t, fixture.attemptIssuer, fixture.plan, fixture.approval, fixture.report,
+		),
 	); !errors.Is(err, ErrApprovalExecutionConflict) {
 		t.Fatalf("approval replay error = %v, want %v", err, ErrApprovalExecutionConflict)
 	}
@@ -192,18 +196,8 @@ func TestApprovalExecutionFencerRejectsReplayAndBindingDrift(t *testing.T) {
 	}
 
 	checksBefore := store.compareCalls
-	otherInput := validPlanInput()
-	otherInput.PlanID = "plan-20260829-0002"
-	otherPlan, err := BuildPlan(otherInput)
-	if err != nil {
-		t.Fatalf("BuildPlan other attempt: %v", err)
-	}
-	otherAttemptStore := &fakeApprovalExecutionAttemptStore{createdAt: fixture.now}
-	otherAttemptIssuer, err := NewApprovalExecutionAttemptIssuer(otherAttemptStore)
-	if err != nil {
-		t.Fatalf("NewApprovalExecutionAttemptIssuer other attempt: %v", err)
-	}
-	otherAttempt := mustIssueApprovalExecutionAttempt(t, otherAttemptIssuer, otherPlan)
+	otherAttempt := fixture.attempt
+	otherAttempt.record.PlanID = "plan-20260829-0002"
 	tests := map[string]struct {
 		approval VerifiedApproval
 		report   PreflightReport
@@ -294,16 +288,58 @@ func TestApprovalExecutionFenceRecordRejectsFieldAndDigestDrift(t *testing.T) {
 		"approval": func(value *ApprovalExecutionFenceRecord) {
 			value.ApprovalDigest = "sha256:" + strings.Repeat("e", 64)
 		},
+		"approval expiry": func(value *ApprovalExecutionFenceRecord) {
+			value.ApprovalExpiresAt = value.ApprovalExpiresAt.Add(-time.Second)
+		},
+		"approval key fingerprint": func(value *ApprovalExecutionFenceRecord) {
+			value.ApprovalKeyFingerprint = "sha256:" + strings.Repeat("e", 64)
+		},
+		"approval key generation": func(value *ApprovalExecutionFenceRecord) {
+			value.ApprovalKeyGeneration += "-other"
+		},
+		"approval key id": func(value *ApprovalExecutionFenceRecord) {
+			value.ApprovalKeyID += "-other"
+		},
+		"approval root trust": func(value *ApprovalExecutionFenceRecord) {
+			value.ApprovalPolicyRootTrustDigest = "sha256:" + strings.Repeat("e", 64)
+		},
 		"reference": func(value *ApprovalExecutionFenceRecord) { value.ApprovalReference += "-other" },
-		"attempt":   func(value *ApprovalExecutionFenceRecord) { value.ExecutionAttemptID += "-other" },
+		"approved at": func(value *ApprovalExecutionFenceRecord) {
+			value.ApprovedAt = value.ApprovedAt.Add(time.Second)
+		},
+		"approver": func(value *ApprovalExecutionFenceRecord) {
+			value.ApproverIdentity += "-other"
+		},
+		"attempt": func(value *ApprovalExecutionFenceRecord) { value.ExecutionAttemptID += "-other" },
 		"attempt generation": func(value *ApprovalExecutionFenceRecord) {
 			value.ExecutionAttemptGeneration++
 		},
 		"attempt created at": func(value *ApprovalExecutionFenceRecord) {
 			value.ExecutionAttemptCreatedAt = value.ExecutionAttemptCreatedAt.Add(time.Second)
 		},
+		"attempt issuance": func(value *ApprovalExecutionFenceRecord) {
+			value.ExecutionAttemptIssuanceID += "-other"
+		},
 		"head": func(value *ApprovalExecutionFenceRecord) {
 			value.ExpectedPolicyHead.Revision++
+		},
+		"mutation expiry": func(value *ApprovalExecutionFenceRecord) {
+			value.MutationNotAfter = value.MutationNotAfter.Add(-time.Second)
+		},
+		"plan digest": func(value *ApprovalExecutionFenceRecord) {
+			value.PlanDigest = "sha256:" + strings.Repeat("e", 64)
+		},
+		"plan expiry": func(value *ApprovalExecutionFenceRecord) {
+			value.PlanExpiresAt = value.PlanExpiresAt.Add(-time.Second)
+		},
+		"preflight expiry": func(value *ApprovalExecutionFenceRecord) {
+			value.PreflightExpiresAt = value.PreflightExpiresAt.Add(-time.Second)
+		},
+		"preflight observed": func(value *ApprovalExecutionFenceRecord) {
+			value.PreflightObservedAt = value.PreflightObservedAt.Add(-time.Second)
+		},
+		"preflight digest": func(value *ApprovalExecutionFenceRecord) {
+			value.PreflightReportDigest = "sha256:" + strings.Repeat("e", 64)
 		},
 		"epoch": func(value *ApprovalExecutionFenceRecord) { value.FenceEpoch++ },
 		"operation": func(value *ApprovalExecutionFenceRecord) {
@@ -473,7 +509,9 @@ func TestApprovalExecutionFencerAllowsOneConcurrentApprovalConsumption(t *testin
 	const contenders = 64
 	attempts := make([]ApprovalExecutionAttempt, contenders)
 	for index := range attempts {
-		attempts[index] = mustIssueApprovalExecutionAttempt(t, fixture.attemptIssuer, fixture.plan)
+		attempts[index] = mustIssueApprovalExecutionAttempt(
+			t, fixture.attemptIssuer, fixture.plan, fixture.approval, fixture.report,
+		)
 	}
 	var wait sync.WaitGroup
 	errorsByContender := make(chan error, contenders)
@@ -520,7 +558,7 @@ func TestApprovalExecutionFencerAllowsOneConcurrentApprovalConsumption(t *testin
 	}
 }
 
-func TestApprovalExecutionFenceStoreSerializesPolicyLineagesByPhysicalTarget(t *testing.T) {
+func TestApprovalExecutionFenceRejectsPolicyLineageRewriteOutsideAttemptGrant(t *testing.T) {
 	fixture := newApprovalExecutionFenceFixture(t)
 	store := newFakeApprovalExecutionFenceStore(fixture.now)
 	first, err := newApprovalExecutionFenceCandidate(
@@ -564,8 +602,8 @@ func TestApprovalExecutionFenceStoreSerializesPolicyLineagesByPhysicalTarget(t *
 		second.record.ExecutionAttemptReceiptDigest,
 	)
 	second.record.AdmissionDigest = approvalExecutionAdmissionDigest(second.record)
-	if !validApprovalExecutionFenceCandidate(second) {
-		t.Fatal("second policy lineage candidate is invalid")
+	if validApprovalExecutionFenceCandidate(second) {
+		t.Fatal("rewritten policy lineage escaped the durable attempt grant")
 	}
 	secondNamespace := ApprovalPolicyNamespace{
 		PolicyID:     second.record.ApprovalPolicyID,
@@ -581,8 +619,8 @@ func TestApprovalExecutionFenceStoreSerializesPolicyLineagesByPhysicalTarget(t *
 		second.record.ExpectedPolicyHead,
 		second,
 		tokenB,
-	); !errors.Is(err, ErrApprovalExecutionConflict) {
-		t.Fatalf("second policy lineage error = %v, want %v", err, ErrApprovalExecutionConflict)
+	); !errors.Is(err, ErrInvalidApprovalExecutionState) {
+		t.Fatalf("rewritten policy lineage error = %v, want %v", err, ErrInvalidApprovalExecutionState)
 	}
 	if len(store.states) != 1 || len(store.activeByTarget) != 1 ||
 		store.nextEpochByTarget[firstNamespace.TargetDigest] != 1 {
@@ -769,12 +807,15 @@ func newApprovalExecutionFenceFixture(t *testing.T) approvalExecutionFenceFixtur
 	if err != nil {
 		t.Fatalf("buildPreflightReport: %v", err)
 	}
-	attemptStore := &fakeApprovalExecutionAttemptStore{createdAt: observedAt}
-	attemptIssuer, err := NewApprovalExecutionAttemptIssuer(attemptStore)
+	attemptStore := newFakeApprovalExecutionAttemptStore(observedAt)
+	attemptIssuer, err := newApprovalExecutionAttemptIssuer(
+		attemptStore,
+		func() time.Time { return observedAt },
+	)
 	if err != nil {
 		t.Fatalf("NewApprovalExecutionAttemptIssuer: %v", err)
 	}
-	attempt := mustIssueApprovalExecutionAttempt(t, attemptIssuer, plan)
+	attempt := mustIssueApprovalExecutionAttempt(t, attemptIssuer, plan, approval, report)
 	return approvalExecutionFenceFixture{
 		approval:      approval,
 		attempt:       attempt,
@@ -789,9 +830,11 @@ func mustIssueApprovalExecutionAttempt(
 	t *testing.T,
 	issuer ApprovalExecutionAttemptIssuer,
 	plan Plan,
+	approval VerifiedApproval,
+	report PreflightReport,
 ) ApprovalExecutionAttempt {
 	t.Helper()
-	attempt, err := issuer.Issue(t.Context(), plan)
+	attempt, err := issuer.Issue(t.Context(), plan, approval, report)
 	if err != nil {
 		t.Fatalf("Issue approval execution attempt: %v", err)
 	}
