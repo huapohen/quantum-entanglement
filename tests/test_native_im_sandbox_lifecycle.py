@@ -53,6 +53,18 @@ class BlockingTransport(FixtureTransport):
         return self.response
 
 
+class BlockingCloseTransport(FixtureTransport):
+    def __init__(self, response) -> None:
+        super().__init__(response)
+        self.close_entered = asyncio.Event()
+        self.close_release = asyncio.Event()
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
+        self.close_entered.set()
+        await self.close_release.wait()
+
+
 class CapturingHandler(logging.Handler):
     def __init__(self) -> None:
         super().__init__()
@@ -87,6 +99,7 @@ def lifecycle_inputs(
     tmp_path: Path,
     *,
     blocking: bool = False,
+    blocking_close: bool = False,
     observer: NativeIMSandboxObserverV1 | None = None,
 ):
     profile = provider_profile()
@@ -99,8 +112,12 @@ def lifecycle_inputs(
     adapter, request, configuration, profile, transport, mapper, secrets, _ = adapter_inputs(
         replay_guard=store
     )
-    if blocking:
-        blocked = BlockingTransport(transport.response)
+    if blocking or blocking_close:
+        blocked = (
+            BlockingTransport(transport.response)
+            if blocking
+            else BlockingCloseTransport(transport.response)
+        )
         adapter = NativeIMInboundOnlySandboxAdapter(
             configuration,
             profile,
@@ -301,6 +318,69 @@ async def test_trip_during_inflight_read_prevents_admission_and_restart_resumes(
     finally:
         await resumed.aclose()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_read_retains_preparation_and_can_resume_without_restart(
+    tmp_path: Path,
+) -> None:
+    observer, metrics = sandbox_observer()
+    lifecycle, _, store, _, request, transport = lifecycle_inputs(
+        tmp_path,
+        blocking=True,
+        observer=observer,
+    )
+    assert type(transport) is BlockingTransport
+    try:
+        await lifecycle.start()
+        task = asyncio.create_task(lifecycle.admit_once(request))
+        await transport.entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        preparation = store.prepare_native_im_inbound_read(request)
+        assert preparation.read_status == "prepared"
+        assert lifecycle.status().ready is True
+        assert metrics.snapshot().read_rejected_count == 1
+
+        transport.release.set()
+        resumed = await lifecycle.admit_once(request)
+        assert resumed.disposition == "fresh_observation"
+        assert transport.read_calls == 2
+        assert metrics.snapshot().read_fresh_count == 1
+    finally:
+        await lifecycle.aclose()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_close_is_retryable_and_only_success_marks_adapter_closed(
+    tmp_path: Path,
+) -> None:
+    lifecycle, adapter, store, kill_switch, _, transport = lifecycle_inputs(
+        tmp_path,
+        blocking_close=True,
+    )
+    assert type(transport) is BlockingCloseTransport
+    await lifecycle.start()
+    close_task = asyncio.create_task(lifecycle.aclose())
+    await transport.close_entered.wait()
+    close_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await close_task
+
+    assert lifecycle.status().state == "failed"
+    assert lifecycle.status().ready is False
+    assert kill_switch.tripped is True
+    assert adapter.closed is False
+
+    transport.close_release.set()
+    await lifecycle.aclose()
+    assert lifecycle.status().state == "closed"
+    assert adapter.closed is True
+    assert transport.close_calls == 2
+    store.close()
 
 
 @pytest.mark.asyncio
