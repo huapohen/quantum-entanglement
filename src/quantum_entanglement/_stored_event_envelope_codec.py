@@ -28,6 +28,8 @@ _MAX_PAYLOAD_DEPTH = 64
 _MAX_PAYLOAD_NODES = 10_000
 _MAX_PAYLOAD_KEY_CHARACTERS = 512
 _MAX_PAYLOAD_STRING_CHARACTERS = 65_536
+_MAX_PAYLOAD_INTEGER_DECIMAL_DIGITS = 1_234
+_MAX_PAYLOAD_FLOAT_LEXEME_CHARACTERS = 128
 _CANONICAL_UTC_MICROSECONDS = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z"
 )
@@ -128,6 +130,22 @@ def _reject_json_constant(_value: str) -> Any:
     raise StoredEventEnvelopeCanonicalError("payload contains a non-finite number")
 
 
+def _bounded_json_integer(value: str) -> int:
+    digits = value[1:] if value.startswith("-") else value
+    if len(digits) > _MAX_PAYLOAD_INTEGER_DECIMAL_DIGITS:
+        raise StoredEventEnvelopeError("payload integer exceeds its lexical limit")
+    return int(value, 10)
+
+
+def _bounded_json_float(value: str) -> float:
+    if len(value) > _MAX_PAYLOAD_FLOAT_LEXEME_CHARACTERS:
+        raise StoredEventEnvelopeError("payload float exceeds its lexical limit")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise StoredEventEnvelopeCanonicalError("payload contains a non-finite number")
+    return parsed
+
+
 def _object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -176,10 +194,10 @@ def _validate_payload_value(
             raise StoredEventEnvelopeCanonicalError("payload contains a non-finite number")
         return
     if value_type is list:
-        for index, item in enumerate(cast(list[Any], value)):
+        for item in cast(list[Any], value):
             _validate_payload_value(
                 item,
-                path=f"payload[{index}]",
+                path="payload value",
                 depth=depth + 1,
                 traversal=traversal,
             )
@@ -195,7 +213,7 @@ def _validate_payload_value(
             )
             _validate_payload_value(
                 item,
-                path=f"payload.{key}",
+                path="payload value",
                 depth=depth + 1,
                 traversal=traversal,
             )
@@ -217,6 +235,8 @@ def _canonical_payload(encoded: object) -> tuple[dict[str, Any], str]:
             encoded,
             object_pairs_hook=_object_without_duplicate_keys,
             parse_constant=_reject_json_constant,
+            parse_float=_bounded_json_float,
+            parse_int=_bounded_json_integer,
         )
     except StoredEventEnvelopeError:
         raise
@@ -276,47 +296,70 @@ class _StoredEventEnvelopeV1:
     ) -> None:
         if type(self) is not _StoredEventEnvelopeV1:
             raise StoredEventEnvelopeTypeError("stored event envelope must use its exact class")
+        canonical_event_id = _plain_text(event_id, "event_id")
+        canonical_stream_id = _plain_text(stream_id, "stream_id")
+        canonical_event_type = _plain_text(event_type, "event_type")
+        canonical_actor_id = _plain_text(actor_id, "actor_id")
+        canonical_timestamp = _timestamp(timestamp)
+        canonical_correlation_id = _optional_text(correlation_id, "correlation_id")
+        canonical_causation_id = _optional_text(causation_id, "causation_id")
+        canonical_idempotency_key = _optional_text(idempotency_key, "idempotency_key")
+        canonical_sequence = _positive_integer(sequence, "sequence")
+        canonical_global_position = _positive_integer(
+            global_position,
+            "global_position",
+        )
         _payload, canonical_payload = _canonical_payload(payload_json)
         object.__setattr__(
             self,
             "_StoredEventEnvelopeV1__event_id",
-            _plain_text(event_id, "event_id"),
+            canonical_event_id,
         )
         object.__setattr__(
-            self, "_StoredEventEnvelopeV1__stream_id", _plain_text(stream_id, "stream_id")
+            self,
+            "_StoredEventEnvelopeV1__stream_id",
+            canonical_stream_id,
         )
         object.__setattr__(
-            self, "_StoredEventEnvelopeV1__event_type", _plain_text(event_type, "event_type")
+            self,
+            "_StoredEventEnvelopeV1__event_type",
+            canonical_event_type,
         )
         object.__setattr__(
             self,
             "_StoredEventEnvelopeV1__actor_id",
-            _plain_text(actor_id, "actor_id"),
+            canonical_actor_id,
         )
-        object.__setattr__(self, "_StoredEventEnvelopeV1__timestamp", _timestamp(timestamp))
+        object.__setattr__(
+            self,
+            "_StoredEventEnvelopeV1__timestamp",
+            canonical_timestamp,
+        )
         object.__setattr__(
             self,
             "_StoredEventEnvelopeV1__correlation_id",
-            _optional_text(correlation_id, "correlation_id"),
+            canonical_correlation_id,
         )
         object.__setattr__(
             self,
             "_StoredEventEnvelopeV1__causation_id",
-            _optional_text(causation_id, "causation_id"),
+            canonical_causation_id,
         )
         object.__setattr__(
             self,
             "_StoredEventEnvelopeV1__idempotency_key",
-            _optional_text(idempotency_key, "idempotency_key"),
+            canonical_idempotency_key,
         )
         object.__setattr__(self, "_StoredEventEnvelopeV1__payload_json", canonical_payload)
         object.__setattr__(
-            self, "_StoredEventEnvelopeV1__sequence", _positive_integer(sequence, "sequence")
+            self,
+            "_StoredEventEnvelopeV1__sequence",
+            canonical_sequence,
         )
         object.__setattr__(
             self,
             "_StoredEventEnvelopeV1__global_position",
-            _positive_integer(global_position, "global_position"),
+            canonical_global_position,
         )
 
     def __setattr__(self, _name: str, _value: object) -> None:

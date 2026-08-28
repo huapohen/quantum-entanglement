@@ -430,3 +430,58 @@ def test_valid_canonical_json_edge_values_remain_exact() -> None:
         "negativeZero": -0.0,
         "space": "ordinary space",
     }
+
+
+def test_numeric_lexemes_are_bounded_before_python_number_conversion() -> None:
+    oversized_integer = '{"value":' + ("9" * 100_000) + "}"
+    oversized_float = '{"value":1.' + ("1" * 100_000) + "}"
+
+    for payload_json in (oversized_integer, oversized_float):
+        with pytest.raises(codec.StoredEventEnvelopeError, match="lexical limit"):
+            envelope(payload_json=payload_json)
+
+
+def test_cheap_scalar_rejection_happens_before_payload_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_payload_parse(_value: object) -> tuple[dict[str, Any], str]:
+        raise AssertionError("payload parsing must not run")
+
+    monkeypatch.setattr(codec, "_canonical_payload", forbidden_payload_parse)
+
+    with pytest.raises(codec.StoredEventEnvelopeTypeError, match="event_id"):
+        envelope(event_id=b"invalid")
+    with pytest.raises(codec.StoredEventEnvelopeTypeError, match="sequence"):
+        envelope(sequence=True)
+
+
+def test_payload_errors_do_not_disclose_key_or_value_canaries() -> None:
+    key_canary = "credential_sk_example_canary"
+    value_canary = "value_canary_should_not_escape"
+    payload_json = json.dumps(
+        {key_canary: value_canary + "\n"},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+    with pytest.raises(codec.StoredEventEnvelopeCanonicalError) as raised:
+        envelope(payload_json=payload_json)
+
+    message = str(raised.value)
+    assert key_canary not in message
+    assert value_canary not in message
+
+
+def test_reflective_valid_mutation_cannot_preserve_the_original_digest() -> None:
+    value = envelope()
+
+    object.__setattr__(
+        value,
+        "_StoredEventEnvelopeV1__event_id",
+        "event-reflectively-mutated",
+    )
+
+    assert value.digest() != EXPECTED_DIGEST
+    assert repr(value) == "_StoredEventEnvelopeV1(<capability-free>)"
+    assert not hasattr(value, "accepted")
