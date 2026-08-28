@@ -70,10 +70,10 @@ func (repositories *tenantRepositories) CurrentConversation(
 	reference im.ConversationRef,
 ) (im.ConversationSnapshot, error) {
 	if err := repositories.usable(ctx); err != nil {
-		return im.ConversationSnapshot{}, err
+		return im.ConversationSnapshot{}, repositories.readError(err)
 	}
 	if reference.IsZero() || reference.TenantID() != repositories.tenantID {
-		return im.ConversationSnapshot{}, store.ErrInvalidRequest
+		return im.ConversationSnapshot{}, repositories.readError(store.ErrInvalidRequest)
 	}
 	var workspaceValue *string
 	var conversationType string
@@ -95,13 +95,13 @@ WHERE head.tenant_id = $1
 		reference.ConversationID().String(),
 	).Scan(&workspaceValue, &conversationType, &status, &revision)
 	if err != nil {
-		return im.ConversationSnapshot{}, mapReadError(err)
+		return im.ConversationSnapshot{}, repositories.readError(mapReadError(err))
 	}
 	var workspaceID *im.WorkspaceID
 	if workspaceValue != nil {
 		parsed, err := im.ParseWorkspaceID(*workspaceValue)
 		if err != nil {
-			return im.ConversationSnapshot{}, store.ErrIntegrity
+			return im.ConversationSnapshot{}, repositories.readError(store.ErrIntegrity)
 		}
 		workspaceID = &parsed
 	}
@@ -116,7 +116,7 @@ WHERE head.tenant_id = $1
 		revision,
 	)
 	if err != nil {
-		return im.ConversationSnapshot{}, store.ErrIntegrity
+		return im.ConversationSnapshot{}, repositories.readError(store.ErrIntegrity)
 	}
 	return snapshot, nil
 }
@@ -222,10 +222,10 @@ func (repositories *tenantRepositories) CurrentProviderBinding(
 	externalReference im.ProviderConversationRef,
 ) (im.ProviderConversationBinding, error) {
 	if err := repositories.usable(ctx); err != nil {
-		return im.ProviderConversationBinding{}, err
+		return im.ProviderConversationBinding{}, repositories.readError(err)
 	}
 	if externalReference.IsZero() {
-		return im.ProviderConversationBinding{}, store.ErrInvalidRequest
+		return im.ProviderConversationBinding{}, repositories.readError(store.ErrInvalidRequest)
 	}
 	var conversationID string
 	var status string
@@ -251,18 +251,18 @@ WHERE head.tenant_id = $1
 		externalReference.SubjectID(),
 	).Scan(&conversationID, &status, &revision)
 	if err != nil {
-		return im.ProviderConversationBinding{}, mapReadError(err)
+		return im.ProviderConversationBinding{}, repositories.readError(mapReadError(err))
 	}
 	parsedConversationID, err := im.ParseConversationID(conversationID)
 	if err != nil {
-		return im.ProviderConversationBinding{}, store.ErrIntegrity
+		return im.ProviderConversationBinding{}, repositories.readError(store.ErrIntegrity)
 	}
 	conversationReference, err := im.NewConversationRef(
 		repositories.tenantID,
 		parsedConversationID,
 	)
 	if err != nil {
-		return im.ProviderConversationBinding{}, store.ErrIntegrity
+		return im.ProviderConversationBinding{}, repositories.readError(store.ErrIntegrity)
 	}
 	binding, err := im.NewProviderConversationBinding(
 		externalReference,
@@ -271,7 +271,7 @@ WHERE head.tenant_id = $1
 		revision,
 	)
 	if err != nil {
-		return im.ProviderConversationBinding{}, store.ErrIntegrity
+		return im.ProviderConversationBinding{}, repositories.readError(store.ErrIntegrity)
 	}
 	return binding, nil
 }
@@ -366,10 +366,10 @@ func (repositories *tenantRepositories) CurrentMembership(
 	actorReference im.ActorRef,
 ) (im.ConversationMembershipSnapshot, error) {
 	if err := repositories.usable(ctx); err != nil {
-		return im.ConversationMembershipSnapshot{}, err
+		return im.ConversationMembershipSnapshot{}, repositories.readError(err)
 	}
 	if !repositories.referencesMatch(conversationReference, actorReference) {
-		return im.ConversationMembershipSnapshot{}, store.ErrInvalidRequest
+		return im.ConversationMembershipSnapshot{}, repositories.readError(store.ErrInvalidRequest)
 	}
 	var role string
 	var status string
@@ -390,7 +390,7 @@ WHERE head.tenant_id = $1
 		actorReference.ActorID().String(),
 	).Scan(&role, &status, &revision)
 	if err != nil {
-		return im.ConversationMembershipSnapshot{}, mapReadError(err)
+		return im.ConversationMembershipSnapshot{}, repositories.readError(mapReadError(err))
 	}
 	snapshot, err := im.NewConversationMembershipSnapshot(
 		conversationReference,
@@ -400,7 +400,7 @@ WHERE head.tenant_id = $1
 		revision,
 	)
 	if err != nil {
-		return im.ConversationMembershipSnapshot{}, store.ErrIntegrity
+		return im.ConversationMembershipSnapshot{}, repositories.readError(store.ErrIntegrity)
 	}
 	return snapshot, nil
 }
@@ -482,10 +482,10 @@ func (repositories *tenantRepositories) CurrentAccess(
 	actorReference im.ActorRef,
 ) (im.ConversationAccessSnapshot, error) {
 	if err := repositories.usable(ctx); err != nil {
-		return im.ConversationAccessSnapshot{}, err
+		return im.ConversationAccessSnapshot{}, repositories.readError(err)
 	}
 	if !repositories.referencesMatch(conversationReference, actorReference) {
-		return im.ConversationAccessSnapshot{}, store.ErrInvalidRequest
+		return im.ConversationAccessSnapshot{}, repositories.readError(store.ErrInvalidRequest)
 	}
 	var revision uint64
 	var canRead, canSend, canManageMembers, canManageConversation bool
@@ -520,7 +520,7 @@ WHERE head.tenant_id = $1
 		&canPublishArtifact,
 	)
 	if err != nil {
-		return im.ConversationAccessSnapshot{}, mapReadError(err)
+		return im.ConversationAccessSnapshot{}, repositories.readError(mapReadError(err))
 	}
 	permissions := make([]im.ConversationPermission, 0, 6)
 	for _, value := range []struct {
@@ -545,7 +545,7 @@ WHERE head.tenant_id = $1
 		revision,
 	)
 	if err != nil {
-		return im.ConversationAccessSnapshot{}, store.ErrIntegrity
+		return im.ConversationAccessSnapshot{}, repositories.readError(store.ErrIntegrity)
 	}
 	return snapshot, nil
 }
@@ -635,6 +635,13 @@ func (repositories *tenantRepositories) referencesMatch(
 	return !conversationReference.IsZero() && !actorReference.IsZero() &&
 		conversationReference.TenantID() == repositories.tenantID &&
 		actorReference.TenantID() == repositories.tenantID
+}
+
+func (repositories *tenantRepositories) readError(err error) error {
+	if errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return repositories.poison(err)
 }
 
 func validCASRevision(expectedRevision uint64, nextRevision uint64) error {
