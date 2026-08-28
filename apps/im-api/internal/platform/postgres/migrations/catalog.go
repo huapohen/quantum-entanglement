@@ -39,6 +39,7 @@ var migrationSpecs = [...]migrationSpec{
 	{version: 2, name: "identity_authority"},
 	{version: 3, name: "conversation"},
 	{version: 4, name: "conversation_authority"},
+	{version: 5, name: "function_only_writes"},
 }
 
 func Catalog() ([]Migration, error) {

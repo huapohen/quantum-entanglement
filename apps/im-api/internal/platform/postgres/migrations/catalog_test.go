@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 4 || len(second) != 4 {
+	if len(first) != 5 || len(second) != 5 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -127,6 +127,34 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 		if strings.Contains(strings.ToLower(authority.UpSQL), strings.ToLower(forbidden)) {
 			t.Fatalf("conversation authority migration contains forbidden text %q", forbidden)
 		}
+	}
+
+	functions := first[4]
+	if functions.Version != 5 || functions.Name != "function_only_writes" ||
+		len(functions.Checksum) != 64 || functions.Checksum != second[4].Checksum ||
+		functions.UpSQL != second[4].UpSQL || functions.DownSQL != second[4].DownSQL {
+		t.Fatalf("unexpected deterministic function migration: %#v", functions)
+	}
+	for _, marker := range []string{
+		`CREATE FUNCTION wanwork_im.write_conversation_revision`,
+		`CREATE FUNCTION wanwork_im.write_provider_conversation_binding_revision`,
+		`CREATE FUNCTION wanwork_im.write_conversation_membership_revision`,
+		`CREATE FUNCTION wanwork_im.write_conversation_access_revision`,
+		`CREATE FUNCTION wanwork_im.write_tenant_command_receipt`,
+		`SECURITY DEFINER`,
+		`SET search_path TO pg_catalog`,
+		`FROM PUBLIC`,
+	} {
+		if !strings.Contains(functions.UpSQL, marker) {
+			t.Fatalf("function migration missing %q", marker)
+		}
+	}
+	if strings.Count(functions.UpSQL, "CREATE FUNCTION") != 5 ||
+		strings.Count(functions.UpSQL, "REVOKE ALL ON FUNCTION") != 5 ||
+		strings.Contains(functions.UpSQL, "CREATE OR REPLACE") ||
+		strings.Contains(functions.UpSQL, "SECURITY INVOKER") ||
+		strings.Contains(functions.UpSQL, "LANGUAGE sql") {
+		t.Fatal("function migration escaped its exact surface")
 	}
 }
 

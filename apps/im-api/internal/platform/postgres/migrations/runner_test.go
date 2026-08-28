@@ -28,7 +28,7 @@ func TestValidateAppliedAcceptsOnlyExactContiguousPrefix(t *testing.T) {
 		{name: "version gap", applied: []AppliedMigration{{Version: 0}}, want: ErrLedgerDrift},
 		{name: "name drift", applied: []AppliedMigration{{Version: 1, Name: "other", Checksum: catalog[0].Checksum}}, want: ErrLedgerDrift},
 		{name: "checksum drift", applied: []AppliedMigration{{Version: 1, Name: catalog[0].Name, Checksum: "0"}}, want: ErrLedgerDrift},
-		{name: "future version", applied: []AppliedMigration{{Version: 5}}, want: ErrFutureSchema},
+		{name: "future version", applied: []AppliedMigration{{Version: 6}}, want: ErrFutureSchema},
 		{
 			name: "extra rows",
 			applied: append(
@@ -42,7 +42,10 @@ func TestValidateAppliedAcceptsOnlyExactContiguousPrefix(t *testing.T) {
 				AppliedMigration{
 					Version: 4, Name: catalog[3].Name, Checksum: catalog[3].Checksum,
 				},
-				AppliedMigration{Version: 5},
+				AppliedMigration{
+					Version: 5, Name: catalog[4].Name, Checksum: catalog[4].Checksum,
+				},
+				AppliedMigration{Version: 6},
 			),
 			want: ErrFutureSchema,
 		},

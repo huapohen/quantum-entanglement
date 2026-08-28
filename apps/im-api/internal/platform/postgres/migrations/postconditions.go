@@ -82,6 +82,8 @@ func validateMigrationPostcondition(ctx context.Context, transaction pgx.Tx, ver
 		return validateConversation(ctx, transaction)
 	case 4:
 		return validateConversationAuthority(ctx, transaction)
+	case 5:
+		return validateFunctionOnlyWrites(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}

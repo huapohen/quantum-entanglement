@@ -64,10 +64,10 @@ SELECT procedure.proname,
                    procedure.proacl,
                    pg_catalog.acldefault('f', procedure.proowner)
                )
-           ) AS acl
-           WHERE acl.grantee <> procedure.proowner
-              OR acl.privilege_type <> 'EXECUTE'
-              OR NOT acl.is_grantable
+		   ) AS acl
+		   WHERE acl.grantee <> procedure.proowner
+		      OR acl.privilege_type <> 'EXECUTE'
+		      OR acl.is_grantable
        ) AND EXISTS (
            SELECT 1
            FROM pg_catalog.aclexplode(
@@ -76,9 +76,9 @@ SELECT procedure.proname,
                    pg_catalog.acldefault('f', procedure.proowner)
                )
            ) AS acl
-           WHERE acl.grantee = procedure.proowner
-             AND acl.privilege_type = 'EXECUTE'
-             AND acl.is_grantable
+		   WHERE acl.grantee = procedure.proowner
+		     AND acl.privilege_type = 'EXECUTE'
+		     AND NOT acl.is_grantable
        ),
        pg_catalog.pg_get_functiondef(procedure.oid)
 FROM pg_catalog.pg_proc AS procedure
@@ -150,4 +150,75 @@ func exactStoredAuthorityFunctions(
 func digestFunctionDefinition(definition string) string {
 	digest := sha256.Sum256([]byte(functionDefinitionDigestDomain + definition))
 	return hex.EncodeToString(digest[:])
+}
+
+func validateFunctionOnlyWrites(ctx context.Context, transaction pgx.Tx) error {
+	specs := storedAuthorityFunctionManifest()
+	names := make([]string, len(specs))
+	for index, spec := range specs {
+		names[index] = spec.name
+	}
+	functions, err := readStoredAuthorityFunctions(ctx, transaction, names)
+	if err != nil || !exactStoredAuthorityFunctions(functions, specs) {
+		return ErrMigrationSchema
+	}
+	return nil
+}
+
+func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
+	return []storedAuthorityFunctionSpec{
+		{
+			name: "write_conversation_access_revision",
+			arguments: "p_tenant_id text, p_conversation_id text, p_actor_id text, " +
+				"p_expected_revision bigint, p_next_revision bigint, p_can_read boolean, " +
+				"p_can_send_message boolean, p_can_manage_members boolean, " +
+				"p_can_manage_conversation boolean, p_can_invoke_agent boolean, " +
+				"p_can_publish_artifact_reference boolean",
+			identityArguments: "p_tenant_id text, p_conversation_id text, p_actor_id text, " +
+				"p_expected_revision bigint, p_next_revision bigint, p_can_read boolean, " +
+				"p_can_send_message boolean, p_can_manage_members boolean, " +
+				"p_can_manage_conversation boolean, p_can_invoke_agent boolean, " +
+				"p_can_publish_artifact_reference boolean",
+			result:           "boolean",
+			definitionDigest: "5d01ba7ed5a3d23d4a39429fadc1b13b74b0b19b5f1b6481f7089a77cded5624",
+		},
+		{
+			name: "write_conversation_membership_revision",
+			arguments: "p_tenant_id text, p_conversation_id text, p_actor_id text, " +
+				"p_expected_revision bigint, p_next_revision bigint, p_role text, p_status text",
+			identityArguments: "p_tenant_id text, p_conversation_id text, p_actor_id text, " +
+				"p_expected_revision bigint, p_next_revision bigint, p_role text, p_status text",
+			result:           "boolean",
+			definitionDigest: "e767afdb78fc0c503ef712da50f6a74758be03b209e2f131b79db54344e16ee3",
+		},
+		{
+			name: "write_conversation_revision",
+			arguments: "p_tenant_id text, p_conversation_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_workspace_id text, p_conversation_type text, p_status text",
+			identityArguments: "p_tenant_id text, p_conversation_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_workspace_id text, p_conversation_type text, p_status text",
+			result:           "boolean",
+			definitionDigest: "d7261cd6d418136abbc372b486106526d21f1ecd22fd49f6d372c9fda6592702",
+		},
+		{
+			name: "write_provider_conversation_binding_revision",
+			arguments: "p_tenant_id text, p_provider text, p_realm_id text, " +
+				"p_provider_conversation_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_conversation_id text, p_status text",
+			identityArguments: "p_tenant_id text, p_provider text, p_realm_id text, " +
+				"p_provider_conversation_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_conversation_id text, p_status text",
+			result:           "boolean",
+			definitionDigest: "a3ed1538ff9f61c2289fb9068f97cc4010fabbc4e2f86088f2012f44ef5c4c9c",
+		},
+		{
+			name: "write_tenant_command_receipt",
+			arguments: "p_tenant_id text, p_command_kind text, p_idempotency_key text, " +
+				"p_request_sha256 text, p_result_sha256 text",
+			identityArguments: "p_tenant_id text, p_command_kind text, p_idempotency_key text, " +
+				"p_request_sha256 text, p_result_sha256 text",
+			result:           "timestamp with time zone",
+			definitionDigest: "9d2854dadf7f5bb3bbce2b2385e4a69b3ce2138ffb6389e554b6328f22f22d62",
+		},
+	}
 }
