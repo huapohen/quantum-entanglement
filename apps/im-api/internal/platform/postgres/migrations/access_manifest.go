@@ -169,34 +169,27 @@ func exactAuthorityAccessObjects(
 	transaction pgx.Tx,
 	manifest AuthorityAccessManifest,
 ) bool {
-	return exactAuthorityRoles(ctx, transaction, manifest) &&
-		exactAuthorityMemberships(ctx, transaction, manifest) &&
-		exactAuthorityDatabasePrivileges(ctx, transaction, manifest) &&
-		exactAuthorityNamespaces(ctx, transaction, manifest) &&
-		exactAuthorityRelations(ctx, transaction, manifest) &&
-		exactAuthorityFunctions(ctx, transaction, manifest)
-}
-
-type authorityAccessRole struct {
-	name          string
-	login         bool
-	superuser     bool
-	inherit       bool
-	createRole    bool
-	createDB      bool
-	replication   bool
-	bypassRLS     bool
-	connectionCap int
-	noValidUntil  bool
-	noSettings    bool
+	specification, err := CurrentAuthorityAccessSpecification(manifest)
+	if err != nil {
+		return false
+	}
+	return exactAuthorityRoles(ctx, transaction, specification) &&
+		exactAuthorityMemberships(ctx, transaction, specification) &&
+		exactAuthorityDatabasePrivileges(ctx, transaction, specification) &&
+		exactAuthorityNamespaces(ctx, transaction, specification) &&
+		exactAuthorityRelations(ctx, transaction, specification) &&
+		exactAuthorityFunctions(ctx, transaction, specification)
 }
 
 func exactAuthorityRoles(
 	ctx context.Context,
 	transaction pgx.Tx,
-	manifest AuthorityAccessManifest,
+	specification AuthorityAccessSpecification,
 ) bool {
-	allRoles := authorityAccessRoleNames(manifest)
+	allRoles := make([]string, 0, len(specification.Roles))
+	for _, role := range specification.Roles {
+		allRoles = append(allRoles, role.Name)
+	}
 	rows, err := transaction.Query(ctx, `
 SELECT role_value.rolname,
        role_value.rolcanlogin,
@@ -207,8 +200,8 @@ SELECT role_value.rolname,
        role_value.rolreplication,
        role_value.rolbypassrls,
        role_value.rolconnlimit,
-       role_value.rolvaliduntil IS NULL,
-       role_value.rolconfig IS NULL
+	   role_value.rolvaliduntil IS NOT NULL,
+	   role_value.rolconfig IS NOT NULL
 FROM pg_catalog.pg_roles AS role_value
 WHERE role_value.rolname = ANY($1::text[])
 ORDER BY role_value.rolname`, allRoles)
@@ -216,43 +209,28 @@ ORDER BY role_value.rolname`, allRoles)
 		return false
 	}
 	defer rows.Close()
-	roles := make(map[string]authorityAccessRole, len(allRoles))
+	roles := make([]AuthorityRoleSpecification, 0, len(allRoles))
 	for rows.Next() {
-		var role authorityAccessRole
+		var role AuthorityRoleSpecification
 		if err := rows.Scan(
-			&role.name,
-			&role.login,
-			&role.superuser,
-			&role.inherit,
-			&role.createRole,
-			&role.createDB,
-			&role.replication,
-			&role.bypassRLS,
-			&role.connectionCap,
-			&role.noValidUntil,
-			&role.noSettings,
+			&role.Name,
+			&role.Login,
+			&role.Superuser,
+			&role.Inherit,
+			&role.CreateRole,
+			&role.CreateDatabase,
+			&role.Replication,
+			&role.BypassRLS,
+			&role.ConnectionLimit,
+			&role.ValidUntil,
+			&role.Settings,
 		); err != nil {
 			return false
 		}
-		roles[role.name] = role
+		roles = append(roles, role)
 	}
-	if rows.Err() != nil || len(roles) != len(allRoles) {
-		return false
-	}
-	loginRoles := make(map[string]struct{}, len(manifest.MigrationLoginRoles)+len(manifest.RuntimeLoginRoles))
-	for _, name := range append(append([]string(nil), manifest.MigrationLoginRoles...), manifest.RuntimeLoginRoles...) {
-		loginRoles[name] = struct{}{}
-	}
-	for _, name := range allRoles {
-		role := roles[name]
-		_, mustLogin := loginRoles[name]
-		if role.login != mustLogin || role.superuser || role.inherit || role.createRole ||
-			role.createDB || role.replication || role.bypassRLS || role.connectionCap != -1 ||
-			!role.noValidUntil || !role.noSettings {
-			return false
-		}
-	}
-	return noAuthorityRoleSettings(ctx, transaction, allRoles)
+	return rows.Err() == nil && slices.Equal(roles, specification.Roles) &&
+		!specification.RoleSettings && noAuthorityRoleSettings(ctx, transaction, allRoles)
 }
 
 func noAuthorityRoleSettings(
@@ -271,21 +249,15 @@ SELECT NOT EXISTS (
 	return err == nil && clean
 }
 
-type authorityAccessMembership struct {
-	granted string
-	member  string
-	grantor string
-	admin   bool
-	inherit bool
-	setRole bool
-}
-
 func exactAuthorityMemberships(
 	ctx context.Context,
 	transaction pgx.Tx,
-	manifest AuthorityAccessManifest,
+	specification AuthorityAccessSpecification,
 ) bool {
-	allRoles := authorityAccessRoleNames(manifest)
+	allRoles := make([]string, 0, len(specification.Roles))
+	for _, role := range specification.Roles {
+		allRoles = append(allRoles, role.Name)
+	}
 	rows, err := transaction.Query(ctx, `
 SELECT granted_role.rolname,
        member_role.rolname,
@@ -304,77 +276,38 @@ ORDER BY granted_role.rolname, member_role.rolname, grantor_role.rolname`, allRo
 		return false
 	}
 	defer rows.Close()
-	actual := make([]authorityAccessMembership, 0)
+	actual := make([]AuthorityMembershipSpecification, 0)
 	for rows.Next() {
-		var membership authorityAccessMembership
+		var membership AuthorityMembershipSpecification
 		if err := rows.Scan(
-			&membership.granted,
-			&membership.member,
-			&membership.grantor,
-			&membership.admin,
-			&membership.inherit,
-			&membership.setRole,
+			&membership.GrantedRole,
+			&membership.MemberRole,
+			&membership.GrantorRole,
+			&membership.AdminOption,
+			&membership.InheritOption,
+			&membership.SetOption,
 		); err != nil {
 			return false
 		}
 		actual = append(actual, membership)
 	}
-	if rows.Err() != nil {
-		return false
-	}
-	expected := []authorityAccessMembership{{
-		granted: manifest.OwnerRole,
-		member:  manifest.MigratorRole,
-		grantor: manifest.DatabaseOwnerRole,
-		setRole: true,
-	}}
-	for _, member := range manifest.MigrationLoginRoles {
-		expected = append(expected, authorityAccessMembership{
-			granted: manifest.MigratorRole,
-			member:  member,
-			grantor: manifest.DatabaseOwnerRole,
-			setRole: true,
-		})
-	}
-	for _, member := range manifest.RuntimeLoginRoles {
-		expected = append(expected, authorityAccessMembership{
-			granted: manifest.RuntimeRole,
-			member:  member,
-			grantor: manifest.DatabaseOwnerRole,
-			setRole: true,
-		})
-	}
-	slices.SortFunc(expected, compareAuthorityAccessMembership)
-	return slices.Equal(actual, expected)
-}
-
-func compareAuthorityAccessMembership(left, right authorityAccessMembership) int {
-	if left.granted != right.granted {
-		if left.granted < right.granted {
-			return -1
-		}
-		return 1
-	}
-	if left.member < right.member {
-		return -1
-	}
-	if left.member > right.member {
-		return 1
-	}
-	if left.grantor < right.grantor {
-		return -1
-	}
-	if left.grantor > right.grantor {
-		return 1
-	}
-	return 0
+	return rows.Err() == nil && slices.Equal(actual, specification.Memberships)
 }
 
 func exactAuthorityDatabasePrivileges(
 	ctx context.Context,
 	transaction pgx.Tx,
-	manifest AuthorityAccessManifest,
+	specification AuthorityAccessSpecification,
 ) bool {
+	databaseObjects := authorityObjectsFor(
+		specification,
+		AuthorityObjectDatabase,
+		"",
+	)
+	if len(databaseObjects) != 1 {
+		return false
+	}
+	databaseObject := databaseObjects[0]
 	var databaseName, databaseOwner string
 	if err := transaction.QueryRow(ctx, `
 SELECT database_value.datname, owner.rolname
@@ -383,29 +316,37 @@ JOIN pg_catalog.pg_roles AS owner ON owner.oid = database_value.datdba
 WHERE database_value.datname = current_database()`).Scan(
 		&databaseName,
 		&databaseOwner,
-	); err != nil || databaseName != manifest.DatabaseName ||
-		databaseOwner != manifest.DatabaseOwnerRole {
+	); err != nil || databaseName != databaseObject.Name ||
+		databaseOwner != databaseObject.OwnerRole {
 		return false
 	}
-	roles := authorityAccessRoleNames(manifest)
-	loginRoles := make(map[string]struct{}, len(manifest.MigrationLoginRoles)+len(manifest.RuntimeLoginRoles))
-	for _, role := range append(append([]string(nil), manifest.MigrationLoginRoles...), manifest.RuntimeLoginRoles...) {
-		loginRoles[role] = struct{}{}
-	}
-	for _, role := range roles {
+	for _, role := range specification.Roles {
 		var connect, createDatabaseObject, temporary bool
 		if err := transaction.QueryRow(ctx, `
 SELECT pg_catalog.has_database_privilege($1, current_database(), 'CONNECT'),
        pg_catalog.has_database_privilege($1, current_database(), 'CREATE'),
-       pg_catalog.has_database_privilege($1, current_database(), 'TEMPORARY')`, role).Scan(
+	   pg_catalog.has_database_privilege($1, current_database(), 'TEMPORARY')`, role.Name).Scan(
 			&connect,
 			&createDatabaseObject,
 			&temporary,
-		); err != nil || temporary || createDatabaseObject != (role == manifest.OwnerRole) {
+		); err != nil || temporary {
 			return false
 		}
-		_, mustConnect := loginRoles[role]
-		if connect != mustConnect {
+		mustConnect := authorityRoleHasPrivilege(
+			specification,
+			AuthorityPrivilegeDatabase,
+			databaseName,
+			role.Name,
+			"CONNECT",
+		)
+		mustCreate := authorityRoleHasPrivilege(
+			specification,
+			AuthorityPrivilegeDatabase,
+			databaseName,
+			role.Name,
+			"CREATE",
+		)
+		if connect != mustConnect || createDatabaseObject != mustCreate {
 			return false
 		}
 	}
@@ -413,21 +354,7 @@ SELECT pg_catalog.has_database_privilege($1, current_database(), 'CONNECT'),
 	if !ok {
 		return false
 	}
-	expected := []authorityAccessACL{{
-		object:    databaseName,
-		grantee:   manifest.OwnerRole,
-		grantor:   manifest.DatabaseOwnerRole,
-		privilege: "CREATE",
-	}}
-	for role := range loginRoles {
-		expected = append(expected, authorityAccessACL{
-			object:    databaseName,
-			grantee:   role,
-			grantor:   manifest.DatabaseOwnerRole,
-			privilege: "CONNECT",
-		})
-	}
-	slices.SortFunc(expected, compareAuthorityAccessACL)
+	expected := authorityPrivilegesFor(specification, AuthorityPrivilegeDatabase)
 	return slices.Equal(actual, expected)
 }
 
@@ -435,7 +362,7 @@ func readNonOwnerDatabaseACL(
 	ctx context.Context,
 	transaction pgx.Tx,
 	databaseName string,
-) ([]authorityAccessACL, bool) {
+) ([]AuthorityPrivilegeSpecification, bool) {
 	rows, err := transaction.Query(ctx, `
 SELECT database_value.datname,
        COALESCE(grantee.rolname, ''),
@@ -455,93 +382,75 @@ ORDER BY grantee.rolname, grantor.rolname, acl.privilege_type`)
 		return nil, false
 	}
 	defer rows.Close()
-	values := make([]authorityAccessACL, 0)
+	values := make([]AuthorityPrivilegeSpecification, 0)
 	for rows.Next() {
-		var value authorityAccessACL
+		value := AuthorityPrivilegeSpecification{Scope: AuthorityPrivilegeDatabase}
 		if err := rows.Scan(
-			&value.object,
-			&value.grantee,
-			&value.grantor,
-			&value.privilege,
-			&value.grantable,
-		); err != nil || value.object != databaseName || value.grantee == "" ||
-			value.grantor == "" || value.grantable {
+			&value.Object,
+			&value.GranteeRole,
+			&value.GrantorRole,
+			&value.Privilege,
+			&value.Grantable,
+		); err != nil || value.Object != databaseName || value.GranteeRole == "" ||
+			value.GrantorRole == "" || value.Grantable {
 			return nil, false
 		}
 		values = append(values, value)
 	}
+	slices.SortFunc(values, compareAuthorityPrivilegeSpecification)
 	return values, rows.Err() == nil
 }
 
 func exactAuthorityNamespaces(
 	ctx context.Context,
 	transaction pgx.Tx,
-	manifest AuthorityAccessManifest,
+	specification AuthorityAccessSpecification,
 ) bool {
+	expectedObjects := authorityObjectsFor(specification, AuthorityObjectSchema, "")
+	names := make([]string, 0, len(expectedObjects))
+	for _, object := range expectedObjects {
+		names = append(names, object.Name)
+	}
 	rows, err := transaction.Query(ctx, `
 SELECT namespace.nspname, owner.rolname
 FROM pg_catalog.pg_namespace AS namespace
 JOIN pg_catalog.pg_roles AS owner ON owner.oid = namespace.nspowner
 WHERE namespace.nspname = ANY($1::text[])
-ORDER BY namespace.nspname`, []string{"wanwork_im", "wanwork_meta"})
+ORDER BY namespace.nspname`, names)
 	if err != nil {
 		return false
 	}
 	defer rows.Close()
-	count := 0
+	actualObjects := make([]AuthorityObjectSpecification, 0, len(expectedObjects))
 	for rows.Next() {
-		var name, owner string
-		if err := rows.Scan(&name, &owner); err != nil || owner != manifest.OwnerRole {
+		object := AuthorityObjectSpecification{Kind: AuthorityObjectSchema}
+		if err := rows.Scan(&object.Name, &object.OwnerRole); err != nil {
 			return false
 		}
-		count++
+		actualObjects = append(actualObjects, object)
 	}
-	if rows.Err() != nil || count != 2 {
+	if rows.Err() != nil || !slices.Equal(actualObjects, expectedObjects) {
 		return false
 	}
-	actual, ok := readNonOwnerSchemaACL(ctx, transaction, manifest.OwnerRole)
+	actual, ok := readNonOwnerSchemaACL(ctx, transaction, expectedObjects)
 	if !ok {
 		return false
 	}
-	expected := []authorityAccessACL{{
-		object:    "wanwork_im",
-		grantee:   manifest.RuntimeRole,
-		grantor:   manifest.OwnerRole,
-		privilege: "USAGE",
-	}}
+	expected := authorityPrivilegesFor(specification, AuthorityPrivilegeSchema)
 	return slices.Equal(actual, expected)
-}
-
-type authorityAccessACL struct {
-	object    string
-	grantee   string
-	grantor   string
-	privilege string
-	grantable bool
-}
-
-func compareAuthorityAccessACL(left, right authorityAccessACL) int {
-	for _, values := range [][2]string{
-		{left.object, right.object},
-		{left.grantee, right.grantee},
-		{left.grantor, right.grantor},
-		{left.privilege, right.privilege},
-	} {
-		if values[0] < values[1] {
-			return -1
-		}
-		if values[0] > values[1] {
-			return 1
-		}
-	}
-	return 0
 }
 
 func readNonOwnerSchemaACL(
 	ctx context.Context,
 	transaction pgx.Tx,
-	ownerRole string,
-) ([]authorityAccessACL, bool) {
+	objects []AuthorityObjectSpecification,
+) ([]AuthorityPrivilegeSpecification, bool) {
+	names := make([]string, 0, len(objects))
+	owners := make(map[string]string, len(objects))
+	for _, object := range objects {
+		names = append(names, object.Name)
+		owners[object.Name] = object.OwnerRole
+	}
 	rows, err := transaction.Query(ctx, `
 SELECT namespace.nspname,
        COALESCE(grantee.rolname, ''),
@@ -556,89 +465,73 @@ LEFT JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee
 LEFT JOIN pg_catalog.pg_roles AS grantor ON grantor.oid = acl.grantor
 WHERE namespace.nspname = ANY($1::text[])
   AND acl.grantee <> namespace.nspowner
-ORDER BY namespace.nspname, grantee.rolname, grantor.rolname, acl.privilege_type`, []string{"wanwork_im", "wanwork_meta"})
+ORDER BY namespace.nspname, grantee.rolname, grantor.rolname, acl.privilege_type`, names)
 	if err != nil {
 		return nil, false
 	}
 	defer rows.Close()
-	values := make([]authorityAccessACL, 0)
+	values := make([]AuthorityPrivilegeSpecification, 0)
 	for rows.Next() {
-		var value authorityAccessACL
+		value := AuthorityPrivilegeSpecification{Scope: AuthorityPrivilegeSchema}
 		if err := rows.Scan(
-			&value.object,
-			&value.grantee,
-			&value.grantor,
-			&value.privilege,
-			&value.grantable,
-		); err != nil || value.grantee == "" || value.grantor == "" ||
-			value.grantee == ownerRole || value.grantable {
+			&value.Object,
+			&value.GranteeRole,
+			&value.GrantorRole,
+			&value.Privilege,
+			&value.Grantable,
+		); err != nil || value.GranteeRole == "" || value.GrantorRole == "" ||
+			value.GranteeRole == owners[value.Object] || value.Grantable {
 			return nil, false
 		}
 		values = append(values, value)
 	}
+	slices.SortFunc(values, compareAuthorityPrivilegeSpecification)
 	return values, rows.Err() == nil
 }
 
 func exactAuthorityRelations(
 	ctx context.Context,
 	transaction pgx.Tx,
-	manifest AuthorityAccessManifest,
+	specification AuthorityAccessSpecification,
 ) bool {
-	tableNames := authorityAccessTableNames()
+	expectedObjects := authorityObjectsFor(specification, AuthorityObjectRelation, "")
+	schemas := authoritySchemasForObjects(expectedObjects)
 	rows, err := transaction.Query(ctx, `
-SELECT relation.relname, relation.relkind::text, owner.rolname
+SELECT namespace.nspname, relation.relname, relation.relkind::text, owner.rolname
 FROM pg_catalog.pg_class AS relation
 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
 JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner
-WHERE namespace.nspname = 'wanwork_im'
-  AND relation.relkind = ANY($1::"char"[])
-ORDER BY relation.relname`, []string{"r", "p", "v", "m", "S", "f"})
+WHERE namespace.nspname = ANY($1::text[])
+  AND relation.relkind = ANY($2::"char"[])
+ORDER BY namespace.nspname, relation.relname`, schemas, []string{"r", "p", "v", "m", "S", "f"})
 	if err != nil {
 		return false
 	}
 	defer rows.Close()
-	actualNames := make([]string, 0, len(tableNames))
+	actualObjects := make([]AuthorityObjectSpecification, 0, len(expectedObjects))
 	for rows.Next() {
-		var name, kind, owner string
-		if err := rows.Scan(&name, &kind, &owner); err != nil || kind != "r" || owner != manifest.OwnerRole {
+		object := AuthorityObjectSpecification{Kind: AuthorityObjectRelation}
+		var relationKind string
+		if err := rows.Scan(
+			&object.Schema,
+			&object.Name,
+			&relationKind,
+			&object.OwnerRole,
+		); err != nil || relationKind != "r" {
 			return false
 		}
-		actualNames = append(actualNames, name)
+		actualObjects = append(actualObjects, object)
 	}
-	if rows.Err() != nil || !slices.Equal(actualNames, tableNames) {
+	if rows.Err() != nil || !slices.Equal(actualObjects, expectedObjects) {
 		return false
 	}
-	var exactMetaRelations bool
-	if err := transaction.QueryRow(ctx, `
-SELECT count(*) = 1
-       AND count(*) FILTER (
-           WHERE relation.relname = 'schema_migrations'
-             AND relation.relkind = 'r'
-             AND owner.rolname = $1
-       ) = 1
-FROM pg_catalog.pg_class AS relation
-JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner
-WHERE namespace.nspname = 'wanwork_meta'
-	  AND relation.relkind = ANY($2::"char"[])`, manifest.OwnerRole, []string{"r", "p", "v", "m", "S", "f"}).Scan(
-		&exactMetaRelations,
-	); err != nil || !exactMetaRelations {
-		return false
-	}
-	actualACL, ok := readNonOwnerTableACL(ctx, transaction, manifest.OwnerRole)
+	actualACL, ok := readNonOwnerTableACL(ctx, transaction, expectedObjects)
 	if !ok {
 		return false
 	}
-	expectedACL := make([]authorityAccessACL, 0, len(runtimeAuthorityReadTables))
-	for _, tableName := range runtimeAuthorityReadTables {
-		expectedACL = append(expectedACL, authorityAccessACL{
-			object:    tableName,
-			grantee:   manifest.RuntimeRole,
-			grantor:   manifest.OwnerRole,
-			privilege: "SELECT",
-		})
-	}
-	return slices.Equal(actualACL, expectedACL) && noNonOwnerColumnACL(ctx, transaction)
+	expectedACL := authorityPrivilegesFor(specification, AuthorityPrivilegeRelation)
+	return slices.Equal(actualACL, expectedACL) && !specification.ColumnPrivileges &&
+		noNonOwnerColumnACL(ctx, transaction, schemas)
 }
 
 var runtimeAuthorityReadTables = []string{
@@ -668,10 +561,19 @@ func authorityAccessTableNames() []string {
 func readNonOwnerTableACL(
 	ctx context.Context,
 	transaction pgx.Tx,
-	ownerRole string,
-) ([]authorityAccessACL, bool) {
+	objects []AuthorityObjectSpecification,
+) ([]AuthorityPrivilegeSpecification, bool) {
+	schemas := make([]string, 0)
+	owners := make(map[string]string, len(objects))
+	for _, object := range objects {
+		if !slices.Contains(schemas, object.Schema) {
+			schemas = append(schemas, object.Schema)
+		}
+		owners[object.Schema+"\x00"+object.Name] = object.OwnerRole
+	}
 	rows, err := transaction.Query(ctx, `
-SELECT relation.relname,
+SELECT namespace.nspname,
+       relation.relname,
        COALESCE(grantee.rolname, ''),
        COALESCE(grantor.rolname, ''),
        acl.privilege_type,
@@ -686,30 +588,36 @@ LEFT JOIN pg_catalog.pg_roles AS grantor ON grantor.oid = acl.grantor
 WHERE namespace.nspname = ANY($1::text[])
   AND relation.relkind = 'r'
   AND acl.grantee <> relation.relowner
-ORDER BY relation.relname, grantee.rolname, grantor.rolname, acl.privilege_type`, []string{"wanwork_im", "wanwork_meta"})
+ORDER BY namespace.nspname, relation.relname, grantee.rolname, grantor.rolname, acl.privilege_type`, schemas)
 	if err != nil {
 		return nil, false
 	}
 	defer rows.Close()
-	values := make([]authorityAccessACL, 0)
+	values := make([]AuthorityPrivilegeSpecification, 0)
 	for rows.Next() {
-		var value authorityAccessACL
+		value := AuthorityPrivilegeSpecification{Scope: AuthorityPrivilegeRelation}
 		if err := rows.Scan(
-			&value.object,
-			&value.grantee,
-			&value.grantor,
-			&value.privilege,
-			&value.grantable,
-		); err != nil || value.grantee == "" || value.grantor == "" ||
-			value.grantee == ownerRole || value.grantable {
+			&value.Schema,
+			&value.Object,
+			&value.GranteeRole,
+			&value.GrantorRole,
+			&value.Privilege,
+			&value.Grantable,
+		); err != nil || value.GranteeRole == "" || value.GrantorRole == "" ||
+			value.GranteeRole == owners[value.Schema+"\x00"+value.Object] || value.Grantable {
 			return nil, false
 		}
 		values = append(values, value)
 	}
+	slices.SortFunc(values, compareAuthorityPrivilegeSpecification)
 	return values, rows.Err() == nil
 }
 
-func noNonOwnerColumnACL(ctx context.Context, transaction pgx.Tx) bool {
+func noNonOwnerColumnACL(
+	ctx context.Context,
+	transaction pgx.Tx,
+	schemas []string,
+) bool {
 	var clean bool
 	err := transaction.QueryRow(ctx, `
 SELECT NOT EXISTS (
@@ -723,80 +631,81 @@ SELECT NOT EXISTS (
       AND NOT attribute.attisdropped
       AND attribute.attacl IS NOT NULL
       AND acl.grantee <> relation.relowner
-)`, []string{"wanwork_im", "wanwork_meta"}).Scan(&clean)
+)`, schemas).Scan(&clean)
 	return err == nil && clean
 }
 
 func exactAuthorityFunctions(
 	ctx context.Context,
 	transaction pgx.Tx,
-	manifest AuthorityAccessManifest,
+	specification AuthorityAccessSpecification,
 ) bool {
-	if validateFunctionOnlyWritesForOwner(ctx, transaction, manifest.OwnerRole) != nil ||
-		!exactOwnerFunctionDefaultPrivileges(ctx, transaction, manifest.OwnerRole) ||
-		!noAuthorityMetaFunctions(ctx, transaction) {
+	expectedObjects := authorityObjectsFor(specification, AuthorityObjectFunction, "")
+	if len(expectedObjects) == 0 {
 		return false
 	}
+	ownerRole := expectedObjects[0].OwnerRole
+	if validateFunctionOnlyWritesForOwner(ctx, transaction, ownerRole) != nil ||
+		!exactOwnerFunctionDefaultPrivileges(ctx, transaction, specification.DefaultPrivileges) ||
+		specification.FunctionsInMetadata {
+		return false
+	}
+	managedSchemas := make([]string, 0)
+	for _, object := range authorityObjectsFor(specification, AuthorityObjectSchema, "") {
+		managedSchemas = append(managedSchemas, object.Name)
+	}
 	rows, err := transaction.Query(ctx, `
-SELECT procedure.proname,
+SELECT namespace.nspname,
+       procedure.proname,
        pg_catalog.pg_get_function_identity_arguments(procedure.oid),
        owner.rolname
 FROM pg_catalog.pg_proc AS procedure
 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
 JOIN pg_catalog.pg_roles AS owner ON owner.oid = procedure.proowner
-WHERE namespace.nspname = 'wanwork_im'
-ORDER BY procedure.proname, pg_catalog.pg_get_function_identity_arguments(procedure.oid)`)
+WHERE namespace.nspname = ANY($1::text[])
+ORDER BY namespace.nspname,
+         procedure.proname,
+         pg_catalog.pg_get_function_identity_arguments(procedure.oid)`, managedSchemas)
 	if err != nil {
 		return false
 	}
 	defer rows.Close()
-	specs := storedAuthorityFunctionManifest()
-	index := 0
+	actualObjects := make([]AuthorityObjectSpecification, 0, len(expectedObjects))
 	for rows.Next() {
-		var name, identityArguments, owner string
-		if err := rows.Scan(&name, &identityArguments, &owner); err != nil || index >= len(specs) ||
-			name != specs[index].name || identityArguments != specs[index].identityArguments ||
-			owner != manifest.OwnerRole {
+		object := AuthorityObjectSpecification{Kind: AuthorityObjectFunction}
+		if err := rows.Scan(
+			&object.Schema,
+			&object.Name,
+			&object.IdentityArguments,
+			&object.OwnerRole,
+		); err != nil {
 			return false
 		}
-		index++
+		actualObjects = append(actualObjects, object)
 	}
-	if rows.Err() != nil || index != len(specs) {
+	if rows.Err() != nil || !slices.Equal(actualObjects, expectedObjects) {
 		return false
 	}
-	actualACL, ok := readNonOwnerFunctionACL(ctx, transaction, manifest.OwnerRole)
+	actualACL, ok := readNonOwnerFunctionACL(ctx, transaction, expectedObjects)
 	if !ok {
 		return false
 	}
-	expectedACL := make([]authorityAccessACL, 0, len(specs))
-	for _, spec := range specs {
-		expectedACL = append(expectedACL, authorityAccessACL{
-			object:    spec.name,
-			grantee:   manifest.RuntimeRole,
-			grantor:   manifest.OwnerRole,
-			privilege: "EXECUTE",
-		})
-	}
+	expectedACL := authorityPrivilegesFor(specification, AuthorityPrivilegeFunction)
 	return slices.Equal(actualACL, expectedACL)
-}
-
-func noAuthorityMetaFunctions(ctx context.Context, transaction pgx.Tx) bool {
-	var clean bool
-	err := transaction.QueryRow(ctx, `
-SELECT NOT EXISTS (
-    SELECT 1
-    FROM pg_catalog.pg_proc AS procedure
-    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
-    WHERE namespace.nspname = 'wanwork_meta'
-)`).Scan(&clean)
-	return err == nil && clean
 }
 
 func exactOwnerFunctionDefaultPrivileges(
 	ctx context.Context,
 	transaction pgx.Tx,
-	ownerRole string,
+	expected []AuthorityDefaultPrivilegeSpecification,
 ) bool {
+	if len(expected) != 1 || expected[0].ObjectType != "FUNCTION" ||
+		expected[0].Schema != "" || expected[0].GranteeRole != expected[0].OwnerRole ||
+		expected[0].GrantorRole != expected[0].OwnerRole || expected[0].Privilege != "EXECUTE" ||
+		expected[0].Grantable {
+		return false
+	}
+	ownerRole := expected[0].OwnerRole
 	var exact bool
 	err := transaction.QueryRow(ctx, `
 SELECT (
@@ -835,10 +744,20 @@ WHERE owner.rolname = $1
 func readNonOwnerFunctionACL(
 	ctx context.Context,
 	transaction pgx.Tx,
-	ownerRole string,
-) ([]authorityAccessACL, bool) {
+	objects []AuthorityObjectSpecification,
+) ([]AuthorityPrivilegeSpecification, bool) {
+	owners := make(map[string]string, len(objects))
+	schemas := make([]string, 0)
+	for _, object := range objects {
+		if !slices.Contains(schemas, object.Schema) {
+			schemas = append(schemas, object.Schema)
+		}
+		owners[object.Schema+"\x00"+object.Name+"\x00"+object.IdentityArguments] = object.OwnerRole
+	}
 	rows, err := transaction.Query(ctx, `
-SELECT procedure.proname,
+SELECT namespace.nspname,
+       procedure.proname,
+       pg_catalog.pg_get_function_identity_arguments(procedure.oid),
        COALESCE(grantee.rolname, ''),
        COALESCE(grantor.rolname, ''),
        acl.privilege_type,
@@ -850,29 +769,91 @@ CROSS JOIN LATERAL pg_catalog.aclexplode(
 ) AS acl
 LEFT JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee
 LEFT JOIN pg_catalog.pg_roles AS grantor ON grantor.oid = acl.grantor
-WHERE namespace.nspname = 'wanwork_im'
+WHERE namespace.nspname = ANY($1::text[])
   AND acl.grantee <> procedure.proowner
-ORDER BY procedure.proname, grantee.rolname, grantor.rolname, acl.privilege_type`)
+ORDER BY namespace.nspname,
+         procedure.proname,
+         pg_catalog.pg_get_function_identity_arguments(procedure.oid),
+         grantee.rolname,
+         grantor.rolname,
+         acl.privilege_type`, schemas)
 	if err != nil {
 		return nil, false
 	}
 	defer rows.Close()
-	values := make([]authorityAccessACL, 0)
+	values := make([]AuthorityPrivilegeSpecification, 0)
 	for rows.Next() {
-		var value authorityAccessACL
+		value := AuthorityPrivilegeSpecification{Scope: AuthorityPrivilegeFunction}
 		if err := rows.Scan(
-			&value.object,
-			&value.grantee,
-			&value.grantor,
-			&value.privilege,
-			&value.grantable,
-		); err != nil || value.grantee == "" || value.grantor == "" ||
-			value.grantee == ownerRole || value.grantable {
+			&value.Schema,
+			&value.Object,
+			&value.IdentityArguments,
+			&value.GranteeRole,
+			&value.GrantorRole,
+			&value.Privilege,
+			&value.Grantable,
+		); err != nil || value.GranteeRole == "" || value.GrantorRole == "" ||
+			value.GranteeRole == owners[value.Schema+"\x00"+value.Object+"\x00"+value.IdentityArguments] || value.Grantable {
 			return nil, false
 		}
 		values = append(values, value)
 	}
+	slices.SortFunc(values, compareAuthorityPrivilegeSpecification)
 	return values, rows.Err() == nil
+}
+
+func authorityObjectsFor(
+	specification AuthorityAccessSpecification,
+	kind AuthorityObjectKind,
+	schema string,
+) []AuthorityObjectSpecification {
+	values := make([]AuthorityObjectSpecification, 0)
+	for _, object := range specification.Objects {
+		if object.Kind == kind && (schema == "" || object.Schema == schema) {
+			values = append(values, object)
+		}
+	}
+	return values
+}
+
+func authorityPrivilegesFor(
+	specification AuthorityAccessSpecification,
+	scope AuthorityPrivilegeScope,
+) []AuthorityPrivilegeSpecification {
+	values := make([]AuthorityPrivilegeSpecification, 0)
+	for _, privilege := range specification.Privileges {
+		if privilege.Scope == scope {
+			values = append(values, privilege)
+		}
+	}
+	return values
+}
+
+func authoritySchemasForObjects(objects []AuthorityObjectSpecification) []string {
+	values := make([]string, 0)
+	for _, object := range objects {
+		if object.Schema != "" && !slices.Contains(values, object.Schema) {
+			values = append(values, object.Schema)
+		}
+	}
+	slices.Sort(values)
+	return values
+}
+
+func authorityRoleHasPrivilege(
+	specification AuthorityAccessSpecification,
+	scope AuthorityPrivilegeScope,
+	object string,
+	grantee string,
+	privilegeName string,
+) bool {
+	for _, privilege := range specification.Privileges {
+		if privilege.Scope == scope && privilege.Object == object &&
+			privilege.GranteeRole == grantee && privilege.Privilege == privilegeName {
+			return true
+		}
+	}
+	return false
 }
 
 func authorityAccessRoleNames(manifest AuthorityAccessManifest) []string {
