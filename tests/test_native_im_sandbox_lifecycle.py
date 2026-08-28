@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 import pickle
 from pathlib import Path
@@ -19,6 +21,12 @@ from quantum_entanglement.native_im_sandbox_lifecycle import (
     NativeIMSandboxLifecycleV1,
     NativeIMSandboxProcessMismatchError,
 )
+from quantum_entanglement.native_im_sandbox_observability import (
+    NativeIMSandboxMetricsV1,
+    NativeIMSandboxObserverV1,
+    native_im_sandbox_log_catalog_v1,
+)
+from quantum_entanglement.service.logging import SafeLogger
 from tests.test_native_im_auth import NOW
 from tests.test_native_im_sandbox_inbound_adapter import (
     FixtureTransport,
@@ -41,7 +49,42 @@ class BlockingTransport(FixtureTransport):
         return self.response
 
 
-def lifecycle_inputs(tmp_path: Path, *, blocking: bool = False):
+class CapturingHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+class FailingHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        raise RuntimeError("logging-backend-message-secret-canary")
+
+
+def sandbox_observer(
+    handler: logging.Handler | None = None,
+) -> tuple[NativeIMSandboxObserverV1, NativeIMSandboxMetricsV1]:
+    logger = logging.Logger("qe-native-im-lifecycle-test", level=logging.DEBUG)
+    logger.propagate = False
+    logger.addHandler(logging.NullHandler() if handler is None else handler)
+    metrics = NativeIMSandboxMetricsV1()
+    return (
+        NativeIMSandboxObserverV1(
+            SafeLogger(logger, native_im_sandbox_log_catalog_v1()),
+            metrics,
+        ),
+        metrics,
+    )
+
+
+def lifecycle_inputs(
+    tmp_path: Path,
+    *,
+    blocking: bool = False,
+    observer: NativeIMSandboxObserverV1 | None = None,
+):
     profile = provider_profile()
     store = SQLiteNativeIMInboxStore(
         str(tmp_path / "native-im-lifecycle.sqlite3"),
@@ -65,7 +108,8 @@ def lifecycle_inputs(tmp_path: Path, *, blocking: bool = False):
         )
         transport = blocked
     kill_switch = NativeIMSandboxKillSwitchV1()
-    lifecycle = NativeIMSandboxLifecycleV1(adapter, store, kill_switch)
+    observer = sandbox_observer()[0] if observer is None else observer
+    lifecycle = NativeIMSandboxLifecycleV1(adapter, store, kill_switch, observer)
     return lifecycle, adapter, store, kill_switch, request, transport
 
 
@@ -99,6 +143,94 @@ async def test_lifecycle_starts_health_then_atomically_admits_and_replays_page(
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_emits_typed_state_read_and_kill_switch_observations(
+    tmp_path: Path,
+) -> None:
+    handler = CapturingHandler()
+    observer, metrics = sandbox_observer(handler)
+    lifecycle, _, store, _, request, _ = lifecycle_inputs(tmp_path, observer=observer)
+    try:
+        await lifecycle.start()
+        fresh = await lifecycle.admit_once(request)
+        replay = await lifecycle.admit_once(request)
+        assert lifecycle.trip("manual") is True
+        with pytest.raises(NativeIMKillSwitchTrippedError):
+            await lifecycle.admit_once(request)
+    finally:
+        await lifecycle.aclose()
+        store.close()
+
+    decoded = [json.loads(message) for message in handler.messages]
+    assert [(item["event"], item["fields"]) for item in decoded] == [
+        (
+            "qe.native_im.lifecycle",
+            {"kill_switch_tripped": False, "ready": False, "state": "starting"},
+        ),
+        ("qe.native_im.health", {"outcome": "success"}),
+        (
+            "qe.native_im.lifecycle",
+            {"kill_switch_tripped": False, "ready": True, "state": "ready"},
+        ),
+        (
+            "qe.native_im.read",
+            {
+                "event_count": len(fresh.event_receipts),
+                "outcome": "fresh_observation",
+                "trace_present": False,
+            },
+        ),
+        (
+            "qe.native_im.read",
+            {
+                "event_count": len(replay.event_receipts),
+                "outcome": "observed_replay",
+                "trace_present": False,
+            },
+        ),
+        ("qe.native_im.kill_switch", {"reason": "manual"}),
+        (
+            "qe.native_im.read",
+            {"event_count": 0, "outcome": "kill_switch", "trace_present": False},
+        ),
+        (
+            "qe.native_im.lifecycle",
+            {"kill_switch_tripped": True, "ready": False, "state": "draining"},
+        ),
+        (
+            "qe.native_im.lifecycle",
+            {"kill_switch_tripped": True, "ready": False, "state": "closed"},
+        ),
+    ]
+    snapshot = metrics.snapshot()
+    assert snapshot.health_success_count == 1
+    assert snapshot.read_fresh_count == 1
+    assert snapshot.read_replay_count == 1
+    assert snapshot.read_rejected_count == 1
+    assert snapshot.events_admitted_count == len(fresh.event_receipts)
+    assert snapshot.kill_switch_trip_count == 1
+
+
+@pytest.mark.asyncio
+async def test_logging_backend_failure_cannot_change_lifecycle_admission(
+    tmp_path: Path,
+) -> None:
+    observer, metrics = sandbox_observer(FailingHandler())
+    lifecycle, _, store, _, request, _ = lifecycle_inputs(tmp_path, observer=observer)
+    try:
+        health = await lifecycle.start()
+        result = await lifecycle.admit_once(request)
+        assert health.healthy is True
+        assert result.disposition == "fresh_observation"
+    finally:
+        await lifecycle.aclose()
+        store.close()
+    snapshot = metrics.snapshot()
+    assert snapshot.health_success_count == 1
+    assert snapshot.read_fresh_count == 1
+    assert snapshot.events_admitted_count == len(result.event_receipts)
+
+
+@pytest.mark.asyncio
 async def test_trip_during_inflight_read_prevents_admission_and_restart_resumes(
     tmp_path: Path,
 ) -> None:
@@ -129,6 +261,7 @@ async def test_trip_during_inflight_read_prevents_admission_and_restart_resumes(
         resumed_adapter,
         store,
         NativeIMSandboxKillSwitchV1(),
+        sandbox_observer()[0],
     )
     try:
         await resumed.start()
@@ -201,9 +334,24 @@ def test_lifecycle_rejects_subclasses_and_serialization(tmp_path: Path) -> None:
     class AdapterSubclass(NativeIMInboundOnlySandboxAdapter):
         pass
 
+    class ObserverSubclass(NativeIMSandboxObserverV1):
+        pass
+
     try:
         with pytest.raises(TypeError):
-            NativeIMSandboxLifecycleV1(object.__new__(AdapterSubclass), store, kill_switch)
+            NativeIMSandboxLifecycleV1(
+                object.__new__(AdapterSubclass),
+                store,
+                kill_switch,
+                sandbox_observer()[0],
+            )
+        with pytest.raises(TypeError):
+            NativeIMSandboxLifecycleV1(
+                adapter,
+                store,
+                kill_switch,
+                object.__new__(ObserverSubclass),
+            )
         with pytest.raises(TypeError):
             pickle.dumps(lifecycle)
     finally:

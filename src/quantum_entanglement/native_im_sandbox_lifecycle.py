@@ -21,6 +21,7 @@ from .native_im_sandbox import (
     NativeIMInboundOnlySandboxAdapter,
     NativeIMVerifiedInboundReadV1,
 )
+from .native_im_sandbox_observability import NativeIMSandboxObserverV1
 
 _KILL_REASONS = {
     "canary_detected",
@@ -207,6 +208,7 @@ class NativeIMSandboxLifecycleV1:
         "__adapter",
         "__kill_switch",
         "__lock",
+        "__observer",
         "__process_id",
         "__state",
         "__store",
@@ -217,6 +219,7 @@ class NativeIMSandboxLifecycleV1:
         adapter: NativeIMInboundOnlySandboxAdapter,
         store: SQLiteNativeIMInboxStore,
         kill_switch: NativeIMSandboxKillSwitchV1,
+        observer: NativeIMSandboxObserverV1,
     ) -> None:
         if type(adapter) is not NativeIMInboundOnlySandboxAdapter:
             raise TypeError("lifecycle requires the exact inbound-only adapter")
@@ -224,16 +227,57 @@ class NativeIMSandboxLifecycleV1:
             raise TypeError("lifecycle requires the exact native IM inbox store")
         if type(kill_switch) is not NativeIMSandboxKillSwitchV1:
             raise TypeError("lifecycle requires the exact kill switch")
+        if type(observer) is not NativeIMSandboxObserverV1:
+            raise TypeError("lifecycle requires the exact sandbox observer")
         self.__process_id = os.getpid()
         self.__adapter = adapter
         self.__store = store
         self.__kill_switch = kill_switch
+        self.__observer = observer
         self.__lock = asyncio.Lock()
         self.__state = "stopped"
 
     def _require_current_process(self) -> None:
         if os.getpid() != self.__process_id:
             raise NativeIMSandboxProcessMismatchError() from None
+
+    def _observe_lifecycle(self, state: str, *, kill_switch_tripped: bool) -> None:
+        try:
+            self.__observer.lifecycle(
+                state,
+                ready=state == "ready" and not kill_switch_tripped,
+                kill_switch_tripped=kill_switch_tripped,
+            )
+        except Exception:
+            pass
+
+    def _observe_health(self, outcome: str) -> None:
+        try:
+            self.__observer.health(outcome)
+        except Exception:
+            pass
+
+    def _observe_read(
+        self,
+        outcome: str,
+        *,
+        event_count: int = 0,
+        trace_present: bool = False,
+    ) -> None:
+        try:
+            self.__observer.read(
+                outcome,
+                event_count=event_count,
+                trace_present=trace_present,
+            )
+        except Exception:
+            pass
+
+    def _observe_kill_switch(self, reason: str) -> None:
+        try:
+            self.__observer.kill_switch(reason)
+        except Exception:
+            pass
 
     async def start(self) -> NativeIMHealthEvidenceV1:
         self._require_current_process()
@@ -244,13 +288,29 @@ class NativeIMSandboxLifecycleV1:
             snapshot = self.__kill_switch.snapshot()
             self.__kill_switch.require_permitted(snapshot)
             self.__state = "starting"
+            self._observe_lifecycle("starting", kill_switch_tripped=False)
             try:
                 health = await self.__adapter.probe_health()
+            except BaseException:
+                self._observe_health("failure")
+                self.__state = "failed"
+                self._observe_lifecycle(
+                    "failed",
+                    kill_switch_tripped=self.__kill_switch.tripped,
+                )
+                raise
+            self._observe_health("success")
+            try:
                 self.__kill_switch.require_permitted(snapshot)
             except BaseException:
                 self.__state = "failed"
+                self._observe_lifecycle(
+                    "failed",
+                    kill_switch_tripped=self.__kill_switch.tripped,
+                )
                 raise
             self.__state = "ready"
+            self._observe_lifecycle("ready", kill_switch_tripped=False)
             return health
 
     async def admit_once(
@@ -261,47 +321,72 @@ class NativeIMSandboxLifecycleV1:
         async with self.__lock:
             self._require_current_process()
             if self.__state != "ready":
+                self._observe_read("rejected")
                 raise NativeIMSandboxLifecycleError() from None
-            snapshot = self.__kill_switch.snapshot()
-            self.__kill_switch.require_permitted(snapshot)
-            if type(request) is not IMInboundReadRequestV1:
-                raise TypeError("lifecycle read requires the exact V1 request")
-            preparation = self.__store.prepare_native_im_inbound_read(request)
-            if type(preparation) is not NativeIMInboundReadPreparationV1:
-                raise NativeIMSandboxLifecycleError() from None
-            self.__kill_switch.require_permitted(snapshot)
-            verified = await self.__adapter.read_verified_inbound(request)
-            if type(verified) is not NativeIMVerifiedInboundReadV1:
-                raise NativeIMSandboxLifecycleError() from None
-            with self.__kill_switch.admission_guard(snapshot):
-                result = self.__store.admit_native_im_inbound_page(
-                    verified.request,
-                    verified.capability,
-                    verified.page,
-                    verified.raw_verification,
-                )
-            if type(result) is not NativeIMInboundPageAdmissionResultV1:
-                raise NativeIMSandboxLifecycleError() from None
+            try:
+                snapshot = self.__kill_switch.snapshot()
+                self.__kill_switch.require_permitted(snapshot)
+                if type(request) is not IMInboundReadRequestV1:
+                    raise TypeError("lifecycle read requires the exact V1 request")
+                preparation = self.__store.prepare_native_im_inbound_read(request)
+                if type(preparation) is not NativeIMInboundReadPreparationV1:
+                    raise NativeIMSandboxLifecycleError() from None
+                self.__kill_switch.require_permitted(snapshot)
+                verified = await self.__adapter.read_verified_inbound(request)
+                if type(verified) is not NativeIMVerifiedInboundReadV1:
+                    raise NativeIMSandboxLifecycleError() from None
+                with self.__kill_switch.admission_guard(snapshot):
+                    result = self.__store.admit_native_im_inbound_page(
+                        verified.request,
+                        verified.capability,
+                        verified.page,
+                        verified.raw_verification,
+                    )
+                if type(result) is not NativeIMInboundPageAdmissionResultV1:
+                    raise NativeIMSandboxLifecycleError() from None
+            except NativeIMKillSwitchTrippedError:
+                self._observe_read("kill_switch")
+                raise
+            except (NativeIMSandboxLifecycleError, TypeError):
+                self._observe_read("rejected")
+                raise
+            except BaseException:
+                self._observe_read("contract_failure")
+                raise
+            trace_present = any(
+                envelope.traceparent is not None for envelope in verified.page.envelopes
+            )
+            self._observe_read(
+                result.disposition,
+                event_count=len(result.event_receipts),
+                trace_present=trace_present,
+            )
             return result
 
     def trip(self, reason: str = "manual") -> bool:
         self._require_current_process()
-        return self.__kill_switch.trip(reason)
+        tripped = self.__kill_switch.trip(reason)
+        if tripped:
+            self._observe_kill_switch(reason)
+        return tripped
 
     async def aclose(self) -> None:
         self._require_current_process()
-        self.__kill_switch.trip("shutdown")
+        self.trip("shutdown")
         async with self.__lock:
             self._require_current_process()
             if self.__state == "closed":
                 return
             self.__state = "draining"
+            self._observe_lifecycle("draining", kill_switch_tripped=True)
             try:
                 await self.__adapter.aclose()
             except BaseException:
                 self.__state = "failed"
+                self._observe_lifecycle("failed", kill_switch_tripped=True)
                 raise
             self.__state = "closed"
+            self._observe_lifecycle("closed", kill_switch_tripped=True)
 
     def status(self) -> NativeIMSandboxLifecycleStatusV1:
         self._require_current_process()
