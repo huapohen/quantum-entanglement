@@ -3,7 +3,7 @@
 > 计划版本：2026-08-28-stage-pause-v2
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
-> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec 已在 `d889751` 完成；下一实现节点是 M2 reserved fence；真实 provider sandbox 未连接。**
+> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec 已在 `d889751` 完成，M2 reserved fence 已在 `dd0ba54` 完成；下一实现节点是 M3 store adapter；真实 provider sandbox 未连接。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -254,6 +254,11 @@ codec-only 全量通过，且仍没有任何公共写 API 能据此签发 author
   - `runningTaskRevision`
   - `terminalTaskRevision`
 
+精确合同冻结为：只检查 exact `task.status.changed` 的 store-owned payload 顶层 key；依次执行
+`NFKC → casefold → NFKD → 仅保留 ASCII [a-z0-9]`，任一 key 的 skeleton 命中上述六项即拒绝，
+不依赖 value、字段数量或 typed decode。nested key、字符串 value、其他 event type 不在该 terminal
+namespace 内。Exact `task.invocation.result.accepted` 则与 payload 内容无关，全部拒绝。
+
 ### 6.3 必须覆盖的 generic surface
 
 - `append`
@@ -282,6 +287,24 @@ standalone `SQLiteInvocationAttemptStore.complete()` 对 canonical scoped job �
 ### Phase 2 出口
 
 每个 public/generic 入口的零写入失败测试通过，legacy tests 无回归。
+
+### 2026-08-28 M2 实施检查点
+
+- 代码/对抗修复封板：`dd0ba54`；
+- `_snapshot_event` 保持未来 M3 私有 writer 可使用的纯冻结 primitive；caller-controlled 写入口只走
+  class-qualified `_snapshot_generic_event`，没有 `trusted`、`allow_reserved`、caller connection 或
+  transaction 参数；
+- `append`、`append_many`、`append_with_outbox`、`append_inbox`、
+  `append_invocation_admission` 均在 `BEGIN` 前检查 store-owned snapshot；canonical admission wrappers
+  继续经过同一 base path，内部 start writer 只生成固定 start vocabulary；
+- `SQLiteInvocationAttemptStore.complete()` 在同一写事务内、读 clock 与任何 DML 前，按 durable
+  job/admission/execution/start 结构分类 scoped job；candidate query 由 canonical idempotency、exact
+  payload `invocationId` needle 和 receipt coordinate 定位，最多 64 条，超限失败关闭；
+- 独立逆向复核发现并修复了 stripped scope marker 降级与 type/key coordinate drift 两条真实旁路；
+- legacy 五字段状态、schema-1 admission/start、attempt-only database、demo/recovery 继续兼容；
+- 详细证据：[`research/29_reserved_result_event_boundary_evidence.md`](./research/29_reserved_result_event_boundary_evidence.md)。
+
+M2 已达到本阶段出口，但没有开放 M3 adapter、migration 7、result writer、Accepted 或 worker。
 
 ## 7. Phase 3：Write-Snapshot 与 Raw-Row 双路重算
 
@@ -706,7 +729,7 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | --- | --- | --- |
 | M0 参考复评 | 新项目 delta/ADR 完成 | 全部实现 |
 | M1 Codec（已完成） | golden/canonical/raw JSON contract 通过 | writer、Accepted |
-| M2 Reserved fence | generic bypass 全封 | writer、Accepted |
+| M2 Reserved fence（已完成） | generic bypass 全封 | writer、Accepted |
 | M3 Store adapter | snapshot/raw-row 双验通过 | writer public API |
 | M4 Inactive schema | migration/backup/artifact 候选通过 | migration registration |
 | M5 Atomic writer | 完整事务图/fault/concurrency 通过 | Accepted、worker |
@@ -715,28 +738,30 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | M8 Integration | 独立 release evidence 通过 | 生产 Gate 仍需分别审批 |
 
 本计划现在是 E3 Result Authority 的当前串行入口。提前接入路线的 E1/E2 离线节点已完成，M1
-也已形成安全停点；用户验收并继续后从 M2 reserved fence 开始，不跳过 M2 直接开放 writer。
+与 M2 reserved fence 均已形成安全停点；下一串行实现节点是 M3 store adapter，不跳过 M3 直接开放
+writer。
 若用户新增会改变底层 result/store 方向的参考项目，仍先做 M0 delta review，不从原子 writer
 中途改变合同。
 
 ## 18. 远端文档策略
 
-本地主仓继续作为 canonical source。用户已经重新授权私人 Notion；同步节奏调整为每个 E1–E5
-稳定阶段结束后批量更新并远端回读，不再阻塞每个小 commit。私人语雀仍只有用户另行明确授权时
-才操作：
+本地主仓继续作为 canonical source。用户在 2026-08-28 进一步确认：Notion 页面写入、图片上传和
+逐页回读明显影响开发速度，因此当前计划的本地任务全部完成前不再逐阶段操作 Notion；开发期间只
+更新本地文档并频繁 commit/push，全部任务完成后再一次性批量同步并逐页回读。私人语雀仍只有用户
+另行明确授权时才操作：
 
 - 新报告先落本地、进入 Git 并推送 GitHub；
-- 阶段末同步 Notion 页面、附件、manifest/checkpoint 并逐页 fetch 回读；
+- 全部当前计划任务完成后同步 Notion 页面、附件、manifest/checkpoint 并逐页 fetch 回读；
 - 回读未完成时只声明“已写入待核验”，不能声明同步闭环；
 - 不自动操作私人语雀；
 - 永远不向飞书、企微、任何人、任何群聊、bot 或 webhook 发送消息。
 
-E1 本地/GitHub 收口完成后，必须把新增生产说明、调研证据、计划状态、readiness、changelog 和
-远端分支 SHA 同步到 Notion，并 fetch 回读关键 marker；在此之前 Notion 基线仍按 `f99f176` 记录。
+当前截至 `3a92f3c` 的稳定内容已经完成 Notion 同步；M2 及后续本地增量只进入 Git/GitHub，不能在
+最终批量同步前声称已进入 Notion。
 
 ## 19. 启动下一阶段时的第一组命令
 
-继续本最大强度 Result Authority 路线时，从以下只读检查开始；下一步是本文件 Phase 2，真实 IM
+继续本最大强度 Result Authority 路线时，从以下只读检查开始；下一步是本文件 Phase 3，真实 IM
 Level B 仍以 `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 的合同输入为独立门禁：
 
 ```bash
@@ -750,5 +775,5 @@ git ls-remote --heads \
 PYTHONPATH=src python3 -m pytest
 ```
 
-确认 clean baseline 后按 Phase 2 reserved fence 开始；没有用户新的继续指令，不进入真实 sandbox
-网络、M3 store adapter 或任何 writer。
+确认 clean baseline 后按 Phase 3 store adapter 开始；没有用户新的继续指令，不进入真实 sandbox
+网络、migration 7、任何 writer、Accepted 或 worker。

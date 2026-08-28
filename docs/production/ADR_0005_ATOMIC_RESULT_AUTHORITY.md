@@ -21,6 +21,12 @@
 > `_EventWriteSnapshot` adapter, reserved-event fence, same-transaction write/read comparison,
 > result migration 7, writer, `AcceptedV2` mint point and worker dispatch remain absent and disabled.
 
+> 2026-08-28 M2 checkpoint: every caller-controlled generic event append now passes a
+> store-owned reserved-vocabulary fence before `BEGIN`, and standalone `complete()` structurally
+> rejects scoped durable admissions before reading the clock or issuing DML. M3 stored-event
+> snapshot/raw-row comparison, migration 7, writer, `AcceptedV2` and worker dispatch remain absent
+> and disabled.
+
 ## Context
 
 Atomic admission and first claim/start now commit a queued invocation, running attempt and
@@ -267,6 +273,28 @@ Before the writer is promoted:
 
 Compatibility APIs for legacy/demo workflows stay clearly named and cannot create scoped canonical
 evidence.
+
+M2 freezes the generic event rule more precisely:
+
+- exact `task.invocation.result.accepted` is always rejected, regardless of payload;
+- for exact `task.status.changed`, only root payload keys are examined; each key is normalized with
+  `NFKC`, `casefold`, then `NFKD`, and reduced to ASCII alphanumerics;
+- any one skeleton equal to `transitionkind`, `resultreceiptid`, `resulteventid`,
+  `resultevidencedigest`, `runningtaskrevision`, or `terminaltaskrevision` is rejected before typed
+  decoding, so malformed, partial and near-canonical shapes cannot fall through;
+- nested keys, string values and different event types are outside this terminal namespace; the
+  legacy five-field status event remains writable but does not gain Result Authority;
+- `_snapshot_event` remains the private pure snapshot primitive for M3; caller-controlled paths use
+  the separate class-qualified `_snapshot_generic_event`, so no future writer needs a public bypass
+  flag.
+
+Standalone completion does not infer scope from `max_attempts`, identity prefixes or an opaque
+digest. Inside the same write transaction it loads the durable job and classifies bounded candidate
+admission/start events through receipt coordinates, canonical idempotency and exact payload
+`invocationId`. Exact schema-2 execution or schema-3 start evidence raises
+`InvocationCompletionPathReservedError`; scoped-like partial or drifted structure raises
+`InvocationIntegrityError`. The check happens before clock access and DML. Exact schema-1 evidence
+and databases that only own attempt migrations retain their legacy behavior.
 
 ## Required proof before writer enablement
 
