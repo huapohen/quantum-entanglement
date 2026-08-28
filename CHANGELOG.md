@@ -46,6 +46,15 @@ production gate and does not authorize a real connector or external message.
 - Frozen stored-event envelope Golden bytes/manifest, a read-only verifier exercised on Python
   3.9/3.12/3.13, exhaustive scalar/payload/storage mutation tests, and a three-version stdlib-only
   CI job.
+- A private, fresh-only stored-event insert adapter that derives an envelope from the exact hidden
+  write snapshot, performs one isolated INSERT, reads a fixed raw `sqlite3.Row` projection in the
+  owning transaction, and independently compares fields, canonical bytes and digest.
+- Exact typed result/terminal payload and event-scalar binding before INSERT, zero-trigger-side-
+  effect accounting with `changes()` plus `total_changes`, and rollback coverage for replay,
+  relocation/clone, ignored INSERT, extra event, audit-table, storage-class and caller-mutation
+  drift.
+- Clean fixed contract, integrity and concurrency outcomes that detach payload-bearing traceback
+  graphs, plus exact preservation of the pre-M3 wildcard-visible store surface.
 - Native IM V1 provider-neutral executable contract with strict bounded codecs, 21 public wire
   models, domain-separated canonical digests and stable idempotency derivation.
 - An exact four-method `IMGatewayPort` plus pure request/result admission gates for capability,
@@ -214,9 +223,10 @@ production gate and does not authorize a real connector or external message.
 
 ### In progress — not yet a shipped guarantee
 
-- Atomic Result Authority has completed M1 private envelope codec and M2 reserved generic-append /
-  scoped-standalone-completion fences. The store-owned snapshot/raw-row transaction adapter, result
-  migration 7, atomic writer, Observed recovery, Accepted mint point, and worker promotion remain
+- Atomic Result Authority has completed M1 private envelope codec, M2 reserved generic-append /
+  scoped-standalone-completion fences, and M3 private store-owned snapshot/raw-row transaction
+  adapter. Inactive result schema and Artifact transaction primitives are next; migration 7
+  registration, atomic writer, Observed recovery, Accepted mint point, and worker promotion remain
   disabled.
 - Native IM E2 sandbox inbound-only: the offline profile/auth/durable atomic inbox, default-off
   adapter/lifecycle/observability/recorded-probe and synthetic provider-bundle TCK nodes now exist,

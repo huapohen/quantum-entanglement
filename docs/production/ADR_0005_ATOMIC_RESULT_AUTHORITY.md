@@ -27,6 +27,14 @@
 > snapshot/raw-row comparison, migration 7, writer, `AcceptedV2` and worker dispatch remain absent
 > and disabled.
 
+> 2026-08-29 M3 checkpoint: a private, fresh-only adapter now freezes exact typed result/terminal
+> snapshot bytes, performs one isolated event INSERT, reads a fixed 11-column raw `sqlite3.Row`
+> inside the owning transaction, and requires write/raw fields, canonical bytes and digest to
+> match. Trigger replacement/extra-row effects, idempotent replay, storage-class drift, caller
+> mutation and classified exception-graph disclosure fail closed. This is still only an insert-time
+> adapter: result migration 7, Artifact transaction primitives, atomic pair writer/final readback,
+> receipt, `ObservedV2`, `AcceptedV2` and worker dispatch remain absent and disabled.
+
 ## Context
 
 Atomic admission and first claim/start now commit a queued invocation, running attempt and
@@ -284,9 +292,28 @@ M2 freezes the generic event rule more precisely:
   decoding, so malformed, partial and near-canonical shapes cannot fall through;
 - nested keys, string values and different event types are outside this terminal namespace; the
   legacy five-field status event remains writable but does not gain Result Authority;
-- `_snapshot_event` remains the private pure snapshot primitive for M3; caller-controlled paths use
-  the separate class-qualified `_snapshot_generic_event`, so no future writer needs a public bypass
-  flag.
+- `_snapshot_event` is the private pure snapshot primitive consumed by M3; caller-controlled paths
+  use the separate class-qualified `_snapshot_generic_event`, so M3 needs no public bypass flag.
+
+M3 freezes the private insert contract more precisely:
+
+- only exact typed `ScopedInvocationResultEvidenceV2` and
+  `ScopedInvocationResultTerminalTransitionV2` payload bytes are accepted;
+- the result event binds stream, orchestrator actor, `acceptedAt` timestamp, non-null
+  correlation/causation and acceptance idempotency; the terminal event binds stream, actor,
+  correlation, result-event causation and task/revision idempotency;
+- one verified insert must be fresh and have zero trigger/FK side effects: top-level `changes()` is
+  exactly 1 and connection `total_changes` increases by exactly 1;
+- after INSERT, a fixed raw-row projection is independently decoded and must equal the write-side
+  envelope by fields, canonical bytes and digest;
+- classified contract, integrity and concurrency failures are reissued from a clean boundary with
+  no payload-bearing inner traceback; no public writer, capability or wildcard-visible symbol is
+  added.
+
+The M3 check occurs immediately after each event INSERT. The future atomic writer must repeat final
+verification of both result and terminal rows after every Artifact/receipt/outbox/attempt/task DML
+and before COMMIT. Pair-level timestamp, coordinates, evidence digest and receipt binding are not
+proven by the single-event adapter.
 
 Standalone completion does not infer scope from `max_attempts`, identity prefixes or an opaque
 digest. Inside the same write transaction it loads the durable job and classifies bounded candidate

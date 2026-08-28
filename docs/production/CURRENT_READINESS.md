@@ -1,6 +1,6 @@
 # Quantum Entanglement 当前生产就绪审计
 
-- 更新日期：2026-08-28
+- 更新日期：2026-08-29
 - 审计口径：只计算本文所在评审分支中已提交、可复现的源码和证据
 - 硬边界：[`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md)
 - 结论：**内核组件已形成较强验证基线，但仍不是生产服务；Gate A–E 全部关闭**
@@ -34,9 +34,10 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
    receipt，并由 `claim_invocation_start(...)` 在同一 SQLite transaction 内完成 admission
    复核、job CAS、attempt、schema-2 start event 与 readback；但 `OrchestratorKernel` 尚未使用这些
    API。Result Authority M1 已增加私有 stored-event envelope codec 与 raw-row 重算 primitive，M2
-   已封锁 generic result vocabulary 和 scoped standalone completion 旁路；但真实
-   write-snapshot/store adapter、heartbeat-supervised worker、result/artifact receipt 与 terminal
-   projection 闭环仍不存在；
+   已封锁 generic result vocabulary 和 scoped standalone completion 旁路，M3 又完成 exact typed
+   write-snapshot 与 raw durable row 的同事务双路重算；但 inactive result schema、Artifact
+   same-transaction primitive、atomic writer/recovery/Accepted、heartbeat-supervised worker 与
+   terminal projection 闭环仍不存在；
 2. events、snapshots、delivery、attempt 和 projection repository 尚未统一强制 tenant/workspace
    scope，tenant domain object 不能替代可信认证与 SQL predicate；
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
@@ -385,6 +386,19 @@ locked Ruff 0.16.3 与 Mypy 1.19.1 strict（66 source files）全绿。M2 不包
 migration 7、writer、Accepted 或 worker；详细证据见
 [`29_reserved_result_event_boundary_evidence.md`](../../analysis_report/research/29_reserved_result_event_boundary_evidence.md)。
 
+E3 Result Authority M3 封板节点 `504824c` 已完成 private stored-event envelope store adapter：actual
+INSERT hidden frozen snapshot 与 fixed 11-column raw `sqlite3.Row` 在 owning transaction 内独立重算
+fields、canonical bytes 与 digest；reserved result/terminal payload 先通过 exact typed codec 和
+event-scalar binding。`changes()` + `total_changes` 冻结 zero-trigger-side-effect 合同，拒绝
+relocation/clone、ignored INSERT、extra event、audit side effect 与 idempotent replay；classified
+contract/integrity/concurrency error 的完整 traceback graph 不保留 event/payload/digest canary，且
+pre-M3 82-name wildcard surface exact 不变。M3 两文件 64 tests；M1–M3 与 typed-model 组合 209 tests
+在 CPython 3.9.6/3.12.12/3.13.9 通过；Python 3.13 全仓为 2,578/2,578 tests（79 条既有 fork
+warning），Ruff 0.16.3 lint 与 Mypy 1.19.1 strict（66 source files）全绿。M3 不包含 inactive
+schema/migration 7、Artifact transaction primitive、writer、receipt、Observed、Accepted 或 worker；
+详细证据见
+[`30_stored_event_envelope_store_adapter_evidence.md`](../../analysis_report/research/30_stored_event_envelope_store_adapter_evidence.md)。
+
 仍缺：
 
 - 完整的 supported OS/SQLite 组合矩阵；当前 full-suite CI 只覆盖 GitHub Linux 的 Python
@@ -430,10 +444,10 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
    profile/mapper 和 production exchange 并通过现有 TCK，再单独修订 `SERVICE_BOUNDARY.md`；
 4. 上述批准与 full gates 完成后，才执行 health/read/dedupe/resume；Level B 只生成 observation，
    不驱动 Agent、tool、browser、subprocess 或 outbound；
-5. E3 M1 private stored-event envelope codec 与 M2 reserved result/terminal event fence 已完成；
-   下一步做 M3 store-owned write snapshot 与 raw-row 同事务双路重算。M3 完成前不开放 result
-   writer；
-6. 在 M2/M3 之上再把 accepted result/artifact、attempt 和 terminal task state 组成单一原子验收
+5. E3 M1 private stored-event envelope codec、M2 reserved result/terminal event fence 与 M3
+   private store adapter 已完成；下一步做 M4 inactive result schema、Artifact same-transaction
+   primitives 与 backup-v2 topology。M4 完成前不注册 migration 7、不开放 result writer；
+6. 在 M1–M4 之上再把 accepted result/artifact、attempt 和 terminal task state 组成单一原子验收
    边界；没有 result receipt 时绝不把 succeeded job 猜成 completed。默认关闭的
    [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)保持不变；
 7. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
