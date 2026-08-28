@@ -463,9 +463,7 @@ class NativeIMInboundOnlyConfigV1:
             {
                 "approvalExpiresAt": self.approval_expires_at,
                 "approvalId": self.approval_id,
-                "approvedAddresses": [
-                    address.compressed for address in self.approved_addresses
-                ],
+                "approvedAddresses": [address.compressed for address in self.approved_addresses],
                 "channelId": self.channel_id,
                 "connectTimeoutMs": self.connect_timeout_ms,
                 "credentialRef": self.credential_ref.canonical,

@@ -174,9 +174,7 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
             raise TypeError("approval authority requires the exact durable high-water store")
         self.__process_owner = _process_identity.capture_process_owner()
         self.__authority_token = object()
-        self.__approval = NativeIMSandboxApprovalV1.from_json_bytes(
-            approval.canonical_bytes()
-        )
+        self.__approval = NativeIMSandboxApprovalV1.from_json_bytes(approval.canonical_bytes())
         self.__approval_digest = trusted_record_digest
         self.__clock = clock
         self.__high_water = high_water
@@ -268,9 +266,7 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
         now_text, now_value = self._now()
         self._require_time_window(self.__approval, now_text, now_value)
         self._observe_approved_locked(now_text)
-        return NativeIMSandboxApprovalV1.from_json_bytes(
-            self.__approval.canonical_bytes()
-        )
+        return NativeIMSandboxApprovalV1.from_json_bytes(self.__approval.canonical_bytes())
 
     def _approved_state(self, observed_at: str) -> NativeIMSandboxApprovalAuthorityStateV1:
         return NativeIMSandboxApprovalAuthorityStateV1(

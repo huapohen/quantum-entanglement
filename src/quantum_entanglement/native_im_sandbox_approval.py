@@ -335,9 +335,7 @@ class NativeIMSandboxApprovalV1:
             "transportContractDigest": self.transport_contract_digest,
             "transportContractId": self.transport_contract_id,
             "verificationKeyId": self.verification_key_id,
-            "verificationSecretRefBindingDigest": (
-                self.verification_secret_ref_binding_digest
-            ),
+            "verificationSecretRefBindingDigest": (self.verification_secret_ref_binding_digest),
             "workspaceId": self.workspace_id,
         }
 
@@ -392,9 +390,7 @@ class NativeIMSandboxApprovalV1:
             read_method=body["readMethod"],
             read_path=body["readPath"],
             credential_ref_binding_digest=body["credentialRefBindingDigest"],
-            verification_secret_ref_binding_digest=(
-                body["verificationSecretRefBindingDigest"]
-            ),
+            verification_secret_ref_binding_digest=(body["verificationSecretRefBindingDigest"]),
             verification_key_id=body["verificationKeyId"],
             page_limit=body["pageLimit"],
             max_response_bytes=body["maxResponseBytes"],

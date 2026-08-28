@@ -49,13 +49,16 @@ def test_authority_state_round_trip_and_domain_separated_digests_are_stable() ->
 
     assert NativeIMSandboxApprovalAuthorityStateV1.from_dict(wire) == value
     assert NativeIMSandboxApprovalAuthorityStateV1.from_json_bytes(encoded) == value
-    assert encoded == json.dumps(
-        wire,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
+    assert (
+        encoded
+        == json.dumps(
+            wire,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    )
     assert value.canonical_digest() == (
         "73df52ec6ba8fedcac2bf821c1cb9d8a009a13de0c5d38c94021d32490c340d0"
     )
@@ -290,8 +293,7 @@ def test_admission_guard_rejects_revoked_input_and_rolls_back_failed_section(
             with store.admission_guard(revoked):
                 pass
         assert (
-            state_error.value.code
-            == "native_im_sandbox_approval_store_admission_state_forbidden"
+            state_error.value.code == "native_im_sandbox_approval_store_admission_state_forbidden"
         )
 
         with pytest.raises(RuntimeError, match="admission-body-failed"):
@@ -320,9 +322,7 @@ def test_store_rejects_weak_permissions_symlink_schema_trigger_and_tampered_row(
 
     weak = tmp_path / "weak.sqlite3"
     connection = sqlite3.connect(weak)
-    connection.execute(
-        "CREATE TABLE qe_native_im_sandbox_approval_high_water (approval_id TEXT)"
-    )
+    connection.execute("CREATE TABLE qe_native_im_sandbox_approval_high_water (approval_id TEXT)")
     connection.commit()
     connection.close()
     weak.chmod(0o600)

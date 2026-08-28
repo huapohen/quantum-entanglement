@@ -54,9 +54,7 @@ class NativeIMInboxMigrationTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def _downgrade_to_v4(self) -> None:
-        self.connection.executescript(
-            migration_text("0006_native_im_sandbox_provenance.down.sql")
-        )
+        self.connection.executescript(migration_text("0006_native_im_sandbox_provenance.down.sql"))
         self.connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 6")
         self.connection.executescript(migration_text("0005_native_im_inbox.down.sql"))
         self.connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 5")

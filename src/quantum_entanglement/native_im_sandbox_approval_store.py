@@ -369,10 +369,7 @@ class SQLiteNativeIMSandboxApprovalHighWaterV1:
             state=state,
             observed_at=observed_at,
         )
-        if (
-            state_digest != value.state_binding_digest()
-            or bool(terminal) != (state == "revoked")
-        ):
+        if state_digest != value.state_binding_digest() or bool(terminal) != (state == "revoked"):
             raise NativeIMSandboxApprovalStoreIntegrityError(
                 "native_im_sandbox_approval_store_row_integrity_failed"
             ) from None
@@ -468,9 +465,7 @@ class SQLiteNativeIMSandboxApprovalHighWaterV1:
     ) -> NativeIMSandboxApprovalAuthorityStateV1:
         if type(value) is not NativeIMSandboxApprovalAuthorityStateV1:
             raise TypeError("approval high-water requires the exact authority state V1")
-        return NativeIMSandboxApprovalAuthorityStateV1.from_json_bytes(
-            value.canonical_bytes()
-        )
+        return NativeIMSandboxApprovalAuthorityStateV1.from_json_bytes(value.canonical_bytes())
 
     def observe(
         self,

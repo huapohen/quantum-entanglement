@@ -205,9 +205,7 @@ class NativeIMSandboxLifecycleStatusV1:
         if type(self.kill_switch_generation) is not int or self.kill_switch_generation < 0:
             raise TypeError("lifecycle generation must be a non-negative exact integer")
         if self.ready != (
-            self.state == "ready"
-            and self.approval_current
-            and not self.kill_switch_tripped
+            self.state == "ready" and self.approval_current and not self.kill_switch_tripped
         ):
             raise ValueError("lifecycle ready flag does not match state and kill switch")
 
@@ -421,11 +419,7 @@ class NativeIMSandboxLifecycleV1:
                 approval_current = True
         return NativeIMSandboxLifecycleStatusV1(
             state=self.__state,
-            ready=(
-                self.__state == "ready"
-                and approval_current
-                and not snapshot.tripped
-            ),
+            ready=(self.__state == "ready" and approval_current and not snapshot.tripped),
             approval_current=approval_current,
             kill_switch_tripped=snapshot.tripped,
             kill_switch_generation=snapshot.generation,

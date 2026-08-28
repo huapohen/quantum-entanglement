@@ -49,9 +49,7 @@ def test_v5_upgrades_to_exact_provenance_schema_and_can_downgrade(tmp_path: Path
             hashlib.sha256(migration_text(migration.filename).encode()).hexdigest(),
         )
 
-        columns = connection.execute(
-            "PRAGMA table_info('native_im_inbound_provenance')"
-        ).fetchall()
+        columns = connection.execute("PRAGMA table_info('native_im_inbound_provenance')").fetchall()
         assert tuple((row["name"], row["type"], row["notnull"], row["pk"]) for row in columns) == (
             ("tenant_id", "TEXT", 1, 1),
             ("workspace_id", "TEXT", 1, 2),
@@ -95,9 +93,10 @@ def test_v5_upgrades_to_exact_provenance_schema_and_can_downgrade(tmp_path: Path
                 "page_digest",
             )
         }
-        assert connection.execute(
-            "SELECT name FROM sqlite_schema WHERE type = 'trigger'"
-        ).fetchall() == []
+        assert (
+            connection.execute("SELECT name FROM sqlite_schema WHERE type = 'trigger'").fetchall()
+            == []
+        )
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
         _downgrade_to_v5(connection)

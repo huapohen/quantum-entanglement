@@ -138,9 +138,7 @@ def approved_authority_for(
     )
     configuration = replace(configuration, approval_digest=approval.canonical_digest())
     store = (
-        SQLiteNativeIMSandboxApprovalHighWaterV1(":memory:")
-        if high_water is None
-        else high_water
+        SQLiteNativeIMSandboxApprovalHighWaterV1(":memory:") if high_water is None else high_water
     )
     authority = InMemoryNativeIMSandboxApprovalAuthorityV1(
         approval,
@@ -292,9 +290,7 @@ def test_clock_values_fail_closed_without_leaking_the_value(invalid: object) -> 
 
 def test_clock_exception_is_detached_and_redacted() -> None:
     canary = "authority-clock-secret-canary"
-    authority, configuration, provider_profile, _, _ = authority_inputs(
-        now=RuntimeError(canary)
-    )
+    authority, configuration, provider_profile, _, _ = authority_inputs(now=RuntimeError(canary))
     with pytest.raises(NativeIMSandboxApprovalAuthorityError) as raised:
         authority.activate(configuration, provider_profile)
     assert raised.value.code == "native_im_sandbox_approval_clock_invalid"

@@ -218,9 +218,7 @@ class NativeIMProviderSandboxRegistrationV1:
         self._require_process()
         if token is not _REGISTRATION_TOKEN:
             raise TypeError("provider registration is consumed by approved composition")
-        return NativeIMProviderSandboxManifestV1.from_json_bytes(
-            self.__manifest.canonical_bytes()
-        )
+        return NativeIMProviderSandboxManifestV1.from_json_bytes(self.__manifest.canonical_bytes())
 
     def _components(self, token: object) -> tuple[object, object, object, object]:
         self._require_process()
@@ -324,9 +322,7 @@ def compose_approved_native_im_sandbox_v1(
     approval = authority.require_current(permit, operation="health")
     manifest = registration._manifest_snapshot(_REGISTRATION_TOKEN)
     _validate_manifest_binding(manifest, approval, configuration, profile)
-    transport, mapper, secret_provider, replay_guard = registration._components(
-        _REGISTRATION_TOKEN
-    )
+    transport, mapper, secret_provider, replay_guard = registration._components(_REGISTRATION_TOKEN)
     if not isinstance(transport, NativeIMInboundTransportPort):
         raise NativeIMSandboxCompositionError(
             "native_im_sandbox_registered_transport_invalid"

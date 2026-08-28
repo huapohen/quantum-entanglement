@@ -672,9 +672,7 @@ class SQLiteBackupTests(unittest.TestCase):
         with SQLiteEventStore(str(self.source), clock=lambda: T0):
             pass
         with closing(sqlite3.connect(self.source, isolation_level=None)) as connection:
-            connection.executescript(
-                migration_text("0006_native_im_sandbox_provenance.down.sql")
-            )
+            connection.executescript(migration_text("0006_native_im_sandbox_provenance.down.sql"))
             connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 6")
             connection.executescript(migration_text("0005_native_im_inbox.down.sql"))
             connection.execute("DELETE FROM main.qe_schema_migrations WHERE version = 5")

@@ -347,10 +347,7 @@ def test_approval_binding_digest_covers_every_mutable_configuration_field(
     configuration = bound_configuration()
     changed_configuration = replace(configuration, **{field_name: changed})
 
-    assert (
-        changed_configuration.approval_binding_digest
-        != configuration.approval_binding_digest
-    )
+    assert changed_configuration.approval_binding_digest != configuration.approval_binding_digest
 
 
 def test_record_digest_trust_anchor_is_outside_the_record_configuration_digest_cycle() -> None:
