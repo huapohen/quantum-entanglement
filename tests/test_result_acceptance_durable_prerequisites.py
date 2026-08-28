@@ -53,7 +53,10 @@ from quantum_entanglement.invocation_results import (
     ScopedInvocationResultTerminalTransitionV2,
 )
 from quantum_entanglement.protocol import TaskStatus
-from quantum_entanglement.store import SQLiteEventStore
+from quantum_entanglement.store import (
+    SQLiteEventStore,
+    _InsertedFreshResultAcceptancePlanV2,
+)
 from tests import test_inactive_invocation_results_migration as inactive_migration_module
 from tests.test_scoped_task_invocation_admission import (
     CLAIMED_AT,
@@ -1579,6 +1582,163 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     ],
                     0,
                 )
+
+    def test_inserted_event_pair_is_fresh_consecutive_and_raw_verified(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        generated = (
+            "receipt_inserted_1",
+            "event_result_inserted_1",
+            "event_terminal_inserted_1",
+        )
+        before_events = self.store._connection.execute("SELECT count(*) FROM events").fetchone()[0]
+
+        with patch("quantum_entanglement.store.new_id", side_effect=generated):
+            with self.store._result_artifact_transaction() as handle:
+                insert_pair = self.store._insert_result_acceptance_event_pair_in_owner_transaction
+                with insert_pair(handle, prepared) as inserted:
+                    self.assertIs(type(inserted), _InsertedFreshResultAcceptancePlanV2)
+                    assert type(inserted) is _InsertedFreshResultAcceptancePlanV2
+                    (
+                        evented,
+                        result_stored,
+                        result_envelope,
+                        terminal_stored,
+                        terminal_envelope,
+                    ) = inserted._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+                    self.assertEqual(
+                        (result_stored.sequence, terminal_stored.sequence),
+                        (
+                            prepared.request.expected_stream_version + 1,
+                            prepared.request.expected_stream_version + 2,
+                        ),
+                    )
+                    self.assertEqual(
+                        terminal_stored.global_position,
+                        result_stored.global_position + 1,
+                    )
+                    self.assertEqual(
+                        result_stored.event.idempotency_key,
+                        prepared.request.acceptance_idempotency_key,
+                    )
+                    self.assertEqual(
+                        terminal_stored.event.causation_id,
+                        result_stored.event.event_id,
+                    )
+                    self.assertNotEqual(result_envelope.digest(), terminal_envelope.digest())
+                    self.assertEqual(
+                        result_envelope.to_dict()["eventId"],
+                        result_stored.event.event_id,
+                    )
+                    self.assertEqual(
+                        terminal_envelope.to_dict()["eventId"],
+                        terminal_stored.event.event_id,
+                    )
+                    self.assertEqual(
+                        ScopedInvocationResultEvidenceV2.from_dict(
+                            result_stored.event.payload
+                        ).accepted_at,
+                        result_stored.event.timestamp,
+                    )
+                    self.assertEqual(
+                        ScopedInvocationResultTerminalTransitionV2.from_dict(
+                            terminal_stored.event.payload
+                        ).result_event_id,
+                        result_stored.event.event_id,
+                    )
+                    for operation in (
+                        lambda: copy.copy(inserted),
+                        lambda: copy.deepcopy(inserted),
+                        lambda: pickle.dumps(inserted),
+                    ):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ):
+                            operation()
+        self.assertEqual(
+            self.store._connection.execute("SELECT count(*) FROM events").fetchone()[0],
+            before_events + 2,
+        )
+        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+            inserted._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+            evented._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_existing_graph_insert_path_does_not_touch_event_rows(self) -> None:
+        helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
+            methodName="runTest"
+        )
+        helper.store = self.store
+        helper.connection = self.store._connection
+        helper.seed_nonempty_v6_dependencies()
+        helper.apply_candidate()
+        helper.seed_complete_result_graph()
+        prepared = existing_graph_prepared(helper)
+        before = tuple(tuple(row) for row in self.store._connection.execute("SELECT * FROM events"))
+        with patch.object(
+            SQLiteEventStore,
+            "_insert_with_verified_envelope_in_transaction",
+            side_effect=AssertionError("existing graph must not insert events"),
+        ) as insert:
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._insert_result_acceptance_event_pair_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as result:
+                    self.assertIs(type(result), _ExistingResultAcceptanceGraphCandidateV2)
+        insert.assert_not_called()
+        after = tuple(tuple(row) for row in self.store._connection.execute("SELECT * FROM events"))
+        self.assertEqual(after, before)
+
+    def test_second_event_insert_failure_rolls_back_pair_and_artifacts(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        generated = (
+            "receipt_second_failure",
+            "event_result_second_failure",
+            "event_terminal_second_failure",
+        )
+        before_events = tuple(
+            tuple(row) for row in self.store._connection.execute("SELECT * FROM events")
+        )
+        original_insert = SQLiteEventStore._insert_with_verified_envelope_in_transaction
+        calls = 0
+
+        def fail_second(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("terminal event insert failed")
+            return original_insert(*args, **kwargs)  # type: ignore[arg-type]
+
+        with (
+            patch("quantum_entanglement.store.new_id", side_effect=generated),
+            patch.object(
+                SQLiteEventStore,
+                "_insert_with_verified_envelope_in_transaction",
+                side_effect=fail_second,
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "terminal event insert failed"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._insert_result_acceptance_event_pair_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("failed terminal insertion unexpectedly yielded a plan")
+        self.assertEqual(calls, 2)
+        self.assertEqual(
+            tuple(tuple(row) for row in self.store._connection.execute("SELECT * FROM events")),
+            before_events,
+        )
+        for table in ("artifact_versions", "artifact_blobs"):
+            self.assertEqual(
+                self.store._connection.execute(f"SELECT count(*) FROM main.{table}").fetchone()[0],
+                0,
+            )
 
     def test_caught_event_pair_failure_still_forces_owner_transaction_rollback(self) -> None:
         prepared = self.fresh_prepared()

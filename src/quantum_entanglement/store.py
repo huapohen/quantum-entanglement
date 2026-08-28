@@ -1140,6 +1140,143 @@ class _EventWriteSnapshot:
     payload_json: str
 
 
+class _InsertedFreshResultAcceptancePlanV2:
+    """Two privately verified event rows produced by one still-open owner transaction."""
+
+    __slots__ = (
+        "__active",
+        "__evented",
+        "__result_envelope",
+        "__result_stored",
+        "__terminal_envelope",
+        "__terminal_stored",
+    )
+
+    def __init__(
+        self,
+        *,
+        evented: _EventedFreshResultAcceptancePlanV2,
+        result_stored: StoredEvent,
+        result_envelope: _StoredEventEnvelopeV1,
+        terminal_stored: StoredEvent,
+        terminal_envelope: _StoredEventEnvelopeV1,
+        token: object,
+    ) -> None:
+        if type(self) is not _InsertedFreshResultAcceptancePlanV2:
+            raise TypeError("inserted result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("inserted result acceptance plan constructor is private")
+        self.__evented = evented
+        self.__result_stored = result_stored
+        self.__result_envelope = result_envelope
+        self.__terminal_stored = terminal_stored
+        self.__terminal_envelope = terminal_envelope
+        self.__active = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    @staticmethod
+    def _verify_stored_event_and_envelope(
+        stored: StoredEvent,
+        envelope: _StoredEventEnvelopeV1,
+        expected_event: DomainEvent,
+    ) -> None:
+        if type(stored) is not StoredEvent or type(envelope) is not _StoredEventEnvelopeV1:
+            raise TypeError("inserted result event proof values are not exact")
+        if type(expected_event) is not DomainEvent or stored.event != expected_event:
+            raise ValueError("inserted result event differs from its canonical snapshot")
+        event = stored.event
+        body = _StoredEventEnvelopeV1.to_dict(envelope)
+        expected = {
+            "schemaVersion": body["schemaVersion"],
+            "eventId": event.event_id,
+            "streamId": event.stream_id,
+            "eventType": event.event_type,
+            "actorId": event.actor_id,
+            "timestamp": event.timestamp,
+            "correlationId": event.correlation_id,
+            "causationId": event.causation_id,
+            "idempotencyKey": event.idempotency_key,
+            "payload": dict(event.payload),
+            "sequence": stored.sequence,
+            "globalPosition": stored.global_position,
+        }
+        if body != expected:
+            raise ValueError("inserted result event envelope differs from its canonical snapshot")
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> tuple[
+        _EventedFreshResultAcceptancePlanV2,
+        StoredEvent,
+        _StoredEventEnvelopeV1,
+        StoredEvent,
+        _StoredEventEnvelopeV1,
+    ]:
+        if type(self) is not _InsertedFreshResultAcceptancePlanV2:
+            raise TypeError("inserted result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("inserted result acceptance plan validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("inserted result acceptance plan is no longer active")
+        evented = self.__evented
+        if type(evented) is not _EventedFreshResultAcceptancePlanV2:
+            raise TypeError("inserted result acceptance event plan is not exact")
+        _transitioned, expected_result, expected_terminal = evented._validated(
+            token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+        )
+        result_stored = self.__result_stored
+        result_envelope = self.__result_envelope
+        terminal_stored = self.__terminal_stored
+        terminal_envelope = self.__terminal_envelope
+        self._verify_stored_event_and_envelope(
+            result_stored,
+            result_envelope,
+            expected_result,
+        )
+        self._verify_stored_event_and_envelope(
+            terminal_stored,
+            terminal_envelope,
+            expected_terminal,
+        )
+        if (
+            terminal_stored.sequence != result_stored.sequence + 1
+            or terminal_stored.global_position != result_stored.global_position + 1
+            or terminal_stored.event.timestamp != result_stored.event.timestamp
+            or terminal_stored.event.stream_id != result_stored.event.stream_id
+            or terminal_stored.event.correlation_id != result_stored.event.correlation_id
+            or terminal_stored.event.causation_id != result_stored.event.event_id
+        ):
+            raise ValueError("inserted result event pair coordinates are not consecutive")
+        return (
+            evented,
+            result_stored,
+            result_envelope,
+            terminal_stored,
+            terminal_envelope,
+        )
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("inserted result acceptance plan invalidation is private")
+        self.__active = False
+        object.__setattr__(self, "_InsertedFreshResultAcceptancePlanV2__evented", None)
+        object.__setattr__(self, "_InsertedFreshResultAcceptancePlanV2__result_stored", None)
+        object.__setattr__(self, "_InsertedFreshResultAcceptancePlanV2__result_envelope", None)
+        object.__setattr__(self, "_InsertedFreshResultAcceptancePlanV2__terminal_stored", None)
+        object.__setattr__(self, "_InsertedFreshResultAcceptancePlanV2__terminal_envelope", None)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("inserted result acceptance plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("inserted result acceptance plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("inserted result acceptance plans cannot be serialized")
+
+
 @dataclass(frozen=True)
 class InvocationAdmissionResult:
     """The events and queued job committed by one atomic invocation admission."""
@@ -2991,6 +3128,99 @@ class SQLiteEventStore:
                 yield evented
             finally:
                 evented._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    @_bind_event_store_process
+    def _insert_result_acceptance_event_pair_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> ContextManager[
+        _ExistingResultAcceptanceGraphCandidateV2 | _InsertedFreshResultAcceptancePlanV2
+    ]:
+        """Insert and independently verify both canonical events in the owner transaction."""
+
+        return self._insert_result_acceptance_event_pair_in_owner_transaction_inner(
+            handle,
+            prepared,
+        )
+
+    @contextmanager
+    def _insert_result_acceptance_event_pair_in_owner_transaction_inner(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> Iterator[_ExistingResultAcceptanceGraphCandidateV2 | _InsertedFreshResultAcceptancePlanV2]:
+        inserted: Optional[_InsertedFreshResultAcceptancePlanV2] = None
+        with self._construct_result_acceptance_event_pair_in_owner_transaction(
+            handle,
+            prepared,
+        ) as candidate:
+            if type(candidate) is _ExistingResultAcceptanceGraphCandidateV2:
+                yield candidate
+                return
+            if type(candidate) is not _EventedFreshResultAcceptancePlanV2:
+                raise RuntimeError("result acceptance insertion classification is not closed")
+            transitioned_plan, result_event, terminal_event = candidate._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            evidenced_plan, _transition = transitioned_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            identified_plan, _evidence = evidenced_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            materialized, _, _, _ = identified_plan._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            prepared_snapshot, prerequisites, _, _ = materialized._validated(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            connection = self._connection_for_result_artifact_transaction(handle)
+            result_snapshot = SQLiteEventStore._snapshot_event(self, result_event)
+            result_stored, result_inserted, result_envelope = (
+                SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                    self,
+                    connection,
+                    result_snapshot,
+                    prepared_snapshot.request.expected_stream_version,
+                )
+            )
+            if result_inserted is not True:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance result event was not freshly inserted"
+                )
+            self._require_current_process()
+            terminal_snapshot = SQLiteEventStore._snapshot_event(self, terminal_event)
+            terminal_stored, terminal_inserted, terminal_envelope = (
+                SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                    self,
+                    connection,
+                    terminal_snapshot,
+                    result_stored.sequence,
+                )
+            )
+            if terminal_inserted is not True:
+                raise _ResultAcceptanceIntegrityError(
+                    "result acceptance terminal event was not freshly inserted"
+                )
+            self._require_current_process()
+            if prerequisites.expected_stream_version != result_stored.sequence - 1:
+                raise _ResultAcceptanceConflictError(
+                    "result acceptance result event sequence changed during insertion"
+                )
+            inserted = _InsertedFreshResultAcceptancePlanV2(
+                evented=candidate,
+                result_stored=result_stored,
+                result_envelope=result_envelope,
+                terminal_stored=terminal_stored,
+                terminal_envelope=terminal_envelope,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            self._require_current_process()
+            try:
+                yield inserted
+            finally:
+                inserted._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
     @contextmanager
     def _transaction_inner(
