@@ -336,19 +336,21 @@ def render_catalog(
     if auxiliary_worktree_count:
         worktree_summary = (
             f"`main` 固定在 `{repo}`。当前另有 {auxiliary_worktree_count} 个辅助 linked "
-            f"worktree；它们统一位于 `{worktree_root}`，完成后必须合并、推送并移除。"
+            f"worktree；它们统一位于 `{worktree_root}`。每个 worktree 必须先推送，再按人工评审"
+            "结论决定合并、归档或移除；保留中的人工评审 worktree 不得提前清理。"
         )
     else:
         worktree_summary = (
             f"`main` 固定在 `{repo}`。当前没有辅助 linked worktree；后续临时 worktree "
-            f"统一创建在 `{worktree_root}`，完成后必须合并、推送并移除。"
+            f"统一创建在 `{worktree_root}`，完成后先推送，再按人工评审结论决定合并、归档或移除。"
         )
     lines = [
         "# Quantum Entanglement 分支与 Worktree 导航",
         "",
         "> 结论先行：**日常开发、启动体验和后续集成都只使用 `main`。** "
         "除非是在做历史审计或定点恢复，不要直接在 `codex/*`、`agent/*`、`gate-*` 或 "
-        "`archive/*` 上继续开发，也不要把这些分支整条合并回 `main`。",
+        "`archive/*` 上继续开发，也不要把这些分支整条合并回 `main`。用户已明确指定的独立人工"
+        "评审分支是例外：应使用表中对应 worktree，并在验收决定前保留、不合并、不删除。",
         "",
         "## 你现在应该用哪个",
         "",
@@ -491,9 +493,11 @@ def render_catalog(
             "## 管理规则",
             "",
             "1. `main` 永远是唯一默认主线；阶段分支不能自封为发布分支。",
-            "2. 每个小改动继续独立提交；阶段完成后合并回 `main` 并推送远端。",
+            "2. 每个小改动继续独立提交并先推送阶段分支；只有用户明确批准后才合并或挑选进入 "
+            "`main`。",
             f"3. 新 worktree 一律建在 `{worktree_root}`。",
-            "4. 推送成功后删除已完成的本地 worktree 和本地阶段分支，不长期堆积。",
+            "4. 已完成且评审决定不再保留的 worktree，确认推送和归档状态后再删除；保留中的人工"
+            "评审 worktree 不得提前清理。",
             "5. 删除远端 active 分支前，必须确认提交已进入 `main` 或已有同 SHA 的 "
             "`archive/*` 冻结引用。",
             "6. `archive/*` 只用于保全证据，不在其中开发、不移动其尖端。",

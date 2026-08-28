@@ -223,7 +223,8 @@ class BranchCatalogTests(unittest.TestCase):
         self.assertIn("archive/2026-08-21/dangling/recovered", rendered)
         self.assertIn("正式主线工作区", rendered)
         self.assertIn("当前没有辅助 linked worktree", rendered)
-        self.assertIn("完成后必须合并、推送并移除", rendered)
+        self.assertIn("完成后先推送，再按人工评审结论决定合并、归档或移除", rendered)
+        self.assertIn("只有用户明确批准后才合并或挑选进入 `main`", rendered)
         self.assertIn("`v0.1.0`", rendered)
 
     def test_render_catalog_counts_only_auxiliary_linked_worktrees(self) -> None:
@@ -263,7 +264,7 @@ class BranchCatalogTests(unittest.TestCase):
             rendered = render_catalog(root, [main], worktrees, [])
 
         self.assertIn("当前另有 1 个辅助 linked worktree", rendered)
-        self.assertIn("完成后必须合并、推送并移除", rendered)
+        self.assertIn("保留中的人工评审 worktree 不得提前清理", rendered)
 
     def test_render_catalog_uses_catalog_baseline_for_main_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
