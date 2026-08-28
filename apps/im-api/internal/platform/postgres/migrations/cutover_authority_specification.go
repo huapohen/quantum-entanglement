@@ -66,7 +66,7 @@ func CurrentAuthorityCutoverSpecification(
 			Scope:       AuthorityPrivilegeDatabase,
 			Object:      manifest.DatabaseName,
 			GranteeRole: provisionerLoginRole,
-			GrantorRole: provisionerGrantorRole,
+			GrantorRole: manifest.DatabaseOwnerRole,
 			Privilege:   "CONNECT",
 		},
 	}
@@ -106,7 +106,7 @@ func validAuthorityCutoverSpecification(specification AuthorityCutoverSpecificat
 			Scope:       AuthorityPrivilegeDatabase,
 			Object:      specification.DatabaseOwner.Database,
 			GranteeRole: specification.Provisioner.Name,
-			GrantorRole: specification.Membership.GrantorRole,
+			GrantorRole: specification.DatabaseOwner.Role,
 			Privilege:   "CONNECT",
 		}) {
 		return false

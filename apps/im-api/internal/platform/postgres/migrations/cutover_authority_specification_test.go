@@ -51,7 +51,7 @@ func TestCurrentAuthorityCutoverSpecificationFreezesDedicatedCellGraph(t *testin
 		Scope:       AuthorityPrivilegeDatabase,
 		Object:      manifest.DatabaseName,
 		GranteeRole: "provisioner_login",
-		GrantorRole: "iac_bootstrap_role",
+		GrantorRole: manifest.DatabaseOwnerRole,
 		Privilege:   "CONNECT",
 	}) {
 		t.Fatalf("CONNECT privilege = %#v", specification.ProvisionerConnect)
@@ -116,7 +116,7 @@ func TestAuthorityCutoverSpecificationIsDeterministicAndIndependentlyDigested(t 
 		t.Fatal("cutover and managed specifications shared a digest domain")
 	}
 
-	const want = "sha256:7090823b9bf4d1f4a7303087d043265b1caa64f3d1dc2c1fa684686f582c4110"
+	const want = "sha256:ab3d5e7755eb6d987e846fdced242b4049d1edf8659d5bb8679ad767e0983f07"
 	if firstDigest != want {
 		t.Fatalf("golden digest = %q, want %q", firstDigest, want)
 	}
@@ -166,9 +166,6 @@ func TestDigestAuthorityCutoverSpecificationRejectsDrift(t *testing.T) {
 		"membership cannot set": func(value *AuthorityCutoverSpecification) {
 			value.Membership.SetOption = false
 		},
-		"membership wrong grantor": func(value *AuthorityCutoverSpecification) {
-			value.Membership.GrantorRole = "other_iac_role"
-		},
 		"connect grantable": func(value *AuthorityCutoverSpecification) {
 			value.ProvisionerConnect.Grantable = true
 		},
@@ -200,5 +197,28 @@ func TestDigestAuthorityCutoverSpecificationRejectsDrift(t *testing.T) {
 				t.Fatalf("digest error = %v, want %v", err, ErrAuthorityCutoverSpecification)
 			}
 		})
+	}
+}
+
+func TestAuthorityCutoverDigestBindsExactMembershipGrantor(t *testing.T) {
+	specification, err := CurrentAuthorityCutoverSpecification(
+		specificationTestManifest(),
+		"provisioner_login",
+		"iac_bootstrap_role",
+	)
+	if err != nil {
+		t.Fatalf("CurrentAuthorityCutoverSpecification: %v", err)
+	}
+	first, err := DigestAuthorityCutoverSpecification(specification)
+	if err != nil {
+		t.Fatalf("DigestAuthorityCutoverSpecification: %v", err)
+	}
+	specification.Membership.GrantorRole = "other_iac_role"
+	second, err := DigestAuthorityCutoverSpecification(specification)
+	if err != nil {
+		t.Fatalf("DigestAuthorityCutoverSpecification changed grantor: %v", err)
+	}
+	if first == second {
+		t.Fatal("exact membership grantor did not change cutover specification digest")
 	}
 }
