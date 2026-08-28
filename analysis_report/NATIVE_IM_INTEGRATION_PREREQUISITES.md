@@ -1,6 +1,6 @@
 # 原生 IM 接入前必做事项与接入后 TODO 分界
 
-> 决策版本：2026-08-28-native-im-entry-v4
+> 决策版本：2026-08-28-native-im-entry-v5
 >
 > 适用仓库：`quantum_entanglement`
 >
@@ -13,6 +13,8 @@
 > E2 adapter/lifecycle 离线运行证据：`2bdaea1adddcfb3033b4678766f635d7afc242fc`
 >
 > E2 provider bundle 离线闭环证据：`ee0666fe3e956234cbd653abd0ea57bdba322cb7`
+>
+> 独立 IM 后端合同复核基线：`dev_wanwork_quantum_entanglement@c623aeadc0693e63c0d34602ed45ae1d2bc8099f`
 >
 > 决策性质：原生 IM 接入的执行顺序与验收边界；不是生产发布批准
 >
@@ -49,6 +51,14 @@
 > 增强 admission provenance、migration-v6 durable readback 和 bundle-to-atomic-admission 已推进到
 > `ee0666f`。真实 provider contract/scope/production exchange 和 sandbox 网络仍未介入；证据见
 > [`research/26_native_im_provider_bundle_offline_evidence.md`](./research/26_native_im_provider_bundle_offline_evidence.md)。
+
+> **2026-08-28 独立 IM 后端合同复核：** 已只读审计独立 IM 分支已提交 `c623aea`。其 authority
+> persistence substrate 可作为后续底座，但当前 Go/Fiber composition 只注册 loopback
+> `/health/live` 和 `/api/v1/system/ping`，配置强制 fake auth、fake IM、outbound disabled，尚无
+> authenticated event read、provider readiness、cursor/snapshot 或 production exchange。因此不能用
+> liveness 或内部 PostgreSQL repository 冒充真实 provider 合同；Level B 的三类直接阻断保持不变。
+> 证据与最小 readiness/read 交接合同见
+> [`research/27_native_im_backend_contract_audit.md`](./research/27_native_im_backend_contract_audit.md)。
 
 ## 1. 最终决策
 
