@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -27,6 +28,7 @@ _MAX_RESULT_ARTIFACT_METADATA_BYTES = 1_048_576
 _RESULT_ARTIFACT_HISTORY_FETCH_BATCH_SIZE = 64
 _RESULT_ARTIFACT_TRANSACTION_TOKEN = object()
 _MISSING_RESULT_ARTIFACT_SCHEMA_DIGEST = object()
+_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX = "qe_result_artifact_clock_"
 
 _HEAD_AGGREGATE_COLUMNS = (
     "row_count",
@@ -157,6 +159,10 @@ class _ResultArtifactConcurrencyError(RuntimeError):
 
 class _ResultArtifactIntegrityError(RuntimeError):
     """Artifact storage or DML effects violate the owner transaction contract."""
+
+
+class _ResultArtifactTransactionContinuityError(_ResultArtifactIntegrityError):
+    """The owner transaction identity changed across a re-entrant dependency."""
 
 
 class _ResultArtifactTransactionError(RuntimeError):
@@ -553,10 +559,11 @@ def _guarded_execute(
 def _result_artifact_process_progress_fence(
     connection: sqlite3.Connection,
     process_guard: Callable[[], None],
-) -> Iterator[Callable[[], None]]:
+) -> Iterator[Callable[[str], None]]:
     """Own SQLite callbacks after clock sampling and fence every later VM instruction."""
 
     callbacks_claimed = False
+    owned_savepoint_name: str | None = None
 
     def progress() -> int:
         try:
@@ -602,19 +609,37 @@ def _result_artifact_process_progress_fence(
             return sqlite3.SQLITE_OK
         if action == sqlite3.SQLITE_PRAGMA and first == "schema_version" and second is None:
             return sqlite3.SQLITE_OK
+        if action == sqlite3.SQLITE_SAVEPOINT and first in {"BEGIN", "RELEASE"} and (
+            second == owned_savepoint_name
+        ):
+            return sqlite3.SQLITE_OK
         return sqlite3.SQLITE_DENY
 
-    def claim_callbacks() -> None:
-        nonlocal callbacks_claimed
+    def claim_callbacks(savepoint_name: str) -> None:
+        nonlocal callbacks_claimed, owned_savepoint_name
         _run_process_guard(process_guard)
-        _require_exact_connection_codec(connection)
+        if (
+            type(savepoint_name) is not str
+            or len(savepoint_name) != len(_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX) + 32
+            or not savepoint_name.startswith(_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX)
+            or any(
+                character not in "0123456789abcdef"
+                for character in savepoint_name[len(_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX) :]
+            )
+            or (owned_savepoint_name is not None and owned_savepoint_name != savepoint_name)
+        ):
+            raise _ResultArtifactIntegrityError(
+                "result Artifact transaction savepoint name is invalid"
+            )
         # A constructor clock may retain the store through a closure. It cannot be
         # allowed to leave a trace/authorizer callback that changes the process fence
         # or introduces trigger work between topology verification and Artifact DML.
-        connection.set_trace_callback(None)
-        connection.set_authorizer(authorize)
         callbacks_claimed = True
-        refresh()
+        connection.set_trace_callback(None)
+        owned_savepoint_name = savepoint_name
+        connection.set_authorizer(authorize)
+        connection.set_progress_handler(progress, 1)
+        _run_process_guard(process_guard)
 
     refresh()
     try:
@@ -622,11 +647,47 @@ def _result_artifact_process_progress_fence(
     finally:
         # A mismatch child must not mutate the inherited SQLite wrapper even for cleanup.
         _run_process_guard(process_guard)
-        if callbacks_claimed:
-            connection.set_authorizer(None)
-            connection.set_trace_callback(None)
-        connection.set_progress_handler(None, 0)
+        try:
+            if callbacks_claimed:
+                connection.set_authorizer(None)
+                connection.set_trace_callback(None)
+            connection.set_progress_handler(None, 0)
+        except sqlite3.Error as error:
+            raise _ResultArtifactTransactionContinuityError(
+                "result Artifact SQLite callback cleanup lost transaction continuity"
+            ) from error
         _run_process_guard(process_guard)
+
+
+def _release_result_artifact_clock_savepoint(
+    connection: sqlite3.Connection,
+    savepoint_name: str,
+    *,
+    process_guard: Callable[[], None],
+    claim_sqlite_callbacks: Callable[[str], None],
+) -> None:
+    _run_process_guard(process_guard)
+    try:
+        claim_sqlite_callbacks(savepoint_name)
+        transaction_open = connection.in_transaction
+        if type(transaction_open) is not bool or not transaction_open:
+            raise _ResultArtifactTransactionContinuityError(
+                "result Artifact owner transaction closed during clock sampling"
+            )
+        connection.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+        _run_process_guard(process_guard)
+        transaction_open = connection.in_transaction
+        if type(transaction_open) is not bool or not transaction_open:
+            raise _ResultArtifactTransactionContinuityError(
+                "result Artifact owner transaction closed after clock sampling"
+            )
+    except _ResultArtifactTransactionContinuityError:
+        raise
+    except sqlite3.Error as error:
+        raise _ResultArtifactTransactionContinuityError(
+            "result Artifact owner transaction changed during clock sampling"
+        ) from error
+    _require_exact_connection_codec(connection)
 
 
 def _result_artifact_schema_snapshot(
@@ -1169,7 +1230,7 @@ def _write_prepared_result_artifacts_in_transaction_body(
     *,
     clock: Callable[[], str],
     process_guard: Callable[[], None],
-    claim_sqlite_callbacks: Callable[[], None],
+    claim_sqlite_callbacks: Callable[[str], None],
 ) -> tuple[ScopedInvocationResultArtifactV2, ...]:
     _run_process_guard(process_guard)
     if type(connection) is not sqlite3.Connection or not connection.in_transaction:
@@ -1204,16 +1265,25 @@ def _write_prepared_result_artifacts_in_transaction_body(
     _run_process_guard(process_guard)
     if type(before_total_changes) is not int:
         raise _ResultArtifactIntegrityError("SQLite total-change counter is invalid")
-    _run_process_guard(process_guard)
-    created_at = clock()
-    _run_process_guard(process_guard)
-    created_at = _canonical_result_artifact_timestamp(created_at, persisted=False)
-    _run_process_guard(process_guard)
-    claim_sqlite_callbacks()
-    transaction_open = connection.in_transaction
-    if type(transaction_open) is not bool or not transaction_open:
-        raise _ResultArtifactIntegrityError(
-            "result Artifact owner transaction changed during clock sampling"
+    savepoint_name = f"{_RESULT_ARTIFACT_CLOCK_SAVEPOINT_PREFIX}{secrets.token_hex(16)}"
+    claim_sqlite_callbacks(savepoint_name)
+    _guarded_execute(
+        connection,
+        process_guard,
+        f"SAVEPOINT {savepoint_name}",
+    )
+    try:
+        _run_process_guard(process_guard)
+        created_at = clock()
+        _run_process_guard(process_guard)
+        created_at = _canonical_result_artifact_timestamp(created_at, persisted=False)
+        _run_process_guard(process_guard)
+    finally:
+        _release_result_artifact_clock_savepoint(
+            connection,
+            savepoint_name,
+            process_guard=process_guard,
+            claim_sqlite_callbacks=claim_sqlite_callbacks,
         )
     if _result_artifact_schema_snapshot(connection, process_guard) != schema_snapshot:
         raise _ResultArtifactIntegrityError(

@@ -44,6 +44,7 @@ from ._result_artifact_transaction import (
     _ResultArtifactConcurrencyError,
     _ResultArtifactConflictError,
     _ResultArtifactIntegrityError,
+    _ResultArtifactTransactionContinuityError,
     _ResultArtifactTransactionError,
     _ResultArtifactTransactionHandle,
     _write_prepared_result_artifacts_in_transaction,
@@ -241,6 +242,12 @@ _MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
 _EVENT_STORE_PROCESS_SIGNAL_TOKEN = object()
 _EVENT_STORE_ADMISSION_CONTROL_TOKEN = object()
 _EVENT_STORE_START_CONTROL_TOKEN = object()
+_BASE_EXCEPTION_CAUSE_DESCRIPTOR: Any = BaseException.__dict__["__cause__"]
+_BASE_EXCEPTION_CONTEXT_DESCRIPTOR: Any = BaseException.__dict__["__context__"]
+_BASE_EXCEPTION_SUPPRESS_CONTEXT_DESCRIPTOR: Any = BaseException.__dict__[
+    "__suppress_context__"
+]
+_BASE_EXCEPTION_TRACEBACK_DESCRIPTOR: Any = BaseException.__dict__["__traceback__"]
 _EVENT_STORE_CHILD_GRAPH_QUARANTINE: List[object] = []
 _INVOCATION_ADMISSION_RECEIPT_FORMAT = "qe.invocation-admission-receipt/1"
 _RESERVED_RESULT_EVENT_TYPE = _TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE
@@ -458,6 +465,47 @@ def _event_store_control_descriptor(
     return None
 
 
+def _result_artifact_continuity_control(
+    error: BaseException,
+) -> Tuple[Optional[_EventStoreControlDescriptor], Tuple[BaseException, ...]]:
+    """Find one exact displaced control in a bounded internal continuity graph."""
+
+    if type(error) is not _ResultArtifactTransactionContinuityError:
+        return None, ()
+    pending: List[BaseException] = [error]
+    observed: List[BaseException] = []
+    controls: List[_EventStoreControlDescriptor] = []
+    while pending and len(observed) < 8:
+        current = pending.pop()
+        if any(current is item for item in observed):
+            continue
+        observed.append(current)
+        descriptor = _event_store_control_descriptor(current)
+        if descriptor is not None:
+            controls.append(descriptor)
+        cause = _BASE_EXCEPTION_CAUSE_DESCRIPTOR.__get__(current, BaseException)
+        context = _BASE_EXCEPTION_CONTEXT_DESCRIPTOR.__get__(current, BaseException)
+        suppress_context = _BASE_EXCEPTION_SUPPRESS_CONTEXT_DESCRIPTOR.__get__(
+            current,
+            BaseException,
+        )
+        linked_errors: Tuple[BaseException, ...]
+        if isinstance(cause, BaseException):
+            linked_errors = (cause,)
+        elif suppress_context:
+            linked_errors = ()
+        elif isinstance(context, BaseException):
+            linked_errors = (context,)
+        else:
+            linked_errors = ()
+        for linked in linked_errors:
+            if not any(linked is item for item in observed):
+                pending.append(linked)
+    if pending or len(controls) != 1:
+        return None, tuple(observed)
+    return controls[0], tuple(observed)
+
+
 def _normalized_event_store_control_descriptor(
     descriptor: object,
 ) -> Optional[_EventStoreControlDescriptor]:
@@ -567,10 +615,10 @@ def _raise_clean_invocation_start_error(kind: str) -> NoReturn:
 
 
 def _detach_exception(error: BaseException) -> None:
-    error_traceback = error.__traceback__
-    error.__cause__ = None
-    error.__context__ = None
-    error.__traceback__ = None
+    error_traceback = _BASE_EXCEPTION_TRACEBACK_DESCRIPTOR.__get__(error, BaseException)
+    _BASE_EXCEPTION_CAUSE_DESCRIPTOR.__set__(error, None)
+    _BASE_EXCEPTION_CONTEXT_DESCRIPTOR.__set__(error, None)
+    _BASE_EXCEPTION_TRACEBACK_DESCRIPTOR.__set__(error, None)
     if error_traceback is not None:
         traceback_module.clear_frames(error_traceback)
 
@@ -1661,8 +1709,15 @@ class SQLiteEventStore:
             )
             self._require_current_process()
             return result
-        except BaseException:
+        except BaseException as error:
             if self._process_is_current():
+                continuity_control: Optional[_EventStoreControlDescriptor] = None
+                continuity_graph: Tuple[BaseException, ...] = ()
+                if isinstance(error, _ResultArtifactTransactionContinuityError):
+                    self._poisoned = True
+                    continuity_control, continuity_graph = (
+                        _result_artifact_continuity_control(error)
+                    )
                 if type(connection) is sqlite3.Connection:
                     try:
                         transaction_open = connection.in_transaction
@@ -1676,6 +1731,14 @@ class SQLiteEventStore:
                 generation = self._active_result_artifact_transaction_generation
                 if type(generation) is int and generation > 0:
                     self._result_artifact_transaction_rollback_only = True
+                if continuity_control is not None:
+                    for graph_error in continuity_graph:
+                        _detach_exception(graph_error)
+                    raise _EventStoreAdmissionTransactionSignal(
+                        "ambiguous",
+                        control=continuity_control,
+                        token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+                    ) from None
             raise
 
     @contextmanager
@@ -1744,8 +1807,13 @@ class SQLiteEventStore:
                             raise RuntimeError("SQLite did not confirm body rollback")
                 except BaseException as rollback_error:
                     if classify_admission:
-                        control = _event_store_control_descriptor(
+                        classified_body = _take_classified_event_store_transaction_signal(
                             body_error
+                        )
+                        control = (
+                            classified_body[1]
+                            if classified_body is not None
+                            else _event_store_control_descriptor(body_error)
                         ) or _event_store_control_descriptor(rollback_error)
                         self._poisoned = True
                         _detach_exception(rollback_error)

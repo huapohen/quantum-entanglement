@@ -918,6 +918,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
 
         def hostile_clock() -> str:
             connection.set_progress_handler(None, 0)
+            connection.set_authorizer(None)
             connection.execute(
                 """
                 CREATE TEMP TRIGGER clock_created_result_artifact_trigger
@@ -955,6 +956,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
 
         def hostile_clock() -> str:
             connection.set_progress_handler(None, 0)
+            connection.set_authorizer(None)
             connection.execute(
                 """
                 CREATE TEMP TABLE artifact_blobs (
@@ -1038,6 +1040,7 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         connection = self.store._connection
 
         def hostile_clock() -> str:
+            connection.set_authorizer(None)
             connection.execute(
                 "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
                 "VALUES ('clock-mutation', 1, '{}', '2026-08-29T00:00:00Z')"
@@ -1059,15 +1062,17 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
         self.assertFalse(connection.in_transaction)
         self.assertFalse(self.store._poisoned)
 
-    def test_clock_committed_mutation_fails_and_poisons_the_store(self) -> None:
+    def test_clock_commit_then_begin_loses_savepoint_and_poisons_the_store(self) -> None:
         connection = self.store._connection
 
         def hostile_clock() -> str:
+            connection.set_authorizer(None)
             connection.execute(
                 "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
                 "VALUES ('clock-committed', 1, '{}', '2026-08-29T00:00:00Z')"
             )
             connection.execute("COMMIT")
+            connection.execute("BEGIN IMMEDIATE")
             return self.now
 
         self.store._clock = hostile_clock
@@ -1084,6 +1089,308 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
             ).fetchone()[0],
             "clock-committed",
         )
+        self.assertFalse(connection.in_transaction)
+        self.assertTrue(self.store._poisoned)
+
+    def test_clock_commit_then_begin_then_raise_still_poisons_the_store(self) -> None:
+        connection = self.store._connection
+
+        def hostile_clock() -> str:
+            connection.set_authorizer(None)
+            connection.execute(
+                "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
+                "VALUES ('clock-raised', 1, '{}', '2026-08-29T00:00:00Z')"
+            )
+            connection.execute("COMMIT")
+            connection.execute("BEGIN IMMEDIATE")
+            raise RuntimeError("clock failed after replacing the transaction")
+
+        self.store._clock = hostile_clock
+        with self.assertRaisesRegex(
+            _ResultArtifactIntegrityError,
+            "transaction integrity failed",
+        ):
+            self.write(candidate())
+
+        self.assertEqual(self.counts(), (0, 0))
+        self.assertEqual(
+            connection.execute(
+                "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-raised'"
+            ).fetchone()[0],
+            "clock-raised",
+        )
+        self.assertFalse(connection.in_transaction)
+        self.assertTrue(self.store._poisoned)
+
+    def test_clock_transaction_replacement_preserves_clean_control_ambiguity(self) -> None:
+        connection = self.store._connection
+
+        def hostile_clock() -> str:
+            connection.set_authorizer(None)
+            connection.execute(
+                "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
+                "VALUES ('clock-control', 1, '{}', '2026-08-29T00:00:00Z')"
+            )
+            connection.execute("COMMIT")
+            connection.execute("BEGIN IMMEDIATE")
+            raise KeyboardInterrupt("private-control-payload")
+
+        self.store._clock = hostile_clock
+        with self.assertRaises(KeyboardInterrupt) as failure:
+            self.write(candidate())
+
+        self.assertIs(type(failure.exception), KeyboardInterrupt)
+        self.assertEqual(failure.exception.args, ())
+        self.assertIs(
+            type(failure.exception.__cause__),
+            _ResultArtifactCommitAmbiguityError,
+        )
+        self.assertIsNone(failure.exception.__context__)
+        self.assertEqual(self.counts(), (0, 0))
+        self.assertEqual(
+            connection.execute(
+                "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-control'"
+            ).fetchone()[0],
+            "clock-control",
+        )
+        self.assertFalse(connection.in_transaction)
+        self.assertTrue(self.store._poisoned)
+
+    def test_clock_close_preserves_control_when_outer_rollback_also_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = str(Path(temporary_directory) / "clock-close.sqlite3")
+            store = SQLiteEventStore(path, clock=lambda: self.now)
+            connection = store._connection
+
+            def hostile_clock() -> str:
+                connection.set_authorizer(None)
+                connection.execute(
+                    "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
+                    "VALUES ('clock-closed', 1, '{}', '2026-08-29T00:00:00Z')"
+                )
+                connection.execute("COMMIT")
+                connection.close()
+                raise KeyboardInterrupt("private-control-payload")
+
+            store._clock = hostile_clock
+            batch = _prepare_result_artifact_batch((candidate(),))
+            try:
+                with self.assertRaises(KeyboardInterrupt) as failure:
+                    with store._result_artifact_transaction() as handle:
+                        store._write_result_artifacts_in_owner_transaction(handle, batch)
+
+                self.assertIs(type(failure.exception), KeyboardInterrupt)
+                self.assertEqual(failure.exception.args, ())
+                self.assertIs(
+                    type(failure.exception.__cause__),
+                    _ResultArtifactCommitAmbiguityError,
+                )
+                self.assertIsNone(failure.exception.__context__)
+                self.assertTrue(store._poisoned)
+
+                recovered = sqlite3.connect(path)
+                try:
+                    self.assertEqual(
+                        recovered.execute(
+                            "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-closed'"
+                        ).fetchone()[0],
+                        "clock-closed",
+                    )
+                    self.assertEqual(
+                        recovered.execute(
+                            "SELECT count(*) FROM main.artifact_versions"
+                        ).fetchone()[0],
+                        0,
+                    )
+                finally:
+                    recovered.close()
+            finally:
+                store.close()
+
+    def test_clock_suppressed_historical_control_is_not_revived(self) -> None:
+        connection = self.store._connection
+
+        def hostile_clock() -> str:
+            connection.set_authorizer(None)
+            connection.execute(
+                "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
+                "VALUES ('clock-suppressed', 1, '{}', '2026-08-29T00:00:00Z')"
+            )
+            connection.execute("COMMIT")
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                raise KeyboardInterrupt("already-handled")
+            except KeyboardInterrupt:
+                raise RuntimeError("clock outward failure") from None
+
+        self.store._clock = hostile_clock
+        with self.assertRaisesRegex(
+            _ResultArtifactIntegrityError,
+            "transaction integrity failed",
+        ):
+            self.write(candidate())
+
+        self.assertEqual(self.counts(), (0, 0))
+        self.assertEqual(
+            connection.execute(
+                "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-suppressed'"
+            ).fetchone()[0],
+            "clock-suppressed",
+        )
+        self.assertFalse(connection.in_transaction)
+        self.assertTrue(self.store._poisoned)
+
+    def test_clock_exception_attribute_hooks_cannot_replace_continuity_error(self) -> None:
+        connection = self.store._connection
+
+        class HookedRuntimeError(RuntimeError):
+            def __getattribute__(self, name: str) -> object:
+                if name in {"__cause__", "__context__", "__suppress_context__"}:
+                    raise KeyboardInterrupt("attribute-read-payload")
+                return super().__getattribute__(name)
+
+            def __setattr__(self, name: str, value: object) -> None:
+                if name in {"__cause__", "__context__", "__traceback__"}:
+                    raise KeyboardInterrupt("attribute-write-payload")
+                super().__setattr__(name, value)
+
+        def hostile_clock() -> str:
+            connection.set_authorizer(None)
+            connection.execute(
+                "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
+                "VALUES ('clock-hooked', 1, '{}', '2026-08-29T00:00:00Z')"
+            )
+            connection.execute("COMMIT")
+            connection.execute("BEGIN IMMEDIATE")
+            raise HookedRuntimeError("clock outward failure")
+
+        self.store._clock = hostile_clock
+        with self.assertRaisesRegex(
+            _ResultArtifactIntegrityError,
+            "transaction integrity failed",
+        ) as failure:
+            self.write(candidate())
+
+        self.assertIsNone(failure.exception.__cause__)
+        self.assertIsNone(failure.exception.__context__)
+        self.assertEqual(self.counts(), (0, 0))
+        self.assertEqual(
+            connection.execute(
+                "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-hooked'"
+            ).fetchone()[0],
+            "clock-hooked",
+        )
+        self.assertFalse(connection.in_transaction)
+        self.assertTrue(self.store._poisoned)
+
+    def test_clock_exception_descriptors_cannot_replace_continuity_error(self) -> None:
+        connection = self.store._connection
+
+        class DescriptorRuntimeError(RuntimeError):
+            @property
+            def __cause__(self) -> object:
+                raise KeyboardInterrupt("descriptor-read-payload")
+
+            @__cause__.setter
+            def __cause__(self, _value: object) -> None:
+                raise KeyboardInterrupt("descriptor-write-payload")
+
+            @property
+            def __context__(self) -> object:
+                raise KeyboardInterrupt("descriptor-read-payload")
+
+            @__context__.setter
+            def __context__(self, _value: object) -> None:
+                raise KeyboardInterrupt("descriptor-write-payload")
+
+            @property
+            def __suppress_context__(self) -> object:
+                raise KeyboardInterrupt("descriptor-read-payload")
+
+            @property
+            def __traceback__(self) -> object:
+                raise KeyboardInterrupt("descriptor-read-payload")
+
+            @__traceback__.setter
+            def __traceback__(self, _value: object) -> None:
+                raise KeyboardInterrupt("descriptor-write-payload")
+
+        def hostile_clock() -> str:
+            connection.set_authorizer(None)
+            connection.execute(
+                "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
+                "VALUES ('clock-descriptor', 1, '{}', '2026-08-29T00:00:00Z')"
+            )
+            connection.execute("COMMIT")
+            connection.execute("BEGIN IMMEDIATE")
+            raise DescriptorRuntimeError("clock outward failure")
+
+        self.store._clock = hostile_clock
+        with self.assertRaisesRegex(
+            _ResultArtifactIntegrityError,
+            "transaction integrity failed",
+        ) as failure:
+            self.write(candidate())
+
+        self.assertIsNone(failure.exception.__cause__)
+        self.assertIsNone(failure.exception.__context__)
+        self.assertEqual(self.counts(), (0, 0))
+        self.assertEqual(
+            connection.execute(
+                "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-descriptor'"
+            ).fetchone()[0],
+            "clock-descriptor",
+        )
+        self.assertFalse(connection.in_transaction)
+        self.assertTrue(self.store._poisoned)
+
+    def test_clock_commit_then_begin_then_invalid_time_still_poisons_store(self) -> None:
+        connection = self.store._connection
+
+        def hostile_clock() -> str:
+            connection.set_authorizer(None)
+            connection.execute(
+                "INSERT INTO snapshots(stream_id, sequence, state_json, updated_at) "
+                "VALUES ('clock-invalid', 1, '{}', '2026-08-29T00:00:00Z')"
+            )
+            connection.execute("COMMIT")
+            connection.execute("BEGIN IMMEDIATE")
+            return "not-a-timestamp"
+
+        self.store._clock = hostile_clock
+        with self.assertRaisesRegex(
+            _ResultArtifactIntegrityError,
+            "transaction integrity failed",
+        ):
+            self.write(candidate())
+
+        self.assertEqual(self.counts(), (0, 0))
+        self.assertEqual(
+            connection.execute(
+                "SELECT stream_id FROM snapshots WHERE stream_id = 'clock-invalid'"
+            ).fetchone()[0],
+            "clock-invalid",
+        )
+        self.assertFalse(connection.in_transaction)
+        self.assertTrue(self.store._poisoned)
+
+    def test_clock_rollback_then_begin_loses_savepoint_and_poisons_the_store(self) -> None:
+        connection = self.store._connection
+
+        def hostile_clock() -> str:
+            connection.set_authorizer(None)
+            connection.execute("ROLLBACK")
+            connection.execute("BEGIN IMMEDIATE")
+            return self.now
+
+        self.store._clock = hostile_clock
+        with self.assertRaisesRegex(
+            _ResultArtifactIntegrityError,
+            "transaction integrity failed",
+        ):
+            self.write(candidate())
+
+        self.assertEqual(self.counts(), (0, 0))
         self.assertFalse(connection.in_transaction)
         self.assertTrue(self.store._poisoned)
 
