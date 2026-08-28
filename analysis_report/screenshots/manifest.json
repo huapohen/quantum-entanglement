@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "97b24b20c120c968a86f533651f515e5c60f0ae9",
-  "lastImageArchivedAt": "2026-08-28T18:21:07+08:00",
+  "lastArchivedCommit": "72b0f968f8e75bb8639c5621119899fe690082de",
+  "lastImageArchivedAt": "2026-08-28T20:29:18+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -690,6 +690,50 @@
       "sourceKind": "quantum-entanglement-canonical-report-visual",
       "sourceReference": "analysis_report/screenshots/34_postgres_function_only_writes_and_exact_access_map.svg; rsvg-convert -w 1600 -h 1100; archived-git:97b24b20c120c968a86f533651f515e5c60f0ae9",
       "width": 1600
+    },
+    {
+      "byteSize": 7995,
+      "captureDate": null,
+      "captureDateEvidence": "Not a captured external page or runtime viewport; this is a repository-authored SVG documentation visual, so captureDate is not applicable",
+      "contentScope": "W2 PostgreSQL attested runtime composition map connecting private configuration, strict connection policy, physical and session attestation, exact readiness, controlled Unit of Work, API route gating and the remaining Gate A, trusted Participant and mention boundaries",
+      "derivation": "repository-authored-svg-documentation-visual",
+      "evidenceClass": "B-local-derived-documentation-visual",
+      "evidenceLimitations": [
+        "A review map derived from repository facts and cited research; it is not independent runtime, database, provider, authorization or production-readiness evidence",
+        "The diagram proves neither production cutover and credential rotation nor Clerk tenancy, action-time authorization, RongCloud delivery, Agent child threads or exactly-once effects"
+      ],
+      "filename": "35_postgres_attested_runtime_composition_map.svg",
+      "firstArchivedAt": "2026-08-28T20:29:18+08:00",
+      "height": 1120,
+      "mediaType": "image/svg+xml",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-repository-authored-diagram",
+      "sha256": "7f9e5dda9195a90ef7bf36aca00d226d65db9187de3db5a273545e2fcd386d3a",
+      "sourceKind": "quantum-entanglement-canonical-report-visual",
+      "sourceReference": "analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md; code-baseline:5c19fdb0d88c2d59caec3c95aee400be193b269f; archived-git:72b0f968f8e75bb8639c5621119899fe690082de",
+      "width": 1800
+    },
+    {
+      "byteSize": 461527,
+      "captureDate": null,
+      "captureDateEvidence": "Not a captured external page or runtime viewport; this PNG was rendered from the archived SVG in the same repository batch, so captureDate is not applicable",
+      "contentScope": "PNG rendering of the W2 attested runtime composition, PostgreSQL 18.6 evidence and remaining Gate A, trusted Participant and mention boundaries for Notion and browser review",
+      "derivation": "rsvg-convert-1800x1120-from-35-postgres-attested-runtime-composition-map-svg",
+      "evidenceClass": "B-local-derived-documentation-visual",
+      "evidenceLimitations": [
+        "A rendering of the sibling SVG, not additional or independent evidence",
+        "Pixel appearance does not prove production provisioning, authenticated tenancy, credential lifecycle, restore safety, provider delivery, Agent child threads or production readiness; inspect the canonical report and code baseline"
+      ],
+      "filename": "35_postgres_attested_runtime_composition_map.png",
+      "firstArchivedAt": "2026-08-28T20:29:18+08:00",
+      "height": 1120,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "not-applicable-repository-authored-diagram",
+      "sha256": "d9236f96a13fa2dc55e4afe530438a3f8b56470922972960407b5afebd175b58",
+      "sourceKind": "quantum-entanglement-canonical-report-visual",
+      "sourceReference": "analysis_report/screenshots/35_postgres_attested_runtime_composition_map.svg; rsvg-convert -w 1800 -h 1120; archived-git:72b0f968f8e75bb8639c5621119899fe690082de",
+      "width": 1800
     }
   ],
   "redactionStatus": "mixed-restricted-originals-synthetic-ui-reviewed-model-output-and-derived-documentation-visuals",
