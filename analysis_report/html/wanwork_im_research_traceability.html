@@ -175,13 +175,40 @@
 <header id="title-block-header">
 <h1 class="title">WanWork 原生 IM 研究可追溯矩阵</h1>
 </header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#wanwork-原生-im-研究可追溯矩阵"
+id="toc-wanwork-原生-im-研究可追溯矩阵">WanWork 原生 IM
+研究可追溯矩阵</a>
+<ul>
+<li><a href="#这份文档解决什么" id="toc-这份文档解决什么">1.
+这份文档解决什么</a></li>
+<li><a href="#审计快照" id="toc-审计快照">2. 审计快照</a></li>
+<li><a href="#研究到实现的硬映射" id="toc-研究到实现的硬映射">3.
+研究到实现的硬映射</a>
+<ul>
+<li><a href="#w2-postgresql-证据增量head-8d662bf"
+id="toc-w2-postgresql-证据增量head-8d662bf">3.1 W2 PostgreSQL
+证据增量（HEAD <code>8d662bf</code>）</a></li>
+</ul></li>
+<li><a href="#明确吸收与明确拒绝" id="toc-明确吸收与明确拒绝">4.
+明确吸收与明确拒绝</a></li>
+<li><a href="#延后但不遗忘" id="toc-延后但不遗忘">5.
+延后但不遗忘</a></li>
+<li><a href="#冻结与变更纪律" id="toc-冻结与变更纪律">6.
+冻结与变更纪律</a></li>
+</ul></li>
+</ul>
+</nav>
 <h1 id="wanwork-原生-im-研究可追溯矩阵">WanWork 原生 IM
 研究可追溯矩阵</h1>
 <blockquote>
-<p>状态：W0 冻结依据</p>
+<p>状态：W0 冻结依据；W2 PostgreSQL persistence substrate 检查点</p>
 <p>研究快照：2026-08-27</p>
-<p>审计日期：2026-08-28
-适用分支：<code>dev_wanwork_quantum_entanglement</code></p>
+<p>审计日期：2026-08-28</p>
+<p>适用分支：<code>dev_wanwork_quantum_entanglement</code></p>
+<p>W2 code
+baseline：<code>8d662bf4faec1cfaa12b63f4dfc2132ae6869dbb</code></p>
 </blockquote>
 <h2 id="这份文档解决什么">1. 这份文档解决什么</h2>
 <p>用户指定的调研不是背景阅读，而是产品合同的证据输入。本矩阵强制保留：</p>
@@ -197,8 +224,9 @@
 是厂商/维护者主张，<code>[A]</code> 是分析判断， <code>[U]</code>
 是未知。产品不能把 <code>[C]/[A]</code> 改写成已经具备的能力，也不能用
 Stars、下载、目录规模或 页面文案代替真实生产证据。</p>
-<p>研究根目录：</p>
-<p><code>/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output/more/</code></p>
+<p>研究根目录（两层都必须作为一级证据，不得只读组合报告）：</p>
+<pre class="text"><code>/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output
+/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output/more</code></pre>
 <p>该目录是本机研究证据快照，未整包复制进产品仓库。全部 40 份 Markdown
 的行数、SHA-256、角色 和处置见
 <code>RESEARCH_COVERAGE.md</code>；下表保留直接支撑既有 RQ
@@ -1057,6 +1085,152 @@ fixture。</td>
 </tr>
 </tbody>
 </table>
+<h3 id="w2-postgresql-证据增量head-8d662bf">3.1 W2 PostgreSQL
+证据增量（HEAD <code>8d662bf</code>）</h3>
+<p>本节不修改 RQ
+的长期验收终点，只记录哪些研究结论已经进入当前数据库结构/transaction
+seam，避免把 “方向正确”改写成“完整能力已交付”。详细证据见
+<code>analysis_report/research/33_postgres_authority_persistence_checkpoint.md</code>。</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr>
+<th>关联 RQ / 一级证据</th>
+<th><code>[F]</code> 当前已落实</th>
+<th><code>[C]</code> 合同限定</th>
+<th><code>[A]</code> 设计判断</th>
+<th><code>[U]</code> 未完成</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RQ-003；Clawith <code>:543-557</code>；安全治理
+<code>:187-231</code></td>
+<td>human principal、Actor、tenant membership、provider Actor binding
+已分表持久化；provider realm 与 tenant scope 分离。</td>
+<td>当前 identity 只有 migration/test，尚无 production identity
+repository；typed tenant 仍由 UoW caller 提供。</td>
+<td>identity 分层是 trusted request context 的必要底座。</td>
+<td>Clerk verified claim、workload/delegation、claim/path/membership
+admission。</td>
+</tr>
+<tr>
+<td>RQ-005；Clawith <code>:196-226</code>；FloatIM
+<code>:152-163</code></td>
+<td>ordinary conversation membership 只允许
+<code>usr_</code>/<code>agt_</code>；membership/access 独立
+head/snapshot。</td>
+<td>membership 存在不等于 active；access row/boolean 不等于 action-time
+allow。</td>
+<td>成员移除应同一 UoW 写 removed membership + all-false access。</td>
+<td>Agent installation/status/mandate/budget 与 send/invoke PEP。</td>
+</tr>
+<tr>
+<td>RQ-006；Clawith <code>:493-503</code>；Portfolio
+<code>:220-226</code></td>
+<td>ordinary conversation persistence 对 <code>agent_thread</code> fail
+closed；没有静默丢 parent/root/invocation。</td>
+<td>拒绝 unsupported topology 不等于 thread 已实现。</td>
+<td>先稳定 ordinary authority，再增加 thread lineage，避免群聊冒充
+Task。</td>
+<td><code>agent_thread</code> repository、message
+root、Invocation、child ACL/use case。</td>
+</tr>
+<tr>
+<td>RQ-010；DeepSeek Harness <code>:255-312,543-591,823-842</code></td>
+<td>PostgreSQL transaction/UoW seam、revision CAS 与 receipt
+已建立。</td>
+<td>command receipt 不是 event stream、outbox、projection checkpoint 或
+audit chain。</td>
+<td>不做 memory EventStore 与 PostgreSQL state 的伪双写是正确的
+fail-closed 选择。</td>
+<td>production event
+store/outbox、backfill+live、crash/reopen/restore。</td>
+</tr>
+<tr>
+<td>RQ-012/013；Clawith <code>:421-452</code>；Portfolio
+<code>:635-654</code></td>
+<td>same command exact replay、request digest conflict、commit unknown
+新连接 receipt readback；definite rollback 分离。</td>
+<td>callback 一次只限定数据库 command；result digest 不能重建 typed
+result，也不证明 provider effect。</td>
+<td>unknown/replay 后必须 typed aggregate readback；外部 effect 仍采用
+at-least-once + reconcile。</td>
+<td>provider receipt/acceptance query、outbox、effect_unknown
+reconciler。</td>
+</tr>
+<tr>
+<td>RQ-026；AgentTeams <code>:614-693</code>；AgentSpace
+<code>:633-674</code></td>
+<td>head/snapshot/receipt transaction state 可复核；测试 runtime role 无
+snapshot/receipt UPDATE/DELETE/TRUNCATE。</td>
+<td>当前是测试 fixture，生产 role/grant/provisioning 未冻结；digest
+无签名。</td>
+<td>数据库 history protection 是 evidence chain 的一层，不是完整
+audit。</td>
+<td>actor/mandate/policy/intent/provider receipt/Artifact/Acceptance
+evidence chain。</td>
+</tr>
+<tr>
+<td>RQ-028/043/044；Clawith <code>:599-611</code>；AgentSpace
+<code>:739-759</code></td>
+<td>realm-scoped RongCloud group binding 已持久化，metadata codec 仍为
+zero-authority projection。</td>
+<td>binding 只说明本地 routing metadata；不证明融云群存在、成员、ACK 或
+delivery。</td>
+<td>canonical platform authority 不应由 provider metadata
+反向覆盖。</td>
+<td>callback auth、sandbox readback、dedupe/resume、provider
+unknown/reconcile。</td>
+</tr>
+<tr>
+<td>RQ-034；AgentTeams <code>:373-404,431-450</code></td>
+<td>repository/UoW 不暴露 <code>pgx.Tx</code>，ignored repository error
+会 poison transaction。</td>
+<td>runtime role 当前仍需 raw head UPDATE/snapshot INSERT；有 credential
+的其他代码可绕 repository。</td>
+<td>下一步必须改为 fixed SECURITY DEFINER function-only writes。</td>
+<td>exact role/table/schema/function ACL manifest 与 action-time
+executor PEP。</td>
+</tr>
+<tr>
+<td>RQ-008/009；DeepSeek Harness <code>:207-251,404-414</code></td>
+<td>migration runner 固定 PG18、checksum、lock、search path、累计
+postcondition；data-executing DDL forms 被收窄。</td>
+<td>token policy 不是完整 SQL parser/不可信代码
+sandbox；只保护登记对象结构。</td>
+<td>schema/role/function manifest 应像 plugin effective configuration
+一样由 host 冻结并启动重验。</td>
+<td><code>0005</code> function definitions、owner/security/ACL
+digest、named grants/default privileges/role attributes。</td>
+</tr>
+</tbody>
+</table>
+<p>当前统一口径：</p>
+<ul>
+<li><code>[F]</code> 已证实的是 tenant-bound PostgreSQL authority
+repository + serializable/idempotent UoW + cumulative migration
+invariants 这一持久化安全切片；</li>
+<li><code>[C]</code> 所有保证限定在已登记 schema、conversation/provider
+binding/membership/access repository、同一 PostgreSQL transaction
+和测试过的 runtime-role fixture；</li>
+<li><code>[A]</code> 该切片是原生 IM/A2A/Agent runtime
+的底座，不是完成态；</li>
+<li><code>[U]</code> production role/ACL、trusted auth/request
+context、action-time mandate/capability PEP、message/
+thread/task/action、event/outbox、provider reconcile 与 Artifact
+acceptance 仍未实现。</li>
+</ul>
+<p>禁止把本节改写为以下宣称：生产级多租户、端到端 exactly-once、完整
+audit/non-repudiation、Agent invocation authorization、Artifact
+publishing/acceptance、RongCloud delivery/A2A compatibility 或 runtime
+role 已在生产部署中强制。</p>
 <h2 id="明确吸收与明确拒绝">4. 明确吸收与明确拒绝</h2>
 <table>
 <colgroup>
