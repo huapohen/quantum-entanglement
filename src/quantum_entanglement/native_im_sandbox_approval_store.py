@@ -378,6 +378,100 @@ class SQLiteNativeIMSandboxApprovalHighWaterV1:
             ) from None
         return value
 
+    def _observe_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: NativeIMSandboxApprovalAuthorityStateV1,
+    ) -> NativeIMSandboxApprovalAuthorityStateV1:
+        self._validate_schema(connection)
+        row = connection.execute(
+            f"SELECT * FROM {_TABLE_NAME} WHERE approval_id = ?",
+            (snapshot.approval_id,),
+        ).fetchone()
+        if row is None:
+            connection.execute(
+                f"""
+                INSERT INTO {_TABLE_NAME} (
+                    approval_id, approval_digest, authority_revision, state,
+                    state_digest, terminal_revoked, max_observed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.approval_id,
+                    snapshot.approval_digest,
+                    snapshot.authority_revision,
+                    snapshot.state,
+                    snapshot.state_binding_digest(),
+                    int(snapshot.state == "revoked"),
+                    snapshot.observed_at,
+                ),
+            )
+            return snapshot
+        current = self._validate_row(row)
+        if snapshot.observed_at < current.observed_at:
+            raise NativeIMSandboxApprovalStoreError(
+                "native_im_sandbox_approval_store_clock_rollback"
+            ) from None
+        if current.state == "revoked":
+            if (
+                snapshot.authority_revision != current.authority_revision
+                or snapshot.state != "revoked"
+                or snapshot.approval_digest != current.approval_digest
+                or snapshot.state_binding_digest() != current.state_binding_digest()
+            ):
+                raise NativeIMSandboxApprovalStoreError(
+                    "native_im_sandbox_approval_store_terminal_revoked"
+                ) from None
+        elif snapshot.authority_revision < current.authority_revision:
+            raise NativeIMSandboxApprovalStoreError(
+                "native_im_sandbox_approval_store_revision_rollback"
+            ) from None
+        elif snapshot.authority_revision == current.authority_revision:
+            if (
+                snapshot.approval_digest != current.approval_digest
+                or snapshot.state_binding_digest() != current.state_binding_digest()
+            ):
+                raise NativeIMSandboxApprovalStoreError(
+                    "native_im_sandbox_approval_store_equivocation"
+                ) from None
+        else:
+            if snapshot.approval_digest != current.approval_digest:
+                raise NativeIMSandboxApprovalStoreError(
+                    "native_im_sandbox_approval_store_record_changed"
+                ) from None
+            if snapshot.state != "revoked":
+                raise NativeIMSandboxApprovalStoreError(
+                    "native_im_sandbox_approval_store_renewal_requires_new_id"
+                ) from None
+        connection.execute(
+            f"""
+            UPDATE {_TABLE_NAME}
+            SET approval_digest = ?, authority_revision = ?, state = ?,
+                state_digest = ?, terminal_revoked = ?, max_observed_at = ?
+            WHERE approval_id = ?
+            """,
+            (
+                snapshot.approval_digest,
+                snapshot.authority_revision,
+                snapshot.state,
+                snapshot.state_binding_digest(),
+                int(snapshot.state == "revoked"),
+                snapshot.observed_at,
+                snapshot.approval_id,
+            ),
+        )
+        return snapshot
+
+    @staticmethod
+    def _snapshot_state(
+        value: NativeIMSandboxApprovalAuthorityStateV1,
+    ) -> NativeIMSandboxApprovalAuthorityStateV1:
+        if type(value) is not NativeIMSandboxApprovalAuthorityStateV1:
+            raise TypeError("approval high-water requires the exact authority state V1")
+        return NativeIMSandboxApprovalAuthorityStateV1.from_json_bytes(
+            value.canonical_bytes()
+        )
+
     def observe(
         self,
         value: NativeIMSandboxApprovalAuthorityStateV1,
@@ -385,94 +479,34 @@ class SQLiteNativeIMSandboxApprovalHighWaterV1:
         """Atomically validate and advance one authority state observation."""
 
         self._require_open()
-        if type(value) is not NativeIMSandboxApprovalAuthorityStateV1:
-            raise TypeError("approval high-water requires the exact authority state V1")
-        snapshot = NativeIMSandboxApprovalAuthorityStateV1.from_json_bytes(
-            value.canonical_bytes()
-        )
+        snapshot = self._snapshot_state(value)
         try:
             with self._transaction() as connection:
-                self._validate_schema(connection)
-                row = connection.execute(
-                    f"SELECT * FROM {_TABLE_NAME} WHERE approval_id = ?",
-                    (snapshot.approval_id,),
-                ).fetchone()
-                if row is None:
-                    connection.execute(
-                        f"""
-                        INSERT INTO {_TABLE_NAME} (
-                            approval_id, approval_digest, authority_revision, state,
-                            state_digest, terminal_revoked, max_observed_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            snapshot.approval_id,
-                            snapshot.approval_digest,
-                            snapshot.authority_revision,
-                            snapshot.state,
-                            snapshot.state_binding_digest(),
-                            int(snapshot.state == "revoked"),
-                            snapshot.observed_at,
-                        ),
-                    )
-                    return snapshot
-                current = self._validate_row(row)
-                if snapshot.observed_at < current.observed_at:
-                    raise NativeIMSandboxApprovalStoreError(
-                        "native_im_sandbox_approval_store_clock_rollback"
-                    ) from None
-                if current.state == "revoked":
-                    if (
-                        snapshot.authority_revision != current.authority_revision
-                        or snapshot.state != "revoked"
-                        or snapshot.approval_digest != current.approval_digest
-                        or snapshot.state_binding_digest() != current.state_binding_digest()
-                    ):
-                        raise NativeIMSandboxApprovalStoreError(
-                            "native_im_sandbox_approval_store_terminal_revoked"
-                        ) from None
-                elif snapshot.authority_revision < current.authority_revision:
-                    raise NativeIMSandboxApprovalStoreError(
-                        "native_im_sandbox_approval_store_revision_rollback"
-                    ) from None
-                elif snapshot.authority_revision == current.authority_revision:
-                    if (
-                        snapshot.approval_digest != current.approval_digest
-                        or snapshot.state_binding_digest() != current.state_binding_digest()
-                    ):
-                        raise NativeIMSandboxApprovalStoreError(
-                            "native_im_sandbox_approval_store_equivocation"
-                        ) from None
-                else:
-                    if snapshot.approval_digest != current.approval_digest:
-                        raise NativeIMSandboxApprovalStoreError(
-                            "native_im_sandbox_approval_store_record_changed"
-                        ) from None
-                    if snapshot.state != "revoked":
-                        raise NativeIMSandboxApprovalStoreError(
-                            "native_im_sandbox_approval_store_renewal_requires_new_id"
-                        ) from None
-                connection.execute(
-                    f"""
-                    UPDATE {_TABLE_NAME}
-                    SET approval_digest = ?, authority_revision = ?, state = ?,
-                        state_digest = ?, terminal_revoked = ?, max_observed_at = ?
-                    WHERE approval_id = ?
-                    """,
-                    (
-                        snapshot.approval_digest,
-                        snapshot.authority_revision,
-                        snapshot.state,
-                        snapshot.state_binding_digest(),
-                        int(snapshot.state == "revoked"),
-                        snapshot.observed_at,
-                        snapshot.approval_id,
-                    ),
-                )
-                return snapshot
+                return self._observe_in_transaction(connection, snapshot)
         except sqlite3.Error:
             raise NativeIMSandboxApprovalStoreError(
                 "native_im_sandbox_approval_store_write_failed"
+            ) from None
+
+    @contextmanager
+    def admission_guard(
+        self,
+        value: NativeIMSandboxApprovalAuthorityStateV1,
+    ) -> Iterator[NativeIMSandboxApprovalAuthorityStateV1]:
+        """Hold the durable write lock across one final local admission section."""
+
+        self._require_open()
+        snapshot = self._snapshot_state(value)
+        if snapshot.state != "approved":
+            raise NativeIMSandboxApprovalStoreError(
+                "native_im_sandbox_approval_store_admission_state_forbidden"
+            ) from None
+        try:
+            with self._transaction() as connection:
+                yield self._observe_in_transaction(connection, snapshot)
+        except sqlite3.Error:
+            raise NativeIMSandboxApprovalStoreError(
+                "native_im_sandbox_approval_store_admission_failed"
             ) from None
 
     def current(
