@@ -1085,33 +1085,31 @@ password、默认文件压制、exact endpoint/credential、受控 DialFunc</td>
 <p>结果：所有 Go package normal/race 通过，vet 无输出；本地 PostgreSQL
 版本 18.6。</p>
 <h2 id="下一阶段详细计划">7. 下一阶段详细计划</h2>
-<h3 id="p0-a完成-production-gate-a">P0-A：完成 production Gate A</h3>
+<h3 id="p0-aproduction-deployment-authority">P0-A：production deployment
+authority</h3>
 <ol type="1">
+<li>冻结 production topology/IaC，以及平台、数据库与运维对 secret
+injection/rotation、provisioner 和 runtime credential 的责任边界；文档与
+Plan 都不得夹带 credential；</li>
 <li>冻结 production authority bootstrap/cutover
 <code>Plan</code>：roles、membership grantor/options、DB
 ownership、schema/ relation/function
 ownership、table/function/default/column ACL；Plan 必须可
-dry-run、canonical digest、不可夹带 credential；</li>
+dry-run、canonical digest；</li>
 <li>executor 只使用独立 provisioner credential，先 preflight 再
 transactionally apply 可事务部分；非事务 DB/role 操作必须有逐步 receipt
 与 reconcile；</li>
-<li>冻结 production secret injection/rotation
-的平台与运维责任边界；增加真实远程 authenticated-TLS 正向 E2E，
-不能只依赖当前 numeric-loopback disposable PostgreSQL 18.6；</li>
+<li>增加真实远程 authenticated-TLS 与受控 host trust injection 正向
+E2E，不能只依赖当前 numeric-loopback disposable PostgreSQL 18.6；</li>
 <li>首部署 E2E：empty DB → role/db preflight → migrate → cutover →
 migration exact validate → runtime Open/Ready；</li>
+<li>非空升级 E2E：旧 schema 与真实既有 tenant 数据 → forward migration →
+postcondition/integrity → runtime readback；</li>
 <li>rotation：new login membership → 双 credential overlap → 新 pool
 ready → business drain → terminate old sessions → revoke old
 membership/CONNECT → exact validate；</li>
 <li>drift/cutover 负测：错误 grantor、duplicate membership、old role
-setting、column ACL、PUBLIC/TEMP/MAINTAIN、 stale session；</li>
-<li>dump/restore、DB restart、process kill-9、future schema、old
-binary、rolling shutdown 与 pool exhaustion；</li>
-<li>把当前每请求 full catalog check 改为 host-owned readiness
-monitor：只缓存最近一次成功结果，绑定 exact manifest digest 与冻结的
-max-staleness 窗口；过期/错误/draining 立即 gate closed。该 snapshot
-只证明 dependency readiness，高风险 effect 仍必须独立执行 action-time
-authorization，不得沿用 readiness cache。</li>
+setting、column ACL、PUBLIC/TEMP/MAINTAIN、 stale session。</li>
 </ol>
 <h3 id="p0-btrusted-humanagent-participant-authority">P0-B：Trusted
 human/Agent Participant authority</h3>
@@ -1133,29 +1131,50 @@ agent-member/agent-admin；</li>
 <li>human-member / human-admin / agent-member / agent-admin 四主体 CRUD
 矩阵；“一等 Participant”不推导相同权限。</li>
 </ol>
-<h3 id="p1mention独立工作子群与-provider-vertical-slice">P1：Mention、独立工作子群与
-provider vertical slice</h3>
+<h3 id="p0-creadinessupgrade-与-recovery">P0-C：readiness、upgrade 与
+recovery</h3>
 <ol type="1">
-<li><code>agent_thread</code> persistence：parent/root
-message/invocation/installation lineage，同 tenant，独立
-membership/access；</li>
+<li>把当前每请求 full catalog check 改为 host-owned readiness
+monitor：只缓存最近一次成功结果，绑定 exact manifest digest 与冻结的
+max-staleness 窗口；过期/错误/draining 立即 gate closed。该 snapshot
+只证明 dependency readiness，高风险 effect 仍必须独立执行 action-time
+authorization，不得沿用 readiness cache；</li>
+<li>dump/restore、DB restart、process kill-9、future schema、old
+binary、role restoration、rolling shutdown 与 pool exhaustion
+全部进入可重复演练。</li>
+</ol>
+<h3 id="p1durable-mention-vertical-slice">P1：durable mention vertical
+slice</h3>
+<ol type="1">
+<li>先完成 PostgreSQL EventStore expected-revision、outbox、projection
+checkpoint、backfill+live handoff，以及
+crash/reopen/kill-9/restore/clear-and-rebuild；W1 memory fake
+不能替代；</li>
+<li>零网络、<code>outbound=disabled</code> 的 provider contract/fake
+可以提前编译验证，但不能持有状态或触发网络；</li>
+<li>durable gate 通过后再持久化 <code>agent_thread</code> 与
+message：parent/root message/invocation/installation lineage， 同
+tenant、独立 membership/access；provider group 永远不是 canonical thread
+事实源；</li>
 <li>unique key
 <code>(tenant,parent,rootMessage,agentInstallation)</code>，并发/重放只产生一个
 thread/Task/Invocation；</li>
 <li>单 Agent mention 确定性直达；多 Agent
 规划结果仍由平台校验；编辑/引用/转发/duplicate callback 入矩阵；</li>
-<li>durable inbox/wake 与 lossy Activity/presence 分域；</li>
-<li>先实现零网络、<code>outbound=disabled</code> 的 provider
-contract/fake；canonical <code>agent_thread</code> 必须先于 provider
-projection，provider group 不能成为 thread 的事实源；</li>
-<li>只有 PostgreSQL EventStore/outbox、durable
-command、receipt/readback/unknown reconcile 与 crash recovery
-通过后，才允许真实 provider 普通 Agent 用户投影、subgroup
-create/invite/send；provisioning 未成功不得启动 Agent；</li>
-<li>Go→Python QE 只签发短 TTL、single-use、exact
-tenant/conversation/Agent/action/audience 的内部调用授权，不序列化
-Python opaque RequestContext，不把 ActorRef/ext_info 当 authority。</li>
+<li>durable inbox/wake 与 lossy Activity/presence 分域；Go→Python QE
+只签发短 TTL、single-use、exact tenant/
+conversation/Agent/action/audience 的内部调用授权，不序列化 Python
+opaque RequestContext，不把 ActorRef/ ext_info 当 authority；</li>
+<li>真实 provider 还必须先通过 W3 的 profile/capability matrix、callback
+authenticity、dedupe/resume、mapping drift、sandbox config 与
+inbound-only readback；subgroup create/invite/send 另需用户对具体
+sandbox outbound 明确授权，provisioning 未成功不得启动 Agent。</li>
 </ol>
+<p>P0-A～P1 是接 provider 前的最小安全切片，不是 W2
+完成清单。message/reaction/read state、Task/Attempt/
+Budget/NeedsYou/Artifact/Acceptance、memory/skill/capability、action/evidence、taint/declassification、promotion、
+presence/data-route/routine 及 W2 总计划列出的其余对象，仍须逐批交付
+schema、repository/UoW、tenant/revision/ dedupe 不变量和恢复证据。</p>
 <h2 id="阶段停止条件与验收建议">8. 阶段停止条件与验收建议</h2>
 <p>当前适合停下来验收的是：</p>
 <ul>
@@ -1166,9 +1185,10 @@ Python opaque RequestContext，不把 ActorRef/ext_info 当 authority。</li>
 <li>报告、HTML 与结构图是否准确表达“已完成/未完成”。</li>
 </ul>
 <p>当前不适合拿真实 IM、真实组织或 production credential 验收。进入真实
-IM 之前，至少完成 P0-A 的 production cutover/rotation/recovery 和 P0-B
-的 trusted tenant/action-time PEP；若选择“提前接 IM”，也只能在
-fake/sandbox、 outbound disabled 或只读 provider profile 下进行，不得把
+IM 之前，至少完成 P0-A 的 production cutover/rotation、P0-B 的 trusted
+tenant/action-time PEP、P0-C 的 readiness/recovery，以及 P1 的 durable
+EventStore/outbox 门禁；若选择“提前接 IM”，也只能在
+fake/sandbox、outbound disabled 或只读 provider profile 下进行，不得把
 provider metadata 或聊天 path tenant 直接当授权。</p>
 <p>全程没有向飞书、企微、群聊、bot、webhook
 或任何人发送消息；没有操作语雀；没有记录或输出完整 API key。</p>

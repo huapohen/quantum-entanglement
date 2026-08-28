@@ -298,24 +298,22 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 
 ## 7. 下一阶段详细计划
 
-### P0-A：完成 production Gate A
+### P0-A：production deployment authority
 
-1. 冻结 production authority bootstrap/cutover `Plan`：roles、membership grantor/options、DB ownership、schema/
-   relation/function ownership、table/function/default/column ACL；Plan 必须可 dry-run、canonical digest、不可夹带
-   credential；
-2. executor 只使用独立 provisioner credential，先 preflight 再 transactionally apply 可事务部分；非事务 DB/role
+1. 冻结 production topology/IaC，以及平台、数据库与运维对 secret injection/rotation、provisioner 和 runtime
+   credential 的责任边界；文档与 Plan 都不得夹带 credential；
+2. 冻结 production authority bootstrap/cutover `Plan`：roles、membership grantor/options、DB ownership、schema/
+   relation/function ownership、table/function/default/column ACL；Plan 必须可 dry-run、canonical digest；
+3. executor 只使用独立 provisioner credential，先 preflight 再 transactionally apply 可事务部分；非事务 DB/role
    操作必须有逐步 receipt 与 reconcile；
-3. 冻结 production secret injection/rotation 的平台与运维责任边界；增加真实远程 authenticated-TLS 正向 E2E，
-   不能只依赖当前 numeric-loopback disposable PostgreSQL 18.6；
-4. 首部署 E2E：empty DB → role/db preflight → migrate → cutover → migration exact validate → runtime Open/Ready；
-5. rotation：new login membership → 双 credential overlap → 新 pool ready → business drain → terminate old sessions →
+4. 增加真实远程 authenticated-TLS 与受控 host trust injection 正向 E2E，不能只依赖当前 numeric-loopback
+   disposable PostgreSQL 18.6；
+5. 首部署 E2E：empty DB → role/db preflight → migrate → cutover → migration exact validate → runtime Open/Ready；
+6. 非空升级 E2E：旧 schema 与真实既有 tenant 数据 → forward migration → postcondition/integrity → runtime readback；
+7. rotation：new login membership → 双 credential overlap → 新 pool ready → business drain → terminate old sessions →
    revoke old membership/CONNECT → exact validate；
-6. drift/cutover 负测：错误 grantor、duplicate membership、old role setting、column ACL、PUBLIC/TEMP/MAINTAIN、
-   stale session；
-7. dump/restore、DB restart、process kill-9、future schema、old binary、rolling shutdown 与 pool exhaustion；
-8. 把当前每请求 full catalog check 改为 host-owned readiness monitor：只缓存最近一次成功结果，绑定 exact manifest
-   digest 与冻结的 max-staleness 窗口；过期/错误/draining 立即 gate closed。该 snapshot 只证明 dependency
-   readiness，高风险 effect 仍必须独立执行 action-time authorization，不得沿用 readiness cache。
+8. drift/cutover 负测：错误 grantor、duplicate membership、old role setting、column ACL、PUBLIC/TEMP/MAINTAIN、
+   stale session。
 
 ### P0-B：Trusted human/Agent Participant authority
 
@@ -329,18 +327,34 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
    installation authority 时不得出现 agent-member/agent-admin；
 7. human-member / human-admin / agent-member / agent-admin 四主体 CRUD 矩阵；“一等 Participant”不推导相同权限。
 
-### P1：Mention、独立工作子群与 provider vertical slice
+### P0-C：readiness、upgrade 与 recovery
 
-1. `agent_thread` persistence：parent/root message/invocation/installation lineage，同 tenant，独立 membership/access；
-2. unique key `(tenant,parent,rootMessage,agentInstallation)`，并发/重放只产生一个 thread/Task/Invocation；
-3. 单 Agent mention 确定性直达；多 Agent 规划结果仍由平台校验；编辑/引用/转发/duplicate callback 入矩阵；
-4. durable inbox/wake 与 lossy Activity/presence 分域；
-5. 先实现零网络、`outbound=disabled` 的 provider contract/fake；canonical `agent_thread` 必须先于 provider
-   projection，provider group 不能成为 thread 的事实源；
-6. 只有 PostgreSQL EventStore/outbox、durable command、receipt/readback/unknown reconcile 与 crash recovery
-   通过后，才允许真实 provider 普通 Agent 用户投影、subgroup create/invite/send；provisioning 未成功不得启动 Agent；
-7. Go→Python QE 只签发短 TTL、single-use、exact tenant/conversation/Agent/action/audience 的内部调用授权，不序列化
-   Python opaque RequestContext，不把 ActorRef/ext_info 当 authority。
+1. 把当前每请求 full catalog check 改为 host-owned readiness monitor：只缓存最近一次成功结果，绑定 exact manifest
+   digest 与冻结的 max-staleness 窗口；过期/错误/draining 立即 gate closed。该 snapshot 只证明 dependency
+   readiness，高风险 effect 仍必须独立执行 action-time authorization，不得沿用 readiness cache；
+2. dump/restore、DB restart、process kill-9、future schema、old binary、role restoration、rolling shutdown 与
+   pool exhaustion 全部进入可重复演练。
+
+### P1：durable mention vertical slice
+
+1. 先完成 PostgreSQL EventStore expected-revision、outbox、projection checkpoint、backfill+live handoff，以及
+   crash/reopen/kill-9/restore/clear-and-rebuild；W1 memory fake 不能替代；
+2. 零网络、`outbound=disabled` 的 provider contract/fake 可以提前编译验证，但不能持有状态或触发网络；
+3. durable gate 通过后再持久化 `agent_thread` 与 message：parent/root message/invocation/installation lineage，
+   同 tenant、独立 membership/access；provider group 永远不是 canonical thread 事实源；
+4. unique key `(tenant,parent,rootMessage,agentInstallation)`，并发/重放只产生一个 thread/Task/Invocation；
+5. 单 Agent mention 确定性直达；多 Agent 规划结果仍由平台校验；编辑/引用/转发/duplicate callback 入矩阵；
+6. durable inbox/wake 与 lossy Activity/presence 分域；Go→Python QE 只签发短 TTL、single-use、exact tenant/
+   conversation/Agent/action/audience 的内部调用授权，不序列化 Python opaque RequestContext，不把 ActorRef/
+   ext_info 当 authority；
+7. 真实 provider 还必须先通过 W3 的 profile/capability matrix、callback authenticity、dedupe/resume、mapping
+   drift、sandbox config 与 inbound-only readback；subgroup create/invite/send 另需用户对具体 sandbox outbound
+   明确授权，provisioning 未成功不得启动 Agent。
+
+P0-A～P1 是接 provider 前的最小安全切片，不是 W2 完成清单。message/reaction/read state、Task/Attempt/
+Budget/NeedsYou/Artifact/Acceptance、memory/skill/capability、action/evidence、taint/declassification、promotion、
+presence/data-route/routine 及 W2 总计划列出的其余对象，仍须逐批交付 schema、repository/UoW、tenant/revision/
+dedupe 不变量和恢复证据。
 
 ## 8. 阶段停止条件与验收建议
 
@@ -352,7 +366,8 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 - 报告、HTML 与结构图是否准确表达“已完成/未完成”。
 
 当前不适合拿真实 IM、真实组织或 production credential 验收。进入真实 IM 之前，至少完成 P0-A 的 production
-cutover/rotation/recovery 和 P0-B 的 trusted tenant/action-time PEP；若选择“提前接 IM”，也只能在 fake/sandbox、
-outbound disabled 或只读 provider profile 下进行，不得把 provider metadata 或聊天 path tenant 直接当授权。
+cutover/rotation、P0-B 的 trusted tenant/action-time PEP、P0-C 的 readiness/recovery，以及 P1 的 durable
+EventStore/outbox 门禁；若选择“提前接 IM”，也只能在 fake/sandbox、outbound disabled 或只读 provider profile
+下进行，不得把 provider metadata 或聊天 path tenant 直接当授权。
 
 全程没有向飞书、企微、群聊、bot、webhook 或任何人发送消息；没有操作语雀；没有记录或输出完整 API key。
