@@ -628,26 +628,35 @@ def _raise_clean_result_artifact_error(kind: str) -> NoReturn:
 
 def _raise_clean_result_artifact_control(
     descriptor: _EventStoreControlDescriptor,
+    *,
+    ambiguity: bool,
 ) -> NoReturn:
     normalized = _normalized_event_store_control_descriptor(descriptor)
-    if normalized is None:
+    if normalized is None or type(ambiguity) is not bool:
         raise _ResultArtifactIntegrityError(
             "result Artifact transaction integrity failed"
         ) from None
+    cause: Optional[BaseException] = (
+        _ResultArtifactCommitAmbiguityError(
+            "result Artifact commit outcome is unknown; reopen and reconcile"
+        )
+        if ambiguity
+        else None
+    )
     expected_type: type[BaseException]
     try:
         if normalized.kind == "keyboard_interrupt":
             expected_type = KeyboardInterrupt
-            raise KeyboardInterrupt() from None
+            raise KeyboardInterrupt() from cause
         if normalized.kind == "generator_exit":
             expected_type = GeneratorExit
-            raise GeneratorExit() from None
+            raise GeneratorExit() from cause
         if normalized.kind == "cancelled":
             expected_type = CancelledError
-            raise CancelledError() from None
+            raise CancelledError() from cause
         if normalized.kind == "system_exit":
             expected_type = SystemExit
-            raise SystemExit(normalized.system_exit_code) from None
+            raise SystemExit(normalized.system_exit_code) from cause
         raise RuntimeError("unsupported result Artifact control signal") from None
     except BaseException as public_error:
         if type(public_error) is expected_type:
@@ -751,7 +760,7 @@ def _sanitize_result_artifact_errors(method: _Method) -> _Method:
         if process_mismatch:
             _raise_event_store_process_mismatch()
         if descriptor is not None:
-            _raise_clean_result_artifact_control(descriptor)
+            _raise_clean_result_artifact_control(descriptor, ambiguity=False)
         if kind is None:
             raise RuntimeError("result Artifact sanitizer classification is missing")
         _raise_clean_result_artifact_error(kind)
@@ -1603,7 +1612,10 @@ class SQLiteEventStore:
                 raise
             transaction_outcome, control = classified
         if control is not None:
-            _raise_clean_result_artifact_control(control)
+            _raise_clean_result_artifact_control(
+                control,
+                ambiguity=transaction_outcome == "ambiguous",
+            )
         if transaction_outcome == "rolled_back":
             _raise_clean_result_artifact_error("rolled_back")
         if transaction_outcome == "ambiguous":
@@ -1734,6 +1746,15 @@ class SQLiteEventStore:
                         ) from None
                     if not _is_exact_control_signal(body_error):
                         raise
+                if classify_admission:
+                    control = _event_store_control_descriptor(body_error)
+                    if control is not None:
+                        _detach_exception(body_error)
+                        raise _EventStoreAdmissionTransactionSignal(
+                            "rolled_back",
+                            control=control,
+                            token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
+                        ) from None
                 raise
             else:
                 self._require_current_process()

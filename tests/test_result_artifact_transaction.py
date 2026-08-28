@@ -414,6 +414,43 @@ class ResultArtifactTransactionHandleTests(unittest.TestCase):
         finally:
             self.store._connection.set_authorizer(None)
 
+    def test_keyboard_interrupt_after_confirmed_rollback_is_clean(self) -> None:
+        with self.assertRaises(KeyboardInterrupt) as failure:
+            with self.store._result_artifact_transaction():
+                raise KeyboardInterrupt("private-control-payload")
+
+        self.assertIs(type(failure.exception), KeyboardInterrupt)
+        self.assertEqual(failure.exception.args, ())
+        self.assertIsNone(failure.exception.__cause__)
+        self.assertIsNone(failure.exception.__context__)
+        self.assertFalse(self.store._poisoned)
+        self.assertFalse(self.store._connection.in_transaction)
+
+    def test_keyboard_interrupt_with_failed_rollback_retains_ambiguity_cause(self) -> None:
+        transaction_code = sqlite3.SQLITE_TRANSACTION
+
+        def deny_rollback(action: int, first: object, *_args: object) -> int:
+            if action == transaction_code and first == "ROLLBACK":
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        self.store._connection.set_authorizer(deny_rollback)
+        try:
+            with self.assertRaises(KeyboardInterrupt) as failure:
+                with self.store._result_artifact_transaction():
+                    raise KeyboardInterrupt("private-control-payload")
+        finally:
+            self.store._connection.set_authorizer(None)
+
+        self.assertIs(type(failure.exception), KeyboardInterrupt)
+        self.assertEqual(failure.exception.args, ())
+        self.assertIs(
+            type(failure.exception.__cause__),
+            _ResultArtifactCommitAmbiguityError,
+        )
+        self.assertIsNone(failure.exception.__context__)
+        self.assertTrue(self.store._poisoned)
+
 
 class ResultArtifactOwnerWriteTests(unittest.TestCase):
     def setUp(self) -> None:
