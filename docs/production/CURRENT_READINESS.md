@@ -83,6 +83,13 @@ network、subprocess 或 outbound。阶段证据见：
 - [`25_native_im_e2_adapter_lifecycle_offline_evidence.md`](../../analysis_report/research/25_native_im_e2_adapter_lifecycle_offline_evidence.md)。
 - [`26_native_im_provider_bundle_offline_evidence.md`](../../analysis_report/research/26_native_im_provider_bundle_offline_evidence.md)。
 
+对独立 IM 分支已提交 `c623aea` 的源码级合同复核又确认：该分支已有 identity/conversation/
+PostgreSQL authority persistence 底座，但当前运行 composition 仍只暴露 loopback liveness/ping，
+auth/IM 固定 fake，未注册 authenticated event read、provider readiness、cursor/snapshot 或真实 endpoint/
+credential composition。`/health/live` 不能升级为 provider health evidence，内部 repository 也不能
+作为跨 bounded-context transport。逐项证据、最小 readiness/read 合同和第一轮 Level B 顺序见
+[`27_native_im_backend_contract_audit.md`](../../analysis_report/research/27_native_im_backend_contract_audit.md)。
+
 这仍没有打开真实 IM：仓库没有 production HTTP/WebSocket/socket exchange、真实 credential
 material、webhook 或 external IM send。下一硬门禁是真实 provider contract、测试
 endpoint/scope/data/secret/path/expiry/rollback 批准输入、真实 profile/mapper fixture 与 production
