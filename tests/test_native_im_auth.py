@@ -141,6 +141,7 @@ def test_valid_raw_body_is_verified_then_nonce_is_claimed_once() -> None:
     assert result.key_id == configuration.verification_key_id
     assert result.body_digest == hashlib.sha256(BODY).hexdigest()
     assert result.signed_at == NOW
+    assert result.expires_at == "2026-08-28T12:05:00.000000Z"
     assert result.verified_at == NOW
     assert len(result.nonce_digest) == 64
     assert len(result.authentication_evidence_digest) == 64
@@ -153,6 +154,23 @@ def test_valid_raw_body_is_verified_then_nonce_is_claimed_once() -> None:
     )
     assert material.closed is True
     assert retained_view.tobytes() == bytes(len(retained_view))
+
+
+def test_atomic_admission_verification_defers_nonce_claim_and_closes_material() -> None:
+    verifier, configuration, guard = verifier_and_inputs()
+    material = SecretMaterial(KEY)
+
+    result = verifier.verify_for_atomic_admission(
+        metadata_for(configuration),
+        BODY,
+        material,
+        now=NOW,
+    )
+
+    assert type(result) is NativeIMRawVerificationResultV1
+    assert result.expires_at == "2026-08-28T12:05:00.000000Z"
+    assert guard.claims == []
+    assert material.closed is True
 
 
 def test_exact_replay_is_rejected_after_signature_verification() -> None:
@@ -349,6 +367,7 @@ def test_result_rejects_subclass_and_metadata_subclass_before_field_access() -> 
             verifier_id="test-verifier",
             key_id="test-key",
             signed_at=NOW,
+            expires_at="2026-08-28T12:05:00.000000Z",
             verified_at=NOW,
             body_digest="a" * 64,
             nonce_digest="b" * 64,

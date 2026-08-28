@@ -101,6 +101,7 @@ class NativeIMRawVerificationResultV1:
     verifier_id: str
     key_id: str
     signed_at: str
+    expires_at: str
     verified_at: str
     body_digest: str
     nonce_digest: str
@@ -112,7 +113,10 @@ class NativeIMRawVerificationResultV1:
         _schema_version(self.schema_version)
         _id(self.verifier_id, "verifierId")
         _id(self.key_id, "keyId")
-        _timestamp(self.signed_at, "signedAt")
+        signed_at = _timestamp(self.signed_at, "signedAt")
+        expires_at = _timestamp(self.expires_at, "expiresAt")
+        if expires_at <= signed_at:
+            raise ValueError("expiresAt must follow signedAt")
         _timestamp(self.verified_at, "verifiedAt")
         _digest(self.body_digest, "bodyDigest")
         _digest(self.nonce_digest, "nonceDigest")
@@ -157,11 +161,40 @@ class NativeIMHMACRawBodyVerifier:
         if type(verification_material) is not SecretMaterial:
             raise TypeError("verification material must be an exact secret lease")
         try:
-            return self._verify(metadata, raw_body, verification_material, now=now)
+            result = self._verify_evidence(
+                metadata,
+                raw_body,
+                verification_material,
+                now=now,
+            )
+            self._claim_nonce(result)
+            return result
         finally:
             verification_material.close()
 
-    def _verify(
+    def verify_for_atomic_admission(
+        self,
+        metadata: NativeIMDetachedSignatureV1,
+        raw_body: bytes,
+        verification_material: SecretMaterial,
+        *,
+        now: str,
+    ) -> NativeIMRawVerificationResultV1:
+        """Verify evidence while deferring nonce claim to one inbox transaction."""
+
+        if type(verification_material) is not SecretMaterial:
+            raise TypeError("verification material must be an exact secret lease")
+        try:
+            return self._verify_evidence(
+                metadata,
+                raw_body,
+                verification_material,
+                now=now,
+            )
+        finally:
+            verification_material.close()
+
+    def _verify_evidence(
         self,
         metadata: NativeIMDetachedSignatureV1,
         raw_body: bytes,
@@ -225,6 +258,19 @@ class NativeIMHMACRawBodyVerifier:
             signed_at,
             seconds=authentication.replay_window_seconds,
         )
+        return NativeIMRawVerificationResultV1(
+            schema_version=NATIVE_IM_SCHEMA_VERSION,
+            verifier_id=_VERIFIER_CONTRACT_ID,
+            key_id=metadata.key_id,
+            signed_at=signed_at,
+            expires_at=expires_at,
+            verified_at=now,
+            body_digest=body_digest,
+            nonce_digest=nonce_digest,
+            authentication_evidence_digest=evidence_digest,
+        )
+
+    def _claim_nonce(self, result: NativeIMRawVerificationResultV1) -> None:
         guard_failed = False
         claimed: object = False
         try:
@@ -235,11 +281,11 @@ class NativeIMHMACRawBodyVerifier:
                     self.__profile.provider,
                     self.__profile.channel_id,
                 ),
-                key_id=metadata.key_id,
-                nonce_digest=nonce_digest,
-                signed_at=signed_at,
-                expires_at=expires_at,
-                authentication_evidence_digest=evidence_digest,
+                key_id=result.key_id,
+                nonce_digest=result.nonce_digest,
+                signed_at=result.signed_at,
+                expires_at=result.expires_at,
+                authentication_evidence_digest=result.authentication_evidence_digest,
             )
         except Exception:
             guard_failed = True
@@ -247,16 +293,6 @@ class NativeIMHMACRawBodyVerifier:
             raise NativeIMAuthenticationError("native_im_auth_replay_guard_failed") from None
         if claimed is not True:
             raise NativeIMAuthenticationError("native_im_auth_nonce_replay") from None
-        return NativeIMRawVerificationResultV1(
-            schema_version=NATIVE_IM_SCHEMA_VERSION,
-            verifier_id=_VERIFIER_CONTRACT_ID,
-            key_id=metadata.key_id,
-            signed_at=signed_at,
-            verified_at=now,
-            body_digest=body_digest,
-            nonce_digest=nonce_digest,
-            authentication_evidence_digest=evidence_digest,
-        )
 
     def _signed_message(
         self,
