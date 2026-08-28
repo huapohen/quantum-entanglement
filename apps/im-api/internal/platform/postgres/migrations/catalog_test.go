@@ -150,12 +150,45 @@ func TestMigrationSQLRejectsAmbientTransactionsAndSearchPath(t *testing.T) {
 		"BEGIN;\nSELECT 1;\n",
 		"BEGIN TRANSACTION;\nSELECT 1;\n",
 		"SELECT 1;\nCOMMIT;\n",
-		"ROLLBACK;\n",
+		"END;\n",
+		"COMMIT WORK;\n",
+		"ROLLBACK WORK;\n",
+		"ABORT;\n",
+		"START TRANSACTION;\n",
+		"PREPARE TRANSACTION 'migration';\n",
+		"SAVEPOINT migration;\n",
+		"RELEASE SAVEPOINT migration;\n",
 		"SET search_path TO public;\n",
+		"SET LOCAL search_path TO public;\n",
+		"RESET search_path;\n",
+		"SELECT set_config('search_path', 'public', false);\n",
+		"DO $$ BEGIN PERFORM set_config('search_path', 'public', false); END $$;\n",
+		"CREATE FUNCTION public.mutate_path() RETURNS void AS $$ SELECT 1 $$ LANGUAGE sql;\n",
+		"GRANT ALL ON SCHEMA wanwork_im TO PUBLIC;\n",
+		"CREATE OR REPLACE VIEW public.bad AS SELECT 1;\n",
+		"CREATE /* unterminated",
+		"CREATE TABLE public.bad (value text DEFAULT 'unterminated);\n",
+		"CREATE TABLE public.bad (value text DEFAULT $tag$unterminated);\n",
 		"\x00",
 	} {
 		if validMigrationSQL(sql) {
 			t.Fatalf("expected unsafe SQL rejection: %q", sql)
+		}
+	}
+}
+
+func TestMigrationSQLLexerIgnoresCommentAndLiteralCanaries(t *testing.T) {
+	for _, sql := range []string{
+		"-- COMMIT; SET search_path\nCREATE TABLE public.safe (id bigint);\n",
+		"/* ROLLBACK; /* SET search_path */ COMMIT; */ CREATE TABLE public.safe (id bigint);\n",
+		"CREATE TABLE public.safe (value text DEFAULT 'COMMIT; SET search_path');\n",
+		"CREATE TABLE public.safe (value text DEFAULT $$COMMIT; SET search_path$$);\n",
+		"CREATE TABLE \"semi;colon\" (id bigint);\n",
+		"CREATE UNIQUE INDEX safe_uk ON public.safe (id);\nALTER TABLE public.safe ENABLE ROW LEVEL SECURITY;\n",
+		"DROP POLICY safe_policy ON public.safe;\nDROP TABLE public.safe;\nDROP SCHEMA public;\n",
+	} {
+		if !validMigrationSQL(sql) {
+			t.Fatalf("expected safe DDL acceptance: %q", sql)
 		}
 	}
 }

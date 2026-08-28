@@ -82,13 +82,5 @@ func validMigrationSQL(sql string) bool {
 		strings.Contains(sql, "\r") {
 		return false
 	}
-	upper := strings.ToUpper(sql)
-	for _, forbidden := range []string{
-		"BEGIN;", "BEGIN TRANSACTION", "COMMIT;", "ROLLBACK;", "SET SEARCH_PATH",
-	} {
-		if strings.Contains(upper, forbidden) {
-			return false
-		}
-	}
-	return true
+	return validMigrationStatements(sql)
 }
