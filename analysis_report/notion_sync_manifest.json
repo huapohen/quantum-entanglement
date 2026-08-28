@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-28T06:59:38Z",
+  "syncedAt": "2026-08-28T07:22:44Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private branches + local repository",
     "remoteRepresentation": "semantic-mirror",
@@ -23,8 +23,8 @@
   },
   "sourceControl": {
     "notionContentBaselineCommit": "4a465d880334b206f4503447d3fa2ccad696884d",
-    "manifestPreparedFromCommit": "28b6a29130f77f583bb6e13ebbf8f2ae0d0ce3ec",
-    "manifestPreparedFromTree": "b89435f12dfb7aa157a0a9a164a83b15de3ecb58"
+    "manifestPreparedFromCommit": "c8b8cd149c6c98796a40d320f0dac4967bd3d08c",
+    "manifestPreparedFromTree": "275adc9f8ded28046569b5275cab2386594e764d"
   },
   "pages": [
     {
@@ -41,8 +41,16 @@
       "remoteReadback": {
         "verified": true,
         "title": "🪢 Quantum Entanglement｜人 + 多 Agent 协同办公",
-        "contentLength": 15556,
+        "contentLength": 15858,
         "expectedMarkers": [
+          "c8b8cd1",
+          "e9491cd",
+          "25d4d6c",
+          "63 个本地 source",
+          "64 个 target mapping",
+          "29 项图像（1 SVG + 28 raster）",
+          "43 项生成器测试通过",
+          "signed S3 URL",
           "任何本地文档、代码、决策、计划或验收动作",
           "f99f176bfa9cd14abf7e3c51d971b9682dc49230",
           "47 个受控事实源页面 + 2 个派生索引页 = 49 页",
@@ -589,19 +597,27 @@
       "localFiles": [
         {
           "path": "analysis_report/screenshots/README.md",
-          "sha256": "673bfcd9832351c2c35e80060c705a739eacaa0d04ad099aaced3bc326797202"
+          "sha256": "09bb4c29364e3c3ea0469a365d5fec99cd8b1f90d379b595cbcbf23d2505cb36"
         },
         {
           "path": "analysis_report/screenshots/manifest.json",
-          "sha256": "9b7f4f275421302e4bf0122b80886bce60a38eeb067b9a39a06d67ac5dc8d354"
+          "sha256": "c20ffa44fe1cbf60ad2296229d5e0606e6683fa51ac9afa972fb9b86cac32295"
         }
       ],
-      "updateMode": "targeted-preserve-existing-and-append-17-images",
+      "updateMode": "targeted-preserve-existing-and-attach-current-inventory",
       "remoteReadback": {
         "verified": true,
         "title": "🖼️ 证据库｜调研与产品验收截图（只读）",
-        "contentLength": 47587,
+        "contentLength": 48546,
         "expectedMarkers": [
+          "29 项截图与文档图证据检查点",
+          "c20ffa44fe1c",
+          "09bb4c29364e",
+          "551899b",
+          "3caead4b996e8183ae54f4d5abc2643d",
+          "screenshots_README_4a465d8.md",
+          "screenshots_manifest_4a465d8.json",
+          "主动内容和外链全部拒绝",
           "2026-08-27 增量截图",
           "26_clawith_rapid_rnd_claim_20260827",
           "8ab98aa5837226f0c1d8788eec350fe580f32180"
@@ -1065,8 +1081,16 @@
       "remoteReadback": {
         "verified": true,
         "title": "🐘 33｜PostgreSQL 权威持久化：Migration、Authority、Repository 与 UoW",
-        "contentLength": 13746,
+        "contentLength": 14356,
         "expectedMarkers": [
+          "c8b8cd1",
+          "e9491cd",
+          "25d4d6c",
+          "63 个本地 source",
+          "64 个 target mapping",
+          "29 项图像（1 SVG + 28 raster）",
+          "43 项生成器测试通过",
+          "DOCTYPE/entity/script/foreignObject/image/use/a",
           "8d662bf",
           "4a465d8",
           "automation/2026/05_08/1/2output",
@@ -1266,8 +1290,11 @@
       "remoteReadback": {
         "verified": true,
         "title": "🛰️ WanWork Quantum Entanglement｜原生 IM 独立审阅空间",
-        "contentLength": 7508,
+        "contentLength": 7686,
         "expectedMarkers": [
+          "c8b8cd1",
+          "机器 manifest、确定性 bundle",
+          "43 项 bundle 测试通过",
           "8d662bf",
           "4a465d8",
           "automation/2026/05_08/1/2output",
@@ -1327,12 +1354,12 @@
     "pageCount": 49,
     "controlledSourcePageCount": 47,
     "auxiliaryDerivedPageCount": 2,
-    "existingPagesUpdated": 6,
-    "newPagesCreated": 1,
-    "readbackVerified": 7,
+    "existingPagesUpdated": 4,
+    "newPagesCreated": 0,
+    "readbackVerified": 4,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 29,
-    "screenshotImagesAddedThisSync": 2,
+    "screenshotImagesAddedThisSync": 0,
     "temporarySignedImageUrlsRecorded": false,
     "secretsRecorded": false
   }
