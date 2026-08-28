@@ -117,6 +117,7 @@ func TestApprovalExecutionFencerReconcilesCommitUnknownWithExactToken(t *testing
 	fixture := newApprovalExecutionFenceFixture(t)
 	store := newFakeApprovalExecutionFenceStore(fixture.now)
 	store.commitThenErr = ErrApprovalExecutionCommitUncertain
+	store.loadNotFoundCount = 2
 	fencer := mustApprovalExecutionFencer(t, store, 0x72, fixture.now)
 
 	fence, err := fencer.ConsumeAndFence(
@@ -129,13 +130,30 @@ func TestApprovalExecutionFencerReconcilesCommitUnknownWithExactToken(t *testing
 	if err != nil {
 		t.Fatalf("ConsumeAndFence lost ACK: %v", err)
 	}
-	if fence.FenceEpoch() != 1 || store.loadCalls != 1 {
+	if fence.FenceEpoch() != 1 || store.loadCalls != 3 {
 		t.Fatal("authoritative readback did not recover exact committed fence")
 	}
 
 	missing := newFakeApprovalExecutionFenceStore(fixture.now)
 	missing.compareErr = ErrApprovalExecutionCommitUncertain
-	missingFencer := mustApprovalExecutionFencer(t, missing, 0x73, fixture.now)
+	missingFencer, err := newApprovalExecutionFencerWithReconcilePolicy(
+		missing,
+		func(destination []byte) error {
+			for index := range destination {
+				destination[index] = 0x73
+			}
+			return nil
+		},
+		func() time.Time { return fixture.now },
+		approvalExecutionReconcilePolicy{
+			maximumDelay: 2 * time.Millisecond,
+			minimumDelay: time.Millisecond,
+			timeout:      5 * time.Millisecond,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new missing fencer: %v", err)
+	}
 	if _, err := missingFencer.ConsumeAndFence(
 		t.Context(),
 		fixture.plan,
@@ -485,7 +503,24 @@ func TestApprovalExecutionFencerAllowsOneConcurrentApprovalConsumption(t *testin
 func TestApprovalExecutionFencerUsesFreshReadbackAfterCallerCancellation(t *testing.T) {
 	fixture := newApprovalExecutionFenceFixture(t)
 	store := &cancellationApprovalExecutionFenceStore{}
-	fencer := mustApprovalExecutionFencer(t, store, 0x76, fixture.now)
+	fencer, err := newApprovalExecutionFencerWithReconcilePolicy(
+		store,
+		func(destination []byte) error {
+			for index := range destination {
+				destination[index] = 0x76
+			}
+			return nil
+		},
+		func() time.Time { return fixture.now },
+		approvalExecutionReconcilePolicy{
+			maximumDelay: 2 * time.Millisecond,
+			minimumDelay: time.Millisecond,
+			timeout:      5 * time.Millisecond,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new cancellation fencer: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.WithValue(
 		t.Context(),
 		approvalExecutionFenceContextKey{},
@@ -493,7 +528,7 @@ func TestApprovalExecutionFencerUsesFreshReadbackAfterCallerCancellation(t *test
 	))
 	cancel()
 
-	_, err := fencer.ConsumeAndFence(
+	_, err = fencer.ConsumeAndFence(
 		ctx,
 		fixture.plan,
 		fixture.approval,
@@ -503,7 +538,7 @@ func TestApprovalExecutionFencerUsesFreshReadbackAfterCallerCancellation(t *test
 	if !errors.Is(err, ErrApprovalExecutionCommitUncertain) {
 		t.Fatalf("canceled fence error = %v, want %v", err, ErrApprovalExecutionCommitUncertain)
 	}
-	if store.loadContextCanceled || store.loadContextValue != "retained" || store.loadCalls != 1 {
+	if store.loadContextCanceled || store.loadContextValue != "retained" || store.loadCalls < 2 {
 		t.Fatalf(
 			"fresh readback canceled=%t value=%q calls=%d",
 			store.loadContextCanceled,
@@ -692,16 +727,17 @@ func mustApprovalExecutionFencer(
 }
 
 type fakeApprovalExecutionFenceStore struct {
-	mu            sync.Mutex
-	states        map[string]ApprovalExecutionFenceStoredState
-	consumptions  map[string]string
-	activeBySpace map[ApprovalPolicyNamespace]string
-	compareCalls  int
-	loadCalls     int
-	compareErr    error
-	commitThenErr error
-	clock         approvalExecutionClock
-	nextEpoch     uint64
+	mu                sync.Mutex
+	states            map[string]ApprovalExecutionFenceStoredState
+	consumptions      map[string]string
+	activeBySpace     map[ApprovalPolicyNamespace]string
+	compareCalls      int
+	loadCalls         int
+	compareErr        error
+	commitThenErr     error
+	clock             approvalExecutionClock
+	loadNotFoundCount int
+	nextEpoch         uint64
 }
 
 func newFakeApprovalExecutionFenceStore(now time.Time) *fakeApprovalExecutionFenceStore {
@@ -721,6 +757,10 @@ func (store *fakeApprovalExecutionFenceStore) Load(
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.loadCalls++
+	if store.loadNotFoundCount > 0 {
+		store.loadNotFoundCount--
+		return ApprovalExecutionFenceStoredState{}, ErrApprovalExecutionFenceNotFound
+	}
 	state, exists := store.states[fakeApprovalExecutionFenceKey(namespace, operationID)]
 	if !exists {
 		return ApprovalExecutionFenceStoredState{}, ErrApprovalExecutionFenceNotFound

@@ -22,6 +22,8 @@ const (
 	approvalExecutionTokenDigestDomain     = "wanwork.im/postgres-authority-approval-execution-token/1\n"
 	approvalExecutionTokenBytes            = 32
 	approvalExecutionReconcileTimeout      = 5 * time.Second
+	approvalExecutionReconcileMinimumDelay = 10 * time.Millisecond
+	approvalExecutionReconcileMaximumDelay = 250 * time.Millisecond
 	approvalMutationFenceRedacted          = "ApprovalMutationFence{redacted}"
 	maximumApprovalExecutionAdmissionBytes = 64 * 1024
 )
@@ -105,6 +107,12 @@ type approvalExecutionFenceStore interface {
 type approvalExecutionTokenSource func([]byte) error
 type approvalExecutionClock func() time.Time
 
+type approvalExecutionReconcilePolicy struct {
+	maximumDelay time.Duration
+	minimumDelay time.Duration
+	timeout      time.Duration
+}
+
 // ApprovalExecutionFencer is the only constructor of an opaque ApprovalMutationFence. The store
 // must atomically verify the exact current policy head, consume the approval, allocate a monotonic
 // epoch, and create one unresolved namespace head before returning from CompareAndOpen.
@@ -112,6 +120,7 @@ type ApprovalExecutionFencer struct {
 	store       approvalExecutionFenceStore
 	tokenSource approvalExecutionTokenSource
 	clock       approvalExecutionClock
+	reconcile   approvalExecutionReconcilePolicy
 }
 
 func NewApprovalExecutionFencer(store approvalExecutionFenceStore) (ApprovalExecutionFencer, error) {
@@ -126,10 +135,35 @@ func newApprovalExecutionFencer(
 	tokenSource approvalExecutionTokenSource,
 	clock approvalExecutionClock,
 ) (ApprovalExecutionFencer, error) {
-	if nilInterface(store) || tokenSource == nil || clock == nil {
+	return newApprovalExecutionFencerWithReconcilePolicy(
+		store,
+		tokenSource,
+		clock,
+		approvalExecutionReconcilePolicy{
+			maximumDelay: approvalExecutionReconcileMaximumDelay,
+			minimumDelay: approvalExecutionReconcileMinimumDelay,
+			timeout:      approvalExecutionReconcileTimeout,
+		},
+	)
+}
+
+func newApprovalExecutionFencerWithReconcilePolicy(
+	store approvalExecutionFenceStore,
+	tokenSource approvalExecutionTokenSource,
+	clock approvalExecutionClock,
+	reconcile approvalExecutionReconcilePolicy,
+) (ApprovalExecutionFencer, error) {
+	if nilInterface(store) || tokenSource == nil || clock == nil ||
+		reconcile.timeout <= 0 || reconcile.minimumDelay <= 0 ||
+		reconcile.maximumDelay < reconcile.minimumDelay {
 		return ApprovalExecutionFencer{}, ErrInvalidApprovalExecutionFencer
 	}
-	return ApprovalExecutionFencer{store: store, tokenSource: tokenSource, clock: clock}, nil
+	return ApprovalExecutionFencer{
+		store:       store,
+		tokenSource: tokenSource,
+		clock:       clock,
+		reconcile:   reconcile,
+	}, nil
 }
 
 // ApprovalMutationFence is an in-process capability. Its token is intentionally unexported; later
@@ -206,13 +240,14 @@ func (fencer ApprovalExecutionFencer) ConsumeAndFence(
 	)
 	reconciliationContext, cancelReconciliation := context.WithTimeout(
 		context.WithoutCancel(ctx),
-		approvalExecutionReconcileTimeout,
+		fencer.reconcile.timeout,
 	)
 	defer cancelReconciliation()
-	readback, readbackErr := fencer.store.Load(
+	readback, readbackErr := fencer.loadForReconciliation(
 		reconciliationContext,
 		namespace,
 		candidate.record.OperationID,
+		commitErr == nil || errors.Is(commitErr, ErrApprovalExecutionCommitUncertain),
 	)
 	if readbackErr != nil {
 		if errors.Is(readbackErr, ErrInvalidApprovalExecutionState) ||
@@ -237,6 +272,39 @@ func (fencer ApprovalExecutionFencer) ConsumeAndFence(
 		return ApprovalMutationFence{}, ErrInvalidApprovalExecutionState
 	}
 	return ApprovalMutationFence{record: readback.Record, token: token}, nil
+}
+
+func (fencer ApprovalExecutionFencer) loadForReconciliation(
+	ctx context.Context,
+	namespace ApprovalPolicyNamespace,
+	operationID string,
+	retryNotFound bool,
+) (ApprovalExecutionFenceStoredState, error) {
+	delay := fencer.reconcile.minimumDelay
+	for {
+		state, err := fencer.store.Load(ctx, namespace, operationID)
+		if err == nil || !retryNotFound || !errors.Is(err, ErrApprovalExecutionFenceNotFound) {
+			return state, err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ApprovalExecutionFenceStoredState{}, ErrApprovalExecutionFenceNotFound
+		case <-timer.C:
+		}
+		if delay < fencer.reconcile.maximumDelay {
+			delay *= 2
+			if delay > fencer.reconcile.maximumDelay {
+				delay = fencer.reconcile.maximumDelay
+			}
+		}
+	}
 }
 
 func newApprovalExecutionFenceCandidate(
