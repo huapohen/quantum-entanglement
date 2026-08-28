@@ -8,6 +8,7 @@ transport is registered here.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import NoReturn, Protocol, runtime_checkable
 
@@ -21,7 +22,12 @@ from .native_im import (
     IMInboundPageV1,
     IMInboundReadRequestV1,
 )
-from .native_im_auth import NativeIMDetachedSignatureV1
+from .native_im_auth import (
+    NativeIMDetachedSignatureV1,
+    NativeIMRawVerificationResultV1,
+)
+from .native_im_gateway import validate_im_inbound_result_v1
+from .native_im_provider_profile import IMProviderProfileV1
 from .service.native_im_config import (
     NativeIMConfigV1,
     NativeIMDisabledConfigV1,
@@ -57,6 +63,16 @@ class NativeIMTransportContractError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__(self.code)
+
+
+class NativeIMInboundParseError(ValueError):
+    """A stable content-free rejection from the bounded canonical page parser."""
+
+    __slots__ = ("code",)
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
 
 
 @dataclass(frozen=True, repr=False)
@@ -138,6 +154,124 @@ class NativeIMInboundTransportPort(Protocol):
         """Close transport-owned resources without performing an external action."""
 
 
+def _scope(value: object) -> tuple[object, object, object, object]:
+    return (
+        getattr(value, "tenant_id", None),
+        getattr(value, "workspace_id", None),
+        getattr(value, "provider", None),
+        getattr(value, "channel_id", None),
+    )
+
+
+def _raise_clean_parse_error(code: str) -> NoReturn:
+    raise NativeIMInboundParseError(code) from None
+
+
+def _detach_exception(error: BaseException) -> None:
+    error.__traceback__ = None
+    error.__cause__ = None
+    error.__context__ = None
+
+
+def parse_native_im_inbound_page_v1(
+    response: NativeIMInboundRawResponseV1,
+    request: IMInboundReadRequestV1,
+    capability: IMCapabilitySnapshotV1,
+    raw_verification: NativeIMRawVerificationResultV1,
+    configuration: NativeIMInboundOnlyConfigV1,
+    profile: IMProviderProfileV1,
+) -> IMInboundPageV1:
+    """Decode one canonical page under config, profile, request, and auth bounds."""
+
+    for value, expected, label in (
+        (response, NativeIMInboundRawResponseV1, "response"),
+        (request, IMInboundReadRequestV1, "request"),
+        (capability, IMCapabilitySnapshotV1, "capability"),
+        (raw_verification, NativeIMRawVerificationResultV1, "raw verification"),
+        (configuration, NativeIMInboundOnlyConfigV1, "configuration"),
+        (profile, IMProviderProfileV1, "profile"),
+    ):
+        if type(value) is not expected:
+            raise TypeError(f"native IM parser requires the exact {label} V1 value")
+
+    expected_scope = (
+        configuration.tenant_id,
+        configuration.workspace_id,
+        configuration.provider,
+        configuration.channel_id,
+    )
+    if _scope(request) != expected_scope or _scope(capability) != expected_scope:
+        _raise_clean_parse_error("native_im_parse_scope_mismatch")
+    if _scope(profile) != expected_scope:
+        _raise_clean_parse_error("native_im_parse_profile_scope_mismatch")
+    if response.read_request_id != request.read_request_id:
+        _raise_clean_parse_error("native_im_parse_request_mismatch")
+    if request.limit > configuration.page_limit or request.limit > profile.limits.max_page_events:
+        _raise_clean_parse_error("native_im_parse_request_limit_exceeded")
+    raw_body = response.raw_body
+    maximum_body_bytes = min(
+        configuration.max_response_bytes,
+        profile.limits.max_raw_page_bytes,
+        _MAX_RAW_RESPONSE_BYTES,
+    )
+    if len(raw_body) > maximum_body_bytes:
+        _raise_clean_parse_error("native_im_parse_body_too_large")
+    if hashlib.sha256(raw_body).hexdigest() != raw_verification.body_digest:
+        _raise_clean_parse_error("native_im_parse_body_digest_mismatch")
+
+    page: IMInboundPageV1 | None = None
+    decode_failed = False
+    try:
+        page = IMInboundPageV1.from_json_bytes(raw_body)
+    except Exception as error:
+        decode_failed = True
+        _detach_exception(error)
+    if decode_failed or type(page) is not IMInboundPageV1:
+        _raise_clean_parse_error("native_im_parse_body_invalid")
+    if raw_body != page.canonical_bytes():
+        _raise_clean_parse_error("native_im_parse_body_not_canonical")
+
+    binding_failed = False
+    try:
+        validate_im_inbound_result_v1(request, capability, page)
+    except (TypeError, ValueError) as error:
+        binding_failed = True
+        _detach_exception(error)
+    if binding_failed:
+        _raise_clean_parse_error("native_im_parse_binding_failed")
+    if len(page.envelopes) > configuration.page_limit:
+        _raise_clean_parse_error("native_im_parse_page_limit_exceeded")
+
+    supported_events = {
+        mapping.event_type for mapping in profile.event_mappings if mapping.status == "supported"
+    }
+    allowed_conversations = set(profile.allowed_conversation_ids)
+    verification_ids: set[str] = set()
+    for envelope in page.envelopes:
+        event = envelope.event
+        if event.event_type not in supported_events:
+            _raise_clean_parse_error("native_im_parse_event_mapping_unsupported")
+        if event.conversation.conversation_id not in allowed_conversations:
+            _raise_clean_parse_error("native_im_parse_conversation_forbidden")
+        if envelope.tenant_mapping_revision != profile.tenant_mapping_revision:
+            _raise_clean_parse_error("native_im_parse_tenant_mapping_mismatch")
+        if (
+            envelope.verifier_id != raw_verification.verifier_id
+            or envelope.authentication_evidence_digest
+            != raw_verification.authentication_evidence_digest
+            or envelope.verified_at != raw_verification.verified_at
+        ):
+            _raise_clean_parse_error("native_im_parse_authentication_binding_failed")
+        if event.transport_evidence_digest != response.transport_evidence_digest:
+            _raise_clean_parse_error("native_im_parse_transport_binding_failed")
+        if envelope.verification_id in verification_ids:
+            _raise_clean_parse_error("native_im_parse_verification_id_duplicate")
+        verification_ids.add(envelope.verification_id)
+        if len(envelope.canonical_bytes()) > profile.limits.max_raw_event_bytes:
+            _raise_clean_parse_error("native_im_parse_event_too_large")
+    return page
+
+
 class NativeIMDisabledSandboxAdapter:
     """The only adapter produced by the default service composition."""
 
@@ -197,10 +331,12 @@ def compose_default_native_im_sandbox_v1(
 __all__ = [
     "NativeIMDisabledSandboxAdapter",
     "NativeIMHealthEvidenceV1",
+    "NativeIMInboundParseError",
     "NativeIMInboundRawResponseV1",
     "NativeIMInboundTransportPort",
     "NativeIMOutboundForbiddenError",
     "NativeIMSandboxDisabledError",
     "NativeIMTransportContractError",
     "compose_default_native_im_sandbox_v1",
+    "parse_native_im_inbound_page_v1",
 ]
