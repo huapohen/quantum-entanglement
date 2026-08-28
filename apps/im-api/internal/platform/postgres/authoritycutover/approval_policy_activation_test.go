@@ -320,6 +320,17 @@ func TestApprovalPolicyActivationReconcilesCommitUnknownAndNeverReturnsUnprovenS
 		}
 	})
 
+	t.Run("commit then caller cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		store := newFakeApprovalPolicyActivationStore()
+		store.afterCompare = cancel
+		activator := mustApprovalPolicyActivator(t, fixture.verifier, store)
+		activated, err := activator.Activate(ctx, fixture.raw, fixture.now)
+		if err != nil || activated.PolicyDigest() != fixture.toSign.PolicyDigest() {
+			t.Fatalf("cancellation-safe readback = (%+v, %v)", activated, err)
+		}
+	})
+
 	t.Run("uncertain before commit", func(t *testing.T) {
 		store := newFakeApprovalPolicyActivationStore()
 		store.beforeCommitErr = ErrApprovalPolicyCommitUncertain
@@ -433,6 +444,7 @@ func TestApprovalPolicyActivationRejectsCorruptDurableStateAndTypedNilStore(t *t
 
 type fakeApprovalPolicyActivationStore struct {
 	mu              sync.Mutex
+	afterCompare    func()
 	afterCommitErr  error
 	beforeCommitErr error
 	compareCalls    int
@@ -450,12 +462,15 @@ func newFakeApprovalPolicyActivationStore() *fakeApprovalPolicyActivationStore {
 }
 
 func (store *fakeApprovalPolicyActivationStore) Load(
-	_ context.Context,
+	ctx context.Context,
 	namespace ApprovalPolicyNamespace,
 ) (ApprovalPolicyStoredState, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.loadCalls++
+	if err := ctx.Err(); err != nil {
+		return ApprovalPolicyStoredState{}, ErrApprovalPolicyStoreUnavailable
+	}
 	if err := store.failLoadAt[store.loadCalls]; err != nil {
 		return ApprovalPolicyStoredState{}, err
 	}
@@ -493,6 +508,9 @@ func (store *fakeApprovalPolicyActivationStore) CompareAndActivate(
 			Head:            record.Head(),
 			Record:          cloneApprovalPolicyActivationRecord(record),
 		}
+	}
+	if store.afterCompare != nil {
+		store.afterCompare()
 	}
 	return store.afterCommitErr
 }

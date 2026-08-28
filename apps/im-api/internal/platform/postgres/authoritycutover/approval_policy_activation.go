@@ -22,6 +22,7 @@ const (
 	approvalPolicyActivationDigestDomain       = "wanwork.im/postgres-authority-approval-policy-activation/1\n"
 	approvalPolicyTargetDigestDomain           = "wanwork.im/postgres-authority-approval-policy-target/1\n"
 	maximumApprovalPolicyActivationRecordBytes = 32 * 1024
+	approvalPolicyReconciliationTimeout        = 5 * time.Second
 )
 
 var (
@@ -285,7 +286,15 @@ func (activator ApprovalPolicyActivator) Activate(
 		record,
 		candidate.CanonicalBytes(),
 	)
-	readback, readbackErr := activator.store.Load(ctx, namespace)
+	// Commit acknowledgement and caller cancellation cannot determine durable outcome. Reconcile
+	// through a bounded fresh context that retains request values but not its cancellation signal;
+	// no ActivatedApprovalPolicy is returned unless this authoritative readback succeeds.
+	reconciliationContext, cancelReconciliation := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		approvalPolicyReconciliationTimeout,
+	)
+	defer cancelReconciliation()
+	readback, readbackErr := activator.store.Load(reconciliationContext, namespace)
 	if readbackErr != nil {
 		if commitErr == nil || errors.Is(commitErr, ErrApprovalPolicyCommitUncertain) {
 			return ActivatedApprovalPolicy{}, ErrApprovalPolicyCommitUncertain
