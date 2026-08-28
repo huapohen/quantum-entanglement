@@ -1,7 +1,9 @@
 # WanWork IM API
 
 Go/Fiber backend for the native WanWork IM. This module is intentionally isolated from the existing Python
-package and starts with no Clerk, RongCloud, model, tool, database, or outbound network adapter.
+package. It has a PostgreSQL authority persistence implementation and real PostgreSQL integration tests, but
+the HTTP service still starts with no production database composition, Clerk, RongCloud, model, tool, or
+outbound network adapter.
 
 ## Run the current scaffold
 
@@ -20,6 +22,24 @@ WANWORK_IM_LISTEN_ADDRESS=127.0.0.1:19080 \
 The current immutable configuration reads only `WANWORK_IM_LISTEN_ADDRESS`, accepts only numeric loopback
 hosts, fixes auth/IM providers to their fake implementations, and fixes outbound to `disabled`. Clerk,
 RongCloud, model, endpoint, and credential environment variables are intentionally not read in this stage.
+
+## Current PostgreSQL authority subset
+
+At code baseline `cd92ea5`, `internal/platform/postgres` contains checksummed migrations `0001..0005`, 22
+authority tables, 17 FORCE RLS tables, tenant-bound repositories/UoW, and five fixed `SECURITY DEFINER` write
+functions. Conversation, provider-binding, membership, access, and command-receipt writes go through those
+functions. The tested `NOINHERIT` runtime login can explicitly `SET ROLE` only to its exact runtime group; that
+runtime role has only the required reads and function executions and is denied raw table mutation, `MAINTAIN`,
+schema/object creation, elevated role settings, and unlisted routines.
+
+The exact owner/role/database/schema/table/function/default-ACL validator, role provision helper, and
+migration/runtime login wiring are integration-test fixtures. They prove the bounded PostgreSQL contract; they
+are not production IaC, credential lifecycle, application pool composition, startup/readiness wiring, or a live
+service database adapter. Trusted Clerk tenant context, active authority resolution, dump/restore and crash
+recovery, PostgreSQL event store/outbox/projection checkpoints, and provider reconciliation remain unimplemented.
+See `docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md` and
+`analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md` for the current
+engineering boundary.
 
 Current endpoint:
 

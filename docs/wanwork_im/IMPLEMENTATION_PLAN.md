@@ -86,21 +86,22 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 
 #### W2 当前检查点（2026-08-28）
 
-详细工程入口见 [W2_POSTGRES_AUTHORITY_CHECKPOINT.md](W2_POSTGRES_AUTHORITY_CHECKPOINT.md)，深度证据见
-`analysis_report/research/33_postgres_authority_persistence_checkpoint.md`。
+当前工程入口见 [W2_POSTGRES_AUTHORITY_CHECKPOINT.md](W2_POSTGRES_AUTHORITY_CHECKPOINT.md)，最新深度证据见
+`analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md`；Topic 33
+`analysis_report/research/33_postgres_authority_persistence_checkpoint.md` 是 `0001..0004` 的前序历史检查点。
 
-当前 code baseline 为 `8d662bf`，文档 checkpoint 已独立提交并推送。当前口径必须保留：
+当前 code baseline 为 `cd92ea5`。当前口径必须保留：
 
 | 标记 | 状态 |
 |---|---|
-| `[F]` | `0001..0004`、22 张业务表、17 张 FORCE RLS 表、PG18 fail-closed runner、conversation authority repository/UoW 已在 PostgreSQL 18.6 普通/race 测试中通过。 |
-| `[C]` | 保证仅限已登记 schema、当前四类 conversation authority repository、同一 PostgreSQL transaction 和测试 runtime-role fixture。 |
+| `[F]` | `0001..0005`、22 张业务表、17 张 FORCE RLS 表、五个 exact `SECURITY DEFINER` 写函数、function-only repository/receipt 路径与 exact access manifest 已在 PostgreSQL 18.6 普通/race 集成测试中通过。 |
+| `[C]` | 保证仅限已登记 schema、当前四类 conversation authority repository、receipt、同一 PostgreSQL transaction，以及测试 provision/access-validator fixture；这不是生产 IaC 或服务启动接线。 |
 | `[A]` | persistence substrate 的结构方向正确，可作为 authenticated admission、resolver 和 event/outbox 的底座。 |
-| `[U]` | 生产 role/ACL、function-only write、Clerk trusted tenant、action-time resolver、service startup、restore/crash 和 event/outbox 尚未完成。 |
+| `[U]` | 生产 IaC/角色生命周期、真实 service pool/readiness wiring、Clerk trusted tenant、action-time resolver、restore/crash 和 event/outbox 尚未完成。 |
 
 已交付的 W2 子集：
 
-- checksummed migration catalog、精确 ledger、PG18 major gate、session advisory lock；
+- checksummed `0001..0005` migration catalog、精确 ledger、PG18 major gate、session advisory lock；
 - 每个新 migration 提交前累计验证全部旧 postcondition；
 - fixed `search_path`、有界 rollback/unlock/close；
 - token-aware DDL allowlist，并拒绝 `CREATE TABLE AS SELECT`、危险 DEFAULT、`set_config`/`pg_sleep`
@@ -111,6 +112,10 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 - serializable UoW、same-command exact replay、request-digest conflict、receipt transaction、commit outcome
   unknown 的新连接 readback；
 - out-of-band receipt conflict 在 pool handoff 前释放 command advisory lock；
+- 五个固定 `SECURITY DEFINER` 函数冻结 exact signature/owner/body digest/security attributes/search path，
+  repository 与 receipt 只经函数写入，runtime raw table mutation 被拒绝；
+- exact authority access manifest 验证 database/schema/table/function/default ACL、owner、role attributes、
+  membership options/grantor 与额外 relation/routine；真实 migration/runtime login 通过正负向 fixture；
 - 真实 PG18 RLS、schema drift、64 路 exact retry、64 路 single CAS winner、rollback、unknown commit 和
   runtime immutable-history fixture。
 
@@ -118,6 +123,7 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 
 - W2 已完成；
 - 生产多租户/授权已完成；
+- 测试 provision/access-validator fixture 已经是生产 IaC、生产 role bootstrap 或 service readiness；
 - receipt 实现 provider ACK、完整结果或 exactly-once；
 - access boolean 已构成 action-time gate；
 - provider binding 证明融云群存在或消息送达；
@@ -125,8 +131,8 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 
 #### W2 接真实 IM 前的 P0 顺序
 
-1. `0005`：function-only revision writes + non-login owner/migrator/runtime + exact named role/table/schema/
-   function ACL manifest；
+1. 把已验证的 `0005`/function-only/exact access 合同落到生产 IaC：显式 database owner、环境 migration/
+   runtime login、secret 注入、角色轮换、cutover/旧 session 清理与 drift validator；
 2. Clerk verified claim → realm binding → active principal/tenant membership → exact Actor → path consistency
    的 trusted request context；
 3. conversation/actor/membership/access active resolver；invoke/publish 再叠加 installation/mandate/
@@ -254,8 +260,11 @@ policy/approval/intent/receipt append 不可用时
 26. `feat/fix: add idempotent tenant UoW and safe receipt-conflict lock lifecycle`
     （`09511ef`、`d588695`）
 27. `docs: checkpoint PostgreSQL authority persistence`（33 号 Markdown/HTML、SVG/PNG 图、W2 工程入口）
-28. `feat: restrict runtime writes to fixed database functions`（下一批；不得把 raw table grants 保留为
-    production contract）
+28. `feat: restrict runtime writes to fixed database functions`（`5fa2456`～`3fcc7ba`；`0005`、五个 exact
+    function、repository/receipt wiring 与 runtime raw-write 负测）
+29. `security/test: freeze exact authority access manifest`（`d911c51`～`cd92ea5`；测试 provision/
+    validator fixture、真实 migration/runtime login 与 ACL/role/membership/MAINTAIN drift 矩阵；生产 IaC
+    和 service wiring 仍未交付）
 
 任何一个条目若同时包含合同、实现、迁移、故障矩阵和 UI，应继续拆成小提交；列表是顺序约束，
 不是要求把一整项压成一个大 commit。

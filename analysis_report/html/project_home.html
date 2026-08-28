@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="generator" content="pandoc" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
-  <title>Quantum Entanglement 项目首页</title>
+  <title>调研与证据索引</title>
   <style>
     /* Default styles provided by pandoc.
     ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
@@ -173,8 +173,22 @@
 </head>
 <body>
 <header id="title-block-header">
-<h1 class="title">Quantum Entanglement 项目首页</h1>
+<h1 class="title">调研与证据索引</h1>
 </header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#调研与证据索引" id="toc-调研与证据索引">调研与证据索引</a>
+<ul>
+<li><a href="#notion-镜像2026-08-27-已回读"
+id="toc-notion-镜像2026-08-27-已回读">Notion 镜像（2026-08-27
+已回读）</a></li>
+<li><a href="#当前阶段交付" id="toc-当前阶段交付">当前阶段交付</a></li>
+<li><a href="#专题研究" id="toc-专题研究">专题研究</a></li>
+<li><a href="#已归档截图" id="toc-已归档截图">已归档截图</a></li>
+<li><a href="#数据安全" id="toc-数据安全">数据安全</a></li>
+</ul></li>
+</ul>
+</nav>
 <h1 id="调研与证据索引">调研与证据索引</h1>
 <p>本目录是本地报告的单一真相源。报告正文会在研究、实现和验证完成后汇总为
 <code>multi_agent_collaboration_report.md</code>。自 2026-08-27
@@ -182,7 +196,7 @@
 计划或验收动作形成稳定检查点后，都必须同步到私人 Notion
 并完成远端回读，回读完成前不进入
 下一项工作。语雀仍只在用户另行明确授权时操作。</p>
-<h2 id="notion-镜像2026-08-28-已回读">Notion 镜像（2026-08-28
+<h2 id="notion-镜像2026-08-27-已回读">Notion 镜像（2026-08-27
 已回读）</h2>
 <ul>
 <li>私有 GitHub 仓库：<a
@@ -218,15 +232,14 @@ class="uri">https://app.notion.com/p/3c9ead4b996e818fb220c66126181863?pvs=204</a
 <li>PostgreSQL authority 专题：<a
 href="https://app.notion.com/p/3caead4b996e8183ae54f4d5abc2643d?pvs=204"
 class="uri">https://app.notion.com/p/3caead4b996e8183ae54f4d5abc2643d?pvs=204</a></li>
-<li>最近稳定批次同步：2026-08-28；47 个受控事实源页面与 2
-个派生索引页共 49 页。项目首页、WanWork IM
-审阅主页、调研矩阵、实施计划、2output 吸收审计、专题 32 与专题 33
-已联合回读。</li>
+<li>最近稳定批次同步：2026-08-28；47 个受控事实源页面与 2 个派生索引页共
+49 页。项目首页、 WanWork IM 审阅主页、调研矩阵、实施计划、2output
+吸收审计、专题 32 与专题 33 已联合回读。</li>
 <li>当前 WanWork IM Notion 内容基线为
 <code>dev_wanwork_quantum_entanglement@4a465d880334b206f4503447d3fa2ccad696884d</code>，代码事实基线为
 <code>8d662bf4faec1cfaa12b63f4dfc2132ae6869dbb</code>；分支未合并
-<code>main</code>。<code>main@f99f176</code>
-仍是提前接入历史备份基线，不代表本分支当前 W2 进度。</li>
+<code>main</code>。<code>main@f99f176</code> 仍是提前接入
+历史备份基线，不代表本分支当前 W2 进度。</li>
 <li>本轮已确认两个当前 Markdown
 附件从临时上传转为页面附件；所有七个更新页面均回读到 Topic 33
 反链、两个基线 SHA、两层一级调研根、六项 P0 gate
@@ -272,23 +285,36 @@ writer、Observed/Accepted、迁移与 worker 门禁的提交级计划</td>
 </tr>
 <tr>
 <td><code>PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md</code></td>
-<td>基线与三层备份已完成</td>
+<td>历史备份检查点</td>
 <td><code>1d399e5</code> 状态、backup 分支、annotated tag、离线
-bundle、恢复命令与提前接入边界</td>
+bundle、恢复命令与提前接入边界；不是当前 W2 入口</td>
 </tr>
 <tr>
 <td><code>NATIVE_IM_EARLY_INTEGRATION_PLAN.md</code></td>
-<td>当前执行入口</td>
-<td>E0–E5、Level A–D、文件/迁移/测试/提交序列、可停点、工期与 outbound
-授权边界</td>
+<td>历史调度计划</td>
+<td>提前接入决策时冻结的 E0–E5/Level A–D
+路线；保留作决策溯源，不再是当前 W2 执行入口</td>
+</tr>
+<tr>
+<td><code>docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md</code></td>
+<td>当前 W2 工程入口：<code>cd92ea5</code></td>
+<td><code>0001..0005</code>、function-only writes、exact access 测试
+fixture、Go/No-Go 与生产 IaC/service wiring 等剩余 P0</td>
+</tr>
+<tr>
+<td><code>research/34_postgres_function_only_writes_and_exact_access_checkpoint.md</code></td>
+<td>当前 W2 深度证据：<code>cd92ea5</code></td>
+<td>五函数 exact manifest、repository/receipt function-only
+wiring、access manifest、真实 login/PG18 正负向证据与未交付边界</td>
 </tr>
 </tbody>
 </table>
-<p>当前接入前代码基线已经安全备份。后续以
-<code>NATIVE_IM_EARLY_INTEGRATION_PLAN.md</code> 为执行源，先 完成 Level
-A 合同可执行，再到 Level B sandbox
-inbound-only；<code>NEXT_STAGE_PLAN.md</code> 继续作为 E3 Atomic Result
-Authority 的最大强度参考，不再作为提前接入前的串行总清单。</p>
+<p>接入前代码基线已经安全备份。<code>NATIVE_IM_EARLY_INTEGRATION_PLAN.md</code>
+中“先 Level A、再 Level B sandbox
+inbound-only”是当时的历史调度口径。当前执行源已切换为
+<code>docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md</code> 与
+Topic 34；<code>NEXT_STAGE_PLAN.md</code> 继续作为 E3 Atomic Result
+Authority 的最大强度参考，不是当前 W2 的串行总清单。</p>
 <h2 id="专题研究">专题研究</h2>
 <table>
 <colgroup>
@@ -521,18 +547,27 @@ topology、零授权 canonical <code>ext_info</code>、848 个非 canonical
 排列、forbidden-field canary、race/fuzz 与 W2～W4 未完成边界</td>
 </tr>
 <tr>
-<td><a href="33_postgres_authority_persistence_checkpoint.html"><code>research/33_postgres_authority_persistence_checkpoint.md</code><br />
-<code>html/33_postgres_authority_persistence_checkpoint.html</code></a></td>
-<td>W2 PostgreSQL authority persistence 检查点：<code>8d662bf</code></td>
-<td>两层 <code>2output</code> 一级证据、0001–0004、22 张业务表、17 张
-FORCE RLS 表、PG18 fail-closed migration、tenant repository、serializable/
-idempotent UoW、真实 PG/race 证据、禁止性宣称与接真实 IM 前六个 P0 gate</td>
+<td><a
+href="research/33_postgres_authority_persistence_checkpoint.md"><code>research/33_postgres_authority_persistence_checkpoint.md</code></a></td>
+<td>W2 PostgreSQL authority persistence 历史检查点：<code>8d662bf</code>
+/ <code>4a465d8</code></td>
+<td><code>0001..0004</code> persistence substrate
+的前序证据；保留作溯源，不是当前 W2 入口</td>
+</tr>
+<tr>
+<td><a
+href="research/34_postgres_function_only_writes_and_exact_access_checkpoint.md"><code>research/34_postgres_function_only_writes_and_exact_access_checkpoint.md</code></a></td>
+<td>W2 当前深度证据：<code>cd92ea5</code></td>
+<td><code>0005</code>、五个 fixed function、function-only
+repository/receipt、exact access 临时测试 validator fixture、真实
+migration/runtime login 与 PostgreSQL 18.6 正负向矩阵；生产 IaC/service
+wiring/trusted tenant/resolver/recovery/event-outbox 仍未交付</td>
 </tr>
 <tr>
 <td><code>docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md</code></td>
-<td>W2 工程入口与 Go/No-Go</td>
-<td>当前可用范围、测试命令、function-only writes、trusted tenant、active
-resolver、service startup、recovery 和 event/outbox 顺序</td>
+<td>当前 W2 工程入口与 Go/No-Go：<code>cd92ea5</code></td>
+<td>当前可用范围、验证命令、生产 IaC/service wiring、trusted
+tenant、active resolver、recovery 与 event/outbox 顺序</td>
 </tr>
 </tbody>
 </table>
@@ -541,11 +576,11 @@ resolver、service startup、recovery 和 event/outbox 顺序</td>
 href="screenshots/README.md"><code>screenshots/README.md</code></a> 与
 <a
 href="screenshots/manifest.json"><code>screenshots/manifest.json</code></a>。当前共归档
-29 张图；前十张是受限、
+31 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第
 10–13 张是合成本地 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是
-Clawith 公开官网、白皮书与官方文档
-只读证据；最后两项是同一 W2 PostgreSQL 检查点图的 SVG source 与 PNG
+Clawith 公开官网、白皮书与官方文档 只读证据；最后四项是 Topic 33 与
+Topic 34 两个 W2 PostgreSQL 检查点图各自的 SVG source 与 PNG
 rendering，只作为报告导航图，不冒充独立运行证据。整套资料仍按项目内部证据管理。</p>
 <table>
 <colgroup>
@@ -698,10 +733,17 @@ rendering，只作为报告导航图，不冒充独立运行证据。整套资�
 <td>Playwright 官网元素只读证据</td>
 </tr>
 <tr>
-<td><code>screenshots/33_postgres_authority_persistence_map.svg</code><br />
-<code>screenshots/33_postgres_authority_persistence_map.png</code></td>
-<td>一级调研→当前持久化切片→PG18 证据→六个 P0 gate</td>
-<td>Repository-authored SVG 与 rsvg 派生 PNG；不是独立运行证据</td>
+<td><code>screenshots/33_postgres_authority_persistence_map.svg</code> /
+<code>.png</code></td>
+<td>一级调研 → 当前持久化切片 → PostgreSQL 18.6 证据 → 六项 P0 gate</td>
+<td>仓库内 SVG 与派生 PNG；不是独立运行证据</td>
+</tr>
+<tr>
+<td><code>screenshots/34_postgres_function_only_writes_and_exact_access_map.svg</code>
+/ <code>.png</code></td>
+<td>一级调研 → 五函数写面 → exact access → PG18.6 故障证据 → 剩余生产
+gate</td>
+<td>仓库内 SVG 与派生 PNG；不是独立运行证据</td>
 </tr>
 </tbody>
 </table>

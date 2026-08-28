@@ -39,12 +39,15 @@
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 原路线已由提前接入调度修订 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界 |
-| `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
-| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | 当前执行入口 | E0–E5、Level A–D、文件/迁移/测试/提交序列、可停点、工期与 outbound 授权边界 |
+| `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 历史备份检查点 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界；不是当前 W2 入口 |
+| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | 历史调度计划 | 提前接入决策时冻结的 E0–E5/Level A–D 路线；保留作决策溯源，不再是当前 W2 执行入口 |
+| `docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md` | 当前 W2 工程入口：`cd92ea5` | `0001..0005`、function-only writes、exact access 测试 fixture、Go/No-Go 与生产 IaC/service wiring 等剩余 P0 |
+| `research/34_postgres_function_only_writes_and_exact_access_checkpoint.md` | 当前 W2 深度证据：`cd92ea5` | 五函数 exact manifest、repository/receipt function-only wiring、access manifest、真实 login/PG18 正负向证据与未交付边界 |
 
-当前接入前代码基线已经安全备份。后续以 `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 为执行源，先
-完成 Level A 合同可执行，再到 Level B sandbox inbound-only；`NEXT_STAGE_PLAN.md` 继续作为 E3
-Atomic Result Authority 的最大强度参考，不再作为提前接入前的串行总清单。
+接入前代码基线已经安全备份。`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 中“先 Level A、再 Level B
+sandbox inbound-only”是当时的历史调度口径。当前执行源已切换为
+`docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md` 与 Topic 34；`NEXT_STAGE_PLAN.md` 继续作为 E3
+Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清单。
 
 ## 专题研究
 
@@ -83,18 +86,19 @@ Atomic Result Authority 的最大强度参考，不再作为提前接入前的�
 | `research/30_third_party_execution_isolation_contract.md` | W1 P1-6 当前合同与 fake 证据：`43e111e`/`fccb64e`/`d32079c` | host-owned refs、Supervisor IPC、generation/fence、cancel→grace→kill→wait/reap/release receipt、operator quarantine 与 `isolation=none` deterministic fake |
 | `research/31_volatile_memory_event_store_implementation.md` | W1 P1-7 当前实现证据：`a4ac9bd`…`4118746` | volatile/non-production EventStore fake、ordered exact retry/conflict、store-owned ordering/time、scope/namespace cursor、严格 admission、cooperative context、并发/失败原子性、test-only backfill fixture 与 W2 durability/projection 边界 |
 | `research/32_im_identity_conversation_and_provider_metadata_contract.md` | W1 IM identity/conversation/metadata 合同证据：`9f55b33`…`60ebf6a` | `2output` 一级证据到 `ActorRef/Snapshot`、realm-scoped external identity、`ConversationRef/Snapshot`、Agent thread topology、零授权 canonical `ext_info`、848 个非 canonical 排列、forbidden-field canary、race/fuzz 与 W2～W4 未完成边界 |
-| [`research/33_postgres_authority_persistence_checkpoint.md`](research/33_postgres_authority_persistence_checkpoint.md) | W2 PostgreSQL authority persistence 检查点：`8d662bf` / `4a465d8` | 两层 `2output` 一级证据、migration 0001–0004、22 张业务表、17 张 FORCE RLS 表、PG18 fail-closed migration、tenant repository、Serializable/idempotent UoW、真实 PG/race 证据、明确非声明与接真实 IM 前六项 P0 gate |
-| `docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md` | W2 工程入口与 Go/No-Go | 当前可用范围、验证命令、function-only writes、trusted tenant context、active resolver、service startup、recovery 与 event/outbox 顺序 |
+| [`research/33_postgres_authority_persistence_checkpoint.md`](research/33_postgres_authority_persistence_checkpoint.md) | W2 PostgreSQL authority persistence 历史检查点：`8d662bf` / `4a465d8` | `0001..0004` persistence substrate 的前序证据；保留作溯源，不是当前 W2 入口 |
+| [`research/34_postgres_function_only_writes_and_exact_access_checkpoint.md`](research/34_postgres_function_only_writes_and_exact_access_checkpoint.md) | W2 当前深度证据：`cd92ea5` | `0005`、五个 fixed function、function-only repository/receipt、exact access 临时测试 validator fixture、真实 migration/runtime login 与 PostgreSQL 18.6 正负向矩阵；生产 IaC/service wiring/trusted tenant/resolver/recovery/event-outbox 仍未交付 |
+| `docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md` | 当前 W2 工程入口与 Go/No-Go：`cd92ea5` | 当前可用范围、验证命令、生产 IaC/service wiring、trusted tenant、active resolver、recovery 与 event/outbox 顺序 |
 
 ## 已归档截图
 
 完整 SHA-256、尺寸、来源、证据等级和隐私边界见
 [`screenshots/README.md`](screenshots/README.md) 与
-[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 29 张图；前十张是受限、
+[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 31 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地
 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是 Clawith 公开官网、白皮书与官方文档
-只读证据；最后两项是同一 W2 PostgreSQL 检查点图的 SVG source 与 PNG rendering，只作为报告
-导航图，不冒充独立运行证据。整套资料仍按项目内部证据管理。
+只读证据；最后四项是 Topic 33 与 Topic 34 两个 W2 PostgreSQL 检查点图各自的 SVG source 与
+PNG rendering，只作为报告导航图，不冒充独立运行证据。整套资料仍按项目内部证据管理。
 
 | 文件 | 内容 | 采集方式 |
 |---|---|---|
@@ -126,6 +130,7 @@ Atomic Result Authority 的最大强度参考，不再作为提前接入前的�
 | `screenshots/25_clawith_plaza_legacy_docs_20260827.png` | 与固定源码 Experience Library 已漂移的 Plaza 旧文档 | Playwright 官方文档元素只读证据 |
 | `screenshots/26_clawith_rapid_rnd_claim_20260827.png` | 部门级研发交付样板、阶段指标与 `3 天` / `6d 21h` 同卡片口径冲突 | Playwright 官网元素只读证据 |
 | `screenshots/33_postgres_authority_persistence_map.svg` / `.png` | 一级调研 → 当前持久化切片 → PostgreSQL 18.6 证据 → 六项 P0 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/34_postgres_function_only_writes_and_exact_access_map.svg` / `.png` | 一级调研 → 五函数写面 → exact access → PG18.6 故障证据 → 剩余生产 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 
 ## 数据安全
 

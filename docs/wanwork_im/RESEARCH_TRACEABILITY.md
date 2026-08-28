@@ -1,6 +1,6 @@
 # WanWork 原生 IM 研究可追溯矩阵
 
-> 状态：W0 冻结依据；W2 PostgreSQL persistence substrate 检查点
+> 状态：W0 冻结依据；W2 PostgreSQL function-only writes / exact access 检查点
 >
 > 研究快照：2026-08-27
 >
@@ -8,7 +8,7 @@
 >
 > 适用分支：`dev_wanwork_quantum_entanglement`
 >
-> W2 code baseline：`8d662bf4faec1cfaa12b63f4dfc2132ae6869dbb`
+> W2 code baseline：`cd92ea5`
 
 ## 1. 这份文档解决什么
 
@@ -113,11 +113,12 @@ W5 Web/PWA；W6 Desktop/Mobile；W7 生产加固与交付。
 | RQ-044 | **IM adapter 必须显式声明身份 mapping、能力降级和失败语义。** `clawith/research_report.md:599-611`; `agentspace/research_report.md:739-759`; `floatim-floatboat/research_report.md:582-593`; `tech-agent-security-governance/research_report.md:389-395` | `ProviderRealm/Profile/Capabilities`、`ExternalIdentityBindingResolver`、`VerifiedInboundEnvelope`、`ProviderDispatchAttempt/TransportReceipt/ReconciliationCase`。 | callback auth、durable dedupe、realm+provider ID mapping、canonical metadata consistency；outbound 默认关闭；timeout 无 authoritative negative finality 时进入 unknown，禁止盲重发。 | W2 port；W3 adapter；W4 dispatch | 错 realm/tenant、duplicate/reorder/resume、metadata drift、ACK loss、unsupported feature、kill switch 矩阵；内部 codec 与融云 sandbox contract test 分开。 |
 | RQ-045 | **Conversation freshness、held draft、message lifecycle 与 attention/read state 必须分域。** `clawith/research_report.md:204-226`; `raft-slock/research_report.md:135-145,237-270`; `floatim-floatboat/research_report.md:582-593,896-915` | `ContextCutoff/HeldDraft/ConversationRevision/MessageRevision/Tombstone/ReadState/ActivityItem`；引用、转发、编辑是否产生 mention 必须有显式规则。 | Agent 推理期间 membership、mandate、message 或 conversation revision 变化时，在发送点 hold/rebase/reject；read/activity 不冒充审计；edit/delete 不静默重写已接纳 Task/evidence。 | W2 extension points；W4/W5；retention/legal hold W7 | stale draft 不直发；引用/转发/编辑 mention 确定性；mark-read CAS；删/改消息不改变已冻结 Task/Artifact；retention/legal-hold fixture。 |
 
-### 3.1 W2 PostgreSQL 证据增量（HEAD `8d662bf`）
+### 3.1 W2 PostgreSQL 证据增量（HEAD `cd92ea5`）
 
 本节不修改 RQ 的长期验收终点，只记录哪些研究结论已经进入当前数据库结构/transaction seam，避免把
-“方向正确”改写成“完整能力已交付”。详细证据见
-`analysis_report/research/33_postgres_authority_persistence_checkpoint.md`。
+“方向正确”改写成“完整能力已交付”。当前详细证据见
+`analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md`；Topic 33 是
+`0001..0004` persistence substrate 的前序历史检查点。
 
 | 关联 RQ / 一级证据 | `[F]` 当前已落实 | `[C]` 合同限定 | `[A]` 设计判断 | `[U]` 未完成 |
 |---|---|---|---|---|
@@ -126,20 +127,20 @@ W5 Web/PWA；W6 Desktop/Mobile；W7 生产加固与交付。
 | RQ-006；Clawith `:493-503`；Portfolio `:220-226` | ordinary conversation persistence 对 `agent_thread` fail closed；没有静默丢 parent/root/invocation。 | 拒绝 unsupported topology 不等于 thread 已实现。 | 先稳定 ordinary authority，再增加 thread lineage，避免群聊冒充 Task。 | `agent_thread` repository、message root、Invocation、child ACL/use case。 |
 | RQ-010；DeepSeek Harness `:255-312,543-591,823-842` | PostgreSQL transaction/UoW seam、revision CAS 与 receipt 已建立。 | command receipt 不是 event stream、outbox、projection checkpoint 或 audit chain。 | 不做 memory EventStore 与 PostgreSQL state 的伪双写是正确的 fail-closed 选择。 | production event store/outbox、backfill+live、crash/reopen/restore。 |
 | RQ-012/013；Clawith `:421-452`；Portfolio `:635-654` | same command exact replay、request digest conflict、commit unknown 新连接 receipt readback；definite rollback 分离。 | callback 一次只限定数据库 command；result digest 不能重建 typed result，也不证明 provider effect。 | unknown/replay 后必须 typed aggregate readback；外部 effect 仍采用 at-least-once + reconcile。 | provider receipt/acceptance query、outbox、effect_unknown reconciler。 |
-| RQ-026；AgentTeams `:614-693`；AgentSpace `:633-674` | head/snapshot/receipt transaction state 可复核；测试 runtime role 无 snapshot/receipt UPDATE/DELETE/TRUNCATE。 | 当前是测试 fixture，生产 role/grant/provisioning 未冻结；digest 无签名。 | 数据库 history protection 是 evidence chain 的一层，不是完整 audit。 | actor/mandate/policy/intent/provider receipt/Artifact/Acceptance evidence chain。 |
+| RQ-026；AgentTeams `:614-693`；AgentSpace `:633-674` | head/snapshot/receipt transaction state 可复核；测试 runtime login 对全部 22 张表无 raw mutation/MAINTAIN，五个写函数是 runtime 的唯一登记 mutation 面。 | exact access validator 与 provision helper 是集成测试 fixture，不是生产 IaC/service readiness；digest 无签名。 | 数据库 history protection 是 evidence chain 的一层，不是完整 audit。 | actor/mandate/policy/intent/provider receipt/Artifact/Acceptance evidence chain。 |
 | RQ-028/043/044；Clawith `:599-611`；AgentSpace `:739-759` | realm-scoped RongCloud group binding 已持久化，metadata codec 仍为 zero-authority projection。 | binding 只说明本地 routing metadata；不证明融云群存在、成员、ACK 或 delivery。 | canonical platform authority 不应由 provider metadata 反向覆盖。 | callback auth、sandbox readback、dedupe/resume、provider unknown/reconcile。 |
-| RQ-034；AgentTeams `:373-404,431-450` | repository/UoW 不暴露 `pgx.Tx`，ignored repository error 会 poison transaction。 | runtime role 当前仍需 raw head UPDATE/snapshot INSERT；有 credential 的其他代码可绕 repository。 | 下一步必须改为 fixed SECURITY DEFINER function-only writes。 | exact role/table/schema/function ACL manifest 与 action-time executor PEP。 |
-| RQ-008/009；DeepSeek Harness `:207-251,404-414` | migration runner 固定 PG18、checksum、lock、search path、累计 postcondition；data-executing DDL forms 被收窄。 | token policy 不是完整 SQL parser/不可信代码 sandbox；只保护登记对象结构。 | schema/role/function manifest 应像 plugin effective configuration 一样由 host 冻结并启动重验。 | `0005` function definitions、owner/security/ACL digest、named grants/default privileges/role attributes。 |
+| RQ-034；AgentTeams `:373-404,431-450` | repository/UoW 不暴露 `pgx.Tx`；conversation/provider binding/membership/access/receipt 已改调五个 fixed `SECURITY DEFINER` 函数，runtime raw writes 全拒绝。 | function-only 保证只覆盖当前五个函数与已登记 authority 对象；数据库 ACL 不替代 action-time business authorization。 | 把 planner/runtime credential 收窄到 exact `SELECT` + `EXECUTE` 是独立执行侧 PEP 的必要底座。 | production service 使用 runtime login、trusted request context、active resolver 与 executor PEP。 |
+| RQ-008/009；DeepSeek Harness `:207-251,404-414` | migration `0005` 的 exact signature/owner/body digest/security/search path/overload manifest，以及 database/schema/table/function/default ACL、role attribute、membership option/grantor manifest 已由 PG18 fixture 验证。 | token policy 仍不是完整 SQL parser/不可信代码 sandbox；AuthorityAccessManifest/provision helper 只是临时测试 validator fixture。 | schema/role/function/access manifest 像 plugin effective configuration 一样精确冻结并在受控入口重验，方向正确。 | production IaC、database owner/provisioner 交接、login/secret rotation、startup/readiness drift validation 与旧 session cutover。 |
 
 当前统一口径：
 
 - `[F]` 已证实的是 tenant-bound PostgreSQL authority repository + serializable/idempotent UoW +
-  cumulative migration invariants 这一持久化安全切片；
-- `[C]` 所有保证限定在已登记 schema、conversation/provider binding/membership/access repository、同一
-  PostgreSQL transaction 和测试过的 runtime-role fixture；
+  `0001..0005` cumulative migration invariants + function-only writes + exact access fixture 这一安全切片；
+- `[C]` 所有保证限定在已登记 schema、conversation/provider binding/membership/access/receipt、同一
+  PostgreSQL transaction 和测试 provision/access-validator fixture；
 - `[A]` 该切片是原生 IM/A2A/Agent runtime 的底座，不是完成态；
-- `[U]` production role/ACL、trusted auth/request context、action-time mandate/capability PEP、message/
-  thread/task/action、event/outbox、provider reconcile 与 Artifact acceptance 仍未实现。
+- `[U]` production IaC/service wiring、trusted auth/request context、action-time mandate/capability PEP、
+  recovery、message/thread/task/action、event/outbox、provider reconcile 与 Artifact acceptance 仍未实现。
 
 禁止把本节改写为以下宣称：生产级多租户、端到端 exactly-once、完整 audit/non-repudiation、Agent
 invocation authorization、Artifact publishing/acceptance、RongCloud delivery/A2A compatibility 或
