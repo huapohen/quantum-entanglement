@@ -283,17 +283,19 @@ func TestUnitOfWorkAgainstPostgres(t *testing.T) {
 			if _, err := setStoreTenant(ctx, externalTransaction, tenantID.String()); err != nil {
 				return store.SHA256Digest{}, fmt.Errorf("bind out-of-band tenant: %w", err)
 			}
-			if _, err := externalTransaction.Exec(ctx, `
-INSERT INTO wanwork_im.tenant_command_receipts (
-    tenant_id, command_kind, idempotency_key, request_sha256, result_sha256
-) VALUES ($1, $2, $3, $4, $5)`,
+			var committedAt time.Time
+			if err := externalTransaction.QueryRow(ctx, `
+SELECT wanwork_im.write_tenant_command_receipt($1, $2, $3, $4, $5)`,
 				tenantID.String(),
 				command.Kind(),
 				command.IdempotencyKey(),
 				command.RequestDigest().Hex(),
 				resultDigest.Hex(),
-			); err != nil {
-				return store.SHA256Digest{}, fmt.Errorf("insert out-of-band receipt: %w", err)
+			).Scan(&committedAt); err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("write out-of-band receipt: %w", err)
+			}
+			if committedAt.IsZero() {
+				return store.SHA256Digest{}, errors.New("out-of-band receipt has zero commit time")
 			}
 			if err := externalTransaction.Commit(ctx); err != nil {
 				return store.SHA256Digest{}, fmt.Errorf("commit out-of-band receipt: %w", err)
@@ -491,7 +493,7 @@ INSERT INTO wanwork_im.tenant_command_receipts (
 		assertConversationNotFound(t, unit, tenantID, rolledBack.Ref())
 	})
 
-	t.Run("runtime role cannot rewrite immutable history", func(t *testing.T) {
+	t.Run("runtime role can only write through fixed functions", func(t *testing.T) {
 		unit, pool := newStoreIntegrationUnit(t, adminURL)
 		tenantID := mustTenantID(t, "ten_alpha")
 		conversation := mustConversationSnapshot(t, tenantID, "cnv_immutable", 1, im.ConversationActive)
@@ -517,45 +519,51 @@ WHERE role_value.rolname = current_user`).Scan(&superuser, &bypassRLS, &inherit)
 		if superuser || bypassRLS || inherit {
 			t.Fatalf("unsafe runtime role: super=%v bypass=%v inherit=%v", superuser, bypassRLS, inherit)
 		}
-		for _, fixture := range []struct {
+		type sqlFixture struct {
 			name string
 			sql  string
-		}{
-			{
-				name: "update conversation snapshot",
-				sql: `UPDATE wanwork_im.conversation_snapshots
-                      SET status = 'closed'
-                      WHERE tenant_id = 'ten_alpha'
-                        AND conversation_id = 'cnv_immutable'
-                        AND revision = 1`,
-			},
-			{
-				name: "delete conversation snapshot",
-				sql: `DELETE FROM wanwork_im.conversation_snapshots
-                      WHERE tenant_id = 'ten_alpha'
-                        AND conversation_id = 'cnv_immutable'
-                        AND revision = 1`,
-			},
-			{
-				name: "truncate conversation snapshot",
-				sql:  "TRUNCATE TABLE wanwork_im.conversation_snapshots",
-			},
-			{
-				name: "update receipt",
-				sql: `UPDATE wanwork_im.tenant_command_receipts
-                      SET result_sha256 = repeat('0', 64)
-                      WHERE tenant_id = 'ten_alpha'
-                        AND command_kind = 'conversation.create'
-                        AND idempotency_key = 'immutable-create'`,
-			},
-			{
-				name: "delete receipt",
-				sql: `DELETE FROM wanwork_im.tenant_command_receipts
-                      WHERE tenant_id = 'ten_alpha'
-                        AND command_kind = 'conversation.create'
-                        AND idempotency_key = 'immutable-create'`,
-			},
+		}
+		fixtures := make([]sqlFixture, 0, 41)
+		for _, tableName := range []string{
+			"conversation_heads",
+			"conversation_snapshots",
+			"provider_conversation_binding_heads",
+			"provider_conversation_binding_snapshots",
+			"conversation_membership_heads",
+			"conversation_membership_snapshots",
+			"conversation_access_heads",
+			"conversation_access_snapshots",
+			"tenant_command_receipts",
 		} {
+			qualifiedTable := "wanwork_im." + pgx.Identifier{tableName}.Sanitize()
+			for _, operation := range []sqlFixture{
+				{name: "insert", sql: "INSERT INTO " + qualifiedTable + " DEFAULT VALUES"},
+				{name: "update", sql: "UPDATE " + qualifiedTable + " SET tenant_id = tenant_id WHERE false"},
+				{name: "delete", sql: "DELETE FROM " + qualifiedTable + " WHERE false"},
+				{name: "truncate", sql: "TRUNCATE TABLE " + qualifiedTable},
+			} {
+				fixtures = append(fixtures, sqlFixture{
+					name: operation.name + " " + tableName,
+					sql:  operation.sql,
+				})
+			}
+		}
+		fixtures = append(fixtures,
+			sqlFixture{name: "create schema", sql: "CREATE SCHEMA runtime_escape"},
+			sqlFixture{name: "create table", sql: "CREATE TABLE wanwork_im.runtime_escape (id bigint)"},
+			sqlFixture{
+				name: "create function",
+				sql: "CREATE FUNCTION wanwork_im.runtime_escape() RETURNS boolean " +
+					"LANGUAGE sql AS 'SELECT true'",
+			},
+			sqlFixture{
+				name: "alter policy",
+				sql: "ALTER POLICY conversation_heads_exact_tenant " +
+					"ON wanwork_im.conversation_heads USING (true)",
+			},
+			sqlFixture{name: "create temporary table", sql: "CREATE TEMPORARY TABLE runtime_escape (id bigint)"},
+		)
+		for _, fixture := range fixtures {
 			t.Run(fixture.name, func(t *testing.T) {
 				transaction, err := pool.BeginTx(t.Context(), pgx.TxOptions{})
 				if err != nil {
@@ -596,6 +604,12 @@ func newStoreIntegrationUnit(t *testing.T, adminURL string) (*UnitOfWork, *pgxpo
 	if _, err := adminConnection.Exec(ctx, "CREATE DATABASE "+quotedDatabase); err != nil {
 		_ = adminConnection.Close(context.Background())
 		t.Fatalf("create store database: %v", err)
+	}
+	if _, err := adminConnection.Exec(
+		ctx,
+		"REVOKE TEMPORARY ON DATABASE "+quotedDatabase+" FROM PUBLIC",
+	); err != nil {
+		t.Fatalf("revoke public temporary database access: %v", err)
 	}
 	databaseConfig := adminConfig.Copy()
 	databaseConfig.Database = databaseName
@@ -730,17 +744,6 @@ func grantStoreRole(t *testing.T, connection *pgx.Conn, quotedRole string) {
              wanwork_im.conversation_membership_heads,
              wanwork_im.conversation_membership_snapshots,
              wanwork_im.conversation_access_heads,
-             wanwork_im.conversation_access_snapshots,
-             wanwork_im.tenant_command_receipts TO ` + quotedRole,
-		`GRANT INSERT, UPDATE ON
-             wanwork_im.conversation_heads,
-             wanwork_im.provider_conversation_binding_heads,
-             wanwork_im.conversation_membership_heads,
-             wanwork_im.conversation_access_heads TO ` + quotedRole,
-		`GRANT INSERT ON
-             wanwork_im.conversation_snapshots,
-             wanwork_im.provider_conversation_binding_snapshots,
-             wanwork_im.conversation_membership_snapshots,
              wanwork_im.conversation_access_snapshots,
              wanwork_im.tenant_command_receipts TO ` + quotedRole,
 	} {
