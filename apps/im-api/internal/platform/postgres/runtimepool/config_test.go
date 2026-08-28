@@ -38,10 +38,10 @@ func TestParseConfigRejectsIdentityAndSessionParameterDrift(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
 		"empty connection string": func(value *Config) { value.ConnectionString = "" },
 		"wrong database": func(value *Config) {
-			value.ConnectionString = "postgresql://wanwork_app_a@db.example.com/wrong?sslmode=verify-full"
+			value.ConnectionString = "postgresql://wanwork_app_a:runtime-test-password@db.example.com:5432/wrong?sslmode=verify-full"
 		},
 		"wrong login": func(value *Config) {
-			value.ConnectionString = "postgresql://wanwork_other@db.example.com/wanwork_im?sslmode=verify-full"
+			value.ConnectionString = "postgresql://wanwork_other:runtime-test-password@db.example.com:5432/wanwork_im?sslmode=verify-full"
 		},
 		"role": func(value *Config) {
 			value.ConnectionString += "&role=wanwork_im_owner"
@@ -67,11 +67,12 @@ func TestParseConfigRequiresExplicitURLIdentityEndpointAndTLSMode(t *testing.T) 
 	for name, connectionString := range map[string]string{
 		"keyword form":            "host=db.example.com port=5432 user=wanwork_app_a dbname=wanwork_im sslmode=verify-full",
 		"missing user":            "postgresql://db.example.com:5432/wanwork_im?sslmode=verify-full",
-		"missing host":            "postgresql://wanwork_app_a@/wanwork_im?sslmode=verify-full",
-		"missing port":            "postgresql://wanwork_app_a@db.example.com/wanwork_im?sslmode=verify-full",
-		"missing database":        "postgresql://wanwork_app_a@db.example.com:5432/?sslmode=verify-full",
-		"missing sslmode":         "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im",
-		"query identity override": "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=verify-full&user=other",
+		"missing host":            "postgresql://wanwork_app_a:runtime-test-password@/wanwork_im?sslmode=verify-full",
+		"missing port":            "postgresql://wanwork_app_a:runtime-test-password@db.example.com/wanwork_im?sslmode=verify-full",
+		"missing database":        "postgresql://wanwork_app_a:runtime-test-password@db.example.com:5432/?sslmode=verify-full",
+		"missing sslmode":         "postgresql://wanwork_app_a:runtime-test-password@db.example.com:5432/wanwork_im",
+		"query identity override": "postgresql://wanwork_app_a:runtime-test-password@db.example.com:5432/wanwork_im?sslmode=verify-full&user=other",
+		"missing password":        "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=verify-full",
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := validConfig()
@@ -161,30 +162,30 @@ func TestParseConfigRejectsInvalidManifestAndLimits(t *testing.T) {
 
 func TestParseConfigRequiresTLSExceptExplicitLocalTest(t *testing.T) {
 	remote := validConfig()
-	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=disable"
+	remote.ConnectionString = "postgresql://wanwork_app_a:runtime-test-password@db.example.com:5432/wanwork_im?sslmode=disable"
 	if _, err := parseConfig(remote); !errors.Is(err, ErrUnsafeTransport) {
 		t.Fatalf("remote plaintext error = %v, want %v", err, ErrUnsafeTransport)
 	}
-	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=prefer"
+	remote.ConnectionString = "postgresql://wanwork_app_a:runtime-test-password@db.example.com:5432/wanwork_im?sslmode=prefer"
 	if _, err := parseConfig(remote); !errors.Is(err, ErrUnsafeTransport) {
 		t.Fatalf("remote TLS downgrade fallback error = %v, want %v", err, ErrUnsafeTransport)
 	}
-	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=require"
+	remote.ConnectionString = "postgresql://wanwork_app_a:runtime-test-password@db.example.com:5432/wanwork_im?sslmode=require"
 	if _, err := parseConfig(remote); !errors.Is(err, ErrUnsafeTransport) {
 		t.Fatalf("unauthenticated TLS error = %v, want %v", err, ErrUnsafeTransport)
 	}
-	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com:5432,db2.example.com:5432/wanwork_im?sslmode=verify-full"
-	if _, err := parseConfig(remote); !errors.Is(err, ErrUnsafeTransport) {
-		t.Fatalf("unmodeled multi-host error = %v, want %v", err, ErrUnsafeTransport)
+	remote.ConnectionString = "postgresql://wanwork_app_a:runtime-test-password@db.example.com:5432,db2.example.com:5432/wanwork_im?sslmode=verify-full"
+	if _, err := parseConfig(remote); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("unmodeled multi-host error = %v, want %v", err, ErrInvalidConfig)
 	}
-	remote.ConnectionString = "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=disable"
+	remote.ConnectionString = "postgresql://wanwork_app_a:runtime-test-password@db.example.com:5432/wanwork_im?sslmode=disable"
 	remote.AllowInsecureLocalhost = true
 	if _, err := parseConfig(remote); !errors.Is(err, ErrUnsafeTransport) {
 		t.Fatalf("remote plaintext exception error = %v, want %v", err, ErrUnsafeTransport)
 	}
 
 	local := validConfig()
-	local.ConnectionString = "postgresql://wanwork_app_a@127.0.0.1:55488/wanwork_im?sslmode=disable"
+	local.ConnectionString = "postgresql://wanwork_app_a:runtime-test-password@127.0.0.1:55488/wanwork_im?sslmode=disable"
 	if _, err := parseConfig(local); !errors.Is(err, ErrUnsafeTransport) {
 		t.Fatalf("implicit local plaintext error = %v, want %v", err, ErrUnsafeTransport)
 	}
@@ -192,7 +193,7 @@ func TestParseConfigRequiresTLSExceptExplicitLocalTest(t *testing.T) {
 	if _, err := parseConfig(local); err != nil {
 		t.Fatalf("explicit local test exception: %v", err)
 	}
-	local.ConnectionString = "postgresql://wanwork_app_a@localhost:55488/wanwork_im?sslmode=disable"
+	local.ConnectionString = "postgresql://wanwork_app_a:runtime-test-password@localhost:55488/wanwork_im?sslmode=disable"
 	if _, err := parseConfig(local); !errors.Is(err, ErrUnsafeTransport) {
 		t.Fatalf("hostname local exception error = %v, want %v", err, ErrUnsafeTransport)
 	}
@@ -203,7 +204,7 @@ func validConfig() Config {
 	manifest.MigrationLoginRoles = []string{"wanwork_migration_a"}
 	manifest.RuntimeLoginRoles = []string{"wanwork_app_a"}
 	return Config{
-		ConnectionString:   "postgresql://wanwork_app_a@db.example.com:5432/wanwork_im?sslmode=verify-full",
+		ConnectionString:   "postgresql://wanwork_app_a:runtime-test-password@db.example.com:5432/wanwork_im?sslmode=verify-full",
 		Manifest:           manifest,
 		MaxConnections:     8,
 		MinIdleConnections: 1,

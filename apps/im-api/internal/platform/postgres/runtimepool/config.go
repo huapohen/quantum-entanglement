@@ -40,7 +40,7 @@ func parseConfig(input Config) (*pgxpool.Config, error) {
 		input.ConnectTimeout <= 0 || input.PingTimeout <= 0 {
 		return nil, ErrInvalidConfig
 	}
-	validated, err := connectionpolicy.Parse(connectionpolicy.Config{
+	parsed, err := connectionpolicy.ParsePool(connectionpolicy.Config{
 		ConnectionString:       input.ConnectionString,
 		DatabaseName:           input.Manifest.DatabaseName,
 		LoginRoles:             input.Manifest.RuntimeLoginRoles,
@@ -53,18 +53,6 @@ func parseConfig(input Config) (*pgxpool.Config, error) {
 	if err != nil {
 		return nil, ErrInvalidConfig
 	}
-	parsed, err := pgxpool.ParseConfig(input.ConnectionString)
-	if err != nil {
-		// pgx parse errors can retain the connection string. Do not wrap or return them.
-		return nil, ErrInvalidConfig
-	}
-	connection := &parsed.ConnConfig.Config
-	if connection.Database != validated.Database || connection.User != validated.User ||
-		len(connection.RuntimeParams) != 0 {
-		return nil, ErrInvalidConfig
-	}
-
-	connection.ConnectTimeout = input.ConnectTimeout
 	parsed.MaxConns = input.MaxConnections
 	parsed.MinConns = 0
 	parsed.MinIdleConns = input.MinIdleConnections
