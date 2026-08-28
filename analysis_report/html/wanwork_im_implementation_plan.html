@@ -348,12 +348,12 @@ transaction、crash/reopen、kill-9/restore 和 projection 清库重建；W1
 memory fake 不能代替该门禁。</p>
 <h4 id="w2-当前检查点2026-08-28">W2 当前检查点（2026-08-28）</h4>
 <p>当前工程入口见 <a
-href="W2_POSTGRES_RUNTIME_CHECKPOINT.md">W2_POSTGRES_RUNTIME_CHECKPOINT.md</a>，最新深度证据见
+href="../../docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md">W2_POSTGRES_RUNTIME_CHECKPOINT.md</a>，最新深度证据见
 <code>analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md</code>；Topic
 33/34 分别保留 <code>0001..0004</code> persistence 与 <code>0005</code>
 function-only/exact-access 的前序历史检查点。</p>
 <p>当前 code evidence baseline 为
-<code>2d0c4a0</code>。当前口径必须保留：</p>
+<code>53dd38b</code>。当前口径必须保留：</p>
 <table>
 <colgroup>
 <col style="width: 50%" />
@@ -426,7 +426,9 @@ passwordless、session 与 parser-consumed params、raw service/pass
 file、unauthenticated TLS 与 multi-host/fallback；canonical parse
 压住默认 <code>.pgpass</code>/client TLS file，精确比较最终
 credential/endpoint， 重建 timeout <code>DialFunc</code>；runtime pool
-不再二次解析 raw DSN；</li>
+不再二次解析 raw DSN；malformed raw query 与
+<code>SSL_CERT_FILE/SSL_CERT_DIR</code> ambient trust override 也 fail
+closed；</li>
 <li>attested pool 在 AfterConnect 执行
 login/database/role/session/full-catalog proof，在 PrepareConn 拒绝
 role/GUC/lock/LISTEN/transaction 污染；</li>
@@ -459,15 +461,18 @@ production event store 已持久化。</li>
 <ol type="1">
 <li>把已验证的合同落到 production cutover/IaC：canonical
 plan、provisioner preflight、ownership/grant executor/receipt、secret
-注入、角色轮换、旧 session drain、回滚与 drift validator；</li>
+注入与 rotation 责任边界、远程 authenticated-TLS 正向 E2E、角色轮换、旧
+session drain、回滚与 drift validator；</li>
 <li>Clerk verified claim → realm binding → active principal/tenant
 membership → exact Actor → path consistency 的 trusted request
 context；</li>
 <li>conversation/actor/membership/access active resolver；invoke/publish
 再叠加 installation/mandate/
 capability/budget/Artifact/Acceptance；</li>
-<li>把当前每请求 full-catalog gate 性能化为 host-owned max-staleness
-readiness monitor，并增加 explicit draining state；</li>
+<li>把当前每请求 full-catalog gate 性能化为
+host-owned、冻结最大漂移窗口的 max-staleness dependency readiness
+monitor，并增加 explicit draining state；过期立即关闭，高风险 effect
+仍独立做 action-time PEP；</li>
 <li>dump/restore、DB/process restart、kill-9、old binary/future
 schema、role restoration 演练；</li>
 <li>PostgreSQL event store/outbox/projection checkpoint、backfill+live
@@ -609,6 +614,10 @@ drain 与 one-shot migrator；production cutover/rotation/recovery
 inheritance、default passfile/client TLS file、remote password、exact
 endpoint/credential、timeout DialFunc 与 raw runtime DSN 二次解析均 fail
 closed）</li>
+<li><code>security/test: reject malformed query and ambient system trust overrides</code>（<code>53dd38b</code>；raw
+query fail-closed、<code>SSL_CERT_FILE/SSL_CERT_DIR</code> presence
+拒绝；宿主 OS root store 明确属于 reviewed TCB， production remote-TLS
+E2E 仍未交付）</li>
 </ol>
 <p>任何一个条目若同时包含合同、实现、迁移、故障矩阵和
 UI，应继续拆成小提交；列表是顺序约束， 不是要求把一整项压成一个大

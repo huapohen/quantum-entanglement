@@ -224,7 +224,7 @@ class="uri">https://app.notion.com/p/3caead4b996e8183ae54f4d5abc2643d?pvs=204</a
 <code>dev_wanwork_quantum_entanglement@7bb324a4a06689a496cbc99b79d23261d031bc19</code>，其
 Topic 34 代码证据 基线为
 <code>cd92ea56493b43889f5165892b40ec36e958d44a</code>；分支未合并
-<code>main</code>。当前 Topic 35 <code>2d0c4a0</code>
+<code>main</code>。当前 Topic 35 <code>53dd38b</code>
 代码/文档仍是本地与 Git 待同步增量，不能写成 Notion
 已更新。<code>main@f99f176</code> 仍是提前
 接入历史备份基线，不代表本分支当前 W2 进度。</li>
@@ -235,7 +235,7 @@ Topic 34 代码证据 基线为
 <li>冻结合同正文没有为同步台账而改写；其本地原始文件 SHA-256 为
 <code>99031ad243112122e987e84658ff93daf33b3285ea1468039f9d59dc8048167a</code>。</li>
 <li>机器可读页面映射、文件摘要和回读断言见 <a
-href="notion_sync_manifest.json"><code>notion_sync_manifest.json</code></a>。</li>
+href="../notion_sync_manifest.json"><code>notion_sync_manifest.json</code></a>。</li>
 <li>最近完成批次已完成 Notion 写入和远端回读；Topic 35
 将在本阶段本地/Git 收尾后批量同步；语雀仍未操作。</li>
 </ul>
@@ -286,16 +286,16 @@ bundle、恢复命令与提前接入边界；不是当前 W2 入口</td>
 </tr>
 <tr>
 <td><code>docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md</code></td>
-<td>当前 W2 工程入口：<code>2d0c4a0</code></td>
+<td>当前 W2 工程入口：<code>53dd38b</code></td>
 <td>canonical strict connection policy、attested runtime pool、受控
 UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate
 A/Trusted tenant 剩余 P0</td>
 </tr>
 <tr>
 <td><code>research/35_postgres_attested_runtime_composition_checkpoint.md</code></td>
-<td>当前 W2 深度证据：<code>2d0c4a0</code></td>
-<td>25 提交台账、ambient/default-file/raw-DSN 安全闭环、PG18
-connection/session/ACL drift
+<td>当前 W2 深度证据：<code>53dd38b</code></td>
+<td>30 提交台账、ambient/default-file/raw-DSN/malformed-query
+安全闭环、PG18 connection/session/ACL drift
 实证、一级调研硬映射、未交付边界与下一阶段计划</td>
 </tr>
 </tbody>
@@ -539,7 +539,7 @@ topology、零授权 canonical <code>ext_info</code>、848 个非 canonical
 </tr>
 <tr>
 <td><a
-href="research/33_postgres_authority_persistence_checkpoint.md"><code>research/33_postgres_authority_persistence_checkpoint.md</code></a></td>
+href="../research/33_postgres_authority_persistence_checkpoint.md"><code>research/33_postgres_authority_persistence_checkpoint.md</code></a></td>
 <td>W2 PostgreSQL authority persistence 历史检查点：<code>8d662bf</code>
 / <code>4a465d8</code></td>
 <td><code>0001..0004</code> persistence substrate
@@ -547,7 +547,7 @@ href="research/33_postgres_authority_persistence_checkpoint.md"><code>research/3
 </tr>
 <tr>
 <td><a
-href="research/34_postgres_function_only_writes_and_exact_access_checkpoint.md"><code>research/34_postgres_function_only_writes_and_exact_access_checkpoint.md</code></a></td>
+href="../research/34_postgres_function_only_writes_and_exact_access_checkpoint.md"><code>research/34_postgres_function_only_writes_and_exact_access_checkpoint.md</code></a></td>
 <td>W2 前序检查点：<code>cd92ea5</code></td>
 <td><code>0005</code>、五个 fixed function、function-only
 repository/receipt、exact access 临时测试 validator fixture、真实
@@ -556,8 +556,8 @@ migration/runtime login 与 PostgreSQL 18.6 正负向矩阵；由 Topic 35
 </tr>
 <tr>
 <td><a
-href="research/35_postgres_attested_runtime_composition_checkpoint.md"><code>research/35_postgres_attested_runtime_composition_checkpoint.md</code></a></td>
-<td>W2 当前深度证据：<code>2d0c4a0</code></td>
+href="../research/35_postgres_attested_runtime_composition_checkpoint.md"><code>research/35_postgres_attested_runtime_composition_checkpoint.md</code></a></td>
+<td>W2 当前深度证据：<code>53dd38b</code></td>
 <td>canonical strict connection policy、physical/session
 attestation、exact readiness、attested-only UoW、API gate、one-shot
 migrator、PG18 normal/race/vet 与 Gate A/Trusted Participant/mention
@@ -565,7 +565,7 @@ migrator、PG18 normal/race/vet 与 Gate A/Trusted Participant/mention
 </tr>
 <tr>
 <td><code>docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md</code></td>
-<td>当前 W2 工程入口与 Go/No-Go：<code>2d0c4a0</code></td>
+<td>当前 W2 工程入口与 Go/No-Go：<code>53dd38b</code></td>
 <td>当前启动/调试入口、runtime composition、验证命令、production
 cutover/rotation、trusted tenant、mention/thread/provider 顺序</td>
 </tr>
@@ -573,9 +573,9 @@ cutover/rotation、trusted tenant、mention/thread/provider 顺序</td>
 </table>
 <h2 id="已归档截图">已归档截图</h2>
 <p>完整 SHA-256、尺寸、来源、证据等级和隐私边界见 <a
-href="screenshots/README.md"><code>screenshots/README.md</code></a> 与
+href="../screenshots/README.md"><code>screenshots/README.md</code></a> 与
 <a
-href="screenshots/manifest.json"><code>screenshots/manifest.json</code></a>。当前共归档
+href="../screenshots/manifest.json"><code>screenshots/manifest.json</code></a>。当前共归档
 33 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第
 10–13 张是合成本地 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是
@@ -748,9 +748,9 @@ gate</td>
 <tr>
 <td><code>screenshots/35_postgres_attested_runtime_composition_map.svg</code>
 / <code>.png</code></td>
-<td>private config → ambient/default-file/raw-DSN hardening →
-physical/session attestation → readiness/UoW/API gate → Gate A/Trusted
-Participant/mention 剩余边界</td>
+<td>private config → ambient/default-file/raw-DSN/malformed-query
+hardening → physical/session attestation → readiness/UoW/API gate → Gate
+A/Trusted Participant/mention 剩余边界</td>
 <td>仓库内 SVG 与派生 PNG；不是独立运行证据</td>
 </tr>
 </tbody>
