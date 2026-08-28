@@ -1,12 +1,13 @@
 # W2 PostgreSQL `0005`：Function-only Writes 与 Exact Access 实施记录
 
-状态：阶段实现完成、生产接线未完成，2026-08-28
+状态：历史阶段实现记录，2026-08-28；当前 W2 已由
+[`W2_POSTGRES_RUNTIME_CHECKPOINT.md`](W2_POSTGRES_RUNTIME_CHECKPOINT.md) 接续
 
 分支：`dev_wanwork_quantum_entanglement`，不合并 `main`
 
-当前证据 HEAD：`cd92ea56493b43889f5165892b40ec36e958d44a`
+本检查点证据 HEAD：`cd92ea56493b43889f5165892b40ec36e958d44a`
 
-## 1. 当前结论
+## 1. 本检查点结论
 
 最初冻结的 `0005` 目标已经在当前代码中实现并通过 PostgreSQL 18.6 真实测试：
 
@@ -313,8 +314,9 @@ outbound reconcile/ACK。现有 memory event fake 与 command receipt 不能代�
 
 - 深度报告：`analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md`
 - HTML：`analysis_report/html/34_postgres_function_only_writes_and_exact_access_checkpoint.html`
-- W2 当前检查点：`docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md`
+- W2 当前检查点：`docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md`
 - Function migration/postcondition：`apps/im-api/internal/platform/postgres/migrations`
 - Repository/UoW/真实 runtime fixture：`apps/im-api/internal/platform/postgres/imstore`
 
-Git 是 canonical source。Topic 34 和外部知识库镜像只能报告已提交、已测试并回读的稳定检查点。
+Git 是 canonical source。Topic 34 是历史检查点；当前稳定事实由 Topic 35、当前 W2 工程入口和后续已提交、
+已测试并回读的知识库镜像共同表达。
