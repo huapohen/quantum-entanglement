@@ -185,8 +185,8 @@ tests/test_native_im_sandbox_config.py
 tests/test_native_im_inbox_migration.py
 ```
 
-上列是已交付文件。`native_im_sandbox.py`、adapter/transport contract tests、sandbox runbook 和
-approval template 仍待 page admission 原子边界完成后新增。
+上列是已交付文件。Page admission 原子边界已完成；`native_im_sandbox.py`、adapter/transport
+contract tests、sandbox runbook 和 approval template 现在是下一离线节点。
 
 Provider-specific mapping放在独立 adapter 模块，不写回 provider-neutral value types。
 

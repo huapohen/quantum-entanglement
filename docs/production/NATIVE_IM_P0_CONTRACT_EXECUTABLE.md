@@ -208,9 +208,10 @@ commit; results from `7620200` do not automatically attest a later tree.
 ## 8. E2 handoff and hard stop
 
 At the E1 evidence commit, E2 / Level B was planned to begin only after an inbound-only sandbox
-provider profile and approval inputs became available. Current E2 work has since implemented part
-of that list offline; the linked current evidence identifies atomic page/cursor admission as the
-next hard stop. Real transport still requires the recorded approval inputs.
+provider profile and approval inputs became available. Current E2 work has since completed the
+offline atomic page/cursor admission boundary. The linked current evidence identifies a
+default-off adapter/lifecycle, bounded parser, kill switch, safe logging, and fake contract probe as
+the next hard stop. Real transport still requires the recorded approval inputs.
 
 During Level B:
 

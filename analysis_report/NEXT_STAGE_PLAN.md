@@ -3,7 +3,7 @@
 > 计划版本：2026-08-28-stage-pause-v2
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
-> 当前状态：**E1 / Level A 已完成；E2 离线 inbox 底座进行中；本文件继续作为 E3 Result Authority 最大强度参考计划。**
+> 当前状态：**E1 / Level A 已完成；E2 离线原子 inbox 已完成、adapter/lifecycle 进行中；本文件继续作为 E3 Result Authority 最大强度参考计划。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -15,8 +15,9 @@
 
 > E2 进展说明（2026-08-28）：provider-neutral V1 contract、strict codec、golden、四方法 port 和
 > zero-network fake 已在 `7620200` 完成；离线 profile/config/verifier/migration/nonce/read-preparation
-> 底座已推进到 `4ab745b`。下一 P0 是 nonce + verified page + events + checkpoint 单事务 admission；
-> 真实 sandbox 网络仍未连接。
+> 与整页单事务 admission 已在运行源码 `9cf1bfe` 完成。下一 P0 是 default-off inbound-only
+> adapter/lifecycle、bounded parser、kill switch、safe logging 与 fake contract probe；真实 sandbox
+> 网络仍未连接。
 
 ## 1. 下一阶段的唯一目标
 

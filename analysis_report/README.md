@@ -5,7 +5,7 @@
 计划或验收动作形成稳定检查点后，都必须同步到私人 Notion 并完成远端回读，回读完成前不进入
 下一项工作。语雀仍只在用户另行明确授权时操作。
 
-## Notion 镜像（2026-08-28 E2 离线底座已回读）
+## Notion 镜像（最近已回读基线：E2 离线底座；原子页节点本轮待同步）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -38,6 +38,9 @@
   E2 离线 inbox 阶段证据：<https://app.notion.com/p/3c9ead4b996e8119818ec17c6272afec?pvs=204>。
 - 后续 README/manifest/目录收口提交只更新同步台账与导航，不改变 `4ab745b` 的运行行为或
   Gate 状态；最终 bookkeeping HEAD 会再次写入父页并回读。
+- 当前本地运行源码已推进到原子页 admission 节点 `9cf1bfe`；对应代码、测试、计划与
+  `research/24_native_im_e2_atomic_page_admission_evidence.md` 将在本轮稳定文档提交后批量同步并
+  逐页回读。完成前，上述 `4ab745b` 数字只代表最近一次已完成的 Notion 基线。
 
 ## 当前阶段交付
 
@@ -45,14 +48,15 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
-| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | P0 provider-neutral/fake 已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；E2 离线底座已开始，真实网络仍关闭 |
+| `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | P0 provider-neutral/fake 已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；E2 离线原子 inbox 已完成，真实网络仍关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
-| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | E1 已完成；E2 离线底座进行中 | E0–E5、Level A–D、E2 已交付/待交付矩阵、下一原子 admission、可停点与 outbound 授权边界 |
+| `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | E1 已完成；E2 adapter/lifecycle 进行中 | E0–E5、Level A–D、原子页已交付矩阵、下一离线 adapter/lifecycle、可停点与 outbound 授权边界 |
 | `../docs/production/NATIVE_IM_P0_CONTRACT_EXECUTABLE.md` | E1 生产说明已完成 | 四方法 port、zero-network fake、permit/ledger/ACK-loss、验证、回退和 E2 硬停止边界 |
 
 当前接入前代码基线已经安全备份，Level A 合同可执行已在 `7620200` 完成并通过 Notion 回读。
-Level B 的离线 profile/config/verifier/migration/nonce/read-preparation 底座已推进到 `4ab745b`；下一
-P0 是 nonce + verified page + events + checkpoint 的单事务 admission，完成前不连接真实 sandbox。
+Level B 的离线 profile/config/verifier/migration/nonce/read-preparation 与整页单事务 admission 已在
+运行源码 `9cf1bfe` 完成；下一 P0 是 default-off inbound-only adapter/lifecycle、bounded parser、
+kill switch、safe logging 与 fake contract probe，完成前不连接真实 sandbox。
 `NEXT_STAGE_PLAN.md` 继续作为 E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前的
 串行总清单。
 
@@ -84,6 +88,7 @@ P0 是 nonce + verified page + events + checkpoint 的单事务 admission，完�
 | `research/21_atomic_invocation_start_release_evidence.md` | 当前 atomic start 发布证据：`a1fd355` | first-claim/start 的代码、提交、Python 3.9/3.12/3.13、BEGIN/COMMIT/ROLLBACK ACK-loss、双连接、spawn/fork、backup/token canary 与未关闭 worker/result/action/Gate A–E 边界 |
 | `research/22_native_im_e1_contract_executable_evidence.md` | 原生 IM E1 证据：`7620200` | 21 个 V1 wire model、23 vectors、四方法 port、默认拒绝 fake、receiver 双账本、ACK-loss/query、271 项专项矩阵、三版本/full gate 与 E2 未开始边界 |
 | `research/23_native_im_e2_offline_inbox_foundation_evidence.md` | 原生 IM E2 离线底座：`4ab745b` | profile/config/verifier、migration 5 六表、durable nonce、read preparation、46 项专项/2,031 项全仓门禁，以及 page admission 单事务 P0 |
+| `research/24_native_im_e2_atomic_page_admission_evidence.md` | 原生 IM E2 原子页运行证据：`9cf1bfe` | nonce/page/events/read/checkpoint 单事务、独立 durable readback、88 项专项/2,060 项全仓门禁、下一 adapter/lifecycle P0 |
 
 ## 已归档截图
 
