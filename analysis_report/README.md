@@ -5,7 +5,7 @@
 计划或验收动作形成稳定检查点后，都必须同步到私人 Notion 并完成远端回读，回读完成前不进入
 下一项工作。语雀仍只在用户另行明确授权时操作。
 
-## Notion 镜像（最近已回读基线：E2 原子页 admission）
+## Notion 镜像（最近已回读基线：E2 adapter/lifecycle 离线节点）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -17,30 +17,27 @@
 - 原生 IM V1 合同：<https://app.notion.com/p/3c9ead4b996e8114985cce2cc5af2b63?pvs=204>
 - 提前接入检查点：<https://app.notion.com/p/3c9ead4b996e8103b53bf10409f08e1d?pvs=204>
 - 提前接入执行计划：<https://app.notion.com/p/3c9ead4b996e818fb220c66126181863?pvs=204>
-- 基础镜像仍为 32 个固定页面与 1 个派生分支目录页，共 33 页；独立评审空间现为 1 个父页与
-  13 个子页，共 14 页；两处合计 47 个私人 Notion 页面。项目主页回读确认原有 32 个子页和
-  1 个任务数据库完整保留。
-- 原子页批次新增 1 个完整语义镜像：
-  [E2 原子页 admission 阶段证据](https://app.notion.com/p/3caead4b996e8189a1e9c7ad867c52b3?pvs=204)；
-  更新 9 个独立评审子页、独立父页、4 个全局页与项目主页，并保留 E1/E2 历史快照页。
-- 当前 Notion 内容基线为评审分支 `3c4e102`；运行源码节点为
-  `9cf1bfebe33fd5efae2933bc82027275b3313696`，源码 tree 为
-  `cab127587c65600dac9fefd97c4010afa7d08e39`。未变更的基础镜像页继续保留各自已提交证据语义。
-- 本批 16 个相关页面已逐页 fetch 回读；48 个内容 marker 与 3 个父子/数据库结构检查全部命中，
-  0 个缺失、0 个回读失败。源文件页均包含 committed Markdown 原件或等价源文件绑定。
-- 冻结合同正文没有为同步台账而改写；其本地原始文件 SHA-256 为
-  `99031ad243112122e987e84658ff93daf33b3285ea1468039f9d59dc8048167a`。
+- 基础镜像仍为 33 页；独立评审空间现为 1 个父页与 14 个唯一子页，共 15 页；两处合计
+  48 个私人 Notion 页面。项目主页原有子页和 1 个任务数据库完整保留。
+- 本批新增 1 个完整语义镜像：
+  [E2 adapter/lifecycle 离线阶段证据](https://app.notion.com/p/3caead4b996e8165b1dfd85a6d16e6d5?pvs=204)；
+  完整重建 8 个独立评审源文件页和 3 个全局镜像页，定点更新独立父页与项目主页，并把上一
+  原子页检查点保留为明确历史快照。
+- 当前 Notion 语义基线为评审分支 `c09b5fa1052b04e94a0067b7f4577d305ef8eb47`；运行源码节点为
+  `2bdaea1adddcfb3033b4678766f635d7afc242fc`，源码 tree 为
+  `42e6bedf04a1ed971ee269676730b94882112d59`。未变更的基础镜像页继续保留各自已提交证据语义。
+- 本批 14 个相关页面已逐页 fetch 回读；42 个内容 marker 与 3 个父子/数据库结构检查全部命中，
+  0 个缺失、0 个回读失败。源文件页均包含 `c09b5fa` 的 committed Markdown 原件。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
 - 当前批次已完成 Notion 写入和远端回读；语雀仍未操作，飞书/企微仍为零发送，真实 IM 网络和
   outbound 仍未启用。
 - E1–E2 独立审阅空间：<https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204>；
-  E2 离线 inbox 阶段证据：<https://app.notion.com/p/3c9ead4b996e8119818ec17c6272afec?pvs=204>。
-- 后续 README/manifest/目录收口提交只更新同步台账与导航，不改变 `9cf1bfe` 的运行行为或
-  Gate 状态；最终 bookkeeping HEAD 会再次写入父页并回读。
-- 原子页 admission 的代码、测试、计划与
-  `research/24_native_im_e2_atomic_page_admission_evidence.md` 已完成 Notion 同步和远端回读；真实
-  sandbox、Agent 驱动、tool/browser/subprocess 与 outbound 仍保持关闭。
+  E2 原子页历史证据：<https://app.notion.com/p/3caead4b996e8189a1e9c7ad867c52b3?pvs=204>；
+  E2 adapter/lifecycle 当前证据：<https://app.notion.com/p/3caead4b996e8165b1dfd85a6d16e6d5?pvs=204>。
+- adapter/lifecycle 的代码、测试、计划、readiness、changelog 与
+  `research/25_native_im_e2_adapter_lifecycle_offline_evidence.md` 已完成 Notion 同步和远端回读；
+  真实 sandbox、Agent 驱动、tool/browser/subprocess 与 outbound 仍保持关闭。
 
 ## 当前阶段交付
 
