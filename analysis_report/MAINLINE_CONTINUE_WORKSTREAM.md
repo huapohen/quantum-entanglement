@@ -28,8 +28,11 @@ E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
 2. migration 5 六表、backup/restore/topology registry 已实现；
 3. profile-bound durable nonce claim 已实现；
 4. 保留 exact request 时可重开 replay 并与 checkpoint 对账的 read preparation 已在 `4ab745b` 实现；
-5. 下一步把 nonce、verified page、event rows、read CAS 和 checkpoint 放入同一事务；
-6. 每个小改变独立 commit 并推送本分支；稳定节点批量同步独立 Notion 空间并回读。
+5. nonce、verified page、event/verification/link rows、read CAS、checkpoint 与独立 readback 的
+   单事务 admission 已在运行源码 `9cf1bfe` 完成；
+6. 下一步实现 default-off inbound-only adapter/lifecycle、bounded parser、kill switch、safe logging
+   和 fake contract probe；
+7. 每个小改变独立 commit 并推送本分支；稳定节点批量同步独立 Notion 空间并回读。
 
 ## 不变边界
 
@@ -46,7 +49,7 @@ E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
 |---|---|---|
 | E0 | 已继承 | 主线恢复分支、tag、bundle 与回读证据已完成 |
 | E1 | 已完成 | provider-neutral 合同、fake、zero-network 证据和 Notion 回读已闭环 |
-| E2 | 进行中 | 离线底座到 `4ab745b`；真实 sandbox 未连接，page admission 原子事务仍是下一 P0 |
+| E2 | 进行中 | 离线原子 inbox 底座到 `9cf1bfe`；真实 sandbox 未连接，default-off adapter/lifecycle 是下一 P0 |
 | E3 | 未开始 | verified inbound → PURE Agent 草稿 |
 | E4 | 未开始 | fake-only Action Plane |
 | E5 | 未开始 | 需另行明确授权的单会话 sandbox outbound |

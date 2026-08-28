@@ -1,10 +1,11 @@
 # 原生 IM 提前接入执行计划
 
-> 计划版本：2026-08-28-early-integration-v3
+> 计划版本：2026-08-28-early-integration-v4
 > 基线：`backup_0827_200010` / `pre-native-im-20260827-200010`  
 > 当前主线起点：`1d399e555fb0416f9c6225811269b9e5a2407728`  
-> 当前执行分支：`mainline_continue_quantum_entanglement`；E2 离线底座节点 `4ab745b`
-> 当前阶段：E1 / Level A 已完成；E2 / Level B 离线底座进行中，真实 sandbox 尚未连接
+> 当前执行分支：`mainline_continue_quantum_entanglement`；E2 离线原子页运行节点 `9cf1bfe`
+> 当前阶段：E1 / Level A 已完成；E2 / Level B 离线原子 inbox 底座已完成，adapter/lifecycle
+> 仍在离线推进，真实 sandbox 尚未连接
 > 决策状态：用户已决定提前接入独立原生 IM；先 inbound-only，再 Agent，再受控 outbound  
 > 永久限制：不向飞书、企微、任何个人、群聊、bot 或 webhook 发消息
 
@@ -16,7 +17,7 @@
 | 层级 | 可见结果 | 预计累计时间 | 是否真实发送 |
 |---|---|---:|---|
 | A：CONTRACT_EXECUTABLE（已完成） | V1 模型、codec、golden、fake adapter 全绿 | 已完成 | 否 |
-| B：SANDBOX_INBOUND（进行中） | 离线 inbox 底座已建立；完成后验收 health/read/dedupe/resume | 原估 3–5 天 | 否 |
+| B：SANDBOX_INBOUND（进行中） | 离线原子 inbox 已建立；adapter/lifecycle 完成并批准后验收 health/read/dedupe/resume | 原估 3–5 天 | 否 |
 | C：AGENT_DRAFT | verified inbound 可安全驱动 PURE Agent 并生成待审草稿 | 7–9 天 | 否 |
 | D：CONTROLLED_OUTBOUND | 单个 allowlisted 测试 conversation 可受控发送并对账 | 10–14 天 | 仅另行明确授权后 |
 
@@ -142,13 +143,14 @@ local release evidence 均通过。
 
 目标：完成 Level B，只连接独立 IM 的专用测试后端，不驱动 Agent，不注册 outbound。
 
-状态：**离线底座进行中**。截至 `4ab745b`，exact provider profile、inbound-only config/secret
-reference、raw-body verifier、migration 5 六表、durable nonce claim 和 exact-request replayable
-read preparation 已
-实现。当前仓库仍没有真实 provider adapter、credential material、webhook、socket、HTTP/WebSocket
-client 或 external IM send。nonce + verified page + event rows + checkpoint 的同事务 admission 是连接
-任何真实 sandbox 前的下一 P0；详见
-[`research/23_native_im_e2_offline_inbox_foundation_evidence.md`](./research/23_native_im_e2_offline_inbox_foundation_evidence.md)。
+状态：**离线原子 inbox 底座已完成；Level B 仍在进行中**。截至运行源码 `9cf1bfe`，exact
+provider profile、inbound-only config/secret reference、raw-body verifier、migration 5 六表、durable
+nonce、exact-request read preparation，以及 nonce + verified page + event/verification/link rows + read
+CAS + checkpoint + 独立 readback 的同事务 admission 均已实现。当前仓库仍没有真实 provider
+adapter、credential material、webhook、socket、HTTP/WebSocket client 或 external IM send。下一 P0
+是 default-off inbound-only adapter/lifecycle、bounded parser、kill switch、safe logging 和 fake contract
+probe；详见
+[`research/24_native_im_e2_atomic_page_admission_evidence.md`](./research/24_native_im_e2_atomic_page_admission_evidence.md)。
 
 ### 5.1 IM 后端必须提供的输入
 
@@ -177,6 +179,7 @@ tests/test_native_im_auth.py
 tests/test_native_im_inbox_contract.py
 tests/test_native_im_nonce_store.py
 tests/test_native_im_prepared_read_store.py
+tests/test_native_im_page_admission_store.py
 tests/test_native_im_provider_profile.py
 tests/test_native_im_sandbox_config.py
 tests/test_native_im_inbox_migration.py
@@ -196,16 +199,16 @@ topology、backup/restore inventory 必须在注册 `0005` 前同步更新。
 
 1. **已完成**：provider profile exact schema 与 unsupported capability 表；
 2. **已完成**：sandbox config 的 HTTPS/host/port/path allowlist、no redirect、credential `SecretRef`；
-3. **部分完成**：signature/timestamp verifier、raw-body digest 和 durable nonce claim 已完成；与 page
-   admission 的原子 composition 尚未完成；
-4. **Schema/contract 已完成**：`(tenantId, workspaceId, provider, channelId, eventId)` durable inbox
-   唯一键；写入 admission 尚未完成；
-5. **Contract 已完成**：`eventDigest` immutable binding；事务内逐值写入/readback 尚未完成；
-6. **下一 P0**：verified envelope + nonce + inbox receipt 原子 admission；
-7. **下一 P0**：整页 envelopes、page/snapshot binding、read CAS 与 cursor checkpoint 同事务提交；
-8. **部分完成**：cursor/snapshot/resume schema、checkpoint graph codec 和 read preparation 已完成；
-   page admission/reconcile 尚未完成；
-9. **待完成**：inbound-only adapter skeleton 和 feature flag；
+3. **已完成**：signature/timestamp verifier、raw-body digest、deferred nonce verification 与同事务
+   nonce claim；
+4. **已完成**：`(tenantId, workspaceId, provider, channelId, eventId)` durable inbox 唯一键与事务内
+   canonical event 写入；
+5. **已完成**：`eventDigest` immutable binding、verification/link rows 与独立 durable readback；
+6. **已完成**：verified envelope + nonce + inbox receipt 原子 admission；
+7. **已完成**：整页 envelopes、page/snapshot binding、read CAS 与 cursor checkpoint 同事务提交；
+8. **已完成**：cursor/snapshot/resume、read preparation、page admission、ACK-loss reopen 和 exact
+   reconciliation；
+9. **下一 P0**：inbound-only adapter skeleton、feature flag 与默认无 transport composition；
 10. **待完成**：bounded page/stream parser、disconnect/resume 和 duplicate/conflict；
 11. **已完成**：migration registration、upgrade/downgrade、backup/restore 和 topology inventory；
 12. **待完成**：message-body-safe logging、secret canary、metrics/trace；
@@ -346,12 +349,13 @@ python3 scripts/report_sync_bundle.py --verify <current-checkpoint.json>
 
 ## 10. 下一轮开工清单
 
-E1 文档、GitHub 和 Notion 已收口；用户恢复主线后，E2 离线底座已推进到 `4ab745b`。接下来按
-以下顺序继续：
+E1 文档、GitHub 和 Notion 已收口；E2 单事务 page admission 与完整 fault/tamper/replay 矩阵已在
+运行源码 `9cf1bfe` 完成。接下来按以下顺序继续：
 
-1. 先完成 nonce、verified page、event rows、read CAS 与 checkpoint 的单事务 admission；
-2. 对每个 transaction 边界补 rollback、COMMIT ACK-loss、poison/reopen 和 durable reconciliation；
-3. 实现 inbound-only adapter skeleton、kill switch、redaction 和 fake contract probe；
+1. 实现 default-off inbound-only adapter/transport skeleton，默认不能解析 endpoint、credential 或
+   打开 socket；
+2. 实现 bounded parser、disconnect/resume fixture、kill switch、startup/health/ready/graceful close；
+3. 实现 message-body-safe logging、secret canary、metrics/trace allowlist 和 fake contract probe；
 4. 只有 sandbox endpoint class、测试 scope、数据等级、read-only credential reference、方法路径和
    截止时间获批后，才执行 health/read/dedupe/resume；
 5. Level B 始终只产生 observation，机械阻断 Agent、tool、browser、subprocess 和 outbound。

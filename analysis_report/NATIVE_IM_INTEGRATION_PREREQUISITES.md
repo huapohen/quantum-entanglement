@@ -8,7 +8,7 @@
 >
 > E1 源码证据：`7620200f8e378507b1f592d6d34744080250d2ea`
 >
-> E2 离线底座证据：`4ab745b1a83e3a840fe503fefc0bae58b112c95b`
+> E2 原子页 admission 运行证据：`9cf1bfebe33fd5efae2933bc82027275b3313696`
 >
 > 决策性质：原生 IM 接入的执行顺序与验收边界；不是生产发布批准
 >
@@ -27,12 +27,12 @@
 > adapter、endpoint、credential 和 sandbox inbound 当时均未开始；完整 E1 证据见
 > [`research/22_native_im_e1_contract_executable_evidence.md`](./research/22_native_im_e1_contract_executable_evidence.md)。
 
-> **2026-08-28 E2 离线底座：** exact profile schema、inbound-only config/secret reference、
-> raw-body verifier、migration 5 六表、durable nonce claim 和 exact-request replayable read
-> preparation 已推进到
-> `4ab745b`。真实 sandbox 参数和网络仍未介入；下一硬门禁是 nonce + verified page + events +
-> checkpoint 单事务 admission。证据见
-> [`research/23_native_im_e2_offline_inbox_foundation_evidence.md`](./research/23_native_im_e2_offline_inbox_foundation_evidence.md)。
+> **2026-08-28 E2 原子页 admission：** exact profile/config/secret reference、raw-body verifier、
+> migration 5 六表、durable nonce/read preparation，以及 nonce + verified page +
+> event/verification/link rows + read CAS + checkpoint + 独立 readback 的单事务 admission 已推进到
+> `9cf1bfe`。真实 sandbox 参数和网络仍未介入；下一硬门禁是 default-off inbound-only
+> adapter/lifecycle、bounded parser、kill switch、safe logging 与 fake contract probe。证据见
+> [`research/24_native_im_e2_atomic_page_admission_evidence.md`](./research/24_native_im_e2_atomic_page_admission_evidence.md)。
 
 ## 1. 最终决策
 
@@ -78,6 +78,8 @@ conversation 和非敏感合成数据完成真实网络端到端联调。它不�
 - transactional inbox/outbox、outbox lease/fencing、bounded Publisher、retry、DLQ 和 ambiguity
   记录；
 - invocation admission，以及 job/attempt/start event 的原子首次 claim；
+- 原生 IM nonce、verified page、event/verification/link rows、read CAS 与 checkpoint 的单事务
+  admission、ACK-loss 重开对账和 durable graph 独立 readback；
 - durable attempt、heartbeat、lease expiry、epoch fencing 和 stale-owner terminal CAS 原语；
 - tenant/workspace-scoped Artifact store；
 - Result Acceptance Request、Evidence、Terminal Transition、ReceiptV2 和 capability-free
