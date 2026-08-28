@@ -293,10 +293,7 @@ func finalizeReceipt(
 ) (time.Time, error) {
 	var committedAt time.Time
 	err := transaction.QueryRow(ctx, `
-INSERT INTO wanwork_im.tenant_command_receipts (
-    tenant_id, command_kind, idempotency_key, request_sha256, result_sha256
-) VALUES ($1, $2, $3, $4, $5)
-RETURNING committed_at`,
+SELECT wanwork_im.write_tenant_command_receipt($1, $2, $3, $4, $5)`,
 		tenantID.String(),
 		command.Kind(),
 		command.IdempotencyKey(),
