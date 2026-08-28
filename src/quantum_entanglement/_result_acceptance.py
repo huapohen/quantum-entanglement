@@ -13,7 +13,9 @@ from ._result_artifact_transaction import (
 )
 from .invocation_execution import ScopedInvocationStartClaimedV3
 from .invocation_results import (
+    SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION,
     ScopedInvocationResultAcceptanceRequestV2,
+    ScopedInvocationResultEvidenceV2,
     _acceptance_request_snapshot,
 )
 
@@ -343,6 +345,7 @@ class _IdentifiedFreshResultAcceptancePlanV2:
 
     __slots__ = (
         "__active",
+        "__evidence_construction_started",
         "__materialized",
         "__receipt_id",
         "__result_event_id",
@@ -366,6 +369,7 @@ class _IdentifiedFreshResultAcceptancePlanV2:
         self.__receipt_id = receipt_id
         self.__result_event_id = result_event_id
         self.__terminal_event_id = terminal_event_id
+        self.__evidence_construction_started = False
         self.__active = True
         self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
@@ -398,10 +402,29 @@ class _IdentifiedFreshResultAcceptancePlanV2:
             raise ValueError("result acceptance event identity reuses the start event")
         return self.__materialized, receipt_id, result_event_id, terminal_event_id
 
+    def _begin_evidence_construction(
+        self,
+        *,
+        token: object,
+    ) -> tuple[_MaterializedFreshResultAcceptancePlanV2, str, str, str]:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("result acceptance evidence construction is private")
+        if type(self) is not _IdentifiedFreshResultAcceptancePlanV2:
+            raise TypeError("identified result acceptance plan must be exact")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("identified result acceptance plan is no longer active")
+        if type(self.__evidence_construction_started) is not bool:
+            raise RuntimeError("identified result acceptance evidence state is invalid")
+        if self.__evidence_construction_started:
+            raise RuntimeError("result acceptance evidence construction already started")
+        self.__evidence_construction_started = True
+        return self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
     def _invalidate(self, *, token: object) -> None:
         if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
             raise TypeError("identified result acceptance plan invalidation is private")
         self.__active = False
+        self.__evidence_construction_started = True
         object.__setattr__(
             self,
             "_IdentifiedFreshResultAcceptancePlanV2__materialized",
@@ -416,6 +439,83 @@ class _IdentifiedFreshResultAcceptancePlanV2:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("identified result acceptance plans cannot be serialized")
+
+
+class _EvidencedFreshResultAcceptancePlanV2:
+    """One exact store-shaped evidence payload that remains private and non-authoritative."""
+
+    __slots__ = ("__active", "__evidence", "__identified")
+
+    def __init__(
+        self,
+        *,
+        identified: _IdentifiedFreshResultAcceptancePlanV2,
+        evidence: ScopedInvocationResultEvidenceV2,
+        token: object,
+    ) -> None:
+        if type(self) is not _EvidencedFreshResultAcceptancePlanV2:
+            raise TypeError("evidenced result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("evidenced result acceptance plan constructor is private")
+        self.__identified = identified
+        self.__evidence = evidence
+        self.__active = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> tuple[_IdentifiedFreshResultAcceptancePlanV2, ScopedInvocationResultEvidenceV2]:
+        if type(self) is not _EvidencedFreshResultAcceptancePlanV2:
+            raise TypeError("evidenced result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("evidenced result acceptance plan validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("evidenced result acceptance plan is no longer active")
+        identified = self.__identified
+        if type(identified) is not _IdentifiedFreshResultAcceptancePlanV2:
+            raise TypeError("evidenced result acceptance identity plan is not exact")
+        materialized, receipt_id, _, _ = identified._validated(
+            token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+        )
+        evidence = self.__evidence
+        if type(evidence) is not ScopedInvocationResultEvidenceV2:
+            raise TypeError("result acceptance evidence is not exact")
+        evidence_snapshot = ScopedInvocationResultEvidenceV2.from_dict(
+            ScopedInvocationResultEvidenceV2.to_dict(evidence)
+        )
+        expected = _build_scoped_invocation_result_evidence_v2(
+            materialized,
+            receipt_id=receipt_id,
+        )
+        if evidence_snapshot != expected:
+            raise ValueError("result acceptance evidence differs from its identified plan")
+        return identified, evidence_snapshot
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("evidenced result acceptance plan invalidation is private")
+        self.__active = False
+        object.__setattr__(
+            self,
+            "_EvidencedFreshResultAcceptancePlanV2__identified",
+            None,
+        )
+        object.__setattr__(
+            self,
+            "_EvidencedFreshResultAcceptancePlanV2__evidence",
+            None,
+        )
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("evidenced result acceptance plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("evidenced result acceptance plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("evidenced result acceptance plans cannot be serialized")
 
 
 def _scoped_invocation_start_claimed_snapshot(
@@ -462,6 +562,72 @@ class _PreparedScopedInvocationResultAcceptanceV2:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("prepared result acceptance cannot be serialized")
+
+
+def _build_scoped_invocation_result_evidence_v2(
+    materialized: _MaterializedFreshResultAcceptancePlanV2,
+    *,
+    receipt_id: object,
+) -> ScopedInvocationResultEvidenceV2:
+    """Derive one canonical evidence payload only from the frozen store plan."""
+
+    if type(materialized) is not _MaterializedFreshResultAcceptancePlanV2:
+        raise TypeError("result acceptance evidence requires an exact materialized plan")
+    exact_receipt_id = _prepared_text(receipt_id, "receipt identity")
+    prepared, prerequisites, accepted_at, artifacts = materialized._validated(
+        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+    )
+    request = prepared.request
+    manifest = request.manifest
+    start_evidence = request.start_receipt.evidence
+    bindings = (
+        (prerequisites.invocation_id, manifest.invocation_id),
+        (prerequisites.request_digest, request.canonical_digest()),
+        (prerequisites.start_receipt_digest, request.start_receipt_digest),
+        (prerequisites.attempt_id, start_evidence.attempt_id),
+        (prerequisites.lease_epoch, start_evidence.lease_epoch),
+        (prerequisites.worker_id, start_evidence.worker_id),
+        (prerequisites.lease_token_digest, start_evidence.lease_token_digest),
+        (prerequisites.expected_stream_version, request.expected_stream_version),
+        (prerequisites.running_task_revision, manifest.task_revision),
+        (tuple(artifacts), manifest.artifacts),
+    )
+    if any(actual != expected for actual, expected in bindings):
+        raise ValueError("result acceptance evidence inputs differ from the frozen request")
+    evidence = ScopedInvocationResultEvidenceV2(
+        schema_version=SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION,
+        evidence_kind="attempt_bound",
+        receipt_id=exact_receipt_id,
+        tenant_id=manifest.tenant_id,
+        workspace_id=manifest.workspace_id,
+        invocation_id=manifest.invocation_id,
+        session_id=manifest.session_id,
+        plan_id=manifest.plan_id,
+        task_id=manifest.task_id,
+        agent_id=manifest.agent_id,
+        job_idempotency_key=manifest.job_idempotency_key,
+        running_task_revision=prerequisites.running_task_revision,
+        terminal_task_revision=prerequisites.running_task_revision + 1,
+        attempt_id=prerequisites.attempt_id,
+        attempt_number=start_evidence.attempt_number,
+        lease_epoch=prerequisites.lease_epoch,
+        worker_id=prerequisites.worker_id,
+        lease_token_digest=prerequisites.lease_token_digest,
+        start_receipt_digest=prerequisites.start_receipt_digest,
+        execution_manifest_digest=manifest.execution_manifest_digest,
+        result_manifest_schema_version=manifest.schema_version,
+        result_manifest_digest=manifest.canonical_digest(),
+        result_ref=manifest.result_ref,
+        effect_class=manifest.effect_class,
+        action_receipt_set_digest=manifest.action_receipt_set_digest,
+        acceptance_idempotency_key=request.acceptance_idempotency_key,
+        request_digest=prerequisites.request_digest,
+        accepted_at=accepted_at,
+        artifact_count=len(artifacts),
+    )
+    return ScopedInvocationResultEvidenceV2.from_dict(
+        ScopedInvocationResultEvidenceV2.to_dict(evidence)
+    )
 
 
 def _prepare_scoped_invocation_result_acceptance_v2(

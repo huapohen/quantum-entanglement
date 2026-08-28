@@ -12,6 +12,7 @@ from unittest.mock import patch
 import quantum_entanglement
 from quantum_entanglement._result_acceptance import (
     _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+    _EvidencedFreshResultAcceptancePlanV2,
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
     _FreshResultAcceptanceWritePlanV2,
@@ -35,9 +36,11 @@ from quantum_entanglement.invocation_execution import (
 from quantum_entanglement.invocation_results import (
     EMPTY_ACTION_RECEIPT_SET_DIGEST,
     SCOPED_INVOCATION_RESULT_ACCEPTANCE_REQUEST_SCHEMA_VERSION,
+    SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION,
     SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION,
     ScopedInvocationResultAcceptanceRequestV2,
     ScopedInvocationResultArtifactCandidateV2,
+    ScopedInvocationResultEvidenceV2,
     ScopedInvocationResultManifestV2,
 )
 from quantum_entanglement.store import SQLiteEventStore
@@ -978,6 +981,248 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             0,
         )
 
+    def test_fresh_evidence_plan_binds_every_store_and_request_coordinate(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        accepted_at = "2026-08-27T10:00:02.000000Z"
+        self.store._clock = lambda: accepted_at
+        generated = (
+            "result_receipt_evidence_1",
+            "event_result_evidence_1",
+            "event_terminal_evidence_1",
+        )
+
+        with patch("quantum_entanglement.store.new_id", side_effect=generated):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._construct_result_acceptance_evidence_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as evidenced:
+                    self.assertIs(type(evidenced), _EvidencedFreshResultAcceptancePlanV2)
+                    assert type(evidenced) is _EvidencedFreshResultAcceptancePlanV2
+                    identified, evidence = evidenced._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    self.assertIs(type(evidence), ScopedInvocationResultEvidenceV2)
+                    materialized, receipt_id, result_event_id, terminal_event_id = (
+                        identified._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+                    )
+                    _, prerequisites, materialized_at, artifacts = materialized._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    manifest = prepared.request.manifest
+                    start = prepared.request.start_receipt.evidence
+                    self.assertEqual(
+                        (receipt_id, result_event_id, terminal_event_id),
+                        generated,
+                    )
+                    self.assertEqual(
+                        evidence,
+                        ScopedInvocationResultEvidenceV2.from_dict(evidence.to_dict()),
+                    )
+                    self.assertEqual(
+                        (
+                            evidence.schema_version,
+                            evidence.evidence_kind,
+                            evidence.receipt_id,
+                            evidence.tenant_id,
+                            evidence.workspace_id,
+                            evidence.invocation_id,
+                            evidence.session_id,
+                            evidence.plan_id,
+                            evidence.task_id,
+                            evidence.agent_id,
+                            evidence.job_idempotency_key,
+                        ),
+                        (
+                            SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION,
+                            "attempt_bound",
+                            receipt_id,
+                            manifest.tenant_id,
+                            manifest.workspace_id,
+                            manifest.invocation_id,
+                            manifest.session_id,
+                            manifest.plan_id,
+                            manifest.task_id,
+                            manifest.agent_id,
+                            manifest.job_idempotency_key,
+                        ),
+                    )
+                    self.assertEqual(
+                        (
+                            evidence.running_task_revision,
+                            evidence.terminal_task_revision,
+                            evidence.attempt_id,
+                            evidence.attempt_number,
+                            evidence.lease_epoch,
+                            evidence.worker_id,
+                            evidence.lease_token_digest,
+                            evidence.start_receipt_digest,
+                        ),
+                        (
+                            prerequisites.running_task_revision,
+                            prerequisites.running_task_revision + 1,
+                            prerequisites.attempt_id,
+                            start.attempt_number,
+                            prerequisites.lease_epoch,
+                            prerequisites.worker_id,
+                            prerequisites.lease_token_digest,
+                            prerequisites.start_receipt_digest,
+                        ),
+                    )
+                    self.assertEqual(
+                        (
+                            evidence.execution_manifest_digest,
+                            evidence.result_manifest_schema_version,
+                            evidence.result_manifest_digest,
+                            evidence.result_ref,
+                            evidence.effect_class,
+                            evidence.action_receipt_set_digest,
+                            evidence.acceptance_idempotency_key,
+                            evidence.request_digest,
+                            evidence.accepted_at,
+                            evidence.artifact_count,
+                        ),
+                        (
+                            manifest.execution_manifest_digest,
+                            manifest.schema_version,
+                            manifest.canonical_digest(),
+                            manifest.result_ref,
+                            manifest.effect_class,
+                            manifest.action_receipt_set_digest,
+                            prepared.request.acceptance_idempotency_key,
+                            prerequisites.request_digest,
+                            materialized_at,
+                            len(artifacts),
+                        ),
+                    )
+                    for operation in (
+                        lambda: copy.copy(evidenced),
+                        lambda: copy.deepcopy(evidenced),
+                        lambda: pickle.dumps(evidenced),
+                    ):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ):
+                            operation()
+                    with self.assertRaisesRegex(RuntimeError, "already started"):
+                        identified._begin_evidence_construction(
+                            token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                        )
+        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+            evidenced._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+            identified._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_narration_only_evidence_has_exact_zero_artifact_count(self) -> None:
+        prepared = self.narration_only_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=("receipt_zero", "event_result_zero", "event_terminal_zero"),
+        ):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._construct_result_acceptance_evidence_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as evidenced:
+                    assert type(evidenced) is _EvidencedFreshResultAcceptancePlanV2
+                    _, evidence = evidenced._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    self.assertEqual(evidence.artifact_count, 0)
+                    self.assertEqual(prepared.request.manifest.artifacts, ())
+
+    def test_existing_graph_evidence_path_does_not_construct_fresh_payload(self) -> None:
+        helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
+            methodName="runTest"
+        )
+        helper.store = self.store
+        helper.connection = self.store._connection
+        helper.seed_nonempty_v6_dependencies()
+        helper.apply_candidate()
+        helper.seed_complete_result_graph()
+        prepared = existing_graph_prepared(helper)
+
+        with patch(
+            "quantum_entanglement.store._build_scoped_invocation_result_evidence_v2",
+            side_effect=AssertionError("existing graph must not construct fresh evidence"),
+        ) as builder:
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._construct_result_acceptance_evidence_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as result:
+                    self.assertIs(type(result), _ExistingResultAcceptanceGraphCandidateV2)
+        builder.assert_not_called()
+
+    def test_evidence_construction_failure_rolls_back_materialized_artifacts(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=("receipt_failure", "event_result_failure", "event_terminal_failure"),
+        ), patch(
+            "quantum_entanglement.store._build_scoped_invocation_result_evidence_v2",
+            side_effect=RuntimeError("evidence construction failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "evidence construction failed"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.store._construct_result_acceptance_evidence_in_owner_transaction(
+                        handle,
+                        prepared,
+                    ):
+                        self.fail("failed evidence construction unexpectedly yielded a plan")
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_blobs"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_caught_evidence_failure_still_forces_owner_transaction_rollback(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=("receipt_caught", "event_result_caught", "event_terminal_caught"),
+        ), patch(
+            "quantum_entanglement.store._build_scoped_invocation_result_evidence_v2",
+            side_effect=RuntimeError("caught evidence failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "rollback-only"):
+                with self.store._result_artifact_transaction() as handle:
+                    with self.assertRaisesRegex(RuntimeError, "caught evidence failure"):
+                        with self.store._construct_result_acceptance_evidence_in_owner_transaction(
+                            handle,
+                            prepared,
+                        ):
+                            self.fail(
+                                "caught evidence failure unexpectedly yielded a plan"
+                            )
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_versions"
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM main.artifact_blobs"
+            ).fetchone()[0],
+            0,
+        )
+
     def assert_materialization_time_rejected(
         self,
         clock_value: str,
@@ -1101,11 +1346,13 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
     def test_private_prerequisites_add_no_writer_or_accepted_export(self) -> None:
         for name in (
             "_ExistingResultAcceptanceGraphCandidateV2",
+            "_EvidencedFreshResultAcceptancePlanV2",
             "_FreshResultAcceptancePrerequisitesV2",
             "_FreshResultAcceptanceWritePlanV2",
             "_IdentifiedFreshResultAcceptancePlanV2",
             "_MaterializedFreshResultAcceptancePlanV2",
             "_validate_result_acceptance_durable_prerequisites_in_transaction",
+            "_build_scoped_invocation_result_evidence_v2",
             "accept_scoped_invocation_result_v2",
             "ScopedInvocationResultAcceptedV2",
         ):

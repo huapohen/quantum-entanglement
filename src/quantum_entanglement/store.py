@@ -39,6 +39,8 @@ from typing import (
 from . import process_identity as _process_identity
 from ._result_acceptance import (
     _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+    _build_scoped_invocation_result_evidence_v2,
+    _EvidencedFreshResultAcceptancePlanV2,
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
     _FreshResultAcceptanceWritePlanV2,
@@ -2835,6 +2837,58 @@ class SQLiteEventStore:
                         token=_EVENT_STORE_ADMISSION_CONTROL_TOKEN,
                     ) from None
             raise
+
+    @_bind_event_store_process
+    def _construct_result_acceptance_evidence_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> ContextManager[
+        _ExistingResultAcceptanceGraphCandidateV2 | _EvidencedFreshResultAcceptancePlanV2
+    ]:
+        """Construct exact canonical result evidence without appending its event."""
+
+        return self._construct_result_acceptance_evidence_in_owner_transaction_inner(
+            handle,
+            prepared,
+        )
+
+    @contextmanager
+    def _construct_result_acceptance_evidence_in_owner_transaction_inner(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> Iterator[
+        _ExistingResultAcceptanceGraphCandidateV2 | _EvidencedFreshResultAcceptancePlanV2
+    ]:
+        evidenced: Optional[_EvidencedFreshResultAcceptancePlanV2] = None
+        with self._identify_result_acceptance_write_in_owner_transaction(
+            handle,
+            prepared,
+        ) as candidate:
+            if type(candidate) is _ExistingResultAcceptanceGraphCandidateV2:
+                yield candidate
+                return
+            if type(candidate) is not _IdentifiedFreshResultAcceptancePlanV2:
+                raise RuntimeError("result acceptance evidence classification is not closed")
+            materialized, receipt_id, _, _ = candidate._begin_evidence_construction(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            self._require_current_process()
+            evidence = _build_scoped_invocation_result_evidence_v2(
+                materialized,
+                receipt_id=receipt_id,
+            )
+            self._require_current_process()
+            evidenced = _EvidencedFreshResultAcceptancePlanV2(
+                identified=candidate,
+                evidence=evidence,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            try:
+                yield evidenced
+            finally:
+                evidenced._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
     @contextmanager
     def _transaction_inner(
