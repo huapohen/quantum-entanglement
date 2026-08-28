@@ -1,5 +1,9 @@
 # PostgreSQL 权威持久化阶段检查点
 
+> 历史检查点：本文冻结在 `8d662bf`、`0001–0004` 和本批 19 个小提交，不回写后续实现事实。
+> `0005` function-only writes、exact access validator 与 PostgreSQL 18.6 新证据见
+> [`34_postgres_function_only_writes_and_exact_access_checkpoint.md`](34_postgres_function_only_writes_and_exact_access_checkpoint.md)。
+
 > 日期：2026-08-28（Asia/Shanghai）
 >
 > 分支：`dev_wanwork_quantum_entanglement`
