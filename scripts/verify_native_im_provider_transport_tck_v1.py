@@ -20,15 +20,17 @@ from tests.test_native_im_synthetic_provider_transport import (  # noqa: E402
     test_transport_intent_changes_with_every_approved_configuration_axis,
     test_transport_tck_close_is_idempotent_and_blocks_new_exchange,
     test_transport_tck_continuation_intent_binds_cursor_sequence_snapshot_and_request,
+    test_transport_tck_enhanced_read_binds_transient_exchange_evidence,
     test_transport_tck_health_is_exact_bound_and_zero_effect,
     test_transport_tck_initial_read_builds_exact_intent_without_reading_credential,
     test_transport_tck_redacts_scripted_exchange_faults,
     test_transport_tck_rejects_cross_request_signed_response,
     test_transport_tck_rejects_every_non_200_read_status,
     test_transport_tck_rejects_missing_or_extra_signed_headers,
+    test_transport_tck_repeat_event_source_does_not_reuse_exchange_evidence,
 )
 
-EXPECTED_SUITE_DIGEST = "004ec6592122c76101b3e8bc68fc885f2fdbee82b1798284038b58b5f4b1782b"
+EXPECTED_SUITE_DIGEST = "173a05e443a1506a41a23cf17ca834c08b667a0d28e46fd1d186b64cd106c1d4"
 _SUITE_FILES = (
     "tests/native_im_synthetic_provider_transport.py",
     "tests/test_native_im_synthetic_provider_transport.py",
@@ -54,6 +56,8 @@ async def verify() -> None:
 
     await test_transport_tck_health_is_exact_bound_and_zero_effect()
     await test_transport_tck_initial_read_builds_exact_intent_without_reading_credential()
+    await test_transport_tck_enhanced_read_binds_transient_exchange_evidence()
+    await test_transport_tck_repeat_event_source_does_not_reuse_exchange_evidence()
     test_transport_tck_continuation_intent_binds_cursor_sequence_snapshot_and_request()
     for fault in _FAULTS:
         await test_transport_tck_redacts_scripted_exchange_faults(fault)
@@ -75,7 +79,7 @@ def main() -> int:
         return 1
     print(
         "native IM provider transport TCK verified: "
-        f"3 accepted, 12 rejected, {EXPECTED_SUITE_DIGEST}"
+        f"5 accepted, 12 rejected, {EXPECTED_SUITE_DIGEST}"
     )
     return 0
 

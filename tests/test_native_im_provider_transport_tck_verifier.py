@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 VERIFIER = REPOSITORY_ROOT / "scripts" / "verify_native_im_provider_transport_tck_v1.py"
-EXPECTED_DIGEST = "004ec6592122c76101b3e8bc68fc885f2fdbee82b1798284038b58b5f4b1782b"
+EXPECTED_DIGEST = "173a05e443a1506a41a23cf17ca834c08b667a0d28e46fd1d186b64cd106c1d4"
 
 
 def _run(seed: str, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -39,7 +39,7 @@ def test_provider_transport_tck_verifier_is_cross_process_stable_and_read_only()
     assert first.stderr == second.stderr == ""
     assert first.stdout == second.stdout
     assert first.stdout.strip() == (
-        f"native IM provider transport TCK verified: 3 accepted, 12 rejected, {EXPECTED_DIGEST}"
+        f"native IM provider transport TCK verified: 5 accepted, 12 rejected, {EXPECTED_DIGEST}"
     )
     assert VERIFIER.read_bytes() == before
 

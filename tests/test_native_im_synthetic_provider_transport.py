@@ -12,6 +12,7 @@ from quantum_entanglement.native_im_provider_exchange import (
 )
 from quantum_entanglement.native_im_sandbox import (
     NativeIMHealthEvidenceV1,
+    NativeIMInboundRawExchangeV1,
     NativeIMInboundRawResponseV1,
     NativeIMTransportContractError,
     derive_native_im_health_evidence_digest_v1,
@@ -181,6 +182,83 @@ async def test_transport_tck_initial_read_builds_exact_intent_without_reading_cr
         ("readRequestId", request.read_request_id),
     )
     assert exchange.consumed
+
+
+@pytest.mark.asyncio
+async def test_transport_tck_enhanced_read_binds_transient_exchange_evidence() -> None:
+    request = inbound_read_request(provider="test-provider")
+    intent = _base_transport().read_intent(request)
+    transport, exchange = _scripted_transport(
+        (ScriptedNativeIMExchangeStepV1(intent, response=_read_response(request)),)
+    )
+    credential = SecretMaterial(b"synthetic-enhanced-read-credential")
+    try:
+        observed = await transport.read_inbound_exchange(request, credential)
+    finally:
+        credential.close()
+
+    assert type(observed) is NativeIMInboundRawExchangeV1
+    observed.exchange_evidence.validate_request_binding(request)
+    assert observed.exchange_evidence.request_intent_digest == intent.canonical_digest()
+    assert observed.exchange_evidence.exchange_security_evidence_digest == EXCHANGE_EVIDENCE
+    assert (
+        observed.exchange_evidence.event_source_evidence_digest
+        == EVENT_SOURCE_EVIDENCE
+        == observed.response.transport_evidence_digest
+    )
+    assert exchange.consumed
+
+
+@pytest.mark.asyncio
+async def test_transport_tck_repeat_event_source_does_not_reuse_exchange_evidence() -> None:
+    request = inbound_read_request(provider="test-provider")
+    intent = _base_transport().read_intent(request)
+    first_transport, _ = _scripted_transport(
+        (
+            ScriptedNativeIMExchangeStepV1(
+                intent,
+                response=_read_response(
+                    request,
+                    received_at=NOW,
+                    exchange_security_evidence_digest="1" * 64,
+                ),
+            ),
+        )
+    )
+    second_transport = SyntheticSemanticProviderTransportV1(
+        bound_configuration(),
+        profile(),
+        manifest_for(profile()).canonical_digest(),
+        ScriptedNativeIMProviderExchangeV1(
+            (
+                ScriptedNativeIMExchangeStepV1(
+                    intent,
+                    response=_read_response(
+                        request,
+                        received_at="2026-08-28T12:00:01.000001Z",
+                        exchange_security_evidence_digest="2" * 64,
+                    ),
+                ),
+            )
+        ),
+        clock=lambda: "2026-08-28T12:00:01.000001Z",
+    )
+    first_credential = SecretMaterial(b"synthetic-repeat-first")
+    second_credential = SecretMaterial(b"synthetic-repeat-second")
+    try:
+        first = await first_transport.read_inbound_exchange(request, first_credential)
+        second = await second_transport.read_inbound_exchange(request, second_credential)
+    finally:
+        first_credential.close()
+        second_credential.close()
+
+    assert first.response.raw_body == second.response.raw_body
+    assert (
+        first.response.transport_evidence_digest
+        == second.response.transport_evidence_digest
+        == EVENT_SOURCE_EVIDENCE
+    )
+    assert first.exchange_evidence.evidence_digest != second.exchange_evidence.evidence_digest
 
 
 def test_transport_tck_continuation_intent_binds_cursor_sequence_snapshot_and_request() -> None:

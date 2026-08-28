@@ -14,8 +14,13 @@ from quantum_entanglement.native_im_provider_exchange import (
     NativeIMProviderWireResponseV1,
 )
 from quantum_entanglement.native_im_provider_profile import IMProviderProfileV1
+from quantum_entanglement.native_im_read_exchange import (
+    NativeIMInboundReadExchangeEvidenceV1,
+    derive_native_im_read_exchange_evidence_digest_v1,
+)
 from quantum_entanglement.native_im_sandbox import (
     NativeIMHealthEvidenceV1,
+    NativeIMInboundRawExchangeV1,
     NativeIMInboundRawResponseV1,
     NativeIMTransportContractError,
     derive_native_im_health_evidence_digest_v1,
@@ -286,6 +291,13 @@ class SyntheticSemanticProviderTransportV1:
         request: IMInboundReadRequestV1,
         credential: SecretMaterial,
     ) -> NativeIMInboundRawResponseV1:
+        return (await self.read_inbound_exchange(request, credential)).response
+
+    async def read_inbound_exchange(
+        self,
+        request: IMInboundReadRequestV1,
+        credential: SecretMaterial,
+    ) -> NativeIMInboundRawExchangeV1:
         self._require_open()
         if type(credential) is not SecretMaterial:
             raise TypeError("synthetic provider transport requires an exact credential lease")
@@ -320,7 +332,7 @@ class SyntheticSemanticProviderTransportV1:
                 key_id=headers["x-native-im-key-id"],
                 signature=headers["x-native-im-signature"],
             )
-            return NativeIMInboundRawResponseV1(
+            raw_response = NativeIMInboundRawResponseV1(
                 schema_version=1,
                 read_request_id=request.read_request_id,
                 status_code=response.status_code,
@@ -328,6 +340,38 @@ class SyntheticSemanticProviderTransportV1:
                 raw_body=response.raw_body,
                 received_at=response.received_at,
                 transport_evidence_digest=headers["x-native-im-event-source-digest"],
+            )
+            read_request_digest = request.canonical_digest()
+            request_intent_digest = intent.canonical_digest()
+            exchange_security_evidence_digest = response.exchange_security_evidence_digest
+            event_source_evidence_digest = raw_response.transport_evidence_digest
+            evidence_digest = derive_native_im_read_exchange_evidence_digest_v1(
+                read_request_id=request.read_request_id,
+                read_request_digest=read_request_digest,
+                after_cursor=request.after_cursor,
+                after_sequence=request.after_sequence,
+                snapshot_token=request.snapshot_token,
+                received_at=response.received_at,
+                request_intent_digest=request_intent_digest,
+                exchange_security_evidence_digest=exchange_security_evidence_digest,
+                event_source_evidence_digest=event_source_evidence_digest,
+            )
+            exchange_evidence = NativeIMInboundReadExchangeEvidenceV1(
+                schema_version=1,
+                read_request_id=request.read_request_id,
+                read_request_digest=read_request_digest,
+                after_cursor=request.after_cursor,
+                after_sequence=request.after_sequence,
+                snapshot_token=request.snapshot_token,
+                received_at=response.received_at,
+                request_intent_digest=request_intent_digest,
+                exchange_security_evidence_digest=exchange_security_evidence_digest,
+                event_source_evidence_digest=event_source_evidence_digest,
+                evidence_digest=evidence_digest,
+            )
+            return NativeIMInboundRawExchangeV1(
+                response=raw_response,
+                exchange_evidence=exchange_evidence,
             )
         except (TypeError, ValueError):
             _contract_failure()
