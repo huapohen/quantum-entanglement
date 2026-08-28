@@ -6,8 +6,10 @@ import (
 )
 
 const (
-	AuthorityAccessSpecificationFormat = "wanwork.im.postgres-authority-access-spec/1"
-	AuthorityAccessPostgreSQLMajor     = minimumServerVersion / 10000
+	AuthorityAccessSpecificationFormat    = "wanwork.im.postgres-authority-access-spec/1"
+	AuthorityAccessPostgreSQLMajor        = minimumServerVersion / 10000
+	AuthorityAccessExecutorCompatibility  = "wanwork.im.postgres-authority-executor/1"
+	AuthorityAccessValidatorCompatibility = "wanwork.im.postgres-authority-validator/1"
 )
 
 var ErrAuthorityAccessSpecification = errors.New("invalid PostgreSQL authority access specification")
@@ -34,19 +36,23 @@ const (
 // authority contract. Every call returns fresh slice backing arrays so callers cannot mutate the
 // validator's source of truth. It contains identities and privileges, never a DSN or credential.
 type AuthorityAccessSpecification struct {
-	Format               string                                   `json:"format"`
-	PostgreSQLMajor      int                                      `json:"postgresqlMajor"`
-	DatabaseOwner        AuthorityDatabaseOwnerSpecification      `json:"databaseOwner"`
-	Roles                []AuthorityRoleSpecification             `json:"roles"`
-	Memberships          []AuthorityMembershipSpecification       `json:"memberships"`
-	Objects              []AuthorityObjectSpecification           `json:"objects"`
-	Privileges           []AuthorityPrivilegeSpecification        `json:"privileges"`
-	DefaultPrivileges    []AuthorityDefaultPrivilegeSpecification `json:"defaultPrivileges"`
-	UnexpectedObjects    bool                                     `json:"unexpectedObjects"`
-	UnexpectedPrivileges bool                                     `json:"unexpectedPrivileges"`
-	RoleSettings         bool                                     `json:"roleSettings"`
-	ColumnPrivileges     bool                                     `json:"columnPrivileges"`
-	FunctionsInMetadata  bool                                     `json:"functionsInMetadataSchema"`
+	Format                        string                                   `json:"format"`
+	PostgreSQLMajor               int                                      `json:"postgresqlMajor"`
+	MigrationCatalogDigest        string                                   `json:"migrationCatalogDigest"`
+	AuthorityManifestDigest       string                                   `json:"authorityManifestDigest"`
+	ExecutorCompatibilityVersion  string                                   `json:"executorCompatibilityVersion"`
+	ValidatorCompatibilityVersion string                                   `json:"validatorCompatibilityVersion"`
+	DatabaseOwner                 AuthorityDatabaseOwnerSpecification      `json:"databaseOwner"`
+	Roles                         []AuthorityRoleSpecification             `json:"roles"`
+	Memberships                   []AuthorityMembershipSpecification       `json:"memberships"`
+	Objects                       []AuthorityObjectSpecification           `json:"objects"`
+	Privileges                    []AuthorityPrivilegeSpecification        `json:"privileges"`
+	DefaultPrivileges             []AuthorityDefaultPrivilegeSpecification `json:"defaultPrivileges"`
+	UnexpectedObjects             bool                                     `json:"unexpectedObjects"`
+	UnexpectedPrivileges          bool                                     `json:"unexpectedPrivileges"`
+	RoleSettings                  bool                                     `json:"roleSettings"`
+	ColumnPrivileges              bool                                     `json:"columnPrivileges"`
+	FunctionsInMetadata           bool                                     `json:"functionsInMetadataSchema"`
 }
 
 // AuthorityDatabaseOwnerSpecification records the external deployment root that owns the
@@ -118,9 +124,21 @@ func CurrentAuthorityAccessSpecification(
 	if manifest.Validate() != nil {
 		return AuthorityAccessSpecification{}, ErrAuthorityAccessSpecification
 	}
+	migrationCatalogDigest, err := CurrentMigrationCatalogDigest()
+	if err != nil {
+		return AuthorityAccessSpecification{}, ErrAuthorityAccessSpecification
+	}
+	authorityManifestDigest, err := DigestAuthorityAccessManifest(manifest)
+	if err != nil {
+		return AuthorityAccessSpecification{}, ErrAuthorityAccessSpecification
+	}
 	specification := AuthorityAccessSpecification{
-		Format:          AuthorityAccessSpecificationFormat,
-		PostgreSQLMajor: AuthorityAccessPostgreSQLMajor,
+		Format:                        AuthorityAccessSpecificationFormat,
+		PostgreSQLMajor:               AuthorityAccessPostgreSQLMajor,
+		MigrationCatalogDigest:        migrationCatalogDigest,
+		AuthorityManifestDigest:       authorityManifestDigest,
+		ExecutorCompatibilityVersion:  AuthorityAccessExecutorCompatibility,
+		ValidatorCompatibilityVersion: AuthorityAccessValidatorCompatibility,
 		DatabaseOwner: AuthorityDatabaseOwnerSpecification{
 			Database:          manifest.DatabaseName,
 			Role:              manifest.DatabaseOwnerRole,
@@ -304,6 +322,10 @@ func authorityDefaultPrivilegeSpecifications(
 func validAuthorityAccessSpecification(specification AuthorityAccessSpecification) bool {
 	if specification.Format != AuthorityAccessSpecificationFormat ||
 		specification.PostgreSQLMajor != AuthorityAccessPostgreSQLMajor ||
+		!canonicalSHA256Digest.MatchString(specification.MigrationCatalogDigest) ||
+		!canonicalSHA256Digest.MatchString(specification.AuthorityManifestDigest) ||
+		specification.ExecutorCompatibilityVersion != AuthorityAccessExecutorCompatibility ||
+		specification.ValidatorCompatibilityVersion != AuthorityAccessValidatorCompatibility ||
 		specification.DatabaseOwner.Database == "" || specification.DatabaseOwner.Role == "" ||
 		!specification.DatabaseOwner.PreflightRequired || len(specification.Roles) == 0 ||
 		len(specification.Memberships) == 0 || len(specification.Objects) == 0 ||

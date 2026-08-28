@@ -18,6 +18,12 @@ func TestCurrentAuthorityAccessSpecification(t *testing.T) {
 		specification.PostgreSQLMajor != AuthorityAccessPostgreSQLMajor {
 		t.Fatalf("specification identity = %#v", specification)
 	}
+	if !canonicalSHA256Digest.MatchString(specification.MigrationCatalogDigest) ||
+		!canonicalSHA256Digest.MatchString(specification.AuthorityManifestDigest) ||
+		specification.ExecutorCompatibilityVersion != AuthorityAccessExecutorCompatibility ||
+		specification.ValidatorCompatibilityVersion != AuthorityAccessValidatorCompatibility {
+		t.Fatalf("specification compatibility binding = %#v", specification)
+	}
 	if specification.DatabaseOwner != (AuthorityDatabaseOwnerSpecification{
 		Database:          manifest.DatabaseName,
 		Role:              manifest.DatabaseOwnerRole,
