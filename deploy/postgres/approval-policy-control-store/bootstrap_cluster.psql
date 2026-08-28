@@ -1,0 +1,33 @@
+\set ON_ERROR_STOP on
+
+-- Required psql variables:
+--   control_database: dedicated database name
+--   owner_role:       dedicated NOLOGIN owner
+--   reader_role:      dedicated LOGIN role for identity/current-state reads
+--   activator_role:   dedicated LOGIN role for reads plus exact CAS activation
+--
+-- This script is deliberately create-only. Re-running it must fail instead of silently adopting
+-- unknown roles or a database whose attributes were not created by this deployment unit.
+
+CREATE ROLE :"owner_role"
+    NOLOGIN NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS
+    CONNECTION LIMIT -1;
+
+CREATE ROLE :"reader_role"
+    LOGIN NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS
+    CONNECTION LIMIT -1;
+
+CREATE ROLE :"activator_role"
+    LOGIN NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS
+    CONNECTION LIMIT -1;
+
+CREATE DATABASE :"control_database"
+    OWNER :"owner_role"
+    TEMPLATE template0
+    ENCODING 'UTF8';
+
+REVOKE ALL ON DATABASE :"control_database" FROM PUBLIC;
+REVOKE ALL ON DATABASE :"control_database" FROM :"reader_role";
+REVOKE ALL ON DATABASE :"control_database" FROM :"activator_role";
+GRANT CONNECT ON DATABASE :"control_database" TO :"reader_role";
+GRANT CONNECT ON DATABASE :"control_database" TO :"activator_role";

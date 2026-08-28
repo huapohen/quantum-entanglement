@@ -1,0 +1,472 @@
+\set ON_ERROR_STOP on
+
+-- Run in control_database as a provisioner allowed to SET ROLE owner_role. The only substituted
+-- identifiers are quoted by psql's :"name" form. This schema has an independent lifecycle from
+-- the IM target database and must never be installed in that target database.
+
+BEGIN;
+SET LOCAL ROLE :"owner_role";
+SET LOCAL search_path TO pg_catalog;
+
+CREATE SCHEMA wanwork_policy_control AUTHORIZATION :"owner_role";
+REVOKE ALL ON SCHEMA wanwork_policy_control FROM PUBLIC;
+
+CREATE TABLE wanwork_policy_control.approval_policy_archive (
+    policy_id text COLLATE pg_catalog."C" NOT NULL,
+    target_digest text COLLATE pg_catalog."C" NOT NULL,
+    revision bigint NOT NULL,
+    policy_digest text COLLATE pg_catalog."C" NOT NULL,
+    previous_policy_digest text COLLATE pg_catalog."C" NOT NULL,
+    canonical_policy bytea NOT NULL,
+    archived_at timestamptz NOT NULL DEFAULT pg_catalog.transaction_timestamp(),
+    CONSTRAINT approval_policy_archive_pk
+        PRIMARY KEY (policy_id, target_digest, revision),
+    CONSTRAINT approval_policy_archive_policy_digest_uk
+        UNIQUE (policy_id, target_digest, policy_digest),
+    CONSTRAINT approval_policy_archive_head_fk_uk
+        UNIQUE (policy_id, target_digest, revision, policy_digest),
+    CONSTRAINT approval_policy_archive_policy_id_ck CHECK (
+        policy_id ~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' AND
+        policy_id LIKE 'approval-policy/%'
+    ),
+    CONSTRAINT approval_policy_archive_target_digest_ck CHECK (
+        target_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_policy_archive_revision_ck CHECK (
+        revision > 0 AND revision <= 9223372036854775807
+    ),
+    CONSTRAINT approval_policy_archive_policy_digest_ck CHECK (
+        policy_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_policy_archive_previous_digest_ck CHECK (
+        (revision = 1 AND previous_policy_digest = '') OR
+        (revision > 1 AND previous_policy_digest ~ '^sha256:[0-9a-f]{64}$')
+    ),
+    CONSTRAINT approval_policy_archive_canonical_policy_ck CHECK (
+        pg_catalog.octet_length(canonical_policy) BETWEEN 1 AND 131072
+    )
+);
+
+CREATE TABLE wanwork_policy_control.approval_policy_activation_record (
+    policy_id text COLLATE pg_catalog."C" NOT NULL,
+    target_digest text COLLATE pg_catalog."C" NOT NULL,
+    revision bigint NOT NULL,
+    policy_digest text COLLATE pg_catalog."C" NOT NULL,
+    activation_record_digest text COLLATE pg_catalog."C" NOT NULL,
+    canonical_record bytea NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT pg_catalog.transaction_timestamp(),
+    CONSTRAINT approval_policy_activation_record_pk
+        PRIMARY KEY (policy_id, target_digest, revision),
+    CONSTRAINT approval_policy_activation_record_digest_uk
+        UNIQUE (policy_id, target_digest, activation_record_digest),
+    CONSTRAINT approval_policy_activation_record_head_fk_uk
+        UNIQUE (policy_id, target_digest, revision, policy_digest, activation_record_digest),
+    CONSTRAINT approval_policy_activation_record_policy_id_ck CHECK (
+        policy_id ~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' AND
+        policy_id LIKE 'approval-policy/%'
+    ),
+    CONSTRAINT approval_policy_activation_record_target_digest_ck CHECK (
+        target_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_policy_activation_record_revision_ck CHECK (
+        revision > 0 AND revision <= 9223372036854775807
+    ),
+    CONSTRAINT approval_policy_activation_record_policy_digest_ck CHECK (
+        policy_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_policy_activation_record_digest_ck CHECK (
+        activation_record_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_policy_activation_record_canonical_record_ck CHECK (
+        pg_catalog.octet_length(canonical_record) BETWEEN 1 AND 32768
+    ),
+    CONSTRAINT approval_policy_activation_record_archive_fk FOREIGN KEY (
+        policy_id, target_digest, revision, policy_digest
+    ) REFERENCES wanwork_policy_control.approval_policy_archive (
+        policy_id, target_digest, revision, policy_digest
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
+CREATE TABLE wanwork_policy_control.approval_policy_head (
+    policy_id text COLLATE pg_catalog."C" NOT NULL,
+    target_digest text COLLATE pg_catalog."C" NOT NULL,
+    revision bigint NOT NULL,
+    policy_digest text COLLATE pg_catalog."C" NOT NULL,
+    activation_record_digest text COLLATE pg_catalog."C" NOT NULL,
+    advanced_at timestamptz NOT NULL DEFAULT pg_catalog.transaction_timestamp(),
+    CONSTRAINT approval_policy_head_pk PRIMARY KEY (policy_id, target_digest),
+    CONSTRAINT approval_policy_head_archive_fk FOREIGN KEY (
+        policy_id, target_digest, revision, policy_digest
+    ) REFERENCES wanwork_policy_control.approval_policy_archive (
+        policy_id, target_digest, revision, policy_digest
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT approval_policy_head_activation_record_fk FOREIGN KEY (
+        policy_id, target_digest, revision, policy_digest, activation_record_digest
+    ) REFERENCES wanwork_policy_control.approval_policy_activation_record (
+        policy_id, target_digest, revision, policy_digest, activation_record_digest
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
+CREATE FUNCTION wanwork_policy_control.read_store_identity()
+RETURNS TABLE (
+    login_role text,
+    owner_role text,
+    database_name text,
+    server_version_num integer,
+    in_recovery boolean,
+    system_identifier text,
+    schema_format text,
+    schema_digest text
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+PARALLEL RESTRICTED
+SET search_path TO pg_catalog
+AS $function$
+    SELECT
+        session_user::text,
+        current_user::text,
+        pg_catalog.current_database()::text,
+        pg_catalog.current_setting('server_version_num')::integer,
+        pg_catalog.pg_is_in_recovery(),
+        control.system_identifier::text,
+        'wanwork.im.postgres-approval-policy-control-store/1'::text,
+        'sha256:8a64c08cb0268beade6be94a410d865db4d384cd50107168e7d573386c23e4c5'::text
+    FROM pg_catalog.pg_control_system() AS control
+$function$;
+
+CREATE FUNCTION wanwork_policy_control.read_approval_policy_state(
+    p_policy_id text,
+    p_target_digest text
+)
+RETURNS TABLE (
+    state_status text,
+    activation_record_digest text,
+    policy_digest text,
+    revision bigint,
+    canonical_policy bytea,
+    canonical_record bytea
+)
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+PARALLEL SAFE
+SET search_path TO pg_catalog
+AS $function$
+    WITH history AS (
+        SELECT
+            archive.revision,
+            archive.policy_digest,
+            archive.previous_policy_digest,
+            pg_catalog.row_number() OVER (ORDER BY archive.revision) AS ordinal,
+            pg_catalog.lag(archive.policy_digest) OVER (ORDER BY archive.revision) AS prior_digest
+        FROM wanwork_policy_control.approval_policy_archive AS archive
+        WHERE archive.policy_id = p_policy_id
+          AND archive.target_digest = p_target_digest
+    ),
+    history_audit AS (
+        SELECT
+            pg_catalog.count(*) AS row_count,
+            COALESCE(pg_catalog.max(history.revision), 0) AS maximum_revision,
+            COALESCE(pg_catalog.bool_and(
+                history.revision = history.ordinal AND
+                ((history.revision = 1 AND history.previous_policy_digest = '') OR
+                 (history.revision > 1 AND history.previous_policy_digest = history.prior_digest))
+            ), true) AS valid
+        FROM history
+    ),
+    activation_audit AS (
+        SELECT
+            pg_catalog.count(*) AS row_count,
+            COALESCE(pg_catalog.bool_and(EXISTS (
+                SELECT 1
+                FROM wanwork_policy_control.approval_policy_archive AS archive
+                WHERE archive.policy_id = activation.policy_id
+                  AND archive.target_digest = activation.target_digest
+                  AND archive.revision = activation.revision
+                  AND archive.policy_digest = activation.policy_digest
+            )), true) AS valid
+        FROM wanwork_policy_control.approval_policy_activation_record AS activation
+        WHERE activation.policy_id = p_policy_id
+          AND activation.target_digest = p_target_digest
+    ),
+    head_row AS (
+        SELECT head.revision, head.policy_digest, head.activation_record_digest
+        FROM wanwork_policy_control.approval_policy_head AS head
+        WHERE head.policy_id = p_policy_id
+          AND head.target_digest = p_target_digest
+    ),
+    current_row AS (
+        SELECT
+            head.revision,
+            head.policy_digest,
+            head.activation_record_digest,
+            archive.canonical_policy,
+            activation.canonical_record
+        FROM head_row AS head
+        INNER JOIN wanwork_policy_control.approval_policy_archive AS archive
+            ON archive.policy_id = p_policy_id
+           AND archive.target_digest = p_target_digest
+           AND archive.revision = head.revision
+           AND archive.policy_digest = head.policy_digest
+        INNER JOIN wanwork_policy_control.approval_policy_activation_record AS activation
+            ON activation.policy_id = p_policy_id
+           AND activation.target_digest = p_target_digest
+           AND activation.revision = head.revision
+           AND activation.policy_digest = head.policy_digest
+           AND activation.activation_record_digest = head.activation_record_digest
+        WHERE pg_catalog.octet_length(archive.canonical_policy) BETWEEN 1 AND 131072
+          AND pg_catalog.octet_length(activation.canonical_record) BETWEEN 1 AND 32768
+    ),
+    classified AS (
+        SELECT
+            CASE
+                WHEN head.revision IS NULL AND history.row_count = 0 AND activation.row_count = 0
+                    THEN 'empty'
+                WHEN head.revision IS NOT NULL AND current.revision IS NOT NULL AND
+                     history.valid AND activation.valid AND
+                     history.row_count = head.revision AND
+                     activation.row_count = head.revision AND
+                     history.maximum_revision = head.revision
+                    THEN 'present'
+                ELSE 'corrupt'
+            END AS status,
+            current.activation_record_digest,
+            current.policy_digest,
+            current.revision,
+            current.canonical_policy,
+            current.canonical_record
+        FROM history_audit AS history
+        CROSS JOIN activation_audit AS activation
+        LEFT JOIN head_row AS head ON true
+        LEFT JOIN current_row AS current ON true
+    )
+    SELECT
+        classified.status,
+        CASE WHEN classified.status = 'present' THEN classified.activation_record_digest END,
+        CASE WHEN classified.status = 'present' THEN classified.policy_digest END,
+        CASE WHEN classified.status = 'present' THEN classified.revision END,
+        CASE WHEN classified.status = 'present' THEN classified.canonical_policy END,
+        CASE WHEN classified.status = 'present' THEN classified.canonical_record END
+    FROM classified
+$function$;
+
+CREATE FUNCTION wanwork_policy_control.compare_and_activate_approval_policy(
+    p_policy_id text,
+    p_target_digest text,
+    p_expected_revision bigint,
+    p_expected_policy_digest text,
+    p_expected_activation_record_digest text,
+    p_candidate_revision bigint,
+    p_candidate_policy_digest text,
+    p_candidate_activation_record_digest text,
+    p_canonical_policy bytea,
+    p_canonical_record bytea
+)
+RETURNS text
+LANGUAGE plpgsql
+VOLATILE
+STRICT
+SECURITY DEFINER
+PARALLEL UNSAFE
+SET search_path TO pg_catalog
+AS $function$
+DECLARE
+    canonical_policy_document jsonb;
+    canonical_policy_key_count bigint;
+    canonical_record_document jsonb;
+    canonical_record_key_count bigint;
+    current_state_status text;
+    current_activation_record_digest text;
+    current_policy_digest text;
+    current_revision bigint;
+    changed_rows bigint;
+BEGIN
+    IF p_policy_id !~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       p_policy_id NOT LIKE 'approval-policy/%' OR
+       p_target_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_expected_revision < 0 OR
+       p_expected_revision >= 9223372036854775807 OR
+       p_candidate_revision <> p_expected_revision + 1 OR
+       p_candidate_policy_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_candidate_activation_record_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       pg_catalog.octet_length(p_canonical_policy) NOT BETWEEN 1 AND 131072 OR
+       pg_catalog.octet_length(p_canonical_record) NOT BETWEEN 1 AND 32768 OR
+       (p_expected_revision = 0 AND (
+           p_expected_policy_digest <> '' OR p_expected_activation_record_digest <> ''
+       )) OR
+       (p_expected_revision > 0 AND (
+           p_expected_policy_digest !~ '^sha256:[0-9a-f]{64}$' OR
+           p_expected_activation_record_digest !~ '^sha256:[0-9a-f]{64}$'
+       )) THEN
+        RETURN 'rejected';
+    END IF;
+
+    BEGIN
+        canonical_policy_document := pg_catalog.convert_from(p_canonical_policy, 'UTF8')::jsonb;
+        canonical_record_document := pg_catalog.convert_from(p_canonical_record, 'UTF8')::jsonb;
+        SELECT pg_catalog.count(*) INTO canonical_policy_key_count
+        FROM pg_catalog.jsonb_object_keys(canonical_policy_document);
+        SELECT pg_catalog.count(*) INTO canonical_record_key_count
+        FROM pg_catalog.jsonb_object_keys(canonical_record_document);
+    EXCEPTION WHEN OTHERS THEN
+        RETURN 'rejected';
+    END;
+
+    IF pg_catalog.jsonb_typeof(canonical_policy_document) IS DISTINCT FROM 'object' OR
+       pg_catalog.jsonb_typeof(canonical_record_document) IS DISTINCT FROM 'object' OR
+       canonical_policy_key_count <> 14 OR
+       canonical_record_key_count <> 14 OR
+       canonical_policy_document->>'format' IS DISTINCT FROM
+           'wanwork.im.postgres-authority-approval-policy/1' OR
+       canonical_policy_document->>'policyId' IS DISTINCT FROM p_policy_id OR
+       canonical_policy_document->>'revision' IS DISTINCT FROM p_candidate_revision::text OR
+       canonical_policy_document->>'policyDigest' IS DISTINCT FROM p_candidate_policy_digest OR
+       canonical_policy_document->>'previousPolicyDigest' IS DISTINCT FROM p_expected_policy_digest OR
+       pg_catalog.jsonb_typeof(canonical_policy_document->'target') IS DISTINCT FROM 'object' OR
+       pg_catalog.jsonb_typeof(canonical_policy_document->'keys') IS DISTINCT FROM 'array' OR
+       pg_catalog.jsonb_typeof(canonical_policy_document->'rootSignatures') IS DISTINCT FROM 'array' OR
+       pg_catalog.jsonb_array_length(canonical_policy_document->'rootSignatures') NOT BETWEEN 2 AND 8 OR
+       canonical_record_document->>'format' IS DISTINCT FROM
+           'wanwork.im.postgres-authority-approval-policy-activation/1' OR
+       canonical_record_document->>'policyId' IS DISTINCT FROM p_policy_id OR
+       canonical_record_document->>'targetDigest' IS DISTINCT FROM p_target_digest OR
+       canonical_record_document->>'revision' IS DISTINCT FROM p_candidate_revision::text OR
+       canonical_record_document->>'policyDigest' IS DISTINCT FROM p_candidate_policy_digest OR
+       canonical_record_document->>'previousPolicyDigest' IS DISTINCT FROM p_expected_policy_digest OR
+       canonical_record_document->>'activationRecordDigest' IS DISTINCT FROM
+           p_candidate_activation_record_digest OR
+       canonical_record_document->>'mutationAuthorized' IS DISTINCT FROM 'false' OR
+       COALESCE(canonical_record_document->>'policyEnvelopeDigest', '') !~
+           '^sha256:[0-9a-f]{64}$' OR
+       COALESCE(canonical_record_document->>'rootTrustBundleDigest', '') !~
+           '^sha256:[0-9a-f]{64}$' OR
+       pg_catalog.jsonb_typeof(canonical_record_document->'rootSignerFingerprints') IS DISTINCT FROM
+           'array' OR
+       pg_catalog.jsonb_array_length(canonical_record_document->'rootSignerFingerprints') NOT BETWEEN 2 AND 8 OR
+       canonical_record_document->>'approvalVerificationEnabled' IS DISTINCT FROM
+           (CASE canonical_policy_document->>'denyAll' WHEN 'true' THEN 'false' ELSE 'true' END) THEN
+        RETURN 'rejected';
+    END IF;
+
+    -- The namespace lock also covers genesis, where no head row exists yet. Hash collisions only
+    -- serialize unrelated activations; they cannot merge namespaces or weaken the exact CAS.
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(p_policy_id || E'\\000' || p_target_digest, 7318470029)
+    );
+
+    SELECT state.state_status, state.revision, state.policy_digest, state.activation_record_digest
+    INTO current_state_status, current_revision, current_policy_digest, current_activation_record_digest
+    FROM wanwork_policy_control.read_approval_policy_state(
+        p_policy_id,
+        p_target_digest
+    ) AS state;
+
+    IF current_state_status = 'corrupt' THEN
+        RETURN 'corrupt';
+    ELSIF current_state_status = 'empty' THEN
+        IF p_expected_revision <> 0 OR p_expected_policy_digest <> '' OR
+           p_expected_activation_record_digest <> '' THEN
+            RETURN 'conflict';
+        END IF;
+    ELSIF current_state_status <> 'present' THEN
+        RETURN 'corrupt';
+    ELSIF current_revision <> p_expected_revision OR
+          current_policy_digest <> p_expected_policy_digest OR
+          current_activation_record_digest <> p_expected_activation_record_digest THEN
+        RETURN 'conflict';
+    END IF;
+
+    INSERT INTO wanwork_policy_control.approval_policy_archive (
+        policy_id,
+        target_digest,
+        revision,
+        policy_digest,
+        previous_policy_digest,
+        canonical_policy
+    ) VALUES (
+        p_policy_id,
+        p_target_digest,
+        p_candidate_revision,
+        p_candidate_policy_digest,
+        p_expected_policy_digest,
+        p_canonical_policy
+    );
+
+    INSERT INTO wanwork_policy_control.approval_policy_activation_record (
+        policy_id,
+        target_digest,
+        revision,
+        policy_digest,
+        activation_record_digest,
+        canonical_record
+    ) VALUES (
+        p_policy_id,
+        p_target_digest,
+        p_candidate_revision,
+        p_candidate_policy_digest,
+        p_candidate_activation_record_digest,
+        p_canonical_record
+    );
+
+    IF p_expected_revision = 0 THEN
+        INSERT INTO wanwork_policy_control.approval_policy_head (
+            policy_id,
+            target_digest,
+            revision,
+            policy_digest,
+            activation_record_digest
+        ) VALUES (
+            p_policy_id,
+            p_target_digest,
+            p_candidate_revision,
+            p_candidate_policy_digest,
+            p_candidate_activation_record_digest
+        );
+    ELSE
+        UPDATE wanwork_policy_control.approval_policy_head
+        SET revision = p_candidate_revision,
+            policy_digest = p_candidate_policy_digest,
+            activation_record_digest = p_candidate_activation_record_digest,
+            advanced_at = pg_catalog.transaction_timestamp()
+        WHERE policy_id = p_policy_id
+          AND target_digest = p_target_digest
+          AND revision = p_expected_revision
+          AND policy_digest = p_expected_policy_digest
+          AND activation_record_digest = p_expected_activation_record_digest;
+        GET DIAGNOSTICS changed_rows = ROW_COUNT;
+        IF changed_rows <> 1 THEN
+            RAISE EXCEPTION USING
+                ERRCODE = '40001',
+                MESSAGE = 'approval policy head changed after namespace lock';
+        END IF;
+    END IF;
+    RETURN 'committed';
+END
+$function$;
+
+REVOKE ALL ON ALL TABLES IN SCHEMA wanwork_policy_control FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA wanwork_policy_control FROM :"reader_role";
+REVOKE ALL ON ALL TABLES IN SCHEMA wanwork_policy_control FROM :"activator_role";
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA wanwork_policy_control FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA wanwork_policy_control FROM :"reader_role";
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA wanwork_policy_control FROM :"activator_role";
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA wanwork_policy_control FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA wanwork_policy_control FROM :"reader_role";
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA wanwork_policy_control FROM :"activator_role";
+
+GRANT USAGE ON SCHEMA wanwork_policy_control TO :"reader_role";
+GRANT USAGE ON SCHEMA wanwork_policy_control TO :"activator_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_store_identity() TO :"reader_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_store_identity() TO :"activator_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_approval_policy_state(text, text)
+    TO :"reader_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_approval_policy_state(text, text)
+    TO :"activator_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.compare_and_activate_approval_policy(
+    text, text, bigint, text, text, bigint, text, text, bytea, bytea
+) TO :"activator_role";
+
+COMMIT;
