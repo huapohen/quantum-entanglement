@@ -149,7 +149,7 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 
 | 能力 | 状态 | 决策 |
 |---|---|---|
-| 默认 fake/no-outbound API 本地验收 | 已实现 | Go |
+| 默认 zero-outbound API shell 本地验收 | 已实现 | Go（provider 仅占位标识，adapter 未实现） |
 | PostgreSQL runtime config/pool/readiness 专项验收 | 已实现 | Go（仅 disposable local/exact fixture） |
 | one-shot migrator config/process boundary | 已实现 | Go（尚非 production bootstrap） |
 | production ownership/grant cutover | 未实现 | No-Go |

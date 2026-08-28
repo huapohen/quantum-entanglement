@@ -360,7 +360,7 @@ dedupe 不变量和恢复证据。
 
 当前适合停下来验收的是：
 
-- 默认 fake/no-outbound 服务仍能启动；
+- 默认 zero-outbound API shell 仍能启动；provider 目前只有占位标识，不是可调用的 fake adapter；
 - runtime DB 配置合同、attested pool 和 readiness/gate 的代码与测试；
 - 独立 migrator 的进程/credential 边界；
 - 报告、HTML 与结构图是否准确表达“已完成/未完成”。

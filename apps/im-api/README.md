@@ -1,10 +1,11 @@
 # WanWork IM API
 
 Go/Fiber backend for the native WanWork IM. This module is intentionally isolated from the existing Python
-package. The default service remains a zero-outbound local fake, while an explicit runtime mode now composes a
+package. The default service remains a zero-outbound local API shell, while an explicit runtime mode now composes a
 strictly admitted PostgreSQL URL, an attested runtime-only pool, exact readiness, a controlled Unit of Work,
 and an API route barrier. Production IaC/cutover/credential rotation, Clerk, RongCloud, model, tool, and
-outbound adapters are still not delivered.
+outbound adapters are still not delivered; in particular, the current provider identifiers are placeholders,
+not working fake adapters.
 
 ## Run the current scaffold
 
@@ -23,8 +24,8 @@ WANWORK_IM_LISTEN_ADDRESS=127.0.0.1:19080 ./scripts/start_im_api.sh
 
 The script refuses to start if PostgreSQL runtime variables are already present unless
 `WANWORK_IM_ALLOW_RUNTIME_COMPOSITION=1` is set explicitly. In default mode the immutable configuration accepts
-only a numeric loopback listener, fixes auth/IM providers to their fake implementations, and fixes outbound to
-`disabled`.
+only a numeric loopback listener, fixes auth/IM provider identifiers to placeholder values, and fixes outbound to
+`disabled`; it does not instantiate an IM provider adapter.
 
 Verify the default mode:
 
