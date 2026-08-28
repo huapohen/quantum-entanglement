@@ -100,8 +100,8 @@ is `qe.sqlite-backup/1` and records:
 - SQLite page count and page size;
 - counts for known tables that exist in the snapshot, including projection checkpoints,
   projection receipts, durable revocation high-water state, and the migration-4
-  `invocation_admissions` receipt table when those components have initialized their
-  tables;
+  `invocation_admissions` receipt table, migration-5 native-IM inbox graph, and migration-6
+  `native_im_inbound_provenance` table when those components have initialized their tables;
 - each applied migration version, filename, packaged SQL checksum, and application
   timestamp.
 
@@ -109,21 +109,22 @@ The manifest does not contain credentials or raw artifact/event content. It is n
 cryptographically authenticated, however, so custody controls must protect the database
 and manifest together.
 
-For `projection_offsets`, `projection_receipts`, `qe_revocation_high_water`, and
-`invocation_admissions`, creation records a count whenever the table exists in the copied
-snapshot. Verification derives the same evidence from the opened database: changing one
-of these counts or removing its manifest entry while the table remains present fails with
-a table-count mismatch. This closes silent omission of projection idempotency,
-authorization anti-rollback state, and atomic-admission receipt inventory from a normally
-created pair.
+For every known table in the fixed v1 inventory—including `projection_offsets`,
+`projection_receipts`, `qe_revocation_high_water`, `invocation_admissions`, the native-IM inbox
+tables and `native_im_inbound_provenance`—creation records a count whenever the table exists in the
+copied snapshot. Verification derives the same evidence from the opened database: changing one of
+these counts or removing its manifest entry while the table remains present fails with a table-count
+mismatch. This closes silent omission of projection idempotency, authorization anti-rollback state,
+atomic-admission receipt inventory and native-IM admission provenance from a normally created pair.
 
 The active v1 implementation recognizes the exact continuous migration prefix through
-`0004_invocation_admissions.up.sql`. The retained downgrade test gives the current
-validator a registry ending at v3; it raises `MigrationVersionError` for ledger row 4 and
-leaves the database unchanged. This proves validator-level behavior, not a historical v3
-wheel in an independent process; the real mixed-wheel/process matrix remains open. Never
-delete row 4 or the receipt table to make an old binary accept the database; use the
-matching tested binary and an evidence-backed rollback or restore decision.
+`0006_native_im_sandbox_provenance.up.sql`. The retained focused downgrade test gives the current
+validator a registry ending at v3; it raises `MigrationVersionError` for ledger row 4 and leaves the
+database unchanged. This proves the earlier validator boundary, not a historical wheel in an
+independent process. Installed-wheel/process evidence for the migration-5 inbox and migration-6
+provenance boundaries remains open. Never delete ledger rows or durable safety tables to make an old
+binary accept the database; use the matching tested binary and an evidence-backed rollback or
+restore decision.
 
 Format version 1 intentionally remains readable for databases created before one of
 these self-initializing components was enabled, so it does not require a component table
@@ -354,7 +355,7 @@ the deployment environment.
 | Backup/manifest path is replaced during verify | Verify continues on stable FD then fails identity check | Repeat under deployment mount |
 | Backup/manifest is changed in place during verify | Digest/reread check fails | Repeat under deployment mount |
 | Backup parent is replaced during verify | Parent identity check fails | Repeat under deployment mount |
-| Migration ledger is future/gapped/drifted, including v4 opened by a v3 registry | Backup/verify fails closed before mutation | Upgrade/rollback compatibility drill |
+| Migration ledger is future/gapped/drifted, including current v6 opened by an older registry | Backup/verify fails closed before mutation | Upgrade/rollback compatibility drill |
 | Migration-owned schema is missing/weakened | Schema congruence check fails | Corruption quarantine exercise |
 | Projection receipt count is changed or omitted from a normally created manifest | Verification fails with table-count drift | Compare receipt/checkpoint identities and positions after restore |
 | Revocation high-water count is changed or omitted from a normally created manifest | Verification fails with table-count drift | Compare every tenant revision and digest before authorization is enabled |
@@ -484,7 +485,7 @@ files or edit the migration ledger manually.
 | Pair contains only database or only manifest | Treat it as incomplete; do not synthesize the missing member |
 | Path/inode replacement is detected | Abort, preserve the replacement, and investigate directory access |
 | Post-publication restore check fails | Remove only the destination inode created by that restore |
-| V3 binary rejects a v4 migration history | Use the matching tested v4 binary/backup; never edit checksums, ledger rows, or `invocation_admissions` |
+| An older binary rejects current v6 migration history | Use the matching tested v6 binary/backup; never edit checksums, ledger rows, inbox tables, or provenance |
 | Activation validation fails before traffic | Keep traffic closed; preserve candidate and select an evidence-backed rollback path |
 | Validation fails after traffic/effects | Freeze both timelines and perform incident reconciliation; do not blindly switch back |
 
