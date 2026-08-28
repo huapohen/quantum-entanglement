@@ -436,6 +436,25 @@ func TestApprovalExecutionFencerUsesOwnedClockOnce(t *testing.T) {
 	}
 }
 
+func TestApprovalExecutionFencerPreservesAuthoritativeStoreExpiry(t *testing.T) {
+	fixture := newApprovalExecutionFenceFixture(t)
+	store := newFakeApprovalExecutionFenceStore(fixture.report.ExpiresAt())
+	fencer := mustApprovalExecutionFencer(t, store, 0x7d, fixture.now)
+	if _, err := fencer.ConsumeAndFence(
+		t.Context(),
+		fixture.plan,
+		fixture.approval,
+		fixture.report,
+		fixture.attempt,
+	); !errors.Is(err, ErrApprovalExecutionExpired) {
+		t.Fatalf("store expiry error = %v, want %v", err, ErrApprovalExecutionExpired)
+	}
+	if store.compareCalls != 1 || store.loadCalls != 1 || len(store.states) != 0 ||
+		len(store.activeByTarget) != 0 || len(store.nextEpochByTarget) != 0 {
+		t.Fatalf("expired store call left durable state: %+v", store)
+	}
+}
+
 func TestApprovalExecutionFencerAllowsOneConcurrentApprovalConsumption(t *testing.T) {
 	fixture := newApprovalExecutionFenceFixture(t)
 	store := newFakeApprovalExecutionFenceStore(fixture.now)
@@ -865,12 +884,16 @@ func (store *fakeApprovalExecutionFenceStore) CompareAndOpen(
 	if _, exists := store.consumptions[candidate.record.ConsumptionID]; exists {
 		return ErrApprovalExecutionConflict
 	}
+	openedAt := store.clock().UTC()
+	if !openedAt.Before(candidate.record.MutationNotAfter) {
+		return ErrApprovalExecutionExpired
+	}
 	store.nextEpochByTarget[namespace.TargetDigest]++
 	nextEpoch := store.nextEpochByTarget[namespace.TargetDigest]
 	record, err := sealApprovalExecutionFenceRecord(
 		candidate,
 		nextEpoch,
-		store.clock().UTC(),
+		openedAt,
 		tokenDigest,
 	)
 	if err != nil {

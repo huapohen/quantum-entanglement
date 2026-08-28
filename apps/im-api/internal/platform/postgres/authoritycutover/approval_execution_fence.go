@@ -254,6 +254,10 @@ func (fencer ApprovalExecutionFencer) ConsumeAndFence(
 			errors.Is(commitErr, ErrInvalidApprovalExecutionState) {
 			return ApprovalMutationFence{}, ErrInvalidApprovalExecutionState
 		}
+		if errors.Is(readbackErr, ErrApprovalExecutionFenceNotFound) &&
+			errors.Is(commitErr, ErrApprovalExecutionExpired) {
+			return ApprovalMutationFence{}, ErrApprovalExecutionExpired
+		}
 		if commitErr == nil || errors.Is(commitErr, ErrApprovalExecutionCommitUncertain) {
 			return ApprovalMutationFence{}, ErrApprovalExecutionCommitUncertain
 		}
