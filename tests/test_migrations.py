@@ -386,6 +386,28 @@ class MigrationRunnerTests(unittest.TestCase):
         self.assertFalse(self.table_exists("qe_schema_migrations"))
         self.assertFalse(self.table_exists("invocation_result_manifests"))
 
+    def test_public_runner_rejects_hostile_duck_registry_before_database_mutation(self):
+        class HostileMigrationDuck:
+            version = 1
+            filename = "0007_invocation_results.up.sql"
+
+            def __eq__(self, other):
+                return True
+
+        with self.assertRaisesRegex(
+            TypeError,
+            "exact Migration instances",
+        ):
+            apply_sqlite_migrations(
+                self.connection,
+                migrations=(HostileMigrationDuck(),),
+                clock=lambda: NOW,
+            )
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertFalse(self.table_exists("qe_schema_migrations"))
+        self.assertFalse(self.table_exists("invocation_result_manifests"))
+
     def test_schema_validator_rejects_missing_and_weakened_migration_objects(self):
         apply_sqlite_migrations(
             self.connection,

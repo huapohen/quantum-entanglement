@@ -77,6 +77,8 @@ _DROP_OBJECT_PATTERN = re.compile(
 
 
 def _validate_registry(migrations: Sequence[Migration]) -> None:
+    if any(type(item) is not Migration for item in migrations):
+        raise TypeError("migration registry entries must be exact Migration instances")
     versions = [item.version for item in migrations]
     filenames = [item.filename for item in migrations]
     if versions != sorted(versions) or len(set(versions)) != len(versions):
@@ -374,7 +376,12 @@ def apply_sqlite_migrations(
     """
 
     selected = tuple(migrations)
-    if selected != tuple(MIGRATIONS[: len(selected)]):
+    _validate_registry(selected)
+    selected_identity = tuple((item.version, item.filename) for item in selected)
+    active_identity = tuple(
+        (item.version, item.filename) for item in MIGRATIONS[: len(selected)]
+    )
+    if selected_identity != active_identity:
         raise MigrationVersionError(
             "migration application is restricted to the active packaged registry prefix"
         )
