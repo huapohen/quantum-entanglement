@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120" role="img" aria-labelledby="title desc">
+  <title id="title">WanWork IM PostgreSQL attested runtime composition checkpoint</title>
+  <desc id="desc">The migration credential is isolated from the API. A strict connection policy, physical connection attestation, acquisition-time session guard, exact readiness validation, controlled unit of work, and route barrier form the delivered chain. Production cutover, identity authorization, provider integration, and recovery remain open.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#07111f"/><stop offset="1" stop-color="#12263d"/></linearGradient>
+    <linearGradient id="good" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0f766e"/><stop offset="1" stop-color="#14b8a6"/></linearGradient>
+    <linearGradient id="warn" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#92400e"/><stop offset="1" stop-color="#f59e0b"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-opacity=".3"/></filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#67e8f9"/></marker>
+    <style>
+      .title{font:700 44px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#f8fafc}.sub{font:500 20px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#a5f3fc}.h{font:700 24px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#f8fafc}.t{font:500 18px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#dbeafe}.small{font:500 15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#cbd5e1}.mono{font:600 15px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#cffafe}.line{stroke:#67e8f9;stroke-width:4;fill:none;marker-end:url(#arrow)}.dash{stroke:#fbbf24;stroke-width:3;stroke-dasharray:10 8;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1800" height="1120" rx="32" fill="url(#bg)"/>
+  <text x="72" y="80" class="title">PostgreSQL Attested Runtime Composition｜Topic 35</text>
+  <text x="72" y="118" class="sub">代码基线 5c19fdb · PostgreSQL 18.6 normal / race / vet 全绿 · 不等于 production IM</text>
+
+  <g filter="url(#shadow)">
+    <rect x="72" y="178" width="370" height="190" rx="22" fill="#172554" stroke="#60a5fa" stroke-width="2"/>
+    <text x="98" y="216" class="h">私有 Runtime 配置</text>
+    <text x="98" y="252" class="t">• runtime URL（不进 snapshot）</text>
+    <text x="98" y="284" class="t">• exact authority manifest</text>
+    <text x="98" y="316" class="t">• host-owned pool / timeout</text>
+    <text x="98" y="348" class="small">默认仍为 fake providers + outbound disabled</text>
+
+    <rect x="505" y="178" width="370" height="190" rx="22" fill="#164e63" stroke="#22d3ee" stroke-width="2"/>
+    <text x="531" y="216" class="h">Strict Connection Policy</text>
+    <text x="531" y="252" class="t">• URL / DB / login 精确绑定</text>
+    <text x="531" y="284" class="t">• 原始 key allowlist</text>
+    <text x="531" y="316" class="t">• verify-full 等价远端 TLS</text>
+    <text x="531" y="348" class="small">拒绝 parser-consumed 参数、fallback、multi-host</text>
+
+    <rect x="938" y="178" width="370" height="190" rx="22" fill="url(#good)" stroke="#5eead4" stroke-width="2"/>
+    <text x="964" y="216" class="h">Physical Conn Attestation</text>
+    <text x="964" y="252" class="t">• session=current=runtime login</text>
+    <text x="964" y="284" class="t">• SET ROLE exact runtime</text>
+    <text x="964" y="316" class="t">• frozen search_path / app name</text>
+    <text x="964" y="348" class="small">AfterConnect 执行完整 catalog exact validator</text>
+
+    <rect x="1371" y="178" width="357" height="190" rx="22" fill="#134e4a" stroke="#2dd4bf" stroke-width="2"/>
+    <text x="1397" y="216" class="h">Acquire-time Guard</text>
+    <text x="1397" y="252" class="t">• role / DB / TxStatus</text>
+    <text x="1397" y="284" class="t">• tenant GUC / session GUC</text>
+    <text x="1397" y="316" class="t">• advisory lock / LISTEN</text>
+    <text x="1397" y="348" class="small">污染连接 fail closed、销毁，不交给 UoW</text>
+  </g>
+
+  <path d="M442 273 H493" class="line"/><path d="M875 273 H926" class="line"/><path d="M1308 273 H1359" class="line"/>
+
+  <g filter="url(#shadow)">
+    <rect x="172" y="454" width="420" height="198" rx="22" fill="#12304a" stroke="#38bdf8" stroke-width="2"/>
+    <text x="198" y="494" class="h">Exact Readiness + Route Barrier</text>
+    <text x="198" y="532" class="t">/health/ready → HTTP 200 / 503</text>
+    <text x="198" y="566" class="t">/api/v1/* → HTTP 200 envelope 50301</text>
+    <text x="198" y="600" class="small">完整 role / membership / DB / schema / table / function / ACL 比较</text>
+    <text x="198" y="628" class="small">当前每次业务请求复验，安全但仍需性能化 gate</text>
+
+    <rect x="690" y="454" width="420" height="198" rx="22" fill="#123c3a" stroke="#2dd4bf" stroke-width="2"/>
+    <text x="716" y="494" class="h">Attested Unit of Work</text>
+    <text x="716" y="532" class="t">公开构造器不再接受 raw pgxpool</text>
+    <text x="716" y="566" class="t">owner / migrator pool 无法注入</text>
+    <text x="716" y="600" class="small">tenant GUC 仍只是数据库 transaction context</text>
+    <text x="716" y="628" class="small">它还不是 Clerk trusted tenant authorization</text>
+
+    <rect x="1208" y="454" width="420" height="198" rx="22" fill="#172554" stroke="#818cf8" stroke-width="2"/>
+    <text x="1234" y="494" class="h">One-shot im-migrate</text>
+    <text x="1234" y="532" class="t">独立 migration URL / login</text>
+    <text x="1234" y="566" class="t">SET ROLE owner → Apply → exact validate</text>
+    <text x="1234" y="600" class="small">API 不读取、不保留 owner-capable credential</text>
+    <text x="1234" y="628" class="small">首次 DBA ownership/grant cutover 尚未自动化</text>
+  </g>
+
+  <path d="M1549 368 V408 H382 V442" class="line"/><path d="M592 553 H678" class="line"/>
+  <path d="M1418 442 V408 H1123 V368" class="dash"/>
+
+  <g filter="url(#shadow)">
+    <rect x="72" y="742" width="1656" height="292" rx="24" fill="#201a17" stroke="#f59e0b" stroke-width="2"/>
+    <text x="102" y="788" class="h">下一阶段仍是硬门禁（未交付，不能被当前绿色测试替代）</text>
+    <rect x="104" y="820" width="488" height="170" rx="18" fill="#3f2a16"/>
+    <text x="130" y="858" class="h">Gate A 收尾</text>
+    <text x="130" y="894" class="t">生产 ownership / grant cutover plan + executor</text>
+    <text x="130" y="926" class="t">credential rotation、旧 session drain、恢复演练</text>
+    <text x="130" y="958" class="small">IaC、dump/restore、restart/kill-9、rolling upgrade</text>
+
+    <rect x="656" y="820" width="488" height="170" rx="18" fill="#3f2a16"/>
+    <text x="682" y="858" class="h">Trusted Identity / Participant</text>
+    <text x="682" y="894" class="t">Clerk JWT/JWKS → realm → principal</text>
+    <text x="682" y="926" class="t">membership → Actor → action-time permission</text>
+    <text x="682" y="958" class="small">人/Agent 一等身份 ≠ 相同管理权限</text>
+
+    <rect x="1208" y="820" width="488" height="170" rx="18" fill="#3f2a16"/>
+    <text x="1234" y="858" class="h">Mention / Thread / Provider</text>
+    <text x="1234" y="894" class="t">单 @Agent 确定性直达，durable admission</text>
+    <text x="1234" y="926" class="t">agent_thread 独立 ACL + receipt/reconcile</text>
+    <text x="1234" y="958" class="small">当前没有真实融云 outbound，也没有自动子群 E2E</text>
+  </g>
+
+  <text x="72" y="1080" class="mono">Evidence boundary: delivered database/service Gate-A slice ≠ production multitenancy ≠ provider delivery ≠ Agent Task/Artifact acceptance</text>
+</svg>
