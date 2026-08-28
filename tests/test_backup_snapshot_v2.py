@@ -195,8 +195,8 @@ class BackupManifestV2SnapshotTests(unittest.TestCase):
         self.assertIs(type(snapshot), BackupManifestV2Snapshot)
         self.assertEqual(snapshot.schema_state.shape, "bridged_prefix")
         self.assertEqual(len(snapshot.schema_state.applied_migrations), len(MIGRATIONS))
-        self.assertEqual(len(snapshot.registry_topology.present_profiles), 10)
-        self.assertEqual(len(snapshot.registry_topology.schema_objects), 85)
+        self.assertEqual(len(snapshot.registry_topology.present_profiles), 11)
+        self.assertEqual(len(snapshot.registry_topology.schema_objects), 88)
         self.assertEqual(
             tuple(item.profile for item in snapshot.registry_topology.present_profiles),
             tuple(profile.name for profile in BACKUP_TOPOLOGY_REGISTRY.profiles),

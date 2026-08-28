@@ -353,6 +353,7 @@ class NativeIMSandboxLifecycleV1:
                             verified.capability,
                             verified.page,
                             verified.raw_verification,
+                            verified.provenance,
                         )
                 if type(result) is not NativeIMInboundPageAdmissionResultV1:
                     raise NativeIMSandboxLifecycleError() from None
