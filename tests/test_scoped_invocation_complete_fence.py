@@ -89,8 +89,9 @@ class ScopedInvocationCompleteFenceTests(unittest.TestCase):
         lease: InvocationLease,
         *,
         expected_error: type[Exception] = InvocationCompletionPathReservedError,
+        clock_value: str = AFTER_EXPIRY,
     ) -> None:
-        clock = CountingClock(AFTER_EXPIRY)
+        clock = CountingClock(clock_value)
         with SQLiteInvocationAttemptStore(self.path, clock=clock) as attempts:
             clock.calls = 0
             before = durable_completion_state(attempts, lease.invocation_id)
@@ -162,6 +163,30 @@ class ScopedInvocationCompleteFenceTests(unittest.TestCase):
         )
 
         self.assert_scoped_complete_rejected(claimed.lease)
+
+    def test_drifted_type_and_key_remain_bound_by_scoped_payload_identity(self) -> None:
+        request, claimed = self.scoped_event_store_claim()
+        self.events._connection.execute(
+            "DELETE FROM invocation_admissions WHERE invocation_id = ?",
+            (request.manifest.invocation_id,),
+        )
+        self.events._connection.execute(
+            """
+            UPDATE events SET event_type = ?, idempotency_key = ?
+            WHERE event_id = ?
+            """,
+            (
+                "task.execution.requested.drift",
+                "execution-request-drift",
+                request.execution_requested_event_id,
+            ),
+        )
+
+        self.assert_scoped_complete_rejected(
+            claimed.lease,
+            expected_error=InvocationIntegrityError,
+            clock_value=CLAIMED_AT,
+        )
 
     def test_receipt_digest_drift_fails_as_integrity_not_legacy(self) -> None:
         request, claimed = self.scoped_event_store_claim()
