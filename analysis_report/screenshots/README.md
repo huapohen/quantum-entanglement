@@ -89,8 +89,8 @@
 | [`33_postgres_authority_persistence_map.png`](33_postgres_authority_persistence_map.png) | 1600×1000 | 不适用 / 2026-08-28 14:13:43 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1600×1000 确定性渲染，便于 Notion 审阅 | `08f6d1a3a7ce` |
 | [`34_postgres_function_only_writes_and_exact_access_map.svg`](34_postgres_function_only_writes_and_exact_access_map.svg) | 1600×1100 | 不适用 / 2026-08-28 18:21:07 +08:00 | `B-local-derived-documentation-visual`；一级调研→五函数写面→exact access→PG18.6 故障证据→剩余生产 gate 源图 | `d2b715afaa88` |
 | [`34_postgres_function_only_writes_and_exact_access_map.png`](34_postgres_function_only_writes_and_exact_access_map.png) | 1600×1100 | 不适用 / 2026-08-28 18:21:07 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1600×1100 确定性渲染，便于 Notion 审阅 | `586c3b5edebf` |
-| [`35_postgres_attested_runtime_composition_map.svg`](35_postgres_attested_runtime_composition_map.svg) | 1800×1120 | 不适用 / 2026-08-28 20:29:18 +08:00 | `B-local-derived-documentation-visual`；private config→ambient/default-file/raw-DSN hardening→physical/session attestation→readiness/UoW/API gate→剩余 P0 源图 | `22d75a40ee97` |
-| [`35_postgres_attested_runtime_composition_map.png`](35_postgres_attested_runtime_composition_map.png) | 1800×1120 | 不适用 / 2026-08-28 20:29:18 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1800×1120 确定性渲染，便于 Notion 审阅 | `9b5d200df3c0` |
+| [`35_postgres_attested_runtime_composition_map.svg`](35_postgres_attested_runtime_composition_map.svg) | 1800×1120 | 不适用 / 2026-08-28 20:29:18 +08:00 | `B-local-derived-documentation-visual`；private config→ambient/default-file/raw-DSN/malformed-query hardening→physical/session attestation→readiness/UoW/API gate→剩余 P0 源图 | `69b242cc4331` |
+| [`35_postgres_attested_runtime_composition_map.png`](35_postgres_attested_runtime_composition_map.png) | 1800×1120 | 不适用 / 2026-08-28 20:29:18 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1800×1120 确定性渲染，便于 Notion 审阅 | `2ca4fa79c3d6` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件
