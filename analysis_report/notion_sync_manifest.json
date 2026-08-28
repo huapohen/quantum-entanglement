@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-28T01:29:03Z",
+  "syncedAt": "2026-08-28T01:36:54Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private main + local repository",
     "remoteRepresentation": "semantic-mirror",
@@ -23,8 +23,8 @@
   },
   "sourceControl": {
     "notionContentBaselineCommit": "ed9a4a10ab1818aed29b34f68a741d2f7232f80c",
-    "manifestPreparedFromCommit": "ed9a4a10ab1818aed29b34f68a741d2f7232f80c",
-    "manifestPreparedFromTree": "dd4d73591f772550d99a284ed4e028dcb130886f"
+    "manifestPreparedFromCommit": "e10ac5ecf85392d0fb11c8312da73eef2c865928",
+    "manifestPreparedFromTree": "12c2c87d8ffece2e0eb2c2fab8a8fe0018b5ff7c"
   },
   "pages": [
     {
@@ -41,13 +41,15 @@
       "remoteReadback": {
         "verified": true,
         "title": "🪢 Quantum Entanglement｜人 + 多 Agent 协同办公",
-        "contentLength": 12541,
+        "contentLength": 12634,
         "expectedMarkers": [
           "任何本地文档、代码、决策、计划或验收动作",
           "f99f176bfa9cd14abf7e3c51d971b9682dc49230",
           "当前项目镜像共 **48 页**",
           "46 个受控事实源页面",
           "ed9a4a1",
+          "Notion 内容基线",
+          "e10ac5e",
           "ActorRef / ActorSnapshot",
           "ProviderRealmID",
           "ConversationRef / ConversationSnapshot",
@@ -885,9 +887,11 @@
       "remoteReadback": {
         "verified": true,
         "title": "🧭 22｜2output 调研吸收与产品合同增量审计",
-        "contentLength": 5460,
+        "contentLength": 5553,
         "expectedMarkers": [
           "ed9a4a1",
+          "Notion 内容基线",
+          "e10ac5e",
           "RQ-001～RQ-045",
           "ProviderRealmID",
           "1024 bytes",
@@ -971,9 +975,11 @@
       "remoteReadback": {
         "verified": true,
         "title": "🧬 32｜IM 身份、会话拓扑与 Provider Metadata 合同",
-        "contentLength": 8595,
+        "contentLength": 8682,
         "expectedMarkers": [
           "ed9a4a1",
+          "Notion 内容基线",
+          "e10ac5e",
           "ActorRef / ActorSnapshot",
           "ProviderRealmID",
           "ConversationRef / ConversationSnapshot",
@@ -1171,9 +1177,11 @@
       "remoteReadback": {
         "verified": true,
         "title": "🛰️ WanWork Quantum Entanglement｜原生 IM 独立审阅空间",
-        "contentLength": 5469,
+        "contentLength": 5558,
         "expectedMarkers": [
           "ed9a4a1",
+          "Notion 内容基线",
+          "e10ac5e",
           "ActorRef / ActorSnapshot",
           "ProviderRealmID",
           "ConversationRef / ConversationSnapshot",
@@ -1218,9 +1226,9 @@
     "pageCount": 48,
     "controlledSourcePageCount": 46,
     "auxiliaryDerivedPageCount": 2,
-    "existingPagesUpdated": 16,
+    "existingPagesUpdated": 20,
     "newPagesCreated": 6,
-    "readbackVerified": 22,
+    "readbackVerified": 26,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 27,
     "screenshotImagesAddedThisSync": 17,
