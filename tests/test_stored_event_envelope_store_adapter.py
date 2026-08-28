@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import inspect
 import json
+import sqlite3
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
+import quantum_entanglement.store as store_module
 from quantum_entanglement import _stored_event_envelope_codec as codec
 from quantum_entanglement.events import DomainEvent, StoredEvent
 from quantum_entanglement.invocation_execution import CANONICAL_ORCHESTRATOR_ACTOR_ID
@@ -60,14 +63,28 @@ def event(
     )
 
 
-def terminal_event() -> DomainEvent:
+def terminal_event(
+    *,
+    event_id: str = "event-m3-terminal",
+    session_id: str | None = None,
+    correlation_id: str | None = None,
+    result_event_id: str | None = None,
+) -> DomainEvent:
     transition = valid_transition()
+    transition = replace(
+        transition,
+        session_id=transition.session_id if session_id is None else session_id,
+        correlation_id=(transition.correlation_id if correlation_id is None else correlation_id),
+        result_event_id=(
+            transition.result_event_id if result_event_id is None else result_event_id
+        ),
+    )
     return DomainEvent(
         stream_id=transition.stream_id,
         event_type=TASK_STATUS_CHANGED_EVENT_TYPE,
         payload=ScopedInvocationResultTerminalTransitionV2.to_dict(transition),
         actor_id=transition.actor_id,
-        event_id="event-m3-terminal",
+        event_id=event_id,
         timestamp=T0,
         correlation_id=transition.correlation_id,
         causation_id=transition.causation_id,
@@ -316,10 +333,26 @@ def test_idempotent_replay_never_mints_a_verified_insert() -> None:
 @pytest.mark.parametrize(
     "trigger_body",
     (
+        "UPDATE events SET global_position = NEW.global_position + 1 "
+        "WHERE global_position = NEW.global_position;",
+        "UPDATE events SET stream_id = 'session:drifted' "
+        "WHERE global_position = NEW.global_position;",
+        "UPDATE events SET sequence = NEW.sequence + 1 "
+        "WHERE global_position = NEW.global_position;",
         "UPDATE events SET event_id = 'event-drifted' WHERE global_position = NEW.global_position;",
+        "UPDATE events SET event_type = 'task.status.changed' "
+        "WHERE global_position = NEW.global_position;",
+        "UPDATE events SET actor_id = 'actor:drifted' WHERE global_position = NEW.global_position;",
+        "UPDATE events SET timestamp = '2026-08-28T13:14:16.123456Z' "
+        "WHERE global_position = NEW.global_position;",
         "UPDATE events SET payload_json = ' ' || payload_json "
         "WHERE global_position = NEW.global_position;",
+        "UPDATE events SET correlation_id = NULL WHERE global_position = NEW.global_position;",
+        "UPDATE events SET causation_id = NULL WHERE global_position = NEW.global_position;",
+        "UPDATE events SET idempotency_key = NULL WHERE global_position = NEW.global_position;",
         "UPDATE events SET payload_json = CAST(payload_json AS BLOB) "
+        "WHERE global_position = NEW.global_position;",
+        "UPDATE events SET sequence = CAST(sequence AS BLOB) "
         "WHERE global_position = NEW.global_position;",
         "DELETE FROM events WHERE global_position = NEW.global_position;",
     ),
@@ -344,6 +377,139 @@ def test_raw_row_drift_or_missing_row_rolls_back(trigger_body: str) -> None:
         assert inserted is True
         assert stored.sequence == 1
         assert stored.global_position == 1
+
+
+def test_two_verified_rows_bind_real_consecutive_coordinates() -> None:
+    result = event()
+    terminal = terminal_event(
+        event_id="event-m3-terminal-pair",
+        session_id="m3-store",
+        correlation_id=result.correlation_id,
+        result_event_id=result.event_id,
+    )
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        with store._transaction() as connection:
+            first = SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                store,
+                connection,
+                SQLiteEventStore._snapshot_event(store, result),
+                0,
+            )
+            second = SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                store,
+                connection,
+                SQLiteEventStore._snapshot_event(store, terminal),
+                1,
+            )
+
+    assert first[0].sequence == 1
+    assert first[0].global_position == 1
+    assert second[0].sequence == 2
+    assert second[0].global_position == 2
+    assert first[2].digest() != second[2].digest()
+
+
+def test_second_row_verification_failure_rolls_back_the_pair() -> None:
+    result = event()
+    terminal = terminal_event(
+        event_id="event-m3-terminal-pair",
+        session_id="m3-store",
+        correlation_id=result.correlation_id,
+        result_event_id=result.event_id,
+    )
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        store._connection.execute(
+            """
+            CREATE TRIGGER drift_terminal AFTER INSERT ON events
+            WHEN NEW.event_id = 'event-m3-terminal-pair'
+            BEGIN
+                UPDATE events SET causation_id = NULL
+                WHERE global_position = NEW.global_position;
+            END
+            """
+        )
+
+        with pytest.raises(EventStoreIntegrityError):
+            with store._transaction() as connection:
+                SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                    store,
+                    connection,
+                    SQLiteEventStore._snapshot_event(store, result),
+                    0,
+                )
+                SQLiteEventStore._insert_with_verified_envelope_in_transaction(
+                    store,
+                    connection,
+                    SQLiteEventStore._snapshot_event(store, terminal),
+                    1,
+                )
+
+        assert durable_rows(store) == ()
+
+
+def test_non_sqlite_row_readback_is_rejected_and_rolled_back() -> None:
+    def mapping_row(
+        cursor: sqlite3.Cursor,
+        row: tuple[object, ...],
+    ) -> dict[str, object]:
+        return {description[0]: value for description, value in zip(cursor.description, row)}
+
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        store._connection.row_factory = mapping_row
+        try:
+            with pytest.raises(EventStoreIntegrityError, match="readback is invalid"):
+                append_verified(store, event())
+        finally:
+            store._connection.row_factory = sqlite3.Row
+
+        assert durable_rows(store) == ()
+        stored, inserted, _verified = append_verified(store, event())
+        assert inserted is True
+        assert stored.global_position == 1
+
+
+def test_raw_recompute_control_signal_rolls_back_and_store_remains_usable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(_row: object) -> codec._StoredEventEnvelopeV1:
+        raise KeyboardInterrupt("private readback interruption")
+
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        monkeypatch.setattr(store_module, "_stored_event_envelope_from_raw_row", interrupt)
+        with pytest.raises(KeyboardInterrupt, match="private readback interruption"):
+            append_verified(store, event())
+        assert durable_rows(store) == ()
+
+        monkeypatch.undo()
+        stored, inserted, _verified = append_verified(store, event())
+        assert inserted is True
+        assert stored.global_position == 1
+
+
+def test_readback_failures_do_not_disclose_event_or_payload_canaries() -> None:
+    event_canary = "event-private-canary"
+    value_canary = "credential-private-canary"
+    candidate = event(
+        event_id=event_canary,
+        payload=result_payload(resultRef=value_canary),
+    )
+    with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+        store._connection.execute(
+            """
+            CREATE TRIGGER drift_canary AFTER INSERT ON events
+            BEGIN
+                UPDATE events SET actor_id = 'actor:drifted'
+                WHERE global_position = NEW.global_position;
+            END
+            """
+        )
+        with pytest.raises(EventStoreIntegrityError) as raised:
+            append_verified(store, candidate)
+
+    rendered = repr(raised.value) + str(raised.value)
+    assert event_canary not in rendered
+    assert value_canary not in rendered
+    assert "resultRef" not in rendered
 
 
 def test_verifier_rejects_foreign_or_closed_transaction_before_select() -> None:
