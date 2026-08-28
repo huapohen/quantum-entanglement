@@ -354,7 +354,6 @@ func TestApprovalPolicyContentChainIdentityIsIndependentOfRootCosignatures(t *te
 	revisionTwo.PreviousPolicyDigest = fixture.toSign.PolicyDigest()
 	revisionTwo.IssuedAt = revisionTwo.IssuedAt.Add(time.Hour)
 	revisionTwo.NotBefore = revisionTwo.NotBefore.Add(time.Hour)
-	revisionTwo.Keys[1].NotBefore = revisionTwo.NotBefore
 	revisionTwo.Keys[0].RevokedAt = revisionTwo.NotBefore
 	toSign, err := NewApprovalPolicyToSign(revisionTwo)
 	if err != nil {
@@ -372,7 +371,8 @@ func TestApprovalPolicyContentChainIdentityIsIndependentOfRootCosignatures(t *te
 	}
 	if verifiedTwo.PolicyDigest() != verifiedThree.PolicyDigest() ||
 		verifiedTwo.EnvelopeDigest() == verifiedThree.EnvelopeDigest() ||
-		verifiedTwo.PreviousPolicyDigest() != fixture.toSign.PolicyDigest() {
+		verifiedTwo.PreviousPolicyDigest() != fixture.toSign.PolicyDigest() ||
+		verifiedTwo.Snapshot().Keys[1].NotBefore != fixture.input.Keys[1].NotBefore {
 		t.Fatal("policy content identity or envelope evidence semantics are incorrect")
 	}
 }

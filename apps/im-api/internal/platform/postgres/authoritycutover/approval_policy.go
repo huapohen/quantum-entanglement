@@ -608,7 +608,7 @@ func validApprovalPolicyKeySnapshot(key ApprovalPolicyKeySnapshot, policy Approv
 	switch key.Status {
 	case ApprovalPolicyKeyActive:
 		return key.RevokedAt.IsZero() && key.RevocationReason == "" &&
-			!key.NotBefore.Before(policy.NotBefore) && !key.NotAfter.After(policy.NotAfter)
+			key.NotAfter.After(policy.NotBefore) && !key.NotAfter.After(policy.NotAfter)
 	case ApprovalPolicyKeyRevoked:
 		return canonicalPolicyTime(key.RevokedAt) && !key.RevokedAt.Before(key.NotBefore) &&
 			!key.RevokedAt.After(policy.NotBefore) && canonicalIdentity(key.RevocationReason) &&
