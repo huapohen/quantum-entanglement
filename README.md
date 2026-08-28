@@ -90,11 +90,11 @@ Artifact、Needs You、25 步事件时间线和三张内联 SVG 系统图；它�
 python3 scripts/report_sync_bundle.py
 ```
 
-验证当前 schema v3 checkpoint：
+验证当前 schema v3 本地待同步 checkpoint：
 
 ```bash
 python3 scripts/report_sync_bundle.py \
-  --verify analysis_report/report_sync_bundles/checkpoint-20260828-w2-postgres-function-only-exact-access-notion-readback.json
+  --verify analysis_report/report_sync_bundles/checkpoint-20260829-postgres-policy-control-store-local-pending.json
 ```
 
 下一阶段生成 checkpoint 时必须使用新的阶段文件名，不覆盖当前或历史快照：
@@ -105,10 +105,10 @@ python3 scripts/report_sync_bundle.py \
 ```
 
 `sourceTargets` 记录的是 source-target entry，不等于远端页面数；bundle 生成器完全本地运行，所以其中
-所有实时远端回读标记固定为 `false`。当前已冻结的 latest checkpoint 是 Topic 34 / `7bb324a` 批次：
-64 个本地 source、65 个 target mapping、49 个 Notion source mapping、16 个语雀 local-pending mapping
-和 31 项图像。当前 Topic 35 增量会在本阶段完成 GitHub 推送与 Notion 批量回读后生成新文件名，不能
-覆盖这个历史快照。current / superseded 关系和历史 checkout 验证方式见
+所有实时远端回读标记固定为 `false`。当前 latest 是 policy control-store 本地待同步批次：72 个本地
+source、73 个 target mapping、57 个 Notion source mapping、16 个语雀 local-pending mapping 和 37 项
+图像；它没有执行任何远端写入或回读。最近完成 Notion 回读的历史基线仍是 Topic 34 / `7bb324a`，
+不得把本地 latest 冒充远端已更新。current / superseded 关系和历史 checkout 验证方式见
 [`analysis_report/report_sync_bundles/README.md`](analysis_report/report_sync_bundles/README.md)。
 `analysis_report/notion_sync_manifest.json` 记录最近一次 2026-08-28 真实 Notion 回读；它与本地 bundle
 的 `liveReadbackPerformed=false` 语义不同。语雀条目继续按 mapping 的 `local_pending`/历史状态解释，
