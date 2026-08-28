@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import hashlib
+import pickle
 import sqlite3
 import unittest
 from dataclasses import replace
@@ -8,12 +10,18 @@ from unittest.mock import patch
 
 import quantum_entanglement
 from quantum_entanglement._result_acceptance import (
+    _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
+    _FreshResultAcceptanceWritePlanV2,
     _prepare_scoped_invocation_result_acceptance_v2,
+    _PreparedScopedInvocationResultAcceptanceV2,
     _ResultAcceptanceConflictError,
     _ResultAcceptanceIntegrityError,
     _ResultAcceptanceSchemaUnavailableError,
+)
+from quantum_entanglement._result_artifact_transaction import (
+    _ResultArtifactConflictError,
 )
 from quantum_entanglement.attempts import InvocationLease
 from quantum_entanglement.invocation_execution import (
@@ -97,7 +105,7 @@ def result_request_for_claim(
 
 def existing_graph_prepared(
     helper: inactive_migration_module.InactiveInvocationResultsMigrationTests,
-) -> object:
+) -> _PreparedScopedInvocationResultAcceptanceV2:
     graph = helper.exact_result_graph()
     request = graph["request"]
     assert type(request) is ScopedInvocationResultAcceptanceRequestV2
@@ -138,7 +146,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.store.close()
 
-    def fresh_prepared(self) -> object:
+    def fresh_prepared(self) -> _PreparedScopedInvocationResultAcceptanceV2:
         admission = scoped_request()
         self.store.append_scoped_task_invocation_admission_v2(
             admission,
@@ -160,17 +168,20 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             claimed,
         )
 
-    def validate(self, prepared: object) -> object:
+    def validate(
+        self,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> _ExistingResultAcceptanceGraphCandidateV2 | _FreshResultAcceptancePrerequisitesV2:
         with self.store._transaction() as connection:
             return self.store._validate_result_acceptance_durable_prerequisites_in_transaction(
                 connection,
-                prepared,  # type: ignore[arg-type]
+                prepared,
             )
 
     def test_fresh_prerequisites_bind_exact_durable_start_without_clock_or_id(self) -> None:
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
-        lease_token = prepared.claimed.lease.lease_token  # type: ignore[attr-defined]
+        lease_token = prepared.claimed.lease.lease_token
         self.store._clock = lambda: (_ for _ in ()).throw(AssertionError("clock must not be read"))
         with patch(
             "quantum_entanglement.protocol.new_id",
@@ -180,8 +191,9 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
 
         self.assertIs(type(result), _FreshResultAcceptancePrerequisitesV2)
         self.assertNotIn(lease_token, repr(result))
-        self.assertEqual(result.expected_stream_version, 3)  # type: ignore[attr-defined]
-        self.assertEqual(result.running_task_revision, 5)  # type: ignore[attr-defined]
+        assert type(result) is _FreshResultAcceptancePrerequisitesV2
+        self.assertEqual(result.expected_stream_version, 3)
+        self.assertEqual(result.running_task_revision, 5)
         new_id.assert_not_called()
 
     def test_missing_or_temp_shadowed_schema_fails_before_start_or_lease_read(self) -> None:
@@ -213,7 +225,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             SET lease_token_digest = ?
             WHERE invocation_id = ?
             """,
-            ("f" * 64, prepared.request.manifest.invocation_id),  # type: ignore[attr-defined]
+            ("f" * 64, prepared.request.manifest.invocation_id),
         )
         with self.assertRaises(_ResultAcceptanceConflictError):
             self.validate(prepared)
@@ -221,7 +233,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
     def test_matching_manifest_without_receipt_is_partial_and_never_repaired(self) -> None:
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
-        manifest = prepared.request.manifest  # type: ignore[attr-defined]
+        manifest = prepared.request.manifest
         encoded = manifest.canonical_bytes()
         self.store._connection.execute(
             """
@@ -267,7 +279,8 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             result = self.validate(prepared)
 
         self.assertIs(type(result), _ExistingResultAcceptanceGraphCandidateV2)
-        self.assertEqual(result.invocation_id, "invocation-1")  # type: ignore[attr-defined]
+        assert type(result) is _ExistingResultAcceptanceGraphCandidateV2
+        self.assertEqual(result.invocation_id, "invocation-1")
         fresh_load.assert_not_called()
 
     def test_structural_prefix_is_partial_before_fresh_lease_classification(self) -> None:
@@ -293,10 +306,116 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                 self.validate(prepared)
         fresh_load.assert_not_called()
 
+    def test_fresh_owner_preflight_yields_opaque_plan_without_clock_or_dml(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        lease_token = prepared.claimed.lease.lease_token
+        self.store._clock = lambda: (_ for _ in ()).throw(
+            AssertionError("write preflight must not read clock")
+        )
+
+        with self.store._result_artifact_transaction() as handle:
+            connection = self.store._connection_for_result_artifact_transaction(handle)
+            before_total_changes = connection.total_changes
+            with self.store._preflight_result_acceptance_write_in_owner_transaction(
+                handle,
+                prepared,
+            ) as plan:
+                self.assertIs(type(plan), _FreshResultAcceptanceWritePlanV2)
+                assert type(plan) is _FreshResultAcceptanceWritePlanV2
+                frozen, prerequisites, artifact_plan = plan._validated(
+                    token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                )
+                self.assertIs(frozen, prepared)
+                self.assertIs(type(prerequisites), _FreshResultAcceptancePrerequisitesV2)
+                self.assertNotIn(lease_token, repr(plan))
+                self.assertEqual(connection.total_changes, before_total_changes)
+                self.assertEqual(
+                    connection.execute("SELECT count(*) FROM main.artifact_versions").fetchone()[0],
+                    0,
+                )
+                self.assertIsNotNone(artifact_plan)
+                for operation in (
+                    lambda: copy.copy(plan),
+                    lambda: copy.deepcopy(plan),
+                    lambda: pickle.dumps(plan),
+                ):
+                    with self.subTest(operation=operation):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ):
+                            operation()
+            with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                plan._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+            self.assertEqual(connection.total_changes, before_total_changes)
+
+    def test_artifact_head_preflight_fails_without_creating_a_result_prefix(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        with self.store._result_artifact_transaction() as handle:
+            self.store._write_result_artifacts_in_owner_transaction(
+                handle,
+                prepared.artifact_batch,
+            )
+        before = tuple(
+            self.store._connection.execute(f"SELECT count(*) FROM {table_name}").fetchone()[0]
+            for table_name in (
+                "invocation_result_requests",
+                "invocation_result_receipts",
+                "invocation_result_artifacts",
+            )
+        )
+
+        with self.store._result_artifact_transaction() as handle:
+            with self.assertRaises(_ResultArtifactConflictError):
+                with self.store._preflight_result_acceptance_write_in_owner_transaction(
+                    handle,
+                    prepared,
+                ):
+                    self.fail("conflicting Artifact head unexpectedly produced a plan")
+
+        after = tuple(
+            self.store._connection.execute(f"SELECT count(*) FROM {table_name}").fetchone()[0]
+            for table_name in (
+                "invocation_result_requests",
+                "invocation_result_receipts",
+                "invocation_result_artifacts",
+            )
+        )
+        self.assertEqual(after, before)
+
+    def test_existing_graph_skips_fresh_artifact_preflight(self) -> None:
+        helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
+            methodName="runTest"
+        )
+        helper.store = self.store
+        helper.connection = self.store._connection
+        helper.seed_nonempty_v6_dependencies()
+        helper.apply_candidate()
+        helper.seed_complete_result_graph()
+        prepared = existing_graph_prepared(helper)
+
+        with patch(
+            "quantum_entanglement.store._preflight_prepared_result_artifacts_in_transaction",
+            side_effect=AssertionError("existing graph must skip Artifact preflight"),
+        ) as artifact_preflight:
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._preflight_result_acceptance_write_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as result:
+                    self.assertIs(
+                        type(result),
+                        _ExistingResultAcceptanceGraphCandidateV2,
+                    )
+        artifact_preflight.assert_not_called()
+
     def test_private_prerequisites_add_no_writer_or_accepted_export(self) -> None:
         for name in (
             "_ExistingResultAcceptanceGraphCandidateV2",
             "_FreshResultAcceptancePrerequisitesV2",
+            "_FreshResultAcceptanceWritePlanV2",
             "_validate_result_acceptance_durable_prerequisites_in_transaction",
             "accept_scoped_invocation_result_v2",
             "ScopedInvocationResultAcceptedV2",

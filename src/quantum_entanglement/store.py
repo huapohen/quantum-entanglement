@@ -38,8 +38,10 @@ from typing import (
 
 from . import process_identity as _process_identity
 from ._result_acceptance import (
+    _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
+    _FreshResultAcceptanceWritePlanV2,
     _PreparedScopedInvocationResultAcceptanceV2,
     _ResultAcceptanceConflictError,
     _ResultAcceptanceIntegrityError,
@@ -47,6 +49,7 @@ from ._result_acceptance import (
 )
 from ._result_artifact_transaction import (
     _RESULT_ARTIFACT_TRANSACTION_TOKEN,
+    _preflight_prepared_result_artifacts_in_transaction,
     _PreparedResultArtifactBatch,
     _ResultArtifactCommitAmbiguityError,
     _ResultArtifactConcurrencyError,
@@ -2345,6 +2348,61 @@ class SQLiteEventStore:
         )
         self._require_current_process()
         return fresh
+
+    @_bind_event_store_process
+    def _preflight_result_acceptance_write_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> ContextManager[
+        _ExistingResultAcceptanceGraphCandidateV2
+        | _FreshResultAcceptanceWritePlanV2
+    ]:
+        """Create no durable prefix; yield existing candidate or one fresh opaque plan."""
+
+        return self._preflight_result_acceptance_write_in_owner_transaction_inner(
+            handle,
+            prepared,
+        )
+
+    @contextmanager
+    def _preflight_result_acceptance_write_in_owner_transaction_inner(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> Iterator[
+        _ExistingResultAcceptanceGraphCandidateV2
+        | _FreshResultAcceptanceWritePlanV2
+    ]:
+        connection = self._connection_for_result_artifact_transaction(handle)
+        prerequisites = (
+            self._validate_result_acceptance_durable_prerequisites_in_transaction(
+                connection,
+                prepared,
+            )
+        )
+        if type(prerequisites) is _ExistingResultAcceptanceGraphCandidateV2:
+            yield prerequisites
+            return
+        if type(prerequisites) is not _FreshResultAcceptancePrerequisitesV2:
+            raise RuntimeError(
+                "result acceptance prerequisite classification is not closed"
+            )
+        with _preflight_prepared_result_artifacts_in_transaction(
+            connection,
+            prepared.artifact_batch,
+            process_guard=self._require_current_process,
+        ) as artifact_plan:
+            plan = _FreshResultAcceptanceWritePlanV2(
+                prepared=prepared,
+                prerequisites=prerequisites,
+                artifact_plan=artifact_plan,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            try:
+                yield plan
+            finally:
+                plan._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
     @contextmanager
     def _transaction_inner(

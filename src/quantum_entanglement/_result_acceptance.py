@@ -8,6 +8,7 @@ from typing import NoReturn
 from ._result_artifact_transaction import (
     _prepare_result_artifact_batch,
     _PreparedResultArtifactBatch,
+    _ResultArtifactMaterializationPlan,
 )
 from .invocation_execution import ScopedInvocationStartClaimedV3
 from .invocation_results import (
@@ -95,6 +96,81 @@ class _FreshResultAcceptancePrerequisitesV2:
             raise ValueError("prepared result acceptance stream version is invalid")
         if type(self.running_task_revision) is not int or self.running_task_revision < 1:
             raise ValueError("prepared result acceptance task revision is invalid")
+
+
+_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN = object()
+
+
+class _FreshResultAcceptanceWritePlanV2:
+    """One owner-transaction-bound plan; it is neither Accepted nor durable evidence."""
+
+    __slots__ = (
+        "__active",
+        "__artifact_plan",
+        "__prepared",
+        "__prerequisites",
+    )
+
+    def __init__(
+        self,
+        *,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+        prerequisites: _FreshResultAcceptancePrerequisitesV2,
+        artifact_plan: _ResultArtifactMaterializationPlan,
+        token: object,
+    ) -> None:
+        if type(self) is not _FreshResultAcceptanceWritePlanV2:
+            raise TypeError("fresh result acceptance write plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("fresh result acceptance write plan constructor is private")
+        if type(prepared) is not _PreparedScopedInvocationResultAcceptanceV2:
+            raise TypeError("fresh result acceptance write plan inputs are not exact")
+        prepared.verify()
+        if type(prerequisites) is not _FreshResultAcceptancePrerequisitesV2:
+            raise TypeError("fresh result acceptance prerequisites are not exact")
+        _FreshResultAcceptancePrerequisitesV2.__post_init__(prerequisites)
+        if type(artifact_plan) is not _ResultArtifactMaterializationPlan:
+            raise TypeError("fresh result acceptance Artifact plan is not exact")
+        self.__prepared = prepared
+        self.__prerequisites = prerequisites
+        self.__artifact_plan = artifact_plan
+        self.__active = True
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> tuple[
+        _PreparedScopedInvocationResultAcceptanceV2,
+        _FreshResultAcceptancePrerequisitesV2,
+        _ResultArtifactMaterializationPlan,
+    ]:
+        if type(self) is not _FreshResultAcceptanceWritePlanV2:
+            raise TypeError("fresh result acceptance write plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("fresh result acceptance write plan validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("fresh result acceptance write plan is no longer active")
+        self.__prepared.verify()
+        _FreshResultAcceptancePrerequisitesV2.__post_init__(self.__prerequisites)
+        return self.__prepared, self.__prerequisites, self.__artifact_plan
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("fresh result acceptance write plan invalidation is private")
+        self.__active = False
+        object.__setattr__(self, "_FreshResultAcceptanceWritePlanV2__artifact_plan", None)
+        object.__setattr__(self, "_FreshResultAcceptanceWritePlanV2__prepared", None)
+        object.__setattr__(self, "_FreshResultAcceptanceWritePlanV2__prerequisites", None)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("fresh result acceptance write plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("fresh result acceptance write plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("fresh result acceptance write plans cannot be serialized")
 
 
 def _scoped_invocation_start_claimed_snapshot(
