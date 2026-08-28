@@ -1345,6 +1345,7 @@ class SQLiteEventStore:
         self._poisoned = False
         self._result_artifact_transaction_generation = 0
         self._active_result_artifact_transaction_generation: Optional[int] = None
+        self._result_artifact_transaction_rollback_only = False
         process_mismatch = False
         connection: Optional[sqlite3.Connection] = None
         parent: Optional[str] = None
@@ -1566,6 +1567,7 @@ class SQLiteEventStore:
             generation = self._result_artifact_transaction_generation + 1
             self._result_artifact_transaction_generation = generation
             self._active_result_artifact_transaction_generation = generation
+            self._result_artifact_transaction_rollback_only = False
             handle = _ResultArtifactTransactionHandle(
                 store=self,
                 connection=connection,
@@ -1575,9 +1577,13 @@ class SQLiteEventStore:
             )
             try:
                 yield handle
+                self._require_current_process()
+                if self._result_artifact_transaction_rollback_only is not False:
+                    raise RuntimeError("result Artifact owner transaction is rollback-only")
             finally:
                 handle._invalidate(token=_RESULT_ARTIFACT_TRANSACTION_TOKEN)
                 self._active_result_artifact_transaction_generation = None
+                self._result_artifact_transaction_rollback_only = False
 
     @_bind_event_store_process
     def _connection_for_result_artifact_transaction(
@@ -1602,19 +1608,26 @@ class SQLiteEventStore:
         handle: _ResultArtifactTransactionHandle,
         batch: _PreparedResultArtifactBatch,
     ) -> Tuple[_ScopedInvocationResultArtifactV2, ...]:
-        connection = self._connection_for_result_artifact_transaction(handle)
-        if type(batch) is not _PreparedResultArtifactBatch:
-            raise TypeError("result Artifact write requires an exact prepared batch")
-        batch.verify()
-        self._require_current_process()
-        result = _write_prepared_result_artifacts_in_transaction(
-            connection,
-            batch,
-            clock=self._now,
-            process_guard=self._require_current_process,
-        )
-        self._require_current_process()
-        return result
+        try:
+            connection = self._connection_for_result_artifact_transaction(handle)
+            if type(batch) is not _PreparedResultArtifactBatch:
+                raise TypeError("result Artifact write requires an exact prepared batch")
+            batch.verify()
+            self._require_current_process()
+            result = _write_prepared_result_artifacts_in_transaction(
+                connection,
+                batch,
+                clock=self._now,
+                process_guard=self._require_current_process,
+            )
+            self._require_current_process()
+            return result
+        except BaseException:
+            if self._process_is_current():
+                generation = self._active_result_artifact_transaction_generation
+                if type(generation) is int and generation > 0:
+                    self._result_artifact_transaction_rollback_only = True
+            raise
 
     @contextmanager
     def _transaction_inner(

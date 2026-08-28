@@ -13,8 +13,10 @@ import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import quantum_entanglement
+import quantum_entanglement._result_artifact_transaction as result_artifact_transaction_module
 from quantum_entanglement._result_artifact_transaction import (
     _MAX_RESULT_ARTIFACTS,
     _RESULT_ARTIFACT_TRANSACTION_TOKEN,
@@ -723,6 +725,40 @@ class ResultArtifactOwnerWriteTests(unittest.TestCase):
                 self.assertEqual(descriptors, (first.to_descriptor(), second.to_descriptor()))
                 self.assertEqual(self.counts(), (2, 2))
                 raise RuntimeError("later result graph failure")
+        self.assertEqual(self.counts(), (0, 0))
+
+    def test_caught_second_item_failure_marks_owner_rollback_only(self) -> None:
+        first = candidate(0, content=b"rollback-only-first")
+        second = candidate(1, content=b"rollback-only-second")
+        batch = _prepare_result_artifact_batch((first, second))
+        real_execute = result_artifact_transaction_module._guarded_execute
+        version_inserts = 0
+
+        def fail_second_version_insert(
+            connection: sqlite3.Connection,
+            process_guard: object,
+            sql: str,
+            parameters: tuple[object, ...] = (),
+        ) -> None:
+            nonlocal version_inserts
+            if "INSERT INTO artifact_versions" in sql:
+                version_inserts += 1
+                if version_inserts == 2:
+                    raise sqlite3.OperationalError("injected second version failure")
+            real_execute(connection, process_guard, sql, parameters)  # type: ignore[arg-type]
+
+        with self.assertRaisesRegex(RuntimeError, "rollback-only"):
+            with self.store._result_artifact_transaction() as handle:
+                with patch.object(
+                    result_artifact_transaction_module,
+                    "_guarded_execute",
+                    side_effect=fail_second_version_insert,
+                ):
+                    with self.assertRaises(_ResultArtifactIntegrityError):
+                        self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+                self.assertEqual(self.counts(), (2, 1))
+
+        self.assertEqual(version_inserts, 2)
         self.assertEqual(self.counts(), (0, 0))
 
     def test_empty_batch_has_no_clock_or_dml_effect(self) -> None:
