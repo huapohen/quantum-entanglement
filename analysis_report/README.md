@@ -67,8 +67,10 @@ cursor/snapshot 或 provider readiness；封板前又对已推送 `a18acd6` 做�
 `NEXT_STAGE_PLAN.md` 继续作为 E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前的
 串行总清单。其 M1 private stored-event envelope codec 已在 `d889751` 完成：372-byte Golden 在
 Python 3.9.6/3.12.12/3.13.9 同 digest，专项 102 tests、Python 3.13 全仓 2,489 tests 与 locked
-Ruff/Mypy 全绿；下一步是 M2 reserved fence。M3 store adapter、migration 7、writer、Accepted、
-worker 和真实 IM/outbound 均保持关闭。完整边界见
+Ruff/Mypy 全绿；最终 formatter 封板提交为 `39732c1`，受保护的 provider-bundle suite digest 随后
+在 `f8cafd4` 刷新为 `9e76f826…1a21ae0`，证据文档推进到 `0e85f80` 后再次完成 2,489 项全量复验。
+下一步是 M2 reserved fence。M3 store adapter、migration 7、writer、Accepted、worker 和真实
+IM/outbound 均保持关闭。完整边界见
 `research/28_stored_event_envelope_codec_evidence.md`。
 
 ## 专题研究

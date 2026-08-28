@@ -168,8 +168,9 @@ production gate and does not authorize a real connector or external message.
 ### Fixed
 
 - Python 3.9 package imports no longer evaluate PEP 604 type aliases at runtime in native-IM
-  configuration/provenance modules; the source-bound provider-bundle suite digest was refreshed
-  and independently reverified.
+  configuration/provenance modules. The source-bound provider-bundle suite digest was refreshed
+  once for that semantic compatibility fix and again after the locked Ruff 0.16.3 formatter
+  normalized the same covered source; both drifts were independently recomputed and reverified.
 - Stored-event JSON number decoding now bounds integer and float lexemes before Python numeric
   conversion, validates cheap row scalars before payload parsing, and keeps payload key/value
   canaries out of exception text.

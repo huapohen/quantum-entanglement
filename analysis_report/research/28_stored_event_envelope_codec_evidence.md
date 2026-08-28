@@ -182,7 +182,10 @@ CI 新增一个无第三方依赖的 3.9/3.12/3.13 Golden job；未来 pull requ
 
 第一次 full pytest 曾出现 1 个 provider-bundle verifier 失败。原因不是网络或随机波动，而是
 Python 3.9 compatibility fix 修改了其 digest-covered 源文件；刷新 exact suite digest 后 focused
-复核与第二次 full pytest 全绿。该失败没有被忽略或归类成偶发。
+复核与第二次 full pytest 全绿。阶段末锁定 Ruff 0.16.3 formatter 又对同一 covered source 做了
+纯排版归一化，verifier 再次按设计捕获字节漂移；`f8cafd4` 把 suite digest 刷新为
+`9e76f826…1a21ae0`，随后在 `0e85f80` 工作树上重跑 2,489 项全量测试、Ruff 0.16.3 lint/format、
+Mypy 1.19.1 strict 与三 Python Golden 全绿。两次失败都没有被忽略或归类成偶发。
 
 ## 6. 明确没有完成的内容
 

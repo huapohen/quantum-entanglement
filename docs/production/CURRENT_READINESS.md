@@ -367,7 +367,9 @@ SQLite row 重算、372-byte Golden 和只读 verifier。Codec/Golden 专项 102
 2,489/2,489 tests（79 个既有 fork deprecation warnings）；项目锁定 Ruff 0.16.3 与 Mypy 1.19.1
 strict（66 source files）全绿。Python 3.9 package import 的两个 runtime type alias 已修复；因此
 provider-bundle suite digest 先因 Python 3.9 alias 修复刷新为 `a14ef986…a50368`，最终又因锁定
-Ruff 0.16.3 的纯格式封板刷新为 `9e76f826…1a21ae0`，并经 fresh-process/hash-seed verifier 复核。
+Ruff 0.16.3 的纯格式封板刷新为 `9e76f826…1a21ae0`。`39732c1`、`f8cafd4`、`0e85f80` 三个独立
+提交分别保留格式变化、digest 更新与文档证据；其后再次完成 2,489 项全量测试、locked Ruff
+lint/format、strict Mypy、三 Python Golden 和 fresh-process/hash-seed verifier 复核。
 M1 不包含 M2 reserved fence、M3 store adapter、migration 7、writer、Accepted 或 worker；详细证据见
 [`28_stored_event_envelope_codec_evidence.md`](../../analysis_report/research/28_stored_event_envelope_codec_evidence.md)。
 
