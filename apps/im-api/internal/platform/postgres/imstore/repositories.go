@@ -336,57 +336,24 @@ func (repositories *tenantRepositories) CompareAndSwapMembership(
 	}
 	conversationID := next.ConversationRef().ConversationID().String()
 	actorID := next.ActorRef().ActorID().String()
-	if expectedRevision == 0 {
-		if _, err := repositories.tx.Exec(ctx, `
-INSERT INTO wanwork_im.conversation_membership_heads (
-    tenant_id, conversation_id, actor_id, current_revision
-) VALUES ($1, $2, $3, $4)`,
-			repositories.tenantID.String(),
-			conversationID,
-			actorID,
-			next.Revision(),
-		); err != nil {
-			return im.ConversationMembershipSnapshot{}, repositories.poison(
-				mapWriteError(err, store.ErrRevisionConflict),
-			)
-		}
-	} else {
-		tag, err := repositories.tx.Exec(ctx, `
-UPDATE wanwork_im.conversation_membership_heads
-SET current_revision = $4
-WHERE tenant_id = $1
-  AND conversation_id = $2
-  AND actor_id = $3
-  AND current_revision = $5`,
-			repositories.tenantID.String(),
-			conversationID,
-			actorID,
-			next.Revision(),
-			expectedRevision,
-		)
-		if err != nil {
-			return im.ConversationMembershipSnapshot{}, repositories.poison(
-				mapWriteError(err, store.ErrRevisionConflict),
-			)
-		}
-		if tag.RowsAffected() != 1 {
-			return im.ConversationMembershipSnapshot{}, repositories.poison(store.ErrRevisionConflict)
-		}
-	}
-	if _, err := repositories.tx.Exec(ctx, `
-INSERT INTO wanwork_im.conversation_membership_snapshots (
-    tenant_id, conversation_id, actor_id, revision, role, status
-) VALUES ($1, $2, $3, $4, $5, $6)`,
+	var written bool
+	err := repositories.tx.QueryRow(ctx, `
+SELECT wanwork_im.write_conversation_membership_revision($1, $2, $3, $4, $5, $6, $7)`,
 		repositories.tenantID.String(),
 		conversationID,
 		actorID,
-		next.Revision(),
+		int64(expectedRevision),
+		int64(next.Revision()),
 		string(next.Role()),
 		string(next.Status()),
-	); err != nil {
+	).Scan(&written)
+	if err != nil {
 		return im.ConversationMembershipSnapshot{}, repositories.poison(
 			mapWriteError(err, store.ErrRevisionConflict),
 		)
+	}
+	if !written {
+		return im.ConversationMembershipSnapshot{}, repositories.poison(store.ErrRevisionConflict)
 	}
 	return next, nil
 }
