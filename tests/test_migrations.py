@@ -12,6 +12,7 @@ from quantum_entanglement.migrations import (
     Migration,
     MigrationDriftError,
     MigrationVersionError,
+    _apply_sqlite_migrations_unregistered,
     apply_sqlite_migrations,
     current_schema_version,
     migration_text,
@@ -339,7 +340,7 @@ class MigrationRunnerTests(unittest.TestCase):
 
     def test_registry_and_applied_ledger_must_not_contain_holes(self):
         with self.assertRaisesRegex(ValueError, "continuous prefix"):
-            apply_sqlite_migrations(
+            _apply_sqlite_migrations_unregistered(
                 self.connection,
                 migrations=(
                     Migration(1, "0001_first.up.sql"),
@@ -367,6 +368,23 @@ class MigrationRunnerTests(unittest.TestCase):
             "SELECT version FROM qe_schema_migrations ORDER BY version"
         ).fetchall()
         self.assertEqual([row["version"] for row in versions], [2])
+
+    def test_public_runner_rejects_packaged_but_inactive_migration(self):
+        inactive = Migration(7, "0007_invocation_results.up.sql")
+
+        with self.assertRaisesRegex(
+            MigrationVersionError,
+            "restricted to the active packaged registry prefix",
+        ):
+            apply_sqlite_migrations(
+                self.connection,
+                migrations=(*MIGRATIONS, inactive),
+                clock=lambda: NOW,
+            )
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertFalse(self.table_exists("qe_schema_migrations"))
+        self.assertFalse(self.table_exists("invocation_result_manifests"))
 
     def test_schema_validator_rejects_missing_and_weakened_migration_objects(self):
         apply_sqlite_migrations(
@@ -504,7 +522,7 @@ class MigrationRunnerTests(unittest.TestCase):
             return_value=compound,
         ):
             self.assertEqual(
-                apply_sqlite_migrations(
+                _apply_sqlite_migrations_unregistered(
                     self.connection,
                     migrations=(migration,),
                     clock=lambda: NOW,
@@ -528,7 +546,7 @@ class MigrationRunnerTests(unittest.TestCase):
             return_value=broken,
         ):
             with self.assertRaises(sqlite3.OperationalError):
-                apply_sqlite_migrations(
+                _apply_sqlite_migrations_unregistered(
                     self.connection,
                     migrations=(migration,),
                     clock=lambda: NOW,
@@ -543,7 +561,7 @@ class MigrationRunnerTests(unittest.TestCase):
             return_value=fixed,
         ):
             self.assertEqual(
-                apply_sqlite_migrations(
+                _apply_sqlite_migrations_unregistered(
                     self.connection,
                     migrations=(migration,),
                     clock=lambda: NOW,
@@ -563,7 +581,7 @@ class MigrationRunnerTests(unittest.TestCase):
             return_value="CREATE TABLE clock_partial (value TEXT);",
         ):
             with self.assertRaisesRegex(KeyboardInterrupt, "injected clock interrupt"):
-                apply_sqlite_migrations(
+                _apply_sqlite_migrations_unregistered(
                     self.connection,
                     migrations=(migration,),
                     clock=fail_clock,
@@ -573,7 +591,7 @@ class MigrationRunnerTests(unittest.TestCase):
             self.assertFalse(self.table_exists("clock_partial"))
             self.assertEqual(self.ledger_count(), 0)
             self.assertEqual(
-                apply_sqlite_migrations(
+                _apply_sqlite_migrations_unregistered(
                     self.connection,
                     migrations=(migration,),
                     clock=lambda: NOW,
@@ -600,7 +618,7 @@ class MigrationRunnerTests(unittest.TestCase):
             return_value="CREATE TABLE process_drift_partial (value TEXT);",
         ):
             with self.assertRaisesRegex(MigrationProcessMismatchSignal, "process drifted"):
-                apply_sqlite_migrations(
+                _apply_sqlite_migrations_unregistered(
                     guarded,
                     migrations=(migration,),
                     clock=fork_seam_clock,
@@ -641,7 +659,7 @@ class MigrationRunnerTests(unittest.TestCase):
                         raise originating
 
                     with self.assertRaises(type(originating)) as caught:
-                        apply_sqlite_migrations(
+                        _apply_sqlite_migrations_unregistered(
                             guarded,
                             migrations=(migration,),
                             clock=control_clock,
@@ -672,7 +690,7 @@ class MigrationRunnerTests(unittest.TestCase):
                 raise rollback_origin
 
             with self.assertRaises(KeyboardInterrupt) as caught_rollback:
-                apply_sqlite_migrations(
+                _apply_sqlite_migrations_unregistered(
                     RollbackInterruptingConnection(),
                     migrations=(migration,),
                     clock=rollback_control_clock,
@@ -693,7 +711,7 @@ class MigrationRunnerTests(unittest.TestCase):
             return_value="CREATE TABLE commit_partial (value TEXT);",
         ):
             with self.assertRaisesRegex(sqlite3.OperationalError, "commit failure"):
-                apply_sqlite_migrations(
+                _apply_sqlite_migrations_unregistered(
                     wrapped,
                     migrations=(migration,),
                     clock=lambda: NOW,
@@ -703,7 +721,7 @@ class MigrationRunnerTests(unittest.TestCase):
             self.assertFalse(self.table_exists("commit_partial"))
             self.assertEqual(self.ledger_count(), 0)
             self.assertEqual(
-                apply_sqlite_migrations(
+                _apply_sqlite_migrations_unregistered(
                     wrapped,
                     migrations=(migration,),
                     clock=lambda: NOW,
@@ -728,7 +746,7 @@ class MigrationRunnerTests(unittest.TestCase):
                 return_value="CREATE TABLE denied_commit (value TEXT);",
             ):
                 with self.assertRaisesRegex(sqlite3.DatabaseError, "not authorized"):
-                    apply_sqlite_migrations(
+                    _apply_sqlite_migrations_unregistered(
                         self.connection,
                         migrations=(migration,),
                         clock=lambda: NOW,

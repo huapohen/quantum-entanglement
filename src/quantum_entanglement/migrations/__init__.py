@@ -239,7 +239,7 @@ def _is_exact_control_signal(error: BaseException) -> bool:
     return type(error) in (KeyboardInterrupt, SystemExit, GeneratorExit, CancelledError)
 
 
-def apply_sqlite_migrations(
+def _apply_sqlite_migrations_unregistered(
     connection: sqlite3.Connection,
     *,
     migrations: Sequence[Migration] = MIGRATIONS,
@@ -355,6 +355,36 @@ def apply_sqlite_migrations(
     version = validate_sqlite_schema(connection, migrations=migrations)
     _run_process_guard(_process_guard)
     return version
+
+
+def apply_sqlite_migrations(
+    connection: sqlite3.Connection,
+    *,
+    migrations: Sequence[Migration] = MIGRATIONS,
+    target_versions: Optional[Sequence[int]] = None,
+    clock: Callable[[], str] = utc_now,
+    _process_guard: Optional[Callable[[], None]] = None,
+) -> int:
+    """Apply only an exact prefix of the active packaged legacy registry.
+
+    Custom registries used to be accepted by this public legacy runner.  Once inactive native SQL
+    candidates are packaged, that would turn a caller-supplied sequence into an activation bypass.
+    Fault-injection tests exercise the private kernel directly; product paths can apply only the
+    active `MIGRATIONS` prefix.
+    """
+
+    selected = tuple(migrations)
+    if selected != tuple(MIGRATIONS[: len(selected)]):
+        raise MigrationVersionError(
+            "migration application is restricted to the active packaged registry prefix"
+        )
+    return _apply_sqlite_migrations_unregistered(
+        connection,
+        migrations=selected,
+        target_versions=target_versions,
+        clock=clock,
+        _process_guard=_process_guard,
+    )
 
 
 def current_schema_version(connection: sqlite3.Connection) -> int:
