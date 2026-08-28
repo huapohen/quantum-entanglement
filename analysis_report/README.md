@@ -49,6 +49,7 @@
 | `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口：`53dd38b` | canonical strict connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate A/Trusted tenant 剩余 P0 |
 | `docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md` | 当前 policy control-store 工程入口：`16d66b6`，`local_pending` | 独立 control cluster、owner/reader/activator 分权、exact CAS、catalog/ACL attestation、commit-unknown reconcile、PG18.6 实证与 mutation-time fence 后续边界 |
 | `research/36_postgres_approval_policy_control_store_checkpoint.md` | 当前 W2 深度证据：`16d66b6`，`local_pending` | immutable policy archive/activation/head、完整历史链、双重 attestation、并发/损坏/取消测试、诚实 NO-GO 与下一阶段顺序 |
+| `research/37_postgres_durable_attempt_issuer_v2_checkpoint.md` | 当前 W2 本地增量：`ec9ed68`，`local_pending` | 五角色 control store、post-preflight durable attempt grant、issuance ID 幂等回读、fence `/3` trust boundary 与 SQL smoke test |
 
 接入前代码基线已经安全备份。`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 中“先 Level A、再 Level B
 sandbox inbound-only”是当时的历史调度口径。当前执行源已切换为
@@ -96,6 +97,7 @@ Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清�
 | [`research/34_postgres_function_only_writes_and_exact_access_checkpoint.md`](research/34_postgres_function_only_writes_and_exact_access_checkpoint.md) | W2 前序检查点：`cd92ea5` | `0005`、五个 fixed function、function-only repository/receipt、exact access 临时测试 validator fixture、真实 migration/runtime login 与 PostgreSQL 18.6 正负向矩阵；由 Topic 35 接续 |
 | [`research/35_postgres_attested_runtime_composition_checkpoint.md`](research/35_postgres_attested_runtime_composition_checkpoint.md) | W2 当前深度证据：`53dd38b` | canonical strict connection policy、physical/session attestation、exact readiness、attested-only UoW、API gate、one-shot migrator、PG18 normal/race/vet 与 Gate A/Trusted Participant/mention 后续计划 |
 | [`research/36_postgres_approval_policy_control_store_checkpoint.md`](research/36_postgres_approval_policy_control_store_checkpoint.md) | W2 当前深度证据：`16d66b6` | 独立 policy control cluster、三角色、exact CAS、完整历史链、code-owned catalog attestation、PG18.6 并发/故障证据与 mutation-time fence NO-GO |
+| [`research/37_postgres_durable_attempt_issuer_v2_checkpoint.md`](research/37_postgres_durable_attempt_issuer_v2_checkpoint.md) | W2 当前本地增量：`ec9ed68`，`local_pending` | 五角色 control store、post-preflight durable attempt issuer、issuance retry、完整向量绑定、fence `/3`、PG18.6 fresh schema/contract smoke test；Notion 延后批量同步 |
 | `docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md` | 当前 policy control-store 工程入口与 Go/No-Go：`16d66b6` | 代码/部署入口、验证命令、可信边界，以及 approval consumption/fence/receipt/executor 的后续顺序 |
 
 ## 已归档截图
