@@ -494,7 +494,8 @@ EventEnvelope
 
 W1 P1-7 已冻结 `EventToAppend`/`StoredEvent`、`EventStore` port、scope-bound opaque cursor 和明确标记为
 volatile 的 `VolatileMemoryStore`。`EventStore.Characteristics()` 是 port 合同的一部分，要求 durable、
-restart persistence、tamper evidence 或 Action receipt 的 production composition 会拒绝该 fake。
+restart persistence 或 tamper evidence 的 production composition 会拒绝该 fake；Action receipt 由独立
+Action Plane port/admission 保证，不属于 EventStore characteristics。
 
 fake 的整批 append 在单一临界区执行：先做 ordered exact-retry/conflict，再做 expected revision、capacity、
 injected clock 和 context 检查，最后一起发布 stream/global/retry indexes。store 独占 sequence、global
