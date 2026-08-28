@@ -668,7 +668,8 @@ func exactAuthorityFunctions(
 	manifest AuthorityAccessManifest,
 ) bool {
 	if validateFunctionOnlyWrites(ctx, transaction) != nil ||
-		!exactOwnerFunctionDefaultPrivileges(ctx, transaction, manifest.OwnerRole) {
+		!exactOwnerFunctionDefaultPrivileges(ctx, transaction, manifest.OwnerRole) ||
+		!noAuthorityMetaFunctions(ctx, transaction) {
 		return false
 	}
 	rows, err := transaction.Query(ctx, `
@@ -712,6 +713,18 @@ ORDER BY procedure.proname, pg_catalog.pg_get_function_identity_arguments(proced
 		})
 	}
 	return slices.Equal(actualACL, expectedACL)
+}
+
+func noAuthorityMetaFunctions(ctx context.Context, transaction pgx.Tx) bool {
+	var clean bool
+	err := transaction.QueryRow(ctx, `
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_proc AS procedure
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+    WHERE namespace.nspname = 'wanwork_meta'
+)`).Scan(&clean)
+	return err == nil && clean
 }
 
 func exactOwnerFunctionDefaultPrivileges(
