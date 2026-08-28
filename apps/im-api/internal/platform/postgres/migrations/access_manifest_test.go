@@ -13,9 +13,11 @@ func TestAuthorityAccessManifestRequiresDistinctCanonicalRoles(t *testing.T) {
 		t.Fatal("valid authority access manifest rejected")
 	}
 	for name, mutate := range map[string]func(*AuthorityAccessManifest){
-		"empty owner":    func(value *AuthorityAccessManifest) { value.OwnerRole = "" },
-		"uppercase role": func(value *AuthorityAccessManifest) { value.RuntimeRole = "Runtime" },
-		"duplicate core": func(value *AuthorityAccessManifest) { value.RuntimeRole = value.OwnerRole },
+		"empty owner":            func(value *AuthorityAccessManifest) { value.OwnerRole = "" },
+		"empty migration logins": func(value *AuthorityAccessManifest) { value.MigrationLoginRoles = nil },
+		"empty runtime logins":   func(value *AuthorityAccessManifest) { value.RuntimeLoginRoles = nil },
+		"uppercase role":         func(value *AuthorityAccessManifest) { value.RuntimeRole = "Runtime" },
+		"duplicate core":         func(value *AuthorityAccessManifest) { value.RuntimeRole = value.OwnerRole },
 		"duplicate login": func(value *AuthorityAccessManifest) {
 			value.RuntimeLoginRoles = append(value.RuntimeLoginRoles, value.RuntimeLoginRoles[0])
 		},

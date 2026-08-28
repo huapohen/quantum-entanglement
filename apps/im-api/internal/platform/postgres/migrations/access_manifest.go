@@ -37,9 +37,10 @@ func DefaultAuthorityAccessManifest() AuthorityAccessManifest {
 	}
 }
 
-// ValidateAuthorityAccess must run on a connection whose current role is manifest.OwnerRole.
-// Role and database provisioning remain DBA/IaC responsibilities; this function is read-only and
-// fails closed instead of attempting to repair ownership, memberships, or grants.
+// ValidateAuthorityAccess must run on a listed migration login connection after it has selected
+// manifest.OwnerRole. Role and database provisioning remain DBA/IaC responsibilities; this
+// function is read-only and fails closed instead of attempting to repair ownership, memberships,
+// or grants.
 func ValidateAuthorityAccess(
 	ctx context.Context,
 	connection *pgx.Conn,
@@ -70,7 +71,8 @@ func ValidateAuthorityAccess(
 
 func validAuthorityAccessManifest(manifest AuthorityAccessManifest) bool {
 	core := []string{manifest.OwnerRole, manifest.MigratorRole, manifest.RuntimeRole}
-	if !canonicalAccessRoleName.MatchString(manifest.DatabaseOwnerRole) ||
+	if len(manifest.MigrationLoginRoles) == 0 || len(manifest.RuntimeLoginRoles) == 0 ||
+		!canonicalAccessRoleName.MatchString(manifest.DatabaseOwnerRole) ||
 		!uniqueCanonicalAccessRoles(core) ||
 		!uniqueCanonicalAccessRoles(manifest.MigrationLoginRoles) ||
 		!uniqueCanonicalAccessRoles(manifest.RuntimeLoginRoles) {
@@ -100,9 +102,12 @@ func exactAuthorityAccess(
 	transaction pgx.Tx,
 	manifest AuthorityAccessManifest,
 ) bool {
-	var currentUser string
-	if err := transaction.QueryRow(ctx, "SELECT current_user").Scan(&currentUser); err != nil ||
-		currentUser != manifest.OwnerRole {
+	var sessionUser, currentUser string
+	if err := transaction.QueryRow(ctx, "SELECT session_user, current_user").Scan(
+		&sessionUser,
+		&currentUser,
+	); err != nil || currentUser != manifest.OwnerRole ||
+		!slices.Contains(manifest.MigrationLoginRoles, sessionUser) {
 		return false
 	}
 	return exactAuthorityRoles(ctx, transaction, manifest) &&
