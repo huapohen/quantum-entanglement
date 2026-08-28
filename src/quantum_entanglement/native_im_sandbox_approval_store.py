@@ -551,6 +551,13 @@ class SQLiteNativeIMSandboxApprovalHighWaterV1:
         self._require_process()
         return self.__closed
 
+    @property
+    def durable(self) -> bool:
+        """Whether the high-water survives process restart on a filesystem path."""
+
+        self._require_process()
+        return self.__path != ":memory:"
+
     def __enter__(self) -> SQLiteNativeIMSandboxApprovalHighWaterV1:
         self._require_open()
         return self

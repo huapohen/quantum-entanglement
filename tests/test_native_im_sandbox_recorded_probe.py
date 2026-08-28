@@ -28,6 +28,7 @@ from quantum_entanglement.native_im_inbox import (
 from quantum_entanglement.native_im_nonce_store import SQLiteNativeIMInboxStore
 from quantum_entanglement.native_im_provider_profile import IMProviderProfileV1
 from quantum_entanglement.native_im_sandbox import (
+    _APPROVED_COMPOSITION_TOKEN,
     NativeIMHealthEvidenceV1,
     NativeIMInboundOnlySandboxAdapter,
     NativeIMInboundRawResponseV1,
@@ -57,6 +58,7 @@ from tests.test_native_im_contract import (
     inbound_read_request,
     participant,
 )
+from tests.test_native_im_sandbox_authority import approved_authority_for
 from tests.test_native_im_sandbox_inbound_adapter import (
     READ_CREDENTIAL,
     RecordingSecretProvider,
@@ -247,14 +249,21 @@ def make_probe_rig(
     )
     transport = RecordedTransport(plans)
     mapper = RecordedMapper(specs)
+    configuration, approval_authority, approval_permit, _, _ = approved_authority_for(
+        configuration,
+        profile,
+    )
     adapter = NativeIMInboundOnlySandboxAdapter(
         configuration,
         profile,
+        approval_authority,
+        approval_permit,
         transport,
         mapper,
         RecordingSecretProvider(configuration),
         store,
         clock=lambda: NOW,
+        _composition_token=_APPROVED_COMPOSITION_TOKEN,
     )
     handler = CapturingHandler()
     observer, metrics = sandbox_observer(handler)

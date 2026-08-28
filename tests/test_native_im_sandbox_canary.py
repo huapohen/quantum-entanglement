@@ -8,6 +8,7 @@ import pytest
 from quantum_entanglement.native_im import IMInboundReadRequestV1
 from quantum_entanglement.native_im_nonce_store import SQLiteNativeIMInboxStore
 from quantum_entanglement.native_im_sandbox import (
+    _APPROVED_COMPOSITION_TOKEN,
     NativeIMHealthEvidenceV1,
     NativeIMInboundOnlySandboxAdapter,
     NativeIMInboundRawResponseV1,
@@ -27,6 +28,7 @@ from tests.test_native_im_auth import (
     signature_for,
 )
 from tests.test_native_im_contract import inbound_read_request
+from tests.test_native_im_sandbox_authority import approved_authority_for
 from tests.test_native_im_sandbox_inbound_adapter import (
     MAPPING_EVIDENCE,
     TRANSPORT_EVIDENCE,
@@ -149,14 +151,21 @@ async def test_message_secret_and_trace_canaries_are_contained_end_to_end(
         profile_digest=profile.canonical_digest(),
         clock=lambda: NOW,
     )
+    configuration, approval_authority, approval_permit, _, _ = approved_authority_for(
+        configuration,
+        profile,
+    )
     adapter = NativeIMInboundOnlySandboxAdapter(
         configuration,
         profile,
+        approval_authority,
+        approval_permit,
         transport,
         mapper,
         secrets,
         store,
         clock=lambda: NOW,
+        _composition_token=_APPROVED_COMPOSITION_TOKEN,
     )
     handler = CapturingHandler()
     observer, metrics = sandbox_observer(handler)

@@ -12,6 +12,8 @@ import asyncio
 import hashlib
 import ipaddress
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, NoReturn, Protocol, SupportsIndex, runtime_checkable
 
@@ -39,6 +41,10 @@ from .native_im_provider_profile import (
     IMProviderProfileV1,
     derive_inbound_only_capability_snapshot_v1,
 )
+from .native_im_sandbox_authority import (
+    InMemoryNativeIMSandboxApprovalAuthorityV1,
+    NativeIMSandboxApprovalPermitV1,
+)
 from .service.native_im_config import (
     CanonicalAbsolutePath,
     CanonicalHTTPSOrigin,
@@ -51,6 +57,7 @@ from .service.native_im_secrets import NativeIMSecretLoader
 from .service.secrets import SecretMaterial, SecretRef
 
 _MAX_RAW_RESPONSE_BYTES = 16 * 1_024 * 1_024
+_APPROVED_COMPOSITION_TOKEN = object()
 
 
 class NativeIMSandboxDisabledError(RuntimeError):
@@ -458,6 +465,8 @@ class NativeIMInboundOnlySandboxAdapter:
         "__close_lock",
         "__configuration",
         "__closed",
+        "__approval_authority",
+        "__approval_permit",
         "__mapper",
         "__process_id",
         "__profile",
@@ -470,17 +479,27 @@ class NativeIMInboundOnlySandboxAdapter:
         self,
         configuration: NativeIMInboundOnlyConfigV1,
         profile: IMProviderProfileV1,
+        approval_authority: InMemoryNativeIMSandboxApprovalAuthorityV1,
+        approval_permit: NativeIMSandboxApprovalPermitV1,
         transport: NativeIMInboundTransportPort,
         mapper: NativeIMInboundMapperPort,
         secret_provider: NativeIMSecretResolverPort,
         replay_guard: NativeIMNonceReplayGuardPort,
         *,
         clock: Callable[[], str],
+        _composition_token: object,
     ) -> None:
+        if _composition_token is not _APPROVED_COMPOSITION_TOKEN:
+            raise TypeError("inbound adapters are created by approved composition only")
         configuration_snapshot = _snapshot_configuration(configuration)
         if type(profile) is not IMProviderProfileV1:
             raise TypeError("inbound adapter requires the exact provider profile")
         profile_snapshot = IMProviderProfileV1.from_json_bytes(profile.canonical_bytes())
+        if type(approval_authority) is not InMemoryNativeIMSandboxApprovalAuthorityV1:
+            raise TypeError("inbound adapter requires the exact sandbox approval authority")
+        if type(approval_permit) is not NativeIMSandboxApprovalPermitV1:
+            raise TypeError("inbound adapter requires the exact live approval permit")
+        approval_authority.require_current(approval_permit, operation="health")
         if not isinstance(transport, NativeIMInboundTransportPort):
             raise TypeError("inbound adapter requires the transport port")
         if not isinstance(mapper, NativeIMInboundMapperPort):
@@ -494,6 +513,8 @@ class NativeIMInboundOnlySandboxAdapter:
         self.__process_id = os.getpid()
         self.__configuration = configuration_snapshot
         self.__profile = profile_snapshot
+        self.__approval_authority = approval_authority
+        self.__approval_permit = approval_permit
         self.__transport = transport
         self.__mapper = mapper
         self.__secret_loader = NativeIMSecretLoader(configuration_snapshot, secret_provider)
@@ -534,11 +555,35 @@ class NativeIMInboundOnlySandboxAdapter:
             now=now,
         )
 
+    def _require_approval(self, operation: str) -> None:
+        self._require_open()
+        self.__approval_authority.require_current(
+            self.__approval_permit,
+            operation=operation,
+        )
+
+    @contextmanager
+    def approval_admission_guard(self) -> Iterator[None]:
+        """Hold live and durable approval authority across final local admission."""
+
+        self._require_open()
+        with self.__approval_authority.admission_guard(
+            self.__approval_permit,
+            operation="read",
+        ):
+            yield
+
+    def require_current_approval(self) -> None:
+        """Fail closed when lifecycle readiness no longer has live health authority."""
+
+        self._require_approval("health")
+
     async def capability_snapshot(
         self,
         request: IMCapabilityRequestV1,
     ) -> IMCapabilitySnapshotV1:
         self._require_open()
+        self._require_approval("read")
         if type(request) is not IMCapabilityRequestV1:
             raise TypeError("capability request must be the exact V1 class")
         request_snapshot = IMCapabilityRequestV1.from_json_bytes(request.canonical_bytes())
@@ -553,7 +598,9 @@ class NativeIMInboundOnlySandboxAdapter:
 
     async def probe_health(self) -> NativeIMHealthEvidenceV1:
         self._require_open()
+        self._require_approval("health")
         self._preflight(self._now())
+        self._require_approval("health")
         credential = self.__secret_loader.resolve("read_credential")
         failed = False
         result: object = None
@@ -566,6 +613,7 @@ class NativeIMInboundOnlySandboxAdapter:
             credential.close()
         if failed or type(result) is not NativeIMHealthEvidenceV1 or result.healthy is not True:
             raise NativeIMTransportContractError() from None
+        self._require_approval("health")
         return result
 
     async def read_verified_inbound(
@@ -573,6 +621,7 @@ class NativeIMInboundOnlySandboxAdapter:
         request: IMInboundReadRequestV1,
     ) -> NativeIMVerifiedInboundReadV1:
         self._require_open()
+        self._require_approval("read")
         if type(request) is not IMInboundReadRequestV1:
             raise TypeError("inbound read request must be the exact V1 class")
         request_snapshot = IMInboundReadRequestV1.from_json_bytes(request.canonical_bytes())
@@ -588,6 +637,7 @@ class NativeIMInboundOnlySandboxAdapter:
             ),
         )
         capability = await self.capability_snapshot(capability_request)
+        self._require_approval("read")
         credential = self.__secret_loader.resolve("read_credential")
         transport_failed = False
         response: object = None
@@ -600,6 +650,7 @@ class NativeIMInboundOnlySandboxAdapter:
             credential.close()
         if transport_failed or type(response) is not NativeIMInboundRawResponseV1:
             raise NativeIMTransportContractError() from None
+        self._require_approval("read")
 
         verification_material = self.__secret_loader.resolve("verification_key")
         raw_verification = self.__verifier.verify_for_atomic_admission(
@@ -608,6 +659,7 @@ class NativeIMInboundOnlySandboxAdapter:
             verification_material,
             now=self._now(),
         )
+        self._require_approval("read")
         mapping_failed = False
         mapped: object = None
         try:
@@ -623,6 +675,7 @@ class NativeIMInboundOnlySandboxAdapter:
             _detach_exception(error)
         if mapping_failed or type(mapped) is not NativeIMMappedPageV1:
             raise NativeIMTransportContractError() from None
+        self._require_approval("read")
         page = parse_native_im_inbound_page_v1(
             response,
             mapped,
@@ -632,6 +685,7 @@ class NativeIMInboundOnlySandboxAdapter:
             self.__configuration,
             self.__profile,
         )
+        self._require_approval("read")
         return NativeIMVerifiedInboundReadV1(
             request=request_snapshot,
             capability=capability,

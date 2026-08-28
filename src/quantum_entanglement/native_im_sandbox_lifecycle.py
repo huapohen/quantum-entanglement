@@ -22,6 +22,7 @@ from .native_im_sandbox import (
     NativeIMInboundOnlySandboxAdapter,
     NativeIMVerifiedInboundReadV1,
 )
+from .native_im_sandbox_authority import NativeIMSandboxApprovalAuthorityError
 from .native_im_sandbox_observability import NativeIMSandboxObserverV1
 
 _KILL_REASONS = {
@@ -186,6 +187,7 @@ class NativeIMSandboxKillSwitchV1:
 class NativeIMSandboxLifecycleStatusV1:
     state: str
     ready: bool
+    approval_current: bool
     kill_switch_tripped: bool
     kill_switch_generation: int
 
@@ -194,11 +196,19 @@ class NativeIMSandboxLifecycleStatusV1:
             raise TypeError("lifecycle status requires the exact V1 class")
         if type(self.state) is not str or self.state not in _LIFECYCLE_STATES:
             raise ValueError("lifecycle state is invalid")
-        if type(self.ready) is not bool or type(self.kill_switch_tripped) is not bool:
+        if (
+            type(self.ready) is not bool
+            or type(self.approval_current) is not bool
+            or type(self.kill_switch_tripped) is not bool
+        ):
             raise TypeError("lifecycle status flags must be exact booleans")
         if type(self.kill_switch_generation) is not int or self.kill_switch_generation < 0:
             raise TypeError("lifecycle generation must be a non-negative exact integer")
-        if self.ready != (self.state == "ready" and not self.kill_switch_tripped):
+        if self.ready != (
+            self.state == "ready"
+            and self.approval_current
+            and not self.kill_switch_tripped
+        ):
             raise ValueError("lifecycle ready flag does not match state and kill switch")
 
 
@@ -336,13 +346,14 @@ class NativeIMSandboxLifecycleV1:
                 verified = await self.__adapter.read_verified_inbound(request)
                 if type(verified) is not NativeIMVerifiedInboundReadV1:
                     raise NativeIMSandboxLifecycleError() from None
-                with self.__kill_switch.admission_guard(snapshot):
-                    result = self.__store.admit_native_im_inbound_page(
-                        verified.request,
-                        verified.capability,
-                        verified.page,
-                        verified.raw_verification,
-                    )
+                with self.__adapter.approval_admission_guard():
+                    with self.__kill_switch.admission_guard(snapshot):
+                        result = self.__store.admit_native_im_inbound_page(
+                            verified.request,
+                            verified.capability,
+                            verified.page,
+                            verified.raw_verification,
+                        )
                 if type(result) is not NativeIMInboundPageAdmissionResultV1:
                     raise NativeIMSandboxLifecycleError() from None
             except NativeIMKillSwitchTrippedError:
@@ -399,9 +410,22 @@ class NativeIMSandboxLifecycleV1:
     def status(self) -> NativeIMSandboxLifecycleStatusV1:
         self._require_current_process()
         snapshot = self.__kill_switch.snapshot()
+        approval_current = False
+        if self.__state == "ready":
+            try:
+                self.__adapter.require_current_approval()
+            except NativeIMSandboxApprovalAuthorityError:
+                approval_current = False
+            else:
+                approval_current = True
         return NativeIMSandboxLifecycleStatusV1(
             state=self.__state,
-            ready=self.__state == "ready" and not snapshot.tripped,
+            ready=(
+                self.__state == "ready"
+                and approval_current
+                and not snapshot.tripped
+            ),
+            approval_current=approval_current,
             kill_switch_tripped=snapshot.tripped,
             kill_switch_generation=snapshot.generation,
         )
