@@ -175,29 +175,14 @@
 <header id="title-block-header">
 <h1 class="title">调研与证据索引</h1>
 </header>
-<nav id="TOC" role="doc-toc">
-<ul>
-<li><a href="#调研与证据索引" id="toc-调研与证据索引">调研与证据索引</a>
-<ul>
-<li><a href="#notion-镜像2026-08-27-已回读"
-id="toc-notion-镜像2026-08-27-已回读">Notion 镜像（2026-08-27
-已回读）</a></li>
-<li><a href="#当前阶段交付" id="toc-当前阶段交付">当前阶段交付</a></li>
-<li><a href="#专题研究" id="toc-专题研究">专题研究</a></li>
-<li><a href="#已归档截图" id="toc-已归档截图">已归档截图</a></li>
-<li><a href="#数据安全" id="toc-数据安全">数据安全</a></li>
-</ul></li>
-</ul>
-</nav>
 <h1 id="调研与证据索引">调研与证据索引</h1>
 <p>本目录是本地报告的单一真相源。报告正文会在研究、实现和验证完成后汇总为
-<code>multi_agent_collaboration_report.md</code>。自 2026-08-27
-起，用户要求任何本地文档、代码、决策、
-计划或验收动作形成稳定检查点后，都必须同步到私人 Notion
-并完成远端回读，回读完成前不进入
-下一项工作。语雀仍只在用户另行明确授权时操作。</p>
-<h2 id="notion-镜像2026-08-27-已回读">Notion 镜像（2026-08-27
-已回读）</h2>
+<code>multi_agent_collaboration_report.md</code>。当前采用阶段批量同步节奏：本地连续研究/实现/验证并频繁提交，
+阶段代码和文档全部完成、推送 GitHub 后，再统一同步私人 Notion
+并完成一次回读。Notion 未回读前只算
+<code>local_pending</code>，不得冒充远端已更新；语雀仍只在用户另行明确授权时操作。</p>
+<h2 id="notion-镜像最近完成批次2026-08-28">Notion
+镜像（最近完成批次：2026-08-28）</h2>
 <ul>
 <li>私有 GitHub 仓库：<a
 href="https://github.com/huapohen/quantum-entanglement"
@@ -235,11 +220,14 @@ class="uri">https://app.notion.com/p/3caead4b996e8183ae54f4d5abc2643d?pvs=204</a
 <li>最近稳定批次同步：2026-08-28；47 个受控事实源页面与 2 个派生索引页共
 49 页。项目首页、 WanWork IM 审阅主页、调研矩阵、实施计划、2output
 吸收审计、专题 32 与专题 33 已联合回读。</li>
-<li>当前 WanWork IM Notion 内容基线为
-<code>dev_wanwork_quantum_entanglement@4a465d880334b206f4503447d3fa2ccad696884d</code>，代码事实基线为
-<code>8d662bf4faec1cfaa12b63f4dfc2132ae6869dbb</code>；分支未合并
-<code>main</code>。<code>main@f99f176</code> 仍是提前接入
-历史备份基线，不代表本分支当前 W2 进度。</li>
+<li>当前最后完成远端回读的 WanWork IM Notion 内容基线为
+<code>dev_wanwork_quantum_entanglement@7bb324a4a06689a496cbc99b79d23261d031bc19</code>，其
+Topic 34 代码证据 基线为
+<code>cd92ea56493b43889f5165892b40ec36e958d44a</code>；分支未合并
+<code>main</code>。当前 Topic 35 <code>2d0c4a0</code>
+代码/文档仍是本地与 Git 待同步增量，不能写成 Notion
+已更新。<code>main@f99f176</code> 仍是提前
+接入历史备份基线，不代表本分支当前 W2 进度。</li>
 <li>本轮已确认两个当前 Markdown
 附件从临时上传转为页面附件；所有七个更新页面均回读到 Topic 33
 反链、两个基线 SHA、两层一级调研根、六项 P0 gate
@@ -248,7 +236,8 @@ class="uri">https://app.notion.com/p/3caead4b996e8183ae54f4d5abc2643d?pvs=204</a
 <code>99031ad243112122e987e84658ff93daf33b3285ea1468039f9d59dc8048167a</code>。</li>
 <li>机器可读页面映射、文件摘要和回读断言见 <a
 href="notion_sync_manifest.json"><code>notion_sync_manifest.json</code></a>。</li>
-<li>当前批次已完成 Notion 写入和远端回读；语雀仍未操作。</li>
+<li>最近完成批次已完成 Notion 写入和远端回读；Topic 35
+将在本阶段本地/Git 收尾后批量同步；语雀仍未操作。</li>
 </ul>
 <h2 id="当前阶段交付">当前阶段交付</h2>
 <table>
@@ -297,15 +286,16 @@ bundle、恢复命令与提前接入边界；不是当前 W2 入口</td>
 </tr>
 <tr>
 <td><code>docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md</code></td>
-<td>当前 W2 工程入口：<code>5c19fdb</code></td>
-<td>strict connection policy、attested runtime pool、受控
+<td>当前 W2 工程入口：<code>2d0c4a0</code></td>
+<td>canonical strict connection policy、attested runtime pool、受控
 UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate
 A/Trusted tenant 剩余 P0</td>
 </tr>
 <tr>
 <td><code>research/35_postgres_attested_runtime_composition_checkpoint.md</code></td>
-<td>当前 W2 深度证据：<code>5c19fdb</code></td>
-<td>12 提交台账、PG18 connection/session/ACL drift
+<td>当前 W2 深度证据：<code>2d0c4a0</code></td>
+<td>25 提交台账、ambient/default-file/raw-DSN 安全闭环、PG18
+connection/session/ACL drift
 实证、一级调研硬映射、未交付边界与下一阶段计划</td>
 </tr>
 </tbody>
@@ -314,8 +304,8 @@ A/Trusted tenant 剩余 P0</td>
 中“先 Level A、再 Level B sandbox
 inbound-only”是当时的历史调度口径。当前执行源已切换为
 <code>docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md</code> 与 Topic
-35；<code>NEXT_STAGE_PLAN.md</code> 继续作为 E3 Atomic Result
-Authority 的最大强度参考，不是当前 W2 的串行总清单。</p>
+35；<code>NEXT_STAGE_PLAN.md</code> 继续作为 E3 Atomic Result Authority
+的最大强度参考，不是当前 W2 的串行总清单。</p>
 <h2 id="专题研究">专题研究</h2>
 <table>
 <colgroup>
@@ -567,14 +557,15 @@ migration/runtime login 与 PostgreSQL 18.6 正负向矩阵；由 Topic 35
 <tr>
 <td><a
 href="research/35_postgres_attested_runtime_composition_checkpoint.md"><code>research/35_postgres_attested_runtime_composition_checkpoint.md</code></a></td>
-<td>W2 当前深度证据：<code>5c19fdb</code></td>
-<td>strict connection policy、physical/session attestation、exact
-readiness、attested-only UoW、API gate、one-shot migrator、PG18
-normal/race/vet 与 Gate A/Trusted Participant/mention 后续计划</td>
+<td>W2 当前深度证据：<code>2d0c4a0</code></td>
+<td>canonical strict connection policy、physical/session
+attestation、exact readiness、attested-only UoW、API gate、one-shot
+migrator、PG18 normal/race/vet 与 Gate A/Trusted Participant/mention
+后续计划</td>
 </tr>
 <tr>
 <td><code>docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md</code></td>
-<td>当前 W2 工程入口与 Go/No-Go：<code>5c19fdb</code></td>
+<td>当前 W2 工程入口与 Go/No-Go：<code>2d0c4a0</code></td>
 <td>当前启动/调试入口、runtime composition、验证命令、production
 cutover/rotation、trusted tenant、mention/thread/provider 顺序</td>
 </tr>
@@ -757,9 +748,9 @@ gate</td>
 <tr>
 <td><code>screenshots/35_postgres_attested_runtime_composition_map.svg</code>
 / <code>.png</code></td>
-<td>private config → strict connection policy → physical/session
-attestation → readiness/UoW/API gate → Gate A/Trusted Participant/mention
-剩余边界</td>
+<td>private config → ambient/default-file/raw-DSN hardening →
+physical/session attestation → readiness/UoW/API gate → Gate A/Trusted
+Participant/mention 剩余边界</td>
 <td>仓库内 SVG 与派生 PNG；不是独立运行证据</td>
 </tr>
 </tbody>

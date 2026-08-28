@@ -240,42 +240,6 @@
 <header id="title-block-header">
 <h1 class="title">原生 IM 实施计划</h1>
 </header>
-<nav id="TOC" role="doc-toc">
-<ul>
-<li><a href="#原生-im-实施计划" id="toc-原生-im-实施计划">原生 IM
-实施计划</a>
-<ul>
-<li><a href="#分支与提交策略" id="toc-分支与提交策略">1.
-分支与提交策略</a></li>
-<li><a href="#阶段" id="toc-阶段">2. 阶段</a>
-<ul>
-<li><a href="#w0研究审计冻结需求架构和审阅空间"
-id="toc-w0研究审计冻结需求架构和审阅空间">W0：研究审计、冻结需求/架构和审阅空间</a></li>
-<li><a href="#w1monorepo-与-go-基础"
-id="toc-w1monorepo-与-go-基础">W1：Monorepo 与 Go 基础</a></li>
-<li><a href="#w2im-domain-与-postgresql"
-id="toc-w2im-domain-与-postgresql">W2：IM Domain 与 PostgreSQL</a></li>
-<li><a href="#w3clerk-与融云-adapter"
-id="toc-w3clerk-与融云-adapter">W3：Clerk 与融云 adapter</a></li>
-<li><a href="#w4agent-store-与-agent-子群"
-id="toc-w4agent-store-与-agent-子群">W4：Agent Store 与
-<code>@Agent</code> 子群</a></li>
-<li><a href="#w5react-webpwa" id="toc-w5react-webpwa">W5：React
-Web/PWA</a></li>
-<li><a href="#w6desktop-与-mobile"
-id="toc-w6desktop-与-mobile">W6：Desktop 与 Mobile</a></li>
-<li><a href="#w7受控集成与审阅交付"
-id="toc-w7受控集成与审阅交付">W7：受控集成与审阅交付</a></li>
-</ul></li>
-<li><a href="#m0-首个不可伪造验收脚本"
-id="toc-m0-首个不可伪造验收脚本">3. M0 首个不可伪造验收脚本</a></li>
-<li><a href="#第一批小提交" id="toc-第一批小提交">4.
-第一批小提交</a></li>
-<li><a href="#持续门禁" id="toc-持续门禁">5. 持续门禁</a></li>
-<li><a href="#停止条件" id="toc-停止条件">6. 停止条件</a></li>
-</ul></li>
-</ul>
-</nav>
 <h1 id="原生-im-实施计划">原生 IM 实施计划</h1>
 <h2 id="分支与提交策略">1. 分支与提交策略</h2>
 <ul>
@@ -386,9 +350,10 @@ memory fake 不能代替该门禁。</p>
 <p>当前工程入口见 <a
 href="W2_POSTGRES_RUNTIME_CHECKPOINT.md">W2_POSTGRES_RUNTIME_CHECKPOINT.md</a>，最新深度证据见
 <code>analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md</code>；Topic
-33/34 分别保留 <code>0001..0004</code> persistence 与
-<code>0005</code> function-only/exact-access 的前序历史检查点。</p>
-<p>当前 code baseline 为 <code>5c19fdb</code>。当前口径必须保留：</p>
+33/34 分别保留 <code>0001..0004</code> persistence 与 <code>0005</code>
+function-only/exact-access 的前序历史检查点。</p>
+<p>当前 code evidence baseline 为
+<code>2d0c4a0</code>。当前口径必须保留：</p>
 <table>
 <colgroup>
 <col style="width: 50%" />
@@ -404,7 +369,7 @@ href="W2_POSTGRES_RUNTIME_CHECKPOINT.md">W2_POSTGRES_RUNTIME_CHECKPOINT.md</a>�
 <tr>
 <td><code>[F]</code></td>
 <td><code>0001..0005</code>、五个 exact write function、exact
-access、strict connection policy、attested runtime pool、受控
+access、strict canonical connection policy、attested runtime pool、受控
 UoW、startup/readiness/route barrier 与独立 migrator
 已形成代码路径；PostgreSQL 18.6 全包 normal/race 与 vet 通过。</td>
 </tr>
@@ -412,7 +377,8 @@ UoW、startup/readiness/route barrier 与独立 migrator
 <td><code>[C]</code></td>
 <td>保证仅限 explicit manifest、已登记 schema/object、当前
 repository/UoW 与测试 provision fixture；runtime composition 已接线，但
-production ownership/grant cutover、credential lifecycle 和恢复仍未交付。</td>
+production ownership/grant cutover、credential lifecycle
+和恢复仍未交付。</td>
 </tr>
 <tr>
 <td><code>[A]</code></td>
@@ -422,7 +388,8 @@ admission、resolver 和 event/outbox 的底座。</td>
 <tr>
 <td><code>[U]</code></td>
 <td>production cutover/角色轮换/旧 session drain、Clerk trusted
-tenant、action-time resolver、restore/crash 和 event/outbox 尚未完成。</td>
+tenant、action-time resolver、restore/crash 和 event/outbox
+尚未完成。</td>
 </tr>
 </tbody>
 </table>
@@ -453,16 +420,23 @@ signature/owner/body digest/security attributes/search path， repository
 database/schema/table/function/default ACL、owner、role attributes、
 membership options/grantor 与额外 relation/routine；真实
 migration/runtime login 通过正负向 fixture；</li>
-<li>strict connection policy 拒绝隐式 endpoint/identity、session 与
-parser-consumed params、service/pass file、 unauthenticated TLS 与
-multi-host/fallback；</li>
+<li>strict connection policy 拒绝 24 个 ambient <code>PG*</code> 变量的
+presence（含空值）、隐式 endpoint/identity、 remote
+passwordless、session 与 parser-consumed params、raw service/pass
+file、unauthenticated TLS 与 multi-host/fallback；canonical parse
+压住默认 <code>.pgpass</code>/client TLS file，精确比较最终
+credential/endpoint， 重建 timeout <code>DialFunc</code>；runtime pool
+不再二次解析 raw DSN；</li>
 <li>attested pool 在 AfterConnect 执行
 login/database/role/session/full-catalog proof，在 PrepareConn 拒绝
 role/GUC/lock/LISTEN/transaction 污染；</li>
-<li>UnitOfWork 生产构造器只接 attested pool；API runtime 监听前必须
-Ready，业务 route effect 前有 dependency gate；</li>
+<li>UnitOfWork 生产构造器只接 attested pool；<code>Pool.Acquire</code>
+是有 guard 但仍能执行 runtime-role SQL 的 trusted low-level escape
+hatch，不是 tenant/action authority；API runtime 监听前必须 Ready，业务
+route effect 前有 dependency gate；</li>
 <li>migration credential 已拆到 one-shot <code>im-migrate</code>
-进程，API 不读取 migration URL；</li>
+进程；API 不读取 migration URL，且启动环境只要存在
+该变量（含空值）就拒绝；</li>
 <li>SIGINT/SIGTERM 先有界 graceful drain HTTP，再关闭 pool；</li>
 <li>真实 PG18 RLS、schema drift、64 路 exact retry、64 路 single CAS
 winner、rollback、unknown commit 和 runtime immutable-history
@@ -630,6 +604,11 @@ runtime validator、strict connection policy、physical/session
 attestation、attested-only UoW、readiness/ route barrier、graceful HTTP
 drain 与 one-shot migrator；production cutover/rotation/recovery
 仍未交付）</li>
+<li><code>security/test: close ambient PostgreSQL composition gaps</code>（<code>2c65b80</code>～<code>2d0c4a0</code>；24
+个 <code>PG*</code> presence、API migration credential
+inheritance、default passfile/client TLS file、remote password、exact
+endpoint/credential、timeout DialFunc 与 raw runtime DSN 二次解析均 fail
+closed）</li>
 </ol>
 <p>任何一个条目若同时包含合同、实现、迁移、故障矩阵和
 UI，应继续拆成小提交；列表是顺序约束， 不是要求把一整项压成一个大
