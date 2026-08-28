@@ -319,12 +319,10 @@ class NativeIMSandboxExchangeAdmissionProvenanceV1:
         )
 
 
-NativeIMSandboxAdmissionProvenance = (
-    Union[
-        NativeIMSandboxAdmissionProvenanceV1,
-        NativeIMSandboxExchangeAdmissionProvenanceV1,
-    ]
-)
+NativeIMSandboxAdmissionProvenance = Union[
+    NativeIMSandboxAdmissionProvenanceV1,
+    NativeIMSandboxExchangeAdmissionProvenanceV1,
+]
 
 
 def decode_native_im_sandbox_admission_provenance_v1(

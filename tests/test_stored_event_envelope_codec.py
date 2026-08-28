@@ -109,9 +109,12 @@ def test_canonical_body_and_domain_separated_digest_are_exact() -> None:
     }
     assert value.canonical_bytes() == EXPECTED_CANONICAL_BYTES
     assert value.digest() == EXPECTED_DIGEST
-    assert value.digest() == hashlib.sha256(
-        codec.STORED_EVENT_ENVELOPE_DOMAIN.encode("utf-8") + EXPECTED_CANONICAL_BYTES
-    ).hexdigest()
+    assert (
+        value.digest()
+        == hashlib.sha256(
+            codec.STORED_EVENT_ENVELOPE_DOMAIN.encode("utf-8") + EXPECTED_CANONICAL_BYTES
+        ).hexdigest()
+    )
 
 
 def test_private_codec_is_not_exported_and_value_is_capability_free() -> None:
@@ -297,9 +300,7 @@ def test_every_raw_sqlite_column_is_covered_by_the_digest(
     field: str,
     replacement: object,
 ) -> None:
-    changed = codec._stored_event_envelope_from_raw_row(
-        raw_row(**{field: replacement})
-    )
+    changed = codec._stored_event_envelope_from_raw_row(raw_row(**{field: replacement}))
 
     assert changed.digest() != EXPECTED_DIGEST
 
@@ -342,9 +343,7 @@ def test_raw_row_requires_the_exact_closed_column_projection(
 ) -> None:
     overrides = {"future": "future-value"}
     with pytest.raises(codec.StoredEventEnvelopeCanonicalError, match="columns"):
-        codec._stored_event_envelope_from_raw_row(
-            raw_row(columns=columns, **overrides)
-        )
+        codec._stored_event_envelope_from_raw_row(raw_row(columns=columns, **overrides))
 
 
 @pytest.mark.parametrize("invalid", ({}, tuple(RAW_VALUES.values()), object()))
@@ -395,9 +394,7 @@ def test_payload_text_keys_and_structural_bounds_match_the_store_contract() -> N
     )
     for payload_json in invalid_payloads:
         with pytest.raises(codec.StoredEventEnvelopeError):
-            codec._stored_event_envelope_from_raw_row(
-                raw_row(payload_json=payload_json)
-            )
+            codec._stored_event_envelope_from_raw_row(raw_row(payload_json=payload_json))
 
 
 def test_payload_key_and_string_character_boundaries_match_the_event_store() -> None:
@@ -444,9 +441,7 @@ def test_payload_depth_and_node_bounds_fail_closed() -> None:
 
     for payload_json in (deep_json, wide_json):
         with pytest.raises(codec.StoredEventEnvelopeError):
-            codec._stored_event_envelope_from_raw_row(
-                raw_row(payload_json=payload_json)
-            )
+            codec._stored_event_envelope_from_raw_row(raw_row(payload_json=payload_json))
 
 
 def test_valid_canonical_json_edge_values_remain_exact() -> None:
@@ -454,9 +449,7 @@ def test_valid_canonical_json_edge_values_remain_exact() -> None:
         '{"array":[true,null,"item"],"emptyKey":{"":true},"emptyString":"",'
         '"float":1.5,"negativeZero":-0.0,"space":"ordinary space"}'
     )
-    value = codec._stored_event_envelope_from_raw_row(
-        raw_row(payload_json=payload_json)
-    )
+    value = codec._stored_event_envelope_from_raw_row(raw_row(payload_json=payload_json))
 
     assert value.to_dict()["payload"] == {
         "array": [True, None, "item"],

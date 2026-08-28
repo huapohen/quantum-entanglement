@@ -30,9 +30,7 @@ _MAX_PAYLOAD_KEY_CHARACTERS = 512
 _MAX_PAYLOAD_STRING_CHARACTERS = 65_536
 _MAX_PAYLOAD_INTEGER_DECIMAL_DIGITS = 1_234
 _MAX_PAYLOAD_FLOAT_LEXEME_CHARACTERS = 128
-_CANONICAL_UTC_MICROSECONDS = re.compile(
-    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z"
-)
+_CANONICAL_UTC_MICROSECONDS = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z")
 _RAW_EVENT_ROW_COLUMNS = (
     "global_position",
     "stream_id",
@@ -108,21 +106,15 @@ def _positive_integer(value: object, field: str) -> int:
 def _timestamp(value: object) -> str:
     snapshot = _plain_text(value, "timestamp")
     if _CANONICAL_UTC_MICROSECONDS.fullmatch(snapshot) is None:
-        raise StoredEventEnvelopeCanonicalError(
-            "timestamp must use canonical UTC microseconds"
-        )
+        raise StoredEventEnvelopeCanonicalError("timestamp must use canonical UTC microseconds")
     try:
-        parsed = datetime.strptime(snapshot, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
-            tzinfo=timezone.utc
-        )
+        parsed = datetime.strptime(snapshot, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
     except ValueError:
         raise StoredEventEnvelopeCanonicalError(
             "timestamp must use canonical UTC microseconds"
         ) from None
     if parsed.isoformat(timespec="microseconds").replace("+00:00", "Z") != snapshot:
-        raise StoredEventEnvelopeCanonicalError(
-            "timestamp must use canonical UTC microseconds"
-        )
+        raise StoredEventEnvelopeCanonicalError("timestamp must use canonical UTC microseconds")
     return snapshot
 
 
@@ -423,16 +415,12 @@ def _snapshot_envelope(value: object) -> _StoredEventEnvelopeV1:
             event_type=object.__getattribute__(value, "_StoredEventEnvelopeV1__event_type"),
             actor_id=object.__getattribute__(value, "_StoredEventEnvelopeV1__actor_id"),
             timestamp=object.__getattribute__(value, "_StoredEventEnvelopeV1__timestamp"),
-            correlation_id=object.__getattribute__(
-                value, "_StoredEventEnvelopeV1__correlation_id"
-            ),
+            correlation_id=object.__getattribute__(value, "_StoredEventEnvelopeV1__correlation_id"),
             causation_id=object.__getattribute__(value, "_StoredEventEnvelopeV1__causation_id"),
             idempotency_key=object.__getattribute__(
                 value, "_StoredEventEnvelopeV1__idempotency_key"
             ),
-            payload_json=object.__getattribute__(
-                value, "_StoredEventEnvelopeV1__payload_json"
-            ),
+            payload_json=object.__getattribute__(value, "_StoredEventEnvelopeV1__payload_json"),
             sequence=object.__getattribute__(value, "_StoredEventEnvelopeV1__sequence"),
             global_position=object.__getattribute__(
                 value, "_StoredEventEnvelopeV1__global_position"

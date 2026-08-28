@@ -11,9 +11,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = REPOSITORY_ROOT / "tests" / "fixtures" / "stored_event_envelope" / "v1"
 VERIFIER = REPOSITORY_ROOT / "scripts" / "verify_stored_event_envelope_v1_golden.py"
 PYTHON_INTERPRETERS = tuple(
-    path
-    for path in (Path("/usr/bin/python3"), Path(sys.executable))
-    if path.is_file()
+    path for path in (Path("/usr/bin/python3"), Path(sys.executable)) if path.is_file()
 )
 
 
