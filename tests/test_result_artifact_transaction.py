@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import copy
 import itertools
+import os
 import pickle
+import select
 import sqlite3
+import tempfile
+import threading
 import unittest
 from dataclasses import replace
+from pathlib import Path
 
 import quantum_entanglement
 from quantum_entanglement._result_artifact_transaction import (
@@ -14,12 +19,16 @@ from quantum_entanglement._result_artifact_transaction import (
     _prepare_result_artifact_batch,
     _PreparedResultArtifact,
     _PreparedResultArtifactBatch,
+    _ResultArtifactConcurrencyError,
+    _ResultArtifactConflictError,
+    _ResultArtifactIntegrityError,
     _ResultArtifactTransactionHandle,
+    _write_prepared_result_artifacts_in_transaction,
 )
 from quantum_entanglement.invocation_results import (
     ScopedInvocationResultArtifactCandidateV2,
 )
-from quantum_entanglement.store import SQLiteEventStore
+from quantum_entanglement.store import EventStoreLifecycleError, SQLiteEventStore
 
 
 def candidate(
@@ -269,6 +278,461 @@ class ResultArtifactTransactionHandleTests(unittest.TestCase):
                 )
         finally:
             foreign.close()
+
+    def test_missing_owner_fails_before_inspecting_the_prepared_batch(self) -> None:
+        class HostileBatch:
+            def __getattribute__(self, _name: str) -> object:
+                raise AssertionError("prepared batch was inspected")
+
+        with self.assertRaisesRegex(RuntimeError, "owner transaction is unavailable"):
+            self.store._write_result_artifacts_in_owner_transaction(
+                None,  # type: ignore[arg-type]
+                HostileBatch(),  # type: ignore[arg-type]
+            )
+
+    @unittest.skipUnless(hasattr(os, "fork"), "requires POSIX fork")
+    def test_real_fork_cannot_use_an_inherited_active_owner_handle(self) -> None:
+        batch = _prepare_result_artifact_batch((candidate(),))
+        read_fd, write_fd = os.pipe()
+        child_pid = -1
+        try:
+            with self.store._result_artifact_transaction() as handle:
+                child_pid = os.fork()
+                if child_pid == 0:
+                    try:
+                        self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+                    except EventStoreLifecycleError:
+                        os.write(write_fd, b"rejected")
+                    else:
+                        os.write(write_fd, b"accepted")
+                    os._exit(0)
+
+                os.close(write_fd)
+                ready, _, _ = select.select((read_fd,), (), (), 3.0)
+                self.assertTrue(ready, "fork child did not publish an owner-handle outcome")
+                self.assertEqual(os.read(read_fd, 32), b"rejected")
+                _, status = os.waitpid(child_pid, 0)
+                child_pid = -1
+                self.assertTrue(os.WIFEXITED(status))
+                self.assertEqual(os.WEXITSTATUS(status), 0)
+                self.assertEqual(
+                    self.store._write_result_artifacts_in_owner_transaction(handle, batch),
+                    (candidate().to_descriptor(),),
+                )
+        finally:
+            for descriptor in (read_fd, write_fd):
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            if child_pid > 0:
+                os.kill(child_pid, 9)
+                os.waitpid(child_pid, 0)
+
+        self.assertEqual(
+            self.store._connection.execute("SELECT count(*) FROM artifact_versions").fetchone()[0],
+            1,
+        )
+
+
+class ResultArtifactOwnerWriteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.now = "2026-08-29T00:00:00.123456Z"
+        self.store = SQLiteEventStore(":memory:", clock=lambda: self.now)
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def write(
+        self,
+        *candidates: ScopedInvocationResultArtifactCandidateV2,
+    ) -> tuple[object, ...]:
+        batch = _prepare_result_artifact_batch(candidates)
+        with self.store._result_artifact_transaction() as handle:
+            return self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+
+    def counts(self) -> tuple[int, int]:
+        connection = self.store._connection
+        return (
+            connection.execute("SELECT count(*) FROM artifact_blobs").fetchone()[0],
+            connection.execute("SELECT count(*) FROM artifact_versions").fetchone()[0],
+        )
+
+    def test_ordered_batch_commits_exact_descriptors_and_deduplicated_blob(self) -> None:
+        shared = b"shared-content"
+        first = candidate(0, content=shared)
+        second = candidate(1, content=shared)
+        descriptors = self.write(first, second)
+
+        self.assertEqual(descriptors, (first.to_descriptor(), second.to_descriptor()))
+        self.assertEqual(self.counts(), (1, 2))
+        rows = self.store._connection.execute(
+            """
+            SELECT
+                artifact_id,
+                version,
+                parent_version,
+                metadata_json,
+                typeof(metadata_json) AS metadata_storage,
+                created_at
+            FROM artifact_versions
+            ORDER BY artifact_id
+            """
+        ).fetchall()
+        self.assertEqual(tuple(row["artifact_id"] for row in rows), ("artifact-0", "artifact-1"))
+        self.assertEqual(tuple(row["version"] for row in rows), (1, 1))
+        self.assertEqual(tuple(row["parent_version"] for row in rows), (None, None))
+        self.assertEqual(tuple(row["metadata_storage"] for row in rows), ("text", "text"))
+        self.assertEqual(tuple(row["created_at"] for row in rows), (self.now, self.now))
+        self.assertEqual(
+            tuple(row["metadata_json"].encode("utf-8") for row in rows),
+            (first.metadata_canonical_bytes, second.metadata_canonical_bytes),
+        )
+
+    def test_successor_uses_exact_existing_head_and_parent(self) -> None:
+        first = candidate(0)
+        self.write(first)
+        successor = replace(
+            candidate(2, content=b"successor-content"),
+            name=first.name,
+            expected_head_version=1,
+        )
+        descriptor = self.write(successor)[0]
+        self.assertEqual((descriptor.version, descriptor.parent_version), (2, 1))
+        self.assertEqual(self.counts(), (2, 2))
+
+    def test_entire_existing_lineage_is_verified_before_a_successor_write(self) -> None:
+        first = candidate(0)
+        self.write(first)
+        second = replace(candidate(1), name=first.name, expected_head_version=1)
+        self.write(second)
+        third = replace(candidate(2), name=first.name, expected_head_version=2)
+        self.write(third)
+
+        connection = self.store._connection
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        try:
+            connection.execute(
+                "UPDATE artifact_versions SET parent_version = 99 WHERE artifact_id = ?",
+                (second.artifact_id,),
+            )
+        finally:
+            connection.execute("PRAGMA ignore_check_constraints=OFF")
+
+        successor = replace(
+            candidate(3, content=b"lineage-successor"),
+            name=first.name,
+            expected_head_version=3,
+        )
+        before = self.counts()
+        with self.assertRaisesRegex(_ResultArtifactIntegrityError, "transaction integrity failed"):
+            self.write(successor)
+        self.assertEqual(self.counts(), before)
+        self.assertIsNone(
+            connection.execute(
+                "SELECT digest FROM artifact_blobs WHERE digest = ?",
+                (successor.blob_digest,),
+            ).fetchone()
+        )
+
+    def test_stale_head_fails_before_blob_or_version_dml(self) -> None:
+        first = candidate(0)
+        self.write(first)
+        stale = replace(candidate(2, content=b"never-written"), name=first.name)
+        before = self.counts()
+
+        with self.assertRaisesRegex(_ResultArtifactConcurrencyError, "head changed"):
+            self.write(stale)
+        self.assertEqual(self.counts(), before)
+        self.assertIsNone(
+            self.store._connection.execute(
+                "SELECT digest FROM artifact_blobs WHERE digest = ?",
+                (stale.blob_digest,),
+            ).fetchone()
+        )
+
+    def test_entire_batch_preflights_before_the_first_blob_dml(self) -> None:
+        existing = candidate(9)
+        self.write(existing)
+        first = candidate(0, content=b"must-not-be-written")
+        stale_second = replace(
+            candidate(1, content=b"also-not-written"),
+            name=existing.name,
+        )
+        batch = _prepare_result_artifact_batch((first, stale_second))
+        before = self.counts()
+
+        with self.assertRaises(_ResultArtifactConcurrencyError):
+            with self.store._result_artifact_transaction() as handle:
+                self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+        self.assertEqual(self.counts(), before)
+        for item in (first, stale_second):
+            self.assertIsNone(
+                self.store._connection.execute(
+                    "SELECT digest FROM artifact_blobs WHERE digest = ?",
+                    (item.blob_digest,),
+                ).fetchone()
+            )
+
+    def test_identity_and_idempotency_reuse_are_never_result_replay(self) -> None:
+        first = candidate(0)
+        self.write(first)
+        for conflict in (
+            replace(candidate(2), artifact_id=first.artifact_id),
+            replace(candidate(2), idempotency_key=first.idempotency_key),
+        ):
+            with self.subTest(artifact_id=conflict.artifact_id):
+                with self.assertRaisesRegex(_ResultArtifactConflictError, "already bound"):
+                    self.write(conflict)
+        self.assertEqual(self.counts(), (1, 1))
+
+    def test_fixed_write_error_detaches_content_bearing_internal_traceback_frames(self) -> None:
+        first = candidate(0, content=b"private-content-canary")
+        self.write(first)
+        conflict = replace(candidate(1), artifact_id=first.artifact_id)
+        try:
+            self.write(conflict)
+        except _ResultArtifactConflictError as error:
+            self.assertIsNone(error.__cause__)
+            self.assertIsNone(error.__context__)
+            function_names: list[str] = []
+            cursor = error.__traceback__
+            while cursor is not None:
+                function_names.append(cursor.tb_frame.f_code.co_name)
+                cursor = cursor.tb_next
+            self.assertNotIn("_write_prepared_result_artifacts_in_transaction_body", function_names)
+            self.assertNotIn("_preflight_result_artifact_identity", function_names)
+            self.assertNotIn("_write_result_artifacts_in_owner_transaction", function_names)
+        else:
+            self.fail("conflicting result Artifact identity unexpectedly committed")
+
+    def test_existing_blob_is_byte_verified_before_any_version_dml(self) -> None:
+        item = candidate(0)
+        connection = self.store._connection
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        try:
+            connection.execute(
+                """
+                INSERT INTO artifact_blobs(digest, content, byte_size, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (item.blob_digest, "not-a-blob", len(item.content), self.now),
+            )
+        finally:
+            connection.execute("PRAGMA ignore_check_constraints=OFF")
+
+        with self.assertRaises(_ResultArtifactIntegrityError):
+            self.write(item)
+        self.assertEqual(self.counts(), (1, 0))
+
+    def test_noncanonical_existing_blob_timestamp_is_rejected_before_version_dml(self) -> None:
+        item = candidate(0)
+        self.store._connection.execute(
+            """
+            INSERT INTO artifact_blobs(digest, content, byte_size, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                item.blob_digest,
+                sqlite3.Binary(item.content),
+                len(item.content),
+                "2026-08-29T00:00:00Z",
+            ),
+        )
+        with self.assertRaisesRegex(_ResultArtifactIntegrityError, "transaction integrity failed"):
+            self.write(item)
+        self.assertEqual(self.counts(), (1, 0))
+
+    def test_clock_timestamp_is_persisted_as_exact_utc_microseconds(self) -> None:
+        self.store._clock = lambda: "2026-08-29T00:00:00Z"
+        self.write(candidate())
+        timestamps = self.store._connection.execute(
+            """
+            SELECT created_at FROM artifact_blobs
+            UNION ALL
+            SELECT created_at FROM artifact_versions
+            """
+        ).fetchall()
+        self.assertEqual(
+            tuple(row["created_at"] for row in timestamps),
+            ("2026-08-29T00:00:00.000000Z", "2026-08-29T00:00:00.000000Z"),
+        )
+
+    def test_hostile_sqlite_row_and_text_factories_fail_before_dml(self) -> None:
+        connection = self.store._connection
+        cases = (
+            (
+                "row",
+                lambda: setattr(connection, "row_factory", lambda _cursor, row: {"x": row}),
+            ),
+            ("text", lambda: setattr(connection, "text_factory", bytes)),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                mutate()
+                try:
+                    with self.assertRaisesRegex(
+                        _ResultArtifactIntegrityError,
+                        "transaction integrity failed",
+                    ):
+                        self.write(candidate())
+                finally:
+                    connection.row_factory = sqlite3.Row
+                    connection.text_factory = str
+                self.assertEqual(self.counts(), (0, 0))
+
+    def test_unexpected_artifact_trigger_fails_before_dml(self) -> None:
+        self.store._connection.execute(
+            """
+            CREATE TRIGGER unexpected_result_artifact_trigger
+            AFTER INSERT ON artifact_versions
+            BEGIN
+                SELECT 1;
+            END
+            """
+        )
+        with self.assertRaisesRegex(_ResultArtifactIntegrityError, "transaction integrity failed"):
+            self.write(candidate())
+        self.assertEqual(self.counts(), (0, 0))
+
+    def test_unexpected_temp_artifact_trigger_fails_before_dml(self) -> None:
+        self.store._connection.execute(
+            """
+            CREATE TEMP TRIGGER unexpected_temp_result_artifact_trigger
+            AFTER INSERT ON main.artifact_versions
+            BEGIN
+                SELECT 1;
+            END
+            """
+        )
+        with self.assertRaisesRegex(_ResultArtifactIntegrityError, "transaction integrity failed"):
+            self.write(candidate())
+        self.assertEqual(self.counts(), (0, 0))
+
+    def test_sqlite_trace_boundary_process_cut_aborts_before_first_dml(self) -> None:
+        current = True
+        cut_seen = False
+
+        def guarded() -> None:
+            if not current:
+                raise RuntimeError("simulated process-epoch cut")
+
+        def cut_on_first_insert(statement: str) -> None:
+            nonlocal current, cut_seen
+            if not cut_seen and statement.lstrip().startswith("INSERT INTO artifact_blobs"):
+                cut_seen = True
+                current = False
+
+        connection = self.store._connection
+        batch = _prepare_result_artifact_batch((candidate(),))
+        connection.execute("BEGIN IMMEDIATE")
+        connection.set_trace_callback(cut_on_first_insert)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "simulated process-epoch cut"):
+                _write_prepared_result_artifacts_in_transaction(
+                    connection,
+                    batch,
+                    clock=lambda: self.now,
+                    process_guard=guarded,
+                )
+        finally:
+            current = True
+            connection.set_trace_callback(None)
+            connection.set_progress_handler(None, 0)
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+
+        self.assertTrue(cut_seen)
+        self.assertEqual(self.counts(), (0, 0))
+
+    def test_later_owner_body_failure_rolls_back_every_blob_and_version(self) -> None:
+        first = candidate(0)
+        second = candidate(1, content=b"second-content")
+        batch = _prepare_result_artifact_batch((first, second))
+        with self.assertRaisesRegex(RuntimeError, "later result graph failure"):
+            with self.store._result_artifact_transaction() as handle:
+                descriptors = self.store._write_result_artifacts_in_owner_transaction(handle, batch)
+                self.assertEqual(descriptors, (first.to_descriptor(), second.to_descriptor()))
+                self.assertEqual(self.counts(), (2, 2))
+                raise RuntimeError("later result graph failure")
+        self.assertEqual(self.counts(), (0, 0))
+
+    def test_empty_batch_has_no_clock_or_dml_effect(self) -> None:
+        batch = _prepare_result_artifact_batch(())
+        self.store._clock = lambda: (_ for _ in ()).throw(AssertionError("clock was read"))
+        with self.store._result_artifact_transaction() as handle:
+            self.assertEqual(
+                self.store._write_result_artifacts_in_owner_transaction(handle, batch),
+                (),
+            )
+        self.assertEqual(self.counts(), (0, 0))
+        self.assertEqual(
+            self.store._connection.execute("PRAGMA foreign_key_check").fetchall(),
+            [],
+        )
+        self.assertEqual(
+            self.store._connection.execute("PRAGMA integrity_check").fetchone()[0],
+            "ok",
+        )
+
+
+class ResultArtifactConcurrentWriterTests(unittest.TestCase):
+    def test_two_connections_with_the_same_expected_head_commit_exactly_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = str(Path(tempdir) / "result-artifacts.sqlite3")
+            now = "2026-08-29T00:00:00.123456Z"
+            stores = (
+                SQLiteEventStore(path, clock=lambda: now),
+                SQLiteEventStore(path, clock=lambda: now),
+            )
+            first = candidate(0, content=b"writer-one")
+            second = replace(
+                candidate(1, content=b"writer-two"),
+                name=first.name,
+            )
+            barrier = threading.Barrier(2)
+            outcomes: list[str] = []
+
+            def write(
+                store: SQLiteEventStore,
+                item: ScopedInvocationResultArtifactCandidateV2,
+            ) -> None:
+                batch = _prepare_result_artifact_batch((item,))
+                barrier.wait()
+                try:
+                    with store._result_artifact_transaction() as handle:
+                        store._write_result_artifacts_in_owner_transaction(handle, batch)
+                except _ResultArtifactConcurrencyError:
+                    outcomes.append("concurrency")
+                else:
+                    outcomes.append("committed")
+
+            threads = (
+                threading.Thread(target=write, args=(stores[0], first)),
+                threading.Thread(target=write, args=(stores[1], second)),
+            )
+            try:
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=10)
+                self.assertTrue(all(not thread.is_alive() for thread in threads))
+                self.assertEqual(sorted(outcomes), ["committed", "concurrency"])
+                self.assertEqual(
+                    stores[0]._connection.execute(
+                        "SELECT count(*) FROM artifact_versions"
+                    ).fetchone()[0],
+                    1,
+                )
+                self.assertEqual(
+                    stores[0]._connection.execute("SELECT count(*) FROM artifact_blobs").fetchone()[
+                        0
+                    ],
+                    1,
+                )
+            finally:
+                for store in stores:
+                    store.close()
 
 
 if __name__ == "__main__":

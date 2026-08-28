@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from itertools import islice
 from typing import NoReturn
 
@@ -17,6 +19,56 @@ _MAX_RESULT_ARTIFACTS = 256
 _MAX_RESULT_ARTIFACT_CONTENT_BYTES = 64 * 1024 * 1024
 _MAX_RESULT_ARTIFACT_METADATA_BYTES = 1_048_576
 _RESULT_ARTIFACT_TRANSACTION_TOKEN = object()
+
+_HEAD_AGGREGATE_COLUMNS = (
+    "row_count",
+    "minimum_version",
+    "maximum_version",
+    "invalid_lineage_count",
+)
+_TRIGGER_COLUMNS = ("schema_name",)
+_BLOB_COLUMNS = (
+    "digest",
+    "content",
+    "byte_size",
+    "created_at",
+    "digest_storage",
+    "content_storage",
+    "byte_size_storage",
+    "created_at_storage",
+    "content_length",
+)
+_VERSION_COLUMNS = (
+    "artifact_id",
+    "tenant_id",
+    "workspace_id",
+    "session_id",
+    "task_id",
+    "name",
+    "version",
+    "parent_version",
+    "media_type",
+    "blob_digest",
+    "byte_size",
+    "metadata_json",
+    "created_by",
+    "created_at",
+    "idempotency_key",
+    "request_digest",
+)
+_CHANGE_COUNT_COLUMNS = ("changed",)
+
+
+class _ResultArtifactConflictError(RuntimeError):
+    """An Artifact identity or idempotency key is already reserved."""
+
+
+class _ResultArtifactConcurrencyError(RuntimeError):
+    """An exact candidate head no longer matches durable history."""
+
+
+class _ResultArtifactIntegrityError(RuntimeError):
+    """Artifact storage or DML effects violate the owner transaction contract."""
 
 
 class _ResultArtifactTransactionHandle:
@@ -205,6 +257,7 @@ def _validate_batch_identities(items: tuple[_PreparedResultArtifact, ...]) -> No
     artifact_ids: set[str] = set()
     idempotency_coordinates: set[tuple[str, str, str]] = set()
     head_coordinates: set[tuple[str, str, str, str]] = set()
+    blob_contents: dict[str, bytes] = {}
     for item in items:
         scope = (item.tenant_id, item.workspace_id, item.session_id, item.task_id)
         if scope != expected_scope:
@@ -220,6 +273,11 @@ def _validate_batch_identities(items: tuple[_PreparedResultArtifact, ...]) -> No
         if head_coordinate in head_coordinates:
             raise ValueError("prepared result Artifact head coordinates must be unique")
         head_coordinates.add(head_coordinate)
+        blob_digest = item.descriptor.blob_digest
+        previous_content = blob_contents.get(blob_digest)
+        if previous_content is not None and previous_content != item.content:
+            raise ValueError("prepared result Artifact blob digest has conflicting content")
+        blob_contents[blob_digest] = item.content
 
 
 def _prepare_result_artifact_batch(
@@ -265,3 +323,545 @@ def _prepare_result_artifact_batch(
     )
     batch.verify()
     return batch
+
+
+def _require_exact_connection_codec(connection: sqlite3.Connection) -> None:
+    if type(connection) is not sqlite3.Connection:
+        raise _ResultArtifactIntegrityError("result Artifact connection is not exact")
+    if connection.row_factory is not sqlite3.Row or connection.text_factory is not str:
+        raise _ResultArtifactIntegrityError("result Artifact SQLite codecs are not exact")
+
+
+def _require_exact_row(row: object, columns: Sequence[str]) -> sqlite3.Row:
+    if type(row) is not sqlite3.Row:
+        raise _ResultArtifactIntegrityError("result Artifact row must be an exact sqlite3.Row")
+    try:
+        keys = row.keys()
+    except (AttributeError, TypeError, ValueError) as error:
+        raise _ResultArtifactIntegrityError("result Artifact row shape is invalid") from error
+    if tuple(keys) != tuple(columns):
+        raise _ResultArtifactIntegrityError("result Artifact row columns are not exact")
+    return row
+
+
+def _exact_row_value(row: sqlite3.Row, name: str) -> object:
+    try:
+        return row[name]
+    except (IndexError, KeyError) as error:
+        raise _ResultArtifactIntegrityError("result Artifact row shape is invalid") from error
+
+
+def _canonical_result_artifact_timestamp(value: object, *, persisted: bool) -> str:
+    if type(value) is not str or not value:
+        raise ValueError("result Artifact transaction clock returned an invalid timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(
+            "result Artifact transaction clock returned an invalid timestamp"
+        ) from error
+    if parsed.tzinfo is None:
+        raise ValueError("result Artifact transaction clock timestamp has no timezone")
+    canonical = (
+        parsed.astimezone(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+    if len(canonical.encode("ascii")) != 27:
+        raise ValueError("result Artifact transaction timestamp is not canonical")
+    if persisted and value != canonical:
+        raise _ResultArtifactIntegrityError(
+            "persisted result Artifact timestamp is not canonical UTC microseconds"
+        )
+    return canonical
+
+
+def _run_process_guard(process_guard: Callable[[], None]) -> None:
+    process_guard()
+
+
+def _guarded_fetchone(
+    connection: sqlite3.Connection,
+    process_guard: Callable[[], None],
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> object:
+    _run_process_guard(process_guard)
+    _require_exact_connection_codec(connection)
+    cursor = connection.execute(sql, parameters)
+    _run_process_guard(process_guard)
+    _require_exact_connection_codec(connection)
+    row = cursor.fetchone()
+    _run_process_guard(process_guard)
+    _require_exact_connection_codec(connection)
+    return row
+
+
+def _guarded_fetchall(
+    connection: sqlite3.Connection,
+    process_guard: Callable[[], None],
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> list[object]:
+    _run_process_guard(process_guard)
+    _require_exact_connection_codec(connection)
+    cursor = connection.execute(sql, parameters)
+    _run_process_guard(process_guard)
+    _require_exact_connection_codec(connection)
+    rows = cursor.fetchall()
+    _run_process_guard(process_guard)
+    _require_exact_connection_codec(connection)
+    if type(rows) is not list:
+        raise _ResultArtifactIntegrityError("result Artifact row collection is not exact")
+    return rows
+
+
+def _guarded_execute(
+    connection: sqlite3.Connection,
+    process_guard: Callable[[], None],
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> None:
+    _run_process_guard(process_guard)
+    _require_exact_connection_codec(connection)
+    connection.execute(sql, parameters)
+    _run_process_guard(process_guard)
+    _require_exact_connection_codec(connection)
+
+
+@contextmanager
+def _result_artifact_process_progress_fence(
+    connection: sqlite3.Connection,
+    process_guard: Callable[[], None],
+) -> Iterator[None]:
+    """Abort SQLite VM execution if a trace/provider fork crosses a SQL call."""
+
+    def progress() -> int:
+        try:
+            process_guard()
+        except BaseException:
+            return 1
+        return 0
+
+    _run_process_guard(process_guard)
+    _require_exact_connection_codec(connection)
+    connection.set_progress_handler(progress, 1)
+    _run_process_guard(process_guard)
+    try:
+        yield
+    finally:
+        # A mismatch child must not mutate the inherited SQLite wrapper even for cleanup.
+        _run_process_guard(process_guard)
+        connection.set_progress_handler(None, 0)
+        _run_process_guard(process_guard)
+
+
+def _exact_row_text(row: sqlite3.Row, name: str) -> str:
+    value = _exact_row_value(row, name)
+    if type(value) is not str:
+        raise _ResultArtifactIntegrityError("result Artifact row text storage is invalid")
+    return value
+
+
+def _exact_row_integer(row: sqlite3.Row, name: str, *, minimum: int = 0) -> int:
+    value = _exact_row_value(row, name)
+    if type(value) is not int or value < minimum:
+        raise _ResultArtifactIntegrityError("result Artifact row integer storage is invalid")
+    return value
+
+
+def _preflight_result_artifact_head(
+    connection: sqlite3.Connection,
+    item: _PreparedResultArtifact,
+    process_guard: Callable[[], None],
+) -> None:
+    raw_row = _guarded_fetchone(
+        connection,
+        process_guard,
+        """
+        SELECT
+            count(*) AS row_count,
+            COALESCE(min(version), 0) AS minimum_version,
+            COALESCE(max(version), 0) AS maximum_version,
+            COALESCE(sum(
+                CASE
+                    WHEN typeof(version) != 'integer' OR version < 1 THEN 1
+                    WHEN version = 1 AND parent_version IS NULL THEN 0
+                    WHEN version > 1
+                         AND typeof(parent_version) = 'integer'
+                         AND parent_version = version - 1 THEN 0
+                    ELSE 1
+                END
+            ), 0) AS invalid_lineage_count
+        FROM artifact_versions
+        WHERE tenant_id = ? AND workspace_id = ?
+          AND session_id = ? AND name = ?
+        """,
+        (item.tenant_id, item.workspace_id, item.session_id, item.name),
+    )
+    if raw_row is None:
+        raise _ResultArtifactIntegrityError("result Artifact head aggregate is missing")
+    row = _require_exact_row(raw_row, _HEAD_AGGREGATE_COLUMNS)
+    row_count = _exact_row_integer(row, "row_count")
+    minimum_version = _exact_row_integer(row, "minimum_version")
+    maximum_version = _exact_row_integer(row, "maximum_version")
+    invalid_lineage_count = _exact_row_integer(row, "invalid_lineage_count")
+    expected_minimum = 1 if row_count else 0
+    if (
+        minimum_version != expected_minimum
+        or maximum_version != row_count
+        or invalid_lineage_count != 0
+    ):
+        raise _ResultArtifactIntegrityError(
+            "result Artifact version history is not a contiguous exact lineage"
+        )
+    if maximum_version != item.expected_head_version:
+        raise _ResultArtifactConcurrencyError("result Artifact head changed")
+
+
+def _preflight_result_artifact_identity(
+    connection: sqlite3.Connection,
+    item: _PreparedResultArtifact,
+    process_guard: Callable[[], None],
+) -> None:
+    rows = _guarded_fetchall(
+        connection,
+        process_guard,
+        """
+        SELECT artifact_id
+        FROM artifact_versions
+        WHERE artifact_id = ?
+           OR (tenant_id = ? AND workspace_id = ? AND idempotency_key = ?)
+        LIMIT 2
+        """,
+        (
+            item.artifact_id,
+            item.tenant_id,
+            item.workspace_id,
+            item.idempotency_key,
+        ),
+    )
+    if rows:
+        raise _ResultArtifactConflictError("result Artifact identity is already bound")
+
+
+def _select_result_artifact_blob(
+    connection: sqlite3.Connection,
+    digest: str,
+    process_guard: Callable[[], None],
+) -> object:
+    return _guarded_fetchone(
+        connection,
+        process_guard,
+        """
+        SELECT
+            digest,
+            content,
+            byte_size,
+            created_at,
+            typeof(digest) AS digest_storage,
+            typeof(content) AS content_storage,
+            typeof(byte_size) AS byte_size_storage,
+            typeof(created_at) AS created_at_storage,
+            length(content) AS content_length
+        FROM artifact_blobs
+        WHERE digest = ?
+        """,
+        (digest,),
+    )
+
+
+def _verify_result_artifact_blob(
+    raw_row: object,
+    item: _PreparedResultArtifact,
+    *,
+    fresh: bool,
+    created_at: str | None,
+) -> None:
+    if raw_row is None:
+        raise _ResultArtifactIntegrityError("result Artifact blob is missing")
+    row = _require_exact_row(raw_row, _BLOB_COLUMNS)
+    if (
+        _exact_row_text(row, "digest_storage") != "text"
+        or _exact_row_text(row, "content_storage") != "blob"
+        or _exact_row_text(row, "byte_size_storage") != "integer"
+        or _exact_row_text(row, "created_at_storage") != "text"
+    ):
+        raise _ResultArtifactIntegrityError("result Artifact blob storage classes changed")
+    content = _exact_row_value(row, "content")
+    if type(content) is not bytes:
+        raise _ResultArtifactIntegrityError("result Artifact blob content is not exact bytes")
+    if (
+        _exact_row_text(row, "digest") != item.descriptor.blob_digest
+        or content != item.content
+        or _exact_row_integer(row, "byte_size") != len(item.content)
+        or _exact_row_integer(row, "content_length") != len(item.content)
+    ):
+        raise _ResultArtifactIntegrityError("result Artifact blob readback differs")
+    stored_created_at = _exact_row_text(row, "created_at")
+    try:
+        _canonical_result_artifact_timestamp(stored_created_at, persisted=True)
+    except ValueError as error:
+        raise _ResultArtifactIntegrityError(
+            "persisted result Artifact timestamp is not canonical UTC microseconds"
+        ) from error
+    if fresh and (type(created_at) is not str or stored_created_at != created_at):
+        raise _ResultArtifactIntegrityError("fresh result Artifact blob timestamp differs")
+
+
+def _verify_result_artifact_version(
+    connection: sqlite3.Connection,
+    item: _PreparedResultArtifact,
+    created_at: str,
+    process_guard: Callable[[], None],
+) -> None:
+    raw_row = _guarded_fetchone(
+        connection,
+        process_guard,
+        """
+        SELECT
+            artifact_id,
+            tenant_id,
+            workspace_id,
+            session_id,
+            task_id,
+            name,
+            version,
+            parent_version,
+            media_type,
+            blob_digest,
+            byte_size,
+            metadata_json,
+            created_by,
+            created_at,
+            idempotency_key,
+            request_digest
+        FROM artifact_versions
+        WHERE artifact_id = ?
+        """,
+        (item.artifact_id,),
+    )
+    if raw_row is None:
+        raise _ResultArtifactIntegrityError("result Artifact version readback is missing")
+    row = _require_exact_row(raw_row, _VERSION_COLUMNS)
+    expected = item.descriptor
+    text_values = {
+        "artifact_id": item.artifact_id,
+        "tenant_id": item.tenant_id,
+        "workspace_id": item.workspace_id,
+        "session_id": item.session_id,
+        "task_id": item.task_id,
+        "name": item.name,
+        "media_type": item.media_type,
+        "blob_digest": expected.blob_digest,
+        "metadata_json": item.metadata_json,
+        "created_by": item.created_by,
+        "created_at": created_at,
+        "idempotency_key": item.idempotency_key,
+        "request_digest": expected.request_digest,
+    }
+    for name, value in text_values.items():
+        if _exact_row_text(row, name) != value:
+            raise _ResultArtifactIntegrityError("result Artifact version text readback differs")
+    if _exact_row_integer(row, "version", minimum=1) != expected.version:
+        raise _ResultArtifactIntegrityError("result Artifact version readback differs")
+    parent = _exact_row_value(row, "parent_version")
+    if parent != expected.parent_version or (parent is not None and type(parent) is not int):
+        raise _ResultArtifactIntegrityError("result Artifact parent readback differs")
+    if _exact_row_integer(row, "byte_size") != expected.byte_size:
+        raise _ResultArtifactIntegrityError("result Artifact byte-size readback differs")
+    try:
+        metadata_bytes = _exact_row_text(row, "metadata_json").encode("utf-8")
+    except UnicodeError as error:
+        raise _ResultArtifactIntegrityError(
+            "result Artifact metadata readback is not UTF-8"
+        ) from error
+    if metadata_bytes != item.metadata_canonical_bytes:
+        raise _ResultArtifactIntegrityError("result Artifact metadata bytes differ")
+
+
+def _write_prepared_result_artifacts_in_transaction_body(
+    connection: sqlite3.Connection,
+    batch: _PreparedResultArtifactBatch,
+    *,
+    clock: Callable[[], str],
+    process_guard: Callable[[], None],
+) -> tuple[ScopedInvocationResultArtifactV2, ...]:
+    _run_process_guard(process_guard)
+    if type(connection) is not sqlite3.Connection or not connection.in_transaction:
+        raise RuntimeError("result Artifact write requires an exact open SQLite transaction")
+    if type(batch) is not _PreparedResultArtifactBatch:
+        raise TypeError("result Artifact write requires an exact prepared batch")
+    batch.verify()
+    if not callable(clock):
+        raise TypeError("result Artifact transaction clock must be callable")
+    if not callable(process_guard):
+        raise TypeError("result Artifact process guard must be callable")
+    _require_exact_connection_codec(connection)
+    raw_trigger = _guarded_fetchone(
+        connection,
+        process_guard,
+        """
+        SELECT 'main' AS schema_name
+        FROM main.sqlite_schema
+        WHERE type = 'trigger' AND tbl_name IN ('artifact_blobs', 'artifact_versions')
+        UNION ALL
+        SELECT 'temp' AS schema_name
+        FROM temp.sqlite_temp_schema
+        WHERE type = 'trigger' AND tbl_name IN ('artifact_blobs', 'artifact_versions')
+        LIMIT 1
+        """
+    )
+    if raw_trigger is not None:
+        _require_exact_row(raw_trigger, _TRIGGER_COLUMNS)
+        raise _ResultArtifactIntegrityError("result Artifact tables contain an unexpected trigger")
+    if not batch.items:
+        return ()
+    for item in batch.items:
+        _run_process_guard(process_guard)
+        _preflight_result_artifact_identity(connection, item, process_guard)
+        _preflight_result_artifact_head(connection, item, process_guard)
+        existing_blob = _select_result_artifact_blob(
+            connection,
+            item.descriptor.blob_digest,
+            process_guard,
+        )
+        if existing_blob is not None:
+            _verify_result_artifact_blob(existing_blob, item, fresh=False, created_at=None)
+        _run_process_guard(process_guard)
+    _run_process_guard(process_guard)
+    before_total_changes = connection.total_changes
+    _run_process_guard(process_guard)
+    if type(before_total_changes) is not int:
+        raise _ResultArtifactIntegrityError("SQLite total-change counter is invalid")
+    _run_process_guard(process_guard)
+    created_at = clock()
+    _run_process_guard(process_guard)
+    created_at = _canonical_result_artifact_timestamp(created_at, persisted=False)
+    _run_process_guard(process_guard)
+    fresh_blobs = 0
+    for item in batch.items:
+        _guarded_execute(
+            connection,
+            process_guard,
+            """
+            INSERT INTO artifact_blobs(digest, content, byte_size, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(digest) DO NOTHING
+            """,
+            (
+                item.descriptor.blob_digest,
+                sqlite3.Binary(item.content),
+                item.descriptor.byte_size,
+                created_at,
+            ),
+        )
+        raw_blob_changes_row = _guarded_fetchone(
+            connection,
+            process_guard,
+            "SELECT changes() AS changed",
+        )
+        if raw_blob_changes_row is None:
+            raise _ResultArtifactIntegrityError("result Artifact blob change count is missing")
+        blob_changes_row = _require_exact_row(raw_blob_changes_row, _CHANGE_COUNT_COLUMNS)
+        blob_changes = _exact_row_integer(blob_changes_row, "changed")
+        if blob_changes not in (0, 1):
+            raise _ResultArtifactIntegrityError("result Artifact blob change count is invalid")
+        fresh_blobs += blob_changes
+        _verify_result_artifact_blob(
+            _select_result_artifact_blob(
+                connection,
+                item.descriptor.blob_digest,
+                process_guard,
+            ),
+            item,
+            fresh=bool(blob_changes),
+            created_at=created_at,
+        )
+        try:
+            _guarded_execute(
+                connection,
+                process_guard,
+                """
+                INSERT INTO artifact_versions(
+                    artifact_id,
+                    tenant_id,
+                    workspace_id,
+                    session_id,
+                    task_id,
+                    name,
+                    version,
+                    parent_version,
+                    media_type,
+                    blob_digest,
+                    byte_size,
+                    metadata_json,
+                    created_by,
+                    created_at,
+                    idempotency_key,
+                    request_digest
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item.artifact_id,
+                    item.tenant_id,
+                    item.workspace_id,
+                    item.session_id,
+                    item.task_id,
+                    item.name,
+                    item.descriptor.version,
+                    item.descriptor.parent_version,
+                    item.media_type,
+                    item.descriptor.blob_digest,
+                    item.descriptor.byte_size,
+                    item.metadata_json,
+                    item.created_by,
+                    created_at,
+                    item.idempotency_key,
+                    item.descriptor.request_digest,
+                ),
+            )
+        except sqlite3.IntegrityError as error:
+            raise _ResultArtifactIntegrityError(
+                "result Artifact version insert violated the preflight contract"
+            ) from error
+        raw_version_changes_row = _guarded_fetchone(
+            connection,
+            process_guard,
+            "SELECT changes() AS changed",
+        )
+        if raw_version_changes_row is None:
+            raise _ResultArtifactIntegrityError("result Artifact version change count is missing")
+        version_changes_row = _require_exact_row(raw_version_changes_row, _CHANGE_COUNT_COLUMNS)
+        if _exact_row_integer(version_changes_row, "changed") != 1:
+            raise _ResultArtifactIntegrityError("result Artifact version change count is invalid")
+        _verify_result_artifact_version(connection, item, created_at, process_guard)
+    _run_process_guard(process_guard)
+    after_total_changes = connection.total_changes
+    _run_process_guard(process_guard)
+    if type(after_total_changes) is not int:
+        raise _ResultArtifactIntegrityError("SQLite total-change counter is invalid")
+    if after_total_changes - before_total_changes != fresh_blobs + len(batch.items):
+        raise _ResultArtifactIntegrityError(
+            "result Artifact transaction had unexpected DML effects"
+        )
+    _run_process_guard(process_guard)
+    return tuple(item.descriptor for item in batch.items)
+
+
+def _write_prepared_result_artifacts_in_transaction(
+    connection: sqlite3.Connection,
+    batch: _PreparedResultArtifactBatch,
+    *,
+    clock: Callable[[], str],
+    process_guard: Callable[[], None],
+) -> tuple[ScopedInvocationResultArtifactV2, ...]:
+    if not callable(process_guard):
+        raise TypeError("result Artifact process guard must be callable")
+    with _result_artifact_process_progress_fence(connection, process_guard):
+        return _write_prepared_result_artifacts_in_transaction_body(
+            connection,
+            batch,
+            clock=clock,
+            process_guard=process_guard,
+        )

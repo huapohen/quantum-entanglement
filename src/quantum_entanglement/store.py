@@ -39,7 +39,12 @@ from typing import (
 from . import process_identity as _process_identity
 from ._result_artifact_transaction import (
     _RESULT_ARTIFACT_TRANSACTION_TOKEN,
+    _PreparedResultArtifactBatch,
+    _ResultArtifactConcurrencyError,
+    _ResultArtifactConflictError,
+    _ResultArtifactIntegrityError,
     _ResultArtifactTransactionHandle,
+    _write_prepared_result_artifacts_in_transaction,
 )
 from ._stored_event_envelope_codec import (
     StoredEventEnvelopeError as _StoredEventEnvelopeError,
@@ -95,6 +100,9 @@ from .invocation_results import (
 )
 from .invocation_results import (
     TASK_STATUS_CHANGED_EVENT_TYPE as _TASK_STATUS_CHANGED_EVENT_TYPE,
+)
+from .invocation_results import (
+    ScopedInvocationResultArtifactV2 as _ScopedInvocationResultArtifactV2,
 )
 from .invocation_results import (
     ScopedInvocationResultEvidenceV2 as _ScopedInvocationResultEvidenceV2,
@@ -586,6 +594,59 @@ def _raise_clean_stored_event_envelope_error(kind: str) -> NoReturn:
         raise
 
 
+def _raise_clean_result_artifact_error(kind: str) -> NoReturn:
+    error: BaseException
+    if kind == "conflict":
+        error = _ResultArtifactConflictError("result Artifact identity is already bound")
+    elif kind == "concurrency":
+        error = _ResultArtifactConcurrencyError("result Artifact head changed")
+    elif kind == "integrity":
+        error = _ResultArtifactIntegrityError("result Artifact transaction integrity failed")
+    elif kind == "type":
+        error = TypeError("result Artifact write input is invalid")
+    elif kind == "value":
+        error = ValueError("result Artifact write input is invalid")
+    elif kind == "transaction":
+        error = RuntimeError("result Artifact owner transaction is unavailable")
+    else:
+        raise RuntimeError("unsupported result Artifact error kind") from None
+    try:
+        raise error from None
+    except BaseException as public_error:
+        if public_error is error:
+            public_error.__context__ = None
+        raise
+
+
+def _raise_clean_result_artifact_control(
+    descriptor: _EventStoreControlDescriptor,
+) -> NoReturn:
+    normalized = _normalized_event_store_control_descriptor(descriptor)
+    if normalized is None:
+        raise _ResultArtifactIntegrityError(
+            "result Artifact transaction integrity failed"
+        ) from None
+    expected_type: type[BaseException]
+    try:
+        if normalized.kind == "keyboard_interrupt":
+            expected_type = KeyboardInterrupt
+            raise KeyboardInterrupt() from None
+        if normalized.kind == "generator_exit":
+            expected_type = GeneratorExit
+            raise GeneratorExit() from None
+        if normalized.kind == "cancelled":
+            expected_type = CancelledError
+            raise CancelledError() from None
+        if normalized.kind == "system_exit":
+            expected_type = SystemExit
+            raise SystemExit(normalized.system_exit_code) from None
+        raise RuntimeError("unsupported result Artifact control signal") from None
+    except BaseException as public_error:
+        if type(public_error) is expected_type:
+            public_error.__context__ = None
+        raise
+
+
 def _take_classified_event_store_transaction_signal(
     error: BaseException,
 ) -> Optional[Tuple[str, Optional[_EventStoreControlDescriptor]]]:
@@ -631,6 +692,61 @@ def _sanitize_stored_event_envelope_errors(method: _Method) -> _Method:
         if kind is None:
             raise RuntimeError("stored event envelope sanitizer classification is missing")
         _raise_clean_stored_event_envelope_error(kind)
+
+    return cast(_Method, sanitized)
+
+
+def _sanitize_result_artifact_errors(method: _Method) -> _Method:
+    """Reissue fixed errors only after content-bearing write frames have unwound."""
+
+    @wraps(method)
+    def sanitized(*args: Any, **kwargs: Any) -> Any:
+        kind: Optional[str] = None
+        descriptor: Optional[_EventStoreControlDescriptor] = None
+        process_mismatch = False
+        try:
+            return method(*args, **kwargs)
+        except _ResultArtifactConflictError as error:
+            kind = "conflict" if type(error) is _ResultArtifactConflictError else "integrity"
+            _detach_exception(error)
+        except _ResultArtifactConcurrencyError as error:
+            kind = "concurrency" if type(error) is _ResultArtifactConcurrencyError else "integrity"
+            _detach_exception(error)
+        except _ResultArtifactIntegrityError as error:
+            kind = "integrity"
+            _detach_exception(error)
+        except EventStoreLifecycleError as error:
+            if _consume_event_store_public_mismatch(error):
+                process_mismatch = True
+            else:
+                kind = "integrity"
+                _detach_exception(error)
+        except BaseException as error:
+            descriptor = _event_store_control_descriptor(error)
+            if descriptor is not None:
+                _detach_exception(error)
+            elif type(error) is TypeError:
+                kind = "type"
+                _detach_exception(error)
+            elif type(error) is ValueError:
+                kind = "value"
+                _detach_exception(error)
+            elif type(error) is RuntimeError:
+                kind = "transaction"
+                _detach_exception(error)
+            elif isinstance(error, Exception):
+                kind = "integrity"
+                _detach_exception(error)
+            else:
+                raise
+        del args, kwargs
+        if process_mismatch:
+            _raise_event_store_process_mismatch()
+        if descriptor is not None:
+            _raise_clean_result_artifact_control(descriptor)
+        if kind is None:
+            raise RuntimeError("result Artifact sanitizer classification is missing")
+        _raise_clean_result_artifact_error(kind)
 
     return cast(_Method, sanitized)
 
@@ -1478,6 +1594,27 @@ class SQLiteEventStore:
             generation=generation,
             token=_RESULT_ARTIFACT_TRANSACTION_TOKEN,
         )
+
+    @_sanitize_result_artifact_errors
+    @_bind_event_store_process
+    def _write_result_artifacts_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        batch: _PreparedResultArtifactBatch,
+    ) -> Tuple[_ScopedInvocationResultArtifactV2, ...]:
+        connection = self._connection_for_result_artifact_transaction(handle)
+        if type(batch) is not _PreparedResultArtifactBatch:
+            raise TypeError("result Artifact write requires an exact prepared batch")
+        batch.verify()
+        self._require_current_process()
+        result = _write_prepared_result_artifacts_in_transaction(
+            connection,
+            batch,
+            clock=self._now,
+            process_guard=self._require_current_process,
+        )
+        self._require_current_process()
+        return result
 
     @contextmanager
     def _transaction_inner(
