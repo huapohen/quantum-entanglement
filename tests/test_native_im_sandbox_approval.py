@@ -15,6 +15,9 @@ from quantum_entanglement.native_im_sandbox_approval import (
     native_im_secret_reference_binding_digest,
     validate_native_im_sandbox_approval_binding_v1,
 )
+from quantum_entanglement.native_im_sandbox_provenance import (
+    NativeIMSandboxAdmissionProvenanceV1,
+)
 from quantum_entanglement.service.native_im_config import (
     CanonicalAbsolutePath,
     CanonicalHTTPSOrigin,
@@ -139,10 +142,20 @@ def test_committed_provider_sandbox_approval_fixture_is_canonical_and_frozen() -
                 "digest": "f3c070a2cd444a6c965fd3770b607e58605218db345cb493457dae82a50e375c",
                 "filename": "approval.json",
                 "model": "NativeIMSandboxApprovalV1",
-            }
+            },
+            {
+                "byteLength": 1130,
+                "digest": "f316314be364ecdc8d51fe293e99919ee36ca8d81323bc9005be84c39328ab16",
+                "filename": "provenance.json",
+                "model": "NativeIMSandboxAdmissionProvenanceV1",
+            },
         ],
     }
-    assert {path.name for path in FIXTURE_ROOT.iterdir()} == {"approval.json", "manifest.json"}
+    assert {path.name for path in FIXTURE_ROOT.iterdir()} == {
+        "approval.json",
+        "manifest.json",
+        "provenance.json",
+    }
     assert all(path.is_file() and not path.is_symlink() for path in FIXTURE_ROOT.iterdir())
 
     approval_raw = (FIXTURE_ROOT / "approval.json").read_bytes()
@@ -154,6 +167,28 @@ def test_committed_provider_sandbox_approval_fixture_is_canonical_and_frozen() -
     ).hexdigest()
     assert independent_digest == manifest["vectors"][0]["digest"]
     assert approval.canonical_digest() == independent_digest
+
+    provenance_raw = (FIXTURE_ROOT / "provenance.json").read_bytes()
+    provenance = NativeIMSandboxAdmissionProvenanceV1.from_json_bytes(provenance_raw)
+    assert provenance.canonical_bytes() == provenance_raw
+    assert len(provenance_raw) == manifest["vectors"][1]["byteLength"]
+    independent_provenance_digest = hashlib.sha256(
+        b"quantum-entanglement.native-im/NativeIMSandboxAdmissionProvenanceV1/1\n"
+        + provenance_raw
+    ).hexdigest()
+    assert independent_provenance_digest == manifest["vectors"][1]["digest"]
+    assert provenance.canonical_digest() == independent_provenance_digest
+    assert provenance.approval_id == approval.approval_id
+    assert provenance.authority_revision == approval.authority_revision
+    assert provenance.approval_digest == approval.canonical_digest()
+    assert provenance.configuration_binding_digest == approval.configuration_binding_digest
+    assert provenance.profile_id == approval.profile_id
+    assert provenance.profile_revision == approval.profile_revision
+    assert provenance.profile_digest == approval.profile_digest
+    assert provenance.transport_contract_id == approval.transport_contract_id
+    assert provenance.transport_contract_digest == approval.transport_contract_digest
+    assert provenance.mapper_contract_id == approval.mapper_contract_id
+    assert provenance.mapper_contract_digest == approval.mapper_contract_digest
 
 
 def test_approval_is_inert_frozen_and_strictly_exact_typed() -> None:
