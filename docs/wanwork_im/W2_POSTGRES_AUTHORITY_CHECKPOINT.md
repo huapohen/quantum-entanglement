@@ -1,5 +1,9 @@
 # W2 PostgreSQL Authority Persistence 检查点
 
+> 历史状态：本文件冻结 `cd92ea5` 的 function-only write / exact-access 工程边界。当前 W2 入口已经前进到
+> [`W2_POSTGRES_RUNTIME_CHECKPOINT.md`](W2_POSTGRES_RUNTIME_CHECKPOINT.md)（`5c19fdb`）；不要再把本文件的
+> “service wiring 未实现”描述当成当前事实。
+
 > 检查点日期：2026-08-28
 >
 > 分支：`dev_wanwork_quantum_entanglement`
