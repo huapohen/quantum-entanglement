@@ -47,7 +47,8 @@
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | 历史调度计划 | 提前接入决策时冻结的 E0–E5/Level A–D 路线；保留作决策溯源，不再是当前 W2 执行入口 |
 | `docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md` | 当前 Gate A0 plan 入口：`d2f1bf0`，`local_pending` | physical cluster probe、managed/transient 双 authority specification、plan v4、代码派生五阶段 workflow、fixed-SQL short-lived PreflightReport、严格 decoder/approval/file trust、No-Go 与 policy/executor/receipt 后续顺序 |
 | `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口：`53dd38b` | canonical strict connection policy、attested runtime pool、受控 UoW、startup/readiness/route barrier、独立 migrator、Go/No-Go 与 Gate A/Trusted tenant 剩余 P0 |
-| `research/35_postgres_attested_runtime_composition_checkpoint.md` | 当前 W2 深度证据：`53dd38b` | 30 提交台账、ambient/default-file/raw-DSN/malformed-query 安全闭环、PG18 connection/session/ACL drift 实证、一级调研硬映射、未交付边界与下一阶段计划 |
+| `docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md` | 当前 policy control-store 工程入口：`16d66b6`，`local_pending` | 独立 control cluster、owner/reader/activator 分权、exact CAS、catalog/ACL attestation、commit-unknown reconcile、PG18.6 实证与 mutation-time fence 后续边界 |
+| `research/36_postgres_approval_policy_control_store_checkpoint.md` | 当前 W2 深度证据：`16d66b6`，`local_pending` | immutable policy archive/activation/head、完整历史链、双重 attestation、并发/损坏/取消测试、诚实 NO-GO 与下一阶段顺序 |
 
 接入前代码基线已经安全备份。`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 中“先 Level A、再 Level B
 sandbox inbound-only”是当时的历史调度口径。当前执行源已切换为
@@ -94,16 +95,17 @@ Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清�
 | [`research/33_postgres_authority_persistence_checkpoint.md`](research/33_postgres_authority_persistence_checkpoint.md) | W2 PostgreSQL authority persistence 历史检查点：`8d662bf` / `4a465d8` | `0001..0004` persistence substrate 的前序证据；保留作溯源，不是当前 W2 入口 |
 | [`research/34_postgres_function_only_writes_and_exact_access_checkpoint.md`](research/34_postgres_function_only_writes_and_exact_access_checkpoint.md) | W2 前序检查点：`cd92ea5` | `0005`、五个 fixed function、function-only repository/receipt、exact access 临时测试 validator fixture、真实 migration/runtime login 与 PostgreSQL 18.6 正负向矩阵；由 Topic 35 接续 |
 | [`research/35_postgres_attested_runtime_composition_checkpoint.md`](research/35_postgres_attested_runtime_composition_checkpoint.md) | W2 当前深度证据：`53dd38b` | canonical strict connection policy、physical/session attestation、exact readiness、attested-only UoW、API gate、one-shot migrator、PG18 normal/race/vet 与 Gate A/Trusted Participant/mention 后续计划 |
-| `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` | 当前 W2 工程入口与 Go/No-Go：`53dd38b` | 当前启动/调试入口、runtime composition、验证命令、production cutover/rotation、trusted tenant、mention/thread/provider 顺序 |
+| [`research/36_postgres_approval_policy_control_store_checkpoint.md`](research/36_postgres_approval_policy_control_store_checkpoint.md) | W2 当前深度证据：`16d66b6` | 独立 policy control cluster、三角色、exact CAS、完整历史链、code-owned catalog attestation、PG18.6 并发/故障证据与 mutation-time fence NO-GO |
+| `docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md` | 当前 policy control-store 工程入口与 Go/No-Go：`16d66b6` | 代码/部署入口、验证命令、可信边界，以及 approval consumption/fence/receipt/executor 的后续顺序 |
 
 ## 已归档截图
 
 完整 SHA-256、尺寸、来源、证据等级和隐私边界见
 [`screenshots/README.md`](screenshots/README.md) 与
-[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 33 张图；前十张是受限、
+[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 37 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地
 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是 Clawith 公开官网、白皮书与官方文档
-只读证据；最后六项是 Topic 33、Topic 34 与 Topic 35 三个 W2 PostgreSQL 检查点图各自的 SVG source 与
+只读证据；最后十项是 Topic 33～37 五个 W2 PostgreSQL 检查点/合同图各自的 SVG source 与
 PNG rendering，只作为报告导航图，不冒充独立运行证据。整套资料仍按项目内部证据管理。
 
 | 文件 | 内容 | 采集方式 |
@@ -138,6 +140,8 @@ PNG rendering，只作为报告导航图，不冒充独立运行证据。整套�
 | `screenshots/33_postgres_authority_persistence_map.svg` / `.png` | 一级调研 → 当前持久化切片 → PostgreSQL 18.6 证据 → 六项 P0 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 | `screenshots/34_postgres_function_only_writes_and_exact_access_map.svg` / `.png` | 一级调研 → 五函数写面 → exact access → PG18.6 故障证据 → 剩余生产 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 | `screenshots/35_postgres_attested_runtime_composition_map.svg` / `.png` | private config → ambient/default-file/raw-DSN/malformed-query hardening → physical/session attestation → readiness/UoW/API gate → Gate A/Trusted Participant/mention 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/36_postgres_production_authority_topology.svg` / `.png` | Gate A0 plan/SecretRef/provision/migrate/runtime/TLS/receipt/No-Go 合同 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/37_postgres_approval_policy_control_store_map.svg` / `.png` | 离线 root policy → 独立 control cluster → exact CAS/attestation/readback → mutation-time fence 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 
 ## 数据安全
 

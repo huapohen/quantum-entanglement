@@ -26,19 +26,21 @@
   specification、canonical cutover plan、strict decoder、测试证据与剩余 No-Go。
 - [W2_POSTGRES_RUNTIME_CHECKPOINT.md](W2_POSTGRES_RUNTIME_CHECKPOINT.md)：当前 W2 PostgreSQL
   工程入口、attested runtime composition、Go/No-Go 与接 IM 前剩余 P0。
+- [W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md](W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md)：
+  当前 approval policy control-store 工程入口、独立 cluster/角色/CAS/attestation/PG18.6 证据与
+  mutation-time fence 后续边界。
 - [W2_POSTGRES_AUTHORITY_CHECKPOINT.md](W2_POSTGRES_AUTHORITY_CHECKPOINT.md)：`0001..0005`、
   function-only write 与 exact access 的前序工程检查点。
 - [RESEARCH_COVERAGE.md](RESEARCH_COVERAGE.md)：`2output` 全部 40 份 Markdown 的行数、摘要、角色和处置。
 - [RESEARCH_TRACEABILITY.md](RESEARCH_TRACEABILITY.md)：用户调研快照、采纳/拒绝决策与从证据到验收的映射。
 
-当前 authority/cutover plan 代码证据基线为 `ad60859`；当前深度报告与可视化仍保留
-attested runtime baseline `53dd38b`：
+当前 approval policy control-store 代码证据基线为 `16d66b6`，深度报告与可视化为：
 
-- `analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md`；
-- `analysis_report/html/35_postgres_attested_runtime_composition_checkpoint.html`；
-- `analysis_report/screenshots/35_postgres_attested_runtime_composition_map.svg` 与 `.png`。
+- `analysis_report/research/36_postgres_approval_policy_control_store_checkpoint.md`；
+- `analysis_report/html/36_postgres_approval_policy_control_store_checkpoint.html`；
+- `analysis_report/screenshots/37_postgres_approval_policy_control_store_map.svg` 与 `.png`。
 
-Topic 33 与 Topic 34 保留为 persistence/function-only/exact-access 的历史检查点，不是当前 W2 入口。
+Topic 33～35 与 Gate A0 production authority 保留为前序检查点/合同，不是当前 policy control-store 入口。
 
 后续会增加 API、数据库、融云 provider profile、Clerk 鉴权、跨端和运维文档。任何实现若与
 本目录的冻结不变量冲突，必须先修订文档并单独提交，不得在代码中暗改语义。
