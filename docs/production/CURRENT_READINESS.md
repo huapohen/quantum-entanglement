@@ -33,7 +33,9 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 1. `SQLiteEventStore` 已能原子提交 caller-supplied `RUNNING` transition、queued job 和 admission
    receipt，并由 `claim_invocation_start(...)` 在同一 SQLite transaction 内完成 admission
    复核、job CAS、attempt、schema-2 start event 与 readback；但 `OrchestratorKernel` 尚未使用这些
-   API，也尚无 heartbeat-supervised worker、result/artifact receipt 与 terminal projection 闭环；
+   API。Result Authority M1 已增加私有 stored-event envelope codec 与 raw-row 重算 primitive，但
+   reserved fence、真实 write-snapshot/store adapter、heartbeat-supervised worker、result/artifact
+   receipt 与 terminal projection 闭环仍不存在；
 2. events、snapshots、delivery、attempt 和 projection repository 尚未统一强制 tenant/workspace
    scope，tenant domain object 不能替代可信认证与 SQL predicate；
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
@@ -127,6 +129,11 @@ event/revision/scope/mention/digest union/state 矩阵由参数化 contract test
   readback；仅首次正常 COMMIT ACK 返回携带非重放 lease 的 `InvocationStartClaimed`，replay、第二
   worker、reopen 与 ACK-loss 后恢复只返回不含 lease 的 `InvocationStartObserved`；运行合同见
   [`ATOMIC_INVOCATION_START.md`](./ATOMIC_INVOCATION_START.md)；
+- `_stored_event_envelope_codec.py`：私有、capability-free 的 V1 stored-event envelope，冻结 12
+  字段 canonical body、domain-separated digest、exact scalar/UTC 微秒/JSON bounds，以及 exact
+  `sqlite3.Row` 固定列重算；372-byte Golden 在 Python 3.9/3.12/3.13 得到同一 digest。该 primitive
+  未导出、未接 writer，也不能证明 durable acceptance；边界见
+  [`ADR_0005_ATOMIC_RESULT_AUTHORITY.md`](./ADR_0005_ATOMIC_RESULT_AUTHORITY.md)；
 - `artifact_store.py`：tenant/workspace-scoped blob/version、digest、并发版本和恢复检查；
 - `publisher.py`：bounded callback admission、timeout、retry/dead-letter、lease deadline、ambiguity
   记录和 receiver receipt 校验；
@@ -146,6 +153,9 @@ event/revision/scope/mention/digest union/state 矩阵由参数化 contract test
 - canonical admission 与 claim + attempt + schema-2 start event + readback 的统一 UoW 已实现；但
   heartbeat-supervised receipt-aware worker gate、result/artifact acceptance 和 terminal state
   仍未实现；
+- stored-event envelope M1 仅完成 exact values/raw-row codec；generic reserved-event append fence、
+  store-owned `_EventWriteSnapshot` adapter、同事务 INSERT/readback digest 比对与 exact typed result
+  payload dispatch 尚未实现，不能据此签发 receipt 或 Accepted；
 - task `RUNNING`、attempt、artifact/result acceptance 和 terminal task state 不是端到端状态机；
 - Agent 返回后逐个写 artifact、result 和 completion，任一边界崩溃仍需 receipt-based reconcile；
 - succeeded attempt 没有不可变 result receipt 时不能安全自动投影 `COMPLETED`；
@@ -351,10 +361,20 @@ wire → HMAC → pure mapper → canonical page → enhanced provenance → ato
 并证明重复 event 的 stable source evidence 不随 exchange 漂移。该结果仍不包含真实 endpoint、
 production exchange、service-level soak、Agent activation、outbound 或生产批准。
 
+E3 Result Authority M1 代码节点 `d889751` 新增 private stored-event envelope codec、exact raw
+SQLite row 重算、372-byte Golden 和只读 verifier。Codec/Golden 专项 102 tests；CPython 3.9.6、
+3.12.12、3.13.9 的 verifier 得到同一 digest `a7a2a28e…d08e538`。Python 3.13 全仓为
+2,489/2,489 tests（79 个既有 fork deprecation warnings）；项目锁定 Ruff 0.16.3 与 Mypy 1.19.1
+strict（66 source files）全绿。Python 3.9 package import 的两个 runtime type alias 已修复；因此
+provider-bundle 当前 suite digest 合理刷新为 `a14ef986…a50368` 并经 fresh-process verifier 复核。
+M1 不包含 M2 reserved fence、M3 store adapter、migration 7、writer、Accepted 或 worker；详细证据见
+[`28_stored_event_envelope_codec_evidence.md`](../../analysis_report/research/28_stored_event_envelope_codec_evidence.md)。
+
 仍缺：
 
-- 完整的 supported OS/SQLite 组合矩阵；当前不可变 CI 只覆盖 GitHub Linux 的 Python 3.9/3.12，
-  本机 Python 3.13 证据不能替代所有目标平台 clean runner；
+- 完整的 supported OS/SQLite 组合矩阵；当前 full-suite CI 只覆盖 GitHub Linux 的 Python
+  3.9/3.12，stored-event Golden 另有 3.9/3.12/3.13 stdlib-only job；本机 Python 3.13 证据不能
+  替代所有目标平台 clean runner；
 - API/fake-connector E2E、cross-tenant property、fuzz、crash-at-every-boundary、load/chaos/soak；
 - artifact/projection/revocation/authorization/secret/runtime/connector 的 POSIX fork/fork-while-lock、
   spawn/forkserver、parent continuity、fresh child composition 和 spawn-before-secret-load retained
@@ -395,20 +415,21 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
    profile/mapper 和 production exchange 并通过现有 TCK，再单独修订 `SERVICE_BOUNDARY.md`；
 4. 上述批准与 full gates 完成后，才执行 health/read/dedupe/resume；Level B 只生成 observation，
    不驱动 Agent、tool、browser、subprocess 或 outbound；
-5. E3 在已完成 event/job/receipt atomic admission 与 claim + attempt + schema-2 start event + readback
-   统一 UoW 之上，已冻结默认关闭的
-   [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)；下一步先把 accepted
-   result/artifact、attempt 和 terminal task state 组成单一原子验收边界，没有 result receipt 时
-   绝不把 succeeded job 猜成 completed；
-6. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
+5. E3 M1 private stored-event envelope codec 已完成；下一步先做 M2 reserved result/terminal event
+   fence，再做 M3 store-owned write snapshot 与 raw-row 同事务双路重算。M2/M3 未完成前不开放
+   result writer；
+6. 在 M2/M3 之上再把 accepted result/artifact、attempt 和 terminal task state 组成单一原子验收
+   边界；没有 result receipt 时绝不把 succeeded job 猜成 completed。默认关闭的
+   [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)保持不变；
+7. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
    heartbeat-supervised pure/fake worker；
-7. E4 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；真实
+8. E4 建立 durable action receipt 与 `effect_unknown` reconcile，connector 继续只用 fake；真实
    outbound 在 E1–E4 完成且针对单一 sandbox 另获明确授权前保持不存在/关闭；
-8. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
-9. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
-10. 实现 authenticated loopback API、transactional command receipt、stream、health 和 SIGTERM；
-11. 完成单节点部署、upgrade/rollback、restore/non-emitting reconcile 和 clean-host evidence；
-12. 通过 Gate C 后再推进 capacity/OTel/isolation/PostgreSQL/HA/DR。
+9. 建立可信 RequestContext，然后 expand/backfill/contract，逐 repository 强制 tenant/workspace；
+10. 迁移剩余自由文本 log/error，并建立全输出 secret-canary gate；
+11. 实现 authenticated loopback API、transactional command receipt、stream、health 和 SIGTERM；
+12. 完成单节点部署、upgrade/rollback、restore/non-emitting reconcile 和 clean-host evidence；
+13. 通过 Gate C 后再推进 capacity/OTel/isolation/PostgreSQL/HA/DR。
 
 每个独立行为及其测试单独提交；每阶段都有运行命令、失败边界、兼容/迁移、回退和证据文档。
 默认分支每次提交后保持可运行，但“可运行”不等于“可生产晋级”。

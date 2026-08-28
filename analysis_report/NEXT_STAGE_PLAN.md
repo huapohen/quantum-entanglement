@@ -3,7 +3,7 @@
 > 计划版本：2026-08-28-stage-pause-v2
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
-> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；真实 provider sandbox 未连接；本文件继续作为 E3 Result Authority 最大强度参考计划。**
+> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec 已在 `d889751` 完成；下一实现节点是 M2 reserved fence；真实 provider sandbox 未连接。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -145,9 +145,9 @@ authority 语义，必须先修订 ADR 和本文件，再写代码。
 
 ### 5.1 目标
 
-新增私有、domain-separated、capability-free 的 stored-event envelope codec。它既能从
-store-owned write snapshot 计算，也能从 SQLite 原始 row 独立重算；两条路径必须得到相同
-digest。
+新增私有、domain-separated、capability-free 的 stored-event envelope codec。M1 冻结 exact scalar
+value primitive 与 SQLite 原始 row 独立重算；M3 再把 value primitive 机械绑定到 store-owned
+`_EventWriteSnapshot`，并在 owning transaction 内证明两条路径得到相同 digest。
 
 建议模块：
 
@@ -188,10 +188,12 @@ SHA-256(domain || canonical-json-body)
 ### 5.3 必须实现的不变量
 
 - payload 根必须是 exact JSON object；
-- 写路径只接受 `_EventWriteSnapshot` 已冻结的 canonical payload bytes；
+- M1 value primitive 只接受 exact scalar 与已冻结的 canonical payload text，不成为 public API；
+- M3 写路径 adapter 只接受 `_EventWriteSnapshot` 已冻结的 canonical payload bytes；
 - 读路径读取 `sqlite3.Row.payload_json` 原始 storage class 和 bytes/string；
 - 严格拒绝 duplicate key、NaN/Infinity、数组根、非 canonical 排序/空白/escape；
-- typed payload codec 重编码后必须与 durable bytes 完全一致；
+- M1 generic JSON 重编码必须与输入 bytes 完全一致；M3 对 reserved result/terminal event 还必须先
+  通过 exact typed payload codec，并证明其重编码与 durable bytes 完全一致；
 - `sequence/globalPosition` 是 exact positive signed-64-bit int，拒绝 bool-as-int；
 - timestamp 固定 UTC 微秒格式；
 - 所有文本按既有长度、NFC/control 规则验证；
@@ -222,6 +224,18 @@ SHA-256(domain || canonical-json-body)
 ### Phase 1 出口
 
 codec-only 全量通过，且仍没有任何公共写 API 能据此签发 authority。
+
+### 2026-08-28 M1 实施检查点
+
+- 代码封板：`d889751e4cc3b7db548994a000a87e21688b4429`；
+- Golden：372 bytes，digest
+  `a7a2a28ed93454fe925dbdf676acd6bf758b9c5ac7afc50eeeae867d3d08e538`；
+- Python 3.9.6 / 3.12.12 / 3.13.9 只读 verifier 同值通过；
+- codec/golden 专项 102 tests；Python 3.13 全仓 2,489 tests；locked Ruff 0.16.3 与
+  Mypy 1.19.1 strict 全绿；
+- 详细证据：[`research/28_stored_event_envelope_codec_evidence.md`](./research/28_stored_event_envelope_codec_evidence.md)；
+- 明确未完成：M2 fence、M3 store adapter、typed result dispatch、migration 7、writer、Observed
+  readback、Accepted 和 worker 全部保持关闭。
 
 ## 6. Phase 2：Reserved Result Event Boundary
 
@@ -691,7 +705,7 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | 里程碑 | 可停条件 | 下一步授权前保持关闭 |
 | --- | --- | --- |
 | M0 参考复评 | 新项目 delta/ADR 完成 | 全部实现 |
-| M1 Codec | golden/canonical/raw JSON contract 通过 | writer、Accepted |
+| M1 Codec（已完成） | golden/canonical/raw JSON contract 通过 | writer、Accepted |
 | M2 Reserved fence | generic bypass 全封 | writer、Accepted |
 | M3 Store adapter | snapshot/raw-row 双验通过 | writer public API |
 | M4 Inactive schema | migration/backup/artifact 候选通过 | migration registration |
@@ -700,10 +714,10 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | M7 Accepted | fresh ACK 唯一 mint 点通过 | migration/worker promotion |
 | M8 Integration | 独立 release evidence 通过 | 生产 Gate 仍需分别审批 |
 
-本计划不再作为当前串行开工入口。提前接入路线的 E1 已完成；用户阶段验收后先执行 E2，达到
-E3 时再从本计划抽取
-M1–M7 的必要 Result Authority 子集。若用户新增会改变底层 result/store 方向的参考项目，仍先做
-M0 delta review，不从原子 writer 中途改变合同。
+本计划现在是 E3 Result Authority 的当前串行入口。提前接入路线的 E1/E2 离线节点已完成，M1
+也已形成安全停点；用户验收并继续后从 M2 reserved fence 开始，不跳过 M2 直接开放 writer。
+若用户新增会改变底层 result/store 方向的参考项目，仍先做 M0 delta review，不从原子 writer
+中途改变合同。
 
 ## 18. 远端文档策略
 
@@ -722,8 +736,8 @@ E1 本地/GitHub 收口完成后，必须把新增生产说明、调研证据、
 
 ## 19. 启动下一阶段时的第一组命令
 
-需要恢复本最大强度 Result Authority 路线时，从以下只读检查开始；下一步 E2 命令与边界以
-`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 第 10 节为准：
+继续本最大强度 Result Authority 路线时，从以下只读检查开始；下一步是本文件 Phase 2，真实 IM
+Level B 仍以 `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 的合同输入为独立门禁：
 
 ```bash
 cd /Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement
@@ -736,5 +750,5 @@ git ls-remote --heads \
 PYTHONPATH=src python3 -m pytest
 ```
 
-确认 clean baseline 后按 E2 只读输入盘点开始；没有用户新的继续指令，不进入真实 sandbox 网络或
-本文件 Phase 1。
+确认 clean baseline 后按 Phase 2 reserved fence 开始；没有用户新的继续指令，不进入真实 sandbox
+网络、M3 store adapter 或任何 writer。

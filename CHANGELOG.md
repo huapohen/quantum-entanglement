@@ -40,6 +40,12 @@ production gate and does not authorize a real connector or external message.
 
 ### Added
 
+- A private, capability-free stored-event envelope V1 codec with an exact 12-field canonical body,
+  domain-separated SHA-256 digest, bounded canonical JSON, UTC-microsecond coordinates, and exact
+  raw `sqlite3.Row` reconstruction without exporting a writer or authority API.
+- Frozen stored-event envelope Golden bytes/manifest, a read-only verifier exercised on Python
+  3.9/3.12/3.13, exhaustive scalar/payload/storage mutation tests, and a three-version stdlib-only
+  CI job.
 - Native IM V1 provider-neutral executable contract with strict bounded codecs, 21 public wire
   models, domain-separated canonical digests and stable idempotency derivation.
 - An exact four-method `IMGatewayPort` plus pure request/result admission gates for capability,
@@ -161,6 +167,12 @@ production gate and does not authorize a real connector or external message.
 
 ### Fixed
 
+- Python 3.9 package imports no longer evaluate PEP 604 type aliases at runtime in native-IM
+  configuration/provenance modules; the source-bound provider-bundle suite digest was refreshed
+  and independently reverified.
+- Stored-event JSON number decoding now bounds integer and float lexemes before Python numeric
+  conversion, validates cheap row scalars before payload parsing, and keeps payload key/value
+  canaries out of exception text.
 - Process-inherited request-context issuers, protected-operation composers, and operation
   registries now fail closed on creator PID/process-epoch mismatch before inherited locks
   or authorization dependencies; a forked child cannot adopt an issuer by constructing a
@@ -201,6 +213,9 @@ production gate and does not authorize a real connector or external message.
 
 ### In progress — not yet a shipped guarantee
 
+- Atomic Result Authority has completed only M1 private envelope codec. The reserved generic-append
+  fence, store-owned snapshot/raw-row transaction adapter, result migration 7, atomic writer,
+  Observed recovery, Accepted mint point, and worker promotion remain disabled.
 - Native IM E2 sandbox inbound-only: the offline profile/auth/durable atomic inbox, default-off
   adapter/lifecycle/observability/recorded-probe and synthetic provider-bundle TCK nodes now exist,
   but no real provider contract/profile/mapper, production exchange, endpoint, credential material,

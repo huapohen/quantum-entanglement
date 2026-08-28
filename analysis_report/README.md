@@ -45,7 +45,7 @@
 | 文件 | 状态 | 内容 |
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
-| `NEXT_STAGE_PLAN.md` | 已冻结，尚未实施 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
+| `NEXT_STAGE_PLAN.md` | M1 codec 已完成，下一步 M2 | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
@@ -62,7 +62,11 @@ cursor/snapshot 或 provider readiness；封板前又对已推送 `a18acd6` 做�
 仍未注册这些合同。完整证据和最小交接合同见
 `research/27_native_im_backend_contract_audit.md`。
 `NEXT_STAGE_PLAN.md` 继续作为 E3 Atomic Result Authority 的最大强度参考，不再作为提前接入前的
-串行总清单。
+串行总清单。其 M1 private stored-event envelope codec 已在 `d889751` 完成：372-byte Golden 在
+Python 3.9.6/3.12.12/3.13.9 同 digest，专项 102 tests、Python 3.13 全仓 2,489 tests 与 locked
+Ruff/Mypy 全绿；下一步是 M2 reserved fence。M3 store adapter、migration 7、writer、Accepted、
+worker 和真实 IM/outbound 均保持关闭。完整边界见
+`research/28_stored_event_envelope_codec_evidence.md`。
 
 ## 专题研究
 
@@ -96,6 +100,7 @@ cursor/snapshot 或 provider readiness；封板前又对已推送 `a18acd6` 做�
 | `research/25_native_im_e2_adapter_lifecycle_offline_evidence.md` | 原生 IM E2 adapter/lifecycle 离线运行证据：`2bdaea1` | default-off、bounded parser、process-bound lifecycle/kill switch、typed observability、全链 canary、recorded probe、2,114 项全仓门禁与真实接入前硬边界 |
 | `research/26_native_im_provider_bundle_offline_evidence.md` | 原生 IM E2 provider bundle 离线闭环：`ee0666f` | Mapper/Transport/Bundle TCK、read-exchange evidence、增强 provenance、migration-v6 持久回读、2,386 项全仓门禁与真实 provider 接入前五项硬输入 |
 | `research/27_native_im_backend_contract_audit.md` | 独立原生 IM 后端源码合同复核：`c623aea` | 确认 authority persistence 底座可复用，但运行 composition 仍只有 fake liveness/ping；冻结 Level B readiness/read 最小合同、三类直接阻断与第一轮只读联调顺序 |
+| `research/28_stored_event_envelope_codec_evidence.md` | E3 Result Authority M1 代码证据：`d889751` | 私有 canonical envelope、exact raw SQLite row 重算、372-byte Golden、102 项专项、三 Python verifier、2,489 项全仓门禁、对抗修复及 M2/M3/authority 未完成边界 |
 
 ## 已归档截图
 
