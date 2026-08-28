@@ -1,33 +1,77 @@
 from __future__ import annotations
 
 import inspect
+import json
 from typing import Any
 
 import pytest
 
 from quantum_entanglement import _stored_event_envelope_codec as codec
 from quantum_entanglement.events import DomainEvent, StoredEvent
-from quantum_entanglement.store import EventStoreIntegrityError, SQLiteEventStore
+from quantum_entanglement.invocation_execution import CANONICAL_ORCHESTRATOR_ACTOR_ID
+from quantum_entanglement.invocation_results import (
+    TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE,
+    TASK_STATUS_CHANGED_EVENT_TYPE,
+    ScopedInvocationResultEvidenceV2,
+    ScopedInvocationResultTerminalTransitionV2,
+)
+from quantum_entanglement.store import (
+    EventStoreIntegrityError,
+    ResultEventWriteContractError,
+    SQLiteEventStore,
+)
+from tests.test_invocation_result_evidence import valid_evidence
+from tests.test_invocation_result_terminal_transition import valid_transition
 
 T0 = "2026-08-28T13:14:15.123456Z"
+DEFAULT_RESULT_IDEMPOTENCY_KEY = "accept:invocation-m3-store"
+
+
+def result_payload(**changes: object) -> dict[str, object]:
+    payload = valid_evidence(
+        session_id="m3-store",
+        accepted_at=T0,
+        acceptance_idempotency_key=DEFAULT_RESULT_IDEMPOTENCY_KEY,
+        artifact_count=0,
+    ).to_dict()
+    payload.update(changes)
+    return payload
 
 
 def event(
     *,
     event_id: str = "event-m3-store",
     payload: dict[str, object] | None = None,
-    idempotency_key: str = "result-event:invocation-m3-store",
+    idempotency_key: str = DEFAULT_RESULT_IDEMPOTENCY_KEY,
 ) -> DomainEvent:
+    event_payload = result_payload(acceptanceIdempotencyKey=idempotency_key)
+    if payload is not None:
+        event_payload = payload
     return DomainEvent(
         stream_id="session:m3-store",
-        event_type="task.invocation.result.accepted",
-        payload={"resultRef": "result:m3-store"} if payload is None else payload,
-        actor_id="orchestrator",
+        event_type=TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE,
+        payload=event_payload,
+        actor_id=CANONICAL_ORCHESTRATOR_ACTOR_ID,
         event_id=event_id,
         timestamp=T0,
         correlation_id="correlation-m3-store",
         causation_id="event-m3-start",
         idempotency_key=idempotency_key,
+    )
+
+
+def terminal_event() -> DomainEvent:
+    transition = valid_transition()
+    return DomainEvent(
+        stream_id=transition.stream_id,
+        event_type=TASK_STATUS_CHANGED_EVENT_TYPE,
+        payload=ScopedInvocationResultTerminalTransitionV2.to_dict(transition),
+        actor_id=transition.actor_id,
+        event_id="event-m3-terminal",
+        timestamp=T0,
+        correlation_id=transition.correlation_id,
+        causation_id=transition.causation_id,
+        idempotency_key=transition.idempotency_key,
     )
 
 
@@ -49,6 +93,98 @@ def append_verified(
 
 def durable_rows(store: SQLiteEventStore) -> tuple[tuple[Any, ...], ...]:
     return tuple(tuple(row) for row in store._connection.execute("SELECT * FROM events").fetchall())
+
+
+def test_private_adapter_accepts_only_exact_typed_result_payload_bytes() -> None:
+    candidates = (event(), terminal_event())
+    typed_payloads = (
+        ScopedInvocationResultEvidenceV2.from_dict(candidates[0].payload),
+        ScopedInvocationResultTerminalTransitionV2.from_dict(candidates[1].payload),
+    )
+    typed_bytes = (
+        ScopedInvocationResultEvidenceV2.canonical_bytes(typed_payloads[0]),  # type: ignore[arg-type]
+        ScopedInvocationResultTerminalTransitionV2.canonical_bytes(typed_payloads[1]),  # type: ignore[arg-type]
+    )
+
+    for candidate, expected_bytes in zip(candidates, typed_bytes):
+        with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+            stored, inserted, verified = append_verified(store, candidate)
+            row = store._connection.execute(
+                "SELECT payload_json FROM events WHERE global_position = ?",
+                (stored.global_position,),
+            ).fetchone()
+
+        assert inserted is True
+        assert type(row["payload_json"]) is str
+        assert row["payload_json"].encode("utf-8") == expected_bytes
+        assert verified.to_dict()["payload"] == candidate.payload
+
+
+def test_non_typed_or_misbound_reserved_snapshots_fail_before_insert() -> None:
+    valid_result = event()
+    valid_terminal = terminal_event()
+    invalid = (
+        DomainEvent(
+            stream_id=valid_result.stream_id,
+            event_type="ordinary.event",
+            payload=valid_result.payload,
+            actor_id=valid_result.actor_id,
+            event_id="event-ordinary",
+            timestamp=valid_result.timestamp,
+            correlation_id=valid_result.correlation_id,
+            causation_id=valid_result.causation_id,
+            idempotency_key=valid_result.idempotency_key,
+        ),
+        event(payload={**valid_result.payload, "future": True}),
+        DomainEvent(
+            stream_id=valid_terminal.stream_id,
+            event_type=TASK_STATUS_CHANGED_EVENT_TYPE,
+            payload=valid_result.payload,
+            actor_id=valid_terminal.actor_id,
+            event_id="event-wrong-terminal-payload",
+            timestamp=T0,
+            correlation_id=valid_terminal.correlation_id,
+            causation_id=valid_terminal.causation_id,
+            idempotency_key=valid_terminal.idempotency_key,
+        ),
+        DomainEvent(
+            stream_id="session:wrong",
+            event_type=valid_result.event_type,
+            payload=valid_result.payload,
+            actor_id=valid_result.actor_id,
+            event_id="event-wrong-result-binding",
+            timestamp=valid_result.timestamp,
+            correlation_id=valid_result.correlation_id,
+            causation_id=valid_result.causation_id,
+            idempotency_key=valid_result.idempotency_key,
+        ),
+        DomainEvent(
+            stream_id=valid_terminal.stream_id,
+            event_type=valid_terminal.event_type,
+            payload=valid_terminal.payload,
+            actor_id=valid_terminal.actor_id,
+            event_id="event-wrong-terminal-binding",
+            timestamp=valid_terminal.timestamp,
+            correlation_id=valid_terminal.correlation_id,
+            causation_id=valid_terminal.causation_id,
+            idempotency_key="task-status:wrong:1",
+        ),
+    )
+
+    for candidate in invalid:
+        with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
+            statements: list[str] = []
+            store._connection.set_trace_callback(statements.append)
+            try:
+                with pytest.raises(ResultEventWriteContractError):
+                    append_verified(store, candidate)
+            finally:
+                store._connection.set_trace_callback(None)
+            assert durable_rows(store) == ()
+            assert not any(
+                statement.lstrip().upper().startswith("INSERT INTO EVENTS")
+                for statement in statements
+            )
 
 
 def test_private_adapter_verifies_exact_raw_row_before_commit() -> None:
@@ -114,7 +250,8 @@ def test_private_adapter_never_uses_domain_or_read_model_serializers(
 
 
 def test_hidden_frozen_bind_snapshot_closes_mid_insert_caller_mutation() -> None:
-    candidate = event(payload={"resultRef": "result:original"})
+    original_payload = result_payload(resultRef="result:original")
+    candidate = event(payload=original_payload)
     with SQLiteEventStore(":memory:", clock=lambda: T0) as store:
         snapshot = SQLiteEventStore._snapshot_event(store, candidate)
 
@@ -144,9 +281,16 @@ def test_hidden_frozen_bind_snapshot_closes_mid_insert_caller_mutation() -> None
 
     assert inserted is True
     assert stored.event.event_id == "event-m3-store"
-    assert tuple(row) == ("event-m3-store", '{"resultRef":"result:original"}')
+    expected_payload_json = json.dumps(
+        original_payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert tuple(row) == ("event-m3-store", expected_payload_json)
     assert verified.to_dict()["eventId"] == "event-m3-store"
-    assert verified.to_dict()["payload"] == {"resultRef": "result:original"}
+    assert verified.to_dict()["payload"] == original_payload
 
 
 def test_idempotent_replay_never_mints_a_verified_insert() -> None:
@@ -159,7 +303,10 @@ def test_idempotent_replay_never_mints_a_verified_insert() -> None:
             append_verified(store, event())
         assert durable_rows(store) == before
 
-        changed = event(event_id="event-changed", payload={"resultRef": "result:changed"})
+        changed = event(
+            event_id="event-changed",
+            payload=result_payload(resultRef="result:changed"),
+        )
         with pytest.raises(EventStoreIntegrityError, match="requires a fresh row"):
             append_verified(store, changed)
         assert durable_rows(store) == before
@@ -170,7 +317,7 @@ def test_idempotent_replay_never_mints_a_verified_insert() -> None:
     "trigger_body",
     (
         "UPDATE events SET event_id = 'event-drifted' WHERE global_position = NEW.global_position;",
-        'UPDATE events SET payload_json = \'{"resultRef": "result:m3-store"}\' '
+        "UPDATE events SET payload_json = ' ' || payload_json "
         "WHERE global_position = NEW.global_position;",
         "UPDATE events SET payload_json = CAST(payload_json AS BLOB) "
         "WHERE global_position = NEW.global_position;",
@@ -192,7 +339,7 @@ def test_raw_row_drift_or_missing_row_rolls_back(trigger_body: str) -> None:
         store._connection.execute("DROP TRIGGER drift_event")
         stored, inserted, _verified = append_verified(
             store,
-            event(event_id="event-after-rollback", idempotency_key="result-event:after-rollback"),
+            event(event_id="event-after-rollback", idempotency_key="accept:after-rollback"),
         )
         assert inserted is True
         assert stored.sequence == 1
