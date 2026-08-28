@@ -23,6 +23,11 @@ from .native_im_sandbox_approval import (
     NativeIMSandboxApprovalV1,
     validate_native_im_sandbox_approval_binding_v1,
 )
+from .native_im_sandbox_approval_store import (
+    NativeIMSandboxApprovalAuthorityStateV1,
+    NativeIMSandboxApprovalStoreError,
+    SQLiteNativeIMSandboxApprovalHighWaterV1,
+)
 from .service.native_im_config import NativeIMInboundOnlyConfigV1
 
 _ACTIVATION_TOKEN = object()
@@ -137,6 +142,7 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
         "__authority_token",
         "__clock",
         "__generation",
+        "__high_water",
         "__lock",
         "__process_owner",
         "__revoked",
@@ -147,6 +153,7 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
         approval: NativeIMSandboxApprovalV1,
         *,
         trusted_record_digest: str,
+        high_water: SQLiteNativeIMSandboxApprovalHighWaterV1,
         clock: Callable[[], str],
     ) -> None:
         if type(approval) is not NativeIMSandboxApprovalV1:
@@ -163,6 +170,8 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
             ) from None
         if not callable(clock):
             raise TypeError("approval authority clock must be callable")
+        if type(high_water) is not SQLiteNativeIMSandboxApprovalHighWaterV1:
+            raise TypeError("approval authority requires the exact durable high-water store")
         self.__process_owner = _process_identity.capture_process_owner()
         self.__authority_token = object()
         self.__approval = NativeIMSandboxApprovalV1.from_json_bytes(
@@ -170,6 +179,7 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
         )
         self.__approval_digest = trusted_record_digest
         self.__clock = clock
+        self.__high_water = high_water
         self.__generation = 0
         self.__revoked = False
         self.__lock = threading.RLock()
@@ -257,9 +267,59 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
             ) from None
         now_text, now_value = self._now()
         self._require_time_window(self.__approval, now_text, now_value)
+        self._observe_approved_locked(now_text)
         return NativeIMSandboxApprovalV1.from_json_bytes(
             self.__approval.canonical_bytes()
         )
+
+    def _approved_state(self, observed_at: str) -> NativeIMSandboxApprovalAuthorityStateV1:
+        return NativeIMSandboxApprovalAuthorityStateV1(
+            schema_version=1,
+            approval_id=self.__approval.approval_id,
+            approval_digest=self.__approval_digest,
+            authority_revision=self.__approval.authority_revision,
+            state="approved",
+            observed_at=observed_at,
+        )
+
+    def _raise_store_failure(self, error: NativeIMSandboxApprovalStoreError) -> NoReturn:
+        code = error.code
+        error.__traceback__ = None
+        error.__cause__ = None
+        error.__context__ = None
+        if code == "native_im_sandbox_approval_store_terminal_revoked":
+            self.__revoked = True
+            self.__generation += 1
+            raise NativeIMSandboxApprovalAuthorityError(
+                "native_im_sandbox_approval_revoked"
+            ) from None
+        raise NativeIMSandboxApprovalAuthorityError(
+            "native_im_sandbox_approval_durable_state_invalid"
+        ) from None
+
+    def _observe_approved_locked(self, observed_at: str) -> None:
+        try:
+            current = self.__high_water.current(self.__approval.approval_id)
+        except NativeIMSandboxApprovalStoreError as error:
+            self._raise_store_failure(error)
+        if current is not None:
+            if current.state == "revoked":
+                self.__revoked = True
+                self.__generation += 1
+                raise NativeIMSandboxApprovalAuthorityError(
+                    "native_im_sandbox_approval_revoked"
+                ) from None
+            if (
+                current.approval_digest != self.__approval_digest
+                or current.authority_revision != self.__approval.authority_revision
+            ):
+                raise NativeIMSandboxApprovalAuthorityError(
+                    "native_im_sandbox_approval_durable_state_invalid"
+                ) from None
+        try:
+            self.__high_water.observe(self._approved_state(observed_at))
+        except NativeIMSandboxApprovalStoreError as error:
+            self._raise_store_failure(error)
 
     def activate(
         self,
@@ -289,6 +349,7 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
                 ) from None
             now_text, now_value = self._now()
             self._require_time_window(self.__approval, now_text, now_value)
+            self._observe_approved_locked(now_text)
             return NativeIMSandboxApprovalPermitV1(
                 approval_id=self.__approval.approval_id,
                 authority_revision=self.__approval.authority_revision,
@@ -321,7 +382,15 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
         self._require_process()
         self.__lock.acquire()
         try:
-            yield self._require_permit_locked(permit, operation=operation)
+            approval = self._require_permit_locked(permit, operation=operation)
+            now_text, now_value = self._now()
+            self._require_time_window(self.__approval, now_text, now_value)
+            state = self._approved_state(now_text)
+            try:
+                with self.__high_water.admission_guard(state):
+                    yield approval
+            except NativeIMSandboxApprovalStoreError as error:
+                self._raise_store_failure(error)
         finally:
             self.__lock.release()
 
@@ -330,8 +399,34 @@ class InMemoryNativeIMSandboxApprovalAuthorityV1:
         with self.__lock:
             if self.__revoked:
                 return False
+            now_text, _ = self._now()
+            try:
+                current = self.__high_water.current(self.__approval.approval_id)
+            except NativeIMSandboxApprovalStoreError as error:
+                self._raise_store_failure(error)
+            if current is not None and current.state == "revoked":
+                self.__revoked = True
+                self.__generation += 1
+                return False
+            revision = (
+                self.__approval.authority_revision
+                if current is None
+                else current.authority_revision
+            ) + 1
+            revoked = NativeIMSandboxApprovalAuthorityStateV1(
+                schema_version=1,
+                approval_id=self.__approval.approval_id,
+                approval_digest=self.__approval_digest,
+                authority_revision=revision,
+                state="revoked",
+                observed_at=now_text,
+            )
             self.__revoked = True
             self.__generation += 1
+            try:
+                self.__high_water.observe(revoked)
+            except NativeIMSandboxApprovalStoreError as error:
+                self._raise_store_failure(error)
             return True
 
     @property
