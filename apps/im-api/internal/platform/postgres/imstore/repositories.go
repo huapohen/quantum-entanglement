@@ -448,64 +448,30 @@ func (repositories *tenantRepositories) CompareAndSwapAccess(
 	}
 	conversationID := next.ConversationRef().ConversationID().String()
 	actorID := next.ActorRef().ActorID().String()
-	if expectedRevision == 0 {
-		if _, err := repositories.tx.Exec(ctx, `
-INSERT INTO wanwork_im.conversation_access_heads (
-    tenant_id, conversation_id, actor_id, current_revision
-) VALUES ($1, $2, $3, $4)`,
-			repositories.tenantID.String(),
-			conversationID,
-			actorID,
-			next.Revision(),
-		); err != nil {
-			return im.ConversationAccessSnapshot{}, repositories.poison(
-				mapWriteError(err, store.ErrRevisionConflict),
-			)
-		}
-	} else {
-		tag, err := repositories.tx.Exec(ctx, `
-UPDATE wanwork_im.conversation_access_heads
-SET current_revision = $4
-WHERE tenant_id = $1
-  AND conversation_id = $2
-  AND actor_id = $3
-  AND current_revision = $5`,
-			repositories.tenantID.String(),
-			conversationID,
-			actorID,
-			next.Revision(),
-			expectedRevision,
-		)
-		if err != nil {
-			return im.ConversationAccessSnapshot{}, repositories.poison(
-				mapWriteError(err, store.ErrRevisionConflict),
-			)
-		}
-		if tag.RowsAffected() != 1 {
-			return im.ConversationAccessSnapshot{}, repositories.poison(store.ErrRevisionConflict)
-		}
-	}
-	if _, err := repositories.tx.Exec(ctx, `
-INSERT INTO wanwork_im.conversation_access_snapshots (
-    tenant_id, conversation_id, actor_id, revision,
-    can_read, can_send_message, can_manage_members,
-    can_manage_conversation, can_invoke_agent,
-    can_publish_artifact_reference
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+	var written bool
+	err := repositories.tx.QueryRow(ctx, `
+SELECT wanwork_im.write_conversation_access_revision(
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+)`,
 		repositories.tenantID.String(),
 		conversationID,
 		actorID,
-		next.Revision(),
+		int64(expectedRevision),
+		int64(next.Revision()),
 		next.HasPermission(im.ConversationPermissionRead),
 		next.HasPermission(im.ConversationPermissionSendMessage),
 		next.HasPermission(im.ConversationPermissionManageMembers),
 		next.HasPermission(im.ConversationPermissionManageConversation),
 		next.HasPermission(im.ConversationPermissionInvokeAgent),
 		next.HasPermission(im.ConversationPermissionPublishArtifactReference),
-	); err != nil {
+	).Scan(&written)
+	if err != nil {
 		return im.ConversationAccessSnapshot{}, repositories.poison(
 			mapWriteError(err, store.ErrRevisionConflict),
 		)
+	}
+	if !written {
+		return im.ConversationAccessSnapshot{}, repositories.poison(store.ErrRevisionConflict)
 	}
 	return next, nil
 }
