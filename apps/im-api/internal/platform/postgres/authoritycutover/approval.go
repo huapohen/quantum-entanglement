@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +23,7 @@ const (
 	approvalDecisionApproved     = "approved"
 	approvalSignatureDomain      = "wanwork.im/postgres-authority-cutover-approval/signature/1\n"
 	approvalEvidenceDigestDomain = "wanwork.im/postgres-authority-cutover-approval/evidence/1\n"
+	approvalKeyFingerprintDomain = "wanwork.im/postgres-authority-cutover-approval/public-key/1\n"
 	maximumApprovalBytes         = 32 * 1024
 	maximumApprovalLifetime      = 15 * time.Minute
 	maximumApprovalClockSkew     = 5 * time.Minute
@@ -114,18 +116,39 @@ func (approval ApprovalToSign) Encode(signature []byte) ([]byte, error) {
 	return canonical, nil
 }
 
-// ApprovalVerificationKey is public verification material bound to one exact controller identity.
-// The constructor copies PublicKey so caller mutation cannot rotate trust behind the verifier's
-// back. Key rotation is represented by multiple distinct KeyIDs for the same identity.
+// ApprovalVerificationScope limits a controller key to one deployment, PostgreSQL cell, and
+// approval-reference namespace. ReferencePrefix must be an approval/ path ending in a slash.
+type ApprovalVerificationScope struct {
+	CellID          string
+	DeploymentID    string
+	ReferencePrefix string
+}
+
+// ApprovalVerificationKey is public verification material bound to one exact controller identity
+// and scope. The constructor copies PublicKey so caller mutation cannot rotate trust behind the
+// verifier's back. Revoked keys must be removed from the active policy; Revoked=true is rejected to
+// fail closed when a policy loader accidentally passes a tombstone as active trust.
 type ApprovalVerificationKey struct {
 	ApproverIdentity string
+	Generation       string
 	KeyID            string
+	NotAfter         time.Time
+	NotBefore        time.Time
+	PolicyRevision   string
 	PublicKey        ed25519.PublicKey
+	Revoked          bool
+	Scope            ApprovalVerificationScope
 }
 
 type trustedApprovalKey struct {
 	approverIdentity string
+	fingerprint      string
+	generation       string
+	notAfter         time.Time
+	notBefore        time.Time
+	policyRevision   string
 	publicKey        ed25519.PublicKey
+	scope            ApprovalVerificationScope
 }
 
 type ApprovalVerifier struct {
@@ -143,8 +166,7 @@ func NewApprovalVerifier(
 	}
 	trusted := make(map[string]trustedApprovalKey, len(keys))
 	for _, key := range keys {
-		if !canonicalIdentity(key.ApproverIdentity) || !canonicalIdentity(key.KeyID) ||
-			len(key.PublicKey) != ed25519.PublicKeySize {
+		if !validApprovalVerificationKey(key) {
 			return ApprovalVerifier{}, ErrInvalidApprovalVerifier
 		}
 		if _, duplicate := trusted[key.KeyID]; duplicate {
@@ -152,32 +174,50 @@ func NewApprovalVerifier(
 		}
 		trusted[key.KeyID] = trustedApprovalKey{
 			approverIdentity: key.ApproverIdentity,
+			fingerprint:      approvalKeyFingerprint(key.PublicKey),
+			generation:       key.Generation,
+			notAfter:         key.NotAfter,
+			notBefore:        key.NotBefore,
+			policyRevision:   key.PolicyRevision,
 			publicKey:        slices.Clone(key.PublicKey),
+			scope:            key.Scope,
 		}
 	}
 	return ApprovalVerifier{keys: trusted, clockSkew: clockSkew}, nil
 }
 
-// VerifiedApproval is the only approval form an executor may consume. It exposes a non-reusable
-// evidence digest and bounded metadata, never the signature or canonical envelope.
+// VerifiedApproval is the only approval form an executor may consume. It exposes a
+// non-authenticating evidence digest and bounded policy metadata, never the signature or canonical
+// envelope. Verification is intentionally not a single-use operation: the executor must durably
+// consume ApprovalDigest with a plan-bound execution attempt before it performs any mutation.
 type VerifiedApproval struct {
 	approvalDigest   string
 	approvedAt       time.Time
 	approverIdentity string
+	cellID           string
+	deploymentID     string
 	expiresAt        time.Time
+	keyFingerprint   string
+	keyGeneration    string
 	keyID            string
 	planDigest       string
 	planID           string
+	policyRevision   string
 	reference        string
 }
 
 func (approval VerifiedApproval) ApprovalDigest() string   { return approval.approvalDigest }
 func (approval VerifiedApproval) ApprovedAt() time.Time    { return approval.approvedAt }
 func (approval VerifiedApproval) ApproverIdentity() string { return approval.approverIdentity }
+func (approval VerifiedApproval) CellID() string           { return approval.cellID }
+func (approval VerifiedApproval) DeploymentID() string     { return approval.deploymentID }
 func (approval VerifiedApproval) ExpiresAt() time.Time     { return approval.expiresAt }
+func (approval VerifiedApproval) KeyFingerprint() string   { return approval.keyFingerprint }
+func (approval VerifiedApproval) KeyGeneration() string    { return approval.keyGeneration }
 func (approval VerifiedApproval) KeyID() string            { return approval.keyID }
 func (approval VerifiedApproval) PlanDigest() string       { return approval.planDigest }
 func (approval VerifiedApproval) PlanID() string           { return approval.planID }
+func (approval VerifiedApproval) PolicyRevision() string   { return approval.policyRevision }
 func (approval VerifiedApproval) Reference() string        { return approval.reference }
 
 func (verifier ApprovalVerifier) Verify(
@@ -217,6 +257,9 @@ func (verifier ApprovalVerifier) Verify(
 		!ed25519.Verify(verificationKey.publicKey, approvalSigningMessage(unsignedCanonical), signature) {
 		return VerifiedApproval{}, ErrUntrustedApproval
 	}
+	if !validApprovalPolicyForPlan(verificationKey, envelope, planSnapshot) {
+		return VerifiedApproval{}, ErrUntrustedApproval
+	}
 	instant := now.UTC()
 	if envelope.ApprovedAt.After(instant.Add(verifier.clockSkew)) {
 		return VerifiedApproval{}, ErrUntrustedApproval
@@ -229,12 +272,42 @@ func (verifier ApprovalVerifier) Verify(
 		approvalDigest:   approvalEvidenceDigest(canonical),
 		approvedAt:       envelope.ApprovedAt,
 		approverIdentity: envelope.ApproverIdentity,
+		cellID:           planSnapshot.Target.CellID,
+		deploymentID:     planSnapshot.Target.DeploymentID,
 		expiresAt:        envelope.ExpiresAt,
+		keyFingerprint:   verificationKey.fingerprint,
+		keyGeneration:    verificationKey.generation,
 		keyID:            envelope.KeyID,
 		planDigest:       envelope.PlanDigest,
 		planID:           envelope.PlanID,
+		policyRevision:   verificationKey.policyRevision,
 		reference:        envelope.Reference,
 	}, nil
+}
+
+func validApprovalVerificationKey(key ApprovalVerificationKey) bool {
+	return canonicalIdentity(key.ApproverIdentity) && canonicalIdentity(key.Generation) &&
+		strings.HasPrefix(key.Generation, "generation-") && canonicalIdentity(key.KeyID) &&
+		canonicalIdentity(key.PolicyRevision) && strings.HasPrefix(key.PolicyRevision, "policy/") &&
+		len(key.PublicKey) == ed25519.PublicKeySize && !key.Revoked &&
+		!key.NotBefore.IsZero() && !key.NotAfter.IsZero() && key.NotBefore.Location() == time.UTC &&
+		key.NotAfter.Location() == time.UTC && key.NotBefore.Nanosecond() == 0 &&
+		key.NotAfter.Nanosecond() == 0 && key.NotAfter.After(key.NotBefore) &&
+		canonicalIdentity(key.Scope.CellID) && canonicalIdentity(key.Scope.DeploymentID) &&
+		canonicalIdentity(key.Scope.ReferencePrefix) &&
+		strings.HasPrefix(key.Scope.ReferencePrefix, "approval/") &&
+		strings.HasSuffix(key.Scope.ReferencePrefix, "/")
+}
+
+func validApprovalPolicyForPlan(
+	key trustedApprovalKey,
+	envelope approvalEnvelope,
+	plan PlanSnapshot,
+) bool {
+	return key.scope.CellID == plan.Target.CellID && key.scope.DeploymentID == plan.Target.DeploymentID &&
+		strings.HasPrefix(envelope.Reference, key.scope.ReferencePrefix) &&
+		!envelope.ApprovedAt.Before(key.notBefore) && envelope.ApprovedAt.Before(key.notAfter) &&
+		(envelope.ExpiresAt.Before(key.notAfter) || envelope.ExpiresAt.Equal(key.notAfter))
 }
 
 // decodeApproval accepts only the exact canonical envelope emitted by Encode. This prevents
@@ -327,5 +400,12 @@ func approvalEvidenceDigest(canonical []byte) string {
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(approvalEvidenceDigestDomain))
 	_, _ = hash.Write(canonical)
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+func approvalKeyFingerprint(publicKey ed25519.PublicKey) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(approvalKeyFingerprintDomain))
+	_, _ = hash.Write(publicKey)
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }

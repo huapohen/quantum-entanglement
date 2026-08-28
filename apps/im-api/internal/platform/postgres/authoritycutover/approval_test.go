@@ -18,6 +18,7 @@ type approvalFixture struct {
 	plan       Plan
 	publicKey  ed25519.PublicKey
 	privateKey ed25519.PrivateKey
+	trustedKey ApprovalVerificationKey
 	verifier   ApprovalVerifier
 	approvedAt time.Time
 	expiresAt  time.Time
@@ -59,8 +60,13 @@ func TestDetachedApprovalDeterministicRoundTripAndEvidenceBoundary(t *testing.T)
 	snapshot := fixture.plan.Snapshot()
 	if verified.ApprovedAt() != fixture.approvedAt || verified.ExpiresAt() != fixture.expiresAt ||
 		verified.ApproverIdentity() != snapshot.Approval.Identity ||
+		verified.CellID() != snapshot.Target.CellID ||
+		verified.DeploymentID() != snapshot.Target.DeploymentID ||
+		verified.KeyFingerprint() != approvalKeyFingerprint(fixture.publicKey) ||
+		verified.KeyGeneration() != fixture.trustedKey.Generation ||
 		verified.KeyID() != "release-key-2026-08" || verified.PlanDigest() != fixture.plan.Digest() ||
 		verified.PlanID() != snapshot.PlanID || verified.Reference() != snapshot.Approval.Reference ||
+		verified.PolicyRevision() != fixture.trustedKey.PolicyRevision ||
 		!canonicalDigest.MatchString(verified.ApprovalDigest()) {
 		t.Fatalf("verified metadata is incomplete: %+v", verified)
 	}
@@ -90,11 +96,8 @@ func TestDetachedApprovalDeterministicRoundTripAndEvidenceBoundary(t *testing.T)
 
 func TestApprovalVerifierCopiesCallerOwnedTrustMaterial(t *testing.T) {
 	fixture := newApprovalFixture(t, 0)
-	key := ApprovalVerificationKey{
-		ApproverIdentity: "release-owner/primary",
-		KeyID:            "release-key-2026-08",
-		PublicKey:        slices.Clone(fixture.publicKey),
-	}
+	key := fixture.trustedKey
+	key.PublicKey = slices.Clone(fixture.publicKey)
 	keys := []ApprovalVerificationKey{key}
 	verifier, err := NewApprovalVerifier(keys, 0)
 	if err != nil {
@@ -102,6 +105,9 @@ func TestApprovalVerifierCopiesCallerOwnedTrustMaterial(t *testing.T) {
 	}
 	keys[0].KeyID = "mutated-key"
 	keys[0].ApproverIdentity = "release-owner/mutated"
+	keys[0].Generation = "generation-mutated"
+	keys[0].PolicyRevision = "policy/mutated"
+	keys[0].Scope.CellID = "postgres-cell-mutated"
 	keys[0].PublicKey[0] ^= 0xff
 	key.PublicKey[1] ^= 0xff
 	if _, err := verifier.Verify(fixture.plan, fixture.raw, fixture.now); err != nil {
@@ -111,20 +117,37 @@ func TestApprovalVerifierCopiesCallerOwnedTrustMaterial(t *testing.T) {
 
 func TestApprovalVerifierRejectsInvalidKeyrings(t *testing.T) {
 	fixture := newApprovalFixture(t, 0)
-	valid := ApprovalVerificationKey{
-		ApproverIdentity: "release-owner/primary",
-		KeyID:            "release-key-2026-08",
-		PublicKey:        fixture.publicKey,
-	}
+	valid := fixture.trustedKey
+	badIdentity := valid
+	badIdentity.ApproverIdentity = "Release Owner"
+	badGeneration := valid
+	badGeneration.Generation = "rotation-1"
+	badKeyID := valid
+	badKeyID.KeyID = "Release Key"
+	badPolicyRevision := valid
+	badPolicyRevision.PolicyRevision = "revision-1"
+	badScope := valid
+	badScope.Scope.ReferencePrefix = "approval/postgres-cell-a"
+	shortKey := valid
+	shortKey.PublicKey = fixture.publicKey[:ed25519.PublicKeySize-1]
+	revoked := valid
+	revoked.Revoked = true
+	badValidity := valid
+	badValidity.NotAfter = badValidity.NotBefore
 	tests := map[string]struct {
 		keys []ApprovalVerificationKey
 		skew time.Duration
 	}{
 		"empty":          {keys: nil},
 		"duplicate":      {keys: []ApprovalVerificationKey{valid, valid}},
-		"bad identity":   {keys: []ApprovalVerificationKey{{ApproverIdentity: "Release Owner", KeyID: valid.KeyID, PublicKey: fixture.publicKey}}},
-		"bad key id":     {keys: []ApprovalVerificationKey{{ApproverIdentity: valid.ApproverIdentity, KeyID: "Release Key", PublicKey: fixture.publicKey}}},
-		"short key":      {keys: []ApprovalVerificationKey{{ApproverIdentity: valid.ApproverIdentity, KeyID: valid.KeyID, PublicKey: fixture.publicKey[:ed25519.PublicKeySize-1]}}},
+		"bad identity":   {keys: []ApprovalVerificationKey{badIdentity}},
+		"bad generation": {keys: []ApprovalVerificationKey{badGeneration}},
+		"bad key id":     {keys: []ApprovalVerificationKey{badKeyID}},
+		"bad policy":     {keys: []ApprovalVerificationKey{badPolicyRevision}},
+		"bad scope":      {keys: []ApprovalVerificationKey{badScope}},
+		"short key":      {keys: []ApprovalVerificationKey{shortKey}},
+		"revoked":        {keys: []ApprovalVerificationKey{revoked}},
+		"bad validity":   {keys: []ApprovalVerificationKey{badValidity}},
 		"negative skew":  {keys: []ApprovalVerificationKey{valid}, skew: -time.Nanosecond},
 		"excessive skew": {keys: []ApprovalVerificationKey{valid}, skew: maximumApprovalClockSkew + time.Nanosecond},
 	}
@@ -132,8 +155,13 @@ func TestApprovalVerifierRejectsInvalidKeyrings(t *testing.T) {
 	for index := range tooMany {
 		tooMany[index] = ApprovalVerificationKey{
 			ApproverIdentity: valid.ApproverIdentity,
+			Generation:       valid.Generation,
 			KeyID:            fmt.Sprintf("release-key-%03d", index),
+			NotAfter:         valid.NotAfter,
+			NotBefore:        valid.NotBefore,
+			PolicyRevision:   valid.PolicyRevision,
 			PublicKey:        fixture.publicKey,
+			Scope:            valid.Scope,
 		}
 	}
 	tests["too many"] = struct {
@@ -235,16 +263,51 @@ func TestApprovalRejectsEveryPlanIdentityAndSignatureDrift(t *testing.T) {
 	if _, err := fixture.verifier.Verify(otherPlan, fixture.raw, fixture.now); !errors.Is(err, ErrUntrustedApproval) {
 		t.Fatalf("wrong plan error = %v, want %v", err, ErrUntrustedApproval)
 	}
-	wrongIdentityVerifier, err := NewApprovalVerifier([]ApprovalVerificationKey{{
-		ApproverIdentity: "release-owner/secondary",
-		KeyID:            "release-key-2026-08",
-		PublicKey:        fixture.publicKey,
-	}}, 0)
+	wrongIdentityKey := fixture.trustedKey
+	wrongIdentityKey.ApproverIdentity = "release-owner/secondary"
+	wrongIdentityVerifier, err := NewApprovalVerifier([]ApprovalVerificationKey{wrongIdentityKey}, 0)
 	if err != nil {
 		t.Fatalf("NewApprovalVerifier wrong identity: %v", err)
 	}
 	if _, err := wrongIdentityVerifier.Verify(fixture.plan, fixture.raw, fixture.now); !errors.Is(err, ErrUntrustedApproval) {
 		t.Fatalf("key-to-approver binding error = %v, want %v", err, ErrUntrustedApproval)
+	}
+}
+
+func TestApprovalTrustPolicyRejectsOutOfScopeAndOutOfWindow(t *testing.T) {
+	fixture := newApprovalFixture(t, 0)
+	tests := map[string]func(*ApprovalVerificationKey){
+		"deployment": func(key *ApprovalVerificationKey) {
+			key.Scope.DeploymentID = "wanwork-im-prod-b"
+		},
+		"cell": func(key *ApprovalVerificationKey) {
+			key.Scope.CellID = "postgres-cell-b"
+		},
+		"reference namespace": func(key *ApprovalVerificationKey) {
+			key.Scope.ReferencePrefix = "approval/postgres-cell-b/"
+		},
+		"approval before key validity": func(key *ApprovalVerificationKey) {
+			key.NotBefore = fixture.approvedAt.Add(time.Second)
+		},
+		"approval at key expiry": func(key *ApprovalVerificationKey) {
+			key.NotAfter = fixture.approvedAt
+		},
+		"approval expires after key": func(key *ApprovalVerificationKey) {
+			key.NotAfter = fixture.expiresAt.Add(-time.Second)
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			key := fixture.trustedKey
+			mutate(&key)
+			verifier, err := NewApprovalVerifier([]ApprovalVerificationKey{key}, 0)
+			if err != nil {
+				t.Fatalf("NewApprovalVerifier: %v", err)
+			}
+			if _, err := verifier.Verify(fixture.plan, fixture.raw, fixture.now); !errors.Is(err, ErrUntrustedApproval) {
+				t.Fatalf("Verify error = %v, want %v", err, ErrUntrustedApproval)
+			}
+		})
 	}
 }
 
@@ -392,11 +455,21 @@ func newApprovalFixture(t *testing.T, clockSkew time.Duration) approvalFixture {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	verifier, err := NewApprovalVerifier([]ApprovalVerificationKey{{
+	trustedKey := ApprovalVerificationKey{
 		ApproverIdentity: "release-owner/primary",
+		Generation:       "generation-1",
 		KeyID:            "release-key-2026-08",
+		NotAfter:         time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+		NotBefore:        time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		PolicyRevision:   "policy/release-approvers/revision-1",
 		PublicKey:        publicKey,
-	}}, clockSkew)
+		Scope: ApprovalVerificationScope{
+			CellID:          "postgres-cell-a",
+			DeploymentID:    "wanwork-im-prod-a",
+			ReferencePrefix: "approval/postgres-cell-a/",
+		},
+	}
+	verifier, err := NewApprovalVerifier([]ApprovalVerificationKey{trustedKey}, clockSkew)
 	if err != nil {
 		t.Fatalf("NewApprovalVerifier: %v", err)
 	}
@@ -404,6 +477,7 @@ func newApprovalFixture(t *testing.T, clockSkew time.Duration) approvalFixture {
 		plan:       plan,
 		publicKey:  publicKey,
 		privateKey: privateKey,
+		trustedKey: trustedKey,
 		verifier:   verifier,
 		approvedAt: approvedAt,
 		expiresAt:  expiresAt,
