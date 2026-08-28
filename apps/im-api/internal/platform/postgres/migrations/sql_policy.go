@@ -19,21 +19,60 @@ func allowedMigrationStatement(head []string) bool {
 	if len(head) < 2 {
 		return false
 	}
+	for _, token := range head {
+		if forbiddenMigrationToken(token) {
+			return false
+		}
+	}
 	switch head[0] {
 	case "ALTER":
-		return head[1] == "TABLE"
+		return head[1] == "TABLE" && !containsMigrationToken(head, "DEFAULT")
 	case "CREATE":
 		if head[1] == "UNIQUE" {
 			return len(head) >= 3 && head[2] == "INDEX"
 		}
-		return head[1] == "INDEX" || head[1] == "POLICY" || head[1] == "SCHEMA" ||
-			head[1] == "TABLE"
+		if head[1] == "TABLE" {
+			return !containsMigrationToken(head, "AS") && validMigrationDefaults(head)
+		}
+		return head[1] == "INDEX" || head[1] == "POLICY" || head[1] == "SCHEMA"
 	case "DROP":
 		return head[1] == "INDEX" || head[1] == "POLICY" || head[1] == "SCHEMA" ||
 			head[1] == "TABLE"
 	default:
 		return false
 	}
+}
+
+func forbiddenMigrationToken(token string) bool {
+	switch token {
+	case "CALL", "COPY", "DBLINK", "EXECUTE", "LO_EXPORT", "LO_IMPORT",
+		"PG_ADVISORY_LOCK", "PG_CANCEL_BACKEND", "PG_CREATE_RESTORE_POINT",
+		"PG_LOGICAL_EMIT_MESSAGE", "PG_READ_BINARY_FILE", "PG_READ_FILE",
+		"PG_RELOAD_CONF", "PG_ROTATE_LOGFILE", "PG_SLEEP", "PG_SWITCH_WAL",
+		"PG_TERMINATE_BACKEND", "PG_WRITE_FILE", "SELECT", "SET_CONFIG":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsMigrationToken(tokens []string, expected string) bool {
+	for _, token := range tokens {
+		if token == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func validMigrationDefaults(tokens []string) bool {
+	for index, token := range tokens {
+		if token == "DEFAULT" && (index+1 >= len(tokens) ||
+			(tokens[index+1] != "CLOCK_TIMESTAMP" && tokens[index+1] != "LITERAL")) {
+			return false
+		}
+	}
+	return true
 }
 
 func migrationStatementHeads(sql string) ([][]string, bool) {
@@ -66,6 +105,7 @@ func migrationStatementHeads(sql string) ([][]string, bool) {
 			if !ok {
 				return nil, false
 			}
+			current = append(current, "LITERAL")
 		case sql[offset] == '"':
 			var ok bool
 			offset, ok = skipSQLQuoted(sql, offset, '"')
@@ -79,6 +119,7 @@ func migrationStatementHeads(sql string) ([][]string, bool) {
 			}
 			if matched {
 				offset = next
+				current = append(current, "LITERAL")
 			} else {
 				offset++
 			}
@@ -88,9 +129,7 @@ func migrationStatementHeads(sql string) ([][]string, bool) {
 			for offset < len(sql) && isSQLIdentifierPart(sql[offset]) {
 				offset++
 			}
-			if len(current) < 3 {
-				current = append(current, strings.ToUpper(sql[start:offset]))
-			}
+			current = append(current, strings.ToUpper(sql[start:offset]))
 		default:
 			offset++
 		}
