@@ -21,6 +21,18 @@ func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
 		t.Fatalf("apply authority access prerequisites: %v", err)
 	}
 	manifest := provisionAuthorityAccess(t, connection)
+	if _, err := connection.Exec(t.Context(), "SET ROLE "+pgx.Identifier{manifest.OwnerRole}.Sanitize()); err != nil {
+		t.Fatalf("set owner from unlisted admin session: %v", err)
+	}
+	if err := ValidateAuthorityAccess(t.Context(), connection, manifest); !errors.Is(
+		err,
+		ErrAuthorityAccessDrift,
+	) {
+		t.Fatalf("unlisted admin session error = %v, want %v", err, ErrAuthorityAccessDrift)
+	}
+	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+		t.Fatalf("reset unlisted admin session: %v", err)
+	}
 	authorityConfig := databaseConfig.Copy()
 	authorityConfig.User = manifest.MigrationLoginRoles[0]
 	authorityConnection, err := pgx.ConnectConfig(t.Context(), authorityConfig)
