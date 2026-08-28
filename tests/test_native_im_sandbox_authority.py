@@ -10,6 +10,10 @@ import pytest
 
 from quantum_entanglement import process_identity
 from quantum_entanglement.native_im_sandbox_approval import NativeIMSandboxApprovalV1
+from quantum_entanglement.native_im_sandbox_approval_store import (
+    NativeIMSandboxApprovalAuthorityStateV1,
+    SQLiteNativeIMSandboxApprovalHighWaterV1,
+)
 from quantum_entanglement.native_im_sandbox_authority import (
     InMemoryNativeIMSandboxApprovalAuthorityV1,
     NativeIMSandboxApprovalAuthorityError,
@@ -38,6 +42,7 @@ def authority_inputs(
     now: object = NOW,
     expires_at: str = EXPIRES,
     approval_changes: dict[str, object] | None = None,
+    high_water: SQLiteNativeIMSandboxApprovalHighWaterV1 | None = None,
 ):
     configuration = bound_configuration(
         QE_NATIVE_IM_APPROVAL_EXPIRES_AT=expires_at,
@@ -58,6 +63,11 @@ def authority_inputs(
     authority = InMemoryNativeIMSandboxApprovalAuthorityV1(
         approval,
         trusted_record_digest=approval.canonical_digest(),
+        high_water=(
+            SQLiteNativeIMSandboxApprovalHighWaterV1(":memory:")
+            if high_water is None
+            else high_water
+        ),
         clock=clock,
     )
     return authority, configuration, profile(), approval, clock
@@ -107,6 +117,7 @@ def test_authority_requires_an_independent_exact_record_digest() -> None:
         InMemoryNativeIMSandboxApprovalAuthorityV1(
             approval,
             trusted_record_digest="f" * 64,
+            high_water=SQLiteNativeIMSandboxApprovalHighWaterV1(":memory:"),
             clock=lambda: NOW,
         )
     assert raised.value.code == "native_im_sandbox_approval_trust_anchor_mismatch"
@@ -283,6 +294,77 @@ def test_admission_guard_linearizes_revocation_after_the_guarded_section() -> No
 
     assert completed.is_set()
     assert authority.revoked is True
+
+
+def test_external_durable_revocation_invalidates_live_permit_after_restart_boundary(
+    tmp_path,
+) -> None:
+    path = str((tmp_path / "approval-authority.sqlite3").resolve())
+    local_store = SQLiteNativeIMSandboxApprovalHighWaterV1(path)
+    external_store = SQLiteNativeIMSandboxApprovalHighWaterV1(path)
+    authority, permit, _, _, approval, _ = active_inputs(high_water=local_store)
+    revoked = NativeIMSandboxApprovalAuthorityStateV1(
+        schema_version=1,
+        approval_id=approval.approval_id,
+        approval_digest=approval.canonical_digest(),
+        authority_revision=approval.authority_revision + 1,
+        state="revoked",
+        observed_at="2026-08-28T12:00:01.000001Z",
+    )
+    try:
+        external_store.observe(revoked)
+        with pytest.raises(NativeIMSandboxApprovalAuthorityError) as raised:
+            authority.require_current(permit, operation="read")
+        assert raised.value.code == "native_im_sandbox_approval_revoked"
+        assert authority.revoked is True
+    finally:
+        local_store.close()
+        external_store.close()
+
+
+def test_durable_backend_failure_invalidates_action_time_check(tmp_path) -> None:
+    path = str((tmp_path / "closed-authority.sqlite3").resolve())
+    store = SQLiteNativeIMSandboxApprovalHighWaterV1(path)
+    authority, permit, _, _, _, _ = active_inputs(high_water=store)
+    store.close()
+
+    with pytest.raises(NativeIMSandboxApprovalAuthorityError) as raised:
+        authority.require_current(permit, operation="read")
+    assert raised.value.code == "native_im_sandbox_approval_durable_state_invalid"
+
+
+def test_authority_admission_guard_blocks_external_durable_revocation(tmp_path) -> None:
+    path = str((tmp_path / "guarded-authority.sqlite3").resolve())
+    local_store = SQLiteNativeIMSandboxApprovalHighWaterV1(path)
+    external_store = SQLiteNativeIMSandboxApprovalHighWaterV1(path)
+    authority, permit, _, _, approval, _ = active_inputs(high_water=local_store)
+    revoked = NativeIMSandboxApprovalAuthorityStateV1(
+        schema_version=1,
+        approval_id=approval.approval_id,
+        approval_digest=approval.canonical_digest(),
+        authority_revision=approval.authority_revision + 1,
+        state="revoked",
+        observed_at="2026-08-28T12:00:01.000001Z",
+    )
+    started = threading.Event()
+    completed = threading.Event()
+
+    def revoke() -> None:
+        started.set()
+        external_store.observe(revoked)
+        completed.set()
+
+    try:
+        with authority.admission_guard(permit):
+            thread = threading.Thread(target=revoke)
+            thread.start()
+            assert started.wait(timeout=2)
+            assert completed.wait(timeout=0.05) is False
+        thread.join(timeout=2)
+        assert completed.is_set()
+    finally:
+        local_store.close()
+        external_store.close()
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork")
