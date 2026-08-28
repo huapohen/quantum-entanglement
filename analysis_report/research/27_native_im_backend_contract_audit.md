@@ -10,6 +10,9 @@
 >
 > 被复核提交 tree：`7319fa96c2544fe9bce3e2160a77e77eec403092`
 >
+> 封板前漂移复核：`a18acd67f494f75777d5b64d60223c4639333ac3`，tree
+> `93c801720d2e0a6292b5738873921ac47b788758`（2026-08-28T10:37:22Z）
+>
 > 决策性质：Level B inbound-only 介入前的源码合同审计；不是生产发布批准
 >
 > 安全边界：本次只读检查已提交源码和文档；未读取 `.env`、未解析任何密钥、未连接任何
@@ -61,6 +64,12 @@ tree:   7319fa96c2544fe9bce3e2160a77e77eec403092
 `apps/im-api/internal/platform/postgres/migrations/access_manifest_integration_test.go`。本报告没有读取、
 修改、暂存或依赖该未提交 diff；所有关键判断均通过 `git show HEAD:<path>` 和 `git grep HEAD` 对已
 提交对象复核。
+
+封板前独立 IM 分支已从 `c623aea` 前进到已推送 `a18acd6`。本次又对新 HEAD 的 HTTP adapter、
+application composition、入口和 config 执行同一负向搜索；新增提交仍集中在 PostgreSQL
+function-only access checkpoint、runtime role 和文档索引，注册路由依旧只有 `/health/live` 与
+`/api/v1/system/ping`。因此本报告的 Level B NO-GO 结论没有因并发分支前进而过期。该漂移复核同样
+只针对已提交对象；新 HEAD worktree 中当时存在的未提交文档/报告改动不属于本报告证据。
 
 ### 2.2 直接证据
 
