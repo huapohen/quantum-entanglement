@@ -12,6 +12,7 @@ from typing import NoReturn, SupportsIndex
 
 from .native_im import IMInboundReadRequestV1
 from .native_im_inbox import (
+    NativeIMInboundConflictError,
     NativeIMInboundPageAdmissionResultV1,
     NativeIMInboundReadPreparationV1,
 )
@@ -347,7 +348,11 @@ class NativeIMSandboxLifecycleV1:
             except NativeIMKillSwitchTrippedError:
                 self._observe_read("kill_switch")
                 raise
-            except (NativeIMSandboxLifecycleError, TypeError):
+            except (
+                NativeIMInboundConflictError,
+                NativeIMSandboxLifecycleError,
+                TypeError,
+            ):
                 self._observe_read("rejected")
                 raise
             except BaseException:

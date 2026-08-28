@@ -5,12 +5,16 @@ import json
 import logging
 import os
 import pickle
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from quantum_entanglement.native_im_inbox import NativeIMInboundPageAdmissionResultV1
+from quantum_entanglement.native_im_inbox import (
+    NativeIMInboundCheckpointConflictError,
+    NativeIMInboundPageAdmissionResultV1,
+)
 from quantum_entanglement.native_im_nonce_store import SQLiteNativeIMInboxStore
 from quantum_entanglement.native_im_sandbox import NativeIMInboundOnlySandboxAdapter
 from quantum_entanglement.native_im_sandbox_lifecycle import (
@@ -228,6 +232,33 @@ async def test_logging_backend_failure_cannot_change_lifecycle_admission(
     assert snapshot.health_success_count == 1
     assert snapshot.read_fresh_count == 1
     assert snapshot.events_admitted_count == len(result.event_receipts)
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_conflict_is_observed_as_rejected_before_transport(
+    tmp_path: Path,
+) -> None:
+    observer, metrics = sandbox_observer()
+    lifecycle, _, store, _, request, transport = lifecycle_inputs(
+        tmp_path,
+        observer=observer,
+    )
+    conflicting_request = replace(
+        request,
+        after_cursor="test-out-of-order-cursor",
+        after_sequence=99,
+        snapshot_token="test-out-of-order-snapshot",
+        read_request_id="test-out-of-order-read",
+    )
+    try:
+        await lifecycle.start()
+        with pytest.raises(NativeIMInboundCheckpointConflictError):
+            await lifecycle.admit_once(conflicting_request)
+        assert transport.read_calls == 0
+        assert metrics.snapshot().read_rejected_count == 1
+    finally:
+        await lifecycle.aclose()
+        store.close()
 
 
 @pytest.mark.asyncio
