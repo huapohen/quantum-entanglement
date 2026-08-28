@@ -187,9 +187,9 @@ id="toc-wanwork-原生-im-研究可追溯矩阵">WanWork 原生 IM
 <li><a href="#研究到实现的硬映射" id="toc-研究到实现的硬映射">3.
 研究到实现的硬映射</a>
 <ul>
-<li><a href="#w2-postgresql-证据增量head-cd92ea5"
-id="toc-w2-postgresql-证据增量head-cd92ea5">3.1 W2 PostgreSQL
-证据增量（HEAD <code>cd92ea5</code>）</a></li>
+<li><a href="#w2-postgresql-证据增量code-baseline-53dd38b"
+id="toc-w2-postgresql-证据增量code-baseline-53dd38b">3.1 W2 PostgreSQL
+证据增量（code baseline <code>53dd38b</code>）</a></li>
 </ul></li>
 <li><a href="#明确吸收与明确拒绝" id="toc-明确吸收与明确拒绝">4.
 明确吸收与明确拒绝</a></li>
@@ -203,12 +203,12 @@ id="toc-w2-postgresql-证据增量head-cd92ea5">3.1 W2 PostgreSQL
 <h1 id="wanwork-原生-im-研究可追溯矩阵">WanWork 原生 IM
 研究可追溯矩阵</h1>
 <blockquote>
-<p>状态：W0 冻结依据；W2 PostgreSQL function-only writes / exact access
+<p>状态：W0 冻结依据；W2 PostgreSQL attested runtime composition
 检查点</p>
 <p>研究快照：2026-08-27</p>
 <p>审计日期：2026-08-28</p>
 <p>适用分支：<code>dev_wanwork_quantum_entanglement</code></p>
-<p>W2 code baseline：<code>cd92ea5</code></p>
+<p>W2 code baseline：<code>53dd38b4224003a415605074f25470405ebe799e</code></p>
 </blockquote>
 <h2 id="这份文档解决什么">1. 这份文档解决什么</h2>
 <p>用户指定的调研不是背景阅读，而是产品合同的证据输入。本矩阵强制保留：</p>
@@ -1085,14 +1085,15 @@ fixture。</td>
 </tr>
 </tbody>
 </table>
-<h3 id="w2-postgresql-证据增量head-cd92ea5">3.1 W2 PostgreSQL
-证据增量（HEAD <code>cd92ea5</code>）</h3>
+<h3 id="w2-postgresql-证据增量code-baseline-53dd38b">3.1 W2 PostgreSQL
+证据增量（code baseline <code>53dd38b</code>）</h3>
 <p>本节不修改 RQ
 的长期验收终点，只记录哪些研究结论已经进入当前数据库结构/transaction
 seam，避免把 “方向正确”改写成“完整能力已交付”。当前详细证据见
-<code>analysis_report/research/34_postgres_function_only_writes_and_exact_access_checkpoint.md</code>；Topic
-33 是 <code>0001..0004</code> persistence substrate
-的前序历史检查点。</p>
+<code>analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md</code>；Topic
+34 的 <code>cd92ea5</code> 是 function-only/exact-access
+前序历史检查点，Topic 33 是 <code>0001..0004</code> persistence substrate
+历史检查点。</p>
 <table>
 <colgroup>
 <col style="width: 20%" />
@@ -1172,9 +1173,9 @@ reconciler。</td>
 <code>:633-674</code></td>
 <td>head/snapshot/receipt transaction state 可复核；测试 runtime login
 对全部 22 张表无 raw mutation/MAINTAIN，五个写函数是 runtime 的唯一登记
-mutation 面。</td>
-<td>exact access validator 与 provision helper 是集成测试
-fixture，不是生产 IaC/service readiness；digest 无签名。</td>
+mutation 面；exact validator 已进入显式 runtime Open/Ready。</td>
+<td>runtime wiring 只覆盖受控 manifest/credential 与当前仓库；测试
+provision helper 不是 production IaC，digest 无签名。</td>
 <td>数据库 history protection 是 evidence chain 的一层，不是完整
 audit。</td>
 <td>actor/mandate/policy/intent/provider receipt/Artifact/Acceptance
@@ -1196,27 +1197,30 @@ unknown/reconcile。</td>
 <td>RQ-034；AgentTeams <code>:373-404,431-450</code></td>
 <td>repository/UoW 不暴露 <code>pgx.Tx</code>；conversation/provider
 binding/membership/access/receipt 已改调五个 fixed
-<code>SECURITY DEFINER</code> 函数，runtime raw writes 全拒绝。</td>
+<code>SECURITY DEFINER</code> 函数，runtime raw writes
+全拒绝；生产构造器只接 attested pool。</td>
 <td>function-only 保证只覆盖当前五个函数与已登记 authority 对象；数据库
-ACL 不替代 action-time business authorization。</td>
+ACL/readiness 不替代 action-time business authorization。</td>
 <td>把 planner/runtime credential 收窄到 exact <code>SELECT</code> +
 <code>EXECUTE</code> 是独立执行侧 PEP 的必要底座。</td>
-<td>production service 使用 runtime login、trusted request
-context、active resolver 与 executor PEP。</td>
+<td>production cutover/rotation、trusted request context、active
+resolver 与 executor PEP。</td>
 </tr>
 <tr>
 <td>RQ-008/009；DeepSeek Harness <code>:207-251,404-414</code></td>
 <td>migration <code>0005</code> 的 exact signature/owner/body
 digest/security/search path/overload manifest，以及
 database/schema/table/function/default ACL、role attribute、membership
-option/grantor manifest 已由 PG18 fixture 验证。</td>
-<td>token policy 仍不是完整 SQL parser/不可信代码
-sandbox；AuthorityAccessManifest/provision helper 只是临时测试 validator
-fixture。</td>
+option/grantor manifest 已由 PG18 fixture 验证；strict connection
+policy、physical/session attestation、Ready 与 route barrier 已接线。</td>
+<td>token policy 仍不是完整 SQL parser/不可信代码 sandbox；runtime
+manifest/composition 不等于 production IaC、credential lifecycle
+或恢复。</td>
 <td>schema/role/function/access manifest 像 plugin effective
 configuration 一样精确冻结并在受控入口重验，方向正确。</td>
-<td>production IaC、database owner/provisioner 交接、login/secret
-rotation、startup/readiness drift validation 与旧 session cutover。</td>
+<td>production topology/IaC、database owner/provisioner
+cutover、login/secret rotation、远程 TLS E2E、旧 session drain
+与恢复演练。</td>
 </tr>
 </tbody>
 </table>
@@ -1224,17 +1228,17 @@ rotation、startup/readiness drift validation 与旧 session cutover。</td>
 <ul>
 <li><code>[F]</code> 已证实的是 tenant-bound PostgreSQL authority
 repository + serializable/idempotent UoW + <code>0001..0005</code>
-cumulative migration invariants + function-only writes + exact access
-fixture 这一安全切片；</li>
+cumulative migration invariants + function-only writes + exact access +
+strict connection policy + attested runtime composition 这一安全切片；</li>
 <li><code>[C]</code> 所有保证限定在已登记 schema、conversation/provider
-binding/membership/access/receipt、同一 PostgreSQL transaction 和测试
-provision/access-validator fixture；</li>
+binding/membership/access/receipt、受控 manifest/credential、当前
+repository/UoW 和测试 provision fixture；</li>
 <li><code>[A]</code> 该切片是原生 IM/A2A/Agent runtime
 的底座，不是完成态；</li>
-<li><code>[U]</code> production IaC/service wiring、trusted auth/request
-context、action-time mandate/capability PEP、
-recovery、message/thread/task/action、event/outbox、provider reconcile
-与 Artifact acceptance 仍未实现。</li>
+<li><code>[U]</code> production topology/IaC/cutover/credential
+lifecycle、trusted auth/request context、action-time mandate/capability
+PEP、recovery、message/thread/task/action、event/outbox、provider
+reconcile 与 Artifact acceptance 仍未实现。</li>
 </ul>
 <p>禁止把本节改写为以下宣称：生产级多租户、端到端 exactly-once、完整
 audit/non-repudiation、Agent invocation authorization、Artifact
