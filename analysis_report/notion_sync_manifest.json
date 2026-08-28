@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-28T09:29:58Z",
+  "syncedAt": "2026-08-28T11:45:56Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private review branch + local linked worktree",
     "remoteRepresentation": "semantic-mirror",
@@ -1850,6 +1850,148 @@
       "secretsRecorded": false
     }
   },
+  "stageReviewSyncV7": {
+    "stage": "e3-result-authority-m1-stored-event-envelope",
+    "syncedAt": "2026-08-28T11:45:56Z",
+    "semanticBaselineCommit": "497c545b0613a15d5edf142c694ddbf00412a135",
+    "semanticBaselineTree": "0eda517dc2cf3f6832c6a218831d65471bba7495",
+    "sourceCandidateCommit": "d889751e4cc3b7db548994a000a87e21688b4429",
+    "sourceCandidateTree": "57b608ed57f47a68d1f9433104cd88d820a19929",
+    "branch": "mainline_continue_quantum_entanglement",
+    "parent": {
+      "pageId": "3c9ead4b-996e-8108-aea6-c97c694d6587",
+      "url": "https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204",
+      "title": "Quantum Entanglement｜mainline_continue 独立审阅空间",
+      "contentLength": 13754,
+      "expectedMarkers": ["497c545", "d889751", "3caead4b996e81f99b71d0bed6ac3136"],
+      "missingMarkers": [],
+      "remoteReadbackVerified": true,
+      "childPageCount": 17,
+      "uniqueChildPageCount": 17,
+      "pageTagCountIncludingSelf": 18
+    },
+    "evidencePage": {
+      "key": "e3-m1-stored-event-envelope",
+      "pageId": "3caead4b-996e-81f9-9b71-d0bed6ac3136",
+      "url": "https://app.notion.com/p/3caead4b996e81f99b71d0bed6ac3136?pvs=204",
+      "sourcePath": "analysis_report/research/28_stored_event_envelope_codec_evidence.md",
+      "sourceSha256": "56dd0f63f5203379e1a2ccca2d9fc38f190e00597a85036f7c62a534f0efaea4",
+      "contentLength": 10368,
+      "attachmentId": "3caead4b-996e-8189-8478-00b2dff3c4bf",
+      "updateMode": "created-full-semantic-mirror-with-exact-markdown-attachment",
+      "expectedMarkers": ["d889751", "372", "a7a2a28ed93454fe925dbdf676acd6bf758b9c5ac7afc50eeeae867d3d08e538", "2,489", "本地原始 Markdown"],
+      "missingMarkers": [],
+      "remoteReadbackVerified": true
+    },
+    "sourceArtifacts": [
+      {
+        "sourcePath": "docs/production/ADR_0005_ATOMIC_RESULT_AUTHORITY.md",
+        "sourceSha256": "057d38cecfc6b3b6c1067f18ae4a5e61cd4863a99c8802e0cd144e3853faca16",
+        "attachmentId": "3caead4b-996e-816b-8545-00b2941f80fe"
+      },
+      {
+        "sourcePath": "analysis_report/NEXT_STAGE_PLAN.md",
+        "sourceSha256": "89e52630838e8f5b2afa3be09fc12dfdc3d3f93ba51793284f1db81027286d90",
+        "attachmentId": "3caead4b-996e-81ad-abf4-00b264ebc341"
+      },
+      {
+        "sourcePath": "docs/production/CURRENT_READINESS.md",
+        "sourceSha256": "8fc90733df069cb72857f9080942faa3d1e260c51b3e323a607fc6f9d0da70ac",
+        "attachmentId": "3caead4b-996e-8114-ae38-00b2ad8053e6"
+      },
+      {
+        "sourcePath": "analysis_report/README.md",
+        "sourceSha256": "092cf61f2ca93548f3331bb32da0d97613b9562a4b46449dcf7ae60bec4e1df2",
+        "attachmentId": "3caead4b-996e-8180-a20c-00b2f2b3efb6",
+        "status": "superseded-by-final-ledger-refresh"
+      },
+      {
+        "sourcePath": "BRANCH_CATALOG.md",
+        "sourceSha256": "853f2c52a9157529a868ce4a8bab01ef9c2c1a6008107c2abd97ae5df2c3adae",
+        "attachmentId": "3caead4b-996e-810c-81d7-00b2508f24c9"
+      },
+      {
+        "sourcePath": "CHANGELOG.md",
+        "sourceSha256": "a717ab182adcbc8bb1e59f7bf8d902cf63b69b485b602d6e140019798b574c6b",
+        "attachmentId": "3caead4b-996e-8163-9e3f-00b2375774d0"
+      },
+      {
+        "sourcePath": "BRANCH_CATALOG.md",
+        "sourceSha256": "853f2c52a9157529a868ce4a8bab01ef9c2c1a6008107c2abd97ae5df2c3adae",
+        "attachmentId": "3caead4b-996e-81c0-a0a4-00b20ff774d3",
+        "representation": "global-branch-catalog"
+      }
+    ],
+    "updatedPages": [
+      {
+        "key": "global-next-stage-plan",
+        "pageId": "3c9ead4b-996e-8133-91b7-e322936a1f13",
+        "contentLength": 26593,
+        "sourcePath": "analysis_report/NEXT_STAGE_PLAN.md",
+        "sourceSha256": "89e52630838e8f5b2afa3be09fc12dfdc3d3f93ba51793284f1db81027286d90"
+      },
+      {
+        "key": "native-im-readiness",
+        "pageId": "3c9ead4b-996e-819b-bb02-f206122941c2",
+        "contentLength": 25632,
+        "sourcePath": "docs/production/CURRENT_READINESS.md",
+        "sourceSha256": "8fc90733df069cb72857f9080942faa3d1e260c51b3e323a607fc6f9d0da70ac"
+      },
+      {
+        "key": "native-im-report-index",
+        "pageId": "3c9ead4b-996e-81d3-9fb6-d5cf6d364fe0",
+        "contentLength": 16208,
+        "sourcePath": "analysis_report/README.md",
+        "sourceSha256": "092cf61f2ca93548f3331bb32da0d97613b9562a4b46449dcf7ae60bec4e1df2"
+      },
+      {
+        "key": "native-im-branch-catalog",
+        "pageId": "3c9ead4b-996e-81c8-9d1f-ed42248fc74a",
+        "contentLength": 20610,
+        "sourcePath": "BRANCH_CATALOG.md",
+        "sourceSha256": "853f2c52a9157529a868ce4a8bab01ef9c2c1a6008107c2abd97ae5df2c3adae"
+      },
+      {
+        "key": "global-branch-catalog",
+        "pageId": "3c9ead4b-996e-81bc-8053-cf1e844dccdb",
+        "contentLength": 20639,
+        "sourcePath": "BRANCH_CATALOG.md",
+        "sourceSha256": "853f2c52a9157529a868ce4a8bab01ef9c2c1a6008107c2abd97ae5df2c3adae"
+      }
+    ],
+    "projectHome": {
+      "pageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
+      "url": "https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204",
+      "contentLength": 17853,
+      "expectedMarkers": ["497c545", "d889751", "3caead4b996e81f99b71d0bed6ac3136"],
+      "missingMarkers": [],
+      "remoteReadbackVerified": true,
+      "originalChildPageCountPreserved": 32,
+      "uniqueChildPageCount": 32,
+      "originalDatabaseCountPreserved": 1,
+      "evidenceMentionPageId": "3caead4b-996e-81f9-9b71-d0bed6ac3136"
+    },
+    "remoteReadback": {
+      "verified": true,
+      "pagesReadbackVerified": 8,
+      "stageReviewPageCount": 18,
+      "baseMirrorPageCount": 33,
+      "totalProjectMirrorPageCount": 51,
+      "newPagesCreated": 1,
+      "existingPagesUpdated": 7,
+      "markerChecks": 34,
+      "structureChecks": 3,
+      "missingMarkers": [],
+      "readbackFailures": 0
+    },
+    "safety": {
+      "yuque": "not-touched",
+      "feishuAndWeCom": "no-send-reply-comment-mention-upload-or-webhook",
+      "realNativeIm": "no-provider-endpoint-credential-webhook-socket-read-or-send",
+      "agentToolOutbound": "not-enabled",
+      "secretsRecorded": false
+    }
+  },
   "verificationSummary": {
     "pageCount": 33,
     "controlledSourcePageCount": 32,
@@ -1863,14 +2005,14 @@
     "temporarySignedImageUrlsRecorded": false,
     "secretsRecorded": false,
     "latestIncrementalSync": {
-      "stage": "native-im-backend-contract-audit",
-      "stageReviewPageCount": 17,
+      "stage": "e3-result-authority-m1-stored-event-envelope",
+      "stageReviewPageCount": 18,
       "baseMirrorPageCount": 33,
-      "totalProjectMirrorPageCount": 50,
+      "totalProjectMirrorPageCount": 51,
       "newPagesCreated": 1,
-      "existingPagesUpdated": 10,
-      "pagesReadbackVerified": 11,
-      "markerChecks": 49,
+      "existingPagesUpdated": 7,
+      "pagesReadbackVerified": 8,
+      "markerChecks": 34,
       "structureChecks": 3,
       "readbackFailures": 0
     }

@@ -5,7 +5,7 @@
 计划或验收动作形成稳定检查点后，都必须同步到私人 Notion 并完成远端回读，回读完成前不进入
 下一项工作。语雀仍只在用户另行明确授权时操作。
 
-## Notion 镜像（最近已回读基线：独立 IM 后端真实入站合同复核）
+## Notion 镜像（最近已回读基线：E3 Result Authority M1 Stored-Event Envelope）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -17,28 +17,31 @@
 - 原生 IM V1 合同：<https://app.notion.com/p/3c9ead4b996e8114985cce2cc5af2b63?pvs=204>
 - 提前接入检查点：<https://app.notion.com/p/3c9ead4b996e8103b53bf10409f08e1d?pvs=204>
 - 提前接入执行计划：<https://app.notion.com/p/3c9ead4b996e818fb220c66126181863?pvs=204>
-- 基础镜像仍按 33 页计；独立评审空间现为 1 个父页与 16 个唯一子页，共 17 页；两处合计
-  50 个私人 Notion 页面。项目主页原有 32 个子页块和 1 个任务数据库在本批定点更新前后保持不变。
+- 基础镜像仍按 33 页计；独立评审空间现为 1 个父页与 17 个唯一子页，共 18 页；两处合计
+  51 个私人 Notion 页面。项目主页原有 32 个子页块和 1 个任务数据库在本批定点更新前后保持不变。
 - 本批新增 1 个完整语义镜像：
-  [独立 IM 后端真实入站合同复核](https://app.notion.com/p/3caead4b996e817aab3ae63a29ecfb5c?pvs=204)；
-  刷新独立评审执行计划、接入分界、就绪度、索引和分支导航，以及全局执行计划、接入决策和
-  分支导航；定点更新独立父页与项目主页。所有更新的源文件镜像和新证据页都附带对应完整
-  Markdown 原件。
-- 当前决策/审计内容源基线从评审分支 `b755356` 开始；被复核 IM 后端的固定深审基线为
-  `dev_wanwork_quantum_entanglement@c623aeadc0693e63c0d34602ed45ae1d2bc8099f`，封板前漂移复核为
-  `a18acd67f494f75777d5b64d60223c4639333ac3`。新增提交仍未提供 readiness/read 合同，NO-GO 不变。
-- 本批 11 个相关页面已逐页 fetch 回读；49 个内容 marker 与 3 个父子/数据库结构检查全部命中，
-  0 个缺失、0 个回读失败。独立父页为 16 个唯一子页；项目主页保持 32 个子页块和 1 个数据库。
+  [E3 M1 Stored-Event Envelope Codec](https://app.notion.com/p/3caead4b996e81f99b71d0bed6ac3136?pvs=204)；
+  刷新全局执行计划、就绪度、索引、独立与全局分支导航，并定点更新独立父页与项目主页。
+  `research/28`、ADR、计划、就绪度、索引、分支目录与 Changelog 均上传了对应完整 Markdown 原件。
+- 当前语义镜像基线为评审分支
+  `mainline_continue_quantum_entanglement@497c545b0613a15d5edf142c694ddbf00412a135`；M1 代码封板候选为
+  `d889751e4cc3b7db548994a000a87e21688b4429`，固定 tree 为
+  `57b608ed57f47a68d1f9433104cd88d820a19929`。M2 fence、M3 store adapter、migration 7、writer、
+  Accepted、worker、真实 IM 和 outbound 均未启用。
+- 本批 8 个相关页面已逐页 fetch 回读；34 个内容 marker 与 3 个父子/数据库结构检查全部命中，
+  0 个缺失、0 个回读失败。独立父页为 17 个唯一子页；项目主页保持 32 个子页块和 1 个数据库。
 - 机器可读页面映射、文件摘要和回读断言见
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
 - 当前批次已完成 Notion 写入和远端回读；语雀仍未操作，飞书/企微仍为零发送，真实 IM 网络和
   outbound 仍未启用。
-- E1–E2 独立审阅空间：<https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204>；
+- E1–E3 独立审阅空间：<https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204>；
   E2 adapter/lifecycle 历史证据：<https://app.notion.com/p/3caead4b996e8165b1dfd85a6d16e6d5?pvs=204>；
   E2 provider-bundle 历史证据：<https://app.notion.com/p/3caead4b996e81dc9001dcd77cdf9893?pvs=204>；
-  当前合同复核证据：<https://app.notion.com/p/3caead4b996e817aab3ae63a29ecfb5c?pvs=204>。
-- `research/27_native_im_backend_contract_audit.md`、提前接入计划、接入分界、readiness 和索引已完成
-  Notion 同步和远端回读；真实 sandbox、Agent 驱动、tool/browser/subprocess 与 outbound 仍保持关闭。
+  合同复核证据：<https://app.notion.com/p/3caead4b996e817aab3ae63a29ecfb5c?pvs=204>；
+  当前 M1 codec 证据：<https://app.notion.com/p/3caead4b996e81f99b71d0bed6ac3136?pvs=204>。
+- `research/28_stored_event_envelope_codec_evidence.md`、ADR、下一阶段计划、readiness、索引、分支目录与
+  Changelog 已完成 Notion 同步和远端回读；真实 sandbox、Agent 驱动、tool/browser/subprocess 与
+  outbound 仍保持关闭。
 
 ## 当前阶段交付
 
