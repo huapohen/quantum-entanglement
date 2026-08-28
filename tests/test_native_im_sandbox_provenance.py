@@ -7,7 +7,10 @@ import pytest
 
 from quantum_entanglement.native_im_sandbox_provenance import (
     NativeIMSandboxAdmissionProvenanceV1,
+    NativeIMSandboxExchangeAdmissionProvenanceV1,
+    decode_native_im_sandbox_admission_provenance_v1,
 )
+from tests.test_native_im_read_exchange import evidence as exchange_evidence
 
 
 def provenance(**changes: object) -> NativeIMSandboxAdmissionProvenanceV1:
@@ -40,13 +43,16 @@ def test_provenance_round_trip_and_domain_digest_are_stable() -> None:
 
     assert NativeIMSandboxAdmissionProvenanceV1.from_dict(value.to_dict()) == value
     assert NativeIMSandboxAdmissionProvenanceV1.from_json_bytes(encoded) == value
-    assert encoded == json.dumps(
-        value.to_dict(),
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
+    assert (
+        encoded
+        == json.dumps(
+            value.to_dict(),
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    )
     assert value.canonical_digest() == (
         "68b90e956bca451d8411177059c7ffbc15ea24207a58750220eb0e1466356094"
     )
@@ -112,3 +118,52 @@ def test_provenance_repr_hides_all_identity_and_evidence_values() -> None:
         value.mapping_evidence_digest,
     ):
         assert hidden not in rendered
+
+
+def exchange_provenance(
+    **changes: object,
+) -> NativeIMSandboxExchangeAdmissionProvenanceV1:
+    legacy = provenance(
+        read_request_digest=exchange_evidence().read_request_digest,
+        transport_evidence_digest=exchange_evidence().event_source_evidence_digest,
+    )
+    values = {
+        **legacy.__dict__,
+        "read_exchange_evidence": exchange_evidence(),
+    }
+    values.update(changes)
+    return NativeIMSandboxExchangeAdmissionProvenanceV1(
+        **values  # type: ignore[arg-type]
+    )
+
+
+def test_exchange_provenance_round_trip_binds_nested_evidence() -> None:
+    value = exchange_provenance()
+
+    assert NativeIMSandboxExchangeAdmissionProvenanceV1.from_dict(value.to_dict()) == value
+    assert (
+        NativeIMSandboxExchangeAdmissionProvenanceV1.from_json_bytes(value.canonical_bytes())
+        == value
+    )
+    assert decode_native_im_sandbox_admission_provenance_v1(value.canonical_bytes()) == value
+    assert (
+        decode_native_im_sandbox_admission_provenance_v1(provenance().canonical_bytes())
+        == provenance()
+    )
+    assert value.canonical_digest() != provenance().canonical_digest()
+
+
+def test_exchange_provenance_rejects_request_or_event_source_mismatch() -> None:
+    with pytest.raises(ValueError, match="does not bind"):
+        exchange_provenance(read_request_digest="f" * 64)
+    with pytest.raises(ValueError, match="does not bind"):
+        exchange_provenance(transport_evidence_digest="f" * 64)
+
+
+def test_exchange_provenance_repr_hides_nested_exchange_values() -> None:
+    value = exchange_provenance()
+    rendered = repr(value)
+
+    assert value.read_exchange_evidence.read_request_id not in rendered
+    assert value.read_exchange_evidence.evidence_digest not in rendered
+    assert value.read_exchange_evidence.exchange_security_evidence_digest not in rendered
