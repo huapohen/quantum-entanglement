@@ -57,13 +57,37 @@ func ParseInvocationID(value string) (InvocationID, error) {
 func (value InvocationID) String() string { return value.value }
 func (value InvocationID) IsZero() bool   { return value.value == "" }
 
-// ConversationIdentity is a stable collaboration-space identity and topology projection. It is
-// not a task, membership grant, capability, or proof that parent participants may access a child.
-type ConversationIdentity struct {
-	tenantID           TenantID
+// ConversationRef is the stable tenant-scoped collaboration-space reference. It is not a task,
+// membership grant, capability, or provider group binding.
+type ConversationRef struct {
+	tenantID       TenantID
+	conversationID ConversationID
+}
+
+func NewConversationRef(
+	tenantID TenantID,
+	conversationID ConversationID,
+) (ConversationRef, error) {
+	if tenantID.IsZero() || conversationID.IsZero() {
+		return ConversationRef{}, ErrInvalidConversation
+	}
+	return ConversationRef{tenantID: tenantID, conversationID: conversationID}, nil
+}
+
+func (reference ConversationRef) TenantID() TenantID { return reference.tenantID }
+func (reference ConversationRef) ConversationID() ConversationID {
+	return reference.conversationID
+}
+func (reference ConversationRef) IsZero() bool {
+	return reference.tenantID.IsZero() && reference.conversationID.IsZero()
+}
+
+// ConversationSnapshot describes one immutable revision and topology projection of a stable
+// ConversationRef. Parent lineage never grants access to a child conversation.
+type ConversationSnapshot struct {
+	reference          ConversationRef
 	workspaceID        WorkspaceID
 	hasWorkspace       bool
-	conversationID     ConversationID
 	conversationType   ConversationType
 	parentConversation ConversationID
 	rootMessageID      MessageID
@@ -71,25 +95,24 @@ type ConversationIdentity struct {
 	revision           uint64
 }
 
-func NewConversationIdentity(
-	tenantID TenantID,
+func NewConversationSnapshot(
+	reference ConversationRef,
 	workspaceID *WorkspaceID,
-	conversationID ConversationID,
 	conversationType ConversationType,
 	parentConversationID ConversationID,
 	rootMessageID MessageID,
 	agentInvocationID InvocationID,
 	revision uint64,
-) (ConversationIdentity, error) {
-	if tenantID.IsZero() || conversationID.IsZero() || !conversationType.Valid() || revision == 0 {
-		return ConversationIdentity{}, ErrInvalidConversation
+) (ConversationSnapshot, error) {
+	if reference.IsZero() || !conversationType.Valid() || revision == 0 {
+		return ConversationSnapshot{}, ErrInvalidConversation
 	}
 
 	var workspace WorkspaceID
 	hasWorkspace := workspaceID != nil
 	if hasWorkspace {
 		if workspaceID.IsZero() {
-			return ConversationIdentity{}, ErrInvalidConversation
+			return ConversationSnapshot{}, ErrInvalidConversation
 		}
 		workspace = *workspaceID
 	}
@@ -99,22 +122,22 @@ func NewConversationIdentity(
 	hasInvocation := !agentInvocationID.IsZero()
 	switch conversationType {
 	case ConversationAgentThread:
-		if !hasParent || !hasRoot || !hasInvocation || parentConversationID == conversationID {
-			return ConversationIdentity{}, ErrInvalidConversation
+		if !hasParent || !hasRoot || !hasInvocation ||
+			parentConversationID == reference.conversationID {
+			return ConversationSnapshot{}, ErrInvalidConversation
 		}
 	case ConversationDirect, ConversationGroup:
 		if hasParent || hasRoot || hasInvocation {
-			return ConversationIdentity{}, ErrInvalidConversation
+			return ConversationSnapshot{}, ErrInvalidConversation
 		}
 	default:
-		return ConversationIdentity{}, ErrInvalidConversation
+		return ConversationSnapshot{}, ErrInvalidConversation
 	}
 
-	return ConversationIdentity{
-		tenantID:           tenantID,
+	return ConversationSnapshot{
+		reference:          reference,
 		workspaceID:        workspace,
 		hasWorkspace:       hasWorkspace,
-		conversationID:     conversationID,
 		conversationType:   conversationType,
 		parentConversation: parentConversationID,
 		rootMessageID:      rootMessageID,
@@ -123,29 +146,26 @@ func NewConversationIdentity(
 	}, nil
 }
 
-func (identity ConversationIdentity) TenantID() TenantID { return identity.tenantID }
-func (identity ConversationIdentity) WorkspaceID() (WorkspaceID, bool) {
-	return identity.workspaceID, identity.hasWorkspace
+func (snapshot ConversationSnapshot) Ref() ConversationRef { return snapshot.reference }
+func (snapshot ConversationSnapshot) WorkspaceID() (WorkspaceID, bool) {
+	return snapshot.workspaceID, snapshot.hasWorkspace
 }
-func (identity ConversationIdentity) ConversationID() ConversationID {
-	return identity.conversationID
+func (snapshot ConversationSnapshot) ConversationType() ConversationType {
+	return snapshot.conversationType
 }
-func (identity ConversationIdentity) ConversationType() ConversationType {
-	return identity.conversationType
+func (snapshot ConversationSnapshot) ParentConversationID() ConversationID {
+	return snapshot.parentConversation
 }
-func (identity ConversationIdentity) ParentConversationID() ConversationID {
-	return identity.parentConversation
+func (snapshot ConversationSnapshot) RootMessageID() MessageID {
+	return snapshot.rootMessageID
 }
-func (identity ConversationIdentity) RootMessageID() MessageID {
-	return identity.rootMessageID
+func (snapshot ConversationSnapshot) AgentInvocationID() InvocationID {
+	return snapshot.agentInvocationID
 }
-func (identity ConversationIdentity) AgentInvocationID() InvocationID {
-	return identity.agentInvocationID
-}
-func (identity ConversationIdentity) Revision() uint64 { return identity.revision }
-func (identity ConversationIdentity) IsZero() bool {
-	return identity.tenantID.IsZero() && identity.workspaceID.IsZero() && !identity.hasWorkspace &&
-		identity.conversationID.IsZero() && identity.conversationType == "" &&
-		identity.parentConversation.IsZero() && identity.rootMessageID.IsZero() &&
-		identity.agentInvocationID.IsZero() && identity.revision == 0
+func (snapshot ConversationSnapshot) Revision() uint64 { return snapshot.revision }
+func (snapshot ConversationSnapshot) IsZero() bool {
+	return snapshot.reference.IsZero() && snapshot.workspaceID.IsZero() && !snapshot.hasWorkspace &&
+		snapshot.conversationType == "" && snapshot.parentConversation.IsZero() &&
+		snapshot.rootMessageID.IsZero() && snapshot.agentInvocationID.IsZero() &&
+		snapshot.revision == 0
 }
