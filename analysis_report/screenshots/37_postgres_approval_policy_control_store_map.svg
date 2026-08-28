@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">WanWork PostgreSQL approval policy control store</title>
+  <desc id="desc">Offline root policy enters an independently attested PostgreSQL control cluster, passes exact CAS and authoritative readback, and produces an activated approval verifier. Mutation fence and off-host high-water remain next gates.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="1" stop-color="#111d35"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#163d68"/>
+      <stop offset="1" stop-color="#102b4a"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#124d43"/>
+      <stop offset="1" stop-color="#0d332f"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5d4017"/>
+      <stop offset="1" stop-color="#392a16"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity="0.32"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5bd7ff"/>
+    </marker>
+    <style>
+      .title{font:700 42px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#f4f8ff}
+      .subtitle{font:400 19px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#9eb2cf}
+      .h{font:700 24px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#fff}
+      .b{font:400 17px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#d7e4f7}
+      .small{font:500 15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#9fc5dc}
+      .badge{font:700 14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#07111f;letter-spacing:.4px}
+      .line{stroke:#5bd7ff;stroke-width:3;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="1000" fill="url(#bg)"/>
+  <circle cx="1425" cy="125" r="240" fill="#19456c" opacity=".16"/>
+  <circle cx="180" cy="900" r="260" fill="#1c806c" opacity=".12"/>
+
+  <text x="80" y="78" class="title">Approval Policy Control Store · PostgreSQL 18</text>
+  <text x="80" y="112" class="subtitle">独立 physical cluster · exact CAS · code-owned catalog/ACL attestation · authoritative readback</text>
+  <rect x="1325" y="60" width="190" height="38" rx="19" fill="#55e0b3"/>
+  <text x="1420" y="85" class="badge" text-anchor="middle">HEAD 16d66b6</text>
+
+  <g filter="url(#shadow)">
+    <rect x="80" y="180" width="300" height="235" rx="24" fill="url(#blue)" stroke="#2b79ad"/>
+    <text x="112" y="226" class="h">Offline trust</text>
+    <text x="112" y="265" class="b">2-of-N Ed25519 root quorum</text>
+    <text x="112" y="298" class="b">signed canonical policy</text>
+    <text x="112" y="331" class="b">target + key lineage</text>
+    <text x="112" y="364" class="b">deny-all / expiry / revision</text>
+    <rect x="112" y="382" width="174" height="25" rx="12" fill="#5bd7ff"/>
+    <text x="199" y="400" class="badge" text-anchor="middle">MUTATION = FALSE</text>
+  </g>
+
+  <path class="line" d="M380 297 H470"/>
+
+  <g filter="url(#shadow)">
+    <rect x="470" y="150" width="650" height="510" rx="28" fill="#0c1728" stroke="#426b9a" stroke-width="2"/>
+    <text x="505" y="198" class="h">Dedicated policy-control cluster</text>
+    <text x="505" y="228" class="small">system_identifier ≠ IM target · owner is NOLOGIN</text>
+
+    <rect x="505" y="260" width="180" height="100" rx="18" fill="#152c49" stroke="#467fb4"/>
+    <text x="595" y="296" class="h" text-anchor="middle">Reader</text>
+    <text x="595" y="328" class="small" text-anchor="middle">identity + current state</text>
+    <text x="595" y="349" class="small" text-anchor="middle">no CAS / no tables</text>
+
+    <rect x="710" y="260" width="190" height="100" rx="18" fill="#153c42" stroke="#43a68f"/>
+    <text x="805" y="296" class="h" text-anchor="middle">Activator</text>
+    <text x="805" y="328" class="small" text-anchor="middle">identity + read + CAS</text>
+    <text x="805" y="349" class="small" text-anchor="middle">no direct tables</text>
+
+    <rect x="925" y="260" width="160" height="100" rx="18" fill="#3d2f1c" stroke="#a77b37"/>
+    <text x="1005" y="296" class="h" text-anchor="middle">Owner</text>
+    <text x="1005" y="328" class="small" text-anchor="middle">NOLOGIN TCB</text>
+    <text x="1005" y="349" class="small" text-anchor="middle">IaC only</text>
+
+    <rect x="505" y="395" width="580" height="112" rx="20" fill="url(#green)" stroke="#46b69b"/>
+    <text x="535" y="432" class="h">Fixed SECURITY DEFINER surface</text>
+    <text x="535" y="465" class="b">read_store_identity · read_approval_policy_state</text>
+    <text x="535" y="492" class="b">compare_and_activate_approval_policy · search_path=pg_catalog</text>
+
+    <rect x="505" y="535" width="170" height="88" rx="17" fill="#172e4b" stroke="#4780b5"/>
+    <text x="590" y="571" class="h" text-anchor="middle">Archive</text>
+    <text x="590" y="598" class="small" text-anchor="middle">canonical policy</text>
+    <rect x="710" y="535" width="190" height="88" rx="17" fill="#172e4b" stroke="#4780b5"/>
+    <text x="805" y="571" class="h" text-anchor="middle">Activation</text>
+    <text x="805" y="598" class="small" text-anchor="middle">immutable record</text>
+    <rect x="935" y="535" width="150" height="88" rx="17" fill="#194238" stroke="#46b69b"/>
+    <text x="1010" y="571" class="h" text-anchor="middle">Head</text>
+    <text x="1010" y="598" class="small" text-anchor="middle">exact high-water</text>
+  </g>
+
+  <path class="line" d="M1120 405 H1215"/>
+
+  <g filter="url(#shadow)">
+    <rect x="1215" y="180" width="305" height="235" rx="24" fill="url(#green)" stroke="#43a68f"/>
+    <text x="1248" y="226" class="h">Authoritative result</text>
+    <text x="1248" y="265" class="b">fresh readback validated</text>
+    <text x="1248" y="298" class="b">policy + record + head exact</text>
+    <text x="1248" y="331" class="b">ActivatedApprovalPolicy</text>
+    <text x="1248" y="364" class="b">→ ApprovalVerifier</text>
+    <rect x="1248" y="382" width="166" height="25" rx="12" fill="#55e0b3"/>
+    <text x="1331" y="400" class="badge" text-anchor="middle">FAIL CLOSED</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="80" y="715" width="1040" height="205" rx="24" fill="#0d1b2e" stroke="#334e73"/>
+    <text x="112" y="760" class="h">PostgreSQL 18.6 evidence</text>
+    <text x="112" y="800" class="b">64× same candidate · 64× fork · exact expected-head drift · zero orphan</text>
+    <text x="112" y="835" class="b">direct DML denied · reader CAS denied · function/ACL/role drift rejected</text>
+    <text x="112" y="870" class="b">orphan/gap = corrupt · canceled CAS quarantined · fresh recovery succeeds</text>
+    <rect x="835" y="755" width="240" height="42" rx="21" fill="#224d75"/>
+    <text x="955" y="782" class="badge" fill="#fff" text-anchor="middle">NORMAL + RACE + VET</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1150" y="715" width="370" height="205" rx="24" fill="url(#amber)" stroke="#bd8738"/>
+    <text x="1182" y="760" class="h">Next production gates</text>
+    <text x="1182" y="800" class="b">1 · mutation-time policy fence</text>
+    <text x="1182" y="835" class="b">2 · execution receipt / reconcile</text>
+    <text x="1182" y="870" class="b">3 · off-host WORM high-water</text>
+    <text x="1182" y="900" class="small">control owner / whole-cluster restore remain TCB</text>
+  </g>
+
+  <text x="80" y="964" class="small">WanWork Quantum Entanglement · v0版 terminology · local/GitHub evidence · Notion local_pending</text>
+</svg>
