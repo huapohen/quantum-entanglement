@@ -339,11 +339,28 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
   go test -race ./apps/im-api/internal/im/... ./apps/im-api/internal/immetadata/... -count=1
 
+GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
+  go test ./apps/im-api/internal/immetadata -run '^$' \
+  -fuzz '^FuzzDecodeUserProjectionNeverPanics$' -fuzztime=5s
+
+GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
+  go test ./apps/im-api/internal/immetadata -run '^$' \
+  -fuzz '^FuzzDecodeConversationProjectionNeverPanics$' -fuzztime=5s
+
 git diff --check
 ```
 
-普通测试与 race 均通过。阶段末仍须运行 `./apps/im-api/...`、`go vet`、`go mod verify`、
-`go mod tidy -diff` 和全量 Python gate；专题通过不代表全仓阶段门禁完成。
+实际 fuzz 结果：user decoder 144,457 executions、conversation decoder 113,977 executions，均 PASS。
+随后全仓门禁也已通过：
+
+- `go test ./apps/im-api/... -count=1`；
+- `go test -race ./apps/im-api/... -count=1`；
+- `go vet ./apps/im-api/...`；
+- `go -C apps/im-api mod verify` 与 `mod tidy -diff`；
+- Python `unittest` 1,505 tests，`OK (skipped=1)`；
+- Ruff check/format、Mypy、workspace path 与 report-sync credential scanner。
+
+这些结果证明当前仓库与本地合同没有已知门禁回归；仍不证明真实 Clerk/融云/provider 或生产环境。
 
 ## 9. 小提交台账
 
