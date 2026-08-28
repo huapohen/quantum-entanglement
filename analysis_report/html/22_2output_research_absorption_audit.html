@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>2output 调研吸收与产品合同增量审计</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">2output 调研吸收与产品合同增量审计</h1>
+</header>
+<h1 id="output-调研吸收与产品合同增量审计"><code>2output</code>
+调研吸收与产品合同增量审计</h1>
+<blockquote>
+<p>审计日期：2026-08-28（Asia/Shanghai）</p>
+<p>证据根：<code>/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output/more</code></p>
+<p>开发分支：<code>dev_wanwork_quantum_entanglement</code></p>
+<p>审计基线：<code>73116ae</code>；Event contract
+提交：<code>b666cbb</code>；当前 W1 P1-7 EventStore
+fake：<code>4118746</code></p>
+</blockquote>
+<h2 id="最终结论">1. 最终结论</h2>
+<p>这批调研现在被当作产品合同的证据输入，不再只通过一份总报告间接引用。审计确认：</p>
+<ol type="1">
+<li>证据目录有 40 份 Markdown、45,909 行，其中是 31
+份独立产品/协议/安全报告和 9 份组合/ 方法/追踪文档；</li>
+<li>原研究导航和总报告固定的是较早的 30 份口径；晚生成的 AgentSpace
+报告没有进入组合报告；</li>
+<li>原 WanWork 追踪矩阵虽然已有 38 条较强不变量，且 15 份核心源的
+SHA/行数全部未漂移，但对 17 份报告只做了间接综合、MCP 只有快照没有直接
+RQ、AgentSpace 完全漏编；</li>
+<li>本轮建立 40/40 内容清单和 31/31 独立报告处置账本，并新增
+RQ-039～RQ-042；</li>
+<li>新要求按 M0/W1 前置、真实 IM outbound 前置、W2+
+增量和明确延后分层，没有把所有研究机会 机械升级成当前必做。</li>
+</ol>
+<p>完整逐文件 SHA、行数和处置见
+<code>docs/wanwork_im/RESEARCH_COVERAGE.md</code>；硬需求、对象、安全控制、
+阶段和验收见 <code>docs/wanwork_im/RESEARCH_TRACEABILITY.md</code>。</p>
+<h2 id="审计方法与证据边界">2. 审计方法与证据边界</h2>
+<p>本轮只读复核本机研究快照，执行：</p>
+<ul>
+<li>枚举全部 Markdown，核对行数和 SHA-256；</li>
+<li>比较 README、product inventory、master report 与实际
+<code>research_report.md</code> 数量；</li>
+<li>逐份检查是否被 RQ
+直接引用、仅进入快照、仅经总报告综合或完全漏编；</li>
+<li>回读 AgentSpace、CodexLoom、Raft、KiroCrew、Pi、Tutti、MCP、Omnigent
+等增量原文；</li>
+<li>将结论写成
+<code>研究证据 → 产品硬需求 → 领域对象/API → 安全控制 → 阶段 → 验收证据</code>；</li>
+<li>保留 <code>[F]/[C]/[A]/[U]</code>
+边界，不用产品宣传、模块名、Star、下载或协议原语证明生产能力。</li>
+</ul>
+<p>本轮没有登录或操作飞书、企微、语雀，也没有向任何人、群、机器人或
+webhook 发送消息。没有 使用或输出任何完整凭据。</p>
+<h2 id="发现的覆盖缺口">3. 发现的覆盖缺口</h2>
+<h3 id="份报告而不是-30-份">3.1 31 份报告，而不是 30 份</h3>
+<p><code>agentspace/research_report.md</code> 有 3,083 行、168,329
+bytes，SHA-256 为
+<code>9698be0f74d81c2078e208a3231f3e6498965fedeb3a3aba164764279bd8f0b7</code>。它生成于
+2026-08-27 21:05， 晚于 README/master 约 14 小时，因此“30
+份报告”是此前组合快照的准确口径，但不是当前目录事实。</p>
+<p>正确处理不是改掉历史说法，而是：保留原 30 份组合报告时间点，并把
+AgentSpace 作为独立 evidence delta 进入 WanWork 需求和架构审计。</p>
+<h3 id="原矩阵的覆盖结构">3.2 原矩阵的覆盖结构</h3>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 23%" />
+<col style="width: 30%" />
+<col style="width: 23%" />
+<col style="width: 23%" />
+</colgroup>
+<thead>
+<tr>
+<th>级别</th>
+<th style="text-align: right;">数量</th>
+<th>原状态</th>
+<th>本轮处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>直接进入 RQ</td>
+<td style="text-align: right;">12</td>
+<td>深度较好</td>
+<td>保留并增补 AgentSpace/taint/隔离证据</td>
+</tr>
+<tr>
+<td>只进 SHA 快照</td>
+<td style="text-align: right;">1</td>
+<td>MCP 未被直接引用</td>
+<td>RQ-019/041/042 增加 MCP 原报告证据</td>
+</tr>
+<tr>
+<td>只经总报告间接综合</td>
+<td style="text-align: right;">17</td>
+<td>缺逐报告处置</td>
+<td>全部加入 31/31 ledger，注明直接/加强/组合/延后</td>
+</tr>
+<tr>
+<td>完全漏编</td>
+<td style="text-align: right;">1</td>
+<td>AgentSpace</td>
+<td>加 SHA、delta、RQ-040/041，并加强 6 条既有 RQ</td>
+</tr>
+</tbody>
+</table>
+<p>这说明原矩阵不是“没有参考调研”，而是核心架构已经吸收得较深、组合覆盖证明不足。修复重点是
+可追溯性和几个真正改变系统边界的增量，不是推翻此前的 Task/Trust/Artifact
+主线。</p>
+<h2 id="四条新增硬合同">4. 四条新增硬合同</h2>
+<h3 id="rq-039会话级代表权">4.1 RQ-039：会话级代表权</h3>
+<p>证据：CodexLoom <code>226-234</code>；Raft <code>272-283</code>。</p>
+<p>同一 Agent 在内部群、客户群、供应商空间不能使用同一份无限
+representation。新增：</p>
+<ul>
+<li><code>ConversationRepresentationPolicyRevision</code></li>
+<li><code>ConversationMandate</code></li>
+<li><code>DisclosureRule</code></li>
+<li><code>CommitmentLimit</code></li>
+<li><code>OutboundSpeechAct</code></li>
+</ul>
+<p>member
+身份只能说明它在群里，不授予全部内部知识、工具、主动发送、报价或承诺权。真实
+IM outbound 前必须按真实 destination、audience、purpose、data class
+和承诺额度重验；错群、越额和撤权后外发 必须失败。跨组织 federation
+延后，单组织内的会话代表权不延后。</p>
+<h3 id="rq-040promotion-transaction">4.2 RQ-040：Promotion
+Transaction</h3>
+<p>证据：AgentSpace <code>790-820</code>；YouMind
+<code>11-17,510-544</code>。</p>
+<p>Runtime/provider success 只能产出候选
+Artifact，不能直接变成权威文档、知识、Skill、Memory 或外部
+写入。新增：</p>
+<ul>
+<li><code>PromotionIntent/PromotionAttempt</code></li>
+<li><code>SourceArtifactRef/ValidationBundle</code></li>
+<li><code>PromotionReceipt/RollbackReceipt</code></li>
+</ul>
+<p>晋升绑定 immutable digest、MIME/magic/active-content/archive/DLP
+扫描、generated Skill 的 review/sign/ sandbox、文档 base-version CAS
+和外部写 exact diff。provider 成功但 promotion 失败时不能出现半权威
+资产；rollback 仍保留原 Artifact 和 evidence。</p>
+<p>它是 W2+ 产品合同。M0 只要求 accepted Artifact reference
+由真人发布回父群，通用 promotion 不被 错误提升成 M0 阻断。</p>
+<h3 id="rq-041内容-taint-端到端传播">4.3 RQ-041：内容 taint
+端到端传播</h3>
+<p>证据：MCP <code>419-423</code>；AgentSpace
+<code>1817-1842</code>；OpenWorker <code>63-67</code>；Raft
+<code>276-283</code>。</p>
+<p>网页、邮件、附件、IM 消息、MCP result、Memory 和 subagent
+输出默认是数据，不是授权指令。新增：</p>
+<ul>
+<li><code>ContentObservation</code></li>
+<li><code>ProvenanceEdge</code></li>
+<li><code>TaintLabel</code></li>
+<li><code>AuthorityClass</code></li>
+<li><code>DeclassificationDecision</code></li>
+</ul>
+<p>复制、摘要、格式转换、Tool/Agent 转发不能静默去掉
+taint；ActionProposal、Needs You 和 Artifact 必须
+引用影响它们的来源链。只有有权主体可以做范围受限的
+declassification。</p>
+<p>M0 fake action 至少冻结 source/authority/minimal taint path，所以这是
+M0 前合同阻断；完整传播、UI 和攻击语料分别进入 W4/W5/W7，不阻断当前 W1
+Plugin/Event 代码。</p>
+<h3 id="rq-042可执行包与声明式能力分开">4.4
+RQ-042：可执行包与声明式能力分开</h3>
+<p>证据：KiroCrew <code>31-33</code>；Pi <code>34-39,73-79</code>；Tutti
+<code>41-47</code>；MCP <code>281-287,392-404</code>。</p>
+<p><code>SKILL.md</code>、Tool definition 和 App/Extension/Plugin
+arbitrary code 不是同一信任类。新增：</p>
+<ul>
+<li><code>ExecutablePackageVersion</code></li>
+<li><code>ExecutionIsolationProfile</code></li>
+<li><code>RuntimeGrant</code></li>
+<li><code>ProcessInstance</code></li>
+</ul>
+<p>W1 只允许随 host 编译、平台准入的可信内建插件；第三方代码不得加载进
+API/Gateway/Plugin Host 主进程。后续生态必须以独立 UID/container/microVM
+限制 filesystem/network/process/env/secret/ resource，安装 lifecycle
+script 也属于执行。</p>
+<p>第三方隔离实现在 W4/W7；“W1
+不把任意第三方代码当普通插件加载”现在就是前置约束。</p>
+<h2 id="对既有需求的加强">5. 对既有需求的加强</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>既有 RQ</th>
+<th>增量证据</th>
+<th>加强点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RQ-011</td>
+<td>AgentSpace 369-439</td>
+<td>queue 必须有 lease/fence/reclaim，claim 状态名不等于可靠</td>
+</tr>
+<tr>
+<td>RQ-012/014</td>
+<td>AgentSpace 579-629</td>
+<td>approval 是 frozen-hash transaction，decision 与 execution result
+分离</td>
+</tr>
+<tr>
+<td>RQ-017</td>
+<td>AgentSpace 1852-1871</td>
+<td>App registry 需要 publisher/provenance/revoke，不只目录和 hash</td>
+</tr>
+<tr>
+<td>RQ-019/033</td>
+<td>MCP + Omnigent</td>
+<td>adapter 保存 capability matrix；resume/fork/approval/cost
+等不能静默降级</td>
+</tr>
+<tr>
+<td>RQ-023</td>
+<td>AgentSpace 1748-1815</td>
+<td>成本必须关联 verified outcome 和 human/retry/tool/runtime 成本</td>
+</tr>
+<tr>
+<td>RQ-026</td>
+<td>AgentSpace 633-674</td>
+<td>高风险审计 append 失败则 dispatch 前 fail-closed；best-effort log
+不是审计</td>
+</tr>
+<tr>
+<td>RQ-038</td>
+<td>数据治理复核</td>
+<td>组织处理批准与个人告知/确认分开，普通员工不能扩大组织路线</td>
+</tr>
+</tbody>
+</table>
+<h2 id="架构修正">6. 架构修正</h2>
+<p>原组件图存在三个与正文冲突的直连：<code>Auth -&gt; Clerk</code>、<code>Realtime -&gt; RongCloud</code>、<code>Runtime -&gt; Models</code>。
+这会让人误以为只有有副作用的 Action 才需要统一出网控制。</p>
+<p>修正后的职责是：</p>
+<pre class="text"><code>Action Plane
+  = 授权、批准、durable intent、idempotency、unknown/reconcile/compensation
+
+Egress Broker
+  = 所有网络的 DNS/IP/target、credential、route、data class、response budget 与审计</code></pre>
+<p>Clerk、融云 realtime、模型、只读 Tool、SSE、MCP 和 connector read
+同样经 Egress Broker；Runtime/ Planner 不能直持 provider
+credential。Action Plane 与 Egress 互补，不能合并成一个普通 HTTP
+client。</p>
+<h2 id="阶段门禁">7. 阶段门禁</h2>
+<h3 id="w0m0-前必须">W0/M0 前必须</h3>
+<ul>
+<li>40/40 Markdown 完整 manifest 与 31/31 report disposition
+ledger；</li>
+<li>AgentSpace delta 进入 RQ 和架构；</li>
+<li>RQ-041 最小 source/authority/taint wire contract；</li>
+<li>W1 明确只允许可信内建插件；</li>
+<li>修正所有网络绕过 Egress 的架构表达；</li>
+<li>M0 fault matrix 增加 prompt injection/taint 丢失。</li>
+</ul>
+<h3 id="真实-im-outbound-前必须">真实 IM outbound 前必须</h3>
+<ul>
+<li>RQ-039 会话级代表权、disclosure 和 commitment limit；</li>
+<li>Data route 的组织批准与适用的个人告知/确认；</li>
+<li>destination/action-time policy、unknown reconcile、wrong-group DLP
+与 kill switch。</li>
+</ul>
+<h3 id="w2-增量">W2+ 增量</h3>
+<ul>
+<li>通用 Promotion Transaction；</li>
+<li>第三方可执行 App/Extension 的进程/UID/container/microVM 隔离；</li>
+<li>全量 taint propagation 和 declassification UI；</li>
+<li>跨 harness conformance matrix。</li>
+</ul>
+<h3 id="明确延后">明确延后</h3>
+<ul>
+<li>公共 Agent marketplace、settlement、escrow、reputation 和
+dispute；</li>
+<li>Agent fork/transfer；实施前另行冻结 provenance、license/policy
+inheritance、revocation notice 和 atomic acceptance；</li>
+<li>跨组织 federation/Joint Channel；</li>
+<li>Agent lending、HRIS 与劳动力市场。</li>
+</ul>
+<h2 id="当前实现状态与下一步">8. 当前实现状态与下一步</h2>
+<p>研究审计与代码继续保持独立提交。当前已完成：</p>
+<ul>
+<li><code>b666cbb feat: freeze scoped event append contracts</code></li>
+<li>strict canonical object payload、raw payload SHA-256、immutable
+inline/reference payload；</li>
+<li>caller/store event fields 分离、scope/batch 校验、canonical event
+digest；</li>
+<li><code>5b34357 fix: activate only effective plugins</code>：只启动
+effective selection；</li>
+<li><code>cbb7ecc fix: retain failed plugin cleanup for retry</code>：独立有界清理
+context 与失败重试；</li>
+<li><code>ed9a709 fix: bind effective configs to admitted manifests</code>：host-computed
+manifest digest、approved manifest binding、admission
+revision、Effective v2、frozen activation snapshot；</li>
+<li><code>211ada7 fix: admit secret claims outside plugin composition</code>：raw
+locator 只进入准入 broker，
+tenant/row/plugin/manifest/admission/schema/purpose/audience exact
+bind，Effective v3、撤销和 Secret canary/golden/anti-replay
+负向矩阵；</li>
+<li><code>e2f82be fix: freeze plugin registry definitions before use</code>：完整
+schema/broker/package definition graph 重验、builder map 脱离、所有
+runtime read 的 freeze 前拒绝、late registration 关闭与 concurrent race
+证据；</li>
+<li><code>0f00b47 fix: close plugin effect scopes before shutdown</code>：<code>open -&gt; closing -&gt; closed</code>、Drain
+前关闭 effect 注册、迟到/递归 cleanup 拒绝与失败项精确重试；</li>
+<li><code>3b8e02e fix: invoke plugin lifecycle callbacks without host lock</code>：所有
+plugin lifecycle/effect callback 在 Host mutex 外执行，starting/stopping
+可观察，reentrant/concurrent Start/Stop 快速拒绝且 owner 唯一；</li>
+<li><code>2d97f0a fix: contain plugin lifecycle callback panics</code>：Configure/Start/Ready
+panic 固定脱敏并回滚； Drain/Stop/cleanup panic 不跳过其他回收；panic
+payload 不进入 error；</li>
+<li><code>eafd3da docs: make plugin lifecycle deadlines cooperative</code>：<code>callWithDeadline</code>
+和 Manifest 类型注释 明确 deadline 不强杀；Start/Drain deadline 后仍占
+owner 的测试冻结 starting/stopping 诚实状态；</li>
+<li><code>43e111e feat: freeze isolated runtime admission contracts</code>：<code>ExecutionIsolationProfile/RuntimeGrant/ ProcessInstance</code>、host-owned
+scope binding、profile 扩权 fail-closed 与 generation/fence
+identity；</li>
+<li><code>fccb64e feat: define fenced supervisor receipt protocol</code>：API
+只持 pure IPC port 和 versioned refs； cancel/kill/exit/reap/release
+分层 receipt，kill 不冒充 external effect negative finality；</li>
+<li><code>d32079c test: add volatile isolation supervisor fake</code>：fake
+明示
+<code>durability=volatile/isolation=none/ executesCode=false</code>，覆盖
+exact idempotency、并发 generation CAS、old fence、quarantine 与
+reconcile；</li>
+<li><code>a4ac9bd</code>～<code>4118746</code>：<code>VolatileMemoryStore</code>
+明示 non-production characteristics；整批 expected revision、 ordered
+exact retry/conflict、store-owned sequence/global position/recorded
+time、scope/namespace cursor、 严格 admission、cooperative
+context、失败原子性、不可变快照、64 路 CAS/replay、128 stream global
+order 与 test-only pure backfill fixture；</li>
+<li><code>9f55b33</code>～<code>60ebf6a</code>：W1
+identity/conversation/provider metadata 纯值合同；研究复核后把稳定
+<code>ActorRef/ConversationRef</code> 与 revision snapshot 分离，为外部
+subject 增加 provider realm，冻结 <code>direct/group/agent_thread</code>
+topology 和 parent ACL 不继承边界；</li>
+<li><code>immetadata</code> 冻结 1024-byte、flat allowlist、受限 JCS
+风格 canonical JSON；四种合法 shape 只有唯一 bytes，848 个非 canonical
+key permutation、unknown/duplicate/type/version/Unicode/control/oversize
+和 44 类 authority/secret/content/evidence field 均 fail closed；</li>
+<li>128 路 metadata encode/decode race fixture 与 seeded fuzz property
+通过；这些证据不证明融云实际
+接受、原样保存、稳定回传或赋予任何权限；</li>
+<li>专项普通测试、race 和 vet 通过。</li>
+</ul>
+<p>Plugin Host 四个 P0 已全部完成，P1-1 Registry freeze/snapshot、P1-2
+effect scope 状态与 P1-3 callback locking/reentrancy、P1-4 panic
+containment、P1-5 cooperative deadline honesty、P1-6 第三方执行隔离
+data/IPC/receipt 合同与 hostile fake、P1-7 volatile Memory EventStore
+合同 fake 也已完成。 这里的“完成”不包括 action-time JIT Secret
+lease、真实独立 supervisor、process/container/microVM backend、 OS
+conformance 或真实 connector；fake 不是 sandbox，也不是 durable
+store。P1-7 的 deterministic 只表示 相同 fixture 输入/clock/call
+schedule 得到相同 StoredEvent，test-only reducer 可从 page backfill
+重建；没有 production projection engine、SSE live replay 或
+Agent/model/tool 重执行。W1 identity/conversation 与 strict provider
+metadata codec 已冻结；下一项是零网络、零凭据的 fake IM provider
+port，真实 Clerk/ 融云 adapter、mapping persistence、membership/ACL 和
+provider sandbox contract 仍属于 W2/W3。 W2
+领域建模开始前，RQ-039～RQ-042 必须进入 canonical contract/fixtures；
+不会用“文档已经写了”代替测试。P0-4 的完整证据映射见 <a
+href="24_secret_claim_admission_implementation.md"><code>24_secret_claim_admission_implementation.md</code></a>，P1-6
+证据见 <a
+href="30_third_party_execution_isolation_contract.md"><code>30_third_party_execution_isolation_contract.md</code></a>，P1-7
+证据见 <a
+href="31_volatile_memory_event_store_implementation.md"><code>31_volatile_memory_event_store_implementation.md</code></a>，本批
+identity/conversation/provider metadata 证据见 <a
+href="32_im_identity_conversation_and_provider_metadata_contract.md"><code>32_im_identity_conversation_and_provider_metadata_contract.md</code></a>。</p>
+</body>
+</html>

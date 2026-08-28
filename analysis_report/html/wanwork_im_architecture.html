@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>WanWork 原生 IM 架构</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">WanWork 原生 IM 架构</h1>
+</header>
+<h1 id="原生-im-架构-v1">原生 IM 架构 V1</h1>
+<h2 id="架构原则">1. 架构原则</h2>
+<ol type="1">
+<li><strong>平台持有事实</strong>：组织、主体、群、成员、消息接纳、Agent
+installation、Task、invocation、 Artifact、审批和 Action Receipt
+由平台的权威存储持有；“平台”包含 IM 与 QE bounded context， 不是指某个
+provider，也不要求所有对象物理上塞进同一张库表。</li>
+<li><strong>融云负责传输，不拥有业务</strong>：融云 SDK
+提供实时传输、多端同步和 provider message identity； provider
+记录不能替代平台事务和审计。</li>
+<li><strong>Clerk 负责认证，不拥有授权</strong>：Clerk JWT
+证明外部身份；组织成员、角色、群 ACL、Agent 调用 权限和 action-time
+authorization 由平台计算。</li>
+<li><strong>一切皆插件，但插件不拥有真相</strong>：provider、auth、search、notification、Agent
+runtime、模型、 工具和存储通过显式 lifecycle/port
+装配；插件只能返回值或命令，不能暗改核心数据库。</li>
+<li><strong>消息与任务分离</strong>：聊天是事件投影；正式结果进入
+versioned Artifact，Agent 自报“完成”不 能推进业务终态。</li>
+<li><strong>外部副作用可对账</strong>：send/create-group/invite/edit/delete/reaction
+都需要 durable command、 idempotency、fence、receiver receipt 和 unknown
+reconcile。</li>
+<li><strong>Task 而不是群或 session 是业务脊柱</strong>：child
+group、RongCloud message、runtime session、MCP/A2A Task
+都是投影或执行句柄；只有 Business Task 承载 mandate、budget、acceptance
+和 closure。</li>
+<li><strong>协议互通不等于信任互通</strong>：MCP/A2A/Agent Client
+Protocol 只进入 adapter；身份委托、策略、 Action Ledger、Artifact 验收和
+Evidence Graph 始终使用平台 canonical model。</li>
+<li><strong>Planner 不持有执行权</strong>：模型/runtime 只能产生 typed
+proposal；policy/approval、privileged executor、 egress broker 和
+receipt verification 位于独立平台边界，不能由 prompt 绕过。</li>
+<li><strong>Action Plane 与 Egress Broker 分责</strong>：Action Plane
+决定副作用是否获权并保证 durable 状态； Egress Broker 强制所有
+HTTP/SSE/MCP/provider 网络路径的目标、credential、数据与响应预算。认证、
+实时和模型调用也必须经过 Egress，不能因为“不是写操作”就直连外部
+provider。</li>
+</ol>
+<h2 id="组件图">2. 组件图</h2>
+<pre class="mermaid"><code>flowchart TB
+    subgraph Clients[跨端客户端]
+      Web[React Web/PWA]
+      Desktop[Tauri Desktop]
+      Mobile[Flutter Mobile]
+    end
+
+    subgraph Edge[Go/Fiber API]
+      Envelope[Business Envelope]
+      Auth[Clerk Auth Plugin]
+      Realtime[Realtime Gateway]
+      IMAPI[IM Application API]
+    end
+
+    subgraph Core[WanWork IM Domain]
+      Org[Organization &amp; Directory]
+      Conv[Conversation &amp; Membership]
+      Msg[Message Admission &amp; Projection]
+      Store[Agent Store]
+      Thread[Mention &amp; Agent Thread]
+      Task[Business Task Spine]
+      Attention[Needs You]
+      Memory[Governed Memory]
+      Proposal[Typed Action Proposal]
+      Action[Durable Action Plane]
+      Executor[Privileged Executor]
+      Egress[Egress Broker]
+      Plugins[Plugin Host]
+    end
+
+    subgraph QE[Quantum Entanglement Kernel]
+      Inbox[Verified Inbox]
+      Router[Mention Router]
+      Invocation[Durable Invocation]
+      Runtime[Plugin Agent Runtime]
+      Artifact[Artifact / Needs You / Audit]
+    end
+
+    subgraph Providers[External Providers]
+      Clerk[Clerk]
+      Rong[RongCloud SDK/API]
+      Models[Model Providers]
+      Tools[MCP Tool Adapters]
+      Peers[A2A Agent Adapters]
+    end
+
+    Web --&gt; Envelope
+    Desktop --&gt; Envelope
+    Mobile --&gt; Envelope
+    Envelope --&gt; Auth
+    Auth --&gt; Egress
+    Envelope --&gt; IMAPI
+    IMAPI --&gt; Org
+    IMAPI --&gt; Conv
+    IMAPI --&gt; Msg
+    IMAPI --&gt; Store
+    Msg --&gt; Thread
+    Thread --&gt; Inbox
+    Inbox --&gt; Router
+    Router --&gt; Task
+    Task --&gt; Invocation
+    Invocation --&gt; Runtime
+    Runtime --&gt; Artifact
+    Runtime --&gt; Memory
+    Runtime --&gt; Proposal
+    Artifact --&gt; Attention
+    Artifact --&gt; Action
+    Proposal --&gt; Action
+    Action --&gt; Executor
+    Executor --&gt; Egress
+    Realtime --&gt; Egress
+    Runtime --&gt; Egress
+    Egress --&gt; Clerk
+    Egress --&gt; Rong
+    Egress --&gt; Models
+    Egress --&gt; Tools
+    Egress --&gt; Peers
+    Plugins -. lifecycle .-&gt; Auth
+    Plugins -. lifecycle .-&gt; Realtime
+    Plugins -. lifecycle .-&gt; Runtime</code></pre>
+<h2 id="仓库布局">3. 仓库布局</h2>
+<pre class="text"><code>apps/
+  im-api/                 Go/Fiber API、domain composition、migrations
+  im-web/                 React/Vite Web/PWA
+  im-desktop/             Tauri 2 壳，共用 im-web UI packages
+  im-mobile/              Flutter App
+packages/
+  im-contracts/           OpenAPI、JSON Schema、生成前的 canonical contracts
+  im-design/              tokens、icons、跨端语义规范
+src/quantum_entanglement/
+  native_im*.py           provider-neutral wire contract、inbox、QE bridge
+docs/wanwork_im/          产品、架构、运行和审计文档</code></pre>
+<p>Go 和 TypeScript 可以有语言内 value types，但 canonical JSON Schema
+是跨语言 wire 真相源。 Python 的冻结
+<code>NATIVE_IM_CONTRACT_V1.md</code> 继续约束 Quantum Entanglement
+边界；任何字段差异通过 versioned adapter 映射，不能各语言独立漂移。</p>
+<p>Canonical contracts 至少区分：</p>
+<ul>
+<li><code>BusinessTask</code> 与
+<code>Attempt/RuntimeSession/ProtocolTaskRef</code>；</li>
+<li><code>WorkConversation</code> 与
+<code>RongCloudGroupRef</code>；</li>
+<li><code>ArtifactVersion</code> 与聊天中的
+<code>ArtifactReference</code>；</li>
+<li><code>TaskStatus</code>、<code>DeliveryStatus</code>、<code>ActionStatus</code>
+与 <code>AcceptanceStatus</code>；</li>
+<li><code>HumanPrincipal</code>、<code>WorkloadPrincipal</code>、<code>AgentIdentity</code>
+与 <code>DelegationGrant</code>。</li>
+</ul>
+<h2 id="go-后端分层">4. Go 后端分层</h2>
+<pre class="text"><code>internal/
+  domain/        纯值、状态机、错误与 ports；不导入 Fiber/Clerk/融云/SQL
+  application/   use case、事务边界、idempotency、policy、outbox
+  platform/      PostgreSQL、clock、IDs、observability、secret provider
+  adapters/
+    http/        Fiber handlers 与统一 response envelope
+    auth/clerk/  JWT/JWKS verification
+    im/fake/     零网络、确定性 fault script
+    im/rongcloud/融云 server API/SDK adapter
+  bootstrap/     插件注册、config、health、graceful shutdown</code></pre>
+<p>Domain port 不暴露 SDK client、HTTP session、数据库 connection、JWT
+library 或 raw webhook。</p>
+<h3 id="领域聚合与唯一权威">4.1 领域聚合与唯一权威</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>聚合</th>
+<th>关键字段/子对象</th>
+<th>唯一权威</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Organization</td>
+<td>membership、role、policy、retention、region</td>
+<td>IM domain PostgreSQL schema</td>
+</tr>
+<tr>
+<td>Actor/Agent</td>
+<td>external link、definition、release、installation、status</td>
+<td>identity/store schema</td>
+</tr>
+<tr>
+<td>AgentPresence</td>
+<td>lease/incarnation、working/waiting/takeover、runtime liveness
+projection</td>
+<td>coordination/presence schema</td>
+</tr>
+<tr>
+<td>Conversation</td>
+<td>membership、ACL、parent/root、provider projection</td>
+<td>IM domain schema</td>
+</tr>
+<tr>
+<td>ConversationRepresentation</td>
+<td>mandate、audience/purpose、disclosure、speech act/commitment
+limits</td>
+<td>identity/policy schema</td>
+</tr>
+<tr>
+<td>BusinessTask</td>
+<td>mandate、capability、budget、context、plan、closure</td>
+<td>QE task/event store</td>
+</tr>
+<tr>
+<td>Attempt</td>
+<td>runtime/profile/model/plugin revisions、environment
+revision、effective config 与 Run capability/egress snapshot
+digest、lease、checkpoint</td>
+<td>QE runtime store</td>
+</tr>
+<tr>
+<td>NeedsYou</td>
+<td>frozen action、parameter hash、risk、assignee、decision</td>
+<td>QE attention store</td>
+</tr>
+<tr>
+<td>Artifact</td>
+<td>immutable version、hash、lineage、scan、acceptance</td>
+<td>QE metadata + object store</td>
+</tr>
+<tr>
+<td>Action</td>
+<td>intent、approval、attempt、external ref、receipt、reconcile</td>
+<td>platform Action Ledger</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td>provenance、scope、TTL、conflict、use lineage、deletion</td>
+<td>QE governed-memory store</td>
+</tr>
+<tr>
+<td>ContentAuthority</td>
+<td>observation、provenance
+edge、taint、authority、declassification</td>
+<td>QE evidence/policy store</td>
+</tr>
+<tr>
+<td>Promotion</td>
+<td>source Artifact、validation、target revision、receipt/rollback</td>
+<td>QE artifact/action store</td>
+</tr>
+<tr>
+<td>Routine</td>
+<td>definition、timezone、trigger/missed-run policy、occurrence
+key、budget</td>
+<td>scheduler/domain schema</td>
+</tr>
+</tbody>
+</table>
+<p>这些“store”可以在 modular monolith 中由同一个 PostgreSQL 集群的不同
+schema/transactional outbox 实现，但每个对象只有上表一个 owner。其他
+bounded context 只保存 versioned reference/projection， 不能双主写。</p>
+<h3 id="business-task-状态">4.2 Business Task 状态</h3>
+<pre class="text"><code>draft -&gt; planned -&gt; authorized -&gt; running
+      -&gt; waiting_human | waiting_external
+      -&gt; delivering -&gt; verifying -&gt; compensating
+      -&gt; closed(accepted | rejected | cancelled)</code></pre>
+<p><code>InvocationAttempt.succeeded</code> 只允许推进到
+<code>delivering</code>；Artifact 经 verifier/human decision 后才可进入
+accepted。Thread provisioning、runtime liveness 和 provider delivery
+各有独立状态机，不能用 Task 状态掩盖。</p>
+<h3 id="environment-与-run-compilation">4.3 Environment 与 Run
+compilation</h3>
+<p>长期 <code>EnvironmentRevision</code> 和一次 <code>Attempt</code>
+分离。每次 Run 由 projection compiler 冻结：</p>
+<pre class="text"><code>identity + task/mandate + environmentRevision
+  + effectiveConfigurationDigest + model/runtime revisions
+  + RunCapabilitySnapshot + ProjectedContextManifest
+  -&gt; immutable Attempt compilation receipt</code></pre>
+<p>Hot prompt、warm checkpoint、cold canonical state
+是不同数据层；换模型或 runtime 时从受界限的 canonical state
+恢复，不能把全量 transcript 当
+Environment。任何输入/Artifact/Memory/Skill 只有经过 promotion boundary
+才能进入长期 authored/adaptive state，避免一次 prompt injection
+永久污染环境。</p>
+<h3 id="content-authority-与-promotion-transaction">4.4 Content
+authority 与 Promotion Transaction</h3>
+<p>输入内容的来源和 authority 与其语义内容分开存储：</p>
+<pre class="text"><code>ContentObservation(source, digest, authority, taint)
+  -&gt; ProvenanceEdge(copy | quote | summarize | tool_result | agent_handoff)
+  -&gt; Plan / ActionProposal / Artifact
+  -&gt; explicit DeclassificationDecision（可选、最小范围）</code></pre>
+<p>复制、摘要或通过 MCP/Agent 转发不会自动清除
+taint；缺少来源元数据的高风险动作失败关闭。Runtime 完成只创建候选
+Artifact。晋升到文档、知识、Skill、Memory 或外部系统必须创建独立
+<code>PromotionIntent</code>，经过 validation、目标 base
+revision/CAS、授权和 durable receipt 后才成为权威； 任何失败/rollback
+都保留原 Artifact digest 与 evidence。</p>
+<h2 id="everything-is-a-plugin">5. Everything-is-a-plugin</h2>
+<p>插件不是一个任意 <code>map[string]any</code>
+回调集合，而是有版本、依赖、能力和生命周期的组件：</p>
+<pre class="text"><code>discovered -&gt; validated -&gt; configured -&gt; started -&gt; ready -&gt; draining -&gt; stopped</code></pre>
+<p>每个插件声明：</p>
+<ul>
+<li>stable ID、semantic version、host API range；</li>
+<li>capability manifest 和依赖插件；</li>
+<li>config schema 与 secret reference names；</li>
+<li>start/health/drain/stop timeout；</li>
+<li>网络、文件、数据库和外部 action 范围。</li>
+</ul>
+<p>插件 manifest 只是 capability claim；artifact
+digest、provenance、SBOM、组织 approval 与 revocation 由 host-owned
+package/admission record 保存并核对，插件不能自证可信。Host 对完整
+normalized manifest 计算独立摘要；package record 必须以
+<code>ApprovedManifestDigest + AdmissionRevision</code>
+绑定本次批准，不能让 相同 ID/version 或 artifact
+静默复用不同运行行为的旧批准。</p>
+<p>Registry 先作为 builder 接收 schema、broker 和
+package/factory，随后必须显式 Freeze。Freeze 在写锁内 重算
+schema/broker/manifest digest、复核完整 definition graph，并克隆成不可变
+runtime snapshot； Resolve/Compose/Secret claim/NewHost 在 Freeze
+前全部拒绝，Freeze 后任何 late registration 失败。动态 Secret
+claim/revocation 使用独立状态，不允许借“定义不可变”取消运行期撤权。</p>
+<p>插件装配沿用 DeepSeek Harness
+值得保留的三层思想，但冻结平台自己的语义：</p>
+<pre class="text"><code>Plugin definition -&gt; Provider binding -&gt; Consumer port
+profile -&gt; ordered bundles -&gt; tenant overlay -&gt; EffectiveConfiguration</code></pre>
+<p>相同 row ID 由后层整行替换，不做 deep merge；删除必须使用显式
+tombstone；同层重复 row、跨租户 overlay、prompt/CLI/home patch
+一律拒绝。启动前生成 immutable effective snapshot。P0-4 已把 raw Secret
+locator 限制在 trusted broker admission；配置只携带 claim
+digest/revision，Compose 重新校验 tenant、row、
+plugin、artifact、manifest、admission、schema、logical
+name、broker、purpose 和 audience，canonical/Factory 只保存不可取 Secret
+的 binding view/fingerprint。Snapshot 生成
+source/digest、capability/egress/secret/
+artifact/schema/binding/manifest/admission diff 和依赖 DAG；Attempt
+保存最终 digest。Effective v3 的 row 同时绑定 manifest digest、admission
+revision 和 Secret binding view；Host 构造时 冻结选中
+factory/config/timeout 的 activation snapshot，启动不回读
+Registry。未批准扩权、依赖循环、 host API/schema
+不兼容、manifest/admission/revocation 或其他 digest 漂移直接拒绝。</p>
+<p>当前 binding view 明确不是 bearer，也没有 material
+resolver。真实凭据使用必须在 W2/W4 Action Plane 建立后，经 action-time
+policy、JIT short-lived lease/token exchange、trusted executor 和
+provider receipt 单独闭环；不得由 P0-4 的准入引用冒充。</p>
+<p>所有 required plugins 都 ready 后才开放组合 readiness/route；draining
+立即拒绝新工作，对 in-flight 按 deadline 收敛。启动或 ready 失败按逆依赖
+drain→stop→host-owned effect cleanup，终态统一为 <code>stopped</code> 或
+<code>failed</code>，不再另造含义不清的 <code>dispose</code>
+状态；任何阶段失败都不能残留 route、listener、timer、 lease 或 provider
+handle。</p>
+<p>Effect scope 在 shutdown 的第一个 Drain 前统一从 <code>open</code>
+转为 <code>closing</code>，此后任何 <code>Defer</code> 失败； cleanup
+失败只保留失败项并允许精确重试，全部成功后进入
+<code>closed</code>。插件不能在 Drain/Stop/callback 期间注册逃出本轮
+cleanup snapshot 的新资源。</p>
+<p>Host mutex 只用于校验和发布
+<code>new/starting/ready/stopping/stopped/failed</code> 与 started
+snapshot，不在锁内 调用 Configure/Start/Ready/Drain/Stop/effect
+cleanup。<code>starting</code>/<code>stopping</code> 同时是唯一
+lifecycle owner claim；callback 内查询 State 不死锁，误重入或并发
+Start/Stop 立即失败，不能抢占 rollback/cleanup。
+这只解决可信内建插件的进程内锁纪律，不替代第三方代码隔离，也不能强杀忽略
+context 的 callback。</p>
+<p>当前 goroutine 内的 Configure/Start/Ready/Drain/Stop/effect cleanup
+panic 统一转换为固定
+<code>ErrLifecyclePanic</code>，不格式化或返回可能含 Secret/消息的 panic
+payload。Start/Ready panic 仍进入逆序 rollback；Drain/Stop/cleanup 单项
+panic 只形成 joined error，不跳过其他插件和后续清理。这个 recover
+不覆盖插件自行创建的 goroutine、fatal runtime error、进程退出或忽略
+context 的无限阻塞。</p>
+<p>Manifest 的 Start/Ready/Drain/Stop duration 只形成 callback context
+deadline。实现使用 <code>callWithDeadline</code>，不宣称 deadline
+到达会让 callback、goroutine 或进程退出；callback 未返回时 Host 保持
+<code>starting/stopping</code> 并保留唯一 owner，不能提前发布
+failed/stopped。强制终止必须由独立 supervisor +
+process/UID/container/microVM 完成；即使进程已 kill，也不能据此推导外部
+effect 未发生。</p>
+<p>V1 预留插件种类：</p>
+<ul>
+<li><code>auth.clerk.v1</code>、<code>auth.fake.v1</code>；</li>
+<li><code>im.rongcloud.v1</code>、<code>im.fake.v1</code>；</li>
+<li><code>agent-runtime.quantum-entanglement.v1</code>；</li>
+<li><code>search.postgres.v1</code>；</li>
+<li><code>notification.local.v1</code>；</li>
+<li><code>object-store.local.v1</code>，后续增加 S3 兼容实现。</li>
+</ul>
+<p>插件不能：从 prompt 选择 credential/endpoint；直接发布
+IM；持有可序列化 authority；绕过 application service 写 domain
+tables；把消息正文、token 或 attachment URL 写入普通日志。</p>
+<p>插件可替换的是实现，不可替换的是 <code>DomainCommand</code>、event
+envelope、authorization、Task/Action/ Artifact invariants。Agent Store
+中“可安装”也不等于可信：代码插件、Skill、MCP server、Agent definition
+分别进入
+<code>CapabilityBOM + provenance + digest + scan + verdict + revocation</code>
+准入链。</p>
+<p>W1 Plugin Host 只加载随 host 编译并由平台 admission
+固定的可信内建插件。<code>SKILL.md</code>、Tool definition
+和真正执行任意代码的 App/Extension/Plugin package
+是不同信任类；第三方可执行包不得进入 API/ Gateway/Plugin Host
+主进程。后续生态使用独立 <code>ExecutionIsolationProfile</code> 与
+process/UID/container/ microVM 边界，安装 lifecycle script
+同样按可执行代码处理。</p>
+<h3 id="第三方执行隔离控制合同w1-p1-6">第三方执行隔离控制合同（W1
+P1-6）</h3>
+<p>W1 已冻结 <code>apps/im-api/internal/isolation</code> 的
+provider-neutral data/IPC contract，但没有开放第三方执行。 API/Gateway
+未来只能持 authenticated <code>SupervisorClient</code>；privileged
+supervisor 必须是独立服务。Launch 只允许传 host-owned
+<code>PackageVersionRef/IsolationProfileRef/RuntimeGrantRef</code>、operation/request
+digest、 expected previous generation、Attempt 与 input manifest
+digest，禁止传 raw argv、shell、env、host path、 mount、runtime
+socket、raw secret、PID handle 或 callback。</p>
+<pre class="mermaid"><code>flowchart LR
+  API[&quot;API / Gateway&lt;br&gt;pure IPC client&quot;] --&gt; SUP[&quot;Independent Supervisor&quot;]
+  SUP --&gt; ADM[&quot;Host-owned package/profile/grant&quot;]
+  SUP --&gt; ISO[&quot;UID / process / container / microVM&quot;]
+  ISO --&gt; ACT[&quot;Action Plane / Egress Broker&quot;]
+  SUP --&gt; PROC[&quot;Process receipts&quot;]
+  ACT --&gt; EFF[&quot;Provider receipt / reconcile&quot;]
+  PROC -. &quot;cannot prove effect finality&quot; .-&gt; EFF</code></pre>
+<p><code>ProcessInstance</code> 使用
+<code>ExecutionID + supervisor-assigned Generation + FenceRevision/Digest + InstanceID</code>；
+PID/provider transport handle 只能是 supervisor 私有观察值。相同
+<code>OperationID + RequestDigest</code> exact replay， 同 OperationID
+换摘要冲突；并发 launch 由 supervisor generation CAS 保证只有一个
+incarnation。</p>
+<p>停止状态机固定为 cooperative cancel → bounded grace → kill-tree →
+exact wait → descendant reap → grant/ network/mount/workspace
+release。<code>KillReceipt</code> 只证明 kill-tree
+已发出，<code>ExitReceipt</code> 才证明 exact instance
+退出，<code>ReapReceipt</code> 才证明 descendant
+empty，<code>ReleaseReceipt</code> 才证明本地资源释放。任一证据缺失进入
+operator-visible quarantine，不能发布 released。</p>
+<p>Process truth 与 external effect truth 分离：effectful runtime 即使
+forced kill、wait、reap、release 全部 成功，仍只能返回
+<code>dispatched_unknown + reconcileRequired</code>。邮件、IM、支付、部署、工单、Git
+或 DB 写入 必须由 Action Ledger 的 provider receipt/readback
+收敛，supervisor 无权据进程退出推导“动作未发生”。</p>
+<p><code>internal/isolation/fake</code> 明确声明
+<code>durability=volatile</code>、<code>isolation=none</code>、<code>executesCode=false</code>，只验证
+idempotency、generation/fence、receipt 与 quarantine，不冒充
+process/container/microVM sandbox。真实 wire schema、durable operation
+ledger、signed receipt、anti-rollback、OS backend 和
+fork/daemon/orphan/escape conformance 仍是 W4/W7 生产门禁。完整证据见
+<code>analysis_report/research/30_third_party_execution_isolation_contract.md</code>。</p>
+<h3 id="skill-package-与-tool-execution-binding">5.1 Skill package 与
+Tool execution binding</h3>
+<p>插件装配 seam 不等于 Tool 授权 seam。平台分别持有：</p>
+<pre class="text"><code>SkillPackageVersion
+  -&gt; catalog projection (name/description/version only)
+  -&gt; complete SKILL.md read
+  -&gt; ActivationReceipt(packageVersion, objectVersion, contentDigest)
+  -&gt; MaterializationManifest(required files and digests)
+  -&gt; immutable Run snapshot
+
+CapabilityDefinitionVersion
+  -&gt; AgentCapabilityAssignmentRevision
+  -&gt; ExecutionBinding(routeDigest, credentialRef, policyRevision)
+  -&gt; action-time authorization
+  -&gt; ActionIntent / Receipt</code></pre>
+<p>Active Skill 只能从 receipt 指向的不可变对象读取；部分
+tree、摘要漂移或未审核包一律不进入可执行 上下文。模型看见 catalog entry
+不代表激活，完整读取主文件不代表其脚本自动获权，激活 Skill 也不 提升当前
+Run 的 capability snapshot。</p>
+<p>Capability definition 定义 schema/effect/data class；assignment
+决定某 Agent 在 tenant/workspace 的 显式可用范围；execution binding
+冻结本次 route 与 opaque credential ref。执行器在每个 action 前 重新读取
+assignment revision、membership、policy、credential 和 route，任何
+stale/disabled/drift 都拒绝。长期 secret 只由 broker 在执行边界 JIT
+解析，不进入 checkpoint/event/model/IM metadata。</p>
+<h2 id="identity-与-ext_info">6. Identity 与 <code>ext_info</code></h2>
+<h3 id="平台主体">6.1 平台主体</h3>
+<pre class="text"><code>ActorRef
+  tenantId
+  actorId
+
+ActorSnapshot
+  ActorRef
+  subjectType = human | agent | system | service
+  displayProfile
+  status
+  revision
+
+ExternalIdentityRef
+  provider = clerk | rongcloud
+  providerRealmId
+  subjectId</code></pre>
+<p>Clerk <code>sub</code> 先映射为平台 human actor，再读取组织
+membership。Agent actor 由安装记录创建，不 复用操作者的 Clerk
+identity。稳定 <code>ActorRef</code> 与带 revision 的
+<code>ActorSnapshot</code> 分离，避免同一 Actor 的新版 snapshot 在
+equality、dedupe 或 audit join 中变成另一个身份。外部 subject
+必须绑定明确的 provider realm/app/environment；相同 provider subject 在
+staging/production 或多个 app 中不能串号。</p>
+<p>Actor ID 的 prefix 与 <code>subjectType</code> 一致仍只证明
+syntax，不证明 caller 可代表该 Actor、数据库记录 存在、Agent
+installation 有效或 tenant/conversation membership
+成立。<code>AgentVersion</code> 也只是严格 SemVer
+显示/兼容标签；不可变执行版本必须在 W2 以 release ID 和 artifact/config
+digest 固定。</p>
+<p>Actor 是可见业务主体；执行授权还必须另外保存：</p>
+<pre class="text"><code>HumanPrincipal -&gt; DelegationGrant(task, purpose, audience, capability, expiry)
+               -&gt; AgentIdentity -&gt; WorkloadPrincipal(instance/device/process)
+               -&gt; CredentialLease(tool/resource, short TTL, proof binding)</code></pre>
+<p>委托链只能缩权。Task 取消、human 离职、Agent installation
+撤销、policy revision 变化都会阻断 新 lease；已发生动作仍通过原
+actor/subject/task chain 追责。融云 <code>ext_info</code> 的
+<code>subjectType</code> 仅是 显示投影，伪造它不能改变
+authorization。</p>
+<p><code>AgentPresenceLease</code>、execution-host
+<code>RuntimeLiveness</code> 与融云 online status 独立。presence lease
+过期 或 runtime <code>unverifiable</code> 时停止新 admission，但没有当前
+incarnation 的正面退出证据就不能启动第二 实例。human takeover 会推进
+fencing generation，旧 runtime 即使恢复连接也不能提交终态/副作用。</p>
+<h3 id="融云用户-ext_info">6.2 融云用户 <code>ext_info</code></h3>
+<p>string 内容是 canonical JSON。下列是 exact bytes，不允许
+pretty-print、重排或等价 escape：</p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;agentDefinitionId&quot;</span><span class="fu">:</span><span class="st">&quot;agd_finance&quot;</span><span class="fu">,</span><span class="dt">&quot;agentVersion&quot;</span><span class="fu">:</span><span class="st">&quot;1.0.0&quot;</span><span class="fu">,</span><span class="dt">&quot;platformActorId&quot;</span><span class="fu">:</span><span class="st">&quot;agt_finance&quot;</span><span class="fu">,</span><span class="dt">&quot;schemaVersion&quot;</span><span class="fu">:</span><span class="dv">1</span><span class="fu">,</span><span class="dt">&quot;subjectType&quot;</span><span class="fu">:</span><span class="st">&quot;agent&quot;</span><span class="fu">}</span></span></code></pre></div>
+<p>真人 exact shape 为：</p>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;platformActorId&quot;</span><span class="fu">:</span><span class="st">&quot;usr_alice&quot;</span><span class="fu">,</span><span class="dt">&quot;schemaVersion&quot;</span><span class="fu">:</span><span class="dv">1</span><span class="fu">,</span><span class="dt">&quot;subjectType&quot;</span><span class="fu">:</span><span class="st">&quot;human&quot;</span><span class="fu">}</span></span></code></pre></div>
+<p>真人不包含 Agent 字段；<code>system/service</code> 不注册成 V1
+普通聊天用户。codec 上限为 1024 UTF-8 bytes， 只接受 flat
+allowlist、integer schema version、字典序 key、有效 NFC 与 exact
+canonical roundtrip；拒绝 unknown、duplicate/escaped
+duplicate、missing/null、错误类型、trailing value、超限、Unicode 混淆、
+控制字符和秘密/授权字段。<code>ext_info</code> 只能辅助 provider 显示和
+mapping；收到事件后必须按 authenticated provider realm + user ID
+回查平台 binding、Actor status 和 membership，不能信任 payload
+自报主体类型。</p>
+<h3 id="融云群-ext_info">6.3 融云群 <code>ext_info</code></h3>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;agentInvocationId&quot;</span><span class="fu">:</span><span class="st">&quot;inv_finance&quot;</span><span class="fu">,</span><span class="dt">&quot;conversationType&quot;</span><span class="fu">:</span><span class="st">&quot;agent_thread&quot;</span><span class="fu">,</span><span class="dt">&quot;parentConversationId&quot;</span><span class="fu">:</span><span class="st">&quot;cnv_parent&quot;</span><span class="fu">,</span><span class="dt">&quot;platformConversationId&quot;</span><span class="fu">:</span><span class="st">&quot;cnv_thread&quot;</span><span class="fu">,</span><span class="dt">&quot;rootMessageId&quot;</span><span class="fu">:</span><span class="st">&quot;msg_root&quot;</span><span class="fu">,</span><span class="dt">&quot;schemaVersion&quot;</span><span class="fu">:</span><span class="dv">1</span><span class="fu">}</span></span></code></pre></div>
+<p>普通群 exact shape 为：</p>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;conversationType&quot;</span><span class="fu">:</span><span class="st">&quot;group&quot;</span><span class="fu">,</span><span class="dt">&quot;platformConversationId&quot;</span><span class="fu">:</span><span class="st">&quot;cnv_product&quot;</span><span class="fu">,</span><span class="dt">&quot;schemaVersion&quot;</span><span class="fu">:</span><span class="dv">1</span><span class="fu">}</span></span></code></pre></div>
+<p>普通群不携带 parent/root/invocation 字段，direct conversation 不使用
+group <code>ext_info</code>；Agent thread 三字段 all-or-none 且 parent
+不得等于 self。parent/root/invocation 只表示 topology hint，不产生父群
+ACL 继承，也不证明 Task、membership 或 provider group 已存在。组织
+ID、ACL、真实消息正文、token 和永久文件 URL 不放入
+<code>ext_info</code>。</p>
+<h2 id="入站消息时序">7. 入站消息时序</h2>
+<pre class="mermaid"><code>sequenceDiagram
+    participant R as RongCloud
+    participant A as Provider Adapter
+    participant I as Durable Inbox
+    participant M as Message Admission
+    participant T as Mention Router
+    participant Q as QE Invocation
+
+    R-&gt;&gt;A: webhook/stream/read event
+    A-&gt;&gt;A: authenticate + verify + bound decode
+    A-&gt;&gt;I: verified envelope + provider digest
+    I-&gt;&gt;I: dedupe + cursor transaction
+    I-&gt;&gt;M: admitted message
+    M-&gt;&gt;M: persist message + projection + outbox
+    M-&gt;&gt;T: exact mention list
+    T-&gt;&gt;T: membership/policy/budget check
+    T-&gt;&gt;Q: durable invocation command
+    Note over T,Q: Level B 以前到 inbox/observation 为止</code></pre>
+<p>未认证 raw webhook 不能直接进入 Mention Router。入站事件中出现
+<code>@Agent</code> 也不代表已经授权。</p>
+<h3 id="durable-event-spine">7.1 Durable Event Spine</h3>
+<p>所有会影响模型、Task、权限、Artifact
+或外部动作的事实进入版本化事件流：</p>
+<pre class="text"><code>EventEnvelope
+  eventId / streamId / sequence / schemaVersion
+  tenantId / actorId / causationId / correlationId
+  eventType / occurredAt / payloadRef / payloadDigest</code></pre>
+<ul>
+<li>同一 stream 的 sequence 严格单调，append 与当前 aggregate revision
+在同一事务提交；</li>
+<li>projection 可以从持久事件重建，SSE 使用 cursor 做 backfill + live
+拼接；</li>
+<li>typing、presence heartbeat 和高频临时进度是 ephemeral event，不冒充
+durable history；</li>
+<li>“model-visible”输入必须能定位到有权限的 source
+event/reference，但不代表把正文、token、PII 或 隐藏思维链全量入库；</li>
+<li>unknown event/version
+原样保留并停止有副作用的投影，禁止静默丢弃；</li>
+<li>普通 telemetry、业务审计和 tamper-evident evidence 分开保存，采样
+trace 不能造成证据断链。</li>
+</ul>
+<p>W1 P1-7 已冻结
+<code>EventToAppend</code>/<code>StoredEvent</code>、<code>EventStore</code>
+port、scope-bound opaque cursor 和明确标记为 volatile 的
+<code>VolatileMemoryStore</code>。<code>EventStore.Characteristics()</code>
+是 port 合同的一部分，要求 durable、 restart persistence 或 tamper
+evidence 的 production composition 会拒绝该 fake；Action receipt 由独立
+Action Plane port/admission 保证，不属于 EventStore
+characteristics。</p>
+<p>fake 的整批 append 在单一临界区执行：先做 ordered
+exact-retry/conflict，再做 expected revision、capacity、 injected clock
+和 context 检查，最后一起发布 stream/global/retry indexes。store 独占
+sequence、global position 和 recorded time；caller 的
+input、append/replay result 与所有 page 都是深快照。并发相同 revision
+只有一个 owner，读者只能看到整个 batch 之前或之后。</p>
+<p>cursor 绑定 caller-provided deterministic namespace、stream/global
+query kind、tenant、workspace presence/value、stream 和 exclusive
+position；跨 kind/scope/namespace、截断、超长、unknown/duplicate field
+或 future position 均失败关闭。相同 namespace + 相同重建事件会复现旧
+cursor；它不是自动的 process incarnation fence，需要拒绝旧 cursor
+时必须注入新 namespace。 cursor 中的 SHA-256 只是 fake
+checksum，不是签名、MAC、鉴权或公网 bearer
+安全证明。<code>WorkspaceID=nil</code> 是 tenant-root 精确 scope，不是跨
+workspace 通配符。</p>
+<p>相同 fixture 可向新 fake 重放相同 append 输入，得到相同
+StoredEvent；测试还证明 page backfill 可驱动纯 fixture reducer
+得到相同结果，并在 unknown schema 时停止且保留 source
+event。这不等于已有 production projection engine、SSE
+backfill+live、Agent/model/tool deterministic re-execution 或外部副作用
+replay。</p>
+<p>W2 仍须交付 PostgreSQL stream/event/projection-checkpoint
+migrations、expected revision 真实事务和
+crash/reopen/kill-9/backup-restore 门禁；从空 production projection
+重建的来源必须是该 durable store。 调用方始终不能提供 sequence/global
+position/recordedAt。完整证据见
+<code>analysis_report/research/31_volatile_memory_event_store_implementation.md</code>。</p>
+<h2 id="agent-子群时序">8. <code>@Agent</code> 子群时序</h2>
+<pre class="mermaid"><code>sequenceDiagram
+    participant U as User
+    participant P as Parent Group
+    participant W as WanWork Platform
+    participant R as RongCloud Adapter
+    participant S as Agent Thread
+    participant A as Agent Runtime
+
+    U-&gt;&gt;P: @Agent instruction
+    P-&gt;&gt;W: verified admitted message
+    W-&gt;&gt;W: unique mention admission
+    W-&gt;&gt;W: create thread aggregate + commands
+    W-&gt;&gt;R: create ordinary provider group
+    R--&gt;&gt;W: receipt or effect_unknown
+    W-&gt;&gt;R: add initiator + Agent members
+    R--&gt;&gt;W: membership receipts
+    W-&gt;&gt;S: mark ready
+    W-&gt;&gt;A: durable invocation
+    A--&gt;&gt;S: progress / Needs You / Artifact ref
+    Note over W,P: parent receives only restricted work card</code></pre>
+<p>线程 provisioning 失败不启动 Agent；Agent
+运行失败不删除线程；provider 结果未知不创建第二个 group。恢复按 durable
+command 和 acceptance query 继续。</p>
+<h3 id="mention-admission-与幂等键">8.1 Mention admission 与幂等键</h3>
+<p>固定顺序：authenticated principal → durable inbox/dedupe →
+conversation membership/object auth → Agent installation/status →
+mandate/policy/budget → create-or-get Task/Invocation/WorkConversation →
+enqueue Attempt。唯一键至少为：</p>
+<pre class="text"><code>(tenantId, parentConversationId, rootMessageId, agentInstallationId)</code></pre>
+<p>重复 webhook、cursor resume、客户端重发和 worker 重启都返回同一
+Task、Invocation 与 child group projection。RongCloud group 创建成功但
+ACK 丢失时先按 platform group key 查询/对账，不生成新 ID。</p>
+<h3 id="durable-action-plane">8.2 Durable Action Plane</h3>
+<pre class="text"><code>prepared -&gt; approved -&gt; dispatched
+         -&gt; succeeded | failed | effect_unknown
+effect_unknown -&gt; reconciled_succeeded | reconciled_not_accepted | manual_review
+succeeded -&gt; compensating -&gt; compensated | compensation_failed</code></pre>
+<p>每个现实写操作保存
+<code>ActionIntent(intentId, canonicalHash, target, expectedPostcondition, compensationRef)</code>、稳定
+idempotency key、attempt/fencing token、provider operation
+reference、实际参数 digest 和 receiver receipt。审批只绑定 canonical
+payload、policy revision、audience、TTL 与 nonce； 目标、参数、预算或
+route 变化必须重新审批。</p>
+<p>外部系统通常只能提供 at-least-once delivery，平台不得宣传
+exactly-once。timeout、5xx、连接中断、 ACK loss 都可能是
+<code>effect_unknown</code>；没有 authoritative negative finality
+时禁止盲重试。取消只是一项 请求，已发生的副作用单独
+reconcile/compensate，UI 不得把 cancelled 显示为“全部撤销”。</p>
+<p>Runtime/Planner 只提交 <code>ActionProposal</code>。Policy/Approval
+成功并 durable append intent 后，独立 Executor 才可通过 Egress Broker
+dispatch；Runtime 不读取长期 provider secret。Broker 对
+DNS/IP、redirect、 SSE endpoint、origin/auth
+header、domain/port、response bytes/time/schema 做统一约束，并按
+capability 声明的
+<code>effect/dataClass/approval/retry/idempotency/reconcile</code>
+执行，不能把所有 MCP 一刀切为安全读或 默认可重试写。高风险 action 的
+policy、approval、intent 或审计事件写入失败时绝不 dispatch。</p>
+<p>Action Plane 只控制有副作用的授权与一致性；Egress Broker
+控制所有网络。Clerk JWKS/session、融云 realtime、模型推理、只读
+Tool、SSE 和 connector read 同样经 broker，绑定
+<code>DataRouteDescriptor</code>、 credential lease、DNS/IP/connection
+target、response bytes/time/schema 和审计。二者不能合并成一个 “HTTP
+client”，也不能让
+<code>Runtime -&gt; Models</code>、<code>Auth -&gt; Clerk</code> 或
+<code>Realtime -&gt; RongCloud</code> 旁路。</p>
+<h3 id="needs-youartifact-与-evidence">8.3 Needs You、Artifact 与
+Evidence</h3>
+<ul>
+<li>Needs You 保存风险、损失上限、截止、可逆性、参数
+hash/diff、选择、assignee、SLA 与 decision
+receipt；低风险批量处理和高风险四眼审批由 policy 决定；</li>
+<li>Artifact 保存 immutable
+version、hash、producer、environment、lineage、scan 与
+acceptance；HTML、 URL、压缩包和附件在隔离预览/AV/DLP 后才能显示；</li>
+<li>证据图使用可见事实：<code>mandate -&gt; plan/version -&gt; policy -&gt; credential lease -&gt; action -&gt; receipt -&gt; artifact/hash -&gt; verifier -&gt; human decision -&gt; final receipt</code>；不以隐藏思维链作审计基础；</li>
+<li>accepted Artifact 只以 reference/card 发布回父群，发布本身也是新的
+ActionIntent。</li>
+</ul>
+<h3 id="governed-memory">8.4 Governed Memory</h3>
+<p><code>MemoryRecord</code> 至少包含 source
+event/hash、writer、tenant/user/task/group scope、purpose、confidence、
+sensitivity、validity/TTL、conflict/supersession 和 retention。写前执行
+provenance/PII/conflict/admission， 读时执行
+principal/task/purpose/freshness policy，并记录 memory-to-decision
+citation。</p>
+<p>群消息不会默认永久进入跨群
+Memory；临时上下文晋升为组织经验需要候选、eval、人审、版本和回滚。
+删除必须传播到 canonical store、index、cache、summary 与 backup
+expiry，并生成 deletion proof。Derived index 必须可以从 canonical source
+重建。</p>
+<h2 id="数据所有权">9. 数据所有权</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>数据</th>
+<th>权威源</th>
+<th>Provider 投影</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Clerk external identity</td>
+<td>Clerk</td>
+<td>平台保存稳定 mapping 与必要 claims digest</td>
+</tr>
+<tr>
+<td>组织、部门、成员、角色</td>
+<td>PostgreSQL</td>
+<td>融云只获得聊天所需用户/群投影</td>
+</tr>
+<tr>
+<td>会话、成员、ACL、父子关系</td>
+<td>PostgreSQL</td>
+<td>融云 group + <code>ext_info</code></td>
+</tr>
+<tr>
+<td>消息接纳和 provider mapping</td>
+<td>PostgreSQL</td>
+<td>融云负责 transport/history copy</td>
+</tr>
+<tr>
+<td>未读/已读</td>
+<td>平台聚合 + provider evidence</td>
+<td>SDK 实时体验</td>
+</tr>
+<tr>
+<td>Agent definition/installation/version</td>
+<td>PostgreSQL</td>
+<td>融云普通用户 display projection</td>
+</tr>
+<tr>
+<td>Agent presence/runtime liveness</td>
+<td>coordination/presence store</td>
+<td>融云 online 只作不可信观察证据</td>
+</tr>
+<tr>
+<td>Data route/approval/notice</td>
+<td>identity/store + organization policy/personal acknowledgement
+receipt</td>
+<td>成员卡/安装页只读披露</td>
+</tr>
+<tr>
+<td>BusinessTask/invocation/Artifact/Needs You/Memory</td>
+<td>QE authoritative stores（同属平台，可与 IM 共用 PostgreSQL
+集群但不双主）</td>
+<td>IM 工作卡/引用消息/受限 projection</td>
+</tr>
+<tr>
+<td>Routine/ScheduleOccurrence</td>
+<td>scheduler/domain store</td>
+<td>IM 通知/任务卡只读投影</td>
+</tr>
+<tr>
+<td>action command/receipt/unknown</td>
+<td>PostgreSQL durable action tables</td>
+<td>provider receipt evidence</td>
+</tr>
+<tr>
+<td>credential</td>
+<td>secret provider</td>
+<td>从不进入 domain/event/Notion/Git</td>
+</tr>
+</tbody>
+</table>
+<h2 id="api-envelope">10. API envelope</h2>
+<p>应用可达时统一返回 HTTP 200：</p>
+<div class="sourceCode" id="cb22"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;code&quot;</span><span class="fu">:</span> <span class="dv">200</span><span class="fu">,</span></span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;data&quot;</span><span class="fu">:</span> <span class="fu">{},</span></span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;message&quot;</span><span class="fu">:</span> <span class="st">&quot;ok&quot;</span><span class="fu">,</span></span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;requestId&quot;</span><span class="fu">:</span> <span class="st">&quot;req_...&quot;</span></span>
+<span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>业务错误使用稳定非 200 <code>code</code>，例如
+<code>40101</code>（未认证）、<code>40301</code>（组织权限不足）、<code>40901</code>
+（revision
+conflict）、<code>42201</code>（validation）、<code>50301</code>（provider
+unavailable）。HTTP status 仍为 200。代理未连接、TLS
+失败、响应中断等网络层问题不会产生这个 envelope。</p>
+<p>以下状态永不折叠：</p>
+<ul>
+<li>HTTP/transport 是否送达；</li>
+<li>API envelope 的业务命令是否接纳；</li>
+<li>provider delivery/action 是否成功或未知；</li>
+<li>Attempt 是否 succeeded；</li>
+<li>Artifact 是否 accepted；</li>
+<li>Task 是否 closed。</li>
+</ul>
+<p>因此“HTTP 200 + <code>code=200</code>”最多表示平台接纳/完成了当前 API
+命令，不能单独证明消息已送达、 Agent 已完成、Artifact
+已验收或外部副作用已经发生。</p>
+<h2 id="可观测性与隐私">11. 可观测性与隐私</h2>
+<ul>
+<li>结构化日志只记录 ID、类型、状态、耗时、大小和 digest；</li>
+<li>message body、附件
+URL、JWT、secret、签名材料和模型上下文默认不记录；</li>
+<li>trace 使用
+<code>requestId/correlationId/causationId/traceparent</code>；</li>
+<li>指标必须分 tenant/provider/operation/result，但 tenant
+使用内部低基数 ID；</li>
+<li>audit 记录
+who/what/why/policy/revision/digest，不记录不必要正文；</li>
+<li>telemetry 默认关闭；启用前经过本地分类、脱敏、采样和 DLP。</li>
+</ul>
+<p>每个 tenant 还需要可审阅的 Data Flow/Nutrition
+Label：Clerk、融云、模型、embedding、MCP/A2A、 object store、telemetry
+和 backup 各自处理何种数据、地区、保留、训练/再利用口径与删除路径。
+“本地存储”“self-hosted”或“sandbox”都不能自动推导为离线、平台不可见或隔离成立。</p>
+<p>每个 Agent release/installation 另有版本化
+<code>DataRouteDescriptor</code>、<code>OrganizationProcessingApproval</code>
+和适用场景下的 <code>PersonalAcknowledgement</code>，声明
+operator、host、region、model/embedding provider、
+retention/training/telemetry/third-party forwarding。路线 revision 进入
+installation/Attempt/evidence；
+任何扩大或未知路线默认阻断升级/首次交互，重新经过组织
+policy，并按场景更新个人告知/确认；不能 从消息或 provider metadata
+猜测同意。</p>
+<h2 id="部署演进">12. 部署演进</h2>
+<p>V1 从 modular monolith 开始：一个 Go API、一个
+worker、PostgreSQL、fake/rongcloud adapter、Web 客户端。Domain 和 ports
+从第一天保持可拆分；在真实负载证据出现前不提前拆微服务。</p>
+<p>演进顺序：</p>
+<ol type="1">
+<li>fake provider 单进程 M0 垂直切片（Task/Needs You/Artifact/receipt
+闭环）；</li>
+<li>PostgreSQL + durable inbox/outbox/action；</li>
+<li>融云 sandbox inbound-only；</li>
+<li>Agent thread + fake runtime；</li>
+<li>QE runtime + Artifact/Needs You；</li>
+<li>单 allowlisted sandbox conversation 受控 outbound；</li>
+<li>Desktop/Mobile 分发、容量、HA、灾备和生产 Gate。</li>
+</ol>
+<p>生产 Gate 至少包含：tenant isolation、offboarding/revocation、secret
+canary、plugin supply-chain admission、dispatch 四窗口故障注入、unknown
+reconcile、evidence tamper detection、backup/restore、
+RPO/RTO、data-flow 抓包核对和 provider sandbox
+allowlist。任何一个失败都不能用功能演示覆盖。</p>
+</body>
+</html>

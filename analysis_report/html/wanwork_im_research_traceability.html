@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>WanWork 原生 IM 研究可追溯矩阵</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">WanWork 原生 IM 研究可追溯矩阵</h1>
+</header>
+<h1 id="wanwork-原生-im-研究可追溯矩阵">WanWork 原生 IM
+研究可追溯矩阵</h1>
+<blockquote>
+<p>状态：W0 冻结依据</p>
+<p>研究快照：2026-08-27</p>
+<p>审计日期：2026-08-28
+适用分支：<code>dev_wanwork_quantum_entanglement</code></p>
+</blockquote>
+<h2 id="这份文档解决什么">1. 这份文档解决什么</h2>
+<p>用户指定的调研不是背景阅读，而是产品合同的证据输入。本矩阵强制保留：</p>
+<pre class="text"><code>研究结论
+  -&gt; 证据来源与快照
+  -&gt; 产品硬需求
+  -&gt; 领域模型/API
+  -&gt; 安全控制
+  -&gt; 实施阶段
+  -&gt; 可复核验收证据</code></pre>
+<p>调研中的 <code>[F]</code>
+是固定源码、规范或可复现事实，<code>[C]</code>
+是厂商/维护者主张，<code>[A]</code> 是分析判断， <code>[U]</code>
+是未知。产品不能把 <code>[C]/[A]</code> 改写成已经具备的能力，也不能用
+Stars、下载、目录规模或 页面文案代替真实生产证据。</p>
+<p>研究根目录：</p>
+<p><code>/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output/more/</code></p>
+<p>该目录是本机研究证据快照，未整包复制进产品仓库。全部 40 份 Markdown
+的行数、SHA-256、角色 和处置见
+<code>RESEARCH_COVERAGE.md</code>；下表保留直接支撑既有 RQ
+的核心子集。原组合导航只包含 30 份 报告，后生成的
+<code>agentspace/research_report.md</code> 是必须单独审计的 evidence
+delta。</p>
+<h2 id="审计快照">2. 审计快照</h2>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 40%" />
+<col style="width: 30%" />
+</colgroup>
+<thead>
+<tr>
+<th>来源</th>
+<th style="text-align: right;">行数</th>
+<th>SHA-256</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agentspace/research_report.md</code></td>
+<td style="text-align: right;">3083</td>
+<td><code>9698be0f74d81c2078e208a3231f3e6498965fedeb3a3aba164764279bd8f0b7</code></td>
+</tr>
+<tr>
+<td><code>_portfolio/master_research_report.md</code></td>
+<td style="text-align: right;">1791</td>
+<td><code>02366d7b7dcfdda96309b22142376217caff2b752e770e71a8a8e2d8cb8c2787</code></td>
+</tr>
+<tr>
+<td><code>_portfolio/product_inventory.md</code></td>
+<td style="text-align: right;">114</td>
+<td><code>c47d70ff371eff0454d7ba5f046444d268294a0fafaed8831e5bf9376ded550a</code></td>
+</tr>
+<tr>
+<td><code>floatim-floatboat/research_report.md</code></td>
+<td style="text-align: right;">1018</td>
+<td><code>fe239ede133ca4cc0168a20cac8e43bf0673fafb7fd1d895b69584ba82e432ac</code></td>
+</tr>
+<tr>
+<td><code>openagents/research_report.md</code></td>
+<td style="text-align: right;">1543</td>
+<td><code>05f3feb8889430236e9e7211beb2004613145d8634ba5afb5840069a20a5916c</code></td>
+</tr>
+<tr>
+<td><code>agentteams/research_report.md</code></td>
+<td style="text-align: right;">1141</td>
+<td><code>b9ace0fc4a8e0c8be7cf49e3a530428e097f026040fc19a6d314995e38d67a9c</code></td>
+</tr>
+<tr>
+<td><code>clawith/research_report.md</code></td>
+<td style="text-align: right;">1588</td>
+<td><code>9894dbfbf6f8b1a5eca987c01d4556888160ca1a0721a4e6503ebe1d7a188bc7</code></td>
+</tr>
+<tr>
+<td><code>deepseek-harness/research_report.md</code></td>
+<td style="text-align: right;">1281</td>
+<td><code>8f6cfb194a114d1b3a324db17e650a637e0962fdb1b6aefa81b84597ea0330b4</code></td>
+</tr>
+<tr>
+<td><code>open-connector/research_report.md</code></td>
+<td style="text-align: right;">1197</td>
+<td><code>d43ffe461bc8362eba05bfe92f192a1218c70980d13a0350378a80ea60c41974</code></td>
+</tr>
+<tr>
+<td><code>sandbase-harness/research_report.md</code></td>
+<td style="text-align: right;">1702</td>
+<td><code>03255d84e4e14694ac0018fee94db99cfac7369dd168c1fe9a4915abf145d922</code></td>
+</tr>
+<tr>
+<td><code>holaos/research_report.md</code></td>
+<td style="text-align: right;">1883</td>
+<td><code>b5582eaea50c22732bd7a66ce562735e47ec80597da3038f4d595b5419601572</code></td>
+</tr>
+<tr>
+<td><code>orca/research_report.md</code></td>
+<td style="text-align: right;">1157</td>
+<td><code>2d32de3d2db2eec3c9da5bec9b2ae72611aff3ceef32cb81dc4d8d80b5e5fa8f</code></td>
+</tr>
+<tr>
+<td><code>tech-agent-security-governance/research_report.md</code></td>
+<td style="text-align: right;">1014</td>
+<td><code>a0c97009a04aaaaa47c5437b2d66bc8c09ef2fb7107f0af51e1dab05e64e2bb9</code></td>
+</tr>
+<tr>
+<td><code>protocol-mcp/research_report.md</code></td>
+<td style="text-align: right;">1199</td>
+<td><code>6aa6bc551458c817a81dc52dbe30b5bb2589f1184f27f4831a067817d3ffd462</code></td>
+</tr>
+<tr>
+<td><code>protocol-a2a/research_report.md</code></td>
+<td style="text-align: right;">1024</td>
+<td><code>21e29a0e340e74b177e975a5912c12247d71263a1e0e355d44839af27ffb8ff5</code></td>
+</tr>
+<tr>
+<td><code>protocol-acp-dual/research_report.md</code></td>
+<td style="text-align: right;">949</td>
+<td><code>9541e8137812a59b8c99720fec5ccede16a36c4a2c5e2edf25642c45c4287899</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="研究到实现的硬映射">3. 研究到实现的硬映射</h2>
+<p>阶段缩写：W0 需求冻结；W1 插件/事件骨架；W2 领域与持久化；W3
+Clerk/融云；W4 Agent 闭环； W5 Web/PWA；W6 Desktop/Mobile；W7
+生产加固与交付。</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>ID</th>
+<th>研究结论与证据</th>
+<th>产品需求 → 领域模型/API</th>
+<th>安全控制</th>
+<th>阶段</th>
+<th>验收证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RQ-001</td>
+<td><strong>Task 而非 chat/session 是权威对象。</strong>
+<code>_portfolio/master_research_report.md:46-50,128-143,635-654</code></td>
+<td>每次正式工作建立 <code>BusinessTask</code>，包含
+identity、mandate、capability、budget、context、plan、execution、Artifact、acceptance、evidence、recovery、closure；API
+使用 create/plan/authorize/start/deliver/verify/close 命令。</td>
+<td>消息、子群、session、MCP/A2A Task 只保存引用/投影；所有命令校验
+tenant、revision、actor chain。</td>
+<td>W0/W2/W4</td>
+<td>删除/编辑聊天、重建融云群或更换 runtime 后，Task
+ID、revision、状态和 evidence 不变。</td>
+</tr>
+<tr>
+<td>RQ-002</td>
+<td><strong>Task、Thread、Attempt、Action、Acceptance
+状态不可混用。</strong>
+<code>_portfolio/master_research_report.md:656-671,689-700</code>;
+<code>clawith/research_report.md:204-226,493-503</code></td>
+<td>分离
+<code>WorkConversation</code>、<code>BusinessTask</code>、<code>InvocationAttempt</code>、<code>ActionIntent</code>、<code>ArtifactAcceptance</code>
+状态机；execution succeeded 只能进入 delivering/verifying。</td>
+<td>revision/CAS、非法跳转拒绝、批准参数冻结、cancel
+propagation、compensation。</td>
+<td>W0/W2/W4</td>
+<td>并发推进、旧 revision、Attempt succeeded 但 verifier
+failed、取消后已有副作用等 fixture 均给出诚实状态。</td>
+</tr>
+<tr>
+<td>RQ-003</td>
+<td><strong>external identity、稳定 Actor、tenant
+membership、conversation membership、acting principal/on-behalf-of 与
+workload/delegation 必须分层。</strong>
+<code>_portfolio/master_research_report.md:47,673-687,909-921</code>;
+<code>clawith/research_report.md:543-557</code>;
+<code>tech-agent-security-governance/research_report.md:189-231</code></td>
+<td>W1 已冻结
+<code>ProviderRealmID/ExternalIdentityRef/ActorRef/ActorSnapshot</code>；W2/W4
+增加
+<code>HumanPrincipal/WorkloadPrincipal/TenantMembership/ConversationMembership/ActingContext/OnBehalfOf/DelegationGrant/CapabilityLease</code>。Clerk
+只认证 human，平台逐层做 membership/authorization。</td>
+<td>provider ref/prefix/type 都不授予权限；realm/app
+隔离；委托只能缩权；task/audience/purpose/TTL/PoP
+绑定；离职、取消、撤销使新 lease 失效。</td>
+<td>W1 值完成；W2-W4 authority</td>
+<td>同一 external human 可进入两个 tenant 但权限不同；同一 provider
+subject 跨 realm 不串号；receipt 还原 human→Agent→workload→tool；无
+membership、伪造 service/Agent 或请求父级权限均失败。</td>
+</tr>
+<tr>
+<td>RQ-004</td>
+<td><strong>持久 Agent 身份、不可变 release、tenant installation 与
+runtime session 解耦，并可 offboard。</strong>
+<code>_portfolio/master_research_report.md:254-262,1031-1038,1185</code>;
+<code>clawith/research_report.md:148-152</code>;
+<code>raft-slock/research_report.md:209-230</code>;
+<code>agentteams/research_report.md:113-123,192-201</code></td>
+<td><code>ActorRef</code> 已与 snapshot revision 分离；W2 分离
+<code>AgentDefinition/Release(digest)/Installation/RuntimeIncarnation</code>，提供
+suspend/offboard/reassign API。SemVer 只作显示/兼容标签。</td>
+<td>release bytes/digest 不可漂移；Run/Message pin release；回收
+membership、claim、schedule、delegation、credential、provider
+projection；Memory/Artifact 按 retention 处理。</td>
+<td>W1 stable ref；W2/W4 完整对象</td>
+<td>runtime restart/swap 不换 Actor；升级不改历史 producer；重复 SemVer
+不可换 bytes；offboard 后不能读新增内容或执行，历史 Artifact
+责任链保留。</td>
+</tr>
+<tr>
+<td>RQ-005</td>
+<td><strong>Agent-native IM 需要一等 Agent 身份、独立 membership
+与群级触发规则。</strong>
+<code>floatim-floatboat/research_report.md:152-163,229-240</code>;
+<code>clawith/research_report.md:198-226</code></td>
+<td>人与 Agent 共享
+<code>ActorRef/Participant/ConversationMembership/MentionIntent</code>；Agent
+是融云普通用户；群策略默认 <code>mention_only</code>。metadata codec
+独立见 RQ-043。</td>
+<td>sender 由平台 binding；system/service 默认不作普通聊天用户；平台校验
+tenant、membership、Agent installation/status、policy、budget；主
+Agent/service 不冒充目标 Agent。</td>
+<td>W1 actor value；W2-W4 membership/use case</td>
+<td>人和 Agent 使用同一成员 API；非 mention 不触发；无 persisted
+Actor/active installation/membership 不能发言；UI/事件/审计 actor
+一致。</td>
+</tr>
+<tr>
+<td>RQ-006</td>
+<td><strong><code>@Agent</code> 子群是 WorkConversation/Handoff
+topology，不是 Task、ACL 或 authority。</strong>
+<code>clawith/research_report.md:204-226,493-503</code>;
+<code>_portfolio/master_research_report.md:220-226</code>;
+<code>codexloom/research_report.md:216-234</code></td>
+<td>W1 已冻结 <code>ConversationRef/Snapshot</code> 与
+parent/root/invocation all-or-none；W4 实现
+<code>MentionAdmission/Invocation/WorkConversation/HandoffContract</code>，幂等键
+<code>(tenant,parentGroup,rootMessage,agentInstallation)</code>。</td>
+<td>durable inbox、child 独立 membership/object auth、context
+cutoff、deadline/cycle/depth/budget guard；父群默认不继承子群
+ACL；conversation 变化触发 held-draft action-time 重验。</td>
+<td>W1 topology；W3/W4 use case</td>
+<td>duplicate/reorder/resume 只产生一个
+Task/子群/Invocation；父群未显式加入不能读 child；Agent
+只在子群输出，父群仅有受限卡片和人工授权发布的 Artifact ref。</td>
+</tr>
+<tr>
+<td>RQ-007</td>
+<td><strong>通用群聊易复制，首版必须交付窄而完整的不可伪造结果。</strong>
+<code>_portfolio/master_research_report.md:1040-1047,1125-1158,1427-1433</code></td>
+<td>M0 冻结“安装→入群→mention→唯一 Task/子群→Needs
+You→Artifact→accept→publish ref→offboard”闭环；V1
+再补企业完备性和原生端。</td>
+<td>M0 fake provider、零真实 outbound；功能页面不能代替 fault/evidence
+gate。</td>
+<td>W0-W5</td>
+<td>单条 E2E 加 9 类故障注入全部通过，并输出 evidence bundle、截图和
+runbook。</td>
+</tr>
+<tr>
+<td>RQ-008</td>
+<td><strong>Everything-is-a-plugin 是受不变量约束的 capability
+seam。</strong>
+<code>deepseek-harness/research_report.md:23-32,207-216,236-251,516-519,568-579</code>;
+<code>_portfolio/master_research_report.md:338-348</code></td>
+<td><code>PluginManifest/Definition/Instance/ProviderBinding/ConsumerPort</code>；确定性
+discover→validate→configure→start→ready→drain→stop；终态统一为
+stopped/failed，最终资源清理由 host effect registry 持有。</td>
+<td>package trust/approval 与 manifest 分离；依赖
+DAG/循环拒绝；all-ready barrier、drain 拒绝新工作、逆序清理；Host mutex
+外执行 plugin callback，starting/stopping 单 owner，reentrant/concurrent
+lifecycle 快速拒绝；当前 goroutine panic 转固定无 payload error，startup
+仍 rollback、shutdown 不跳过后续回收；lifecycle duration 只形成
+cooperative context deadline，不冒充强杀；插件不能直写核心表或绕过
+Action Plane。</td>
+<td>W1</td>
+<td>fake 替换
+Clerk/融云后领域测试不变；validate/configure/start/ready/drain/stop
+任一点失败及 concurrent/repeat lifecycle 后 route/listener/timer/lease
+为零残留；全部 callback 可观察 State 且不死锁，blocked callback
+不能阻止状态观察或抢占 owner；各 phase panic canary
+不泄漏且后续回收完整；deadline 已过但 callback 未返回时仍保持
+owner/state，释放后才收敛。</td>
+</tr>
+<tr>
+<td>RQ-009</td>
+<td><strong>最终组合树才是部署真相。</strong>
+<code>deepseek-harness/research_report.md:218-234,404-414</code>;
+<code>agentspace/research_report.md:1852-1861</code>;
+<code>tech-agent-security-governance/research_report.md:239-276</code></td>
+<td><code>Registry builder -&gt; Freeze -&gt; profile -&gt; ordered bundles -&gt; tenant overlay -&gt; EffectiveConfiguration</code>；相同
+row ID 后层整行替换，显式 tombstone 删除；Attempt 保存 source revisions
+与 effective digest。</td>
+<td>Freeze 重验并克隆 schema/broker/manifest/package graph，runtime read
+在 Freeze 前拒绝、late registration 关闭；同层冲突/跨租户
+overlay/prompt/CLI/home patch 拒绝；schema/version/artifact pin；host
+重算完整 manifest digest，PackageRecord 以 approved manifest digest +
+admission revision 绑定批准；Secret raw locator 先经 broker
+admission，配置只引用 claim digest/revision，Effective/Factory 只保存非
+bearer binding
+view；capability/egress/secret/artifact/schema/binding/manifest/admission
+diff 交给 host-owned admission，配置不能自证批准。</td>
+<td>W1/W7</td>
+<td>Freeze completeness/tamper/detachment/concurrency
+race；manifest/config-schema/broker/claim/effective v3 golden；bundle
+优先级、整行替换、timeout/admission/Secret retarget diff、跨 scope
+anti-replay、撤销与 Host
+漂移拒绝；首次启动和未批准扩权均阻断自动晋升。</td>
+</tr>
+<tr>
+<td>RQ-010</td>
+<td><strong>Durable event spine 是恢复/审计/流式 UI
+的共同底座。</strong>
+<code>deepseek-harness/research_report.md:255-312,543-591,823-842</code>;
+<code>sandbase-harness/research_report.md:318-351</code>;
+<code>_portfolio/master_research_report.md:183-190</code></td>
+<td>W1 已冻结 <code>EventToAppend/StoredEvent/EventStore</code>
+port、append/read page/scoped opaque cursor 与 volatile deterministic
+fake；W2 实现 PostgreSQL stream/event/checkpoint、production projector
+与 backfill+live。</td>
+<td>store 独占 seq/globalPosition/recordedAt；整批 expected
+revision、ordered strict exact retry/conflict、全有或全无、unknown event
+保留、deep snapshot、empty/unknown/contradictory/typed-nil
+characteristics fail-closed、cooperative context checks；durable/live 与
+EventStore/ActionReceipt 分域；正文/secret 用受控 ref。</td>
+<td>W1 port/fake 已完成；W2 durability/projection 未实现</td>
+<td>W1：28 个 event test，覆盖 64 路 CAS/replay、128 stream global
+order、scope/namespace cursor、失败零写入、fixture backfill no
+gap/dup；明确不宣称 durable/tamper-evident/Action receipt/Agent
+replay，checksum 不冒充 MAC。W2：crash/reopen/kill-9/restore、projection
+清库重建、subscribe-before-backfill+live 与 source evidence 通过。</td>
+</tr>
+<tr>
+<td>RQ-011</td>
+<td><strong>商用 long-running 需要持久
+lease/heartbeat/reclaim，不是进程内 Jobs。</strong>
+<code>deepseek-harness/research_report.md:543-601</code>;
+<code>sandbase-harness/research_report.md:453-468,598-615</code>;
+<code>agentspace/research_report.md:369-439</code></td>
+<td><code>WorkItem/Attempt/Lease/Fence/Heartbeat/RetryPolicy/DeadLetter/ScheduleOccurrence</code>。</td>
+<td>DB atomic claim/CAS、bounded retry、deadline/budget、orphan
+reconciler；仅当前 fence 可写终态。</td>
+<td>W2/W4</td>
+<td>claim 后 crash、双 worker、过期 owner、重复 complete、多实例
+schedule 均无双终态和幽灵执行。</td>
+</tr>
+<tr>
+<td>RQ-012</td>
+<td><strong>外部写操作只能诚实建模为 at-least-once +
+unknown/reconcile。</strong>
+<code>open-connector/research_report.md:441-449</code>;
+<code>clawith/research_report.md:421-452</code>;
+<code>protocol-a2a/research_report.md:307-320</code>;
+<code>agentspace/research_report.md:579-629</code></td>
+<td><code>ActionIntent/Attempt/ExternalOperationRef/Receipt/ReconciliationCase/Compensation</code>；prepare/authorize/dispatch/reconcile
+API。</td>
+<td>canonical hash、稳定 idempotency
+key、fencing、read-after-write、provider acceptance query；无 negative
+finality 不盲重试。</td>
+<td>W2/W4/W7</td>
+<td>dispatch 前/中/远端成功后本地落库前杀进程；effect_unknown
+可收敛；故障矩阵重复副作用为 0。</td>
+</tr>
+<tr>
+<td>RQ-013</td>
+<td><strong>HTTP 200、business accepted、provider delivered、Attempt
+succeeded、Artifact accepted 互不等价。</strong>
+<code>open-connector/research_report.md:846-850</code>;
+<code>protocol-a2a/research_report.md:242-257</code></td>
+<td><code>ApiEnvelope</code>、<code>DeliveryStatus</code>、<code>ActionStatus</code>、<code>AttemptStatus</code>、<code>AcceptanceStatus</code>
+各自版本化。</td>
+<td>网络中断不伪装为业务成功，COMPLETED 不触发发布/付款，需
+readback/verifier。</td>
+<td>W0-W4</td>
+<td>HTTP 200 业务拒绝、HTTP 中断但远端成功、Attempt succeeded
+但验收失败都能区分和恢复。</td>
+</tr>
+<tr>
+<td>RQ-014</td>
+<td><strong>HITL 是 Human Attention OS，不是确认弹窗。</strong>
+<code>_portfolio/master_research_report.md:50,730-743,990-998</code>;
+<code>clawith/research_report.md:513-541</code>;
+<code>agentspace/research_report.md:579-629</code></td>
+<td><code>NeedsYou/ApprovalRequest/Decision</code> 含
+risk、loss、deadline、reversibility、confidence、parameter
+hash/diff、options、assignee、SLA、reason。</td>
+<td>trusted UI
+从真实参数渲染；TTL/nonce/audience/single-use；四眼、代理审批、超时
+fail-closed；改参重批。</td>
+<td>W2/W4/W5</td>
+<td>改 recipient/amount/resource 后旧批准失效；过期/重放/跨 workspace
+拒绝；最终 receipt 引用 decision。</td>
+</tr>
+<tr>
+<td>RQ-015</td>
+<td><strong>Agent 提交/完成不等于 Artifact 被接受。</strong>
+<code>_portfolio/master_research_report.md:56,745-758</code>;
+<code>agentteams/research_report.md:256-283</code>;
+<code>protocol-a2a/research_report.md:267-281</code></td>
+<td><code>Artifact/Version/Scan/AcceptanceContract/VerificationRun/Decision/PublishReceipt</code>；deliver/verify/accept/request-changes/publish-ref。</td>
+<td>immutable hash/lineage；producer/verifier 分权；URL safe
+fetch、AV/zip bomb/CSP/DLP/隔离预览。</td>
+<td>W2/W4/W5</td>
+<td>恶意 HTML/URL/文件 quarantine；hash 篡改失败；未 accepted
+不可发布回父群。</td>
+</tr>
+<tr>
+<td>RQ-016</td>
+<td><strong>Memory 是受治理资产，不是向量库 feature。</strong>
+<code>_portfolio/master_research_report.md:48,715-728</code>;
+<code>holaos/research_report.md:365-444</code>;
+<code>tech-agent-security-governance/research_report.md:337-358</code></td>
+<td><code>MemoryRecord/Admission/Conflict/Promotion/DerivedIndex/DeleteProof</code>；ingest/retrieve/use/quarantine/correct/promote/delete
+API。</td>
+<td>provenance/owner/scope/purpose/TTL/taint；先授权后检索；组织经验候选→eval→人审→发布→退休。</td>
+<td>W2/W4，V1 深化</td>
+<td>跨群/跨 tenant 泄漏为 0；污染内容不晋升；derived index
+可重建；删除传播到 cache/index/backup expiry 并留 proof。</td>
+</tr>
+<tr>
+<td>RQ-017</td>
+<td><strong>Agent Store 必须是 Trust Passport，不是图标目录。</strong>
+<code>floatim-floatboat/research_report.md:647-681,943-962</code>;
+<code>_portfolio/master_research_report.md:58,923-939</code>;
+<code>agentspace/research_report.md:1852-1871</code></td>
+<td><code>AgentRelease/TrustPassport/Publisher/CapabilityBOM/Attestation/InstallSnapshot/Verdict/Waiver/Revocation</code>；publish/admit/install/upgrade-diff/revoke。</td>
+<td>digest/signature/SBOM/provenance、static+isolated dynamic
+scan、data/auth/egress disclosure、quarantine/canary/rollback。</td>
+<td>W2/W4/W7</td>
+<td>篡改包拒装；扩权需重新批准；撤销后不可新装/新
+Task，在用实例受控停止。</td>
+</tr>
+<tr>
+<td>RQ-018</td>
+<td><strong>local/self-hosted/sandbox 不等于无出网或隔离成立。</strong>
+<code>_portfolio/master_research_report.md:51-52,592-617</code>;
+<code>holaos/research_report.md:611-679</code>;
+<code>sandbase-harness/research_report.md:432-442</code></td>
+<td><code>DataFlowDeclaration/ProcessingRoute/RuntimeProfile/EgressPolicy/RetentionPolicy</code>；按
+deployment/model/embedding/telemetry/provider 披露。</td>
+<td>mount/process/network/secret/browser/clipboard/cleanup 逐项
+profile；analytics/relay 分级开关；默认零网。</td>
+<td>W0/W3/W7</td>
+<td>各模式抓包与声明一致；关闭 telemetry/relay 零对应出站；egress
+canary、mount escape 与清理测试。</td>
+</tr>
+<tr>
+<td>RQ-019</td>
+<td><strong>MCP、A2A、Agent Client Protocol 解决不同边界，adapter
+存在不等于语义无损。</strong>
+<code>_portfolio/master_research_report.md:520-527,529-580</code>;
+<code>protocol-mcp/research_report.md:23-65,160-202,645-664</code>;
+<code>protocol-acp-dual/research_report.md:13-31,138-165,595-605</code>;
+<code>omnigent/research_report.md:30-35,45-53,84-90</code></td>
+<td>MCP=tool seam；A2A=未来跨 Agent/组织委托；Agent Client
+Protocol=客户端/IDE↔︎coding Agent；内部使用 canonical adapter，并为
+resume/fork/stream/approval/interrupt/cost/images/compaction 保存
+capability matrix。</td>
+<td>文档/API 禁止只写歧义 <code>ACP</code>；version/wire/schema/draft
+分开；unknown 或无法保真的 capability 明确失败，禁止静默降级。</td>
+<td>W0，W4/W7 扩展</td>
+<td>协议名称 lint、adapter golden/round-trip/differential/conformance
+tests；不把 Registry/Card 当信任证明；不能保真时返回 unsupported。</td>
+</tr>
+<tr>
+<td>RQ-020</td>
+<td><strong>协议互操作不等于信任互操作。</strong>
+<code>protocol-a2a/research_report.md:579-593</code>;
+<code>tech-agent-security-governance/research_report.md:362-374</code></td>
+<td><code>CanonicalPrincipal/Mandate/Task/ActionIntent/EvidenceGraph</code>
+横跨 IM、MCP、A2A、browser、connector。</td>
+<td>每跳传播 tenant/actor/subject/task/purpose/audience 并取 capability
+交集；所有 side effect 汇入同一 Action Plane。</td>
+<td>W0/W2/W4</td>
+<td>同一动作从不同 adapter 进入得到一致 allow/deny/approval；语义丢失
+fail-closed，causal graph 连续。</td>
+</tr>
+<tr>
+<td>RQ-021</td>
+<td><strong>长期凭据不进入 Agent/model/message/ext_info/event。</strong>
+<code>holaos/research_report.md:889-924</code>;
+<code>tech-agent-security-governance/research_report.md:315-333</code>;
+<code>deepseek-harness/research_report.md:433-459</code>;
+<code>sandbase-harness/research_report.md:470-504</code></td>
+<td>W1
+<code>SecretClaimRequest -&gt; SecretClaimReference -&gt; SecretBindingView</code>；W2/W4
+再实现
+<code>SecretLease/TokenExchangeRecord/BrokeredExecution</code>，运行时按
+typed ActionIntent JIT 解析。</td>
+<td>W1 raw locator 仅进 trusted admission
+broker，tenant/row/plugin/artifact/manifest/admission/schema/logical-name/broker/purpose/audience
+exact bind，error/panic 脱敏与 revoke；后续 KMS/Keychain、persistent
+tenant key、short TTL、audience/PoP/scope、rotation、backup/export
+denylist。</td>
+<td>W1 admission 已实现；W2-W4/W7 action-time 仍待</td>
+<td>W1 raw/material canary 不进入
+canonical/getter/diff/Factory/error，跨 scope/漂移/伪造/撤销拒绝；全系统
+Git/Notion/DB/日志/模型/IM canary 与过期/PoP/rotation/执行 receipt
+仍是后续门禁。</td>
+</tr>
+<tr>
+<td>RQ-022</td>
+<td><strong>Webhook/push 是 durable delivery service，不是 Agent 任意
+POST。</strong> <code>protocol-a2a/research_report.md:323-342</code>;
+<code>sandbase-harness/research_report.md:576-596</code></td>
+<td><code>DeliveryIntent/Subscription/Attempt(deliveryId,nonce,digest)/DeadLetter</code>；outbox
+delivery worker。</td>
+<td>HTTPS、DNS/redirect/private-IP
+重验、challenge、签名/timestamp/nonce、owner
+binding、backoff/max-age。</td>
+<td>W3/W4/W7</td>
+<td>SSRF/rebinding/replay/duplicate/out-of-order/remote-success-local-timeout
+故障测试；receiver 只消费一次。</td>
+</tr>
+<tr>
+<td>RQ-023</td>
+<td><strong>Budget 和 verified outcome 指标必须是一等对象。</strong>
+<code>_portfolio/master_research_report.md:644,702-713,1000-1008</code>;
+<code>openagents/research_report.md:1113-1183</code>;
+<code>agentspace/research_report.md:1748-1815</code></td>
+<td><code>TaskBudget/Reservation/UsageLedger/OutcomeEvaluation/ReliabilitySLO</code>；token、money、compute、time、attempt、attention
+hard limit。</td>
+<td>每事件归因；并行/重试预留；超限停止并创建 Needs
+You；防负账/重复计费。</td>
+<td>W2/W4/W7</td>
+<td>verified task success、human minutes、duplicate
+side-effect、recovery completion、evidence completeness、cost/accepted
+outcome 可复算。</td>
+</tr>
+<tr>
+<td>RQ-024</td>
+<td><strong>Direct Reply、Quick Task、Project Task 要分层。</strong>
+<code>agentteams/research_report.md:250-255</code></td>
+<td><code>WorkMode=direct|quick|project</code> 与可解释
+<code>WorkAdmissionDecision</code>；普通问答不强制创建 Agent
+swarm。</td>
+<td>按风险/成本/复杂度/验收需要
+admission，模型不能自行升级预算与权限。</td>
+<td>W2/W4/W5</td>
+<td>三类请求确定路由；低复杂请求不创建冗余子群/Task；单/多 Agent
+成本质量可对照。</td>
+</tr>
+<tr>
+<td>RQ-025</td>
+<td><strong>worktree 只是文件并发边界；断网只能判 runtime
+unverifiable。</strong>
+<code>orca/research_report.md:205-221,239-255</code></td>
+<td><code>ExecutionWorkspace/ResourceLease/ExternalNamespace/CleanupPlan</code>；<code>RuntimeLiveness=live|unverifiable|exited</code>
+与 incarnation。</td>
+<td>端口/DB schema/测试账号/云 namespace/outbound task-scoped；只有
+execution host 正面证据可判 exited。</td>
+<td>W4/W7</td>
+<td>并发 Run 不共享外部资源；断网不启动第二实例；失败清理无幽灵
+worktree，未合并工作不丢失。</td>
+</tr>
+<tr>
+<td>RQ-026</td>
+<td><strong>消息透明/trace 不是完整证据。</strong>
+<code>_portfolio/master_research_report.md:57,647-652,760-766</code>;
+<code>agentteams/research_report.md:614-693</code>;
+<code>agentspace/research_report.md:633-674</code></td>
+<td><code>EvidenceNode/Edge/Chain/Bundle/RedactionManifest</code>；按
+Task 导出 mandate→action→Artifact→acceptance。</td>
+<td>hash chain/签名、字段级 redaction、ACL、retention/legal hold；trace
+sampling 不影响审计；高风险审计 append 失败则 dispatch 前
+fail-closed。</td>
+<td>W2/W4/W7</td>
+<td>任一 accepted Artifact 可离线验签；篡改/删除/乱序能定位断点；bundle
+不含 secret；best-effort 日志不能补写冒充审计。</td>
+</tr>
+<tr>
+<td>RQ-027</td>
+<td><strong>组织知识必须候选→审阅→发布→退休。</strong>
+<code>clawith/research_report.md:307-352</code></td>
+<td><code>ExperienceDraft/Revision/PublicationDecision/Citation/AdoptionFeedback/Retirement</code>。</td>
+<td>未发布不进入权威检索；source 撤回使经验失效；promotion 需
+eval/reviewer/version/rollback。</td>
+<td>V1 后半（W4/W5 后）</td>
+<td>AI 提议不自动发布；每次引用回溯
+source/version/reviewer；撤回/退休版本不再影响新 Run。</td>
+</tr>
+<tr>
+<td>RQ-028</td>
+<td><strong>RongCloud 是 transport/projection，不是 business source of
+truth；adapter 能启动不证明 provider 语义完整。</strong>
+<code>openagents/research_report.md:341-363,466-528</code>;
+<code>holaos/research_report.md:595-607</code>;
+<code>agentspace/research_report.md:739-759</code></td>
+<td><code>InboundChannelBinding/ExternalIdentityBinding/ProviderProjection/TransportReceipt/ProviderCapabilities</code>；平台持有
+organization、ACL、admitted message、Task、Artifact。</td>
+<td>webhook authenticate/dedupe、realm mapping、attachment
+taint、wrong-group/output DLP、kill switch；stable ID、event
+auth、resume、mention、file/edit/delete、idempotency、acceptance query
+分项声明，required capability 缺失则 not-ready。</td>
+<td>W0/W2/W3</td>
+<td>provider history/group 被删除或 metadata
+伪造时平台权限不变；fake↔︎RongCloud adapter 不改变 canonical
+contract；unverified capability 不得静默模拟，ACK loss 进入
+unknown/reconcile。</td>
+</tr>
+<tr>
+<td>RQ-029</td>
+<td><strong>移动审批应签结构化 capability，不搬运泛化终端权限。</strong>
+<code>orca/research_report.md:319-325,667-669</code></td>
+<td><code>AttentionPresentation/ApprovalCapability/DeviceSession</code>；移动端展示
+diff、风险、资源、可逆性和测试证据。</td>
+<td>device revoke、短 session、生物/step-up auth、task/action
+scope；高风险独立 capability。</td>
+<td>W5/W6</td>
+<td>丢失/撤销设备不能批准；一次审批不能换成文件、Git、shell
+或其他资源泛权限。</td>
+</tr>
+<tr>
+<td>RQ-030</td>
+<td><strong>不自造新的公网 Agent wire
+协议；自行设计平台内部信任合同。</strong>
+<code>_portfolio/master_research_report.md:516-580</code>;
+<code>openagents/research_report.md:466-528</code></td>
+<td>自研 canonical mandate、Task、Action Ledger、Artifact
+Acceptance、Evidence/Recovery；外部以 MCP/A2A/Agent Client Protocol
+adapter 接入。</td>
+<td>adapter 只翻译，不拥有 authority；版本/conformance/peer trust
+单独准入。</td>
+<td>W0，W4+按需</td>
+<td>内部合同不依赖任一
+provider/protocol；真实跨组织需求出现前不发布伪标准。</td>
+</tr>
+<tr>
+<td>RQ-031</td>
+<td><strong>Skill
+必须渐进披露，并把一次激活冻结到不可变包快照。</strong>
+<code>clawith/research_report.md:356-401</code></td>
+<td><code>SkillPackageVersion/ActivationReceipt/MaterializationManifest</code>；catalog
+只投影轻量索引，完整读取 <code>SKILL.md</code> 后才激活，辅助文件按
+manifest 物化。</td>
+<td>receipt 绑定
+<code>packageVersion + objectVersion + contentDigest</code>；Run
+中途升级不漂移；部分物化、摘要不符、未审核包 fail-closed。</td>
+<td>W2 建模；M0 后 W4/W7 实现</td>
+<td>同一 Run 激活后修改上游 Skill，后续 step
+仍读取原字节；缺任一必需文件不能执行；未批准包不能产生 activation
+receipt。</td>
+</tr>
+<tr>
+<td>RQ-032</td>
+<td><strong>Tool Definition、Agent Assignment 与一次 Execution Binding
+是三种授权对象。</strong>
+<code>clawith/research_report.md:403-419</code></td>
+<td><code>CapabilityDefinitionVersion/AgentCapabilityAssignmentRevision/ExecutionBinding(routeDigest,credentialRef,policyRevision)</code>；执行前重验
+assignment/route/credential/membership。</td>
+<td>secret 仅保存 opaque ref；stale assignment、route drift、跨 Agent
+绑定、未批准参数在 action-time fail-closed。</td>
+<td>W2 建模；W4/W7 实现</td>
+<td>运行前禁用 assignment 可阻断旧 Run；route
+漂移触发重新准入；checkpoint/event/模型/IM 中 secret canary 为零。</td>
+</tr>
+<tr>
+<td>RQ-033</td>
+<td><strong>长期单位是 Environment；每次 Run 只消费受治理的
+projection。</strong>
+<code>holaos/research_report.md:215-255,461-488</code>;
+<code>omnigent/research_report.md:30-35,45-53,84-90</code></td>
+<td><code>EnvironmentRevision/RunCompilation/RunCapabilitySnapshot/ProjectedContextManifest</code>；Attempt
+冻结 environment/effective config/model/runtime/capability/egress
+digests。</td>
+<td>hot/warm/cold 分层；projection compiler 最小化可见/可做范围；跨
+harness resume/fork/stream/approval/interrupt/cost/images/compaction
+缺能力时 fail-closed；promotion boundary 阻止未审核内容进入 durable
+state。</td>
+<td>W1 effective config；W2 建模；W4 runtime</td>
+<td>换模型/runtime 后从 bounded canonical state 恢复；未投影能力从任何
+adapter 入口都失败；无法保真不迁移；未 promotion
+内容不进入长期环境。</td>
+</tr>
+<tr>
+<td>RQ-034</td>
+<td><strong>Planner/model 不能持有 privileged actuator 权限。</strong>
+<code>agentteams/research_report.md:373-404,431-450</code></td>
+<td><code>ActionProposal -&gt; PolicyDecision/Approval -&gt; ExecutorCommand -&gt; ActionReceipt</code>；Runtime
+只提 typed proposal，Executor 独立。</td>
+<td>Runtime 无 provider credential/Docker socket/宿主 home；执行器按
+tenant/task/capability/参数 action-time 重验。</td>
+<td>W2 Action port；W4 实现；W7 硬化</td>
+<td>prompt injection 不能从 Runtime 直达副作用；绕过 Action Plane 的
+Tools/Peers/RongCloud 路径为零。</td>
+</tr>
+<tr>
+<td>RQ-035</td>
+<td><strong>所有 MCP/connector 出网必须经过统一 Egress Broker。</strong>
+<code>clawith/research_report.md:439-452</code>;
+<code>holaos/research_report.md:571-587</code></td>
+<td><code>EgressIntent/ResolvedTarget/ConnectionLease/ResponseBudget</code>；per-capability
+<code>effect/dataClass/approval/retry/idempotency/reconcile</code>。</td>
+<td>DNS/IP pin、private/metadata 拒绝、redirect/SSE 每跳重验、跨 origin
+剥离认证、domain/port allowlist、响应 byte/time/schema 上限。</td>
+<td>W2 port；M0 可 fake；W4/W7 实现</td>
+<td>SSRF/rebinding/redirect/credential forwarding/oversize/slow stream
+全拒绝；MCP 写响应丢失进入 unknown 而非换 transport 重放。</td>
+</tr>
+<tr>
+<td>RQ-036</td>
+<td><strong>Routine/Timer 是独立产品对象，不只是底层 schedule
+occurrence。</strong>
+<code>openagents/research_report.md:174-190</code></td>
+<td><code>RoutineDefinition/TriggerPolicy/MissedRunPolicy/ScheduleOccurrence</code>；冻结
+owner、timezone、Task template、budget、approval 和 pause state。</td>
+<td>stable occurrence key、scheduler lease/fence、DST/错过边界、bounded
+backfill；offboard/预算耗尽停止新 occurrence。</td>
+<td>W2 建模；M0 后 W4/W5 实现</td>
+<td>scheduler 重启/重复 tick/DST 不重复 Task；skip/run-once/backfill
+可预测；预算耗尽和撤权后零新执行。</td>
+</tr>
+<tr>
+<td>RQ-037</td>
+<td><strong>Agent Presence、provider online 与 runtime liveness
+是三种状态。</strong>
+<code>floatim-floatboat/research_report.md:896-913</code>;
+<code>orca/research_report.md:239-255</code></td>
+<td><code>AgentPresenceLease(online/working/waiting/human_takeover/unverifiable)</code>、<code>RuntimeIncarnation/Liveness</code>；群/目录只投影。</td>
+<td>lease expiry 停止新 admission；unverifiable 不判
+exited/不重跑；human takeover 推进 fence，旧 runtime 不能写终态。</td>
+<td>W2 建模；W4 实现</td>
+<td>断网显示 unverifiable 且不启动第二实例；过期 Agent
+不接任务；takeover 后旧 incarnation 恢复也无法产生副作用。</td>
+</tr>
+<tr>
+<td>RQ-038</td>
+<td><strong>每条 Agent
+数据路线必须版本化披露并在变化时重新批准/告知。</strong>
+<code>floatim-floatboat/research_report.md:502-517</code>;
+<code>holaos/research_report.md:595-607</code></td>
+<td><code>DataRouteDescriptor/ProcessingRoute/OrganizationProcessingApproval/PersonalAcknowledgement</code>；installation/Attempt
+冻结 route revision，成员卡可回看
+operator/host/region/model/retention/training。</td>
+<td>unknown host/route 默认拒绝；组织 allowlist/DLP；路线扩大或
+host/model/region/training/retention 变化重新
+policy；普通员工不能扩大组织处理路线，也不能把组织处理的全部合法基础伪装成个人
+consent。</td>
+<td>W2 模型；W3/W4 接入</td>
+<td>未知第三方 host 不能交互；route revision
+变化使旧组织批准/个人告知按适用规则失效；抓包/evidence 与披露一致。</td>
+</tr>
+<tr>
+<td>RQ-039</td>
+<td><strong>同一 Agent
+在不同会话中有不同代表权、披露边界与承诺额度。</strong>
+<code>codexloom/research_report.md:226-234</code>;
+<code>raft-slock/research_report.md:272-283</code></td>
+<td><code>ConversationRepresentationPolicyRevision/ConversationMandate/DisclosureRule/CommitmentLimit/OutboundSpeechAct</code>；内部群、客户群、供应商空间分别编译。</td>
+<td>membership 不授予全部内部知识/工具；按 audience/purpose/data
+class/主动发送/承诺额度缩权；撤权立即阻断新外发。</td>
+<td>W2 建模；W3/W4 接入；跨组织 federation 延后</td>
+<td>同一 Agent 在内部/外部群得到不同
+context/tool/knowledge/commitment；错群输出、越额承诺和撤权后发送均失败。</td>
+</tr>
+<tr>
+<td>RQ-040</td>
+<td><strong>Runtime 输出晋升为权威文档、知识、Skill
+或外部写入必须是独立事务。</strong>
+<code>agentspace/research_report.md:790-820</code>;
+<code>youmind/research_report.md:11-17,510-544</code></td>
+<td><code>PromotionIntent/Attempt/SourceArtifactRef/ValidationBundle/PromotionReceipt/RollbackReceipt</code>；provider
+completion 只产生候选 Artifact。</td>
+<td>immutable digest；MIME/magic/active-content/archive/DLP；generated
+Skill review/sign/sandbox；文档 base-version CAS；外部写 exact diff；可
+rollback。</td>
+<td>W2 建模；M0 后 W4/W7 实现</td>
+<td>provider 成功但 promotion
+失败无半权威资产；并发人工编辑冲突；恶意产出隔离；crash resume；rollback
+保留原 Artifact/evidence。</td>
+</tr>
+<tr>
+<td>RQ-041</td>
+<td><strong>不可信内容不能产生 authority，taint 必须经过复制、摘要、Tool
+和 Agent 链端到端传播。</strong>
+<code>protocol-mcp/research_report.md:419-423</code>;
+<code>agentspace/research_report.md:1817-1842</code>;
+<code>openworker/research_report.md:63-67</code>;
+<code>raft-slock/research_report.md:276-283</code></td>
+<td><code>ContentObservation/ProvenanceEdge/TaintLabel/AuthorityClass/DeclassificationDecision</code>；ActionProposal
+与 Artifact 保存来源/taint path。</td>
+<td>数据与指令分离；摘要/转发/tool result 不自动提升信任；approval
+展示来源链；只有显式授权主体可 declassify。</td>
+<td>W2 建模；W4 enforcement；W5 UI；W7 攻击语料</td>
+<td>网页/邮件/附件/MCP result 注入不能授予权限或外传 secret；复制/摘要后
+taint 不丢；删除标签导致 admission 失败。</td>
+</tr>
+<tr>
+<td>RQ-042</td>
+<td><strong>可执行 App/Extension/Plugin 与声明式 Skill/Tool definition
+是不同信任类。</strong> <code>kirocrew/research_report.md:31-33</code>;
+<code>pi-agent/research_report.md:34-39,73-79</code>;
+<code>tutti-vm/research_report.md:41-47</code>;
+<code>protocol-mcp/research_report.md:281-287,392-404</code>;
+<code>deepseek-harness/research_report.md:384-414,443-456,516-519,568-581,825-840</code>;
+<code>omnigent/research_report.md:355-366,505-534,570-589,1242-1261</code>;
+<code>sandbase-harness/research_report.md:373-414,1160-1163</code></td>
+<td><code>ExecutablePackageVersion/ExecutionIsolationProfile/RuntimeGrant/ProcessInstance</code>；W1
+已冻结 host-owned version refs、Supervisor
+IPC、generation/fence、cancel→grace→kill→wait/reap/release receipts 与
+volatile non-isolating fake；Plugin Host 只允许 host
+编译并准入的内建插件。</td>
+<td>不可信包不进 API/Gateway/Plugin Host 主进程；API 不持 raw
+argv/env/host path/secret/runtime socket/process handle；真实 backend
+使用独立 UID/container/microVM，限制
+fs/network/process/env/secret/resource；kill 不证明 effect 未发生，缺
+exit/reap/release 进入 operator-visible quarantine，effectful stop 始终
+reconcile；安装 lifecycle script 也属于执行。</td>
+<td>W1 合同/fake 已完成；共享 wire、durable supervisor 与真实 OS
+isolation/conformance 在 W4/W7</td>
+<td>W1：profile 扩权逐项拒绝、24 路 generation CAS 单 winner、old fence
+拒绝、kill 无 wait quarantine、forced release 仍
+<code>dispatched_unknown</code>、fake 明示
+<code>isolation=none</code>；W4/W7：恶意包不能读宿主 home/env/其他
+tenant/metadata，不能撞垮核心 API，fork/daemon/orphan
+可验证回收，撤销/结束后零残留。</td>
+</tr>
+<tr>
+<td>RQ-043</td>
+<td><strong>Provider metadata 必须是有界、严格、零授权
+projection。</strong> <code>clawith/research_report.md:599-611</code>;
+<code>holaos/research_report.md:599-607</code>;
+<code>tech-agent-security-governance/research_report.md:442-444</code>;
+<code>protocol-a2a/research_report.md:425-457,480</code></td>
+<td>W1 <code>UserProjection/ConversationProjection</code> 与专用
+canonical codec；四种 exact shape，schemaVersion=1，1024-byte
+上限。</td>
+<td>flat allowlist、字典序
+key、UTF-8/NFC、duplicate/unknown/null/wrong-type/trailing/exact-roundtrip
+拒绝；永久禁止 authority/secret/content/evidence 字段；decode 后仍回查
+authoritative binding/membership。</td>
+<td>W1 codec 完成；W2/W3 resolver/provider readback</td>
+<td>四种 golden bytes；848 个非 canonical permutation；44 类
+forbidden-field canary；Unicode/control/oversize/race/fuzz
+通过；语法合法但 mapping 被篡改仍无权限。</td>
+</tr>
+<tr>
+<td>RQ-044</td>
+<td><strong>IM adapter 必须显式声明身份
+mapping、能力降级和失败语义。</strong>
+<code>clawith/research_report.md:599-611</code>;
+<code>agentspace/research_report.md:739-759</code>;
+<code>floatim-floatboat/research_report.md:582-593</code>;
+<code>tech-agent-security-governance/research_report.md:389-395</code></td>
+<td><code>ProviderRealm/Profile/Capabilities</code>、<code>ExternalIdentityBindingResolver</code>、<code>VerifiedInboundEnvelope</code>、<code>ProviderDispatchAttempt/TransportReceipt/ReconciliationCase</code>。</td>
+<td>callback auth、durable dedupe、realm+provider ID mapping、canonical
+metadata consistency；outbound 默认关闭；timeout 无 authoritative
+negative finality 时进入 unknown，禁止盲重发。</td>
+<td>W2 port；W3 adapter；W4 dispatch</td>
+<td>错 realm/tenant、duplicate/reorder/resume、metadata drift、ACK
+loss、unsupported feature、kill switch 矩阵；内部 codec 与融云 sandbox
+contract test 分开。</td>
+</tr>
+<tr>
+<td>RQ-045</td>
+<td><strong>Conversation freshness、held draft、message lifecycle 与
+attention/read state 必须分域。</strong>
+<code>clawith/research_report.md:204-226</code>;
+<code>raft-slock/research_report.md:135-145,237-270</code>;
+<code>floatim-floatboat/research_report.md:582-593,896-915</code></td>
+<td><code>ContextCutoff/HeldDraft/ConversationRevision/MessageRevision/Tombstone/ReadState/ActivityItem</code>；引用、转发、编辑是否产生
+mention 必须有显式规则。</td>
+<td>Agent 推理期间 membership、mandate、message 或 conversation revision
+变化时，在发送点 hold/rebase/reject；read/activity
+不冒充审计；edit/delete 不静默重写已接纳 Task/evidence。</td>
+<td>W2 extension points；W4/W5；retention/legal hold W7</td>
+<td>stale draft 不直发；引用/转发/编辑 mention 确定性；mark-read
+CAS；删/改消息不改变已冻结 Task/Artifact；retention/legal-hold
+fixture。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="明确吸收与明确拒绝">4. 明确吸收与明确拒绝</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>对象</th>
+<th>吸收</th>
+<th>不照搬</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FloatIM/Floatboat</td>
+<td>一等 Agent 身份、群规则、<code>mention_only</code>、Agent-native
+messaging</td>
+<td>只有头像和群聊；把第三方 Agent
+host/数据路线藏起来；群消息冒充任务真相</td>
+</tr>
+<tr>
+<td>Clawith</td>
+<td>Participant、Handoff、Needs You、Experience/Skill/Tool 分层、Action
+unknown</td>
+<td>Agent 自安装能力、best-effort 高风险审计、host
+fallback、把内部协议宣传成标准 A2A</td>
+</tr>
+<tr>
+<td>DeepSeek Harness</td>
+<td>capability seam、可逆插件生命周期、profile/bundle、durable event
+spine</td>
+<td>同 UID secret、MCP 裸宿主、process-local Jobs、未认证插件即信任</td>
+</tr>
+<tr>
+<td>OpenAgents</td>
+<td>workspace 控制面、Task/Routine/Inbox、canonical protocol
+adapter</td>
+<td>owner-equivalent machine token、URL token、legacy
+fail-open、把浏览器代理当 sandbox</td>
+</tr>
+<tr>
+<td>AgentTeams</td>
+<td>透明 room、对象化 HITL、submission/acceptance 分离</td>
+<td>自然语言 Manager 持 Docker/socket/full access、挂宿主 home、Matrix
+timeline 冒充审计</td>
+</tr>
+<tr>
+<td>holaOS</td>
+<td>Environment、canonical memory、run capability projection、Data
+Nutrition Label</td>
+<td><code>local=offline/private</code>、依赖 harness 原生审批、unsigned
+grant/raw token、全局 cookie/明文 secret</td>
+</tr>
+<tr>
+<td>Orca</td>
+<td>worktree fleet、structured mobile approval、evidence
+bundle、unverifiable liveness</td>
+<td>worktree=完整隔离、看不到进程=退出、remote/read-mostly=安全、热度=accepted
+outcome</td>
+</tr>
+<tr>
+<td>Open Connector</td>
+<td>大规模 schema/executor 组织、OAuth gateway、连接器维护知识</td>
+<td>目录数量=真实 E2E；开发友好 fail-open；只声明 scope
+却不在执行点强制</td>
+</tr>
+<tr>
+<td>MCP/A2A/Agent Client Protocol</td>
+<td>标准化能力/Agent/客户端边界，建立 adapter 与 conformance</td>
+<td>Registry/Card/Task state=信任/身份/验收；三个协议混成“Agent
+协议”</td>
+</tr>
+<tr>
+<td>AgentSpace</td>
+<td>数字员工控制/执行面分离、approval transaction、output
+promotion、outcome ledger</td>
+<td>把 Runtime output 直接写成知识/Skill/文档；无 lease
+queue；<code>LocalSandbox</code> 名称冒充隔离</td>
+</tr>
+<tr>
+<td>CodexLoom / Raft</td>
+<td>会话级 Agent 代表权、跨边界 disclosure/commitment、身份连续性</td>
+<td>organization/membership 声明冒充资源授权；activity/transcript
+冒充审计</td>
+</tr>
+<tr>
+<td>KiroCrew / Pi / Tutti</td>
+<td>小内核、App/Extension/Room 的真实信任边界、完整性与隔离分层</td>
+<td>用 Tool gate、UI sandbox 或 package hash 为同进程第三方代码背书</td>
+</tr>
+<tr>
+<td>Omnigent</td>
+<td>跨 harness capability matrix 与 conformance regression</td>
+<td>adapter 能启动就宣称 resume/fork/approval/cost 等语义无损</td>
+</tr>
+</tbody>
+</table>
+<h2 id="延后但不遗忘">5. 延后但不遗忘</h2>
+<p>以下不是 M0
+首发内容，只冻结扩展点；它们需要真实客户、跨组织需求或失败数据才能进入实施：</p>
+<ul>
+<li>公共 Agent marketplace、自动结果计费、escrow、dispute、reputation
+和跨组织 federation；</li>
+<li>Agent HRIS、绩效、劳动力市场和跨公司 Agent lending；</li>
+<li>Agent fork/transfer；进入实施前必须冻结 provenance、license/policy
+inheritance、revocation notice 和原子接收流程；</li>
+<li>全量组织 Memory 因果学习、FinOps 自动路由、跨 harness
+无损迁移认证；</li>
+<li>生产 E2EE、跨区域 active-active、公开 A2A gateway
+和第三方插件市场；</li>
+<li>把所有飞书/企微/钉钉连接回产品。当前任务明确保持飞书/企微零发送。</li>
+</ul>
+<h2 id="冻结与变更纪律">6. 冻结与变更纪律</h2>
+<ol type="1">
+<li>改动 RQ-001 至 RQ-045 任一结论，必须同时修改
+PRD/Architecture/contract/test，并单独 commit；</li>
+<li>研究源文件变化时先比对 SHA-256，再进行 evidence delta
+review，不能静默沿用旧行号；</li>
+<li>若 provider/协议官方合同不支持稳定 ID、acceptance
+query、签名、cursor 或幂等，标记
+<code>unsupported/unverified</code>，不得让 adapter 猜测；</li>
+<li>实现“看起来能工作”但无法给出本矩阵验收证据时，该条仍是未完成；</li>
+<li>Git/本地文档是 canonical source，Notion
+是稳定节点镜像；两者不一致时停止标记已同步并修复。</li>
+</ol>
+</body>
+</html>
