@@ -30,6 +30,7 @@ from quantum_entanglement.native_im_sandbox import (
     NativeIMSandboxAdapterProcessMismatchError,
     NativeIMTransportContractError,
     NativeIMVerifiedInboundReadV1,
+    derive_native_im_mapping_evidence_digest_v1,
 )
 from quantum_entanglement.native_im_sandbox_authority import (
     NativeIMSandboxApprovalAuthorityError,
@@ -56,7 +57,9 @@ from tests.test_native_im_contract import (
 from tests.test_native_im_sandbox_authority import approved_authority_for
 
 TRANSPORT_EVIDENCE = "b" * 64
-MAPPING_EVIDENCE = "f" * 64
+MAPPER_CONTRACT_ID = "test-native-im-mapper-v1"
+MAPPER_CONTRACT_DIGEST = "3" * 64
+MAPPING_EVIDENCE = "ed5536a7e07a208dab7d81d09f48a167d0b8fbc187306f9db09f65896fc304f6"
 RAW_BODY = b'{"providerEvents":["test-event-1"]}'
 READ_CREDENTIAL = b"test-read-only-credential"
 
@@ -136,8 +139,14 @@ class FixtureTransport:
 
 
 class FixtureMapper:
-    def __init__(self, *, failure_canary: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        failure_canary: str | None = None,
+        mapping_evidence_override: str | None = None,
+    ) -> None:
         self.failure_canary = failure_canary
+        self.mapping_evidence_override = mapping_evidence_override
         self.calls = 0
 
     def map_inbound(
@@ -188,11 +197,20 @@ class FixtureMapper:
             capability=capability,
             envelopes=(envelope,),
         )
+        evidence = derive_native_im_mapping_evidence_digest_v1(
+            mapper_contract_id=MAPPER_CONTRACT_ID,
+            mapper_contract_digest=MAPPER_CONTRACT_DIGEST,
+            profile_digest=profile.canonical_digest(),
+            read_request_digest=request.canonical_digest(),
+            capability_digest=capability.canonical_digest(),
+            source_body_digest=source_body_digest,
+            page_digest=page.canonical_digest(),
+        )
         return NativeIMMappedPageV1(
             schema_version=1,
             source_body_digest=source_body_digest,
             canonical_page_body=page.canonical_bytes(),
-            mapping_evidence_digest=MAPPING_EVIDENCE,
+            mapping_evidence_digest=self.mapping_evidence_override or evidence,
         )
 
 
@@ -219,6 +237,7 @@ def adapter_inputs(
     *,
     transport_failure: str | None = None,
     mapper_failure: str | None = None,
+    mapping_evidence_override: str | None = None,
     secret_failure: str | None = None,
     replay_guard: object | None = None,
 ):
@@ -248,7 +267,10 @@ def adapter_inputs(
         transport_evidence_digest=TRANSPORT_EVIDENCE,
     )
     transport = FixtureTransport(response, failure_canary=transport_failure)
-    mapper = FixtureMapper(failure_canary=mapper_failure)
+    mapper = FixtureMapper(
+        failure_canary=mapper_failure,
+        mapping_evidence_override=mapping_evidence_override,
+    )
     secrets = RecordingSecretProvider(configuration, failure_canary=secret_failure)
     replay_guard = ReplayGuard() if replay_guard is None else replay_guard
     adapter = NativeIMInboundOnlySandboxAdapter(
@@ -285,9 +307,7 @@ async def test_explicit_inbound_adapter_verifies_maps_and_returns_atomic_evidenc
     )
     assert result.page.envelopes[0].event.transport_evidence_digest == TRANSPORT_EVIDENCE
     assert result.capability.operations == ()
-    assert result.provenance.configuration_binding_digest == (
-        configuration.approval_binding_digest
-    )
+    assert result.provenance.configuration_binding_digest == (configuration.approval_binding_digest)
     assert result.provenance.profile_digest == profile.canonical_digest()
     assert result.provenance.provider_manifest_digest == "9" * 64
     assert result.provenance.read_request_digest == request.canonical_digest()
@@ -304,6 +324,40 @@ async def test_explicit_inbound_adapter_verifies_maps_and_returns_atomic_evidenc
     assert replay_guard.claims == 0
     assert RAW_BODY.decode() not in repr(result)
     assert isinstance(adapter, IMGatewayPort)
+
+
+def test_mapping_evidence_digest_binds_every_reviewed_input_axis() -> None:
+    values = {
+        "mapper_contract_id": MAPPER_CONTRACT_ID,
+        "mapper_contract_digest": MAPPER_CONTRACT_DIGEST,
+        "profile_digest": "4" * 64,
+        "read_request_digest": "5" * 64,
+        "capability_digest": "6" * 64,
+        "source_body_digest": "7" * 64,
+        "page_digest": "8" * 64,
+    }
+    baseline = derive_native_im_mapping_evidence_digest_v1(**values)
+    assert len(baseline) == 64
+    for field in values:
+        changed = dict(values)
+        changed[field] = "other-contract" if field == "mapper_contract_id" else "9" * 64
+        assert derive_native_im_mapping_evidence_digest_v1(**changed) != baseline
+
+
+@pytest.mark.asyncio
+async def test_mapper_cannot_self_report_unbound_mapping_evidence() -> None:
+    adapter, request, _, _, transport, mapper, secrets, replay_guard = adapter_inputs(
+        mapping_evidence_override="f" * 64,
+    )
+
+    with pytest.raises(NativeIMTransportContractError) as raised:
+        await adapter.read_verified_inbound(request)
+    assert raised.value.code == "native_im_transport_contract_failed"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert transport.read_calls == mapper.calls == 1
+    assert all(material.closed for material in secrets.materials)
+    assert replay_guard.claims == 0
 
 
 @pytest.mark.asyncio
@@ -324,8 +378,9 @@ async def test_revoked_before_read_rejects_before_request_secret_transport_or_ma
 
 
 @pytest.mark.asyncio
-async def test_revocation_during_transport_closes_credential_and_blocks_mapper_and_verifier(
-) -> None:
+async def test_revocation_during_transport_closes_credential_and_blocks_mapper_and_verifier() -> (
+    None
+):
     adapter, request, configuration, profile, transport, mapper, secrets, replay_guard = (
         adapter_inputs()
     )
