@@ -107,7 +107,7 @@ def test_approval_round_trip_and_domain_separated_digest_are_stable() -> None:
         sort_keys=True,
     ).encode()
     assert approval.canonical_digest() == (
-        "9b5f0dca5e3933aeef5344a74d3345d5a9e2fd421d3e935e5a9bad1fa196b147"
+        "8229fc630a32fb2807a6e367b0da67ea0cddd1438d893a6b0556e1242921e571"
     )
 
 
@@ -252,7 +252,9 @@ def test_static_approval_binding_matches_exact_config_and_profile_without_activa
     ("field_name", "changed"),
     (
         ("approval_id", "other-approval"),
+        ("authority_revision", 8),
         ("expires_at", "2026-09-29T00:00:00.000001Z"),
+        ("deployment_subject_digest", "9" * 64),
         ("provider", "other-provider"),
         ("tenant_id", "other-tenant"),
         ("workspace_id", "other-workspace"),

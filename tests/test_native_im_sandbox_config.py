@@ -59,7 +59,12 @@ def enabled_environment() -> dict[str, str]:
         "QE_NATIVE_IM_PROFILE_REVISION": "test-revision-1",
         "QE_NATIVE_IM_PROFILE_DIGEST": "a" * 64,
         "QE_NATIVE_IM_APPROVAL_ID": "test-approval",
+        "QE_NATIVE_IM_APPROVAL_DIGEST": (
+            "8229fc630a32fb2807a6e367b0da67ea0cddd1438d893a6b0556e1242921e571"
+        ),
+        "QE_NATIVE_IM_AUTHORITY_REVISION": "7",
         "QE_NATIVE_IM_APPROVAL_EXPIRES_AT": "2026-09-28T00:00:00.000001Z",
+        "QE_NATIVE_IM_DEPLOYMENT_SUBJECT_DIGEST": "1" * 64,
         "QE_NATIVE_IM_PROVIDER": "test-provider",
         "QE_NATIVE_IM_TENANT_ID": "test-tenant",
         "QE_NATIVE_IM_WORKSPACE_ID": "test-workspace",
@@ -301,7 +306,7 @@ def test_approval_binding_digest_is_full_stable_and_not_a_diagnostic_fingerprint
     configuration = bound_configuration()
 
     assert configuration.approval_binding_digest == (
-        "e01642b1477ea9f35973a3ff3baf76d68fc0eeb7805efbeb75b95e73ac347754"
+        "0eeddc946b222b9fcea228ce0b5c6c6589c5274d678d3ee715e74e0260add54d"
     )
     assert len(configuration.approval_binding_digest) == 64
     assert configuration.approval_binding_digest != configuration.fingerprint
@@ -315,7 +320,9 @@ def test_approval_binding_digest_is_full_stable_and_not_a_diagnostic_fingerprint
         ("profile_revision", "other-revision"),
         ("profile_digest", "f" * 64),
         ("approval_id", "other-approval"),
+        ("authority_revision", 8),
         ("approval_expires_at", "2026-09-29T00:00:00.000001Z"),
+        ("deployment_subject_digest", "9" * 64),
         ("provider", "other-provider"),
         ("tenant_id", "other-tenant"),
         ("workspace_id", "other-workspace"),
@@ -344,6 +351,14 @@ def test_approval_binding_digest_covers_every_mutable_configuration_field(
         changed_configuration.approval_binding_digest
         != configuration.approval_binding_digest
     )
+
+
+def test_record_digest_trust_anchor_is_outside_the_record_configuration_digest_cycle() -> None:
+    configuration = bound_configuration()
+    changed = replace(configuration, approval_digest="e" * 64)
+
+    assert changed.approval_binding_digest == configuration.approval_binding_digest
+    assert changed.fingerprint != configuration.fingerprint
 
 
 def test_environment_snapshot_reads_each_native_field_exactly_once() -> None:
@@ -390,6 +405,12 @@ def test_enabled_configuration_requires_every_exact_field() -> None:
         ("QE_NATIVE_IM_ENABLED", "yes", "native_im_configuration_boolean_invalid"),
         ("QE_NATIVE_IM_MODE", "outbound", "native_im_mode_forbidden"),
         ("QE_NATIVE_IM_PROFILE_DIGEST", "A" * 64, "native_im_configuration_digest_invalid"),
+        ("QE_NATIVE_IM_APPROVAL_DIGEST", "A" * 64, "native_im_configuration_digest_invalid"),
+        (
+            "QE_NATIVE_IM_AUTHORITY_REVISION",
+            "0",
+            "native_im_configuration_integer_out_of_range",
+        ),
         (
             "QE_NATIVE_IM_APPROVAL_EXPIRES_AT",
             "2026-09-28T00:00:00Z",
