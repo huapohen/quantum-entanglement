@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import os
 from dataclasses import dataclass, field
-from typing import Callable, NoReturn, Protocol, runtime_checkable
+from typing import Callable, NoReturn, Protocol, SupportsIndex, runtime_checkable
 
 from ._native_im_codec import _digest, _id, _schema_version, _timestamp
 from .native_im import (
@@ -92,6 +93,15 @@ class NativeIMSandboxAdapterClosedError(RuntimeError):
     """The inbound adapter has permanently released its transport."""
 
     code = "native_im_sandbox_adapter_closed"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)
+
+
+class NativeIMSandboxAdapterProcessMismatchError(RuntimeError):
+    """A process-inherited adapter cannot retain transport or secret-loader authority."""
+
+    code = "native_im_sandbox_adapter_process_mismatch"
 
     def __init__(self) -> None:
         super().__init__(self.code)
@@ -444,6 +454,7 @@ class NativeIMInboundOnlySandboxAdapter:
         "__configuration",
         "__closed",
         "__mapper",
+        "__process_id",
         "__profile",
         "__secret_loader",
         "__transport",
@@ -475,6 +486,7 @@ class NativeIMInboundOnlySandboxAdapter:
             raise TypeError("inbound adapter requires a nonce replay guard")
         if not callable(clock):
             raise TypeError("inbound adapter clock must be callable")
+        self.__process_id = os.getpid()
         self.__configuration = configuration_snapshot
         self.__profile = profile_snapshot
         self.__transport = transport
@@ -489,8 +501,13 @@ class NativeIMInboundOnlySandboxAdapter:
         self.__closed = False
 
     def _require_open(self) -> None:
+        self._require_current_process()
         if self.__closed:
             raise NativeIMSandboxAdapterClosedError() from None
+
+    def _require_current_process(self) -> None:
+        if os.getpid() != self.__process_id:
+            raise NativeIMSandboxAdapterProcessMismatchError() from None
 
     def _now(self) -> str:
         failed = False
@@ -627,6 +644,7 @@ class NativeIMInboundOnlySandboxAdapter:
         raise NativeIMOutboundForbiddenError() from None
 
     async def aclose(self) -> None:
+        self._require_current_process()
         if self.__closed:
             return
         self.__closed = True
@@ -641,9 +659,11 @@ class NativeIMInboundOnlySandboxAdapter:
 
     @property
     def closed(self) -> bool:
+        self._require_current_process()
         return self.__closed
 
     def __repr__(self) -> str:
+        self._require_current_process()
         return (
             "NativeIMInboundOnlySandboxAdapter("
             f"config={self.__configuration.fingerprint!r}, "
@@ -651,20 +671,28 @@ class NativeIMInboundOnlySandboxAdapter:
             f"closed={self.__closed!r})"
         )
 
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("native IM inbound sandbox adapter cannot be serialized")
+
 
 class NativeIMDisabledSandboxAdapter:
     """The only adapter produced by the default service composition."""
 
-    __slots__ = ("__configuration_fingerprint", "__closed")
+    __slots__ = ("__configuration_fingerprint", "__closed", "__process_id")
 
     def __init__(self, configuration: NativeIMDisabledConfigV1) -> None:
         if type(configuration) is not NativeIMDisabledConfigV1:
             raise TypeError("disabled adapter requires the exact disabled configuration")
+        self.__process_id = os.getpid()
         self.__configuration_fingerprint = configuration.fingerprint
         self.__closed = False
 
-    @staticmethod
-    def _reject() -> NoReturn:
+    def _require_current_process(self) -> None:
+        if os.getpid() != self.__process_id:
+            raise NativeIMSandboxAdapterProcessMismatchError() from None
+
+    def _reject(self) -> NoReturn:
+        self._require_current_process()
         raise NativeIMSandboxDisabledError() from None
 
     async def capability_snapshot(
@@ -683,17 +711,23 @@ class NativeIMDisabledSandboxAdapter:
         self._reject()
 
     async def aclose(self) -> None:
+        self._require_current_process()
         self.__closed = True
 
     @property
     def closed(self) -> bool:
+        self._require_current_process()
         return self.__closed
 
     def __repr__(self) -> str:
+        self._require_current_process()
         return (
             "NativeIMDisabledSandboxAdapter("
             f"config={self.__configuration_fingerprint!r}, closed={self.__closed!r})"
         )
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("native IM disabled sandbox adapter cannot be serialized")
 
 
 def compose_default_native_im_sandbox_v1(
@@ -721,6 +755,7 @@ __all__ = [
     "NativeIMSandboxDisabledError",
     "NativeIMSecretResolverPort",
     "NativeIMSandboxAdapterClosedError",
+    "NativeIMSandboxAdapterProcessMismatchError",
     "NativeIMTransportContractError",
     "NativeIMVerifiedInboundReadV1",
     "compose_default_native_im_sandbox_v1",
