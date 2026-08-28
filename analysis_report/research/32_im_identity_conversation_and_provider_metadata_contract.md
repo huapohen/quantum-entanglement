@@ -270,7 +270,7 @@ Parent archived       != Task canceled
 |---|---|---|
 | scope/authority | tenant、workspace、ACL、role、member IDs、permission、capability、policy、approval、delegation、mandate、scope | provider metadata 可伪造/漂移，不能建立平台 authority |
 | runtime | session/run/attempt/workload/process/device/lease/fence | visible Actor 与 runtime identity 必须分离 |
-| secret | token、API key、password、cookie、Authorization、refresh token、credential、secret ref | secret 只能在 trusted executor 通过 broker JIT 解析 |
+| credential material | token、API key、password、cookie、Authorization、refresh token、credential、secret ref | 凭据只能在 trusted executor 通过 broker JIT 解析 |
 | content/PII | message body、Prompt、email、phone、Memory | 防止 provider profile 泄漏和 prompt/日志扩散 |
 | external address | callback、webhook、endpoint、永久 file URL | 防止 SSRF、credential forwarding 与失效链接变成权威引用 |
 | business/evidence | Task、Action、Receipt、Artifact、Acceptance、Evidence、Checkpoint | provider transport 状态不能冒充业务状态或审计证据 |
