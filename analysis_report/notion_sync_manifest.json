@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-28T03:26:13Z",
+  "syncedAt": "2026-08-28T03:38:17Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private review branch + local linked worktree",
     "remoteRepresentation": "semantic-mirror",
@@ -21,9 +21,9 @@
     }
   },
   "sourceControl": {
-    "notionContentBaselineCommit": "d011fe8ea74eddda70575c65feb4019fa2c235b5",
-    "manifestPreparedFromCommit": "d011fe8ea74eddda70575c65feb4019fa2c235b5",
-    "manifestPreparedFromTree": "55f50d2d2f4497be2503ac0fc833ce5267dfddeb"
+    "notionContentBaselineCommit": "64859475480b5037a59a2077d152a457e2cd117b",
+    "manifestPreparedFromCommit": "64859475480b5037a59a2077d152a457e2cd117b",
+    "manifestPreparedFromTree": "ad16fe72328959b24fb2a5401dd6aadee910e120"
   },
   "pages": [
     {
@@ -33,7 +33,7 @@
       "localFiles": [
         {
           "path": "analysis_report/README.md",
-          "sha256": "88e7d918f8f7cadc647bed756946132120daf33c65b3b1542af3bc21d1de00ed"
+          "sha256": "13d4c388e4f737e80925bd25d33cacc5e266697feb5a049177b07eb344e60198"
         }
       ],
       "updateMode": "targeted-preserve-child-pages-and-database",
@@ -1266,9 +1266,9 @@
   },
   "stageReviewSyncV4": {
     "stage": "native-im-e2-adapter-lifecycle-offline",
-    "syncedAt": "2026-08-28T03:26:13Z",
+    "syncedAt": "2026-08-28T03:38:17Z",
     "semanticBaselineCommit": "c09b5fa1052b04e94a0067b7f4577d305ef8eb47",
-    "indexCommit": "d011fe8ea74eddda70575c65feb4019fa2c235b5",
+    "indexCommit": "64859475480b5037a59a2077d152a457e2cd117b",
     "sourceCandidateCommit": "2bdaea1adddcfb3033b4678766f635d7afc242fc",
     "sourceCandidateTree": "42e6bedf04a1ed971ee269676730b94882112d59",
     "branch": "mainline_continue_quantum_entanglement",
@@ -1368,9 +1368,9 @@
         "key": "native-im-report-index",
         "pageId": "3c9ead4b-996e-81d3-9fb6-d5cf6d364fe0",
         "sourcePath": "analysis_report/README.md",
-        "sourceSha256": "88e7d918f8f7cadc647bed756946132120daf33c65b3b1542af3bc21d1de00ed",
-        "contentLength": 14086,
-        "expectedMarkers": ["d011fe8ea74eddda70575c65feb4019fa2c235b5", "48 个私人 Notion 页面", "research/25_native_im_e2_adapter_lifecycle_offline_evidence.md"],
+        "sourceSha256": "13d4c388e4f737e80925bd25d33cacc5e266697feb5a049177b07eb344e60198",
+        "contentLength": 14134,
+        "expectedMarkers": ["64859475480b5037a59a2077d152a457e2cd117b", "16 个相关页面", "48 个内容 marker"],
         "missingMarkers": [],
         "remoteReadbackVerified": true
       },
@@ -1418,6 +1418,32 @@
         "remoteReadbackVerified": true
       }
     ],
+    "branchCatalogPagesUpdated": [
+      {
+        "key": "native-im-branch-catalog",
+        "pageId": "3c9ead4b-996e-81c8-9d1f-ed42248fc74a",
+        "sourcePath": "/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/BRANCH_CATALOG.md",
+        "catalogCommit": "a03201a418e7409082ba8bbff2ffc40f541ce952",
+        "digestPinned": false,
+        "reason": "generated catalog is refreshed after sync-ledger commits to avoid a self-referential manifest/catalog cycle",
+        "contentLength": 19195,
+        "expectedMarkers": ["a03201a418e7409082ba8bbff2ffc40f541ce952", "mainline_continue_quantum_entanglement", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "global-branch-catalog",
+        "pageId": "3c9ead4b-996e-81bc-8053-cf1e844dccdb",
+        "sourcePath": "/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/BRANCH_CATALOG.md",
+        "catalogCommit": "a03201a418e7409082ba8bbff2ffc40f541ce952",
+        "digestPinned": false,
+        "reason": "generated catalog is refreshed after sync-ledger commits to avoid a self-referential manifest/catalog cycle",
+        "contentLength": 19190,
+        "expectedMarkers": ["a03201a418e7409082ba8bbff2ffc40f541ce952", "mainline_continue_quantum_entanglement", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      }
+    ],
     "projectHome": {
       "pageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
       "url": "https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204",
@@ -1436,13 +1462,13 @@
     },
     "remoteReadback": {
       "verified": true,
-      "pagesReadbackVerified": 14,
+      "pagesReadbackVerified": 16,
       "stageReviewPageCount": 15,
       "baseMirrorPageCount": 33,
       "totalProjectMirrorPageCount": 48,
       "newPagesCreated": 1,
-      "existingPagesUpdated": 13,
-      "markerChecks": 42,
+      "existingPagesUpdated": 15,
+      "markerChecks": 48,
       "structureChecks": 3,
       "missingMarkers": [],
       "readbackFailures": 0
@@ -1459,9 +1485,9 @@
     "pageCount": 33,
     "controlledSourcePageCount": 32,
     "auxiliaryDerivedPageCount": 1,
-    "existingPagesUpdated": 13,
+    "existingPagesUpdated": 15,
     "newPagesCreated": 1,
-    "readbackVerified": 14,
+    "readbackVerified": 16,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 27,
     "screenshotImagesAddedThisSync": 17,
@@ -1473,9 +1499,9 @@
       "baseMirrorPageCount": 33,
       "totalProjectMirrorPageCount": 48,
       "newPagesCreated": 1,
-      "existingPagesUpdated": 13,
-      "pagesReadbackVerified": 14,
-      "markerChecks": 42,
+      "existingPagesUpdated": 15,
+      "pagesReadbackVerified": 16,
+      "markerChecks": 48,
       "structureChecks": 3,
       "readbackFailures": 0
     }
