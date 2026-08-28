@@ -179,7 +179,12 @@ from .native_im_sandbox_observability import (
     NativeIMSandboxObserverV1,
     native_im_sandbox_log_catalog_v1,
 )
-from .native_im_sandbox_provenance import NativeIMSandboxAdmissionProvenanceV1
+from .native_im_sandbox_provenance import (
+    NativeIMSandboxAdmissionProvenance,
+    NativeIMSandboxAdmissionProvenanceV1,
+    NativeIMSandboxExchangeAdmissionProvenanceV1,
+    decode_native_im_sandbox_admission_provenance_v1,
+)
 from .plugins import HookPoint, KernelPlugin, PluginManager
 from .policy import ApprovalRequest, NeedsYouQueue, PolicyDecision, PolicyEngine, PolicyOutcome
 from .protocol import (
@@ -416,6 +421,7 @@ __all__ = [
     "NativeIMSandboxApprovalStoreError",
     "NativeIMSandboxApprovalStoreIntegrityError",
     "NativeIMSandboxApprovalV1",
+    "NativeIMSandboxAdmissionProvenance",
     "NativeIMSandboxAdmissionProvenanceV1",
     "NativeIMSandboxCompositionError",
     "NativeIMSandboxDisabledError",
@@ -428,10 +434,12 @@ __all__ = [
     "NativeIMSandboxObservationProcessMismatchError",
     "NativeIMSandboxObserverV1",
     "NativeIMSandboxProcessMismatchError",
+    "NativeIMSandboxExchangeAdmissionProvenanceV1",
     "NativeIMSecretResolverPort",
     "NativeIMTransportContractError",
     "NativeIMVerifiedInboundReadV1",
     "derive_native_im_read_exchange_evidence_digest_v1",
+    "decode_native_im_sandbox_admission_provenance_v1",
     "NeedsYouQueue",
     "OrchestratorKernel",
     "OutboxMessage",

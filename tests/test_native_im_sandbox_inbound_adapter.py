@@ -19,10 +19,15 @@ from quantum_entanglement.native_im import (
 )
 from quantum_entanglement.native_im_gateway import IMGatewayPort
 from quantum_entanglement.native_im_provider_profile import IMProviderProfileV1
+from quantum_entanglement.native_im_read_exchange import (
+    NativeIMInboundReadExchangeEvidenceV1,
+    derive_native_im_read_exchange_evidence_digest_v1,
+)
 from quantum_entanglement.native_im_sandbox import (
     _APPROVED_COMPOSITION_TOKEN,
     NativeIMHealthEvidenceV1,
     NativeIMInboundOnlySandboxAdapter,
+    NativeIMInboundRawExchangeV1,
     NativeIMInboundRawResponseV1,
     NativeIMMappedPageV1,
     NativeIMMapperRejectionError,
@@ -36,6 +41,10 @@ from quantum_entanglement.native_im_sandbox import (
 )
 from quantum_entanglement.native_im_sandbox_authority import (
     NativeIMSandboxApprovalAuthorityError,
+)
+from quantum_entanglement.native_im_sandbox_provenance import (
+    NativeIMSandboxAdmissionProvenanceV1,
+    NativeIMSandboxExchangeAdmissionProvenanceV1,
 )
 from quantum_entanglement.service.native_im_config import NativeIMInboundOnlyConfigV1
 from quantum_entanglement.service.native_im_secrets import NativeIMSecretLoadError
@@ -190,6 +199,29 @@ class FixtureTransport:
         self.close_calls += 1
         if self.failure_canary is not None:
             raise RuntimeError(self.failure_canary)
+
+
+class FixtureExchangeTransport(FixtureTransport):
+    def __init__(
+        self,
+        response: NativeIMInboundRawResponseV1,
+        *,
+        health_evidence: NativeIMHealthEvidenceV1,
+        exchange_evidence: NativeIMInboundReadExchangeEvidenceV1,
+    ) -> None:
+        super().__init__(response, health_evidence=health_evidence)
+        self.exchange_evidence = exchange_evidence
+
+    async def read_inbound_exchange(
+        self,
+        request: IMInboundReadRequestV1,
+        credential: SecretMaterial,
+    ) -> NativeIMInboundRawExchangeV1:
+        response = await self.read_inbound(request, credential)
+        return NativeIMInboundRawExchangeV1(
+            response=response,
+            exchange_evidence=self.exchange_evidence,
+        )
 
 
 class FixtureMapper:
@@ -347,6 +379,35 @@ def adapter_inputs(
     return adapter, request, configuration, profile, transport, mapper, secrets, replay_guard
 
 
+def exchange_evidence_for(
+    request: IMInboundReadRequestV1,
+) -> NativeIMInboundReadExchangeEvidenceV1:
+    evidence_digest = derive_native_im_read_exchange_evidence_digest_v1(
+        read_request_id=request.read_request_id,
+        read_request_digest=request.canonical_digest(),
+        after_cursor=request.after_cursor,
+        after_sequence=request.after_sequence,
+        snapshot_token=request.snapshot_token,
+        received_at=NOW,
+        request_intent_digest="5" * 64,
+        exchange_security_evidence_digest="6" * 64,
+        event_source_evidence_digest=TRANSPORT_EVIDENCE,
+    )
+    return NativeIMInboundReadExchangeEvidenceV1(
+        schema_version=1,
+        read_request_id=request.read_request_id,
+        read_request_digest=request.canonical_digest(),
+        after_cursor=request.after_cursor,
+        after_sequence=request.after_sequence,
+        snapshot_token=request.snapshot_token,
+        received_at=NOW,
+        request_intent_digest="5" * 64,
+        exchange_security_evidence_digest="6" * 64,
+        event_source_evidence_digest=TRANSPORT_EVIDENCE,
+        evidence_digest=evidence_digest,
+    )
+
+
 @pytest.mark.asyncio
 async def test_explicit_inbound_adapter_verifies_maps_and_returns_atomic_evidence() -> None:
     adapter, request, configuration, profile, transport, mapper, secrets, replay_guard = (
@@ -372,6 +433,7 @@ async def test_explicit_inbound_adapter_verifies_maps_and_returns_atomic_evidenc
     assert result.provenance.page_digest == result.page.canonical_digest()
     assert result.provenance.transport_evidence_digest == TRANSPORT_EVIDENCE
     assert result.provenance.mapping_evidence_digest == MAPPING_EVIDENCE
+    assert type(result.provenance) is NativeIMSandboxAdmissionProvenanceV1
     assert transport.read_calls == 1
     assert mapper.calls == 1
     assert secrets.references == [
@@ -382,6 +444,96 @@ async def test_explicit_inbound_adapter_verifies_maps_and_returns_atomic_evidenc
     assert replay_guard.claims == 0
     assert RAW_BODY.decode() not in repr(result)
     assert isinstance(adapter, IMGatewayPort)
+
+
+@pytest.mark.asyncio
+async def test_enhanced_transport_produces_request_bound_exchange_provenance() -> None:
+    adapter, request, configuration, profile, transport, mapper, secrets, replay_guard = (
+        adapter_inputs()
+    )
+    authority = object.__getattribute__(
+        adapter,
+        "_NativeIMInboundOnlySandboxAdapter__approval_authority",
+    )
+    permit = object.__getattribute__(
+        adapter,
+        "_NativeIMInboundOnlySandboxAdapter__approval_permit",
+    )
+    enhanced = FixtureExchangeTransport(
+        transport.response,
+        health_evidence=transport.health_evidence,
+        exchange_evidence=exchange_evidence_for(request),
+    )
+    rebuilt = NativeIMInboundOnlySandboxAdapter(
+        configuration,
+        profile,
+        authority,
+        permit,
+        PROVIDER_MANIFEST_DIGEST,
+        enhanced,
+        mapper,
+        secrets,
+        replay_guard,
+        clock=lambda: NOW,
+        _composition_token=_APPROVED_COMPOSITION_TOKEN,
+    )
+
+    result = await rebuilt.read_verified_inbound(request)
+
+    assert type(result.provenance) is NativeIMSandboxExchangeAdmissionProvenanceV1
+    result.provenance.read_exchange_evidence.validate_request_binding(request)
+    assert result.provenance.read_exchange_evidence == enhanced.exchange_evidence
+    assert result.provenance.transport_evidence_digest == TRANSPORT_EVIDENCE
+    assert enhanced.read_calls == mapper.calls == 1
+    assert all(material.closed for material in secrets.materials)
+
+
+@pytest.mark.asyncio
+async def test_enhanced_transport_rejects_cross_request_exchange_before_verification() -> None:
+    adapter, request, configuration, profile, transport, mapper, secrets, replay_guard = (
+        adapter_inputs()
+    )
+    authority = object.__getattribute__(
+        adapter,
+        "_NativeIMInboundOnlySandboxAdapter__approval_authority",
+    )
+    permit = object.__getattribute__(
+        adapter,
+        "_NativeIMInboundOnlySandboxAdapter__approval_permit",
+    )
+    other_request = inbound_read_request(
+        provider=profile.provider,
+        read_request_id=request.read_request_id,
+        after_cursor="other-cursor",
+        after_sequence=1,
+        snapshot_token="other-snapshot",
+    )
+    enhanced = FixtureExchangeTransport(
+        transport.response,
+        health_evidence=transport.health_evidence,
+        exchange_evidence=exchange_evidence_for(other_request),
+    )
+    rebuilt = NativeIMInboundOnlySandboxAdapter(
+        configuration,
+        profile,
+        authority,
+        permit,
+        PROVIDER_MANIFEST_DIGEST,
+        enhanced,
+        mapper,
+        secrets,
+        replay_guard,
+        clock=lambda: NOW,
+        _composition_token=_APPROVED_COMPOSITION_TOKEN,
+    )
+
+    with pytest.raises(NativeIMTransportContractError):
+        await rebuilt.read_verified_inbound(request)
+
+    assert enhanced.read_calls == 1
+    assert mapper.calls == 0
+    assert len(secrets.materials) == 1
+    assert secrets.materials[0].closed
 
 
 def test_mapping_evidence_digest_binds_every_reviewed_input_axis() -> None:
