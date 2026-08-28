@@ -54,6 +54,14 @@ var ambientPostgresVariableNames = []string{
 	"PGREQUIREAUTH",
 }
 
+// Go's system certificate loader recognizes these variables on Unix-like hosts. A deployment may
+// use the host OS trust store as part of its reviewed TCB, but it may not replace that trust source
+// through ambient process configuration.
+var ambientTLSTrustVariableNames = []string{
+	"SSL_CERT_FILE",
+	"SSL_CERT_DIR",
+}
+
 var connectionStringAllowedKeys = []string{
 	"database",
 	"dbname",
@@ -179,7 +187,10 @@ func validateAndFreeze(
 }
 
 func ambientPostgresSettingsPresent() bool {
-	for _, name := range ambientPostgresVariableNames {
+	for _, name := range slices.Concat(
+		ambientPostgresVariableNames,
+		ambientTLSTrustVariableNames,
+	) {
 		if _, ok := os.LookupEnv(name); ok {
 			return true
 		}
@@ -194,7 +205,10 @@ func strictConnectionURL(connectionString string, allowInsecureLocalhost bool) (
 		parsed.User.Username() == "" || parsed.Path == "" || parsed.Path == "/" {
 		return nil, false
 	}
-	query := parsed.Query()
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return nil, false
+	}
 	for key, values := range query {
 		if _, allowed := rawQueryAllowedKeys[key]; !allowed || len(values) != 1 || values[0] == "" {
 			return nil, false

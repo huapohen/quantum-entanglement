@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -114,6 +115,29 @@ func TestParseRejectsEmptyAmbientSettingPresence(t *testing.T) {
 	}
 }
 
+func TestParseRejectsAmbientSystemTrustOverrides(t *testing.T) {
+	clearAmbientPostgresSettings(t)
+	for _, name := range ambientTLSTrustVariableNames {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "")
+			if _, err := Parse(validPolicyConfig()); !errors.Is(err, ErrAmbientSettings) {
+				t.Fatalf("ambient trust override %s error = %v, want %v", name, err, ErrAmbientSettings)
+			}
+		})
+	}
+}
+
+func TestParseRejectsMalformedQueryPairsWithoutSilentlyDroppingThem(t *testing.T) {
+	clearAmbientPostgresSettings(t)
+	input := validPolicyConfig()
+	// url.URL.Query silently discards a pair containing an unescaped semicolon. The strict parser
+	// must reject the whole raw query rather than continue with only the valid sslmode pair.
+	input.ConnectionString += "&unknown=value;also=value"
+	if _, err := Parse(input); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("malformed query error = %v, want %v", err, ErrInvalidConfig)
+	}
+}
+
 func TestPrepareOverridesDefaultCredentialAndTLSFiles(t *testing.T) {
 	clearAmbientPostgresSettings(t)
 	explicit, original, err := prepare(validPolicyConfig())
@@ -160,7 +184,10 @@ func TestParsePoolReturnsStrictConstructiblePoolConfig(t *testing.T) {
 
 func clearAmbientPostgresSettings(t *testing.T) {
 	t.Helper()
-	for _, name := range ambientPostgresVariableNames {
+	for _, name := range slices.Concat(
+		ambientPostgresVariableNames,
+		ambientTLSTrustVariableNames,
+	) {
 		name := name
 		value, present := os.LookupEnv(name)
 		if err := os.Unsetenv(name); err != nil {
