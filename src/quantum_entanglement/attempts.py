@@ -2950,6 +2950,14 @@ class SQLiteInvocationAttemptStore:
                         raise InvocationIntegrityError(
                             "scoped completion boundary legacy admission is inconsistent"
                         ) from None
+                elif (
+                    targeted_by_key
+                    or targeted_by_payload
+                    or (targeted_by_receipt and row["event_type"] == "task.execution.requested")
+                ):
+                    raise InvocationIntegrityError(
+                        "scoped completion boundary execution admission is inconsistent"
+                    )
                 continue
             try:
                 from .invocation_execution import ScopedInvocationExecutionManifestV2
