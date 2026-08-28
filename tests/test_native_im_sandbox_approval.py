@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from quantum_entanglement._native_im_codec import NativeIMCodecTooLargeError
+from quantum_entanglement.native_im import IMInboundPageV1, IMInboundReadRequestV1
 from quantum_entanglement.native_im_sandbox_approval import (
     NativeIMSandboxApprovalBindingError,
     NativeIMSandboxApprovalV1,
@@ -28,11 +29,7 @@ from tests.test_native_im_provider_profile import profile
 from tests.test_native_im_sandbox_config import bound_configuration
 
 FIXTURE_ROOT = (
-    Path(__file__).resolve().parent
-    / "fixtures"
-    / "native_im"
-    / "provider_sandbox"
-    / "v1"
+    Path(__file__).resolve().parent / "fixtures" / "native_im" / "provider_sandbox" / "v1"
 )
 
 
@@ -112,13 +109,16 @@ def test_approval_round_trip_and_domain_separated_digest_are_stable() -> None:
     assert NativeIMSandboxApprovalV1.from_dict(approval.to_dict()) == approval
     assert NativeIMSandboxApprovalV1.from_json_bytes(encoded) == approval
     assert pickle.loads(pickle.dumps(approval)) == approval
-    assert encoded == json.dumps(
-        approval.to_dict(),
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
+    assert (
+        encoded
+        == json.dumps(
+            approval.to_dict(),
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    )
     assert approval.canonical_digest() == (
         "8229fc630a32fb2807a6e367b0da67ea0cddd1438d893a6b0556e1242921e571"
     )
@@ -127,13 +127,16 @@ def test_approval_round_trip_and_domain_separated_digest_are_stable() -> None:
 def test_committed_provider_sandbox_approval_fixture_is_canonical_and_frozen() -> None:
     manifest_raw = (FIXTURE_ROOT / "manifest.json").read_bytes()
     manifest = json.loads(manifest_raw)
-    assert json.dumps(
-        manifest,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode() == manifest_raw
+    assert (
+        json.dumps(
+            manifest,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+        == manifest_raw
+    )
     assert manifest == {
         "schemaVersion": 1,
         "vectors": [
@@ -145,14 +148,28 @@ def test_committed_provider_sandbox_approval_fixture_is_canonical_and_frozen() -
             },
             {
                 "byteLength": 1130,
-                "digest": "f316314be364ecdc8d51fe293e99919ee36ca8d81323bc9005be84c39328ab16",
+                "digest": "70e371ba62d820a0379bea5f07a6f3026b46de9c7c34794b3663e49413e8c327",
                 "filename": "provenance.json",
                 "model": "NativeIMSandboxAdmissionProvenanceV1",
+            },
+            {
+                "byteLength": 240,
+                "digest": "191be7371f5721194fa81489b43d2c182ed8afa2ebf21fc055fb394b425e8c03",
+                "filename": "inbound_read_request.json",
+                "model": "IMInboundReadRequestV1",
+            },
+            {
+                "byteLength": 1936,
+                "digest": "40d095ced43678f2c95f246a5b2ede5207711bb66b7eeb3cf7fabbb264eee895",
+                "filename": "inbound_page.json",
+                "model": "IMInboundPageV1",
             },
         ],
     }
     assert {path.name for path in FIXTURE_ROOT.iterdir()} == {
         "approval.json",
+        "inbound_page.json",
+        "inbound_read_request.json",
         "manifest.json",
         "provenance.json",
     }
@@ -173,8 +190,7 @@ def test_committed_provider_sandbox_approval_fixture_is_canonical_and_frozen() -
     assert provenance.canonical_bytes() == provenance_raw
     assert len(provenance_raw) == manifest["vectors"][1]["byteLength"]
     independent_provenance_digest = hashlib.sha256(
-        b"quantum-entanglement.native-im/NativeIMSandboxAdmissionProvenanceV1/1\n"
-        + provenance_raw
+        b"quantum-entanglement.native-im/NativeIMSandboxAdmissionProvenanceV1/1\n" + provenance_raw
     ).hexdigest()
     assert independent_provenance_digest == manifest["vectors"][1]["digest"]
     assert provenance.canonical_digest() == independent_provenance_digest
@@ -189,6 +205,28 @@ def test_committed_provider_sandbox_approval_fixture_is_canonical_and_frozen() -
     assert provenance.transport_contract_digest == approval.transport_contract_digest
     assert provenance.mapper_contract_id == approval.mapper_contract_id
     assert provenance.mapper_contract_digest == approval.mapper_contract_digest
+
+    request_raw = (FIXTURE_ROOT / "inbound_read_request.json").read_bytes()
+    request = IMInboundReadRequestV1.from_json_bytes(request_raw)
+    page_raw = (FIXTURE_ROOT / "inbound_page.json").read_bytes()
+    page = IMInboundPageV1.from_json_bytes(page_raw)
+    assert request.canonical_bytes() == request_raw
+    assert page.canonical_bytes() == page_raw
+    assert request.canonical_digest() == manifest["vectors"][2]["digest"]
+    assert page.canonical_digest() == manifest["vectors"][3]["digest"]
+    page.validate_request_binding(request)
+    assert provenance.read_request_digest == request.canonical_digest()
+    assert provenance.page_digest == page.canonical_digest()
+    assert (request.tenant_id, request.workspace_id, request.provider, request.channel_id) == (
+        approval.tenant_id,
+        approval.workspace_id,
+        approval.provider,
+        approval.channel_id,
+    )
+    assert all(
+        envelope.event.conversation.conversation_id in approval.allowed_conversation_ids
+        for envelope in page.envelopes
+    )
 
 
 def test_approval_is_inert_frozen_and_strictly_exact_typed() -> None:
