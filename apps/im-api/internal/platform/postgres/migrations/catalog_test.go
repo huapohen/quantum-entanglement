@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 1 || len(second) != 1 {
+	if len(first) != 2 || len(second) != 2 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -46,6 +46,34 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	first[0].UpSQL = "tampered"
 	if second[0].UpSQL == "tampered" {
 		t.Fatal("catalog leaked mutable state")
+	}
+
+	identity := first[1]
+	if identity.Version != 2 || identity.Name != "identity_authority" ||
+		len(identity.Checksum) != 64 || identity.Checksum != second[1].Checksum ||
+		identity.UpSQL != second[1].UpSQL || identity.DownSQL != second[1].DownSQL {
+		t.Fatalf("unexpected deterministic identity migration: %#v", identity)
+	}
+	for _, marker := range []string{
+		`CREATE TABLE wanwork_im.human_principal_heads`,
+		`CREATE TABLE wanwork_im.human_identity_binding_heads`,
+		`CREATE TABLE wanwork_im.actor_heads`,
+		`CREATE TABLE wanwork_im.tenant_membership_heads`,
+		`CREATE TABLE wanwork_im.provider_actor_binding_heads`,
+		`DEFERRABLE INITIALLY DEFERRED`,
+		`ENABLE ROW LEVEL SECURITY`,
+		`FORCE ROW LEVEL SECURITY`,
+	} {
+		if !strings.Contains(identity.UpSQL, marker) {
+			t.Fatalf("identity migration missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{
+		"credential", "password", "api_key", "secret_value", "endpoint", "IF NOT EXISTS",
+	} {
+		if strings.Contains(strings.ToLower(identity.UpSQL), strings.ToLower(forbidden)) {
+			t.Fatalf("identity migration contains forbidden text %q", forbidden)
+		}
 	}
 }
 

@@ -28,8 +28,18 @@ func TestValidateAppliedAcceptsOnlyExactContiguousPrefix(t *testing.T) {
 		{name: "version gap", applied: []AppliedMigration{{Version: 0}}, want: ErrLedgerDrift},
 		{name: "name drift", applied: []AppliedMigration{{Version: 1, Name: "other", Checksum: catalog[0].Checksum}}, want: ErrLedgerDrift},
 		{name: "checksum drift", applied: []AppliedMigration{{Version: 1, Name: catalog[0].Name, Checksum: "0"}}, want: ErrLedgerDrift},
-		{name: "future version", applied: []AppliedMigration{{Version: 2}}, want: ErrFutureSchema},
-		{name: "extra rows", applied: append(exact, AppliedMigration{Version: 2}), want: ErrFutureSchema},
+		{name: "future version", applied: []AppliedMigration{{Version: 3}}, want: ErrFutureSchema},
+		{
+			name: "extra rows",
+			applied: append(
+				exact,
+				AppliedMigration{
+					Version: 2, Name: catalog[1].Name, Checksum: catalog[1].Checksum,
+				},
+				AppliedMigration{Version: 3},
+			),
+			want: ErrFutureSchema,
+		},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			if err := validateApplied(catalog, fixture.applied); !errors.Is(err, fixture.want) {

@@ -37,14 +37,14 @@ func TestApplyAgainstPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatalf("repeat Apply: %v", err)
 		}
-		if len(first.Applied) != 1 || len(second.Applied) != 1 ||
-			first.Applied[0] != second.Applied[0] {
+		if len(first.Applied) != 2 || len(second.Applied) != 2 ||
+			first.Applied[0] != second.Applied[0] || first.Applied[1] != second.Applied[1] {
 			t.Fatalf("unexpected migration states: first=%#v second=%#v", first, second)
 		}
 		var rows int
 		if err := connection.QueryRow(ctx, `
 SELECT count(*)
-FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != 1 {
+FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != 2 {
 			t.Fatalf("ledger rows = %d, err = %v", rows, err)
 		}
 	})
@@ -56,6 +56,37 @@ FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != 1 {
 		}
 		if connection.IsClosed() {
 			t.Fatal("invalid input must not quarantine a healthy connection")
+		}
+	})
+
+	t.Run("identity authority schema digest fixture", func(t *testing.T) {
+		connection, _ := newIntegrationDatabase(t, adminURL)
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		catalog, err := Catalog()
+		if err != nil {
+			t.Fatalf("load catalog: %v", err)
+		}
+		transaction, err := connection.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+		if err != nil {
+			t.Fatalf("begin identity migration: %v", err)
+		}
+		defer func() { _ = transaction.Rollback(context.Background()) }()
+		for _, migration := range catalog[:2] {
+			if _, err := transaction.Exec(
+				ctx,
+				migration.UpSQL,
+				pgx.QueryExecModeSimpleProtocol,
+			); err != nil {
+				t.Fatalf("apply migration %d: %v", migration.Version, err)
+			}
+		}
+		digest, err := tableSchemaDigest(ctx, transaction, identityAuthorityTableNames)
+		if err != nil {
+			t.Fatalf("digest identity schema: %v", err)
+		}
+		if digest != identityAuthoritySchemaDigest {
+			t.Fatalf("identity authority schema digest = %s, want %s", digest, identityAuthoritySchemaDigest)
 		}
 	})
 
@@ -113,7 +144,7 @@ WHERE version = 1`, strings.Repeat("0", 64)); err != nil {
 		}
 		if _, err := connection.Exec(ctx, `
 INSERT INTO wanwork_meta.schema_migrations (version, name, checksum)
-VALUES (2, 'future', $1)`, strings.Repeat("0", 64)); err != nil {
+VALUES (3, 'future', $1)`, strings.Repeat("0", 64)); err != nil {
 			t.Fatalf("insert future row: %v", err)
 		}
 		if _, err := Apply(ctx, connection); !errors.Is(err, ErrFutureSchema) {
@@ -214,7 +245,7 @@ ALTER TABLE wanwork_im.provider_realms
 		close(start)
 		workers.Wait()
 		for index := range connections {
-			if errorsByWorker[index] != nil || len(results[index].Applied) != 1 {
+			if errorsByWorker[index] != nil || len(results[index].Applied) != 2 {
 				t.Fatalf(
 					"migrator %d state=%#v error=%v",
 					index,
