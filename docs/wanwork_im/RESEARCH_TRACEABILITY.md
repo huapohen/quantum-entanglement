@@ -1,11 +1,14 @@
 # WanWork 原生 IM 研究可追溯矩阵
 
-> 状态：W0 冻结依据
+> 状态：W0 冻结依据；W2 PostgreSQL persistence substrate 检查点
 >
 > 研究快照：2026-08-27
 >
 > 审计日期：2026-08-28
+>
 > 适用分支：`dev_wanwork_quantum_entanglement`
+>
+> W2 code baseline：`8d662bf4faec1cfaa12b63f4dfc2132ae6869dbb`
 
 ## 1. 这份文档解决什么
 
@@ -25,9 +28,12 @@
 `[U]` 是未知。产品不能把 `[C]/[A]` 改写成已经具备的能力，也不能用 Stars、下载、目录规模或
 页面文案代替真实生产证据。
 
-研究根目录：
+研究根目录（两层都必须作为一级证据，不得只读组合报告）：
 
-`/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output/more/`
+```text
+/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output
+/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output/more
+```
 
 该目录是本机研究证据快照，未整包复制进产品仓库。全部 40 份 Markdown 的行数、SHA-256、角色
 和处置见 `RESEARCH_COVERAGE.md`；下表保留直接支撑既有 RQ 的核心子集。原组合导航只包含 30 份
@@ -106,6 +112,38 @@ W5 Web/PWA；W6 Desktop/Mobile；W7 生产加固与交付。
 | RQ-043 | **Provider metadata 必须是有界、严格、零授权 projection。** `clawith/research_report.md:599-611`; `holaos/research_report.md:599-607`; `tech-agent-security-governance/research_report.md:442-444`; `protocol-a2a/research_report.md:425-457,480` | W1 `UserProjection/ConversationProjection` 与专用 canonical codec；四种 exact shape，schemaVersion=1，1024-byte 上限。 | flat allowlist、字典序 key、UTF-8/NFC、duplicate/unknown/null/wrong-type/trailing/exact-roundtrip 拒绝；永久禁止 authority/secret/content/evidence 字段；decode 后仍回查 authoritative binding/membership。 | W1 codec 完成；W2/W3 resolver/provider readback | 四种 golden bytes；848 个非 canonical permutation；44 类 forbidden-field canary；Unicode/control/oversize/race/fuzz 通过；语法合法但 mapping 被篡改仍无权限。 |
 | RQ-044 | **IM adapter 必须显式声明身份 mapping、能力降级和失败语义。** `clawith/research_report.md:599-611`; `agentspace/research_report.md:739-759`; `floatim-floatboat/research_report.md:582-593`; `tech-agent-security-governance/research_report.md:389-395` | `ProviderRealm/Profile/Capabilities`、`ExternalIdentityBindingResolver`、`VerifiedInboundEnvelope`、`ProviderDispatchAttempt/TransportReceipt/ReconciliationCase`。 | callback auth、durable dedupe、realm+provider ID mapping、canonical metadata consistency；outbound 默认关闭；timeout 无 authoritative negative finality 时进入 unknown，禁止盲重发。 | W2 port；W3 adapter；W4 dispatch | 错 realm/tenant、duplicate/reorder/resume、metadata drift、ACK loss、unsupported feature、kill switch 矩阵；内部 codec 与融云 sandbox contract test 分开。 |
 | RQ-045 | **Conversation freshness、held draft、message lifecycle 与 attention/read state 必须分域。** `clawith/research_report.md:204-226`; `raft-slock/research_report.md:135-145,237-270`; `floatim-floatboat/research_report.md:582-593,896-915` | `ContextCutoff/HeldDraft/ConversationRevision/MessageRevision/Tombstone/ReadState/ActivityItem`；引用、转发、编辑是否产生 mention 必须有显式规则。 | Agent 推理期间 membership、mandate、message 或 conversation revision 变化时，在发送点 hold/rebase/reject；read/activity 不冒充审计；edit/delete 不静默重写已接纳 Task/evidence。 | W2 extension points；W4/W5；retention/legal hold W7 | stale draft 不直发；引用/转发/编辑 mention 确定性；mark-read CAS；删/改消息不改变已冻结 Task/Artifact；retention/legal-hold fixture。 |
+
+### 3.1 W2 PostgreSQL 证据增量（HEAD `8d662bf`）
+
+本节不修改 RQ 的长期验收终点，只记录哪些研究结论已经进入当前数据库结构/transaction seam，避免把
+“方向正确”改写成“完整能力已交付”。详细证据见
+`analysis_report/research/33_postgres_authority_persistence_checkpoint.md`。
+
+| 关联 RQ / 一级证据 | `[F]` 当前已落实 | `[C]` 合同限定 | `[A]` 设计判断 | `[U]` 未完成 |
+|---|---|---|---|---|
+| RQ-003；Clawith `:543-557`；安全治理 `:187-231` | human principal、Actor、tenant membership、provider Actor binding 已分表持久化；provider realm 与 tenant scope 分离。 | 当前 identity 只有 migration/test，尚无 production identity repository；typed tenant 仍由 UoW caller 提供。 | identity 分层是 trusted request context 的必要底座。 | Clerk verified claim、workload/delegation、claim/path/membership admission。 |
+| RQ-005；Clawith `:196-226`；FloatIM `:152-163` | ordinary conversation membership 只允许 `usr_`/`agt_`；membership/access 独立 head/snapshot。 | membership 存在不等于 active；access row/boolean 不等于 action-time allow。 | 成员移除应同一 UoW 写 removed membership + all-false access。 | Agent installation/status/mandate/budget 与 send/invoke PEP。 |
+| RQ-006；Clawith `:493-503`；Portfolio `:220-226` | ordinary conversation persistence 对 `agent_thread` fail closed；没有静默丢 parent/root/invocation。 | 拒绝 unsupported topology 不等于 thread 已实现。 | 先稳定 ordinary authority，再增加 thread lineage，避免群聊冒充 Task。 | `agent_thread` repository、message root、Invocation、child ACL/use case。 |
+| RQ-010；DeepSeek Harness `:255-312,543-591,823-842` | PostgreSQL transaction/UoW seam、revision CAS 与 receipt 已建立。 | command receipt 不是 event stream、outbox、projection checkpoint 或 audit chain。 | 不做 memory EventStore 与 PostgreSQL state 的伪双写是正确的 fail-closed 选择。 | production event store/outbox、backfill+live、crash/reopen/restore。 |
+| RQ-012/013；Clawith `:421-452`；Portfolio `:635-654` | same command exact replay、request digest conflict、commit unknown 新连接 receipt readback；definite rollback 分离。 | callback 一次只限定数据库 command；result digest 不能重建 typed result，也不证明 provider effect。 | unknown/replay 后必须 typed aggregate readback；外部 effect 仍采用 at-least-once + reconcile。 | provider receipt/acceptance query、outbox、effect_unknown reconciler。 |
+| RQ-026；AgentTeams `:614-693`；AgentSpace `:633-674` | head/snapshot/receipt transaction state 可复核；测试 runtime role 无 snapshot/receipt UPDATE/DELETE/TRUNCATE。 | 当前是测试 fixture，生产 role/grant/provisioning 未冻结；digest 无签名。 | 数据库 history protection 是 evidence chain 的一层，不是完整 audit。 | actor/mandate/policy/intent/provider receipt/Artifact/Acceptance evidence chain。 |
+| RQ-028/043/044；Clawith `:599-611`；AgentSpace `:739-759` | realm-scoped RongCloud group binding 已持久化，metadata codec 仍为 zero-authority projection。 | binding 只说明本地 routing metadata；不证明融云群存在、成员、ACK 或 delivery。 | canonical platform authority 不应由 provider metadata 反向覆盖。 | callback auth、sandbox readback、dedupe/resume、provider unknown/reconcile。 |
+| RQ-034；AgentTeams `:373-404,431-450` | repository/UoW 不暴露 `pgx.Tx`，ignored repository error 会 poison transaction。 | runtime role 当前仍需 raw head UPDATE/snapshot INSERT；有 credential 的其他代码可绕 repository。 | 下一步必须改为 fixed SECURITY DEFINER function-only writes。 | exact role/table/schema/function ACL manifest 与 action-time executor PEP。 |
+| RQ-008/009；DeepSeek Harness `:207-251,404-414` | migration runner 固定 PG18、checksum、lock、search path、累计 postcondition；data-executing DDL forms 被收窄。 | token policy 不是完整 SQL parser/不可信代码 sandbox；只保护登记对象结构。 | schema/role/function manifest 应像 plugin effective configuration 一样由 host 冻结并启动重验。 | `0005` function definitions、owner/security/ACL digest、named grants/default privileges/role attributes。 |
+
+当前统一口径：
+
+- `[F]` 已证实的是 tenant-bound PostgreSQL authority repository + serializable/idempotent UoW +
+  cumulative migration invariants 这一持久化安全切片；
+- `[C]` 所有保证限定在已登记 schema、conversation/provider binding/membership/access repository、同一
+  PostgreSQL transaction 和测试过的 runtime-role fixture；
+- `[A]` 该切片是原生 IM/A2A/Agent runtime 的底座，不是完成态；
+- `[U]` production role/ACL、trusted auth/request context、action-time mandate/capability PEP、message/
+  thread/task/action、event/outbox、provider reconcile 与 Artifact acceptance 仍未实现。
+
+禁止把本节改写为以下宣称：生产级多租户、端到端 exactly-once、完整 audit/non-repudiation、Agent
+invocation authorization、Artifact publishing/acceptance、RongCloud delivery/A2A compatibility 或
+runtime role 已在生产部署中强制。
 
 ## 4. 明确吸收与明确拒绝
 
