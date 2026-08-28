@@ -18,26 +18,25 @@ import (
 
 func TestApprovalExecutionFencerConsumesApprovalAndReturnsOpaqueFence(t *testing.T) {
 	fixture := newApprovalExecutionFenceFixture(t)
-	store := newFakeApprovalExecutionFenceStore()
-	fencer := mustApprovalExecutionFencer(t, store, 0x71)
+	store := newFakeApprovalExecutionFenceStore(fixture.now)
+	fencer := mustApprovalExecutionFencer(t, store, 0x71, fixture.now)
 
 	fence, err := fencer.ConsumeAndFence(
 		t.Context(),
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		fixture.executionAttemptID,
-		fixture.now,
+		fixture.attempt,
 	)
 	if err != nil {
 		t.Fatalf("ConsumeAndFence: %v", err)
 	}
 	record := fence.EvidenceRecord()
 	if fence.FenceEpoch() != 1 || record.FenceEpoch != 1 ||
-		fence.ExecutionAttemptID() != fixture.executionAttemptID ||
+		fence.ExecutionAttemptID() != fixture.attempt.ID() ||
 		fence.PolicyHead() != record.ExpectedPolicyHead ||
 		fence.MutationNotAfter() != fixture.report.ExpiresAt() ||
-		record.TargetBeforeStateDigest != fixture.report.Digest() ||
+		record.ExecutionAttemptReceiptDigest != fixture.attempt.ReceiptDigest() ||
 		record.ApprovalPolicyTargetDigest != fixture.approval.PolicyTargetDigest() ||
 		!validApprovalExecutionFenceRecord(record, true) ||
 		store.compareCalls != 1 || store.loadCalls != 1 {
@@ -77,15 +76,14 @@ func TestApprovalExecutionFencerConsumesApprovalAndReturnsOpaqueFence(t *testing
 
 func TestApprovalMutationFenceRedactsFormattingAndStructuredLogs(t *testing.T) {
 	fixture := newApprovalExecutionFenceFixture(t)
-	store := newFakeApprovalExecutionFenceStore()
-	fencer := mustApprovalExecutionFencer(t, store, 0x71)
+	store := newFakeApprovalExecutionFenceStore(fixture.now)
+	fencer := mustApprovalExecutionFencer(t, store, 0x71, fixture.now)
 	fence, err := fencer.ConsumeAndFence(
 		t.Context(),
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		fixture.executionAttemptID,
-		fixture.now,
+		fixture.attempt,
 	)
 	if err != nil {
 		t.Fatalf("ConsumeAndFence: %v", err)
@@ -94,7 +92,7 @@ func TestApprovalMutationFenceRedactsFormattingAndStructuredLogs(t *testing.T) {
 	capabilityCanary := strings.Repeat("q", approvalExecutionTokenBytes)
 	formatted := fmt.Sprintf("%v|%+v|%#v|%s|%q", fence, fence, fence, fence, fence)
 	if strings.Contains(formatted, capabilityCanary) ||
-		strings.Contains(formatted, fixture.executionAttemptID) ||
+		strings.Contains(formatted, fixture.attempt.ID()) ||
 		formatted != "ApprovalMutationFence{redacted}|ApprovalMutationFence{redacted}|"+
 			"ApprovalMutationFence{redacted}|ApprovalMutationFence{redacted}|"+
 			`"ApprovalMutationFence{redacted}"` {
@@ -106,7 +104,7 @@ func TestApprovalMutationFenceRedactsFormattingAndStructuredLogs(t *testing.T) {
 	logger.Info("fence canary", "fence", fence)
 	logged := output.String()
 	if strings.Contains(logged, capabilityCanary) ||
-		strings.Contains(logged, fixture.executionAttemptID) ||
+		strings.Contains(logged, fixture.attempt.ID()) ||
 		!strings.Contains(logged, approvalMutationFenceRedacted) {
 		t.Fatalf("opaque fence structured log was not redacted: %q", logged)
 	}
@@ -114,17 +112,16 @@ func TestApprovalMutationFenceRedactsFormattingAndStructuredLogs(t *testing.T) {
 
 func TestApprovalExecutionFencerReconcilesCommitUnknownWithExactToken(t *testing.T) {
 	fixture := newApprovalExecutionFenceFixture(t)
-	store := newFakeApprovalExecutionFenceStore()
+	store := newFakeApprovalExecutionFenceStore(fixture.now)
 	store.commitThenErr = ErrApprovalExecutionCommitUncertain
-	fencer := mustApprovalExecutionFencer(t, store, 0x72)
+	fencer := mustApprovalExecutionFencer(t, store, 0x72, fixture.now)
 
 	fence, err := fencer.ConsumeAndFence(
 		t.Context(),
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		fixture.executionAttemptID,
-		fixture.now,
+		fixture.attempt,
 	)
 	if err != nil {
 		t.Fatalf("ConsumeAndFence lost ACK: %v", err)
@@ -133,16 +130,15 @@ func TestApprovalExecutionFencerReconcilesCommitUnknownWithExactToken(t *testing
 		t.Fatal("authoritative readback did not recover exact committed fence")
 	}
 
-	missing := newFakeApprovalExecutionFenceStore()
+	missing := newFakeApprovalExecutionFenceStore(fixture.now)
 	missing.compareErr = ErrApprovalExecutionCommitUncertain
-	missingFencer := mustApprovalExecutionFencer(t, missing, 0x73)
+	missingFencer := mustApprovalExecutionFencer(t, missing, 0x73, fixture.now)
 	if _, err := missingFencer.ConsumeAndFence(
 		t.Context(),
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		fixture.executionAttemptID,
-		fixture.now,
+		fixture.attempt,
 	); !errors.Is(err, ErrApprovalExecutionCommitUncertain) {
 		t.Fatalf("missing readback error = %v, want %v", err, ErrApprovalExecutionCommitUncertain)
 	}
@@ -150,15 +146,14 @@ func TestApprovalExecutionFencerReconcilesCommitUnknownWithExactToken(t *testing
 
 func TestApprovalExecutionFencerRejectsReplayAndBindingDrift(t *testing.T) {
 	fixture := newApprovalExecutionFenceFixture(t)
-	store := newFakeApprovalExecutionFenceStore()
-	fencer := mustApprovalExecutionFencer(t, store, 0x74)
+	store := newFakeApprovalExecutionFenceStore(fixture.now)
+	fencer := mustApprovalExecutionFencer(t, store, 0x74, fixture.now)
 	if _, err := fencer.ConsumeAndFence(
 		t.Context(),
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		fixture.executionAttemptID,
-		fixture.now,
+		fixture.attempt,
 	); err != nil {
 		t.Fatalf("first ConsumeAndFence: %v", err)
 	}
@@ -167,8 +162,7 @@ func TestApprovalExecutionFencerRejectsReplayAndBindingDrift(t *testing.T) {
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		"execution-attempt/second",
-		fixture.now,
+		mustIssueApprovalExecutionAttempt(t, fixture.attemptIssuer, fixture.plan),
 	); !errors.Is(err, ErrApprovalExecutionConflict) {
 		t.Fatalf("approval replay error = %v, want %v", err, ErrApprovalExecutionConflict)
 	}
@@ -177,26 +171,45 @@ func TestApprovalExecutionFencerRejectsReplayAndBindingDrift(t *testing.T) {
 	}
 
 	checksBefore := store.compareCalls
+	otherInput := validPlanInput()
+	otherInput.PlanID = "plan-20260829-0002"
+	otherPlan, err := BuildPlan(otherInput)
+	if err != nil {
+		t.Fatalf("BuildPlan other attempt: %v", err)
+	}
+	otherAttemptStore := &fakeApprovalExecutionAttemptStore{createdAt: fixture.now}
+	otherAttemptIssuer, err := NewApprovalExecutionAttemptIssuer(otherAttemptStore)
+	if err != nil {
+		t.Fatalf("NewApprovalExecutionAttemptIssuer other attempt: %v", err)
+	}
+	otherAttempt := mustIssueApprovalExecutionAttempt(t, otherAttemptIssuer, otherPlan)
 	tests := map[string]struct {
 		approval VerifiedApproval
 		report   PreflightReport
-		attempt  string
+		attempt  ApprovalExecutionAttempt
 		now      time.Time
 		want     error
 	}{
 		"invalid attempt": {
 			approval: fixture.approval,
 			report:   fixture.report,
-			attempt:  "caller-selected-retry",
+			attempt:  ApprovalExecutionAttempt{},
 			now:      fixture.now,
 			want:     ErrInvalidApprovalExecutionState,
 		},
 		"expired report": {
 			approval: fixture.approval,
 			report:   fixture.report,
-			attempt:  "execution-attempt/expired",
+			attempt:  fixture.attempt,
 			now:      fixture.report.ExpiresAt(),
 			want:     ErrApprovalExecutionExpired,
+		},
+		"attempt plan drift": {
+			approval: fixture.approval,
+			report:   fixture.report,
+			attempt:  otherAttempt,
+			now:      fixture.now,
+			want:     ErrInvalidApprovalExecutionState,
 		},
 		"target drift": {
 			approval: func() VerifiedApproval {
@@ -205,20 +218,20 @@ func TestApprovalExecutionFencerRejectsReplayAndBindingDrift(t *testing.T) {
 				return value
 			}(),
 			report:  fixture.report,
-			attempt: "execution-attempt/target-drift",
+			attempt: fixture.attempt,
 			now:     fixture.now,
 			want:    ErrInvalidApprovalExecutionState,
 		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := fencer.ConsumeAndFence(
+			testFencer := mustApprovalExecutionFencer(t, store, 0x78, test.now)
+			if _, err := testFencer.ConsumeAndFence(
 				t.Context(),
 				fixture.plan,
 				test.approval,
 				test.report,
 				test.attempt,
-				test.now,
 			); !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}
@@ -235,7 +248,7 @@ func TestApprovalExecutionFenceRecordRejectsFieldAndDigestDrift(t *testing.T) {
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		fixture.executionAttemptID,
+		fixture.attempt,
 	)
 	if err != nil {
 		t.Fatalf("newApprovalExecutionFenceCandidate: %v", err)
@@ -259,6 +272,12 @@ func TestApprovalExecutionFenceRecordRejectsFieldAndDigestDrift(t *testing.T) {
 		},
 		"reference": func(value *ApprovalExecutionFenceRecord) { value.ApprovalReference += "-other" },
 		"attempt":   func(value *ApprovalExecutionFenceRecord) { value.ExecutionAttemptID += "-other" },
+		"attempt generation": func(value *ApprovalExecutionFenceRecord) {
+			value.ExecutionAttemptGeneration++
+		},
+		"attempt created at": func(value *ApprovalExecutionFenceRecord) {
+			value.ExecutionAttemptCreatedAt = value.ExecutionAttemptCreatedAt.Add(time.Second)
+		},
 		"head": func(value *ApprovalExecutionFenceRecord) {
 			value.ExpectedPolicyHead.Revision++
 		},
@@ -266,8 +285,8 @@ func TestApprovalExecutionFenceRecordRejectsFieldAndDigestDrift(t *testing.T) {
 		"operation": func(value *ApprovalExecutionFenceRecord) {
 			value.OperationID = "approval-operation/other"
 		},
-		"before state": func(value *ApprovalExecutionFenceRecord) {
-			value.TargetBeforeStateDigest = "sha256:" + strings.Repeat("e", 64)
+		"attempt receipt": func(value *ApprovalExecutionFenceRecord) {
+			value.ExecutionAttemptReceiptDigest = "sha256:" + strings.Repeat("e", 64)
 		},
 		"token": func(value *ApprovalExecutionFenceRecord) {
 			value.TokenDigest = "sha256:" + strings.Repeat("e", 64)
@@ -287,9 +306,43 @@ func TestApprovalExecutionFenceRecordRejectsFieldAndDigestDrift(t *testing.T) {
 	}
 }
 
+func TestApprovalExecutionFencerUsesOwnedClockOnce(t *testing.T) {
+	fixture := newApprovalExecutionFenceFixture(t)
+	store := newFakeApprovalExecutionFenceStore(fixture.report.ExpiresAt())
+	var clockCalls atomic.Uint64
+	fencer, err := newApprovalExecutionFencer(
+		store,
+		func(destination []byte) error {
+			for index := range destination {
+				destination[index] = 0x79
+			}
+			return nil
+		},
+		func() time.Time {
+			clockCalls.Add(1)
+			return fixture.report.ExpiresAt()
+		},
+	)
+	if err != nil {
+		t.Fatalf("newApprovalExecutionFencer: %v", err)
+	}
+	if _, err := fencer.ConsumeAndFence(
+		t.Context(),
+		fixture.plan,
+		fixture.approval,
+		fixture.report,
+		fixture.attempt,
+	); !errors.Is(err, ErrApprovalExecutionExpired) {
+		t.Fatalf("expired owned clock error = %v, want %v", err, ErrApprovalExecutionExpired)
+	}
+	if clockCalls.Load() != 1 || store.compareCalls != 0 {
+		t.Fatalf("owned clock calls=%d store calls=%d", clockCalls.Load(), store.compareCalls)
+	}
+}
+
 func TestApprovalExecutionFencerAllowsOneConcurrentApprovalConsumption(t *testing.T) {
 	fixture := newApprovalExecutionFenceFixture(t)
-	store := newFakeApprovalExecutionFenceStore()
+	store := newFakeApprovalExecutionFenceStore(fixture.now)
 	var tokenSequence atomic.Uint64
 	fencer, err := newApprovalExecutionFencer(store, func(destination []byte) error {
 		sequence := tokenSequence.Add(1)
@@ -297,12 +350,16 @@ func TestApprovalExecutionFencerAllowsOneConcurrentApprovalConsumption(t *testin
 			destination[index] = byte(sequence + uint64(index))
 		}
 		return nil
-	})
+	}, func() time.Time { return fixture.now })
 	if err != nil {
 		t.Fatalf("newApprovalExecutionFencer: %v", err)
 	}
 
 	const contenders = 64
+	attempts := make([]ApprovalExecutionAttempt, contenders)
+	for index := range attempts {
+		attempts[index] = mustIssueApprovalExecutionAttempt(t, fixture.attemptIssuer, fixture.plan)
+	}
 	var wait sync.WaitGroup
 	errorsByContender := make(chan error, contenders)
 	for index := range contenders {
@@ -314,8 +371,7 @@ func TestApprovalExecutionFencerAllowsOneConcurrentApprovalConsumption(t *testin
 				fixture.plan,
 				fixture.approval,
 				fixture.report,
-				fmt.Sprintf("execution-attempt/concurrent-%02d", index),
-				fixture.now,
+				attempts[index],
 			)
 			errorsByContender <- err
 		}()
@@ -351,7 +407,7 @@ func TestApprovalExecutionFencerAllowsOneConcurrentApprovalConsumption(t *testin
 func TestApprovalExecutionFencerUsesFreshReadbackAfterCallerCancellation(t *testing.T) {
 	fixture := newApprovalExecutionFenceFixture(t)
 	store := &cancellationApprovalExecutionFenceStore{}
-	fencer := mustApprovalExecutionFencer(t, store, 0x76)
+	fencer := mustApprovalExecutionFencer(t, store, 0x76, fixture.now)
 	ctx, cancel := context.WithCancel(context.WithValue(
 		t.Context(),
 		approvalExecutionFenceContextKey{},
@@ -364,8 +420,7 @@ func TestApprovalExecutionFencerUsesFreshReadbackAfterCallerCancellation(t *test
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		fixture.executionAttemptID,
-		fixture.now,
+		fixture.attempt,
 	)
 	if !errors.Is(err, ErrApprovalExecutionCommitUncertain) {
 		t.Fatalf("canceled fence error = %v, want %v", err, ErrApprovalExecutionCommitUncertain)
@@ -388,16 +443,31 @@ func TestApprovalExecutionFencerRejectsInvalidDependenciesAndTokenSources(t *tes
 	) {
 		t.Fatalf("typed nil store error = %v, want %v", err, ErrInvalidApprovalExecutionFencer)
 	}
-	if _, err := newApprovalExecutionFencer(newFakeApprovalExecutionFenceStore(), nil); !errors.Is(
+	if _, err := newApprovalExecutionFencer(
+		newFakeApprovalExecutionFenceStore(time.Now().UTC().Truncate(time.Second)),
+		nil,
+		func() time.Time { return time.Now().UTC() },
+	); !errors.Is(
 		err,
 		ErrInvalidApprovalExecutionFencer,
 	) {
 		t.Fatalf("nil token source error = %v, want %v", err, ErrInvalidApprovalExecutionFencer)
 	}
+	if _, err := newApprovalExecutionFencer(
+		newFakeApprovalExecutionFenceStore(time.Now().UTC().Truncate(time.Second)),
+		func([]byte) error { return nil },
+		nil,
+	); !errors.Is(err, ErrInvalidApprovalExecutionFencer) {
+		t.Fatalf("nil clock error = %v, want %v", err, ErrInvalidApprovalExecutionFencer)
+	}
 
 	fixture := newApprovalExecutionFenceFixture(t)
-	zeroStore := newFakeApprovalExecutionFenceStore()
-	zeroFencer, err := newApprovalExecutionFencer(zeroStore, func([]byte) error { return nil })
+	zeroStore := newFakeApprovalExecutionFenceStore(fixture.now)
+	zeroFencer, err := newApprovalExecutionFencer(
+		zeroStore,
+		func([]byte) error { return nil },
+		func() time.Time { return fixture.now },
+	)
 	if err != nil {
 		t.Fatalf("new zero-token fencer: %v", err)
 	}
@@ -406,8 +476,7 @@ func TestApprovalExecutionFencerRejectsInvalidDependenciesAndTokenSources(t *tes
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		fixture.executionAttemptID,
-		fixture.now,
+		fixture.attempt,
 	); !errors.Is(err, ErrApprovalExecutionStoreUnavailable) {
 		t.Fatalf("zero token error = %v, want %v", err, ErrApprovalExecutionStoreUnavailable)
 	}
@@ -416,10 +485,12 @@ func TestApprovalExecutionFencerRejectsInvalidDependenciesAndTokenSources(t *tes
 	}
 
 	const canary = "token-source-private-canary"
-	failingStore := newFakeApprovalExecutionFenceStore()
-	failingFencer, err := newApprovalExecutionFencer(failingStore, func([]byte) error {
-		return errors.New(canary)
-	})
+	failingStore := newFakeApprovalExecutionFenceStore(fixture.now)
+	failingFencer, err := newApprovalExecutionFencer(
+		failingStore,
+		func([]byte) error { return errors.New(canary) },
+		func() time.Time { return fixture.now },
+	)
 	if err != nil {
 		t.Fatalf("new failing-token fencer: %v", err)
 	}
@@ -428,8 +499,7 @@ func TestApprovalExecutionFencerRejectsInvalidDependenciesAndTokenSources(t *tes
 		fixture.plan,
 		fixture.approval,
 		fixture.report,
-		fixture.executionAttemptID,
-		fixture.now,
+		fixture.attempt,
 	)
 	if !errors.Is(sourceErr, ErrApprovalExecutionStoreUnavailable) ||
 		strings.Contains(sourceErr.Error(), canary) || failingStore.compareCalls != 0 {
@@ -438,11 +508,12 @@ func TestApprovalExecutionFencerRejectsInvalidDependenciesAndTokenSources(t *tes
 }
 
 type approvalExecutionFenceFixture struct {
-	approval           VerifiedApproval
-	executionAttemptID string
-	now                time.Time
-	plan               Plan
-	report             PreflightReport
+	approval      VerifiedApproval
+	attempt       ApprovalExecutionAttempt
+	attemptIssuer ApprovalExecutionAttemptIssuer
+	now           time.Time
+	plan          Plan
+	report        PreflightReport
 }
 
 func newApprovalExecutionFenceFixture(t *testing.T) approvalExecutionFenceFixture {
@@ -494,19 +565,40 @@ func newApprovalExecutionFenceFixture(t *testing.T) approvalExecutionFenceFixtur
 	if err != nil {
 		t.Fatalf("buildPreflightReport: %v", err)
 	}
-	return approvalExecutionFenceFixture{
-		approval:           approval,
-		executionAttemptID: "execution-attempt/cutover-0001",
-		now:                observedAt,
-		plan:               plan,
-		report:             report,
+	attemptStore := &fakeApprovalExecutionAttemptStore{createdAt: observedAt}
+	attemptIssuer, err := NewApprovalExecutionAttemptIssuer(attemptStore)
+	if err != nil {
+		t.Fatalf("NewApprovalExecutionAttemptIssuer: %v", err)
 	}
+	attempt := mustIssueApprovalExecutionAttempt(t, attemptIssuer, plan)
+	return approvalExecutionFenceFixture{
+		approval:      approval,
+		attempt:       attempt,
+		attemptIssuer: attemptIssuer,
+		now:           observedAt,
+		plan:          plan,
+		report:        report,
+	}
+}
+
+func mustIssueApprovalExecutionAttempt(
+	t *testing.T,
+	issuer ApprovalExecutionAttemptIssuer,
+	plan Plan,
+) ApprovalExecutionAttempt {
+	t.Helper()
+	attempt, err := issuer.Issue(t.Context(), plan)
+	if err != nil {
+		t.Fatalf("Issue approval execution attempt: %v", err)
+	}
+	return attempt
 }
 
 func mustApprovalExecutionFencer(
 	t *testing.T,
 	store approvalExecutionFenceStore,
 	tokenByte byte,
+	now time.Time,
 ) ApprovalExecutionFencer {
 	t.Helper()
 	fencer, err := newApprovalExecutionFencer(store, func(destination []byte) error {
@@ -514,7 +606,7 @@ func mustApprovalExecutionFencer(
 			destination[index] = tokenByte
 		}
 		return nil
-	})
+	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatalf("newApprovalExecutionFencer: %v", err)
 	}
@@ -530,14 +622,16 @@ type fakeApprovalExecutionFenceStore struct {
 	loadCalls     int
 	compareErr    error
 	commitThenErr error
+	clock         approvalExecutionClock
 	nextEpoch     uint64
 }
 
-func newFakeApprovalExecutionFenceStore() *fakeApprovalExecutionFenceStore {
+func newFakeApprovalExecutionFenceStore(now time.Time) *fakeApprovalExecutionFenceStore {
 	return &fakeApprovalExecutionFenceStore{
 		states:        make(map[string]ApprovalExecutionFenceStoredState),
 		consumptions:  make(map[string]string),
 		activeBySpace: make(map[ApprovalPolicyNamespace]string),
+		clock:         func() time.Time { return now },
 	}
 }
 
@@ -584,7 +678,7 @@ func (store *fakeApprovalExecutionFenceStore) CompareAndOpen(
 	record, err := sealApprovalExecutionFenceRecord(
 		candidate,
 		store.nextEpoch,
-		candidate.record.PreflightObservedAt,
+		store.clock().UTC(),
 		tokenDigest,
 	)
 	if err != nil {

@@ -113,7 +113,8 @@ func (issuer ApprovalExecutionAttemptIssuer) Issue(
 	if !validApprovalExecutionAttemptRecord(state.Record, true) ||
 		state.Record.PlanID != candidate.PlanID ||
 		state.Record.PlanDigest != candidate.PlanDigest ||
-		state.Record.TargetDigest != candidate.TargetDigest {
+		state.Record.TargetDigest != candidate.TargetDigest ||
+		!state.Record.CreatedAt.Before(plan.Snapshot().ExpiresAt) {
 		return ApprovalExecutionAttempt{}, ErrInvalidApprovalExecutionAttempt
 	}
 	return ApprovalExecutionAttempt{record: state.Record}, nil

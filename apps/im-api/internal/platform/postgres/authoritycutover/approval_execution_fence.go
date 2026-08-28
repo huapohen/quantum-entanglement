@@ -54,7 +54,10 @@ type ApprovalExecutionFenceRecord struct {
 	ApprovedAt                     time.Time          `json:"approvedAt"`
 	ApproverIdentity               string             `json:"approverIdentity"`
 	ConsumptionID                  string             `json:"consumptionId"`
+	ExecutionAttemptCreatedAt      time.Time          `json:"executionAttemptCreatedAt"`
+	ExecutionAttemptGeneration     uint64             `json:"executionAttemptGeneration"`
 	ExecutionAttemptID             string             `json:"executionAttemptId"`
+	ExecutionAttemptReceiptDigest  string             `json:"executionAttemptReceiptDigest"`
 	ExpectedPolicyHead             ApprovalPolicyHead `json:"expectedPolicyHead"`
 	FenceEpoch                     uint64             `json:"fenceEpoch"`
 	Format                         string             `json:"format"`
@@ -68,7 +71,6 @@ type ApprovalExecutionFenceRecord struct {
 	PreflightObservedAt            time.Time          `json:"preflightObservedAt"`
 	PreflightReportDigest          string             `json:"preflightReportDigest"`
 	RecordDigest                   string             `json:"recordDigest"`
-	TargetBeforeStateDigest        string             `json:"targetBeforeStateDigest"`
 	TokenDigest                    string             `json:"tokenDigest"`
 }
 
@@ -97,6 +99,7 @@ type approvalExecutionFenceStore interface {
 }
 
 type approvalExecutionTokenSource func([]byte) error
+type approvalExecutionClock func() time.Time
 
 // ApprovalExecutionFencer is the only constructor of an opaque ApprovalMutationFence. The store
 // must atomically verify the exact current policy head, consume the approval, allocate a monotonic
@@ -104,23 +107,25 @@ type approvalExecutionTokenSource func([]byte) error
 type ApprovalExecutionFencer struct {
 	store       approvalExecutionFenceStore
 	tokenSource approvalExecutionTokenSource
+	clock       approvalExecutionClock
 }
 
 func NewApprovalExecutionFencer(store approvalExecutionFenceStore) (ApprovalExecutionFencer, error) {
 	return newApprovalExecutionFencer(store, func(destination []byte) error {
 		_, err := rand.Read(destination)
 		return err
-	})
+	}, func() time.Time { return time.Now().UTC() })
 }
 
 func newApprovalExecutionFencer(
 	store approvalExecutionFenceStore,
 	tokenSource approvalExecutionTokenSource,
+	clock approvalExecutionClock,
 ) (ApprovalExecutionFencer, error) {
-	if nilInterface(store) || tokenSource == nil {
+	if nilInterface(store) || tokenSource == nil || clock == nil {
 		return ApprovalExecutionFencer{}, ErrInvalidApprovalExecutionFencer
 	}
-	return ApprovalExecutionFencer{store: store, tokenSource: tokenSource}, nil
+	return ApprovalExecutionFencer{store: store, tokenSource: tokenSource, clock: clock}, nil
 }
 
 // ApprovalMutationFence is an in-process capability. Its token is intentionally unexported; later
@@ -163,23 +168,19 @@ func (fencer ApprovalExecutionFencer) ConsumeAndFence(
 	plan Plan,
 	approval VerifiedApproval,
 	report PreflightReport,
-	executionAttemptID string,
-	now time.Time,
+	attempt ApprovalExecutionAttempt,
 ) (ApprovalMutationFence, error) {
-	if ctx == nil || nilInterface(fencer.store) || fencer.tokenSource == nil {
+	if ctx == nil || nilInterface(fencer.store) || fencer.tokenSource == nil || fencer.clock == nil {
 		return ApprovalMutationFence{}, ErrInvalidApprovalExecutionFencer
 	}
-	if !canonicalIdentity(executionAttemptID) ||
-		!strings.HasPrefix(executionAttemptID, "execution-attempt/") {
-		return ApprovalMutationFence{}, ErrInvalidApprovalExecutionState
-	}
+	now := fencer.clock().UTC()
 	if err := ValidatePreflightReport(report, plan, approval, now); err != nil {
 		if errors.Is(err, ErrExpiredPreflightReport) || errors.Is(err, ErrExpiredApproval) {
 			return ApprovalMutationFence{}, ErrApprovalExecutionExpired
 		}
 		return ApprovalMutationFence{}, ErrInvalidApprovalExecutionState
 	}
-	candidate, err := newApprovalExecutionFenceCandidate(plan, approval, report, executionAttemptID)
+	candidate, err := newApprovalExecutionFenceCandidate(plan, approval, report, attempt)
 	if err != nil {
 		return ApprovalMutationFence{}, err
 	}
@@ -238,10 +239,17 @@ func newApprovalExecutionFenceCandidate(
 	plan Plan,
 	approval VerifiedApproval,
 	report PreflightReport,
-	executionAttemptID string,
+	attempt ApprovalExecutionAttempt,
 ) (approvalExecutionFenceCandidate, error) {
 	planSnapshot := plan.Snapshot()
 	reportSnapshot := report.Snapshot()
+	attemptRecord := attempt.record
+	if !validApprovalExecutionAttemptRecord(attemptRecord, true) ||
+		attemptRecord.PlanID != planSnapshot.PlanID ||
+		attemptRecord.PlanDigest != plan.Digest() ||
+		attemptRecord.TargetDigest != approval.PolicyTargetDigest() {
+		return approvalExecutionFenceCandidate{}, ErrInvalidApprovalExecutionState
+	}
 	head := ApprovalPolicyHead{
 		ActivationRecordDigest: approval.ActivationRecordDigest(),
 		PolicyDigest:           approval.PolicyDigest(),
@@ -265,7 +273,10 @@ func newApprovalExecutionFenceCandidate(
 		ApprovalReference:              approval.Reference(),
 		ApprovedAt:                     approval.ApprovedAt(),
 		ApproverIdentity:               approval.ApproverIdentity(),
-		ExecutionAttemptID:             executionAttemptID,
+		ExecutionAttemptCreatedAt:      attemptRecord.CreatedAt,
+		ExecutionAttemptGeneration:     attemptRecord.AttemptGeneration,
+		ExecutionAttemptID:             attemptRecord.AttemptID,
+		ExecutionAttemptReceiptDigest:  attemptRecord.AttemptReceiptDigest,
 		ExpectedPolicyHead:             head,
 		Format:                         ApprovalExecutionFenceRecordFormat,
 		MutationNotAfter: earliestApprovalExecutionExpiry(
@@ -273,16 +284,19 @@ func newApprovalExecutionFenceCandidate(
 			planSnapshot.ExpiresAt,
 			report.ExpiresAt(),
 		),
-		PlanDigest:              plan.Digest(),
-		PlanExpiresAt:           planSnapshot.ExpiresAt,
-		PlanID:                  planSnapshot.PlanID,
-		PreflightExpiresAt:      report.ExpiresAt(),
-		PreflightObservedAt:     report.ObservedAt(),
-		PreflightReportDigest:   report.Digest(),
-		TargetBeforeStateDigest: report.Digest(),
+		PlanDigest:            plan.Digest(),
+		PlanExpiresAt:         planSnapshot.ExpiresAt,
+		PlanID:                planSnapshot.PlanID,
+		PreflightExpiresAt:    report.ExpiresAt(),
+		PreflightObservedAt:   report.ObservedAt(),
+		PreflightReportDigest: report.Digest(),
 	}
 	record.ConsumptionID = approvalConsumptionID(record)
-	record.OperationID = approvalExecutionOperationID(record.ConsumptionID, executionAttemptID)
+	record.OperationID = approvalExecutionOperationID(
+		record.ConsumptionID,
+		record.ExecutionAttemptID,
+		record.ExecutionAttemptReceiptDigest,
+	)
 	candidate := approvalExecutionFenceCandidate{record: record}
 	if !validApprovalExecutionFenceCandidate(candidate) ||
 		reportSnapshot.ReportDigest != record.PreflightReportDigest {
@@ -370,8 +384,11 @@ func validApprovalExecutionFenceBinding(record ApprovalExecutionFenceRecord) boo
 		record.ApprovalExpiresAt.After(record.ApprovedAt) &&
 		canonicalIdentity(record.ApproverIdentity) &&
 		canonicalIdentity(record.ConsumptionID) &&
+		canonicalPreflightTime(record.ExecutionAttemptCreatedAt) &&
+		record.ExecutionAttemptGeneration > 0 &&
 		canonicalIdentity(record.ExecutionAttemptID) &&
 		strings.HasPrefix(record.ExecutionAttemptID, "execution-attempt/") &&
+		canonicalDigest.MatchString(record.ExecutionAttemptReceiptDigest) &&
 		record.ExpectedPolicyHead == (ApprovalPolicyHead{
 			ActivationRecordDigest: record.ApprovalPolicyActivationDigest,
 			PolicyDigest:           record.ApprovalPolicyDigest,
@@ -386,10 +403,9 @@ func validApprovalExecutionFenceBinding(record ApprovalExecutionFenceRecord) boo
 		canonicalIdentity(record.PlanID) &&
 		canonicalPreflightTime(record.PreflightExpiresAt) &&
 		canonicalPreflightTime(record.PreflightObservedAt) &&
+		!record.ExecutionAttemptCreatedAt.After(record.PreflightObservedAt) &&
 		record.PreflightExpiresAt.After(record.PreflightObservedAt) &&
 		canonicalDigest.MatchString(record.PreflightReportDigest) &&
-		canonicalDigest.MatchString(record.TargetBeforeStateDigest) &&
-		record.TargetBeforeStateDigest == record.PreflightReportDigest &&
 		record.MutationNotAfter == earliestApprovalExecutionExpiry(
 			record.ApprovalExpiresAt,
 			record.PlanExpiresAt,
@@ -399,6 +415,7 @@ func validApprovalExecutionFenceBinding(record ApprovalExecutionFenceRecord) boo
 		record.OperationID == approvalExecutionOperationID(
 			record.ConsumptionID,
 			record.ExecutionAttemptID,
+			record.ExecutionAttemptReceiptDigest,
 		) &&
 		record.ApprovalPolicyRevision == approvalPolicyRevision(
 			record.ApprovalPolicyID,
@@ -446,11 +463,20 @@ func approvalConsumptionID(record ApprovalExecutionFenceRecord) string {
 	)
 }
 
-func approvalExecutionOperationID(consumptionID string, executionAttemptID string) string {
+func approvalExecutionOperationID(
+	consumptionID string,
+	executionAttemptID string,
+	executionAttemptReceiptDigest string,
+) string {
 	canonical, err := json.Marshal(struct {
-		ConsumptionID      string `json:"consumptionId"`
-		ExecutionAttemptID string `json:"executionAttemptId"`
-	}{ConsumptionID: consumptionID, ExecutionAttemptID: executionAttemptID})
+		ConsumptionID                 string `json:"consumptionId"`
+		ExecutionAttemptID            string `json:"executionAttemptId"`
+		ExecutionAttemptReceiptDigest string `json:"executionAttemptReceiptDigest"`
+	}{
+		ConsumptionID:                 consumptionID,
+		ExecutionAttemptID:            executionAttemptID,
+		ExecutionAttemptReceiptDigest: executionAttemptReceiptDigest,
+	})
 	if err != nil {
 		return ""
 	}
