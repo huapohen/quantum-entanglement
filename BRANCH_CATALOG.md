@@ -6,7 +6,8 @@
 
 | 场景 | 应使用的引用 | 说明 |
 | --- | --- | --- |
-| 日常开发、验收、继续主线任务 | `main`（目录基线 `9e44dafecf5e`） | 唯一正式主分支；目录 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement`。 |
+| 日常开发、验收、继续正式主线 | `main`（目录基线 `43f81166e89f`） | 唯一正式主分支；目录 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement`。 |
+| 验收当前 E3 M1 codec 节点 | `mainline_continue_quantum_entanglement`（稳定快照 `42fb708e7581`） | 独立人工评审分支；M1 已完成，下一步 M2；用户决定前不合并 `main`。 |
 | 复现当前本地试用版本 | `v0.1.0-local-trial.2` | 固定版本标签，不会随 `main` 后续提交移动。 |
 | 查看上一试用检查点 | `v0.1.0-local-trial.1` | 已被 `.2` 取代，仅用于对比。 |
 | 恢复某项历史实现 | 先从 `main` 新建分支，再挑选提交 | 优先 `git cherry-pick` 单个已审阅提交，不直接合并历史分支。 |
@@ -31,9 +32,9 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
-| 2026-08-28T18:21:07+08:00 | `dev_wanwork_quantum_entanglement`<br>`97b24b20c120` | 较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。 | 未直接并入 main | 领先 156 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
-| 2026-08-28T18:20:52+08:00 | `mainline_continue_quantum_entanglement`<br>`f5dbc461fcf8` | 原生 IM E2 provider-bundle 离线闭环与独立 IM 后端合同源码复核的人工评审分支；Mapper、Transport、Bundle TCK 已完成，已确认当前后端只有 fake liveness/ping，等待真实 readiness/read 合同、测试 scope 与 production exchange 输入；不自动合并回 main。 | 未直接并入 main | 领先 169 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
-| 2026-08-28T02:01:09+08:00 | `main`<br>`9e44dafecf5e` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
+| 2026-08-28T19:31:02+08:00 | `dev_wanwork_quantum_entanglement`<br>`25f27d686775` | 独立原生 IM 后端/运行时安全候选；当前 worktree clean，但本地分支领先对应远端 3 个提交；不作为默认主线，不由本评审分支合并或推送。 | 未直接并入 main | 领先 165 / 落后 4 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 2026-08-28T19:30:43+08:00 | `mainline_continue_quantum_entanglement`<br>`42fb708e7581` | 当前人工评审分支：原生 IM E2 离线闭环与后端合同复核保持不变，E3 Result Authority M1 private stored-event envelope codec 已完成；下一步是 M2 reserved fence，真实 IM、writer、Accepted、worker 均关闭；不自动合并 `main`。 | 未直接并入 main | 领先 187 / 落后 4 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 2026-08-28T11:43:19+08:00 | `main`<br>`43f81166e89f` | 唯一正式主线；正式集成与发布仍以此为准，尚未包含当前独立 M1 评审分支。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 2026-08-27T18:07:00+08:00 | `backup_0827_200010`<br>`1d399e555fb0` | 2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。 | 已作为祖先进入 main | 领先 0 / 落后 12 | — |
 | 2026-08-23T18:04:39Z | `dependabot/pip/mypy-2.3.1`<br>`fce21d09e51b` | 用途待补充；当前节点主题：build(deps-dev): bump mypy from 1.19.1 to 2.3.1 | 未直接并入 main | 领先 1 / 落后 240 | — |
 | 2026-08-23T18:04:33Z | `dependabot/pip/ruff-0.16.4`<br>`bf627bc8a49f` | 用途待补充；当前节点主题：build(deps): bump ruff from 0.16.3 to 0.16.4 | 未直接并入 main | 领先 1 / 落后 240 | — |
@@ -105,9 +106,9 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 状态 | 分支/模式 | HEAD | 路径 |
 | --- | --- | --- | --- |
-| 正式主线工作区 | `main` | `9e44dafecf5e` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 存在、有未提交修改 | `dev_wanwork_quantum_entanglement` | `97b24b20c120` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
-| 存在、干净 | `mainline_continue_quantum_entanglement` | `f5dbc461fcf8` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 正式主线工作区 | `main` | `43f81166e89f` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
+| 存在、干净；本地领先远端 3 | `dev_wanwork_quantum_entanglement` | `25f27d686775` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 存在、干净 | `mainline_continue_quantum_entanglement` | `42fb708e7581` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 
 ## 固定版本标签
 
