@@ -1,22 +1,25 @@
-# W2 PostgreSQL authority specification 与 cutover plan 检查点
+# W2 PostgreSQL authority plan、可信文件与 detached approval 检查点
 
 日期：2026-08-29
 
 分支：`dev_wanwork_quantum_entanglement`
 
-实现基线：`ad608590f709fe769035c9db97e77da755b0cb48`
+实现基线：`8c31736cf775d5785a4e3ebbd1f9f9b1e6830c09`
 
 ## 1. 结论
 
 Gate A0 已把原来只存在于验证器和文档中的 PostgreSQL authority 期望值收敛成 immutable production
-specification，并交付第一版 canonical cutover plan builder 与严格 decoder。plan 现在能稳定绑定 Git source、
+specification，并交付 canonical cutover plan、严格 decoder、descriptor-based 可信文件加载和 detached Ed25519
+approval verifier。plan 现在能稳定绑定 Git source、
 release artifact、migration catalog、authority manifest/specification、目标数据库和 TLS 身份、三类 credential
-generation reference、备份、回滚边界、空/非空分类、五阶段步骤、审批引用、expiry 与 evidence destination。
+generation reference、备份、回滚边界、空/非空分类、五阶段步骤、审批引用、expiry 与 evidence destination；
+verified approval 进一步绑定 exact plan、审批人、deployment/cell/reference scope、key generation/fingerprint、
+policy revision 和短时有效期。
 
 本检查点**不是 Gate A0 完成**。尚未交付 provisioner preflight、bootstrap/cutover executor、durable
 receipt/reconcile store、hardened secret file provider、clean Linux IaC、remote authenticated-TLS 正向 E2E、
-empty/non-empty production cutover 和 restore 演练。当前 plan 只能被构建、canonicalize、digest、严格解码和
-离线验证，不能执行数据库写入。
+empty/non-empty production cutover 和 restore 演练。当前代码只能构建/验证计划和审批、读取受信文件，不能执行
+数据库写入；`VerifiedApproval` 也不是 single-use lease，必须由后续 executor 在 durable fence 中原子消费。
 
 ## 2. 已交付代码
 
@@ -99,6 +102,36 @@ approval reference 仍需要后续 deployment controller/receipt verifier 验证
 decoder 不访问数据库、filesystem、secret manager 或网络。执行时的新鲜度、approval legitimacy、backup
 existence 和 external artifact existence 仍由后续 preflight/executor 负责。
 
+### 2.6 Descriptor-based 可信文件入口
+
+`LoadPlanFile` 与 `VerifyApprovalFile` 从 filesystem root 开始逐段执行 `openat + O_NOFOLLOW`，并固定要求：
+
+- absolute、clean、UTF-8/NFC path；
+- parent/final component 均不跟随 symlink；
+- regular file、单链接、exact UID/GID、`0400|0440`；
+- 有界大小、descriptor read 前后 device/inode/mode/link/owner/size/mtime/ctime 完全一致；
+- Darwin/Linux 使用真实 descriptor 实现，其他平台明确 `ErrUnsupportedFilePlatform`，不回退到普通 read。
+
+错误不包含 path 或 raw bytes。`VerifyApprovalFile` 读取后立即验证且只返回 `VerifiedApproval`，raw signature 不越过
+API 边界。
+
+### 2.7 Detached Ed25519 approval
+
+approval signing bytes 与 evidence/key fingerprint 分别使用独立 domain。canonical envelope 只允许 fixed schema、
+exact field order、RawURL strict Base64、UTC 整秒和最长 15 分钟 TTL；decoder 拒绝 whitespace/reorder 所形成的第二种
+byte representation、unknown/duplicate/trailing/null、非 UTF-8/NFC 和超限输入。
+
+trusted key policy 明确绑定：
+
+- exact `KeyID -> ApproverIdentity`；
+- deployment、cell 与 `approval/.../` reference namespace；
+- key not-before/not-after、generation、policy revision 与 domain-separated public-key fingerprint；
+- revoked tombstone 不能进入 active verifier；
+- `.`、`..`、空 segment 和 sibling-prefix reference 固定拒绝。
+
+`VerifiedApproval` 不导出 signature、raw/canonical envelope 或 public key，只提供 bounded evidence metadata。它的
+`ApprovalDigest` 是 non-authenticating evidence hash，不是签名替代品，也不防重复 Verify/重复执行。
+
 ## 3. 提交分解
 
 | Commit | 内容 | 独立边界 |
@@ -107,6 +140,11 @@ existence 和 external artifact existence 仍由后续 preflight/executor 负责
 | `61d8afaf7a19333f264247007e373414d12539ce` | manifest/catalog/spec digest 与 compatibility binding | 无数据库写入 |
 | `c08abb717489a93688b8c51d61ac1757a754d0fc` | canonical plan、semantic validation、自绑定 digest、golden digest | 只 build/seal |
 | `ad608590f709fe769035c9db97e77da755b0cb48` | duplicate-aware strict JSON decoder | 只离线 decode/verify |
+| `f82831a4a339a15ea449ceabb287643a3898f5d1` | trusted descriptor plan loader | 不验证 approval |
+| `50366060fb1751612373200dae951a1b7f063b8f` | detached Ed25519 approval verifier | 不接 executor |
+| `3db64d258bde9eac747416f687c5377134fe594b` | scoped key trust 与 policy evidence metadata | policy snapshot 仍需防回滚 |
+| `c0382b76cd0b5a2e3ec5f148fdad9dcf3daf9bdc` | 拒绝歧义 approval namespace | 不改变 plan digest 算法 |
+| `8c31736cf775d5785a4e3ebbd1f9f9b1e6830c09` | trusted approval file read+verify | 只返回 verified evidence |
 
 ## 4. 本地验证证据
 
@@ -131,6 +169,7 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go mod verify
 - 全部 Go package race 通过；
 - `go vet ./...` 通过；
 - `go mod verify` 返回 `all modules verified`；
+- authoritycutover 的 Linux/Windows cross-build 通过；
 - authoritycutover/migrations/imstore/runtimepool 的 JSON 事件统计为 `skip_events=0 fail_events=0`；
 - golden plan digest：`sha256:7d833045167e66b8270513c25a1aac3a24ad7272b5d5423fa5131785bc82a564`；
 - staged credential/旧称 canary 通过；没有写入完整 API key、DSN 或 credential material。
@@ -143,8 +182,9 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go mod verify
 |---|---|---|
 | authority specification snapshot/digest | Go | production code、detached、validator 共用 |
 | canonical cutover plan build/decode | Go | offline contract only |
-| exact plan approval verification | No-Go | 只有 identity/ref/digest binding，没有 deployment controller verifier |
-| provisioner preflight | No-Go | 未连接 cluster/backup/artifact/receipt readback |
+| exact plan approval verification | Go（bounded） | Ed25519、scope/key-policy/file trust 已实现；不是 single-use execution lease |
+| policy snapshot freshness/archive | No-Go | policy 认证、防回滚、原子替换与 immutable archive 尚未实现 |
+| provisioner preflight | No-Go | SQL 前仍须冻结 cluster identity、provisioner authority graph 和 derived step expectation |
 | bootstrap/cutover executor | No-Go | 不存在任何 plan 驱动的 production SQL write path |
 | receipt/unknown-result reconcile | No-Go | durable receipt schema/store/state machine 未实现 |
 | production secret injection | No-Go | hardened file/FD provider 未实现 |
@@ -154,15 +194,18 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go mod verify
 
 ## 6. 下一执行顺序
 
-1. 为 plan 增加 operator-facing bounded file loader 和 detached approval verifier contract；
-2. 实现 read-only provisioner preflight report，先做 identity/version/database/role/plan drift；
-3. 冻结 receipt format/state transition、append/readback 与 unknown-result reconcile；
-4. executor 只消费同一 specification，按事务/非事务 boundary 拆步，默认 dry-run；
-5. 在 PG18 fixture 做 empty/repeat/concurrent/drift/unknown-result 零跳过；
-6. 实现 hardened secret file/FD provider；
-7. 建 remote private-CA `verify-full` E2E 和 clean Linux cell；
-8. 完成 non-empty upgrade、backup/restore 与 old/future binary/schema 演练；
-9. Gate A0 全部证据收口后，才进入 Clerk trusted request context。
+1. 冻结 preflight expectation：Plan 绑定 stable PostgreSQL system identifier、provisioner login → database-owner
+   的 exact SET-role membership/grantor/role attributes，并由 production builder 推导 pre/post/abort digest；
+2. 实现 read-only provisioner `PreflightReport`，只支持 IaC 已创建的 target database；`empty` 表示 database 已存在
+   且无 migration schema/ledger/user object，不表示 database 不存在；
+3. 实现认证、不可回滚、可原子替换和长期归档的 approval policy snapshot；
+4. 冻结 receipt format/state transition、append/readback 与 unknown-result reconcile，并原子消费 approval digest；
+5. executor 只消费同一 specification，按事务/非事务 boundary 拆步，默认 dry-run；
+6. 在 PG18 fixture 做 empty/repeat/concurrent/drift/unknown-result 零跳过；
+7. 实现 hardened secret file/FD provider；
+8. 建 remote private-CA `verify-full` E2E 和 clean Linux cell；
+9. 完成 non-empty upgrade、backup/restore 与 old/future binary/schema 演练；
+10. Gate A0 全部证据收口后，才进入 Clerk trusted request context。
 
 任何一步都不得为了测试便利把 provisioner/migration secret 注入 API，或把 integration fixture 当作 production
 IaC。Notion 在本地代码、测试、文档和 Git 阶段全部收口后再批量镜像并逐页回读。

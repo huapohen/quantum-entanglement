@@ -6,7 +6,7 @@
 >
 > 唯一串行顺序源：[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)
 >
-> 当前代码证据基线：`53dd38b4224003a415605074f25470405ebe799e`
+> 当前代码证据基线：`8c31736cf775d5785a4e3ebbd1f9f9b1e6830c09`
 
 ## 1. 结论与边界
 
@@ -18,7 +18,7 @@ policy、exact authority validator、attested runtime pool 和 one-shot migrator
 
 | 标记 | 当前结论 |
 |---|---|
-| `[F]` | 代码已有 PostgreSQL 18 migration catalog、exact access validator、runtime attestation、API readiness/route barrier 与独立 `im-migrate`。 |
+| `[F]` | 代码已有 PostgreSQL 18 migration catalog、exact access validator、runtime attestation、API readiness/route barrier、独立 `im-migrate`、canonical cutover plan、trusted file loader 与 scoped detached approval verifier。 |
 | `[C]` | 本文冻结 Gate A0 的支持拓扑、责任、plan/receipt/secret/cutover/rollback 合同。实现只有通过本文验收矩阵后才可升级为事实。 |
 | `[A]` | 先完成一个受控 deployment cell，再扩到 HA/多 cell，可减少在身份、provider 与恢复都未闭合时同时扩大故障面。 |
 | `[U]` | clean Linux 安装、production artifact/IaC、remote TLS、cutover executor、secret file injection、rotation、恢复和 HA 均未完成。 |
@@ -334,10 +334,11 @@ generic error。receipt 证明系统观察到的 boundary，不证明外部平�
 
 ## 10. Gate A0 验收矩阵
 
-> 2026-08-29 本地实现进度：authority specification/digest、canonical plan、自绑定 digest 和 strict decoder
-> 已由 production Go code 交付并通过全包 normal/race/vet、PG18 integration zero-skip。详细证据见
-> [W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md](W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md)。preflight、executor、
-> receipt/reconcile、secret provider、remote TLS 与 clean-host IaC 仍为 No-Go。
+> 2026-08-29 本地实现进度：authority specification/digest、canonical plan/self-binding/strict decoder、
+> descriptor-based plan/approval loader 与 scoped detached Ed25519 verifier 已由 production Go code 交付，并通过
+> 全包 normal/race/vet、PG18 integration zero-skip。详细证据见
+> [W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md](W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md)。policy snapshot anti-rollback、
+> preflight、executor、receipt/reconcile、secret provider、remote TLS 与 clean-host IaC 仍为 No-Go。
 
 ### 10.1 合同与单元测试
 
