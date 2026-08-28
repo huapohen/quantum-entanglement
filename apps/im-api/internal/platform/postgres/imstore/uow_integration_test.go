@@ -507,6 +507,13 @@ SELECT wanwork_im.write_tenant_command_receipt($1, $2, $3, $4, $5)`,
 		}); err != nil {
 			t.Fatalf("seed immutable history: %v", err)
 		}
+		var sessionUser, currentUser string
+		if err := pool.QueryRow(t.Context(), "SELECT session_user, current_user").Scan(
+			&sessionUser,
+			&currentUser,
+		); err != nil || sessionUser == currentUser {
+			t.Fatalf("runtime identities session=%q current=%q error=%v", sessionUser, currentUser, err)
+		}
 		var superuser, bypassRLS, inherit bool
 		if err := pool.QueryRow(t.Context(), `
 SELECT role_value.rolsuper,
@@ -625,9 +632,9 @@ func newStoreIntegrationUnit(t *testing.T, adminURL string) (*UnitOfWork, *pgxpo
 	}
 	if _, err := adminConnection.Exec(
 		ctx,
-		"REVOKE TEMPORARY ON DATABASE "+quotedDatabase+" FROM PUBLIC",
+		"REVOKE CONNECT, CREATE, TEMPORARY ON DATABASE "+quotedDatabase+" FROM PUBLIC",
 	); err != nil {
-		t.Fatalf("revoke public temporary database access: %v", err)
+		t.Fatalf("revoke public database access: %v", err)
 	}
 	databaseConfig := adminConfig.Copy()
 	databaseConfig.Database = databaseName
@@ -647,12 +654,43 @@ func newStoreIntegrationUnit(t *testing.T, adminURL string) (*UnitOfWork, *pgxpo
 		os.Getpid(),
 		storeDatabaseSequence.Add(1),
 	)
+	loginName := fmt.Sprintf(
+		"wanwork_store_login_%d_%d",
+		os.Getpid(),
+		storeDatabaseSequence.Add(1),
+	)
+	loginPassword := fmt.Sprintf(
+		"test-only-%d-%d",
+		os.Getpid(),
+		storeDatabaseSequence.Add(1),
+	)
 	quotedRole := pgx.Identifier{roleName}.Sanitize()
+	quotedLogin := pgx.Identifier{loginName}.Sanitize()
 	if _, err := ownerConnection.Exec(
 		ctx,
 		"CREATE ROLE "+quotedRole+" NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT",
 	); err != nil {
 		t.Fatalf("create store role: %v", err)
+	}
+	if _, err := ownerConnection.Exec(
+		ctx,
+		"CREATE ROLE "+quotedLogin+" LOGIN PASSWORD '"+loginPassword+
+			"' NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS CONNECTION LIMIT -1",
+	); err != nil {
+		t.Fatalf("create store login: %v", err)
+	}
+	if _, err := ownerConnection.Exec(
+		ctx,
+		"GRANT "+quotedRole+" TO "+quotedLogin+
+			" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE",
+	); err != nil {
+		t.Fatalf("grant store role to login: %v", err)
+	}
+	if _, err := ownerConnection.Exec(
+		ctx,
+		"GRANT CONNECT ON DATABASE "+quotedDatabase+" TO "+quotedLogin,
+	); err != nil {
+		t.Fatalf("grant store login database access: %v", err)
 	}
 	grantStoreRole(t, ownerConnection, quotedRole)
 	if _, err := migrations.Apply(ctx, ownerConnection); err != nil {
@@ -663,6 +701,8 @@ func newStoreIntegrationUnit(t *testing.T, adminURL string) (*UnitOfWork, *pgxpo
 		t.Fatalf("parse store pool config: %v", err)
 	}
 	poolConfig.ConnConfig.Database = databaseName
+	poolConfig.ConnConfig.User = loginName
+	poolConfig.ConnConfig.Password = loginPassword
 	poolConfig.MaxConns = 16
 	poolConfig.AfterConnect = func(ctx context.Context, connection *pgx.Conn) error {
 		_, err := connection.Exec(ctx, "SET ROLE "+quotedRole)
@@ -681,7 +721,7 @@ func newStoreIntegrationUnit(t *testing.T, adminURL string) (*UnitOfWork, *pgxpo
 		defer closeCancel()
 		_ = ownerConnection.Close(closeContext)
 		_, _ = adminConnection.Exec(closeContext, "DROP DATABASE "+quotedDatabase+" WITH (FORCE)")
-		_, _ = adminConnection.Exec(closeContext, "DROP ROLE "+quotedRole)
+		_, _ = adminConnection.Exec(closeContext, "DROP ROLE "+quotedLogin+", "+quotedRole)
 		_ = adminConnection.Close(closeContext)
 	})
 	unit, err := NewUnitOfWork(pool)
