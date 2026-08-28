@@ -29,7 +29,7 @@
 2. 结果图早已存在、重放、重开、恢复或由其他进程写入：只返回 `ObservedV2`；
 3. COMMIT outcome 不明确、数据部分存在或任一绑定漂移：隔离当前 store，失败关闭，不返回成功。
 
-该目标闭合前，不启用 worker dispatch、outbound connector、result migration 6 或任何“已经 exactly
+该目标闭合前，不启用 worker dispatch、outbound connector、result migration 7 或任何“已经 exactly
 once”的产品声明。
 
 ## 2. 已冻结、不得回退的架构决策
@@ -306,7 +306,7 @@ standalone `SQLiteInvocationAttemptStore.complete()` 对 canonical scoped job �
 
 ### 8.1 目标
 
-准备 result durable graph 所需 schema 和跨组件事务原语，但仍不把 result migration 6 注册进 legacy
+准备 result durable graph 所需 schema 和跨组件事务原语，但仍不把 result migration 7 注册进 legacy
 bootstrap。
 
 ### 8.2 Schema 候选
@@ -338,8 +338,8 @@ bootstrap。
 - sparse upgrade、fleet floor、旧版本 reader/writer 兼容矩阵明确；
 - 空库与非空库 upgrade/restore/reopen/reconcile 均有测试；
 - downgrade/rollback 策略不删除已经接受的结果图；
-- 这些完成前 result migration 6 继续 disabled。`0005` 已由提前接入计划冻结给
-  `native_im_inbox`；Action Plane 使用 `0007`。
+- 这些完成前 result migration 7 继续 disabled。`0005` 已用于 `native_im_inbox`，`0006` 已用于
+  `native_im_sandbox_provenance`；Action Plane 使用 `0008`。
 
 ### 小步提交建议
 
@@ -550,7 +550,7 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 
 该阶段只有在 Phase 1–7 独立评审通过后才开始。
 
-### 12.1 Migration 5 晋级
+### 12.1 Result Migration 7 晋级
 
 - fleet floor 已冻结；
 - active writer/reader compatibility 已证明；

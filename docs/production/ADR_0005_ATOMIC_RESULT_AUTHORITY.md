@@ -10,9 +10,10 @@
   [`SQLITE_BACKUP_MANIFEST_V2_CODEC.md`](../architecture/SQLITE_BACKUP_MANIFEST_V2_CODEC.md)
 
 > 2026-08-27 sequencing addendum: ADR number `0005` is unchanged, but SQL migration identity 5
-> is now reserved for the earlier native-IM durable inbox. Atomic invocation results move to
-> migration 6; native-IM actions use migration 7. This addendum changes ordering, not the result
-> authority semantics in this ADR.
+> is reserved for the earlier native-IM durable inbox and migration 6 is registered for its
+> sandbox-admission provenance. Atomic invocation results therefore move to migration 7;
+> native-IM actions use migration 8. This addendum changes ordering, not the result authority
+> semantics in this ADR.
 
 ## Context
 
@@ -163,18 +164,18 @@ Feishu, WeCom, bots, webhooks and all real connectors remain prohibited througho
 
 ### 5. Migration identity and topology
 
-Legacy migration IDs 1–4 are immutable. The early native-IM integration plan reserves migration 5
-for `native_im_inbox`. The result graph described by this ADR uses the next identity only when the
-native executor is ready:
+Legacy migration IDs 1–6 are immutable. The early native-IM integration path uses migration 5 for
+`native_im_inbox` and migration 6 for `native_im_sandbox_provenance`. The result graph described by
+this ADR uses the next identity only when the native executor is ready:
 
 ```text
-migration_id: 6
+migration_id: 7
 domain: invocation_results
 domain_version: 1
 kind: native
 ```
 
-This is a design coordinate, not permission to add `0006` to the legacy bootstrap registry today.
+This is a design coordinate, not permission to add `0007` to the legacy bootstrap registry today.
 Before registration, the release must include:
 
 1. native/sparse dependency planning and a default-deny executor;
@@ -210,7 +211,7 @@ invocation_result_artifacts
 
 Dependencies are explicit on the attempts, Artifact and admission domains plus the EventStore base
 schema precondition. Runtime `CREATE TABLE IF NOT EXISTS`, fake ledger rows, empty migration files,
-or appending ID 5 to legacy bootstrap are forbidden.
+or appending ID 7 without its release evidence are forbidden.
 
 ## Exact replay and ambiguity
 
@@ -279,7 +280,7 @@ Costs:
   complete graph.
 - **Infer scope from current authorization:** current state can drift and the digest is opaque.
 - **Dual-write ArtifactLedger and SQLiteArtifactStore:** creates two authorities and new split brain.
-- **Add result migration 6 to legacy bootstrap:** bypasses sparse dependency, fleet-floor and backup-v2
+- **Add result migration 7 to legacy bootstrap:** bypasses sparse dependency, fleet-floor and backup-v2
   release safety.
 - **Enable the worker because handlers are pure:** a label or code-review claim is not durable
   completion or retry evidence.

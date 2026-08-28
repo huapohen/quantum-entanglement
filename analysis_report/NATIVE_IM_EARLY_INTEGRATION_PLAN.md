@@ -198,13 +198,15 @@ tests/test_native_im_sandbox_public_api.py
 ```
 
 上列是已交付文件。Page admission、default-off adapter、bounded parser、lifecycle、observability 和
-recorded probe 均已完成。仍待新增的是 provider-specific approved transport/mapper、sandbox runbook
-实例与 approval record；它们不得写入默认 composition。
+recorded probe 均已完成。Approval record、durable approval authority、process-bound live permit、
+approved composition 与 admission provenance 已完成。仍待新增的是 provider-specific approved
+transport/pure mapper 与 sandbox runbook 实例；它们不得写入默认 composition。
 
 Provider-specific mapping放在独立 adapter 模块，不写回 provider-neutral value types。
 
 提前接入改变了原 migration 排序：编号现在冻结为 `0005_native_im_inbox`、
-`0006_atomic_invocation_results`、`0007_native_im_actions`。ADR 编号
+`0006_native_im_sandbox_provenance`、`0007_atomic_invocation_results`、
+`0008_native_im_actions`。ADR 编号
 `ADR_0005_ATOMIC_RESULT_AUTHORITY` 是架构决策编号，不随 SQL migration 序号改变；相关计划、
 topology、backup/restore inventory 必须在注册 `0005` 前同步更新。
 
@@ -230,7 +232,8 @@ topology、backup/restore inventory 必须在注册 `0005` 前同步更新。
 13. **已完成（离线 lifecycle）**：kill switch、startup preflight、health/ready、取消恢复与
     graceful close；服务级 SIGTERM/真实 dependency health 仍待 concrete composition；
 14. **已完成**：fake/recorded contract probe；
-15. **待批准输入后完成**：修订 `SERVICE_BOUNDARY.md`，只放行批准记录中的 sandbox read；
+15. **approval/provenance 基础已完成，待 provider 实现后完成**：修订 `SERVICE_BOUNDARY.md`，只放行
+    批准记录中的 sandbox read；
 16. **待批准后完成**：真实 sandbox health/read/dedupe/resume 验收；
 17. **阶段末**：Level B 证据、GitHub 回读和 Notion 同步。
 
@@ -264,7 +267,7 @@ topology、backup/restore inventory 必须在注册 `0005` 前同步更新。
 1. private stored-event envelope codec 与 durable raw-row readback；
 2. reserved result event fence；
 3. Result/Artifact/receipt/attempt/job/task terminal state same-transaction primitives；
-4. `0006_atomic_invocation_results` migration、topology、backup/restore 与 rollback evidence；
+4. `0007_atomic_invocation_results` migration、topology、backup/restore 与 rollback evidence；
 5. Atomic Result Writer 与 `fresh | observed | unknown` 分类；
 6. ACK-loss/reopen/peer-process/conflict/partial-graph recovery；
 7. heartbeat-supervised PURE worker，spawn/exec-before-secret-load；
@@ -293,7 +296,7 @@ topology、backup/restore inventory 必须在注册 `0005` 前同步更新。
 
 小提交顺序：
 
-1. `0007_native_im_actions` 的 inactive Action Command/Receipt schema 与 migration evidence；
+1. `0008_native_im_actions` 的 inactive Action Command/Receipt schema 与 migration evidence；
 2. action-time authorization exact request/result；
 3. Intent -> durable Command 的 scope/capability/policy CAS；
 4. transactional outbox identity 与 stable receiver idempotency key；
