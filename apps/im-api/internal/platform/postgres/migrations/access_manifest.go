@@ -734,22 +734,36 @@ func exactOwnerFunctionDefaultPrivileges(
 ) bool {
 	var exact bool
 	err := transaction.QueryRow(ctx, `
-SELECT count(*) = 1
-       AND count(*) FILTER (
-           WHERE default_acl.defaclobjtype = 'f'
-             AND default_acl.defaclnamespace = 0
-       ) = 1
-       AND NOT EXISTS (
+SELECT (
+           SELECT count(*) = 1
+                  AND count(*) FILTER (
+                      WHERE default_acl.defaclobjtype = 'f'
+                        AND default_acl.defaclnamespace = 0
+                  ) = 1
+           FROM pg_catalog.pg_default_acl AS default_acl
+           WHERE default_acl.defaclrole = owner.oid
+       )
+       AND (
+           SELECT count(*) = 1
+           FROM pg_catalog.pg_default_acl AS default_acl
+           CROSS JOIN LATERAL pg_catalog.aclexplode(default_acl.defaclacl) AS acl
+           WHERE default_acl.defaclrole = owner.oid
+       )
+       AND EXISTS (
            SELECT 1
-           FROM pg_catalog.pg_default_acl AS protected_default
-           CROSS JOIN LATERAL pg_catalog.aclexplode(protected_default.defaclacl) AS acl
-           WHERE protected_default.defaclrole = owner.oid
-             AND acl.grantee <> owner.oid
+           FROM pg_catalog.pg_default_acl AS default_acl
+           CROSS JOIN LATERAL pg_catalog.aclexplode(default_acl.defaclacl) AS acl
+           WHERE default_acl.defaclrole = owner.oid
+             AND default_acl.defaclobjtype = 'f'
+             AND default_acl.defaclnamespace = 0
+             AND acl.grantee = owner.oid
+             AND acl.grantor = owner.oid
+             AND acl.privilege_type = 'EXECUTE'
+             AND NOT acl.is_grantable
        )
 FROM pg_catalog.pg_roles AS owner
-LEFT JOIN pg_catalog.pg_default_acl AS default_acl ON default_acl.defaclrole = owner.oid
 WHERE owner.rolname = $1
-GROUP BY owner.oid`, ownerRole).Scan(&exact)
+`, ownerRole).Scan(&exact)
 	return err == nil && exact
 }
 
