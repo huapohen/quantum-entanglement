@@ -188,7 +188,23 @@ ORDER BY role_value.rolname`, allRoles)
 			return false
 		}
 	}
-	return true
+	return noAuthorityRoleSettings(ctx, transaction, allRoles)
+}
+
+func noAuthorityRoleSettings(
+	ctx context.Context,
+	transaction pgx.Tx,
+	roleNames []string,
+) bool {
+	var clean bool
+	err := transaction.QueryRow(ctx, `
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_db_role_setting AS role_setting
+    JOIN pg_catalog.pg_roles AS role_value ON role_value.oid = role_setting.setrole
+    WHERE role_value.rolname = ANY($1::text[])
+)`, roleNames).Scan(&clean)
+	return err == nil && clean
 }
 
 type authorityAccessMembership struct {
