@@ -39,8 +39,10 @@ from typing import (
 from . import process_identity as _process_identity
 from ._result_acceptance import (
     _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+    _build_scoped_invocation_result_events_from_plan_v2,
     _build_scoped_invocation_result_evidence_v2,
     _build_scoped_invocation_result_terminal_transition_from_plan_v2,
+    _EventedFreshResultAcceptancePlanV2,
     _EvidencedFreshResultAcceptancePlanV2,
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
@@ -2945,6 +2947,59 @@ class SQLiteEventStore:
                 yield transitioned
             finally:
                 transitioned._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    @_bind_event_store_process
+    def _construct_result_acceptance_event_pair_in_owner_transaction(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> ContextManager[
+        _ExistingResultAcceptanceGraphCandidateV2 | _EventedFreshResultAcceptancePlanV2
+    ]:
+        """Construct the exact canonical event pair without appending either row."""
+
+        return self._construct_result_acceptance_event_pair_in_owner_transaction_inner(
+            handle,
+            prepared,
+        )
+
+    @contextmanager
+    def _construct_result_acceptance_event_pair_in_owner_transaction_inner(
+        self,
+        handle: _ResultArtifactTransactionHandle,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+    ) -> Iterator[
+        _ExistingResultAcceptanceGraphCandidateV2 | _EventedFreshResultAcceptancePlanV2
+    ]:
+        evented: Optional[_EventedFreshResultAcceptancePlanV2] = None
+        with self._construct_result_acceptance_terminal_transition_in_owner_transaction(
+            handle,
+            prepared,
+        ) as candidate:
+            if type(candidate) is _ExistingResultAcceptanceGraphCandidateV2:
+                yield candidate
+                return
+            if type(candidate) is not _TransitionedFreshResultAcceptancePlanV2:
+                raise RuntimeError("result acceptance event classification is not closed")
+            candidate._begin_event_construction(
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+            )
+            self._require_current_process()
+            result_event, terminal_event = (
+                _build_scoped_invocation_result_events_from_plan_v2(candidate)
+            )
+            self._require_current_process()
+            evented = _EventedFreshResultAcceptancePlanV2(
+                transitioned=candidate,
+                result_event=result_event,
+                terminal_event=terminal_event,
+                token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
+            )
+            self._require_current_process()
+            try:
+                yield evented
+            finally:
+                evented._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
     @contextmanager
     def _transaction_inner(

@@ -11,9 +11,15 @@ from ._result_artifact_transaction import (
     _PreparedResultArtifactBatch,
     _ResultArtifactMaterializationPlan,
 )
-from .invocation_execution import ScopedInvocationStartClaimedV3
+from .events import DomainEvent
+from .invocation_execution import (
+    CANONICAL_ORCHESTRATOR_ACTOR_ID,
+    ScopedInvocationStartClaimedV3,
+)
 from .invocation_results import (
     SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION,
+    TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE,
+    TASK_STATUS_CHANGED_EVENT_TYPE,
     ScopedInvocationResultAcceptanceRequestV2,
     ScopedInvocationResultEvidenceV2,
     ScopedInvocationResultTerminalTransitionV2,
@@ -550,7 +556,12 @@ class _EvidencedFreshResultAcceptancePlanV2:
 class _TransitionedFreshResultAcceptancePlanV2:
     """One private exact terminal transition paired with its canonical result evidence."""
 
-    __slots__ = ("__active", "__evidenced", "__terminal_transition")
+    __slots__ = (
+        "__active",
+        "__event_construction_started",
+        "__evidenced",
+        "__terminal_transition",
+    )
 
     def __init__(
         self,
@@ -565,6 +576,7 @@ class _TransitionedFreshResultAcceptancePlanV2:
             raise TypeError("transitioned result acceptance plan constructor is private")
         self.__evidenced = evidenced
         self.__terminal_transition = terminal_transition
+        self.__event_construction_started = False
         self.__active = True
         self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
@@ -600,10 +612,25 @@ class _TransitionedFreshResultAcceptancePlanV2:
             )
         return evidenced, transition_snapshot
 
+    def _begin_event_construction(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("result acceptance event construction is private")
+        if type(self) is not _TransitionedFreshResultAcceptancePlanV2:
+            raise TypeError("transitioned result acceptance plan must be exact")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("transitioned result acceptance plan is no longer active")
+        if type(self.__event_construction_started) is not bool:
+            raise RuntimeError("result acceptance event construction state is invalid")
+        if self.__event_construction_started:
+            raise RuntimeError("result acceptance event construction already started")
+        self.__event_construction_started = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
     def _invalidate(self, *, token: object) -> None:
         if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
             raise TypeError("transitioned result acceptance plan invalidation is private")
         self.__active = False
+        self.__event_construction_started = True
         object.__setattr__(
             self,
             "_TransitionedFreshResultAcceptancePlanV2__evidenced",
@@ -623,6 +650,84 @@ class _TransitionedFreshResultAcceptancePlanV2:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("transitioned result acceptance plans cannot be serialized")
+
+
+class _EventedFreshResultAcceptancePlanV2:
+    """Two exact canonical DomainEvent values that remain private and unappended."""
+
+    __slots__ = ("__active", "__result_event", "__terminal_event", "__transitioned")
+
+    def __init__(
+        self,
+        *,
+        transitioned: _TransitionedFreshResultAcceptancePlanV2,
+        result_event: DomainEvent,
+        terminal_event: DomainEvent,
+        token: object,
+    ) -> None:
+        if type(self) is not _EventedFreshResultAcceptancePlanV2:
+            raise TypeError("evented result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("evented result acceptance plan constructor is private")
+        self.__transitioned = transitioned
+        self.__result_event = result_event
+        self.__terminal_event = terminal_event
+        self.__active = True
+        self._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def _validated(
+        self,
+        *,
+        token: object,
+    ) -> tuple[_TransitionedFreshResultAcceptancePlanV2, DomainEvent, DomainEvent]:
+        if type(self) is not _EventedFreshResultAcceptancePlanV2:
+            raise TypeError("evented result acceptance plan must be exact")
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("evented result acceptance plan validation is private")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("evented result acceptance plan is no longer active")
+        transitioned = self.__transitioned
+        if type(transitioned) is not _TransitionedFreshResultAcceptancePlanV2:
+            raise TypeError("evented result acceptance transition plan is not exact")
+        result_event = self.__result_event
+        terminal_event = self.__terminal_event
+        if type(result_event) is not DomainEvent or type(terminal_event) is not DomainEvent:
+            raise TypeError("result acceptance events must be exact DomainEvent values")
+        expected_result, expected_terminal = (
+            _build_scoped_invocation_result_events_from_plan_v2(transitioned)
+        )
+        if result_event != expected_result or terminal_event != expected_terminal:
+            raise ValueError("result acceptance event pair differs from its transitioned plan")
+        return transitioned, expected_result, expected_terminal
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN:
+            raise TypeError("evented result acceptance plan invalidation is private")
+        self.__active = False
+        object.__setattr__(
+            self,
+            "_EventedFreshResultAcceptancePlanV2__transitioned",
+            None,
+        )
+        object.__setattr__(
+            self,
+            "_EventedFreshResultAcceptancePlanV2__result_event",
+            None,
+        )
+        object.__setattr__(
+            self,
+            "_EventedFreshResultAcceptancePlanV2__terminal_event",
+            None,
+        )
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("evented result acceptance plans cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("evented result acceptance plans cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("evented result acceptance plans cannot be serialized")
 
 
 def _scoped_invocation_start_claimed_snapshot(
@@ -761,6 +866,53 @@ def _build_scoped_invocation_result_terminal_transition_from_plan_v2(
     return ScopedInvocationResultTerminalTransitionV2.from_dict(
         ScopedInvocationResultTerminalTransitionV2.to_dict(transition)
     )
+
+
+def _build_scoped_invocation_result_events_from_plan_v2(
+    transitioned: _TransitionedFreshResultAcceptancePlanV2,
+) -> tuple[DomainEvent, DomainEvent]:
+    """Derive the exact canonical result/terminal events without granting append authority."""
+
+    if type(transitioned) is not _TransitionedFreshResultAcceptancePlanV2:
+        raise TypeError("result events require an exact transitioned plan")
+    evidenced, terminal_transition = transitioned._validated(
+        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+    )
+    identified, evidence = evidenced._validated(
+        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+    )
+    materialized, _, result_event_id, terminal_event_id = identified._validated(
+        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+    )
+    prepared, _, accepted_at, _ = materialized._validated(
+        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+    )
+    request = prepared.request
+    manifest = request.manifest
+    stream_id = "session:" + manifest.session_id
+    result_event = DomainEvent(
+        stream_id=stream_id,
+        event_type=TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE,
+        payload=ScopedInvocationResultEvidenceV2.to_dict(evidence),
+        actor_id=CANONICAL_ORCHESTRATOR_ACTOR_ID,
+        event_id=result_event_id,
+        timestamp=accepted_at,
+        correlation_id=manifest.correlation_id,
+        causation_id=request.start_receipt.event_id,
+        idempotency_key=request.acceptance_idempotency_key,
+    )
+    terminal_event = DomainEvent(
+        stream_id=stream_id,
+        event_type=TASK_STATUS_CHANGED_EVENT_TYPE,
+        payload=ScopedInvocationResultTerminalTransitionV2.to_dict(terminal_transition),
+        actor_id=CANONICAL_ORCHESTRATOR_ACTOR_ID,
+        event_id=terminal_event_id,
+        timestamp=accepted_at,
+        correlation_id=terminal_transition.correlation_id,
+        causation_id=terminal_transition.result_event_id,
+        idempotency_key=terminal_transition.idempotency_key,
+    )
+    return result_event, terminal_event
 
 
 def _prepare_scoped_invocation_result_acceptance_v2(

@@ -13,6 +13,7 @@ import quantum_entanglement
 from quantum_entanglement._result_acceptance import (
     _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
     _build_scoped_invocation_result_terminal_transition_from_plan_v2,
+    _EventedFreshResultAcceptancePlanV2,
     _EvidencedFreshResultAcceptancePlanV2,
     _ExistingResultAcceptanceGraphCandidateV2,
     _FreshResultAcceptancePrerequisitesV2,
@@ -31,7 +32,9 @@ from quantum_entanglement._result_artifact_transaction import (
     _ResultArtifactTransactionContinuityError,
 )
 from quantum_entanglement.attempts import InvocationLease
+from quantum_entanglement.events import DomainEvent
 from quantum_entanglement.invocation_execution import (
+    CANONICAL_ORCHESTRATOR_ACTOR_ID,
     EffectClass,
     ScopedInvocationStartClaimedV3,
 )
@@ -40,6 +43,8 @@ from quantum_entanglement.invocation_results import (
     SCOPED_INVOCATION_RESULT_ACCEPTANCE_REQUEST_SCHEMA_VERSION,
     SCOPED_INVOCATION_RESULT_EVIDENCE_SCHEMA_VERSION,
     SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION,
+    TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE,
+    TASK_STATUS_CHANGED_EVENT_TYPE,
     ScopedInvocationResultAcceptanceRequestV2,
     ScopedInvocationResultArtifactCandidateV2,
     ScopedInvocationResultEvidenceV2,
@@ -1415,6 +1420,166 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     0,
                 )
 
+    def test_fresh_event_pair_binds_exact_canonical_domain_events(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        accepted_at = "2026-08-27T10:00:02.000000Z"
+        self.store._clock = lambda: accepted_at
+        generated = (
+            "result_receipt_events_1",
+            "event_result_events_1",
+            "event_terminal_events_1",
+        )
+
+        with patch("quantum_entanglement.store.new_id", side_effect=generated):
+            with self.store._result_artifact_transaction() as handle:
+                construct = self.store._construct_result_acceptance_event_pair_in_owner_transaction
+                with construct(handle, prepared) as evented:
+                    self.assertIs(type(evented), _EventedFreshResultAcceptancePlanV2)
+                    assert type(evented) is _EventedFreshResultAcceptancePlanV2
+                    transitioned, result_event, terminal_event = evented._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    evidenced, transition = transitioned._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    identified, evidence = evidenced._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    _, receipt_id, result_event_id, terminal_event_id = (
+                        identified._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+                    )
+                    manifest = prepared.request.manifest
+                    self.assertIs(type(result_event), DomainEvent)
+                    self.assertIs(type(terminal_event), DomainEvent)
+                    self.assertEqual(
+                        (receipt_id, result_event_id, terminal_event_id),
+                        generated,
+                    )
+                    self.assertEqual(
+                        (
+                            result_event.stream_id,
+                            result_event.event_type,
+                            result_event.actor_id,
+                            result_event.event_id,
+                            result_event.timestamp,
+                            result_event.correlation_id,
+                            result_event.causation_id,
+                            result_event.idempotency_key,
+                        ),
+                        (
+                            "session:" + manifest.session_id,
+                            TASK_INVOCATION_RESULT_ACCEPTED_EVENT_TYPE,
+                            CANONICAL_ORCHESTRATOR_ACTOR_ID,
+                            result_event_id,
+                            accepted_at,
+                            manifest.correlation_id,
+                            prepared.request.start_receipt.event_id,
+                            prepared.request.acceptance_idempotency_key,
+                        ),
+                    )
+                    self.assertEqual(
+                        ScopedInvocationResultEvidenceV2.from_dict(result_event.payload),
+                        evidence,
+                    )
+                    self.assertEqual(
+                        (
+                            terminal_event.stream_id,
+                            terminal_event.event_type,
+                            terminal_event.actor_id,
+                            terminal_event.event_id,
+                            terminal_event.timestamp,
+                            terminal_event.correlation_id,
+                            terminal_event.causation_id,
+                            terminal_event.idempotency_key,
+                        ),
+                        (
+                            result_event.stream_id,
+                            TASK_STATUS_CHANGED_EVENT_TYPE,
+                            CANONICAL_ORCHESTRATOR_ACTOR_ID,
+                            terminal_event_id,
+                            accepted_at,
+                            result_event.correlation_id,
+                            result_event_id,
+                            transition.idempotency_key,
+                        ),
+                    )
+                    self.assertEqual(
+                        ScopedInvocationResultTerminalTransitionV2.from_dict(
+                            terminal_event.payload
+                        ),
+                        transition,
+                    )
+                    for operation in (
+                        lambda: copy.copy(evented),
+                        lambda: copy.deepcopy(evented),
+                        lambda: pickle.dumps(evented),
+                    ):
+                        with self.assertRaisesRegex(
+                            TypeError,
+                            "cannot be (copied|serialized)",
+                        ):
+                            operation()
+                    with self.assertRaisesRegex(RuntimeError, "already started"):
+                        transitioned._begin_event_construction(
+                            token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                        )
+        for plan in (evented, transitioned, evidenced, identified):
+            with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                plan._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_existing_graph_event_path_does_not_construct_fresh_events(self) -> None:
+        helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
+            methodName="runTest"
+        )
+        helper.store = self.store
+        helper.connection = self.store._connection
+        helper.seed_nonempty_v6_dependencies()
+        helper.apply_candidate()
+        helper.seed_complete_result_graph()
+        prepared = existing_graph_prepared(helper)
+
+        with patch(
+            "quantum_entanglement.store._build_scoped_invocation_result_events_from_plan_v2",
+            side_effect=AssertionError("existing graph must not construct fresh events"),
+        ) as builder:
+            with self.store._result_artifact_transaction() as handle:
+                construct = self.store._construct_result_acceptance_event_pair_in_owner_transaction
+                with construct(handle, prepared) as result:
+                    self.assertIs(type(result), _ExistingResultAcceptanceGraphCandidateV2)
+        builder.assert_not_called()
+
+    def test_event_pair_construction_failure_rolls_back_materialized_artifacts(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=(
+                "receipt_event_failure",
+                "event_result_event_failure",
+                "event_terminal_event_failure",
+            ),
+        ), patch(
+            "quantum_entanglement.store._build_scoped_invocation_result_events_from_plan_v2",
+            side_effect=RuntimeError("event pair construction failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "event pair construction failed"):
+                with self.store._result_artifact_transaction() as handle:
+                    construct = (
+                        self.store._construct_result_acceptance_event_pair_in_owner_transaction
+                    )
+                    with construct(handle, prepared):
+                        self.fail("failed event construction unexpectedly yielded a plan")
+        for table in ("artifact_versions", "artifact_blobs"):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    self.store._connection.execute(
+                        f"SELECT count(*) FROM main.{table}"
+                    ).fetchone()[0],
+                    0,
+                )
+
     def test_existing_graph_evidence_path_does_not_construct_fresh_payload(self) -> None:
         helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
             methodName="runTest"
@@ -1627,6 +1792,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         for name in (
             "_ExistingResultAcceptanceGraphCandidateV2",
             "_EvidencedFreshResultAcceptancePlanV2",
+            "_EventedFreshResultAcceptancePlanV2",
             "_FreshResultAcceptancePrerequisitesV2",
             "_FreshResultAcceptanceWritePlanV2",
             "_IdentifiedFreshResultAcceptancePlanV2",
@@ -1635,6 +1801,8 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             "_build_scoped_invocation_result_evidence_v2",
             "_TransitionedFreshResultAcceptancePlanV2",
             "_build_scoped_invocation_result_terminal_transition_from_plan_v2",
+            "_build_scoped_invocation_result_events_from_plan_v2",
+            "_construct_result_acceptance_event_pair_in_owner_transaction",
             "_construct_result_acceptance_terminal_transition_in_owner_transaction",
             "accept_scoped_invocation_result_v2",
             "ScopedInvocationResultAcceptedV2",
