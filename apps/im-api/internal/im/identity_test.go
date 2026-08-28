@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestActorIdentityBindsSubjectTypeToStableID(t *testing.T) {
+func TestActorSnapshotBindsSubjectTypeToStableReference(t *testing.T) {
 	t.Parallel()
 
 	tenantID := mustTenantID(t, "ten_acme")
@@ -28,19 +28,44 @@ func TestActorIdentityBindsSubjectTypeToStableID(t *testing.T) {
 			if !ok || inferredType != test.subjectType {
 				t.Fatalf("ActorID.SubjectType() = (%q, %v), want (%q, true)", inferredType, ok, test.subjectType)
 			}
-			identity, err := NewActorIdentity(tenantID, actorID, test.subjectType, 7)
+			reference, err := NewActorRef(tenantID, actorID)
 			if err != nil {
-				t.Fatalf("NewActorIdentity() error = %v", err)
+				t.Fatalf("NewActorRef() error = %v", err)
 			}
-			if identity.TenantID() != tenantID || identity.ActorID() != actorID ||
-				identity.SubjectType() != test.subjectType || identity.Revision() != 7 || identity.IsZero() {
-				t.Fatalf("unexpected identity: %#v", identity)
+			snapshot, err := NewActorSnapshot(reference, test.subjectType, 7)
+			if err != nil {
+				t.Fatalf("NewActorSnapshot() error = %v", err)
+			}
+			if snapshot.Ref() != reference || reference.TenantID() != tenantID ||
+				reference.ActorID() != actorID || snapshot.SubjectType() != test.subjectType ||
+				snapshot.Revision() != 7 || reference.IsZero() || snapshot.IsZero() {
+				t.Fatalf("unexpected actor reference/snapshot: %#v %#v", reference, snapshot)
 			}
 		})
 	}
 }
 
-func TestZeroActorIdentityHasNoSubjectType(t *testing.T) {
+func TestActorReferenceRemainsStableAcrossSnapshotRevisions(t *testing.T) {
+	t.Parallel()
+
+	reference, err := NewActorRef(mustTenantID(t, "ten_acme"), mustActorID(t, "agt_finance"))
+	if err != nil {
+		t.Fatalf("NewActorRef() error = %v", err)
+	}
+	first, err := NewActorSnapshot(reference, SubjectAgent, 1)
+	if err != nil {
+		t.Fatalf("NewActorSnapshot(first) error = %v", err)
+	}
+	second, err := NewActorSnapshot(reference, SubjectAgent, 2)
+	if err != nil {
+		t.Fatalf("NewActorSnapshot(second) error = %v", err)
+	}
+	if first == second || first.Ref() != second.Ref() {
+		t.Fatalf("snapshots must differ while stable refs match: %#v %#v", first, second)
+	}
+}
+
+func TestZeroActorIDHasNoSubjectType(t *testing.T) {
 	t.Parallel()
 
 	if subjectType, ok := (ActorID{}).SubjectType(); ok || subjectType != "" {
@@ -48,32 +73,54 @@ func TestZeroActorIdentityHasNoSubjectType(t *testing.T) {
 	}
 }
 
-func TestActorIdentityRejectsTypeImpersonationAndIncompleteScope(t *testing.T) {
+func TestActorReferenceRejectsIncompleteScope(t *testing.T) {
 	t.Parallel()
 
 	tenantID := mustTenantID(t, "ten_acme")
 	humanID := mustActorID(t, "usr_alice")
 	for _, test := range []struct {
-		name        string
-		tenantID    TenantID
-		actorID     ActorID
-		subjectType SubjectType
-		revision    uint64
+		name     string
+		tenantID TenantID
+		actorID  ActorID
 	}{
-		{name: "human ID cannot self-report agent", tenantID: tenantID, actorID: humanID, subjectType: SubjectAgent, revision: 1},
-		{name: "missing tenant", actorID: humanID, subjectType: SubjectHuman, revision: 1},
-		{name: "missing actor", tenantID: tenantID, subjectType: SubjectHuman, revision: 1},
-		{name: "unknown subject", tenantID: tenantID, actorID: humanID, subjectType: SubjectType("owner"), revision: 1},
-		{name: "zero revision", tenantID: tenantID, actorID: humanID, subjectType: SubjectHuman},
+		{name: "missing tenant", actorID: humanID},
+		{name: "missing actor", tenantID: tenantID},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			identity, err := NewActorIdentity(
-				test.tenantID, test.actorID, test.subjectType, test.revision,
-			)
-			if !errors.Is(err, ErrInvalidIdentity) || !identity.IsZero() {
-				t.Fatalf("NewActorIdentity() = (%#v, %v), want zero and ErrInvalidIdentity", identity, err)
+			reference, err := NewActorRef(test.tenantID, test.actorID)
+			if !errors.Is(err, ErrInvalidIdentity) || !reference.IsZero() {
+				t.Fatalf("NewActorRef() = (%#v, %v), want zero and ErrInvalidIdentity", reference, err)
+			}
+		})
+	}
+}
+
+func TestActorSnapshotRejectsSubjectPrefixMismatchAndIncompleteSnapshot(t *testing.T) {
+	t.Parallel()
+
+	reference, err := NewActorRef(mustTenantID(t, "ten_acme"), mustActorID(t, "usr_alice"))
+	if err != nil {
+		t.Fatalf("NewActorRef() error = %v", err)
+	}
+	for _, test := range []struct {
+		name        string
+		reference   ActorRef
+		subjectType SubjectType
+		revision    uint64
+	}{
+		{name: "human prefix cannot claim agent type", reference: reference, subjectType: SubjectAgent, revision: 1},
+		{name: "missing reference", subjectType: SubjectHuman, revision: 1},
+		{name: "unknown subject", reference: reference, subjectType: SubjectType("owner"), revision: 1},
+		{name: "zero revision", reference: reference, subjectType: SubjectHuman},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			snapshot, err := NewActorSnapshot(test.reference, test.subjectType, test.revision)
+			if !errors.Is(err, ErrInvalidIdentity) || !snapshot.IsZero() {
+				t.Fatalf("NewActorSnapshot() = (%#v, %v), want zero and ErrInvalidIdentity", snapshot, err)
 			}
 		})
 	}
@@ -89,6 +136,7 @@ func TestPlatformIdentifiersRejectAmbiguousOrUnboundedText(t *testing.T) {
 	}{
 		{name: "tenant wrong prefix", parse: tenantParseError, value: "org_acme"},
 		{name: "workspace empty suffix", parse: workspaceParseError, value: "wsp_"},
+		{name: "provider realm wrong prefix", parse: providerRealmParseError, value: "app_prod"},
 		{name: "actor unknown prefix", parse: actorParseError, value: "bot_helper"},
 		{name: "agent definition whitespace", parse: agentDefinitionParseError, value: "agd_finance bot"},
 		{name: "unicode confusable", parse: actorParseError, value: "agt_ａｄｍｉｎ"},
@@ -106,7 +154,7 @@ func TestPlatformIdentifiersRejectAmbiguousOrUnboundedText(t *testing.T) {
 	}
 }
 
-func TestAgentVersionUsesStrictSemanticVersionIdentity(t *testing.T) {
+func TestAgentVersionUsesStrictSemanticVersionLabel(t *testing.T) {
 	t.Parallel()
 
 	for _, value := range []string{
@@ -143,6 +191,7 @@ func TestAgentVersionUsesStrictSemanticVersionIdentity(t *testing.T) {
 
 func TestExternalIdentityReferenceIsMappingMetadataNotAnArbitrarySubject(t *testing.T) {
 	t.Parallel()
+	realmID := mustProviderRealmID(t, "rlm_prod")
 
 	for _, test := range []struct {
 		provider  IdentityProvider
@@ -152,34 +201,64 @@ func TestExternalIdentityReferenceIsMappingMetadataNotAnArbitrarySubject(t *test
 		{provider: IdentityProviderRongCloud, subjectID: "usr_alice"},
 		{provider: IdentityProviderRongCloud, subjectID: "agt_finance_v1"},
 	} {
-		reference, err := NewExternalIdentityRef(test.provider, test.subjectID)
+		reference, err := NewExternalIdentityRef(test.provider, realmID, test.subjectID)
 		if err != nil || reference.Provider() != test.provider ||
-			reference.SubjectID() != test.subjectID || reference.IsZero() {
-			t.Fatalf("NewExternalIdentityRef(%q, %q) = (%#v, %v)", test.provider, test.subjectID, reference, err)
+			reference.RealmID() != realmID || reference.SubjectID() != test.subjectID ||
+			reference.IsZero() {
+			t.Fatalf("NewExternalIdentityRef(%q, %q, %q) = (%#v, %v)", test.provider, realmID.String(), test.subjectID, reference, err)
 		}
 	}
 
 	for _, test := range []struct {
 		name      string
 		provider  IdentityProvider
+		realmID   ProviderRealmID
 		subjectID string
 	}{
-		{name: "unknown provider", provider: IdentityProvider("slack"), subjectID: "usr_alice"},
-		{name: "Clerk requires user prefix", provider: IdentityProviderClerk, subjectID: "agt_finance"},
-		{name: "RongCloud requires platform actor", provider: IdentityProviderRongCloud, subjectID: "external-random-user"},
-		{name: "whitespace", provider: IdentityProviderClerk, subjectID: "user_alice root"},
-		{name: "unicode", provider: IdentityProviderClerk, subjectID: "user_爱丽丝"},
-		{name: "oversize", provider: IdentityProviderClerk, subjectID: "user_" + strings.Repeat("a", maxExternalSubjectBytes)},
+		{name: "unknown provider", provider: IdentityProvider("slack"), realmID: realmID, subjectID: "usr_alice"},
+		{name: "missing realm", provider: IdentityProviderClerk, subjectID: "user_alice"},
+		{name: "Clerk requires user prefix", provider: IdentityProviderClerk, realmID: realmID, subjectID: "agt_finance"},
+		{name: "RongCloud requires platform actor", provider: IdentityProviderRongCloud, realmID: realmID, subjectID: "external-random-user"},
+		{name: "whitespace", provider: IdentityProviderClerk, realmID: realmID, subjectID: "user_alice root"},
+		{name: "unicode", provider: IdentityProviderClerk, realmID: realmID, subjectID: "user_爱丽丝"},
+		{name: "oversize", provider: IdentityProviderClerk, realmID: realmID, subjectID: "user_" + strings.Repeat("a", maxExternalSubjectBytes)},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			reference, err := NewExternalIdentityRef(test.provider, test.subjectID)
+			reference, err := NewExternalIdentityRef(test.provider, test.realmID, test.subjectID)
 			if !errors.Is(err, ErrInvalidIdentity) || !reference.IsZero() {
 				t.Fatalf("NewExternalIdentityRef() = (%#v, %v), want zero and ErrInvalidIdentity", reference, err)
 			}
 		})
 	}
+}
+
+func TestExternalIdentityReferenceIsolatesProviderRealms(t *testing.T) {
+	t.Parallel()
+
+	firstRealm := mustProviderRealmID(t, "rlm_staging")
+	secondRealm := mustProviderRealmID(t, "rlm_production")
+	first, err := NewExternalIdentityRef(IdentityProviderClerk, firstRealm, "user_alice")
+	if err != nil {
+		t.Fatalf("NewExternalIdentityRef(first) error = %v", err)
+	}
+	second, err := NewExternalIdentityRef(IdentityProviderClerk, secondRealm, "user_alice")
+	if err != nil {
+		t.Fatalf("NewExternalIdentityRef(second) error = %v", err)
+	}
+	if first == second {
+		t.Fatalf("same provider subject in separate realms must not collapse: %#v %#v", first, second)
+	}
+}
+
+func mustProviderRealmID(t *testing.T, value string) ProviderRealmID {
+	t.Helper()
+	identifier, err := ParseProviderRealmID(value)
+	if err != nil {
+		t.Fatalf("ParseProviderRealmID(%q) error = %v", value, err)
+	}
+	return identifier
 }
 
 func mustTenantID(t *testing.T, value string) TenantID {
@@ -207,6 +286,11 @@ func tenantParseError(value string) error {
 
 func workspaceParseError(value string) error {
 	_, err := ParseWorkspaceID(value)
+	return err
+}
+
+func providerRealmParseError(value string) error {
+	_, err := ParseProviderRealmID(value)
 	return err
 }
 

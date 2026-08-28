@@ -17,6 +17,7 @@ const (
 	serviceActorIDPrefix    = "svc_"
 	tenantIDPrefix          = "ten_"
 	workspaceIDPrefix       = "wsp_"
+	providerRealmIDPrefix   = "rlm_"
 	agentDefinitionIDPrefix = "agd_"
 	conversationIDPrefix    = "cnv_"
 	messageIDPrefix         = "msg_"
@@ -91,6 +92,20 @@ func ParseWorkspaceID(value string) (WorkspaceID, error) {
 func (value WorkspaceID) String() string { return value.value }
 func (value WorkspaceID) IsZero() bool   { return value.value == "" }
 
+// ProviderRealmID scopes a provider subject to one configured application/environment. It is not
+// a secret, tenant membership, provider proof, or authorization grant.
+type ProviderRealmID struct{ value string }
+
+func ParseProviderRealmID(value string) (ProviderRealmID, error) {
+	if !validPrefixedPlatformID(value, providerRealmIDPrefix) {
+		return ProviderRealmID{}, ErrInvalidIdentity
+	}
+	return ProviderRealmID{value: value}, nil
+}
+
+func (value ProviderRealmID) String() string { return value.value }
+func (value ProviderRealmID) IsZero() bool   { return value.value == "" }
+
 type ActorID struct{ value string }
 
 func ParseActorID(value string) (ActorID, error) {
@@ -135,6 +150,8 @@ func ParseAgentDefinitionID(value string) (AgentDefinitionID, error) {
 func (value AgentDefinitionID) String() string { return value.value }
 func (value AgentDefinitionID) IsZero() bool   { return value.value == "" }
 
+// AgentVersion is a strict SemVer compatibility/display label. It is not an immutable release
+// identity, artifact digest, signature, installation approval, or runtime authority.
 type AgentVersion struct{ value string }
 
 func ParseAgentVersion(value string) (AgentVersion, error) {
@@ -158,57 +175,81 @@ func (provider IdentityProvider) Valid() bool {
 	return provider == IdentityProviderClerk || provider == IdentityProviderRongCloud
 }
 
-// ExternalIdentityRef is a provider mapping identity, not an authorization grant. In particular,
-// possessing a RongCloud user ID does not establish tenant membership or Actor authority.
+// ExternalIdentityRef is realm-scoped provider mapping metadata, not provider proof or an
+// authorization grant. Possessing a RongCloud user ID does not establish tenant membership or
+// Actor authority; the persisted binding and platform membership must still be resolved.
 type ExternalIdentityRef struct {
 	provider  IdentityProvider
+	realmID   ProviderRealmID
 	subjectID string
 }
 
-func NewExternalIdentityRef(provider IdentityProvider, subjectID string) (ExternalIdentityRef, error) {
-	if !provider.Valid() || !validExternalSubjectID(provider, subjectID) {
+func NewExternalIdentityRef(
+	provider IdentityProvider,
+	realmID ProviderRealmID,
+	subjectID string,
+) (ExternalIdentityRef, error) {
+	if !provider.Valid() || realmID.IsZero() || !validExternalSubjectID(provider, subjectID) {
 		return ExternalIdentityRef{}, ErrInvalidIdentity
 	}
-	return ExternalIdentityRef{provider: provider, subjectID: subjectID}, nil
+	return ExternalIdentityRef{provider: provider, realmID: realmID, subjectID: subjectID}, nil
 }
 
 func (reference ExternalIdentityRef) Provider() IdentityProvider { return reference.provider }
+func (reference ExternalIdentityRef) RealmID() ProviderRealmID   { return reference.realmID }
 func (reference ExternalIdentityRef) SubjectID() string          { return reference.subjectID }
 func (reference ExternalIdentityRef) IsZero() bool {
-	return reference.provider == "" && reference.subjectID == ""
+	return reference.provider == "" && reference.realmID.IsZero() && reference.subjectID == ""
 }
 
-// ActorIdentity is the stable visible business identity. It deliberately excludes workload,
-// delegation, credential, membership, and capability authority, which are separate contracts.
-type ActorIdentity struct {
-	tenantID    TenantID
-	actorID     ActorID
+// ActorRef is the stable tenant-scoped visible business reference. It deliberately excludes
+// snapshot revision, workload, delegation, credential, membership, and capability authority.
+type ActorRef struct {
+	tenantID TenantID
+	actorID  ActorID
+}
+
+func NewActorRef(tenantID TenantID, actorID ActorID) (ActorRef, error) {
+	if tenantID.IsZero() || actorID.IsZero() {
+		return ActorRef{}, ErrInvalidIdentity
+	}
+	return ActorRef{tenantID: tenantID, actorID: actorID}, nil
+}
+
+func (reference ActorRef) TenantID() TenantID { return reference.tenantID }
+func (reference ActorRef) ActorID() ActorID   { return reference.actorID }
+func (reference ActorRef) IsZero() bool {
+	return reference.tenantID.IsZero() && reference.actorID.IsZero()
+}
+
+// ActorSnapshot describes one immutable revision of a stable ActorRef. Prefix/type agreement is
+// syntax validation only: authorization paths must resolve the persisted Actor and membership.
+type ActorSnapshot struct {
+	reference   ActorRef
 	subjectType SubjectType
 	revision    uint64
 }
 
-func NewActorIdentity(
-	tenantID TenantID,
-	actorID ActorID,
+func NewActorSnapshot(
+	reference ActorRef,
 	subjectType SubjectType,
 	revision uint64,
-) (ActorIdentity, error) {
-	if tenantID.IsZero() || actorID.IsZero() || !subjectType.Valid() || revision == 0 ||
-		!strings.HasPrefix(actorID.String(), subjectType.actorIDPrefix()) {
-		return ActorIdentity{}, ErrInvalidIdentity
+) (ActorSnapshot, error) {
+	inferredType, ok := reference.actorID.SubjectType()
+	if reference.IsZero() || !subjectType.Valid() || revision == 0 || !ok ||
+		inferredType != subjectType {
+		return ActorSnapshot{}, ErrInvalidIdentity
 	}
-	return ActorIdentity{
-		tenantID: tenantID, actorID: actorID, subjectType: subjectType, revision: revision,
+	return ActorSnapshot{
+		reference: reference, subjectType: subjectType, revision: revision,
 	}, nil
 }
 
-func (identity ActorIdentity) TenantID() TenantID       { return identity.tenantID }
-func (identity ActorIdentity) ActorID() ActorID         { return identity.actorID }
-func (identity ActorIdentity) SubjectType() SubjectType { return identity.subjectType }
-func (identity ActorIdentity) Revision() uint64         { return identity.revision }
-func (identity ActorIdentity) IsZero() bool {
-	return identity.tenantID.IsZero() && identity.actorID.IsZero() &&
-		identity.subjectType == "" && identity.revision == 0
+func (snapshot ActorSnapshot) Ref() ActorRef            { return snapshot.reference }
+func (snapshot ActorSnapshot) SubjectType() SubjectType { return snapshot.subjectType }
+func (snapshot ActorSnapshot) Revision() uint64         { return snapshot.revision }
+func (snapshot ActorSnapshot) IsZero() bool {
+	return snapshot.reference.IsZero() && snapshot.subjectType == "" && snapshot.revision == 0
 }
 
 func validPrefixedPlatformID(value, prefix string) bool {
