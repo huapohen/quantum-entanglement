@@ -4,6 +4,11 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 
+if [ "${WANWORK_IM_POSTGRES_MIGRATION_URL+x}" = "x" ]; then
+    echo "WANWORK_IM_POSTGRES_MIGRATION_URL is reserved for the one-shot migrator and must be absent from the API environment" >&2
+    exit 2
+fi
+
 if [ -n "${WANWORK_IM_POSTGRES_RUNTIME_URL:-}" ] || \
    [ -n "${WANWORK_IM_POSTGRES_AUTHORITY_MANIFEST:-}" ] || \
    [ -n "${WANWORK_IM_POSTGRES_ALLOW_INSECURE_LOCAL_TEST:-}" ]; then

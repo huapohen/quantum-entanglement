@@ -15,6 +15,7 @@ import (
 
 const (
 	listenAddressVariable                  = "WANWORK_IM_LISTEN_ADDRESS"
+	postgresMigrationURLVariable           = "WANWORK_IM_POSTGRES_MIGRATION_URL"
 	postgresRuntimeURLVariable             = "WANWORK_IM_POSTGRES_RUNTIME_URL"
 	postgresAuthorityManifestVariable      = "WANWORK_IM_POSTGRES_AUTHORITY_MANIFEST"
 	postgresAllowInsecureLocalTestVariable = "WANWORK_IM_POSTGRES_ALLOW_INSECURE_LOCAL_TEST"
@@ -25,6 +26,7 @@ var (
 	ErrInvalidListenAddress = errors.New("listen address must be a numeric loopback host and valid port")
 	ErrUnsafeComposition    = errors.New("only fake external providers with disabled outbound are admitted")
 	ErrInvalidPostgres      = errors.New("invalid PostgreSQL runtime composition")
+	ErrMigrationCredential  = errors.New("PostgreSQL migration credential is not admitted by the API")
 )
 
 type ProviderID string
@@ -79,6 +81,12 @@ func Load(lookup LookupEnv) (Config, error) {
 	config := defaultConfig()
 	if value, ok := lookup(listenAddressVariable); ok && value != "" {
 		config.listenAddress = value
+	}
+	// The API process must not be launched from an environment that contains the one-shot
+	// migrator credential, even when the variable is present with an empty value. Inspect only
+	// presence and never retain, log, or return the value.
+	if _, ok := lookup(postgresMigrationURLVariable); ok {
+		return Config{}, ErrMigrationCredential
 	}
 	if err := config.loadPostgres(lookup); err != nil {
 		return Config{}, err

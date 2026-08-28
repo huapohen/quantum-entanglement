@@ -21,6 +21,7 @@ func TestLoadDefaultsToLoopbackFakeComposition(t *testing.T) {
 	}
 	if !slices.Equal(queried, []string{
 		listenAddressVariable,
+		postgresMigrationURLVariable,
 		postgresRuntimeURLVariable,
 		postgresAuthorityManifestVariable,
 		postgresAllowInsecureLocalTestVariable,
@@ -37,6 +38,25 @@ func TestLoadDefaultsToLoopbackFakeComposition(t *testing.T) {
 	}
 	if loaded.Snapshot() != want {
 		t.Fatalf("snapshot = %#v, want %#v", loaded.Snapshot(), want)
+	}
+}
+
+func TestLoadRejectsInheritedMigrationCredentialWithoutRetainingValue(t *testing.T) {
+	t.Parallel()
+	const credentialCanary = "migration-credential-canary"
+	for name, values := range map[string]map[string]string{
+		"non-empty":     {postgresMigrationURLVariable: credentialCanary},
+		"present empty": {postgresMigrationURLVariable: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(mapLookup(values))
+			if !errors.Is(err, ErrMigrationCredential) {
+				t.Fatalf("migration credential error = %v, want %v", err, ErrMigrationCredential)
+			}
+			if strings.Contains(err.Error(), credentialCanary) {
+				t.Fatal("migration credential value leaked into error")
+			}
+		})
 	}
 }
 
