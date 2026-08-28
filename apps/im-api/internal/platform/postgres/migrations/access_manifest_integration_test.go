@@ -168,8 +168,152 @@ func TestAuthorityAccessManifestAgainstPostgres(t *testing.T) {
 			}
 		})
 	}
+	assertAdminAuthorityAccessDrift(t, connection, manifest)
 	assertRuntimeLoginAccess(t, databaseConfig, manifest)
 	assertMigrationLoginCanSetExactOwner(t, databaseConfig, manifest)
+}
+
+func assertAdminAuthorityAccessDrift(
+	t *testing.T,
+	connection *pgx.Conn,
+	manifest AuthorityAccessManifest,
+) {
+	t.Helper()
+	quotedOwner := pgx.Identifier{manifest.OwnerRole}.Sanitize()
+	quotedMigrator := pgx.Identifier{manifest.MigratorRole}.Sanitize()
+	quotedRuntime := pgx.Identifier{manifest.RuntimeRole}.Sanitize()
+	quotedRuntimeLogin := pgx.Identifier{manifest.RuntimeLoginRoles[0]}.Sanitize()
+	var databaseName string
+	if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+		t.Fatalf("reset authority owner before admin drift: %v", err)
+	}
+	if err := connection.QueryRow(t.Context(), "SELECT current_database()").Scan(&databaseName); err != nil {
+		t.Fatalf("read authority database for admin drift: %v", err)
+	}
+	quotedDatabase := pgx.Identifier{databaseName}.Sanitize()
+	for _, fixture := range []struct {
+		name   string
+		tamper string
+		repair string
+	}{
+		{
+			name:   "runtime role login attribute",
+			tamper: "ALTER ROLE " + quotedRuntime + " LOGIN",
+			repair: "ALTER ROLE " + quotedRuntime + " NOLOGIN",
+		},
+		{
+			name:   "runtime role inherit attribute",
+			tamper: "ALTER ROLE " + quotedRuntime + " INHERIT",
+			repair: "ALTER ROLE " + quotedRuntime + " NOINHERIT",
+		},
+		{
+			name: "runtime role database setting",
+			tamper: "ALTER ROLE " + quotedRuntime + " IN DATABASE " + quotedDatabase +
+				" SET search_path = malicious, pg_catalog",
+			repair: "ALTER ROLE " + quotedRuntime + " IN DATABASE " + quotedDatabase +
+				" RESET search_path",
+		},
+		{
+			name: "membership admin option",
+			tamper: "GRANT " + quotedOwner + " TO " + quotedMigrator +
+				" WITH ADMIN TRUE",
+			repair: "GRANT " + quotedOwner + " TO " + quotedMigrator +
+				" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE",
+		},
+		{
+			name: "membership inherit option",
+			tamper: "GRANT " + quotedOwner + " TO " + quotedMigrator +
+				" WITH INHERIT TRUE",
+			repair: "GRANT " + quotedOwner + " TO " + quotedMigrator +
+				" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE",
+		},
+		{
+			name: "membership set option",
+			tamper: "GRANT " + quotedOwner + " TO " + quotedMigrator +
+				" WITH SET FALSE",
+			repair: "GRANT " + quotedOwner + " TO " + quotedMigrator +
+				" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE",
+		},
+		{
+			name:   "public database connect",
+			tamper: "GRANT CONNECT ON DATABASE " + quotedDatabase + " TO PUBLIC",
+			repair: "REVOKE CONNECT ON DATABASE " + quotedDatabase + " FROM PUBLIC",
+		},
+		{
+			name: "runtime database create",
+			tamper: "GRANT CREATE ON DATABASE " + quotedDatabase + " TO " +
+				quotedRuntime,
+			repair: "REVOKE CREATE ON DATABASE " + quotedDatabase + " FROM " +
+				quotedRuntime,
+		},
+		{
+			name: "runtime database temporary",
+			tamper: "GRANT TEMPORARY ON DATABASE " + quotedDatabase + " TO " +
+				quotedRuntime,
+			repair: "REVOKE TEMPORARY ON DATABASE " + quotedDatabase + " FROM " +
+				quotedRuntime,
+		},
+		{
+			name: "direct login database create",
+			tamper: "GRANT CREATE ON DATABASE " + quotedDatabase + " TO " +
+				quotedRuntimeLogin,
+			repair: "REVOKE CREATE ON DATABASE " + quotedDatabase + " FROM " +
+				quotedRuntimeLogin,
+		},
+		{
+			name:   "schema owner",
+			tamper: "ALTER SCHEMA wanwork_im OWNER TO " + pgx.Identifier{manifest.DatabaseOwnerRole}.Sanitize(),
+			repair: "ALTER SCHEMA wanwork_im OWNER TO " + quotedOwner,
+		},
+		{
+			name: "table owner",
+			tamper: "ALTER TABLE wanwork_im.conversation_heads OWNER TO " +
+				pgx.Identifier{manifest.DatabaseOwnerRole}.Sanitize(),
+			repair: "ALTER TABLE wanwork_im.conversation_heads OWNER TO " + quotedOwner,
+		},
+		{
+			name: "function owner",
+			tamper: `ALTER FUNCTION wanwork_im.write_tenant_command_receipt(
+                text, text, text, text, text
+            ) OWNER TO ` + pgx.Identifier{manifest.DatabaseOwnerRole}.Sanitize(),
+			repair: `ALTER FUNCTION wanwork_im.write_tenant_command_receipt(
+                text, text, text, text, text
+            ) OWNER TO ` + quotedOwner,
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			if _, err := connection.Exec(t.Context(), fixture.tamper); err != nil {
+				t.Fatalf("tamper admin authority access: %v", err)
+			}
+			if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedOwner); err != nil {
+				t.Fatalf("set authority owner after admin tamper: %v", err)
+			}
+			if err := ValidateAuthorityAccess(t.Context(), connection, manifest); !errors.Is(
+				err,
+				ErrAuthorityAccessDrift,
+			) {
+				t.Fatalf("admin authority access drift error = %v, want %v", err, ErrAuthorityAccessDrift)
+			}
+			if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+				t.Fatalf("reset authority owner after admin tamper: %v", err)
+			}
+			if _, err := connection.Exec(t.Context(), fixture.repair); err != nil {
+				t.Fatalf("repair admin authority access: %v", err)
+			}
+			if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedOwner); err != nil {
+				t.Fatalf("set authority owner after admin repair: %v", err)
+			}
+			if err := ValidateAuthorityAccess(t.Context(), connection, manifest); err != nil {
+				t.Fatalf("validate repaired admin authority access: %v", err)
+			}
+			if _, err := connection.Exec(t.Context(), "RESET ROLE"); err != nil {
+				t.Fatalf("reset authority owner after admin repair: %v", err)
+			}
+		})
+	}
+	if _, err := connection.Exec(t.Context(), "SET ROLE "+quotedOwner); err != nil {
+		t.Fatalf("restore authority owner after admin drift: %v", err)
+	}
 }
 
 func assertRuntimeLoginAccess(
