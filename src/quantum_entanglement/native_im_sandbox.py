@@ -136,6 +136,34 @@ class NativeIMInboundRawResponseV1:
         )
 
 
+@dataclass(frozen=True, repr=False)
+class NativeIMMappedPageV1:
+    """Canonical mapper output bound to, but distinct from, the signed provider body."""
+
+    schema_version: int
+    source_body_digest: str
+    canonical_page_body: bytes = field(repr=False)
+    mapping_evidence_digest: str
+
+    def __post_init__(self) -> None:
+        if type(self) is not NativeIMMappedPageV1:
+            raise TypeError("mapped page requires the exact V1 class")
+        _schema_version(self.schema_version)
+        _digest(self.source_body_digest, "sourceBodyDigest")
+        if type(self.canonical_page_body) is not bytes:
+            raise TypeError("mapped page body must be immutable bytes")
+        if not self.canonical_page_body or len(self.canonical_page_body) > _MAX_RAW_RESPONSE_BYTES:
+            raise ValueError("mapped page body is outside its hard byte bound")
+        _digest(self.mapping_evidence_digest, "mappingEvidenceDigest")
+
+    def __repr__(self) -> str:
+        return (
+            "NativeIMMappedPageV1("
+            f"body_bytes={len(self.canonical_page_body)}, "
+            f"evidence={self.mapping_evidence_digest[:12]!r})"
+        )
+
+
 @runtime_checkable
 class NativeIMInboundTransportPort(Protocol):
     """The only transport shape an E2 inbound adapter may receive explicitly."""
@@ -152,6 +180,21 @@ class NativeIMInboundTransportPort(Protocol):
 
     async def aclose(self) -> None:
         """Close transport-owned resources without performing an external action."""
+
+
+@runtime_checkable
+class NativeIMInboundMapperPort(Protocol):
+    """Provider-specific pure mapping seam; it receives no secret or transport authority."""
+
+    def map_inbound(
+        self,
+        response: NativeIMInboundRawResponseV1,
+        request: IMInboundReadRequestV1,
+        capability: IMCapabilitySnapshotV1,
+        raw_verification: NativeIMRawVerificationResultV1,
+        profile: IMProviderProfileV1,
+    ) -> NativeIMMappedPageV1:
+        """Map one verified provider payload to canonical provider-neutral bytes."""
 
 
 def _scope(value: object) -> tuple[object, object, object, object]:
@@ -175,6 +218,7 @@ def _detach_exception(error: BaseException) -> None:
 
 def parse_native_im_inbound_page_v1(
     response: NativeIMInboundRawResponseV1,
+    mapped: NativeIMMappedPageV1,
     request: IMInboundReadRequestV1,
     capability: IMCapabilitySnapshotV1,
     raw_verification: NativeIMRawVerificationResultV1,
@@ -185,6 +229,7 @@ def parse_native_im_inbound_page_v1(
 
     for value, expected, label in (
         (response, NativeIMInboundRawResponseV1, "response"),
+        (mapped, NativeIMMappedPageV1, "mapped page"),
         (request, IMInboundReadRequestV1, "request"),
         (capability, IMCapabilitySnapshotV1, "capability"),
         (raw_verification, NativeIMRawVerificationResultV1, "raw verification"),
@@ -218,17 +263,22 @@ def parse_native_im_inbound_page_v1(
         _raise_clean_parse_error("native_im_parse_body_too_large")
     if hashlib.sha256(raw_body).hexdigest() != raw_verification.body_digest:
         _raise_clean_parse_error("native_im_parse_body_digest_mismatch")
+    if mapped.source_body_digest != raw_verification.body_digest:
+        _raise_clean_parse_error("native_im_parse_mapping_source_mismatch")
+    mapped_body = mapped.canonical_page_body
+    if len(mapped_body) > maximum_body_bytes:
+        _raise_clean_parse_error("native_im_parse_mapped_body_too_large")
 
     page: IMInboundPageV1 | None = None
     decode_failed = False
     try:
-        page = IMInboundPageV1.from_json_bytes(raw_body)
+        page = IMInboundPageV1.from_json_bytes(mapped_body)
     except Exception as error:
         decode_failed = True
         _detach_exception(error)
     if decode_failed or type(page) is not IMInboundPageV1:
         _raise_clean_parse_error("native_im_parse_body_invalid")
-    if raw_body != page.canonical_bytes():
+    if mapped_body != page.canonical_bytes():
         _raise_clean_parse_error("native_im_parse_body_not_canonical")
 
     binding_failed = False
@@ -332,8 +382,10 @@ __all__ = [
     "NativeIMDisabledSandboxAdapter",
     "NativeIMHealthEvidenceV1",
     "NativeIMInboundParseError",
+    "NativeIMInboundMapperPort",
     "NativeIMInboundRawResponseV1",
     "NativeIMInboundTransportPort",
+    "NativeIMMappedPageV1",
     "NativeIMOutboundForbiddenError",
     "NativeIMSandboxDisabledError",
     "NativeIMTransportContractError",

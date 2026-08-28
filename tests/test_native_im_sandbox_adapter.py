@@ -22,9 +22,11 @@ from quantum_entanglement.native_im_provider_profile import (
 from quantum_entanglement.native_im_sandbox import (
     NativeIMDisabledSandboxAdapter,
     NativeIMHealthEvidenceV1,
+    NativeIMInboundMapperPort,
     NativeIMInboundParseError,
     NativeIMInboundRawResponseV1,
     NativeIMInboundTransportPort,
+    NativeIMMappedPageV1,
     NativeIMSandboxDisabledError,
     compose_default_native_im_sandbox_v1,
     parse_native_im_inbound_page_v1,
@@ -63,6 +65,11 @@ class StructuralTransport:
 
     async def aclose(self) -> None:
         return None
+
+
+class StructuralMapper:
+    def map_inbound(self, *values: object) -> NativeIMMappedPageV1:
+        raise NotImplementedError
 
 
 def raw_response(body: bytes = b"{}") -> NativeIMInboundRawResponseV1:
@@ -135,7 +142,8 @@ def parser_inputs():
         capability=snapshot,
         envelopes=(envelope,),
     )
-    body = page.canonical_bytes()
+    mapped_body = page.canonical_bytes()
+    raw_body = b'{"providerEvents":["test-event-1"]}'
     verification = NativeIMRawVerificationResultV1(
         schema_version=1,
         verifier_id=envelope.verifier_id,
@@ -143,7 +151,7 @@ def parser_inputs():
         signed_at=VERIFIED_AT,
         expires_at="2026-08-28T00:05:00.000001Z",
         verified_at=VERIFIED_AT,
-        body_digest=hashlib.sha256(body).hexdigest(),
+        body_digest=hashlib.sha256(raw_body).hexdigest(),
         nonce_digest="d" * 64,
         authentication_evidence_digest=AUTHENTICATION_EVIDENCE,
     )
@@ -152,11 +160,26 @@ def parser_inputs():
         read_request_id=request.read_request_id,
         status_code=200,
         metadata=metadata_for(configuration),
-        raw_body=body,
+        raw_body=raw_body,
         received_at=VERIFIED_AT,
         transport_evidence_digest=TRANSPORT_EVIDENCE,
     )
-    return response, request, snapshot, verification, configuration, provider_profile, page
+    mapped = NativeIMMappedPageV1(
+        schema_version=1,
+        source_body_digest=verification.body_digest,
+        canonical_page_body=mapped_body,
+        mapping_evidence_digest="f" * 64,
+    )
+    return (
+        response,
+        mapped,
+        request,
+        snapshot,
+        verification,
+        configuration,
+        provider_profile,
+        page,
+    )
 
 
 def test_default_composition_produces_only_a_disabled_gateway() -> None:
@@ -214,6 +237,7 @@ def test_default_composition_rejects_subclasses_without_reading_fields() -> None
 
 def test_transport_contract_is_structural_but_has_no_concrete_network_implementation() -> None:
     assert isinstance(StructuralTransport(), NativeIMInboundTransportPort)
+    assert isinstance(StructuralMapper(), NativeIMInboundMapperPort)
 
 
 def test_health_evidence_is_exact_bounded_and_content_free() -> None:
@@ -278,12 +302,20 @@ def test_raw_response_rejects_metadata_subclasses_and_bool_status() -> None:
 
 
 def test_bounded_parser_accepts_only_the_exact_canonical_bound_page() -> None:
-    response, request, snapshot, verification, configuration, provider_profile, expected = (
-        parser_inputs()
-    )
+    (
+        response,
+        mapped,
+        request,
+        snapshot,
+        verification,
+        configuration,
+        provider_profile,
+        expected,
+    ) = parser_inputs()
 
     parsed = parse_native_im_inbound_page_v1(
         response,
+        mapped,
         request,
         snapshot,
         verification,
@@ -296,21 +328,18 @@ def test_bounded_parser_accepts_only_the_exact_canonical_bound_page() -> None:
 
 
 def test_bounded_parser_rejects_noncanonical_json_and_body_digest_mismatch_cleanly() -> None:
-    response, request, snapshot, verification, configuration, provider_profile, page = (
+    response, mapped, request, snapshot, verification, configuration, provider_profile, page = (
         parser_inputs()
     )
     pretty = json.dumps(page.to_dict(), indent=2).encode()
-    noncanonical_response = replace(response, raw_body=pretty)
-    matching_verification = replace(
-        verification,
-        body_digest=hashlib.sha256(pretty).hexdigest(),
-    )
+    noncanonical_mapping = replace(mapped, canonical_page_body=pretty)
     with pytest.raises(NativeIMInboundParseError) as noncanonical:
         parse_native_im_inbound_page_v1(
-            noncanonical_response,
+            response,
+            noncanonical_mapping,
             request,
             snapshot,
-            matching_verification,
+            verification,
             configuration,
             provider_profile,
         )
@@ -321,6 +350,7 @@ def test_bounded_parser_rejects_noncanonical_json_and_body_digest_mismatch_clean
     with pytest.raises(NativeIMInboundParseError) as digest:
         parse_native_im_inbound_page_v1(
             response,
+            mapped,
             request,
             snapshot,
             replace(verification, body_digest=hashlib.sha256(canary.encode()).hexdigest()),
@@ -331,17 +361,14 @@ def test_bounded_parser_rejects_noncanonical_json_and_body_digest_mismatch_clean
     assert canary not in f"{digest.value!r} {digest.value}"
 
     malformed = b'{"message":"malformed-body-canary"'
-    malformed_response = replace(response, raw_body=malformed)
-    malformed_verification = replace(
-        verification,
-        body_digest=hashlib.sha256(malformed).hexdigest(),
-    )
+    malformed_mapping = replace(mapped, canonical_page_body=malformed)
     with pytest.raises(NativeIMInboundParseError) as invalid:
         parse_native_im_inbound_page_v1(
-            malformed_response,
+            response,
+            malformed_mapping,
             request,
             snapshot,
-            malformed_verification,
+            verification,
             configuration,
             provider_profile,
         )
@@ -352,16 +379,36 @@ def test_bounded_parser_rejects_noncanonical_json_and_body_digest_mismatch_clean
 
 
 def test_bounded_parser_intersects_request_config_profile_page_and_event_limits() -> None:
-    response, request, snapshot, verification, configuration, provider_profile, page = (
+    response, mapped, request, snapshot, verification, configuration, provider_profile, page = (
         parser_inputs()
     )
-    cases = (
-        (
+    large_raw_body = b"x" * 1_025
+    large_body_digest = hashlib.sha256(large_raw_body).hexdigest()
+    with pytest.raises(NativeIMInboundParseError) as raw_limit:
+        parse_native_im_inbound_page_v1(
+            replace(response, raw_body=large_raw_body),
+            replace(mapped, source_body_digest=large_body_digest),
             request,
-            replace(configuration, max_response_bytes=len(response.raw_body) - 1),
+            snapshot,
+            replace(verification, body_digest=large_body_digest),
+            replace(configuration, max_response_bytes=1_024),
             provider_profile,
-            "native_im_parse_body_too_large",
-        ),
+        )
+    assert raw_limit.value.code == "native_im_parse_body_too_large"
+
+    with pytest.raises(NativeIMInboundParseError) as mapped_limit:
+        parse_native_im_inbound_page_v1(
+            response,
+            replace(mapped, canonical_page_body=b"x" * (configuration.max_response_bytes + 1)),
+            request,
+            snapshot,
+            verification,
+            configuration,
+            provider_profile,
+        )
+    assert mapped_limit.value.code == "native_im_parse_mapped_body_too_large"
+
+    cases = (
         (
             replace(request, limit=configuration.page_limit + 1),
             configuration,
@@ -385,6 +432,7 @@ def test_bounded_parser_intersects_request_config_profile_page_and_event_limits(
         with pytest.raises(NativeIMInboundParseError) as raised:
             parse_native_im_inbound_page_v1(
                 response,
+                mapped,
                 changed_request,
                 snapshot,
                 verification,
@@ -408,7 +456,7 @@ def test_bounded_parser_rejects_every_outer_binding_before_admission(
     mutation: str,
     expected_code: str,
 ) -> None:
-    response, request, snapshot, verification, configuration, provider_profile, page = (
+    response, mapped, request, snapshot, verification, configuration, provider_profile, page = (
         parser_inputs()
     )
     if mutation == "request_id":
@@ -434,13 +482,12 @@ def test_bounded_parser_rejects_every_outer_binding_before_admission(
             envelope_changes["tenant_mapping_revision"] = "test-mapping-other"
         changed_envelope = replace(original, **envelope_changes)
         page = inbound_page(request=request, capability=snapshot, envelopes=(changed_envelope,))
-        body = page.canonical_bytes()
-        response = replace(response, raw_body=body)
-        verification = replace(verification, body_digest=hashlib.sha256(body).hexdigest())
+        mapped = replace(mapped, canonical_page_body=page.canonical_bytes())
 
     with pytest.raises(NativeIMInboundParseError) as raised:
         parse_native_im_inbound_page_v1(
             response,
+            mapped,
             request,
             snapshot,
             verification,
@@ -454,10 +501,11 @@ def test_bounded_parser_rejects_subclasses_before_field_access() -> None:
     class ResponseSubclass(NativeIMInboundRawResponseV1):
         pass
 
-    _, request, snapshot, verification, configuration, provider_profile, _ = parser_inputs()
+    _, mapped, request, snapshot, verification, configuration, provider_profile, _ = parser_inputs()
     with pytest.raises(TypeError):
         parse_native_im_inbound_page_v1(
             object.__new__(ResponseSubclass),
+            mapped,
             request,
             snapshot,
             verification,
