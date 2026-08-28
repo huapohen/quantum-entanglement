@@ -1693,27 +1693,159 @@
       "secretsRecorded": false
     }
   },
+  "stageReviewSyncV6": {
+    "stage": "native-im-backend-contract-audit",
+    "syncedAt": "2026-08-28T10:18:57Z",
+    "semanticBaselineCommit": "b755356e8589ff24d4329bb7a4aefb626d0bb561",
+    "semanticBaselineTree": "de1f83e5aa4054032ccb32740dca685e527b5436",
+    "syncLedgerCommit": "1de3bb85709a327298affabe803f03b11e4045d6",
+    "syncLedgerTree": "f7ec29722a394e8140a61794585c063227c69490",
+    "reviewedNativeImCommit": "c623aeadc0693e63c0d34602ed45ae1d2bc8099f",
+    "reviewedNativeImTree": "7319fa96c2544fe9bce3e2160a77e77eec403092",
+    "branch": "mainline_continue_quantum_entanglement",
+    "parent": {
+      "pageId": "3c9ead4b-996e-8108-aea6-c97c694d6587",
+      "url": "https://app.notion.com/p/3c9ead4b996e8108aea6c97c694d6587?pvs=204",
+      "title": "Quantum Entanglement｜mainline_continue 独立审阅空间",
+      "contentLength": 13130,
+      "expectedMarkers": ["b755356", "c623aea", "3caead4b996e817aab3ae63a29ecfb5c"],
+      "missingMarkers": [],
+      "remoteReadbackVerified": true,
+      "childPageCount": 16,
+      "uniqueChildPageCount": 16,
+      "pageTagCountIncludingSelf": 17
+    },
+    "evidencePage": {
+      "key": "native-im-backend-contract-audit",
+      "pageId": "3caead4b-996e-817a-ab3a-e63a29ecfb5c",
+      "url": "https://app.notion.com/p/3caead4b996e817aab3ae63a29ecfb5c?pvs=204",
+      "sourcePath": "analysis_report/research/27_native_im_backend_contract_audit.md",
+      "sourceSha256": "a33ff3b6d99c9eb18c8aaf0a72cc9f922966765ec66a8f183d6595c0d0e7530c",
+      "contentLength": 15095,
+      "updateMode": "created-full-semantic-mirror-with-exact-markdown-attachment",
+      "expectedMarkers": ["c623aea", "b755356", "a33ff3b6d99c9eb18c8aaf0a72cc9f922966765ec66a8f183d6595c0d0e7530c", "本地原始 Markdown", "27_native_im_backend_contract_audit.md"],
+      "missingMarkers": [],
+      "remoteReadbackVerified": true
+    },
+    "independentPages": [
+      {
+        "key": "native-im-early-integration-plan",
+        "pageId": "3c9ead4b-996e-8187-a258-e7d162618a2e",
+        "sourcePath": "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md",
+        "sourceSha256": "5a137fa3968b9d5cbee1631dddee77a7b5d695e2a8c95853f301e493be98055b",
+        "contentLength": 18816,
+        "expectedMarkers": ["c623aea", "b755356", "等待真实合同输入", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-prerequisites",
+        "pageId": "3c9ead4b-996e-81b3-83f4-cafebeb9d008",
+        "sourcePath": "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
+        "sourceSha256": "24e1fe5b1a107bf818efc2542dd4d34381171e85ea2b82f3da925e394e1d10ec",
+        "contentLength": 20601,
+        "expectedMarkers": ["c623aea", "b755356", "native-im-entry-v5", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-readiness",
+        "pageId": "3c9ead4b-996e-819b-bb02-f206122941c2",
+        "sourcePath": "docs/production/CURRENT_READINESS.md",
+        "sourceSha256": "ae6204a08b48e98ea45de56db7789601f6a0d1f19cae7acd40b8362226a9bf9b",
+        "contentLength": 24687,
+        "expectedMarkers": ["c623aea", "b755356", "authenticated event read", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "native-im-report-index",
+        "pageId": "3c9ead4b-996e-81d3-9fb6-d5cf6d364fe0",
+        "sourcePath": "analysis_report/README.md",
+        "sourceSha256": "ad49dd00c3d501d844ae62b0f21a8b5f258a77a333bc567cfc19d37ccd13505c",
+        "contentLength": 15323,
+        "expectedMarkers": ["1de3bb8", "c623aea", "41 个内容 marker", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      }
+    ],
+    "globalPages": [
+      {
+        "key": "global-native-im-early-integration-plan",
+        "pageId": "3c9ead4b-996e-818f-b220-c66126181863",
+        "sourcePath": "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md",
+        "sourceSha256": "5a137fa3968b9d5cbee1631dddee77a7b5d695e2a8c95853f301e493be98055b",
+        "contentLength": 18808,
+        "expectedMarkers": ["c623aea", "b755356", "等待真实合同输入", "本地原始 Markdown"],
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "global-native-im-prerequisites",
+        "pageId": "3c9ead4b-996e-8163-8c43-e48ecc2e0bcc",
+        "sourcePath": "analysis_report/NATIVE_IM_INTEGRATION_PREREQUISITES.md",
+        "sourceSha256": "24e1fe5b1a107bf818efc2542dd4d34381171e85ea2b82f3da925e394e1d10ec",
+        "contentLength": 20708,
+        "expectedMarkers": ["c623aea", "b755356", "保留的合同子页", "本地原始 Markdown"],
+        "preservedChildPageId": "3c9ead4b-996e-8114-985c-ce2cc5af2b63",
+        "missingMarkers": [],
+        "remoteReadbackVerified": true
+      }
+    ],
+    "projectHome": {
+      "pageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
+      "url": "https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204",
+      "contentLength": 16476,
+      "expectedMarkers": ["c623aea", "b755356", "3caead4b996e817aab3ae63a29ecfb5c"],
+      "missingMarkers": [],
+      "remoteReadbackVerified": true,
+      "originalChildPageCountPreserved": 32,
+      "uniqueChildPageCount": 32,
+      "originalDatabaseCountPreserved": 1,
+      "evidenceMentionPageId": "3caead4b-996e-817a-ab3a-e63a29ecfb5c"
+    },
+    "remoteReadback": {
+      "verified": true,
+      "pagesReadbackVerified": 9,
+      "stageReviewPageCount": 17,
+      "baseMirrorPageCount": 33,
+      "totalProjectMirrorPageCount": 50,
+      "newPagesCreated": 1,
+      "existingPagesUpdated": 8,
+      "markerChecks": 41,
+      "structureChecks": 3,
+      "missingMarkers": [],
+      "readbackFailures": 0
+    },
+    "safety": {
+      "yuque": "not-touched",
+      "feishuAndWeCom": "no-send-reply-comment-mention-upload-or-webhook",
+      "realNativeIm": "no-provider-endpoint-credential-webhook-socket-read-or-send",
+      "agentToolOutbound": "level-b-observation-only-not-enabled",
+      "secretsRecorded": false
+    }
+  },
   "verificationSummary": {
     "pageCount": 33,
     "controlledSourcePageCount": 32,
     "auxiliaryDerivedPageCount": 1,
     "existingPagesUpdated": 14,
     "newPagesCreated": 1,
-    "readbackVerified": 16,
+    "readbackVerified": 9,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 27,
     "screenshotImagesAddedThisSync": 17,
     "temporarySignedImageUrlsRecorded": false,
     "secretsRecorded": false,
     "latestIncrementalSync": {
-      "stage": "native-im-e2-provider-bundle-offline",
-      "stageReviewPageCount": 16,
+      "stage": "native-im-backend-contract-audit",
+      "stageReviewPageCount": 17,
       "baseMirrorPageCount": 33,
-      "totalProjectMirrorPageCount": 49,
+      "totalProjectMirrorPageCount": 50,
       "newPagesCreated": 1,
-      "existingPagesUpdated": 14,
-      "pagesReadbackVerified": 16,
-      "markerChecks": 80,
+      "existingPagesUpdated": 8,
+      "pagesReadbackVerified": 9,
+      "markerChecks": 41,
       "structureChecks": 3,
       "readbackFailures": 0
     }
