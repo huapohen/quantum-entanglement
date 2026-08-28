@@ -46,6 +46,29 @@ func ValidateAuthorityAccess(
 	connection *pgx.Conn,
 	manifest AuthorityAccessManifest,
 ) error {
+	return validateAuthorityAccess(ctx, connection, manifest, exactMigrationAuthorityAccess)
+}
+
+// ValidateRuntimeAuthorityAccess performs the same exact catalog comparison through a listed
+// runtime login after it has selected manifest.RuntimeRole. It allows the long-lived API process
+// to fail readiness closed without retaining an owner-capable migration credential. The check is
+// read-only and never repairs drift.
+func ValidateRuntimeAuthorityAccess(
+	ctx context.Context,
+	connection *pgx.Conn,
+	manifest AuthorityAccessManifest,
+) error {
+	return validateAuthorityAccess(ctx, connection, manifest, exactRuntimeAuthorityAccess)
+}
+
+type authorityAccessComparator func(context.Context, pgx.Tx, AuthorityAccessManifest) bool
+
+func validateAuthorityAccess(
+	ctx context.Context,
+	connection *pgx.Conn,
+	manifest AuthorityAccessManifest,
+	compare authorityAccessComparator,
+) error {
 	if ctx == nil || connection == nil || connection.IsClosed() || !validAuthorityAccessManifest(manifest) {
 		return ErrInvalidAuthorityAccessManifest
 	}
@@ -60,7 +83,7 @@ func ValidateAuthorityAccess(
 	if err := prepareMigrationTransaction(ctx, transaction); err != nil {
 		return ErrAuthorityAccessDrift
 	}
-	if !exactAuthorityAccess(ctx, transaction, manifest) {
+	if compare == nil || !compare(ctx, transaction, manifest) {
 		return ErrAuthorityAccessDrift
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -97,7 +120,7 @@ func uniqueCanonicalAccessRoles(roles []string) bool {
 	return true
 }
 
-func exactAuthorityAccess(
+func exactMigrationAuthorityAccess(
 	ctx context.Context,
 	transaction pgx.Tx,
 	manifest AuthorityAccessManifest,
@@ -110,6 +133,30 @@ func exactAuthorityAccess(
 		!slices.Contains(manifest.MigrationLoginRoles, sessionUser) {
 		return false
 	}
+	return exactAuthorityAccessObjects(ctx, transaction, manifest)
+}
+
+func exactRuntimeAuthorityAccess(
+	ctx context.Context,
+	transaction pgx.Tx,
+	manifest AuthorityAccessManifest,
+) bool {
+	var sessionUser, currentUser string
+	if err := transaction.QueryRow(ctx, "SELECT session_user, current_user").Scan(
+		&sessionUser,
+		&currentUser,
+	); err != nil || currentUser != manifest.RuntimeRole ||
+		!slices.Contains(manifest.RuntimeLoginRoles, sessionUser) {
+		return false
+	}
+	return exactAuthorityAccessObjects(ctx, transaction, manifest)
+}
+
+func exactAuthorityAccessObjects(
+	ctx context.Context,
+	transaction pgx.Tx,
+	manifest AuthorityAccessManifest,
+) bool {
 	return exactAuthorityRoles(ctx, transaction, manifest) &&
 		exactAuthorityMemberships(ctx, transaction, manifest) &&
 		exactAuthorityDatabasePrivileges(ctx, transaction, manifest) &&
@@ -672,7 +719,7 @@ func exactAuthorityFunctions(
 	transaction pgx.Tx,
 	manifest AuthorityAccessManifest,
 ) bool {
-	if validateFunctionOnlyWrites(ctx, transaction) != nil ||
+	if validateFunctionOnlyWritesForOwner(ctx, transaction, manifest.OwnerRole) != nil ||
 		!exactOwnerFunctionDefaultPrivileges(ctx, transaction, manifest.OwnerRole) ||
 		!noAuthorityMetaFunctions(ctx, transaction) {
 		return false

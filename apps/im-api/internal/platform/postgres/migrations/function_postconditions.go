@@ -143,15 +143,27 @@ func exactStoredAuthorityFunctions(
 	functions []storedAuthorityFunction,
 	specs []storedAuthorityFunctionSpec,
 ) bool {
+	return exactStoredAuthorityFunctionsForOwner(functions, specs, "")
+}
+
+func exactStoredAuthorityFunctionsForOwner(
+	functions []storedAuthorityFunction,
+	specs []storedAuthorityFunctionSpec,
+	expectedOwner string,
+) bool {
 	if len(functions) != len(specs) {
 		return false
 	}
 	for index, function := range functions {
 		spec := specs[index]
+		ownerMatches := function.ownerIsCurrentUser
+		if expectedOwner != "" {
+			ownerMatches = function.owner == expectedOwner
+		}
 		if function.name != spec.name || function.arguments != spec.arguments ||
 			function.identityArguments != spec.identityArguments || function.result != spec.result ||
 			function.definitionDigest != spec.definitionDigest || function.owner == "" ||
-			!function.ownerIsCurrentUser || function.language != "plpgsql" ||
+			!ownerMatches || function.language != "plpgsql" ||
 			function.kind != "f" || function.volatility != "v" || !function.strict ||
 			!function.securityDefiner || function.parallel != "u" || function.leakproof ||
 			function.configuration != "search_path=pg_catalog" || !function.safeExecuteACL {
@@ -167,13 +179,21 @@ func digestFunctionDefinition(definition string) string {
 }
 
 func validateFunctionOnlyWrites(ctx context.Context, transaction pgx.Tx) error {
+	return validateFunctionOnlyWritesForOwner(ctx, transaction, "")
+}
+
+func validateFunctionOnlyWritesForOwner(
+	ctx context.Context,
+	transaction pgx.Tx,
+	expectedOwner string,
+) error {
 	specs := storedAuthorityFunctionManifest()
 	names := make([]string, len(specs))
 	for index, spec := range specs {
 		names[index] = spec.name
 	}
 	functions, err := readStoredAuthorityFunctions(ctx, transaction, names)
-	if err != nil || !exactStoredAuthorityFunctions(functions, specs) {
+	if err != nil || !exactStoredAuthorityFunctionsForOwner(functions, specs, expectedOwner) {
 		return ErrMigrationSchema
 	}
 	return nil

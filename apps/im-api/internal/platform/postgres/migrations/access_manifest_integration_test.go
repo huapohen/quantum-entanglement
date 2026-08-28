@@ -421,6 +421,12 @@ func assertRuntimeLoginAccess(
 	); err != nil || sessionUser != manifest.RuntimeLoginRoles[0] || currentUser != sessionUser {
 		t.Fatalf("runtime login identities session=%q current=%q error=%v", sessionUser, currentUser, err)
 	}
+	if err := ValidateRuntimeAuthorityAccess(t.Context(), connection, manifest); !errors.Is(
+		err,
+		ErrAuthorityAccessDrift,
+	) {
+		t.Fatalf("runtime validation before SET ROLE error=%v, want access drift", err)
+	}
 	var inheritedUsage bool
 	if err := connection.QueryRow(t.Context(), `
 SELECT pg_catalog.has_schema_privilege(current_user, 'wanwork_im', 'USAGE')`).Scan(
@@ -437,6 +443,9 @@ SELECT pg_catalog.has_schema_privilege(current_user, 'wanwork_im', 'USAGE')`).Sc
 	if err := connection.QueryRow(t.Context(), "SELECT current_user").Scan(&currentUser); err != nil ||
 		currentUser != manifest.RuntimeRole {
 		t.Fatalf("runtime current user=%q error=%v", currentUser, err)
+	}
+	if err := ValidateRuntimeAuthorityAccess(t.Context(), connection, manifest); err != nil {
+		t.Fatalf("runtime exact access validation: %v", err)
 	}
 	allowedReads := make(map[string]struct{}, len(runtimeAuthorityReadTables))
 	for _, tableName := range runtimeAuthorityReadTables {

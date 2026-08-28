@@ -49,6 +49,13 @@ func TestValidateAuthorityAccessRejectsInvalidInputs(t *testing.T) {
 	) {
 		t.Fatalf("nil context error = %v", err)
 	}
+	if err := ValidateRuntimeAuthorityAccess(
+		t.Context(),
+		nil,
+		DefaultAuthorityAccessManifest(),
+	); !errors.Is(err, ErrInvalidAuthorityAccessManifest) {
+		t.Fatalf("nil runtime connection error = %v", err)
+	}
 }
 
 func TestAuthorityAccessTableManifestIsSortedAndComplete(t *testing.T) {
