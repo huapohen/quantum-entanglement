@@ -31,6 +31,7 @@ from quantum_entanglement.native_im_sandbox import (
     NativeIMSandboxAdapterProcessMismatchError,
     NativeIMTransportContractError,
     NativeIMVerifiedInboundReadV1,
+    derive_native_im_health_evidence_digest_v1,
     derive_native_im_mapping_evidence_digest_v1,
 )
 from quantum_entanglement.native_im_sandbox_authority import (
@@ -63,6 +64,34 @@ MAPPER_CONTRACT_DIGEST = "3" * 64
 MAPPING_EVIDENCE = "ed5536a7e07a208dab7d81d09f48a167d0b8fbc187306f9db09f65896fc304f6"
 RAW_BODY = b'{"providerEvents":["test-event-1"]}'
 READ_CREDENTIAL = b"test-read-only-credential"
+PROVIDER_MANIFEST_DIGEST = "9" * 64
+HEALTH_REQUEST_INTENT_DIGEST = "6" * 64
+HEALTH_EXCHANGE_EVIDENCE_DIGEST = "7" * 64
+
+
+def fixture_health_evidence(
+    configuration: NativeIMInboundOnlyConfigV1,
+    profile: IMProviderProfileV1,
+    *,
+    provider_manifest_digest: str = PROVIDER_MANIFEST_DIGEST,
+) -> NativeIMHealthEvidenceV1:
+    values = {
+        "healthy": True,
+        "observed_at": NOW,
+        "status_code": 200,
+        "configuration_binding_digest": configuration.approval_binding_digest,
+        "profile_digest": profile.canonical_digest(),
+        "provider_manifest_digest": provider_manifest_digest,
+        "transport_contract_id": "test-native-im-transport-v1",
+        "transport_contract_digest": "2" * 64,
+        "request_intent_digest": HEALTH_REQUEST_INTENT_DIGEST,
+        "exchange_security_evidence_digest": HEALTH_EXCHANGE_EVIDENCE_DIGEST,
+    }
+    return NativeIMHealthEvidenceV1(
+        schema_version=1,
+        **values,
+        evidence_digest=derive_native_im_health_evidence_digest_v1(**values),
+    )
 
 
 def test_mapper_rejection_error_has_one_closed_redacted_code_catalog() -> None:
@@ -128,9 +157,11 @@ class FixtureTransport:
         self,
         response: NativeIMInboundRawResponseV1,
         *,
+        health_evidence: NativeIMHealthEvidenceV1,
         failure_canary: str | None = None,
     ) -> None:
         self.response = response
+        self.health_evidence = health_evidence
         self.failure_canary = failure_canary
         self.health_calls = 0
         self.read_calls = 0
@@ -141,12 +172,7 @@ class FixtureTransport:
         assert credential.view().tobytes() == READ_CREDENTIAL
         if self.failure_canary is not None:
             raise RuntimeError(self.failure_canary)
-        return NativeIMHealthEvidenceV1(
-            schema_version=1,
-            healthy=True,
-            observed_at=NOW,
-            evidence_digest="a" * 64,
-        )
+        return self.health_evidence
 
     async def read_inbound(
         self,
@@ -294,7 +320,11 @@ def adapter_inputs(
         received_at=NOW,
         transport_evidence_digest=TRANSPORT_EVIDENCE,
     )
-    transport = FixtureTransport(response, failure_canary=transport_failure)
+    transport = FixtureTransport(
+        response,
+        health_evidence=fixture_health_evidence(configuration, profile),
+        failure_canary=transport_failure,
+    )
     mapper = FixtureMapper(
         failure_canary=mapper_failure,
         mapping_evidence_override=mapping_evidence_override,
@@ -427,7 +457,10 @@ async def test_revocation_during_transport_closes_credential_and_blocks_mapper_a
             authority.revoke()
             return response
 
-    revoking = RevokingTransport(transport.response)
+    revoking = RevokingTransport(
+        transport.response,
+        health_evidence=transport.health_evidence,
+    )
     rebuilt = NativeIMInboundOnlySandboxAdapter(
         configuration,
         profile,
@@ -509,6 +542,61 @@ async def test_capability_and_health_do_not_expose_or_retain_secret_material() -
     assert secrets.references == [configuration.credential_ref]
     assert secrets.materials[0].closed is True
     assert transport.health_calls == 1
+
+
+def test_health_evidence_digest_binds_every_approved_and_exchange_axis() -> None:
+    values = {
+        "healthy": True,
+        "observed_at": NOW,
+        "status_code": 200,
+        "configuration_binding_digest": "1" * 64,
+        "profile_digest": "2" * 64,
+        "provider_manifest_digest": "3" * 64,
+        "transport_contract_id": "test-transport-v1",
+        "transport_contract_digest": "4" * 64,
+        "request_intent_digest": "5" * 64,
+        "exchange_security_evidence_digest": "6" * 64,
+    }
+    baseline = derive_native_im_health_evidence_digest_v1(**values)
+    assert len(baseline) == 64
+    for field in values:
+        if field == "status_code":
+            continue
+        changed = dict(values)
+        if field == "healthy":
+            changed[field] = False
+        elif field == "observed_at":
+            changed[field] = "2026-08-28T12:00:01.000001Z"
+        elif field == "transport_contract_id":
+            changed[field] = "other-transport-v1"
+        else:
+            changed[field] = "9" * 64
+        assert derive_native_im_health_evidence_digest_v1(**changed) != baseline
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("configuration_binding_digest", "8" * 64),
+        ("profile_digest", "8" * 64),
+        ("provider_manifest_digest", "8" * 64),
+        ("transport_contract_id", "other-transport-v1"),
+        ("transport_contract_digest", "8" * 64),
+        ("evidence_digest", "8" * 64),
+    ),
+)
+async def test_adapter_rejects_health_evidence_binding_drift(field: str, value: str) -> None:
+    adapter, _, _, _, transport, mapper, secrets, _ = adapter_inputs()
+    transport.health_evidence = replace(transport.health_evidence, **{field: value})
+
+    with pytest.raises(NativeIMTransportContractError) as raised:
+        await adapter.probe_health()
+    assert raised.value.code == "native_im_transport_contract_failed"
+    assert transport.health_calls == 1
+    assert mapper.calls == 0
+    assert len(secrets.materials) == 1
+    assert secrets.materials[0].closed is True
 
 
 @pytest.mark.asyncio

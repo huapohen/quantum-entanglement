@@ -143,6 +143,14 @@ class NativeIMHealthEvidenceV1:
     schema_version: int
     healthy: bool
     observed_at: str
+    status_code: int
+    configuration_binding_digest: str = field(repr=False)
+    profile_digest: str = field(repr=False)
+    provider_manifest_digest: str = field(repr=False)
+    transport_contract_id: str
+    transport_contract_digest: str = field(repr=False)
+    request_intent_digest: str = field(repr=False)
+    exchange_security_evidence_digest: str = field(repr=False)
     evidence_digest: str
 
     def __post_init__(self) -> None:
@@ -152,6 +160,18 @@ class NativeIMHealthEvidenceV1:
         if type(self.healthy) is not bool:
             raise TypeError("health evidence healthy must be an exact boolean")
         _timestamp(self.observed_at, "observedAt")
+        if type(self.status_code) is not int or self.status_code != 200:
+            raise ValueError("health evidence status must be exact 200")
+        _id(self.transport_contract_id, "transportContractId")
+        for value, label in (
+            (self.configuration_binding_digest, "configurationBindingDigest"),
+            (self.profile_digest, "profileDigest"),
+            (self.provider_manifest_digest, "providerManifestDigest"),
+            (self.transport_contract_digest, "transportContractDigest"),
+            (self.request_intent_digest, "requestIntentDigest"),
+            (self.exchange_security_evidence_digest, "exchangeSecurityEvidenceDigest"),
+        ):
+            _digest(value, label)
         _digest(self.evidence_digest, "evidenceDigest")
 
     def __repr__(self) -> str:
@@ -159,6 +179,53 @@ class NativeIMHealthEvidenceV1:
             "NativeIMHealthEvidenceV1("
             f"healthy={self.healthy!r}, evidence={self.evidence_digest[:12]!r})"
         )
+
+
+def derive_native_im_health_evidence_digest_v1(
+    *,
+    healthy: bool,
+    observed_at: str,
+    status_code: int,
+    configuration_binding_digest: str,
+    profile_digest: str,
+    provider_manifest_digest: str,
+    transport_contract_id: str,
+    transport_contract_digest: str,
+    request_intent_digest: str,
+    exchange_security_evidence_digest: str,
+) -> str:
+    """Derive one content-free health result bound to its approved build and exchange."""
+
+    if type(healthy) is not bool:
+        raise TypeError("health evidence healthy must be an exact boolean")
+    _timestamp(observed_at, "observedAt")
+    if type(status_code) is not int or status_code != 200:
+        raise ValueError("health evidence status must be exact 200")
+    _id(transport_contract_id, "transportContractId")
+    for value, label in (
+        (configuration_binding_digest, "configurationBindingDigest"),
+        (profile_digest, "profileDigest"),
+        (provider_manifest_digest, "providerManifestDigest"),
+        (transport_contract_digest, "transportContractDigest"),
+        (request_intent_digest, "requestIntentDigest"),
+        (exchange_security_evidence_digest, "exchangeSecurityEvidenceDigest"),
+    ):
+        _digest(value, label)
+    return _model_digest(
+        "NativeIMHealthEvidenceV1",
+        {
+            "configurationBindingDigest": configuration_binding_digest,
+            "exchangeSecurityEvidenceDigest": exchange_security_evidence_digest,
+            "healthy": healthy,
+            "observedAt": observed_at,
+            "profileDigest": profile_digest,
+            "providerManifestDigest": provider_manifest_digest,
+            "requestIntentDigest": request_intent_digest,
+            "statusCode": status_code,
+            "transportContractDigest": transport_contract_digest,
+            "transportContractId": transport_contract_id,
+        },
+    )
 
 
 @dataclass(frozen=True, repr=False)
@@ -688,7 +755,28 @@ class NativeIMInboundOnlySandboxAdapter:
             credential.close()
         if failed or type(result) is not NativeIMHealthEvidenceV1 or result.healthy is not True:
             raise NativeIMTransportContractError() from None
-        self._require_approval("health")
+        approval = self._require_approval("health")
+        if (
+            result.configuration_binding_digest != approval.configuration_binding_digest
+            or result.profile_digest != self.__profile.canonical_digest()
+            or result.provider_manifest_digest != self.__provider_manifest_digest
+            or result.transport_contract_id != approval.transport_contract_id
+            or result.transport_contract_digest != approval.transport_contract_digest
+            or result.evidence_digest
+            != derive_native_im_health_evidence_digest_v1(
+                healthy=result.healthy,
+                observed_at=result.observed_at,
+                status_code=result.status_code,
+                configuration_binding_digest=result.configuration_binding_digest,
+                profile_digest=result.profile_digest,
+                provider_manifest_digest=result.provider_manifest_digest,
+                transport_contract_id=result.transport_contract_id,
+                transport_contract_digest=result.transport_contract_digest,
+                request_intent_digest=result.request_intent_digest,
+                exchange_security_evidence_digest=(result.exchange_security_evidence_digest),
+            )
+        ):
+            raise NativeIMTransportContractError() from None
         return result
 
     async def read_verified_inbound(
@@ -930,6 +1018,7 @@ __all__ = [
     "NativeIMTransportContractError",
     "NativeIMVerifiedInboundReadV1",
     "compose_default_native_im_sandbox_v1",
+    "derive_native_im_health_evidence_digest_v1",
     "derive_native_im_mapping_evidence_digest_v1",
     "parse_native_im_inbound_page_v1",
 ]

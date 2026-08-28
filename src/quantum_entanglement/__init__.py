@@ -128,6 +128,7 @@ from .native_im_sandbox import (
     NativeIMTransportContractError,
     NativeIMVerifiedInboundReadV1,
     compose_default_native_im_sandbox_v1,
+    derive_native_im_health_evidence_digest_v1,
     derive_native_im_mapping_evidence_digest_v1,
     parse_native_im_inbound_page_v1,
 )
@@ -481,6 +482,7 @@ __all__ = [
     "WorkflowPlan",
     "create_sqlite_backup",
     "compose_default_native_im_sandbox_v1",
+    "derive_native_im_health_evidence_digest_v1",
     "derive_native_im_mapping_evidence_digest_v1",
     "compose_approved_native_im_sandbox_v1",
     "default_manifest_path",

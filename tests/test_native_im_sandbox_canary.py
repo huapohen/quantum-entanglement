@@ -33,6 +33,7 @@ from tests.test_native_im_sandbox_inbound_adapter import (
     MAPPING_EVIDENCE,
     TRANSPORT_EVIDENCE,
     FixtureMapper,
+    fixture_health_evidence,
     provider_profile,
 )
 from tests.test_native_im_sandbox_lifecycle import CapturingHandler, sandbox_observer
@@ -65,8 +66,13 @@ class CanarySecretProvider:
 
 
 class CanaryFixtureTransport:
-    def __init__(self, response: NativeIMInboundRawResponseV1) -> None:
+    def __init__(
+        self,
+        response: NativeIMInboundRawResponseV1,
+        health_evidence: NativeIMHealthEvidenceV1,
+    ) -> None:
         self.response = response
+        self.health_evidence = health_evidence
         self.health_calls = 0
         self.read_calls = 0
         self.close_calls = 0
@@ -74,12 +80,7 @@ class CanaryFixtureTransport:
     async def probe_health(self, credential: SecretMaterial) -> NativeIMHealthEvidenceV1:
         self.health_calls += 1
         assert credential.view().tobytes() == READ_SECRET_CANARY
-        return NativeIMHealthEvidenceV1(
-            schema_version=1,
-            healthy=True,
-            observed_at=NOW,
-            evidence_digest="a" * 64,
-        )
+        return self.health_evidence
 
     async def read_inbound(
         self,
@@ -141,7 +142,6 @@ async def test_message_secret_and_trace_canaries_are_contained_end_to_end(
         received_at=NOW,
         transport_evidence_digest=TRANSPORT_EVIDENCE,
     )
-    transport = CanaryFixtureTransport(response)
     mapper = FixtureMapper()
     secrets = CanarySecretProvider(configuration)
     database_path = tmp_path / "native-im-canary.sqlite3"
@@ -154,6 +154,10 @@ async def test_message_secret_and_trace_canaries_are_contained_end_to_end(
     configuration, approval_authority, approval_permit, _, _ = approved_authority_for(
         configuration,
         profile,
+    )
+    transport = CanaryFixtureTransport(
+        response,
+        fixture_health_evidence(configuration, profile),
     )
     adapter = NativeIMInboundOnlySandboxAdapter(
         configuration,
