@@ -19,7 +19,7 @@ from tests.test_native_im_provider_bundle_tck import (  # noqa: E402
     test_provider_bundle_tck_closes_verified_exchange_to_durable_admission,
 )
 
-EXPECTED_SUITE_DIGEST = "a14ef986ec7ffcfa2ed59ab0fa748d3e2181e29c067e09ffef66325b28a50368"
+EXPECTED_SUITE_DIGEST = "9e76f826a8e8f580c3cc12ba7f2e4d69acf5e8e355f86f68ee96f5d221a21ae0"
 _SUITE_FILES = (
     "src/quantum_entanglement/native_im_read_exchange.py",
     "src/quantum_entanglement/native_im_sandbox_provenance.py",
