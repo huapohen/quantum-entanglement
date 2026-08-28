@@ -348,6 +348,9 @@ class NativeIMSandboxLifecycleV1:
             except NativeIMKillSwitchTrippedError:
                 self._observe_read("kill_switch")
                 raise
+            except asyncio.CancelledError:
+                self._observe_read("rejected")
+                raise
             except (
                 NativeIMInboundConflictError,
                 NativeIMSandboxLifecycleError,

@@ -8,6 +8,7 @@ transport is registered here.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import os
@@ -451,6 +452,7 @@ class NativeIMInboundOnlySandboxAdapter:
 
     __slots__ = (
         "__clock",
+        "__close_lock",
         "__configuration",
         "__closed",
         "__mapper",
@@ -498,6 +500,7 @@ class NativeIMInboundOnlySandboxAdapter:
             replay_guard,
         )
         self.__clock = clock
+        self.__close_lock = asyncio.Lock()
         self.__closed = False
 
     def _require_open(self) -> None:
@@ -645,17 +648,21 @@ class NativeIMInboundOnlySandboxAdapter:
 
     async def aclose(self) -> None:
         self._require_current_process()
-        if self.__closed:
-            return
-        self.__closed = True
-        failed = False
-        try:
-            await self.__transport.aclose()
-        except Exception as error:
-            failed = True
-            _detach_exception(error)
-        if failed:
-            raise NativeIMTransportContractError() from None
+        async with self.__close_lock:
+            self._require_current_process()
+            if self.__closed:
+                return
+            failed = False
+            try:
+                await self.__transport.aclose()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                failed = True
+                _detach_exception(error)
+            if failed:
+                raise NativeIMTransportContractError() from None
+            self.__closed = True
 
     @property
     def closed(self) -> bool:
