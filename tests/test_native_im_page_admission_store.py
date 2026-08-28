@@ -8,7 +8,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
+from quantum_entanglement.agent_runtime import AgentRuntimePort
+from quantum_entanglement.native_im import (
+    IMCapabilitySnapshotV1,
+    IMInboundPageV1,
+    IMInboundReadRequestV1,
+)
 from quantum_entanglement.native_im_auth import NativeIMRawVerificationResultV1
+from quantum_entanglement.native_im_gateway import IMGatewayPort
 from quantum_entanglement.native_im_inbox import (
     NativeIMInboundCommitAmbiguityError,
     NativeIMInboundConflictError,
@@ -20,6 +27,9 @@ from quantum_entanglement.native_im_nonce_store import (
     NativeIMNonceStorePoisonedError,
     SQLiteNativeIMInboxStore,
 )
+from quantum_entanglement.plugins import PluginManager
+from quantum_entanglement.runtime import OrchestratorKernel
+from quantum_entanglement.store import SQLiteEventStore
 from tests.test_native_im_contract import (
     capability,
     inbound_event,
@@ -193,6 +203,173 @@ class SQLiteNativeIMPageAdmissionStoreTests(unittest.TestCase):
         self.assertEqual(read["page_digest"], page.canonical_digest())
         self.assertEqual(read["admitted_checkpoint_revision"], 1)
         self.assertEqual(read["admitted_at"], ADMITTED_AT)
+
+    def test_public_admission_rejects_subclasses_before_inspection(self) -> None:
+        class RequestSubclass(IMInboundReadRequestV1):
+            pass
+
+        class CapabilitySubclass(IMCapabilitySnapshotV1):
+            pass
+
+        class PageSubclass(IMInboundPageV1):
+            pass
+
+        class VerificationSubclass(NativeIMRawVerificationResultV1):
+            pass
+
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        verification = raw_verification()
+        cases = (
+            (
+                object.__new__(RequestSubclass),
+                snapshot,
+                page,
+                verification,
+                "request must be an exact IMInboundReadRequestV1",
+            ),
+            (
+                request,
+                object.__new__(CapabilitySubclass),
+                page,
+                verification,
+                "capability must be an exact IMCapabilitySnapshotV1",
+            ),
+            (
+                request,
+                snapshot,
+                object.__new__(PageSubclass),
+                verification,
+                "page must be an exact IMInboundPageV1",
+            ),
+            (
+                request,
+                snapshot,
+                page,
+                object.__new__(VerificationSubclass),
+                "raw verification must be an exact NativeIMRawVerificationResultV1",
+            ),
+        )
+
+        for (
+            candidate_request,
+            candidate_capability,
+            candidate_page,
+            candidate_raw,
+            message,
+        ) in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(TypeError, f"^{message}$"):
+                    self.store.admit_native_im_inbound_page(
+                        candidate_request,
+                        candidate_capability,
+                        candidate_page,
+                        candidate_raw,
+                    )
+
+    def test_admission_snapshots_hostile_caller_mutation_before_transaction(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        verification = raw_verification()
+        expected_request = IMInboundReadRequestV1.from_json_bytes(request.canonical_bytes())
+        expected_capability = IMCapabilitySnapshotV1.from_json_bytes(snapshot.canonical_bytes())
+        expected_page = IMInboundPageV1.from_json_bytes(page.canonical_bytes())
+        expected_verification = raw_verification()
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+        real_claim = self.store._claim_nonce_in_transaction
+
+        def mutate_callers_then_claim(connection, **kwargs):
+            object.__setattr__(request, "read_request_id", "mutated-request")
+            object.__setattr__(snapshot, "revision", "mutated-capability")
+            object.__setattr__(page, "snapshot_token", "mutated-snapshot")
+            object.__setattr__(page.envelopes[0].event, "event_id", "mutated-event")
+            object.__setattr__(verification, "nonce_digest", "9" * 64)
+            return real_claim(connection, **kwargs)
+
+        with patch.object(
+            self.store,
+            "_claim_nonce_in_transaction",
+            side_effect=mutate_callers_then_claim,
+        ):
+            result = self.store.admit_native_im_inbound_page(
+                request,
+                snapshot,
+                page,
+                verification,
+            )
+
+        self.assertIs(type(result), NativeIMInboundPageAdmissionResultV1)
+        self.assertEqual(result.page_digest, expected_page.canonical_digest())
+        self.assertEqual(
+            self._rows("native_im_inbox_events")[0]["event_id"],
+            expected_page.envelopes[0].event.event_id,
+        )
+        self.assertEqual(
+            self._rows("native_im_auth_nonces")[0]["nonce_digest"],
+            expected_verification.nonce_digest,
+        )
+        replay = self.store.admit_native_im_inbound_page(
+            expected_request,
+            expected_capability,
+            expected_page,
+            expected_verification,
+        )
+        self.assertEqual(replay.disposition, "observed_replay")
+
+    def test_admission_invokes_no_gateway_agent_plugin_browser_network_or_outbound(self) -> None:
+        request = inbound_read_request()
+        snapshot = capability()
+        page = inbound_page(request=request, capability=snapshot)
+        verification = raw_verification()
+        self.store.prepare_native_im_inbound_read(request)
+        self.clock.value = ADMITTED_AT
+        protected_tables = (
+            "events",
+            "outbox",
+            "inbox_receipts",
+            "invocation_jobs",
+        )
+        before = {table: len(self._rows(table)) for table in protected_tables}
+
+        with (
+            patch.object(IMGatewayPort, "capability_snapshot") as capability_call,
+            patch.object(IMGatewayPort, "read_inbound") as inbound_call,
+            patch.object(IMGatewayPort, "dispatch") as dispatch_call,
+            patch.object(IMGatewayPort, "query_acceptance") as acceptance_call,
+            patch.object(AgentRuntimePort, "invoke") as agent_call,
+            patch.object(PluginManager, "emit") as plugin_call,
+            patch.object(OrchestratorKernel, "run") as orchestrator_call,
+            patch.object(SQLiteEventStore, "append_inbox") as domain_inbox_call,
+            patch("socket.socket") as socket_call,
+            patch("subprocess.run") as subprocess_call,
+            patch("urllib.request.urlopen") as network_call,
+            patch("webbrowser.open") as browser_call,
+        ):
+            result = self._admit(request, snapshot, page, verification)
+
+        self.assertEqual(result.disposition, "fresh_observation")
+        self.assertEqual(
+            {table: len(self._rows(table)) for table in protected_tables},
+            before,
+        )
+        for protected_call in (
+            capability_call,
+            inbound_call,
+            dispatch_call,
+            acceptance_call,
+            agent_call,
+            plugin_call,
+            orchestrator_call,
+            domain_inbox_call,
+            socket_call,
+            subprocess_call,
+            network_call,
+            browser_call,
+        ):
+            protected_call.assert_not_called()
 
     def test_exact_page_and_nonce_replay_returns_original_graph_without_clock(self) -> None:
         request = inbound_read_request()
