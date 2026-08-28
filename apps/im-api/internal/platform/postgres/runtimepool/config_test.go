@@ -124,6 +124,21 @@ func TestParseConfigRejectsParserConsumedAndFileBackedParameters(t *testing.T) {
 	}
 }
 
+func TestParseConfigRejectsAmbientFileAndSessionComposition(t *testing.T) {
+	for name, value := range map[string]string{
+		"PGSERVICEFILE": "/tmp/ambient-service-canary",
+		"PGPASSFILE":    "/tmp/ambient-pass-canary",
+		"PGOPTIONS":     "-c role=wanwork_im_owner",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, value)
+			if _, err := parseConfig(validConfig()); !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("ambient %s error = %v, want %v", name, err, ErrInvalidConfig)
+			}
+		})
+	}
+}
+
 func TestParseConfigRejectsInvalidManifestAndLimits(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
 		"invalid manifest": func(value *Config) { value.Manifest.RuntimeRole = "" },

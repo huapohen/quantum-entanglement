@@ -59,3 +59,19 @@ func TestRunMapsConnectionFailureWithoutCredentialLeak(t *testing.T) {
 		t.Fatalf("connection failure error = %v, want fixed unavailable sentinel", err)
 	}
 }
+
+func TestRunRejectsAmbientPostgresCompositionBeforeConnecting(t *testing.T) {
+	t.Setenv("PGSERVICEFILE", "/tmp/ambient-service-canary")
+	manifest := migrations.DefaultAuthorityAccessManifest()
+	manifest.MigrationLoginRoles = []string{"wanwork_deploy_a"}
+	manifest.RuntimeLoginRoles = []string{"wanwork_app_a"}
+	_, err := Run(t.Context(), Config{
+		ConnectionString:       "postgresql://wanwork_deploy_a@127.0.0.1:1/wanwork_im?sslmode=disable",
+		Manifest:               manifest,
+		ConnectTimeout:         time.Millisecond,
+		AllowInsecureLocalhost: true,
+	})
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("ambient migration config error = %v, want %v", err, ErrInvalidConfig)
+	}
+}
