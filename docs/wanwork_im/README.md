@@ -20,8 +20,16 @@
 - [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)：产品范围、用户旅程与验收标准。
 - [ARCHITECTURE.md](ARCHITECTURE.md)：分层架构、数据所有权、插件边界和关键时序。
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)：阶段、提交序列、门禁和可停点。
+- [W2_POSTGRES_AUTHORITY_CHECKPOINT.md](W2_POSTGRES_AUTHORITY_CHECKPOINT.md)：当前 PostgreSQL
+  authority persistence 能力、Go/No-Go、真实 PG18 证据与接 IM 前 P0。
 - [RESEARCH_COVERAGE.md](RESEARCH_COVERAGE.md)：`2output` 全部 40 份 Markdown 的行数、摘要、角色和处置。
 - [RESEARCH_TRACEABILITY.md](RESEARCH_TRACEABILITY.md)：用户调研快照、采纳/拒绝决策与从证据到验收的映射。
+
+当前深度报告与可视化：
+
+- `analysis_report/research/33_postgres_authority_persistence_checkpoint.md`；
+- `analysis_report/html/33_postgres_authority_persistence_checkpoint.html`；
+- `analysis_report/screenshots/33_postgres_authority_persistence_map.svg` 与 `.png`。
 
 后续会增加 API、数据库、融云 provider profile、Clerk 鉴权、跨端和运维文档。任何实现若与
 本目录的冻结不变量冲突，必须先修订文档并单独提交，不得在代码中暗改语义。
@@ -32,6 +40,10 @@
 - 融云真实 outbound 默认关闭，开发阶段只使用 fake adapter 或专用 sandbox inbound-only；
 - Clerk、融云和模型凭据只通过未入 Git 的 secret reference 注入；
 - `ext_info` 只保存版本化、限长、非秘密 metadata，不保存 token、权限证明或消息正文；
+- 当前 PostgreSQL receipt 只做 tenant command dedupe/digest，不是 provider ACK、完整结果、
+  exactly-once 或不可抵赖证据；
+- 当前 access boolean 只作为 resolver 的未来输入；production function-only database writes、Clerk
+  trusted tenant context、action-time resolver、event/outbox 未完成前，真实 IM outbound 保持关闭；
 - HTTP 业务响应统一为 200，但业务 `code`、`message` 和 `requestId` 必须表达真实结果；连接被
   网关中断、请求未到达应用或响应无法传输不伪装为业务成功。
 
