@@ -35,6 +35,19 @@
 > adapter: result migration 7, Artifact transaction primitives, atomic pair writer/final readback,
 > receipt, `ObservedV2`, `AcceptedV2` and worker dispatch remain absent and disabled.
 
+> 2026-08-29 M4 checkpoint: migration 7 now exists only as an inactive, isolated-rehearsal
+> candidate with six result tables, eight explicit indexes and a private backup-topology profile;
+> neither legacy bootstrap nor the active migration/backup registries can reach it. A private exact
+> owner-transaction handle can write an ordered, bounded Artifact batch on the EventStore-owned
+> SQLite transaction, verify every blob/version row, reject unexpected main/TEMP triggers, and force
+> rollback-only after any contained write failure. Existing version history is streamed in fixed
+> batches: SQLite storage classes and byte bounds are checked before each bounded raw row is
+> materialized, then canonical metadata, request digest, scope, lineage and UTC-microsecond time are
+> recomputed. Confirmed rollback and ambiguous outcomes are cleanly distinguished; an ambiguous
+> control signal carries `_ResultArtifactCommitAmbiguityError` as its direct cause and poisons the
+> store. Atomic result request/receipt/event/task/attempt publication, `ObservedV2`, `AcceptedV2`,
+> migration registration and worker dispatch remain absent and disabled.
+
 ## Context
 
 Atomic admission and first claim/start now commit a queued invocation, running attempt and
@@ -69,10 +82,10 @@ The event-backed `ArtifactLedger` remains a legacy/demo projection. It may rende
 events but is not written in parallel by the atomic result boundary and cannot authorize worker
 completion. There will be one durable write path, not two truth sources.
 
-Artifact preparation and persistence will be extracted into caller-owned transaction primitives.
-The future result acceptor owns the single SQLite connection, lock, transaction, clock sample,
-fault classification and commit acknowledgement. Passing the same database path to two store
-instances is not atomic and is prohibited for this boundary.
+M4 extracts Artifact preparation and persistence into private owner-transaction primitives without
+exposing the SQLite connection. The future result acceptor must own the same EventStore connection,
+lock, transaction, clock sample, fault classification and commit acknowledgement. Passing the same
+database path to two store instances is not atomic and is prohibited for this boundary.
 
 ### 2. Scope-bearing execution evidence
 
