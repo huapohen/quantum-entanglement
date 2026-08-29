@@ -287,6 +287,13 @@ func (fencer ApprovalExecutionFencer) loadForReconciliation(
 ) (ApprovalExecutionFenceStoredState, error) {
 	delay := fencer.reconcile.minimumDelay
 	for {
+		// Never start another read after the bounded reconciliation context has
+		// expired. Apart from avoiding a guaranteed canceled database call, this
+		// keeps the fresh-readback contract independent of the caller's canceled
+		// context and makes the deadline boundary deterministic under -race.
+		if ctx.Err() != nil {
+			return ApprovalExecutionFenceStoredState{}, ErrApprovalExecutionFenceNotFound
+		}
 		state, err := fencer.store.Load(ctx, namespace, operationID)
 		if err == nil || !retryNotFound || !errors.Is(err, ErrApprovalExecutionFenceNotFound) {
 			return state, err
