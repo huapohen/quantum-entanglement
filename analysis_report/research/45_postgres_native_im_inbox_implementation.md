@@ -13,7 +13,8 @@ payload 漂移返回 `ErrInboxDigestConflict`，不会进入后续路由。root 
 
 这只是 verified envelope 的 durable admission 切片，不是融云接入完成：provider 签名/nonce/租户
 mapping、Clerk trusted request context、message projection、mention bridge、outbox/action
-receipt、dead-letter、commit-unknown reconcile、真实 provider 读写和生产 worker 仍为 NO-GO。
+receipt、dead-letter、真实 provider 读写和生产 worker 仍为 NO-GO。commit-unknown 已有独立的
+隔离/readback 代码路径，但还没有和 event admission bridge、outbox 或操作台闭合。
 
 Notion 本阶段保持 `local_pending`。本地代码、测试、报告和 Git 是事实来源，阶段全部收口后再批量
 写入 Notion 并回读；没有操作语雀，也没有向飞书、企微、群聊、机器人或 webhook 发消息。
@@ -68,8 +69,8 @@ postcondition，显式 DownSQL 仍不由 runner 自动执行。
 `apps/im-api/internal/platform/postgres/eventstore/inbox_store.go` 的 `NativeIMInboxStore`：
 
 1. 只接受 `*runtimepool.Pool`，不接受 raw pgxpool、owner connection 或 migrator connection；
-2. `Admit` 先在进程内校验 provider-neutral envelope 和 PostgreSQL ID 约束，再进入 Serializable
-   transaction；
+2. `Admit` 先在进程内校验 provider-neutral envelope 和 PostgreSQL ID 约束，再进入 Read Committed
+   transaction；同 scope/event 的唯一键冲突由数据库函数协调，避免正常并发重放被序列化冲突误判；
 3. 在 transaction 内绑定 tenant GUC，调用固定函数，然后从同一事务 readback 完整 row；
 4. readback 重新构造严格 `events.Payload` 和 envelope，验证 scope、digest、时间、计数和 storage
    shape，任何坏行 fail closed；
@@ -129,8 +130,8 @@ WANWORK_TEST_POSTGRES_ADMIN_URL='postgresql://127.0.0.1:55483/postgres?sslmode=d
   和 backup/restore/kill-9 演练；
 - 融云 SDK、Clerk、任何外部 provider endpoint 和生产 worker 出网。
 
-下一步顺序：先补 inbox 与 event admission bridge 的事务/commit-unknown/crash 证据，再实现
-transactional outbox/action receipt 和 reconcile；完成这些 durable 门禁后才进入 W3 provider adapter
+下一步顺序：将现有 inbox commit-unknown/readback 证据接入 inbox 与 event admission bridge 的统一事务
+边界，再实现 transactional outbox/action receipt 和 reconcile；完成这些 durable 门禁后才进入 W3 provider adapter
 与 inbound-only sandbox。真实 outbound 仍需用户对具体 sandbox 动作单独授权。
 
 ## 6. Git 台账
@@ -140,5 +141,7 @@ transactional outbox/action receipt 和 reconcile；完成这些 durable 门禁�
 | `3b933c3` | provider-neutral digest-bound inbox contract 与 volatile fake |
 | `0c9cbac` | PostgreSQL 0009 native IM inbox migration、RLS、function-only writer、authority 更新 |
 | `5248a0a` | `NativeIMInboxStore` runtime adapter、unit/integration tests |
+| `2c208e6` | commit-unknown 隔离、fresh readback reconcile、并发 admission 语义收口 |
+| `0ac868a` | commit-unknown 阶段证据与本地 report-sync checkpoint |
 
 远端：`origin/dev_wanwork_quantum_entanglement`；本报告和同步包会以独立 `local_pending` 文档提交。
