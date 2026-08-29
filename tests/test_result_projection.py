@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
 from collections.abc import Iterable
 from dataclasses import replace
@@ -11,6 +12,7 @@ from unittest.mock import patch
 
 import tests.test_result_acceptance_durable_prerequisites as durable_prerequisites
 from quantum_entanglement.events import StoredEvent
+from quantum_entanglement.projections import ProjectionLeaseConflictError
 from quantum_entanglement.result_projection import (
     RESULT_PROJECTION_TABLE,
     ResultProjectionConflictError,
@@ -112,6 +114,78 @@ class ResultProjectionTests(unittest.TestCase):
         self.assertEqual(second.scanned_count, 0)
         self.assertEqual(second.applied_count, 0)
         self.assertEqual(self.projection.read(*self.scope).status, ResultProjectionStatus.COMPLETED)
+
+    def test_reopen_and_second_connection_reuse_durable_offset(self) -> None:
+        self.projection.run_once()
+        reopened = SQLiteResultProjectionStore(
+            self.event_store,
+            self.path,
+            owner_id="result-projector-reopened",
+        )
+        try:
+            run = reopened.run_once()
+            self.assertEqual(run.scanned_count, 0)
+            view = reopened.read(*self.scope)
+            self.assertIsNotNone(view)
+            assert view is not None
+            self.assertEqual(view.status, ResultProjectionStatus.COMPLETED)
+        finally:
+            reopened.close()
+
+    def test_two_projection_connections_fence_competing_owner(self) -> None:
+        class BlockingSource(_TupleSource):
+            def __init__(self, events: Iterable[StoredEvent]) -> None:
+                super().__init__(events)
+                self.started = threading.Event()
+                self.release = threading.Event()
+
+            def read_all(
+                self,
+                after_position: int = 0,
+                limit: int = 1000,
+            ) -> tuple[StoredEvent, ...]:
+                self.started.set()
+                if not self.release.wait(timeout=5):
+                    raise AssertionError("blocking source was not released")
+                return super().read_all(after_position, limit)
+
+        source = BlockingSource(self.events)
+        path = self.path + ".dual-connection"
+        first = SQLiteResultProjectionStore(source, path, owner_id="result-projector-first")
+        second = SQLiteResultProjectionStore(source, path, owner_id="result-projector-second")
+        first_results: list[object] = []
+        second_errors: list[BaseException] = []
+
+        def run_first() -> None:
+            try:
+                first_results.append(first.run_once())
+            except BaseException as error:
+                first_results.append(error)
+
+        def run_second() -> None:
+            try:
+                second.run_once()
+            except BaseException as error:
+                second_errors.append(error)
+
+        first_thread = threading.Thread(target=run_first)
+        second_thread = threading.Thread(target=run_second)
+        first_thread.start()
+        self.assertTrue(source.started.wait(timeout=5))
+        second_thread.start()
+        second_thread.join(timeout=5)
+        self.assertFalse(second_thread.is_alive())
+        source.release.set()
+        first_thread.join(timeout=5)
+        self.assertFalse(first_thread.is_alive())
+        try:
+            self.assertEqual(len(first_results), 1)
+            self.assertIsNotNone(first_results[0])
+            self.assertEqual(len(second_errors), 1)
+            self.assertIs(type(second_errors[0]), ProjectionLeaseConflictError)
+        finally:
+            first.close()
+            second.close()
 
     def test_terminal_event_without_result_fails_closed(self) -> None:
         source = _TupleSource((replace(self.terminal_event, global_position=1, sequence=1),))
