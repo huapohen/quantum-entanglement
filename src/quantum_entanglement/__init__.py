@@ -88,9 +88,13 @@ from .invocation_results import (
 )
 from .invocation_worker import (
     HeartbeatPureWorkerGate,
+    HeartbeatPureWorkerSupervisor,
     InvocationWorkerAdmission,
     InvocationWorkerConfiguration,
     InvocationWorkerDisabledError,
+    PureWorkerContext,
+    PureWorkerOutcome,
+    PureWorkerRunResult,
     ScopedInvocationWorkerAdmissionV3,
 )
 from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
@@ -350,6 +354,7 @@ __all__ = [
     "EMPTY_ACTION_RECEIPT_SET_DIGEST",
     "HandoffContract",
     "HeartbeatPureWorkerGate",
+    "HeartbeatPureWorkerSupervisor",
     "InboxAppendResult",
     "InboxReceipt",
     "HookPoint",
@@ -380,6 +385,9 @@ __all__ = [
     "InvocationWorkerAdmission",
     "InvocationWorkerConfiguration",
     "InvocationWorkerDisabledError",
+    "PureWorkerContext",
+    "PureWorkerOutcome",
+    "PureWorkerRunResult",
     "KeyStatus",
     "KeyUsage",
     "LangGraphBridge",

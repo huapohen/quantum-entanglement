@@ -9,9 +9,12 @@ receipt-bound recovery must land before the gate can be promoted.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import math
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import NoReturn, cast
 
 from .invocation_execution import (
@@ -270,6 +273,220 @@ class ScopedInvocationWorkerAdmissionV3:
         return False
 
 
+class PureWorkerOutcome(str, Enum):
+    """Terminal classification for the private, non-publishing supervision primitive."""
+
+    RETURNED = "returned"
+    FAILED = "failed"
+    LEASE_LOST = "lease_lost"
+    TIMED_OUT = "timed_out"
+    CANCELED = "canceled"
+
+
+@dataclass(frozen=True)
+class PureWorkerContext:
+    """Handler input that contains no store, lease, connector or authorization object."""
+
+    manifest: ScopedInvocationExecutionManifestV2
+    _cancel_event: asyncio.Event = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not PureWorkerContext:
+            raise TypeError("pure worker context must be exact")
+        if type(self.manifest) is not ScopedInvocationExecutionManifestV2:
+            raise TypeError("pure worker context manifest must be exact")
+        if type(self._cancel_event) is not asyncio.Event:
+            raise TypeError("pure worker context cancellation event must be exact")
+        object.__setattr__(
+            self,
+            "manifest",
+            ScopedInvocationExecutionManifestV2.from_dict(self.manifest.to_dict()),
+        )
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancel_event.is_set()
+
+    async def wait_cancelled(self) -> None:
+        await self._cancel_event.wait()
+
+
+@dataclass(frozen=True)
+class PureWorkerRunResult:
+    """Sanitized outcome; a returned value is retained only for a future result acceptor."""
+
+    outcome: PureWorkerOutcome
+    value: object = field(default=None, repr=False)
+    drained: bool = True
+
+    def __post_init__(self) -> None:
+        if type(self) is not PureWorkerRunResult:
+            raise TypeError("pure worker result must be exact")
+        if type(self.outcome) is not PureWorkerOutcome:
+            raise TypeError("pure worker outcome must be exact")
+        if self.outcome not in {
+            PureWorkerOutcome.RETURNED,
+            PureWorkerOutcome.FAILED,
+            PureWorkerOutcome.LEASE_LOST,
+            PureWorkerOutcome.TIMED_OUT,
+            PureWorkerOutcome.CANCELED,
+        }:
+            raise ValueError("pure worker outcome is unsupported")
+        if type(self.drained) is not bool:
+            raise TypeError("pure worker drained flag must be a boolean")
+
+
+async def _maybe_await(value: object) -> object:
+    if inspect.isawaitable(value):
+        return await cast(Awaitable[object], value)
+    return value
+
+
+async def _cancel_and_drain(task: asyncio.Task[object], timeout: float) -> bool:
+    """Give a pure handler its bounded cooperative drain window without waiting forever."""
+
+    if task.done():
+        try:
+            task.result()
+        except BaseException:
+            pass
+        return True
+    done, _ = await asyncio.wait((task,), timeout=timeout)
+    if task not in done:
+        task.cancel()
+        task.add_done_callback(_consume_task_result)
+        return False
+    try:
+        task.result()
+    except BaseException:
+        pass
+    return True
+
+
+def _consume_task_result(task: asyncio.Task[object]) -> None:
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+class HeartbeatPureWorkerSupervisor:
+    """Private PURE/fake heartbeat loop; it never accepts or publishes a result."""
+
+    def __init__(
+        self,
+        admission: ScopedInvocationWorkerAdmissionV3,
+        *,
+        heartbeat: Callable[[float], object],
+    ) -> None:
+        if type(admission) is not ScopedInvocationWorkerAdmissionV3:
+            raise TypeError("supervisor requires exact scoped worker admission")
+        if not callable(heartbeat):
+            raise TypeError("heartbeat callback must be callable")
+        self.admission = admission
+        self._heartbeat = heartbeat
+
+    async def _heartbeat_once(self) -> bool:
+        try:
+            result = await _maybe_await(self._heartbeat(self.admission.configuration.lease_seconds))
+        except asyncio.CancelledError:
+            raise
+        except BaseException:
+            return False
+        return type(result) is bool and result
+
+    async def _heartbeat_loop(self, lost: asyncio.Event, stopped: asyncio.Event) -> None:
+        interval = self.admission.configuration.heartbeat_interval_seconds
+        while not stopped.is_set():
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                raise
+            if stopped.is_set():
+                return
+            if not await self._heartbeat_once():
+                lost.set()
+                return
+
+    async def run(
+        self,
+        handler: Callable[[PureWorkerContext], Awaitable[object]],
+        *,
+        cancellation: asyncio.Event | None = None,
+    ) -> PureWorkerRunResult:
+        """Run only after a first successful heartbeat and fence every late handler result."""
+
+        if not callable(handler):
+            raise TypeError("pure worker handler must be callable")
+        if cancellation is not None and type(cancellation) is not asyncio.Event:
+            raise TypeError("worker cancellation must be an exact asyncio.Event")
+        if cancellation is not None and cancellation.is_set():
+            return PureWorkerRunResult(PureWorkerOutcome.CANCELED)
+        if not await self._heartbeat_once():
+            return PureWorkerRunResult(PureWorkerOutcome.LEASE_LOST)
+
+        local_cancel = asyncio.Event()
+        context = PureWorkerContext(self.admission.manifest, local_cancel)
+        try:
+            awaitable = handler(context)
+        except BaseException:
+            return PureWorkerRunResult(PureWorkerOutcome.FAILED)
+        if not inspect.isawaitable(awaitable):
+            return PureWorkerRunResult(PureWorkerOutcome.FAILED)
+        handler_task: asyncio.Task[object] = asyncio.create_task(_maybe_await(awaitable))
+        lost = asyncio.Event()
+        stopped = asyncio.Event()
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop(lost, stopped))
+        lost_waiter = asyncio.create_task(lost.wait())
+        timeout_waiter = asyncio.create_task(
+            asyncio.sleep(self.admission.configuration.handler_timeout_seconds)
+        )
+        cancel_waiter = (
+            None if cancellation is None else asyncio.create_task(cancellation.wait())
+        )
+        watchers: set[asyncio.Task[object]] = {handler_task, lost_waiter, timeout_waiter}
+        if cancel_waiter is not None:
+            watchers.add(cancel_waiter)
+        drained = True
+        try:
+            done, _ = await asyncio.wait(watchers, return_when=asyncio.FIRST_COMPLETED)
+            # Any non-handler signal winning the same event-loop turn is treated as a
+            # fence/timeout, never as a successful handler completion.
+            if lost_waiter in done:
+                outcome = PureWorkerOutcome.LEASE_LOST
+            elif cancel_waiter is not None and cancel_waiter in done:
+                outcome = PureWorkerOutcome.CANCELED
+            elif timeout_waiter in done:
+                outcome = PureWorkerOutcome.TIMED_OUT
+            elif handler_task in done:
+                try:
+                    value = handler_task.result()
+                except BaseException:
+                    return PureWorkerRunResult(PureWorkerOutcome.FAILED)
+                return PureWorkerRunResult(PureWorkerOutcome.RETURNED, value=value)
+            else:  # pragma: no cover - asyncio.wait always returns one watcher.
+                outcome = PureWorkerOutcome.FAILED
+            local_cancel.set()
+            drained = await _cancel_and_drain(
+                handler_task,
+                self.admission.configuration.drain_timeout_seconds,
+            )
+            return PureWorkerRunResult(outcome, drained=drained)
+        finally:
+            stopped.set()
+            heartbeat_task.cancel()
+            for watcher in watchers:
+                if watcher is not handler_task:
+                    watcher.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
+            await asyncio.gather(
+                *(watcher for watcher in watchers if watcher is not handler_task),
+                return_exceptions=True,
+            )
+
+
+
+
 async def _disabled_dispatch() -> NoReturn:
     """Raise from an argument-free frame so caller work cannot enter the exception graph."""
 
@@ -323,8 +540,12 @@ class HeartbeatPureWorkerGate:
 
 __all__ = [
     "HeartbeatPureWorkerGate",
+    "HeartbeatPureWorkerSupervisor",
     "InvocationWorkerAdmission",
     "InvocationWorkerConfiguration",
     "InvocationWorkerDisabledError",
+    "PureWorkerContext",
+    "PureWorkerOutcome",
+    "PureWorkerRunResult",
     "ScopedInvocationWorkerAdmissionV3",
 ]

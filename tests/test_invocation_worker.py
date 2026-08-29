@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
@@ -23,9 +24,11 @@ from quantum_entanglement.invocation_execution import (
 )
 from quantum_entanglement.invocation_worker import (
     HeartbeatPureWorkerGate,
+    HeartbeatPureWorkerSupervisor,
     InvocationWorkerAdmission,
     InvocationWorkerConfiguration,
     InvocationWorkerDisabledError,
+    PureWorkerOutcome,
     ScopedInvocationWorkerAdmissionV3,
 )
 
@@ -204,9 +207,13 @@ class InvocationWorkerAdmissionTests(unittest.TestCase):
     def test_worker_contracts_are_exported_from_the_package_surface(self) -> None:
         expected_package = {
             "HeartbeatPureWorkerGate": HeartbeatPureWorkerGate,
+            "HeartbeatPureWorkerSupervisor": HeartbeatPureWorkerSupervisor,
             "InvocationWorkerAdmission": InvocationWorkerAdmission,
             "InvocationWorkerConfiguration": InvocationWorkerConfiguration,
             "InvocationWorkerDisabledError": InvocationWorkerDisabledError,
+            "PureWorkerContext": invocation_worker_module.PureWorkerContext,
+            "PureWorkerOutcome": PureWorkerOutcome,
+            "PureWorkerRunResult": invocation_worker_module.PureWorkerRunResult,
             "ScopedInvocationWorkerAdmissionV3": ScopedInvocationWorkerAdmissionV3,
         }
         expected_module = dict(expected_package)
@@ -510,6 +517,129 @@ class HeartbeatPureWorkerDisabledTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("_disabled_dispatch", frames)
         self.assertIsNone(caught.__cause__)
         self.assertIsNone(caught.__context__)
+
+
+class HeartbeatPureWorkerSupervisorTests(unittest.IsolatedAsyncioTestCase):
+    def admission(self) -> ScopedInvocationWorkerAdmissionV3:
+        return HeartbeatPureWorkerGate.prepare_scoped_v3(
+            valid_scoped_claim(),
+            valid_scoped_manifest(),
+            InvocationWorkerConfiguration(
+                lease_seconds=0.30,
+                heartbeat_interval_seconds=0.02,
+                handler_timeout_seconds=0.08,
+                drain_timeout_seconds=0.05,
+            ),
+            handler_revision=RUNTIME_REVISION,
+        )
+
+    async def test_first_heartbeat_fences_before_handler_invocation(self) -> None:
+        calls = 0
+
+        def heartbeat(_lease_seconds: float) -> bool:
+            nonlocal calls
+            calls += 1
+            return False
+
+        invoked = False
+
+        async def handler(_context: object) -> str:
+            nonlocal invoked
+            invoked = True
+            return "must-not-run"
+
+        result = await HeartbeatPureWorkerSupervisor(
+            self.admission(), heartbeat=heartbeat
+        ).run(handler)
+        self.assertEqual(result.outcome, PureWorkerOutcome.LEASE_LOST)
+        self.assertEqual(calls, 1)
+        self.assertFalse(invoked)
+
+    async def test_heartbeat_loss_cancels_handler_and_discards_late_value(self) -> None:
+        calls = 0
+        cancellation_seen = asyncio.Event()
+
+        async def heartbeat(_lease_seconds: float) -> bool:
+            nonlocal calls
+            calls += 1
+            return calls == 1
+
+        async def handler(context: object) -> str:
+            assert isinstance(context, invocation_worker_module.PureWorkerContext)
+            await context.wait_cancelled()
+            cancellation_seen.set()
+            return "late-value"
+
+        result = await HeartbeatPureWorkerSupervisor(
+            self.admission(), heartbeat=heartbeat
+        ).run(handler)
+        self.assertEqual(result.outcome, PureWorkerOutcome.LEASE_LOST)
+        self.assertTrue(result.drained)
+        self.assertTrue(cancellation_seen.is_set())
+        self.assertIsNone(result.value)
+
+    async def test_timeout_and_external_cancel_are_non_success_and_bounded(self) -> None:
+        async def heartbeat(_lease_seconds: float) -> bool:
+            return True
+
+        async def waiting_handler(context: object) -> str:
+            assert isinstance(context, invocation_worker_module.PureWorkerContext)
+            await context.wait_cancelled()
+            return "late"
+
+        timeout_result = await HeartbeatPureWorkerSupervisor(
+            self.admission(), heartbeat=heartbeat
+        ).run(waiting_handler)
+        self.assertEqual(timeout_result.outcome, PureWorkerOutcome.TIMED_OUT)
+        self.assertTrue(timeout_result.drained)
+        self.assertIsNone(timeout_result.value)
+
+        cancellation = asyncio.Event()
+        running = asyncio.create_task(
+            HeartbeatPureWorkerSupervisor(self.admission(), heartbeat=heartbeat).run(
+                waiting_handler,
+                cancellation=cancellation,
+            )
+        )
+        await asyncio.sleep(0.01)
+        cancellation.set()
+        canceled_result = await running
+        self.assertEqual(canceled_result.outcome, PureWorkerOutcome.CANCELED)
+        self.assertTrue(canceled_result.drained)
+
+    async def test_returned_value_is_only_a_private_supervision_result(self) -> None:
+        async def heartbeat(_lease_seconds: float) -> bool:
+            return True
+
+        async def handler(context: object) -> str:
+            assert isinstance(context, invocation_worker_module.PureWorkerContext)
+            self.assertFalse(context.cancelled)
+            self.assertFalse(hasattr(context, "lease"))
+            return "pure-value"
+
+        result = await HeartbeatPureWorkerSupervisor(
+            self.admission(), heartbeat=heartbeat
+        ).run(handler)
+        self.assertEqual(result.outcome, PureWorkerOutcome.RETURNED)
+        self.assertEqual(result.value, "pure-value")
+
+    async def test_non_awaitable_handler_return_is_failed_without_heartbeat_replay(self) -> None:
+        calls = 0
+
+        def heartbeat(_lease_seconds: float) -> bool:
+            nonlocal calls
+            calls += 1
+            return True
+
+        def invalid_handler(_context: object) -> str:
+            return "not-awaitable"
+
+        result = await HeartbeatPureWorkerSupervisor(
+            self.admission(), heartbeat=heartbeat
+        ).run(invalid_handler)  # type: ignore[arg-type]
+        self.assertEqual(result.outcome, PureWorkerOutcome.FAILED)
+        self.assertEqual(calls, 1)
+        self.assertIsNone(result.value)
 
 
 if __name__ == "__main__":  # pragma: no cover
