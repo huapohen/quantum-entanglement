@@ -253,7 +253,7 @@ Every step remains default-off and independently releasable:
 5. migration, backup/restore and schema-topology support for accepted results;
 6. store-owned atomic result acceptance with statement/commit/control fault injection (**opt-in API and fresh-ACK `AcceptedV2` implemented**);
 7. receipt-bound recovery and non-emitting projection;
-8. heartbeat supervisor with lease-loss/timeout/cancel/drain tests (**acceptance seam and `run_and_accept()` implemented; product gate remains off**);
+8. heartbeat supervisor with lease-loss/timeout/cancel/drain tests (**acceptance seam and `run_and_accept()` implemented; positive store-owned integration evidence in [`41_result_acceptance_worker_integration_evidence.md`](../../analysis_report/research/41_result_acceptance_worker_integration_evidence.md); product gate remains off**);
 9. process-kill and two-process result-acceptance race matrix;
 10. isolated promotion commit that enables only the allowlisted fake/pure path.
 
