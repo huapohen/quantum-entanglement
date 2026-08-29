@@ -62,10 +62,13 @@ view = projection.read(tenant_id, workspace_id, invocation_id)
 1. 结果事件先到：插入 `result_accepted`，不提前猜测 `completed`。
 2. terminal 事件先到或找不到唯一结果投影：抛出 `ResultProjectionConflictError`，该事件事务回滚。
 3. 已存在同一 scope 的另一结果 identity：抛出 conflict，不覆盖旧行。
-4. projector 重跑通过 durable offset/receipt 去重，不产生第二行或第二次状态跃迁。
-5. lease 过期、进程崩溃或 ACK 不明确仍遵循通用 projector 的 fence/rollback 合同；业务读模型
+4. projector 重跑通过 durable offset/receipt 去重，不产生第二行或第二次状态跃迁；重开第二个
+   connection 会复用同一 durable offset。
+5. 两个 projection connection 同时竞争时，lease owner fencing 只允许一个 owner 处理事件，
+   另一个得到 `ProjectionLeaseConflictError`，不会覆盖读模型。
+6. lease 过期、进程崩溃或 ACK 不明确仍遵循通用 projector 的 fence/rollback 合同；业务读模型
    可以重建，但不产生新的结果 authority。
-6. 结果图缺失、digest 漂移、terminal 绑定漂移由上游 result acceptance/reconciliation
+7. 结果图缺失、digest 漂移、terminal 绑定漂移由上游 result acceptance/reconciliation
    quarantine 处理；projection 不修复、不删除、不重写 event history。
 
 ## 已验证断言
@@ -79,7 +82,8 @@ view = projection.read(tenant_id, workspace_id, invocation_id)
 - 结果 identity 冲突 fail closed 且保留原投影；
 - projection schema 漂移拒绝；
 - handler trace 不触碰 events、invocation jobs/attempts 或 outbox framework tables；
-- 投影对象 repr 不包含结果正文或 lease token；真实 fork 子进程在触碰 SQLite 前被拒绝，父进程仍可继续运行。
+- 投影对象 repr 不包含结果正文或 lease token；真实 fork 子进程在触碰 SQLite 前被拒绝，父进程仍可继续运行；
+- 重开 connection 复用 durable offset；双 connection lease 竞争只允许一个 owner。
 
 验证命令：
 
