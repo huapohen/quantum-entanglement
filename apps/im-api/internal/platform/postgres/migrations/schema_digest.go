@@ -16,6 +16,8 @@ const (
 	identityAuthoritySchemaDigest     = "9a178617cbb463df31450f4302454ae4eba101dd2d2f8b2567dad7f49088c5d5"
 	conversationSchemaDigest          = "17002b4c0b7a757e23a96418634af02c517aa85a4bae415175ab33e75cff8457"
 	conversationAuthoritySchemaDigest = "b500175ab19a74fdd1f4cf810906318f9d76e1f1113cad59ec9cd0aa1dde6d34"
+	eventStoreSchemaDigestV6          = "98ac506434a8c589e87f769236664919f09b93cccb8b0ade2d46902cc07900b7"
+	eventStoreSchemaDigestV7          = "37c332bdf52c8cf4ed463c9dedc715ab1e5f5c10ff3ae88356a41e339d5bedaa"
 )
 
 var identityAuthorityTableNames = []string{

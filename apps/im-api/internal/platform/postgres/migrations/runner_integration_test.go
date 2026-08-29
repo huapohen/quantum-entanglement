@@ -86,6 +86,37 @@ FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != 7 {
 		}
 	})
 
+	t.Run("event store schema digest fixtures", func(t *testing.T) {
+		connection, _ := newIntegrationDatabase(t, adminURL)
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		catalog, err := Catalog()
+		if err != nil {
+			t.Fatalf("load catalog: %v", err)
+		}
+		transaction, err := connection.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+		if err != nil {
+			t.Fatalf("begin event store migrations: %v", err)
+		}
+		defer func() { _ = transaction.Rollback(context.Background()) }()
+		for _, migration := range catalog[:6] {
+			if _, err := transaction.Exec(ctx, migration.UpSQL, pgx.QueryExecModeSimpleProtocol); err != nil {
+				t.Fatalf("apply migration %d: %v", migration.Version, err)
+			}
+		}
+		versionSix, err := tableSchemaDigest(ctx, transaction, eventStoreTableNames)
+		if err != nil || versionSix != eventStoreSchemaDigestV6 {
+			t.Fatalf("event store v6 schema digest = %s/%v, want %s", versionSix, err, eventStoreSchemaDigestV6)
+		}
+		if _, err := transaction.Exec(ctx, catalog[6].UpSQL, pgx.QueryExecModeSimpleProtocol); err != nil {
+			t.Fatalf("apply migration 7: %v", err)
+		}
+		versionSeven, err := tableSchemaDigest(ctx, transaction, eventStoreTableNames)
+		if err != nil || versionSeven != eventStoreSchemaDigestV7 {
+			t.Fatalf("event store v7 schema digest = %s/%v, want %s", versionSeven, err, eventStoreSchemaDigestV7)
+		}
+	})
+
 	t.Run("new migration cannot weaken an older postcondition", func(t *testing.T) {
 		connection, _ := newIntegrationDatabase(t, adminURL)
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -345,6 +376,11 @@ ALTER TABLE wanwork_im.provider_realms
 		{
 			name:      "changed default",
 			tamperSQL: "ALTER TABLE wanwork_im.workspaces ALTER COLUMN recorded_at SET DEFAULT now()",
+		},
+		{
+			name: "event append digest constraint removed",
+			tamperSQL: `ALTER TABLE wanwork_im.event_log
+    DROP CONSTRAINT event_log_append_digest_check`,
 		},
 		{
 			name:      "missing table",

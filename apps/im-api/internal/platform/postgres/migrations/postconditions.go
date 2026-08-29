@@ -115,6 +115,10 @@ WHERE namespace.nspname = 'wanwork_im'
 	if !exactStoredAuthorityFunctions(functions, []storedAuthorityFunctionSpec{returnSpec}) {
 		return ErrMigrationSchema
 	}
+	digest, err := tableSchemaDigest(ctx, transaction, eventStoreTableNames)
+	if err != nil || (digest != eventStoreSchemaDigestV6 && digest != eventStoreSchemaDigestV7) {
+		return ErrMigrationSchema
+	}
 	return nil
 }
 
