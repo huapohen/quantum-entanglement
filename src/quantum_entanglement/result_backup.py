@@ -434,7 +434,9 @@ def _result_backup_directory(path: Path) -> None:
     try:
         info = path.lstat()
     except FileNotFoundError as error:
-        raise ResultBackupIntegrityError("result backup recovery directory does not exist") from error
+        raise ResultBackupIntegrityError(
+            "result backup recovery directory does not exist"
+        ) from error
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
         raise ResultBackupIntegrityError("result backup recovery directory must be a directory")
 
