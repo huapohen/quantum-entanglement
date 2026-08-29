@@ -35,6 +35,26 @@ http://127.0.0.1:18080/demo/im
 
 当前回复是确定性的本地验收结果，不调用大模型。这里验证的是身份、Agent Store、群拓扑、ACL、幂等和 provider 边界；模型执行和真实 Clerk/融云网络接入属于后续生产适配阶段。
 
+## 2.1 本地事件日志恢复验收（可选）
+
+事件合同还提供了一个单进程、零网络的 `DurableFileStore`，用于验收“进程重启后已接受 event 不丢失”。
+它不是 PostgreSQL、不是多进程锁，也没有篡改证据；不要把它用于真实组织数据或生产部署。调用方必须传入绝对
+日志路径，父目录需要预先存在，文件权限由实现固定为 `0600`：
+
+```go
+store, err := events.OpenDurableFileStore(
+    context.Background(),
+    "/tmp/wanwork-im/events.log",
+    "local-recovery-run-1",
+    func(context.Context) time.Time { return time.Now().UTC() },
+)
+```
+
+可验证的语义：完整记录 `Write + fsync` 后才对读者可见；相同 batch 重试返回 `Replayed=true`；重新打开
+同一文件可读取原 sequence/global position；无换行的最终中断尾部会被丢弃，而已换行的完整损坏记录会直接
+失败关闭。生产所需 PostgreSQL EventStore、inbox/outbox、kill-9/restore 和 provider reconciliation
+仍未完成。
+
 ## 3. 用 curl 验收 API
 
 先检查运行快照：
@@ -118,6 +138,8 @@ flowchart TB
 - 父群 work card 是规范化 JSON stringified `ext_info`，不含 prompt、Agent 回复、Artifact、credential、capability 或子群 ACL；
 - Agent 回复构造器逐字段绑定子群 provider reference，指向父群会被拒绝；
 - fake adapter 保留重复入站事件，平台 inbox 才是未来的 durable dedupe owner；
+- `DurableFileStore` 仅是本地恢复证据，声明 `durability=durable`、`persistsAcrossRestart=true`，但
+  `tamperEvident=false` 且不提供多进程 writer fence；
 - 本地 API 的业务错误仍返回 HTTP 200，并把结果放进 `{code,data,message,requestId}`。
 
 ## 6. 自动化验证

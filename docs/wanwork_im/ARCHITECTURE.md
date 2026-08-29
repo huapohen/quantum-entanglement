@@ -514,6 +514,13 @@ volatile 的 `VolatileMemoryStore`。`EventStore.Characteristics()` 是 port 合
 restart persistence 或 tamper evidence 的 production composition 会拒绝该 fake；Action receipt 由独立
 Action Plane port/admission 保证，不属于 EventStore characteristics。
 
+本地恢复验收现在还提供 `DurableFileStore`：每个接受的 batch 以严格 JSONL 记录写入并 `fsync`，成功后才
+发布到内存 projection；重新打开会恢复 exact retry、sequence/global position 和分页游标。它的特征是
+`durability=durable`、`persistsAcrossRestart=true`、`tamperEvident=false`，并明确限制为单进程 local
+adapter。它不是 PostgreSQL authority，不提供跨进程 fencing、复制、备份恢复或 action-time tenant PEP；
+生产 EventStore 仍须由 PostgreSQL schema/function-only writes、crash/restore 证据和 projection rebuild
+关闭 W2 门禁。
+
 fake 的整批 append 在单一临界区执行：先做 ordered exact-retry/conflict，再做 expected revision、capacity、
 injected clock 和 context 检查，最后一起发布 stream/global/retry indexes。store 独占 sequence、global
 position 和 recorded time；caller 的 input、append/replay result 与所有 page 都是深快照。并发相同 revision

@@ -52,6 +52,7 @@
 | `research/37_postgres_durable_attempt_issuer_v2_checkpoint.md` | 当前 W2 本地增量：`68d4f2b`，`local_pending` | 五角色 control store、post-preflight durable attempt grant、issuance ID 幂等回读、fence `/3` trust boundary 与 SQL smoke test |
 | `research/38_local_im_provider_agent_thread_checkpoint.md` | 当前本地验收增量：`local_pending` | provider-neutral IM/auth、Agent Store、`@Agent` 子群 vertical slice、零网络 Fiber API、任意自定义指令页面与 Playwright 桌面/移动端证据 |
 | `research/39_basic_im_conversation_message_checkpoint.md` | 当前本地验收增量：`local_pending` | 普通 direct/group 会话创建、显式成员/ACL、文本消息 client/platform ID、provider receipt、cursor 分页和浏览器桌面/移动端验收 |
+| `research/40_durable_file_event_store_checkpoint.md` | 当前本地增量：`local_pending` | fsync 后发布、重启恢复、exact retry、截断尾部恢复、完整损坏拒绝、并发单 winner，以及明确的非生产边界 |
 
 接入前代码基线已经安全备份。`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 中“先 Level A、再 Level B
 sandbox inbound-only”是当时的历史调度口径。当前执行源已切换为
@@ -106,7 +107,7 @@ Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清�
 
 完整 SHA-256、尺寸、来源、证据等级和隐私边界见
 [`screenshots/README.md`](screenshots/README.md) 与
-[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 39 张图；前十张是受限、
+[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 41 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地
 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是 Clawith 公开官网、白皮书与官方文档
 只读证据；Topic 33～37 的十项 SVG/PNG 是五个 W2 PostgreSQL 检查点/合同图，只作为报告导航图，
