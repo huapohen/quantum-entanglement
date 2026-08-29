@@ -14,6 +14,7 @@ import json
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from itertools import islice
 
 from ._inactive_invocation_results_backup_topology import (
     _KNOWN_INVOCATION_RESULTS_BACKUP_TOPOLOGY_REGISTRY,
@@ -79,7 +80,13 @@ def _canonical_digest(value: object) -> str:
 
 def _ordered_unique_strings(values: Iterable[object], label: str) -> tuple[str, ...]:
     result: list[str] = []
-    for value in values:
+    try:
+        bounded = tuple(islice(iter(values), _MAX_PROFILES + 1))
+    except TypeError as error:
+        raise ResultBackupTopologyError(f"{label} is not iterable") from error
+    if len(bounded) > _MAX_PROFILES:
+        raise ResultBackupTopologyError(f"{label} exceeds the hard limit")
+    for value in bounded:
         if type(value) is not str or not value or len(value) > _MAX_NAME_LENGTH:
             raise ResultBackupTopologyError(f"{label} contains a malformed value")
         result.append(value)
@@ -122,7 +129,10 @@ class ResultBackupTopologyEvidence:
                 "result backup topology registry digest differs from the trusted registry"
             )
         profiles = _ordered_unique_strings(self.present_profiles, "result backup profiles")
-        objects = tuple(self.schema_objects)
+        try:
+            objects = tuple(islice(iter(self.schema_objects), _MAX_OBJECTS + 1))
+        except TypeError as error:
+            raise TypeError("result backup schema objects must be iterable") from error
         if len(objects) > _MAX_OBJECTS:
             raise ValueError("result backup schema objects exceed the hard limit")
         for item in objects:
@@ -131,7 +141,10 @@ class ResultBackupTopologyEvidence:
         expected_objects = _TOPOLOGY_REGISTRY.objects_for_profiles(profiles)
         if objects != expected_objects:
             raise ValueError("result backup schema objects differ from the trusted topology")
-        counts = tuple(self.table_counts)
+        try:
+            counts = tuple(islice(iter(self.table_counts), _MAX_TABLES + 1))
+        except TypeError as error:
+            raise TypeError("result backup table counts must be iterable") from error
         if len(counts) > _MAX_TABLES:
             raise ValueError("result backup table counts exceed the hard limit")
         for count_item in counts:
