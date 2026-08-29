@@ -100,11 +100,14 @@ Migration activation makes the result tables reopenable; it does not promote res
 The following remain release blockers:
 
 1. active backup/restore topology and migration-7 backup evidence;
-2. receipt-bound reconciliation CAS and non-emitting task projection;
-3. crash-at-every-boundary, `kill -9`, dual-connection race, stale-worker fencing and restore
+2. crash-at-every-boundary, `kill -9`, dual-connection race, stale-worker fencing and restore
    replay evidence;
-4. heartbeat-supervised pure/fake worker gate;
-5. `AcceptedV2`, publication, real IM and all external outbound paths.
+3. heartbeat-supervised pure/fake worker gate;
+4. `AcceptedV2`, publication, real IM and all external outbound paths.
+
+Receipt-bound, non-emitting reconciliation is implemented separately in
+[`RESULT_RECONCILIATION.md`](./RESULT_RECONCILIATION.md). It remains opt-in and does not close
+these release gates.
 
 The current candidate still permits only the private result graph and capability-free
 `ObservedV2` readback. No Feishu, WeCom, Notion, Yuque, webhook or external connector is called

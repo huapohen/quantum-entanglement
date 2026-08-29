@@ -35,9 +35,10 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
    复核、job CAS、attempt、schema-2 start event 与 readback；但 `OrchestratorKernel` 尚未使用这些
    API。Result Authority M1 已增加私有 stored-event envelope codec 与 raw-row 重算 primitive，M2
    已封锁 generic result vocabulary 和 scoped standalone completion 旁路，M3 又完成 exact typed
-   write-snapshot 与 raw durable row 的同事务双路重算；但 inactive result schema、Artifact
-   same-transaction primitive、atomic writer/recovery/Accepted、heartbeat-supervised worker 与
-   terminal projection 闭环仍不存在；
+   write-snapshot 与 raw durable row 的同事务双路重算；当前分支还完成了 opt-in migration 7、
+   Artifact owner transaction、atomic result graph/readback、capability-free `ObservedV2` 和
+   receipt-bound non-emitting reconciliation CAS。heartbeat-supervised worker、`AcceptedV2`、
+   terminal business projection 和生产兼容/恢复闭环仍不存在；
 2. events、snapshots、delivery、attempt 和 projection repository 尚未统一强制 tenant/workspace
    scope，tenant domain object 不能替代可信认证与 SQL predicate；
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
@@ -426,7 +427,7 @@ M4 仍不包含 migration 7 注册、Atomic Result Writer、receipt/event/task/a
 [`31_inactive_result_schema_artifact_transaction_evidence.md`](../../analysis_report/research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
 随后在独立分支 `mainline_continue_quantum_entanglement` 推进的 E3 M5 私有 checkpoint（最近
-推送 HEAD `78f593f`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
+推送 HEAD `ee63f55`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
 manifest/request/receipt、Artifact blob/version/binding、job 与 attempt terminal CAS 组成同一
 owner transaction；每个结果 DML 边界均有故障注入并证明整图回滚；commit ACK-loss 会 poison
 store 并保留已提交图，确认 rollback 则不留前缀。新增的 capability-free `ObservedV2` 路径只
@@ -438,9 +439,13 @@ store 并保留已提交图，确认 rollback 则不留前缀。新增的 capabi
 domain sidecar、写入迁移元数据和依赖、激活 migration 7，并在空数据时提供受保护的 rollback。
 默认构造器仍保持 feature-off，打开 v7 数据库会被 schema-version gate 拒绝；因此 migration
 activation 只是候选数据库的可审计前向/回退边界，不代表 Accepted/public writer、publication
-或 worker 已开启。运行合同见 [`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md) 与
-[`RESULT_MIGRATION_ACTIVATION.md`](./RESULT_MIGRATION_ACTIVATION.md)；正常重开、ACK-loss、
-crash/replay 与 backup/restore 证据仍需在后续 release gate 中完成。
+或 worker 已开启。随后新增的 reconciliation API 在同一 `BEGIN IMMEDIATE` 内做 receipt-bound
+owner CAS，成功只更新 job/attempt，不新增 event/outbox，重复调用返回
+`ALREADY_RECONCILED`；它仍不代表 Accepted/public writer、worker、projection 或生产恢复已开启。
+运行合同见 [`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md)、
+[`RESULT_MIGRATION_ACTIVATION.md`](./RESULT_MIGRATION_ACTIVATION.md) 与
+[`RESULT_RECONCILIATION.md`](./RESULT_RECONCILIATION.md)；crash/kill、双连接竞争和
+backup/restore 证据仍需在后续 release gate 中完成。
 
 仍缺：
 
@@ -489,11 +494,11 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
    不驱动 Agent、tool、browser、subprocess 或 outbound；
 5. E3 M1 private stored-event envelope codec、M2 reserved result/terminal event fence、M3
    private store adapter、M4 inactive result schema/Artifact owner transaction/private backup
-   topology 与 M5 私有 atomic result graph/`ObservedV2` checkpoint 已完成；下一步先完成
-   migration 7 activation、正常 file reopen、ACK-loss reconcile 与 crash/kill evidence，仍不开放
-   public result writer；
-6. 在 M5 的同一原子图之上补齐 receipt-bound recovery，再决定是否签发 `AcceptedV2`；没有
-   result receipt 时绝不把 succeeded job 猜成 completed。默认关闭的
+   topology、M5 私有 atomic result graph/`ObservedV2` 与 receipt-bound reconciliation checkpoint
+   已完成；下一步先补 active backup/restore topology、非空迁移演练、crash/kill/双连接竞争和
+   restore replay evidence，仍不开放 public result writer；
+6. 在 M5 的同一原子图之上补齐 heartbeat/fencing 与业务 projection，再决定是否签发
+   `AcceptedV2`；没有 result receipt 时绝不把 succeeded job 猜成 completed。默认关闭的
    [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)保持不变；
 7. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
    heartbeat-supervised pure/fake worker；

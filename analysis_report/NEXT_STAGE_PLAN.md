@@ -3,7 +3,7 @@
 > 计划版本：2026-08-29-stage-pause-v4
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
-> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec 已在 `d889751` 完成，M2 reserved fence 已在 `dd0ba54` 完成，M3 private store adapter 已在 `504824c` 完成，M4 inactive schema / Artifact owner transaction / private backup topology 已在代码节点 `28b3d6a` 以 0 blocker 完成；下一实现节点是 M5 Atomic Result Acceptance Writer，真实 provider sandbox 未连接。**
+> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec（`d889751`）、M2 reserved fence（`dd0ba54`）、M3 private store adapter（`504824c`）、M4 inactive schema / Artifact owner transaction / private backup topology（`28b3d6a`）、M5 atomic result graph + `ObservedV2` + migration-7 opt-in（`144f449`）与 receipt-bound non-emitting reconciliation（`ee63f55`）均已完成。真实 provider sandbox 未连接，Accepted、worker、projection、active backup/restore 与 crash/kill evidence 仍未完成。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -27,8 +27,9 @@
 把当前 capability-free 的 result contract 连接到一个真正可验证的 SQLite durable graph，
 并机械区分三种结果：
 
-1. 本调用新写完整结果图且正常收到 COMMIT ACK：返回一次性的 `AcceptedV2`；
-2. 结果图早已存在、重放、重开、恢复或由其他进程写入：只返回 `ObservedV2`；
+1. 本调用新写完整结果图且正常收到 COMMIT ACK：未来才允许返回一次性的 `AcceptedV2`；
+2. 结果图早已存在、重放、重开、恢复或由其他进程写入：只返回 `ObservedV2`；当前已补齐
+   对仍为 `RUNNING` 的 owner 做 receipt-bound、non-emitting reconciliation CAS；
 3. COMMIT outcome 不明确、数据部分存在或任一绑定漂移：隔离当前 store，失败关闭，不返回成功。
 
 该目标闭合前，不启用 worker dispatch、outbound connector、result migration 7 或任何“已经 exactly
@@ -762,7 +763,7 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 - inactive result schema 与 backup-v2 topology；
 - Artifact same-transaction primitives；
 - atomic result acceptance writer/readback；
-- Observed replay/recovery/ACK-loss reconciliation；
+- Observed replay/ACK-loss readback 与 receipt-bound non-emitting reconciliation；
 - process-bound AcceptedV2；
 - migration/worker 的独立晋级门禁；
 - 对应单元、属性、故障、并发、process、backup、UI tests；
@@ -777,14 +778,17 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | M2 Reserved fence（已完成） | generic bypass 全封 | writer、Accepted |
 | M3 Store adapter（已完成） | snapshot/raw-row 双验通过 | writer public API |
 | M4 Inactive schema（已完成） | migration/backup/artifact 候选通过 | migration registration |
-| M5 Atomic writer | 完整事务图/fault/concurrency 通过 | Accepted、worker |
-| M6 Recovery | replay/reopen/ACK-loss 只 Observed | Accepted、worker |
+| M5 Atomic writer | 完整事务图/fault/readback 通过；`ObservedV2` 与 opt-in migration-7 已形成 | Accepted、worker |
+| M6 Recovery | receipt-bound non-emitting reconciliation、idempotent replay、stale/CAS/trigger rollback 通过；crash/kill/restore replay 仍待完成 | Accepted、worker |
 | M7 Accepted | fresh ACK 唯一 mint 点通过 | migration/worker promotion |
 | M8 Integration | 独立 release evidence 通过 | 生产 Gate 仍需分别审批 |
 
-本计划现在是 E3 Result Authority 的当前串行入口。提前接入路线的 E1/E2 离线节点已完成，M1–M4
-均已形成安全停点；下一串行实现节点是 M5 Atomic Result Acceptance Writer。M5 必须复用 M3 的
-stored-event adapter 与 M4 owner transaction，且仍不得注册 migration 7 或开放 worker。
+本计划现在是 E3 Result Authority 的当前串行入口。提前接入路线的 E1/E2 离线节点已完成，M1–M5
+均已形成安全停点；当前分支又完成了 opt-in migration-7 activation 与 receipt-bound
+reconciliation。下一串行实现节点是 active backup/restore topology、非空迁移演练、crash/kill/
+双连接竞争与 restore replay evidence，随后才评审 heartbeat worker、业务 projection 和
+`AcceptedV2`。这些阶段必须复用 M3 的 stored-event adapter 与 M4 owner transaction，且仍不得
+开放真实 IM outbound。
 若用户新增会改变底层 result/store 方向的参考项目，仍先做 M0 delta review，不从原子 writer
 中途改变合同。
 

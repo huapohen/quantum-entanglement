@@ -1,14 +1,15 @@
 # Result Graph Readback Contract (M5 checkpoint)
 
-Status: implemented as a private pre-commit verifier plus a capability-free `ObservedV2`
-readback path. A public read wrapper is available only on the explicit candidate-schema opt-in.
+Status: implemented as a private pre-commit verifier, a capability-free `ObservedV2`
+readback path, and a receipt-bound non-emitting reconciliation CAS. A public read wrapper and
+reconciliation method are available only on the explicit candidate-schema opt-in.
 Migration 7, the public result writer, `AcceptedV2`, publication and worker
 dispatch remain disabled. The normal store reopen path is deliberately blocked while migration
 7 is inactive in the default legacy store; an explicit `enable_result_acceptance_schema=True`
 opt-in is available only for this private rehearsal and is not a production promotion switch.
 
-This document records the local checkpoint delivered by commits `3847594`, `034ceea`, `0d941eb`, `b14ee77` and `ab3ff70`, plus the unmerged
-working tree on branch `mainline_continue_quantum_entanglement`. It is the source of
+This document records the local checkpoint delivered by commits `3847594`, `034ceea`, `0d941eb`,
+`b14ee77`, `ab3ff70` and `ee63f55` on branch `mainline_continue_quantum_entanglement`. It is the source of
 truth during the remaining implementation work. Notion synchronization is intentionally deferred
 until a larger checkpoint is complete; the final upload must include this file and a page-by-page
 readback.
@@ -111,9 +112,10 @@ implemented explicitly. The opt-in `enable_result_acceptance_schema=True` constr
 trusted legacy prefix, installs the sidecar/domain metadata, activates migration 7, validates the
 dependency graph and supports an empty-data guarded rollback. A default `SQLiteEventStore` still
 rejects a file database containing v7, preserving feature-off compatibility. Activation does not
-enable the public result API, backup contract, `AcceptedV2`, publication or workers; active
-backup/restore evidence, receipt-bound reconciliation, compatibility policy and crash/recovery
-matrices remain separate release gates.
+enable the public result writer, backup contract, `AcceptedV2`, publication or workers; active
+backup/restore evidence, compatibility policy, worker supervision and crash/recovery matrices
+remain separate release gates. The reconciliation CAS is implemented as an opt-in, non-emitting
+recovery primitive; it does not by itself promote any of those gates.
 
 ## Tests and release gate
 
@@ -126,6 +128,9 @@ The focused durable-prerequisite suite covers:
 - gated public capability-free `ObservedV2` complete readback with zero DML and no lease material;
 - empty-scope observation, partial/drift quarantine, and inactive-migration reopen gate;
 - commit ACK-loss preservation/poisoning and confirmed-rollback cleanup;
+- receipt-bound reconciliation of a committed graph whose owner is still `RUNNING`, including
+  idempotent replay, stale-owner rejection, competing-CAS rollback, trigger side-effect rollback,
+  and event/outbox count invariants;
 - the existing graph path, which short-circuits without writes or terminal CAS;
 - existing event, receipt, persistence and CAS fault fences.
 
@@ -146,12 +151,12 @@ token, Feishu/WeCom message, webhook, or external publication is used by this st
 
 ## Next local stages
 
-1. Keep the current private writer, transaction outcome classification and same-process
-   `ObservedV2` path isolated; do not register migration 7 or expose a public result API.
-2. Design and review migration-7 activation, forward/backward compatibility, normal file reopen,
-   ACK-loss reconciliation and backup/restore evidence as one migration gate.
-3. Add crash/kill/reopen/replay tests around the result receipt, Artifact rows, job/attempt CAS and
-   worker recovery before introducing `AcceptedV2` or any publication path.
+1. Keep the current private writer, transaction outcome classification, `ObservedV2` path and
+   non-emitting reconciliation isolated; do not expose `AcceptedV2` or a public result writer.
+2. Add active backup/restore topology and non-empty migration-7 evidence, including restore into a
+   clean opt-in store.
+3. Add crash/kill/reopen/replay tests around the result receipt, Artifact rows, owner CAS and
+   reconciliation before introducing `AcceptedV2` or any publication path.
 4. Re-run the full release gates and update the local roadmap/checkpoint ledger after each small
    commit; retain the branch and GitHub backup as the reviewable source.
 5. Only after the local checkpoint is stable, upload the complete Markdown bundle to Notion and

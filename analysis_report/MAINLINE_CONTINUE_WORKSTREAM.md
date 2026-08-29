@@ -58,3 +58,21 @@ E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
 | E3 | 未开始 | verified inbound → PURE Agent 草稿 |
 | E4 | 未开始 | fake-only Action Plane |
 | E5 | 未开始 | 需另行明确授权的单会话 sandbox outbound |
+
+## E3 continuation checkpoint (2026-08-29)
+
+The same branch now carries the opt-in Result Authority continuation through `ee63f55`:
+
+- migration 7 activation/reopen remains explicit and default-off;
+- a committed result graph can be read back while its exact job/attempt owner is still
+  `RUNNING` and reconciled by a receipt-bound, non-emitting CAS;
+- the API is idempotent (`RECONCILED` / `ALREADY_RECONCILED`), rejects stale or malformed owners,
+  detects competing CAS and trigger side effects, and rolls back the complete transaction;
+- successful reconciliation changes only the owner job/attempt rows; it creates no event, outbox,
+  publication, lease, capability or external message.
+
+The next local gates are active backup/restore topology, non-empty migration-7 restore evidence,
+crash/`kill -9`/dual-connection replay tests, heartbeat/fencing and business projection. `AcceptedV2`,
+real IM connectivity and all outbound effects remain disabled. Notion synchronization stays
+`local_pending` until this checkpoint is closed and then receives one batch upload plus page-by-page
+readback.
