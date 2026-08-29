@@ -446,6 +446,8 @@ func configureRuntimePoolAuthority(
 		"event_stream_heads",
 		"event_tenant_heads",
 		"event_log",
+		"event_projection_checkpoints",
+		"native_im_inbox",
 	}
 	for index, table := range readTables {
 		readTables[index] = "wanwork_im." + pgx.Identifier{table}.Sanitize()
@@ -481,7 +483,7 @@ ORDER BY namespace.nspname, relation.relname`)
 		t.Fatalf("list runtime pool relations: %v", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(values) != 26 {
+	if err != nil || len(values) != 28 {
 		t.Fatalf("runtime pool relation count=%d error=%v", len(values), err)
 	}
 	return values
@@ -500,7 +502,7 @@ ORDER BY procedure.proname, pg_catalog.pg_get_function_identity_arguments(proced
 		t.Fatalf("list runtime pool functions: %v", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(values) != 6 {
+	if err != nil || len(values) != 8 {
 		t.Fatalf("runtime pool function count=%d error=%v", len(values), err)
 	}
 	return values
