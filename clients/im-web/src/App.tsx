@@ -147,11 +147,16 @@ export function App() {
 
   async function runMention() {
     const text = instruction.trim();
-    if (!text) return;
+    const installedAgent = agents.find((agent) => agent.installationStatus === "active");
+    if (!text || !selectedConversationId || !installedAgent || !canMention) return;
     setLoading(true);
     setError("");
     try {
-      const result = await api.mention(newMessageId(), text);
+      const result = await api.mention(selectedConversationId, newMessageId(), text);
+      const page = await api.conversations();
+      setConversations(page.conversations);
+      selectConversation(result.childConversationId);
+      await loadMessages(result.childConversationId);
       setMention(result);
       setInstruction("");
     } catch (cause) {
@@ -185,6 +190,12 @@ export function App() {
   }
 
   const isLocal = snapshot?.mode === "zero-network-fake";
+  const selectedAgent = agents.find((agent) => agent.installationStatus === "active");
+  const canMention = Boolean(
+    selectedConversation?.type === "group" &&
+    selectedAgent &&
+    selectedConversation.memberActorIds.includes(selectedAgent.agentActorId),
+  );
 
   return (
     <div className="min-h-screen bg-ink-bg text-ink">
@@ -344,7 +355,8 @@ export function App() {
             <h2 className="text-xl font-semibold text-white">发布协作指令</h2>
             <p className="mt-2 text-sm leading-6 text-slate-400">这会创建一个与父群关联的 Agent 子群，并返回 invocation、工作卡和 Agent 回复。</p>
             <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：调研竞品，给出带证据的 Web 端方案" className="field mt-4 min-h-[92px] w-full resize-none" />
-            <button className="button-primary mt-3 w-full" onClick={() => void runMention()} disabled={loading || !instruction.trim()}>@v0版 Agent</button>
+            <button className="button-primary mt-3 w-full" onClick={() => void runMention()} disabled={loading || !instruction.trim() || !canMention}>@v0版 Agent</button>
+            {!canMention && <div className="mt-2 text-xs text-amber-300/80">请先选择含 Agent 的普通群；Agent 子群不能再次创建子群。</div>}
             {mention && <div className="mt-4 space-y-3 rounded-xl border border-cyan/20 bg-cyan/5 p-3 text-xs">
               <div className="flex items-center justify-between"><span className="text-slate-400">工作状态</span><span className="text-cyan">{mention.replayed ? "REPLAYED" : "COMMITTED"}</span></div>
               <div className="text-slate-500">子群 <span className="text-slate-300">{mention.childConversationId}</span></div>
