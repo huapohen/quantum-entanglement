@@ -2531,6 +2531,70 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             assert type(observed) is ScopedInvocationResultObservedV2
             self.assertEqual(observed.receipt, receipt)
 
+    def test_ack_loss_closes_and_reopens_to_the_same_observed_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "event-store.sqlite3")
+            store = SQLiteEventStore(
+                path,
+                clock=lambda: STORE_TIME,
+                enable_result_acceptance_schema=True,
+            )
+            original_store = self.store
+            self.store = store
+            try:
+                prepared = self.fresh_prepared()
+                store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+                original_control = store._execute_transaction_control
+
+                def commit_then_raise(
+                    connection: sqlite3.Connection,
+                    statement: str,
+                ) -> None:
+                    original_control(connection, statement)
+                    if statement == "COMMIT":
+                        raise RuntimeError("private result commit acknowledgement lost")
+
+                with patch.object(
+                    store,
+                    "_execute_transaction_control",
+                    side_effect=commit_then_raise,
+                ):
+                    with self.assertRaises(_ResultArtifactCommitAmbiguityError):
+                        with store._result_artifact_transaction() as handle:
+                            complete = (
+                                store._complete_result_acceptance_job_and_attempt_in_owner_transaction
+                            )  # noqa: E501
+                            with complete(handle, prepared):
+                                pass
+                self.assertTrue(store._poisoned)
+                durable_receipt_id = store._connection.execute(
+                    "SELECT receipt_id FROM invocation_result_receipts"
+                ).fetchone()[0]
+            finally:
+                store.close()
+                self.store = original_store
+
+            reopened = SQLiteEventStore(path, enable_result_acceptance_schema=True)
+            try:
+                observed = reopened._read_scoped_invocation_result_observed_v2(
+                    prepared.request.manifest.tenant_id,
+                    prepared.request.manifest.workspace_id,
+                    prepared.request.manifest.invocation_id,
+                )
+                replay = reopened._read_scoped_invocation_result_observed_v2(
+                    prepared.request.manifest.tenant_id,
+                    prepared.request.manifest.workspace_id,
+                    prepared.request.manifest.invocation_id,
+                )
+            finally:
+                reopened.close()
+            self.assertIs(type(observed), ScopedInvocationResultObservedV2)
+            self.assertIs(type(replay), ScopedInvocationResultObservedV2)
+            assert type(observed) is ScopedInvocationResultObservedV2
+            assert type(replay) is ScopedInvocationResultObservedV2
+            self.assertEqual(observed, replay)
+            self.assertEqual(observed.receipt.receipt_id, durable_receipt_id)
+
     def test_completion_readback_accepts_a_shared_preexisting_blob(self) -> None:
         prepared = self.fresh_prepared()
         candidate = prepared.request.artifact_candidates[0]
