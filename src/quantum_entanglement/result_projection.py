@@ -452,6 +452,15 @@ class SQLiteResultProjectionStore:
             raise ResultProjectionConflictError(
                 "result event timestamp does not match accepted timestamp"
             )
+        identity_collision = transaction.execute(
+            f"SELECT tenant_id, workspace_id, invocation_id FROM {RESULT_PROJECTION_TABLE} "
+            "WHERE receipt_id = ? OR result_event_id = ?",
+            (evidence.receipt_id, result_event_id),
+        )
+        if identity_collision.rows:
+            raise ResultProjectionConflictError(
+                "result receipt or event identity is already projected"
+            )
         existing = transaction.execute(
             f"SELECT {_RESULT_PROJECTION_COLUMNS[0]}, {_RESULT_PROJECTION_COLUMNS[1]}, "
             f"{_RESULT_PROJECTION_COLUMNS[2]} FROM {RESULT_PROJECTION_TABLE} "
@@ -500,9 +509,11 @@ class SQLiteResultProjectionStore:
             "terminal_event_timestamp",
         )
         result = transaction.execute(
-            f"SELECT {_RESULT_PROJECTION_COLUMNS[8]}, {_RESULT_PROJECTION_COLUMNS[9]}, "
-            f"{_RESULT_PROJECTION_COLUMNS[11]}, {_RESULT_PROJECTION_COLUMNS[16]}, "
-            f"{_RESULT_PROJECTION_COLUMNS[13]} "
+            f"SELECT {_RESULT_PROJECTION_COLUMNS[3]}, {_RESULT_PROJECTION_COLUMNS[4]}, "
+            f"{_RESULT_PROJECTION_COLUMNS[5]}, {_RESULT_PROJECTION_COLUMNS[6]}, "
+            f"{_RESULT_PROJECTION_COLUMNS[8]}, {_RESULT_PROJECTION_COLUMNS[9]}, "
+            f"{_RESULT_PROJECTION_COLUMNS[11]}, {_RESULT_PROJECTION_COLUMNS[13]}, "
+            f"{_RESULT_PROJECTION_COLUMNS[16]} "
             f"FROM {RESULT_PROJECTION_TABLE} WHERE tenant_id = ? AND workspace_id = ? "
             "AND invocation_id = ?",
             (transition.tenant_id, transition.workspace_id, transition.invocation_id),
@@ -511,9 +522,23 @@ class SQLiteResultProjectionStore:
             raise ResultProjectionConflictError(
                 "terminal result event has no unique result projection"
             )
-        receipt_id, result_event_id, running_revision, status, accepted_at = result.rows[0]
+        (
+            session_id,
+            plan_id,
+            task_id,
+            agent_id,
+            receipt_id,
+            result_event_id,
+            running_revision,
+            accepted_at,
+            status,
+        ) = result.rows[0]
         if (
-            receipt_id != transition.result_receipt_id
+            session_id != transition.session_id
+            or plan_id != transition.plan_id
+            or task_id != transition.task_id
+            or agent_id != transition.agent_id
+            or receipt_id != transition.result_receipt_id
             or result_event_id != transition.result_event_id
             or running_revision != transition.running_task_revision
             or status != ResultProjectionStatus.RESULT_ACCEPTED.value
@@ -523,6 +548,13 @@ class SQLiteResultProjectionStore:
             raise ResultProjectionConflictError(
                 "terminal event timestamp does not match accepted timestamp"
             )
+        terminal_identity_collision = transaction.execute(
+            f"SELECT invocation_id FROM {RESULT_PROJECTION_TABLE} "
+            "WHERE terminal_event_id = ?",
+            (terminal_event_id,),
+        )
+        if terminal_identity_collision.rows:
+            raise ResultProjectionConflictError("terminal event identity is already projected")
         transaction.execute(
             f"UPDATE {RESULT_PROJECTION_TABLE} SET terminal_event_id = ?, "
             "terminal_task_revision = ?, status = ?, updated_at = ? "

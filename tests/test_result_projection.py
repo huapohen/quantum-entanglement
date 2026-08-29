@@ -274,6 +274,32 @@ projection.run_once()
         finally:
             candidate.close()
 
+    def test_terminal_binding_drift_fails_closed(self) -> None:
+        payload = dict(self.terminal_event.event.payload)
+        payload["taskId"] = "task-projection-drift"
+        drifted_terminal = replace(
+            self.terminal_event,
+            sequence=2,
+            global_position=2,
+            event=replace(self.terminal_event.event, payload=payload),
+        )
+        result = replace(self.result_event, sequence=1, global_position=1)
+        candidate = SQLiteResultProjectionStore(
+            _TupleSource((result, drifted_terminal)),
+            self.path + ".terminal-drift",
+            owner_id="terminal-drift",
+        )
+        try:
+            with self.assertRaises(ResultProjectionConflictError):
+                candidate.run_once()
+            view = candidate.read(*self.scope)
+            self.assertIsNotNone(view)
+            assert view is not None
+            self.assertEqual(view.status, ResultProjectionStatus.RESULT_ACCEPTED)
+            self.assertIsNone(view.terminal_event_id)
+        finally:
+            candidate.close()
+
     def test_result_identity_conflict_fails_closed(self) -> None:
         duplicate = replace(
             self.result_event,
