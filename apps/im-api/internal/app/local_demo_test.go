@@ -100,6 +100,32 @@ func TestLocalDemoBusinessFailuresRemainHTTP200AndRedacted(t *testing.T) {
 	if conflict.Code != httpapi.CodeIdempotencyConflict || strings.Contains(conflict.Raw, "changed") {
 		t.Fatalf("conflict response = %s", conflict.Raw)
 	}
+	created := localDemoRequest(
+		t, server, http.MethodPost, "/api/v1/demo/im/conversations",
+		`{"type":"group","name":"没有 Agent 的群","memberActorIds":[],"idempotencyKey":"http/no-agent"}`,
+		"Bearer "+localdemo.LocalBearerToken,
+	)
+	if created.Code != httpapi.CodeOK {
+		t.Fatalf("create no-agent group response = %s", created.Raw)
+	}
+	var createdPayload struct {
+		Data struct {
+			Conversation struct {
+				ID string `json:"id"`
+			} `json:"conversation"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(created.Raw), &createdPayload); err != nil || createdPayload.Data.Conversation.ID == "" {
+		t.Fatalf("decode no-agent group response = %v, %s", err, created.Raw)
+	}
+	forbidden := localDemoRequest(
+		t, server, http.MethodPost, "/api/v1/demo/im/mentions",
+		`{"conversationId":"`+createdPayload.Data.Conversation.ID+`","messageId":"msg_forbidden","instruction":"不能执行"}`,
+		"Bearer "+localdemo.LocalBearerToken,
+	)
+	if forbidden.Code != httpapi.CodeForbidden || strings.Contains(forbidden.Raw, "不能执行") {
+		t.Fatalf("forbidden mention response = %s", forbidden.Raw)
+	}
 }
 
 type localDemoEnvelope struct {

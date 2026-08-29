@@ -142,16 +142,7 @@ func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
 		}
 		result, err := demo.Mention(ctx.Context(), bearerToken(ctx), input)
 		if err != nil {
-			switch {
-			case errors.Is(err, localdemo.ErrUnauthenticated):
-				return httpapi.NewAppError(httpapi.CodeUnauthenticated, err)
-			case errors.Is(err, localdemo.ErrConflict):
-				return httpapi.NewAppError(httpapi.CodeIdempotencyConflict, err)
-			case errors.Is(err, localdemo.ErrInvalidInput):
-				return httpapi.NewAppError(httpapi.CodeValidationFailed, err)
-			default:
-				return err
-			}
+			return localDemoAppError(err)
 		}
 		return httpapi.WriteSuccess(ctx, result)
 	})
