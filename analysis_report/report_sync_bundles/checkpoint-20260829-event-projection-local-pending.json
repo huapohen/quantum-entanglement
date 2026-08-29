@@ -1,0 +1,63 @@
+{
+  "format": "quantum-entanglement.report-sync-bundle",
+  "version": 1,
+  "createdAt": "2026-08-29T15:12:00+08:00",
+  "source": {
+    "branch": "dev_wanwork_quantum_entanglement",
+    "head": "1e6077c3ce9757188cd24749c7e198ab52cf71ec",
+    "remote": "https://github.com/huapohen/quantum-entanglement.git",
+    "remoteRef": "refs/heads/dev_wanwork_quantum_entanglement"
+  },
+  "syncDecision": {
+    "notion": "local_pending",
+    "yuque": "local_pending",
+    "feishuAndWeCom": "read-only-no-send",
+    "reason": "Remote knowledge-base writes are deferred to a batch after local code, tests, reports and evidence for the stage are closed."
+  },
+  "changes": [
+    {
+      "commit": "5e9894aab9aaa0cb9747bafcc88a7bbbe923ce8d",
+      "message": "feat(events): add provider-neutral projection contract"
+    },
+    {
+      "commit": "1e6077c3ce9757188cd24749c7e198ab52cf71ec",
+      "message": "docs(events): record projection contract checkpoint"
+    }
+  ],
+  "localSources": [
+    {
+      "path": "analysis_report/README.md",
+      "sha256": "3283db996cd3d7067235510de61724de1de7bfe0e57f0f7ac3191e65a694ca61",
+      "targetPageKey": "project-home",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/research/43_event_projection_contract_checkpoint.md",
+      "sha256": "c20cf63d92cbe64b451e9f151448de3c35637121656bf493a1704886bab72853",
+      "targetPageKey": "research-43",
+      "status": "local_pending"
+    },
+    {
+      "path": "apps/im-api/internal/events/projection.go",
+      "sha256": "0864fc09f93e283cf586678bde3fb7d8633899b126e6d27f8bbc08e8b1d4b25d",
+      "targetPageKey": "current-implementation",
+      "status": "local_pending"
+    },
+    {
+      "path": "apps/im-api/internal/events/projection_test.go",
+      "sha256": "7066e9a147c5e9a5d82855b36f2de74bc175b5f9dff04a57e71fe1feac798487",
+      "targetPageKey": "current-implementation",
+      "status": "local_pending"
+    }
+  ],
+  "verification": {
+    "goTestEvents": "passed: go test ./internal/events",
+    "goTest": "passed: go test ./...",
+    "goTestRace": "passed: go test -race ./...",
+    "goVet": "passed: go vet ./...",
+    "notionLiveWrite": false,
+    "notionLiveReadback": false,
+    "yuqueLiveWrite": false,
+    "feishuOrWeComMessagesSent": false
+  }
+}
