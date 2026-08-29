@@ -16,6 +16,7 @@ connector is contacted.
 from quantum_entanglement import SQLiteEventStore
 from quantum_entanglement.result_backup import (
     create_result_backup,
+    recover_result_backup_publication,
     restore_result_backup,
     verify_result_backup,
 )
@@ -63,7 +64,9 @@ file. The temporary copy is independently opened read-only and checked for:
 The manifest is written and fsynced to a private temporary file. Manifest and database are then
 published with no-overwrite hard-link creation; an error removes any target published by this
 call. Existing files are never replaced. The returned manifest is only returned after a final
-read-only verification of the published backup.
+read-only verification of the published backup. A dual-connection writer may continue to hold an
+uncommitted transaction: the online backup captures the last committed SQLite snapshot, never
+uncommitted rows.
 
 ## Verify and restore contract
 
@@ -81,6 +84,32 @@ events, publishes outbox messages or opens external network connections. A resto
 still a recovery input: an operator must reopen it with
 `SQLiteEventStore(enable_result_acceptance_schema=True)`, inspect the result graph, and run the
 receipt-bound non-emitting reconciliation workflow before any future worker is considered.
+
+## Crash publication recovery
+
+Publication consists of two independent no-overwrite links (manifest and database), so a process
+kill can leave one target, both targets, or private temporary files. A target pair is never
+assumed complete from its filenames. After all backup/restore writers are stopped, run:
+
+```python
+from quantum_entanglement.result_backup import recover_result_backup_publication
+
+recovery = recover_result_backup_publication(
+    "backup",
+    backup_path="backup/event-store.sqlite3",
+    manifest_path="backup/event-store.sqlite3.manifest.json",
+)
+print(recovery.state.value)
+```
+
+The scan removes only regular files with the module-owned `.qe-result-backup-*`,
+`.qe-result-manifest-*` and `.qe-result-restore-*` prefixes, and compares device/inode/size again
+before each unlink. Symlinks, directories and entries replaced during the scan are preserved.
+Published targets are never deleted or overwritten. With both target paths supplied, `complete`
+means a fresh `verify_result_backup` succeeded; `incomplete` means only one target exists;
+`unverified` means both exist but verification failed and they require forensic/operator review;
+`absent` means neither exists. The function is deliberately an operator recovery primitive and
+must not run concurrently with a publisher.
 
 ## Topology evidence
 
@@ -119,7 +148,9 @@ restore with workers/connectors stopped.
 `tests/test_result_backup_topology.py` covers exact active catalog derivation, statistics handling,
 legacy gating, caller-transaction rejection, unknown/partial catalog drift and no-DML behavior.
 `tests/test_result_backup.py` covers non-empty migration-7 create/verify/restore, canonical
-manifest round-trip and tamper rejection, no-overwrite behavior and legacy-source refusal.
+manifest round-trip and tamper rejection, no-overwrite behavior, legacy-source refusal,
+clean-process restore/reconciliation, dual-connection committed-snapshot consistency, and real
+`SIGKILL` at both publication links followed by guarded temporary cleanup.
 
 ```bash
 PYTHONPATH=src pytest -q \
@@ -136,16 +167,12 @@ PYTHONPATH=src python -m mypy \
 git diff --check
 ```
 
-These tests are deterministic local SQLite evidence. They do not prove filesystem crash
-durability, `kill -9` during publication, cross-host object-store retention, encryption/key
-rotation, capacity, SLO/RPO/RTO, production tenant isolation, or permission to connect to a real
-IM. Those remain release gates.
+These tests are deterministic local SQLite and POSIX-process evidence. They do not prove cross-host
+object-store retention, encryption/key rotation, capacity, SLO/RPO/RTO, production tenant
+isolation, or permission to connect to a real IM. Those remain release gates.
 
 ## Next gates
 
-1. Add crash/`kill -9` publication interruption evidence and dual-connection backup consistency.
-2. Exercise restore of a non-empty result graph, then readback and reconciliation on a clean
-   process before any worker starts.
-3. Add fleet compatibility/rollback policy and independent-host evidence retention.
-4. Complete heartbeat/fencing, business projection and `AcceptedV2` gates; keep publication and
+1. Add fleet compatibility/rollback policy and independent-host evidence retention.
+2. Complete heartbeat/fencing, business projection and `AcceptedV2` gates; keep publication and
    real IM outbound disabled until separately authorized.
