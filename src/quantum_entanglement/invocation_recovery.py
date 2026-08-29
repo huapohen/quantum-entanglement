@@ -22,6 +22,7 @@ from .attempts import (
     InvocationRecoverySnapshot,
     InvocationStatus,
 )
+from .invocation_results import ScopedInvocationResultObservedV2
 from .protocol import TaskStatus
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -53,6 +54,37 @@ class InvocationRecoveryDecision(str, Enum):
     BLOCKED_RECEIPT_UNVERIFIED = "blocked_receipt_unverified"
     BLOCKED_RESULT_UNCOMMITTED = "blocked_result_uncommitted"
     TERMINAL_FAILURE_EFFECT_UNKNOWN = "terminal_failure_effect_unknown"
+    RECEIPT_RECONCILIATION_READY = "receipt_reconciliation_ready"
+    RESULT_ALREADY_PROJECTED = "result_already_projected"
+
+
+@dataclass(frozen=True)
+class ScopedInvocationBinding:
+    """Tenant/workspace-scoped identity used by receipt-bound recovery."""
+
+    tenant_id: str
+    workspace_id: str
+    invocation_id: str
+    session_id: str
+    plan_id: str
+    task_id: str
+    agent_id: str
+    idempotency_key: str
+    payload_digest: str
+
+    def __post_init__(self) -> None:
+        for field in (
+            "tenant_id",
+            "workspace_id",
+            "invocation_id",
+            "session_id",
+            "plan_id",
+            "task_id",
+            "agent_id",
+            "idempotency_key",
+        ):
+            _text(getattr(self, field), f"scoped binding {field}")
+        _digest(self.payload_digest, "scoped binding payload_digest")
 
 
 @dataclass(frozen=True)
@@ -102,6 +134,18 @@ class InvocationRecoveryStore(Protocol):
 
     def close(self) -> None:
         """Release resources when ownership was explicitly transferred."""
+
+
+class InvocationResultObservationStore(Protocol):
+    """Trusted source for capability-free, durable scoped result observations."""
+
+    def read_scoped_invocation_result_observed_v2(
+        self,
+        tenant_id: str,
+        workspace_id: str,
+        invocation_id: str,
+    ) -> Optional[ScopedInvocationResultObservedV2]:
+        """Read and verify one committed result graph without write authority."""
 
 
 def _text(
@@ -488,6 +532,137 @@ def _validate_receipt_match(
         )
 
 
+def _scoped_binding_as_legacy(binding: ScopedInvocationBinding) -> InvocationBinding:
+    return InvocationBinding(
+        invocation_id=binding.invocation_id,
+        session_id=binding.session_id,
+        plan_id=binding.plan_id,
+        task_id=binding.task_id,
+        agent_id=binding.agent_id,
+        idempotency_key=binding.idempotency_key,
+        payload_digest=binding.payload_digest,
+    )
+
+
+def _validate_scoped_observed_result(
+    binding: ScopedInvocationBinding,
+    snapshot: InvocationRecoverySnapshot,
+    observed: ScopedInvocationResultObservedV2,
+) -> ScopedInvocationResultObservedV2:
+    if type(observed) is not ScopedInvocationResultObservedV2:
+        raise InvocationRecoveryIntegrityError(
+            "receipt-bound recovery requires an exact ScopedInvocationResultObservedV2"
+        )
+    try:
+        receipt = observed.receipt
+        evidence = receipt.evidence
+        # Re-run the codec from a detached wire snapshot.  A caller can mutate frozen
+        # dataclasses with low-level reflection, so the object received from a store is
+        # not trusted merely because its static type is correct.
+        detached = ScopedInvocationResultObservedV2.from_dict(observed.to_dict())
+        receipt = detached.receipt
+        evidence = receipt.evidence
+    except (TypeError, ValueError, KeyError, IndexError) as error:
+        raise InvocationRecoveryIntegrityError(
+            "durable result observation is malformed"
+        ) from error
+    binding_pairs = (
+        (binding.tenant_id, evidence.tenant_id, "tenant_id"),
+        (binding.workspace_id, evidence.workspace_id, "workspace_id"),
+        (binding.invocation_id, evidence.invocation_id, "invocation_id"),
+        (binding.session_id, evidence.session_id, "session_id"),
+        (binding.plan_id, evidence.plan_id, "plan_id"),
+        (binding.task_id, evidence.task_id, "task_id"),
+        (binding.agent_id, evidence.agent_id, "agent_id"),
+        (binding.idempotency_key, evidence.job_idempotency_key, "idempotency_key"),
+        (binding.payload_digest, evidence.execution_manifest_digest, "payload_digest"),
+    )
+    mismatches = tuple(label for actual, expected, label in binding_pairs if actual != expected)
+    if mismatches:
+        raise InvocationRecoveryIntegrityError(
+            "durable result observation does not match scoped binding: "
+            + ", ".join(mismatches)
+        )
+    job = snapshot.job
+    attempt = snapshot.current_attempt
+    if job is None or attempt is None:
+        raise InvocationRecoveryIntegrityError(
+            "durable result observation exists without its owning attempt"
+        )
+    attempt_pairs = (
+        (attempt.attempt_id, evidence.attempt_id, "attempt_id"),
+        (attempt.attempt_number, evidence.attempt_number, "attempt_number"),
+        (attempt.lease_epoch, evidence.lease_epoch, "lease_epoch"),
+        (attempt.worker_id, evidence.worker_id, "worker_id"),
+        (attempt.lease_token_digest, evidence.lease_token_digest, "lease_token_digest"),
+    )
+    attempt_mismatches = tuple(
+        label for actual, expected, label in attempt_pairs if actual != expected
+    )
+    if attempt_mismatches:
+        raise InvocationRecoveryIntegrityError(
+            "durable result observation does not match current attempt: "
+            + ", ".join(attempt_mismatches)
+        )
+    if job.result_ref is not None and job.result_ref != evidence.result_ref:
+        raise InvocationRecoveryIntegrityError(
+            "durable result observation result_ref differs from the job"
+        )
+    return detached
+
+
+def assess_scoped_invocation_recovery(
+    task_status: TaskStatus,
+    binding: ScopedInvocationBinding,
+    snapshot: InvocationRecoverySnapshot,
+    observed: Optional[ScopedInvocationResultObservedV2] = None,
+) -> InvocationRecoveryDecision:
+    """Assess recovery using a trusted, durable scoped result observation.
+
+    A durable observation never authorizes a second Agent execution.  If the attempt/job
+    projection is not yet terminal, the only positive outcome is
+    ``RECEIPT_RECONCILIATION_READY``; a separate transactional reconciler must perform the
+    CAS and business projection.  A matching terminal projection returns
+    ``RESULT_ALREADY_PROJECTED`` and remains side-effect free.
+    """
+
+    if type(binding) is not ScopedInvocationBinding:
+        raise InvocationRecoveryIntegrityError(
+            "receipt-bound recovery requires an exact ScopedInvocationBinding"
+        )
+    binding_snapshot = ScopedInvocationBinding(
+        tenant_id=binding.tenant_id,
+        workspace_id=binding.workspace_id,
+        invocation_id=binding.invocation_id,
+        session_id=binding.session_id,
+        plan_id=binding.plan_id,
+        task_id=binding.task_id,
+        agent_id=binding.agent_id,
+        idempotency_key=binding.idempotency_key,
+        payload_digest=binding.payload_digest,
+    )
+    base_decision = assess_invocation_recovery(
+        task_status,
+        _scoped_binding_as_legacy(binding_snapshot),
+        snapshot,
+    )
+    if observed is None:
+        return base_decision
+    detached_observed = _validate_scoped_observed_result(binding_snapshot, snapshot, observed)
+    job = snapshot.job
+    attempt = snapshot.current_attempt
+    if job is None or attempt is None:  # pragma: no cover - guarded by validator above.
+        raise InvocationRecoveryIntegrityError("durable result observation has no attempt")
+    if (
+        job.status is InvocationStatus.SUCCEEDED
+        and attempt.status is AttemptStatus.SUCCEEDED
+        and job.result_ref == detached_observed.receipt.evidence.result_ref
+        and attempt.result_ref == detached_observed.receipt.evidence.result_ref
+    ):
+        return InvocationRecoveryDecision.RESULT_ALREADY_PROJECTED
+    return InvocationRecoveryDecision.RECEIPT_RECONCILIATION_READY
+
+
 def assess_invocation_recovery(
     task_status: TaskStatus,
     binding: InvocationBinding,
@@ -541,6 +716,7 @@ class InvocationRecoveryCoordinator:
         store: Optional[InvocationRecoveryStore] = None,
         *,
         owns_store: bool = False,
+        result_store: Optional[InvocationResultObservationStore] = None,
     ) -> None:
         if type(owns_store) is not bool:
             raise TypeError("owns_store must be a boolean")
@@ -550,7 +726,14 @@ class InvocationRecoveryCoordinator:
             for method_name in ("recovery_snapshot_for_task", "close"):
                 if not callable(getattr(store, method_name, None)):
                     raise TypeError("store must provide recovery_snapshot_for_task and close")
+        if result_store is not None and not callable(
+            getattr(result_store, "read_scoped_invocation_result_observed_v2", None)
+        ):
+            raise TypeError(
+                "result_store must provide read_scoped_invocation_result_observed_v2"
+            )
         self._store = store
+        self._result_store = result_store
         self._owns_store = owns_store
         self._closed = False
         self._store_cleanup_complete = not owns_store
@@ -599,6 +782,58 @@ class InvocationRecoveryCoordinator:
                 )
             return assess_invocation_recovery(task_status, binding, snapshot, receipt)
 
+    def assess_scoped(
+        self,
+        task_status: TaskStatus,
+        binding: ScopedInvocationBinding,
+    ) -> InvocationRecoveryDecision:
+        """Assess one scoped task using a trusted durable result observation source.
+
+        This method performs reads only.  A positive receipt-bound decision is a hand-off
+        to a future transactional reconciler; it is never an instruction to invoke an Agent.
+        """
+
+        with self._lock:
+            self._require_open()
+            if self._result_store is None:
+                raise InvocationRecoveryIntegrityError(
+                    "receipt-bound recovery requires a trusted result observation store"
+                )
+            if type(binding) is not ScopedInvocationBinding:
+                raise InvocationRecoveryIntegrityError(
+                    "receipt-bound recovery requires an exact ScopedInvocationBinding"
+                )
+            _validate_binding(
+                InvocationBinding(
+                    invocation_id=binding.invocation_id,
+                    session_id=binding.session_id,
+                    plan_id=binding.plan_id,
+                    task_id=binding.task_id,
+                    agent_id=binding.agent_id,
+                    idempotency_key=binding.idempotency_key,
+                    payload_digest=binding.payload_digest,
+                ),
+                "scoped binding",
+            )
+            if self._store is None:
+                snapshot = InvocationRecoverySnapshot(None, None, 0)
+            else:
+                snapshot = self._store.recovery_snapshot_for_task(
+                    binding.session_id,
+                    binding.task_id,
+                )
+            observed = self._result_store.read_scoped_invocation_result_observed_v2(
+                binding.tenant_id,
+                binding.workspace_id,
+                binding.invocation_id,
+            )
+            return assess_scoped_invocation_recovery(
+                task_status,
+                binding,
+                snapshot,
+                observed,
+            )
+
     def close(self) -> None:
         """Stop reads immediately and retry owned-store cleanup until it succeeds."""
 
@@ -619,6 +854,9 @@ __all__ = [
     "InvocationRecoveryDecision",
     "InvocationRecoveryIntegrityError",
     "InvocationRecoveryStore",
+    "InvocationResultObservationStore",
     "InvocationResultReceipt",
+    "ScopedInvocationBinding",
     "assess_invocation_recovery",
+    "assess_scoped_invocation_recovery",
 ]
