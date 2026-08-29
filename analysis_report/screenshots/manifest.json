@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "d9cf2083eeb1d2823a3ef3352be5c77668e90610",
-  "lastImageArchivedAt": "2026-08-29T10:47:12+08:00",
+  "lastArchivedCommit": "9dbed14e85e09cf133c49ab8b1f5b8ba49708732",
+  "lastImageArchivedAt": "2026-08-29T12:04:58+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -645,6 +645,50 @@
       "sha256": "53a26a561f944ca15169d8235a43f362d0c1f166d7d59a3cda79ce6d570adc76",
       "sourceKind": "quantum-entanglement-local-im-acceptance",
       "sourceReference": "http://127.0.0.1:18081/demo/im; analysis_report/screenshots/local_im_acceptance_manifest.json; code-baseline:d48108abe8ce9ce50afc4c67798a0eeacdab599f; archived-git:d9cf2083eeb1d2823a3ef3352be5c77668e90610",
+      "width": 390
+    },
+    {
+      "byteSize": 359701,
+      "captureDate": null,
+      "captureDateEvidence": "The local Playwright acceptance manifest records only the calendar date 2026-08-29; no independently verifiable capture time was retained",
+      "contentScope": "Desktop loopback basic IM view after creating an ordinary group, sending a text message and reloading the page",
+      "derivation": "playwright-loopback-local-basic-im-capture",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "Proves only the rendered 1440×1000 local viewport and the observed zero-network fake flow; it does not prove external Clerk, RongCloud, model, persistence or production readiness",
+        "The screenshot contains synthetic local fixture content and a process-local message; it is not evidence of durable message history or provider delivery"
+      ],
+      "filename": "38_local_im_basic_desktop.png",
+      "firstArchivedAt": "2026-08-29T12:04:58+08:00",
+      "height": 1000,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "synthetic-local-ui-no-credential",
+      "sha256": "3d871740d3c0a5f62a2ffb12ab4fa6270c66f7ae778fa08a6be61f6cc7d85657",
+      "sourceKind": "quantum-entanglement-local-basic-im-acceptance",
+      "sourceReference": "http://127.0.0.1:19082/demo/im; analysis_report/screenshots/local_im_basic_acceptance_manifest.json; code-baseline:e2515c1",
+      "width": 1440
+    },
+    {
+      "byteSize": 143738,
+      "captureDate": null,
+      "captureDateEvidence": "The local Playwright acceptance manifest records only the calendar date 2026-08-29; no independently verifiable capture time was retained",
+      "contentScope": "Mobile loopback basic IM view showing the responsive ordinary-conversation list and text composer",
+      "derivation": "playwright-loopback-local-basic-im-capture",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "Proves only the rendered 390×844 local viewport and the observed zero-network fake flow; it does not prove external Clerk, RongCloud, model, persistence or production readiness",
+        "The screenshot contains synthetic local fixture content and a process-local message; it is not evidence of durable message history or provider delivery"
+      ],
+      "filename": "39_local_im_basic_mobile.png",
+      "firstArchivedAt": "2026-08-29T12:04:58+08:00",
+      "height": 844,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "synthetic-local-ui-no-credential",
+      "sha256": "249bdf2a03059185c07492e960a3ec524e6c6718285820c270fafa1179eda08e",
+      "sourceKind": "quantum-entanglement-local-basic-im-acceptance",
+      "sourceReference": "http://127.0.0.1:19082/demo/im; analysis_report/screenshots/local_im_basic_acceptance_manifest.json; code-baseline:e2515c1",
       "width": 390
     },
     {
