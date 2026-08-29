@@ -5658,10 +5658,21 @@ class SQLiteEventStore:
         ):
             quarantine("result observation receipt graph cannot be decoded")
 
-        observation_input = _ResultAcceptanceObservationInputV2(
-            request=request,
-            artifact_batch=_prepare_result_artifact_batch(tuple(candidates)),
-        )
+        try:
+            observation_input = _ResultAcceptanceObservationInputV2(
+                request=request,
+                artifact_batch=_prepare_result_artifact_batch(tuple(candidates)),
+            )
+        except (
+            _ResultArtifactConflictError,
+            _ResultArtifactConcurrencyError,
+            _ResultArtifactIntegrityError,
+            _ResultArtifactTransactionContinuityError,
+            _ResultArtifactTransactionError,
+            TypeError,
+            ValueError,
+        ):
+            quarantine("result observation Artifact batch cannot be rebuilt")
         try:
             self._readback_result_acceptance_graph_body(
                 connection,
