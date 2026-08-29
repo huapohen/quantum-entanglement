@@ -21,6 +21,17 @@ func TestLocalDemoHTTPVerticalSlice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	page, err := server.Test(httptest.NewRequest(http.MethodGet, "/demo/im", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageBody, err := io.ReadAll(page.Body)
+	page.Body.Close()
+	if err != nil || page.StatusCode != http.StatusOK ||
+		!strings.Contains(string(pageBody), "人和 Agent 共生协同办公") ||
+		page.Header.Get("Content-Security-Policy") == "" {
+		t.Fatalf("demo HTML response status=%d error=%v", page.StatusCode, err)
+	}
 	snapshot := localDemoRequest(t, server, http.MethodGet, "/api/v1/demo/im", "", "")
 	if snapshot.Code != httpapi.CodeOK || !strings.Contains(snapshot.Raw, `"networkCalls":0`) ||
 		!strings.Contains(snapshot.Raw, `"mode":"zero-network-fake"`) {

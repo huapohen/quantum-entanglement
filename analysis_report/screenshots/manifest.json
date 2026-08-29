@@ -604,6 +604,50 @@
       "width": 1184
     },
     {
+      "byteSize": 520274,
+      "captureDate": null,
+      "captureDateEvidence": "The local Playwright acceptance manifest records only the calendar date 2026-08-29; no independently verifiable capture time was retained",
+      "contentScope": "Desktop loopback acceptance view after submitting an arbitrary custom instruction: parent restricted work card, independent Agent child group, invocation lineage and child-only reply",
+      "derivation": "playwright-loopback-local-acceptance-capture",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "Proves only the rendered 1440×1000 local viewport and the observed zero-network fake flow; it does not prove external Clerk, RongCloud, model, persistence or production readiness",
+        "The UI is backed by synthetic local fixtures and must not be interpreted as a production provider receipt or real Agent execution"
+      ],
+      "filename": "35_local_im_acceptance_desktop.png",
+      "firstArchivedAt": "2026-08-29T10:36:36+08:00",
+      "height": 1000,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "synthetic-local-ui-no-credential",
+      "sha256": "32b7b69c4bd425cbee5cd2e0878d03bf2aa8adb0e4a36e20a1e8724fc9213b5b",
+      "sourceKind": "quantum-entanglement-local-im-acceptance",
+      "sourceReference": "http://127.0.0.1:18081/demo/im; analysis_report/screenshots/local_im_acceptance_manifest.json; code-baseline:d48108a",
+      "width": 1440
+    },
+    {
+      "byteSize": 179625,
+      "captureDate": null,
+      "captureDateEvidence": "The local Playwright acceptance manifest records only the calendar date 2026-08-29; no independently verifiable capture time was retained",
+      "contentScope": "Mobile loopback acceptance view after submitting an arbitrary custom instruction: responsive parent work card and Agent child-group result",
+      "derivation": "playwright-loopback-local-acceptance-capture",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "Proves only the rendered 390×844 local viewport and the observed zero-network fake flow; it does not prove external Clerk, RongCloud, model, persistence or production readiness",
+        "The UI is backed by synthetic local fixtures and must not be interpreted as a production provider receipt or real Agent execution"
+      ],
+      "filename": "36_local_im_acceptance_mobile.png",
+      "firstArchivedAt": "2026-08-29T10:36:36+08:00",
+      "height": 844,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "synthetic-local-ui-no-credential",
+      "sha256": "53a26a561f944ca15169d8235a43f362d0c1f166d7d59a3cda79ce6d570adc76",
+      "sourceKind": "quantum-entanglement-local-im-acceptance",
+      "sourceReference": "http://127.0.0.1:18081/demo/im; analysis_report/screenshots/local_im_acceptance_manifest.json; code-baseline:d48108a",
+      "width": 390
+    },
+    {
       "byteSize": 10351,
       "captureDate": null,
       "captureDateEvidence": "Not a captured external page or runtime viewport; this is a repository-authored SVG documentation visual, so captureDate is not applicable",

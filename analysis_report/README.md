@@ -50,6 +50,7 @@
 | `docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md` | 当前 policy control-store 工程入口：`16d66b6`，`local_pending` | 独立 control cluster、owner/reader/activator 分权、exact CAS、catalog/ACL attestation、commit-unknown reconcile、PG18.6 实证与 mutation-time fence 后续边界 |
 | `research/36_postgres_approval_policy_control_store_checkpoint.md` | 当前 W2 深度证据：`16d66b6`，`local_pending` | immutable policy archive/activation/head、完整历史链、双重 attestation、并发/损坏/取消测试、诚实 NO-GO 与下一阶段顺序 |
 | `research/37_postgres_durable_attempt_issuer_v2_checkpoint.md` | 当前 W2 本地增量：`68d4f2b`，`local_pending` | 五角色 control store、post-preflight durable attempt grant、issuance ID 幂等回读、fence `/3` trust boundary 与 SQL smoke test |
+| `research/38_local_im_provider_agent_thread_checkpoint.md` | 当前本地验收增量：`local_pending` | provider-neutral IM/auth、Agent Store、`@Agent` 子群 vertical slice、零网络 Fiber API、任意自定义指令页面与 Playwright 桌面/移动端证据 |
 
 接入前代码基线已经安全备份。`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 中“先 Level A、再 Level B
 sandbox inbound-only”是当时的历史调度口径。当前执行源已切换为
@@ -104,7 +105,7 @@ Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清�
 
 完整 SHA-256、尺寸、来源、证据等级和隐私边界见
 [`screenshots/README.md`](screenshots/README.md) 与
-[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 37 张图；前十张是受限、
+[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 39 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地
 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是 Clawith 公开官网、白皮书与官方文档
 只读证据；最后十项是 Topic 33～37 五个 W2 PostgreSQL 检查点/合同图各自的 SVG source 与
@@ -144,6 +145,8 @@ PNG rendering，只作为报告导航图，不冒充独立运行证据。整套�
 | `screenshots/35_postgres_attested_runtime_composition_map.svg` / `.png` | private config → ambient/default-file/raw-DSN/malformed-query hardening → physical/session attestation → readiness/UoW/API gate → Gate A/Trusted Participant/mention 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 | `screenshots/36_postgres_production_authority_topology.svg` / `.png` | Gate A0 plan/SecretRef/provision/migrate/runtime/TLS/receipt/No-Go 合同 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 | `screenshots/37_postgres_approval_policy_control_store_map.svg` / `.png` | 离线 root policy → 独立 control cluster → exact CAS/attestation/readback → mutation-time fence 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/35_local_im_acceptance_desktop.png` | 任意自定义指令提交后，父群受限工作卡、独立 Agent 子群和回复 | Playwright loopback 桌面端真实渲染与交互证据 |
+| `screenshots/36_local_im_acceptance_mobile.png` | 移动 viewport 下的同一自定义指令验收结果 | Playwright loopback 移动端真实渲染与交互证据 |
 
 ## 数据安全
 

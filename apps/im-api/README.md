@@ -1,37 +1,39 @@
 # WanWork IM API
 
 Go/Fiber backend for the native WanWork IM. This module is intentionally isolated from the existing Python
-package. The default service remains a zero-outbound local API shell, while an explicit runtime mode now composes a
-strictly admitted PostgreSQL URL, an attested runtime-only pool, exact readiness, a controlled Unit of Work,
-and an API route barrier. Production IaC/cutover/credential rotation, Clerk, RongCloud, model, tool, and
-outbound adapters are still not delivered; in particular, the current provider identifiers are placeholders,
-not working fake adapters.
+package. The default service now includes deterministic, zero-network Clerk-shaped and RongCloud-shaped fake
+adapters plus an `@Agent` child-group acceptance slice. An explicit runtime mode composes a strictly admitted
+PostgreSQL URL, an attested runtime-only pool, exact readiness, a controlled Unit of Work, and an API route
+barrier. Production IaC/cutover/credential rotation, real Clerk/RongCloud network adapters, model, tool, and
+production outbound reconciliation are still not delivered.
 
-## Run the current scaffold
+## Run the local IM acceptance surface
 
 From the repository root:
 
 ```bash
-./scripts/start_im_api.sh
+./scripts/start_im_demo.sh
 ```
 
-The default listener is loopback-only at `127.0.0.1:18080`. Override it only for an explicitly reviewed local
-environment:
+Then open `http://127.0.0.1:18080/demo/im`. The default listener is loopback-only. To select a different local
+port:
 
 ```bash
-WANWORK_IM_LISTEN_ADDRESS=127.0.0.1:19080 ./scripts/start_im_api.sh
+./scripts/start_im_demo.sh --port 19080
 ```
 
-The script refuses to start if PostgreSQL runtime variables are already present unless
+The underlying API script refuses to start if PostgreSQL runtime variables are already present unless
 `WANWORK_IM_ALLOW_RUNTIME_COMPOSITION=1` is set explicitly. In default mode the immutable configuration accepts
-only a numeric loopback listener, fixes auth/IM provider identifiers to placeholder values, and fixes outbound to
-`disabled`; it does not instantiate an IM provider adapter.
+only a numeric loopback listener. The local acceptance composition instantiates in-memory fake adapters with
+synthetic fixtures; they make no network calls and contain no production credentials. Its fake outbound path is
+enabled only inside this process so the child-group reply flow can be observed.
 
 Verify the default mode:
 
 ```bash
 curl --fail http://127.0.0.1:18080/health/live
 curl --fail http://127.0.0.1:18080/api/v1/system/ping
+curl --fail http://127.0.0.1:18080/api/v1/demo/im
 ```
 
 Expected responses:
@@ -40,6 +42,10 @@ Expected responses:
 {"status":"ok"}
 {"code":200,"data":{"status":"ok"},"message":"ok","requestId":"req_..."}
 ```
+
+See [`docs/wanwork_im/LOCAL_IM_ACCEPTANCE_GUIDE.md`](../../docs/wanwork_im/LOCAL_IM_ACCEPTANCE_GUIDE.md) for the
+browser flow, arbitrary instruction API, expected invariants, architecture diagrams, and exact production
+boundary.
 
 ## Explicit PostgreSQL runtime mode
 

@@ -2,7 +2,7 @@
 
 本目录保存用户原始任务截图、在飞书和语雀中以只读方式采集的研究视图、本地产品
 体验的真实浏览器验收视图，以及 Clawith 官网和官方文档的公开只读调研证据。
-`manifest.json` 当前索引 37 张图片，并固定每个文件的 SHA-256、字节数、像素尺寸、来源
+`manifest.json` 当前索引 39 张图片，并固定每个文件的 SHA-256、字节数、像素尺寸、来源
 类型、内容范围、派生关系与访问分类。
 
 ## 安全与证据边界
@@ -96,6 +96,9 @@
 | [`36_postgres_production_authority_topology.png`](36_postgres_production_authority_topology.png) | 1800×1120 | 不适用 / 2026-08-29 00:10:19 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1800×1120 确定性渲染，便于本地浏览器与后续 Notion 审阅 | `8569f0ec46fb` |
 | [`37_postgres_approval_policy_control_store_map.svg`](37_postgres_approval_policy_control_store_map.svg) | 1600×1000 | 不适用 / 2026-08-29 04:40:39 +08:00 | `B-local-derived-documentation-visual`；离线 root policy→独立 control cluster→exact CAS/catalog attestation→authoritative readback→mutation-time fence NO-GO 源图 | `56831344df7a` |
 | [`37_postgres_approval_policy_control_store_map.png`](37_postgres_approval_policy_control_store_map.png) | 1600×1000 | 不适用 / 2026-08-29 04:40:39 +08:00 | `B-local-derived-documentation-visual`；由同名 SVG 用 rsvg 1600×1000 确定性渲染，便于本地浏览器与后续 Notion 审阅 | `c02a1da387ce` |
+
+| [`35_local_im_acceptance_desktop.png`](35_local_im_acceptance_desktop.png) | 1440×1000 | 2026-08-29 / local_pending | `B-local-runtime-product-evidence`；任意自定义指令提交后的父群工作卡、Agent 子群和回复 | `32b7b69c4bd4` |
+| [`36_local_im_acceptance_mobile.png`](36_local_im_acceptance_mobile.png) | 390×844 | 2026-08-29 / local_pending | `B-local-runtime-product-evidence`；移动 viewport 下的同一自定义指令验收结果 | `53a26a561f94` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件

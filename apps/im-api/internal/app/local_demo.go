@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,6 +15,9 @@ import (
 )
 
 const maxLocalDemoRequestBytes = 8 * 1024
+
+//go:embed local_demo.html
+var localDemoHTML []byte
 
 // NewLocalDemo constructs the loopback-only, credential-free IM acceptance surface. The fake
 // Clerk and RongCloud-shaped adapters make zero network calls.
@@ -28,6 +32,11 @@ func NewLocalDemo() (*fiber.App, error) {
 }
 
 func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
+	server.Get("/demo/im", func(ctx fiber.Ctx) error {
+		ctx.Set(fiber.HeaderContentType, fiber.MIMETextHTMLCharsetUTF8)
+		ctx.Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+		return ctx.Send(localDemoHTML)
+	})
 	server.Get("/api/v1/demo/im", func(ctx fiber.Ctx) error {
 		return httpapi.WriteSuccess(ctx, demo.Snapshot())
 	})
