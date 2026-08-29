@@ -157,11 +157,10 @@ class ResultAcceptancePreparationTests(unittest.TestCase):
                 with self.assertRaisesRegex(TypeError, "cannot be (copied|serialized)"):
                     operation()
 
-    def test_private_preparation_adds_no_package_writer_or_accepted_surface(self) -> None:
+    def test_private_preparation_adds_no_package_writer_surface(self) -> None:
         for name in (
             "_PreparedScopedInvocationResultAcceptanceV2",
             "_prepare_scoped_invocation_result_acceptance_v2",
-            "ScopedInvocationResultAcceptedV2",
             "accept_scoped_invocation_result_v2",
         ):
             with self.subTest(name=name):

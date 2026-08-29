@@ -50,6 +50,7 @@ from ._result_acceptance import (
     _FreshResultAcceptanceWritePlanV2,
     _IdentifiedFreshResultAcceptancePlanV2,
     _MaterializedFreshResultAcceptancePlanV2,
+    _prepare_scoped_invocation_result_acceptance_v2,
     _PreparedScopedInvocationResultAcceptanceV2,
     _ResultAcceptanceConflictError,
     _ResultAcceptanceIntegrityError,
@@ -136,6 +137,9 @@ from .invocation_results import (
     ScopedInvocationResultAcceptanceRequestV2 as _ScopedInvocationResultAcceptanceRequestV2,
 )
 from .invocation_results import (
+    ScopedInvocationResultAcceptedV2 as _ScopedInvocationResultAcceptedV2,
+)
+from .invocation_results import (
     ScopedInvocationResultArtifactCandidateV2 as _ScopedInvocationResultArtifactCandidateV2,
 )
 from .invocation_results import (
@@ -158,6 +162,9 @@ from .invocation_results import (
 )
 from .invocation_results import (
     ScopedInvocationResultTerminalTransitionV2 as _ScopedInvocationResultTerminalTransitionV2,
+)
+from .invocation_results import (
+    _new_scoped_invocation_result_accepted_v2 as _new_scoped_invocation_result_accepted_v2,
 )
 from .invocation_results import (
     build_scoped_invocation_result_receipt_v2 as _build_scoped_invocation_result_receipt_v2,
@@ -238,6 +245,17 @@ class ResultReconciliationResult:
             self,
             "observed",
             _ScopedInvocationResultObservedV2.from_dict(self.observed.to_dict()),
+        )
+
+
+class ResultAcceptanceDisabledError(RuntimeError):
+    """Raised when the opt-in result-acceptance writer is not enabled."""
+
+    code = "result_acceptance_disabled"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "scoped result acceptance is disabled until the opt-in result schema is enabled"
         )
 
 
@@ -2678,7 +2696,9 @@ class SQLiteEventStore:
                     result_manifest_digest,
                     artifact_count,
                     result_event_id,
-                    terminal_event_id
+                    terminal_event_id,
+                    result_event_global_position,
+                    terminal_event_global_position
                 FROM main.invocation_result_receipts
                 WHERE request_digest = ?
                    OR invocation_id = ?
@@ -2905,6 +2925,20 @@ class SQLiteEventStore:
                 """,
                 (receipt_id,),
             ).fetchone()
+            outbox_count = connection.execute(
+                """
+                SELECT count(*) AS row_count
+                FROM main.outbox
+                WHERE triggering_event_id IN (?, ?)
+                   OR triggering_global_position IN (?, ?)
+                """,
+                (
+                    receipt_row["result_event_id"],
+                    receipt_row["terminal_event_id"],
+                    receipt_row["result_event_global_position"],
+                    receipt_row["terminal_event_global_position"],
+                ),
+            ).fetchone()
             counts = (
                 _persisted_integer(manifest_count["row_count"], "result manifest rows"),
                 _persisted_integer(artifact_counts["row_count"], "result artifact rows"),
@@ -2925,6 +2959,7 @@ class SQLiteEventStore:
                     publication_count["row_count"],
                     "result publication rows",
                 ),
+                _persisted_integer(outbox_count["row_count"], "result outbox rows"),
             )
         except (IndexError, KeyError, TypeError, ValueError, sqlite3.Error):
             raise _ResultAcceptanceIntegrityError(
@@ -2939,7 +2974,9 @@ class SQLiteEventStore:
             or counts[1] != artifact_count
             or (counts[2], counts[3]) != expected_ordinals
             or counts[4] != artifact_count
-            or counts[5:] != (2, 1, 1, 2, 1)
+            or counts[5:9] != (2, 1, 1, 2)
+            or counts[9] not in (0, 1)
+            or counts[10] != counts[9]
         ):
             raise _ResultAcceptanceQuarantineError(
                 "result acceptance durable graph is partial",
@@ -5220,6 +5257,72 @@ class SQLiteEventStore:
                 "result acceptance readback SQLite integrity check failed"
             )
         self._require_current_process()
+
+    @_bind_event_store_process
+    def _accepted_result_process_guard(self) -> None:
+        """Validate the creating process before an Accepted proof is read."""
+
+        self._require_current_process()
+
+    @_bind_event_store_process
+    def accept_scoped_invocation_result_v2(
+        self,
+        request: _ScopedInvocationResultAcceptanceRequestV2,
+        claimed: ScopedInvocationStartClaimedV3,
+    ) -> _ScopedInvocationResultAcceptedV2 | _ScopedInvocationResultObservedV2:
+        """Atomically accept one scoped PURE result or return an existing observation.
+
+        The opt-in migration-7 store is the only composition allowed to call this
+        candidate writer.  A fresh result is classified as ``AcceptedV2`` only after
+        the owner transaction has persisted the complete graph, completed the job and
+        attempt CAS, performed readback, and received a normal COMMIT acknowledgement.
+        Existing graphs are re-read after the transaction and return ``ObservedV2``;
+        they never mint a fresh-commit classification.
+        """
+
+        if not self._result_acceptance_schema_enabled:
+            raise ResultAcceptanceDisabledError() from None
+        prepared = _prepare_scoped_invocation_result_acceptance_v2(request, claimed)
+        existing = False
+        receipt: Optional[_ScopedInvocationResultReceiptV2] = None
+        with self._result_artifact_transaction() as handle:
+            with self._complete_result_acceptance_job_and_attempt_in_owner_transaction(
+                handle,
+                prepared,
+            ) as completed:
+                if type(completed) is _ExistingResultAcceptanceGraphCandidateV2:
+                    existing = True
+                elif type(completed) is _CompletedFreshResultAcceptancePlanV2:
+                    _persisted, durable_receipt = completed._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    receipt = _ScopedInvocationResultReceiptV2.from_dict(
+                        durable_receipt.to_dict()
+                    )
+                else:  # pragma: no cover - the private plan union is closed above.
+                    raise _ResultAcceptanceIntegrityError(
+                        "result acceptance completion returned an unsupported plan"
+                    )
+        self._require_current_process()
+        if existing:
+            observed = self.read_scoped_invocation_result_observed_v2(
+                prepared.request.manifest.tenant_id,
+                prepared.request.manifest.workspace_id,
+                prepared.request.manifest.invocation_id,
+            )
+            if type(observed) is not _ScopedInvocationResultObservedV2:
+                raise _ResultAcceptanceIntegrityError(
+                    "existing result acceptance graph disappeared during observation"
+                )
+            return observed
+        if type(receipt) is not _ScopedInvocationResultReceiptV2:
+            raise _ResultAcceptanceIntegrityError(
+                "fresh result acceptance completed without a durable receipt"
+            )
+        return _new_scoped_invocation_result_accepted_v2(
+            receipt,
+            self._accepted_result_process_guard,
+        )
 
     @_bind_event_store_process
     def read_scoped_invocation_result_observed_v2(

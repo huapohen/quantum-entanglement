@@ -83,6 +83,7 @@ from .invocation_recovery import (
 from .invocation_results import (
     EMPTY_ACTION_RECEIPT_SET_DIGEST,
     SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION,
+    ScopedInvocationResultAcceptedV2,
     ScopedInvocationResultArtifactV2,
     ScopedInvocationResultManifestV2,
 )
@@ -236,6 +237,7 @@ from .store import (
     InvocationStartConflictError,
     InvocationStartTransactionError,
     ReservedResultEventError,
+    ResultAcceptanceDisabledError,
     ResultReconciliationConflictError,
     ResultReconciliationOutcome,
     ResultReconciliationResult,
@@ -468,6 +470,7 @@ __all__ = [
     "ResultReconciliationConflictError",
     "ResultReconciliationOutcome",
     "ResultReconciliationResult",
+    "ResultAcceptanceDisabledError",
     "ReservedResultEventError",
     "RiskLevel",
     "ResourceRef",
@@ -496,6 +499,7 @@ __all__ = [
     "StoredOutboxMessage",
     "ScopedInvocationExecutionManifestV2",
     "ScopedInvocationResultArtifactV2",
+    "ScopedInvocationResultAcceptedV2",
     "ScopedInvocationResultManifestV2",
     "ScopedInvocationStartClaimedV3",
     "ScopedInvocationStartEvidenceV3",

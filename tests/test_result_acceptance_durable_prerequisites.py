@@ -3141,7 +3141,6 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             "_complete_result_acceptance_job_and_attempt_in_owner_transaction",
             "_construct_result_acceptance_terminal_transition_in_owner_transaction",
             "accept_scoped_invocation_result_v2",
-            "ScopedInvocationResultAcceptedV2",
         ):
             with self.subTest(name=name):
                 self.assertNotIn(name, quantum_entanglement.__all__)
