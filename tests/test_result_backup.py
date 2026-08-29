@@ -178,6 +178,68 @@ finally:
                 {"reconciliation": "reconciled", "stable": True},
             )
 
+    def test_backup_uses_a_consistent_snapshot_while_a_second_connection_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.sqlite3"
+            backup = root / "backup.sqlite3"
+            self._create_active_source(source)
+
+            writer = sqlite3.connect(source, isolation_level=None, timeout=5)
+            writer.row_factory = sqlite3.Row
+            try:
+                original = writer.execute(
+                    "SELECT accepted_at FROM invocation_result_receipts"
+                ).fetchone()
+                self.assertIsNotNone(original)
+                assert original is not None
+                writer.execute("BEGIN IMMEDIATE")
+                event_ids = writer.execute(
+                    "SELECT result_event_id, terminal_event_id FROM invocation_result_receipts"
+                ).fetchone()
+                self.assertIsNotNone(event_ids)
+                assert event_ids is not None
+                writer.execute(
+                    """
+                    UPDATE invocation_result_receipts
+                    SET accepted_at = ?, result_event_timestamp = ?, terminal_event_timestamp = ?
+                    """,
+                    (
+                        "2026-08-29T12:34:56.000000Z",
+                        "2026-08-29T12:34:56.000000Z",
+                        "2026-08-29T12:34:56.000000Z",
+                    ),
+                )
+                writer.execute(
+                    "UPDATE events SET timestamp = ? WHERE event_id IN (?, ?)",
+                    (
+                        "2026-08-29T12:34:56.000000Z",
+                        event_ids["result_event_id"],
+                        event_ids["terminal_event_id"],
+                    ),
+                )
+
+                # The backup reader must see the last committed snapshot, not the
+                # uncommitted write held by this independent connection.
+                create_result_backup(
+                    source,
+                    backup,
+                    clock=lambda: "2026-08-29T12:00:00.000000Z",
+                )
+                writer.rollback()
+            finally:
+                writer.close()
+
+            verify_result_backup(backup)
+            backup_connection = sqlite3.connect(backup)
+            try:
+                copied = backup_connection.execute(
+                    "SELECT accepted_at FROM invocation_result_receipts"
+                ).fetchone()
+            finally:
+                backup_connection.close()
+            self.assertEqual(copied[0], original["accepted_at"])
+
     def test_manifest_round_trip_is_canonical_and_tamper_evident(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.sqlite3"
