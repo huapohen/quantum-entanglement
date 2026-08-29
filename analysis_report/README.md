@@ -130,7 +130,7 @@ business projection 候选；下一步是认证作用域、crash/kill/two-proces
 | `research/30_stored_event_envelope_store_adapter_evidence.md` | E3 Result Authority M3 代码证据：`504824c` | private typed write-snapshot/raw-row 双验、fresh isolated insert、trigger/exception/API 对抗收口、209 项三 Python 组合专项与 2,578 项全仓门禁 |
 | `research/31_inactive_result_schema_artifact_transaction_evidence.md` | E3 Result Authority M4 代码证据：`aef5f8b` | inactive migration 7、private backup topology、Artifact owner transaction、crash/ambiguity/bounded-history 证据、82 项组合专项、2,639 项全仓门禁与最终 0-blocker 复核 |
 | `research/32_result_acceptance_worker_seam_evidence.md` | E3 Result Authority M7/worker seam：`7bed2b6` | opt-in store-owned acceptance、fresh-ACK `AcceptedV2`、replay/ACK-loss `ObservedV2`、接受期间 heartbeat fencing 与 exact request 门禁；生产 worker/projection 仍关闭 |
-| `../docs/production/RESULT_BUSINESS_PROJECTION.md` | E3 M7.5 result-only business projection 候选 | leased projector、scope/terminal binding、幂等、schema pinning、fork process binding、dual-connection fencing、SIGKILL recovery 与 fail-closed 安全边界 |
+| `../docs/production/RESULT_BUSINESS_PROJECTION.md` | E3 M7.5 result-only business projection 候选 | leased projector、scope/terminal binding、幂等、schema pinning、identity/终态绑定漂移拒绝、fork process binding、dual-connection fencing、SIGKILL recovery 与 fail-closed 安全边界 |
 
 ## 已归档截图
 

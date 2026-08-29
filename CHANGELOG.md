@@ -155,6 +155,9 @@ production gate and does not authorize a real connector or external message.
   dual-connection lease fencing, durable-offset reopen behavior and a real SIGKILL-after-claim
   recovery regression. The projection remains a candidate and is not wired into production
   composition or authenticated APIs.
+- Result projection terminal transitions now re-check session/plan/task/agent identity,
+  accepted timestamp, and globally unique receipt/result/terminal event identities before changing
+  the business state.
 
 ### Changed
 

@@ -34,7 +34,7 @@ Passing unit tests alone is necessary but not sufficient.
 ## Current E3 result-authority checkpoint (2026-08-29)
 
 The independent branch `mainline_continue_quantum_entanglement` currently carries a private M5/M7.5
-checkpoint plus the explicit migration-7 activation kernel (latest pushed HEAD `7a01f6b`). It has a
+checkpoint plus the explicit migration-7 activation kernel (latest pushed code HEAD `a1eb218`). It has a
 single-owner atomic result graph for result and terminal events, manifest/request/receipt, Artifact
 blob/version/binding, and succeeded job/attempt CAS; fault injection covers every result DML boundary
 and both confirmed-rollback and commit-ACK-loss outcomes. A capability-free `ObservedV2` readback
@@ -54,7 +54,7 @@ fresh COMMIT ACK and returns `ObservedV2` for replay/readback; the supervisor ca
 fencing through a caller-supplied acceptor. The next release-blocking work is authenticated
 projection scope, crash/kill and two-process evidence, clean-host restore/replay, compatibility
 policy and the receipt-bound worker gate. The result-only business projection candidate now has process binding,
-dual-connection lease fencing and one real SIGKILL-after-claim recovery test; authenticated scope,
+strict result/terminal identity binding, dual-connection lease fencing and one real SIGKILL-after-claim recovery test; authenticated scope,
 full-system kill/two-process recovery, clean-host restore/replay and production composition remain
 closed.
 
