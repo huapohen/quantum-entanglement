@@ -46,11 +46,14 @@ curl --fail \
 ```text
 GOTOOLCHAIN=local GOPROXY=off go test ./apps/im-api/internal/localdemo ./apps/im-api/internal/app -count=1
 GOTOOLCHAIN=local GOPROXY=off go test -race ./apps/im-api/internal/localdemo -count=1
+(cd apps/im-api && GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly go test ./... -count=1)
+(cd apps/im-api && GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly go vet ./...)
 npm run build                         # clients/im-web
 git diff --check
 ```
 
-上述命令在本检查点均通过。浏览器实际验收截图（本地 Git 忽略目录，不会进入业务仓库）为：
+上述命令在本检查点均通过（包括完整 Go 模块测试和 `go vet`）。浏览器实际验收截图（本地 Git
+忽略目录，不会进入业务仓库）为：
 
 - `output/playwright/im_web_agent_store_20260830.png`：Agent Store 动态投影；
 - `output/playwright/im_web_agent_invited_group_20260830.png`：创建群时邀请 Agent；
