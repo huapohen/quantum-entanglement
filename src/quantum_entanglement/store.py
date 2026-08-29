@@ -37,7 +37,6 @@ from typing import (
 )
 
 from . import process_identity as _process_identity
-from ._inactive_invocation_results_migration import _KNOWN_INVOCATION_RESULTS_MIGRATIONS
 from ._result_acceptance import (
     _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
     _build_scoped_invocation_result_events_from_plan_v2,
@@ -2330,6 +2329,10 @@ class SQLiteEventStore:
             )
             self._require_current_process()
             if self._result_acceptance_schema_enabled:
+                from ._inactive_invocation_results_migration import (
+                    _KNOWN_INVOCATION_RESULTS_MIGRATIONS,
+                )
+
                 _apply_sqlite_migrations_unregistered(
                     self._connection,
                     migrations=_KNOWN_INVOCATION_RESULTS_MIGRATIONS,
