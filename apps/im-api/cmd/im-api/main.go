@@ -47,7 +47,11 @@ func compose(
 ) (*fiber.App, func(), error) {
 	poolConfig, configured := settings.RuntimePostgres()
 	if !configured {
-		return wanworkapp.New(), func() {}, nil
+		server, err := wanworkapp.NewLocalDemo()
+		if err != nil {
+			return nil, nil, err
+		}
+		return server, func() {}, nil
 	}
 	pool, err := runtimepool.Open(ctx, poolConfig)
 	if err != nil {
