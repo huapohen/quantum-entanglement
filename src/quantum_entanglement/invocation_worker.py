@@ -484,6 +484,7 @@ class HeartbeatPureWorkerSupervisor:
                     return PureWorkerRunResult(PureWorkerOutcome.FAILED)
                 if acceptance is None:
                     return PureWorkerRunResult(PureWorkerOutcome.RETURNED, value=value)
+
                 async def call_acceptance() -> object:
                     if acceptance is None:  # pragma: no cover - narrowed above.
                         raise RuntimeError("result acceptance callback disappeared")

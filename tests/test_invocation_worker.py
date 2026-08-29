@@ -638,9 +638,9 @@ class HeartbeatPureWorkerSupervisorTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
             return object()
 
-        result = await HeartbeatPureWorkerSupervisor(
-            self.admission(), heartbeat=heartbeat
-        ).run(handler, acceptance=acceptance)
+        result = await HeartbeatPureWorkerSupervisor(self.admission(), heartbeat=heartbeat).run(
+            handler, acceptance=acceptance
+        )
         self.assertEqual(result.outcome, PureWorkerOutcome.ACCEPTANCE_FAILED)
         self.assertGreaterEqual(calls, 2)
         self.assertIsNone(result.value)

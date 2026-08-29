@@ -5296,9 +5296,7 @@ class SQLiteEventStore:
                     _persisted, durable_receipt = completed._validated(
                         token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
                     )
-                    receipt = _ScopedInvocationResultReceiptV2.from_dict(
-                        durable_receipt.to_dict()
-                    )
+                    receipt = _ScopedInvocationResultReceiptV2.from_dict(durable_receipt.to_dict())
                 else:  # pragma: no cover - the private plan union is closed above.
                     raise _ResultAcceptanceIntegrityError(
                         "result acceptance completion returned an unsupported plan"
