@@ -34,15 +34,16 @@ Passing unit tests alone is necessary but not sufficient.
 ## Current E3 result-authority checkpoint (2026-08-29)
 
 The independent branch `mainline_continue_quantum_entanglement` currently carries a private M5
-checkpoint (latest pushed HEAD `0d941eb`). It has a single-owner atomic result graph for result and
+checkpoint (latest pushed HEAD `b14ee77`). It has a single-owner atomic result graph for result and
 terminal events, manifest/request/receipt, Artifact blob/version/binding, and succeeded job/attempt
 CAS; fault injection covers every result DML boundary and both confirmed-rollback and commit-ACK-loss
 outcomes. A capability-free `ObservedV2` readback reconstructs and verifies the graph without a
 plaintext lease, DML, publication or fresh write authority, and classifies unusable graphs as
 `partial`, `drift` or `orphan`.
 
-This is still an inactive migration-7 rehearsal. A normal file-store reopen is intentionally refused
-until migration activation and compatibility evidence are delivered. Therefore this checkpoint is
+This is still an inactive migration-7 rehearsal. A default feature-off file-store reopen is
+intentionally refused until migration activation and compatibility evidence are delivered; the
+explicit `enable_result_acceptance_schema=True` mode is rehearsal-only. Therefore this checkpoint is
 not a production service, does not enable `AcceptedV2`, worker dispatch, publication, real IM or
 external outbound, and must not be counted as a closed Gate A–E. The next release-blocking work is
 migration activation plus reopen/ACK-loss/crash recovery evidence, followed by the receipt-bound

@@ -3,7 +3,8 @@
 Status: implemented as a private pre-commit verifier plus a capability-free `ObservedV2`
 readback path. Migration 7, the public result writer, `AcceptedV2`, publication and worker
 dispatch remain disabled. The normal store reopen path is deliberately blocked while migration
-7 is inactive; same-process readback is the only executable observation path in this checkpoint.
+7 is inactive in the default legacy store; an explicit `enable_result_acceptance_schema=True`
+opt-in is available only for this private rehearsal and is not a production promotion switch.
 
 This document records the local checkpoint delivered by commits `3847594`, `034ceea` and `0d941eb`, plus the unmerged
 working tree on branch `mainline_continue_quantum_entanglement`. It is the source of
@@ -103,10 +104,13 @@ the store and preserves the committed graph for reconciliation; a commit failure
 is confirmed reports a rolled-back transaction and leaves no result or Artifact prefix. No control
 exception graph is copied into the public error.
 
-Migration 7 is still an inactive candidate and is intentionally not in the active legacy registry.
-Consequently a file database containing the rehearsal schema cannot be opened by an ordinary
-`SQLiteEventStore` instance yet; activating migration 7, adding its upgrade/rollback contract,
-and then proving reopen/recovery is a separate release gate, not something this checkpoint hides.
+Migration 7 is still an inactive candidate and is intentionally not in the default legacy
+registry. A file database containing the rehearsal schema is rejected by a default
+`SQLiteEventStore`; the private `enable_result_acceptance_schema=True` constructor opt-in uses the
+trusted candidate registry to rehearse forward apply and reopen. That opt-in does not activate the
+public migration, backup contract or result API. A reviewed migration activation, sidecar/domain
+metadata contract, compatibility/rollback policy and production reopen/recovery evidence remain a
+separate release gate, not something this checkpoint hides.
 
 ## Tests and release gate
 

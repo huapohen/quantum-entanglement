@@ -435,7 +435,9 @@ store 并保留已提交图，确认 rollback 则不留前缀。新增的 capabi
 仍是 inactive candidate，普通 file-store reopen 目前会被 schema-version gate 拒绝；迁移注册、
 reopen/recovery、Accepted/public writer、publication 和 worker 仍未开启。运行合同见
 [`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md)，该段证据必须在 migration 7 激活后
-重新执行正常重开矩阵，不能把当前同进程验证当成生产恢复证明。
+重新执行正常重开矩阵，不能把当前同进程验证当成生产恢复证明。（其中默认 store 仍为
+feature-off；私有 `enable_result_acceptance_schema=True` 仅用于候选迁移的前向应用与 file
+reopen rehearsal，不代表 migration 7 已注册或生产启用。）
 
 仍缺：
 
