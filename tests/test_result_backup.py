@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -15,7 +16,9 @@ from quantum_entanglement.result_backup import (
     ResultBackupExistsError,
     ResultBackupIntegrityError,
     ResultBackupManifest,
+    ResultBackupPublicationState,
     create_result_backup,
+    recover_result_backup_publication,
     restore_result_backup,
     verify_result_backup,
 )
@@ -239,6 +242,97 @@ finally:
             finally:
                 backup_connection.close()
             self.assertEqual(copied[0], original["accepted_at"])
+
+    @unittest.skipUnless(
+        hasattr(os, "kill") and hasattr(signal, "SIGKILL"),
+        "requires POSIX",
+    )
+    def test_sigkill_at_each_result_backup_publication_boundary_is_recoverable(self) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        child_code = """
+import os
+import signal
+import sys
+import quantum_entanglement.result_backup as result_backup
+
+kill_after = int(sys.argv[3])
+real_link = result_backup.os.link
+calls = 0
+
+def kill_after_boundary(source, target):
+    global calls
+    calls += 1
+    result = real_link(source, target)
+    if calls == kill_after:
+        os.kill(os.getpid(), signal.SIGKILL)
+    return result
+
+result_backup.os.link = kill_after_boundary
+result_backup.create_result_backup(sys.argv[1], sys.argv[2])
+"""
+        for boundary in (1, 2):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "source.sqlite3"
+                backup = root / "backup.sqlite3"
+                manifest = Path(str(backup) + ".manifest.json")
+                self._create_active_source(source)
+                child = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        child_code,
+                        str(source),
+                        str(backup),
+                        str(boundary),
+                    ],
+                    cwd=source_root,
+                    env={**os.environ, "PYTHONPATH": str(source_root / "src")},
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                )
+                self.assertEqual(child.returncode, -signal.SIGKILL, child.stderr)
+                private_temporaries = tuple(
+                    path
+                    for path in root.iterdir()
+                    if path.name.startswith((
+                        ".qe-result-backup-",
+                        ".qe-result-manifest-",
+                    ))
+                )
+                self.assertGreaterEqual(len(private_temporaries), 2)
+                recovered = recover_result_backup_publication(
+                    root,
+                    backup_path=backup,
+                    manifest_path=manifest,
+                )
+                self.assertEqual(recovered.preserved_temporary_paths, ())
+                self.assertEqual(
+                    recovered.state,
+                    (
+                        ResultBackupPublicationState.INCOMPLETE
+                        if boundary == 1
+                        else ResultBackupPublicationState.COMPLETE
+                    ),
+                )
+                self.assertEqual(
+                    tuple(
+                        path
+                        for path in root.iterdir()
+                        if path.name.startswith((
+                            ".qe-result-backup-",
+                            ".qe-result-manifest-",
+                        ))
+                    ),
+                    (),
+                )
+                if boundary == 1:
+                    self.assertFalse(backup.exists())
+                    self.assertTrue(manifest.exists())
+                else:
+                    verify_result_backup(backup, manifest_path=manifest)
 
     def test_manifest_round_trip_is_canonical_and_tamper_evident(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

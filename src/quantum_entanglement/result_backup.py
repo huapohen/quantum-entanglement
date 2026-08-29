@@ -17,6 +17,7 @@ import stat
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
@@ -35,6 +36,11 @@ RESULT_BACKUP_FORMAT = "qe.result-backup/1"
 MAX_RESULT_BACKUP_MANIFEST_BYTES = 1024 * 1024
 _BACKUP_ID_PATTERN = re.compile(r"backup_[0-9a-f]{32}\Z")
 _SHA256_HEX = frozenset("0123456789abcdef")
+_PRIVATE_TEMP_PREFIXES = (
+    ".qe-result-backup-",
+    ".qe-result-manifest-",
+    ".qe-result-restore-",
+)
 
 
 class ResultBackupError(RuntimeError):
@@ -47,6 +53,35 @@ class ResultBackupExistsError(ResultBackupError):
 
 class ResultBackupIntegrityError(ResultBackupError):
     """Raised when bytes, manifest evidence or restored topology differ."""
+
+
+class ResultBackupPublicationState(str, Enum):
+    """What an operator recovery scan could prove about one target pair."""
+
+    NOT_INSPECTED = "not_inspected"
+    ABSENT = "absent"
+    COMPLETE = "complete"
+    INCOMPLETE = "incomplete"
+    UNVERIFIED = "unverified"
+
+
+@dataclass(frozen=True)
+class ResultBackupPublicationRecovery:
+    """Evidence returned by a quiesced cleanup of owned publication temporaries."""
+
+    state: ResultBackupPublicationState
+    removed_temporary_paths: tuple[Path, ...]
+    preserved_temporary_paths: tuple[Path, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.state) is not ResultBackupPublicationState:
+            raise TypeError("result backup publication state must be exact")
+        for label, values in (
+            ("removed temporary paths", self.removed_temporary_paths),
+            ("preserved temporary paths", self.preserved_temporary_paths),
+        ):
+            if type(values) is not tuple or any(not isinstance(value, Path) for value in values):
+                raise TypeError(f"result backup {label} must be exact Path tuples")
 
 
 def _canonical_timestamp(value: object, label: str) -> str:
@@ -395,6 +430,114 @@ def _remove_owned(path: Path) -> None:
         return
 
 
+def _result_backup_directory(path: Path) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError as error:
+        raise ResultBackupIntegrityError("result backup recovery directory does not exist") from error
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise ResultBackupIntegrityError("result backup recovery directory must be a directory")
+
+
+def _path_present(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _unlink_owned_snapshot(path: Path, expected: os.stat_result) -> bool:
+    """Unlink only the exact regular file observed during the recovery scan."""
+
+    try:
+        current = path.lstat()
+    except FileNotFoundError:
+        return True
+    if (
+        current.st_dev != expected.st_dev
+        or current.st_ino != expected.st_ino
+        or current.st_mode != expected.st_mode
+        or current.st_size != expected.st_size
+    ):
+        return False
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return True
+    return True
+
+
+def recover_result_backup_publication(
+    directory_path: os.PathLike[str] | str,
+    *,
+    backup_path: os.PathLike[str] | str | None = None,
+    manifest_path: os.PathLike[str] | str | None = None,
+) -> ResultBackupPublicationRecovery:
+    """Clean owned publication temporaries after a quiesced process crash.
+
+    This is an operator/recovery operation: callers must stop concurrent backup and restore
+    writers first.  Only regular files with this module's private temporary prefixes are
+    removed, and each unlink is guarded by the original device/inode/size snapshot.  Published
+    targets are never deleted or overwritten.  When both target paths are supplied, the pair is
+    verified and classified as complete, absent, incomplete, or unverified.
+    """
+
+    directory = Path(directory_path)
+    _result_backup_directory(directory)
+    if backup_path is None and manifest_path is not None:
+        raise TypeError("manifest_path requires backup_path")
+    backup = Path(backup_path) if backup_path is not None else None
+    manifest = (
+        Path(manifest_path)
+        if manifest_path is not None
+        else (None if backup is None else Path(str(backup) + ".manifest.json"))
+    )
+    if backup is not None and backup.parent != directory:
+        raise ValueError("result backup target must be in the recovery directory")
+    if manifest is not None and manifest.parent != directory:
+        raise ValueError("result backup manifest must be in the recovery directory")
+
+    removed: list[Path] = []
+    preserved: list[Path] = []
+    try:
+        entries = sorted(directory.iterdir(), key=lambda item: item.name.encode("utf-8"))
+    except OSError as error:
+        raise ResultBackupError("result backup recovery directory could not be read") from error
+    for entry in entries:
+        if not any(entry.name.startswith(prefix) for prefix in _PRIVATE_TEMP_PREFIXES):
+            continue
+        try:
+            identity = entry.lstat()
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(identity.st_mode) or not _unlink_owned_snapshot(entry, identity):
+            preserved.append(entry)
+        else:
+            removed.append(entry)
+
+    state = ResultBackupPublicationState.NOT_INSPECTED
+    if backup is not None and manifest is not None:
+        backup_present = _path_present(backup)
+        manifest_present = _path_present(manifest)
+        if not backup_present and not manifest_present:
+            state = ResultBackupPublicationState.ABSENT
+        elif backup_present != manifest_present:
+            state = ResultBackupPublicationState.INCOMPLETE
+        else:
+            try:
+                verify_result_backup(backup, manifest_path=manifest)
+            except (ResultBackupError, OSError, TypeError, ValueError):
+                state = ResultBackupPublicationState.UNVERIFIED
+            else:
+                state = ResultBackupPublicationState.COMPLETE
+    return ResultBackupPublicationRecovery(
+        state=state,
+        removed_temporary_paths=tuple(removed),
+        preserved_temporary_paths=tuple(preserved),
+    )
+
+
 def _copy_file(source: Path, target_directory: Path, prefix: str) -> Path:
     descriptor, name = tempfile.mkstemp(prefix=prefix, dir=target_directory)
     os.close(descriptor)
@@ -559,7 +702,10 @@ __all__ = [
     "ResultBackupExistsError",
     "ResultBackupIntegrityError",
     "ResultBackupManifest",
+    "ResultBackupPublicationRecovery",
+    "ResultBackupPublicationState",
     "create_result_backup",
+    "recover_result_backup_publication",
     "restore_result_backup",
     "verify_result_backup",
 ]
