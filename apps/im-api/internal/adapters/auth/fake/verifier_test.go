@@ -14,16 +14,12 @@ func TestVerifierAuthenticatesFixtureWithoutTenantAuthority(t *testing.T) {
 	t.Parallel()
 	realm := mustRealm(t, "rlm_fake_auth")
 	now := time.Unix(1700000000, 0).UTC()
-	principal, err := im.ParseHumanPrincipalID("hpr_alice")
-	if err != nil {
-		t.Fatal(err)
-	}
 	verifier, err := New(Options{
 		Realm: realm, Issuer: "clerk.example", Audience: "wanwork-web",
 		Now: func() time.Time { return now },
 		Tokens: map[string]TokenFixture{
 			"header.payload.signature": {
-				ExternalSubject: "user_alice", PrincipalID: principal, SessionID: "sess_1",
+				ExternalSubject: "user_alice", SessionID: "sess_1",
 				IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
 			},
 		},
@@ -37,7 +33,7 @@ func TestVerifierAuthenticatesFixtureWithoutTenantAuthority(t *testing.T) {
 	}
 	if identity.ExternalRef.Provider() != im.IdentityProviderClerk ||
 		identity.ExternalRef.RealmID() != realm || identity.ExternalRef.SubjectID() != "user_alice" ||
-		identity.PrincipalID != principal || identity.SessionID != "sess_1" {
+		identity.SessionID != "sess_1" {
 		t.Fatalf("unexpected verified identity: %#v", identity)
 	}
 	if err := identity.Validate(verifier.Profile(), now); err != nil {
@@ -57,10 +53,6 @@ func TestVerifierRejectsExpiredOrMalformedFixturesAndClose(t *testing.T) {
 	t.Parallel()
 	realm := mustRealm(t, "rlm_fake_auth")
 	now := time.Unix(1700000000, 0).UTC()
-	principal, err := im.ParseHumanPrincipalID("hpr_alice")
-	if err != nil {
-		t.Fatal(err)
-	}
 	base := func() Options {
 		return Options{
 			Realm: realm, Issuer: "clerk.example", Audience: "wanwork-web",
@@ -70,7 +62,7 @@ func TestVerifierRejectsExpiredOrMalformedFixturesAndClose(t *testing.T) {
 	bad := base()
 	bad.Tokens = map[string]TokenFixture{
 		"header.payload.signature": {
-			ExternalSubject: "not-clerk-subject", PrincipalID: principal, SessionID: "sess_1",
+			ExternalSubject: "not-clerk-subject", SessionID: "sess_1",
 			IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 		},
 	}
@@ -80,7 +72,7 @@ func TestVerifierRejectsExpiredOrMalformedFixturesAndClose(t *testing.T) {
 	expired := base()
 	expired.Tokens = map[string]TokenFixture{
 		"header.payload.signature": {
-			ExternalSubject: "user_alice", PrincipalID: principal, SessionID: "sess_1",
+			ExternalSubject: "user_alice", SessionID: "sess_1",
 			IssuedAt: now.Add(-time.Hour), ExpiresAt: now.Add(-time.Minute),
 		},
 	}

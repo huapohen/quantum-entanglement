@@ -611,7 +611,7 @@ func findMessageIndex(messages []localMessage, messageID im.MessageID) int {
 
 func (service *Service) verifyRequester(ctx context.Context, bearerToken string) error {
 	identity, err := service.authVerifier.Verify(ctx, authVerifyRequest(bearerToken))
-	if err != nil || identity.PrincipalID != service.installation.InstalledBy() {
+	if err != nil || identity.ExternalRef.SubjectID() != LocalExternalSubject {
 		return ErrUnauthenticated
 	}
 	return nil

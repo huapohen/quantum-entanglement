@@ -30,8 +30,9 @@ var (
 )
 
 const (
-	LocalBearerToken    = "demo.local.signature"
-	maxInstructionBytes = 4096
+	LocalBearerToken     = "demo.local.signature"
+	LocalExternalSubject = "user_local_demo"
+	maxInstructionBytes  = 4096
 )
 
 type MentionInput struct {
@@ -93,13 +94,12 @@ func New() (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	principal := installation.InstalledBy()
 	verifier, err := authfake.New(authfake.Options{
 		Realm: realm, Issuer: "clerk.local-demo", Audience: "wanwork-local-demo",
 		Now: func() time.Time { return time.Now().UTC() },
 		Tokens: map[string]authfake.TokenFixture{
 			LocalBearerToken: {
-				ExternalSubject: "user_local_demo", PrincipalID: principal, SessionID: "sess_local_demo",
+				ExternalSubject: LocalExternalSubject, SessionID: "sess_local_demo",
 				IssuedAt: now.Add(-time.Hour), ExpiresAt: now.Add(24 * time.Hour),
 			},
 		},
@@ -211,7 +211,7 @@ func (service *Service) Mention(
 		return MentionResult{}, ErrInvalidInput
 	}
 	identity, err := service.authVerifier.Verify(ctx, auth.VerifyRequest{BearerToken: bearerToken})
-	if err != nil || identity.PrincipalID != service.installation.InstalledBy() {
+	if err != nil || identity.ExternalRef.SubjectID() != LocalExternalSubject {
 		return MentionResult{}, ErrUnauthenticated
 	}
 	instructionDigest := sha256.Sum256([]byte(input.Instruction))

@@ -63,13 +63,9 @@ func TestVerifiedIdentityIsTimeBoundAndRealmBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := im.ParseHumanPrincipalID("hpr_alice")
-	if err != nil {
-		t.Fatal(err)
-	}
 	issued := time.Unix(1700000000, 0).UTC()
 	valid := VerifiedIdentity{
-		ExternalRef: external, PrincipalID: principal, SessionID: "sess_1",
+		ExternalRef: external, SessionID: "sess_1",
 		IssuedAt: issued, ExpiresAt: issued.Add(time.Hour),
 	}
 	if err := valid.Validate(profile, issued.Add(10*time.Minute)); err != nil {

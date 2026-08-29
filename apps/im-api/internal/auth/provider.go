@@ -1,8 +1,8 @@
 // Package auth defines the provider-neutral authentication boundary for the native IM.
 //
-// The port returns only a verified Clerk subject and global human-principal mapping. It does not
-// carry tenant membership, conversation ACL, Agent installation, or any other platform authority;
-// those facts must be resolved again by the platform at action time.
+// The port returns only a verified Clerk subject. It does not carry a platform principal mapping,
+// tenant membership, conversation ACL, Agent installation, or any other platform authority; those
+// facts must be resolved again by the platform at action time.
 package auth
 
 import (
@@ -109,7 +109,6 @@ func (request VerifyRequest) Validate(profile ProviderProfile) error {
 // mapping must still be joined to current tenant membership and policy before any command runs.
 type VerifiedIdentity struct {
 	ExternalRef im.ExternalIdentityRef
-	PrincipalID im.HumanPrincipalID
 	SessionID   string
 	IssuedAt    time.Time
 	ExpiresAt   time.Time
@@ -118,7 +117,7 @@ type VerifiedIdentity struct {
 func (identity VerifiedIdentity) Validate(profile ProviderProfile, now time.Time) error {
 	if profile.Provider != im.IdentityProviderClerk || identity.ExternalRef.IsZero() ||
 		identity.ExternalRef.Provider() != profile.Provider || identity.ExternalRef.RealmID() != profile.Realm ||
-		identity.PrincipalID.IsZero() || !opaqueIDPattern.MatchString(identity.SessionID) ||
+		!opaqueIDPattern.MatchString(identity.SessionID) ||
 		len(identity.SessionID) > MaxSessionIDBytes || identity.IssuedAt.IsZero() || identity.ExpiresAt.IsZero() ||
 		identity.IssuedAt.Location() != time.UTC || identity.ExpiresAt.Location() != time.UTC ||
 		!now.IsZero() && now.Location() != time.UTC || !identity.ExpiresAt.After(identity.IssuedAt) {

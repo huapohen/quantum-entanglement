@@ -15,7 +15,6 @@ type Clock func() time.Time
 
 type TokenFixture struct {
 	ExternalSubject string
-	PrincipalID     im.HumanPrincipalID
 	SessionID       string
 	IssuedAt        time.Time
 	ExpiresAt       time.Time
@@ -106,7 +105,7 @@ func (verifier *Verifier) Verify(ctx context.Context, request auth.VerifyRequest
 		return auth.VerifiedIdentity{}, auth.ErrInvalidToken
 	}
 	identity := auth.VerifiedIdentity{
-		ExternalRef: externalRef, PrincipalID: fixture.PrincipalID, SessionID: fixture.SessionID,
+		ExternalRef: externalRef, SessionID: fixture.SessionID,
 		IssuedAt: fixture.IssuedAt.UTC(), ExpiresAt: fixture.ExpiresAt.UTC(),
 	}
 	if err := identity.Validate(profile, verifier.now().UTC()); err != nil {
@@ -125,7 +124,7 @@ func (verifier *Verifier) Close() {
 }
 
 func (fixture TokenFixture) validate(profile auth.ProviderProfile) error {
-	if fixture.PrincipalID.IsZero() || fixture.IssuedAt.IsZero() || fixture.ExpiresAt.IsZero() ||
+	if fixture.IssuedAt.IsZero() || fixture.ExpiresAt.IsZero() ||
 		fixture.IssuedAt.Location() != time.UTC || fixture.ExpiresAt.Location() != time.UTC {
 		return auth.ErrInvalidRequest
 	}
@@ -137,8 +136,8 @@ func (fixture TokenFixture) validate(profile auth.ProviderProfile) error {
 	}
 	identity := auth.VerifiedIdentity{
 		ExternalRef: externalRef,
-		PrincipalID: fixture.PrincipalID, SessionID: fixture.SessionID,
-		IssuedAt: fixture.IssuedAt, ExpiresAt: fixture.ExpiresAt,
+		SessionID:   fixture.SessionID,
+		IssuedAt:    fixture.IssuedAt, ExpiresAt: fixture.ExpiresAt,
 	}
 	if err := identity.Validate(profile, time.Time{}); err != nil {
 		return auth.ErrInvalidRequest
