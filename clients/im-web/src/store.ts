@@ -1,8 +1,9 @@
 import { create } from "zustand";
-import type { Conversation, Message, MentionResult, RuntimeSnapshot } from "./api";
+import type { AgentStoreEntry, Conversation, Message, MentionResult, RuntimeSnapshot } from "./api";
 
 type UIState = {
   snapshot: RuntimeSnapshot | null;
+  agents: AgentStoreEntry[];
   conversations: Conversation[];
   selectedConversationId: string;
   messages: Message[];
@@ -10,6 +11,7 @@ type UIState = {
   loading: boolean;
   error: string;
   setSnapshot: (snapshot: RuntimeSnapshot) => void;
+  setAgents: (agents: AgentStoreEntry[]) => void;
   setConversations: (conversations: Conversation[]) => void;
   selectConversation: (conversationId: string) => void;
   setMessages: (messages: Message[]) => void;
@@ -20,6 +22,7 @@ type UIState = {
 
 export const useUIStore = create<UIState>((set) => ({
   snapshot: null,
+  agents: [],
   conversations: [],
   selectedConversationId: "",
   messages: [],
@@ -27,6 +30,7 @@ export const useUIStore = create<UIState>((set) => ({
   loading: false,
   error: "",
   setSnapshot: (snapshot) => set({ snapshot }),
+  setAgents: (agents) => set({ agents }),
   setConversations: (conversations) => set({ conversations }),
   selectConversation: (selectedConversationId) => set({ selectedConversationId, messages: [], mention: null }),
   setMessages: (messages) => set({ messages }),

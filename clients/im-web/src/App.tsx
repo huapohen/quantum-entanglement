@@ -17,6 +17,7 @@ function conversationLabel(conversation: Conversation) {
 
 export function App() {
   const snapshot = useUIStore((state) => state.snapshot);
+  const agents = useUIStore((state) => state.agents);
   const conversations = useUIStore((state) => state.conversations);
   const selectedConversationId = useUIStore((state) => state.selectedConversationId);
   const messages = useUIStore((state) => state.messages);
@@ -24,6 +25,7 @@ export function App() {
   const loading = useUIStore((state) => state.loading);
   const error = useUIStore((state) => state.error);
   const setSnapshot = useUIStore((state) => state.setSnapshot);
+  const setAgents = useUIStore((state) => state.setAgents);
   const setConversations = useUIStore((state) => state.setConversations);
   const selectConversation = useUIStore((state) => state.selectConversation);
   const setMessages = useUIStore((state) => state.setMessages);
@@ -49,8 +51,9 @@ export function App() {
     setLoading(true);
     setError("");
     try {
-      const [runtime, page] = await Promise.all([api.snapshot(), api.conversations()]);
+      const [runtime, agentPage, page] = await Promise.all([api.snapshot(), api.agents(), api.conversations()]);
       setSnapshot(runtime);
+      setAgents(agentPage.agents);
       setConversations(page.conversations);
       const nextId = selectedConversationId || page.conversations[0]?.id || "";
       if (nextId) {
@@ -213,7 +216,7 @@ export function App() {
           </div>
           <div className="mt-auto border-t border-white/10 pt-4 text-xs text-slate-500">
             <div className="flex items-center justify-between"><span>身份</span><span className="text-slate-300">{snapshot?.humanActorId ?? "加载中"}</span></div>
-            <div className="mt-2 flex items-center justify-between"><span>Agent Store</span><span className="text-cyan">v0版研究 Agent</span></div>
+            <div className="mt-2 flex items-center justify-between"><span>Agent Store</span><span className="max-w-[170px] truncate text-right text-cyan">{agents[0]?.name ?? "加载中"}</span></div>
           </div>
         </aside>
 
@@ -270,7 +273,26 @@ export function App() {
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan">Agent Store</div>
             <h2 className="text-xl font-semibold text-white">让 Agent 像普通成员一样协作</h2>
             <p className="mt-2 text-sm leading-6 text-slate-400">@Agent 后创建父群关联的独立工作子群，过程和回复只进入子群；当前体验使用 v0版 fake provider。</p>
-            <div className="mt-4 rounded-xl border border-violet/20 bg-violet/5 p-3 text-xs text-slate-300"><span className="text-violet">已安装</span><br />v0版研究 Agent · 1.0.0<br /><span className="text-slate-500">conversation.read · invoke</span></div>
+            <div className="mt-4 space-y-3">
+              {agents.length === 0 && <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-500">正在读取 Agent Store…</div>}
+              {agents.map((agent) => (
+                <div key={agent.installationId} className="rounded-xl border border-violet/20 bg-violet/5 p-3 text-xs text-slate-300">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-violet">{agent.name}</span>
+                    <span className="rounded-full border border-green-300/20 px-2 py-1 text-[10px] text-green-300">{agent.installationStatus}</span>
+                  </div>
+                  <div className="mt-2 leading-5 text-slate-400">{agent.summary}</div>
+                  <div className="mt-2 text-slate-500">release {agent.version} · actor {agent.agentActorId}</div>
+                  <div className="mt-2 border-t border-white/10 pt-2 text-slate-400">
+                    已授权：<span className="text-slate-200">{agent.grantedCapabilities.join(" · ") || "无"}</span>
+                  </div>
+                  <div className="mt-1 text-slate-500">
+                    数据路线：{agent.dataRoutes.map((route) => `${route.name} → ${route.destinations.join(", ")}`).join("；") || "无"}
+                  </div>
+                  <div className="mt-1 text-slate-500">Trust Passport：{agent.attestations.length} 项审阅声明 · {agent.passportStatus}</div>
+                </div>
+              ))}
+            </div>
           </section>
 
           <section className="panel p-5">

@@ -16,6 +16,37 @@ export type RuntimeSnapshot = {
   agentVersion: string;
 };
 
+export type AgentDataRoute = {
+  name: string;
+  direction: string;
+  classification: string;
+  destinations: string[];
+  retentionDays: number;
+};
+
+export type AgentStoreEntry = {
+  definitionId: string;
+  releaseId: string;
+  installationId: string;
+  name: string;
+  summary: string;
+  version: string;
+  definitionStatus: string;
+  releaseStatus: string;
+  passportStatus: string;
+  installationStatus: string;
+  agentActorId: string;
+  isolation: string;
+  requestedCapabilities: string[];
+  grantedCapabilities: string[];
+  dataRoutes: AgentDataRoute[];
+  attestations: string[];
+};
+
+export type AgentStorePage = {
+  agents: AgentStoreEntry[];
+};
+
 export type Conversation = {
   id: string;
   type: string;
@@ -104,6 +135,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   snapshot: () => request<RuntimeSnapshot>("/api/v1/demo/im"),
+  agents: () => request<AgentStorePage>("/api/v1/demo/im/agents"),
   conversations: () => request<ConversationPage>("/api/v1/demo/im/conversations?limit=50"),
   messages: (conversationId: string) =>
     request<MessagePage>(`/api/v1/demo/im/conversations/${encodeURIComponent(conversationId)}/messages?limit=100`),

@@ -33,6 +33,19 @@ http://127.0.0.1:18080/demo/im
 5. 核验 Agent 回复的 `conversationId` 等于子群 ID，并且不等于父群 ID；
 6. 再输入另一条指令，会按新的消息 ID 创建另一个子群。
 
+右侧 Agent Store 卡片不是前端固定文案，而是启动时从认证 API 读取的 definition、release、Trust
+Passport 和 installation 投影。可以在页面外用下面的请求复核同一份数据：
+
+```bash
+curl --fail \
+  -H 'Authorization: Bearer demo.local.signature' \
+  http://127.0.0.1:18080/api/v1/demo/im/agents
+```
+
+重点检查 `requestedCapabilities`（release 声明）与 `grantedCapabilities`（租户安装决定）分开，
+以及 `dataRoutes`、`attestations` 和 `installationStatus` 都来自后端投影；这些字段不会被当作
+凭据或 action-time 授权。
+
 当前回复是确定性的本地验收结果，不调用大模型。这里验证的是身份、Agent Store、群拓扑、ACL、幂等和 provider 边界；模型执行和真实 Clerk/融云网络接入属于后续生产适配阶段。
 
 ## 2.1 本地事件日志恢复验收（可选）

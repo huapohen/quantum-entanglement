@@ -76,6 +76,7 @@ type Service struct {
 	requester           im.ActorRef
 	requestAccess       im.ConversationAccessSnapshot
 	installation        agentstore.InstallationSnapshot
+	passport            agentstore.TrustPassport
 	requests            map[im.MessageID][sha256.Size]byte
 	knownActors         map[im.ActorID]im.ActorRef
 	conversations       map[im.ConversationID]*localConversation
@@ -175,7 +176,7 @@ func New() (*Service, error) {
 	return &Service{
 		authVerifier: verifier, provider: provider, coordinator: coordinator,
 		parent: parent, requester: requester, requestAccess: requestAccess,
-		installation: installation, requests: make(map[im.MessageID][sha256.Size]byte),
+		installation: installation, passport: passport, requests: make(map[im.MessageID][sha256.Size]byte),
 		knownActors: map[im.ActorID]im.ActorRef{
 			requester.ActorID(): requester, installation.AgentActor(): agentRef,
 		},

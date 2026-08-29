@@ -37,6 +37,16 @@ func TestLocalDemoHTTPVerticalSlice(t *testing.T) {
 		!strings.Contains(snapshot.Raw, `"mode":"zero-network-fake"`) {
 		t.Fatalf("snapshot response = %s", snapshot.Raw)
 	}
+	agents := localDemoRequest(t, server, http.MethodGet, "/api/v1/demo/im/agents", "", "Bearer "+localdemo.LocalBearerToken)
+	if agents.Code != httpapi.CodeOK || !strings.Contains(agents.Raw, `"name":"v0版研究 Agent"`) ||
+		!strings.Contains(agents.Raw, `"installationStatus":"active"`) ||
+		!strings.Contains(agents.Raw, `"attestations":["data_routes_reviewed","publisher_verified","security_reviewed"]`) {
+		t.Fatalf("agent store response = %s", agents.Raw)
+	}
+	unauthenticatedAgents := localDemoRequest(t, server, http.MethodGet, "/api/v1/demo/im/agents", "", "Bearer wrong.local.token")
+	if unauthenticatedAgents.Code != httpapi.CodeUnauthenticated || strings.Contains(unauthenticatedAgents.Raw, "wrong.local.token") {
+		t.Fatalf("unauthenticated agent store response = %s", unauthenticatedAgents.Raw)
+	}
 	body := `{"messageId":"msg_http_1","instruction":"调研竞品并输出证据表"}`
 	result := localDemoRequest(
 		t, server, http.MethodPost, "/api/v1/demo/im/mentions", body, "Bearer "+localdemo.LocalBearerToken,

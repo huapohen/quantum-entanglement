@@ -50,12 +50,24 @@ npm run dev
 ## 当前可验收范围
 
 - 左侧工作空间与群列表；
+- 从认证 Agent Store API 读取 Agent 定义、release、Trust Passport 和 installation 投影；
 - 新建普通群；
 - 普通文本发送、编辑、撤回和 reload 后的消息 projection；
 - `@v0版 Agent` 指令；
 - 父群关联的 Agent 子群、Invocation、工作卡状态和 Agent 回复；
 - 运行模式、auth provider、provider status 与 network-call 安全提示；
 - 窄屏响应式布局。
+
+启动后可用以下只读接口复核右侧 Agent Store 卡片（响应仍是 HTTP 200 envelope）：
+
+```bash
+curl --fail -H 'Authorization: Bearer demo.local.signature' \
+  http://127.0.0.1:18080/api/v1/demo/im/agents
+```
+
+本地响应中的 `requestedCapabilities` 是 Agent 发布版本声明，`grantedCapabilities` 是当前租户安装
+决定，`dataRoutes` 是经过声明的抽象数据路线，`attestations` 是 Trust Passport 的审阅声明；这些
+字段不会被客户端当作凭据，也不会改变 action-time 授权。
 
 ## 生产边界
 

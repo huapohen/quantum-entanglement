@@ -41,6 +41,13 @@ func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
 	server.Get("/api/v1/demo/im", func(ctx fiber.Ctx) error {
 		return httpapi.WriteSuccess(ctx, demo.Snapshot())
 	})
+	server.Get("/api/v1/demo/im/agents", func(ctx fiber.Ctx) error {
+		page, err := demo.ListAgents(ctx.Context(), bearerToken(ctx))
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, page)
+	})
 	server.Get("/api/v1/demo/im/conversations", func(ctx fiber.Ctx) error {
 		limit, err := localDemoQueryLimit(ctx.Query("limit"))
 		if err != nil {

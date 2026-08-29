@@ -37,6 +37,50 @@ func TestServiceRunsAuthenticatedMentionAndReplay(t *testing.T) {
 	}
 }
 
+func TestServiceListsAuthenticatedAgentStoreProjection(t *testing.T) {
+	t.Parallel()
+	service, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := service.ListAgents(context.Background(), LocalBearerToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Agents) != 1 {
+		t.Fatalf("agent store count = %d, want 1", len(page.Agents))
+	}
+	agent := page.Agents[0]
+	if agent.Name != "v0版研究 Agent" || agent.Version != "1.0.0" ||
+		agent.DefinitionStatus != "active" || agent.ReleaseStatus != "published" ||
+		agent.PassportStatus != "active" || agent.InstallationStatus != "active" ||
+		agent.AgentActorID != "agt_local_research" || agent.Isolation != "process" {
+		t.Fatalf("agent store projection = %#v", agent)
+	}
+	if len(agent.RequestedCapabilities) != 1 || agent.RequestedCapabilities[0] != "conversation.read" ||
+		len(agent.GrantedCapabilities) != 1 || agent.GrantedCapabilities[0] != "conversation.read" {
+		t.Fatalf("agent capabilities = %#v", agent)
+	}
+	if len(agent.DataRoutes) != 1 || agent.DataRoutes[0].Name != "conversation.context" ||
+		agent.DataRoutes[0].Classification != "confidential" || len(agent.DataRoutes[0].Destinations) != 2 {
+		t.Fatalf("agent data routes = %#v", agent.DataRoutes)
+	}
+	if len(agent.Attestations) != 3 {
+		t.Fatalf("agent attestations = %#v", agent.Attestations)
+	}
+}
+
+func TestServiceAgentStoreRejectsWrongToken(t *testing.T) {
+	t.Parallel()
+	service, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ListAgents(context.Background(), "wrong.local.token"); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("wrong token = %v", err)
+	}
+}
+
 func TestServiceRejectsAuthenticationValidationAndMessageDrift(t *testing.T) {
 	t.Parallel()
 	service, err := New()
