@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	authfake "github.com/huapohen/quantum-entanglement/apps/im-api/internal/adapters/auth/fake"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/adapters/httpapi"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 	store "github.com/huapohen/quantum-entanglement/apps/im-api/internal/imstore"
@@ -43,6 +45,7 @@ func TestRuntimeReadinessAndBusinessRouteBarrier(t *testing.T) {
 	server, err := NewRuntime(RuntimeDependencies{
 		Database:    probe,
 		Persistence: fakeTenantUnitOfWork{},
+		Verifier:    testVerifier(t),
 	})
 	if err != nil {
 		t.Fatalf("construct runtime server: %v", err)
@@ -95,6 +98,29 @@ func TestRuntimeReadinessAndBusinessRouteBarrier(t *testing.T) {
 	if probe.calls != 3 {
 		t.Fatalf("readiness probe calls = %d, want 3", probe.calls)
 	}
+}
+
+func testVerifier(t *testing.T) *authfake.Verifier {
+	t.Helper()
+	realm, err := im.ParseProviderRealmID("rlm_app_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	verifier, err := authfake.New(authfake.Options{
+		Realm: realm, Issuer: "clerk.test", Audience: "wanwork-test",
+		Now: func() time.Time { return now },
+		Tokens: map[string]authfake.TokenFixture{
+			"header.payload.signature": {
+				ExternalSubject: "user_alice", SessionID: "sess_app_test",
+				IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verifier
 }
 
 func TestNewRuntimeRejectsMissingDependencies(t *testing.T) {

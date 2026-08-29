@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/recover"
 
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/adapters/httpapi"
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/auth"
 	store "github.com/huapohen/quantum-entanglement/apps/im-api/internal/imstore"
 )
 
@@ -21,6 +22,7 @@ type ReadinessProbe interface {
 type RuntimeDependencies struct {
 	Database    ReadinessProbe
 	Persistence store.TenantUnitOfWork
+	Verifier    auth.Verifier
 }
 
 // New constructs the zero-network WanWork IM HTTP composition. External providers are not
@@ -33,7 +35,7 @@ func New() *fiber.App {
 // an action-time database readiness barrier; liveness remains independent so an orchestrator can
 // distinguish a running process from one that is safe to receive work.
 func NewRuntime(dependencies RuntimeDependencies) (*fiber.App, error) {
-	if dependencies.Database == nil || dependencies.Persistence == nil {
+	if dependencies.Database == nil || dependencies.Persistence == nil || dependencies.Verifier == nil {
 		return nil, ErrInvalidRuntimeDependencies
 	}
 	return newServer(&dependencies), nil
@@ -68,6 +70,7 @@ func newServer(runtime *RuntimeDependencies) *fiber.App {
 			}
 			return ctx.Next()
 		})
+		server.Use("/api/v1", httpapi.BearerAuthMiddleware(runtime.Verifier))
 	}
 	httpapi.RegisterSystemRoutes(server)
 
