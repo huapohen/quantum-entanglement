@@ -623,6 +623,51 @@ class HeartbeatPureWorkerSupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.outcome, PureWorkerOutcome.RETURNED)
         self.assertEqual(result.value, "pure-value")
 
+    async def test_heartbeat_continues_while_acceptance_callback_is_running(self) -> None:
+        calls = 0
+
+        async def heartbeat(_lease_seconds: float) -> bool:
+            nonlocal calls
+            calls += 1
+            return True
+
+        async def handler(_context: object) -> str:
+            return "structured-result"
+
+        async def acceptance(_value: object) -> object:
+            await asyncio.sleep(0.05)
+            return object()
+
+        result = await HeartbeatPureWorkerSupervisor(
+            self.admission(), heartbeat=heartbeat
+        ).run(handler, acceptance=acceptance)
+        self.assertEqual(result.outcome, PureWorkerOutcome.ACCEPTANCE_FAILED)
+        self.assertGreaterEqual(calls, 2)
+        self.assertIsNone(result.value)
+
+    async def test_run_and_accept_requires_exact_request_without_exposing_raw_value(
+        self,
+    ) -> None:
+        calls = 0
+
+        async def heartbeat(_lease_seconds: float) -> bool:
+            return True
+
+        async def handler(_context: object) -> str:
+            return "raw-handler-value"
+
+        async def acceptor(_request: object, _claim: object) -> object:
+            nonlocal calls
+            calls += 1
+            return object()
+
+        result = await HeartbeatPureWorkerSupervisor(
+            self.admission(), heartbeat=heartbeat
+        ).run_and_accept(handler, acceptor=acceptor)
+        self.assertEqual(result.outcome, PureWorkerOutcome.ACCEPTANCE_FAILED)
+        self.assertEqual(calls, 0)
+        self.assertIsNone(result.value)
+
     async def test_non_awaitable_handler_return_is_failed_without_heartbeat_replay(self) -> None:
         calls = 0
 

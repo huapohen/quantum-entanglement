@@ -25,6 +25,11 @@ from .invocation_execution import (
     ScopedInvocationExecutionManifestV2,
     ScopedInvocationStartClaimedV3,
 )
+from .invocation_results import (
+    ScopedInvocationResultAcceptanceRequestV2,
+    ScopedInvocationResultAcceptedV2,
+    ScopedInvocationResultObservedV2,
+)
 
 
 class InvocationWorkerDisabledError(RuntimeError):
@@ -281,6 +286,9 @@ class PureWorkerOutcome(str, Enum):
     LEASE_LOST = "lease_lost"
     TIMED_OUT = "timed_out"
     CANCELED = "canceled"
+    ACCEPTED = "accepted"
+    OBSERVED = "observed"
+    ACCEPTANCE_FAILED = "acceptance_failed"
 
 
 @dataclass(frozen=True)
@@ -330,6 +338,9 @@ class PureWorkerRunResult:
             PureWorkerOutcome.LEASE_LOST,
             PureWorkerOutcome.TIMED_OUT,
             PureWorkerOutcome.CANCELED,
+            PureWorkerOutcome.ACCEPTED,
+            PureWorkerOutcome.OBSERVED,
+            PureWorkerOutcome.ACCEPTANCE_FAILED,
         }:
             raise ValueError("pure worker outcome is unsupported")
         if type(self.drained) is not bool:
@@ -371,7 +382,7 @@ def _consume_task_result(task: asyncio.Task[object]) -> None:
 
 
 class HeartbeatPureWorkerSupervisor:
-    """Private PURE/fake heartbeat loop; it never accepts or publishes a result."""
+    """Private PURE/fake heartbeat loop with an optional result-acceptance seam."""
 
     def __init__(
         self,
@@ -413,13 +424,23 @@ class HeartbeatPureWorkerSupervisor:
         handler: Callable[[PureWorkerContext], Awaitable[object]],
         *,
         cancellation: asyncio.Event | None = None,
+        acceptance: Callable[[object], object] | None = None,
     ) -> PureWorkerRunResult:
-        """Run only after a first successful heartbeat and fence every late handler result."""
+        """Run after a first heartbeat and keep fencing active through acceptance.
+
+        ``acceptance`` is an internal composition callback.  It is called only for a
+        returned handler value while the heartbeat task is still running.  Its result
+        must be an exact ``AcceptedV2`` or ``ObservedV2``; all other values and all
+        callback failures become a sanitized non-success outcome.  The public gate
+        remains disabled, so this seam cannot dispatch product work by itself.
+        """
 
         if not callable(handler):
             raise TypeError("pure worker handler must be callable")
         if cancellation is not None and type(cancellation) is not asyncio.Event:
             raise TypeError("worker cancellation must be an exact asyncio.Event")
+        if acceptance is not None and not callable(acceptance):
+            raise TypeError("result acceptance callback must be callable")
         if cancellation is not None and cancellation.is_set():
             return PureWorkerRunResult(PureWorkerOutcome.CANCELED)
         if not await self._heartbeat_once():
@@ -461,7 +482,83 @@ class HeartbeatPureWorkerSupervisor:
                     value = handler_task.result()
                 except BaseException:
                     return PureWorkerRunResult(PureWorkerOutcome.FAILED)
-                return PureWorkerRunResult(PureWorkerOutcome.RETURNED, value=value)
+                if acceptance is None:
+                    return PureWorkerRunResult(PureWorkerOutcome.RETURNED, value=value)
+                async def call_acceptance() -> object:
+                    if acceptance is None:  # pragma: no cover - narrowed above.
+                        raise RuntimeError("result acceptance callback disappeared")
+                    return await _maybe_await(acceptance(value))
+
+                acceptance_task: asyncio.Task[object] = asyncio.create_task(call_acceptance())
+                acceptance_timeout = asyncio.create_task(
+                    asyncio.sleep(
+                        max(
+                            0.001,
+                            self.admission.configuration.lease_seconds
+                            - self.admission.configuration.handler_timeout_seconds,
+                        )
+                    )
+                )
+                acceptance_watchers: set[asyncio.Task[object]] = {
+                    acceptance_task,
+                    lost_waiter,
+                    acceptance_timeout,
+                }
+                if cancel_waiter is not None:
+                    acceptance_watchers.add(cancel_waiter)
+                acceptance_done, _ = await asyncio.wait(
+                    acceptance_watchers,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                try:
+                    if lost_waiter in acceptance_done:
+                        local_cancel.set()
+                        await _cancel_and_drain(
+                            acceptance_task,
+                            self.admission.configuration.drain_timeout_seconds,
+                        )
+                        return PureWorkerRunResult(PureWorkerOutcome.LEASE_LOST)
+                    if cancel_waiter is not None and cancel_waiter in acceptance_done:
+                        local_cancel.set()
+                        await _cancel_and_drain(
+                            acceptance_task,
+                            self.admission.configuration.drain_timeout_seconds,
+                        )
+                        return PureWorkerRunResult(PureWorkerOutcome.CANCELED)
+                    if acceptance_timeout in acceptance_done:
+                        local_cancel.set()
+                        drained = await _cancel_and_drain(
+                            acceptance_task,
+                            self.admission.configuration.drain_timeout_seconds,
+                        )
+                        return PureWorkerRunResult(
+                            PureWorkerOutcome.ACCEPTANCE_FAILED,
+                            drained=drained,
+                        )
+                    try:
+                        accepted_value = acceptance_task.result()
+                    except BaseException:
+                        return PureWorkerRunResult(PureWorkerOutcome.ACCEPTANCE_FAILED)
+                    if type(accepted_value) is ScopedInvocationResultAcceptedV2:
+                        return PureWorkerRunResult(
+                            PureWorkerOutcome.ACCEPTED,
+                            value=accepted_value,
+                        )
+                    if type(accepted_value) is ScopedInvocationResultObservedV2:
+                        return PureWorkerRunResult(
+                            PureWorkerOutcome.OBSERVED,
+                            value=accepted_value,
+                        )
+                    return PureWorkerRunResult(PureWorkerOutcome.ACCEPTANCE_FAILED)
+                finally:
+                    acceptance_timeout.cancel()
+                    if acceptance_task not in acceptance_done:
+                        acceptance_task.cancel()
+                    await asyncio.gather(
+                        acceptance_timeout,
+                        acceptance_task,
+                        return_exceptions=True,
+                    )
             else:  # pragma: no cover - asyncio.wait always returns one watcher.
                 outcome = PureWorkerOutcome.FAILED
             local_cancel.set()
@@ -481,6 +578,38 @@ class HeartbeatPureWorkerSupervisor:
                 *(watcher for watcher in watchers if watcher is not handler_task),
                 return_exceptions=True,
             )
+
+    async def run_and_accept(
+        self,
+        handler: Callable[[PureWorkerContext], Awaitable[object]],
+        *,
+        acceptor: Callable[
+            [ScopedInvocationResultAcceptanceRequestV2, ScopedInvocationStartClaimedV3],
+            object,
+        ],
+        cancellation: asyncio.Event | None = None,
+    ) -> PureWorkerRunResult:
+        """Run a structured result through a store-owned acceptance callback.
+
+        The handler may return only an exact capability-free acceptance request.  The
+        supervisor supplies its snapped start claim to the acceptor, so a handler cannot
+        substitute another invocation or lease.  This is a candidate composition seam;
+        the product dispatch gate is intentionally not connected to it.
+        """
+
+        if not callable(acceptor):
+            raise TypeError("result acceptor must be callable")
+
+        async def accept(value: object) -> object:
+            if type(value) is not ScopedInvocationResultAcceptanceRequestV2:
+                raise TypeError("pure worker result must be an exact result acceptance request")
+            return await _maybe_await(acceptor(value, self.admission.claim))
+
+        return await self.run(
+            handler,
+            cancellation=cancellation,
+            acceptance=accept,
+        )
 
 
 async def _disabled_dispatch() -> NoReturn:
