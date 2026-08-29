@@ -15,6 +15,7 @@ dist/
 build/
 *.egg-info/
 output/
+node_modules/
 
 # Scoped Go service build outputs. Module sums and contracts stay tracked.
 /apps/im-api/bin/

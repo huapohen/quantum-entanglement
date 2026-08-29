@@ -76,6 +76,10 @@ Artifact、Needs You、25 步事件时间线和三张内联 SVG 系统图；它�
 完整启动方式、页面导览、安全边界和故障排查见
 [`docs/LOCAL_PRODUCT_TRIAL.md`](docs/LOCAL_PRODUCT_TRIAL.md)。当前仍是本地体验，Gate A–E 全部关闭。
 
+当前第一版 React Web IM 客户端位于 [`clients/im-web`](clients/im-web)。推荐直接运行
+`./scripts/start_web_client.sh`，它会一条命令启动 Go API 与 Vite 页面；也可以按客户端 README
+中的双终端方式分别启动。当前可体验群聊、编辑/撤回和 `@v0版 Agent` 子群。
+
 当前没有可安装的 macOS/Windows/Linux、iPhone/iPad、Android 或鸿蒙原生 App；移动截图只是浏览器
 响应式 viewport 验收。平台现状、体验矩阵和原生客户端路线见
 [`docs/wanwork_im/MULTI_PLATFORM_STATUS.md`](docs/wanwork_im/MULTI_PLATFORM_STATUS.md)。

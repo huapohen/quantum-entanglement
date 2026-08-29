@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #07101f;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+body { min-width: 320px; margin: 0; background: radial-gradient(circle at 12% -10%, rgba(43, 197, 195, .18), transparent 34rem), radial-gradient(circle at 92% 0%, rgba(130, 101, 246, .2), transparent 36rem), #07101f; }
+button, textarea, input { font: inherit; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+
+@layer components {
+  .panel { @apply rounded-2xl border border-white/10 bg-panel/90 shadow-glow; }
+  .field { @apply rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan/50 focus:ring-2 focus:ring-cyan/10; }
+  .button-primary { @apply rounded-xl bg-cyan px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan/80; }
+  .button-secondary { @apply rounded-xl border border-white/10 bg-white/5 text-sm text-slate-200 transition hover:bg-white/10; }
+  .conversation-row { @apply flex w-full items-center gap-3 rounded-xl px-3 py-3 transition hover:bg-white/5; }
+  .conversation-row-active { @apply bg-cyan/10 ring-1 ring-cyan/20; }
+  .conversation-avatar { @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyan/30 to-violet/30 text-sm font-semibold text-cyan; }
+  .message-bubble { @apply max-w-[min(680px,90%)] rounded-2xl border px-4 py-3; }
+  .message-mine { @apply border-cyan/20 bg-cyan/10; }
+  .message-agent { @apply border-violet/20 bg-violet/10; }
+  .message-action { @apply text-[10px] text-slate-500 underline-offset-2 hover:text-cyan hover:underline; }
+  .empty-state { @apply rounded-2xl border border-dashed border-white/10 px-5 py-10 text-center text-sm leading-6 text-slate-500; }
+}
+
+.brand-mark { position: relative; display: flex; width: 34px; height: 34px; align-items: center; justify-content: center; gap: 2px; border: 1px solid rgba(107, 231, 227, .42); border-radius: 11px; background: linear-gradient(135deg, rgba(107, 231, 227, .2), rgba(177, 156, 255, .24)); box-shadow: inset 0 0 20px rgba(107, 231, 227, .12); }
+.brand-mark span { display: block; width: 12px; height: 12px; border: 1px solid currentColor; border-radius: 50%; }
+.brand-mark span:first-child { color: #6be7e3; }
+.brand-mark span:last-child { color: #ad9bff; }
+.status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #66e2a6; box-shadow: 0 0 14px rgba(102, 226, 166, .8); }
