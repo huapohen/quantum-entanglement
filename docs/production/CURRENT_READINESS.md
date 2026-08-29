@@ -481,6 +481,9 @@ subject drift 与 forged dependency 的拒绝，但这仍不是生产 API。proj
 [`38_result_acceptance_process_kill_matrix_evidence.md`](../../analysis_report/research/38_result_acceptance_process_kill_matrix_evidence.md)。
 COMMIT 落盘后、ACK 返回前进程被杀的分类证据见
 [`39_result_acceptance_commit_kill_evidence.md`](../../analysis_report/research/39_result_acceptance_commit_kill_evidence.md)。
+Heartbeat supervisor 到 store-owned acceptance 的正向候选 seam 证据见
+[`41_result_acceptance_worker_integration_evidence.md`](../../analysis_report/research/41_result_acceptance_worker_integration_evidence.md)，
+但产品 `dispatch` 仍 default-off。
 
 仍缺：
 
