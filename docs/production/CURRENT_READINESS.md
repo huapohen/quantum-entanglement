@@ -426,12 +426,13 @@ M4 仍不包含 migration 7 注册、Atomic Result Writer、receipt/event/task/a
 [`31_inactive_result_schema_artifact_transaction_evidence.md`](../../analysis_report/research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
 随后在独立分支 `mainline_continue_quantum_entanglement` 推进的 E3 M5 私有 checkpoint（最近
-推送 HEAD `ab3ff70`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
+推送 HEAD `bc7a981`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
 manifest/request/receipt、Artifact blob/version/binding、job 与 attempt terminal CAS 组成同一
 owner transaction；每个结果 DML 边界均有故障注入并证明整图回滚；commit ACK-loss 会 poison
 store 并保留已提交图，确认 rollback 则不留前缀。新增的 capability-free `ObservedV2` 路径只
 读取固定 raw projections，重算完整 receipt/Artifact/event/job/attempt 图，不读明文 lease、不
-做 DML、不签发 fresh capability，并以 `partial | drift | orphan` 稳定分类异常。由于 migration 7
+做 DML、不签发 fresh capability；默认 store 的 public read 仍 feature-off，候选 opt-in 才能
+通过门控入口读取，并以 `partial | drift | orphan` 稳定分类异常。由于 migration 7
 仍是 inactive candidate，普通 file-store reopen 目前会被 schema-version gate 拒绝；迁移注册、
 reopen/recovery、Accepted/public writer、publication 和 worker 仍未开启。运行合同见
 [`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md)，该段证据必须在 migration 7 激活后

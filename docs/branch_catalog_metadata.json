@@ -2,7 +2,7 @@
   "schema_version": 1,
   "branches": {
     "main": "唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。",
-    "mainline_continue_quantum_entanglement": "E3 Result Authority 人工评审分支；M1 private envelope、M2 reserved fence、M3 typed snapshot/raw-row adapter、M4 inactive migration 7/backup topology/Artifact owner transaction 与 M5 私有 atomic result graph/ObservedV2 已完成。当前另有 feature-off 默认 + enable_result_acceptance_schema=True 候选迁移重开演练；ACK-loss、逐 DML fault injection、partial/drift/orphan quarantine 与 file reopen/replay 证据已提交。最新 HEAD 由生产文档记录；migration 7 默认注册、Accepted/public writer、worker、真实 IM 与 outbound 仍关闭。Notion 批量同步延后，不自动合并回 main。",
+    "mainline_continue_quantum_entanglement": "E3 Result Authority 人工评审分支；M1 private envelope、M2 reserved fence、M3 typed snapshot/raw-row adapter、M4 inactive migration 7/backup topology/Artifact owner transaction 与 M5 私有 atomic result graph/ObservedV2 已完成。当前为 feature-off 默认 + enable_result_acceptance_schema=True 候选迁移重开演练，并提供同一 opt-in 下的门控 public observation read；ACK-loss、逐 DML fault injection、partial/drift/orphan quarantine 与 file reopen/replay 证据已提交。migration 7 默认注册、Accepted/public writer、worker、真实 IM 与 outbound 仍关闭。Notion 批量同步延后，不自动合并回 main。",
     "dev_wanwork_quantum_entanglement": "较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。",
     "backup_0827_200010": "2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。",
     "agent/evidence-ledger": "早期工程证据账本分支，用于汇总测试、审计和阶段结论。",

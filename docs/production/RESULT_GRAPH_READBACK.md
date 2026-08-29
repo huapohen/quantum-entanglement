@@ -1,7 +1,8 @@
 # Result Graph Readback Contract (M5 checkpoint)
 
 Status: implemented as a private pre-commit verifier plus a capability-free `ObservedV2`
-readback path. Migration 7, the public result writer, `AcceptedV2`, publication and worker
+readback path. A public read wrapper is available only on the explicit candidate-schema opt-in.
+Migration 7, the public result writer, `AcceptedV2`, publication and worker
 dispatch remain disabled. The normal store reopen path is deliberately blocked while migration
 7 is inactive in the default legacy store; an explicit `enable_result_acceptance_schema=True`
 opt-in is available only for this private rehearsal and is not a production promotion switch.
@@ -90,7 +91,8 @@ context is still active.
 
 ## Capability-free observation
 
-`SQLiteEventStore._read_scoped_invocation_result_observed_v2(...)` reconstructs a committed
+`SQLiteEventStore.read_scoped_invocation_result_observed_v2(...)` (backed by the private
+`_read_scoped_invocation_result_observed_v2(...)`) reconstructs a committed
 receipt from fixed raw projections and then runs the same complete graph verifier used by the
 writer. It requires only tenant, workspace and invocation identity; it never reads a plaintext
 lease, returns a write plan, performs DML, or creates a publication. It returns `None` only when
@@ -120,7 +122,7 @@ The focused durable-prerequisite suite covers:
 - pre-existing shared blob reuse;
 - narration-only (zero Artifact) results;
 - receipt drift injected during readback, proving full rollback;
-- capability-free `ObservedV2` complete readback with zero DML and no lease material;
+- gated public capability-free `ObservedV2` complete readback with zero DML and no lease material;
 - empty-scope observation, partial/drift quarantine, and inactive-migration reopen gate;
 - commit ACK-loss preservation/poisoning and confirmed-rollback cleanup;
 - the existing graph path, which short-circuits without writes or terminal CAS;
