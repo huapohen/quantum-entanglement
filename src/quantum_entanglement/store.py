@@ -10141,3 +10141,21 @@ class SQLiteEventStore:
     @_bind_event_store_process
     def __reduce_ex__(self, _protocol: SupportsIndex) -> NoReturn:
         raise TypeError("event stores cannot be serialized")
+
+
+# Keep the historical wildcard surface stable.  New recovery/backup contracts are imported
+# explicitly by name; they must not silently become part of ``from quantum_entanglement.store
+# import *`` for callers that pinned the pre-M3 namespace.
+__all__ = tuple(
+    name
+    for name in globals()
+    if not name.startswith("_")
+    and name
+    not in {
+        "Enum",
+        "InvocationRecoverySnapshot",
+        "ResultReconciliationConflictError",
+        "ResultReconciliationOutcome",
+        "ResultReconciliationResult",
+    }
+)

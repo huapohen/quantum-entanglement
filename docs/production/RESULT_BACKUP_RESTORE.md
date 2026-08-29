@@ -13,8 +13,8 @@ connector is contacted.
 ## API and format
 
 ```python
-from quantum_entanglement import (
-    SQLiteEventStore,
+from quantum_entanglement import SQLiteEventStore
+from quantum_entanglement.result_backup import (
     create_result_backup,
     restore_result_backup,
     verify_result_backup,
