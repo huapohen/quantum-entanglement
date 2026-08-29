@@ -76,7 +76,7 @@ func TestPreflightReportGoldenDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildPreflightReport: %v", err)
 	}
-	const want = "sha256:a95ec3af08497f2181c729bc236b2034182c36a3d22b8df95177fb165c030d4e"
+	const want = "sha256:2b17e666d1966e740b438fc8a91d4e131bad5efb744095cfa49e40c115521d21"
 	if report.Digest() != want {
 		t.Fatalf("golden digest = %q, want %q", report.Digest(), want)
 	}

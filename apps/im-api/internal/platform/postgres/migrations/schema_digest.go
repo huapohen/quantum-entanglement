@@ -19,6 +19,7 @@ const (
 	eventStoreSchemaDigestV6              = "98ac506434a8c589e87f769236664919f09b93cccb8b0ade2d46902cc07900b7"
 	eventStoreSchemaDigestV7              = "37c332bdf52c8cf4ed463c9dedc715ab1e5f5c10ff3ae88356a41e339d5bedaa"
 	eventProjectionCheckpointSchemaDigest = "3b7ac11608f3537efa6314b7afdad67c23e24f3b3c72025ab1bfdaf1664700a9"
+	nativeIMInboxSchemaDigest             = "0ede38802eaac5c9d05b4e66094b76b7c1f1def5730f1e5b07e8f99c98b697c0"
 )
 
 var identityAuthorityTableNames = []string{
@@ -57,6 +58,10 @@ var eventStoreTableNames = []string{
 
 var eventProjectionCheckpointTableNames = []string{
 	"event_projection_checkpoints",
+}
+
+var nativeIMInboxTableNames = []string{
+	"native_im_inbox",
 }
 
 func tableSchemaDigest(

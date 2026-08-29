@@ -68,8 +68,8 @@ func TestValidateAuthorityAccessRejectsInvalidInputs(t *testing.T) {
 
 func TestAuthorityAccessTableManifestIsSortedAndComplete(t *testing.T) {
 	names := authorityAccessTableNames()
-	if len(names) != 26 {
-		t.Fatalf("authority table count = %d, want 26", len(names))
+	if len(names) != 27 {
+		t.Fatalf("authority table count = %d, want 27", len(names))
 	}
 	for index := 1; index < len(names); index++ {
 		if names[index-1] >= names[index] {

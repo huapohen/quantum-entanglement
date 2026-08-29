@@ -60,6 +60,18 @@ func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 			"p_next_position bigint, p_next_cursor text, p_next_last_event_id text",
 		result:           "boolean",
 		definitionDigest: "82b7feec4d80b3cb0335780b0007086ac307e930afc126e5843465c3b31d7faf",
+	}, storedAuthorityFunctionSpec{
+		name: "admit_native_im_inbox",
+		arguments: "p_tenant_id text, p_workspace_id text, p_provider text, p_channel_id text, " +
+			"p_event_id text, p_event_digest text, p_verification_id text, p_payload_kind text, " +
+			"p_payload_inline text, p_payload_storage text, p_payload_reference_id text, " +
+			"p_payload_byte_length bigint, p_payload_digest text",
+		identityArguments: "p_tenant_id text, p_workspace_id text, p_provider text, p_channel_id text, " +
+			"p_event_id text, p_event_digest text, p_verification_id text, p_payload_kind text, " +
+			"p_payload_inline text, p_payload_storage text, p_payload_reference_id text, " +
+			"p_payload_byte_length bigint, p_payload_digest text",
+		result:           "text",
+		definitionDigest: "113b90b791916efb61309d70ec18a83a250e56120e092a3b9fa81686e8149df1",
 	})
 }
 

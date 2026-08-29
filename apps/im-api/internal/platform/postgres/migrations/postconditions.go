@@ -100,9 +100,27 @@ func validateMigrationPostconditionForSchema(
 		return validateEventRetryIdentity(ctx, transaction)
 	case 8:
 		return validateEventProjectionCheckpoint(ctx, transaction)
+	case 9:
+		return validateNativeIMInbox(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateNativeIMInbox(ctx context.Context, transaction pgx.Tx) error {
+	digest, err := tableSchemaDigest(ctx, transaction, nativeIMInboxTableNames)
+	if err != nil || nativeIMInboxSchemaDigest == "" || digest != nativeIMInboxSchemaDigest {
+		return ErrMigrationSchema
+	}
+	functions, err := readStoredAuthorityFunctions(ctx, transaction, []string{"admit_native_im_inbox"})
+	if err != nil {
+		return ErrMigrationSchema
+	}
+	spec, ok := storedAuthorityFunctionSpecByName("admit_native_im_inbox")
+	if !ok || !exactStoredAuthorityFunctions(functions, []storedAuthorityFunctionSpec{spec}) {
+		return ErrMigrationSchema
+	}
+	return nil
 }
 
 func validateEventStore(ctx context.Context, transaction pgx.Tx, schemaVersion int64) error {

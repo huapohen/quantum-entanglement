@@ -548,10 +548,11 @@ var runtimeAuthorityReadTables = []string{
 	"event_tenant_heads",
 	"event_log",
 	"event_projection_checkpoints",
+	"native_im_inbox",
 }
 
 func authorityAccessTableNames() []string {
-	names := make([]string, 0, 25)
+	names := make([]string, 0, 26)
 	for _, spec := range authorityRootSpecs() {
 		names = append(names, spec.name)
 	}
@@ -560,6 +561,7 @@ func authorityAccessTableNames() []string {
 	names = append(names, conversationAuthorityTableNames...)
 	names = append(names, eventStoreTableNames...)
 	names = append(names, eventProjectionCheckpointTableNames...)
+	names = append(names, nativeIMInboxTableNames...)
 	slices.Sort(names)
 	return names
 }

@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 8 || len(second) != 8 {
+	if len(first) != 9 || len(second) != 9 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -202,6 +202,23 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if !strings.Contains(checkpoint.UpSQL, marker) {
 			t.Fatalf("event projection checkpoint migration missing %q", marker)
+		}
+	}
+	inbox := first[8]
+	if inbox.Version != 9 || inbox.Name != "native_im_inbox" ||
+		len(inbox.Checksum) != 64 || inbox.Checksum != second[8].Checksum ||
+		inbox.UpSQL != second[8].UpSQL || inbox.DownSQL != second[8].DownSQL {
+		t.Fatalf("unexpected deterministic native IM inbox migration: %#v", inbox)
+	}
+	for _, marker := range []string{
+		`CREATE TABLE wanwork_im.native_im_inbox`,
+		`PRIMARY KEY (tenant_id, workspace_id, provider, channel_id, event_id)`,
+		`CREATE FUNCTION wanwork_im.admit_native_im_inbox`,
+		`ENABLE ROW LEVEL SECURITY`,
+		`FORCE ROW LEVEL SECURITY`,
+	} {
+		if !strings.Contains(inbox.UpSQL, marker) {
+			t.Fatalf("native IM inbox migration missing %q", marker)
 		}
 	}
 }
