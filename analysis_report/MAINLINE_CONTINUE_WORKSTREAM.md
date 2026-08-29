@@ -83,14 +83,18 @@ accepts only strict result evidence plus a matching terminal transition. The pro
 tenant/workspace/invocation keyed, idempotent, schema-pinned and fail-closed on terminal-before-result
 or result identity conflict; it stores no result body, lease token, credential or framework-table
 authority. The wrapper is process-bound and rejects inherited fork instances before SQLite access.
-Twelve focused tests cover complete materialization, scope isolation, rerun idempotency, reopen,
-dual-connection lease fencing, malformed ordering, identity conflict, schema drift, handler table
-isolation, fork rejection, real SIGKILL-after-claim recovery and terminal binding drift. This is a
-candidate read model only: no authenticated API, production composition, worker dispatch or external
-IM is enabled.
+The service-facing `read_authorized(...)` seam now requires an exact protected-operation handle and
+derives tenant/workspace/invocation solely from the reauthorized request; action/resource mismatch,
+subject drift and forged dependencies fail before SQLite read. Fifteen focused tests cover complete
+materialization, scope isolation, rerun idempotency, reopen, dual-connection lease fencing, malformed
+ordering, identity conflict, schema drift, handler table isolation, fork rejection, real
+SIGKILL-after-claim recovery, terminal binding drift and the authenticated read matrix. This is a
+candidate read model only: no real authenticator/transport, production composition, worker dispatch
+or external IM is enabled.
 
-The next local gates are authenticated projection scope, crash/kill/two-process recovery and compatibility/
-rollback evidence. The opt-in API can issue process-bound `AcceptedV2` only after a fresh COMMIT ACK;
+The authenticated projection read seam is now locally covered; the next local gates are full-system
+crash/kill/two-process recovery and compatibility/rollback evidence. The opt-in API can issue process-bound
+`AcceptedV2` only after a fresh COMMIT ACK;
 production worker dispatch, real IM connectivity and all outbound effects remain disabled. Notion synchronization stays
 `local_pending` until this checkpoint is closed and then receives one batch upload plus page-by-page
 readback.

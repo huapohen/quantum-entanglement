@@ -435,7 +435,7 @@ M4 仍不包含 migration 7 注册、Atomic Result Writer、receipt/event/task/a
 [`31_inactive_result_schema_artifact_transaction_evidence.md`](../../analysis_report/research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
 随后在独立分支 `mainline_continue_quantum_entanglement` 推进的 E3 M5/M7.5 私有 checkpoint（最近
-推送代码 HEAD `a1eb218`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
+推送代码 HEAD `e27c30b`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
 manifest/request/receipt、Artifact blob/version/binding、job 与 attempt terminal CAS 组成同一
 owner transaction；每个结果 DML 边界均有故障注入并证明整图回滚；commit ACK-loss 会 poison
 store 并保留已提交图，确认 rollback 则不留前缀。新增的 capability-free `ObservedV2` 路径只
@@ -454,14 +454,16 @@ owner CAS，成功只更新 job/attempt，不新增 event/outbox，重复调用�
 `run_and_accept()` 只接受 exact request 并把 store-owned claim 交给候选 acceptor；正常 fresh
  COMMIT ACK 返回 process-bound `AcceptedV2`，replay/ACK-loss readback 返回 `ObservedV2`。随后
  新增的 `SQLiteResultProjectionStore` 仅 materialize result/terminal 的最小业务视图，仍未接入
- 可信认证、worker 或生产恢复；这些能力不代表生产 projection、worker 或真实 IM 已开启。
+可信认证 transport、worker 或生产恢复；这些能力不代表生产 projection、worker 或真实 IM 已开启。
 运行合同见 [`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md)、
 [`RESULT_MIGRATION_ACTIVATION.md`](./RESULT_MIGRATION_ACTIVATION.md) 与
 [`RESULT_RECONCILIATION.md`](./RESULT_RECONCILIATION.md) 与
 [`RESULT_BACKUP_RESTORE.md`](./RESULT_BACKUP_RESTORE.md)；crash/kill publication、双连接竞争、
 业务 result projection 候选的运行合同见 [`RESULT_BUSINESS_PROJECTION.md`](./RESULT_BUSINESS_PROJECTION.md)；
-其认证接入、跨租户 property、全系统双连接与 restore replay 仍需独立证据；当前只新增了
-projection 自身的双连接 lease fencing、终态 identity binding 与一条 SIGKILL-after-claim 恢复证据。
+其真实认证 transport/composition、跨租户 property、全系统双连接与 restore replay 仍需独立证据；当前
+已新增一个由 `ProtectedOperationComposer` 驱动的受保护 read seam，并覆盖 action/resource mismatch、
+subject drift 与 forged dependency 的拒绝，但这仍不是生产 API。projection 自身另有双连接 lease fencing、
+终态 identity binding 与一条 SIGKILL-after-claim 恢复证据。
 独立主机恢复和实测 RPO/RTO 证据仍需在后续 release gate 中完成。
 
 仍缺：
