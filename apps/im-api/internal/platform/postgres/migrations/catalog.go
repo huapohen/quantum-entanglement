@@ -41,6 +41,7 @@ var migrationSpecs = [...]migrationSpec{
 	{version: 4, name: "conversation_authority"},
 	{version: 5, name: "function_only_writes"},
 	{version: 6, name: "event_store"},
+	{version: 7, name: "event_retry_identity"},
 }
 
 func Catalog() ([]Migration, error) {

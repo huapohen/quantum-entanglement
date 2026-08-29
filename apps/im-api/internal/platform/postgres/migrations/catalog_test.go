@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 6 || len(second) != 6 {
+	if len(first) != 7 || len(second) != 7 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -172,6 +172,20 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if !strings.Contains(events.UpSQL, marker) {
 			t.Fatalf("event migration missing %q", marker)
+		}
+	}
+	retryIdentity := first[6]
+	if retryIdentity.Version != 7 || retryIdentity.Name != "event_retry_identity" ||
+		len(retryIdentity.Checksum) != 64 || retryIdentity.Checksum != second[6].Checksum ||
+		retryIdentity.UpSQL != second[6].UpSQL || retryIdentity.DownSQL != second[6].DownSQL {
+		t.Fatalf("unexpected deterministic event retry identity migration: %#v", retryIdentity)
+	}
+	for _, marker := range []string{
+		`PRIMARY KEY (tenant_id, workspace_id, event_id)`,
+		`CREATE UNIQUE INDEX event_log_scope_idempotency_key_uk`,
+	} {
+		if !strings.Contains(retryIdentity.UpSQL, marker) {
+			t.Fatalf("event retry identity migration missing %q", marker)
 		}
 	}
 }

@@ -86,6 +86,8 @@ func validateMigrationPostcondition(ctx context.Context, transaction pgx.Tx, ver
 		return validateFunctionOnlyWrites(ctx, transaction)
 	case 6:
 		return validateEventStore(ctx, transaction)
+	case 7:
+		return validateEventRetryIdentity(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
@@ -111,6 +113,39 @@ WHERE namespace.nspname = 'wanwork_im'
 	specs := storedAuthorityFunctionManifest()
 	returnSpec := specs[len(specs)-1]
 	if !exactStoredAuthorityFunctions(functions, []storedAuthorityFunctionSpec{returnSpec}) {
+		return ErrMigrationSchema
+	}
+	return nil
+}
+
+func validateEventRetryIdentity(ctx context.Context, transaction pgx.Tx) error {
+	var primaryKeyDefinition string
+	if err := transaction.QueryRow(ctx, `
+SELECT pg_catalog.pg_get_constraintdef(constraint_value.oid, true)
+FROM pg_catalog.pg_constraint AS constraint_value
+JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_value.conrelid
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relname = 'event_log'
+  AND constraint_value.conname = 'event_log_pkey'
+  AND constraint_value.contype = 'p'`).Scan(&primaryKeyDefinition); err != nil ||
+		primaryKeyDefinition != "PRIMARY KEY (tenant_id, workspace_id, event_id)" {
+		return ErrMigrationSchema
+	}
+	var indexDefinition string
+	if err := transaction.QueryRow(ctx, `
+SELECT pg_catalog.pg_get_indexdef(index_value.indexrelid, 0, false)
+FROM pg_catalog.pg_index AS index_value
+JOIN pg_catalog.pg_class AS relation ON relation.oid = index_value.indrelid
+JOIN pg_catalog.pg_class AS index_relation ON index_relation.oid = index_value.indexrelid
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relname = 'event_log'
+  AND index_relation.relname = 'event_log_scope_idempotency_key_uk'
+  AND index_value.indisunique
+  AND index_value.indisvalid
+  AND index_value.indisready`).Scan(&indexDefinition); err != nil ||
+		indexDefinition != "CREATE UNIQUE INDEX event_log_scope_idempotency_key_uk ON wanwork_im.event_log USING btree (tenant_id, workspace_id, stream_id, idempotency_key) WHERE (idempotency_key <> ''::text)" {
 		return ErrMigrationSchema
 	}
 	return nil
