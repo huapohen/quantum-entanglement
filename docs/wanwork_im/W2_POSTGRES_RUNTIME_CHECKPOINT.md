@@ -63,8 +63,11 @@ GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-migrate
 `analysis_report/research/45_postgres_native_im_inbox_implementation.md`，当前 `local_pending`。
 
 这不等于 provider callback 已认证，也不等于消息/mention/Agent 执行已接通；strict verified envelope、
-Clerk trusted context、event bridge、outbox/action receipt、commit-unknown/reconcile 和真实融云仍为
-NO-GO。Notion 暂不写入，待本地阶段收口后批量同步并回读。
+Clerk trusted context、event bridge、outbox/action receipt 和真实融云仍为 NO-GO。`NativeIMInboxStore`
+现在已把 commit-unknown 隔离并通过 fresh readback reconcile：精确找到相同 receipt 时只返回
+`replayed + ResolvedAfterUnknown=true`，找不到或发生漂移则返回 `ErrInboxCommitUnknown`，不会触发下游
+路由。详细证据见 `analysis_report/research/46_postgres_inbox_commit_unknown_reconcile.md`。Notion
+暂不写入，待本地阶段收口后批量同步并回读。
 
 ### 3.1 Connection policy
 
