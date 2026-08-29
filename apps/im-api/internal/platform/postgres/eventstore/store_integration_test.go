@@ -177,6 +177,47 @@ func TestPostgresEventStoreAgainstPostgres(t *testing.T) {
 		t.Fatalf("stale projection checkpoint commit = %v, want %v", err, events.ErrProjectionCheckpointConflict)
 	}
 
+	inboxStore, err := NewNativeIMInboxStore(pool)
+	if err != nil {
+		t.Fatalf("new native IM inbox store: %v", err)
+	}
+	inboxPayload, err := events.NewInlinePayload([]byte(`{"message":"hello"}`))
+	if err != nil {
+		t.Fatalf("native IM inbox payload: %v", err)
+	}
+	inboxWorkspace := workspace
+	inboxEnvelope := events.InboxEnvelope{
+		Scope: events.InboxScope{
+			TenantID: "ten_acme", WorkspaceID: &inboxWorkspace,
+			Provider: "rongcloud", ChannelID: "channel_main",
+		},
+		EventID:        "provider-event-1",
+		EventDigest:    events.SHA256Digest("sha256:" + strings.Repeat("c", 64)),
+		VerificationID: "verification-1", Payload: inboxPayload,
+	}
+	inboxFirst, err := inboxStore.Admit(t.Context(), inboxEnvelope)
+	if err != nil || inboxFirst.Status != events.InboxInserted || inboxFirst.Receipt.DeliveryCount != 1 {
+		t.Fatalf("native IM inbox first admission = %#v/%v", inboxFirst, err)
+	}
+	inboxReplay, err := inboxStore.Admit(t.Context(), inboxEnvelope)
+	if err != nil || inboxReplay.Status != events.InboxReplayed || inboxReplay.Receipt.DeliveryCount != 2 {
+		t.Fatalf("native IM inbox replay = %#v/%v", inboxReplay, err)
+	}
+	inboxDrift := inboxEnvelope
+	inboxDrift.EventDigest = events.SHA256Digest("sha256:" + strings.Repeat("d", 64))
+	if _, err := inboxStore.Admit(t.Context(), inboxDrift); !errors.Is(err, events.ErrInboxDigestConflict) {
+		t.Fatalf("native IM inbox digest drift = %v, want %v", err, events.ErrInboxDigestConflict)
+	}
+	inboxLoaded, err := inboxStore.Load(t.Context(), inboxEnvelope.Scope, inboxEnvelope.EventID)
+	if err != nil || inboxLoaded.DeliveryCount != 2 || inboxLoaded.Envelope.EventDigest != inboxEnvelope.EventDigest {
+		t.Fatalf("native IM inbox load = %#v/%v", inboxLoaded, err)
+	}
+	otherInboxScope := inboxEnvelope.Scope
+	otherInboxScope.TenantID = "ten_other"
+	if _, err := inboxStore.Load(t.Context(), otherInboxScope, inboxEnvelope.EventID); !errors.Is(err, events.ErrInboxNotFound) {
+		t.Fatalf("cross-tenant inbox load = %v, want %v", err, events.ErrInboxNotFound)
+	}
+
 	connection, err := pool.Acquire(t.Context())
 	if err != nil {
 		t.Fatalf("acquire runtime connection: %v", err)
@@ -193,6 +234,21 @@ INSERT INTO wanwork_im.event_log (
 	connection.Release()
 	if !postgresCodeEventStore(rawWriteErr, "42501") {
 		t.Fatalf("raw runtime event write error = %v, want SQLSTATE 42501", rawWriteErr)
+	}
+	connection, err = pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatalf("acquire runtime connection for raw inbox write: %v", err)
+	}
+	_, rawInboxWriteErr := connection.Exec(t.Context(), `
+INSERT INTO wanwork_im.native_im_inbox (
+ tenant_id, workspace_id, provider, channel_id, event_id, event_digest, verification_id,
+ payload_kind, payload_inline, payload_storage, payload_reference_id, payload_byte_length, payload_digest
+) VALUES ('ten_acme', 'wsp_acme', 'rongcloud', 'channel_main', 'provider-event-raw',
+ 'sha256:' || repeat('e', 64), 'verification-raw', 'inline', '{"message":"raw"}', '', '', -1,
+ 'sha256:' || repeat('f', 64))`)
+	connection.Release()
+	if !postgresCodeEventStore(rawInboxWriteErr, "42501") {
+		t.Fatalf("raw runtime inbox write error = %v, want SQLSTATE 42501", rawInboxWriteErr)
 	}
 
 	pool.Close()
@@ -378,6 +434,7 @@ func configureEventStoreAuthority(t *testing.T, connection *pgx.Conn, manifest m
 		"provider_conversation_binding_heads", "provider_conversation_binding_snapshots", "tenant_command_receipts",
 		"event_stream_heads", "event_tenant_heads", "event_log",
 		"event_projection_checkpoints",
+		"native_im_inbox",
 	}
 	qualifiedTables := make([]string, 0, len(readTables))
 	for _, table := range readTables {
@@ -406,7 +463,7 @@ ORDER BY namespace.nspname, relation.relname`)
 		t.Fatalf("list event store relations: %v", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(values) != 27 {
+	if err != nil || len(values) != 28 {
 		t.Fatalf("event store relation count = %d/%v", len(values), err)
 	}
 	return values
@@ -424,7 +481,7 @@ ORDER BY procedure.proname, pg_catalog.pg_get_function_identity_arguments(proced
 		t.Fatalf("list event store functions: %v", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(values) != 7 {
+	if err != nil || len(values) != 8 {
 		t.Fatalf("event store function count = %d/%v", len(values), err)
 	}
 	return values
