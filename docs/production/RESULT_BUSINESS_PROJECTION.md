@@ -35,6 +35,39 @@ view = projection.read(tenant_id, workspace_id, invocation_id)
 `tenant_id`/`workspace_id`，不能把客户端传入的 scope 当成授权证明。默认
 `SQLiteEventStore(enable_result_acceptance_schema=False)` 仍然不启用 result authority。
 
+## 认证读取入口
+
+`read_authorized(composer, operation, context, request)` 是候选的 service-facing read seam。它只接受
+精确的 `ProtectedOperationComposer`、`AuthorizedOperation`、`RequestContext` 和 `AccessRequest`；request
+必须使用固定的 `resource.read` action、`task_result_projection` resource type，并包含 workspace scope。
+方法先让 composer 做 action-time reauthorization，再消费一次性 operation，最后从同一 request 派生
+tenant/workspace/invocation 调用低层 `read()`。调用方不能另传一组 scope 或 invocation ID，也不能复用已
+消费的 operation；每次读取都必须重新授权。认证失败、request/resource 漂移或依赖类型伪造均转换为不含
+身份/凭据细节的稳定 `ResultProjectionAuthorizationError`。
+
+```python
+view = projection.read_authorized(
+    composer,
+    operation,
+    request_context,
+    AccessRequest(
+        request_id="request-1",
+        subject_id="subject-1",
+        tenant_id=tenant_id,
+        action=RESULT_PROJECTION_READ_ACTION,
+        resource=ResourceRef(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            resource_type=RESULT_PROJECTION_RESOURCE_TYPE,
+            resource_id=invocation_id,
+        ),
+    ),
+)
+```
+
+低层 `read(tenant_id, workspace_id, invocation_id)` 仍是重建/内部 repository primitive，不得直接暴露给
+未经认证的 transport；该 seam 也不等于真实 OIDC/JWT、API、全仓库 scope 或 production composition。
+
 ## 投影合同
 
 | 字段 | 约束 |
@@ -90,6 +123,8 @@ view = projection.read(tenant_id, workspace_id, invocation_id)
 - 真实子进程 `SIGKILL` 恰在 lease claim 后触发，lease 过期后由新 owner 成功恢复完整投影。
 - 子进程在 lease 已提交、尚未读取事件时收到真实 `SIGKILL`，新 owner 等 lease 过期后可
   重新 claim 并完整重建 projection；这只覆盖该边界，不替代全系统 crash-at-every-boundary 证据。
+- 认证读取从已 reauthorize 的 request 派生完整 scope；action/resource 不匹配、subject drift 和
+  forged composer/operation/context/request 均在 SQLite read 前拒绝。
 
 验证命令：
 
@@ -102,12 +137,12 @@ PYTHONPATH=src ./.venv/bin/python -m mypy \
 ```
 
 这些是本地 SQLite 读模型测试，不证明多进程容量、kill-9 每个边界、clean-host restore、
-认证 API、SLO/RPO/RTO 或生产租户隔离。process binding、全 repository scope、可靠恢复和
+真实认证 API、全 repository scope、SLO/RPO/RTO 或生产租户隔离。process binding、全系统恢复和
 compatibility/rollback 仍是独立 release gate。
 
 ## 不可晋级事项
 
-- 没有可信 RequestContext/认证 composition 时，不得把 `read()` 暴露给公网或真实客户；
+- 没有可信 RequestContext/认证 composition 时，不得把低层 `read()` 暴露给公网或真实客户；
 - 没有跨 tenant property、双连接竞争、kill/restore replay、容量/soak 证据时，不得宣称生产；
 - 没有完整 result receipt 时，绝不把 succeeded job 猜测为 completed；
 - 该 projection 不创建 outbox/publication，不连接原生 IM，也不改变
