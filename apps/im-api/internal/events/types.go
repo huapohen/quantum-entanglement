@@ -7,20 +7,21 @@ import (
 )
 
 var (
-	ErrInvalidEvent          = errors.New("invalid event")
-	ErrInvalidPayload        = errors.New("invalid event payload")
-	ErrPayloadTooLarge       = errors.New("event payload is too large")
-	ErrInvalidBatch          = errors.New("invalid event batch")
-	ErrRevisionConflict      = errors.New("event stream revision conflict")
-	ErrIdempotencyConflict   = errors.New("event idempotency conflict")
-	ErrInvalidQuery          = errors.New("invalid event query")
-	ErrInvalidCursor         = errors.New("invalid event cursor")
-	ErrInvalidStore          = errors.New("invalid event store configuration")
-	ErrStoreUnavailable      = errors.New("event store is unavailable")
-	ErrStoreRequirements     = errors.New("event store does not meet requirements")
-	ErrStoreClock            = errors.New("event store clock is invalid")
-	ErrStoreCapacity         = errors.New("event store capacity exceeded")
-	ErrProjectionUnsupported = errors.New("event projection schema is unsupported")
+	ErrInvalidEvent           = errors.New("invalid event")
+	ErrInvalidPayload         = errors.New("invalid event payload")
+	ErrPayloadTooLarge        = errors.New("event payload is too large")
+	ErrInvalidBatch           = errors.New("invalid event batch")
+	ErrRevisionConflict       = errors.New("event stream revision conflict")
+	ErrIdempotencyConflict    = errors.New("event idempotency conflict")
+	ErrInvalidQuery           = errors.New("invalid event query")
+	ErrInvalidCursor          = errors.New("invalid event cursor")
+	ErrInvalidStore           = errors.New("invalid event store configuration")
+	ErrStoreUnavailable       = errors.New("event store is unavailable")
+	ErrStoreRequirements      = errors.New("event store does not meet requirements")
+	ErrStoreClock             = errors.New("event store clock is invalid")
+	ErrStoreCapacity          = errors.New("event store capacity exceeded")
+	ErrProjectionUnsupported  = errors.New("event projection schema is unsupported")
+	ErrInboxEventInconsistent = errors.New("inbound inbox and event store are inconsistent")
 )
 
 type SHA256Digest string
@@ -157,6 +158,19 @@ type EventStore interface {
 	AppendBatch(context.Context, AppendBatch) (AppendResult, error)
 	ReadStreamPage(context.Context, StreamQuery) (StreamPage, error)
 	ReadGlobalPage(context.Context, GlobalQuery) (GlobalPage, error)
+}
+
+// AtomicInboxEventStore is the boundary used by a verified IM transport. Admission of the
+// provider envelope and append of its canonical event must commit or roll back together. A
+// replay returns both durable observations; it never reports a new insertion after an uncertain
+// commit acknowledgement.
+type AtomicInboxEventStore interface {
+	AdmitAndAppend(context.Context, InboxEventProjection) (AtomicInboxEventAdmission, error)
+}
+
+type AtomicInboxEventAdmission struct {
+	Inbox  InboxAdmission
+	Append AppendResult
 }
 
 func cloneBytes(value []byte) []byte {

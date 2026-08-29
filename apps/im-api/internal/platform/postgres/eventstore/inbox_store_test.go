@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/events"
 	"github.com/jackc/pgx/v5"
@@ -21,6 +22,36 @@ func TestNewNativeIMInboxStoreRequiresRuntimePool(t *testing.T) {
 	}
 	if _, err := store.Load(context.Background(), events.InboxScope{}, "event"); !errors.Is(err, events.ErrInvalidInboxScope) {
 		t.Fatalf("nil store load error = %v, want %v", err, events.ErrInvalidInboxScope)
+	}
+}
+
+func TestNewNativeIMAtomicStoreRequiresRuntimePool(t *testing.T) {
+	if _, err := NewNativeIMAtomicStore(nil); !errors.Is(err, events.ErrInvalidStore) {
+		t.Fatalf("nil pool error = %v, want %v", err, events.ErrInvalidStore)
+	}
+	var store *NativeIMAtomicStore
+	if _, err := store.AdmitAndAppend(context.Background(), events.InboxEventProjection{}); !errors.Is(err, events.ErrInvalidStore) {
+		t.Fatalf("nil store error = %v, want %v", err, events.ErrInvalidStore)
+	}
+}
+
+func TestAtomicProjectionRejectsInvalidProjectionBeforeDatabaseAccess(t *testing.T) {
+	payload, err := events.NewInlinePayload([]byte(`{"message":"hello"}`))
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	projection := events.InboxEventProjection{
+		Envelope: events.InboxEnvelope{
+			Scope:   events.InboxScope{TenantID: "ten_alpha", Provider: "rongcloud", ChannelID: "channel_alpha"},
+			EventID: "provider-event-1", EventDigest: events.SHA256Digest("sha256:" + strings.Repeat("a", 64)),
+			VerificationID: "verification-1", Payload: payload,
+		},
+		SchemaVersion: 1, StreamID: "task:inbound", EventType: "message.received.v1",
+		ActorID: "act_user", OccurredAt: time.Date(2026, time.August, 29, 0, 0, 0, 0, time.UTC),
+		CorrelationID: "corr-1", ExpectedVersion: math.MaxUint64,
+	}
+	if _, err := projection.EventBatch(); !errors.Is(err, events.ErrInvalidInboxEvent) {
+		t.Fatalf("invalid projection digest error = %v, want %v", err, events.ErrInvalidInboxEvent)
 	}
 }
 

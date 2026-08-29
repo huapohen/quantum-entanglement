@@ -72,15 +72,7 @@ func (store *NativeIMInboxStore) Admit(
 	if err := bindTenant(ctx, transaction, envelope.Scope.TenantID); err != nil {
 		return events.InboxAdmission{}, mapInboxStoreError(ctx, err)
 	}
-	var status string
-	err = transaction.QueryRow(ctx, `
-SELECT wanwork_im.admit_native_im_inbox(
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
-)`,
-		envelope.Scope.TenantID, inboxWorkspaceValue(envelope.Scope.WorkspaceID), envelope.Scope.Provider,
-		envelope.Scope.ChannelID, envelope.EventID, string(envelope.EventDigest), envelope.VerificationID,
-		parts.kind, parts.inline, parts.storage, parts.referenceID, parts.byteLength, string(parts.digest),
-	).Scan(&status)
+	status, err := admitNativeIMInboxTx(ctx, transaction, envelope, parts)
 	if err != nil {
 		return events.InboxAdmission{}, mapInboxStoreError(ctx, err)
 	}
@@ -119,6 +111,24 @@ SELECT wanwork_im.admit_native_im_inbox(
 		admissionStatus = events.InboxInserted
 	}
 	return events.InboxAdmission{Status: admissionStatus, Receipt: receipt}, nil
+}
+
+func admitNativeIMInboxTx(
+	ctx context.Context,
+	transaction pgx.Tx,
+	envelope events.InboxEnvelope,
+	parts payloadPartsValue,
+) (string, error) {
+	var status string
+	err := transaction.QueryRow(ctx, `
+SELECT wanwork_im.admit_native_im_inbox(
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+)`,
+		envelope.Scope.TenantID, inboxWorkspaceValue(envelope.Scope.WorkspaceID), envelope.Scope.Provider,
+		envelope.Scope.ChannelID, envelope.EventID, string(envelope.EventDigest), envelope.VerificationID,
+		parts.kind, parts.inline, parts.storage, parts.referenceID, parts.byteLength, string(parts.digest),
+	).Scan(&status)
+	return status, err
 }
 
 // Reconcile reads the exact durable row from a fresh read-only transaction. It never reports

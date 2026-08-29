@@ -75,18 +75,6 @@ func (store *Store) AppendBatch(ctx context.Context, batch events.AppendBatch) (
 	if store == nil || store.pool == nil || !validBatch(batch) {
 		return events.AppendResult{}, events.ErrInvalidBatch
 	}
-
-	workspace := workspaceValue(batch.WorkspaceID)
-	snapshot := snapshotBatch(batch)
-	digests := make([]events.SHA256Digest, len(snapshot.Events))
-	for index, event := range snapshot.Events {
-		digest, err := events.DigestEventToAppend(event)
-		if err != nil {
-			return events.AppendResult{}, err
-		}
-		digests[index] = digest
-	}
-
 	connection, err := store.pool.Acquire(ctx)
 	if err != nil {
 		return events.AppendResult{}, events.ErrStoreUnavailable
@@ -97,8 +85,38 @@ func (store *Store) AppendBatch(ctx context.Context, batch events.AppendBatch) (
 		return events.AppendResult{}, mapError(ctx, err)
 	}
 	defer rollback(transaction)
-	if err := bindTenant(ctx, transaction, snapshot.TenantID); err != nil {
+	if err := bindTenant(ctx, transaction, batch.TenantID); err != nil {
 		return events.AppendResult{}, err
+	}
+	result, err := appendBatchTx(ctx, transaction, batch)
+	if err != nil {
+		return events.AppendResult{}, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return events.AppendResult{}, mapError(ctx, err)
+	}
+	return result, nil
+}
+
+// appendBatchTx performs the complete event-store operation without committing the supplied
+// transaction. Keeping this operation transaction-local is what lets the native IM adapter bind
+// inbox admission and event append to one atomic commit boundary.
+func appendBatchTx(ctx context.Context, transaction pgx.Tx, batch events.AppendBatch) (events.AppendResult, error) {
+	if err := contextError(ctx); err != nil {
+		return events.AppendResult{}, err
+	}
+	if transaction == nil || !validBatch(batch) {
+		return events.AppendResult{}, events.ErrInvalidBatch
+	}
+	workspace := workspaceValue(batch.WorkspaceID)
+	snapshot := snapshotBatch(batch)
+	digests := make([]events.SHA256Digest, len(snapshot.Events))
+	for index, event := range snapshot.Events {
+		digest, err := events.DigestEventToAppend(event)
+		if err != nil {
+			return events.AppendResult{}, err
+		}
+		digests[index] = digest
 	}
 
 	existing := make([]events.StoredEvent, len(snapshot.Events))
@@ -124,9 +142,6 @@ func (store *Store) AppendBatch(ctx context.Context, batch events.AppendBatch) (
 				snapshot.ExpectedVersion+uint64(index)+1) {
 				return events.AppendResult{}, events.ErrIdempotencyConflict
 			}
-		}
-		if err := transaction.Commit(ctx); err != nil {
-			return events.AppendResult{}, mapError(ctx, err)
 		}
 		return events.AppendResult{Events: existing, Replayed: true}, nil
 	}
@@ -180,9 +195,6 @@ SELECT wanwork_im.write_event(
 			return events.AppendResult{}, errEventIntegrity
 		}
 		stored = append(stored, value)
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return events.AppendResult{}, mapError(ctx, err)
 	}
 	return events.AppendResult{Events: stored}, nil
 }

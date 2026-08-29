@@ -269,6 +269,60 @@ INSERT INTO wanwork_im.native_im_inbox (
 		t.Fatalf("raw runtime inbox write error = %v, want SQLSTATE 42501", rawInboxWriteErr)
 	}
 
+	// Native IM ingress admits the transport receipt and canonical event in one transaction.
+	atomicStore, err := NewNativeIMAtomicStore(pool)
+	if err != nil {
+		t.Fatalf("new native IM atomic store: %v", err)
+	}
+	atomicWorkspace := workspace
+	atomicPayload, err := events.NewInlinePayload([]byte(`{"message":"atomic"}`))
+	if err != nil {
+		t.Fatalf("atomic payload: %v", err)
+	}
+	atomicEvent := events.EventToAppend{
+		SchemaVersion: 1, EventID: "provider-event-atomic", StreamID: "inbound:channel_main",
+		EventType: "message.received.v1", TenantID: "ten_acme", WorkspaceID: &atomicWorkspace,
+		ActorID: "act_user", OccurredAt: time.Date(2026, time.August, 29, 1, 2, 3, 0, time.UTC),
+		CorrelationID: "corr-atomic", IdempotencyKey: stringPointer("atomic-key"), Payload: atomicPayload,
+	}
+	atomicDigest, err := events.DigestEventToAppend(atomicEvent)
+	if err != nil {
+		t.Fatalf("atomic event digest: %v", err)
+	}
+	atomicProjection := events.InboxEventProjection{
+		Envelope: events.InboxEnvelope{
+			Scope:   events.InboxScope{TenantID: "ten_acme", WorkspaceID: &atomicWorkspace, Provider: "rongcloud", ChannelID: "channel_main"},
+			EventID: atomicEvent.EventID, EventDigest: atomicDigest, VerificationID: "verification-atomic", Payload: atomicPayload,
+		},
+		SchemaVersion: atomicEvent.SchemaVersion, StreamID: atomicEvent.StreamID, EventType: atomicEvent.EventType,
+		ActorID: atomicEvent.ActorID, OccurredAt: atomicEvent.OccurredAt, CorrelationID: atomicEvent.CorrelationID,
+		IdempotencyKey: atomicEvent.IdempotencyKey, ExpectedVersion: 0,
+	}
+	atomicFirst, err := atomicStore.AdmitAndAppend(t.Context(), atomicProjection)
+	if err != nil || atomicFirst.Inbox.Status != events.InboxInserted || atomicFirst.Append.Replayed || len(atomicFirst.Append.Events) != 1 {
+		t.Fatalf("atomic first admission = %#v/%v", atomicFirst, err)
+	}
+	atomicReplay, err := atomicStore.AdmitAndAppend(t.Context(), atomicProjection)
+	if err != nil || atomicReplay.Inbox.Status != events.InboxReplayed || !atomicReplay.Append.Replayed || atomicReplay.Inbox.Receipt.DeliveryCount != 2 {
+		t.Fatalf("atomic replay admission = %#v/%v", atomicReplay, err)
+	}
+	atomicFailedEvent := atomicEvent
+	atomicFailedEvent.EventID = "provider-event-atomic-rollback"
+	failedDigest, err := events.DigestEventToAppend(atomicFailedEvent)
+	if err != nil {
+		t.Fatalf("atomic rollback event digest: %v", err)
+	}
+	atomicFailed := atomicProjection
+	atomicFailed.Envelope.EventID = "provider-event-atomic-rollback"
+	atomicFailed.Envelope.EventDigest = failedDigest
+	atomicFailed.ExpectedVersion = 99
+	if _, err := atomicStore.AdmitAndAppend(t.Context(), atomicFailed); !errors.Is(err, events.ErrRevisionConflict) {
+		t.Fatalf("atomic revision rollback error = %v, want %v", err, events.ErrRevisionConflict)
+	}
+	if _, err := inboxStore.Load(t.Context(), atomicFailed.Envelope.Scope, atomicFailed.Envelope.EventID); !errors.Is(err, events.ErrInboxNotFound) {
+		t.Fatalf("atomic rollback left inbox receipt = %v, want %v", err, events.ErrInboxNotFound)
+	}
+
 	pool.Close()
 	reopened, err := runtimepool.Open(t.Context(), runtimepool.Config{
 		ConnectionString:       connectionString,
