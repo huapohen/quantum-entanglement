@@ -12,9 +12,7 @@ from pathlib import Path
 
 from quantum_entanglement.invocation_results import ScopedInvocationResultAcceptedV2
 from quantum_entanglement.store import SQLiteEventStore
-from tests.test_result_acceptance_durable_prerequisites import (
-    ResultAcceptanceDurablePrerequisiteTests,
-)
+import tests.test_result_acceptance_durable_prerequisites as durable_prerequisites
 
 
 class ResultAcceptanceProcessRecoveryTests(unittest.TestCase):
@@ -29,7 +27,9 @@ class ResultAcceptanceProcessRecoveryTests(unittest.TestCase):
                 clock=lambda: "2026-08-27T10:00:00.000000Z",
                 enable_result_acceptance_schema=True,
             )
-            helper = ResultAcceptanceDurablePrerequisiteTests(methodName="runTest")
+            helper = durable_prerequisites.ResultAcceptanceDurablePrerequisiteTests(
+                methodName="runTest"
+            )
             helper.store = store
             prepared = helper.fresh_prepared()
             store.close()
