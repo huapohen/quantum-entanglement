@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/auth"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 	store "github.com/huapohen/quantum-entanglement/apps/im-api/internal/imstore"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/migrations"
@@ -152,6 +153,68 @@ func TestUnitOfWorkAgainstPostgres(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("Read authority: %v", err)
+		}
+	})
+
+	t.Run("trusted context resolves identity authority in one tenant read snapshot", func(t *testing.T) {
+		unit, _ := newStoreIntegrationUnit(t, adminURL)
+		tenantID := mustTenantID(t, "ten_alpha")
+		realmID, err := im.ParseProviderRealmID("rlm_clerk")
+		if err != nil {
+			t.Fatalf("parse Clerk realm: %v", err)
+		}
+		externalReference, err := im.NewExternalIdentityRef(
+			im.IdentityProviderClerk, realmID, "user_alice",
+		)
+		if err != nil {
+			t.Fatalf("create Clerk reference: %v", err)
+		}
+		profile, err := auth.NewProviderProfile(
+			im.IdentityProviderClerk,
+			realmID,
+			"clerk.example",
+			"wanwork-web",
+			[]auth.Capability{auth.CapabilityVerify},
+			1024,
+		)
+		if err != nil {
+			t.Fatalf("create provider profile: %v", err)
+		}
+		now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+		identity := auth.VerifiedIdentity{
+			ExternalRef: externalReference,
+			SessionID:   "sess_store_integration",
+			IssuedAt:    now.Add(-time.Minute),
+			ExpiresAt:   now.Add(time.Hour),
+		}
+		principalID, err := im.ParseHumanPrincipalID("hpr_alice")
+		if err != nil {
+			t.Fatalf("parse principal: %v", err)
+		}
+		actorReference := mustActorRef(t, tenantID, "usr_alice")
+		err = unit.Read(t.Context(), tenantID, func(
+			ctx context.Context,
+			repositories store.TenantRepositories,
+		) error {
+			resolved, err := auth.ResolveTrustedRequestContext(
+				ctx, profile, identity, tenantID, repositories.Identity(), now,
+			)
+			if err != nil {
+				return fmt.Errorf("resolve trusted context: %w", err)
+			}
+			if resolved.PrincipalID() != principalID || resolved.ActorRef() != actorReference ||
+				resolved.Membership().Revision() != 1 || resolved.Actor().Revision() != 1 {
+				return fmt.Errorf("unexpected trusted context: %#v", resolved)
+			}
+			if _, err := repositories.Identity().CurrentTenantMembership(
+				ctx, mustTenantID(t, "ten_beta"), principalID,
+			); !errors.Is(err, store.ErrInvalidRequest) {
+				return fmt.Errorf("cross-tenant identity lookup error = %v", err)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("trusted context read: %v", err)
 		}
 	})
 
@@ -749,8 +812,26 @@ func seedStoreRoots(t *testing.T, connection *pgx.Conn) {
 	defer rollbackTransaction(transaction)
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO wanwork_im.provider_realms (provider, realm_id, status, revision)
-VALUES ('rongcloud', 'rlm_rong', 'active', 1)`); err != nil {
+
+VALUES ('clerk', 'rlm_clerk', 'active', 1),
+       ('rongcloud', 'rlm_rong', 'active', 1)`); err != nil {
 		t.Fatalf("seed provider realm: %v", err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO wanwork_im.human_principal_heads (principal_id, current_revision)
+         VALUES ('hpr_alice', 1)`,
+		`INSERT INTO wanwork_im.human_principal_snapshots (principal_id, revision, status)
+         VALUES ('hpr_alice', 1, 'active')`,
+		`INSERT INTO wanwork_im.human_identity_binding_heads (
+             provider, realm_id, subject_id, current_revision, current_principal_id, current_status
+         ) VALUES ('clerk', 'rlm_clerk', 'user_alice', 1, 'hpr_alice', 'active')`,
+		`INSERT INTO wanwork_im.human_identity_binding_snapshots (
+             provider, realm_id, subject_id, revision, principal_id, status
+         ) VALUES ('clerk', 'rlm_clerk', 'user_alice', 1, 'hpr_alice', 'active')`,
+	} {
+		if _, err := transaction.Exec(ctx, statement); err != nil {
+			t.Fatalf("seed global identity: %v", err)
+		}
 	}
 	if _, err := setStoreTenant(ctx, transaction, "ten_alpha"); err != nil {
 		t.Fatalf("set alpha seed tenant: %v", err)
@@ -765,6 +846,12 @@ VALUES ('rongcloud', 'rlm_rong', 'active', 1)`); err != nil {
 		`INSERT INTO wanwork_im.actor_snapshots (
              tenant_id, actor_id, revision, subject_type, status
          ) VALUES ('ten_alpha', 'usr_alice', 1, 'human', 'active')`,
+		`INSERT INTO wanwork_im.tenant_membership_heads (
+             tenant_id, principal_id, actor_id, current_revision
+         ) VALUES ('ten_alpha', 'hpr_alice', 'usr_alice', 1)`,
+		`INSERT INTO wanwork_im.tenant_membership_snapshots (
+             tenant_id, principal_id, actor_id, revision, role, status
+         ) VALUES ('ten_alpha', 'hpr_alice', 'usr_alice', 1, 'owner', 'active')`,
 	} {
 		if _, err := transaction.Exec(ctx, statement); err != nil {
 			t.Fatalf("seed alpha roots: %v", err)
@@ -808,7 +895,15 @@ func grantStoreRole(t *testing.T, connection *pgx.Conn, quotedRole string) {
              wanwork_im.conversation_membership_snapshots,
              wanwork_im.conversation_access_heads,
              wanwork_im.conversation_access_snapshots,
-             wanwork_im.tenant_command_receipts TO ` + quotedRole,
+		     wanwork_im.tenant_command_receipts,
+		     wanwork_im.actor_heads,
+		     wanwork_im.actor_snapshots,
+		     wanwork_im.human_identity_binding_heads,
+		     wanwork_im.human_identity_binding_snapshots,
+		     wanwork_im.human_principal_heads,
+		     wanwork_im.human_principal_snapshots,
+		     wanwork_im.tenant_membership_heads,
+		     wanwork_im.tenant_membership_snapshots TO ` + quotedRole,
 	} {
 		if _, err := connection.Exec(t.Context(), statement); err != nil {
 			t.Fatalf("grant store role: %v", err)

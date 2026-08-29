@@ -151,9 +151,30 @@ type ConversationAuthorityRepository interface {
 	) (im.ConversationAccessSnapshot, error)
 }
 
+// IdentityAuthorityRepository exposes only current, immutable identity authority snapshots.
+// Implementations must use the same transaction snapshot as the surrounding operation and must
+// never accept caller-supplied principal/actor claims as authority.
+type IdentityAuthorityRepository interface {
+	CurrentHumanIdentityBinding(
+		context.Context,
+		im.ExternalIdentityRef,
+	) (im.HumanExternalIdentityBinding, error)
+	CurrentHumanPrincipal(
+		context.Context,
+		im.HumanPrincipalID,
+	) (im.HumanPrincipalSnapshot, error)
+	CurrentTenantMembership(
+		context.Context,
+		im.TenantID,
+		im.HumanPrincipalID,
+	) (im.TenantMembershipSnapshot, error)
+	CurrentActor(context.Context, im.ActorRef) (im.ActorSnapshot, error)
+}
+
 type TenantRepositories interface {
 	Conversations() ConversationRepository
 	Authority() ConversationAuthorityRepository
+	Identity() IdentityAuthorityRepository
 }
 
 type ExecuteOperation func(context.Context, TenantRepositories) (SHA256Digest, error)

@@ -139,7 +139,7 @@ func TestPlanGoldenDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}
-	const wantDigest = "sha256:97400d46e0cbe833b2bb54c7b59b98c84279bcc0f1e87d569dca125bed2439aa"
+	const wantDigest = "sha256:01253d245917cfac5254dc25fb8b6dd7e59de10e6d63f58d6399295be16285b8"
 	if plan.Digest() != wantDigest {
 		t.Fatalf("golden digest = %q, want %q", plan.Digest(), wantDigest)
 	}

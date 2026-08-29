@@ -434,6 +434,8 @@ func configureRuntimePoolAuthority(
 		t.Fatalf("grant runtime pool schema usage: %v", err)
 	}
 	readTables := []string{
+		"actor_heads",
+		"actor_snapshots",
 		"conversation_access_heads",
 		"conversation_access_snapshots",
 		"conversation_heads",
@@ -447,7 +449,13 @@ func configureRuntimePoolAuthority(
 		"event_tenant_heads",
 		"event_log",
 		"event_projection_checkpoints",
+		"human_identity_binding_heads",
+		"human_identity_binding_snapshots",
+		"human_principal_heads",
+		"human_principal_snapshots",
 		"native_im_inbox",
+		"tenant_membership_heads",
+		"tenant_membership_snapshots",
 	}
 	for index, table := range readTables {
 		readTables[index] = "wanwork_im." + pgx.Identifier{table}.Sanitize()
