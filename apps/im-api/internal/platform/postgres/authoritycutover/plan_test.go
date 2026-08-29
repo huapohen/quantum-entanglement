@@ -139,7 +139,7 @@ func TestPlanGoldenDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}
-	const wantDigest = "sha256:a240255820f3ef805a58ea9a3e0011837a66ebc9952483cb94b58521192019e0"
+	const wantDigest = "sha256:c73afe6fb05c1725b5745006dfd3b06023abc30418f15d531e5d5e6d2d50d9f5"
 	if plan.Digest() != wantDigest {
 		t.Fatalf("golden digest = %q, want %q", plan.Digest(), wantDigest)
 	}
@@ -215,6 +215,6 @@ func validPlanInput() PlanInput {
 			Mode:       "verify-full",
 			ServerName: "postgres-writer.prod.internal",
 		},
-		ToSchemaVersion: 7,
+		ToSchemaVersion: 8,
 	}
 }
