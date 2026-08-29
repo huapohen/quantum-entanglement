@@ -69,6 +69,23 @@ Clerk trusted context、event bridge、outbox/action receipt 和真实融云仍�
 路由。详细证据见 `analysis_report/research/46_postgres_inbox_commit_unknown_reconcile.md`。Notion
 暂不写入，待本地阶段收口后批量同步并回读。
 
+### 3.0.1 Inbox → canonical event 原子桥（本地增量）
+
+本地提交 `f24786a` 增加 `eventstore.NativeIMAtomicStore`。verified
+`events.InboxEventProjection` 现在显式携带 schema/stream/event type/actor/time、correlation 与 retry
+identity，并在进入数据库前重算完整 `EventToAppend` canonical digest；digest 不一致直接拒绝。
+
+`AdmitAndAppend` 在同一 serializable PostgreSQL transaction 内依次执行 inbox admission、canonical
+`write_event` 和双方 readback，然后只经过一个 commit acknowledgement 对外返回。首次 append 失败会连同
+inbox receipt 一起回滚；replayed inbox 如果找不到精确对应 event 返回 `ErrInboxEventInconsistent`，不会按
+调用方 revision 擅自修复。commit acknowledgement unknown 时会隔离当前连接，并从 fresh connection 同时
+readback 两侧；只有两侧都精确匹配才返回 `replayed + ResolvedAfterUnknown=true`。
+
+对应设计与边界见
+[`analysis_report/research/47_postgres_atomic_inbox_event_bridge.md`](../../analysis_report/research/47_postgres_atomic_inbox_event_bridge.md)。
+该增量仍不等于 callback authenticity、Clerk trusted context、message/mention/Agent 路由或真实 RongCloud
+outbound 已完成；真实 provider 继续关闭。Notion 继续遵循本地优先策略，待阶段收口后批量同步并回读。
+
 ### 3.1 Connection policy
 
 - URL 必须显式携带 user、host/Unix socket、port、database、sslmode；

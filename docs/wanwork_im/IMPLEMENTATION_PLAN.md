@@ -91,7 +91,7 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 [W2_POSTGRES_RUNTIME_CHECKPOINT.md](W2_POSTGRES_RUNTIME_CHECKPOINT.md)；Topic 33/34/35 分别保留 persistence、
 function-only/exact-access 与 attested runtime 的历史检查点。
 
-当前 code evidence baseline 为 `8c31736`。当前口径必须保留：
+当前 code evidence baseline 为 `f24786a`。当前口径必须保留：
 
 | 标记 | 状态 |
 |---|---|
@@ -128,6 +128,9 @@ function-only/exact-access 与 attested runtime 的历史检查点。
   `SSL_CERT_FILE/SSL_CERT_DIR` ambient trust override 也 fail closed；
 - attested pool 在 AfterConnect 执行 login/database/role/session/full-catalog proof，在 PrepareConn 拒绝
   role/GUC/lock/LISTEN/transaction 污染；
+- `NativeIMAtomicStore` 将 verified inbox receipt 与 canonical event append 绑定到同一 PostgreSQL
+  transaction，并在 commit-unknown 时从 fresh connection 同时 readback；replayed inbox 缺 event 时
+  fail closed，不按调用方 revision 自动修复；
 - UnitOfWork 生产构造器只接 attested pool；`Pool.Acquire` 是有 guard 但仍能执行 runtime-role SQL 的
   trusted low-level escape hatch，不是 tenant/action authority；API runtime 监听前必须 Ready，业务 route
   effect 前有 dependency gate；
