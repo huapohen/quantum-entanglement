@@ -140,6 +140,13 @@ production gate and does not authorize a real connector or external message.
 - Fork-before-initialization, spawn and forkserver fresh-connection evidence for global-position
   contention, idempotent event-plus-outbox admission, outbox lease fencing, ambiguity resolution,
   SQLite integrity, foreign keys and exact migration schema.
+- Opt-in migration-7 scoped result acceptance API that atomically commits the result receipt graph,
+  immutable Artifacts, canonical result/terminal events, and job/attempt success; fresh COMMIT ACKs
+  return a process-bound `AcceptedV2`, while replay/readback returns only `ObservedV2`.
+- Public result-acceptance ACK-loss/reopen proof and a private heartbeat supervisor acceptance seam
+  that keeps fencing active during acceptance, requires an exact acceptance request, and sanitizes
+  every non-success outcome. Production worker dispatch, projection, and external effects remain
+  disabled.
 
 ### Changed
 

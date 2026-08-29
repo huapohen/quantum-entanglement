@@ -1,15 +1,15 @@
 # Result Graph Readback Contract (M5 checkpoint)
 
 Status: implemented as a private pre-commit verifier, a capability-free `ObservedV2`
-readback path, and a receipt-bound non-emitting reconciliation CAS. A public read wrapper and
-reconciliation method are available only on the explicit candidate-schema opt-in.
-Migration 7, the public result writer, `AcceptedV2`, publication and worker
-dispatch remain disabled. The normal store reopen path is deliberately blocked while migration
+readback path, a receipt-bound non-emitting reconciliation CAS, and an opt-in store-owned result
+writer. A public read/accept wrapper and reconciliation method are available only on the explicit
+candidate-schema opt-in. Migration 7 remains opt-in; production publication and worker dispatch
+remain disabled. The normal store reopen path is deliberately blocked while migration
 7 is inactive in the default legacy store; an explicit `enable_result_acceptance_schema=True`
 opt-in is available only for this private rehearsal and is not a production promotion switch.
 
 This document records the local checkpoint delivered by commits `3847594`, `034ceea`, `0d941eb`,
-`b14ee77`, `ab3ff70`, `ee63f55`, `abd7709` and `f5e0e4d` on branch `mainline_continue_quantum_entanglement`. It is the source of
+`b14ee77`, `ab3ff70`, `ee63f55`, `abd7709`, `f5e0e4d`, `5a4491c` and `7bed2b6` on branch `mainline_continue_quantum_entanglement`. It is the source of
 truth during the remaining implementation work. Notion synchronization is intentionally deferred
 until a larger checkpoint is complete; the final upload must include this file and a page-by-page
 readback.
@@ -111,11 +111,12 @@ Migration 7 remains outside the default legacy registry, but its reviewed activa
 implemented explicitly. The opt-in `enable_result_acceptance_schema=True` constructor applies the
 trusted legacy prefix, installs the sidecar/domain metadata, activates migration 7, validates the
 dependency graph and supports an empty-data guarded rollback. A default `SQLiteEventStore` still
-rejects a file database containing v7, preserving feature-off compatibility. Activation does not
-enable the public result writer, backup contract, `AcceptedV2`, publication or workers; active
+rejects a file database containing v7, preserving feature-off compatibility. The opt-in writer
+returns process-bound `AcceptedV2` only after a fresh COMMIT ACK and returns `ObservedV2` for an
+existing graph or replay; it does not enable production publication or workers. Active
 backup/restore evidence, compatibility policy, worker supervision and crash/recovery matrices
-remain separate release gates. The reconciliation CAS is implemented as an opt-in, non-emitting
-recovery primitive; it does not by itself promote any of those gates.
+remain separate release gates. The reconciliation CAS is an opt-in, non-emitting recovery
+primitive; it does not by itself promote any of those gates.
 
 ## Tests and release gate
 

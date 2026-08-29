@@ -1,9 +1,9 @@
 # 下一阶段详细执行计划：参考项目复评后闭合 Atomic Result Authority
 
-> 计划版本：2026-08-29-stage-pause-v4
+> 计划版本：2026-08-29-stage-pause-v5
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
-> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec（`d889751`）、M2 reserved fence（`dd0ba54`）、M3 private store adapter（`504824c`）、M4 inactive schema / Artifact owner transaction / private backup topology（`28b3d6a`）、M5 atomic result graph + `ObservedV2` + migration-7 opt-in（`144f449`）与 receipt-bound non-emitting reconciliation（`ee63f55`）已完成；随后补齐 migration-7 active result backup/restore、manifest/topology/bytes/geometry 绑定、有界输入防护、干净进程/双连接/SIGKILL 恢复证据和私有 PURE heartbeat supervisor（当前 HEAD `f5e0e4d`）。真实 provider sandbox 未连接，Accepted、store-wired worker、projection 与 compatibility/rollback evidence 仍未完成。**
+> 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec（`d889751`）、M2 reserved fence（`dd0ba54`）、M3 private store adapter（`504824c`）、M4 inactive schema / Artifact owner transaction / private backup topology（`28b3d6a`）、M5 atomic result graph + `ObservedV2` + migration-7 opt-in（`144f449`）与 receipt-bound non-emitting reconciliation（`ee63f55`）已完成；随后补齐 migration-7 active result backup/restore、manifest/topology/bytes/geometry 绑定、有界输入防护、干净进程/双连接/SIGKILL 恢复证据、私有 PURE heartbeat supervisor、opt-in store-owned acceptance API 与 fresh-ACK `AcceptedV2`（当前 HEAD `7bed2b6`）。真实 provider sandbox 未连接，生产 worker、terminal business projection、crash/kill/two-process recovery 与 compatibility/rollback evidence 仍未完成。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
@@ -778,18 +778,18 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | M2 Reserved fence（已完成） | generic bypass 全封 | writer、Accepted |
 | M3 Store adapter（已完成） | snapshot/raw-row 双验通过 | writer public API |
 | M4 Inactive schema（已完成） | migration/backup/artifact 候选通过 | migration registration |
-| M5 Atomic writer | 完整事务图/fault/readback 通过；`ObservedV2` 与 opt-in migration-7 已形成 | Accepted、worker |
-| M6 Recovery | receipt-bound non-emitting reconciliation、idempotent replay、stale/CAS/trigger rollback 通过；crash/kill/restore replay 仍待完成 | Accepted、worker |
-| M7 Accepted | fresh ACK 唯一 mint 点通过 | migration/worker promotion |
+| M5 Atomic writer（已完成） | 完整事务图/fault/readback 通过；`ObservedV2` 与 opt-in migration-7 已形成 | 生产 worker、projection |
+| M6 Recovery（部分完成） | receipt-bound non-emitting reconciliation、idempotent replay、stale/CAS/trigger rollback 通过；crash/kill/restore replay 与双连接证据仍待完成 | 生产 worker、projection |
+| M7 Accepted（候选完成） | fresh ACK 唯一 mint 点通过；ACK-loss/reopen 与 replay 不升级证据已通过 | migration/worker promotion |
 | M8 Integration | 独立 release evidence 通过 | 生产 Gate 仍需分别审批 |
 
 本计划现在是 E3 Result Authority 的当前串行入口。提前接入路线的 E1/E2 离线节点已完成，M1–M5
-均已形成安全停点；当前分支又完成了 opt-in migration-7 activation 与 receipt-bound
-reconciliation。active backup/restore topology、非空迁移演练、crash/kill/双连接竞争、restore
-replay evidence 与离线 PURE heartbeat supervisor 已完成；下一串行实现节点是将 supervisor
-接入 store-owned result acceptor、heartbeat worker、业务 projection 和
-`AcceptedV2`。这些阶段必须复用 M3 的 stored-event adapter 与 M4 owner transaction，且仍不得
-开放真实 IM outbound。
+均已形成安全停点；当前分支又完成了 opt-in migration-7 activation、receipt-bound
+reconciliation、store-owned result acceptor、fresh-ACK `AcceptedV2` 与接受期间 heartbeat fencing。
+active backup/restore topology、非空迁移演练、离线 PURE heartbeat supervisor、ACK-loss/reopen
+与 replay evidence 已完成；下一串行实现节点是业务 projection、crash/kill/双连接恢复、
+compatibility/rollback evidence 与独立 production promotion。实现必须复用 M3 的 stored-event
+adapter 与 M4 owner transaction，且仍不得开放真实 IM outbound。
 若用户新增会改变底层 result/store 方向的参考项目，仍先做 M0 delta review，不从原子 writer
 中途改变合同。
 
@@ -825,5 +825,6 @@ git ls-remote --heads \
 PYTHONPATH=src python3 -m pytest
 ```
 
-确认 clean baseline 后按 Phase 5 Atomic Result Acceptance Writer 开始；没有用户新的继续指令，
-不进入真实 sandbox 网络，不注册 migration 7，不开放任何 public writer、Accepted 或 worker。
+确认 clean baseline 后按本计划的 M6 recovery / projection 子阶段开始；默认 migration-7 仍关闭，
+opt-in candidate writer 仅用于离线 rehearsal。没有用户新的继续指令，不进入真实 sandbox 网络，
+不开放生产 worker、publication、真实 IM 或任何 outbound。

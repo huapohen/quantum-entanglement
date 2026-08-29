@@ -1,10 +1,11 @@
 # Heartbeat-supervised pure/fake worker contract
 
 Status: **contract frozen; product dispatch remains disabled**. The repository now includes a
-private, non-publishing supervision primitive for scoped PURE/fake rehearsal; the composition gate
-still refuses product dispatch until the remaining acceptance and recovery gates are closed. This
-document defines the narrow worker that may be enabled only after atomic result acceptance and
-receipt-bound recovery are durable.
+private, non-publishing supervision primitive for scoped PURE/fake rehearsal, plus an opt-in
+store-owned result-acceptance seam. A fresh COMMIT ACK can now mint a process-bound `AcceptedV2`,
+while replay/readback returns only `ObservedV2`; the composition gate still refuses product
+dispatch until the remaining recovery, projection, compatibility and process-kill gates are closed.
+This document defines the narrow worker that may be enabled only after those gates are durable.
 It does not authorize a model runtime, plugin, MCP server, connector, browser action, Feishu,
 WeCom, webhook, or any other external effect.
 
@@ -16,7 +17,9 @@ transaction accepts the result and every durable terminal projection.
 
 ## Promotion invariant
 
-The worker gate must default to off until all of the following are present in the same release:
+The worker gate must default to off until all of the following are present in the same release. The
+opt-in rehearsal branch currently has items 1--4 and the store-owned acceptance seam; items 5--6
+remain promotion blockers:
 
 1. an exact, versioned result manifest and result receipt;
 2. one SQLite transaction that revalidates the active lease and start receipt, publishes immutable
@@ -29,10 +32,11 @@ The worker gate must default to off until all of the following are present in th
 
 Until these prerequisites are met, the product dispatch API must raise a stable disabled error
 before it starts a heartbeat, creates a task/thread/process, calls a handler, samples handler-owned
-state, or touches a connector. Tests may exercise pure validation and the private fake supervision
-primitive only when no durable product dispatch is reachable. The private supervision primitive described
-below never writes a result, changes task state, emits an event, publishes an outbox message or
-opens a connector; its returned value is not an Accepted capability.
+state, or touches a connector. Tests may exercise pure validation, the private fake supervision
+primitive and the opt-in result-acceptance seam only when no durable product dispatch is reachable.
+The supervisor itself does not open a connector. Its `run_and_accept()` helper only passes an exact
+capability-free acceptance request and its snapped start claim to a caller-supplied store acceptor;
+the product dispatch gate remains disabled and no external effect is reachable.
 
 ## Private supervision primitive
 
@@ -42,6 +46,11 @@ continues heartbeats at the snapped interval. A false/invalid/raised heartbeat r
 run and cancels the handler. Timeout or external cancellation signals the handler's cancellation
 event and waits only the configured drain window. Late values are discarded and every non-success
 path returns a sanitized `PureWorkerRunResult`; no exception object or lease token is returned.
+When an `acceptance` callback is supplied, the heartbeat task stays alive while that callback runs,
+and only exact `AcceptedV2` or `ObservedV2` values become successful classifications. The
+`run_and_accept()` helper additionally requires an exact
+`ScopedInvocationResultAcceptanceRequestV2` and supplies the supervisor's exact start claim to the
+acceptor, preventing a handler from substituting another invocation or lease.
 
 The handler receives only `PureWorkerContext` (a frozen manifest snapshot plus cancellation
 observation). It cannot receive the store or lease through this API. The primitive is deliberately
@@ -154,9 +163,10 @@ action-receipt state machine.
 
 ## Result acceptance boundary
 
-The worker must call one future store API with a capability-bearing, non-serializable command. The
-exact public name is deferred until the result schema is implemented; its transaction must make
-the following set visible all-or-nothing:
+The candidate store API is now
+`SQLiteEventStore.accept_scoped_invocation_result_v2(request, claimed)`, available only when the
+explicit migration-7 opt-in is enabled. It accepts an exact request plus one exact scoped start
+claim, then makes the following set visible all-or-nothing in the owner transaction:
 
 ```text
 validated schema-2 start receipt
@@ -172,9 +182,12 @@ validated schema-2 start receipt
 ```
 
 No caller-supplied receipt is authority. The store constructs the receipt from rows and stored-event
-coordinates written in the same transaction. Exact replay returns the original accepted bundle.
-Conflicting replay, partial rows, stale lease, expired deadline, stream revision drift, task-scope
-drift, manifest drift or Artifact drift fails closed without publishing any subset.
+coordinates written in the same transaction. A fresh path that receives a normal COMMIT ACK returns
+one process-bound `AcceptedV2`; an existing graph, replay, reopen or recovery path returns only
+`ObservedV2`. A lost COMMIT ACK poisons the current store and requires reopen/readback; replay after
+reopen cannot be upgraded to `AcceptedV2`. Conflicting replay, partial rows, stale lease, expired
+deadline, stream revision drift, task-scope drift, manifest drift or Artifact drift fails closed
+without publishing any subset.
 
 `resultRef` is not an Artifact ID. It remains the job/attempt's stable logical result identity even
 for a narration-only result. The manifest accepts zero through 256 ordered Artifact descriptors and
@@ -204,7 +217,7 @@ and task completion in separate transactions is also not eligible for this worke
 | handler timeout/cancel | no success publication; terminal reconciliation required | no |
 | crash before result transaction begins | no accepted result | no under current `retryClass=never` |
 | crash inside result transaction before commit | rollback means no accepted result | no under current `retryClass=never` |
-| commit durable, acknowledgement lost | reopen and exact-read accepted receipt | never |
+| commit durable, acknowledgement lost | poison, reopen and exact-read accepted receipt; API replay is `ObservedV2` | never |
 | crash after accepted receipt, before caller observes it | restart projects/reports accepted result | never |
 | stale worker submits after a newer fence | zero writes | never |
 | receipt/Artifact/event/job/attempt partial or tampered | integrity quarantine | never |
@@ -238,9 +251,9 @@ Every step remains default-off and independently releasable:
    primitive implemented and covered**);
 4. versioned result manifest/receipt codecs;
 5. migration, backup/restore and schema-topology support for accepted results;
-6. store-owned atomic result acceptance with statement/commit/control fault injection;
+6. store-owned atomic result acceptance with statement/commit/control fault injection (**opt-in API and fresh-ACK `AcceptedV2` implemented**);
 7. receipt-bound recovery and non-emitting projection;
-8. heartbeat supervisor with lease-loss/timeout/cancel/drain tests;
+8. heartbeat supervisor with lease-loss/timeout/cancel/drain tests (**acceptance seam and `run_and_accept()` implemented; product gate remains off**);
 9. process-kill and two-process result-acceptance race matrix;
 10. isolated promotion commit that enables only the allowlisted fake/pure path.
 

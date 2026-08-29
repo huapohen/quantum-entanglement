@@ -2,8 +2,9 @@
 
 Status: **implemented as an explicit migration-7 opt-in, non-emitting recovery primitive.**
 The API is available only on `SQLiteEventStore(enable_result_acceptance_schema=True)`. It does
-not enable `AcceptedV2`, worker dispatch, publication, real IM connectivity, or any external
-side effect.
+not enable production worker dispatch, publication, real IM connectivity, or any external side
+effect. The separate result-acceptance API may return process-bound `AcceptedV2` only for a fresh
+COMMIT ACK; this reconciliation path always returns a capability-free observation.
 
 This document is a local-first release artifact. Markdown and Git/GitHub are the source of truth
 while the branch is being developed; the corresponding Notion page remains pending until the
@@ -132,8 +133,8 @@ tenant isolation, or a safe connection to any real IM. Those remain separate rel
 
 Before enabling a worker or connecting the native IM, the branch still needs:
 
-1. store-owned result acceptance wired to the private stale-worker fencing/heartbeat supervision
-   primitive, followed by a receipt-aware pure worker gate;
+1. the existing store-owned result acceptance seam wired into a promoted receipt-aware pure worker
+   gate, including process-kill, lease-loss-during-acceptance and two-process evidence;
 2. business projection and action receipt semantics separate from result reconciliation;
 3. compatibility/rollback runbooks and a release evidence bundle;
 4. only then, an independently approved provider contract and production exchange for the native

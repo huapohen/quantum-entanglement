@@ -34,7 +34,7 @@ Passing unit tests alone is necessary but not sufficient.
 ## Current E3 result-authority checkpoint (2026-08-29)
 
 The independent branch `mainline_continue_quantum_entanglement` currently carries a private M5
-checkpoint plus the explicit migration-7 activation kernel (latest pushed HEAD `f5e0e4d`). It has a
+checkpoint plus the explicit migration-7 activation kernel (latest pushed HEAD `7bed2b6`). It has a
 single-owner atomic result graph for result and terminal events, manifest/request/receipt, Artifact
 blob/version/binding, and succeeded job/attempt CAS; fault injection covers every result DML boundary
 and both confirmed-rollback and commit-ACK-loss outcomes. A capability-free `ObservedV2` readback
@@ -48,9 +48,12 @@ The migration-7 kernel is explicit and opt-in: `enable_result_acceptance_schema=
 legacy 1--6 prefix, installs the domain sidecar, activates migration 7, validates metadata and
 dependencies, and supports an empty-data guarded rollback. The default constructor remains
 feature-off and rejects an activated v7 database, so this is still not a production service. It does
-not enable `AcceptedV2`, worker dispatch, publication, real IM or external outbound, and must not be
-counted as a closed Gate A–E. The next release-blocking work is crash/kill publication evidence,
-clean-host restore/replay, compatibility policy and the receipt-bound worker gate.
+not enable production worker dispatch, publication, real IM or external outbound, and must not be
+counted as a closed Gate A–E. The opt-in API now returns process-bound `AcceptedV2` only after a
+fresh COMMIT ACK and returns `ObservedV2` for replay/readback; the supervisor can keep heartbeat
+fencing through a caller-supplied acceptor. The next release-blocking work is business projection,
+crash/kill and two-process evidence, clean-host restore/replay, compatibility policy and the
+receipt-bound worker gate.
 
 ## Phase 0 — validated kernel (`0.1.x`, complete)
 

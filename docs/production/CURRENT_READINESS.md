@@ -37,8 +37,10 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
    已封锁 generic result vocabulary 和 scoped standalone completion 旁路，M3 又完成 exact typed
    write-snapshot 与 raw durable row 的同事务双路重算；当前分支还完成了 opt-in migration 7、
    Artifact owner transaction、atomic result graph/readback、capability-free `ObservedV2` 和
-   receipt-bound non-emitting reconciliation CAS。heartbeat-supervised worker、`AcceptedV2`、
-   terminal business projection 和生产兼容/恢复闭环仍不存在；
+   receipt-bound non-emitting reconciliation CAS。当前分支又补齐了 opt-in store-owned result
+   acceptance API、fresh-COMMIT `AcceptedV2`/replay `ObservedV2` 分类，以及 heartbeat supervisor
+   的 acceptance seam；terminal business projection、process-kill/双连接闭环、兼容回退和生产
+   composition 仍不存在；
 2. events、snapshots、delivery、attempt 和 projection repository 尚未统一强制 tenant/workspace
    scope，tenant domain object 不能替代可信认证与 SQL predicate；
 3. connector acceptance 尚未与 action digest、authorization/approval revision、outbox ACK 和
@@ -153,13 +155,15 @@ event/revision/scope/mention/digest union/state 矩阵由参数化 contract test
 
 - runtime 仍直接调用 Agent，尚未接入 atomic admission，也没有 claim/heartbeat/fencing 的 attempt
   integration；
-- canonical admission 与 claim + attempt + schema-2 start event + readback 的统一 UoW 已实现；但
-  heartbeat-supervised receipt-aware worker gate、result/artifact acceptance 和 terminal state
-  仍未实现；
+- canonical admission 与 claim + attempt + schema-2 start event + readback 的统一 UoW 已实现；
+  scoped result/artifact acceptance 已在 migration-7 opt-in store 中实现并有 fresh-ACK/replay
+  分类，但 heartbeat-supervised worker gate 仍 default-off，尚未完成 terminal projection、
+  process-kill 与生产 composition；
 - stored-event envelope M1 已完成 exact values/raw-row codec，M2 已完成 generic reserved-event append
-  fence 与 scoped standalone completion fence；store-owned `_EventWriteSnapshot` adapter、同事务
-  INSERT/readback digest 比对与 exact typed result payload dispatch 尚未实现，不能据此签发 receipt
-  或 Accepted；
+  fence 与 scoped standalone completion fence；M3 store-owned `_EventWriteSnapshot` adapter、同事务
+  INSERT/readback digest 比对与 exact typed result payload dispatch 已实现并接入 opt-in result
+  writer；正常 fresh COMMIT ACK 才能签发 process-bound `AcceptedV2`，ACK-loss/replay 只能
+  `ObservedV2`，不能据此打开生产 worker；
 - task `RUNNING`、attempt、artifact/result acceptance 和 terminal task state 不是端到端状态机；
 - Agent 返回后逐个写 artifact、result 和 completion，任一边界崩溃仍需 receipt-based reconcile；
 - succeeded attempt 没有不可变 result receipt 时不能安全自动投影 `COMPLETED`；
@@ -429,7 +433,7 @@ M4 仍不包含 migration 7 注册、Atomic Result Writer、receipt/event/task/a
 [`31_inactive_result_schema_artifact_transaction_evidence.md`](../../analysis_report/research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
 随后在独立分支 `mainline_continue_quantum_entanglement` 推进的 E3 M5 私有 checkpoint（最近
-推送 HEAD `f5e0e4d`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
+推送 HEAD `7bed2b6`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
 manifest/request/receipt、Artifact blob/version/binding、job 与 attempt terminal CAS 组成同一
 owner transaction；每个结果 DML 边界均有故障注入并证明整图回滚；commit ACK-loss 会 poison
 store 并保留已提交图，确认 rollback 则不留前缀。新增的 capability-free `ObservedV2` 路径只
@@ -440,12 +444,14 @@ store 并保留已提交图，确认 rollback 则不留前缀。新增的 capabi
 本阶段已增加显式 migration-7 activation kernel：opt-in store 会先应用 legacy 1--6，再安装
 domain sidecar、写入迁移元数据和依赖、激活 migration 7，并在空数据时提供受保护的 rollback。
 默认构造器仍保持 feature-off，打开 v7 数据库会被 schema-version gate 拒绝；因此 migration
-activation 只是候选数据库的可审计前向/回退边界，不代表 Accepted/public writer、publication
+activation 只是候选数据库的可审计前向/回退边界，不代表生产 public writer、publication
 或 worker 已开启。随后新增的 reconciliation API 在同一 `BEGIN IMMEDIATE` 内做 receipt-bound
 owner CAS，成功只更新 job/attempt，不新增 event/outbox，重复调用返回
 `ALREADY_RECONCILED`；并补充了仅供离线演练的 scoped PURE heartbeat supervisor（首 heartbeat、
-续租失败、取消、超时与有界 drain），它不写结果、不改变任务状态且不接入 public dispatch；
-因此仍不代表 Accepted/public writer、worker、projection 或生产恢复已开启。
+续租失败、取消、超时与有界 drain）。当前 supervisor 可在接受回调期间继续 heartbeat，
+`run_and_accept()` 只接受 exact request 并把 store-owned claim 交给候选 acceptor；正常 fresh
+COMMIT ACK 返回 process-bound `AcceptedV2`，replay/ACK-loss readback 返回 `ObservedV2`。这些
+能力仍不代表 worker、projection 或生产恢复已开启。
 运行合同见 [`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md)、
 [`RESULT_MIGRATION_ACTIVATION.md`](./RESULT_MIGRATION_ACTIVATION.md) 与
 [`RESULT_RECONCILIATION.md`](./RESULT_RECONCILIATION.md) 与

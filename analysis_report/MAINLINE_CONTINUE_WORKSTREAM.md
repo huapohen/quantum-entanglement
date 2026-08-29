@@ -55,19 +55,20 @@ E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
 | E0 | 已继承 | 主线恢复分支、tag、bundle 与回读证据已完成 |
 | E1 | 已完成 | provider-neutral 合同、fake、zero-network 证据和 Notion 回读已闭环 |
 | E2 | 进行中 | provider bundle 离线闭环 `ee0666f` 已完成；真实 sandbox 未连接，下一门禁是真实 provider contract/scope/production exchange |
-| E3 | 未开始 | verified inbound → PURE Agent 草稿 |
+| E3 | 进行中 | Result Authority opt-in rehearsal：原子 acceptance、heartbeat fencing、recovery/projection |
 | E4 | 未开始 | fake-only Action Plane |
 | E5 | 未开始 | 需另行明确授权的单会话 sandbox outbound |
 
 ## E3 continuation checkpoint (2026-08-29)
 
-The same branch now carries the opt-in Result Authority continuation through `f5e0e4d`:
+The same branch now carries the opt-in Result Authority continuation through `7bed2b6`:
 
 - migration 7 activation/reopen remains explicit and default-off;
 - result-specific active backup/restore now binds the migration-7 topology, database bytes,
   page geometry and table counts, with no-overwrite restore and post-restore verification;
 - a private scoped PURE supervisor now enforces first-heartbeat admission, heartbeat-loss fencing,
-  timeout/cancellation drain and late-result discard; product dispatch remains disabled;
+  timeout/cancellation drain and late-result discard; its acceptance seam keeps heartbeat fencing
+  active until an exact `AcceptedV2`/`ObservedV2` outcome; product dispatch remains disabled;
 - a committed result graph can be read back while its exact job/attempt owner is still
   `RUNNING` and reconciled by a receipt-bound, non-emitting CAS;
 - the API is idempotent (`RECONCILED` / `ALREADY_RECONCILED`), rejects stale or malformed owners,
@@ -75,8 +76,8 @@ The same branch now carries the opt-in Result Authority continuation through `f5
 - successful reconciliation changes only the owner job/attempt rows; it creates no event, outbox,
   publication, lease, capability or external message.
 
-The next local gates are store-wired result acceptance, business projection and compatibility/
-rollback evidence. `AcceptedV2`,
-real IM connectivity and all outbound effects remain disabled. Notion synchronization stays
+The next local gates are business projection, crash/kill/two-process recovery and compatibility/
+rollback evidence. The opt-in API can issue process-bound `AcceptedV2` only after a fresh COMMIT ACK;
+production worker dispatch, real IM connectivity and all outbound effects remain disabled. Notion synchronization stays
 `local_pending` until this checkpoint is closed and then receives one batch upload plus page-by-page
 readback.
