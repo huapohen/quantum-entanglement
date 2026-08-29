@@ -85,6 +85,7 @@ from .invocation_results import (
     SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION,
     ScopedInvocationResultArtifactV2,
     ScopedInvocationResultManifestV2,
+    ScopedInvocationResultObservedV2,
 )
 from .invocation_worker import (
     HeartbeatPureWorkerGate,
@@ -232,6 +233,7 @@ from .store import (
     InvocationStartConflictError,
     InvocationStartTransactionError,
     ReservedResultEventError,
+    ResultAcceptanceDisabledError,
     SQLiteEventStore,
 )
 from .tenancy import (
@@ -374,6 +376,8 @@ __all__ = [
     "InvocationStartObserved",
     "InvocationStartReceipt",
     "InvocationStartTransactionError",
+    "ResultAcceptanceDisabledError",
+    "ScopedInvocationResultObservedV2",
     "InvocationWorkerAdmission",
     "InvocationWorkerConfiguration",
     "InvocationWorkerDisabledError",

@@ -273,6 +273,18 @@ class InvocationStartTransactionError(RuntimeError):
         super().__init__("invocation start transaction was rolled back")
 
 
+class ResultAcceptanceDisabledError(RuntimeError):
+    """Raised when the private result-schema opt-in is not enabled for this store."""
+
+    code = "result_acceptance_disabled"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "result acceptance observation is disabled until the result schema is explicitly "
+            "enabled"
+        )
+
+
 class EventStorePoisonedError(EventStoreIntegrityError):
     """Raised after an ambiguous transaction quarantines this store instance."""
 
@@ -5147,6 +5159,31 @@ class SQLiteEventStore:
                 "result acceptance readback SQLite integrity check failed"
             )
         self._require_current_process()
+
+    @_bind_event_store_process
+    def read_scoped_invocation_result_observed_v2(
+        self,
+        tenant_id: str,
+        workspace_id: str,
+        invocation_id: str,
+    ) -> Optional[_ScopedInvocationResultObservedV2]:
+        """Read one committed result as a capability-free observation.
+
+        The public read is available only on an explicitly result-enabled rehearsal store. It
+        never exposes a lease or a write capability; the default store remains feature-off until
+        migration 7 is promoted through the production migration gate.
+        """
+
+        tenant_snapshot = _caller_invocation_identity(tenant_id, "tenant_id")
+        workspace_snapshot = _caller_invocation_identity(workspace_id, "workspace_id")
+        invocation_snapshot = _caller_invocation_identity(invocation_id, "invocation_id")
+        if not self._result_acceptance_schema_enabled:
+            raise ResultAcceptanceDisabledError() from None
+        return self._read_scoped_invocation_result_observed_v2(
+            tenant_snapshot,
+            workspace_snapshot,
+            invocation_snapshot,
+        )
 
     @_bind_event_store_process
     def _read_scoped_invocation_result_observed_v2(

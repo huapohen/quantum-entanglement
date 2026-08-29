@@ -64,6 +64,7 @@ from quantum_entanglement.invocation_results import (
 )
 from quantum_entanglement.protocol import TaskStatus
 from quantum_entanglement.store import (
+    ResultAcceptanceDisabledError,
     SQLiteEventStore,
     _CompletedFreshResultAcceptancePlanV2,
     _InsertedFreshResultAcceptancePlanV2,
@@ -2450,6 +2451,17 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
         self.assertNotIn("existing-result-lease-token-canary", repr(observed))
         self.assertNotIn("leaseToken", observed.to_dict())
 
+    def test_public_observed_result_readback_is_feature_off_by_default(self) -> None:
+        before_changes = self.store._connection.total_changes
+        with self.assertRaises(ResultAcceptanceDisabledError) as captured:
+            self.store.read_scoped_invocation_result_observed_v2(
+                "tenant-observation-disabled",
+                "workspace-observation-disabled",
+                "invocation-observation-disabled",
+            )
+        self.assertEqual(captured.exception.code, "result_acceptance_disabled")
+        self.assertEqual(self.store._connection.total_changes, before_changes)
+
     def test_observed_result_readback_returns_none_without_a_result_graph(self) -> None:
         prepared = self.fresh_prepared()
         install_inactive_result_schema(self.store)
@@ -2520,7 +2532,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
 
             reopened = SQLiteEventStore(path, enable_result_acceptance_schema=True)
             try:
-                observed = reopened._read_scoped_invocation_result_observed_v2(
+                observed = reopened.read_scoped_invocation_result_observed_v2(
                     receipt.evidence.tenant_id,
                     receipt.evidence.workspace_id,
                     receipt.evidence.invocation_id,
@@ -2576,12 +2588,12 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
 
             reopened = SQLiteEventStore(path, enable_result_acceptance_schema=True)
             try:
-                observed = reopened._read_scoped_invocation_result_observed_v2(
+                observed = reopened.read_scoped_invocation_result_observed_v2(
                     prepared.request.manifest.tenant_id,
                     prepared.request.manifest.workspace_id,
                     prepared.request.manifest.invocation_id,
                 )
-                replay = reopened._read_scoped_invocation_result_observed_v2(
+                replay = reopened.read_scoped_invocation_result_observed_v2(
                     prepared.request.manifest.tenant_id,
                     prepared.request.manifest.workspace_id,
                     prepared.request.manifest.invocation_id,
