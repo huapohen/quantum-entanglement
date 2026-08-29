@@ -1,0 +1,29 @@
+{
+  "format": "quantum-entanglement.local-im-basic-acceptance-screenshots-v1",
+  "capturedAt": "2026-08-29",
+  "source": "http://127.0.0.1:19082/demo/im",
+  "networkPolicy": "loopback-only",
+  "credentialsUsed": false,
+  "interactions": [
+    "create ordinary group from the browser",
+    "select the created group",
+    "send one ordinary text message",
+    "reload and verify the persisted-in-process message projection"
+  ],
+  "screenshots": [
+    {
+      "path": "analysis_report/screenshots/38_local_im_basic_desktop.png",
+      "viewport": {"width": 1440, "height": 1000},
+      "state": "ordinary group created and text message visible after reload",
+      "sha256": "3d871740d3c0a5f62a2ffb12ab4fa6270c66f7ae778fa08a6be61f6cc7d85657",
+      "redactionStatus": "synthetic-local-ui-no-credential"
+    },
+    {
+      "path": "analysis_report/screenshots/39_local_im_basic_mobile.png",
+      "viewport": {"width": 390, "height": 844},
+      "state": "responsive ordinary group and text composer view after reload",
+      "sha256": "249bdf2a03059185c07492e960a3ec524e6c6718285820c270fafa1179eda08e",
+      "redactionStatus": "synthetic-local-ui-no-credential"
+    }
+  ]
+}

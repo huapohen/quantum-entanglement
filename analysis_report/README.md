@@ -51,6 +51,7 @@
 | `research/36_postgres_approval_policy_control_store_checkpoint.md` | 当前 W2 深度证据：`16d66b6`，`local_pending` | immutable policy archive/activation/head、完整历史链、双重 attestation、并发/损坏/取消测试、诚实 NO-GO 与下一阶段顺序 |
 | `research/37_postgres_durable_attempt_issuer_v2_checkpoint.md` | 当前 W2 本地增量：`68d4f2b`，`local_pending` | 五角色 control store、post-preflight durable attempt grant、issuance ID 幂等回读、fence `/3` trust boundary 与 SQL smoke test |
 | `research/38_local_im_provider_agent_thread_checkpoint.md` | 当前本地验收增量：`local_pending` | provider-neutral IM/auth、Agent Store、`@Agent` 子群 vertical slice、零网络 Fiber API、任意自定义指令页面与 Playwright 桌面/移动端证据 |
+| `research/39_basic_im_conversation_message_checkpoint.md` | 当前本地验收增量：`local_pending` | 普通 direct/group 会话创建、显式成员/ACL、文本消息 client/platform ID、provider receipt、cursor 分页和浏览器桌面/移动端验收 |
 
 接入前代码基线已经安全备份。`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 中“先 Level A、再 Level B
 sandbox inbound-only”是当时的历史调度口径。当前执行源已切换为
@@ -148,6 +149,8 @@ Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清�
 | `screenshots/37_postgres_approval_policy_control_store_map.svg` / `.png` | 离线 root policy → 独立 control cluster → exact CAS/attestation/readback → mutation-time fence 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
 | `screenshots/35_local_im_acceptance_desktop.png` | 任意自定义指令提交后，父群受限工作卡、独立 Agent 子群和回复 | Playwright loopback 桌面端真实渲染与交互证据 |
 | `screenshots/36_local_im_acceptance_mobile.png` | 移动 viewport 下的同一自定义指令验收结果 | Playwright loopback 移动端真实渲染与交互证据 |
+| `screenshots/38_local_im_basic_desktop.png` | 普通群创建、普通文本发送和 reload 后消息列表 | Playwright loopback 桌面端真实渲染与交互证据 |
+| `screenshots/39_local_im_basic_mobile.png` | 普通 IM 基础会话在移动 viewport 的响应式状态 | Playwright loopback 移动端真实渲染与交互证据 |
 
 ## 数据安全
 
