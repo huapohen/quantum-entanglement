@@ -170,6 +170,7 @@ func (service *Service) CreateConversation(
 	if err != nil {
 		return ConversationResult{}, err
 	}
+	agentIncluded := containsActorID(members, service.installation.AgentActor())
 	digest := createConversationDigest(conversationType, input.Name, memberIDs)
 
 	service.mu.Lock()
@@ -233,6 +234,9 @@ func (service *Service) CreateConversation(
 				im.ConversationPermissionManageMembers,
 				im.ConversationPermissionManageConversation,
 			)
+			if agentIncluded {
+				permissions = append(permissions, im.ConversationPermissionInvokeAgent)
+			}
 		}
 		access, accessErr := im.NewConversationAccessSnapshot(conversationRef, actorRef, permissions, 1)
 		if accessErr != nil {
@@ -652,6 +656,15 @@ func (service *Service) parseMembers(values []string, conversationType im.Conver
 	}
 	sort.Strings(memberIDs)
 	return actors, memberIDs, nil
+}
+
+func containsActorID(values []im.ActorID, target im.ActorID) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (service *Service) canRead(conversation *localConversation) bool {

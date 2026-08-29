@@ -116,6 +116,56 @@ func TestServiceAddsInstalledAgentToExistingGroupIdempotently(t *testing.T) {
 	}
 }
 
+func TestServiceMentionUsesSelectedGroupAndMaterializesThreadProjection(t *testing.T) {
+	t.Parallel()
+	service, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.CreateConversation(context.Background(), LocalBearerToken, CreateConversationInput{
+		Type: "group", Name: "指定父群验收群", MemberActorIDs: []string{"agt_local_research"},
+		IdempotencyKey: "test/mention/selected-group",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Mention(context.Background(), LocalBearerToken, MentionInput{
+		ConversationID: created.Conversation.ID, MessageID: "msg_selected_group_1", Instruction: "在指定群里执行",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ParentConversationID != created.Conversation.ID || result.ChildConversationID == "" {
+		t.Fatalf("selected group mention = %#v", result)
+	}
+	conversations, err := service.ListConversations(context.Background(), LocalBearerToken, "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foundChild bool
+	for _, conversation := range conversations.Conversations {
+		if conversation.ID == result.ChildConversationID && conversation.ParentConversationID == created.Conversation.ID {
+			foundChild = true
+		}
+	}
+	if !foundChild {
+		t.Fatalf("materialized child missing: %#v", conversations.Conversations)
+	}
+	childMessages, err := service.ListMessages(context.Background(), LocalBearerToken, result.ChildConversationID, "", 20)
+	if err != nil || len(childMessages.Messages) != 1 || childMessages.Messages[0].SenderActorID != service.Snapshot().AgentActorID {
+		t.Fatalf("child projection = %#v, %v", childMessages, err)
+	}
+	parentMessages, err := service.ListMessages(context.Background(), LocalBearerToken, created.Conversation.ID, "", 20)
+	if err != nil || len(parentMessages.Messages) != 1 || parentMessages.Messages[0].ExtInfo == "" {
+		t.Fatalf("parent work card projection = %#v, %v", parentMessages, err)
+	}
+	if _, err := service.Mention(context.Background(), LocalBearerToken, MentionInput{
+		ConversationID: created.Conversation.ID, MessageID: "msg_selected_group_1", Instruction: "changed",
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("selected group mention drift = %v", err)
+	}
+}
+
 func TestServiceRejectsAuthenticationValidationAndMessageDrift(t *testing.T) {
 	t.Parallel()
 	service, err := New()

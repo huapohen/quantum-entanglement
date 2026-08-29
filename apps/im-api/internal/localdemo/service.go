@@ -36,8 +36,9 @@ const (
 )
 
 type MentionInput struct {
-	MessageID   string `json:"messageId"`
-	Instruction string `json:"instruction"`
+	ConversationID string `json:"conversationId,omitempty"`
+	MessageID      string `json:"messageId"`
+	Instruction    string `json:"instruction"`
 }
 
 type AgentReplyView struct {
@@ -77,7 +78,8 @@ type Service struct {
 	requestAccess       im.ConversationAccessSnapshot
 	installation        agentstore.InstallationSnapshot
 	passport            agentstore.TrustPassport
-	requests            map[im.MessageID][sha256.Size]byte
+	requests            map[string][sha256.Size]byte
+	mentionResults      map[string]MentionResult
 	knownActors         map[im.ActorID]im.ActorRef
 	conversations       map[im.ConversationID]*localConversation
 	conversationOrder   []im.ConversationID
@@ -177,7 +179,8 @@ func New() (*Service, error) {
 	return &Service{
 		authVerifier: verifier, provider: provider, coordinator: coordinator,
 		parent: parent, requester: requester, requestAccess: requestAccess,
-		installation: installation, passport: passport, requests: make(map[im.MessageID][sha256.Size]byte),
+		installation: installation, passport: passport, requests: make(map[string][sha256.Size]byte),
+		mentionResults: make(map[string]MentionResult),
 		knownActors: map[im.ActorID]im.ActorRef{
 			requester.ActorID(): requester, installation.AgentActor(): agentRef,
 		},
@@ -209,6 +212,14 @@ func (service *Service) Mention(
 	if service == nil || ctx == nil || !validInstruction(input.Instruction) {
 		return MentionResult{}, ErrInvalidInput
 	}
+	parentID := service.parent.Ref().ConversationID()
+	if input.ConversationID != "" {
+		parsedParentID, err := im.ParseConversationID(input.ConversationID)
+		if err != nil {
+			return MentionResult{}, ErrInvalidInput
+		}
+		parentID = parsedParentID
+	}
 	messageID, err := im.ParseMessageID(input.MessageID)
 	if err != nil {
 		return MentionResult{}, ErrInvalidInput
@@ -218,16 +229,34 @@ func (service *Service) Mention(
 		return MentionResult{}, ErrUnauthenticated
 	}
 	instructionDigest := sha256.Sum256([]byte(input.Instruction))
+	requestKey := parentID.String() + "\x00" + messageID.String()
 	service.mu.Lock()
-	if existing, ok := service.requests[messageID]; ok && existing != instructionDigest {
+	parentRecord, parentExists := service.conversations[parentID]
+	if !parentExists || parentRecord.snapshot.ConversationType() != im.ConversationGroup ||
+		parentRecord.snapshot.Status() != im.ConversationActive || !service.canInvoke(parentRecord) {
+		service.mu.Unlock()
+		return MentionResult{}, ErrForbidden
+	}
+	if _, ok := parentRecord.members[service.installation.AgentActor()]; !ok {
+		service.mu.Unlock()
+		return MentionResult{}, ErrForbidden
+	}
+	if existing, ok := service.requests[requestKey]; ok && existing != instructionDigest {
 		service.mu.Unlock()
 		return MentionResult{}, ErrConflict
 	}
-	service.requests[messageID] = instructionDigest
+	if existingResult, ok := service.mentionResults[requestKey]; ok {
+		existingResult.Replayed = true
+		service.mu.Unlock()
+		return existingResult, nil
+	}
+	service.requests[requestKey] = instructionDigest
+	requestAccess := parentRecord.access[service.requester.ActorID()]
+	parentSnapshot := parentRecord.snapshot
 	service.mu.Unlock()
 	thread, err := service.coordinator.Open(ctx, agentthread.MentionCommand{
-		Parent: service.parent, RequestingActor: service.requester,
-		RequestingAccess: service.requestAccess, RootMessage: messageID,
+		Parent: parentSnapshot, RequestingActor: service.requester,
+		RequestingAccess: requestAccess, RootMessage: messageID,
 		AgentInstallation: service.installation,
 	})
 	if err != nil {
@@ -246,12 +275,15 @@ func (service *Service) Mention(
 	if err != nil {
 		return MentionResult{}, err
 	}
+	if err := service.materializeThread(thread, replyMessageID, replyText, receipt); err != nil {
+		return MentionResult{}, err
+	}
 	workCard, err := agentthread.EncodeParentWorkCard(thread.Plan().ParentCard())
 	if err != nil {
 		return MentionResult{}, err
 	}
-	return MentionResult{
-		ParentConversationID: service.parent.Ref().ConversationID().String(),
+	result := MentionResult{
+		ParentConversationID: parentSnapshot.Ref().ConversationID().String(),
 		ChildConversationID:  thread.Plan().Child().Ref().ConversationID().String(),
 		InvocationID:         thread.Plan().InvocationID().String(), WorkCardExtInfo: workCard,
 		AgentReply: AgentReplyView{
@@ -260,7 +292,16 @@ func (service *Service) Mention(
 		},
 		Replayed:       thread.Replayed() || receipt.Status == im.ProviderEffectReplayed,
 		ProviderStatus: string(receipt.Status),
-	}, nil
+	}
+	service.mu.Lock()
+	if existingResult, exists := service.mentionResults[requestKey]; exists {
+		existingResult.Replayed = true
+		service.mu.Unlock()
+		return existingResult, nil
+	}
+	service.mentionResults[requestKey] = result
+	service.mu.Unlock()
+	return result, nil
 }
 
 func buildPlatform(now time.Time) (

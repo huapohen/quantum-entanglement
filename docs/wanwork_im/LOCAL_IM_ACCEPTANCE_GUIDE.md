@@ -103,6 +103,7 @@ curl --fail \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer demo.local.signature' \
   --data '{
+    "conversationId":"cnv_local_demo_parent",
     "messageId":"msg_manual_1",
     "instruction":"比较三个 Agent 协作产品，输出证据、差异和建议"
   }' \
@@ -116,6 +117,7 @@ curl --fail \
 - HTTP status 始终为 `200`；
 - envelope `code=200`；
 - `childConversationId` 以 `cnv_at_` 开头；
+- `parentConversationId` 等于请求的 `conversationId`（省略时仅兼容地使用演示父群）；
 - `invocationId` 以 `inv_at_` 开头；
 - `agentReply.conversationId == childConversationId`；
 - `agentReply.conversationId != parentConversationId`；

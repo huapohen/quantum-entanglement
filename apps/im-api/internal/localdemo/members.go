@@ -121,6 +121,20 @@ func (service *Service) AddMembers(
 		conversation.members[actorID] = membership
 		conversation.access[actorID] = access
 	}
+	if containsActorID(added, service.installation.AgentActor()) {
+		requesterAccess := conversation.access[service.requester.ActorID()]
+		if !requesterAccess.HasPermission(im.ConversationPermissionInvokeAgent) {
+			permissions := requesterAccess.Permissions()
+			permissions = append(permissions, im.ConversationPermissionInvokeAgent)
+			updatedAccess, accessErr := im.NewConversationAccessSnapshot(
+				conversation.snapshot.Ref(), service.requester, permissions, requesterAccess.Revision()+1,
+			)
+			if accessErr != nil {
+				return AddMembersResult{}, ErrIntegrity
+			}
+			conversation.access[service.requester.ActorID()] = updatedAccess
+		}
+	}
 	service.memberUpdates[updateKey] = memberUpdateRecord{
 		digest: digest, conversation: conversationID, added: append([]string(nil), addedStrings...),
 	}
