@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from quantum_entanglement.events import StoredEvent
 from quantum_entanglement.result_projection import (
     RESULT_PROJECTION_TABLE,
     ResultProjectionConflictError,
+    ResultProjectionProcessMismatchError,
     ResultProjectionSchemaError,
     ResultProjectionStatus,
     SQLiteResultProjectionStore,
@@ -171,6 +173,33 @@ class ResultProjectionTests(unittest.TestCase):
             any(any(table in statement for table in forbidden) for statement in handler_sql)
         )
         self.assertTrue(any(RESULT_PROJECTION_TABLE in statement for statement in handler_sql))
+
+    def test_fork_inherited_projection_rejects_before_touching_sqlite(self) -> None:
+        self.projection.run_once()
+        read_fd, write_fd = os.pipe()
+        child_pid = os.fork()
+        if child_pid == 0:
+            os.close(read_fd)
+            try:
+                self.projection.run_once()
+            except ResultProjectionProcessMismatchError:
+                os.write(write_fd, b"ok")
+                os._exit(0)
+            except BaseException:
+                os.write(write_fd, b"bad")
+                os._exit(1)
+            os.write(write_fd, b"missing")
+            os._exit(1)
+        os.close(write_fd)
+        try:
+            result = os.read(read_fd, 32)
+        finally:
+            os.close(read_fd)
+        _, status = os.waitpid(child_pid, 0)
+        self.assertEqual(result, b"ok")
+        self.assertTrue(os.WIFEXITED(status))
+        self.assertEqual(os.WEXITSTATUS(status), 0)
+        self.assertEqual(self.projection.run_once().scanned_count, 0)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -19,6 +19,7 @@ from enum import Enum
 from threading import RLock
 from typing import Any, Optional, Tuple
 
+from . import process_identity as _process_identity
 from .invocation_execution import (
     TASK_EXECUTION_REQUESTED_EVENT_TYPE,
     TASK_INVOCATION_STARTED_EVENT_TYPE,
@@ -45,6 +46,8 @@ _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _CANONICAL_UTC_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z")
 _MAX_TEXT_BYTES = 4_096
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
+
+_RESULT_PROJECTION_PROCESS_QUARANTINE: list[object] = []
 
 _RESULT_PROJECTION_TABLE_SQL = """
 CREATE TABLE task_result_projection_v1 (
@@ -117,6 +120,10 @@ class ResultProjectionConflictError(ResultProjectionError):
 
 class ResultProjectionSchemaError(ResultProjectionError):
     """Raised when the projection-owned table is absent in part or has drifted."""
+
+
+class ResultProjectionProcessMismatchError(ResultProjectionError):
+    """Raised when a projection instance is used after a fork or PID drift."""
 
 
 class ResultProjectionStatus(str, Enum):
@@ -322,6 +329,8 @@ class SQLiteResultProjectionStore:
         clock: Any = utc_now,
         lease_seconds: float = 30.0,
     ) -> None:
+        self._process_owner = _process_identity.capture_process_owner()
+        self._require_current_process()
         if type(path) is not str or not path:
             raise ValueError("projection path is required")
         if not callable(getattr(event_source, "read_all", None)):
@@ -339,6 +348,28 @@ class SQLiteResultProjectionStore:
             self._handle_event,
             lease_seconds=lease_seconds,
         )
+
+    def _require_current_process(self) -> None:
+        _process_identity.require_current_process(
+            self._process_owner,
+            ResultProjectionProcessMismatchError,
+        )
+
+    def _process_is_current(self) -> bool:
+        try:
+            self._require_current_process()
+        except ResultProjectionProcessMismatchError:
+            return False
+        return True
+
+    def __del__(self) -> None:
+        try:
+            if not self._process_is_current():
+                _RESULT_PROJECTION_PROCESS_QUARANTINE.append(self)
+        except BaseException:
+            # Interpreter teardown may clear module globals; inherited resources are
+            # still intentionally not closed by a child finalizer.
+            pass
 
     def _initialize_table(self) -> None:
         with self._lock:
@@ -521,6 +552,7 @@ class SQLiteResultProjectionStore:
     def run_once(self, *, limit: int = 100) -> ProjectionRunResult:
         """Project one bounded, leased event page and return sanitized run telemetry."""
 
+        self._require_current_process()
         return self._projector.run_once(limit=limit)
 
     def read(
@@ -531,6 +563,7 @@ class SQLiteResultProjectionStore:
     ) -> Optional[ProjectedResultTask]:
         """Read one scope-bound task view without returning result body or lease data."""
 
+        self._require_current_process()
         tenant_id = _text(tenant_id, "tenant_id")
         workspace_id = _text(workspace_id, "workspace_id")
         invocation_id = _text(invocation_id, "invocation_id")
@@ -547,6 +580,7 @@ class SQLiteResultProjectionStore:
     def close(self) -> None:
         """Close the offset and projection connection."""
 
+        self._require_current_process()
         with self._lock:
             self._offset_store.close()
 
@@ -558,6 +592,7 @@ __all__ = [
     "ResultProjectionConflictError",
     "ResultProjectionError",
     "ResultProjectionSchemaError",
+    "ResultProjectionProcessMismatchError",
     "ResultProjectionStatus",
     "SQLiteResultProjectionStore",
     "build_result_projection_registry",
