@@ -435,7 +435,7 @@ M4 仍不包含 migration 7 注册、Atomic Result Writer、receipt/event/task/a
 [`31_inactive_result_schema_artifact_transaction_evidence.md`](../../analysis_report/research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
 随后在独立分支 `mainline_continue_quantum_entanglement` 推进的 E3 M5/M7.5 私有 checkpoint（最近
-推送代码 HEAD `e27c30b`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
+推送代码 HEAD `020c1fd`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
 manifest/request/receipt、Artifact blob/version/binding、job 与 attempt terminal CAS 组成同一
 owner transaction；每个结果 DML 边界均有故障注入并证明整图回滚；commit ACK-loss 会 poison
 store 并保留已提交图，确认 rollback 则不留前缀。新增的 capability-free `ObservedV2` 路径只
@@ -463,7 +463,10 @@ owner CAS，成功只更新 job/attempt，不新增 event/outbox，重复调用�
 其真实认证 transport/composition、跨租户 property、全系统双连接与 restore replay 仍需独立证据；当前
 已新增一个由 `ProtectedOperationComposer` 驱动的受保护 read seam，并覆盖 action/resource mismatch、
 subject drift 与 forged dependency 的拒绝，但这仍不是生产 API。projection 自身另有双连接 lease fencing、
-终态 identity binding 与一条 SIGKILL-after-claim 恢复证据。
+终态 identity binding 与一条 SIGKILL-after-claim 恢复证据。结果 acceptance 另有一条真实跨进程
+`SIGKILL` 证据：Artifact DML 已发生但 COMMIT 尚未返回时，重开数据库的七张 authority 表均无
+半成品，使用原始合法 claim 可获得唯一 fresh `AcceptedV2`；边界与可复现命令见
+[`33_result_acceptance_process_kill_evidence.md`](../../analysis_report/research/33_result_acceptance_process_kill_evidence.md)。
 独立主机恢复和实测 RPO/RTO 证据仍需在后续 release gate 中完成。
 
 仍缺：
