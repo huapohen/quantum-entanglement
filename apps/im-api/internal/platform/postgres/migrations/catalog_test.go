@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 5 || len(second) != 5 {
+	if len(first) != 6 || len(second) != 6 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -155,6 +155,24 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 		strings.Contains(functions.UpSQL, "SECURITY INVOKER") ||
 		strings.Contains(functions.UpSQL, "LANGUAGE sql") {
 		t.Fatal("function migration escaped its exact surface")
+	}
+	events := first[5]
+	if events.Version != 6 || events.Name != "event_store" ||
+		len(events.Checksum) != 64 || events.Checksum != second[5].Checksum ||
+		events.UpSQL != second[5].UpSQL || events.DownSQL != second[5].DownSQL {
+		t.Fatalf("unexpected deterministic event migration: %#v", events)
+	}
+	for _, marker := range []string{
+		`CREATE TABLE wanwork_im.event_stream_heads`,
+		`CREATE TABLE wanwork_im.event_tenant_heads`,
+		`CREATE TABLE wanwork_im.event_log`,
+		`CREATE FUNCTION wanwork_im.write_event`,
+		`ENABLE ROW LEVEL SECURITY`,
+		`FORCE ROW LEVEL SECURITY`,
+	} {
+		if !strings.Contains(events.UpSQL, marker) {
+			t.Fatalf("event migration missing %q", marker)
+		}
 	}
 }
 

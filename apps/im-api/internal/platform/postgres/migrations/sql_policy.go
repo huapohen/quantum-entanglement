@@ -58,6 +58,22 @@ var authorityWriteFunctionSpecs = map[string]authorityWriteFunctionSpec{
 		identityArgumentTokens: []string{"TEXT", "TEXT", "TEXT", "TEXT", "TEXT"},
 		resultToken:            "TIMESTAMPTZ",
 	},
+	"WRITE_EVENT": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_WORKSPACE_ID", "TEXT", "P_STREAM_ID", "TEXT",
+			"P_EXPECTED_VERSION", "BIGINT", "P_EVENT_ID", "TEXT", "P_SCHEMA_VERSION", "BIGINT",
+			"P_EVENT_TYPE", "TEXT", "P_ACTOR_ID", "TEXT", "P_OCCURRED_AT", "TIMESTAMPTZ",
+			"P_CORRELATION_ID", "TEXT", "P_CAUSATION_ID", "TEXT", "P_IDEMPOTENCY_KEY", "TEXT",
+			"P_TRACEPARENT", "TEXT", "P_PAYLOAD_KIND", "TEXT", "P_PAYLOAD_INLINE", "TEXT",
+			"P_PAYLOAD_STORAGE", "TEXT", "P_PAYLOAD_REFERENCE_ID", "TEXT", "P_PAYLOAD_BYTE_LENGTH", "BIGINT",
+			"P_PAYLOAD_DIGEST", "TEXT", "P_APPEND_DIGEST", "TEXT",
+		},
+		identityArgumentTokens: []string{
+			"TEXT", "TEXT", "TEXT", "BIGINT", "TEXT", "BIGINT", "TEXT", "TEXT", "TIMESTAMPTZ",
+			"TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "BIGINT", "TEXT", "TEXT",
+		},
+		resultToken: "BOOLEAN",
+	},
 }
 
 func validMigrationStatements(sql string, allowFunctionDDL bool) bool {

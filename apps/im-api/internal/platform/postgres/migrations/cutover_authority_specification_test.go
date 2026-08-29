@@ -116,7 +116,7 @@ func TestAuthorityCutoverSpecificationIsDeterministicAndIndependentlyDigested(t 
 		t.Fatal("cutover and managed specifications shared a digest domain")
 	}
 
-	const want = "sha256:ab3d5e7755eb6d987e846fdced242b4049d1edf8659d5bb8679ad767e0983f07"
+	const want = "sha256:2e02ec14105e321c4e3ccc613a9fd469c12af84c4be1da7e96ebd7f699f384ea"
 	if firstDigest != want {
 		t.Fatalf("golden digest = %q, want %q", firstDigest, want)
 	}

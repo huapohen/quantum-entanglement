@@ -544,16 +544,20 @@ var runtimeAuthorityReadTables = []string{
 	"provider_conversation_binding_heads",
 	"provider_conversation_binding_snapshots",
 	"tenant_command_receipts",
+	"event_stream_heads",
+	"event_tenant_heads",
+	"event_log",
 }
 
 func authorityAccessTableNames() []string {
-	names := make([]string, 0, 22)
+	names := make([]string, 0, 25)
 	for _, spec := range authorityRootSpecs() {
 		names = append(names, spec.name)
 	}
 	names = append(names, identityAuthorityTableNames...)
 	names = append(names, conversationTableNames...)
 	names = append(names, conversationAuthorityTableNames...)
+	names = append(names, eventStoreTableNames...)
 	slices.Sort(names)
 	return names
 }

@@ -726,5 +726,6 @@ func authorityFunctionSQLIdentities() []string {
 		"write_conversation_revision(text, text, bigint, bigint, text, text, text)",
 		"write_provider_conversation_binding_revision(text, text, text, text, bigint, bigint, text, text)",
 		"write_tenant_command_receipt(text, text, text, text, text)",
+		"write_event(text, text, text, bigint, text, bigint, text, text, timestamp with time zone, text, text, text, text, text, text, text, text, bigint, text, text)",
 	}
 }

@@ -46,6 +46,12 @@ var conversationAuthorityTableNames = []string{
 	"tenant_command_receipts",
 }
 
+var eventStoreTableNames = []string{
+	"event_log",
+	"event_stream_heads",
+	"event_tenant_heads",
+}
+
 func tableSchemaDigest(
 	ctx context.Context,
 	transaction pgx.Tx,

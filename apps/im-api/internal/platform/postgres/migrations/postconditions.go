@@ -84,9 +84,36 @@ func validateMigrationPostcondition(ctx context.Context, transaction pgx.Tx, ver
 		return validateConversationAuthority(ctx, transaction)
 	case 5:
 		return validateFunctionOnlyWrites(ctx, transaction)
+	case 6:
+		return validateEventStore(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateEventStore(ctx context.Context, transaction pgx.Tx) error {
+	var relationCount int
+	if err := transaction.QueryRow(ctx, `
+SELECT count(*)
+FROM pg_catalog.pg_class AS relation
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relkind = 'r'
+  AND relation.relname = ANY($1::text[])`, []string{
+		"event_stream_heads", "event_tenant_heads", "event_log",
+	}).Scan(&relationCount); err != nil || relationCount != 3 {
+		return ErrMigrationSchema
+	}
+	functions, err := readStoredAuthorityFunctions(ctx, transaction, []string{"write_event"})
+	if err != nil || len(functions) != 1 {
+		return ErrMigrationSchema
+	}
+	specs := storedAuthorityFunctionManifest()
+	returnSpec := specs[len(specs)-1]
+	if !exactStoredAuthorityFunctions(functions, []storedAuthorityFunctionSpec{returnSpec}) {
+		return ErrMigrationSchema
+	}
+	return nil
 }
 
 func validateConversationAuthority(ctx context.Context, transaction pgx.Tx) error {

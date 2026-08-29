@@ -29,6 +29,29 @@ type storedAuthorityFunction struct {
 	definitionDigest   string
 }
 
+func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
+	values := storedAuthorityFunctionManifestV5()
+	return append(values, storedAuthorityFunctionSpec{
+		name: "write_event",
+		arguments: "p_tenant_id text, p_workspace_id text, p_stream_id text, " +
+			"p_expected_version bigint, p_event_id text, p_schema_version bigint, " +
+			"p_event_type text, p_actor_id text, p_occurred_at timestamp with time zone, " +
+			"p_correlation_id text, p_causation_id text, p_idempotency_key text, " +
+			"p_traceparent text, p_payload_kind text, p_payload_inline text, " +
+			"p_payload_storage text, p_payload_reference_id text, p_payload_byte_length bigint, " +
+			"p_payload_digest text, p_append_digest text",
+		identityArguments: "p_tenant_id text, p_workspace_id text, p_stream_id text, " +
+			"p_expected_version bigint, p_event_id text, p_schema_version bigint, " +
+			"p_event_type text, p_actor_id text, p_occurred_at timestamp with time zone, " +
+			"p_correlation_id text, p_causation_id text, p_idempotency_key text, " +
+			"p_traceparent text, p_payload_kind text, p_payload_inline text, " +
+			"p_payload_storage text, p_payload_reference_id text, p_payload_byte_length bigint, " +
+			"p_payload_digest text, p_append_digest text",
+		result:           "boolean",
+		definitionDigest: "75d2ae4387b1e07d1c05ea9631515c1d563912f0d206d061b1c3accda6d04029",
+	})
+}
+
 type storedAuthorityFunctionSpec struct {
 	name              string
 	arguments         string
@@ -187,7 +210,7 @@ func validateFunctionOnlyWritesForOwner(
 	transaction pgx.Tx,
 	expectedOwner string,
 ) error {
-	specs := storedAuthorityFunctionManifest()
+	specs := storedAuthorityFunctionManifestV5()
 	names := make([]string, len(specs))
 	for index, spec := range specs {
 		names[index] = spec.name
@@ -199,7 +222,7 @@ func validateFunctionOnlyWritesForOwner(
 	return nil
 }
 
-func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
+func storedAuthorityFunctionManifestV5() []storedAuthorityFunctionSpec {
 	return []storedAuthorityFunctionSpec{
 		{
 			name: "write_conversation_access_revision",

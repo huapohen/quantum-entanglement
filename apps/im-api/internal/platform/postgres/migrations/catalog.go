@@ -40,6 +40,7 @@ var migrationSpecs = [...]migrationSpec{
 	{version: 3, name: "conversation"},
 	{version: 4, name: "conversation_authority"},
 	{version: 5, name: "function_only_writes"},
+	{version: 6, name: "event_store"},
 }
 
 func Catalog() ([]Migration, error) {
@@ -83,7 +84,8 @@ func validMigrationSQL(sql string) bool {
 }
 
 func validMigrationSQLForSpec(sql string, spec migrationSpec) bool {
-	allowFunctionDDL := spec.version == 5 && spec.name == "function_only_writes"
+	allowFunctionDDL := (spec.version == 5 && spec.name == "function_only_writes") ||
+		(spec.version == 6 && spec.name == "event_store")
 	return validMigrationSQLWithFunctionDDL(sql, allowFunctionDDL)
 }
 

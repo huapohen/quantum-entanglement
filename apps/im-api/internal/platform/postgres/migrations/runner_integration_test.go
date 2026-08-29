@@ -37,16 +37,16 @@ func TestApplyAgainstPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatalf("repeat Apply: %v", err)
 		}
-		if len(first.Applied) != 5 || len(second.Applied) != 5 ||
+		if len(first.Applied) != 6 || len(second.Applied) != 6 ||
 			first.Applied[0] != second.Applied[0] || first.Applied[1] != second.Applied[1] ||
 			first.Applied[2] != second.Applied[2] || first.Applied[3] != second.Applied[3] ||
-			first.Applied[4] != second.Applied[4] {
+			first.Applied[4] != second.Applied[4] || first.Applied[5] != second.Applied[5] {
 			t.Fatalf("unexpected migration states: first=%#v second=%#v", first, second)
 		}
 		var rows int
 		if err := connection.QueryRow(ctx, `
 SELECT count(*)
-FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != 5 {
+FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != 6 {
 			t.Fatalf("ledger rows = %d, err = %v", rows, err)
 		}
 	})
@@ -299,7 +299,7 @@ WHERE version = 1`, strings.Repeat("0", 64)); err != nil {
 		}
 		if _, err := connection.Exec(ctx, `
 INSERT INTO wanwork_meta.schema_migrations (version, name, checksum)
-VALUES (6, 'future', $1)`, strings.Repeat("0", 64)); err != nil {
+VALUES (7, 'future', $1)`, strings.Repeat("0", 64)); err != nil {
 			t.Fatalf("insert future row: %v", err)
 		}
 		if _, err := Apply(ctx, connection); !errors.Is(err, ErrFutureSchema) {
@@ -400,7 +400,7 @@ ALTER TABLE wanwork_im.provider_realms
 		close(start)
 		workers.Wait()
 		for index := range connections {
-			if errorsByWorker[index] != nil || len(results[index].Applied) != 5 {
+			if errorsByWorker[index] != nil || len(results[index].Applied) != 6 {
 				t.Fatalf(
 					"migrator %d state=%#v error=%v",
 					index,
