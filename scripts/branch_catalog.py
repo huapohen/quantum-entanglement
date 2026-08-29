@@ -203,13 +203,23 @@ def catalog_main_baseline(
         relative_output = output.resolve().relative_to(repo.resolve()).as_posix()
     except ValueError:
         return tip
-    changed_paths = git(
-        repo, "diff-tree", "--no-commit-id", "--name-only", "-r", tip, "--"
-    ).stdout.splitlines()
-    if changed_paths != [relative_output]:
-        return tip
-    parent = git(repo, "rev-parse", f"{tip}^", check=False)
-    return parent.stdout.strip() if parent.returncode == 0 else tip
+    candidate = tip
+    while True:
+        changed_paths = git(
+            repo,
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            candidate,
+            "--",
+        ).stdout.splitlines()
+        if changed_paths != [relative_output]:
+            return candidate
+        parent = git(repo, "rev-parse", f"{candidate}^", check=False)
+        if parent.returncode != 0 or not parent.stdout.strip():
+            return candidate
+        candidate = parent.stdout.strip()
 
 
 def collect_branches(
