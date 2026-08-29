@@ -87,6 +87,7 @@ from .attempts import (
     InvocationIntegrityError,
     InvocationJob,
     InvocationJobSpec,
+    InvocationRecoverySnapshot,
     InvocationStatus,
     SQLiteInvocationAttemptStore,
     _claim_first_invocation_in_transaction,
@@ -5172,6 +5173,89 @@ class SQLiteEventStore:
             workspace_snapshot,
             invocation_snapshot,
         )
+
+    @_bind_event_store_process
+    def recovery_snapshot_for_task(
+        self,
+        session_id: str,
+        task_id: str,
+    ) -> InvocationRecoverySnapshot:
+        """Read one bounded job/attempt snapshot from this store's own connection.
+
+        The method shares the event store lifecycle and process fence with the result
+        observation API. It grants no claim, lease, retry, or projection authority; a
+        future reconciler must still combine both observations in one CAS.
+        """
+
+        session_snapshot = _caller_invocation_identity(session_id, "session_id")
+        task_snapshot = _caller_invocation_identity(task_id, "task_id")
+        with self._transaction() as connection:
+            job_rows = connection.execute(
+                """
+                SELECT * FROM main.invocation_jobs
+                WHERE session_id = ? AND task_id = ?
+                LIMIT 2
+                """,
+                (session_snapshot, task_snapshot),
+            ).fetchall()
+            if len(job_rows) > 1:
+                raise InvocationIntegrityError("task has multiple invocation jobs")
+            if not job_rows:
+                return InvocationRecoverySnapshot(None, None, 0)
+            try:
+                job = SQLiteInvocationAttemptStore._row_to_job(job_rows[0])
+            except (InvocationIntegrityError, TypeError, ValueError, KeyError, IndexError) as error:
+                raise InvocationIntegrityError("invocation job row is malformed") from error
+            attempt_rows = connection.execute(
+                """
+                SELECT * FROM main.invocation_attempts
+                WHERE invocation_id = ?
+                ORDER BY attempt_number
+                LIMIT 1001
+                """,
+                (job.invocation_id,),
+            ).fetchall()
+            if len(attempt_rows) > 1_000:
+                raise InvocationIntegrityError(
+                    "invocation attempt history exceeds the recovery limit"
+                )
+            attempts: list[InvocationAttempt] = []
+            previous_epoch = 0
+            previous_finished_at: Optional[str] = None
+            try:
+                for row in attempt_rows:
+                    attempt = SQLiteInvocationAttemptStore._row_to_attempt(row)
+                    if (
+                        attempt.invocation_id != job.invocation_id
+                        or attempt.attempt_number != len(attempts) + 1
+                        or attempt.lease_epoch <= previous_epoch
+                    ):
+                        raise InvocationIntegrityError(
+                            "invocation attempt history is not contiguous"
+                        )
+                    if attempt.started_at < job.created_at:
+                        raise InvocationIntegrityError("invocation attempt starts before its job")
+                    if (
+                        previous_finished_at is not None
+                        and attempt.started_at < previous_finished_at
+                    ):
+                        raise InvocationIntegrityError(
+                            "invocation attempt history moves backward in time"
+                        )
+                    attempts.append(attempt)
+                    previous_epoch = attempt.lease_epoch
+                    previous_finished_at = attempt.finished_at
+            except (InvocationIntegrityError, TypeError, ValueError, KeyError, IndexError) as error:
+                if isinstance(error, InvocationIntegrityError):
+                    raise
+                raise InvocationIntegrityError("invocation attempt row is malformed") from error
+            current_attempt = attempts[-1] if attempts else None
+            SQLiteInvocationAttemptStore._validate_recovery_snapshot(
+                job,
+                current_attempt,
+                attempt_count=len(attempts),
+            )
+            return InvocationRecoverySnapshot(job, current_attempt, len(attempts))
 
     @_bind_event_store_process
     def _read_scoped_invocation_result_observed_v2(
