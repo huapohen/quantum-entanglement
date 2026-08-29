@@ -472,7 +472,9 @@ subject drift 与 forged dependency 的拒绝，但这仍不是生产 API。proj
 独立主机恢复和实测 RPO/RTO 证据仍需在后续 release gate 中完成。备份/恢复与 migration-7
 兼容专项（39 tests）和恢复后 clean-process projection replay 证据见
 [`35_result_backup_restore_compatibility_evidence.md`](../../analysis_report/research/35_result_backup_restore_compatibility_evidence.md)
-与 [`36_result_restore_projection_replay_evidence.md`](../../analysis_report/research/36_result_restore_projection_replay_evidence.md)。
+、[`36_result_restore_projection_replay_evidence.md`](../../analysis_report/research/36_result_restore_projection_replay_evidence.md)。
+当前 HEAD 的全仓 pytest 回归为 2,946 项、退出码 0；记录见
+[`37_mainline_regression_checkpoint.md`](../../analysis_report/research/37_mainline_regression_checkpoint.md)。
 
 仍缺：
 
