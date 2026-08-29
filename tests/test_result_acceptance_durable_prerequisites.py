@@ -217,9 +217,14 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             prepared.claimed,
         )
 
-    def commit_fresh_result(self) -> ScopedInvocationResultReceiptV2:
+    def commit_fresh_result(
+        self,
+        *,
+        install_schema: bool = True,
+    ) -> ScopedInvocationResultReceiptV2:
         prepared = self.fresh_prepared()
-        install_inactive_result_schema(self.store)
+        if install_schema:
+            install_inactive_result_schema(self.store)
         self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
         with patch(
             "quantum_entanglement.store.new_id",
@@ -2499,6 +2504,32 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                 store.close()
             with self.assertRaisesRegex(Exception, "schema version 7"):
                 SQLiteEventStore(path)
+
+    def test_result_enabled_store_reopens_and_reads_observation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "event-store.sqlite3")
+            store = SQLiteEventStore(path, enable_result_acceptance_schema=True)
+            original_store = self.store
+            self.store = store
+            try:
+                store._clock = lambda: STORE_TIME
+                receipt = self.commit_fresh_result(install_schema=False)
+            finally:
+                store.close()
+                self.store = original_store
+
+            reopened = SQLiteEventStore(path, enable_result_acceptance_schema=True)
+            try:
+                observed = reopened._read_scoped_invocation_result_observed_v2(
+                    receipt.evidence.tenant_id,
+                    receipt.evidence.workspace_id,
+                    receipt.evidence.invocation_id,
+                )
+            finally:
+                reopened.close()
+            self.assertIs(type(observed), ScopedInvocationResultObservedV2)
+            assert type(observed) is ScopedInvocationResultObservedV2
+            self.assertEqual(observed.receipt, receipt)
 
     def test_completion_readback_accepts_a_shared_preexisting_blob(self) -> None:
         prepared = self.fresh_prepared()

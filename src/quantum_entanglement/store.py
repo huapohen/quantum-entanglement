@@ -37,6 +37,7 @@ from typing import (
 )
 
 from . import process_identity as _process_identity
+from ._inactive_invocation_results_migration import _KNOWN_INVOCATION_RESULTS_MIGRATIONS
 from ._result_acceptance import (
     _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
     _build_scoped_invocation_result_events_from_plan_v2,
@@ -163,7 +164,7 @@ from .invocation_results import (
 from .invocation_results import (
     scoped_invocation_start_receipt_digest_v3 as _scoped_invocation_start_receipt_digest_v3,
 )
-from .migrations import apply_sqlite_migrations
+from .migrations import _apply_sqlite_migrations_unregistered, apply_sqlite_migrations
 from .protocol import new_id, utc_now
 
 
@@ -2131,6 +2132,7 @@ class SQLiteEventStore:
         *,
         clock: Callable[[], str] = utc_now,
         max_json_bytes: int = 1024 * 1024,
+        enable_result_acceptance_schema: bool = False,
     ) -> None:
         self._process_owner = _process_identity.capture_process_owner()
         self._poisoned = False
@@ -2150,6 +2152,8 @@ class SQLiteEventStore:
                 raise TypeError("max_json_bytes must be an integer")
             if max_json_bytes <= 0:
                 raise ValueError("max_json_bytes must be greater than zero")
+            if type(enable_result_acceptance_schema) is not bool:
+                raise TypeError("enable_result_acceptance_schema must be a boolean")
             result_artifact_savepoint_secret = secrets.token_bytes(32)
             self._require_current_process()
             if (
@@ -2174,6 +2178,7 @@ class SQLiteEventStore:
             self._lock = threading.RLock()
             self._clock = clock
             self._max_json_bytes = max_json_bytes
+            self._result_acceptance_schema_enabled = enable_result_acceptance_schema
             self._initialize()
         except _EventStoreProcessMismatchSignal as error:
             trusted = _consume_event_store_process_signal(error)
@@ -2324,11 +2329,19 @@ class SQLiteEventStore:
                 """
             )
             self._require_current_process()
-            apply_sqlite_migrations(
-                self._connection,
-                clock=self._now,
-                _process_guard=self._require_current_process,
-            )
+            if self._result_acceptance_schema_enabled:
+                _apply_sqlite_migrations_unregistered(
+                    self._connection,
+                    migrations=_KNOWN_INVOCATION_RESULTS_MIGRATIONS,
+                    clock=self._now,
+                    _process_guard=self._require_current_process,
+                )
+            else:
+                apply_sqlite_migrations(
+                    self._connection,
+                    clock=self._now,
+                    _process_guard=self._require_current_process,
+                )
             self._require_current_process()
 
     def _transaction(
