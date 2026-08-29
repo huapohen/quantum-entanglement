@@ -15,9 +15,10 @@
   真实模型生成的测试指令和模型产出，但没有真实聊天内容、客户数据或启动令牌。第 15–26
   张来自 Clawith 公开官网和官方文档，不含本项目内部数据；为避免脱离研究语境传播第三方
   页面素材，它们仍与整套证据一起按项目内部资料管理。第 26 张单独固定其部门级交付样板和
-  同卡片口径冲突。最后十项是 Topic 33～35、Gate A0 production authority 与 approval policy
-  control-store 检查点图
-  各自的 source SVG 与 rsvg 派生 PNG；它们是报告/合同导航图，不是独立运行证据。
+  同卡片口径冲突。Topic 33～35、Gate A0 production authority 与 approval policy
+  control-store 检查点图共十项，各自包含 source SVG 与 rsvg 派生 PNG；它们是报告/合同导航图，
+  不是独立运行证据。本轮新增的两张 `local_im_acceptance` PNG 是零网络本地 IM 运行证据，单独绑定
+  本地验收 manifest。
 - 本轮没有伪造“已脱敏”副本。需要对外分享时，应另做 derived redacted copy，保留原件
   hash，并由人工复核不可逆模糊/裁剪区域后再发布。
 - SHA-256 能检测本地文件变化，不证明截图内容本身真实，也不是签名、时间戳服务或页面
