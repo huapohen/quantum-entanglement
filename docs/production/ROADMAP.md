@@ -34,7 +34,7 @@ Passing unit tests alone is necessary but not sufficient.
 ## Current E3 result-authority checkpoint (2026-08-29)
 
 The independent branch `mainline_continue_quantum_entanglement` currently carries a private M5
-checkpoint plus the explicit migration-7 activation kernel (latest pushed HEAD `abd7709`). It has a
+checkpoint plus the explicit migration-7 activation kernel (latest pushed HEAD `f5e0e4d`). It has a
 single-owner atomic result graph for result and terminal events, manifest/request/receipt, Artifact
 blob/version/binding, and succeeded job/attempt CAS; fault injection covers every result DML boundary
 and both confirmed-rollback and commit-ACK-loss outcomes. A capability-free `ObservedV2` readback

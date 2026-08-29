@@ -61,11 +61,13 @@ E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
 
 ## E3 continuation checkpoint (2026-08-29)
 
-The same branch now carries the opt-in Result Authority continuation through `abd7709`:
+The same branch now carries the opt-in Result Authority continuation through `f5e0e4d`:
 
 - migration 7 activation/reopen remains explicit and default-off;
 - result-specific active backup/restore now binds the migration-7 topology, database bytes,
   page geometry and table counts, with no-overwrite restore and post-restore verification;
+- a private scoped PURE supervisor now enforces first-heartbeat admission, heartbeat-loss fencing,
+  timeout/cancellation drain and late-result discard; product dispatch remains disabled;
 - a committed result graph can be read back while its exact job/attempt owner is still
   `RUNNING` and reconciled by a receipt-bound, non-emitting CAS;
 - the API is idempotent (`RECONCILED` / `ALREADY_RECONCILED`), rejects stale or malformed owners,
@@ -73,8 +75,8 @@ The same branch now carries the opt-in Result Authority continuation through `ab
 - successful reconciliation changes only the owner job/attempt rows; it creates no event, outbox,
   publication, lease, capability or external message.
 
-The next local gates are non-empty migration-7 restore evidence, crash/`kill -9`/dual-connection
-replay tests, heartbeat/fencing and business projection. `AcceptedV2`,
+The next local gates are store-wired result acceptance, business projection and compatibility/
+rollback evidence. `AcceptedV2`,
 real IM connectivity and all outbound effects remain disabled. Notion synchronization stays
 `local_pending` until this checkpoint is closed and then receives one batch upload plus page-by-page
 readback.

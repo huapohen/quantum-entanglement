@@ -9,7 +9,7 @@ dispatch remain disabled. The normal store reopen path is deliberately blocked w
 opt-in is available only for this private rehearsal and is not a production promotion switch.
 
 This document records the local checkpoint delivered by commits `3847594`, `034ceea`, `0d941eb`,
-`b14ee77`, `ab3ff70`, `ee63f55` and `abd7709` on branch `mainline_continue_quantum_entanglement`. It is the source of
+`b14ee77`, `ab3ff70`, `ee63f55`, `abd7709` and `f5e0e4d` on branch `mainline_continue_quantum_entanglement`. It is the source of
 truth during the remaining implementation work. Notion synchronization is intentionally deferred
 until a larger checkpoint is complete; the final upload must include this file and a page-by-page
 readback.
