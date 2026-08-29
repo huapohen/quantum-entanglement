@@ -83,9 +83,9 @@ accepts only strict result evidence plus a matching terminal transition. The pro
 tenant/workspace/invocation keyed, idempotent, schema-pinned and fail-closed on terminal-before-result
 or result identity conflict; it stores no result body, lease token, credential or framework-table
 authority. The wrapper is process-bound and rejects inherited fork instances before SQLite access.
-Eleven focused tests cover complete materialization, scope isolation, rerun idempotency, reopen,
+Twelve focused tests cover complete materialization, scope isolation, rerun idempotency, reopen,
 dual-connection lease fencing, malformed ordering, identity conflict, schema drift, handler table
-isolation, fork rejection and real SIGKILL-after-claim recovery. This is a
+isolation, fork rejection, real SIGKILL-after-claim recovery and terminal binding drift. This is a
 candidate read model only: no authenticated API, production composition, worker dispatch or external
 IM is enabled.
 
