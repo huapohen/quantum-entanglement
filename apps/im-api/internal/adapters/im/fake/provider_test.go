@@ -191,6 +191,94 @@ func TestProviderInboundCursorPreservesDuplicatesAndOutboundIsExplicit(t *testin
 	}
 }
 
+func TestProviderOptionalMessageMutationsAreCapabilityBoundAndIdempotent(t *testing.T) {
+	t.Parallel()
+
+	realm := mustRealm(t, "rlm_mutation")
+	provider, err := New(Options{
+		Realm:         realm,
+		AllowOutbound: true,
+		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	alice := mustActor(t, "usr_alice")
+	if _, _, err := provider.ProvisionUser(ctx, im.ProviderUserProvision{
+		Actor: alice, DisplayName: "Alice", ExtInfo: mustUserInfo(t, im.SubjectHuman, alice),
+		IdempotencyKey: "user/alice",
+	}); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	tenant := mustTenant(t, "ten_mutation")
+	conversationID := mustConversation(t, "cnv_mutation")
+	conversation, err := im.NewConversationRef(tenant, conversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerConversation, _, err := provider.CreateGroup(ctx, im.ProviderGroupCreate{
+		Conversation: conversation, ExtInfo: mustGroupInfo(t, conversationID),
+		MemberActors: []im.ActorID{alice}, IdempotencyKey: "group/mutation",
+	})
+	if err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	clientMessage := mustMessage(t, "msg_mutation")
+	sent, err := provider.SendText(ctx, im.ProviderTextMessage{
+		Conversation: providerConversation, Sender: alice, ClientMessage: clientMessage,
+		Text: "before", IdempotencyKey: "send/mutation",
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	edited, err := provider.EditText(ctx, im.ProviderTextEdit{
+		Conversation: providerConversation, Sender: alice, ClientMessage: clientMessage,
+		Text: "after", IdempotencyKey: "edit/mutation",
+	})
+	if err != nil || edited.Status != im.ProviderEffectCommitted || edited.ExternalID != sent.ExternalID {
+		t.Fatalf("edit = %#v, %v", edited, err)
+	}
+	editedReplay, err := provider.EditText(ctx, im.ProviderTextEdit{
+		Conversation: providerConversation, Sender: alice, ClientMessage: clientMessage,
+		Text: "after", IdempotencyKey: "edit/mutation",
+	})
+	if err != nil || editedReplay.Status != im.ProviderEffectReplayed {
+		t.Fatalf("edit replay = %#v, %v", editedReplay, err)
+	}
+	recalled, err := provider.RecallMessage(ctx, im.ProviderMessageRecall{
+		Conversation: providerConversation, Sender: alice, ClientMessage: clientMessage,
+		IdempotencyKey: "recall/mutation",
+	})
+	if err != nil || recalled.Status != im.ProviderEffectCommitted || recalled.ExternalID != sent.ExternalID {
+		t.Fatalf("recall = %#v, %v", recalled, err)
+	}
+	recalledReplay, err := provider.RecallMessage(ctx, im.ProviderMessageRecall{
+		Conversation: providerConversation, Sender: alice, ClientMessage: clientMessage,
+		IdempotencyKey: "recall/mutation",
+	})
+	if err != nil || recalledReplay.Status != im.ProviderEffectReplayed {
+		t.Fatalf("recall replay = %#v, %v", recalledReplay, err)
+	}
+	if _, err := provider.EditText(ctx, im.ProviderTextEdit{
+		Conversation: providerConversation, Sender: alice, ClientMessage: clientMessage,
+		Text: "too late", IdempotencyKey: "edit/after-recall",
+	}); !errors.Is(err, ErrMessageMissing) {
+		t.Fatalf("edit after recall = %v, want %v", err, ErrMessageMissing)
+	}
+
+	disabled, err := New(Options{Realm: realm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := disabled.EditText(ctx, im.ProviderTextEdit{
+		Conversation: providerConversation, Sender: alice, ClientMessage: clientMessage,
+		Text: "no", IdempotencyKey: "edit/disabled",
+	}); !errors.Is(err, im.ErrProviderCapabilityUnsupported) {
+		t.Fatalf("disabled edit = %v, want %v", err, im.ErrProviderCapabilityUnsupported)
+	}
+}
+
 func TestProviderContextAndCloseBoundaries(t *testing.T) {
 	t.Parallel()
 	provider, err := New(Options{Realm: mustRealm(t, "rlm_fake")})

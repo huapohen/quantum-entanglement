@@ -19,9 +19,10 @@ import (
 )
 
 var (
-	ErrClosed       = errors.New("fake IM provider is closed")
-	ErrGroupMissing = errors.New("fake IM provider group not found")
-	ErrUserMissing  = errors.New("fake IM provider user not provisioned")
+	ErrClosed         = errors.New("fake IM provider is closed")
+	ErrGroupMissing   = errors.New("fake IM provider group not found")
+	ErrMessageMissing = errors.New("fake IM provider message not found")
+	ErrUserMissing    = errors.New("fake IM provider user not provisioned")
 )
 
 type Clock func() time.Time
@@ -47,8 +48,9 @@ type group struct {
 }
 
 type sentMessage struct {
-	request im.ProviderTextMessage
-	receipt im.ProviderEffectReceipt
+	request  im.ProviderTextMessage
+	receipt  im.ProviderEffectReceipt
+	recalled bool
 }
 
 type Provider struct {
@@ -83,7 +85,11 @@ func New(options Options) (*Provider, error) {
 		im.ProviderCapabilityMemberWrite,
 	}
 	if options.AllowOutbound {
-		capabilities = append(capabilities, im.ProviderCapabilityTextSend)
+		capabilities = append(capabilities,
+			im.ProviderCapabilityTextSend,
+			im.ProviderCapabilityTextEdit,
+			im.ProviderCapabilityMessageRecall,
+		)
 	}
 	profile, err := im.NewProviderProfile(
 		im.IdentityProviderRongCloud,
@@ -381,6 +387,104 @@ func (provider *Provider) SendText(
 	provider.effectHashes[request.IdempotencyKey] = hash
 	provider.sent = append(provider.sent, sentMessage{request: request, receipt: receipt})
 	return receipt, nil
+}
+
+// EditText is a deterministic fake implementation of the optional message mutation port. It
+// only mutates a previously accepted fake outbound message and never represents provider state
+// as platform authorization.
+func (provider *Provider) EditText(
+	ctx context.Context,
+	request im.ProviderTextEdit,
+) (im.ProviderEffectReceipt, error) {
+	if err := provider.checkContext(ctx); err != nil {
+		return im.ProviderEffectReceipt{}, err
+	}
+	profile := provider.Profile()
+	if err := request.Validate(profile); err != nil {
+		return im.ProviderEffectReceipt{}, err
+	}
+	if !profile.Supports(im.ProviderCapabilityTextEdit) || !provider.allowOutbound {
+		return im.ProviderEffectReceipt{}, im.ErrProviderCapabilityUnsupported
+	}
+	hash := requestHash(
+		"edit", request.Conversation.SubjectID(), request.Sender.String(),
+		request.ClientMessage.String(), request.Text, request.ExtInfo,
+	)
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if existing, ok := provider.effects[request.IdempotencyKey]; ok {
+		if provider.effectHashes[request.IdempotencyKey] != hash {
+			return im.ProviderEffectReceipt{}, im.ErrProviderConflict
+		}
+		existing.Status = im.ProviderEffectReplayed
+		return existing, nil
+	}
+	for index := range provider.sent {
+		message := &provider.sent[index]
+		if message.request.Conversation.SubjectID() == request.Conversation.SubjectID() &&
+			message.request.ClientMessage == request.ClientMessage {
+			if message.request.Sender != request.Sender || message.recalled {
+				return im.ProviderEffectReceipt{}, ErrMessageMissing
+			}
+			message.request.Text = request.Text
+			message.request.ExtInfo = request.ExtInfo
+			receipt := provider.receiptLocked(
+				request.IdempotencyKey, message.receipt.ExternalID, im.ProviderEffectCommitted,
+			)
+			provider.effects[request.IdempotencyKey] = receipt
+			provider.effectHashes[request.IdempotencyKey] = hash
+			return receipt, nil
+		}
+	}
+	return im.ProviderEffectReceipt{}, ErrMessageMissing
+}
+
+// RecallMessage records a provider-side recall effect against the matching fake message. The
+// original outbound record remains available for deterministic test inspection; callers must use
+// the platform's recalled message projection as the business source of truth.
+func (provider *Provider) RecallMessage(
+	ctx context.Context,
+	request im.ProviderMessageRecall,
+) (im.ProviderEffectReceipt, error) {
+	if err := provider.checkContext(ctx); err != nil {
+		return im.ProviderEffectReceipt{}, err
+	}
+	profile := provider.Profile()
+	if err := request.Validate(profile); err != nil {
+		return im.ProviderEffectReceipt{}, err
+	}
+	if !profile.Supports(im.ProviderCapabilityMessageRecall) || !provider.allowOutbound {
+		return im.ProviderEffectReceipt{}, im.ErrProviderCapabilityUnsupported
+	}
+	hash := requestHash(
+		"recall", request.Conversation.SubjectID(), request.Sender.String(), request.ClientMessage.String(),
+	)
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if existing, ok := provider.effects[request.IdempotencyKey]; ok {
+		if provider.effectHashes[request.IdempotencyKey] != hash {
+			return im.ProviderEffectReceipt{}, im.ErrProviderConflict
+		}
+		existing.Status = im.ProviderEffectReplayed
+		return existing, nil
+	}
+	for index := range provider.sent {
+		message := &provider.sent[index]
+		if message.request.Conversation.SubjectID() == request.Conversation.SubjectID() &&
+			message.request.ClientMessage == request.ClientMessage {
+			if message.request.Sender != request.Sender || message.recalled {
+				return im.ProviderEffectReceipt{}, ErrMessageMissing
+			}
+			message.recalled = true
+			receipt := provider.receiptLocked(
+				request.IdempotencyKey, message.receipt.ExternalID, im.ProviderEffectCommitted,
+			)
+			provider.effects[request.IdempotencyKey] = receipt
+			provider.effectHashes[request.IdempotencyKey] = hash
+			return receipt, nil
+		}
+	}
+	return im.ProviderEffectReceipt{}, ErrMessageMissing
 }
 
 func (provider *Provider) SentMessages() []im.ProviderTextMessage {

@@ -41,6 +41,8 @@ const (
 	ProviderCapabilityGroupCreate   ProviderCapability = "group_create"
 	ProviderCapabilityMemberWrite   ProviderCapability = "member_write"
 	ProviderCapabilityTextSend      ProviderCapability = "text_send"
+	ProviderCapabilityTextEdit      ProviderCapability = "text_edit"
+	ProviderCapabilityMessageRecall ProviderCapability = "message_recall"
 )
 
 func (capability ProviderCapability) Valid() bool {
@@ -48,7 +50,7 @@ func (capability ProviderCapability) Valid() bool {
 	case ProviderCapabilityHealth, ProviderCapabilityInboundRead,
 		ProviderCapabilityCursorResume, ProviderCapabilityUserProvision,
 		ProviderCapabilityGroupCreate, ProviderCapabilityMemberWrite,
-		ProviderCapabilityTextSend:
+		ProviderCapabilityTextSend, ProviderCapabilityTextEdit, ProviderCapabilityMessageRecall:
 		return true
 	default:
 		return false
