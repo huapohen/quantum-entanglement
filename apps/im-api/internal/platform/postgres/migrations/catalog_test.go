@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 9 || len(second) != 9 {
+	if len(first) != 10 || len(second) != 10 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -219,6 +219,22 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if !strings.Contains(inbox.UpSQL, marker) {
 			t.Fatalf("native IM inbox migration missing %q", marker)
+		}
+	}
+	semantics := first[9]
+	if semantics.Version != 10 || semantics.Name != "native_im_inbox_semantics" ||
+		len(semantics.Checksum) != 64 || semantics.Checksum != second[9].Checksum ||
+		semantics.UpSQL != second[9].UpSQL || semantics.DownSQL != second[9].DownSQL {
+		t.Fatalf("unexpected deterministic native IM inbox semantics migration: %#v", semantics)
+	}
+	for _, marker := range []string{
+		`DROP FUNCTION wanwork_im.admit_native_im_inbox`,
+		`pg_catalog.sha256`,
+		`delivery_count < 9223372036854775807`,
+		`REVOKE ALL ON FUNCTION wanwork_im.admit_native_im_inbox`,
+	} {
+		if !strings.Contains(semantics.UpSQL, marker) {
+			t.Fatalf("native IM inbox semantics migration missing %q", marker)
 		}
 	}
 }

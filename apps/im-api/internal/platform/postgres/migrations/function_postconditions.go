@@ -50,7 +50,7 @@ func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 		result:           "boolean",
 		definitionDigest: "75d2ae4387b1e07d1c05ea9631515c1d563912f0d206d061b1c3accda6d04029",
 	})
-	return append(values, storedAuthorityFunctionSpec{
+	values = append(values, storedAuthorityFunctionSpec{
 		name: "write_projection_checkpoint",
 		arguments: "p_tenant_id text, p_workspace_id text, p_projection_id text, " +
 			"p_expected_position bigint, p_expected_cursor text, p_expected_last_event_id text, " +
@@ -60,7 +60,12 @@ func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 			"p_next_position bigint, p_next_cursor text, p_next_last_event_id text",
 		result:           "boolean",
 		definitionDigest: "82b7feec4d80b3cb0335780b0007086ac307e930afc126e5843465c3b31d7faf",
-	}, storedAuthorityFunctionSpec{
+	})
+	return append(values, storedNativeIMInboxFunctionSpecV10())
+}
+
+func storedNativeIMInboxFunctionSpecV9() storedAuthorityFunctionSpec {
+	return storedAuthorityFunctionSpec{
 		name: "admit_native_im_inbox",
 		arguments: "p_tenant_id text, p_workspace_id text, p_provider text, p_channel_id text, " +
 			"p_event_id text, p_event_digest text, p_verification_id text, p_payload_kind text, " +
@@ -72,7 +77,23 @@ func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 			"p_payload_byte_length bigint, p_payload_digest text",
 		result:           "text",
 		definitionDigest: "113b90b791916efb61309d70ec18a83a250e56120e092a3b9fa81686e8149df1",
-	})
+	}
+}
+
+func storedNativeIMInboxFunctionSpecV10() storedAuthorityFunctionSpec {
+	return storedAuthorityFunctionSpec{
+		name: "admit_native_im_inbox",
+		arguments: "p_tenant_id text, p_workspace_id text, p_provider text, p_channel_id text, " +
+			"p_event_id text, p_event_digest text, p_verification_id text, p_payload_kind text, " +
+			"p_payload_inline text, p_payload_storage text, p_payload_reference_id text, " +
+			"p_payload_byte_length bigint, p_payload_digest text",
+		identityArguments: "p_tenant_id text, p_workspace_id text, p_provider text, p_channel_id text, " +
+			"p_event_id text, p_event_digest text, p_verification_id text, p_payload_kind text, " +
+			"p_payload_inline text, p_payload_storage text, p_payload_reference_id text, " +
+			"p_payload_byte_length bigint, p_payload_digest text",
+		result:           "text",
+		definitionDigest: "5c171bcf7639bbfa071e5a77d2c3fe12fc98a541b97e2fa096d211a93821e6b1",
+	}
 }
 
 func storedAuthorityFunctionSpecByName(name string) (storedAuthorityFunctionSpec, bool) {

@@ -44,6 +44,7 @@ var migrationSpecs = [...]migrationSpec{
 	{version: 7, name: "event_retry_identity"},
 	{version: 8, name: "event_projection_checkpoint"},
 	{version: 9, name: "native_im_inbox"},
+	{version: 10, name: "native_im_inbox_semantics"},
 }
 
 func Catalog() ([]Migration, error) {
@@ -90,7 +91,8 @@ func validMigrationSQLForSpec(sql string, spec migrationSpec) bool {
 	allowFunctionDDL := (spec.version == 5 && spec.name == "function_only_writes") ||
 		(spec.version == 6 && spec.name == "event_store") ||
 		(spec.version == 8 && spec.name == "event_projection_checkpoint") ||
-		(spec.version == 9 && spec.name == "native_im_inbox")
+		(spec.version == 9 && spec.name == "native_im_inbox") ||
+		(spec.version == 10 && spec.name == "native_im_inbox_semantics")
 	return validMigrationSQLWithFunctionDDL(sql, allowFunctionDDL)
 }
 

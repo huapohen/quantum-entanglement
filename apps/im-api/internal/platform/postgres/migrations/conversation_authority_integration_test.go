@@ -373,8 +373,8 @@ func applyMigrationsForConversationAuthorityTest(t *testing.T, connection *pgx.C
 	if err != nil {
 		t.Fatalf("Apply conversation authority catalog: %v", err)
 	}
-	if len(state.Applied) != 9 {
-		t.Fatalf("applied migration count = %d, want 9", len(state.Applied))
+	if len(state.Applied) != 10 {
+		t.Fatalf("applied migration count = %d, want 10", len(state.Applied))
 	}
 }
 

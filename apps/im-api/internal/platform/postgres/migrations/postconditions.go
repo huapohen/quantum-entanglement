@@ -101,13 +101,15 @@ func validateMigrationPostconditionForSchema(
 	case 8:
 		return validateEventProjectionCheckpoint(ctx, transaction)
 	case 9:
-		return validateNativeIMInbox(ctx, transaction)
+		return validateNativeIMInbox(ctx, transaction, schemaVersion)
+	case 10:
+		return validateNativeIMInbox(ctx, transaction, schemaVersion)
 	default:
 		return ErrMigrationSchema
 	}
 }
 
-func validateNativeIMInbox(ctx context.Context, transaction pgx.Tx) error {
+func validateNativeIMInbox(ctx context.Context, transaction pgx.Tx, schemaVersion int64) error {
 	digest, err := tableSchemaDigest(ctx, transaction, nativeIMInboxTableNames)
 	if err != nil || nativeIMInboxSchemaDigest == "" || digest != nativeIMInboxSchemaDigest {
 		return ErrMigrationSchema
@@ -116,8 +118,11 @@ func validateNativeIMInbox(ctx context.Context, transaction pgx.Tx) error {
 	if err != nil {
 		return ErrMigrationSchema
 	}
-	spec, ok := storedAuthorityFunctionSpecByName("admit_native_im_inbox")
-	if !ok || !exactStoredAuthorityFunctions(functions, []storedAuthorityFunctionSpec{spec}) {
+	spec := storedNativeIMInboxFunctionSpecV9()
+	if schemaVersion >= 10 {
+		spec = storedNativeIMInboxFunctionSpecV10()
+	}
+	if !exactStoredAuthorityFunctions(functions, []storedAuthorityFunctionSpec{spec}) {
 		return ErrMigrationSchema
 	}
 	return nil
