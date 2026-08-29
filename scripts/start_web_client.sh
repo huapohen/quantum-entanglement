@@ -119,6 +119,7 @@ printf '%s\n' "正在启动零网络 IM API：http://127.0.0.1:$web_im_port"
     cd "$web_project_root"
     env WANWORK_IM_LISTEN_ADDRESS="127.0.0.1:$web_im_port" \
         GOTOOLCHAIN="${GOTOOLCHAIN:-local}" \
+        GOTELEMETRY="${GOTELEMETRY:-off}" \
         go run ./apps/im-api/cmd/im-api >"$web_api_log" 2>&1
 ) &
 web_api_pid=$!
