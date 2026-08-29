@@ -10,9 +10,9 @@ import time
 import unittest
 from pathlib import Path
 
+import tests.test_result_acceptance_durable_prerequisites as durable_prerequisites
 from quantum_entanglement.invocation_results import ScopedInvocationResultAcceptedV2
 from quantum_entanglement.store import SQLiteEventStore
-import tests.test_result_acceptance_durable_prerequisites as durable_prerequisites
 
 
 class ResultAcceptanceProcessRecoveryTests(unittest.TestCase):
