@@ -548,9 +548,9 @@ class HeartbeatPureWorkerSupervisorTests(unittest.IsolatedAsyncioTestCase):
             invoked = True
             return "must-not-run"
 
-        result = await HeartbeatPureWorkerSupervisor(
-            self.admission(), heartbeat=heartbeat
-        ).run(handler)
+        result = await HeartbeatPureWorkerSupervisor(self.admission(), heartbeat=heartbeat).run(
+            handler
+        )
         self.assertEqual(result.outcome, PureWorkerOutcome.LEASE_LOST)
         self.assertEqual(calls, 1)
         self.assertFalse(invoked)
@@ -570,9 +570,9 @@ class HeartbeatPureWorkerSupervisorTests(unittest.IsolatedAsyncioTestCase):
             cancellation_seen.set()
             return "late-value"
 
-        result = await HeartbeatPureWorkerSupervisor(
-            self.admission(), heartbeat=heartbeat
-        ).run(handler)
+        result = await HeartbeatPureWorkerSupervisor(self.admission(), heartbeat=heartbeat).run(
+            handler
+        )
         self.assertEqual(result.outcome, PureWorkerOutcome.LEASE_LOST)
         self.assertTrue(result.drained)
         self.assertTrue(cancellation_seen.is_set())
@@ -617,9 +617,9 @@ class HeartbeatPureWorkerSupervisorTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(hasattr(context, "lease"))
             return "pure-value"
 
-        result = await HeartbeatPureWorkerSupervisor(
-            self.admission(), heartbeat=heartbeat
-        ).run(handler)
+        result = await HeartbeatPureWorkerSupervisor(self.admission(), heartbeat=heartbeat).run(
+            handler
+        )
         self.assertEqual(result.outcome, PureWorkerOutcome.RETURNED)
         self.assertEqual(result.value, "pure-value")
 
@@ -634,9 +634,9 @@ class HeartbeatPureWorkerSupervisorTests(unittest.IsolatedAsyncioTestCase):
         def invalid_handler(_context: object) -> str:
             return "not-awaitable"
 
-        result = await HeartbeatPureWorkerSupervisor(
-            self.admission(), heartbeat=heartbeat
-        ).run(invalid_handler)  # type: ignore[arg-type]
+        result = await HeartbeatPureWorkerSupervisor(self.admission(), heartbeat=heartbeat).run(
+            invalid_handler
+        )  # type: ignore[arg-type]
         self.assertEqual(result.outcome, PureWorkerOutcome.FAILED)
         self.assertEqual(calls, 1)
         self.assertIsNone(result.value)

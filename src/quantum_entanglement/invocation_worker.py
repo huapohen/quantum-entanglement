@@ -441,9 +441,7 @@ class HeartbeatPureWorkerSupervisor:
         timeout_waiter = asyncio.create_task(
             asyncio.sleep(self.admission.configuration.handler_timeout_seconds)
         )
-        cancel_waiter = (
-            None if cancellation is None else asyncio.create_task(cancellation.wait())
-        )
+        cancel_waiter = None if cancellation is None else asyncio.create_task(cancellation.wait())
         watchers: set[asyncio.Task[object]] = {handler_task, lost_waiter, timeout_waiter}
         if cancel_waiter is not None:
             watchers.add(cancel_waiter)
@@ -483,8 +481,6 @@ class HeartbeatPureWorkerSupervisor:
                 *(watcher for watcher in watchers if watcher is not handler_task),
                 return_exceptions=True,
             )
-
-
 
 
 async def _disabled_dispatch() -> NoReturn:
