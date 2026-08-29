@@ -6,7 +6,7 @@ dispatch remain disabled. The normal store reopen path is deliberately blocked w
 7 is inactive in the default legacy store; an explicit `enable_result_acceptance_schema=True`
 opt-in is available only for this private rehearsal and is not a production promotion switch.
 
-This document records the local checkpoint delivered by commits `3847594`, `034ceea` and `0d941eb`, plus the unmerged
+This document records the local checkpoint delivered by commits `3847594`, `034ceea`, `0d941eb`, `b14ee77` and `ab3ff70`, plus the unmerged
 working tree on branch `mainline_continue_quantum_entanglement`. It is the source of
 truth during the remaining implementation work. Notion synchronization is intentionally deferred
 until a larger checkpoint is complete; the final upload must include this file and a page-by-page
