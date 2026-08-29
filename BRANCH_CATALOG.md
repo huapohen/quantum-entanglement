@@ -31,9 +31,9 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-29T17:51:51+08:00 | `dev_wanwork_quantum_entanglement`<br>`5248a0ad65e3` | 用途待补充；当前节点主题：feat(postgres): add native IM inbox store adapter | 未直接并入 main | 领先 318 / 落后 6 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 2026-08-29T17:47:56+08:00 | `mainline_continue_quantum_entanglement`<br>`25d756394f52` | E3 Result Authority 人工评审分支；opt-in store-owned result acceptance、fresh-ACK AcceptedV2、heartbeat acceptance seam 与 result-only business projection 候选已完成，生产 worker、认证 projection、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 337 / 落后 6 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 2026-08-29T17:11:27+08:00 | `main`<br>`2deebb1e6bef` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 2026-08-29T17:05:38+08:00 | `dev_wanwork_quantum_entanglement`<br>`719e05814e46` | 用途待补充；当前节点主题：docs(sync): queue postgres projection checkpoint for notion batch | 未直接并入 main | 领先 315 / 落后 6 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
-| 2026-08-29T17:05:32+08:00 | `mainline_continue_quantum_entanglement`<br>`06af97a01759` | E3 Result Authority 人工评审分支；opt-in store-owned result acceptance、fresh-ACK AcceptedV2、heartbeat acceptance seam 与 result-only business projection 候选已完成，生产 worker、认证 projection、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 330 / 落后 6 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 2026-08-27T18:07:00+08:00 | `backup_0827_200010`<br>`1d399e555fb0` | 2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。 | 已作为祖先进入 main | 领先 0 / 落后 19 | — |
 | 2026-08-23T18:04:39Z | `dependabot/pip/mypy-2.3.1`<br>`fce21d09e51b` | 用途待补充；当前节点主题：build(deps-dev): bump mypy from 1.19.1 to 2.3.1 | 未直接并入 main | 领先 1 / 落后 247 | — |
 | 2026-08-23T18:04:33Z | `dependabot/pip/ruff-0.16.4`<br>`bf627bc8a49f` | 用途待补充；当前节点主题：build(deps): bump ruff from 0.16.3 to 0.16.4 | 未直接并入 main | 领先 1 / 落后 247 | — |
@@ -106,8 +106,8 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | 状态 | 分支/模式 | HEAD | 路径 |
 | --- | --- | --- | --- |
 | 正式主线工作区 | `main` | `2deebb1e6bef` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 存在、干净 | `dev_wanwork_quantum_entanglement` | `719e05814e46` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
-| 存在、干净 | `mainline_continue_quantum_entanglement` | `06af97a01759` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 存在、干净 | `dev_wanwork_quantum_entanglement` | `5248a0ad65e3` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 存在、干净 | `mainline_continue_quantum_entanglement` | `25d756394f52` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 
 ## 固定版本标签
 
