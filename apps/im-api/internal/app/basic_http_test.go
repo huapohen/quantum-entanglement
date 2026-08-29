@@ -36,6 +36,34 @@ func TestLocalDemoBasicConversationAndMessageHTTPAPI(t *testing.T) {
 		!strings.Contains(sent.Raw, `"providerStatus":"committed"`) {
 		t.Fatalf("send response = %s", sent.Raw)
 	}
+	messageID := decodeMessageID(t, sent.Raw)
+	edited := localDemoRequest(t, server, http.MethodPatch,
+		"/api/v1/demo/im/conversations/"+conversationID+"/messages/"+messageID,
+		`{"text":"edited from HTTP"}`, "Bearer "+localdemo.LocalBearerToken)
+	if edited.Code != httpapi.CodeOK || !strings.Contains(edited.Raw, `"status":"edited"`) ||
+		!strings.Contains(edited.Raw, `"text":"edited from HTTP"`) ||
+		!strings.Contains(edited.Raw, `"replayed":false`) {
+		t.Fatalf("edit response = %s", edited.Raw)
+	}
+	editedReplay := localDemoRequest(t, server, http.MethodPatch,
+		"/api/v1/demo/im/conversations/"+conversationID+"/messages/"+messageID,
+		`{"text":"edited from HTTP"}`, "Bearer "+localdemo.LocalBearerToken)
+	if editedReplay.Code != httpapi.CodeOK || !strings.Contains(editedReplay.Raw, `"replayed":true`) {
+		t.Fatalf("edit replay response = %s", editedReplay.Raw)
+	}
+	recalled := localDemoRequest(t, server, http.MethodPost,
+		"/api/v1/demo/im/conversations/"+conversationID+"/messages/"+messageID+"/recall",
+		`{}`, "Bearer "+localdemo.LocalBearerToken)
+	if recalled.Code != httpapi.CodeOK || !strings.Contains(recalled.Raw, `"status":"recalled"`) ||
+		!strings.Contains(recalled.Raw, `"replayed":false`) {
+		t.Fatalf("recall response = %s", recalled.Raw)
+	}
+	recalledReplay := localDemoRequest(t, server, http.MethodPost,
+		"/api/v1/demo/im/conversations/"+conversationID+"/messages/"+messageID+"/recall",
+		`{}`, "Bearer "+localdemo.LocalBearerToken)
+	if recalledReplay.Code != httpapi.CodeOK || !strings.Contains(recalledReplay.Raw, `"replayed":true`) {
+		t.Fatalf("recall replay response = %s", recalledReplay.Raw)
+	}
 
 	conversations := localDemoRequest(t, server, http.MethodGet,
 		"/api/v1/demo/im/conversations?limit=20", "", "Bearer "+localdemo.LocalBearerToken)
@@ -46,8 +74,8 @@ func TestLocalDemoBasicConversationAndMessageHTTPAPI(t *testing.T) {
 
 	messages := localDemoRequest(t, server, http.MethodGet,
 		"/api/v1/demo/im/conversations/"+conversationID+"/messages?limit=1", "", "Bearer "+localdemo.LocalBearerToken)
-	if messages.Code != httpapi.CodeOK || !strings.Contains(messages.Raw, `"text":"hello from HTTP"`) ||
-		!strings.Contains(messages.Raw, `"hasMore":false`) {
+	if messages.Code != httpapi.CodeOK || !strings.Contains(messages.Raw, `"status":"recalled"`) ||
+		!strings.Contains(messages.Raw, `"text":""`) || !strings.Contains(messages.Raw, `"hasMore":false`) {
 		t.Fatalf("message page = %s", messages.Raw)
 	}
 	unknown := localDemoRequest(t, server, http.MethodGet,
@@ -75,4 +103,19 @@ func decodeConversationID(t *testing.T, raw string) string {
 		t.Fatalf("decode conversation = %q (%v)", envelope.Data.Conversation.ID, err)
 	}
 	return envelope.Data.Conversation.ID
+}
+
+func decodeMessageID(t *testing.T, raw string) string {
+	t.Helper()
+	var envelope struct {
+		Data struct {
+			Message struct {
+				ID string `json:"id"`
+			} `json:"message"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil || envelope.Data.Message.ID == "" {
+		t.Fatalf("decode message = %q (%v)", envelope.Data.Message.ID, err)
+	}
+	return envelope.Data.Message.ID
 }

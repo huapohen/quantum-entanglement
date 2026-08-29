@@ -89,6 +89,32 @@ func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
 		}
 		return httpapi.WriteSuccess(ctx, result)
 	})
+	server.Patch("/api/v1/demo/im/conversations/:conversationId/messages/:messageId", func(ctx fiber.Ctx) error {
+		var input localdemo.EditTextInput
+		if err := decodeLocalDemoRequest(ctx.Body(), &input); err != nil {
+			return httpapi.NewAppError(httpapi.CodeMalformedRequest, err)
+		}
+		result, err := demo.EditText(
+			ctx.Context(), bearerToken(ctx), ctx.Params("conversationId"), ctx.Params("messageId"), input,
+		)
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, result)
+	})
+	server.Post("/api/v1/demo/im/conversations/:conversationId/messages/:messageId/recall", func(ctx fiber.Ctx) error {
+		var input localdemo.RecallMessageInput
+		if err := decodeLocalDemoRequest(ctx.Body(), &input); err != nil {
+			return httpapi.NewAppError(httpapi.CodeMalformedRequest, err)
+		}
+		result, err := demo.RecallMessage(
+			ctx.Context(), bearerToken(ctx), ctx.Params("conversationId"), ctx.Params("messageId"), input,
+		)
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, result)
+	})
 	server.Post("/api/v1/demo/im/mentions", func(ctx fiber.Ctx) error {
 		var input localdemo.MentionInput
 		if err := decodeLocalDemoRequest(ctx.Body(), &input); err != nil {
