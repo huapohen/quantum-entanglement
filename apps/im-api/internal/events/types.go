@@ -16,6 +16,7 @@ var (
 	ErrInvalidQuery          = errors.New("invalid event query")
 	ErrInvalidCursor         = errors.New("invalid event cursor")
 	ErrInvalidStore          = errors.New("invalid event store configuration")
+	ErrStoreUnavailable      = errors.New("event store is unavailable")
 	ErrStoreRequirements     = errors.New("event store does not meet requirements")
 	ErrStoreClock            = errors.New("event store clock is invalid")
 	ErrStoreCapacity         = errors.New("event store capacity exceeded")
