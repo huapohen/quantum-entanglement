@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import tests.test_result_acceptance_durable_prerequisites as durable_prerequisites
 from quantum_entanglement.result_backup import (
     RESULT_BACKUP_FORMAT,
     ResultBackupExistsError,
@@ -24,9 +25,6 @@ from quantum_entanglement.result_backup import (
 )
 from quantum_entanglement.result_backup_topology import derive_result_backup_topology
 from quantum_entanglement.store import SQLiteEventStore
-from tests.test_result_acceptance_durable_prerequisites import (
-    ResultAcceptanceDurablePrerequisiteTests,
-)
 
 
 class ResultBackupTests(unittest.TestCase):
@@ -36,7 +34,9 @@ class ResultBackupTests(unittest.TestCase):
             clock=lambda: "2026-08-27T10:00:00Z",
             enable_result_acceptance_schema=True,
         )
-        helper = ResultAcceptanceDurablePrerequisiteTests(methodName="runTest")
+        helper = durable_prerequisites.ResultAcceptanceDurablePrerequisiteTests(
+            methodName="runTest"
+        )
         helper.store = store
         prepared = helper.fresh_prepared()
         store._clock = lambda: "2026-08-27T10:00:02.000000Z"
