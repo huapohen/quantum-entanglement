@@ -134,6 +134,9 @@ class ResultBackupTopologyEvidence:
         counts = tuple(self.table_counts)
         if len(counts) > _MAX_TABLES:
             raise ValueError("result backup table counts exceed the hard limit")
+        for count_item in counts:
+            if type(count_item) is not ResultBackupTableCount:
+                raise TypeError("result backup table counts must be exact values")
         if counts != tuple(sorted(counts, key=lambda item: item.name.encode("utf-8"))):
             raise ValueError("result backup table counts are not in canonical order")
         table_names = tuple(item.name for item in objects if item.object_type == "table")
@@ -158,6 +161,17 @@ class ResultBackupTopologyEvidence:
         }
 
     def to_dict(self) -> dict[str, object]:
+        stable = ResultBackupTopologyEvidence(
+            schema_version=self.schema_version,
+            migration_state_sha256=self.migration_state_sha256,
+            result_registry_sha256=self.result_registry_sha256,
+            topology_registry_sha256=self.topology_registry_sha256,
+            present_profiles=self.present_profiles,
+            schema_objects=self.schema_objects,
+            table_counts=self.table_counts,
+        )
+        if stable.topology_sha256 != self.topology_sha256:
+            raise ValueError("result backup topology differs from its canonical snapshot")
         value = dict(self._digest_dict())
         value["topologySha256"] = self.topology_sha256
         return value

@@ -95,6 +95,9 @@ class ResultBackupTests(unittest.TestCase):
             )
             encoded = manifest.to_json_bytes()
             self.assertEqual(ResultBackupManifest.from_json_bytes(encoded), manifest)
+            object.__setattr__(manifest.topology, "topology_sha256", "0" * 64)
+            with self.assertRaises(ValueError):
+                manifest.to_json_bytes()
             manifest_path = Path(str(backup) + ".manifest.json")
             raw = json.loads(manifest_path.read_text())
             raw["databaseSha256"] = "0" * 64

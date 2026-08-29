@@ -195,7 +195,27 @@ class ResultBackupManifest:
         }
 
     def to_json_bytes(self) -> bytes:
-        encoded = _canonical_json(self.to_dict())
+        stable_topology = ResultBackupTopologyEvidence(
+            schema_version=self.topology.schema_version,
+            migration_state_sha256=self.topology.migration_state_sha256,
+            result_registry_sha256=self.topology.result_registry_sha256,
+            topology_registry_sha256=self.topology.topology_registry_sha256,
+            present_profiles=self.topology.present_profiles,
+            schema_objects=self.topology.schema_objects,
+            table_counts=self.topology.table_counts,
+        )
+        if stable_topology != self.topology:
+            raise ValueError("result backup topology differs from its canonical snapshot")
+        stable = ResultBackupManifest(
+            backup_id=self.backup_id,
+            created_at=self.created_at,
+            database_sha256=self.database_sha256,
+            byte_size=self.byte_size,
+            page_count=self.page_count,
+            page_size=self.page_size,
+            topology=stable_topology,
+        )
+        encoded = _canonical_json(stable.to_dict())
         if len(encoded) > MAX_RESULT_BACKUP_MANIFEST_BYTES:
             raise ValueError("result backup manifest exceeds the size limit")
         return encoded
