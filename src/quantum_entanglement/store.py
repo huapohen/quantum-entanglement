@@ -163,7 +163,7 @@ from .invocation_results import (
 from .invocation_results import (
     scoped_invocation_start_receipt_digest_v3 as _scoped_invocation_start_receipt_digest_v3,
 )
-from .migrations import _apply_sqlite_migrations_unregistered, apply_sqlite_migrations
+from .migrations import apply_sqlite_migrations
 from .protocol import new_id, utc_now
 
 
@@ -2329,13 +2329,10 @@ class SQLiteEventStore:
             )
             self._require_current_process()
             if self._result_acceptance_schema_enabled:
-                from ._inactive_invocation_results_migration import (
-                    _KNOWN_INVOCATION_RESULTS_MIGRATIONS,
-                )
+                from .result_migration_activation import activate_result_acceptance_migration
 
-                _apply_sqlite_migrations_unregistered(
+                activate_result_acceptance_migration(
                     self._connection,
-                    migrations=_KNOWN_INVOCATION_RESULTS_MIGRATIONS,
                     clock=self._now,
                     _process_guard=self._require_current_process,
                 )

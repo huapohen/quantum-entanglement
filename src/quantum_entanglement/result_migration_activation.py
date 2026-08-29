@@ -41,6 +41,7 @@ from .migrations import (
     MigrationDriftError,
     MigrationVersionError,
     _sql_statements,
+    apply_sqlite_migrations,
     migration_text,
     validate_sqlite_schema,
 )
@@ -457,6 +458,7 @@ def activate_result_acceptance_migration(
     connection: sqlite3.Connection,
     *,
     clock: Callable[[], str] = utc_now,
+    _process_guard: Callable[[], None] | None = None,
 ) -> ResultAcceptanceMigrationState:
     """Atomically activate migration 7 on an exact v6 database.
 
@@ -467,6 +469,10 @@ def activate_result_acceptance_migration(
 
     if not callable(clock):
         raise TypeError("result migration clock must be callable")
+    if _process_guard is not None and not callable(_process_guard):
+        raise TypeError("_process_guard must be callable or None")
+    if _process_guard is not None:
+        _process_guard()
     if connection.in_transaction:
         raise ResultAcceptanceMigrationTransactionError(
             "result migration activation requires no active caller transaction"
@@ -476,10 +482,38 @@ def activate_result_acceptance_migration(
             connection,
             migrations=RESULT_ACCEPTANCE_MIGRATIONS,
         )
-    except (MigrationDriftError, MigrationVersionError, sqlite3.Error, TypeError, ValueError) as error:
+    except MigrationVersionError:
+        # The legacy validator intentionally rejects an already activated v7 database;
+        # use the active validator below to distinguish that supported state from drift.
+        try:
+            preflight_version = validate_sqlite_schema(connection, migrations=MIGRATIONS)
+        except (MigrationDriftError, MigrationVersionError, sqlite3.Error, TypeError, ValueError) as error:
+            raise ResultAcceptanceMigrationIntegrityError(
+                "result migration preflight schema is not exact"
+            ) from error
+    except (MigrationDriftError, sqlite3.Error, TypeError, ValueError) as error:
         raise ResultAcceptanceMigrationIntegrityError(
             "result migration preflight schema is not exact"
         ) from error
+    if preflight_version < MIGRATIONS[-1].version:
+        if _read_catalog_names(connection):
+            raise ResultAcceptanceMigrationIntegrityError(
+                "result migration preflight found a partial result schema"
+            )
+        try:
+            apply_sqlite_migrations(
+                connection,
+                clock=clock,
+                _process_guard=_process_guard,
+            )
+            preflight_version = validate_sqlite_schema(
+                connection,
+                migrations=RESULT_ACCEPTANCE_MIGRATIONS,
+            )
+        except (MigrationDriftError, MigrationVersionError, sqlite3.Error, TypeError, ValueError) as error:
+            raise ResultAcceptanceMigrationIntegrityError(
+                "result migration legacy prefix could not be prepared"
+            ) from error
     if preflight_version == RESULT_ACCEPTANCE_MIGRATION.version:
         return _read_active_state(connection)
     if preflight_version != MIGRATIONS[-1].version:
@@ -502,14 +536,20 @@ def activate_result_acceptance_migration(
                 "result migration activation did not acquire a transaction"
             )
         _validate_activation_source_locked(connection)
+        if _process_guard is not None:
+            _process_guard()
         sidecar_state = validate_domain_migration_sidecar_schema(connection)
         if sidecar_state.value == "absent":
             _install_domain_migration_sidecar_locked(connection)
+            if _process_guard is not None:
+                _process_guard()
         try:
             _bootstrap_legacy_domain_migration_metadata_locked(
                 connection,
                 clock=clock,
             )
+            if _process_guard is not None:
+                _process_guard()
         except DomainMigrationBridgeIntegrityError as error:
             raise ResultAcceptanceMigrationIntegrityError(
                 "result migration legacy metadata bootstrap failed"
@@ -522,6 +562,8 @@ def activate_result_acceptance_migration(
                 "result migration packaged SQL digest is not exact"
             )
         for statement in _sql_statements(sql):
+            if _process_guard is not None:
+                _process_guard()
             connection.execute(statement)
         connection.execute(
             """
@@ -535,9 +577,17 @@ def activate_result_acceptance_migration(
                 _sample_clock(clock),
             ),
         )
+        if _process_guard is not None:
+            _process_guard()
         _insert_native_metadata_locked(connection, recorded_at=_sample_clock(clock))
+        if _process_guard is not None:
+            _process_guard()
         state = _read_active_state(connection)
+        if _process_guard is not None:
+            _process_guard()
         connection.execute("COMMIT")
+        if _process_guard is not None:
+            _process_guard()
         if connection.in_transaction:
             raise ResultAcceptanceMigrationTransactionError(
                 "result migration activation COMMIT did not end the transaction"
@@ -565,6 +615,8 @@ def activate_result_acceptance_migration(
         ) from error
 
     committed = _read_active_state(connection)
+    if _process_guard is not None:
+        _process_guard()
     if state != committed:
         raise ResultAcceptanceMigrationIntegrityError(
             "committed result migration state differs from the locked state"
