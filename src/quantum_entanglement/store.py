@@ -16,6 +16,7 @@ from asyncio import CancelledError
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from functools import wraps
 from types import MappingProxyType
 from typing import (
@@ -208,6 +209,36 @@ class ReservedResultEventError(ValueError):
 
     def __init__(self) -> None:
         super().__init__("generic event append cannot write reserved result authority")
+
+
+class ResultReconciliationConflictError(RuntimeError):
+    """Raised when a durable result cannot safely reconcile its owning attempt."""
+
+
+class ResultReconciliationOutcome(str, Enum):
+    """Closed outcomes for receipt-bound, non-emitting result reconciliation."""
+
+    RECONCILED = "reconciled"
+    ALREADY_RECONCILED = "already_reconciled"
+
+
+@dataclass(frozen=True)
+class ResultReconciliationResult:
+    """Receipt evidence and the idempotent outcome of one reconciliation attempt."""
+
+    outcome: ResultReconciliationOutcome
+    observed: _ScopedInvocationResultObservedV2
+
+    def __post_init__(self) -> None:
+        if type(self.outcome) is not ResultReconciliationOutcome:
+            raise TypeError("result reconciliation outcome must be exact")
+        if type(self.observed) is not _ScopedInvocationResultObservedV2:
+            raise TypeError("result reconciliation observation must be exact")
+        object.__setattr__(
+            self,
+            "observed",
+            _ScopedInvocationResultObservedV2.from_dict(self.observed.to_dict()),
+        )
 
 
 class _ResultEventWriteContractError(ValueError):
@@ -4343,10 +4374,20 @@ class SQLiteEventStore:
         connection: sqlite3.Connection,
         prepared: _PreparedScopedInvocationResultAcceptanceV2 | _ResultAcceptanceObservationInputV2,
         receipt: _ScopedInvocationResultReceiptV2,
+        *,
+        require_terminal: bool = True,
     ) -> None:
-        """Fixed-projection, read-only verification for one just-written fresh graph."""
+        """Fixed-projection, read-only verification for one durable result graph.
+
+        The normal writer path requires the owning job and attempt to be terminal.  The
+        receipt-bound recovery path deliberately permits the exact pre-CAS state (both rows
+        still ``running``) so a later reconciler can perform the terminal CAS in the same
+        transaction.  No other status is accepted.
+        """
 
         self._require_current_process()
+        if type(require_terminal) is not bool:
+            raise TypeError("require_terminal must be a boolean")
         request = prepared.request
         manifest = request.manifest
         evidence = receipt.evidence
@@ -4983,29 +5024,47 @@ class SQLiteEventStore:
             raise _ResultAcceptanceIntegrityError(
                 "result acceptance readback invocation job is malformed"
             ) from error
-        if (
-            job.status is not InvocationStatus.SUCCEEDED
-            or job.invocation_id != manifest.invocation_id
-            or job.session_id != manifest.session_id
-            or job.plan_id != manifest.plan_id
-            or job.task_id != manifest.task_id
-            or job.agent_id != manifest.agent_id
-            or job.idempotency_key != manifest.job_idempotency_key
-            or job.payload_digest != evidence.execution_manifest_digest
-            or job.max_attempts != 1
-            or job.attempts_started != evidence.attempt_number
-            or job.lease_epoch != evidence.lease_epoch
-            or job.result_ref != evidence.result_ref
-            or job.updated_at != accepted_at
-            or job.finished_at != accepted_at
-            or job.lease_owner is not None
-            or job.lease_token_digest is not None
-            or job.lease_expires_at is not None
-            or job.heartbeat_at is not None
-            or job.last_error is not None
-        ):
+        common_job_binding = (
+            job.invocation_id == manifest.invocation_id
+            and job.session_id == manifest.session_id
+            and job.plan_id == manifest.plan_id
+            and job.task_id == manifest.task_id
+            and job.agent_id == manifest.agent_id
+            and job.idempotency_key == manifest.job_idempotency_key
+            and job.payload_digest == evidence.execution_manifest_digest
+            and job.max_attempts == 1
+            and job.attempts_started == evidence.attempt_number
+            and job.lease_epoch == evidence.lease_epoch
+        )
+        terminal_job_state = (
+            job.status is InvocationStatus.SUCCEEDED
+            and job.result_ref == evidence.result_ref
+            and job.updated_at == accepted_at
+            and job.finished_at == accepted_at
+            and job.lease_owner is None
+            and job.lease_token_digest is None
+            and job.lease_expires_at is None
+            and job.heartbeat_at is None
+            and job.last_error is None
+        )
+        running_job_state = (
+            job.status is InvocationStatus.RUNNING
+            and job.result_ref is None
+            and job.finished_at is None
+            and job.last_error is None
+            and job.lease_owner == evidence.worker_id
+            and job.lease_token_digest == evidence.lease_token_digest
+            and job.lease_expires_at is not None
+            and job.lease_expires_at > accepted_at
+            and job.heartbeat_at is not None
+            and job.heartbeat_at <= accepted_at
+        )
+        valid_job_state = (
+            terminal_job_state if require_terminal else (terminal_job_state or running_job_state)
+        )
+        if not common_job_binding or not valid_job_state:
             raise _ResultAcceptanceIntegrityError(
-                "result acceptance readback invocation job terminal state differs"
+                "result acceptance readback invocation job state differs"
             )
 
         attempt_rows = connection.execute(
@@ -5032,20 +5091,36 @@ class SQLiteEventStore:
             raise _ResultAcceptanceIntegrityError(
                 "result acceptance readback invocation attempt is malformed"
             ) from error
-        if (
-            attempt.status is not AttemptStatus.SUCCEEDED
-            or attempt.attempt_id != evidence.attempt_id
-            or attempt.invocation_id != evidence.invocation_id
-            or attempt.attempt_number != evidence.attempt_number
-            or attempt.lease_epoch != evidence.lease_epoch
-            or attempt.worker_id != evidence.worker_id
-            or attempt.lease_token_digest != evidence.lease_token_digest
-            or attempt.finished_at != accepted_at
-            or attempt.result_ref != evidence.result_ref
-            or attempt.error is not None
-        ):
+        common_attempt_binding = (
+            attempt.attempt_id == evidence.attempt_id
+            and attempt.invocation_id == evidence.invocation_id
+            and attempt.attempt_number == evidence.attempt_number
+            and attempt.lease_epoch == evidence.lease_epoch
+            and attempt.worker_id == evidence.worker_id
+            and attempt.lease_token_digest == evidence.lease_token_digest
+        )
+        terminal_attempt_state = (
+            attempt.status is AttemptStatus.SUCCEEDED
+            and attempt.finished_at == accepted_at
+            and attempt.result_ref == evidence.result_ref
+            and attempt.error is None
+        )
+        running_attempt_state = (
+            attempt.status is AttemptStatus.RUNNING
+            and attempt.finished_at is None
+            and attempt.result_ref is None
+            and attempt.error is None
+            and attempt.heartbeat_at <= accepted_at
+            and attempt.lease_expires_at > accepted_at
+        )
+        valid_attempt_state = (
+            terminal_attempt_state
+            if require_terminal
+            else (terminal_attempt_state or running_attempt_state)
+        )
+        if not common_attempt_binding or not valid_attempt_state:
             raise _ResultAcceptanceIntegrityError(
-                "result acceptance readback invocation attempt terminal state differs"
+                "result acceptance readback invocation attempt state differs"
             )
         try:
             start_state = SQLiteEventStore._load_scoped_invocation_start_in_transaction(
@@ -5263,6 +5338,8 @@ class SQLiteEventStore:
         tenant_id: str,
         workspace_id: str,
         invocation_id: str,
+        *,
+        require_terminal: bool = True,
     ) -> Optional[_ScopedInvocationResultObservedV2]:
         """Reopen and verify one committed result as a capability-free observation.
 
@@ -5280,6 +5357,7 @@ class SQLiteEventStore:
                 tenant_snapshot,
                 workspace_snapshot,
                 invocation_snapshot,
+                require_terminal=require_terminal,
             )
 
     def _read_scoped_invocation_result_observed_v2_in_transaction(
@@ -5288,10 +5366,14 @@ class SQLiteEventStore:
         tenant_id: str,
         workspace_id: str,
         invocation_id: str,
+        *,
+        require_terminal: bool = True,
     ) -> Optional[_ScopedInvocationResultObservedV2]:
         """Read and validate a result graph without requiring the original lease token."""
 
         self._require_current_process()
+        if type(require_terminal) is not bool:
+            raise TypeError("require_terminal must be a boolean")
         self._require_result_acceptance_candidate_schema_in_transaction(connection)
 
         def quarantine(
@@ -5803,6 +5885,7 @@ class SQLiteEventStore:
                 connection,
                 observation_input,
                 receipt,
+                require_terminal=require_terminal,
             )
         except _ResultAcceptanceQuarantineError:
             raise
@@ -5826,6 +5909,240 @@ class SQLiteEventStore:
             ) from error
         self._require_current_process()
         return _ScopedInvocationResultObservedV2(receipt=receipt)
+
+    def _reconciliation_job_and_attempt_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        invocation_id: str,
+    ) -> tuple[InvocationJob, InvocationAttempt]:
+        """Load the exact one-attempt result owner under the caller's write lock."""
+
+        job_rows = connection.execute(
+            "SELECT * FROM main.invocation_jobs WHERE invocation_id = ? LIMIT 2",
+            (invocation_id,),
+        ).fetchall()
+        if type(job_rows) is not list or len(job_rows) != 1:
+            raise ResultReconciliationConflictError(
+                "receipt reconciliation requires exactly one owning invocation job"
+            )
+        attempt_rows = connection.execute(
+            """
+            SELECT * FROM main.invocation_attempts
+            WHERE invocation_id = ?
+            ORDER BY attempt_number
+            LIMIT 2
+            """,
+            (invocation_id,),
+        ).fetchall()
+        if type(attempt_rows) is not list or len(attempt_rows) != 1:
+            raise ResultReconciliationConflictError(
+                "receipt reconciliation requires exactly one owning attempt"
+            )
+        try:
+            job = SQLiteInvocationAttemptStore._row_to_job(job_rows[0])
+            attempt = SQLiteInvocationAttemptStore._row_to_attempt(attempt_rows[0])
+            SQLiteInvocationAttemptStore._validate_recovery_snapshot(
+                job,
+                attempt,
+                attempt_count=1,
+            )
+        except (InvocationIntegrityError, TypeError, ValueError, KeyError, IndexError) as error:
+            raise ResultReconciliationConflictError(
+                "receipt reconciliation owner rows are malformed"
+            ) from error
+        return job, attempt
+
+    def _update_reconciliation_row_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        statement: str,
+        parameters: tuple[object, ...],
+        *,
+        label: str,
+    ) -> None:
+        """Run one exact reconciliation CAS and reject trigger/row-count surprises."""
+
+        self._require_current_process()
+        if connection is not self._connection or not connection.in_transaction:
+            raise ResultReconciliationConflictError(
+                "receipt reconciliation requires the owning write transaction"
+            )
+        before = connection.total_changes
+        cursor = connection.execute(statement, parameters)
+        self._require_current_process()
+        after = connection.total_changes
+        changed = connection.execute("SELECT changes() AS change_count").fetchone()
+        if (
+            type(cursor) is not sqlite3.Cursor
+            or type(cursor.rowcount) is not int
+            or cursor.rowcount != 1
+            or type(before) is not int
+            or type(after) is not int
+            or after != before + 1
+            or changed is None
+            or type(changed["change_count"]) is not int
+            or changed["change_count"] != 1
+        ):
+            raise ResultReconciliationConflictError(
+                f"receipt reconciliation {label} CAS did not change exactly one row"
+            )
+
+    @_bind_event_store_process
+    def reconcile_scoped_invocation_result(
+        self,
+        tenant_id: str,
+        workspace_id: str,
+        invocation_id: str,
+    ) -> Optional[ResultReconciliationResult]:
+        """Reconcile a committed result receipt to its owning job/attempt without emitting.
+
+        The method is intentionally idempotent and only accepts a graph whose receipt binds to
+        the current running lease.  It performs both terminal CAS updates and the final graph
+        readback in one ``BEGIN IMMEDIATE`` transaction.  No Agent call, event append, outbox
+        write, publication, or fresh capability is created.
+        """
+
+        tenant_snapshot = _caller_invocation_identity(tenant_id, "tenant_id")
+        workspace_snapshot = _caller_invocation_identity(workspace_id, "workspace_id")
+        invocation_snapshot = _caller_invocation_identity(invocation_id, "invocation_id")
+        if not self._result_acceptance_schema_enabled:
+            raise _ResultAcceptanceSchemaUnavailableError(
+                "result acceptance reconciliation is disabled until the result schema is "
+                "explicitly enabled"
+            ) from None
+        with self._transaction() as connection:
+            # Inspect the owner first so a stale/malformed lease can be reported as a
+            # reconciliation conflict.  The strict result readback also validates the
+            # invocation-start graph and therefore intentionally raises quarantine for the
+            # same drift; retain that integrity signal unless we have already proved the
+            # owner rows themselves are the conflicting boundary.
+            owner_error: Optional[ResultReconciliationConflictError] = None
+            try:
+                job, attempt = self._reconciliation_job_and_attempt_in_transaction(
+                    connection,
+                    invocation_snapshot,
+                )
+            except ResultReconciliationConflictError as error:
+                owner_error = error
+                job = None
+                attempt = None
+            try:
+                observed = self._read_scoped_invocation_result_observed_v2_in_transaction(
+                    connection,
+                    tenant_snapshot,
+                    workspace_snapshot,
+                    invocation_snapshot,
+                    require_terminal=False,
+                )
+            except _ResultAcceptanceQuarantineError:
+                if owner_error is not None:
+                    raise owner_error from None
+                raise
+            if observed is None:
+                return None
+            if owner_error is not None or job is None or attempt is None:
+                raise owner_error or ResultReconciliationConflictError(
+                    "receipt reconciliation owner rows are unavailable"
+                )
+            receipt = observed.receipt
+            evidence = receipt.evidence
+            if (
+                job.status is InvocationStatus.SUCCEEDED
+                and attempt.status is AttemptStatus.SUCCEEDED
+                and job.result_ref == evidence.result_ref
+                and attempt.result_ref == evidence.result_ref
+            ):
+                return ResultReconciliationResult(
+                    outcome=ResultReconciliationOutcome.ALREADY_RECONCILED,
+                    observed=observed,
+                )
+            if (
+                job.status is not InvocationStatus.RUNNING
+                or attempt.status is not AttemptStatus.RUNNING
+            ):
+                raise ResultReconciliationConflictError(
+                    "receipt reconciliation owner is no longer running"
+                )
+            if (
+                job.lease_owner != evidence.worker_id
+                or job.lease_token_digest != evidence.lease_token_digest
+                or job.lease_epoch != evidence.lease_epoch
+                or attempt.worker_id != evidence.worker_id
+                or attempt.lease_token_digest != evidence.lease_token_digest
+                or attempt.lease_epoch != evidence.lease_epoch
+            ):
+                raise ResultReconciliationConflictError(
+                    "receipt reconciliation lease binding is stale"
+                )
+            accepted_at = evidence.accepted_at
+            self._update_reconciliation_row_in_transaction(
+                connection,
+                """
+                UPDATE main.invocation_jobs
+                SET status = 'succeeded', result_ref = ?, updated_at = ?, finished_at = ?,
+                    lease_owner = NULL, lease_token_digest = NULL,
+                    lease_expires_at = NULL, heartbeat_at = NULL
+                WHERE invocation_id = ? AND session_id = ? AND task_id = ?
+                  AND agent_id = ? AND status = 'running'
+                  AND attempts_started = ? AND lease_epoch = ?
+                  AND lease_owner = ? AND lease_token_digest = ?
+                  AND lease_expires_at > ? AND heartbeat_at <= ?
+                """,
+                (
+                    evidence.result_ref,
+                    accepted_at,
+                    accepted_at,
+                    evidence.invocation_id,
+                    evidence.session_id,
+                    evidence.task_id,
+                    evidence.agent_id,
+                    evidence.attempt_number,
+                    evidence.lease_epoch,
+                    evidence.worker_id,
+                    evidence.lease_token_digest,
+                    accepted_at,
+                    accepted_at,
+                ),
+                label="job terminal",
+            )
+            self._update_reconciliation_row_in_transaction(
+                connection,
+                """
+                UPDATE main.invocation_attempts
+                SET status = 'succeeded', finished_at = ?, result_ref = ?, error = NULL
+                WHERE attempt_id = ? AND invocation_id = ? AND attempt_number = ?
+                  AND lease_epoch = ? AND worker_id = ? AND lease_token_digest = ?
+                  AND status = 'running' AND heartbeat_at <= ? AND lease_expires_at > ?
+                """,
+                (
+                    accepted_at,
+                    evidence.result_ref,
+                    evidence.attempt_id,
+                    evidence.invocation_id,
+                    evidence.attempt_number,
+                    evidence.lease_epoch,
+                    evidence.worker_id,
+                    evidence.lease_token_digest,
+                    accepted_at,
+                    accepted_at,
+                ),
+                label="attempt terminal",
+            )
+            reconciled = self._read_scoped_invocation_result_observed_v2_in_transaction(
+                connection,
+                tenant_snapshot,
+                workspace_snapshot,
+                invocation_snapshot,
+                require_terminal=True,
+            )
+            if reconciled is None:
+                raise ResultReconciliationConflictError(
+                    "receipt reconciliation lost its durable result graph"
+                )
+            return ResultReconciliationResult(
+                outcome=ResultReconciliationOutcome.RECONCILED,
+                observed=reconciled,
+            )
 
     @_bind_event_store_process
     def _complete_result_acceptance_job_and_attempt_in_owner_transaction(

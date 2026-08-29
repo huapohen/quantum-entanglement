@@ -232,6 +232,9 @@ from .store import (
     InvocationStartConflictError,
     InvocationStartTransactionError,
     ReservedResultEventError,
+    ResultReconciliationConflictError,
+    ResultReconciliationOutcome,
+    ResultReconciliationResult,
     SQLiteEventStore,
 )
 from .tenancy import (
@@ -454,6 +457,9 @@ __all__ = [
     "RequestContext",
     "RequestContextError",
     "RequestContextIssuer",
+    "ResultReconciliationConflictError",
+    "ResultReconciliationOutcome",
+    "ResultReconciliationResult",
     "ReservedResultEventError",
     "RiskLevel",
     "ResourceRef",
