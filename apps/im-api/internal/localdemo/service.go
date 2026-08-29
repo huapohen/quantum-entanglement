@@ -67,20 +67,25 @@ type Snapshot struct {
 }
 
 type Service struct {
-	mu            sync.Mutex
-	authVerifier  auth.Verifier
-	provider      *imfake.Provider
-	coordinator   *agentthread.LocalCoordinator
-	parent        im.ConversationSnapshot
-	requester     im.ActorRef
-	requestAccess im.ConversationAccessSnapshot
-	installation  agentstore.InstallationSnapshot
-	requests      map[im.MessageID][sha256.Size]byte
+	mu                  sync.Mutex
+	authVerifier        auth.Verifier
+	provider            *imfake.Provider
+	coordinator         *agentthread.LocalCoordinator
+	parent              im.ConversationSnapshot
+	requester           im.ActorRef
+	requestAccess       im.ConversationAccessSnapshot
+	installation        agentstore.InstallationSnapshot
+	requests            map[im.MessageID][sha256.Size]byte
+	knownActors         map[im.ActorID]im.ActorRef
+	conversations       map[im.ConversationID]*localConversation
+	conversationOrder   []im.ConversationID
+	conversationCreates map[string]createRecord
+	cursorNamespaceHex  string
 }
 
 func New() (*Service, error) {
 	now := time.Now().UTC()
-	tenant, workspace, parent, requester, requestAccess, installation, passport, err := buildPlatform(now)
+	tenant, _, parent, requester, requestAccess, installation, passport, err := buildPlatform(now)
 	if err != nil {
 		return nil, err
 	}
@@ -125,12 +130,58 @@ func New() (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = tenant
-	_ = workspace
+	agentRef, err := im.NewActorRef(tenant, installation.AgentActor())
+	if err != nil {
+		return nil, err
+	}
+	humanMembership, err := im.NewConversationMembershipSnapshot(
+		parent.Ref(), requester, im.ConversationMembershipOwner,
+		im.ConversationMembershipActive, 1,
+	)
+	if err != nil {
+		return nil, err
+	}
+	agentMembership, err := im.NewConversationMembershipSnapshot(
+		parent.Ref(), agentRef, im.ConversationMembershipMember,
+		im.ConversationMembershipActive, 1,
+	)
+	if err != nil {
+		return nil, err
+	}
+	agentAccess, err := im.NewConversationAccessSnapshot(
+		parent.Ref(), agentRef, []im.ConversationPermission{im.ConversationPermissionRead}, 1,
+	)
+	if err != nil {
+		return nil, err
+	}
+	providerRef, err := im.NewProviderConversationRef(
+		im.IdentityProviderRongCloud, provider.Profile().Realm, parent.Ref().ConversationID().String(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	cursorNamespace := sha256.Sum256([]byte("wanwork.local-demo-cursor/1\x00" + parent.Ref().ConversationID().String() + "\x00" + now.Format(time.RFC3339Nano)))
+	parentRecord := &localConversation{
+		snapshot: parent, name: "产品研发群",
+		members: map[im.ActorID]im.ConversationMembershipSnapshot{
+			requester.ActorID(): humanMembership, installation.AgentActor(): agentMembership,
+		},
+		access: map[im.ActorID]im.ConversationAccessSnapshot{
+			requester.ActorID(): requestAccess, installation.AgentActor(): agentAccess,
+		},
+		providerRef: providerRef, providerBound: true, providerStatus: string(im.ProviderEffectCommitted),
+		createdAt: now, messages: make([]localMessage, 0), byClient: make(map[im.MessageID]int),
+	}
 	return &Service{
 		authVerifier: verifier, provider: provider, coordinator: coordinator,
 		parent: parent, requester: requester, requestAccess: requestAccess,
 		installation: installation, requests: make(map[im.MessageID][sha256.Size]byte),
+		knownActors: map[im.ActorID]im.ActorRef{
+			requester.ActorID(): requester, installation.AgentActor(): agentRef,
+		},
+		conversations:       map[im.ConversationID]*localConversation{parent.Ref().ConversationID(): parentRecord},
+		conversationOrder:   []im.ConversationID{parent.Ref().ConversationID()},
+		conversationCreates: make(map[string]createRecord), cursorNamespaceHex: hex.EncodeToString(cursorNamespace[:]),
 	}, nil
 }
 
