@@ -139,10 +139,10 @@ export const api = {
   conversations: () => request<ConversationPage>("/api/v1/demo/im/conversations?limit=50"),
   messages: (conversationId: string) =>
     request<MessagePage>(`/api/v1/demo/im/conversations/${encodeURIComponent(conversationId)}/messages?limit=100`),
-  createConversation: (name: string, idempotencyKey: string) =>
+  createConversation: (name: string, idempotencyKey: string, memberActorIds: string[] = []) =>
     request<ConversationResult>("/api/v1/demo/im/conversations", {
       method: "POST",
-      body: JSON.stringify({ type: "group", name, memberActorIds: [], idempotencyKey }),
+      body: JSON.stringify({ type: "group", name, memberActorIds, idempotencyKey }),
     }),
   sendMessage: (conversationId: string, text: string) =>
     request<MessageResult>(

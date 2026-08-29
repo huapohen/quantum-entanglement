@@ -46,6 +46,10 @@ curl --fail \
 以及 `dataRoutes`、`attestations` 和 `installationStatus` 都来自后端投影；这些字段不会被当作
 凭据或 action-time 授权。
 
+在左侧新建群时默认勾选“创建时邀请已安装 Agent”。提交后打开该群，检查其 `memberActorIds`
+包含 Agent actor；取消勾选则创建只含真人的普通群。此处复用 `CreateConversation` 的成员边界，
+不是把 Agent 偷塞进 UI 状态。
+
 当前回复是确定性的本地验收结果，不调用大模型。这里验证的是身份、Agent Store、群拓扑、ACL、幂等和 provider 边界；模型执行和真实 Clerk/融云网络接入属于后续生产适配阶段。
 
 ## 2.1 本地事件日志恢复验收（可选）

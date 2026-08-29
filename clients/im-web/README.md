@@ -50,6 +50,7 @@ npm run dev
 ## 当前可验收范围
 
 - 左侧工作空间与群列表；
+- 新建群时可勾选邀请当前已安装 Agent（成员 ID 由 Agent Store API 投影提供）；
 - 从认证 Agent Store API 读取 Agent 定义、release、Trust Passport 和 installation 投影；
 - 新建普通群；
 - 普通文本发送、编辑、撤回和 reload 后的消息 projection；

@@ -34,6 +34,7 @@ export function App() {
   const setError = useUIStore((state) => state.setError);
 
   const [groupName, setGroupName] = useState("");
+  const [includeAgent, setIncludeAgent] = useState(true);
   const [messageText, setMessageText] = useState("");
   const [instruction, setInstruction] = useState("");
 
@@ -89,7 +90,9 @@ export function App() {
     setLoading(true);
     setError("");
     try {
-      const result = await api.createConversation(name, `web/group/${crypto.randomUUID()}`);
+      const installedAgent = agents.find((agent) => agent.installationStatus === "active");
+      const memberActorIds = includeAgent && installedAgent ? [installedAgent.agentActorId] : [];
+      const result = await api.createConversation(name, `web/group/${crypto.randomUUID()}`, memberActorIds);
       setGroupName("");
       const page = await api.conversations();
       setConversations(page.conversations);
@@ -198,6 +201,15 @@ export function App() {
             />
             <button className="button-secondary px-3" onClick={() => void createGroup()} disabled={loading}>+</button>
           </div>
+          <label className="mb-4 flex items-center gap-2 text-xs text-slate-400">
+            <input
+              type="checkbox"
+              checked={includeAgent}
+              onChange={(event) => setIncludeAgent(event.target.checked)}
+              className="accent-cyan"
+            />
+            创建时邀请已安装 Agent
+          </label>
           <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">会话</div>
           <div className="space-y-1 overflow-y-auto">
             {conversations.map((conversation) => (

@@ -34,6 +34,7 @@ Verify the default mode:
 curl --fail http://127.0.0.1:18080/health/live
 curl --fail http://127.0.0.1:18080/api/v1/system/ping
 curl --fail http://127.0.0.1:18080/api/v1/demo/im
+curl --fail -H 'Authorization: Bearer demo.local.signature' http://127.0.0.1:18080/api/v1/demo/im/agents
 ```
 
 Expected responses:
@@ -42,6 +43,11 @@ Expected responses:
 {"status":"ok"}
 {"code":200,"data":{"status":"ok"},"message":"ok","requestId":"req_..."}
 ```
+
+The local Web client also reads `GET /api/v1/demo/im/agents`. Its response is an authenticated,
+read-only projection of the demo Agent Store: definition, published release, Trust Passport
+attestations, installation status, granted capabilities, and abstract data routes. It is not a
+production catalog repository or an action-time authorization decision.
 
 See [`docs/wanwork_im/LOCAL_IM_ACCEPTANCE_GUIDE.md`](../../docs/wanwork_im/LOCAL_IM_ACCEPTANCE_GUIDE.md) for the
 browser flow, arbitrary instruction API, expected invariants, architecture diagrams, and exact production
