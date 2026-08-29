@@ -1,0 +1,44 @@
+{
+  "format": "quantum-entanglement.report-sync-bundle",
+  "version": 1,
+  "createdAt": "2026-08-29T16:24:00+08:00",
+  "source": {
+    "branch": "dev_wanwork_quantum_entanglement",
+    "head": "4b1997582e4372e4b6e0d3d53c9120add39e5e8c",
+    "remote": "https://github.com/huapohen/quantum-entanglement.git",
+    "remoteRef": "refs/heads/dev_wanwork_quantum_entanglement"
+  },
+  "syncDecision": {
+    "notion": "local_pending",
+    "yuque": "local_pending",
+    "feishuAndWeCom": "read-only-no-send",
+    "reason": "Notion writes are deferred to one batch after local code, tests, reports and evidence for the stage are closed; this avoids remote round-trip and rate-limit overhead during implementation."
+  },
+  "changes": [
+    {"commit": "82f27906b4376c8f79a56cdfbac9e832932fb6de", "message": "feat(postgres): add durable projection checkpoint migration"},
+    {"commit": "4d6f76c79f63036a930b9cf11e47d85c9a291afa", "message": "feat(postgres): add durable projection checkpoint adapter"},
+    {"commit": "9482790de82160b3124d12e36506e8703bea82ed", "message": "fix(postgres): map event store integrity errors publicly"},
+    {"commit": "2999facd9d00db57a3325f0d58bf782c326f2819", "message": "docs(events): record durable projection checkpoint"},
+    {"commit": "4b1997582e4372e4b6e0d3d53c9120add39e5e8c", "message": "test(postgres): update authority schema v8 goldens"}
+  ],
+  "localSources": [
+    {"path": "analysis_report/README.md", "sha256": "710fe825c026d8863696da8bf718000ed5318dacba2e87cb667473ddd067c21b", "targetPageKey": "project-home", "status": "local_pending"},
+    {"path": "analysis_report/research/43_event_projection_contract_checkpoint.md", "sha256": "c20cf63d92cbe64b451e9f151448de3c35637121656bf493a1704886bab72853", "targetPageKey": "research-43", "status": "local_pending"},
+    {"path": "analysis_report/research/44_postgres_projection_checkpoint_implementation.md", "sha256": "b4e62859bce741e8b4ce02d578ec61e056c306c6c3369879821236735d8648ce", "targetPageKey": "research-44", "status": "local_pending"},
+    {"path": "apps/im-api/internal/platform/postgres/migrations/sql/0008_event_projection_checkpoint.up.sql", "sha256": "6b5a60dd8414e37c90c508cf0ec2e52a0c21c1796e932b6ffb927d5f973f92ca", "targetPageKey": "current-implementation", "status": "local_pending"},
+    {"path": "apps/im-api/internal/platform/postgres/migrations/sql/0008_event_projection_checkpoint.down.sql", "sha256": "dbace6f4f56474672b8a913ff072f75aab7e8043ba6d17552ca57c987fd41d9a", "targetPageKey": "current-implementation", "status": "local_pending"},
+    {"path": "apps/im-api/internal/platform/postgres/eventstore/checkpoint_store.go", "sha256": "6ecc78fa80d6e31afb25d278befe3cbaa2f56866bb6ae1a41455ed81e7877239", "targetPageKey": "current-implementation", "status": "local_pending"},
+    {"path": "apps/im-api/internal/platform/postgres/eventstore/checkpoint_store_test.go", "sha256": "4e6455a85bb081c2f184d565663ae181e3be29cde1d63628f0e1564e775538a1", "targetPageKey": "current-implementation", "status": "local_pending"}
+  ],
+  "verification": {
+    "goTest": "passed: go test ./...",
+    "goTestRace": "passed: go test -race ./...",
+    "goVet": "passed: go vet ./...",
+    "postgresMigrationsIntegration": "passed with local PostgreSQL 18.6",
+    "postgresEventStoreIntegration": "passed with local PostgreSQL 18.6 including checkpoint restart/CAS",
+    "notionLiveWrite": false,
+    "notionLiveReadback": false,
+    "yuqueLiveWrite": false,
+    "feishuOrWeComMessagesSent": false
+  }
+}

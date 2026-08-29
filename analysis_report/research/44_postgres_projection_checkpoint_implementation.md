@@ -80,8 +80,8 @@ WANWORK_TEST_POSTGRES_ADMIN_URL='postgresql://127.0.0.1:55483/postgres?sslmode=d
   go test ./internal/platform/postgres/eventstore -run TestPostgresEventStoreAgainstPostgres -count=1
 ```
 
-本阶段 `go test -race ./...` 与 `go vet ./...` 继续作为收口门禁；测试未访问 Notion、语雀、飞书、企微、
-融云或 Clerk。
+本阶段 `go test -race ./...` 与 `go vet ./...` 均已通过；测试未访问 Notion、语雀、飞书、企微、融云或
+Clerk。
 
 ## Git 版本
 
@@ -90,6 +90,8 @@ WANWORK_TEST_POSTGRES_ADMIN_URL='postgresql://127.0.0.1:55483/postgres?sslmode=d
 | `82f2790` | `feat(postgres): add durable projection checkpoint migration` |
 | `4d6f76c` | `feat(postgres): add durable projection checkpoint adapter` |
 | `9482790` | `fix(postgres): map event store integrity errors publicly` |
+| `2999fac` | `docs(events): record durable projection checkpoint` |
+| `4b19975` | `test(postgres): update authority schema v8 goldens` |
 
 远端 ref：`origin/dev_wanwork_quantum_entanglement`。本报告和下一份同步包会作为独立文档提交；Notion
 目标页为 `research-44`、`research-43` 和 `current-implementation`，状态保持 `local_pending`。
