@@ -30,6 +30,11 @@ from .invocation_results import (
     ScopedInvocationResultEvidenceV2,
     ScopedInvocationResultTerminalTransitionV2,
 )
+from .operation_authorization import (
+    AuthorizedOperation,
+    OperationAuthorizationError,
+    ProtectedOperationComposer,
+)
 from .projections import (
     DurableProjector,
     EventUpcasterRegistry,
@@ -39,9 +44,13 @@ from .projections import (
     UpcastedEvent,
 )
 from .protocol import utc_now
+from .request_context import RequestContext
+from .tenancy import AccessRequest, ResourceRef
 
 RESULT_PROJECTION_TABLE = "task_result_projection_v1"
 RESULT_PROJECTION_NAME = "task-result-v1"
+RESULT_PROJECTION_READ_ACTION = "resource.read"
+RESULT_PROJECTION_RESOURCE_TYPE = "task_result_projection"
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _CANONICAL_UTC_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z")
 _MAX_TEXT_BYTES = 4_096
@@ -120,6 +129,27 @@ class ResultProjectionConflictError(ResultProjectionError):
 
 class ResultProjectionSchemaError(ResultProjectionError):
     """Raised when the projection-owned table is absent in part or has drifted."""
+
+
+class ResultProjectionAuthorizationError(ResultProjectionError):
+    """Raised when an authenticated projection read cannot be admitted."""
+
+    __slots__ = ("code",)
+
+    _CODES = frozenset(
+        {
+            "result_projection_authorization_denied",
+            "result_projection_authorization_process_mismatch",
+            "result_projection_authorization_request_invalid",
+            "result_projection_authorization_dependency_invalid",
+        }
+    )
+
+    def __init__(self, code: str) -> None:
+        if type(code) is not str or code not in self._CODES:
+            raise ValueError("result projection authorization code is invalid")
+        self.code = code
+        super().__init__(code)
 
 
 class ResultProjectionProcessMismatchError(ResultProjectionError):
@@ -609,6 +639,63 @@ class SQLiteResultProjectionStore:
             return None
         return self._result_row_to_view(row)
 
+    def read_authorized(
+        self,
+        composer: ProtectedOperationComposer,
+        operation: AuthorizedOperation,
+        context: RequestContext,
+        request: AccessRequest,
+    ) -> Optional[ProjectedResultTask]:
+        """Consume an action-time authorization and read only its bound projection row.
+
+        The low-level :meth:`read` method remains an internal repository primitive for
+        replay and trusted composition.  Service-facing callers must use this seam so
+        the scope and invocation identity come exclusively from the exact request that
+        the protected-operation composer re-authorizes.  The operation is consumed
+        immediately before the SQLite read; callers must issue a new operation for a
+        subsequent read.
+        """
+
+        self._require_current_process()
+        if type(composer) is not ProtectedOperationComposer:
+            raise ResultProjectionAuthorizationError(
+                "result_projection_authorization_dependency_invalid"
+            )
+        if type(operation) is not AuthorizedOperation or type(context) is not RequestContext:
+            raise ResultProjectionAuthorizationError(
+                "result_projection_authorization_dependency_invalid"
+            )
+        if type(request) is not AccessRequest or type(request.resource) is not ResourceRef:
+            raise ResultProjectionAuthorizationError(
+                "result_projection_authorization_request_invalid"
+            )
+        resource = request.resource
+        if (
+            request.action != RESULT_PROJECTION_READ_ACTION
+            or resource.resource_type != RESULT_PROJECTION_RESOURCE_TYPE
+            or resource.workspace_id is None
+            or resource.tenant_id != request.tenant_id
+            or type(resource.resource_id) is not str
+        ):
+            raise ResultProjectionAuthorizationError(
+                "result_projection_authorization_request_invalid"
+            )
+        try:
+            composer.consume(operation, context, request)
+        except OperationAuthorizationError:
+            raise ResultProjectionAuthorizationError(
+                "result_projection_authorization_denied"
+            ) from None
+        except Exception:
+            raise ResultProjectionAuthorizationError(
+                "result_projection_authorization_dependency_invalid"
+            ) from None
+        return self.read(
+            str(request.tenant_id),
+            str(resource.workspace_id),
+            resource.resource_id,
+        )
+
     def close(self) -> None:
         """Close the offset and projection connection."""
 
@@ -619,8 +706,11 @@ class SQLiteResultProjectionStore:
 
 __all__ = [
     "RESULT_PROJECTION_NAME",
+    "RESULT_PROJECTION_READ_ACTION",
+    "RESULT_PROJECTION_RESOURCE_TYPE",
     "RESULT_PROJECTION_TABLE",
     "ProjectedResultTask",
+    "ResultProjectionAuthorizationError",
     "ResultProjectionConflictError",
     "ResultProjectionError",
     "ResultProjectionProcessMismatchError",
