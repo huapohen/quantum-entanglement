@@ -54,12 +54,21 @@ _IMAGE_EXTENSIONS = {
     ".png": "image/png",
     ".svg": "image/svg+xml",
 }
+_SCREENSHOT_SIDECAR_FILENAMES = frozenset(
+    {
+        "local_im_acceptance_manifest.json",
+        "local_im_basic_acceptance_manifest.json",
+        "local_im_edit_recall_acceptance_manifest.json",
+    }
+)
 _REDACTION_STATUSES = frozenset(
     {
         "not-redacted-synthetic-local-ui",
         "not-applicable-public-webpage-in-internal-evidence-set",
         "not-applicable-repository-authored-diagram",
+        "synthetic-local-ui-no-credential",
         "reviewed-no-credential-model-output-restricted",
+        "reviewed-local-runtime-capture",
         "unredacted-restricted-original",
     }
 )
@@ -1972,6 +1981,17 @@ def _image_inventory(
         if not stat.S_ISREG(entry.mode):
             _fail("controlled_directory_entry_forbidden")
         if entry.name in {"README.md", "manifest.json"}:
+            continue
+        if entry.name in _SCREENSHOT_SIDECAR_FILENAMES:
+            sidecar_raw = session.read_regular(
+                f"analysis_report/screenshots/{entry.name}",
+                limit=_MAX_MANIFEST_BYTES,
+                missing_code="screenshot_sidecar_missing",
+            )
+            _parse_json(
+                sidecar_raw,
+                "screenshot_sidecar_invalid",
+            )
             continue
         if _IMAGE_FILENAME_PATTERN.fullmatch(entry.name) is None:
             _fail("screenshot_filename_forbidden")

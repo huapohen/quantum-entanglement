@@ -956,6 +956,20 @@ class ReportSyncBundleTests(unittest.TestCase):
         self._write_screenshot_manifest([item])
         generate_report_sync_bundle(self.repository)
 
+        item["redactionStatus"] = "reviewed-local-runtime-capture"
+        self._write_screenshot_manifest([item])
+        generate_report_sync_bundle(self.repository)
+
+        item["redactionStatus"] = "synthetic-local-ui-no-credential"
+        self._write_screenshot_manifest([item])
+        generate_report_sync_bundle(self.repository)
+
+        self._write(
+            "analysis_report/screenshots/local_im_acceptance_manifest.json",
+            b'{"format":"quantum-entanglement.local-im-acceptance-screenshots-v1"}\n',
+        )
+        generate_report_sync_bundle(self.repository)
+
         item["redactionStatus"] = "unrestricted-public-copy"
         self._write_screenshot_manifest([item])
         with self.assertRaisesRegex(ReportSyncBundleError, "screenshot_policy_invalid"):
@@ -978,7 +992,7 @@ class ReportSyncBundleTests(unittest.TestCase):
             b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3" '
             b'viewBox="0 0 2 3" role="img">'
             b'<defs><linearGradient id="g"><stop offset="0"/></linearGradient>'
-            b'<style>.safe{fill:url(#g)}</style></defs>'
+            b"<style>.safe{fill:url(#g)}</style></defs>"
             b'<rect class="safe" width="2" height="3" fill="url(#g)"/></svg>'
         )
         svg_path = self._write("analysis_report/screenshots/01_fixture.svg", svg)
@@ -1004,7 +1018,10 @@ class ReportSyncBundleTests(unittest.TestCase):
             b'<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"/>',
             b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><script/></svg>',
             b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><rect fill="url(https://example.invalid/x)"/></svg>',
-            b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><image href="data:image/png;base64,AA=="/></svg>',
+            (
+                b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3">'
+                b'<image href="data:image/png;base64,AA=="/></svg>'
+            ),
         )
         for malicious in malicious_values:
             with self.subTest(malicious=malicious[:24]):
