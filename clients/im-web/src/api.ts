@@ -177,9 +177,9 @@ export const api = {
       `/api/v1/demo/im/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/recall`,
       { method: "POST", body: "{}" },
     ),
-  mention: (messageId: string, instruction: string) =>
+  mention: (conversationId: string, messageId: string, instruction: string) =>
     request<MentionResult>("/api/v1/demo/im/mentions", {
       method: "POST",
-      body: JSON.stringify({ messageId, instruction }),
+      body: JSON.stringify({ conversationId, messageId, instruction }),
     }),
 };
