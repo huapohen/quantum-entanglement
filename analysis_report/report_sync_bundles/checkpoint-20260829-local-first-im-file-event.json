@@ -1,10 +1,10 @@
 {
   "format": "quantum-entanglement.report-sync-bundle",
   "version": 1,
-  "createdAt": "2026-08-29T12:20:50+08:00",
+  "createdAt": "2026-08-29T13:12:20+08:00",
   "source": {
     "branch": "dev_wanwork_quantum_entanglement",
-    "head": "991b5ff552b975b6c3026532731b8747d6fcb20e",
+    "head": "f6324f7165b55910021af2615fb2081265e6c0b3",
     "remote": "https://github.com/huapohen/quantum-entanglement.git",
     "remoteRef": "refs/heads/dev_wanwork_quantum_entanglement"
   },
@@ -30,12 +30,20 @@
     {
       "commit": "991b5ff552b975b6c3026532731b8747d6fcb20e",
       "message": "docs(events): record local durable file checkpoint"
+    },
+    {
+      "commit": "616c18d0111b7011882e35a908c67f38c1aae9d6",
+      "message": "docs(evidence): archive local IM edit recall screenshots"
+    },
+    {
+      "commit": "f6324f7165b55910021af2615fb2081265e6c0b3",
+      "message": "docs(im): seal edit recall acceptance checkpoint"
     }
   ],
   "localSources": [
     {
       "path": "analysis_report/README.md",
-      "sha256": "32128e2de950a54e1e29c0c65aaa65ffb1d038cb4bb3fd4e7295aafaf643b3a0",
+      "sha256": "2a0c07269029cbf5e47b1139b8e5fce70bbe7f6e2179e35c1f164aaf168e012b",
       "targetPageKey": "project-home",
       "status": "local_pending"
     },
@@ -52,14 +60,32 @@
       "status": "local_pending"
     },
     {
+      "path": "analysis_report/research/41_local_im_message_edit_recall_checkpoint.md",
+      "sha256": "a554605f2cbdfcf668642786fab1892d53d409777c61923057d400827398f16a",
+      "targetPageKey": "research-41",
+      "status": "local_pending"
+    },
+    {
       "path": "analysis_report/screenshots/manifest.json",
-      "sha256": "f23f1a77efdd1502c49260ca60bf289870c6a6c0a405dd515b4b8a99bb56208b",
+      "sha256": "fbf33574e0bf10224b8c7823cdc7b5d5888b2cff97655a155b280d8983df896a",
       "targetPageKey": "screenshot-evidence",
       "status": "local_pending"
     },
     {
       "path": "analysis_report/screenshots/local_im_basic_acceptance_manifest.json",
       "sha256": "9b9fb5fefb40408b41b2ac007c8db7a0b836bf7e297c038fa94467a7d8d54475",
+      "targetPageKey": "screenshot-evidence",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/screenshots/local_im_edit_recall_acceptance_manifest.json",
+      "sha256": "582e0b04a325966d2c11c3beb705662a0a8f5e476d7253485264961f972e361d",
+      "targetPageKey": "screenshot-evidence",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/screenshots/README.md",
+      "sha256": "5cb70c704e9526c974f723533f86cc7b37cc0a2e8060f4856f81d56082ce11a2",
       "targetPageKey": "screenshot-evidence",
       "status": "local_pending"
     },
@@ -77,7 +103,7 @@
   "verification": {
     "goTestRace": "passed: go test -race ./...",
     "goVet": "passed: go vet ./...",
-    "jsonAndWhitespace": "passed: jq empty analysis_report/screenshots/manifest.json && git diff --check",
+    "jsonAndWhitespace": "passed: jq empty analysis_report/screenshots/manifest.json analysis_report/screenshots/local_im_edit_recall_acceptance_manifest.json && git diff --check",
     "notionLiveWrite": false,
     "notionLiveReadback": false
   }
