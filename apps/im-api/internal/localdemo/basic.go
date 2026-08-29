@@ -11,6 +11,7 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -97,6 +98,17 @@ type SendTextInput struct {
 }
 
 type SendMessageResult struct {
+	Message  MessageView `json:"message"`
+	Replayed bool        `json:"replayed"`
+}
+
+type EditTextInput struct {
+	Text string `json:"text"`
+}
+
+type RecallMessageInput struct{}
+
+type MutateMessageResult struct {
 	Message  MessageView `json:"message"`
 	Replayed bool        `json:"replayed"`
 }
@@ -436,6 +448,167 @@ func (service *Service) SendText(
 	return SendMessageResult{Message: messageView(record)}, nil
 }
 
+// EditText creates a new platform message revision. Provider mutation is attempted only after
+// the target and sender checks pass; a provider receipt never replaces the platform snapshot.
+func (service *Service) EditText(
+	ctx context.Context,
+	bearerToken string,
+	conversationIDValue string,
+	messageIDValue string,
+	input EditTextInput,
+) (MutateMessageResult, error) {
+	if service == nil || ctx == nil || !validMessageText(input.Text) {
+		return MutateMessageResult{}, ErrInvalidInput
+	}
+	if err := service.verifyRequester(ctx, bearerToken); err != nil {
+		return MutateMessageResult{}, err
+	}
+	conversationID, err := im.ParseConversationID(conversationIDValue)
+	if err != nil {
+		return MutateMessageResult{}, ErrNotFound
+	}
+	messageID, err := im.ParseMessageID(messageIDValue)
+	if err != nil {
+		return MutateMessageResult{}, ErrNotFound
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	conversation, ok := service.conversations[conversationID]
+	if !ok {
+		return MutateMessageResult{}, ErrNotFound
+	}
+	if !service.canSend(conversation) {
+		return MutateMessageResult{}, ErrForbidden
+	}
+	index := findMessageIndex(conversation.messages, messageID)
+	if index < 0 {
+		return MutateMessageResult{}, ErrNotFound
+	}
+	record := conversation.messages[index]
+	if record.snapshot.Sender().ActorID() != service.requester.ActorID() {
+		return MutateMessageResult{}, ErrForbidden
+	}
+	if record.snapshot.Status() == im.MessageStatusRecalled {
+		return MutateMessageResult{}, ErrConflict
+	}
+	if record.snapshot.Text() == input.Text {
+		return MutateMessageResult{Message: messageView(record), Replayed: true}, nil
+	}
+	if conversation.providerBound {
+		mutator, supported := any(service.provider).(im.MessageMutationProvider)
+		if !supported {
+			return MutateMessageResult{}, errors.Join(ErrProvider, im.ErrProviderCapabilityUnsupported)
+		}
+		receipt, providerErr := mutator.EditText(ctx, im.ProviderTextEdit{
+			Conversation: conversation.providerRef, Sender: service.requester.ActorID(),
+			ClientMessage: record.snapshot.ClientMessageID(), Text: input.Text, ExtInfo: record.snapshot.ExtInfo(),
+			IdempotencyKey: "demo/basic/edit/" + messageID.String() + "/" + strconv.FormatUint(record.snapshot.Revision()+1, 10),
+		})
+		if providerErr != nil {
+			return MutateMessageResult{}, errors.Join(ErrProvider, providerErr)
+		}
+		if receipt.Validate() != nil {
+			return MutateMessageResult{}, ErrProvider
+		}
+		record.providerStatus = string(receipt.Status)
+	}
+	snapshot, err := im.NewMessageSnapshot(
+		record.snapshot.Ref(), record.snapshot.Sender(), record.snapshot.ClientMessageID(),
+		record.snapshot.MessageType(), im.MessageStatusEdited, input.Text, record.snapshot.ExtInfo(),
+		record.snapshot.CreatedAt(), record.snapshot.Revision()+1,
+	)
+	if err != nil {
+		return MutateMessageResult{}, ErrIntegrity
+	}
+	record.snapshot = snapshot
+	conversation.messages[index] = record
+	return MutateMessageResult{Message: messageView(record)}, nil
+}
+
+// RecallMessage creates a tombstone-like platform revision while retaining the immutable message
+// identity and creation timestamp. The provider adapter is optional and must return an explicit
+// capability error when it cannot perform the transport mutation.
+func (service *Service) RecallMessage(
+	ctx context.Context,
+	bearerToken string,
+	conversationIDValue string,
+	messageIDValue string,
+	_ RecallMessageInput,
+) (MutateMessageResult, error) {
+	if service == nil || ctx == nil {
+		return MutateMessageResult{}, ErrInvalidInput
+	}
+	if err := service.verifyRequester(ctx, bearerToken); err != nil {
+		return MutateMessageResult{}, err
+	}
+	conversationID, err := im.ParseConversationID(conversationIDValue)
+	if err != nil {
+		return MutateMessageResult{}, ErrNotFound
+	}
+	messageID, err := im.ParseMessageID(messageIDValue)
+	if err != nil {
+		return MutateMessageResult{}, ErrNotFound
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	conversation, ok := service.conversations[conversationID]
+	if !ok {
+		return MutateMessageResult{}, ErrNotFound
+	}
+	if !service.canSend(conversation) {
+		return MutateMessageResult{}, ErrForbidden
+	}
+	index := findMessageIndex(conversation.messages, messageID)
+	if index < 0 {
+		return MutateMessageResult{}, ErrNotFound
+	}
+	record := conversation.messages[index]
+	if record.snapshot.Sender().ActorID() != service.requester.ActorID() {
+		return MutateMessageResult{}, ErrForbidden
+	}
+	if record.snapshot.Status() == im.MessageStatusRecalled {
+		return MutateMessageResult{Message: messageView(record), Replayed: true}, nil
+	}
+	if conversation.providerBound {
+		mutator, supported := any(service.provider).(im.MessageMutationProvider)
+		if !supported {
+			return MutateMessageResult{}, errors.Join(ErrProvider, im.ErrProviderCapabilityUnsupported)
+		}
+		receipt, providerErr := mutator.RecallMessage(ctx, im.ProviderMessageRecall{
+			Conversation: conversation.providerRef, Sender: service.requester.ActorID(),
+			ClientMessage:  record.snapshot.ClientMessageID(),
+			IdempotencyKey: "demo/basic/recall/" + messageID.String() + "/" + strconv.FormatUint(record.snapshot.Revision()+1, 10),
+		})
+		if providerErr != nil {
+			return MutateMessageResult{}, errors.Join(ErrProvider, providerErr)
+		}
+		if receipt.Validate() != nil {
+			return MutateMessageResult{}, ErrProvider
+		}
+		record.providerStatus = string(receipt.Status)
+	}
+	snapshot, err := im.NewMessageSnapshot(
+		record.snapshot.Ref(), record.snapshot.Sender(), record.snapshot.ClientMessageID(),
+		record.snapshot.MessageType(), im.MessageStatusRecalled, "", record.snapshot.ExtInfo(),
+		record.snapshot.CreatedAt(), record.snapshot.Revision()+1,
+	)
+	if err != nil {
+		return MutateMessageResult{}, ErrIntegrity
+	}
+	record.snapshot = snapshot
+	conversation.messages[index] = record
+	return MutateMessageResult{Message: messageView(record)}, nil
+}
+
+func findMessageIndex(messages []localMessage, messageID im.MessageID) int {
+	for index, message := range messages {
+		if message.snapshot.Ref().MessageID() == messageID {
+			return index
+		}
+	}
+	return -1
+}
+
 func (service *Service) verifyRequester(ctx context.Context, bearerToken string) error {
 	identity, err := service.authVerifier.Verify(ctx, authVerifyRequest(bearerToken))
 	if err != nil || identity.PrincipalID != service.installation.InstalledBy() {
@@ -613,11 +786,18 @@ func validMessageInput(input SendTextInput) bool {
 		return false
 	}
 	if input.ClientMessageID == "" || len(input.ClientMessageID) > 128 ||
-		!validLocalID(input.ClientMessageID) || input.Text == "" || len(input.Text) > im.MessageTextMaxBytes ||
-		!utf8.ValidString(input.Text) || !norm.NFC.IsNormalString(input.Text) || strings.TrimSpace(input.Text) != input.Text {
+		!validLocalID(input.ClientMessageID) || !validMessageText(input.Text) {
 		return false
 	}
-	for _, character := range input.Text {
+	return true
+}
+
+func validMessageText(value string) bool {
+	if value == "" || len(value) > im.MessageTextMaxBytes || !utf8.ValidString(value) ||
+		!norm.NFC.IsNormalString(value) || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
 		if unicode.IsControl(character) && character != '\n' && character != '\t' && character != '\r' {
 			return false
 		}

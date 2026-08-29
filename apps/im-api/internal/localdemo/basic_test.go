@@ -69,9 +69,36 @@ func TestBasicConversationAndMessageLifecycle(t *testing.T) {
 	}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("message idempotency drift = %v", err)
 	}
+	edited, err := service.EditText(context.Background(), LocalBearerToken, created.Conversation.ID, sent.Message.ID, EditTextInput{
+		Text: "编辑后的消息",
+	})
+	if err != nil || edited.Replayed || edited.Message.Status != "edited" || edited.Message.Text != "编辑后的消息" ||
+		edited.Message.ProviderStatus != "committed" {
+		t.Fatalf("edited message = %#v, %v", edited, err)
+	}
+	editedReplay, err := service.EditText(context.Background(), LocalBearerToken, created.Conversation.ID, sent.Message.ID, EditTextInput{
+		Text: "编辑后的消息",
+	})
+	if err != nil || !editedReplay.Replayed || editedReplay.Message.Status != "edited" {
+		t.Fatalf("edited replay = %#v, %v", editedReplay, err)
+	}
+	recalled, err := service.RecallMessage(context.Background(), LocalBearerToken, created.Conversation.ID, sent.Message.ID, RecallMessageInput{})
+	if err != nil || recalled.Replayed || recalled.Message.Status != "recalled" || recalled.Message.Text != "" ||
+		recalled.Message.ProviderStatus != "committed" {
+		t.Fatalf("recalled message = %#v, %v", recalled, err)
+	}
+	recalledReplay, err := service.RecallMessage(context.Background(), LocalBearerToken, created.Conversation.ID, sent.Message.ID, RecallMessageInput{})
+	if err != nil || !recalledReplay.Replayed || recalledReplay.Message.Status != "recalled" {
+		t.Fatalf("recalled replay = %#v, %v", recalledReplay, err)
+	}
+	if _, err := service.EditText(context.Background(), LocalBearerToken, created.Conversation.ID, sent.Message.ID, EditTextInput{
+		Text: "撤回后禁止编辑",
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("edit after recall = %v, want %v", err, ErrConflict)
+	}
 
 	messages, err := service.ListMessages(context.Background(), LocalBearerToken, created.Conversation.ID, "", 1)
-	if err != nil || len(messages.Messages) != 1 || messages.Messages[0].Text != "第一条消息" || messages.HasMore {
+	if err != nil || len(messages.Messages) != 1 || messages.Messages[0].Status != "recalled" || messages.Messages[0].Text != "" || messages.HasMore {
 		t.Fatalf("message page = %#v, %v", messages, err)
 	}
 	if _, err := service.ListMessages(context.Background(), LocalBearerToken, created.Conversation.ID, messages.NextCursor+"x", 1); !errors.Is(err, ErrInvalidCursor) {
