@@ -547,6 +547,7 @@ var runtimeAuthorityReadTables = []string{
 	"event_stream_heads",
 	"event_tenant_heads",
 	"event_log",
+	"event_projection_checkpoints",
 }
 
 func authorityAccessTableNames() []string {
@@ -558,6 +559,7 @@ func authorityAccessTableNames() []string {
 	names = append(names, conversationTableNames...)
 	names = append(names, conversationAuthorityTableNames...)
 	names = append(names, eventStoreTableNames...)
+	names = append(names, eventProjectionCheckpointTableNames...)
 	slices.Sort(names)
 	return names
 }

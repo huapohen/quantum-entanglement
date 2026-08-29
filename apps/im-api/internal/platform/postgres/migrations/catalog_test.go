@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 7 || len(second) != 7 {
+	if len(first) != 8 || len(second) != 8 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -186,6 +186,22 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if !strings.Contains(retryIdentity.UpSQL, marker) {
 			t.Fatalf("event retry identity migration missing %q", marker)
+		}
+	}
+	checkpoint := first[7]
+	if checkpoint.Version != 8 || checkpoint.Name != "event_projection_checkpoint" ||
+		len(checkpoint.Checksum) != 64 || checkpoint.Checksum != second[7].Checksum ||
+		checkpoint.UpSQL != second[7].UpSQL || checkpoint.DownSQL != second[7].DownSQL {
+		t.Fatalf("unexpected deterministic event projection checkpoint migration: %#v", checkpoint)
+	}
+	for _, marker := range []string{
+		`CREATE TABLE wanwork_im.event_projection_checkpoints`,
+		`PRIMARY KEY (tenant_id, workspace_id, projection_id)`,
+		`ENABLE ROW LEVEL SECURITY`,
+		`FORCE ROW LEVEL SECURITY`,
+	} {
+		if !strings.Contains(checkpoint.UpSQL, marker) {
+			t.Fatalf("event projection checkpoint migration missing %q", marker)
 		}
 	}
 }

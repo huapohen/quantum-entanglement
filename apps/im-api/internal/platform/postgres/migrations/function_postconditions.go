@@ -31,7 +31,7 @@ type storedAuthorityFunction struct {
 
 func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 	values := storedAuthorityFunctionManifestV5()
-	return append(values, storedAuthorityFunctionSpec{
+	values = append(values, storedAuthorityFunctionSpec{
 		name: "write_event",
 		arguments: "p_tenant_id text, p_workspace_id text, p_stream_id text, " +
 			"p_expected_version bigint, p_event_id text, p_schema_version bigint, " +
@@ -50,6 +50,26 @@ func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 		result:           "boolean",
 		definitionDigest: "75d2ae4387b1e07d1c05ea9631515c1d563912f0d206d061b1c3accda6d04029",
 	})
+	return append(values, storedAuthorityFunctionSpec{
+		name: "write_projection_checkpoint",
+		arguments: "p_tenant_id text, p_workspace_id text, p_projection_id text, " +
+			"p_expected_position bigint, p_expected_cursor text, p_expected_last_event_id text, " +
+			"p_next_position bigint, p_next_cursor text, p_next_last_event_id text",
+		identityArguments: "p_tenant_id text, p_workspace_id text, p_projection_id text, " +
+			"p_expected_position bigint, p_expected_cursor text, p_expected_last_event_id text, " +
+			"p_next_position bigint, p_next_cursor text, p_next_last_event_id text",
+		result:           "boolean",
+		definitionDigest: "82b7feec4d80b3cb0335780b0007086ac307e930afc126e5843465c3b31d7faf",
+	})
+}
+
+func storedAuthorityFunctionSpecByName(name string) (storedAuthorityFunctionSpec, bool) {
+	for _, spec := range storedAuthorityFunctionManifest() {
+		if spec.name == name {
+			return spec, true
+		}
+	}
+	return storedAuthorityFunctionSpec{}, false
 }
 
 type storedAuthorityFunctionSpec struct {

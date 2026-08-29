@@ -61,8 +61,9 @@ func validateAppliedPostconditions(
 	if err := prepareMigrationTransaction(ctx, transaction); err != nil {
 		return err
 	}
+	schemaVersion := applied[len(applied)-1].Version
 	for _, migration := range applied {
-		if err := validateMigrationPostcondition(ctx, transaction, migration.Version); err != nil {
+		if err := validateMigrationPostconditionForSchema(ctx, transaction, migration.Version, schemaVersion); err != nil {
 			return err
 		}
 	}
@@ -73,6 +74,15 @@ func validateAppliedPostconditions(
 }
 
 func validateMigrationPostcondition(ctx context.Context, transaction pgx.Tx, version int64) error {
+	return validateMigrationPostconditionForSchema(ctx, transaction, version, version)
+}
+
+func validateMigrationPostconditionForSchema(
+	ctx context.Context,
+	transaction pgx.Tx,
+	version int64,
+	schemaVersion int64,
+) error {
 	switch version {
 	case 1:
 		return validateAuthorityRoots(ctx, transaction)
@@ -85,15 +95,17 @@ func validateMigrationPostcondition(ctx context.Context, transaction pgx.Tx, ver
 	case 5:
 		return validateFunctionOnlyWrites(ctx, transaction)
 	case 6:
-		return validateEventStore(ctx, transaction)
+		return validateEventStore(ctx, transaction, schemaVersion)
 	case 7:
 		return validateEventRetryIdentity(ctx, transaction)
+	case 8:
+		return validateEventProjectionCheckpoint(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
 }
 
-func validateEventStore(ctx context.Context, transaction pgx.Tx) error {
+func validateEventStore(ctx context.Context, transaction pgx.Tx, schemaVersion int64) error {
 	var relationCount int
 	if err := transaction.QueryRow(ctx, `
 SELECT count(*)
@@ -110,13 +122,35 @@ WHERE namespace.nspname = 'wanwork_im'
 	if err != nil || len(functions) != 1 {
 		return ErrMigrationSchema
 	}
-	specs := storedAuthorityFunctionManifest()
-	returnSpec := specs[len(specs)-1]
+	returnSpec, ok := storedAuthorityFunctionSpecByName("write_event")
+	if !ok {
+		return ErrMigrationSchema
+	}
 	if !exactStoredAuthorityFunctions(functions, []storedAuthorityFunctionSpec{returnSpec}) {
 		return ErrMigrationSchema
 	}
 	digest, err := tableSchemaDigest(ctx, transaction, eventStoreTableNames)
-	if err != nil || (digest != eventStoreSchemaDigestV6 && digest != eventStoreSchemaDigestV7) {
+	wantDigest := eventStoreSchemaDigestV6
+	if schemaVersion >= 7 {
+		wantDigest = eventStoreSchemaDigestV7
+	}
+	if err != nil || digest != wantDigest {
+		return ErrMigrationSchema
+	}
+	return nil
+}
+
+func validateEventProjectionCheckpoint(ctx context.Context, transaction pgx.Tx) error {
+	digest, err := tableSchemaDigest(ctx, transaction, eventProjectionCheckpointTableNames)
+	if err != nil || digest != eventProjectionCheckpointSchemaDigest {
+		return ErrMigrationSchema
+	}
+	functions, err := readStoredAuthorityFunctions(ctx, transaction, []string{"write_projection_checkpoint"})
+	if err != nil {
+		return ErrMigrationSchema
+	}
+	spec, ok := storedAuthorityFunctionSpecByName("write_projection_checkpoint")
+	if !ok || !exactStoredAuthorityFunctions(functions, []storedAuthorityFunctionSpec{spec}) {
 		return ErrMigrationSchema
 	}
 	return nil

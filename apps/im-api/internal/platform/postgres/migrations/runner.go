@@ -595,7 +595,7 @@ func applyOne(ctx context.Context, connection *pgx.Conn, migration Migration) er
 		return ErrMigrationFailed
 	}
 	for version := int64(1); version <= migration.Version; version++ {
-		if err := validateMigrationPostcondition(ctx, transaction, version); err != nil {
+		if err := validateMigrationPostconditionForSchema(ctx, transaction, version, migration.Version); err != nil {
 			return err
 		}
 	}

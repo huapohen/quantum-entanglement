@@ -74,6 +74,15 @@ var authorityWriteFunctionSpecs = map[string]authorityWriteFunctionSpec{
 		},
 		resultToken: "BOOLEAN",
 	},
+	"WRITE_PROJECTION_CHECKPOINT": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_WORKSPACE_ID", "TEXT", "P_PROJECTION_ID", "TEXT",
+			"P_EXPECTED_POSITION", "BIGINT", "P_EXPECTED_CURSOR", "TEXT", "P_EXPECTED_LAST_EVENT_ID", "TEXT",
+			"P_NEXT_POSITION", "BIGINT", "P_NEXT_CURSOR", "TEXT", "P_NEXT_LAST_EVENT_ID", "TEXT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "TEXT", "BIGINT", "TEXT", "TEXT", "BIGINT", "TEXT", "TEXT"},
+		resultToken:            "BOOLEAN",
+	},
 }
 
 func validMigrationStatements(sql string, allowFunctionDDL bool) bool {
