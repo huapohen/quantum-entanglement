@@ -91,11 +91,11 @@ projection 清库重建；W1 memory fake 不能代替该门禁。
 [W2_POSTGRES_RUNTIME_CHECKPOINT.md](W2_POSTGRES_RUNTIME_CHECKPOINT.md)；Topic 33/34/35 分别保留 persistence、
 function-only/exact-access 与 attested runtime 的历史检查点。
 
-当前 code evidence baseline 为 `f24786a`。当前口径必须保留：
+当前 code evidence baseline 为 `c2e3266fdd01660cc5932c451b0238cb1d18a54d`。当前口径必须保留：
 
 | 标记 | 状态 |
 |---|---|
-| `[F]` | `0001..0005`、五个 exact write function、exact access、strict connection policy、attested runtime、immutable authority specification、canonical cutover plan/strict decoder、trusted plan/approval file loader 与 scoped detached Ed25519 approval verifier 已形成代码路径；PostgreSQL 18.6 全包 normal/race/vet、module verify 与 integration zero-skip 通过。 |
+| `[F]` | `0001..0010`、exact access、strict connection policy、attested runtime、immutable authority specification、canonical cutover plan/strict decoder、trusted plan/approval file loader 与 scoped detached Ed25519 approval verifier、native IM inbox→canonical event atomic bridge 已形成代码路径；PostgreSQL 18.6 全包 normal/race/vet、25 package/各 1,444 test pass、zero-skip integration 通过。 |
 | `[C]` | plan/approval 仍只授权离线验证与 bounded evidence；`VerifiedApproval` 不是 single-use lease。production preflight 前还需冻结 stable cluster identity、provisioner exact authority graph 与 derived step expectation；executor/receipt/policy anti-rollback/secret/IaC/remote TLS/恢复尚未交付。 |
 | `[A]` | persistence substrate 的结构方向正确，可作为 authenticated admission、resolver 和 event/outbox 的底座。 |
 | `[U]` | production cutover/角色轮换/旧 session drain、Clerk trusted tenant、action-time resolver、restore/crash 和 event/outbox 尚未完成。 |

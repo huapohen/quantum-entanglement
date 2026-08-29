@@ -1,6 +1,6 @@
 # W2 PostgreSQL Attested Runtime Composition 工程检查点
 
-> 当前代码证据基线：`53dd38b4224003a415605074f25470405ebe799e`
+> 当前代码证据基线：`c2e3266fdd01660cc5932c451b0238cb1d18a54d`
 >
 > 当前分支：`dev_wanwork_quantum_entanglement`，未合并 `main`
 >
@@ -189,10 +189,12 @@ go test -race ./... -count=1 -timeout=15m
 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...
 ```
 
-本轮机器可读本地运行摘要见
-[`w2-postgres-8ca4fca.local-run.json`](../production/evidence/checkpoints/w2-postgres-8ca4fca.local-run.json)：
-17 package、858 个 terminal test pass event、零 skip/零 fail，normal/race 均通过且 vet 无输出；该文件明确
-不是 CI artifact 或 production promotion record。
+本阶段最新机器可读本地运行摘要见
+[`w2-postgres-c2e3266.local-run.json`](../production/evidence/checkpoints/w2-postgres-c2e3266.local-run.json)：
+25 package、normal/race 各 1,444 个 test pass event、零 skip/零 fail，且 vet 无输出；该文件明确
+不是 CI artifact 或 production promotion record。此前的
+[`w2-postgres-8ca4fca.local-run.json`](../production/evidence/checkpoints/w2-postgres-8ca4fca.local-run.json)
+仍保留为历史时点，不被覆盖。
 
 ## 5. Go / No-Go
 
