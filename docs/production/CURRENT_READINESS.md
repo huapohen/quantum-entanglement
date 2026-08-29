@@ -477,6 +477,8 @@ subject drift 与 forged dependency 的拒绝，但这仍不是生产 API。proj
 [`37_mainline_regression_checkpoint.md`](../../analysis_report/research/37_mainline_regression_checkpoint.md)。
 最新 HEAD `313f99d` 的全量回归为 2,948 项、退出码 0；记录见
 [`40_mainline_full_regression_latest.md`](../../analysis_report/research/40_mainline_full_regression_latest.md)。
+worker seam 集成后的最新 HEAD `73f1996` 全量回归为 2,949 项、退出码 0；记录见
+[`42_mainline_full_regression_worker_latest.md`](../../analysis_report/research/42_mainline_full_regression_worker_latest.md)。
 结果接受提交前 11 个真实 `SIGKILL` 边界的矩阵证据见
 [`38_result_acceptance_process_kill_matrix_evidence.md`](../../analysis_report/research/38_result_acceptance_process_kill_matrix_evidence.md)。
 COMMIT 落盘后、ACK 返回前进程被杀的分类证据见
