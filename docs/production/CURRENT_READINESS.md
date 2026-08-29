@@ -477,6 +477,8 @@ subject drift 与 forged dependency 的拒绝，但这仍不是生产 API。proj
 [`37_mainline_regression_checkpoint.md`](../../analysis_report/research/37_mainline_regression_checkpoint.md)。
 结果接受提交前 11 个真实 `SIGKILL` 边界的矩阵证据见
 [`38_result_acceptance_process_kill_matrix_evidence.md`](../../analysis_report/research/38_result_acceptance_process_kill_matrix_evidence.md)。
+COMMIT 落盘后、ACK 返回前进程被杀的分类证据见
+[`39_result_acceptance_commit_kill_evidence.md`](../../analysis_report/research/39_result_acceptance_commit_kill_evidence.md)。
 
 仍缺：
 
