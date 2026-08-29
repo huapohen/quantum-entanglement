@@ -109,7 +109,7 @@ func (store *Store) AppendBatch(ctx context.Context, batch events.AppendBatch) (
 			continue
 		}
 		if readErr != nil {
-			return events.AppendResult{}, readErr
+			return events.AppendResult{}, mapEventReadError(readErr)
 		}
 		existing[index] = stored
 		found++
@@ -135,7 +135,7 @@ func (store *Store) AppendBatch(ctx context.Context, batch events.AppendBatch) (
 	for index, event := range snapshot.Events {
 		parts, err := payloadParts(event.Payload)
 		if err != nil {
-			return events.AppendResult{}, err
+			return events.AppendResult{}, mapEventReadError(err)
 		}
 		var written bool
 		err = transaction.QueryRow(ctx, `
@@ -200,7 +200,7 @@ func (store *Store) ReadStreamPage(ctx context.Context, query events.StreamQuery
 	}
 	after, err := decodeCursor(query.After, binding)
 	if err != nil {
-		return events.StreamPage{}, err
+		return events.StreamPage{}, mapEventReadError(err)
 	}
 	connection, err := store.pool.Acquire(ctx)
 	if err != nil {
@@ -281,7 +281,7 @@ func (store *Store) ReadGlobalPage(ctx context.Context, query events.GlobalQuery
 	}
 	after, err := decodeCursor(query.After, binding)
 	if err != nil {
-		return events.GlobalPage{}, err
+		return events.GlobalPage{}, mapEventReadError(err)
 	}
 	connection, err := store.pool.Acquire(ctx)
 	if err != nil {
@@ -447,12 +447,12 @@ func scanRows(ctx context.Context, rows pgx.Rows, tenantID string) ([]events.Sto
 			recordedAt,
 		)
 		if err != nil {
-			return nil, err
+			return nil, mapEventReadError(err)
 		}
 		values = append(values, value)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, events.ErrStoreUnavailable
+		return nil, mapError(ctx, err)
 	}
 	return values, nil
 }
@@ -622,7 +622,10 @@ func bindTenant(ctx context.Context, transaction pgx.Tx, tenant string) error {
 	var recorded string
 	if err := transaction.QueryRow(ctx,
 		"SELECT pg_catalog.set_config('wanwork.tenant_id', $1, true)", tenant,
-	).Scan(&recorded); err != nil || recorded != tenant {
+	).Scan(&recorded); err != nil {
+		return mapError(ctx, err)
+	}
+	if recorded != tenant {
 		return events.ErrStoreUnavailable
 	}
 	return nil
@@ -642,6 +645,8 @@ func mapError(ctx context.Context, err error) error {
 		switch postgresError.Code {
 		case "23505":
 			return events.ErrIdempotencyConflict
+		case "22003":
+			return events.ErrStoreCapacity
 		case "40001", "40P01", "42501", "57P01", "57P02", "57P03":
 			return events.ErrStoreUnavailable
 		}
@@ -650,6 +655,13 @@ func mapError(ctx context.Context, err error) error {
 		return events.ErrStoreUnavailable
 	}
 	return events.ErrStoreUnavailable
+}
+
+func mapEventReadError(err error) error {
+	if errors.Is(err, errEventIntegrity) || errors.Is(err, errEventNotFound) {
+		return events.ErrStoreUnavailable
+	}
+	return err
 }
 
 func rollback(transaction pgx.Tx) {
