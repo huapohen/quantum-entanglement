@@ -10,21 +10,125 @@ import time
 import unittest
 from collections.abc import Iterable
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 import tests.test_result_acceptance_durable_prerequisites as durable_prerequisites
 from quantum_entanglement.events import StoredEvent
+from quantum_entanglement.operation_authorization import (
+    CurrentAuthorizationState,
+    ProtectedOperationComposer,
+)
 from quantum_entanglement.projections import ProjectionLeaseConflictError
+from quantum_entanglement.request_context import (
+    AuthenticatedRequestBinding,
+    CallerRequestContext,
+    RequestContextIssuer,
+)
 from quantum_entanglement.result_projection import (
+    RESULT_PROJECTION_READ_ACTION,
+    RESULT_PROJECTION_RESOURCE_TYPE,
     RESULT_PROJECTION_TABLE,
+    ResultProjectionAuthorizationError,
     ResultProjectionConflictError,
     ResultProjectionProcessMismatchError,
     ResultProjectionSchemaError,
     ResultProjectionStatus,
     SQLiteResultProjectionStore,
 )
+from quantum_entanglement.service.secrets import SecretMaterial
 from quantum_entanglement.store import SQLiteEventStore
+from quantum_entanglement.tenancy import (
+    AccessRequest,
+    CapabilitySigningKey,
+    CapabilityVerifier,
+    InMemoryRevocationRevisionGuard,
+    KeyStatus,
+    KeyUsage,
+    Member,
+    ResourceRef,
+    ResourceScope,
+    RevocationSnapshot,
+    Role,
+    RoleBinding,
+    RotatingHMACKeyRing,
+    TenantAuthorizer,
+    TenantId,
+    WorkspaceId,
+)
+
+_AUTH_NOW = datetime(2026, 8, 27, 10, 0, 0, tzinfo=timezone.utc)
+_AUTH_EVIDENCE = "ab" * 32
+
+
+class _ProjectionAuthClock:
+    def __init__(self) -> None:
+        self.current = _AUTH_NOW
+
+    def now(self) -> datetime:
+        return self.current
+
+
+class _ProjectionAuthenticator:
+    def authenticate(self, claims, credential, *, audience, at):
+        if bytes(credential) != b"projection-credential":
+            raise RuntimeError("invalid projection test credential")
+        return AuthenticatedRequestBinding(
+            authenticator_id="projection-authenticator",
+            audience=audience,
+            request_id=claims.request_id,
+            principal_id="projection-principal",
+            subject_id=claims.subject_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+            identity_revision="projection-identity-1",
+            scope_revision="projection-scope-1",
+            evidence_fingerprint=_AUTH_EVIDENCE,
+            authenticated_at=at,
+            expires_at=at + timedelta(minutes=5),
+        )
+
+
+class _ProjectionStateProvider:
+    def __init__(self, clock: _ProjectionAuthClock) -> None:
+        self.clock = clock
+        self.calls = 0
+
+    def load_current_state(self, basis, request):
+        self.calls += 1
+        return CurrentAuthorizationState(
+            context_id=basis.context_id,
+            authenticator_id=basis.authenticator_id,
+            audience=basis.audience,
+            request_id=basis.request_id,
+            principal_id=basis.principal_id,
+            subject_id=basis.subject_id,
+            tenant_id=basis.tenant_id,
+            workspace_id=basis.workspace_id,
+            identity_revision=basis.identity_revision,
+            scope_revision=basis.scope_revision,
+            observed_at=self.clock.now(),
+            member=Member(
+                member_id=basis.subject_id,
+                tenant_id=basis.tenant_id,
+                role_bindings=(
+                    RoleBinding(
+                        role=Role.OWNER,
+                        scope=ResourceScope(
+                            tenant_id=basis.tenant_id,
+                            workspace_id=basis.workspace_id,
+                        ),
+                    ),
+                ),
+            ),
+            revocations=RevocationSnapshot.empty(
+                basis.tenant_id,
+                self.clock.now(),
+                revision=1,
+            ),
+            verified_capabilities=(),
+        )
 
 
 class _TupleSource:
@@ -82,11 +186,86 @@ class ResultProjectionTests(unittest.TestCase):
             self.result_event.event.payload["invocationId"],
         )
         self.projection = SQLiteResultProjectionStore(self.event_store, self.path)
+        self.auth_clock = _ProjectionAuthClock()
+        self.auth_tenant = TenantId(self.scope[0])
+        self.auth_workspace = WorkspaceId(self.scope[1])
+        key_ring = RotatingHMACKeyRing(
+            trust_domain="projection-auth-tests",
+            policy_version="projection-policy-1",
+            keys=(
+                CapabilitySigningKey(
+                    kid="projection-root-key",
+                    principal_id="projection-root",
+                    secret=b"projection-signing-secret-canary",
+                    not_before=_AUTH_NOW - timedelta(days=1),
+                    expires_at=_AUTH_NOW + timedelta(days=1),
+                    status=KeyStatus.ACTIVE,
+                    usages=frozenset((KeyUsage.ROOT,)),
+                    root_tenants=frozenset((self.auth_tenant,)),
+                ),
+            ),
+        )
+        verifier = CapabilityVerifier(
+            proof_verifier=key_ring,
+            trust_domain="projection-auth-tests",
+            policy_version="projection-policy-1",
+            audience="projection-runtime",
+            clock=self.auth_clock,
+        )
+        authorizer = TenantAuthorizer(
+            capability_verifier=verifier,
+            trust_domain="projection-auth-tests",
+            policy_version="projection-policy-1",
+            revision_guard=InMemoryRevocationRevisionGuard(),
+            audience="projection-runtime",
+            clock=self.auth_clock,
+        )
+        self.auth_issuer = RequestContextIssuer(
+            authenticator=_ProjectionAuthenticator(),
+            authenticator_id="projection-authenticator",
+            audience="projection-runtime",
+            clock=self.auth_clock,
+        )
+        self.auth_composer = ProtectedOperationComposer(
+            issuer=self.auth_issuer,
+            state_provider=_ProjectionStateProvider(self.auth_clock),
+            authorizer=authorizer,
+            clock=self.auth_clock,
+            operation_ttl=timedelta(seconds=20),
+            max_state_age=timedelta(seconds=30),
+        )
+        self.auth_context = self.auth_issuer.issue(
+            CallerRequestContext(
+                request_id="projection-request-1",
+                subject_id="projection-user-1",
+                tenant_id=self.auth_tenant,
+                workspace_id=self.auth_workspace,
+            ),
+            SecretMaterial(b"projection-credential"),
+        )
 
     def tearDown(self) -> None:
+        self.auth_composer.close()
+        self.auth_issuer.close()
         self.projection.close()
         self.event_store.close()
         self.directory.cleanup()
+
+    def authorized_request(self, **changes):
+        values = {
+            "request_id": "projection-request-1",
+            "subject_id": "projection-user-1",
+            "tenant_id": self.auth_tenant,
+            "action": RESULT_PROJECTION_READ_ACTION,
+            "resource": ResourceRef(
+                tenant_id=self.auth_tenant,
+                workspace_id=self.auth_workspace,
+                resource_type=RESULT_PROJECTION_RESOURCE_TYPE,
+                resource_id=self.scope[2],
+            ),
+        }
+        values.update(changes)
+        return AccessRequest(**values)
 
     def test_complete_result_and_terminal_events_materialize_completed_view(self) -> None:
         run = self.projection.run_once()
@@ -117,6 +296,103 @@ class ResultProjectionTests(unittest.TestCase):
         self.assertEqual(second.scanned_count, 0)
         self.assertEqual(second.applied_count, 0)
         self.assertEqual(self.projection.read(*self.scope).status, ResultProjectionStatus.COMPLETED)
+
+    def test_authorized_read_derives_scope_from_reauthorized_request(self) -> None:
+        self.projection.run_once()
+        request = self.authorized_request()
+        operation = self.auth_composer.authorize(self.auth_context, request)
+        with patch.object(self.projection, "read", wraps=self.projection.read) as read:
+            view = self.projection.read_authorized(
+                self.auth_composer,
+                operation,
+                self.auth_context,
+                request,
+            )
+        self.assertIsNotNone(view)
+        assert view is not None
+        self.assertEqual(view.status, ResultProjectionStatus.COMPLETED)
+        read.assert_called_once_with(*self.scope)
+
+    def test_authorized_read_rejects_request_scope_or_action_before_sqlite_read(self) -> None:
+        self.projection.run_once()
+        operation = self.auth_composer.authorize(
+            self.auth_context,
+            self.authorized_request(),
+        )
+        invalid_requests = (
+            self.authorized_request(action="workflow.read"),
+            self.authorized_request(
+                resource=ResourceRef(
+                    tenant_id=self.auth_tenant,
+                    workspace_id=self.auth_workspace,
+                    resource_type="artifact",
+                    resource_id=self.scope[2],
+                )
+            ),
+            self.authorized_request(
+                resource=ResourceRef(
+                    tenant_id=TenantId("other-tenant"),
+                    workspace_id=self.auth_workspace,
+                    resource_type=RESULT_PROJECTION_RESOURCE_TYPE,
+                    resource_id=self.scope[2],
+                )
+            ),
+        )
+        for request in invalid_requests:
+            with self.subTest(request=request), patch.object(
+                self.projection,
+                "read",
+                wraps=self.projection.read,
+            ) as read:
+                with self.assertRaises(ResultProjectionAuthorizationError) as captured:
+                    self.projection.read_authorized(
+                        self.auth_composer,
+                        operation,
+                        self.auth_context,
+                        request,
+                    )
+            self.assertEqual(
+                captured.exception.code,
+                "result_projection_authorization_request_invalid",
+            )
+            read.assert_not_called()
+
+    def test_authorized_read_rejects_subject_drift_without_reading(self) -> None:
+        self.projection.run_once()
+        request = self.authorized_request()
+        operation = self.auth_composer.authorize(self.auth_context, request)
+        drifted = replace(request, subject_id="projection-attacker")
+        with patch.object(self.projection, "read", wraps=self.projection.read) as read:
+            with self.assertRaises(ResultProjectionAuthorizationError) as captured:
+                self.projection.read_authorized(
+                    self.auth_composer,
+                    operation,
+                    self.auth_context,
+                    drifted,
+                )
+        self.assertEqual(captured.exception.code, "result_projection_authorization_denied")
+        read.assert_not_called()
+
+    def test_authorized_read_rejects_forged_dependencies(self) -> None:
+        request = self.authorized_request()
+        operation = self.auth_composer.authorize(self.auth_context, request)
+        invalid_dependencies = (
+            (object(), operation, self.auth_context, request),
+            (self.auth_composer, object(), self.auth_context, request),
+            (self.auth_composer, operation, object(), request),
+            (self.auth_composer, operation, self.auth_context, object()),
+        )
+        for dependencies in invalid_dependencies:
+            with self.subTest(dependencies=dependencies):
+                with self.assertRaises(ResultProjectionAuthorizationError) as captured:
+                    self.projection.read_authorized(*dependencies)
+                self.assertEqual(
+                    captured.exception.code,
+                    "result_projection_authorization_dependency_invalid"
+                    if dependencies[0] is not self.auth_composer or dependencies[1] is not operation
+                    or dependencies[2] is not self.auth_context
+                    else "result_projection_authorization_request_invalid",
+                )
 
     def test_reopen_and_second_connection_reuse_durable_offset(self) -> None:
         self.projection.run_once()
