@@ -102,7 +102,8 @@ The following remain release blockers:
 1. active backup/restore topology and migration-7 backup evidence;
 2. crash-at-every-boundary, `kill -9`, dual-connection race, stale-worker fencing and restore
    replay evidence;
-3. heartbeat-supervised pure/fake worker gate;
+3. store-wired heartbeat-supervised pure/fake worker gate (the repository currently has only the
+   non-publishing supervision primitive; product dispatch remains disabled);
 4. `AcceptedV2`, publication, real IM and all external outbound paths.
 
 Receipt-bound, non-emitting reconciliation is implemented separately in

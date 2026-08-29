@@ -443,7 +443,9 @@ domain sidecar、写入迁移元数据和依赖、激活 migration 7，并在空
 activation 只是候选数据库的可审计前向/回退边界，不代表 Accepted/public writer、publication
 或 worker 已开启。随后新增的 reconciliation API 在同一 `BEGIN IMMEDIATE` 内做 receipt-bound
 owner CAS，成功只更新 job/attempt，不新增 event/outbox，重复调用返回
-`ALREADY_RECONCILED`；它仍不代表 Accepted/public writer、worker、projection 或生产恢复已开启。
+`ALREADY_RECONCILED`；并补充了仅供离线演练的 scoped PURE heartbeat supervisor（首 heartbeat、
+续租失败、取消、超时与有界 drain），它不写结果、不改变任务状态且不接入 public dispatch；
+因此仍不代表 Accepted/public writer、worker、projection 或生产恢复已开启。
 运行合同见 [`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md)、
 [`RESULT_MIGRATION_ACTIVATION.md`](./RESULT_MIGRATION_ACTIVATION.md) 与
 [`RESULT_RECONCILIATION.md`](./RESULT_RECONCILIATION.md) 与
@@ -497,10 +499,11 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
    不驱动 Agent、tool、browser、subprocess 或 outbound；
 5. E3 M1 private stored-event envelope codec、M2 reserved result/terminal event fence、M3
    private store adapter、M4 inactive result schema/Artifact owner transaction/private backup
-   topology、M5 私有 atomic result graph/`ObservedV2` 与 receipt-bound reconciliation checkpoint
-   已完成；下一步先补 active backup/restore topology、非空迁移演练、crash/kill/双连接竞争和
-   restore replay evidence，仍不开放 public result writer；
-6. 在 M5 的同一原子图之上补齐 heartbeat/fencing 与业务 projection，再决定是否签发
+topology、M5 私有 atomic result graph/`ObservedV2` 与 receipt-bound reconciliation checkpoint
+已完成；active backup/restore topology、非空迁移演练、crash/kill/双连接竞争、restore replay
+以及离线 PURE heartbeat supervisor 均已有本地证据，仍不开放 public result writer；
+6. 在 M5 的同一原子图之上把 heartbeat/fencing supervisor 接到 store-owned result acceptor
+与业务 projection，再决定是否签发
    `AcceptedV2`；没有 result receipt 时绝不把 succeeded job 猜成 completed。默认关闭的
    [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)保持不变；
 7. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的

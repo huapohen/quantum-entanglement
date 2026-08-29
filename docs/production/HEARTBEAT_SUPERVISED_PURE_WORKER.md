@@ -1,7 +1,10 @@
 # Heartbeat-supervised pure/fake worker contract
 
-Status: **contract frozen; dispatch remains disabled**. This document defines the narrow worker
-that may be enabled only after atomic result acceptance and receipt-bound recovery are durable.
+Status: **contract frozen; product dispatch remains disabled**. The repository now includes a
+private, non-publishing supervision primitive for scoped PURE/fake rehearsal; the composition gate
+still refuses product dispatch until the remaining acceptance and recovery gates are closed. This
+document defines the narrow worker that may be enabled only after atomic result acceptance and
+receipt-bound recovery are durable.
 It does not authorize a model runtime, plugin, MCP server, connector, browser action, Feishu,
 WeCom, webhook, or any other external effect.
 
@@ -24,10 +27,27 @@ The worker gate must default to off until all of the following are present in th
 5. stale-worker, timeout, cancellation, graceful-drain, process-kill and two-process race tests;
 6. a composition gate that injects only an explicitly allowlisted pure or fake handler.
 
-Until these prerequisites are met, any executable worker API must raise a stable disabled error
+Until these prerequisites are met, the product dispatch API must raise a stable disabled error
 before it starts a heartbeat, creates a task/thread/process, calls a handler, samples handler-owned
-state, or touches a connector. Tests may exercise pure validation and fake supervision primitives
-only when no durable product dispatch is reachable.
+state, or touches a connector. Tests may exercise pure validation and the private fake supervision
+primitive only when no durable product dispatch is reachable. The private supervision primitive described
+below never writes a result, changes task state, emits an event, publishes an outbox message or
+opens a connector; its returned value is not an Accepted capability.
+
+## Private supervision primitive
+
+`HeartbeatPureWorkerSupervisor` accepts only an exact `ScopedInvocationWorkerAdmissionV3` and a
+caller-bound heartbeat callback. `run()` performs one heartbeat before invoking the handler, then
+continues heartbeats at the snapped interval. A false/invalid/raised heartbeat result fences the
+run and cancels the handler. Timeout or external cancellation signals the handler's cancellation
+event and waits only the configured drain window. Late values are discarded and every non-success
+path returns a sanitized `PureWorkerRunResult`; no exception object or lease token is returned.
+
+The handler receives only `PureWorkerContext` (a frozen manifest snapshot plus cancellation
+observation). It cannot receive the store or lease through this API. The primitive is deliberately
+not wired to `HeartbeatPureWorkerGate.dispatch`, which remains an argument-free disabled error.
+An eventual promotion must add the store-owned atomic result acceptor and receipt-bound
+reconciliation callback around the returned value before exposing product dispatch.
 
 ## Accepted authority
 
@@ -214,7 +234,8 @@ Every step remains default-off and independently releasable:
 
 1. exact worker configuration and authority/manifest validator;
 2. disabled composition gate and negative package-surface tests;
-3. pure/fake handler context, cancellation and late-result sink tests;
+3. pure/fake handler context, cancellation and late-result sink tests (**private supervision
+   primitive implemented and covered**);
 4. versioned result manifest/receipt codecs;
 5. migration, backup/restore and schema-topology support for accepted results;
 6. store-owned atomic result acceptance with statement/commit/control fault injection;

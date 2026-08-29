@@ -785,8 +785,9 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 
 本计划现在是 E3 Result Authority 的当前串行入口。提前接入路线的 E1/E2 离线节点已完成，M1–M5
 均已形成安全停点；当前分支又完成了 opt-in migration-7 activation 与 receipt-bound
-reconciliation。下一串行实现节点是 active backup/restore topology、非空迁移演练、crash/kill/
-双连接竞争与 restore replay evidence，随后才评审 heartbeat worker、业务 projection 和
+reconciliation。active backup/restore topology、非空迁移演练、crash/kill/双连接竞争、restore
+replay evidence 与离线 PURE heartbeat supervisor 已完成；下一串行实现节点是将 supervisor
+接入 store-owned result acceptor、heartbeat worker、业务 projection 和
 `AcceptedV2`。这些阶段必须复用 M3 的 stored-event adapter 与 M4 owner transaction，且仍不得
 开放真实 IM outbound。
 若用户新增会改变底层 result/store 方向的参考项目，仍先做 M0 delta review，不从原子 writer

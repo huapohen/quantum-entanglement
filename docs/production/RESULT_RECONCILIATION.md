@@ -132,10 +132,9 @@ tenant isolation, or a safe connection to any real IM. Those remain separate rel
 
 Before enabling a worker or connecting the native IM, the branch still needs:
 
-1. crash/restore publication interruption and two-connection/process consistency evidence on top of
-   the active backup contract in [`RESULT_BACKUP_RESTORE.md`](./RESULT_BACKUP_RESTORE.md);
-2. stale-worker fencing, heartbeat supervision and a receipt-aware pure worker gate;
-3. business projection and action receipt semantics separate from result reconciliation;
-4. compatibility/rollback runbooks and a release evidence bundle;
-5. only then, an independently approved provider contract and production exchange for the native
+1. store-owned result acceptance wired to the private stale-worker fencing/heartbeat supervision
+   primitive, followed by a receipt-aware pure worker gate;
+2. business projection and action receipt semantics separate from result reconciliation;
+3. compatibility/rollback runbooks and a release evidence bundle;
+4. only then, an independently approved provider contract and production exchange for the native
    IM. No Feishu, WeCom, Notion, Yuque or external connector is called by this API.
