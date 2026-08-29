@@ -2,7 +2,7 @@
 
 本目录保存用户原始任务截图、在飞书和语雀中以只读方式采集的研究视图、本地产品
 体验的真实浏览器验收视图，以及 Clawith 官网和官方文档的公开只读调研证据。
-`manifest.json` 当前索引 41 张图片，并固定每个文件的 SHA-256、字节数、像素尺寸、来源
+`manifest.json` 当前索引 43 张图片，并固定每个文件的 SHA-256、字节数、像素尺寸、来源
 类型、内容范围、派生关系与访问分类。
 
 ## 安全与证据边界
@@ -17,8 +17,8 @@
   页面素材，它们仍与整套证据一起按项目内部资料管理。第 26 张单独固定其部门级交付样板和
   同卡片口径冲突。Topic 33～35、Gate A0 production authority 与 approval policy
   control-store 检查点图共十项，各自包含 source SVG 与 rsvg 派生 PNG；它们是报告/合同导航图，
-  不是独立运行证据。本轮新增的两张 `local_im_acceptance` PNG 是零网络本地 IM 运行证据，单独绑定
-  本地验收 manifest。
+  不是独立运行证据。本轮新增的四张本地 IM PNG 是零网络本地 IM 运行证据，分别绑定基础会话和
+  编辑/撤回验收 manifest/检查点；本次编辑/撤回截图单独记录生命周期状态。
 - 本轮没有伪造“已脱敏”副本。需要对外分享时，应另做 derived redacted copy，保留原件
   hash，并由人工复核不可逆模糊/裁剪区域后再发布。
 - SHA-256 能检测本地文件变化，不证明截图内容本身真实，也不是签名、时间戳服务或页面
@@ -102,7 +102,12 @@
 | [`36_local_im_acceptance_mobile.png`](36_local_im_acceptance_mobile.png) | 390×844 | 2026-08-29 / local_pending | `B-local-runtime-product-evidence`；移动 viewport 下的同一自定义指令验收结果 | `53a26a561f94` |
 | [`38_local_im_basic_desktop.png`](38_local_im_basic_desktop.png) | 1440×1000 | 2026-08-29 / local_pending | `B-local-runtime-product-evidence`；普通群创建、普通文本发送和 reload 后消息列表 | `3d871740d3c0` |
 | [`39_local_im_basic_mobile.png`](39_local_im_basic_mobile.png) | 390×844 | 2026-08-29 / local_pending | `B-local-runtime-product-evidence`；普通 IM 基础会话在移动 viewport 的响应式状态 | `249bdf2a0305` |
+| [`40_local_im_edit_recall_desktop.png`](40_local_im_edit_recall_desktop.png) | 1440×1690 | 2026-08-29 13:03:02 +08:00 / 2026-08-29 13:06:39 +08:00 | `B-local-runtime-product-evidence`；桌面端普通群消息编辑后撤回，保留生命周期状态 | `508e438917dd` |
+| [`41_local_im_edit_recall_mobile.png`](41_local_im_edit_recall_mobile.png) | 390×2987 | 2026-08-29 13:03:02 +08:00 / 2026-08-29 13:06:39 +08:00 | `B-local-runtime-product-evidence`；移动端普通群消息编辑后撤回及响应式渲染 | `9ad9d6c73e06` |
 
 完整 hash、字节数、媒体类型、尺寸、完整 URL/本地来源、逐图限制和日期证据见
 [`manifest.json`](manifest.json)。任何图像内容改变都必须生成新 hash，并说明是受限原件
 更新还是新建派生副本；不得静默覆盖后继续沿用旧证据结论。
+
+编辑/撤回验收的交互步骤、API 复核、viewport 和逐图 hash 另见
+[`local_im_edit_recall_acceptance_manifest.json`](local_im_edit_recall_acceptance_manifest.json)。

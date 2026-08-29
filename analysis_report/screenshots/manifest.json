@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "9dbed14e85e09cf133c49ab8b1f5b8ba49708732",
-  "lastImageArchivedAt": "2026-08-29T12:04:58+08:00",
+  "lastArchivedCommit": "616c18d0111b7011882e35a908c67f38c1aae9d6",
+  "lastImageArchivedAt": "2026-08-29T13:06:39+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -910,6 +910,50 @@
       "sourceKind": "quantum-entanglement-canonical-report-visual",
       "sourceReference": "analysis_report/screenshots/37_postgres_approval_policy_control_store_map.svg; rsvg-convert -w 1600 -h 1000; source-doc-git:4791fba93c69f67604fc1eb9b3f82d97bb4b737a; archived-git:4791fba93c69f67604fc1eb9b3f82d97bb4b737a",
       "width": 1600
+    },
+    {
+      "byteSize": 752102,
+      "captureDate": "2026-08-29T13:03:02+08:00",
+      "captureDateEvidence": "Playwright loopback session completed at the recorded local filesystem time; the session used the local IM demo and no external provider",
+      "contentScope": "Desktop browser evidence of local group message edit and recall: the message is edited, then recalled, and the UI retains the lifecycle state",
+      "derivation": "playwright-loopback-local-im-edit-recall-desktop",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "Proves only the captured 1440px viewport and the in-process local demo behavior",
+        "Does not prove PostgreSQL durability, crash recovery, real Clerk/RongCloud behavior, multi-process fencing, provider reconciliation or production readiness"
+      ],
+      "filename": "40_local_im_edit_recall_desktop.png",
+      "firstArchivedAt": "2026-08-29T13:06:39+08:00",
+      "height": 1690,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "reviewed-local-runtime-capture",
+      "sha256": "508e438917dde6eb67c8a759574924531a95f69a17b150381c8d271337989af8",
+      "sourceKind": "local-runtime-browser-capture",
+      "sourceReference": "http://127.0.0.1:19083/demo/im; Playwright desktop viewport 1440x1690; code-baseline:1a384cffc23c200587c36a3814afc0570de06f84; archived-git:616c18d0111b7011882e35a908c67f38c1aae9d6",
+      "width": 1440
+    },
+    {
+      "byteSize": 459181,
+      "captureDate": "2026-08-29T13:03:02+08:00",
+      "captureDateEvidence": "Playwright loopback session completed at the recorded local filesystem time; the session used the local IM demo and no external provider",
+      "contentScope": "Mobile browser evidence of the same local group message edit and recall flow at 390px width, including the recalled-message rendering",
+      "derivation": "playwright-loopback-local-im-edit-recall-mobile",
+      "evidenceClass": "B-local-runtime-product-evidence",
+      "evidenceLimitations": [
+        "Proves only the captured 390px viewport and the in-process local demo behavior",
+        "Does not prove PostgreSQL durability, crash recovery, real Clerk/RongCloud behavior, multi-process fencing, provider reconciliation or production readiness"
+      ],
+      "filename": "41_local_im_edit_recall_mobile.png",
+      "firstArchivedAt": "2026-08-29T13:06:39+08:00",
+      "height": 2987,
+      "mediaType": "image/png",
+      "notForPublicDistribution": true,
+      "redactionStatus": "reviewed-local-runtime-capture",
+      "sha256": "9ad9d6c73e06c09bb9f9cdeefd271719f178b72983a0303bd9d9e4f639741a74",
+      "sourceKind": "local-runtime-browser-capture",
+      "sourceReference": "http://127.0.0.1:19083/demo/im; Playwright mobile viewport 390x2987; code-baseline:1a384cffc23c200587c36a3814afc0570de06f84; archived-git:616c18d0111b7011882e35a908c67f38c1aae9d6",
+      "width": 390
     }
   ],
   "redactionStatus": "mixed-restricted-originals-synthetic-ui-reviewed-model-output-and-derived-documentation-visuals",

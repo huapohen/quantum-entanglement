@@ -53,6 +53,7 @@
 | `research/38_local_im_provider_agent_thread_checkpoint.md` | 当前本地验收增量：`local_pending` | provider-neutral IM/auth、Agent Store、`@Agent` 子群 vertical slice、零网络 Fiber API、任意自定义指令页面与 Playwright 桌面/移动端证据 |
 | `research/39_basic_im_conversation_message_checkpoint.md` | 当前本地验收增量：`local_pending` | 普通 direct/group 会话创建、显式成员/ACL、文本消息 client/platform ID、provider receipt、cursor 分页和浏览器桌面/移动端验收 |
 | `research/40_durable_file_event_store_checkpoint.md` | 当前本地增量：`local_pending` | fsync 后发布、重启恢复、exact retry、截断尾部恢复、完整损坏拒绝、并发单 winner，以及明确的非生产边界 |
+| `research/41_local_im_message_edit_recall_checkpoint.md` | 当前本地验收增量：`local_pending` | 平台 message revision、可选 provider mutation port、编辑/撤回幂等、状态机约束、Fiber API 与桌面/移动端证据 |
 
 接入前代码基线已经安全备份。`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 中“先 Level A、再 Level B
 sandbox inbound-only”是当时的历史调度口径。当前执行源已切换为
@@ -107,11 +108,11 @@ Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清�
 
 完整 SHA-256、尺寸、来源、证据等级和隐私边界见
 [`screenshots/README.md`](screenshots/README.md) 与
-[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 41 张图；前十张是受限、
+[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 43 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地
 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是 Clawith 公开官网、白皮书与官方文档
 只读证据；Topic 33～37 的十项 SVG/PNG 是五个 W2 PostgreSQL 检查点/合同图，只作为报告导航图，
-不冒充独立运行证据；本轮新增的两张 `local_im_acceptance` 图是零网络本地 IM 运行证据。整套资料
+不冒充独立运行证据；四张本地 IM 基础/编辑撤回图是零网络本地 IM 运行证据。整套资料
 仍按项目内部证据管理。
 
 | 文件 | 内容 | 采集方式 |
@@ -152,6 +153,11 @@ Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清�
 | `screenshots/36_local_im_acceptance_mobile.png` | 移动 viewport 下的同一自定义指令验收结果 | Playwright loopback 移动端真实渲染与交互证据 |
 | `screenshots/38_local_im_basic_desktop.png` | 普通群创建、普通文本发送和 reload 后消息列表 | Playwright loopback 桌面端真实渲染与交互证据 |
 | `screenshots/39_local_im_basic_mobile.png` | 普通 IM 基础会话在移动 viewport 的响应式状态 | Playwright loopback 移动端真实渲染与交互证据 |
+| `screenshots/40_local_im_edit_recall_desktop.png` | 桌面端普通群消息编辑后撤回，保留生命周期状态 | Playwright loopback 桌面端真实渲染与交互证据 |
+| `screenshots/41_local_im_edit_recall_mobile.png` | 移动端普通群消息编辑后撤回及响应式渲染 | Playwright loopback 移动端真实渲染与交互证据 |
+
+编辑/撤回交互步骤和 API 复核清单：
+`screenshots/local_im_edit_recall_acceptance_manifest.json`（`local_pending`）。
 
 ## 数据安全
 
