@@ -13,7 +13,8 @@
     .composer{border-top:1px solid var(--line);padding:14px;display:grid;grid-template-columns:1fr auto;gap:10px}.composer textarea{resize:vertical;min-height:74px;max-height:180px;background:#07111a;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit;outline:none}.composer textarea:focus{border-color:var(--cyan)}button{border:0;border-radius:12px;background:linear-gradient(135deg,var(--cyan),var(--blue));color:#07131a;font-weight:850;padding:0 20px;cursor:pointer}button:disabled{opacity:.4;cursor:wait}
     .child-empty{color:var(--muted);display:grid;place-items:center;min-height:330px;text-align:center;border:1px dashed var(--line);border-radius:13px;padding:20px}.kv{display:grid;grid-template-columns:150px 1fr;gap:7px 12px;font-size:12px}.kv span:nth-child(odd){color:var(--muted)}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#bce5ff;word-break:break-all}
     .architecture{margin-top:18px}.flow{display:grid;grid-template-columns:1fr 42px 1fr 42px 1fr;gap:8px;align-items:stretch}.node{padding:16px;border:1px solid var(--line);border-radius:14px;background:#0d1821}.node b{display:block;color:var(--cyan);margin-bottom:6px}.node small{color:var(--muted)}.arrow{display:grid;place-items:center;color:var(--blue);font-size:24px}.boundary{margin-top:14px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.boundary div{padding:12px;border:1px solid var(--line);border-radius:12px;color:var(--muted);font-size:12px}.boundary strong{display:block;color:var(--text);font-size:13px;margin-bottom:3px}.error{color:var(--red)}
-    @media(max-width:850px){.top{display:block}.pill{display:inline-block;margin-top:14px}.grid{grid-template-columns:1fr}.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.boundary{grid-template-columns:1fr 1fr}.room{min-height:460px}}
+    .basic{margin-top:18px}.basic-layout{display:grid;grid-template-columns:280px 1fr;min-height:420px}.conversation-list{border-right:1px solid var(--line);padding:14px}.conversation-list input{width:100%;background:#07111a;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px;font:inherit;margin-bottom:8px}.conversation-list button{width:100%;min-height:38px;margin-bottom:8px}.conversation-item{display:block;width:100%;text-align:left;background:#0d1821;border:1px solid transparent;color:var(--text);padding:10px;border-radius:10px;margin:5px 0;cursor:pointer}.conversation-item:hover,.conversation-item.selected{border-color:var(--cyan);background:#16313a}.conversation-item small{display:block;color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis}.basic-room{min-height:420px}.basic-room .timeline{min-height:290px}.basic-hint{color:var(--muted);font-size:12px;margin:0 0 10px}.basic-error{color:var(--red);font-size:12px;min-height:20px}
+    @media(max-width:850px){.top{display:block}.pill{display:inline-block;margin-top:14px}.grid{grid-template-columns:1fr}.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.boundary{grid-template-columns:1fr 1fr}.room{min-height:460px}.basic-layout{grid-template-columns:1fr}.conversation-list{border-right:0;border-bottom:1px solid var(--line)}.basic-room{min-height:380px}}
   </style>
 </head>
 <body>
@@ -43,6 +44,23 @@
     </article>
   </section>
 
+  <section class="card basic">
+    <div class="card-head"><h2>普通 IM · 会话与文本消息</h2><span class="status" id="basicStatus">正在读取会话…</span></div>
+    <div class="basic-layout">
+      <aside class="conversation-list">
+        <p class="basic-hint">创建普通群后，选择会话发送文本。所有 ID、成员和状态来自平台本地状态。</p>
+        <input id="groupName" value="新建协同群" aria-label="普通群名称">
+        <button id="createGroup">创建普通群</button>
+        <div id="conversationList"></div>
+      </aside>
+      <article class="room basic-room">
+        <div class="timeline" id="basicTimeline"><div class="child-empty">选择一个会话后，这里显示按 cursor 分页的消息。</div></div>
+        <div class="composer"><textarea id="basicText" placeholder="发送普通文本消息（不会触发 Agent）"></textarea><button id="sendBasic">发送文本</button></div>
+        <div class="card-body"><div class="basic-error" id="basicError"></div></div>
+      </article>
+    </div>
+  </section>
+
   <section class="card architecture">
     <div class="card-head"><h2>当前真实执行链与信任边界</h2><span class="status">验收图</span></div>
     <div class="card-body">
@@ -66,7 +84,16 @@
   const send=document.getElementById('send');
   const instruction=document.getElementById('instruction');
   const parentTimeline=document.getElementById('parentTimeline');
+  const conversationList=document.getElementById('conversationList');
+  const basicTimeline=document.getElementById('basicTimeline');
+  const basicStatus=document.getElementById('basicStatus');
+  const basicError=document.getElementById('basicError');
+  const basicText=document.getElementById('basicText');
+  const groupName=document.getElementById('groupName');
+  const createGroup=document.getElementById('createGroup');
+  const sendBasic=document.getElementById('sendBasic');
   let lastMessageId='';
+  let selectedConversationId='';
 
   async function api(path, options={}){
     const response=await fetch(path, options);
@@ -76,8 +103,16 @@
   }
   function bubble(text, kind, meta){const node=document.createElement('div');node.className=`bubble ${kind||''}`;const label=document.createElement('span');label.className='meta';label.textContent=meta;node.append(label,document.createTextNode(text));return node}
   function messageId(){return `msg_ui_${Date.now()}_${crypto.randomUUID().slice(0,8)}`}
+  function showBasicError(error){basicError.textContent=error.message||String(error);}
+  function renderConversationList(data){conversationList.replaceChildren();for(const item of data.conversations){const button=document.createElement('button');button.className='conversation-item'+(item.id===selectedConversationId?' selected':'');button.type='button';button.innerHTML=`<b></b><small></small>`;button.querySelector('b').textContent=item.name||item.id;button.querySelector('small').textContent=`${item.type} · ${item.providerStatus} · ${item.id}`;button.addEventListener('click',()=>selectConversation(item.id));conversationList.append(button)}basicStatus.textContent=`${data.conversations.length} 个会话 · zero-network fake`}
+  async function loadConversations(){const data=await api('/api/v1/demo/im/conversations?limit=50');if(!selectedConversationId&&data.conversations.length)selectedConversationId=data.conversations[0].id;renderConversationList(data);if(selectedConversationId)await loadMessages(selectedConversationId)}
+  async function selectConversation(id){selectedConversationId=id;basicError.textContent='';await loadConversations()}
+  async function loadMessages(id){const data=await api(`/api/v1/demo/im/conversations/${encodeURIComponent(id)}/messages?limit=100`);basicTimeline.replaceChildren();if(!data.messages.length){basicTimeline.append(bubble('还没有消息。发送一条普通文本开始协作。','','系统说明'));return}for(const message of data.messages){const kind=message.senderActorId==='usr_local_demo'?'me':'agent';basicTimeline.append(bubble(message.text,kind,`${message.senderActorId} · ${message.providerStatus} · ${message.createdAt}`))}basicTimeline.scrollTop=basicTimeline.scrollHeight}
 
   api('/api/v1/demo/im').then(data=>{runtime.innerHTML=`<b>已就绪</b> · ${data.mode} · networkCalls=${data.networkCalls}`}).catch(error=>{runtime.textContent=error.message;runtime.classList.add('error')});
+  loadConversations().catch(showBasicError);
+  createGroup.addEventListener('click',async()=>{const name=groupName.value.trim();if(!name)return;createGroup.disabled=true;basicError.textContent='';try{const data=await api('/api/v1/demo/im/conversations',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({type:'group',name,memberActorIds:[],idempotencyKey:`ui/basic/group/${Date.now()}_${crypto.randomUUID().slice(0,8)}`})});selectedConversationId=data.conversation.id;await loadConversations()}catch(error){showBasicError(error)}finally{createGroup.disabled=false}});
+  sendBasic.addEventListener('click',async()=>{const text=basicText.value.trim();if(!selectedConversationId||!text)return;sendBasic.disabled=true;basicError.textContent='';try{await api(`/api/v1/demo/im/conversations/${encodeURIComponent(selectedConversationId)}/messages`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({clientMessageId:`msg_ui_basic_${Date.now()}_${crypto.randomUUID().slice(0,8)}`,text,extInfo:JSON.stringify({messageType:'text'})})});basicText.value='';await loadMessages(selectedConversationId)}catch(error){showBasicError(error)}finally{sendBasic.disabled=false}});
   send.addEventListener('click',async()=>{
     const text=instruction.value.trim(); if(!text)return;
     send.disabled=true;send.textContent='正在建子群…';
