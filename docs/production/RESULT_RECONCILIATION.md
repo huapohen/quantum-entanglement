@@ -135,7 +135,10 @@ Before enabling a worker or connecting the native IM, the branch still needs:
 
 1. the existing store-owned result acceptance seam wired into a promoted receipt-aware pure worker
    gate, including process-kill, lease-loss-during-acceptance and two-process evidence;
-2. business projection and action receipt semantics separate from result reconciliation;
+2. business projection and action receipt semantics separate from result reconciliation. A
+   result-only business projection candidate now exists in
+   [`RESULT_BUSINESS_PROJECTION.md`](./RESULT_BUSINESS_PROJECTION.md), but it remains opt-in and
+   is not wired into production composition;
 3. compatibility/rollback runbooks and a release evidence bundle;
 4. only then, an independently approved provider contract and production exchange for the native
    IM. No Feishu, WeCom, Notion, Yuque or external connector is called by this API.

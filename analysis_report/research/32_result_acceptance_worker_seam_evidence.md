@@ -2,7 +2,7 @@
 
 > 证据日期：2026-08-29（Asia/Shanghai）  
 > 分支：`mainline_continue_quantum_entanglement`  
-> 当前提交：`7bed2b6`  
+> 当前 worker-seam 提交：`7bed2b6`；后续 result-only projection 候选：`69fbcb6`
 > 远端：`origin/mainline_continue_quantum_entanglement`  
 > Notion 状态：`local_pending`；本地任务完成后批量上传并逐页回读
 
@@ -71,8 +71,9 @@ PYTHONPATH=src ./.venv/bin/python -m pytest -q \
 ## 仍未关闭的门禁
 
 - candidate acceptance 还没有接入 `HeartbeatPureWorkerGate.dispatch` 的生产 composition；
-- 业务 read-model projection 尚未把 result/terminal event 通过认证、tenant/workspace 作用域
-  投影为对外任务视图；
+- 业务 read-model projection 候选已把 result/terminal event 投影为
+  `task_result_projection_v1` 的 tenant/workspace/invocation 作用域最小视图，但尚未通过可信
+  RequestContext、对外 API、跨 tenant property、process/kill/双连接和生产 composition 门禁；
 - process-kill、双连接竞争、clean-host restore/replay 和长时 heartbeat 的完整 E2E 仍待补齐；
 - publication/outbox 仍刻意为零，真实 IM、飞书、企微和任何外部副作用保持关闭；
 - compatibility/rollback、部署、容量、SLO、RPO/RTO 和 Gate A–E 仍未通过。

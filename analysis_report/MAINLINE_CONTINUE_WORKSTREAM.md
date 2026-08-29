@@ -61,7 +61,8 @@ E1 `CONTRACT_EXECUTABLE` 已完成并完成独立 Notion 回读。当前继续
 
 ## E3 continuation checkpoint (2026-08-29)
 
-The same branch now carries the opt-in Result Authority continuation through `7bed2b6`:
+The same branch now carries the opt-in Result Authority continuation through `69fbcb6`
+(`7bed2b6` remains the preceding worker-seam checkpoint):
 
 - migration 7 activation/reopen remains explicit and default-off;
 - result-specific active backup/restore now binds the migration-7 topology, database bytes,
@@ -76,7 +77,17 @@ The same branch now carries the opt-in Result Authority continuation through `7b
 - successful reconciliation changes only the owner job/attempt rows; it creates no event, outbox,
   publication, lease, capability or external message.
 
-The next local gates are business projection, crash/kill/two-process recovery and compatibility/
+The local M7.5 candidate now adds `SQLiteResultProjectionStore` and the
+`task_result_projection_v1` read model. It is driven by the same durable leased projector and
+accepts only strict result evidence plus a matching terminal transition. The projection is
+tenant/workspace/invocation keyed, idempotent, schema-pinned and fail-closed on terminal-before-result
+or result identity conflict; it stores no result body, lease token, credential or framework-table
+authority. Seven focused tests cover complete materialization, scope isolation, rerun idempotency,
+malformed ordering, identity conflict, schema drift and handler table isolation. This is a candidate
+read model only: no authenticated API, production composition, worker dispatch or external IM is
+enabled.
+
+The next local gates are authenticated projection scope, crash/kill/two-process recovery and compatibility/
 rollback evidence. The opt-in API can issue process-bound `AcceptedV2` only after a fresh COMMIT ACK;
 production worker dispatch, real IM connectivity and all outbound effects remain disabled. Notion synchronization stays
 `local_pending` until this checkpoint is closed and then receives one batch upload plus page-by-page

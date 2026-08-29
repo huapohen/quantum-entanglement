@@ -7,7 +7,7 @@
 并逐页回读。语雀按用户
 最新指令保持不操作。
 
-## Notion 镜像（最近已回读基线：3a92f3c；本地/GitHub 已推进至 7bed2b6）
+## Notion 镜像（最近已回读基线：3a92f3c；本地/GitHub 代码已推进至 `69fbcb6`）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -54,7 +54,7 @@
 | 文件 | 状态 | 内容 |
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
-| `NEXT_STAGE_PLAN.md` | M1–M7 候选已完成，下一步 recovery/projection | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移与 worker 门禁的提交级计划 |
+| `NEXT_STAGE_PLAN.md` | M1–M7 与 M7.5 projection 候选已完成，下一步认证作用域/recovery | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移、projection 与 worker 门禁的提交级计划 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
@@ -85,8 +85,9 @@ digest；trigger replacement/extra-row、storage class、caller mutation 与 exc
 同事务 DML/readback、rollback-only、crash rollback、clean ambiguity classification 与 bounded
 streaming history verification；M4 组合 82 项、全仓 2,639 项、Ruff/Mypy/diff-check 全绿，最终独立
 reviewer 为 0 blocker。随后本地分支完成 opt-in migration 7、atomic result acceptance、Observed/
-Accepted、receipt-bound reconciliation 与 heartbeat acceptance seam；下一步是 business projection、
-crash/kill/two-process recovery 和 compatibility/rollback。生产 worker、真实 IM/outbound 均保持关闭。
+Accepted、receipt-bound reconciliation、heartbeat acceptance seam 与 result-only business projection
+候选；下一步是认证作用域、crash/kill/two-process recovery 和 compatibility/rollback。生产 worker、
+真实 IM/outbound 均保持关闭。
 完整边界见
 `research/29_reserved_result_event_boundary_evidence.md`、
 `research/30_stored_event_envelope_store_adapter_evidence.md` 与
@@ -129,6 +130,7 @@ crash/kill/two-process recovery 和 compatibility/rollback。生产 worker、真
 | `research/30_stored_event_envelope_store_adapter_evidence.md` | E3 Result Authority M3 代码证据：`504824c` | private typed write-snapshot/raw-row 双验、fresh isolated insert、trigger/exception/API 对抗收口、209 项三 Python 组合专项与 2,578 项全仓门禁 |
 | `research/31_inactive_result_schema_artifact_transaction_evidence.md` | E3 Result Authority M4 代码证据：`aef5f8b` | inactive migration 7、private backup topology、Artifact owner transaction、crash/ambiguity/bounded-history 证据、82 项组合专项、2,639 项全仓门禁与最终 0-blocker 复核 |
 | `research/32_result_acceptance_worker_seam_evidence.md` | E3 Result Authority M7/worker seam：`7bed2b6` | opt-in store-owned acceptance、fresh-ACK `AcceptedV2`、replay/ACK-loss `ObservedV2`、接受期间 heartbeat fencing 与 exact request 门禁；生产 worker/projection 仍关闭 |
+| `../docs/production/RESULT_BUSINESS_PROJECTION.md` | E3 M7.5 result-only business projection 候选 | leased projector、scope/terminal binding、幂等、schema pinning、fail-closed 与安全边界 |
 
 ## 已归档截图
 
