@@ -109,6 +109,10 @@ Receipt-bound, non-emitting reconciliation is implemented separately in
 [`RESULT_RECONCILIATION.md`](./RESULT_RECONCILIATION.md). It remains opt-in and does not close
 these release gates.
 
+Active migration-7 backup/restore is implemented separately in
+[`RESULT_BACKUP_RESTORE.md`](./RESULT_BACKUP_RESTORE.md). The legacy backup APIs remain
+feature-off for v7; only the explicit result-specific API understands the active topology.
+
 The current candidate still permits only the private result graph and capability-free
 `ObservedV2` readback. No Feishu, WeCom, Notion, Yuque, webhook or external connector is called
 by activation or rollback.

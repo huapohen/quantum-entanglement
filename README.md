@@ -33,6 +33,7 @@ attempt 的 lease、heartbeat、崩溃接管以及外部副作用确认仍在 `0
 - `docs/production/INVOCATION_RECOVERY_COORDINATION.md`
 - `docs/production/RESULT_GRAPH_READBACK.md`
 - `docs/production/RESULT_MIGRATION_ACTIVATION.md`
+- `docs/production/RESULT_BACKUP_RESTORE.md`
 - `docs/production/RESULT_RECONCILIATION.md`
 - `docs/production/REPORT_SYNC_BUNDLE.md`
 - `docs/production/DEPENDENCY_LOCKS_AND_SBOM.md`

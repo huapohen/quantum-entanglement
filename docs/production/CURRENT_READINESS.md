@@ -401,9 +401,11 @@ schema/migration 7、Artifact transaction primitive、writer、receipt、Observe
 [`30_stored_event_envelope_store_adapter_evidence.md`](../../analysis_report/research/30_stored_event_envelope_store_adapter_evidence.md)。
 
 E3 Result Authority M4 代码封板节点 `28b3d6a` 已完成 inactive migration 7 候选、私有 backup-v2
-known topology 与 Artifact owner-transaction primitive。Migration 7 固定六张表、八个显式索引、
-31 个 autoindex 和 guarded down path，但 legacy bootstrap、默认 store 与 active migration registry
-仍停在 6。私有 backup profile 固定 45 个对象；active registry 仍保持 11 profiles / 88 objects。
+known topology 与 Artifact owner-transaction primitive。随后 `86019bb` 增加了独立的
+`result_backup_topology.py` 与 `result_backup.py`：opt-in migration 7 数据库现在可以生成
+45-object result profile 叠加 trusted legacy profiles 的活动拓扑证据，并通过 no-overwrite 的
+create/verify/restore 流程绑定数据库 bytes、page geometry、migration state、DDL/object catalog
+和 table counts。legacy backup registry、默认 store 与旧 v1/v2 API 仍保持 feature-off。
 Exact owner handle 绑定 store、SQLite connection、process owner 和一次性 generation；ordered batch
 在 owner transaction 中做完整 preflight、blob/version DML、固定 readback 与 change accounting，
 任一被调用方捕获的写失败也会把 owner 标记为 rollback-only。真实 `os._exit` / SIGKILL 证据证明
@@ -444,8 +446,9 @@ owner CAS，成功只更新 job/attempt，不新增 event/outbox，重复调用�
 `ALREADY_RECONCILED`；它仍不代表 Accepted/public writer、worker、projection 或生产恢复已开启。
 运行合同见 [`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md)、
 [`RESULT_MIGRATION_ACTIVATION.md`](./RESULT_MIGRATION_ACTIVATION.md) 与
-[`RESULT_RECONCILIATION.md`](./RESULT_RECONCILIATION.md)；crash/kill、双连接竞争和
-backup/restore 证据仍需在后续 release gate 中完成。
+[`RESULT_RECONCILIATION.md`](./RESULT_RECONCILIATION.md) 与
+[`RESULT_BACKUP_RESTORE.md`](./RESULT_BACKUP_RESTORE.md)；crash/kill publication、双连接竞争、
+独立主机恢复和实测 RPO/RTO 证据仍需在后续 release gate 中完成。
 
 仍缺：
 
