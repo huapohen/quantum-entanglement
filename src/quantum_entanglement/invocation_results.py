@@ -18,7 +18,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Set, SupportsIndex, Tuple, cast
+from typing import Any, Dict, Mapping, NoReturn, Set, SupportsIndex, Tuple, cast
 
 from ._artifact_codec import (
     MAX_ARTIFACT_IDENTITY_CHARACTERS,
@@ -207,6 +207,11 @@ _RESULT_RECEIPT_FIELDS = frozenset(
 )
 
 _RESULT_OBSERVED_FIELDS = frozenset(("receipt",))
+
+# This token is intentionally module-private.  A result receipt is a portable
+# observation; an Accepted value is a process-local classification minted only by
+# the store after it has received a fresh COMMIT acknowledgement.
+_RESULT_ACCEPTED_TOKEN = object()
 
 
 def _exact_dict(value: object, fields: Set[str], label: str) -> Dict[str, Any]:
@@ -1509,6 +1514,96 @@ class ScopedInvocationResultObservedV2:
         return ScopedInvocationResultObservedV2.__reduce__(self)
 
 
+class ScopedInvocationResultAcceptedV2:
+    """Process-bound proof that one result graph received a fresh COMMIT ACK.
+
+    The receipt is deliberately exposed only as a detached, capability-free value.
+    The Accepted wrapper itself cannot be copied or serialized, and every receipt
+    access re-enters the store's process fence.  Reopened, replayed, or observed
+    graphs can therefore never be upgraded into this classification.
+    """
+
+    __slots__ = ("__active", "__process_guard", "__receipt")
+
+    def __init__(
+        self,
+        receipt: ScopedInvocationResultReceiptV2,
+        process_guard: object,
+        *,
+        token: object,
+    ) -> None:
+        if type(self) is not ScopedInvocationResultAcceptedV2:
+            raise TypeError("accepted result must use the exact ScopedInvocationResultAcceptedV2")
+        if token is not _RESULT_ACCEPTED_TOKEN:
+            raise TypeError("accepted result construction is private")
+        if type(receipt) is not ScopedInvocationResultReceiptV2:
+            raise TypeError("accepted result requires an exact result receipt")
+        if not callable(process_guard):
+            raise TypeError("accepted result requires a process guard")
+        self.__receipt = _result_receipt_snapshot(receipt)
+        self.__process_guard = process_guard
+        self.__active = True
+
+    def _validated_receipt(self) -> ScopedInvocationResultReceiptV2:
+        if type(self) is not ScopedInvocationResultAcceptedV2:
+            raise TypeError("accepted result must be exact")
+        if type(self.__active) is not bool or not self.__active:
+            raise RuntimeError("accepted result is no longer active")
+        guard = self.__process_guard
+        if not callable(guard):
+            raise RuntimeError("accepted result process guard is unavailable")
+        guard()
+        return _result_receipt_snapshot(self.__receipt)
+
+    @property
+    def receipt(self) -> ScopedInvocationResultReceiptV2:
+        """Return a detached receipt after checking the creating process fence."""
+
+        return self._validated_receipt()
+
+    def __repr__(self) -> str:
+        if type(self) is not ScopedInvocationResultAcceptedV2:
+            return "<invalid accepted result>"
+        if type(self.__active) is not bool or not self.__active:
+            return "ScopedInvocationResultAcceptedV2(inactive)"
+        receipt = self.__receipt
+        return f"ScopedInvocationResultAcceptedV2(receipt_id={receipt.receipt_id!r})"
+
+    def _invalidate(self, *, token: object) -> None:
+        if token is not _RESULT_ACCEPTED_TOKEN:
+            raise TypeError("accepted result invalidation is private")
+        self.__active = False
+        object.__setattr__(self, "_ScopedInvocationResultAcceptedV2__process_guard", None)
+        object.__setattr__(self, "_ScopedInvocationResultAcceptedV2__receipt", None)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("accepted results cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("accepted results cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("accepted results cannot be serialized")
+
+    def __reduce_ex__(self, _protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("accepted results cannot be serialized")
+
+
+def _new_scoped_invocation_result_accepted_v2(
+    receipt: object,
+    process_guard: object,
+) -> ScopedInvocationResultAcceptedV2:
+    """Mint the process-bound classification for one fresh store commit."""
+
+    if type(receipt) is not ScopedInvocationResultReceiptV2:
+        raise TypeError("accepted result factory requires an exact result receipt")
+    return ScopedInvocationResultAcceptedV2(
+        receipt,
+        process_guard,
+        token=_RESULT_ACCEPTED_TOKEN,
+    )
+
+
 def _decode_scoped_invocation_result_observed_v2(
     value: object,
 ) -> ScopedInvocationResultObservedV2:
@@ -2149,5 +2244,6 @@ __all__ = [
     "EMPTY_ACTION_RECEIPT_SET_DIGEST",
     "SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION",
     "ScopedInvocationResultArtifactV2",
+    "ScopedInvocationResultAcceptedV2",
     "ScopedInvocationResultManifestV2",
 ]
