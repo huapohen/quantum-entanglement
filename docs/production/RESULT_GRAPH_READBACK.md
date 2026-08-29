@@ -5,7 +5,7 @@ readback path. Migration 7, the public result writer, `AcceptedV2`, publication 
 dispatch remain disabled. The normal store reopen path is deliberately blocked while migration
 7 is inactive; same-process readback is the only executable observation path in this checkpoint.
 
-This document records the local checkpoint delivered by commits `3847594` and the unmerged
+This document records the local checkpoint delivered by commits `3847594`, `034ceea` and `0d941eb`, plus the unmerged
 working tree on branch `mainline_continue_quantum_entanglement`. It is the source of
 truth during the remaining implementation work. Notion synchronization is intentionally deferred
 until a larger checkpoint is complete; the final upload must include this file and a page-by-page
