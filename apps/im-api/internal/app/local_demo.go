@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
@@ -40,6 +41,54 @@ func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
 	server.Get("/api/v1/demo/im", func(ctx fiber.Ctx) error {
 		return httpapi.WriteSuccess(ctx, demo.Snapshot())
 	})
+	server.Get("/api/v1/demo/im/conversations", func(ctx fiber.Ctx) error {
+		limit, err := localDemoQueryLimit(ctx.Query("limit"))
+		if err != nil {
+			return httpapi.NewAppError(httpapi.CodeValidationFailed, err)
+		}
+		page, err := demo.ListConversations(ctx.Context(), bearerToken(ctx), ctx.Query("after"), limit)
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, page)
+	})
+	server.Post("/api/v1/demo/im/conversations", func(ctx fiber.Ctx) error {
+		var input localdemo.CreateConversationInput
+		if err := decodeLocalDemoRequest(ctx.Body(), &input); err != nil {
+			return httpapi.NewAppError(httpapi.CodeMalformedRequest, err)
+		}
+		result, err := demo.CreateConversation(ctx.Context(), bearerToken(ctx), input)
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, result)
+	})
+	server.Get("/api/v1/demo/im/conversations/:conversationId/messages", func(ctx fiber.Ctx) error {
+		limit, err := localDemoQueryLimit(ctx.Query("limit"))
+		if err != nil {
+			return httpapi.NewAppError(httpapi.CodeValidationFailed, err)
+		}
+		page, err := demo.ListMessages(
+			ctx.Context(), bearerToken(ctx), ctx.Params("conversationId"), ctx.Query("after"), limit,
+		)
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, page)
+	})
+	server.Post("/api/v1/demo/im/conversations/:conversationId/messages", func(ctx fiber.Ctx) error {
+		var input localdemo.SendTextInput
+		if err := decodeLocalDemoRequest(ctx.Body(), &input); err != nil {
+			return httpapi.NewAppError(httpapi.CodeMalformedRequest, err)
+		}
+		result, err := demo.SendText(
+			ctx.Context(), bearerToken(ctx), ctx.Params("conversationId"), input,
+		)
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, result)
+	})
 	server.Post("/api/v1/demo/im/mentions", func(ctx fiber.Ctx) error {
 		var input localdemo.MentionInput
 		if err := decodeLocalDemoRequest(ctx.Body(), &input); err != nil {
@@ -60,6 +109,38 @@ func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
 		}
 		return httpapi.WriteSuccess(ctx, result)
 	})
+}
+
+func localDemoQueryLimit(raw string) (int, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, localdemo.ErrInvalidInput
+	}
+	return value, nil
+}
+
+func localDemoAppError(err error) error {
+	switch {
+	case errors.Is(err, localdemo.ErrUnauthenticated):
+		return httpapi.NewAppError(httpapi.CodeUnauthenticated, err)
+	case errors.Is(err, localdemo.ErrForbidden):
+		return httpapi.NewAppError(httpapi.CodeForbidden, err)
+	case errors.Is(err, localdemo.ErrNotFound):
+		return httpapi.NewAppError(httpapi.CodeNotFound, err)
+	case errors.Is(err, localdemo.ErrConflict):
+		return httpapi.NewAppError(httpapi.CodeIdempotencyConflict, err)
+	case errors.Is(err, localdemo.ErrInvalidCursor), errors.Is(err, localdemo.ErrInvalidInput):
+		return httpapi.NewAppError(httpapi.CodeValidationFailed, err)
+	case errors.Is(err, localdemo.ErrProvider):
+		return httpapi.NewAppError(httpapi.CodeDependencyUnavailable, err)
+	case errors.Is(err, localdemo.ErrIntegrity):
+		return httpapi.NewAppError(httpapi.CodeInternal, err)
+	default:
+		return err
+	}
 }
 
 func decodeLocalDemoRequest(body []byte, destination any) error {
