@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
+import time
 import unittest
 from collections.abc import Iterable
 from dataclasses import replace
@@ -186,6 +189,75 @@ class ResultProjectionTests(unittest.TestCase):
         finally:
             first.close()
             second.close()
+
+    def test_sigkill_after_lease_claim_is_recovered_by_new_owner(self) -> None:
+        signal_path = str(Path(self.directory.name) / "projection-child-ready")
+        child_code = f"""
+import time
+from pathlib import Path
+from quantum_entanglement.result_projection import SQLiteResultProjectionStore
+from quantum_entanglement.store import SQLiteEventStore
+
+class SignalSource:
+    def __init__(self, store, signal_path):
+        self.store = store
+        self.signal_path = signal_path
+
+    def read_all(self, after_position=0, limit=1000):
+        Path(self.signal_path).touch()
+        while True:
+            time.sleep(1)
+
+store = SQLiteEventStore({self.path!r}, enable_result_acceptance_schema=True)
+source = SignalSource(store, {signal_path!r})
+projection = SQLiteResultProjectionStore(
+    source,
+    {self.path!r},
+    owner_id="result-projector-killed",
+    lease_seconds=0.2,
+)
+projection.run_once()
+"""
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = os.pathsep.join(
+            (str(Path(__file__).resolve().parents[1] / "src"), environment.get("PYTHONPATH", ""))
+        ).rstrip(os.pathsep)
+        child = subprocess.Popen(
+            [sys.executable, "-c", child_code],
+            env=environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not Path(signal_path).exists() and child.poll() is None:
+                if time.monotonic() >= deadline:
+                    self.fail("killed projection child did not claim and enter its source")
+                time.sleep(0.01)
+            self.assertTrue(Path(signal_path).exists())
+            child.kill()
+            child.wait(timeout=5)
+            self.assertNotEqual(child.returncode, 0)
+            time.sleep(0.35)
+            recovered = SQLiteResultProjectionStore(
+                self.event_store,
+                self.path,
+                owner_id="result-projector-recovery",
+                lease_seconds=1.0,
+            )
+            try:
+                run = recovered.run_once()
+                self.assertEqual(run.applied_count, len(self.events))
+                view = recovered.read(*self.scope)
+                self.assertIsNotNone(view)
+                assert view is not None
+                self.assertEqual(view.status, ResultProjectionStatus.COMPLETED)
+            finally:
+                recovered.close()
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
 
     def test_terminal_event_without_result_fails_closed(self) -> None:
         source = _TupleSource((replace(self.terminal_event, global_position=1, sequence=1),))
