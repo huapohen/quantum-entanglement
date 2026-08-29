@@ -84,6 +84,9 @@ view = projection.read(tenant_id, workspace_id, invocation_id)
 - handler trace 不触碰 events、invocation jobs/attempts 或 outbox framework tables；
 - 投影对象 repr 不包含结果正文或 lease token；真实 fork 子进程在触碰 SQLite 前被拒绝，父进程仍可继续运行；
 - 重开 connection 复用 durable offset；双 connection lease 竞争只允许一个 owner。
+- 真实子进程 `SIGKILL` 恰在 lease claim 后触发，lease 过期后由新 owner 成功恢复完整投影。
+- 子进程在 lease 已提交、尚未读取事件时收到真实 `SIGKILL`，新 owner 等 lease 过期后可
+  重新 claim 并完整重建 projection；这只覆盖该边界，不替代全系统 crash-at-every-boundary 证据。
 
 验证命令：
 
