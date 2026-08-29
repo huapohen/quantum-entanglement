@@ -12,12 +12,13 @@ import (
 // adapter may translate these values to RongCloud (or a fake), but it cannot turn provider
 // metadata or an acknowledgement into platform authorization.
 var (
-	ErrInvalidProviderRequest   = errors.New("invalid IM provider request")
-	ErrProviderUnavailable      = errors.New("IM provider unavailable")
-	ErrProviderNotReady         = errors.New("IM provider is not ready")
-	ErrProviderConflict         = errors.New("IM provider idempotency conflict")
-	ErrProviderEffectUnknown    = errors.New("IM provider effect outcome is unknown")
-	ErrProviderOutboundDisabled = errors.New("IM provider outbound is disabled")
+	ErrInvalidProviderRequest        = errors.New("invalid IM provider request")
+	ErrProviderUnavailable           = errors.New("IM provider unavailable")
+	ErrProviderNotReady              = errors.New("IM provider is not ready")
+	ErrProviderConflict              = errors.New("IM provider idempotency conflict")
+	ErrProviderCapabilityUnsupported = errors.New("IM provider capability is unsupported")
+	ErrProviderEffectUnknown         = errors.New("IM provider effect outcome is unknown")
+	ErrProviderOutboundDisabled      = errors.New("IM provider outbound is disabled")
 )
 
 const (
@@ -223,6 +224,43 @@ type ProviderTextMessage struct {
 	IdempotencyKey string
 }
 
+// ProviderTextEdit and ProviderMessageRecall are optional transport mutations. Their presence
+// never changes platform history by itself; the platform must first commit its own message
+// revision and retain the provider receipt. Providers that cannot prove the mutation capability
+// must return ErrProviderCapabilityUnsupported instead of simulating success.
+type ProviderTextEdit struct {
+	Conversation   ProviderConversationRef
+	Sender         ActorID
+	ClientMessage  MessageID
+	Text           string
+	ExtInfo        string
+	IdempotencyKey string
+}
+
+func (request ProviderTextEdit) Validate(profile ProviderProfile) error {
+	if !validProviderConversationRef(request.Conversation, profile) || request.Sender.IsZero() ||
+		request.ClientMessage.IsZero() || request.Text == "" || len(request.Text) > profile.MaxOutboundTextBytes ||
+		len(request.ExtInfo) > profile.MaxProviderMetadataBytes || !validProviderIdempotencyKey(request.IdempotencyKey) {
+		return ErrInvalidProviderRequest
+	}
+	return nil
+}
+
+type ProviderMessageRecall struct {
+	Conversation   ProviderConversationRef
+	Sender         ActorID
+	ClientMessage  MessageID
+	IdempotencyKey string
+}
+
+func (request ProviderMessageRecall) Validate(profile ProviderProfile) error {
+	if !validProviderConversationRef(request.Conversation, profile) || request.Sender.IsZero() ||
+		request.ClientMessage.IsZero() || !validProviderIdempotencyKey(request.IdempotencyKey) {
+		return ErrInvalidProviderRequest
+	}
+	return nil
+}
+
 func (request ProviderTextMessage) Validate(profile ProviderProfile) error {
 	if !request.validate(profile) {
 		return ErrInvalidProviderRequest
@@ -344,6 +382,14 @@ type Provider interface {
 	AddMembers(context.Context, ProviderMemberUpdate) (ProviderEffectReceipt, error)
 	ReadInbound(context.Context, string, int) (InboundPage, error)
 	SendText(context.Context, ProviderTextMessage) (ProviderEffectReceipt, error)
+}
+
+// MessageMutationProvider is deliberately optional: Provider implementations may expose only the
+// capabilities they have verified. Callers must check the type and profile capability before
+// invoking these methods.
+type MessageMutationProvider interface {
+	EditText(context.Context, ProviderTextEdit) (ProviderEffectReceipt, error)
+	RecallMessage(context.Context, ProviderMessageRecall) (ProviderEffectReceipt, error)
 }
 
 func validProviderIdempotencyKey(value string) bool {
