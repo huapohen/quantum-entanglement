@@ -150,6 +150,33 @@ func TestPostgresEventStoreAgainstPostgres(t *testing.T) {
 		t.Fatalf("nil workspace page = %#v/%v", page, err)
 	}
 
+	checkpointStore, err := NewProjectionCheckpointStore(pool)
+	if err != nil {
+		t.Fatalf("new projection checkpoint store: %v", err)
+	}
+	projectionScope := events.ProjectionScope{
+		TenantID: "ten_acme", WorkspaceID: &workspace, ProjectionID: "messages-v1",
+	}
+	initial, err := checkpointStore.LoadProjectionCheckpoint(t.Context(), projectionScope)
+	if err != nil || initial.Scope.TenantID != projectionScope.TenantID || initial.Position != 0 {
+		t.Fatalf("initial projection checkpoint = %#v/%v", initial, err)
+	}
+	checkpoint := events.ProjectionCheckpoint{
+		Scope: projectionScope, Position: global.Events[1].GlobalPosition,
+		Cursor: global.Next, LastEventID: global.Events[1].EventID,
+	}
+	if err := checkpointStore.CommitProjectionCheckpoint(t.Context(), initial, checkpoint); err != nil {
+		t.Fatalf("commit projection checkpoint: %v", err)
+	}
+	reloaded, err := checkpointStore.LoadProjectionCheckpoint(t.Context(), projectionScope)
+	if err != nil || reloaded.Position != checkpoint.Position || reloaded.Cursor != checkpoint.Cursor ||
+		reloaded.LastEventID != checkpoint.LastEventID {
+		t.Fatalf("reloaded projection checkpoint = %#v/%v", reloaded, err)
+	}
+	if err := checkpointStore.CommitProjectionCheckpoint(t.Context(), initial, checkpoint); !errors.Is(err, events.ErrProjectionCheckpointConflict) {
+		t.Fatalf("stale projection checkpoint commit = %v, want %v", err, events.ErrProjectionCheckpointConflict)
+	}
+
 	connection, err := pool.Acquire(t.Context())
 	if err != nil {
 		t.Fatalf("acquire runtime connection: %v", err)
@@ -189,6 +216,15 @@ INSERT INTO wanwork_im.event_log (
 	page, err := reopenedStore.ReadStreamPage(t.Context(), events.StreamQuery{TenantID: "ten_acme", WorkspaceID: &workspace, StreamID: "task:one", Limit: 10})
 	if err != nil || len(page.Events) != 2 {
 		t.Fatalf("reopened stream page = %#v/%v", page, err)
+	}
+	reopenedCheckpointStore, err := NewProjectionCheckpointStore(reopened)
+	if err != nil {
+		t.Fatalf("new reopened projection checkpoint store: %v", err)
+	}
+	checkpointAfterRestart, err := reopenedCheckpointStore.LoadProjectionCheckpoint(t.Context(), projectionScope)
+	if err != nil || checkpointAfterRestart.Position != checkpoint.Position ||
+		checkpointAfterRestart.LastEventID != checkpoint.LastEventID {
+		t.Fatalf("reopened projection checkpoint = %#v/%v", checkpointAfterRestart, err)
 	}
 
 	// Serializable append admission has one winner for a fresh stream. The loser may surface as a
@@ -341,6 +377,7 @@ func configureEventStoreAuthority(t *testing.T, connection *pgx.Conn, manifest m
 		"conversation_membership_heads", "conversation_membership_snapshots", "conversation_snapshots",
 		"provider_conversation_binding_heads", "provider_conversation_binding_snapshots", "tenant_command_receipts",
 		"event_stream_heads", "event_tenant_heads", "event_log",
+		"event_projection_checkpoints",
 	}
 	qualifiedTables := make([]string, 0, len(readTables))
 	for _, table := range readTables {
@@ -369,7 +406,7 @@ ORDER BY namespace.nspname, relation.relname`)
 		t.Fatalf("list event store relations: %v", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(values) != 26 {
+	if err != nil || len(values) != 27 {
 		t.Fatalf("event store relation count = %d/%v", len(values), err)
 	}
 	return values
@@ -387,7 +424,7 @@ ORDER BY procedure.proname, pg_catalog.pg_get_function_identity_arguments(proced
 		t.Fatalf("list event store functions: %v", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(values) != 6 {
+	if err != nil || len(values) != 7 {
 		t.Fatalf("event store function count = %d/%v", len(values), err)
 	}
 	return values
