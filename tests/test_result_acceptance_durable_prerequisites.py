@@ -6,10 +6,12 @@ import pickle
 import sqlite3
 import traceback
 import unittest
+from contextlib import ExitStack
 from dataclasses import replace
 from unittest.mock import patch
 
 import quantum_entanglement
+import quantum_entanglement._result_artifact_transaction as result_artifact_transaction_module
 from quantum_entanglement._result_acceptance import (
     _RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN,
     _build_scoped_invocation_result_events_from_plan_v2,
@@ -2114,6 +2116,191 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                             operation()
         with self.assertRaisesRegex(RuntimeError, "no longer active"):
             completed._validated(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
+
+    def test_every_result_dml_boundary_rolls_back_the_complete_graph(self) -> None:
+        """A post-DML failure cannot leave a result prefix or terminal CAS behind."""
+
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        table_names = (
+            "events",
+            "artifact_versions",
+            "artifact_blobs",
+            "invocation_result_manifests",
+            "invocation_result_requests",
+            "invocation_result_event_bindings",
+            "invocation_result_receipts",
+            "invocation_result_artifacts",
+            "invocation_result_publications",
+        )
+        before_tables = {
+            table: tuple(
+                tuple(row) for row in self.store._connection.execute(f"SELECT * FROM {table}")
+            )
+            for table in table_names
+        }
+        before_jobs = tuple(
+            tuple(row) for row in self.store._connection.execute("SELECT * FROM invocation_jobs")
+        )
+        before_attempts = tuple(
+            tuple(row)
+            for row in self.store._connection.execute("SELECT * FROM invocation_attempts")
+        )
+
+        def make_fault_patch(label: str, target: str, fail_after: int):
+            calls = [0]
+            if target == "event":
+                original = SQLiteEventStore._insert_with_verified_envelope_in_transaction
+
+                def injected(
+                    *args: object,
+                    _original=original,
+                    _fail_after=fail_after,
+                    _label=label,
+                    **kwargs: object,
+                ) -> object:
+                    calls[0] += 1
+                    result = _original(*args, **kwargs)  # type: ignore[arg-type]
+                    if calls[0] == _fail_after:
+                        raise RuntimeError(f"injected result DML fault: {_label}")
+                    return result
+
+                patch_target = patch.object(
+                    SQLiteEventStore,
+                    "_insert_with_verified_envelope_in_transaction",
+                    side_effect=injected,
+                )
+            elif target == "artifact":
+                original = result_artifact_transaction_module._guarded_execute
+
+                def injected(
+                    *args: object,
+                    _original=original,
+                    _fail_after=fail_after,
+                    _label=label,
+                    **kwargs: object,
+                ) -> object:
+                    sql = args[2]
+                    is_artifact_insert = type(sql) is str and "INSERT INTO main.artifact_" in sql
+                    if is_artifact_insert:
+                        calls[0] += 1
+                    result = _original(*args, **kwargs)  # type: ignore[arg-type]
+                    if is_artifact_insert and calls[0] == _fail_after:
+                        raise RuntimeError(f"injected result DML fault: {_label}")
+                    return result
+
+                patch_target = patch.object(
+                    result_artifact_transaction_module,
+                    "_guarded_execute",
+                    side_effect=injected,
+                )
+            elif target == "row":
+                original = SQLiteEventStore._insert_exact_result_acceptance_row_in_owner_transaction
+
+                def injected(
+                    *args: object,
+                    _original=original,
+                    _fail_after=fail_after,
+                    _label=label,
+                    **kwargs: object,
+                ) -> object:
+                    calls[0] += 1
+                    result = _original(self.store, *args, **kwargs)  # type: ignore[arg-type]
+                    if calls[0] == _fail_after:
+                        raise RuntimeError(f"injected result DML fault: {_label}")
+                    return result
+
+                patch_target = patch.object(
+                    SQLiteEventStore,
+                    "_insert_exact_result_acceptance_row_in_owner_transaction",
+                    side_effect=injected,
+                )
+            else:
+                original = SQLiteEventStore._update_exact_result_acceptance_row_in_owner_transaction
+
+                def injected(
+                    *args: object,
+                    _original=original,
+                    _fail_after=fail_after,
+                    _label=label,
+                    **kwargs: object,
+                ) -> object:
+                    calls[0] += 1
+                    result = _original(self.store, *args, **kwargs)  # type: ignore[arg-type]
+                    if calls[0] == _fail_after:
+                        raise RuntimeError(f"injected result DML fault: {_label}")
+                    return result
+
+                patch_target = patch.object(
+                    SQLiteEventStore,
+                    "_update_exact_result_acceptance_row_in_owner_transaction",
+                    side_effect=injected,
+                )
+            return patch_target, calls
+
+        fault_points = (
+            ("result event", "event", 1),
+            ("terminal event", "event", 2),
+            ("Artifact blob", "artifact", 1),
+            ("Artifact version", "artifact", 2),
+            ("manifest", "row", 1),
+            ("request", "row", 2),
+            ("result binding", "row", 3),
+            ("terminal binding", "row", 4),
+            ("receipt", "row", 5),
+            ("Artifact binding", "row", 6),
+            ("job terminal CAS", "update", 1),
+            ("attempt terminal CAS", "update", 2),
+        )
+        for ordinal, (label, target, fail_after) in enumerate(fault_points, start=1):
+            with self.subTest(boundary=label):
+                patch_target, calls = make_fault_patch(label, target, fail_after)
+
+                with ExitStack() as stack:
+                    stack.enter_context(
+                        patch(
+                            "quantum_entanglement.store.new_id",
+                            side_effect=(
+                                f"result_receipt_fault_{ordinal}",
+                                f"event_result_fault_{ordinal}",
+                                f"event_terminal_fault_{ordinal}",
+                            ),
+                        )
+                    )
+                    stack.enter_context(patch_target)
+                    with self.assertRaisesRegex(RuntimeError, "injected result DML fault"):
+                        with self.store._result_artifact_transaction() as handle:
+                            complete = self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction  # noqa: E501
+                            with complete(handle, prepared):
+                                self.fail("faulted result acceptance unexpectedly completed")
+
+                self.assertEqual(calls[0], fail_after)
+                for table in table_names:
+                    self.assertEqual(
+                        tuple(
+                            tuple(row)
+                            for row in self.store._connection.execute(f"SELECT * FROM {table}")
+                        ),
+                        before_tables[table],
+                        table,
+                    )
+                self.assertEqual(
+                    tuple(
+                        tuple(row)
+                        for row in self.store._connection.execute("SELECT * FROM invocation_jobs")
+                    ),
+                    before_jobs,
+                )
+                self.assertEqual(
+                    tuple(
+                        tuple(row)
+                        for row in self.store._connection.execute(
+                            "SELECT * FROM invocation_attempts"
+                        )
+                    ),
+                    before_attempts,
+                )
 
     def test_completion_readback_accepts_a_shared_preexisting_blob(self) -> None:
         prepared = self.fresh_prepared()
