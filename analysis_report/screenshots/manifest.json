@@ -4,8 +4,8 @@
   "archivedCommit": "f7be4e2222d45d0ed4b408596a91c01d72e8a324",
   "captureDatePolicy": "captureDate is null unless an independently verifiable capture timestamp exists; firstArchivedAt is the earliest Git commit timestamp and is not presented as capture time",
   "format": "quantum-entanglement.research-screenshot-manifest",
-  "lastArchivedCommit": "4791fba93c69f67604fc1eb9b3f82d97bb4b737a",
-  "lastImageArchivedAt": "2026-08-29T04:40:39+08:00",
+  "lastArchivedCommit": "d9cf2083eeb1d2823a3ef3352be5c77668e90610",
+  "lastImageArchivedAt": "2026-08-29T10:47:12+08:00",
   "items": [
     {
       "byteSize": 807190,
@@ -615,14 +615,14 @@
         "The UI is backed by synthetic local fixtures and must not be interpreted as a production provider receipt or real Agent execution"
       ],
       "filename": "35_local_im_acceptance_desktop.png",
-      "firstArchivedAt": "2026-08-29T10:36:36+08:00",
+      "firstArchivedAt": "2026-08-29T10:47:12+08:00",
       "height": 1000,
       "mediaType": "image/png",
       "notForPublicDistribution": true,
       "redactionStatus": "synthetic-local-ui-no-credential",
       "sha256": "32b7b69c4bd425cbee5cd2e0878d03bf2aa8adb0e4a36e20a1e8724fc9213b5b",
       "sourceKind": "quantum-entanglement-local-im-acceptance",
-      "sourceReference": "http://127.0.0.1:18081/demo/im; analysis_report/screenshots/local_im_acceptance_manifest.json; code-baseline:d48108a",
+      "sourceReference": "http://127.0.0.1:18081/demo/im; analysis_report/screenshots/local_im_acceptance_manifest.json; code-baseline:d48108abe8ce9ce50afc4c67798a0eeacdab599f; archived-git:d9cf2083eeb1d2823a3ef3352be5c77668e90610",
       "width": 1440
     },
     {
@@ -637,14 +637,14 @@
         "The UI is backed by synthetic local fixtures and must not be interpreted as a production provider receipt or real Agent execution"
       ],
       "filename": "36_local_im_acceptance_mobile.png",
-      "firstArchivedAt": "2026-08-29T10:36:36+08:00",
+      "firstArchivedAt": "2026-08-29T10:47:12+08:00",
       "height": 844,
       "mediaType": "image/png",
       "notForPublicDistribution": true,
       "redactionStatus": "synthetic-local-ui-no-credential",
       "sha256": "53a26a561f944ca15169d8235a43f362d0c1f166d7d59a3cda79ce6d570adc76",
       "sourceKind": "quantum-entanglement-local-im-acceptance",
-      "sourceReference": "http://127.0.0.1:18081/demo/im; analysis_report/screenshots/local_im_acceptance_manifest.json; code-baseline:d48108a",
+      "sourceReference": "http://127.0.0.1:18081/demo/im; analysis_report/screenshots/local_im_acceptance_manifest.json; code-baseline:d48108abe8ce9ce50afc4c67798a0eeacdab599f; archived-git:d9cf2083eeb1d2823a3ef3352be5c77668e90610",
       "width": 390
     },
     {
