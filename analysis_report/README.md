@@ -85,8 +85,8 @@ digest；trigger replacement/extra-row、storage class、caller mutation 与 exc
 同事务 DML/readback、rollback-only、crash rollback、clean ambiguity classification 与 bounded
 streaming history verification；M4 组合 82 项、全仓 2,639 项、Ruff/Mypy/diff-check 全绿，最终独立
 reviewer 为 0 blocker。随后本地分支完成 opt-in migration 7、atomic result acceptance、Observed/
-Accepted、receipt-bound reconciliation、heartbeat acceptance seam 与 result-only business projection
-候选；下一步是认证作用域、crash/kill/two-process recovery 和 compatibility/rollback。生产 worker、
+Accepted、receipt-bound reconciliation、heartbeat acceptance seam 与 process-bound result-only
+business projection 候选；下一步是认证作用域、crash/kill/two-process recovery 和 compatibility/rollback。生产 worker、
 真实 IM/outbound 均保持关闭。
 完整边界见
 `research/29_reserved_result_event_boundary_evidence.md`、

@@ -82,10 +82,11 @@ The local M7.5 candidate now adds `SQLiteResultProjectionStore` and the
 accepts only strict result evidence plus a matching terminal transition. The projection is
 tenant/workspace/invocation keyed, idempotent, schema-pinned and fail-closed on terminal-before-result
 or result identity conflict; it stores no result body, lease token, credential or framework-table
-authority. Seven focused tests cover complete materialization, scope isolation, rerun idempotency,
-malformed ordering, identity conflict, schema drift and handler table isolation. This is a candidate
-read model only: no authenticated API, production composition, worker dispatch or external IM is
-enabled.
+authority. The wrapper is process-bound and rejects inherited fork instances before SQLite access.
+Eight focused tests cover complete materialization, scope isolation, rerun idempotency, malformed
+ordering, identity conflict, schema drift, handler table isolation and fork rejection. This is a
+candidate read model only: no authenticated API, production composition, worker dispatch or external
+IM is enabled.
 
 The next local gates are authenticated projection scope, crash/kill/two-process recovery and compatibility/
 rollback evidence. The opt-in API can issue process-bound `AcceptedV2` only after a fresh COMMIT ACK;

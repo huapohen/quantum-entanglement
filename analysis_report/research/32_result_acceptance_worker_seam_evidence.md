@@ -2,7 +2,8 @@
 
 > 证据日期：2026-08-29（Asia/Shanghai）  
 > 分支：`mainline_continue_quantum_entanglement`  
-> 当前 worker-seam 提交：`7bed2b6`；后续 result-only projection 候选：`69fbcb6`
+> 当前 worker-seam 提交：`7bed2b6`；result-only projection 候选：`69fbcb6`；projection process
+> binding follow-up：`a014bc5`
 > 远端：`origin/mainline_continue_quantum_entanglement`  
 > Notion 状态：`local_pending`；本地任务完成后批量上传并逐页回读
 

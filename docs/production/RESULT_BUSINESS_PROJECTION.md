@@ -49,7 +49,10 @@ view = projection.read(tenant_id, workspace_id, invocation_id)
 | 时间 | canonical UTC、微秒精度；digest 为小写 SHA-256 |
 | 规模 | identity 文本最多 4 KiB，Artifact 数量最多 256，revision 使用 SQLite 有符号整数边界 |
 
-投影表由模块自有 DDL 创建，并在每次打开时逐列校验 `PRAGMA table_info` 和 `sqlite_master.sql`。
+投影实例在创建时捕获 PID + opaque process epoch；fork/PID drift 后的 `run_once()`、`read()` 或
+`close()` 会在接触 SQLite/lock 前抛出 `ResultProjectionProcessMismatchError`，子进程不会替父进程
+关闭或操作继承的 connection。投影表由模块自有 DDL 创建，并在每次打开时逐列校验
+`PRAGMA table_info` 和 `sqlite_master.sql`。
 任何列、主键、NULLability、CHECK 或表 SQL 漂移都会抛出 `ResultProjectionSchemaError`，不尝试
 猜测迁移。projection offset、lease 和 receipt 表仍由通用 projector 管理；handler 只能使用
 `ProjectionTransaction`，无法获得 event-store connection、文件路径或 framework-table capability。
@@ -76,7 +79,7 @@ view = projection.read(tenant_id, workspace_id, invocation_id)
 - 结果 identity 冲突 fail closed 且保留原投影；
 - projection schema 漂移拒绝；
 - handler trace 不触碰 events、invocation jobs/attempts 或 outbox framework tables；
-- 投影对象 repr 不包含结果正文或 lease token。
+- 投影对象 repr 不包含结果正文或 lease token；真实 fork 子进程在触碰 SQLite 前被拒绝，父进程仍可继续运行。
 
 验证命令：
 
@@ -99,4 +102,3 @@ compatibility/rollback 仍是独立 release gate。
 - 没有完整 result receipt 时，绝不把 succeeded job 猜测为 completed；
 - 该 projection 不创建 outbox/publication，不连接原生 IM，也不改变
   `SERVICE_BOUNDARY.md` 的 outbound 禁止边界。
-

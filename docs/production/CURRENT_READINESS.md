@@ -54,8 +54,8 @@ runtime attempt/result 状态机、durable action receipt 和统一 service life
 测试数据，不能升级为生产凭据入口或真实客户数据处理路径。
 
 另有一个跨领域 P0：当前主线已经实现统一、无锁的 PID + opaque epoch process identity
-foundation，并完成 `SQLiteEventStore` 的独立 process-bound 候选；artifact/projection/revocation
-store、`RequestContextIssuer`、key/secret registry、plugin/runtime、connector 和 composition root
+foundation，并完成 `SQLiteEventStore` 与 result-only projection wrapper 的独立 process-bound 候选；
+artifact/revocation store、通用 projection offset store、`RequestContextIssuer`、key/secret registry、plugin/runtime、connector 和 composition root
 仍未完成同等级迁移。这些对象仍可能在 child 触碰 inherited lock/provider/connection 前继续运行。
 `non-copyable`/`non-pickleable` 不阻止 fork 复制；credential-bearing 或不可信 worker 必须先
 spawn/exec，再在 child 内构造 store、issuer、provider 和 event loop，并且必须发生在 secret load
@@ -181,8 +181,8 @@ event/revision/scope/mention/digest union/state 矩阵由参数化 contract test
   spawn/forkserver、copy/pickle 和 parent-continuity；`SQLiteEventStore` 又独立覆盖全部入口、open
   transaction/clock/migration/iterator fork、transaction context enter/exit、child GC/finalizer、
   exact control、nested clean error graph 和 fresh fork-before-init/spawn/forkserver contention/CAS。
-  但 artifact/projection/revocation store 与 recovery coordinator 的已构造实例仍未绑定 owner，
-  单组件证据不能替代逐组件接入。
+  但 artifact/revocation store、通用 projection offset store 与 recovery coordinator 的已构造实例仍未绑定 owner，
+  单组件证据不能替代逐组件接入；result-only projection wrapper 的 fork 拒绝仅是一个候选组件证据。
 
 晋级标准：任意 admission、claim、dispatch、receiver accept、result accept、ACK 和响应边界崩溃
 后，只能恢复为未发生、已证明成功、明确拒绝或需要人工/自动 reconcile 的 unknown；不得盲目
