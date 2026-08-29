@@ -13,6 +13,7 @@ from quantum_entanglement.invocation_execution import EffectClass
 from quantum_entanglement.invocation_results import (
     EMPTY_ACTION_RECEIPT_SET_DIGEST,
     SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION,
+    ScopedInvocationResultAcceptedV2,
     ScopedInvocationResultArtifactV2,
     ScopedInvocationResultManifestV2,
 )
@@ -134,6 +135,7 @@ class ScopedInvocationResultManifestCodecTests(unittest.TestCase):
                 SCOPED_INVOCATION_RESULT_MANIFEST_SCHEMA_VERSION
             ),
             "ScopedInvocationResultArtifactV2": ScopedInvocationResultArtifactV2,
+            "ScopedInvocationResultAcceptedV2": ScopedInvocationResultAcceptedV2,
             "ScopedInvocationResultManifestV2": ScopedInvocationResultManifestV2,
         }
         self.assertEqual(set(invocation_results_module.__all__), set(expected))
