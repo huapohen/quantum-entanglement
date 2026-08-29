@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,6 +114,69 @@ class ResultBackupTests(unittest.TestCase):
                 self.assertEqual(reconciled.observed, observed)
             finally:
                 restored_store.close()
+
+    def test_nonempty_restore_reopens_and_reconciles_in_a_clean_process(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.sqlite3"
+            backup = root / "backup.sqlite3"
+            restored = root / "restored.sqlite3"
+            self._create_active_source(source)
+            create_result_backup(
+                source,
+                backup,
+                clock=lambda: "2026-08-29T12:00:00.000000Z",
+            )
+            restore_result_backup(backup, restored)
+
+            source_root = Path(__file__).resolve().parents[1]
+            child = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    """
+import json
+import sys
+from quantum_entanglement.store import SQLiteEventStore
+
+store = SQLiteEventStore(sys.argv[1], enable_result_acceptance_schema=True)
+try:
+    identity = store._connection.execute(
+        \"SELECT tenant_id, workspace_id, invocation_id FROM invocation_result_receipts\"
+    ).fetchone()
+    if identity is None:
+        raise RuntimeError(\"restored result receipt is missing\")
+    reconciliation = store.reconcile_scoped_invocation_result(
+        identity[\"tenant_id\"], identity[\"workspace_id\"], identity[\"invocation_id\"]
+    )
+    if reconciliation is None:
+        raise RuntimeError(\"clean-process reconciliation returned no result\")
+    observed_after = store.read_scoped_invocation_result_observed_v2(
+        identity[\"tenant_id\"], identity[\"workspace_id\"], identity[\"invocation_id\"]
+    )
+    if reconciliation.observed != observed_after:
+        raise RuntimeError(\"clean-process reconciliation did not preserve observation\")
+    print(json.dumps({\"reconciliation\": reconciliation.outcome.value, \"stable\": True}))
+finally:
+    store.close()
+""",
+                    str(restored),
+                ],
+                cwd=source_root,
+                env={
+                    **os.environ,
+                    "PYTHONPATH": str(source_root / "src"),
+                },
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            self.assertEqual(child.returncode, 0, child.stderr)
+            self.assertEqual(
+                json.loads(child.stdout),
+                {"reconciliation": "reconciled", "stable": True},
+            )
 
     def test_manifest_round_trip_is_canonical_and_tamper_evident(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
