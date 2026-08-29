@@ -425,6 +425,18 @@ M4 仍不包含 migration 7 注册、Atomic Result Writer、receipt/event/task/a
 `ObservedV2`、`AcceptedV2`、worker 或真实 IM outbound；详细证据见
 [`31_inactive_result_schema_artifact_transaction_evidence.md`](../../analysis_report/research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
+随后在独立分支 `mainline_continue_quantum_entanglement` 推进的 E3 M5 私有 checkpoint（最近
+推送 HEAD `3847594`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
+manifest/request/receipt、Artifact blob/version/binding、job 与 attempt terminal CAS 组成同一
+owner transaction；每个结果 DML 边界均有故障注入并证明整图回滚；commit ACK-loss 会 poison
+store 并保留已提交图，确认 rollback 则不留前缀。新增的 capability-free `ObservedV2` 路径只
+读取固定 raw projections，重算完整 receipt/Artifact/event/job/attempt 图，不读明文 lease、不
+做 DML、不签发 fresh capability，并以 `partial | drift | orphan` 稳定分类异常。由于 migration 7
+仍是 inactive candidate，普通 file-store reopen 目前会被 schema-version gate 拒绝；迁移注册、
+reopen/recovery、Accepted/public writer、publication 和 worker 仍未开启。运行合同见
+[`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md)，该段证据必须在 migration 7 激活后
+重新执行正常重开矩阵，不能把当前同进程验证当成生产恢复证明。
+
 仍缺：
 
 - 完整的 supported OS/SQLite 组合矩阵；当前 full-suite CI 只覆盖 GitHub Linux 的 Python
@@ -471,11 +483,12 @@ composition。现有截图和一次浏览器成功不能替代可信认证、权
 4. 上述批准与 full gates 完成后，才执行 health/read/dedupe/resume；Level B 只生成 observation，
    不驱动 Agent、tool、browser、subprocess 或 outbound；
 5. E3 M1 private stored-event envelope codec、M2 reserved result/terminal event fence、M3
-   private store adapter 与 M4 inactive result schema/Artifact owner transaction/private backup
-   topology 已完成；下一步做 M5 Atomic Result Acceptance Writer，仍不注册 migration 7、不开放
+   private store adapter、M4 inactive result schema/Artifact owner transaction/private backup
+   topology 与 M5 私有 atomic result graph/`ObservedV2` checkpoint 已完成；下一步先完成
+   migration 7 activation、正常 file reopen、ACK-loss reconcile 与 crash/kill evidence，仍不开放
    public result writer；
-6. 在 M1–M4 之上把 accepted result/artifact、attempt 和 terminal task state 组成单一原子验收
-   边界；没有 result receipt 时绝不把 succeeded job 猜成 completed。默认关闭的
+6. 在 M5 的同一原子图之上补齐 receipt-bound recovery，再决定是否签发 `AcceptedV2`；没有
+   result receipt 时绝不把 succeeded job 猜成 completed。默认关闭的
    [`heartbeat worker 合同`](./HEARTBEAT_SUPERVISED_PURE_WORKER.md)保持不变；
 7. 完成 receipt-bound crash/kill recovery 后，才启用只接受 exact first-claim authority 的
    heartbeat-supervised pure/fake worker；

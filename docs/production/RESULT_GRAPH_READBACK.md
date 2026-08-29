@@ -1,9 +1,12 @@
 # Result Graph Readback Contract (M5 checkpoint)
 
-Status: implemented as a private pre-commit verifier; migration 7, public result writer,
-`AcceptedV2`, `ObservedV2` recovery, publication and worker dispatch remain disabled.
+Status: implemented as a private pre-commit verifier plus a capability-free `ObservedV2`
+readback path. Migration 7, the public result writer, `AcceptedV2`, publication and worker
+dispatch remain disabled. The normal store reopen path is deliberately blocked while migration
+7 is inactive; same-process readback is the only executable observation path in this checkpoint.
 
-This document records the local checkpoint delivered by commit `da7759a`. It is the source of
+This document records the local checkpoint delivered by commits `3847594` and the unmerged
+working tree on branch `mainline_continue_quantum_entanglement`. It is the source of
 truth during the remaining implementation work. Notion synchronization is intentionally deferred
 until a larger checkpoint is complete; the final upload must include this file and a page-by-page
 readback.
@@ -84,6 +87,27 @@ invalidated when its context exits. It is not exported from the package root and
 accepted result or publication authority. The completed plan is yielded only while this readback
 context is still active.
 
+## Capability-free observation
+
+`SQLiteEventStore._read_scoped_invocation_result_observed_v2(...)` reconstructs a committed
+receipt from fixed raw projections and then runs the same complete graph verifier used by the
+writer. It requires only tenant, workspace and invocation identity; it never reads a plaintext
+lease, returns a write plan, performs DML, or creates a publication. It returns `None` only when
+the requested scope has no result graph. A durable prefix, orphan, malformed row, digest mismatch,
+event drift, Artifact drift or terminal-state mismatch raises the stable quarantine signal with
+category `partial`, `drift` or `orphan`.
+
+The transaction-control seam is also centralized in `_execute_transaction_control(...)`. This
+allows deterministic evidence for both commit outcomes: a commit followed by a lost ACK poisons
+the store and preserves the committed graph for reconciliation; a commit failure whose rollback
+is confirmed reports a rolled-back transaction and leaves no result or Artifact prefix. No control
+exception graph is copied into the public error.
+
+Migration 7 is still an inactive candidate and is intentionally not in the active legacy registry.
+Consequently a file database containing the rehearsal schema cannot be opened by an ordinary
+`SQLiteEventStore` instance yet; activating migration 7, adding its upgrade/rollback contract,
+and then proving reopen/recovery is a separate release gate, not something this checkpoint hides.
+
 ## Tests and release gate
 
 The focused durable-prerequisite suite covers:
@@ -92,6 +116,9 @@ The focused durable-prerequisite suite covers:
 - pre-existing shared blob reuse;
 - narration-only (zero Artifact) results;
 - receipt drift injected during readback, proving full rollback;
+- capability-free `ObservedV2` complete readback with zero DML and no lease material;
+- empty-scope observation, partial/drift quarantine, and inactive-migration reopen gate;
+- commit ACK-loss preservation/poisoning and confirmed-rollback cleanup;
 - the existing graph path, which short-circuits without writes or terminal CAS;
 - existing event, receipt, persistence and CAS fault fences.
 
@@ -112,11 +139,13 @@ token, Feishu/WeCom message, webhook, or external publication is used by this st
 
 ## Next local stages
 
-1. Add explicit partial/drift graph quarantine classification and stable diagnostics without
-   exposing lease material.
-2. Add fault injection at each result DML, before/after commit, and acknowledgement-loss path.
-3. Add read-only `ObservedV2` replay/reopen/recovery support; keep fresh `AcceptedV2` capability
-   separate from observations.
-4. Re-run the full release gates and update the local roadmap/checkpoint ledger.
+1. Keep the current private writer, transaction outcome classification and same-process
+   `ObservedV2` path isolated; do not register migration 7 or expose a public result API.
+2. Design and review migration-7 activation, forward/backward compatibility, normal file reopen,
+   ACK-loss reconciliation and backup/restore evidence as one migration gate.
+3. Add crash/kill/reopen/replay tests around the result receipt, Artifact rows, job/attempt CAS and
+   worker recovery before introducing `AcceptedV2` or any publication path.
+4. Re-run the full release gates and update the local roadmap/checkpoint ledger after each small
+   commit; retain the branch and GitHub backup as the reviewable source.
 5. Only after the local checkpoint is stable, upload the complete Markdown bundle to Notion and
    read every updated page back before considering the remote copy synchronized.

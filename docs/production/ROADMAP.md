@@ -31,6 +31,23 @@ Passing unit tests alone is necessary but not sufficient.
 - Every phase ends in a version bump, changelog, release checklist, and signed-off evidence.
 - The default branch must remain runnable after every commit.
 
+## Current E3 result-authority checkpoint (2026-08-29)
+
+The independent branch `mainline_continue_quantum_entanglement` currently carries a private M5
+checkpoint (latest pushed HEAD `3847594`). It has a single-owner atomic result graph for result and
+terminal events, manifest/request/receipt, Artifact blob/version/binding, and succeeded job/attempt
+CAS; fault injection covers every result DML boundary and both confirmed-rollback and commit-ACK-loss
+outcomes. A capability-free `ObservedV2` readback reconstructs and verifies the graph without a
+plaintext lease, DML, publication or fresh write authority, and classifies unusable graphs as
+`partial`, `drift` or `orphan`.
+
+This is still an inactive migration-7 rehearsal. A normal file-store reopen is intentionally refused
+until migration activation and compatibility evidence are delivered. Therefore this checkpoint is
+not a production service, does not enable `AcceptedV2`, worker dispatch, publication, real IM or
+external outbound, and must not be counted as a closed Gate A–E. The next release-blocking work is
+migration activation plus reopen/ACK-loss/crash recovery evidence, followed by the receipt-bound
+worker gate.
+
 ## Phase 0 — validated kernel (`0.1.x`, complete)
 
 Runnable boundary: dependency-free, single-process coordination kernel and local demo.
