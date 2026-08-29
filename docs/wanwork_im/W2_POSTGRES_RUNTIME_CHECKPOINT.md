@@ -86,6 +86,18 @@ readback 两侧；只有两侧都精确匹配才返回 `replayed + ResolvedAfter
 该增量仍不等于 callback authenticity、Clerk trusted context、message/mention/Agent 路由或真实 RongCloud
 outbound 已完成；真实 provider 继续关闭。Notion 继续遵循本地优先策略，待阶段收口后批量同步并回读。
 
+### 3.0.2 Inbox function semantics hardening（本地增量）
+
+migration `0010_native_im_inbox_semantics` 在不修改已发布的 0009 文件与 checksum 的前提下替换同签名
+admission function：拒绝全零摘要、控制字符 identity、inline payload digest 与 bytes 不一致、非法
+reference shape，并保护 `delivery_count` 上限。v9 的历史 function digest 与 v10 的新 digest 分开验证，
+因此空库升级、重复 Apply 与旧 postcondition 不会被静默放宽。详细报告见
+[`analysis_report/research/48_postgres_inbox_semantics_hardening.md`](../../analysis_report/research/48_postgres_inbox_semantics_hardening.md)。
+
+本地 PostgreSQL 18.6 的 migration 全包及毒性 payload 正负向测试已通过；这只证明 disposable 数据库
+合同，不等于 production migration/cutover。真实 provider、Clerk 和 outbound 仍保持关闭，Notion 仍待
+本地阶段收口后批量同步。
+
 ### 3.1 Connection policy
 
 - URL 必须显式携带 user、host/Unix socket、port、database、sslmode；

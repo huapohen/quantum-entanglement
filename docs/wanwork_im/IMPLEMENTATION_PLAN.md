@@ -131,6 +131,9 @@ function-only/exact-access 与 attested runtime 的历史检查点。
 - `NativeIMAtomicStore` 将 verified inbox receipt 与 canonical event append 绑定到同一 PostgreSQL
   transaction，并在 commit-unknown 时从 fresh connection 同时 readback；replayed inbox 缺 event 时
   fail closed，不按调用方 revision 自动修复；
+- migration `0010_native_im_inbox_semantics` 在不改写 0009 checksum 的前提下强化 inbox function 的
+  identity、inline payload digest、reference shape、全零摘要和 delivery counter 边界；v9/v10
+  postcondition digest 分代验证，避免升级后历史检查点失效；
 - UnitOfWork 生产构造器只接 attested pool；`Pool.Acquire` 是有 guard 但仍能执行 runtime-role SQL 的
   trusted low-level escape hatch，不是 tenant/action authority；API runtime 监听前必须 Ready，业务 route
   effect 前有 dependency gate；
