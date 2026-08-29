@@ -475,6 +475,8 @@ subject drift 与 forged dependency 的拒绝，但这仍不是生产 API。proj
 、[`36_result_restore_projection_replay_evidence.md`](../../analysis_report/research/36_result_restore_projection_replay_evidence.md)。
 当前 HEAD 的全仓 pytest 回归为 2,946 项、退出码 0；记录见
 [`37_mainline_regression_checkpoint.md`](../../analysis_report/research/37_mainline_regression_checkpoint.md)。
+结果接受提交前 11 个真实 `SIGKILL` 边界的矩阵证据见
+[`38_result_acceptance_process_kill_matrix_evidence.md`](../../analysis_report/research/38_result_acceptance_process_kill_matrix_evidence.md)。
 
 仍缺：
 
