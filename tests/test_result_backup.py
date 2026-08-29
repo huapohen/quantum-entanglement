@@ -83,6 +83,35 @@ class ResultBackupTests(unittest.TestCase):
             finally:
                 connection.close()
 
+            restored_store = SQLiteEventStore(
+                str(restored),
+                enable_result_acceptance_schema=True,
+            )
+            try:
+                identity = restored_store._connection.execute(
+                    """
+                    SELECT tenant_id, workspace_id, invocation_id
+                    FROM invocation_result_receipts
+                    """
+                ).fetchone()
+                self.assertIsNotNone(identity)
+                assert identity is not None
+                reconciled = restored_store.reconcile_scoped_invocation_result(
+                    identity["tenant_id"],
+                    identity["workspace_id"],
+                    identity["invocation_id"],
+                )
+                self.assertIsNotNone(reconciled)
+                assert reconciled is not None
+                observed = restored_store.read_scoped_invocation_result_observed_v2(
+                    identity["tenant_id"],
+                    identity["workspace_id"],
+                    identity["invocation_id"],
+                )
+                self.assertEqual(reconciled.observed, observed)
+            finally:
+                restored_store.close()
+
     def test_manifest_round_trip_is_canonical_and_tamper_evident(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.sqlite3"
