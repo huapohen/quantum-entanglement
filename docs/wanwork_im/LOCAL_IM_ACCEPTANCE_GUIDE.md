@@ -50,6 +50,11 @@ curl --fail \
 包含 Agent actor；取消勾选则创建只含真人的普通群。此处复用 `CreateConversation` 的成员边界，
 不是把 Agent 偷塞进 UI 状态。
 
+也可以在任意由当前用户管理的普通群中点击 Agent Store 的“邀请到当前群”。后端会校验 active
+membership、`manage_members` 权限、已知 Agent actor 和 provider group，再以
+`conversationId + idempotencyKey` 记录动作；重复请求返回 `replayed=true`，已存在成员不会重复
+写入。生产实现必须把该记录迁移到 tenant-bound UoW 和 durable receipt。
+
 当前回复是确定性的本地验收结果，不调用大模型。这里验证的是身份、Agent Store、群拓扑、ACL、幂等和 provider 边界；模型执行和真实 Clerk/融云网络接入属于后续生产适配阶段。
 
 ## 2.1 本地事件日志恢复验收（可选）

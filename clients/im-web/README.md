@@ -51,6 +51,7 @@ npm run dev
 
 - 左侧工作空间与群列表；
 - 新建群时可勾选邀请当前已安装 Agent（成员 ID 由 Agent Store API 投影提供）；
+- 在当前已打开群里点击“邀请到当前群”，通过受保护的成员动作完成幂等拉群；
 - 从认证 Agent Store API 读取 Agent 定义、release、Trust Passport 和 installation 投影；
 - 新建普通群；
 - 普通文本发送、编辑、撤回和 reload 后的消息 projection；

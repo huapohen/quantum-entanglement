@@ -100,6 +100,7 @@ export type MentionResult = {
 };
 
 export type ConversationResult = { conversation: Conversation; replayed: boolean };
+export type AddMembersResult = { conversation: Conversation; addedActorIds: string[]; replayed: boolean };
 export type MessageResult = { message: Message; replayed: boolean };
 export type MutateMessageResult = MessageResult;
 
@@ -144,6 +145,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ type: "group", name, memberActorIds, idempotencyKey }),
     }),
+  addMembers: (conversationId: string, memberActorIds: string[], idempotencyKey: string) =>
+    request<AddMembersResult>(
+      `/api/v1/demo/im/conversations/${encodeURIComponent(conversationId)}/members`,
+      {
+        method: "POST",
+        body: JSON.stringify({ memberActorIds, idempotencyKey }),
+      },
+    ),
   sendMessage: (conversationId: string, text: string) =>
     request<MessageResult>(
       `/api/v1/demo/im/conversations/${encodeURIComponent(conversationId)}/messages`,

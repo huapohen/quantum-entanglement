@@ -82,6 +82,7 @@ type Service struct {
 	conversations       map[im.ConversationID]*localConversation
 	conversationOrder   []im.ConversationID
 	conversationCreates map[string]createRecord
+	memberUpdates       map[string]memberUpdateRecord
 	cursorNamespaceHex  string
 }
 
@@ -182,7 +183,8 @@ func New() (*Service, error) {
 		},
 		conversations:       map[im.ConversationID]*localConversation{parent.Ref().ConversationID(): parentRecord},
 		conversationOrder:   []im.ConversationID{parent.Ref().ConversationID()},
-		conversationCreates: make(map[string]createRecord), cursorNamespaceHex: hex.EncodeToString(cursorNamespace[:]),
+		conversationCreates: make(map[string]createRecord), memberUpdates: make(map[string]memberUpdateRecord),
+		cursorNamespaceHex: hex.EncodeToString(cursorNamespace[:]),
 	}, nil
 }
 

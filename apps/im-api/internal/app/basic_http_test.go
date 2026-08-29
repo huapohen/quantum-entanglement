@@ -78,6 +78,31 @@ func TestLocalDemoBasicConversationAndMessageHTTPAPI(t *testing.T) {
 		!strings.Contains(messages.Raw, `"text":""`) || !strings.Contains(messages.Raw, `"hasMore":false`) {
 		t.Fatalf("message page = %s", messages.Raw)
 	}
+	memberGroup := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/conversations", `{
+		"type":"group",
+		"name":"HTTP 成员动作群",
+		"memberActorIds":[],
+		"idempotencyKey":"http/create/members/1"
+	}`, "Bearer "+localdemo.LocalBearerToken)
+	if memberGroup.Code != httpapi.CodeOK {
+		t.Fatalf("member group create response = %s", memberGroup.Raw)
+	}
+	memberConversationID := decodeConversationID(t, memberGroup.Raw)
+	added := localDemoRequest(t, server, http.MethodPost,
+		"/api/v1/demo/im/conversations/"+memberConversationID+"/members",
+		`{"memberActorIds":["agt_local_research"],"idempotencyKey":"http/members/add/1"}`,
+		"Bearer "+localdemo.LocalBearerToken)
+	if added.Code != httpapi.CodeOK || !strings.Contains(added.Raw, `"addedActorIds":["agt_local_research"]`) ||
+		!strings.Contains(added.Raw, `"memberActorIds":["agt_local_research","usr_local_demo"]`) {
+		t.Fatalf("member add response = %s", added.Raw)
+	}
+	addedReplay := localDemoRequest(t, server, http.MethodPost,
+		"/api/v1/demo/im/conversations/"+memberConversationID+"/members",
+		`{"memberActorIds":["agt_local_research"],"idempotencyKey":"http/members/add/1"}`,
+		"Bearer "+localdemo.LocalBearerToken)
+	if addedReplay.Code != httpapi.CodeOK || !strings.Contains(addedReplay.Raw, `"replayed":true`) {
+		t.Fatalf("member add replay response = %s", addedReplay.Raw)
+	}
 	unknown := localDemoRequest(t, server, http.MethodGet,
 		"/api/v1/demo/im/conversations/cnv_missing/messages", "", "Bearer "+localdemo.LocalBearerToken)
 	if unknown.Code != httpapi.CodeNotFound {

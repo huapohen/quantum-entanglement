@@ -37,6 +37,7 @@ export function App() {
   const [includeAgent, setIncludeAgent] = useState(true);
   const [messageText, setMessageText] = useState("");
   const [instruction, setInstruction] = useState("");
+  const [memberAction, setMemberAction] = useState("");
 
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId),
@@ -153,6 +154,29 @@ export function App() {
       const result = await api.mention(newMessageId(), text);
       setMention(result);
       setInstruction("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function inviteAgent() {
+    if (!selectedConversationId) return;
+    const installedAgent = agents.find((agent) => agent.installationStatus === "active");
+    if (!installedAgent) return;
+    setLoading(true);
+    setError("");
+    setMemberAction("");
+    try {
+      const result = await api.addMembers(
+        selectedConversationId,
+        [installedAgent.agentActorId],
+        `web/members/${crypto.randomUUID()}`,
+      );
+      setMemberAction(result.addedActorIds.length > 0 ? `已邀请 ${installedAgent.name}` : `${installedAgent.name} 已在群中`);
+      const page = await api.conversations();
+      setConversations(page.conversations);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -302,8 +326,16 @@ export function App() {
                     数据路线：{agent.dataRoutes.map((route) => `${route.name} → ${route.destinations.join(", ")}`).join("；") || "无"}
                   </div>
                   <div className="mt-1 text-slate-500">Trust Passport：{agent.attestations.length} 项审阅声明 · {agent.passportStatus}</div>
+                  <button
+                    className="button-secondary mt-3 w-full"
+                    onClick={() => void inviteAgent()}
+                    disabled={loading || !selectedConversationId || agent.installationStatus !== "active"}
+                  >
+                    邀请到当前群
+                  </button>
                 </div>
               ))}
+              {memberAction && <div role="status" className="rounded-lg border border-cyan/20 bg-cyan/5 px-3 py-2 text-xs text-cyan">{memberAction}</div>}
             </div>
           </section>
 

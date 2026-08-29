@@ -81,6 +81,41 @@ func TestServiceAgentStoreRejectsWrongToken(t *testing.T) {
 	}
 }
 
+func TestServiceAddsInstalledAgentToExistingGroupIdempotently(t *testing.T) {
+	t.Parallel()
+	service, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.CreateConversation(context.Background(), LocalBearerToken, CreateConversationInput{
+		Type: "group", Name: "成员动作验收群", IdempotencyKey: "test/members/create",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.AddMembers(context.Background(), LocalBearerToken, created.Conversation.ID, AddMembersInput{
+		MemberActorIDs: []string{"agt_local_research"}, IdempotencyKey: "test/members/add/1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Replayed || len(first.AddedActorIDs) != 1 || first.AddedActorIDs[0] != "agt_local_research" ||
+		len(first.Conversation.MemberActorIDs) != 2 {
+		t.Fatalf("first member update = %#v", first)
+	}
+	replay, err := service.AddMembers(context.Background(), LocalBearerToken, created.Conversation.ID, AddMembersInput{
+		MemberActorIDs: []string{"agt_local_research"}, IdempotencyKey: "test/members/add/1",
+	})
+	if err != nil || !replay.Replayed || len(replay.AddedActorIDs) != 1 {
+		t.Fatalf("member update replay = %#v, %v", replay, err)
+	}
+	if _, err := service.AddMembers(context.Background(), LocalBearerToken, created.Conversation.ID, AddMembersInput{
+		MemberActorIDs: []string{"agt_local_research"}, IdempotencyKey: "test/members/add/1-different",
+	}); err != nil {
+		t.Fatalf("already-present member with new key should be a no-op: %v", err)
+	}
+}
+
 func TestServiceRejectsAuthenticationValidationAndMessageDrift(t *testing.T) {
 	t.Parallel()
 	service, err := New()
