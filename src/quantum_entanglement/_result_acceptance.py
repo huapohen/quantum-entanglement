@@ -32,6 +32,8 @@ from .invocation_results import (
 class _ResultAcceptanceSchemaUnavailableError(RuntimeError):
     """The inactive result schema is absent or not exact for private M5 work."""
 
+    code = "result_acceptance_disabled"
+
 
 class _ResultAcceptanceConflictError(RuntimeError):
     """A durable identity or fresh lease prerequisite differs from the request."""

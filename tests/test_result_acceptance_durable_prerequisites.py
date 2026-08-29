@@ -64,7 +64,6 @@ from quantum_entanglement.invocation_results import (
 )
 from quantum_entanglement.protocol import TaskStatus
 from quantum_entanglement.store import (
-    ResultAcceptanceDisabledError,
     SQLiteEventStore,
     _CompletedFreshResultAcceptancePlanV2,
     _InsertedFreshResultAcceptancePlanV2,
@@ -2453,7 +2452,7 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
 
     def test_public_observed_result_readback_is_feature_off_by_default(self) -> None:
         before_changes = self.store._connection.total_changes
-        with self.assertRaises(ResultAcceptanceDisabledError) as captured:
+        with self.assertRaises(_ResultAcceptanceSchemaUnavailableError) as captured:
             self.store.read_scoped_invocation_result_observed_v2(
                 "tenant-observation-disabled",
                 "workspace-observation-disabled",

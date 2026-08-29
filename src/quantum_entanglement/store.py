@@ -273,18 +273,6 @@ class InvocationStartTransactionError(RuntimeError):
         super().__init__("invocation start transaction was rolled back")
 
 
-class ResultAcceptanceDisabledError(RuntimeError):
-    """Raised when the private result-schema opt-in is not enabled for this store."""
-
-    code = "result_acceptance_disabled"
-
-    def __init__(self) -> None:
-        super().__init__(
-            "result acceptance observation is disabled until the result schema is explicitly "
-            "enabled"
-        )
-
-
 class EventStorePoisonedError(EventStoreIntegrityError):
     """Raised after an ambiguous transaction quarantines this store instance."""
 
@@ -5178,7 +5166,10 @@ class SQLiteEventStore:
         workspace_snapshot = _caller_invocation_identity(workspace_id, "workspace_id")
         invocation_snapshot = _caller_invocation_identity(invocation_id, "invocation_id")
         if not self._result_acceptance_schema_enabled:
-            raise ResultAcceptanceDisabledError() from None
+            raise _ResultAcceptanceSchemaUnavailableError(
+                "result acceptance observation is disabled until the result schema is explicitly "
+                "enabled"
+            ) from None
         return self._read_scoped_invocation_result_observed_v2(
             tenant_snapshot,
             workspace_snapshot,
