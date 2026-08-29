@@ -1,0 +1,84 @@
+{
+  "format": "quantum-entanglement.report-sync-bundle",
+  "version": 1,
+  "createdAt": "2026-08-29T12:20:50+08:00",
+  "source": {
+    "branch": "dev_wanwork_quantum_entanglement",
+    "head": "991b5ff552b975b6c3026532731b8747d6fcb20e",
+    "remote": "https://github.com/huapohen/quantum-entanglement.git",
+    "remoteRef": "refs/heads/dev_wanwork_quantum_entanglement"
+  },
+  "syncDecision": {
+    "notion": "local_pending",
+    "yuque": "local_pending",
+    "feishuAndWeCom": "read-only-no-send",
+    "reason": "Batch remote knowledge-base synchronization only after the local code, tests, reports and evidence for this stage are closed."
+  },
+  "changes": [
+    {
+      "commit": "9dbed14e85e09cf133c49ab8b1f5b8ba49708732",
+      "message": "docs(im): archive basic conversation acceptance evidence"
+    },
+    {
+      "commit": "9f412dd8cd1a8f981cde0b22718521be3cf6bbcd",
+      "message": "docs(evidence): seal basic IM archive metadata"
+    },
+    {
+      "commit": "043e413dbff6d14ddfe04e78e9d35c30311a376b",
+      "message": "feat(events): add crash-recoverable local file store"
+    },
+    {
+      "commit": "991b5ff552b975b6c3026532731b8747d6fcb20e",
+      "message": "docs(events): record local durable file checkpoint"
+    }
+  ],
+  "localSources": [
+    {
+      "path": "analysis_report/README.md",
+      "sha256": "32128e2de950a54e1e29c0c65aaa65ffb1d038cb4bb3fd4e7295aafaf643b3a0",
+      "targetPageKey": "project-home",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/research/39_basic_im_conversation_message_checkpoint.md",
+      "sha256": "2fe5f0075b1015b5b22ad31fda71e4e106ca23b2786d4fba1db70fa5618fd802",
+      "targetPageKey": "research-39",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/research/40_durable_file_event_store_checkpoint.md",
+      "sha256": "4a249a7789db4efa46bd860bea3f5c19f0116d3dda1ad5dc35ba029e1cf387cc",
+      "targetPageKey": "research-40",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/screenshots/manifest.json",
+      "sha256": "f23f1a77efdd1502c49260ca60bf289870c6a6c0a405dd515b4b8a99bb56208b",
+      "targetPageKey": "screenshot-evidence",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/screenshots/local_im_basic_acceptance_manifest.json",
+      "sha256": "9b9fb5fefb40408b41b2ac007c8db7a0b836bf7e297c038fa94467a7d8d54475",
+      "targetPageKey": "screenshot-evidence",
+      "status": "local_pending"
+    },
+    {
+      "path": "docs/wanwork_im/ARCHITECTURE.md",
+      "targetPageKey": "wanwork-im-architecture",
+      "status": "local_pending"
+    },
+    {
+      "path": "docs/wanwork_im/LOCAL_IM_ACCEPTANCE_GUIDE.md",
+      "targetPageKey": "local-im-acceptance-guide",
+      "status": "local_pending"
+    }
+  ],
+  "verification": {
+    "goTestRace": "passed: go test -race ./...",
+    "goVet": "passed: go vet ./...",
+    "jsonAndWhitespace": "passed: jq empty analysis_report/screenshots/manifest.json && git diff --check",
+    "notionLiveWrite": false,
+    "notionLiveReadback": false
+  }
+}
