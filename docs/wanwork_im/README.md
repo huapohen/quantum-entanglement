@@ -33,6 +33,8 @@
   function-only write 与 exact access 的前序工程检查点。
 - [RESEARCH_COVERAGE.md](RESEARCH_COVERAGE.md)：`2output` 全部 40 份 Markdown 的行数、摘要、角色和处置。
 - [RESEARCH_TRACEABILITY.md](RESEARCH_TRACEABILITY.md)：用户调研快照、采纳/拒绝决策与从证据到验收的映射。
+- [MULTI_PLATFORM_STATUS.md](MULTI_PLATFORM_STATUS.md)：Web、桌面、iOS/iPadOS、Android、鸿蒙的当前
+  交付矩阵、可体验范围与原生客户端路线。
 
 当前 approval policy control-store 代码证据基线为 `16d66b6`，深度报告与可视化为：
 
