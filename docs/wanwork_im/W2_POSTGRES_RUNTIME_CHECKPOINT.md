@@ -54,6 +54,18 @@ GOTOOLCHAIN=local go run ./apps/im-api/cmd/im-migrate
 
 ## 3. 当前已交付边界
 
+### 3.0 Durable native IM inbox admission（本地增量）
+
+当前分支已增加 PostgreSQL migration `0009_native_im_inbox` 与 runtime-only
+`NativeIMInboxStore`。它只负责 verified envelope 进入平台后的 digest-bound transport 去重：同一
+`tenant/workspace/provider/channel/eventId` 加相同 event/payload digest 返回 `replayed`，digest 漂移
+返回冲突；RLS、function-only writer 和完整 row readback 已在本机 PostgreSQL 18.6 验证。对应证据为
+`analysis_report/research/45_postgres_native_im_inbox_implementation.md`，当前 `local_pending`。
+
+这不等于 provider callback 已认证，也不等于消息/mention/Agent 执行已接通；strict verified envelope、
+Clerk trusted context、event bridge、outbox/action receipt、commit-unknown/reconcile 和真实融云仍为
+NO-GO。Notion 暂不写入，待本地阶段收口后批量同步并回读。
+
 ### 3.1 Connection policy
 
 - URL 必须显式携带 user、host/Unix socket、port、database、sslmode；
@@ -220,7 +232,8 @@ remote TLS、rotation 或 production promotion 已完成的证据。
 27. `test(im): prove event outbox crash reopen kill-9 restore and rebuild`
 28. `feat/test(im): freeze zero-network outbound-disabled provider contract and fake`
 29. `feat/test(im): persist agent_thread message and independent ACL after durable gate`
-30. `feat/test(im): add durable mention inbox and exact dedupe`
+30. `feat/test(im): add durable mention inbox and exact dedupe`（通用 digest-bound native IM inbox 已先由
+    `0c9cbac`/`5248a0a` 交付；verified envelope→event/mention bridge 仍未完成）
 31. `feat/test(im): dispatch one mention deterministically through the fake`
 32. `feat/test(im): issue Go to Python single-use narrow authorization`
 33. `test(im): inject duplicate out-of-order ACK-loss and crash end to end`

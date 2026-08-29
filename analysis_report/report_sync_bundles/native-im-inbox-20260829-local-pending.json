@@ -1,0 +1,44 @@
+{
+  "format": "quantum-entanglement.report-sync-bundle",
+  "version": 1,
+  "createdAt": "2026-08-29T17:30:00+08:00",
+  "source": {
+    "branch": "dev_wanwork_quantum_entanglement",
+    "head": "5248a0ad65e3db238ca03495f9252b9990dc7d32",
+    "remote": "https://github.com/huapohen/quantum-entanglement.git",
+    "remoteRef": "refs/heads/dev_wanwork_quantum_entanglement"
+  },
+  "syncDecision": {
+    "notion": "local_pending",
+    "yuque": "local_pending",
+    "feishuAndWeCom": "read-only-no-send",
+    "reason": "Notion writes are deferred to one batch after local code, tests, reports and evidence for the stage are closed; this avoids remote round-trip and rate-limit overhead during implementation."
+  },
+  "changes": [
+    {"commit": "3b933c330d4498ea495c96034b31c05e9ea95797", "message": "feat(events): add digest-bound inbox admission contract"},
+    {"commit": "0c9cbac02f1a9e8cb0e38d94d7d4e34af4094808", "message": "feat(postgres): add durable native IM inbox migration"},
+    {"commit": "5248a0ad65e3db238ca03495f9252b9990dc7d32", "message": "feat(postgres): add native IM inbox store adapter"}
+  ],
+  "localSources": [
+    {"path": "analysis_report/README.md", "sha256": "0ac61b1613081cf7f39b99b5fc69be937ec4036dbb2afead741263e896a3eefe", "targetPageKey": "project-home", "status": "local_pending"},
+    {"path": "analysis_report/research/45_postgres_native_im_inbox_implementation.md", "sha256": "9d65db889fe08b42b64581a21523607d4ac922a9c6025c73b4ced8f01e7d4bd6", "targetPageKey": "research-45", "status": "local_pending"},
+    {"path": "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md", "sha256": "9a55ffcf35d41deeea02f49cdd99b5877ffd396c28769bcf3beb77af22184108", "targetPageKey": "w2-runtime-checkpoint", "status": "local_pending"},
+    {"path": "apps/im-api/internal/events/inbox.go", "sha256": "8e2b68adc1e7283bd67568ce34fd3ac135dbe67f14548d4c05d50aab6fc2d6af", "targetPageKey": "current-implementation", "status": "local_pending"},
+    {"path": "apps/im-api/internal/events/inbox_test.go", "sha256": "93ebcb50c325e0c4c1171aca0dc989c552ba0ce17a63efe900efc80806180905", "targetPageKey": "current-implementation", "status": "local_pending"},
+    {"path": "apps/im-api/internal/platform/postgres/migrations/sql/0009_native_im_inbox.up.sql", "sha256": "7b779de8b8e57677df44343c7a091ae40e52d8cdf89ffaac798d085b51ed979c", "targetPageKey": "current-implementation", "status": "local_pending"},
+    {"path": "apps/im-api/internal/platform/postgres/migrations/sql/0009_native_im_inbox.down.sql", "sha256": "788344f399a9e5b03b657126c37c59e88234d16cb8b3e32b7654c6f65b9ce325", "targetPageKey": "current-implementation", "status": "local_pending"},
+    {"path": "apps/im-api/internal/platform/postgres/eventstore/inbox_store.go", "sha256": "8240a64426cff167811723bfda295c9a192de2f666bbe85cb79392057d94a4a3", "targetPageKey": "current-implementation", "status": "local_pending"},
+    {"path": "apps/im-api/internal/platform/postgres/eventstore/inbox_store_test.go", "sha256": "1d4d412a8bf208149c0a15aa6d0887a10154d74e06b4f94f412a45874a1dcbc3", "targetPageKey": "current-implementation", "status": "local_pending"}
+  ],
+  "verification": {
+    "goTest": "passed: GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test ./... -count=1 -timeout=10m",
+    "goTestRace": "passed: GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test -race ./... -count=1 -timeout=15m",
+    "goVet": "passed: GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...",
+    "postgresMigrationsIntegration": "passed with local PostgreSQL 18.6 on 127.0.0.1:55483",
+    "postgresEventStoreIntegration": "passed with local PostgreSQL 18.6 including native IM inbox insert/replay/conflict/RLS",
+    "notionLiveWrite": false,
+    "notionLiveReadback": false,
+    "yuqueLiveWrite": false,
+    "feishuOrWeComMessagesSent": false
+  }
+}
