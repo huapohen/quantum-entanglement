@@ -469,7 +469,8 @@ subject drift 与 forged dependency 的拒绝，但这仍不是生产 API。proj
 时稳定得到一次 `AcceptedV2` 与一次 `ObservedV2`。边界与可复现命令见
 [`33_result_acceptance_process_kill_evidence.md`](../../analysis_report/research/33_result_acceptance_process_kill_evidence.md)
 和 [`34_result_acceptance_process_competition_evidence.md`](../../analysis_report/research/34_result_acceptance_process_competition_evidence.md)。
-独立主机恢复和实测 RPO/RTO 证据仍需在后续 release gate 中完成。
+独立主机恢复和实测 RPO/RTO 证据仍需在后续 release gate 中完成。备份/恢复与 migration-7
+兼容专项（39 tests）证据见 [`35_result_backup_restore_compatibility_evidence.md`](../../analysis_report/research/35_result_backup_restore_compatibility_evidence.md)。
 
 仍缺：
 
