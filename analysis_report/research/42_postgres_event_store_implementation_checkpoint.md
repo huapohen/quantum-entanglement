@@ -45,7 +45,8 @@ Notion 本阶段保持 `local_pending`。本地 `analysis_report`、Git commit �
    仍不能复用。
 2. 新增 `(tenant_id, workspace_id, stream_id, idempotency_key)` 的条件唯一索引，只约束非空 key；因此
    idempotency key 的 scope 与合同 fake 一致，跨 stream 重用不会误判为同一 retry identity。
-3. 新增 migration postcondition，精确检查主键定义和条件唯一索引；旧 migration checksum 保持不变，
+3. 新增 migration postcondition，精确检查主键定义和条件唯一索引；同时冻结 0006/0007 event 表的
+   schema digest（列、约束、索引、RLS/policy 与 relation 属性），旧 migration checksum 保持不变，
    已应用 0006 的环境可向前应用 0007。
 
 同时升级了 migration catalog、未来版本测试、runtime authority fixture、cutover plan fixture 和
@@ -119,6 +120,7 @@ fresh migration、authority 和 durable adapter 的真实数据库证据。测�
 | `9fb0448` | 0007 retry identity migration、postcondition、catalog/runtime fixture 适配 |
 | `e6611b5` | PostgreSQL 18.6 EventStore 集成测试 |
 | `84c2b82` | schema 7 后 authority cutover fixture 与 golden digest |
+| `aae871e` | event schema digest postcondition 与 constraint-tamper 集成回归 |
 
 远端 ref：`origin/dev_wanwork_quantum_entanglement`。本报告写入后会再产生一个文档提交；该提交
 仍会先推送 GitHub，Notion 镜像等阶段收口后再批量处理。

@@ -54,7 +54,7 @@
 | `research/39_basic_im_conversation_message_checkpoint.md` | 当前本地验收增量：`local_pending` | 普通 direct/group 会话创建、显式成员/ACL、文本消息 client/platform ID、provider receipt、cursor 分页和浏览器桌面/移动端验收 |
 | `research/40_durable_file_event_store_checkpoint.md` | 当前本地增量：`local_pending` | fsync 后发布、重启恢复、exact retry、截断尾部恢复、完整损坏拒绝、并发单 winner，以及明确的非生产边界 |
 | `research/41_local_im_message_edit_recall_checkpoint.md` | 当前本地验收增量：`local_pending` | 平台 message revision、可选 provider mutation port、编辑/撤回幂等、状态机约束、Fiber API 与桌面/移动端证据 |
-| [`research/42_postgres_event_store_implementation_checkpoint.md`](research/42_postgres_event_store_implementation_checkpoint.md) | 当前 W2 本地增量：`local_pending`，`84c2b82` | PostgreSQL durable EventStore adapter、0007 retry identity 兼容迁移、RLS/runtime authority、exact replay、分页 cursor、重启读回、并发与 PG18.6 集成证据；尚未关闭 projection/inbox-outbox/provider/备份与 result authority 门禁 |
+| [`research/42_postgres_event_store_implementation_checkpoint.md`](research/42_postgres_event_store_implementation_checkpoint.md) | 当前 W2 本地增量：`local_pending`，`aae871e` | PostgreSQL durable EventStore adapter、0007 retry identity 兼容迁移、RLS/runtime authority、event schema digest postcondition、exact replay、分页 cursor、重启读回、并发与 PG18.6 集成证据；尚未关闭 projection/inbox-outbox/provider/备份与 result authority 门禁 |
 
 接入前代码基线已经安全备份。`NATIVE_IM_EARLY_INTEGRATION_PLAN.md` 中“先 Level A、再 Level B
 sandbox inbound-only”是当时的历史调度口径。当前执行源已切换为
