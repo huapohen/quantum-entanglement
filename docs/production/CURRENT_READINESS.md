@@ -426,19 +426,21 @@ M4 仍不包含 migration 7 注册、Atomic Result Writer、receipt/event/task/a
 [`31_inactive_result_schema_artifact_transaction_evidence.md`](../../analysis_report/research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
 随后在独立分支 `mainline_continue_quantum_entanglement` 推进的 E3 M5 私有 checkpoint（最近
-推送 HEAD `bc7a981`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
+推送 HEAD `78f593f`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
 manifest/request/receipt、Artifact blob/version/binding、job 与 attempt terminal CAS 组成同一
 owner transaction；每个结果 DML 边界均有故障注入并证明整图回滚；commit ACK-loss 会 poison
 store 并保留已提交图，确认 rollback 则不留前缀。新增的 capability-free `ObservedV2` 路径只
 读取固定 raw projections，重算完整 receipt/Artifact/event/job/attempt 图，不读明文 lease、不
 做 DML、不签发 fresh capability；默认 store 的 public read 仍 feature-off，候选 opt-in 才能
-通过门控入口读取，并以 `partial | drift | orphan` 稳定分类异常。由于 migration 7
-仍是 inactive candidate，普通 file-store reopen 目前会被 schema-version gate 拒绝；迁移注册、
-reopen/recovery、Accepted/public writer、publication 和 worker 仍未开启。运行合同见
-[`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md)，该段证据必须在 migration 7 激活后
-重新执行正常重开矩阵，不能把当前同进程验证当成生产恢复证明。（其中默认 store 仍为
-feature-off；私有 `enable_result_acceptance_schema=True` 仅用于候选迁移的前向应用与 file
-reopen rehearsal，不代表 migration 7 已注册或生产启用。）
+通过门控入口读取，并以 `partial | drift | orphan` 稳定分类异常。
+
+本阶段已增加显式 migration-7 activation kernel：opt-in store 会先应用 legacy 1--6，再安装
+domain sidecar、写入迁移元数据和依赖、激活 migration 7，并在空数据时提供受保护的 rollback。
+默认构造器仍保持 feature-off，打开 v7 数据库会被 schema-version gate 拒绝；因此 migration
+activation 只是候选数据库的可审计前向/回退边界，不代表 Accepted/public writer、publication
+或 worker 已开启。运行合同见 [`RESULT_GRAPH_READBACK.md`](./RESULT_GRAPH_READBACK.md) 与
+[`RESULT_MIGRATION_ACTIVATION.md`](./RESULT_MIGRATION_ACTIVATION.md)；正常重开、ACK-loss、
+crash/replay 与 backup/restore 证据仍需在后续 release gate 中完成。
 
 仍缺：
 

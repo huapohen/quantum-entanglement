@@ -106,13 +106,14 @@ the store and preserves the committed graph for reconciliation; a commit failure
 is confirmed reports a rolled-back transaction and leaves no result or Artifact prefix. No control
 exception graph is copied into the public error.
 
-Migration 7 is still an inactive candidate and is intentionally not in the default legacy
-registry. A file database containing the rehearsal schema is rejected by a default
-`SQLiteEventStore`; the private `enable_result_acceptance_schema=True` constructor opt-in uses the
-trusted candidate registry to rehearse forward apply and reopen. That opt-in does not activate the
-public migration, backup contract or result API. A reviewed migration activation, sidecar/domain
-metadata contract, compatibility/rollback policy and production reopen/recovery evidence remain a
-separate release gate, not something this checkpoint hides.
+Migration 7 remains outside the default legacy registry, but its reviewed activation kernel is now
+implemented explicitly. The opt-in `enable_result_acceptance_schema=True` constructor applies the
+trusted legacy prefix, installs the sidecar/domain metadata, activates migration 7, validates the
+dependency graph and supports an empty-data guarded rollback. A default `SQLiteEventStore` still
+rejects a file database containing v7, preserving feature-off compatibility. Activation does not
+enable the public result API, backup contract, `AcceptedV2`, publication or workers; active
+backup/restore evidence, receipt-bound reconciliation, compatibility policy and crash/recovery
+matrices remain separate release gates.
 
 ## Tests and release gate
 

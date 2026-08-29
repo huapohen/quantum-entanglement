@@ -34,20 +34,20 @@ Passing unit tests alone is necessary but not sufficient.
 ## Current E3 result-authority checkpoint (2026-08-29)
 
 The independent branch `mainline_continue_quantum_entanglement` currently carries a private M5
-checkpoint (latest pushed HEAD `bc7a981`). It has a single-owner atomic result graph for result and
-terminal events, manifest/request/receipt, Artifact blob/version/binding, and succeeded job/attempt
-CAS; fault injection covers every result DML boundary and both confirmed-rollback and commit-ACK-loss
-outcomes. A capability-free `ObservedV2` readback reconstructs and verifies the graph without a
-plaintext lease, DML, publication or fresh write authority, and classifies unusable graphs as
-`partial`, `drift` or `orphan`.
+checkpoint plus the explicit migration-7 activation kernel (latest pushed HEAD `78f593f`). It has a
+single-owner atomic result graph for result and terminal events, manifest/request/receipt, Artifact
+blob/version/binding, and succeeded job/attempt CAS; fault injection covers every result DML boundary
+and both confirmed-rollback and commit-ACK-loss outcomes. A capability-free `ObservedV2` readback
+reconstructs and verifies the graph without a plaintext lease, DML, publication or fresh write
+authority, and classifies unusable graphs as `partial`, `drift` or `orphan`.
 
-This is still an inactive migration-7 rehearsal. A default feature-off file-store reopen is
-intentionally refused until migration activation and compatibility evidence are delivered; the
-explicit `enable_result_acceptance_schema=True` mode is rehearsal-only. Therefore this checkpoint is
-not a production service, does not enable `AcceptedV2`, worker dispatch, publication, real IM or
-external outbound, and must not be counted as a closed Gate A–E. The next release-blocking work is
-migration activation plus reopen/ACK-loss/crash recovery evidence, followed by the receipt-bound
-worker gate.
+The migration-7 kernel is explicit and opt-in: `enable_result_acceptance_schema=True` applies the
+legacy 1--6 prefix, installs the domain sidecar, activates migration 7, validates metadata and
+dependencies, and supports an empty-data guarded rollback. The default constructor remains
+feature-off and rejects an activated v7 database, so this is still not a production service. It does
+not enable `AcceptedV2`, worker dispatch, publication, real IM or external outbound, and must not be
+counted as a closed Gate A–E. The next release-blocking work is active backup/restore evidence,
+receipt-bound reconciliation CAS, crash/reopen/replay coverage and the receipt-bound worker gate.
 
 ## Phase 0 — validated kernel (`0.1.x`, complete)
 
