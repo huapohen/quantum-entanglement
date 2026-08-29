@@ -55,6 +55,7 @@ var (
 	ErrInboxNotFound         = errors.New("inbound inbox event not found")
 	ErrInboxCommitUnknown    = errors.New("inbound inbox commit outcome is unknown")
 	ErrInboxStoreUnavailable = errors.New("inbound inbox store unavailable")
+	ErrInvalidInboxEvent     = errors.New("invalid inbound inbox event projection")
 )
 
 // InboxAdmissionReconciler is implemented by durable stores that can resolve a commit
@@ -62,6 +63,65 @@ var (
 // result; it returns the already durable receipt as an observation.
 type InboxAdmissionReconciler interface {
 	Reconcile(context.Context, InboxEnvelope) (InboxAdmission, error)
+}
+
+// InboxEventProjection is the explicit bridge input from a verified transport envelope to the
+// canonical event stream. Transport identity alone is insufficient: the bridge requires every
+// business field that downstream routing needs and binds the envelope digest to the resulting
+// event digest before any EventStore call is allowed.
+type InboxEventProjection struct {
+	Envelope        InboxEnvelope
+	SchemaVersion   uint32
+	StreamID        string
+	EventType       string
+	ActorID         string
+	OccurredAt      time.Time
+	CorrelationID   string
+	CausationID     *string
+	IdempotencyKey  *string
+	Traceparent     *string
+	ExpectedVersion uint64
+}
+
+func (projection InboxEventProjection) Event() (EventToAppend, error) {
+	if projection.Envelope.Validate() != nil || projection.SchemaVersion == 0 {
+		return EventToAppend{}, ErrInvalidInboxEvent
+	}
+	event := EventToAppend{
+		SchemaVersion:  projection.SchemaVersion,
+		EventID:        projection.Envelope.EventID,
+		StreamID:       projection.StreamID,
+		EventType:      projection.EventType,
+		TenantID:       projection.Envelope.Scope.TenantID,
+		WorkspaceID:    cloneStringPointer(projection.Envelope.Scope.WorkspaceID),
+		ActorID:        projection.ActorID,
+		OccurredAt:     projection.OccurredAt,
+		CorrelationID:  projection.CorrelationID,
+		CausationID:    cloneStringPointer(projection.CausationID),
+		IdempotencyKey: cloneStringPointer(projection.IdempotencyKey),
+		Traceparent:    cloneStringPointer(projection.Traceparent),
+		Payload:        clonePayload(projection.Envelope.Payload),
+	}
+	digest, err := DigestEventToAppend(event)
+	if err != nil || digest != projection.Envelope.EventDigest {
+		return EventToAppend{}, ErrInvalidInboxEvent
+	}
+	return snapshotEvent(event), nil
+}
+
+// EventBatch creates the single-event batch that a future atomic inbox/event adapter must admit
+// in one database transaction. It intentionally does not perform persistence itself.
+func (projection InboxEventProjection) EventBatch() (AppendBatch, error) {
+	event, err := projection.Event()
+	if err != nil {
+		return AppendBatch{}, err
+	}
+	workspace := cloneStringPointer(event.WorkspaceID)
+	return AppendBatch{
+		TenantID: projection.Envelope.Scope.TenantID, WorkspaceID: workspace,
+		StreamID: projection.StreamID, ExpectedVersion: projection.ExpectedVersion,
+		Events: []EventToAppend{event},
+	}, nil
 }
 
 // InboxStore admits one verified event exactly once per scope and event ID. A retry with the
