@@ -61,6 +61,7 @@ from ._result_artifact_transaction import (
     _RESULT_ARTIFACT_TRANSACTION_TOKEN,
     _materialize_prepared_result_artifacts_in_transaction,
     _preflight_prepared_result_artifacts_in_transaction,
+    _prepare_result_artifact_batch,
     _PreparedResultArtifactBatch,
     _ResultArtifactCommitAmbiguityError,
     _ResultArtifactConcurrencyError,
@@ -146,6 +147,9 @@ from .invocation_results import (
 )
 from .invocation_results import (
     ScopedInvocationResultManifestV2 as _ScopedInvocationResultManifestV2,
+)
+from .invocation_results import (
+    ScopedInvocationResultObservedV2 as _ScopedInvocationResultObservedV2,
 )
 from .invocation_results import (
     ScopedInvocationResultReceiptV2 as _ScopedInvocationResultReceiptV2,
@@ -1805,6 +1809,22 @@ class _ReadbackFreshResultAcceptancePlanV2:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("result acceptance readback plans cannot be serialized")
+
+
+@dataclass(frozen=True)
+class _ResultAcceptanceObservationInputV2:
+    """Exact capability-free inputs used by the read-only observation verifier."""
+
+    request: _ScopedInvocationResultAcceptanceRequestV2
+    artifact_batch: _PreparedResultArtifactBatch
+
+    def __post_init__(self) -> None:
+        if type(self) is not _ResultAcceptanceObservationInputV2:
+            raise TypeError("result acceptance observation input must be exact")
+        if type(self.request) is not _ScopedInvocationResultAcceptanceRequestV2:
+            raise TypeError("result acceptance observation request must be exact")
+        if type(self.artifact_batch) is not _PreparedResultArtifactBatch:
+            raise TypeError("result acceptance observation Artifact batch must be exact")
 
 
 @dataclass(frozen=True)
@@ -4307,7 +4327,7 @@ class SQLiteEventStore:
     def _readback_result_acceptance_graph_body(
         self,
         connection: sqlite3.Connection,
-        prepared: _PreparedScopedInvocationResultAcceptanceV2,
+        prepared: _PreparedScopedInvocationResultAcceptanceV2 | _ResultAcceptanceObservationInputV2,
         receipt: _ScopedInvocationResultReceiptV2,
     ) -> None:
         """Fixed-projection, read-only verification for one just-written fresh graph."""
@@ -5113,6 +5133,565 @@ class SQLiteEventStore:
         self._require_current_process()
 
     @_bind_event_store_process
+    def _read_scoped_invocation_result_observed_v2(
+        self,
+        tenant_id: str,
+        workspace_id: str,
+        invocation_id: str,
+    ) -> Optional[_ScopedInvocationResultObservedV2]:
+        """Reopen and verify one committed result as a capability-free observation.
+
+        This path never reads a plaintext lease, never performs DML, and never returns a
+        fresh-commit plan.  It is intentionally private while migration 7 and the public
+        result writer remain disabled.
+        """
+
+        tenant_snapshot = _caller_invocation_identity(tenant_id, "tenant_id")
+        workspace_snapshot = _caller_invocation_identity(workspace_id, "workspace_id")
+        invocation_snapshot = _caller_invocation_identity(invocation_id, "invocation_id")
+        with self._transaction() as connection:
+            return self._read_scoped_invocation_result_observed_v2_in_transaction(
+                connection,
+                tenant_snapshot,
+                workspace_snapshot,
+                invocation_snapshot,
+            )
+
+    def _read_scoped_invocation_result_observed_v2_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        tenant_id: str,
+        workspace_id: str,
+        invocation_id: str,
+    ) -> Optional[_ScopedInvocationResultObservedV2]:
+        """Read and validate a result graph without requiring the original lease token."""
+
+        self._require_current_process()
+        self._require_result_acceptance_candidate_schema_in_transaction(connection)
+
+        def quarantine(
+            detail: str,
+            category: _ResultAcceptanceQuarantineCategory = (
+                _ResultAcceptanceQuarantineCategory.DRIFT
+            ),
+        ) -> NoReturn:
+            raise _ResultAcceptanceQuarantineError(detail, category=category)
+
+        def one_row(
+            sql: str,
+            parameters: tuple[object, ...],
+            columns: tuple[str, ...],
+            label: str,
+        ) -> sqlite3.Row:
+            try:
+                rows = connection.execute(sql, parameters).fetchall()
+            except sqlite3.Error:
+                quarantine(f"result observation {label} cannot be read")
+            if type(rows) is not list:
+                quarantine(f"result observation {label} row collection is invalid")
+            if len(rows) == 0:
+                quarantine(
+                    f"result observation {label} row is missing",
+                    _ResultAcceptanceQuarantineCategory.PARTIAL,
+                )
+            if len(rows) != 1:
+                quarantine(f"result observation {label} resolves to multiple rows")
+            return _result_readback_row(rows[0], columns, label)
+
+        receipt_columns = _RESULT_READBACK_RECEIPT_COLUMNS
+        receipt_rows = connection.execute(
+            "SELECT " + ", ".join(receipt_columns) + " FROM main.invocation_result_receipts "
+            "WHERE tenant_id = ? AND workspace_id = ? AND invocation_id = ? LIMIT 2",
+            (tenant_id, workspace_id, invocation_id),
+        ).fetchall()
+        self._require_current_process()
+        if type(receipt_rows) is not list:
+            quarantine("result observation receipt row collection is invalid")
+        if not receipt_rows:
+            partial_row = connection.execute(
+                """
+                SELECT 1
+                FROM main.invocation_result_requests
+                WHERE tenant_id = ? AND workspace_id = ? AND invocation_id = ?
+                UNION ALL
+                SELECT 1
+                FROM main.invocation_result_artifacts AS artifact
+                JOIN main.invocation_result_receipts AS receipt
+                  ON receipt.tenant_id = artifact.tenant_id
+                 AND receipt.workspace_id = artifact.workspace_id
+                 AND receipt.receipt_id = artifact.receipt_id
+                WHERE artifact.tenant_id = ? AND artifact.workspace_id = ?
+                  AND receipt.invocation_id = ?
+                LIMIT 1
+                """,
+                (tenant_id, workspace_id, invocation_id, tenant_id, workspace_id, invocation_id),
+            ).fetchone()
+            orphan_row = connection.execute(
+                """
+                SELECT 1
+                FROM main.invocation_result_event_bindings AS binding
+                LEFT JOIN main.invocation_result_receipts AS receipt
+                  ON receipt.tenant_id = binding.tenant_id
+                 AND receipt.workspace_id = binding.workspace_id
+                 AND receipt.receipt_id = binding.receipt_id
+                WHERE receipt.receipt_id IS NULL
+                UNION ALL
+                SELECT 1
+                FROM main.invocation_result_publications AS publication
+                LEFT JOIN main.invocation_result_receipts AS receipt
+                  ON receipt.tenant_id = publication.tenant_id
+                 AND receipt.workspace_id = publication.workspace_id
+                 AND receipt.receipt_id = publication.receipt_id
+                WHERE receipt.receipt_id IS NULL
+                LIMIT 1
+                """
+            ).fetchone()
+            if orphan_row is not None:
+                quarantine(
+                    "result observation found an orphan durable graph",
+                    _ResultAcceptanceQuarantineCategory.ORPHAN,
+                )
+            if partial_row is not None:
+                quarantine(
+                    "result observation found a partial durable graph",
+                    _ResultAcceptanceQuarantineCategory.PARTIAL,
+                )
+            return None
+        if len(receipt_rows) != 1:
+            quarantine("result observation receipt resolves to multiple durable graphs")
+        receipt_row = _result_readback_row(receipt_rows[0], receipt_columns, "receipt")
+        try:
+            receipt_id = _persisted_text(
+                receipt_row["receipt_id"], "result observation receipt_id", required=True
+            )
+            receipt_digest = _persisted_result_acceptance_digest(
+                receipt_row["receipt_digest"], "result observation receipt_digest"
+            )
+            request_digest = _persisted_result_acceptance_digest(
+                receipt_row["request_digest"], "result observation request_digest"
+            )
+            manifest_digest = _persisted_result_acceptance_digest(
+                receipt_row["result_manifest_digest"],
+                "result observation manifest_digest",
+            )
+            result_event_id = _persisted_text(
+                receipt_row["result_event_id"],
+                "result observation result_event_id",
+                required=True,
+            )
+            terminal_event_id = _persisted_text(
+                receipt_row["terminal_event_id"],
+                "result observation terminal_event_id",
+                required=True,
+            )
+        except (TypeError, ValueError, KeyError, IndexError):
+            quarantine("result observation receipt row is malformed")
+
+        manifest_row = one_row(
+            "SELECT "
+            + ", ".join(_RESULT_READBACK_MANIFEST_COLUMNS)
+            + " FROM main.invocation_result_manifests "
+            "WHERE tenant_id = ? AND workspace_id = ? AND manifest_digest = ? LIMIT 2",
+            (tenant_id, workspace_id, manifest_digest),
+            _RESULT_READBACK_MANIFEST_COLUMNS,
+            "manifest",
+        )
+        try:
+            canonical_manifest = manifest_row["canonical_bytes"]
+            if type(canonical_manifest) is not bytes:
+                quarantine("result observation manifest is not a BLOB")
+            manifest_byte_size = _persisted_integer(
+                manifest_row["byte_size"], "result observation manifest byte_size", minimum=1
+            )
+            if manifest_byte_size != len(canonical_manifest):
+                quarantine("result observation manifest byte size differs")
+            manifest = _ScopedInvocationResultManifestV2.from_dict(
+                json.loads(
+                    canonical_manifest.decode("utf-8"),
+                    parse_constant=_reject_json_constant,
+                )
+            )
+            if (
+                manifest.tenant_id != tenant_id
+                or manifest.workspace_id != workspace_id
+                or manifest.canonical_digest() != manifest_digest
+                or manifest.canonical_bytes() != canonical_manifest
+            ):
+                quarantine("result observation manifest canonical identity differs")
+            _result_readback_timestamp(manifest_row["created_at"], "manifest created_at")
+        except _ResultAcceptanceQuarantineError:
+            raise
+        except (TypeError, ValueError, KeyError, IndexError, UnicodeError, json.JSONDecodeError):
+            quarantine("result observation manifest cannot be decoded")
+
+        request_row = one_row(
+            "SELECT "
+            + ", ".join(_RESULT_READBACK_REQUEST_COLUMNS)
+            + " FROM main.invocation_result_requests "
+            "WHERE tenant_id = ? AND workspace_id = ? AND request_digest = ? LIMIT 2",
+            (tenant_id, workspace_id, request_digest),
+            _RESULT_READBACK_REQUEST_COLUMNS,
+            "request",
+        )
+        try:
+            acceptance_key = _persisted_text(
+                request_row["acceptance_idempotency_key"],
+                "result observation acceptance_idempotency_key",
+                required=True,
+            )
+            expected_stream_version = _persisted_integer(
+                request_row["expected_stream_version"],
+                "result observation expected_stream_version",
+                minimum=1,
+            )
+            request_schema_version = _persisted_integer(
+                request_row["schema_version"],
+                "result observation request schema_version",
+            )
+        except (TypeError, ValueError, KeyError, IndexError):
+            quarantine("result observation request row is malformed")
+
+        try:
+            start_state = SQLiteEventStore._load_scoped_invocation_start_in_transaction(
+                self,
+                connection,
+                invocation_id,
+                fresh=False,
+            )
+        except (InvocationIntegrityError, InvocationStartConflictError, TypeError, ValueError):
+            quarantine("result observation scoped start is not exact")
+        if type(start_state) is not _ScopedInvocationStartReadback:
+            quarantine(
+                "result observation scoped start is missing",
+                _ResultAcceptanceQuarantineCategory.PARTIAL,
+            )
+
+        artifact_rows = connection.execute(
+            "SELECT "
+            + ", ".join(_RESULT_READBACK_ARTIFACT_COLUMNS)
+            + " FROM main.invocation_result_artifacts "
+            "WHERE tenant_id = ? AND workspace_id = ? AND receipt_id = ? ORDER BY ordinal",
+            (tenant_id, workspace_id, receipt_id),
+        ).fetchall()
+        self._require_current_process()
+        if type(artifact_rows) is not list:
+            quarantine("result observation Artifact row collection is invalid")
+        if len(artifact_rows) != len(manifest.artifacts):
+            quarantine(
+                "result observation Artifact rows are partial",
+                _ResultAcceptanceQuarantineCategory.PARTIAL,
+            )
+        candidates: list[_ScopedInvocationResultArtifactCandidateV2] = []
+        for ordinal, raw_binding in enumerate(artifact_rows):
+            binding = _result_readback_row(
+                raw_binding,
+                _RESULT_READBACK_ARTIFACT_COLUMNS,
+                "Artifact binding",
+            )
+            try:
+                if _persisted_integer(binding["ordinal"], "result observation ordinal") != ordinal:
+                    quarantine(
+                        "result observation Artifact ordinals are not contiguous",
+                        _ResultAcceptanceQuarantineCategory.PARTIAL,
+                    )
+                binding_tenant = _persisted_text(
+                    binding["tenant_id"], "result observation Artifact tenant", required=True
+                )
+                binding_workspace = _persisted_text(
+                    binding["workspace_id"],
+                    "result observation Artifact workspace",
+                    required=True,
+                )
+                binding_receipt = _persisted_text(
+                    binding["receipt_id"], "result observation Artifact receipt", required=True
+                )
+                artifact_id = _persisted_text(
+                    binding["artifact_id"], "result observation Artifact id", required=True
+                )
+                artifact_name = _persisted_text(
+                    binding["name"], "result observation Artifact name", required=True
+                )
+                artifact_media_type = _persisted_text(
+                    binding["media_type"],
+                    "result observation Artifact media_type",
+                    required=True,
+                )
+                artifact_created_by = _persisted_text(
+                    binding["created_by"],
+                    "result observation Artifact created_by",
+                    required=True,
+                )
+                artifact_idempotency_key = _persisted_text(
+                    binding["idempotency_key"],
+                    "result observation Artifact idempotency_key",
+                    required=True,
+                )
+                binding_version = _persisted_integer(
+                    binding["version"], "result observation Artifact version", minimum=1
+                )
+                binding_parent = binding["parent_version"]
+                if binding_parent is not None:
+                    binding_parent = _persisted_integer(
+                        binding_parent,
+                        "result observation Artifact parent_version",
+                        minimum=1,
+                    )
+                binding_blob_digest = _persisted_text(
+                    binding["blob_digest"],
+                    "result observation Artifact blob_digest",
+                    required=True,
+                )
+                binding_byte_size = _persisted_integer(
+                    binding["byte_size"], "result observation Artifact byte_size"
+                )
+                binding_metadata_digest = _persisted_result_acceptance_digest(
+                    binding["metadata_digest"],
+                    "result observation Artifact metadata_digest",
+                )
+            except (TypeError, ValueError, KeyError, IndexError):
+                quarantine("result observation Artifact binding is malformed")
+
+            version_row = one_row(
+                "SELECT "
+                + ", ".join(_RESULT_READBACK_VERSION_COLUMNS)
+                + " FROM main.artifact_versions WHERE artifact_id = ? LIMIT 2",
+                (artifact_id,),
+                _RESULT_READBACK_VERSION_COLUMNS,
+                "Artifact version",
+            )
+            blob_digest = _persisted_text(
+                version_row["blob_digest"],
+                "result observation Artifact version blob_digest",
+                required=True,
+            )
+            metadata_json = version_row["metadata_json"]
+            if type(metadata_json) is not str:
+                quarantine("result observation Artifact metadata is not TEXT")
+            version = _persisted_integer(
+                version_row["version"], "result observation version", minimum=1
+            )
+            version_parent = version_row["parent_version"]
+            if version_parent is not None:
+                version_parent = _persisted_integer(
+                    version_parent,
+                    "result observation version parent_version",
+                    minimum=1,
+                )
+            expected_head_version = 0 if version_parent is None else version_parent
+            blob_row = one_row(
+                """
+                SELECT digest, content, byte_size, created_at,
+                       typeof(digest) AS digest_storage,
+                       typeof(content) AS content_storage,
+                       typeof(byte_size) AS byte_size_storage,
+                       typeof(created_at) AS created_at_storage,
+                       length(content) AS content_length
+                FROM main.artifact_blobs WHERE digest = ? LIMIT 2
+                """,
+                (blob_digest,),
+                _RESULT_READBACK_BLOB_COLUMNS,
+                "Artifact blob",
+            )
+            content = blob_row["content"]
+            if type(content) is not bytes:
+                quarantine("result observation Artifact blob is not a BLOB")
+            try:
+                metadata = json.loads(metadata_json, parse_constant=_reject_json_constant)
+                if type(metadata) is not dict:
+                    quarantine("result observation Artifact metadata is not an object")
+                candidate = _ScopedInvocationResultArtifactCandidateV2.from_content_metadata(
+                    tenant_id=binding_tenant,
+                    workspace_id=binding_workspace,
+                    session_id=_persisted_text(
+                        binding["session_id"], "result observation Artifact session", required=True
+                    ),
+                    task_id=_persisted_text(
+                        binding["task_id"], "result observation Artifact task", required=True
+                    ),
+                    artifact_id=artifact_id,
+                    name=artifact_name,
+                    media_type=artifact_media_type,
+                    content=content,
+                    metadata=metadata,
+                    created_by=artifact_created_by,
+                    idempotency_key=artifact_idempotency_key,
+                    expected_head_version=expected_head_version,
+                )
+            except _ResultAcceptanceQuarantineError:
+                raise
+            except (
+                TypeError,
+                ValueError,
+                KeyError,
+                IndexError,
+                UnicodeError,
+                json.JSONDecodeError,
+            ):
+                quarantine("result observation Artifact content cannot be decoded")
+            if metadata_json.encode("utf-8") != candidate.metadata_canonical_bytes:
+                quarantine("result observation Artifact metadata bytes differ")
+            if (
+                binding_tenant != tenant_id
+                or binding_workspace != workspace_id
+                or binding_receipt != receipt_id
+                or binding_version != version
+                or binding_parent != version_parent
+                or binding_blob_digest != blob_digest
+                or binding_byte_size != candidate.byte_size
+                or binding_metadata_digest != candidate.metadata_digest
+                or candidate.to_descriptor() != manifest.artifacts[ordinal]
+            ):
+                quarantine("result observation Artifact descriptor differs")
+            candidates.append(candidate)
+
+        event_rows = connection.execute(
+            "SELECT "
+            + ", ".join(_RESULT_READBACK_EVENT_COLUMNS)
+            + " FROM main.events WHERE event_id IN (?, ?) ORDER BY global_position",
+            (result_event_id, terminal_event_id),
+        ).fetchall()
+        self._require_current_process()
+        if type(event_rows) is not list or len(event_rows) != 2:
+            quarantine(
+                "result observation event rows are partial",
+                _ResultAcceptanceQuarantineCategory.PARTIAL,
+            )
+        result_coordinate: Optional[_ScopedInvocationResultEventCoordinatesV2] = None
+        terminal_coordinate: Optional[_ScopedInvocationResultEventCoordinatesV2] = None
+        result_payload: Optional[object] = None
+        terminal_payload: Optional[object] = None
+        for raw_event in event_rows:
+            event_row = _result_readback_row(raw_event, _RESULT_READBACK_EVENT_COLUMNS, "event")
+            try:
+                envelope = _stored_event_envelope_from_raw_row(event_row)
+                body = _StoredEventEnvelopeV1.to_dict(envelope)
+                event_body_id = _persisted_text(
+                    body["eventId"], "result observation event_id", required=True
+                )
+                event_body_stream = _persisted_text(
+                    body["streamId"], "result observation stream_id", required=True
+                )
+                event_body_type = _persisted_text(
+                    body["eventType"], "result observation event_type", required=True
+                )
+                event_body_sequence = _persisted_integer(
+                    body["sequence"], "result observation event sequence", minimum=1
+                )
+                event_body_global_position = _persisted_integer(
+                    body["globalPosition"],
+                    "result observation event global_position",
+                    minimum=1,
+                )
+                event_coordinate = _ScopedInvocationResultEventCoordinatesV2(
+                    event_id=event_body_id,
+                    stream_id=event_body_stream,
+                    event_type=event_body_type,
+                    sequence=event_body_sequence,
+                    global_position=event_body_global_position,
+                    event_envelope_digest=_StoredEventEnvelopeV1.digest(envelope),
+                )
+                payload = body["payload"]
+                if event_body_id == result_event_id:
+                    if result_coordinate is not None:
+                        quarantine("result observation has duplicate result events")
+                    result_coordinate = event_coordinate
+                    result_payload = payload
+                elif event_body_id == terminal_event_id:
+                    if terminal_coordinate is not None:
+                        quarantine("result observation has duplicate terminal events")
+                    terminal_coordinate = event_coordinate
+                    terminal_payload = payload
+                else:
+                    quarantine("result observation returned an unexpected event identity")
+            except _ResultAcceptanceQuarantineError:
+                raise
+            except (
+                _StoredEventEnvelopeError,
+                TypeError,
+                ValueError,
+                KeyError,
+                IndexError,
+            ):
+                quarantine("result observation event envelope is malformed")
+        if (
+            result_coordinate is None
+            or terminal_coordinate is None
+            or type(result_payload) is not dict
+            or type(terminal_payload) is not dict
+        ):
+            quarantine(
+                "result observation event payloads are partial",
+                _ResultAcceptanceQuarantineCategory.PARTIAL,
+            )
+        try:
+            evidence = _ScopedInvocationResultEvidenceV2.from_dict(result_payload)
+            terminal_transition = _ScopedInvocationResultTerminalTransitionV2.from_dict(
+                terminal_payload
+            )
+            if evidence.receipt_id != receipt_id:
+                quarantine("result observation evidence receipt identity differs")
+            request = _ScopedInvocationResultAcceptanceRequestV2(
+                schema_version=request_schema_version,
+                acceptance_idempotency_key=acceptance_key,
+                start_receipt=start_state.receipt,
+                manifest=manifest,
+                artifact_candidates=tuple(candidates),
+                expected_stream_version=expected_stream_version,
+            )
+            receipt = _build_scoped_invocation_result_receipt_v2(
+                request,
+                evidence,
+                result_event=result_coordinate,
+                terminal_event=terminal_coordinate,
+                terminal_transition=terminal_transition,
+            )
+            if receipt.receipt_digest != receipt_digest:
+                quarantine("result observation receipt_digest differs")
+        except _ResultAcceptanceQuarantineError:
+            raise
+        except (
+            TypeError,
+            ValueError,
+            KeyError,
+            IndexError,
+            UnicodeError,
+        ):
+            quarantine("result observation receipt graph cannot be decoded")
+
+        observation_input = _ResultAcceptanceObservationInputV2(
+            request=request,
+            artifact_batch=_prepare_result_artifact_batch(tuple(candidates)),
+        )
+        try:
+            self._readback_result_acceptance_graph_body(
+                connection,
+                observation_input,
+                receipt,
+            )
+        except _ResultAcceptanceQuarantineError:
+            raise
+        except _ResultAcceptanceIntegrityError as error:
+            raise _ResultAcceptanceQuarantineError(
+                str(error),
+                category=_ResultAcceptanceQuarantineCategory.DRIFT,
+            ) from error
+        except (
+            InvocationIntegrityError,
+            _ResultAcceptanceConflictError,
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+            KeyError,
+            IndexError,
+        ) as error:
+            raise _ResultAcceptanceQuarantineError(
+                "result observation complete graph verification failed",
+                category=_ResultAcceptanceQuarantineCategory.DRIFT,
+            ) from error
+        self._require_current_process()
+        return _ScopedInvocationResultObservedV2(receipt=receipt)
+
+    @_bind_event_store_process
     def _complete_result_acceptance_job_and_attempt_in_owner_transaction(
         self,
         handle: _ResultArtifactTransactionHandle,
@@ -5251,6 +5830,29 @@ class SQLiteEventStore:
                 finally:
                     completed._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
 
+    def _execute_transaction_control(
+        self,
+        connection: sqlite3.Connection,
+        statement: str,
+    ) -> None:
+        """Execute one exact transaction-control statement under the process fence.
+
+        Keeping the control boundary in one private method gives fault-injection and
+        recovery evidence a stable seam without exposing the SQLite connection or
+        allowing callers to issue arbitrary control SQL.
+        """
+
+        self._require_current_process()
+        if connection is not self._connection:
+            raise RuntimeError("transaction control requires the owning connection")
+        if statement not in {"BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"}:
+            raise ValueError("transaction control statement is not allowlisted")
+        execute = getattr(connection, "execute", None)
+        if not callable(execute):
+            raise RuntimeError("transaction control connection has no execute operation")
+        execute(statement)
+        self._require_current_process()
+
     @contextmanager
     def _transaction_inner(
         self,
@@ -5266,7 +5868,7 @@ class SQLiteEventStore:
                 raise EventStorePoisonedError() from None
             connection = self._connection
             try:
-                connection.execute("BEGIN IMMEDIATE")
+                self._execute_transaction_control(connection, "BEGIN IMMEDIATE")
                 self._require_current_process()
             except BaseException as begin_error:
                 if not self._process_is_current() or not classify_admission:
@@ -5276,7 +5878,7 @@ class SQLiteEventStore:
                     if type(transaction_open) is not bool:
                         raise RuntimeError("SQLite returned a non-boolean transaction state")
                     if transaction_open:
-                        connection.execute("ROLLBACK")
+                        self._execute_transaction_control(connection, "ROLLBACK")
                         self._require_current_process()
                         rollback_state = connection.in_transaction
                         if type(rollback_state) is not bool or rollback_state:
@@ -5310,7 +5912,7 @@ class SQLiteEventStore:
                     if type(transaction_open) is not bool:
                         raise RuntimeError("SQLite returned a non-boolean transaction state")
                     if transaction_open:
-                        connection.execute("ROLLBACK")
+                        self._execute_transaction_control(connection, "ROLLBACK")
                         self._require_current_process()
                         rollback_state = connection.in_transaction
                         if type(rollback_state) is not bool or rollback_state:
@@ -5348,7 +5950,7 @@ class SQLiteEventStore:
             else:
                 self._require_current_process()
                 try:
-                    connection.execute("COMMIT")
+                    self._execute_transaction_control(connection, "COMMIT")
                     self._require_current_process()
                 except BaseException as commit_error:
                     if not self._process_is_current():
@@ -5360,7 +5962,7 @@ class SQLiteEventStore:
                         if type(transaction_was_open) is not bool:
                             raise RuntimeError("SQLite returned a non-boolean transaction state")
                         if transaction_was_open:
-                            connection.execute("ROLLBACK")
+                            self._execute_transaction_control(connection, "ROLLBACK")
                             self._require_current_process()
                             rollback_state = connection.in_transaction
                             if type(rollback_state) is not bool:

@@ -4,10 +4,12 @@ import copy
 import hashlib
 import pickle
 import sqlite3
+import tempfile
 import traceback
 import unittest
 from contextlib import ExitStack
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import patch
 
 import quantum_entanglement
@@ -33,8 +35,10 @@ from quantum_entanglement._result_acceptance import (
     _TransitionedFreshResultAcceptancePlanV2,
 )
 from quantum_entanglement._result_artifact_transaction import (
+    _ResultArtifactCommitAmbiguityError,
     _ResultArtifactConflictError,
     _ResultArtifactTransactionContinuityError,
+    _ResultArtifactTransactionError,
 )
 from quantum_entanglement.attempts import InvocationLease
 from quantum_entanglement.events import DomainEvent
@@ -54,6 +58,7 @@ from quantum_entanglement.invocation_results import (
     ScopedInvocationResultArtifactCandidateV2,
     ScopedInvocationResultEvidenceV2,
     ScopedInvocationResultManifestV2,
+    ScopedInvocationResultObservedV2,
     ScopedInvocationResultReceiptV2,
     ScopedInvocationResultTerminalTransitionV2,
 )
@@ -211,6 +216,29 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             request,
             prepared.claimed,
         )
+
+    def commit_fresh_result(self) -> ScopedInvocationResultReceiptV2:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        with patch(
+            "quantum_entanglement.store.new_id",
+            side_effect=(
+                "receipt_observed_1",
+                "event_result_observed_1",
+                "event_terminal_observed_1",
+            ),
+        ):
+            with self.store._result_artifact_transaction() as handle:
+                with self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction(
+                    handle,
+                    prepared,
+                ) as completed:
+                    _, receipt = completed._validated(
+                        token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN
+                    )
+                    return ScopedInvocationResultReceiptV2.from_dict(receipt.to_dict())
+        raise AssertionError("result acceptance did not yield a receipt")
 
     def validate(
         self,
@@ -2301,6 +2329,176 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     ),
                     before_attempts,
                 )
+
+    def test_result_commit_ack_loss_poisons_and_preserves_the_committed_graph(self) -> None:
+        """A committed graph with a lost ACK is observable only after reopening."""
+
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        original = self.store._execute_transaction_control
+
+        def commit_then_raise(connection: sqlite3.Connection, statement: str) -> None:
+            original(connection, statement)
+            if statement == "COMMIT":
+                raise RuntimeError("private result commit acknowledgement lost")
+
+        with patch.object(
+            self.store,
+            "_execute_transaction_control",
+            side_effect=commit_then_raise,
+        ):
+            with self.assertRaises(_ResultArtifactCommitAmbiguityError):
+                with self.store._result_artifact_transaction() as handle:
+                    complete = (
+                        self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction
+                    )  # noqa: E501
+                    with complete(handle, prepared):
+                        pass
+
+        self.assertTrue(self.store._poisoned)
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT count(*) FROM invocation_result_receipts"
+            ).fetchone()[0],
+            1,
+        )
+        job = self.store._connection.execute(
+            "SELECT status, result_ref, lease_owner FROM invocation_jobs WHERE invocation_id = ?",
+            (prepared.request.manifest.invocation_id,),
+        ).fetchone()
+        self.assertEqual(
+            (job["status"], job["result_ref"], job["lease_owner"]),
+            ("succeeded", prepared.request.manifest.result_ref, None),
+        )
+
+    def test_result_commit_failure_with_confirmed_rollback_has_no_graph(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        self.store._clock = lambda: "2026-08-27T10:00:02.000000Z"
+        original = self.store._execute_transaction_control
+
+        def fail_commit(connection: sqlite3.Connection, statement: str) -> None:
+            if statement == "COMMIT":
+                raise RuntimeError("private result commit failed before acknowledgement")
+            original(connection, statement)
+
+        with patch.object(
+            self.store,
+            "_execute_transaction_control",
+            side_effect=fail_commit,
+        ):
+            with self.assertRaises(_ResultArtifactTransactionError):
+                with self.store._result_artifact_transaction() as handle:
+                    complete = (
+                        self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction
+                    )  # noqa: E501
+                    with complete(handle, prepared):
+                        pass
+
+        self.assertFalse(self.store._poisoned)
+        for table in (
+            "events",
+            "artifact_versions",
+            "artifact_blobs",
+            "invocation_result_manifests",
+            "invocation_result_requests",
+            "invocation_result_event_bindings",
+            "invocation_result_receipts",
+            "invocation_result_artifacts",
+        ):
+            self.assertEqual(
+                self.store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0],
+                3 if table == "events" else 0,
+            )
+        job = self.store._connection.execute(
+            "SELECT status FROM invocation_jobs WHERE invocation_id = ?",
+            (prepared.request.manifest.invocation_id,),
+        ).fetchone()
+        self.assertEqual(job["status"], "running")
+
+    def test_observed_result_readback_is_complete_and_dml_free(self) -> None:
+        receipt = self.commit_fresh_result()
+        before_changes = self.store._connection.total_changes
+        statements: list[str] = []
+        self.store._connection.set_trace_callback(statements.append)
+        try:
+            observed = self.store._read_scoped_invocation_result_observed_v2(
+                receipt.evidence.tenant_id,
+                receipt.evidence.workspace_id,
+                receipt.evidence.invocation_id,
+            )
+        finally:
+            self.store._connection.set_trace_callback(None)
+        self.assertIs(type(observed), ScopedInvocationResultObservedV2)
+        assert type(observed) is ScopedInvocationResultObservedV2
+        self.assertEqual(observed.receipt, receipt)
+        self.assertEqual(self.store._connection.total_changes, before_changes)
+        self.assertFalse(
+            any(
+                statement.lstrip().upper().startswith(
+                    ("INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER")
+                )
+                for statement in statements
+            )
+        )
+        self.assertNotIn("existing-result-lease-token-canary", repr(observed))
+        self.assertNotIn("leaseToken", observed.to_dict())
+
+    def test_observed_result_readback_returns_none_without_a_result_graph(self) -> None:
+        prepared = self.fresh_prepared()
+        install_inactive_result_schema(self.store)
+        before_changes = self.store._connection.total_changes
+        observed = self.store._read_scoped_invocation_result_observed_v2(
+            prepared.request.manifest.tenant_id,
+            prepared.request.manifest.workspace_id,
+            prepared.request.manifest.invocation_id,
+        )
+        self.assertIsNone(observed)
+        self.assertEqual(self.store._connection.total_changes, before_changes)
+
+    def test_observed_result_readback_quarantines_partial_and_drift_graphs(self) -> None:
+        receipt = self.commit_fresh_result()
+        self.store._connection.execute(
+            "DELETE FROM invocation_result_artifacts WHERE receipt_id = ?",
+            (receipt.receipt_id,),
+        )
+        with self.assertRaises(_ResultAcceptanceQuarantineError) as partial:
+            self.store._read_scoped_invocation_result_observed_v2(
+                receipt.evidence.tenant_id,
+                receipt.evidence.workspace_id,
+                receipt.evidence.invocation_id,
+            )
+        self.assertIs(partial.exception.category, _ResultAcceptanceQuarantineCategory.PARTIAL)
+
+        # Rebuild an in-memory graph, then introduce an independent receipt drift.
+        self.store.close()
+        self.store = SQLiteEventStore(":memory:", clock=lambda: STORE_TIME)
+        receipt = self.commit_fresh_result()
+        self.store._connection.execute(
+            "UPDATE invocation_result_receipts SET receipt_digest = ? WHERE receipt_id = ?",
+            ("0" * 64, receipt.receipt_id),
+        )
+        with self.assertRaises(_ResultAcceptanceQuarantineError) as drift:
+            self.store._read_scoped_invocation_result_observed_v2(
+                receipt.evidence.tenant_id,
+                receipt.evidence.workspace_id,
+                receipt.evidence.invocation_id,
+            )
+        self.assertIs(drift.exception.category, _ResultAcceptanceQuarantineCategory.DRIFT)
+
+    def test_observed_result_reopen_is_gated_until_migration_seven_is_active(self) -> None:
+        """Inactive migration 7 intentionally prevents a normal store reopen for now."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "event-store.sqlite3")
+            store = SQLiteEventStore(path)
+            try:
+                install_inactive_result_schema(store)
+            finally:
+                store.close()
+            with self.assertRaisesRegex(Exception, "schema version 7"):
+                SQLiteEventStore(path)
 
     def test_completion_readback_accepts_a_shared_preexisting_blob(self) -> None:
         prepared = self.fresh_prepared()
