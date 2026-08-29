@@ -52,6 +52,8 @@ from ._result_acceptance import (
     _PreparedScopedInvocationResultAcceptanceV2,
     _ResultAcceptanceConflictError,
     _ResultAcceptanceIntegrityError,
+    _ResultAcceptanceQuarantineCategory,
+    _ResultAcceptanceQuarantineError,
     _ResultAcceptanceSchemaUnavailableError,
     _TransitionedFreshResultAcceptancePlanV2,
 )
@@ -2645,8 +2647,9 @@ class SQLiteEventStore:
         self._require_current_process()
 
         if len(request_rows) > 1 or len(receipt_rows) > 1:
-            raise _ResultAcceptanceIntegrityError(
-                "result acceptance identities resolve to multiple durable graphs"
+            raise _ResultAcceptanceQuarantineError(
+                "result acceptance identities resolve to multiple durable graphs",
+                category=_ResultAcceptanceQuarantineCategory.DRIFT,
             )
         if not request_rows and not receipt_rows:
             try:
@@ -2697,14 +2700,21 @@ class SQLiteEventStore:
                     "result acceptance partial-graph guard cannot be read"
                 ) from None
             self._require_current_process()
-            if partial_row is not None or orphan_row is not None:
-                raise _ResultAcceptanceIntegrityError(
-                    "result acceptance has a partial durable graph"
+            if orphan_row is not None:
+                raise _ResultAcceptanceQuarantineError(
+                    "result acceptance has an orphan durable graph",
+                    category=_ResultAcceptanceQuarantineCategory.ORPHAN,
+                )
+            if partial_row is not None:
+                raise _ResultAcceptanceQuarantineError(
+                    "result acceptance has a partial durable graph",
+                    category=_ResultAcceptanceQuarantineCategory.PARTIAL,
                 )
             return None
         if len(request_rows) != 1 or len(receipt_rows) != 1:
-            raise _ResultAcceptanceIntegrityError(
-                "result acceptance has a partial request/receipt graph"
+            raise _ResultAcceptanceQuarantineError(
+                "result acceptance has a partial request/receipt graph",
+                category=_ResultAcceptanceQuarantineCategory.PARTIAL,
             )
 
         request_row = request_rows[0]
@@ -2764,8 +2774,9 @@ class SQLiteEventStore:
                 required=True,
             )
         except (IndexError, KeyError, TypeError, ValueError):
-            raise _ResultAcceptanceIntegrityError(
-                "result acceptance request/receipt rows are malformed"
+            raise _ResultAcceptanceQuarantineError(
+                "result acceptance request/receipt rows are malformed",
+                category=_ResultAcceptanceQuarantineCategory.DRIFT,
             ) from None
         if (
             durable_request_digest != receipt_request_digest
@@ -2775,8 +2786,9 @@ class SQLiteEventStore:
             or artifact_count > 256
             or result_event_id == terminal_event_id
         ):
-            raise _ResultAcceptanceIntegrityError(
-                "result acceptance request/receipt bindings are contradictory"
+            raise _ResultAcceptanceQuarantineError(
+                "result acceptance request/receipt bindings are contradictory",
+                category=_ResultAcceptanceQuarantineCategory.DRIFT,
             )
 
         try:
@@ -2864,7 +2876,10 @@ class SQLiteEventStore:
             or counts[4] != artifact_count
             or counts[5:] != (2, 1, 1, 2, 1)
         ):
-            raise _ResultAcceptanceIntegrityError("result acceptance durable graph is partial")
+            raise _ResultAcceptanceQuarantineError(
+                "result acceptance durable graph is partial",
+                category=_ResultAcceptanceQuarantineCategory.PARTIAL,
+            )
         return _ExistingResultAcceptanceGraphCandidateV2(
             invocation_id=durable_invocation_id,
             request_digest=durable_request_digest,
@@ -4277,8 +4292,13 @@ class SQLiteEventStore:
                 yield plan
             finally:
                 plan._invalidate(token=_RESULT_ACCEPTANCE_WRITE_PLAN_TOKEN)
-        except _ResultAcceptanceIntegrityError:
+        except _ResultAcceptanceQuarantineError:
             raise
+        except _ResultAcceptanceIntegrityError as error:
+            raise _ResultAcceptanceQuarantineError(
+                str(error),
+                category=_ResultAcceptanceQuarantineCategory.DRIFT,
+            ) from error
         except (InvocationIntegrityError, sqlite3.Error, TypeError, ValueError) as error:
             raise _ResultAcceptanceIntegrityError(
                 "result acceptance complete graph readback failed"

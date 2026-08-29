@@ -25,6 +25,8 @@ from quantum_entanglement._result_acceptance import (
     _PreparedScopedInvocationResultAcceptanceV2,
     _ResultAcceptanceConflictError,
     _ResultAcceptanceIntegrityError,
+    _ResultAcceptanceQuarantineCategory,
+    _ResultAcceptanceQuarantineError,
     _ResultAcceptanceSchemaUnavailableError,
     _TransitionedFreshResultAcceptancePlanV2,
 )
@@ -297,8 +299,11 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             "_load_scoped_invocation_start_in_transaction",
             side_effect=AssertionError("partial graph must precede fresh lease"),
         ):
-            with self.assertRaises(_ResultAcceptanceIntegrityError):
+            with self.assertRaises(_ResultAcceptanceQuarantineError) as captured:
                 self.validate(prepared)
+        self.assertIs(captured.exception.category, _ResultAcceptanceQuarantineCategory.PARTIAL)
+        self.assertEqual(captured.exception.code, "result_acceptance_graph_quarantined")
+        self.assertNotIn(prepared.claimed.lease.lease_token, str(captured.exception))
 
     def test_structurally_complete_graph_precedes_fresh_lease_classification(self) -> None:
         helper = inactive_migration_module.InactiveInvocationResultsMigrationTests(
@@ -342,9 +347,11 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             "_load_scoped_invocation_start_in_transaction",
             side_effect=AssertionError("partial graph must precede fresh lease"),
         ) as fresh_load:
-            with self.assertRaises(_ResultAcceptanceIntegrityError):
+            with self.assertRaises(_ResultAcceptanceQuarantineError) as captured:
                 self.validate(prepared)
         fresh_load.assert_not_called()
+        self.assertIs(captured.exception.category, _ResultAcceptanceQuarantineCategory.PARTIAL)
+        self.assertEqual(captured.exception.code, "result_acceptance_graph_quarantined")
 
     def test_fresh_owner_preflight_yields_opaque_plan_without_clock_or_dml(self) -> None:
         prepared = self.fresh_prepared()
@@ -2175,11 +2182,14 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
                     "event_terminal_readback_drift",
                 ),
             ):
-                with self.assertRaises(_ResultAcceptanceIntegrityError):
+                with self.assertRaises(_ResultAcceptanceQuarantineError) as captured:
                     with self.store._result_artifact_transaction() as handle:
                         complete = self.store._complete_result_acceptance_job_and_attempt_in_owner_transaction  # noqa: E501
                         with complete(handle, prepared):
                             self.fail("tampered result graph unexpectedly completed")
+        self.assertIs(captured.exception.category, _ResultAcceptanceQuarantineCategory.DRIFT)
+        self.assertEqual(captured.exception.code, "result_acceptance_graph_quarantined")
+        self.assertNotIn(prepared.claimed.lease.lease_token, str(captured.exception))
         for table in (
             "invocation_result_manifests",
             "invocation_result_requests",
@@ -2626,6 +2636,8 @@ class ResultAcceptanceDurablePrerequisiteTests(unittest.TestCase):
             "_validate_result_acceptance_durable_prerequisites_in_transaction",
             "_build_scoped_invocation_result_evidence_v2",
             "_TransitionedFreshResultAcceptancePlanV2",
+            "_ResultAcceptanceQuarantineCategory",
+            "_ResultAcceptanceQuarantineError",
             "_build_scoped_invocation_result_terminal_transition_from_plan_v2",
             "_build_scoped_invocation_result_events_from_plan_v2",
             "_construct_result_acceptance_event_pair_in_owner_transaction",

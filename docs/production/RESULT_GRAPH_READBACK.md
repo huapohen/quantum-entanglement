@@ -58,6 +58,24 @@ row, canonical mismatch or any binding drift raises `_ResultAcceptanceIntegrityE
 owner transaction then rolls back the complete graph, including Artifact rows and the job/attempt
 CAS.
 
+## Quarantine classification
+
+Before a fresh lease is inspected, structural prefixes are classified as read-only quarantine
+signals. The private `_ResultAcceptanceQuarantineError` carries a closed category and stable code
+`result_acceptance_graph_quarantined`; its category is one of:
+
+| Category | Meaning | Allowed action |
+|---|---|---|
+| `partial` | A result graph has only a durable prefix or missing required rows. | Preserve evidence, roll back any current owner transaction, and require a reconciler; never repair by guessing. |
+| `drift` | Existing identities, coordinates, payloads, digests, storage classes, or terminal state disagree. | Stop acceptance and investigate the exact durable graph; do not replay the Agent. |
+| `orphan` | A result binding/publication exists without its receipt authority. | Isolate the source and operator-review both stores; do not delete or synthesize a receipt. |
+
+The category is the only machine-facing diagnostic. Local detail text is bounded to the current
+integrity message and is never populated with plaintext lease tokens, credentials, raw provider
+responses, or exception graphs. All three categories remain subclasses of the existing private
+`_ResultAcceptanceIntegrityError`, so callers cannot accidentally treat quarantine as a successful
+result. A quarantined graph is never eligible for a fresh acceptance or an `AcceptedV2` capability.
+
 ## Private capability boundary
 
 `_ReadbackFreshResultAcceptancePlanV2` is an exact private, owner-transaction-bound plan. It holds
@@ -102,4 +120,3 @@ token, Feishu/WeCom message, webhook, or external publication is used by this st
 4. Re-run the full release gates and update the local roadmap/checkpoint ledger.
 5. Only after the local checkpoint is stable, upload the complete Markdown bundle to Notion and
    read every updated page back before considering the remote copy synchronized.
-

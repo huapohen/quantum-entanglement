@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import NoReturn
 
 from ._result_artifact_transaction import (
@@ -38,6 +39,39 @@ class _ResultAcceptanceConflictError(RuntimeError):
 
 class _ResultAcceptanceIntegrityError(RuntimeError):
     """A candidate result/start graph is partial, malformed, or contradictory."""
+
+
+class _ResultAcceptanceQuarantineCategory(str, Enum):
+    """Stable, non-sensitive classification for an unusable result graph."""
+
+    PARTIAL = "partial"
+    DRIFT = "drift"
+    ORPHAN = "orphan"
+
+
+class _ResultAcceptanceQuarantineError(_ResultAcceptanceIntegrityError):
+    """An integrity failure that must be retained as a read-only quarantine signal.
+
+    ``detail`` remains the local diagnostic text for tests and operator evidence.  The
+    machine-facing category is deliberately a closed, non-sensitive value; no lease,
+    credential, raw payload, or exception graph is copied into the public signal.
+    """
+
+    code = "result_acceptance_graph_quarantined"
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        category: _ResultAcceptanceQuarantineCategory,
+    ) -> None:
+        if type(detail) is not str or not detail or len(detail.encode("utf-8")) > 4_096:
+            raise TypeError("result acceptance quarantine detail must be non-empty text")
+        if type(category) is not _ResultAcceptanceQuarantineCategory:
+            raise TypeError("result acceptance quarantine category must be exact")
+        self.category = category
+        self.detail = detail
+        super().__init__(detail)
 
 
 def _prepared_text(value: object, label: str) -> str:
