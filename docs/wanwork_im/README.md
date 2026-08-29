@@ -35,6 +35,8 @@
 - [RESEARCH_TRACEABILITY.md](RESEARCH_TRACEABILITY.md)：用户调研快照、采纳/拒绝决策与从证据到验收的映射。
 - [MULTI_PLATFORM_STATUS.md](MULTI_PLATFORM_STATUS.md)：Web、桌面、iOS/iPadOS、Android、鸿蒙的当前
   交付矩阵、可体验范围与原生客户端路线。
+- [WEB_STAGE_CHECKPOINT_20260830.md](WEB_STAGE_CHECKPOINT_20260830.md)：本次 Web-first vertical slice
+  的可重复验收步骤、浏览器证据、提交序列和未完成边界。
 
 当前 approval policy control-store 代码证据基线为 `16d66b6`，深度报告与可视化为：
 
