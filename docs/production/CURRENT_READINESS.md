@@ -435,7 +435,7 @@ M4 仍不包含 migration 7 注册、Atomic Result Writer、receipt/event/task/a
 [`31_inactive_result_schema_artifact_transaction_evidence.md`](../../analysis_report/research/31_inactive_result_schema_artifact_transaction_evidence.md)。
 
 随后在独立分支 `mainline_continue_quantum_entanglement` 推进的 E3 M5/M7.5 私有 checkpoint（最近
-推送代码 HEAD `020c1fd`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
+推送代码 HEAD `313f99d`，尚未合并）已经把上述能力推进到可审计但仍未开放的边界：结果事件、
 manifest/request/receipt、Artifact blob/version/binding、job 与 attempt terminal CAS 组成同一
 owner transaction；每个结果 DML 边界均有故障注入并证明整图回滚；commit ACK-loss 会 poison
 store 并保留已提交图，确认 rollback 则不留前缀。新增的 capability-free `ObservedV2` 路径只
@@ -475,6 +475,8 @@ subject drift 与 forged dependency 的拒绝，但这仍不是生产 API。proj
 、[`36_result_restore_projection_replay_evidence.md`](../../analysis_report/research/36_result_restore_projection_replay_evidence.md)。
 当前 HEAD 的全仓 pytest 回归为 2,946 项、退出码 0；记录见
 [`37_mainline_regression_checkpoint.md`](../../analysis_report/research/37_mainline_regression_checkpoint.md)。
+最新 HEAD `313f99d` 的全量回归为 2,948 项、退出码 0；记录见
+[`40_mainline_full_regression_latest.md`](../../analysis_report/research/40_mainline_full_regression_latest.md)。
 结果接受提交前 11 个真实 `SIGKILL` 边界的矩阵证据见
 [`38_result_acceptance_process_kill_matrix_evidence.md`](../../analysis_report/research/38_result_acceptance_process_kill_matrix_evidence.md)。
 COMMIT 落盘后、ACK 返回前进程被杀的分类证据见
