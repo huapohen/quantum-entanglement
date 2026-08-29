@@ -147,6 +147,14 @@ production gate and does not authorize a real connector or external message.
   that keeps fencing active during acceptance, requires an exact acceptance request, and sanitizes
   every non-success outcome. Production worker dispatch, projection, and external effects remain
   disabled.
+- Opt-in `SQLiteResultProjectionStore` business read model for committed result/terminal events,
+  keyed by tenant/workspace/invocation and storing only result references, receipt/event coordinates,
+  revisions, Artifact count and manifest digest; result bodies, lease tokens and credentials are not
+  copied.
+- Process-bound result projection wrapper with fork/PID-drift rejection before SQLite access,
+  dual-connection lease fencing, durable-offset reopen behavior and a real SIGKILL-after-claim
+  recovery regression. The projection remains a candidate and is not wired into production
+  composition or authenticated APIs.
 
 ### Changed
 

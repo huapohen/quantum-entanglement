@@ -33,8 +33,8 @@ Passing unit tests alone is necessary but not sufficient.
 
 ## Current E3 result-authority checkpoint (2026-08-29)
 
-The independent branch `mainline_continue_quantum_entanglement` currently carries a private M5
-checkpoint plus the explicit migration-7 activation kernel (latest pushed HEAD `7bed2b6`). It has a
+The independent branch `mainline_continue_quantum_entanglement` currently carries a private M5/M7.5
+checkpoint plus the explicit migration-7 activation kernel (latest pushed HEAD `7a01f6b`). It has a
 single-owner atomic result graph for result and terminal events, manifest/request/receipt, Artifact
 blob/version/binding, and succeeded job/attempt CAS; fault injection covers every result DML boundary
 and both confirmed-rollback and commit-ACK-loss outcomes. A capability-free `ObservedV2` readback
@@ -51,9 +51,12 @@ feature-off and rejects an activated v7 database, so this is still not a product
 not enable production worker dispatch, publication, real IM or external outbound, and must not be
 counted as a closed Gate A–E. The opt-in API now returns process-bound `AcceptedV2` only after a
 fresh COMMIT ACK and returns `ObservedV2` for replay/readback; the supervisor can keep heartbeat
-fencing through a caller-supplied acceptor. The next release-blocking work is business projection,
-crash/kill and two-process evidence, clean-host restore/replay, compatibility policy and the
-receipt-bound worker gate.
+fencing through a caller-supplied acceptor. The next release-blocking work is authenticated
+projection scope, crash/kill and two-process evidence, clean-host restore/replay, compatibility
+policy and the receipt-bound worker gate. The result-only business projection candidate now has process binding,
+dual-connection lease fencing and one real SIGKILL-after-claim recovery test; authenticated scope,
+full-system kill/two-process recovery, clean-host restore/replay and production composition remain
+closed.
 
 ## Phase 0 — validated kernel (`0.1.x`, complete)
 

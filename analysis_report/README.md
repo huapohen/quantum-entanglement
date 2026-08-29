@@ -7,7 +7,7 @@
 并逐页回读。语雀按用户
 最新指令保持不操作。
 
-## Notion 镜像（最近已回读基线：3a92f3c；本地/GitHub 代码已推进至 `69fbcb6`）
+## Notion 镜像（最近已回读基线：3a92f3c；本地/GitHub 代码已推进至 `7a01f6b`）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
