@@ -56,6 +56,27 @@ func TestMemoryInboxStoreRejectsDigestAndPayloadDriftWithoutOverwrite(t *testing
 	}
 }
 
+func TestMemoryInboxStoreReconcileReturnsObservedReceiptOnly(t *testing.T) {
+	store := NewMemoryInboxStore()
+	envelope := validInboxEnvelope(t)
+	if _, err := store.Admit(t.Context(), envelope); err != nil {
+		t.Fatalf("initial admission: %v", err)
+	}
+	reconciled, err := store.Reconcile(t.Context(), envelope)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if reconciled.Status != InboxReplayed || !reconciled.ResolvedAfterUnknown ||
+		reconciled.Receipt.Envelope.EventDigest != envelope.EventDigest {
+		t.Fatalf("reconciled admission = %#v", reconciled)
+	}
+	changed := envelope
+	changed.EventDigest = SHA256Digest("sha256:" + "b" + "111111111111111111111111111111111111111111111111111111111111111")
+	if _, err := store.Reconcile(t.Context(), changed); !errors.Is(err, ErrInboxDigestConflict) {
+		t.Fatalf("reconcile digest drift error = %v, want %v", err, ErrInboxDigestConflict)
+	}
+}
+
 func TestMemoryInboxStoreScopesAreNotWildcardsAndConcurrentAdmissionHasOneInsert(t *testing.T) {
 	store := NewMemoryInboxStore()
 	envelope := validInboxEnvelope(t)

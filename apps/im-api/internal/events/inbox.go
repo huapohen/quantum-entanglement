@@ -43,8 +43,9 @@ const (
 )
 
 type InboxAdmission struct {
-	Status  InboxAdmissionStatus
-	Receipt InboxReceipt
+	Status               InboxAdmissionStatus
+	Receipt              InboxReceipt
+	ResolvedAfterUnknown bool
 }
 
 var (
@@ -52,8 +53,16 @@ var (
 	ErrInvalidInboxEnvelope  = errors.New("invalid inbound inbox envelope")
 	ErrInboxDigestConflict   = errors.New("inbound inbox event digest conflict")
 	ErrInboxNotFound         = errors.New("inbound inbox event not found")
+	ErrInboxCommitUnknown    = errors.New("inbound inbox commit outcome is unknown")
 	ErrInboxStoreUnavailable = errors.New("inbound inbox store unavailable")
 )
+
+// InboxAdmissionReconciler is implemented by durable stores that can resolve a commit
+// acknowledgement loss from a fresh read. Reconciliation never grants a fresh insertion
+// result; it returns the already durable receipt as an observation.
+type InboxAdmissionReconciler interface {
+	Reconcile(context.Context, InboxEnvelope) (InboxAdmission, error)
+}
 
 // InboxStore admits one verified event exactly once per scope and event ID. A retry with the
 // same event digest returns the original receipt; a retry with a different digest must fail
@@ -176,6 +185,31 @@ func (store *MemoryInboxStore) Load(ctx context.Context, scope InboxScope, event
 		return InboxReceipt{}, ErrInboxNotFound
 	}
 	return cloneInboxReceipt(receipt), nil
+}
+
+func (store *MemoryInboxStore) Reconcile(
+	ctx context.Context,
+	envelope InboxEnvelope,
+) (InboxAdmission, error) {
+	if err := inboxContextError(ctx); err != nil {
+		return InboxAdmission{}, err
+	}
+	if store == nil || envelope.Validate() != nil {
+		return InboxAdmission{}, ErrInvalidInboxEnvelope
+	}
+	receipt, err := store.Load(ctx, envelope.Scope, envelope.EventID)
+	if err != nil {
+		return InboxAdmission{}, err
+	}
+	if receipt.Envelope.EventDigest != envelope.EventDigest ||
+		receipt.Envelope.Payload.Digest() != envelope.Payload.Digest() {
+		return InboxAdmission{}, ErrInboxDigestConflict
+	}
+	return InboxAdmission{
+		Status:               InboxReplayed,
+		Receipt:              receipt,
+		ResolvedAfterUnknown: true,
+	}, nil
 }
 
 func (envelope InboxEnvelope) Validate() error {

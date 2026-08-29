@@ -10,11 +10,13 @@ import (
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/events"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/runtimepool"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
 	maxInboxIdentifierBytes = 256
 	maxInboxProviderBytes   = 64
+	inboxReconcileTimeout   = 5 * time.Second
 )
 
 var inboxDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -23,7 +25,8 @@ var inboxDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // Runtime callers can SELECT receipts and execute the one fixed admission function, but cannot
 // directly INSERT, UPDATE, or DELETE inbox rows.
 type NativeIMInboxStore struct {
-	pool *runtimepool.Pool
+	pool       *runtimepool.Pool
+	commitHook func(context.Context, pgx.Tx) error
 }
 
 var _ events.InboxStore = (*NativeIMInboxStore)(nil)
@@ -32,7 +35,7 @@ func NewNativeIMInboxStore(pool *runtimepool.Pool) (*NativeIMInboxStore, error) 
 	if pool == nil {
 		return nil, events.ErrInvalidStore
 	}
-	return &NativeIMInboxStore{pool: pool}, nil
+	return &NativeIMInboxStore{pool: pool, commitHook: commitInboxTransaction}, nil
 }
 
 func (store *NativeIMInboxStore) Admit(
@@ -42,7 +45,7 @@ func (store *NativeIMInboxStore) Admit(
 	if err := inboxStoreContextError(ctx); err != nil {
 		return events.InboxAdmission{}, err
 	}
-	if store == nil || store.pool == nil || !validNativeIMInboxEnvelope(envelope) {
+	if store == nil || store.pool == nil || store.commitHook == nil || !validNativeIMInboxEnvelope(envelope) {
 		return events.InboxAdmission{}, events.ErrInvalidInboxEnvelope
 	}
 	parts, err := payloadParts(envelope.Payload)
@@ -53,8 +56,15 @@ func (store *NativeIMInboxStore) Admit(
 	if err != nil {
 		return events.InboxAdmission{}, events.ErrInboxStoreUnavailable
 	}
-	defer connection.Release()
-	transaction, err := connection.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	released := false
+	release := func() {
+		if !released {
+			connection.Release()
+			released = true
+		}
+	}
+	defer release()
+	transaction, err := connection.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return events.InboxAdmission{}, mapInboxStoreError(ctx, err)
 	}
@@ -88,14 +98,54 @@ SELECT wanwork_im.admit_native_im_inbox(
 		receipt.Envelope.Payload.Digest() != envelope.Payload.Digest() {
 		return events.InboxAdmission{}, events.ErrInboxDigestConflict
 	}
-	if err := transaction.Commit(ctx); err != nil {
-		return events.InboxAdmission{}, mapInboxStoreError(ctx, err)
+	if err := store.commitHook(ctx, transaction); err != nil {
+		if definiteInboxRollback(err) {
+			return events.InboxAdmission{}, mapInboxStoreError(ctx, err)
+		}
+		// A commit error after the server may have accepted the transaction makes this
+		// connection unsafe to return to the pool. Reconcile only from a fresh connection.
+		quarantineInboxConnection(connection)
+		released = true
+		reconcileContext, cancel := context.WithTimeout(context.Background(), inboxReconcileTimeout)
+		defer cancel()
+		reconciled, reconcileErr := store.Reconcile(reconcileContext, envelope)
+		if reconcileErr == nil {
+			return reconciled, nil
+		}
+		return events.InboxAdmission{}, events.ErrInboxCommitUnknown
 	}
 	admissionStatus := events.InboxReplayed
 	if status == "inserted" {
 		admissionStatus = events.InboxInserted
 	}
 	return events.InboxAdmission{Status: admissionStatus, Receipt: receipt}, nil
+}
+
+// Reconcile reads the exact durable row from a fresh read-only transaction. It never reports
+// a fresh insertion, because the caller has not received a verified commit acknowledgement.
+func (store *NativeIMInboxStore) Reconcile(
+	ctx context.Context,
+	envelope events.InboxEnvelope,
+) (events.InboxAdmission, error) {
+	if err := inboxStoreContextError(ctx); err != nil {
+		return events.InboxAdmission{}, err
+	}
+	if store == nil || store.pool == nil || !validNativeIMInboxEnvelope(envelope) {
+		return events.InboxAdmission{}, events.ErrInvalidInboxEnvelope
+	}
+	receipt, err := store.Load(ctx, envelope.Scope, envelope.EventID)
+	if err != nil {
+		return events.InboxAdmission{}, err
+	}
+	if receipt.Envelope.EventDigest != envelope.EventDigest ||
+		receipt.Envelope.Payload.Digest() != envelope.Payload.Digest() {
+		return events.InboxAdmission{}, events.ErrInboxDigestConflict
+	}
+	return events.InboxAdmission{
+		Status:               events.InboxReplayed,
+		Receipt:              receipt,
+		ResolvedAfterUnknown: true,
+	}, nil
 }
 
 func (store *NativeIMInboxStore) Load(
@@ -279,6 +329,32 @@ func mapInboxStoreError(ctx context.Context, err error) error {
 		return err
 	}
 	return events.ErrInboxStoreUnavailable
+}
+
+func definiteInboxRollback(err error) bool {
+	if errors.Is(err, pgx.ErrTxCommitRollback) {
+		return true
+	}
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) &&
+		(postgresError.Code == "40001" || postgresError.Code == "40P01")
+}
+
+func commitInboxTransaction(ctx context.Context, transaction pgx.Tx) error {
+	return transaction.Commit(ctx)
+}
+
+func quarantineInboxConnection(connection interface{ Hijack() *pgx.Conn }) {
+	if connection == nil {
+		return
+	}
+	rawConnection := connection.Hijack()
+	if rawConnection == nil {
+		return
+	}
+	closeContext, cancel := context.WithTimeout(context.Background(), inboxReconcileTimeout)
+	defer cancel()
+	_ = rawConnection.Close(closeContext)
 }
 
 func rollbackInboxTransaction(transaction pgx.Tx) {

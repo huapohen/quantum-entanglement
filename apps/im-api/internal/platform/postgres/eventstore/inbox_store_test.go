@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/events"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestNewNativeIMInboxStoreRequiresRuntimePool(t *testing.T) {
@@ -88,5 +89,14 @@ func TestMapInboxStoreErrorPreservesCancellationOnly(t *testing.T) {
 	}
 	if got := inboxStoreContextError(nil); !errors.Is(got, context.Canceled) {
 		t.Fatalf("nil context error = %v", got)
+	}
+}
+
+func TestDefiniteInboxRollbackSeparatesKnownRollbackFromUnknownOutcome(t *testing.T) {
+	if !definiteInboxRollback(pgx.ErrTxCommitRollback) {
+		t.Fatal("pgx commit rollback was not classified as definite rollback")
+	}
+	if definiteInboxRollback(errors.New("synthetic acknowledgement loss")) {
+		t.Fatal("generic commit error was incorrectly classified as definite rollback")
 	}
 }

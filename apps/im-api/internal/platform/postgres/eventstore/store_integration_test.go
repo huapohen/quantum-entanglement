@@ -203,6 +203,24 @@ func TestPostgresEventStoreAgainstPostgres(t *testing.T) {
 	if err != nil || inboxReplay.Status != events.InboxReplayed || inboxReplay.Receipt.DeliveryCount != 2 {
 		t.Fatalf("native IM inbox replay = %#v/%v", inboxReplay, err)
 	}
+	unknownEnvelope := inboxEnvelope
+	unknownEnvelope.EventID = "provider-event-unknown"
+	var injectedUnknown atomic.Bool
+	inboxStore.commitHook = func(ctx context.Context, transaction pgx.Tx) error {
+		if injectedUnknown.CompareAndSwap(false, true) {
+			if err := transaction.Commit(ctx); err != nil {
+				return err
+			}
+			return errors.New("synthetic inbox commit acknowledgement loss")
+		}
+		return commitInboxTransaction(ctx, transaction)
+	}
+	unknownAdmission, err := inboxStore.Admit(t.Context(), unknownEnvelope)
+	if err != nil || unknownAdmission.Status != events.InboxReplayed ||
+		!unknownAdmission.ResolvedAfterUnknown || unknownAdmission.Receipt.DeliveryCount != 1 {
+		t.Fatalf("native IM inbox unknown commit = %#v/%v", unknownAdmission, err)
+	}
+	inboxStore.commitHook = commitInboxTransaction
 	inboxDrift := inboxEnvelope
 	inboxDrift.EventDigest = events.SHA256Digest("sha256:" + strings.Repeat("d", 64))
 	if _, err := inboxStore.Admit(t.Context(), inboxDrift); !errors.Is(err, events.ErrInboxDigestConflict) {
