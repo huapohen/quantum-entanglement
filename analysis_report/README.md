@@ -47,6 +47,7 @@
 - [`html/10h_execution_status_20260830.html`](html/10h_execution_status_20260830.html)：同一状态的可视化 HTML 入口。
 - [`research/52_agent_store_acceptance_20260830.md`](research/52_agent_store_acceptance_20260830.md)：Agent Store 独立验收证据、API/UI 入口、Trust Passport 投影和当前生产边界。
 - [`research/53_agent_store_live_gate_20260830.md`](research/53_agent_store_live_gate_20260830.md)：16:59 实时重跑门禁结果、覆盖范围、远端 SHA 与 Notion `local_pending` 边界。
+- [`research/54_agent_store_durable_persistence_boundary_20260830.md`](research/54_agent_store_durable_persistence_boundary_20260830.md)：从内存 synthetic 迁移 PostgreSQL durable 的最小 schema、repository/UoW、action-time resolver、provider effect、cutover 与验证边界；设计审计，尚未实现。
 
 | 文件 | 状态 | 内容 |
 |---|---|---|
