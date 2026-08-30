@@ -150,13 +150,19 @@ def select_commands(
             )
         )
     elif python_tests:
+        changed_python = tuple(
+            path
+            for path in paths
+            if path.startswith(("src/", "tests/", "scripts/")) and path.endswith(".py")
+        )
+        ruff_paths = tuple(dict.fromkeys((*changed_python, *python_tests)))
         commands.extend(
             (
                 GateCommand(
                     "pytest-focused",
                     (python_executable, "-m", "pytest", "-q", *python_tests),
                 ),
-                GateCommand("ruff-focused", ("ruff", "check", *python_tests)),
+                GateCommand("ruff-focused", ("ruff", "check", *ruff_paths)),
             )
         )
     elif code_changes:

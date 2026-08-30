@@ -22,6 +22,19 @@ class RegressionGateSelectionTests(unittest.TestCase):
         tests = _python_tests(self.repository, ["src/quantum_entanglement/runtime.py"])
         self.assertEqual(tests, ("tests/test_agent_runtime.py", "tests/test_runtime.py"))
 
+    def test_focused_ruff_includes_changed_source_and_selected_tests(self) -> None:
+        commands = select_commands(
+            self.repository,
+            ["src/quantum_entanglement/runtime.py"],
+        )
+        ruff = next(command for command in commands if command.name == "ruff-focused")
+        self.assertEqual(
+            ruff.argv[0:2],
+            ("ruff", "check"),
+        )
+        self.assertIn("src/quantum_entanglement/runtime.py", ruff.argv)
+        self.assertIn("tests/test_runtime.py", ruff.argv)
+
     def test_unmapped_runtime_change_escalates_to_full_python_gate(self) -> None:
         tests = _python_tests(self.repository, ["src/quantum_entanglement/new_runtime_piece.py"])
         self.assertEqual(tests, ("__FULL_PYTHON_GATE_REQUIRED__",))
