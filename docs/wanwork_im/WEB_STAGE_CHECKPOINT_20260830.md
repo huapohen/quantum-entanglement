@@ -46,6 +46,15 @@ curl --fail \
 
 ## 自动化证据
 
+可重复的一键门禁：
+
+```bash
+./scripts/verify_web_first.sh
+```
+
+该脚本强制 synthetic runtime，自动构建 Web、启动临时 loopback API，并检查 Agent Store、HTTP 200
+envelope、动态 mention、子群隔离和 provider committed；成功后清理 API 进程与临时日志。
+
 ```text
 GOTOOLCHAIN=local GOPROXY=off go test ./apps/im-api/internal/localdemo ./apps/im-api/internal/app -count=1
 GOTOOLCHAIN=local GOPROXY=off go test -race ./apps/im-api/internal/localdemo -count=1

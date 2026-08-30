@@ -24,6 +24,16 @@ http://127.0.0.1:18080/demo/im
 
 停止服务：回到启动服务的终端按 `Ctrl-C`。
 
+如果需要一次性验证 Web 构建、synthetic API、Agent Store 和子群隔离，而不打开浏览器，可在仓库
+根目录执行：
+
+```bash
+./scripts/verify_web_first.sh
+```
+
+脚本会使用临时端口和临时日志，结束时自动清理；可用 `WANWORK_IM_VERIFY_PORT` 指定验证端口。
+它强制 synthetic runtime，不读取模型/聊天平台凭据，也不访问外网。
+
 ## 2. 页面怎么验收
 
 1. 在左侧父群输入任意具体任务，不是固定示例；
