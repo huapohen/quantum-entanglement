@@ -10697,6 +10697,7 @@ __all__ = tuple(
     not in {
         "Enum",
         "InvocationRecoverySnapshot",
+        "RecoverySummary",
         "ResultAcceptanceDisabledError",
         "ResultReconciliationConflictError",
         "ResultReconciliationOutcome",
