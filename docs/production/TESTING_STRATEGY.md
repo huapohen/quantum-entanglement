@@ -3,11 +3,11 @@
 > 适用分支：`mainline_continue_quantum_entanglement`  
 > 更新日期：2026-08-30
 
-## 为什么有 2,958 项
+## 为什么有 2,964 项
 
-2,958 是当前 pytest 收集到的测试用例总数，不是本轮新增数量。`509e593` 基线已有 2,949
-项；本轮生命周期和 scoped lease 竞争节点新增 9 项。因此总数增加是有界的，且每一项都有
-明确的回归目的。
+2,964 是当前集成评审分支由 pytest 收集到的测试用例总数，不是本轮每个 commit 都要执行的数量。
+合并前的 QE 内核基线约为 2,962 项；当前数字会随参数化用例和测试文件合并而变化。测试库存的
+增长只说明覆盖面变化，不能用来推导单次改动的回归范围。
 
 ## 分层门禁
 
@@ -19,7 +19,7 @@
 | 跨模块运行 seam | 相关组合测试 + Ruff + strict mypy/compile | 10–60 秒 | 阶段封板 |
 | schema/transaction/process boundary | 专项矩阵 + 双连接/进程测试 + diff-check | 10–90 秒 | 阶段封板 |
 | 文档、证据、索引 | `git diff --check` | <1 秒 | 不需要 |
-| 用户可验收阶段 | 全量 pytest + Ruff + strict mypy + compileall | 约 2 分钟 | 必跑 |
+| 用户可验收阶段 | 全量 pytest + Ruff + strict mypy + compileall | 约 2–3 分钟 | 必跑 |
 
 ## 当前节点的可复现命令
 
@@ -40,7 +40,7 @@ PYTHONPATH=src .venv/bin/pytest -q \
 阶段封板：
 
 ```bash
-PYTHONPATH=src .venv/bin/pytest --collect-only  # 当前 2,962 项
+PYTHONPATH=src .venv/bin/pytest --collect-only  # 当前 2,964 项，仅盘点库存
 PYTHONPATH=src .venv/bin/pytest -q
 .venv/bin/ruff check src tests
 PYTHONPATH=src .venv/bin/python -m mypy --strict src
@@ -55,6 +55,22 @@ git diff --check
 3. 只有跨阶段节点才跑完整回归，并把结果写到 `analysis_report/research/`；
 4. 若快速门禁失败，先修复再提交，不用全量回归掩盖局部失败；
 5. 文档提交不触碰运行代码，也不因文档变更重新等待全量测试。
+
+### 影响面选择规则
+
+先用 `git diff --name-only <base>...HEAD` 列出本 commit 触及的路径，再按下面规则取最小充分
+集合：
+
+- `docs/`、`analysis_report/`、HTML、索引：只做 `git diff --check` 和对应生成器/链接检查；
+- `src/quantum_entanglement/<module>.py`：运行同名或直接依赖的 `tests/test_<module>.py`；
+- `store.py`、事务、schema、lease、process boundary：运行对应专项矩阵，再加 Ruff、strict
+  mypy、compileall；
+- `apps/im-api/`：在该模块目录运行 `go test ./...`，必要时加 `go test -race ./...` 和 `go vet`；
+- `clients/im-web/`：运行 `npm run build`，再跑 `scripts/verify_web_first.sh`；
+- 跨上述两层的合并或用户验收节点：各层专项全部通过后，只在封板时跑一次全量 pytest。
+
+当前 2,964 项全量回归的证据见
+[`50_mainline_web_im_integration_regression_20260830.md`](../../analysis_report/research/50_mainline_web_im_integration_regression_20260830.md)。
 
 全量通过只证明当前记录环境的源码和断言成立，不代表生产 GA；外部 IM、飞书、企微、模型
 出网和 connector 仍由独立 Gate 控制。

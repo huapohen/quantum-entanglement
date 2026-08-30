@@ -2,12 +2,13 @@
 
 本目录是本地报告的单一真相源。报告正文会在研究、实现和验证完成后汇总为
 `multi_agent_collaboration_report.md`。当前截至 `3a92f3c` 的稳定内容已经同步到私人 Notion 并完成
-回读；之后的本地增量持续以 Git/GitHub 为事实源。用户在 2026-08-28 进一步确认 Notion 会影响开发速度，
-因此后续开发期间只更新本地文档并频繁 commit/push；当前计划任务全部完成后再一次性批量同步 Notion
+回读；之后的本地增量持续以 Git/GitHub 为事实源。当前评审分支最新集成提交为 `4783f61`，已推送
+到 `origin/mainline_continue_quantum_entanglement`。用户在 2026-08-28 进一步确认 Notion 会影响
+开发速度，因此后续开发期间只更新本地文档并频繁 commit/push；当前计划任务全部完成后再一次性批量同步 Notion
 并逐页回读。语雀按用户
 最新指令保持不操作。
 
-## Notion 镜像（最近已回读基线：3a92f3c；本地/GitHub 代码已推进至 `7a01f6b`）
+## Notion 镜像（最近已回读基线：3a92f3c；本地/GitHub 代码已推进至 `4783f61`）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -58,7 +59,7 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | M1–M7 与 M7.5 projection 候选已完成，下一步认证作用域/recovery | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移、projection 与 worker 门禁的提交级计划 |
-| `../docs/production/TESTING_STRATEGY.md` | 当前执行规则 | 小改动跑专项，阶段封板才跑全量 2,962 项；静态门禁与提交纪律 |
+| `../docs/production/TESTING_STRATEGY.md` | 当前执行规则 | 小改动跑专项，阶段封板才跑全量 2,964 项；静态门禁与提交纪律 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
@@ -136,6 +137,7 @@ business projection 候选；下一步是认证作用域、crash/kill/two-proces
 | `research/32_result_acceptance_worker_seam_evidence.md` | E3 Result Authority M7/worker seam：`7bed2b6` | opt-in store-owned acceptance、fresh-ACK `AcceptedV2`、replay/ACK-loss `ObservedV2`、接受期间 heartbeat fencing 与 exact request 门禁；生产 worker/projection 仍关闭 |
 | `research/43_scoped_lease_lifecycle_evidence.md` | E3 continuation：`36cd0b4`/`025b5c7` | 私有 lifecycle admission stop、bounded drain、store relinquish、双连接 heartbeat/expiry 与 relinquish race；生产 gate 仍关闭 |
 | `research/44_mainline_full_regression_20260830.md` | 当前封板全量回归 | 2,962 项 pytest、Ruff、strict mypy、compileall、diff-check 全通过及剩余生产边界 |
+| `research/50_mainline_web_im_integration_regression_20260830.md` | 当前 Web-first IM 集成封板 | 2,964 项 pytest、Go API、Web 构建、synthetic 验收和影响面回归纪律 |
 | `../docs/production/RESULT_BUSINESS_PROJECTION.md` | E3 M7.5 result-only business projection 候选 | leased projector、scope/terminal binding、幂等、schema pinning、identity/终态绑定漂移拒绝、fork process binding、dual-connection fencing、SIGKILL recovery 与 fail-closed 安全边界 |
 
 ## 已归档截图
