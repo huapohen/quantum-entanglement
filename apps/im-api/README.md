@@ -119,12 +119,16 @@ GET /api/v1/auth/context -> authenticated tenant identity summary (runtime compo
 GET /api/v1/tenants/:tenantId/conversations/:conversationId -> tenant-scoped read projection (runtime only)
 GET /api/v1/tenants/:tenantId/conversations/:conversationId/events -> authenticated, cursor-paged event read
   (runtime composition only; requires an injected EventStore and never writes or dispatches work)
+GET /api/v1/tenants/:tenantId/conversations/:conversationId/messages -> authenticated message projection read
+  (bounded event replay; no provider delivery or outbound effect)
 
 The provider-neutral `internal/improjection` package reduces `message.created`, `message.edited`, and
 `message.recalled` events into immutable `MessageSnapshot` values with strict field allowlists, tenant/stream
-scope, sequence monotonicity, event-ID replay dedupe, and revision transitions. It is intentionally a volatile
-reducer that can be passed to the existing event `Projector`; PostgreSQL message heads/snapshots and a durable
-message route are not yet composed.
+scope, sequence monotonicity, event-ID replay dedupe, and revision transitions. The PostgreSQL runtime now
+composes its durable EventStore with a bounded replay reader. The reader reconstructs at most 4,096 events,
+binds its opaque page cursor to tenant/workspace/conversation/stream version, and rejects a stale cursor after
+stream drift. Durable materialized message heads/snapshots and same-transaction projection checkpoints remain
+future work; this replay path is the fail-closed bridge, not the final high-volume read model.
 ```
 
 The runtime-only identity seam requires both a canonical bearer header and one tenant candidate header:
@@ -154,8 +158,9 @@ position, event-ID uniqueness, and canonical payload shape before returning the 
 conversation/membership/access revisions and cursor metadata so a client can detect which authority snapshot
 authorized the page. Event ID is exposed as the page-level `dedupeKey`; it is an observation key, not a write
 idempotency grant. If no EventStore is composed, the route returns dependency-unavailable rather than an empty
-success. The current PostgreSQL runtime composition intentionally does not inject this dependency yet, because
-the event query must eventually share one transaction snapshot with authority reads before production use.
+success. The PostgreSQL runtime now injects the durable EventStore and bounded message replay reader. Authority
+and event/projection reads still use separate repeatable-read transactions, so cross-snapshot cutover evidence
+and a reviewed Clerk/JWKS adapter remain mandatory before production authorization is opened.
 
 ### One-shot migrator
 
@@ -293,9 +298,9 @@ stream, and position.
 Input, append/replay results, and pages are detached snapshots.
 
 The port exposes `StoreCharacteristics`, so `ValidateStoreRequirements` rejects empty, unknown,
-contradictory, typed-nil, durable restart-persistence, or tamper-evidence admissions for this fake. The current
-application has no EventStore production composition yet; every future production factory must invoke the
-guard and pass provider-specific crash/restore conformance. Action receipts deliberately remain a separate
+contradictory, typed-nil, durable restart-persistence, or tamper-evidence admissions for this fake. The
+PostgreSQL runtime composition uses the durable adapter; every production deployment still must pass
+provider-specific crash/restore conformance. Action receipts deliberately remain a separate
 Action Plane port and are not an EventStore characteristic. The fake's actual guarantees are limited:
 
 ```text
