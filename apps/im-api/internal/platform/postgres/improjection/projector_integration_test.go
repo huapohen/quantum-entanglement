@@ -341,7 +341,6 @@ func TestPostgresMessageProjectorSIGKILLHelper(t *testing.T) {
 		}
 		writeProjectorSIGKILLMarker(t, marker)
 		select {}
-		return nil
 	}
 	if _, err := projector.Run(t.Context(), tenant, workspace, 16); err != nil {
 		t.Fatalf("helper projector run: %v", err)
