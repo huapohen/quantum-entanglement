@@ -85,14 +85,22 @@ func TestPostgresMessageProjectorEndToEnd(t *testing.T) {
 	if err != nil || second.Processed != 0 || second.Checkpoint.Position != 3 {
 		t.Fatalf("idempotent rerun=%#v err=%v", second, err)
 	}
-	// Two workers are safe: one may drain first while the other observes the committed checkpoint;
-	// neither may produce a divergent materialized snapshot.
+	// Add a fresh event, then race two workers from the same checkpoint. One may win the CAS while
+	// the other observes the committed checkpoint or reports a retryable conflict; neither may
+	// produce a divergent materialized snapshot.
+	secondMessage := projectorIntegrationEvent(t, "evt_msg_created_2", "message.created", 4,
+		`{"conversationId":"cnv_room","messageId":"msg_2","clientMessageId":"msg_client_2","messageType":"text","text":"second"}`,
+		when.Add(3*time.Second), workspace)
+	if _, err := store.AppendBatch(t.Context(), events.AppendBatch{TenantID: "ten_alpha", WorkspaceID: &workspace,
+		StreamID: "cnv_room", ExpectedVersion: 3, Events: []events.EventToAppend{secondMessage}}); err != nil {
+		t.Fatalf("append second message: %v", err)
+	}
 	var results [2]ProjectorResult
 	var errs [2]error
 	var done atomic.Uint32
 	for i := range results {
 		go func(i int) {
-			results[i], errs[i] = projector.Run(t.Context(), tenantID, workspaceValue, 2)
+			results[i], errs[i] = projector.Run(t.Context(), tenantID, workspaceValue, 1)
 			done.Add(1)
 		}(i)
 	}
@@ -109,8 +117,35 @@ func TestPostgresMessageProjectorEndToEnd(t *testing.T) {
 		}
 	}
 	final, err := reader.ReadPage(t.Context(), imstore.MessageReadPageQuery{Conversation: conversation, WorkspaceID: workspaceValue, Limit: 10, ConversationRevision: 1, AccessRevision: 1})
-	if err != nil || len(final.Messages) != 1 || final.Messages[0].Text() != "after" || final.ProjectionRevision != 3 {
+	if err != nil || len(final.Messages) != 2 || final.Messages[0].Text() != "after" || final.Messages[1].Text() != "second" || final.ProjectionRevision != 4 {
 		t.Fatalf("final materialized page=%#v err=%v", final, err)
+	}
+	pool.Close()
+	reopened, err := runtimepool.Open(t.Context(), runtimepool.Config{
+		ConnectionString: connectionString, Manifest: manifest, MaxConnections: 1,
+		MinIdleConnections: 0, ConnectTimeout: 3 * time.Second, PingTimeout: time.Second,
+		AllowInsecureLocalhost: true,
+	})
+	if err != nil {
+		t.Fatalf("reopen runtime pool: %v", err)
+	}
+	defer reopened.Close()
+	restartedProjector, err := NewProjector(reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := restartedProjector.Run(t.Context(), tenantID, workspaceValue, 2)
+	if err != nil || restarted.Processed != 0 || restarted.Checkpoint.Position != 4 {
+		t.Fatalf("restart projector result=%#v err=%v", restarted, err)
+	}
+	restartedReader, err := NewReader(reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedPage, err := restartedReader.ReadPage(t.Context(), imstore.MessageReadPageQuery{Conversation: conversation,
+		WorkspaceID: workspaceValue, Limit: 10, ConversationRevision: 1, AccessRevision: 1})
+	if err != nil || len(restartedPage.Messages) != 2 || restartedPage.ProjectionRevision != 4 {
+		t.Fatalf("restart materialized page=%#v err=%v", restartedPage, err)
 	}
 }
 
