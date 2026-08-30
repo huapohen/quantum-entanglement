@@ -568,7 +568,28 @@ class HeartbeatPureWorkerSupervisor:
                 self.admission.configuration.drain_timeout_seconds,
             )
             return PureWorkerRunResult(outcome, drained=drained)
+        except asyncio.CancelledError:
+            # A caller may cancel the supervisor task itself while a handler is still
+            # running (for example, a hard shutdown deadline).  Do not leave that
+            # handler orphaned: signal cooperative cancellation and use the same
+            # bounded drain contract as timeout/lease-loss paths.  The public result
+            # remains a sanitized non-success classification.
+            local_cancel.set()
+            drained = await _cancel_and_drain(
+                handler_task,
+                self.admission.configuration.drain_timeout_seconds,
+            )
+            return PureWorkerRunResult(PureWorkerOutcome.CANCELED, drained=drained)
         finally:
+            # Defensive cleanup for unexpected exceptions raised by the supervision
+            # machinery itself.  Normal paths have already drained this task; this
+            # branch prevents an internal error from leaking a live pure handler.
+            if not handler_task.done():
+                local_cancel.set()
+                await _cancel_and_drain(
+                    handler_task,
+                    self.admission.configuration.drain_timeout_seconds,
+                )
             stopped.set()
             heartbeat_task.cancel()
             for watcher in watchers:
