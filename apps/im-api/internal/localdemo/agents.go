@@ -147,6 +147,10 @@ func (service *Service) InstallAgent(
 	// An already-active installation is a no-op. Resolve and validate the requested subset before
 	// this branch so a replay cannot be used to smuggle an undeclared capability past the gate.
 	if !target.installation.IsZero() && target.installation.Status() == agentstore.InstallationActive {
+		if input.GrantedCapabilities != nil &&
+			!slices.Equal(grantedCapabilities, target.installation.GrantedCapabilities()) {
+			return AgentStoreInstallResult{}, ErrConflict
+		}
 		return AgentStoreInstallResult{Agent: service.agentStoreView(target), Replayed: true}, nil
 	}
 	passport := target.passport

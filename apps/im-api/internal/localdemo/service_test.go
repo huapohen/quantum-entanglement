@@ -266,6 +266,12 @@ func TestServiceInstallHonorsCapabilitySubsetAndRejectsEscalation(t *testing.T) 
 		t.Fatalf("unreviewed capability = %v, want ErrForbidden", err)
 	}
 	if _, err := service.InstallAgent(context.Background(), LocalBearerToken, "agd_local_planner", AgentStoreInstallInput{
+		IdempotencyKey:      "test/store/install/planner-different-subset",
+		GrantedCapabilities: []string{"artifact.read"},
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("active install capability drift = %v, want ErrConflict", err)
+	}
+	if _, err := service.InstallAgent(context.Background(), LocalBearerToken, "agd_local_planner", AgentStoreInstallInput{
 		IdempotencyKey:      "test/store/install/planner-empty",
 		GrantedCapabilities: []string{},
 	}); !errors.Is(err, ErrInvalidInput) {
