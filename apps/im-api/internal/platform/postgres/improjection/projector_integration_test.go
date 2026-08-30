@@ -288,6 +288,103 @@ func TestPostgresMessageProjectorSIGKILLBoundaries(t *testing.T) {
 	}
 }
 
+// TestPostgresMessageProjectorPartialWriteRollback installs a temporary owner-side trigger that
+// fails on the second snapshot write. The first write has already succeeded inside the page
+// transaction, so this is a real database partial-write fault rather than an injected Go error.
+// The trigger is removed and a fresh run must replay both events from the unchanged checkpoint.
+func TestPostgresMessageProjectorPartialWriteRollback(t *testing.T) {
+	adminURL := os.Getenv("WANWORK_TEST_POSTGRES_ADMIN_URL")
+	if adminURL == "" {
+		t.Skip("WANWORK_TEST_POSTGRES_ADMIN_URL is not set")
+	}
+	admin, connectionString, manifest := provisionProjectorRuntime(t, adminURL)
+	pool, err := runtimepool.Open(t.Context(), runtimepool.Config{
+		ConnectionString: connectionString, Manifest: manifest, MaxConnections: 2,
+		MinIdleConnections: 0, ConnectTimeout: 3 * time.Second, PingTimeout: time.Second,
+		AllowInsecureLocalhost: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if _, err := admin.Exec(t.Context(), `INSERT INTO wanwork_im.tenants (tenant_id,status,revision) VALUES ('ten_partial','active',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `INSERT INTO wanwork_im.workspaces (tenant_id,workspace_id,status,revision) VALUES ('ten_partial','wsp_partial','active',1)`); err != nil {
+		t.Fatal(err)
+	}
+	store, err := eventstore.New(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := "wsp_partial"
+	tenantID := mustTenant(t, "ten_partial")
+	workspaceID := mustWorkspace(t, workspace)
+	conversation := mustConversation(t, "ten_partial", "cnv_partial")
+	when := time.Date(2026, 8, 31, 1, 30, 0, 0, time.UTC)
+	first := projectorPartialEvent(t, "evt_partial_1", 1, "msg_partial_1", "first", when, workspace)
+	second := projectorPartialEvent(t, "evt_partial_2", 2, "msg_partial_2", "second", when.Add(time.Second), workspace)
+	if _, err := store.AppendBatch(t.Context(), events.AppendBatch{
+		TenantID: "ten_partial", WorkspaceID: &workspace, StreamID: "cnv_partial", Events: []events.EventToAppend{first, second},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `
+CREATE FUNCTION wanwork_im.test_projector_partial_write_fault() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO pg_catalog AS $function$
+BEGIN
+    IF NEW.message_id = 'msg_partial_2' THEN
+        RAISE EXCEPTION 'synthetic projector partial-write fault';
+    END IF;
+    RETURN NEW;
+END
+$function$;
+CREATE TRIGGER test_projector_partial_write_fault
+BEFORE INSERT OR UPDATE ON wanwork_im.message_snapshots
+FOR EACH ROW EXECUTE FUNCTION wanwork_im.test_projector_partial_write_fault();`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), `DROP TRIGGER IF EXISTS test_projector_partial_write_fault ON wanwork_im.message_snapshots`)
+		_, _ = admin.Exec(context.Background(), `DROP FUNCTION IF EXISTS wanwork_im.test_projector_partial_write_fault()`)
+	})
+	projector, err := NewProjector(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projector.Run(t.Context(), tenantID, workspaceID, 16); !errors.Is(err, imstore.ErrStoreUnavailable) {
+		t.Fatalf("partial-write error=%v, want %v", err, imstore.ErrStoreUnavailable)
+	}
+	reader, err := NewReader(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rolledBack, err := reader.ReadPage(t.Context(), imstore.MessageReadPageQuery{
+		Conversation: conversation, WorkspaceID: workspaceID, Limit: 10,
+		ConversationRevision: 1, AccessRevision: 1,
+	})
+	if err != nil || len(rolledBack.Messages) != 0 || rolledBack.ProjectionRevision != 0 {
+		t.Fatalf("partial-write rollback page=%#v err=%v", rolledBack, err)
+	}
+	if _, err := admin.Exec(t.Context(), `DROP TRIGGER test_projector_partial_write_fault ON wanwork_im.message_snapshots`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `DROP FUNCTION wanwork_im.test_projector_partial_write_fault()`); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := projector.Run(t.Context(), tenantID, workspaceID, 16)
+	if err != nil || recovered.Processed != 2 || recovered.Checkpoint.Position != 2 {
+		t.Fatalf("partial-write recovery=%#v err=%v", recovered, err)
+	}
+	page, err := reader.ReadPage(t.Context(), imstore.MessageReadPageQuery{
+		Conversation: conversation, WorkspaceID: workspaceID, Limit: 10,
+		ConversationRevision: 1, AccessRevision: 1,
+	})
+	if err != nil || len(page.Messages) != 2 || page.Messages[0].Text() != "first" || page.Messages[1].Text() != "second" || page.ProjectionRevision != 2 {
+		t.Fatalf("partial-write recovered page=%#v err=%v", page, err)
+	}
+}
+
 // TestPostgresMessageProjectorSIGKILLHelper is launched by the opt-in parent test above. It
 // blocks at the requested publication boundary until the parent sends SIGKILL. Keeping the
 // helper in the test binary avoids adding any kill/debug switch to the production binary.
@@ -441,6 +538,16 @@ func projectorSIGKILLEvent(t *testing.T, eventID string, sequence uint64, messag
 	}
 	key := "key_" + eventID
 	return events.EventToAppend{SchemaVersion: 1, EventID: eventID, StreamID: "cnv_sigkill", EventType: "message.created", TenantID: "ten_sigkill", WorkspaceID: &workspace, ActorID: "usr_alice", OccurredAt: occurred, CorrelationID: "corr_" + eventID, IdempotencyKey: &key, Payload: payload}
+}
+
+func projectorPartialEvent(t *testing.T, eventID string, sequence uint64, messageID, text string, occurred time.Time, workspace string) events.EventToAppend {
+	t.Helper()
+	payload, err := events.NewInlinePayload([]byte(fmt.Sprintf(`{"conversationId":"cnv_partial","messageId":"%s","clientMessageId":"msg_client_%d","messageType":"text","text":"%s"}`, messageID, sequence, text)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "key_" + eventID
+	return events.EventToAppend{SchemaVersion: 1, EventID: eventID, StreamID: "cnv_partial", EventType: "message.created", TenantID: "ten_partial", WorkspaceID: &workspace, ActorID: "usr_alice", OccurredAt: occurred, CorrelationID: "corr_" + eventID, IdempotencyKey: &key, Payload: payload}
 }
 
 func projectorIntegrationEvent(t *testing.T, id, eventType string, sequence uint64, raw string, occurred time.Time, workspace string) events.EventToAppend {
