@@ -7,8 +7,9 @@
 `EventStore append → Serializable Projector.Run → migration-12 owner function →
 message_projection_heads/message_snapshots → materialized Reader.ReadPage`。
 
-验证同时覆盖分页跨页、非消息事件推进 stream watermark、编辑 reducer、精确重跑和双实例并发
-重跑。没有启用真实 IM provider、外发或公网监听。
+验证同时覆盖分页跨页、非消息事件推进 stream watermark、编辑 reducer、精确重跑、新事件后的
+双实例并发竞争，以及关闭/重新打开 runtime pool 后的 checkpoint 与 reader readback。没有启用真实
+IM provider、外发或公网监听。
 
 ## 端到端场景
 
@@ -19,8 +20,10 @@ message_projection_heads/message_snapshots → materialized Reader.ReadPage`。
 3. `message.edited`：`msg_1 = after`。
 
 Projector 使用 page size 2，实际跨两个 Serializable transaction 完成 3 个事件。Reader 随后
-只返回一个 `edited/after` 快照，`ProjectionRevision=3`。再次运行 projector 处理 0 个事件且
-checkpoint 保持 position 3；两个并发 runner 均可安全结束，最终快照不分叉。
+只返回一个 `edited/after` 快照，`ProjectionRevision=3`。追加第 4 个 `message.created` 后，两个
+runner 以 page size 1 并发竞争；一个 CAS 获胜，另一个要么观察已提交 checkpoint、要么得到可重试
+冲突，最终两条消息和 `ProjectionRevision=4` 均可读。关闭并重新打开 runtime pool 后，projector
+处理 0 个事件、checkpoint position=4，reader 仍返回完整两条消息。
 
 ## 真实缺陷与修复
 
@@ -44,8 +47,8 @@ WANWORK_TEST_POSTGRES_ADMIN_URL='postgresql://127.0.0.1:55489/postgres?sslmode=d
   -run TestPostgresMessageProjectorEndToEnd -count=1 -v
 ```
 
-记录结果：`PASS`。完整迁移、runtime authority、eventstore、imstore 矩阵也已在同一隔离 PG18
-实例通过。
+记录结果：`PASS`（含并发竞争与 restart readback）。完整迁移、runtime authority、eventstore、
+imstore 矩阵也已在同一隔离 PG18 实例通过。
 
 ## 边界
 

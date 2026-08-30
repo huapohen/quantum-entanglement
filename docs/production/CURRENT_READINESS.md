@@ -102,7 +102,8 @@ PostgreSQL 18 上完成 integration 验证（证据见 research/68）；这里�
 
 `1e8fc38` 又补齐了 runtime-only 的真实端到端闭环：EventStore append、跨页 Serializable
 projector、migration-12 函数写入、materialized Reader readback、非消息 watermark、编辑 reducer、
-精确重跑和双 runner 并发重跑均在隔离 PostgreSQL 18 通过。期间修复了一个 revision 语义缺陷：
+精确重跑、追加事件后的双 runner CAS 竞争，以及 runtime pool 关闭/重开后的 checkpoint/readback
+均在隔离 PostgreSQL 18 通过。期间修复了一个 revision 语义缺陷：
 非消息事件推进 conversation head 时，已有消息行的 `projection_revision` 允许小于等于 head，
 不再被错误要求相等。详见 [`69_postgres_projector_end_to_end_and_revision_fix_20260830.md`](../../analysis_report/research/69_postgres_projector_end_to_end_and_revision_fix_20260830.md)。
 
