@@ -21,6 +21,7 @@ from time import monotonic, sleep
 from types import MappingProxyType
 from typing import Any, Callable, Optional, Protocol
 
+from . import process_identity as _process_identity
 from .events import StoredEvent
 from .protocol import utc_now
 
@@ -121,6 +122,12 @@ class _PayloadTraversalState:
 
 class ProjectionOffsetError(RuntimeError):
     """Base class for durable projection ownership or offset failures."""
+
+
+class ProjectionOffsetProcessMismatchError(ProjectionOffsetError):
+    """Raised when a projection offset store is used after its process forked."""
+
+    code = "projection_offset_process_mismatch"
 
 
 class ProjectionIntegrityError(ProjectionOffsetError):
@@ -941,6 +948,8 @@ class SQLiteProjectionOffsetStore:
         clock: Callable[[], str] = utc_now,
         busy_timeout_seconds: float = 5.0,
     ) -> None:
+        self._process_owner = _process_identity.capture_process_owner()
+        self._require_current_process()
         if not isinstance(path, str) or not path:
             raise ValueError("path is required")
         if not callable(clock):
@@ -979,6 +988,12 @@ class SQLiteProjectionOffsetStore:
         _trigger_or_view: Optional[str],
     ) -> int:
         return sqlite3.SQLITE_OK
+
+    def _require_current_process(self) -> None:
+        _process_identity.require_current_process(
+            self._process_owner,
+            ProjectionOffsetProcessMismatchError,
+        )
 
     @staticmethod
     def _is_framework_table(identifier: Optional[str]) -> bool:
@@ -1411,6 +1426,7 @@ class SQLiteProjectionOffsetStore:
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
+        self._require_current_process()
         with self._lock:
             if self._connection.in_transaction:
                 raise ProjectionOffsetError("projection operation requires no active transaction")
@@ -1667,6 +1683,7 @@ class SQLiteProjectionOffsetStore:
     def load(self, projection_name: str) -> ProjectionOffset:
         """Read a checkpoint; an unseen projection has the virtual offset zero."""
 
+        self._require_current_process()
         projection_name = self._validate_name(projection_name, "projection_name")
         with self._lock:
             row = self._connection.execute(
@@ -1686,6 +1703,7 @@ class SQLiteProjectionOffsetStore:
     ) -> ProjectionLease:
         """Acquire ownership or fence an older incarnation of the same owner."""
 
+        self._require_current_process()
         projection_name = self._validate_name(projection_name, "projection_name")
         owner_id = self._validate_name(owner_id, "owner_id")
         normalized_lease_seconds = self._validate_lease_seconds(lease_seconds)
@@ -1741,6 +1759,7 @@ class SQLiteProjectionOffsetStore:
     ) -> ProjectionLease:
         """Extend a still-live lease without changing its fencing epoch."""
 
+        self._require_current_process()
         normalized_lease_seconds = self._validate_lease_seconds(lease_seconds)
         lease = self._validate_lease(lease)
         with self._transaction() as connection:
@@ -1795,6 +1814,7 @@ class SQLiteProjectionOffsetStore:
     ) -> ProjectionOffset:
         """Monotonically advance an offset using owner-epoch and position CAS."""
 
+        self._require_current_process()
         lease = self._validate_lease(lease)
         expected_position = self._validate_position(expected_position, "expected_position")
         new_position = self._validate_position(new_position, "new_position")
@@ -1858,6 +1878,7 @@ class SQLiteProjectionOffsetStore:
         offset all roll back. Re-presenting an already receipted event is a no-op.
         """
 
+        self._require_current_process()
         lease = self._validate_lease(lease)
         expected_position = self._validate_position(expected_position, "expected_position")
         if not callable(handler):
@@ -1963,6 +1984,7 @@ class SQLiteProjectionOffsetStore:
     def release(self, lease: ProjectionLease) -> None:
         """Expire a live lease immediately; stale releases fail closed."""
 
+        self._require_current_process()
         lease = self._validate_lease(lease)
         with self._transaction() as connection:
             now = self._now()
@@ -2001,6 +2023,7 @@ class SQLiteProjectionOffsetStore:
                 raise ProjectionLeaseLostError("projection lease is stale or expired")
 
     def close(self) -> None:
+        self._require_current_process()
         with self._lock:
             self._connection.close()
 

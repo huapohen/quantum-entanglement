@@ -1,4 +1,5 @@
 import math
+import os
 import sqlite3
 import tempfile
 import threading
@@ -35,6 +36,7 @@ from quantum_entanglement.projections import (
     ProjectionLeaseConflictError,
     ProjectionLeaseLostError,
     ProjectionOffsetConflictError,
+    ProjectionOffsetProcessMismatchError,
     ProjectionSchemaError,
     ProjectionSourceIntegrityError,
     ProjectionStatementResult,
@@ -721,6 +723,31 @@ class SQLiteProjectionOffsetStoreTests(unittest.TestCase):
         connect.assert_not_called()
         self.assertFalse(parent.exists())
         self.assertFalse(path.exists())
+
+    def test_fork_inherited_offset_store_rejects_before_touching_sqlite(self) -> None:
+        read_fd, write_fd = os.pipe()
+        child_pid = os.fork()
+        if child_pid == 0:
+            os.close(read_fd)
+            try:
+                self.store.load("task-list")
+            except ProjectionOffsetProcessMismatchError:
+                os.write(write_fd, b"ok")
+            except BaseException:
+                os.write(write_fd, b"unexpected")
+            else:
+                os.write(write_fd, b"missing")
+            finally:
+                os.close(write_fd)
+            os._exit(0)
+        os.close(write_fd)
+        try:
+            result = os.read(read_fd, 32)
+        finally:
+            os.close(read_fd)
+        _, status = os.waitpid(child_pid, 0)
+        self.assertEqual(status, 0)
+        self.assertEqual(result, b"ok")
 
     def test_busy_timeout_boundaries_round_up_to_milliseconds_and_reopen(self) -> None:
         smallest_positive_float = math.nextafter(0.0, math.inf)
