@@ -12,6 +12,7 @@ import (
 
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/adapters/httpapi"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/auth"
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/events"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 	store "github.com/huapohen/quantum-entanglement/apps/im-api/internal/imstore"
 )
@@ -26,6 +27,10 @@ type RuntimeDependencies struct {
 	Database    ReadinessProbe
 	Persistence store.TenantUnitOfWork
 	Verifier    auth.Verifier
+	// EventStore is optional while the PostgreSQL composition is still being wired to one
+	// transaction snapshot. When absent, the authenticated event route fails closed with a
+	// dependency-unavailable envelope rather than silently returning an empty page.
+	EventStore events.EventStore
 	// Now is injected by tests and controlled compositions. Production defaults to UTC wall clock;
 	// request context resolution never accepts a non-UTC or zero timestamp.
 	Now func() time.Time
@@ -86,6 +91,7 @@ func newServer(runtime *RuntimeDependencies) *fiber.App {
 	if runtime != nil {
 		registerAuthenticatedContextRoute(server)
 		registerAuthenticatedConversationRoute(server, *runtime)
+		registerAuthenticatedEventRoute(server, *runtime)
 	}
 
 	return server
