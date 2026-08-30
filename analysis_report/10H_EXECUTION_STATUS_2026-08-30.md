@@ -1,9 +1,9 @@
 # 10 小时全量目标执行状态（2026-08-30）
 
-更新时间：2026-08-30 13:56（Asia/Shanghai）
+更新时间：2026-08-30 14:20（Asia/Shanghai）
 主线分支：`dev_wanwork_quantum_entanglement`  
 当前 HEAD：见 Git 远端分支（本文件不硬编码可变 SHA）  
-安全备份：`backup_0830_135259`（Artifact 发布引用闭环前的远端备份；文档收口后会再创建最新备份）
+安全备份：`backup_0830_141602`
 固定验收标签：`v0.2.0-web-im-20260830`
 
 ## 结论
@@ -50,6 +50,7 @@ SSE/WebSocket resume、文件/已读/通知/reaction、原生 `.app/.exe/.ipa/.a
 - `a99338a`：Workboard 暴露 Artifact 发布按钮；
 - `536395c`：Artifact 发布/回放门禁。
 - `6e039d2`：Agent Store 安装与 invocation 的 action-time Trust Passport 准入加固。
+- `1f86e5a`：补充 Agent Store action-time gate 验收证据与阶段提交台账。
 
 ## 今晚直接验收
 
@@ -81,6 +82,10 @@ GPT runtime（可选，Key 只在子进程环境）：
 ```bash
 ./scripts/verify_web_first.sh
 ```
+
+14:20 阶段复核：`WANWORK_IM_VERIFY_PORT=18129 ./scripts/verify_web_first.sh` 通过；Go
+`go test ./... -count=1`（含 PostgreSQL/authoritycutover 全包）通过；本次验证未产生外部网络或
+飞书/企微消息。
 
 ## 生产化剩余主线（按优先级）
 
