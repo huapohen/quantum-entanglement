@@ -50,6 +50,7 @@ var migrationSpecs = [...]migrationSpec{
 	{version: 13, name: "agent_store_capability_constraints"},
 	{version: 14, name: "agent_provider_effect_outbox"},
 	{version: 15, name: "agent_provider_effect_write_functions"},
+	{version: 16, name: "agent_provider_effect_receipt_evidence"},
 }
 
 func Catalog() ([]Migration, error) {

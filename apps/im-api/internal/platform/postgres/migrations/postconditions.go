@@ -114,9 +114,45 @@ func validateMigrationPostconditionForSchema(
 		return validateAgentProviderEffectOutbox(ctx, transaction)
 	case 15:
 		return validateAgentProviderEffectWriteFunctions(ctx, transaction)
+	case 16:
+		return validateAgentProviderEffectReceiptEvidence(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateAgentProviderEffectReceiptEvidence(ctx context.Context, transaction pgx.Tx) error {
+	var columnCount int
+	if err := transaction.QueryRow(ctx, `
+SELECT count(*)
+FROM pg_catalog.pg_attribute AS attribute
+JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relname = 'agent_provider_effects'
+  AND attribute.attname = ANY($1::text[])
+  AND attribute.attnum > 0
+  AND NOT attribute.attisdropped`, []string{
+		"provider_receipt_status", "provider_receipt_observed_at",
+	}).Scan(&columnCount); err != nil || columnCount != 2 {
+		return ErrMigrationSchema
+	}
+	var constraintCount int
+	if err := transaction.QueryRow(ctx, `
+SELECT count(*)
+FROM pg_catalog.pg_constraint AS constraint_value
+JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_value.conrelid
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relname = 'agent_provider_effects'
+  AND constraint_value.conname = ANY($1::text[])`, []string{
+		"agent_provider_effects_receipt_evidence_shape_check",
+		"agent_provider_effects_receipt_state_check",
+		"agent_provider_effects_receipt_time_check",
+	}).Scan(&constraintCount); err != nil || constraintCount != 3 {
+		return ErrMigrationSchema
+	}
+	return nil
 }
 
 func validateAgentProviderEffectWriteFunctions(ctx context.Context, transaction pgx.Tx) error {
