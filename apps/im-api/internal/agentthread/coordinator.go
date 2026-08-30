@@ -69,7 +69,7 @@ func (coordinator *LocalCoordinator) Open(
 	if err != nil {
 		return ThreadResult{}, err
 	}
-	if receipt.Validate() != nil || providerConversation.SubjectID() != plan.Child().Ref().ConversationID().String() {
+	if im.RequireCommittedProviderEffect(receipt) != nil || providerConversation.SubjectID() != plan.Child().Ref().ConversationID().String() {
 		return ThreadResult{}, im.ErrProviderEffectUnknown
 	}
 	result := ThreadResult{

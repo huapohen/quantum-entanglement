@@ -159,6 +159,64 @@ func TestLocalCoordinatorRunsFakeChildGroupAndReplyVerticalSlice(t *testing.T) {
 	}
 }
 
+func TestLocalCoordinatorRejectsUnknownGroupEffectBeforeRegistryCommit(t *testing.T) {
+	t.Parallel()
+	command, _ := threadTestCommand(t)
+	base, err := fake.New(fake.Options{Realm: command.ProviderProfile.Realm, AllowOutbound: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &unknownGroupEffectProvider{Provider: base}
+	coordinator, err := NewLocalCoordinator(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := coordinator.Open(ctx, command); !errors.Is(err, im.ErrProviderEffectUnknown) {
+		t.Fatalf("unknown group effect error = %v, want ErrProviderEffectUnknown", err)
+	}
+	if provider.createCalls != 1 {
+		t.Fatalf("first create calls = %d, want 1", provider.createCalls)
+	}
+	// An unresolved effect must not populate the dedupe registry. A retry therefore calls the
+	// provider again instead of returning a replayed ThreadResult that could be mistaken for a
+	// durable child conversation.
+	if _, err := coordinator.Open(ctx, command); !errors.Is(err, im.ErrProviderEffectUnknown) {
+		t.Fatalf("retry unknown group effect error = %v, want ErrProviderEffectUnknown", err)
+	}
+	if provider.createCalls != 2 {
+		t.Fatalf("retry create calls = %d, want 2", provider.createCalls)
+	}
+}
+
+type unknownGroupEffectProvider struct {
+	im.Provider
+	createCalls int
+}
+
+func (provider *unknownGroupEffectProvider) CreateGroup(
+	ctx context.Context,
+	request im.ProviderGroupCreate,
+) (im.ProviderConversationRef, im.ProviderEffectReceipt, error) {
+	if ctx == nil {
+		return im.ProviderConversationRef{}, im.ProviderEffectReceipt{}, im.ErrInvalidProviderRequest
+	}
+	if err := ctx.Err(); err != nil {
+		return im.ProviderConversationRef{}, im.ProviderEffectReceipt{}, err
+	}
+	provider.createCalls++
+	conversation, err := im.NewProviderConversationRef(
+		im.IdentityProviderRongCloud, provider.Profile().Realm, request.Conversation.ConversationID().String(),
+	)
+	if err != nil {
+		return im.ProviderConversationRef{}, im.ProviderEffectReceipt{}, err
+	}
+	return conversation, im.ProviderEffectReceipt{
+		OperationKey: "op/unknown-group", ExternalID: "ext_unknown_group",
+		Status: im.ProviderEffectUnknown, ObservedAt: time.Unix(1700000000, 0).UTC(),
+	}, nil
+}
+
 func threadTestCommand(t *testing.T) (MentionCommand, agentstore.InstallationSnapshot) {
 	t.Helper()
 	tenant := threadMustTenant(t, "ten_acme")
