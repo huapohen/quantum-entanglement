@@ -253,6 +253,9 @@ event/revision/scope/mention/digest union/state 矩阵由参数化 contract test
 - `SQLiteRevocationRevisionGuard` 的 PID/epoch inherited-instance guard 已在 `3bb8f8b` 完成；该
   证据只覆盖 high-water guard 自身，不能替代 key ring、recovery、provider、secret 或通用
   projection offset 的进程合同；
+- `SQLiteProjectionOffsetStore` 的 PID/epoch inherited-instance guard 已在 `c8308e8` 完成；该证据
+  只覆盖通用 offset store 自身，DurableProjector、event source、handler 和 recovery coordinator
+  仍需系统级组合验证；
 - stable identifier hash 不是匿名化，仍需 retention/access/cardinality policy。
 
 晋级标准：身份只能来自验证过的认证层；所有受保护动作执行时重新授权；secret canary 在

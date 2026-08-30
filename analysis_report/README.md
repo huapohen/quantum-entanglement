@@ -141,6 +141,7 @@ business projection 候选；下一步是认证作用域、crash/kill/two-proces
 | `research/51_postgres_runtime_fail_closed_auth_composition_20260830.md` | PostgreSQL runtime 组合收口 | 空 fixture fake verifier、启动/readiness 生命周期、业务请求默认拒绝及 Go 专项证据 |
 | `research/52_artifact_store_process_binding_20260830.md` | Artifact Store 进程绑定 | fork inherited SQLite 连接/锁在 public 入口前 fail-closed，28 项专项与静态门禁 |
 | `research/53_revocation_guard_process_binding_20260830.md` | Revocation Guard 进程绑定 | fork inherited high-water guard 在 public 入口前 fail-closed，39 项专项与静态门禁 |
+| `research/54_projection_offset_process_binding_20260830.md` | Projection Offset Store 进程绑定 | fork inherited projection lock/SQLite 在 public 入口前 fail-closed，72 项专项与静态门禁 |
 | `../docs/production/RESULT_BUSINESS_PROJECTION.md` | E3 M7.5 result-only business projection 候选 | leased projector、scope/terminal binding、幂等、schema pinning、identity/终态绑定漂移拒绝、fork process binding、dual-connection fencing、SIGKILL recovery 与 fail-closed 安全边界 |
 
 ## 已归档截图
