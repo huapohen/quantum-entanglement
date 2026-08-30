@@ -297,7 +297,7 @@ func applyMigrationsForConversationTest(t *testing.T, connection *pgx.Conn) {
 	if err != nil {
 		t.Fatalf("Apply conversation catalog: %v", err)
 	}
-	if len(state.Applied) != 10 {
+	if len(state.Applied) != 12 {
 		t.Fatalf("applied migration count = %d, want 10", len(state.Applied))
 	}
 }
