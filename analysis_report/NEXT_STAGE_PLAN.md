@@ -6,6 +6,12 @@
 > 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec（`d889751`）、M2 reserved fence（`dd0ba54`）、M3 private store adapter（`504824c`）、M4 inactive schema / Artifact owner transaction / private backup topology（`28b3d6a`）、M5 atomic result graph + `ObservedV2` + migration-7 opt-in（`144f449`）与 receipt-bound non-emitting reconciliation（`ee63f55`）已完成；随后补齐 migration-7 active result backup/restore、manifest/topology/bytes/geometry 绑定、有界输入防护、干净进程/双连接/SIGKILL 恢复证据、私有 PURE heartbeat supervisor、opt-in store-owned acceptance API 与 fresh-ACK `AcceptedV2`（worker seam checkpoint `7bed2b6`），并在 `69fbcb6` 增加 result-only business projection 候选，在 `a014bc5`/`e4f00fe`/`7a01f6b` 补齐其 process binding、lease fencing 与 SIGKILL recovery；当前 `23acebb`/`e27c30b` 又加入受 ProtectedOperationComposer 保护的认证读取 seam 与 15 项专项矩阵；本次 continuation 再完成 `36cd0b4` 的私有 `ScopedPureWorkerLifecycle`、`025b5c7` 的双连接 heartbeat/expiry 与 relinquish race 矩阵，以及 `a4196d3` 的 wildcard surface 兼容修复。真实 provider sandbox 未连接，生产 worker、真实认证 transport/composition、全系统 crash/kill/two-process recovery 与 compatibility/rollback evidence 仍未完成。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
+> 2026-08-30 集成检查点：`4783f61` 已将 Web-first IM 的 loopback Go API、React 客户端、工作台和
+> synthetic 验收脚本合入 `mainline_continue_quantum_entanglement`，并保留 QE Result Authority
+> 内核。该产品切片的 2,964 项 Python 全量、Go/Web 专项和集成脚本均已通过；它只增加本地验收面，
+> 不改变本计划的 Gate A–E、真实 provider、外部 outbound 或生产 worker 关闭状态。后续小改动按
+> [`TESTING_STRATEGY.md`](../docs/production/TESTING_STRATEGY.md) 的影响面门禁执行，阶段封板才跑一次全量。
+
 > 原生 IM 调度说明（2026-08-27）：本文件定义 Atomic Result Authority 的最大强度实现计划，
 > 不是“完成全部内容后才能开始 IM”的串行清单。原生 IM 的接入前硬要求、可延期加固和接入后
 > TODO 以 [`NATIVE_IM_INTEGRATION_PREREQUISITES.md`](./NATIVE_IM_INTEGRATION_PREREQUISITES.md)

@@ -15,6 +15,17 @@ event/outbox 外部副作用。该节点仍是 opt-in rehearsal；`HeartbeatPure
 继续 default-off，Gate A–E 不变。实现和证据分别见 `36cd0b4`、`025b5c7`、`d5e91c1` 与
 [`43_scoped_lease_lifecycle_evidence.md`](../../analysis_report/research/43_scoped_lease_lifecycle_evidence.md)。
 
+## 2026-08-30 Web-first IM integration checkpoint
+
+集成提交 `4783f61` 已推送到 `origin/mainline_continue_quantum_entanglement`。该节点保留上述 QE
+Result Authority 内核，并纳入 loopback-only Go IM API、React/Vite Web 客户端、Agent Store、父群/子群
+工作卡、Task/Artifact/Needs You 工作台、启动脚本和 synthetic 验收门禁。Python 2,964 项全量、
+Ruff、strict mypy、compileall、Go test/vet、Web build 与 Web-first synthetic 闭环均有本地退出码 0
+证据，详见 [`50_mainline_web_im_integration_regression_20260830.md`](../../analysis_report/research/50_mainline_web_im_integration_regression_20260830.md)。
+
+该节点只扩大了本地可验收面，没有打开任何生产 Gate：真实认证、PostgreSQL durable projection、
+真实 IM provider、外部 outbound、跨实例恢复与原生安装包仍明确关闭。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow
