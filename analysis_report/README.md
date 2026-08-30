@@ -35,8 +35,8 @@
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
 - 最近完成批次已完成 Notion 写入和远端回读；Topic 35 与 Gate A0 plan 将在本地代码/测试/文档/Git
   全部收口后批量同步；语雀仍未操作。
-- 2026-08-30 Web-first 加速检查点已追加到项目主页并回读确认；摘要指向开发分支 `a526d4a`，
-  备份分支 `backup_0830_301220` 同 SHA；语雀仍未操作。
+- 2026-08-30 Web-first 加速检查点已追加到项目主页并回读确认；摘要指向开发分支 `208b6a9`，
+  备份分支 `backup_0830_121946` 同 SHA；语雀仍未操作。
 
 ## 当前阶段交付
 
