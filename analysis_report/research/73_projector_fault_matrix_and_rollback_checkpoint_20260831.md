@@ -29,15 +29,25 @@ PostgreSQL message projector 现在拥有两条独立的提交边界证据：
 cd apps/im-api
 go test ./internal/platform/postgres/improjection -count=1     PASS
 go test ./internal/platform/postgres/improjection -run TestPostgresMessageProjectorEndToEnd -count=1 -v
-  （未设置 WANWORK_TEST_POSTGRES_ADMIN_URL 时安全跳过真实 PG；本节点未伪造集成结果）
+  PASS（隔离 PostgreSQL 18.6，临时 loopback 实例）
+
+WANWORK_TEST_POSTGRES_ADMIN_URL='<isolated-local-admin-url>' \
+  go test ./internal/platform/postgres/migrations \
+  ./internal/platform/postgres/runtimepool \
+  ./internal/platform/postgres/eventstore \
+  ./internal/platform/postgres/improjection \
+  ./internal/platform/postgres/imstore -count=1
+  PASS（5 包 PostgreSQL 18.6 integration matrix）
 
 PYTHONPATH=src .venv/bin/pytest -q tests/test_result_compatibility_rollback.py  1 passed
 .venv/bin/ruff check tests/test_result_compatibility_rollback.py                 All checks passed
 git diff --check                                                         PASS
 ```
 
-真实 PG18 端到端命令仍保留在 `research/69` 与 `research/71`；提交前失败测试与 ACK-loss 测试均为
-opt-in integration，必须在隔离 PostgreSQL 18 实例上运行，不能用 SQLite 或单元测试替代。
+真实 PG18 端到端命令仍保留在 `research/69` 与 `research/71`；本节点已在隔离 PostgreSQL 18.6
+临时 loopback 实例复跑 projector fault matrix 及 migrations/runtimepool/eventstore/improjection/
+imstore 五包 integration matrix。提交前失败测试与 ACK-loss 测试均为 opt-in integration，不能
+用 SQLite 或单元测试替代。凭据、端口和完整连接串不进入证据文件。
 
 ## 未关闭边界
 
