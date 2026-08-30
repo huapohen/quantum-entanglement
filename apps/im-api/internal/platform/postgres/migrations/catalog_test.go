@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 15 || len(second) != 15 {
+	if len(first) != 16 || len(second) != 16 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -335,6 +335,23 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if strings.Contains(strings.ToLower(writer.UpSQL), strings.ToLower(forbidden)) {
 			t.Fatalf("provider effect writer migration contains forbidden secret/payload marker %q", forbidden)
+		}
+	}
+	receiptEvidence := first[15]
+	if receiptEvidence.Version != 16 || receiptEvidence.Name != "agent_provider_effect_receipt_evidence" ||
+		len(receiptEvidence.Checksum) != 64 || receiptEvidence.Checksum != second[15].Checksum ||
+		receiptEvidence.UpSQL != second[15].UpSQL || receiptEvidence.DownSQL != second[15].DownSQL {
+		t.Fatalf("unexpected deterministic provider effect receipt evidence migration: %#v", receiptEvidence)
+	}
+	for _, marker := range []string{
+		`ADD COLUMN provider_receipt_status`,
+		`ADD COLUMN provider_receipt_observed_at`,
+		`agent_provider_effects_receipt_evidence_shape_check`,
+		`agent_provider_effects_receipt_state_check`,
+		`agent_provider_effects_receipt_time_check`,
+	} {
+		if !strings.Contains(receiptEvidence.UpSQL, marker) {
+			t.Fatalf("provider effect receipt evidence migration missing %q", marker)
 		}
 	}
 }
