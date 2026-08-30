@@ -40,6 +40,8 @@
   交付矩阵、可体验范围与原生客户端路线。
 - [WEB_STAGE_CHECKPOINT_20260830.md](WEB_STAGE_CHECKPOINT_20260830.md)：本次 Web-first vertical slice
   的可重复验收步骤、浏览器证据、提交序列和未完成边界。
+- [DURABLE_LOCAL_INBOX_CHECKPOINT_20260830.md](DURABLE_LOCAL_INBOX_CHECKPOINT_20260830.md)：本地
+  Native IM durable inbox 候选的重启、重放、冲突和损坏恢复合同；明确不等于 W2 生产完成。
 
 当前 approval policy control-store 代码证据基线为 `16d66b6`，深度报告与可视化为：
 
