@@ -5,7 +5,7 @@
 阶段代码和文档全部完成、推送 GitHub 后，再统一同步私人 Notion 并完成一次回读。Notion 未回读前只算
 `local_pending`，不得冒充远端已更新；语雀仍只在用户另行明确授权时操作。
 
-## Notion 镜像（最近完成批次：2026-08-28）
+## Notion 镜像（最近完成批次：2026-08-30）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -35,6 +35,8 @@
   [`notion_sync_manifest.json`](notion_sync_manifest.json)。
 - 最近完成批次已完成 Notion 写入和远端回读；Topic 35 与 Gate A0 plan 将在本地代码/测试/文档/Git
   全部收口后批量同步；语雀仍未操作。
+- 2026-08-30 Web-first 加速检查点已追加到项目主页并回读确认；摘要指向开发分支 `a526d4a`，
+  备份分支 `backup_0830_301220` 同 SHA；语雀仍未操作。
 
 ## 当前阶段交付
 

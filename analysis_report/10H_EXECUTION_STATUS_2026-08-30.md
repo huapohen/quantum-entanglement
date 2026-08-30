@@ -81,5 +81,5 @@ GPT runtime（可选，Key 只在子进程环境）：
 5. Web 的 SSE/WebSocket resume、断线、离线同步、文件/已读/reaction/通知；
 6. 真实 sandbox 端到端后再做 Tauri 桌面、iOS/iPadOS、Android、鸿蒙打包与签名。
 
-Notion/Yuque 同步按此前“先本地收口、最后统一上传”的授权处理；本阶段先以本地 Git 为实现真相源，
-不会为了同步阻塞 10 小时主线。
+本阶段已将状态摘要追加到私人 Notion 项目主页并完成回读（2026-08-30）；语雀未操作。完整代码和
+证据仍以本地 Git 为实现真相源，Notion 只做阅读镜像，不包含任何 API Key。
