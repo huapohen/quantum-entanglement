@@ -1,6 +1,7 @@
 # ruff: noqa: UP045
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from dataclasses import replace
@@ -22,6 +23,7 @@ from quantum_entanglement.invocation_recovery import (
     InvocationRecoveryCoordinator,
     InvocationRecoveryDecision,
     InvocationRecoveryIntegrityError,
+    InvocationRecoveryProcessMismatchError,
     InvocationResultReceipt,
     assess_invocation_recovery,
 )
@@ -685,6 +687,33 @@ class InvocationRecoveryCoordinatorLifecycleTests(unittest.TestCase):
         self.assertIsNotNone(self.store.get(self.spec.invocation_id))
         with self.assertRaises(InvocationRecoveryClosedError):
             coordinator.__enter__()
+
+    def test_fork_inherited_coordinator_rejects_before_lock_or_store_access(self) -> None:
+        coordinator = InvocationRecoveryCoordinator(self.store)
+        read_fd, write_fd = os.pipe()
+        child_pid = os.fork()
+        if child_pid == 0:
+            os.close(read_fd)
+            try:
+                _ = coordinator.closed
+            except InvocationRecoveryProcessMismatchError:
+                os.write(write_fd, b"ok")
+            except BaseException:
+                os.write(write_fd, b"unexpected")
+            else:
+                os.write(write_fd, b"missing")
+            finally:
+                os.close(write_fd)
+            os._exit(0)
+        os.close(write_fd)
+        try:
+            result = os.read(read_fd, 32)
+        finally:
+            os.close(read_fd)
+        _, status = os.waitpid(child_pid, 0)
+        coordinator.close()
+        self.assertEqual(status, 0)
+        self.assertEqual(result, b"ok")
 
     def test_owned_store_closes_once_and_context_manager_uses_the_same_rule(self) -> None:
         fake = FakeRecoveryStore(InvocationRecoverySnapshot(None, None, 0))

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Protocol
 
+from . import process_identity as _process_identity
 from .attempts import (
     AttemptStatus,
     InvocationAttempt,
@@ -42,6 +43,12 @@ class InvocationRecoveryIntegrityError(RuntimeError):
 
 class InvocationRecoveryClosedError(RuntimeError):
     """Raised when a closed recovery coordinator is asked to read durable state."""
+
+
+class InvocationRecoveryProcessMismatchError(RuntimeError):
+    """Raised when a recovery coordinator is used after its process forked."""
+
+    code = "invocation_recovery_process_mismatch"
 
 
 class InvocationRecoveryDecision(str, Enum):
@@ -718,6 +725,8 @@ class InvocationRecoveryCoordinator:
         owns_store: bool = False,
         result_store: Optional[InvocationResultObservationStore] = None,
     ) -> None:
+        self._process_owner = _process_identity.capture_process_owner()
+        self._require_current_process()
         if type(owns_store) is not bool:
             raise TypeError("owns_store must be a boolean")
         if owns_store and store is None:
@@ -740,6 +749,7 @@ class InvocationRecoveryCoordinator:
         self._lock = threading.RLock()
 
     def __enter__(self) -> InvocationRecoveryCoordinator:
+        self._require_current_process()
         with self._lock:
             self._require_open()
             return self
@@ -747,12 +757,19 @@ class InvocationRecoveryCoordinator:
     def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
         self.close()
 
+    def _require_current_process(self) -> None:
+        _process_identity.require_current_process(
+            self._process_owner,
+            InvocationRecoveryProcessMismatchError,
+        )
+
     def _require_open(self) -> None:
         if self._closed:
             raise InvocationRecoveryClosedError("invocation recovery coordinator is closed")
 
     @property
     def closed(self) -> bool:
+        self._require_current_process()
         with self._lock:
             return self._closed
 
@@ -764,6 +781,7 @@ class InvocationRecoveryCoordinator:
     ) -> InvocationRecoveryDecision:
         """Read an optional durable snapshot and apply the pure recovery matrix."""
 
+        self._require_current_process()
         with self._lock:
             self._require_open()
             if task_status is not TaskStatus.RUNNING:
@@ -793,6 +811,7 @@ class InvocationRecoveryCoordinator:
         to a future transactional reconciler; it is never an instruction to invoke an Agent.
         """
 
+        self._require_current_process()
         with self._lock:
             self._require_open()
             if self._result_store is None:
@@ -837,6 +856,7 @@ class InvocationRecoveryCoordinator:
     def close(self) -> None:
         """Stop reads immediately and retry owned-store cleanup until it succeeds."""
 
+        self._require_current_process()
         with self._lock:
             self._closed = True
             if self._store_cleanup_complete:
@@ -853,6 +873,7 @@ __all__ = [
     "InvocationRecoveryCoordinator",
     "InvocationRecoveryDecision",
     "InvocationRecoveryIntegrityError",
+    "InvocationRecoveryProcessMismatchError",
     "InvocationRecoveryStore",
     "InvocationResultObservationStore",
     "InvocationResultReceipt",
