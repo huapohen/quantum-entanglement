@@ -46,6 +46,22 @@ conversation authority 与 identity fixture 原先仍断言 10 个 migration，�
 只读取已校验对象中的 `messageId`，允许同一合法对象的其他字段，并拒绝缺失 ID；避免首条
 `message.created` 在进入 owner SQL function 前被错误拦截。
 
+## 真实 PostgreSQL integration readback
+
+使用本机隔离 PostgreSQL 18 测试实例（仅临时测试数据库，无业务数据）运行：
+
+```text
+WANWORK_TEST_POSTGRES_ADMIN_URL=<local-test-admin-dsn> \
+go test ./internal/platform/postgres/migrations \
+  -run TestApplyAgainstPostgres -count=1   PASS
+```
+
+覆盖结果包括 migration 1–12 fresh/repeat、migration-12 writer function definition digest、旧
+migration postcondition、防 hostile search_path、checksum/future ledger、RLS/constraint/index/
+grant/default 漂移、双 migrator serialization、锁超时和 panic quarantine。该证据证明 migration
+12 在记录的 PostgreSQL 18 schema 上可应用且 postcondition 可回读；不等于生产集群批准或 projector
+crash/restore 完成。
+
 ## 仍未关闭的门禁
 
 该实现仍是 production composition 前的候选，需要真实 PostgreSQL applied-schema integration
