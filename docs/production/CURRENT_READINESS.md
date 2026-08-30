@@ -107,7 +107,7 @@ projector、migration-12 函数写入、materialized Reader readback、非消息
 非消息事件推进 conversation head 时，已有消息行的 `projection_revision` 允许小于等于 head，
 不再被错误要求相等。详见 [`69_postgres_projector_end_to_end_and_revision_fix_20260830.md`](../../analysis_report/research/69_postgres_projector_end_to_end_and_revision_fix_20260830.md)。
 
-该证据仍不打开 cutover：crash/restore、COMMIT ACK 丢失、shadow replay equality 的真实运行、
+该证据仍不打开 cutover：真实进程 crash/restore、shadow replay equality 的长期运行、
 生产 applied-schema proof 和 materialized primary 仍关闭。
 
 `1e94f8d` 已将 shadow equality 接入 runtime composition，但保持显式 default-off：设置
