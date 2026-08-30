@@ -54,6 +54,9 @@ type MentionResult struct {
 	ParentConversationID string         `json:"parentConversationId"`
 	ChildConversationID  string         `json:"childConversationId"`
 	InvocationID         string         `json:"invocationId"`
+	TaskID               string         `json:"taskId"`
+	ArtifactID           string         `json:"artifactId"`
+	NeedsYouID           string         `json:"needsYouId"`
 	WorkCardExtInfo      string         `json:"workCardExtInfo"`
 	AgentReply           AgentReplyView `json:"agentReply"`
 	Replayed             bool           `json:"replayed"`
@@ -91,6 +94,10 @@ type Service struct {
 	conversationOrder   []im.ConversationID
 	conversationCreates map[string]createRecord
 	memberUpdates       map[string]memberUpdateRecord
+	tasks               map[string]TaskView
+	taskOrder           []string
+	artifacts           map[string]ArtifactView
+	needsYou            map[string]NeedsYouView
 	cursorNamespaceHex  string
 }
 
@@ -209,6 +216,7 @@ func NewWithRuntime(runtime modelruntime.Runtime) (*Service, error) {
 		conversations:       map[im.ConversationID]*localConversation{parent.Ref().ConversationID(): parentRecord},
 		conversationOrder:   []im.ConversationID{parent.Ref().ConversationID()},
 		conversationCreates: make(map[string]createRecord), memberUpdates: make(map[string]memberUpdateRecord),
+		tasks: make(map[string]TaskView), artifacts: make(map[string]ArtifactView), needsYou: make(map[string]NeedsYouView),
 		cursorNamespaceHex: hex.EncodeToString(cursorNamespace[:]),
 	}, nil
 }
@@ -349,6 +357,13 @@ func (service *Service) Mention(
 		Replayed:       thread.Replayed() || receipt.Status == im.ProviderEffectReplayed,
 		ProviderStatus: string(receipt.Status),
 	}
+	task, artifact, needsYou, err := service.materializeTaskOutcome(
+		result.ParentConversationID, result.ChildConversationID, result.InvocationID, input.Instruction, replyText,
+	)
+	if err != nil {
+		return MentionResult{}, err
+	}
+	result.TaskID, result.ArtifactID, result.NeedsYouID = task.ID, artifact.ID, needsYou.ID
 	service.mu.Lock()
 	if existingResult, exists := service.mentionResults[requestKey]; exists {
 		existingResult.Replayed = true

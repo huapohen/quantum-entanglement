@@ -5,6 +5,9 @@
 
 ## 本次完成范围
 
+- 新增显式 Workboard：Task、Artifact 草稿和 Needs You 独立投影；可在 Web 页面接受或退回产物，
+  生命周期不会被聊天正文冒充；详情见 [WEB_TASK_WORKBOARD_CHECKPOINT_20260830.md](WEB_TASK_WORKBOARD_CHECKPOINT_20260830.md)。
+
 - React + TypeScript + Vite + Zustand Web 客户端可以从一键脚本启动；
 - 生产构建带有 manifest 和只缓存静态 shell 的 service worker，可添加到主屏幕；`/api/`、登录态和
   聊天数据不进入浏览器缓存；

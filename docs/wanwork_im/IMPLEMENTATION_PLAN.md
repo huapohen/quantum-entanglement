@@ -234,6 +234,13 @@ succeeded 不冒充 accepted；参数变化使批准失效；dispatch 故障不�
 出口：mock/fake API 可完整体验 M0；1440/1024/390 截图和 Playwright E2E 通过；Needs You、Artifact
 review、Task recovery 不是藏在聊天正文里的文本。
 
+#### W5 当前增量检查点（2026-08-30）
+
+已在 loopback Web-first slice 中落地 Task、Artifact 草稿、Needs You 审阅的最小闭环：mention 成功后
+显式创建三类投影，Workboard 可接受/退回并显示生命周期，重复处理幂等。该实现仍是进程内 fake，
+因此只完成“UI/API 语义和验收路径”，不宣称 Task recovery、Artifact 版本、持久化或生产多人审阅已完成。
+详见 [WEB_TASK_WORKBOARD_CHECKPOINT_20260830.md](WEB_TASK_WORKBOARD_CHECKPOINT_20260830.md)。
+
 ### W6：Desktop 与 Mobile（Web 验收后）
 
 交付：Tauri 壳、签名/更新策略；Flutter 核心页面、deep link、通知和本地缓存；鸿蒙兼容评估。

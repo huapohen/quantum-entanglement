@@ -22,6 +22,9 @@ export function App() {
   const selectedConversationId = useUIStore((state) => state.selectedConversationId);
   const messages = useUIStore((state) => state.messages);
   const mention = useUIStore((state) => state.mention);
+  const tasks = useUIStore((state) => state.tasks);
+  const artifacts = useUIStore((state) => state.artifacts);
+  const needsYou = useUIStore((state) => state.needsYou);
   const loading = useUIStore((state) => state.loading);
   const error = useUIStore((state) => state.error);
   const setSnapshot = useUIStore((state) => state.setSnapshot);
@@ -30,6 +33,9 @@ export function App() {
   const selectConversation = useUIStore((state) => state.selectConversation);
   const setMessages = useUIStore((state) => state.setMessages);
   const setMention = useUIStore((state) => state.setMention);
+  const setTasks = useUIStore((state) => state.setTasks);
+  const setArtifacts = useUIStore((state) => state.setArtifacts);
+  const setNeedsYou = useUIStore((state) => state.setNeedsYou);
   const setLoading = useUIStore((state) => state.setLoading);
   const setError = useUIStore((state) => state.setError);
 
@@ -67,10 +73,15 @@ export function App() {
     setLoading(true);
     setError("");
     try {
-      const [runtime, agentPage, page] = await Promise.all([api.snapshot(), api.agents(), api.conversations()]);
+      const [runtime, agentPage, page, taskPage, artifactPage, needsYouPage] = await Promise.all([
+        api.snapshot(), api.agents(), api.conversations(), api.tasks(), api.artifacts(), api.needsYou(),
+      ]);
       setSnapshot(runtime);
       setAgents(agentPage.agents);
       setConversations(page.conversations);
+      setTasks(taskPage.tasks);
+      setArtifacts(artifactPage.artifacts);
+      setNeedsYou(needsYouPage.needsYou);
       const selectedStillExists = page.conversations.some((conversation) => conversation.id === selectedConversationId);
       const nextId = selectedStillExists ? selectedConversationId : page.conversations[0]?.id || "";
       if (nextId) {
@@ -82,6 +93,13 @@ export function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadWorkProjections() {
+    const [taskPage, artifactPage, needsYouPage] = await Promise.all([api.tasks(), api.artifacts(), api.needsYou()]);
+    setTasks(taskPage.tasks);
+    setArtifacts(artifactPage.artifacts);
+    setNeedsYou(needsYouPage.needsYou);
   }
 
   useEffect(() => {
@@ -174,6 +192,20 @@ export function App() {
       await loadMessages(result.childConversationId);
       setMention(result);
       setInstruction("");
+      await loadWorkProjections();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resolveNeedsYou(needsYouId: string, decision: "accept" | "reject") {
+    setLoading(true);
+    setError("");
+    try {
+      await api.resolveNeedsYou(needsYouId, decision);
+      await loadWorkProjections();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -211,6 +243,8 @@ export function App() {
     selectedAgent &&
     selectedConversation.memberActorIds.includes(selectedAgent.agentActorId),
   );
+  const openNeedsYou = needsYou.filter((item) => item.status === "open");
+  const artifactByID = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
 
   return (
     <div className="min-h-screen bg-ink-bg text-ink">
@@ -342,6 +376,33 @@ export function App() {
         </section>
 
         <aside className="space-y-5">
+          <section className="panel p-5" aria-label="任务与产物工作台">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-300">Workboard</div>
+            <h2 className="text-xl font-semibold text-white">任务、产物与待你确认</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-400">Agent 的执行状态和产物单独呈现。接受前保持草稿，不会伪装成已发布结论。</p>
+            {tasks.length === 0 && <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-500">发布一条协作指令后，这里会出现任务卡。</div>}
+            <div className="mt-4 space-y-3">
+              {tasks.map((task) => {
+                const artifact = task.artifactIds?.map((id) => artifactByID.get(id)).find(Boolean);
+                return (
+                  <div key={task.id} className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-200">{task.title}</span>
+                      <span className="rounded-full border border-amber-300/20 px-2 py-1 text-[10px] text-amber-200">{task.status}</span>
+                    </div>
+                    <div className="mt-2 text-slate-500">{task.id} · invocation {task.invocationId}</div>
+                    {artifact && <div className="mt-3 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-violet/20 bg-violet/5 p-2 leading-5 text-slate-300"><span className="text-violet">{artifact.title}</span>{"\n"}{artifact.content}</div>}
+                    {task.needsYouIds.map((needsID) => {
+                      const needs = needsYou.find((item) => item.id === needsID);
+                      if (!needs) return null;
+                      return <div key={needs.id} className="mt-3 rounded-lg border border-cyan/20 bg-cyan/5 p-2"><div className="text-slate-300">{needs.prompt}</div><div className="mt-2 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-500">{needs.status}</span>{needs.status === "open" ? <span className="flex gap-2"><button className="button-primary px-3 py-1 text-xs" onClick={() => void resolveNeedsYou(needs.id, "accept")} disabled={loading}>接受产物</button><button className="button-secondary px-3 py-1 text-xs" onClick={() => void resolveNeedsYou(needs.id, "reject")} disabled={loading}>退回</button></span> : <span className="text-[10px] text-green-300">已处理</span>}</div></div>;
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-3 text-[10px] text-slate-500">待处理 {openNeedsYou.length} · 产物 {artifacts.length} · 任务 {tasks.length}</div>
+          </section>
           <section className="panel p-5">
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan">Agent Store</div>
             <h2 className="text-xl font-semibold text-white">让 Agent 像普通成员一样协作</h2>

@@ -95,6 +95,9 @@ export type MentionResult = {
   parentConversationId: string;
   childConversationId: string;
   invocationId: string;
+  taskId: string;
+  artifactId: string;
+  needsYouId: string;
   workCardExtInfo: string;
   agentReply: {
     conversationId: string;
@@ -104,6 +107,48 @@ export type MentionResult = {
   replayed: boolean;
   providerStatus: string;
 };
+
+export type Task = {
+  id: string;
+  title: string;
+  instruction: string;
+  status: string;
+  parentConversationId: string;
+  childConversationId: string;
+  invocationId: string;
+  artifactIds: string[];
+  needsYouIds: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Artifact = {
+  id: string;
+  taskId: string;
+  title: string;
+  kind: string;
+  content: string;
+  status: string;
+  digest: string;
+  createdAt: string;
+  acceptedAt?: string;
+};
+
+export type NeedsYou = {
+  id: string;
+  taskId: string;
+  artifactId: string;
+  kind: string;
+  prompt: string;
+  status: string;
+  createdAt: string;
+  resolvedAt?: string;
+};
+
+export type TaskPage = { tasks: Task[] };
+export type ArtifactPage = { artifacts: Artifact[] };
+export type NeedsYouPage = { needsYou: NeedsYou[] };
+export type ResolveNeedsYouResult = { needsYou: NeedsYou; task: Task; artifact: Artifact; replayed: boolean };
 
 export type ConversationResult = { conversation: Conversation; replayed: boolean };
 export type AddMembersResult = { conversation: Conversation; addedActorIds: string[]; replayed: boolean };
@@ -143,6 +188,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   snapshot: () => request<RuntimeSnapshot>("/api/v1/demo/im"),
   agents: () => request<AgentStorePage>("/api/v1/demo/im/agents"),
+  tasks: () => request<TaskPage>("/api/v1/demo/im/tasks"),
+  artifacts: () => request<ArtifactPage>("/api/v1/demo/im/artifacts"),
+  needsYou: () => request<NeedsYouPage>("/api/v1/demo/im/needs-you"),
   conversations: () => request<ConversationPage>("/api/v1/demo/im/conversations?limit=50"),
   messages: (conversationId: string) =>
     request<MessagePage>(`/api/v1/demo/im/conversations/${encodeURIComponent(conversationId)}/messages?limit=100`),
@@ -187,5 +235,10 @@ export const api = {
     request<MentionResult>("/api/v1/demo/im/mentions", {
       method: "POST",
       body: JSON.stringify({ conversationId, messageId, instruction }),
+    }),
+  resolveNeedsYou: (needsYouId: string, decision: "accept" | "reject") =>
+    request<ResolveNeedsYouResult>(`/api/v1/demo/im/needs-you/${encodeURIComponent(needsYouId)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
     }),
 };

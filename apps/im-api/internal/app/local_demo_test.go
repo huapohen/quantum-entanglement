@@ -53,8 +53,41 @@ func TestLocalDemoHTTPVerticalSlice(t *testing.T) {
 	)
 	if result.Code != httpapi.CodeOK || !strings.Contains(result.Raw, `"childConversationId":"cnv_at_`) ||
 		!strings.Contains(result.Raw, `"providerStatus":"committed"`) ||
+		!strings.Contains(result.Raw, `"taskId":"task_local_`) ||
+		!strings.Contains(result.Raw, `"artifactId":"artifact_local_`) ||
+		!strings.Contains(result.Raw, `"needsYouId":"needs_local_`) ||
 		strings.Contains(result.Raw, localdemo.LocalBearerToken) {
 		t.Fatalf("mention response = %s", result.Raw)
+	}
+	tasks := localDemoRequest(t, server, http.MethodGet, "/api/v1/demo/im/tasks", "", "Bearer "+localdemo.LocalBearerToken)
+	if tasks.Code != httpapi.CodeOK || !strings.Contains(tasks.Raw, `"status":"waiting_for_review"`) {
+		t.Fatalf("tasks response = %s", tasks.Raw)
+	}
+	artifacts := localDemoRequest(t, server, http.MethodGet, "/api/v1/demo/im/artifacts", "", "Bearer "+localdemo.LocalBearerToken)
+	if artifacts.Code != httpapi.CodeOK || !strings.Contains(artifacts.Raw, `"status":"draft"`) {
+		t.Fatalf("artifacts response = %s", artifacts.Raw)
+	}
+	needsYou := localDemoRequest(t, server, http.MethodGet, "/api/v1/demo/im/needs-you", "", "Bearer "+localdemo.LocalBearerToken)
+	if needsYou.Code != httpapi.CodeOK || !strings.Contains(needsYou.Raw, `"status":"open"`) {
+		t.Fatalf("needs-you response = %s", needsYou.Raw)
+	}
+	var needsPayload struct {
+		Data struct {
+			NeedsYou []struct {
+				ID string `json:"id"`
+			} `json:"needsYou"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(needsYou.Raw), &needsPayload); err != nil || len(needsPayload.Data.NeedsYou) != 1 {
+		t.Fatalf("decode needs-you response = %v, %s", err, needsYou.Raw)
+	}
+	resolved := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/needs-you/"+needsPayload.Data.NeedsYou[0].ID+"/resolve", `{"decision":"accept"}`, "Bearer "+localdemo.LocalBearerToken)
+	if resolved.Code != httpapi.CodeOK || !strings.Contains(resolved.Raw, `"status":"accepted"`) || !strings.Contains(resolved.Raw, `"status":"completed"`) {
+		t.Fatalf("resolve response = %s", resolved.Raw)
+	}
+	resolvedReplay := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/needs-you/"+needsPayload.Data.NeedsYou[0].ID+"/resolve", `{"decision":"accept"}`, "Bearer "+localdemo.LocalBearerToken)
+	if resolvedReplay.Code != httpapi.CodeOK || !strings.Contains(resolvedReplay.Raw, `"replayed":true`) {
+		t.Fatalf("resolve replay response = %s", resolvedReplay.Raw)
 	}
 	replay := localDemoRequest(
 		t, server, http.MethodPost, "/api/v1/demo/im/mentions", body, "Bearer "+localdemo.LocalBearerToken,

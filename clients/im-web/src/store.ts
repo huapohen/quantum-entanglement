@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AgentStoreEntry, Conversation, Message, MentionResult, RuntimeSnapshot } from "./api";
+import type { AgentStoreEntry, Artifact, Conversation, Message, MentionResult, NeedsYou, RuntimeSnapshot, Task } from "./api";
 
 type UIState = {
   snapshot: RuntimeSnapshot | null;
@@ -8,6 +8,9 @@ type UIState = {
   selectedConversationId: string;
   messages: Message[];
   mention: MentionResult | null;
+  tasks: Task[];
+  artifacts: Artifact[];
+  needsYou: NeedsYou[];
   loading: boolean;
   error: string;
   setSnapshot: (snapshot: RuntimeSnapshot) => void;
@@ -16,6 +19,9 @@ type UIState = {
   selectConversation: (conversationId: string) => void;
   setMessages: (messages: Message[]) => void;
   setMention: (mention: MentionResult | null) => void;
+  setTasks: (tasks: Task[]) => void;
+  setArtifacts: (artifacts: Artifact[]) => void;
+  setNeedsYou: (needsYou: NeedsYou[]) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string) => void;
 };
@@ -27,6 +33,9 @@ export const useUIStore = create<UIState>((set) => ({
   selectedConversationId: "",
   messages: [],
   mention: null,
+  tasks: [],
+  artifacts: [],
+  needsYou: [],
   loading: false,
   error: "",
   setSnapshot: (snapshot) => set({ snapshot }),
@@ -35,6 +44,9 @@ export const useUIStore = create<UIState>((set) => ({
   selectConversation: (selectedConversationId) => set({ selectedConversationId, messages: [], mention: null }),
   setMessages: (messages) => set({ messages }),
   setMention: (mention) => set({ mention }),
+  setTasks: (tasks) => set({ tasks }),
+  setArtifacts: (artifacts) => set({ artifacts }),
+  setNeedsYou: (needsYou) => set({ needsYou }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
 }));

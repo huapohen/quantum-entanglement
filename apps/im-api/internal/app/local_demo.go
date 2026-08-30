@@ -50,6 +50,27 @@ func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
 		}
 		return httpapi.WriteSuccess(ctx, page)
 	})
+	server.Get("/api/v1/demo/im/tasks", func(ctx fiber.Ctx) error {
+		page, err := demo.ListTasks(ctx.Context(), bearerToken(ctx))
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, page)
+	})
+	server.Get("/api/v1/demo/im/artifacts", func(ctx fiber.Ctx) error {
+		page, err := demo.ListArtifacts(ctx.Context(), bearerToken(ctx))
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, page)
+	})
+	server.Get("/api/v1/demo/im/needs-you", func(ctx fiber.Ctx) error {
+		page, err := demo.ListNeedsYou(ctx.Context(), bearerToken(ctx))
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, page)
+	})
 	server.Get("/api/v1/demo/im/conversations", func(ctx fiber.Ctx) error {
 		limit, err := localDemoQueryLimit(ctx.Query("limit"))
 		if err != nil {
@@ -143,6 +164,17 @@ func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
 			return httpapi.NewAppError(httpapi.CodeMalformedRequest, err)
 		}
 		result, err := demo.Mention(ctx.Context(), bearerToken(ctx), input)
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, result)
+	})
+	server.Post("/api/v1/demo/im/needs-you/:needsYouId/resolve", func(ctx fiber.Ctx) error {
+		var input localdemo.ResolveNeedsYouInput
+		if err := decodeLocalDemoRequest(ctx.Body(), &input); err != nil {
+			return httpapi.NewAppError(httpapi.CodeMalformedRequest, err)
+		}
+		result, err := demo.ResolveNeedsYou(ctx.Context(), bearerToken(ctx), ctx.Params("needsYouId"), input)
 		if err != nil {
 			return localDemoAppError(err)
 		}
