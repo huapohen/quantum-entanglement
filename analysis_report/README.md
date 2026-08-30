@@ -42,6 +42,7 @@
 
 - [`10H_EXECUTION_STATUS_2026-08-30.md`](10H_EXECUTION_STATUS_2026-08-30.md)：当前 10 小时全量目标的真实完成矩阵、远端提交、跨端验收入口和生产剩余主线。
 - [`html/10h_execution_status_20260830.html`](html/10h_execution_status_20260830.html)：同一状态的可视化 HTML 入口。
+- [`research/52_agent_store_acceptance_20260830.md`](research/52_agent_store_acceptance_20260830.md)：Agent Store 独立验收证据、API/UI 入口、Trust Passport 投影和当前生产边界。
 
 | 文件 | 状态 | 内容 |
 |---|---|---|
