@@ -44,9 +44,15 @@ Agent Store create command 的第二次调用返回 `replayed=true`、同一 res
 三种状态和非法 receipt 的单元测试。这样在 provider 结果未决时，系统会停在可对账状态，不推进本地
 aggregate，也不向调用方报告成功。
 
-这不是“生产 Agent Store 已完成”的声明。当前仍缺少安装命令的 durable receipt、action-time resolver、
-provider outbox/reconcile、真实 Clerk/RongCloud 适配器、灾备恢复和完整 IM provider effect gate；migration
-与 repository 是这些组件可以共同依赖的持久化契约。
+随后复核 Agent 子群入口发现 coordinator 的 `CreateGroup` 之前仍只检查 receipt 语法。该点已在
+`coordinator.Open` 统一改用 `RequireCommittedProviderEffect`：`unknown` 回执现在在 registry 写入
+之前直接失败，重试会重新请求 provider，而不会返回一个看似 replayed 的未决子群。新增测试覆盖
+“unknown 首次失败 + unknown 重试再次调用 provider”两项断言。
+
+这不是“生产 Agent Store 已完成”的声明。当前仍缺少安装命令与撤权流程对 durable receipt 的完整业务
+接入、provider outbox/effect reconcile、真实 Clerk/RongCloud 适配器、灾备恢复，以及真实 runtime
+身份链路；本阶段的 action-time resolver 和 provider effect fail-closed 只是 provider-neutral/synthetic
+边界。migration 与 repository 是这些组件可以共同依赖的持久化契约。
 
 ## 持久化对象
 
@@ -108,6 +114,7 @@ runtime ACL、repository definition/release/Passport/installation 创建与读�
 
 - `WANWORK_TEST_POSTGRES_ADMIN_URL=postgresql://<redacted> go test ./apps/im-api/internal/platform/postgres/... -count=1`：authoritycutover、connectionpolicy、eventstore、imstore、migrationrun 全部通过；此前 eventstore fixture 漏授共享 runtime read 表的问题已修正并由 `TestPostgresEventStoreAgainstPostgres` 覆盖。
 - `cd apps/im-api && go test ./... -count=1`：全部 Go package 通过。
+- `go test ./apps/im-api/internal/agentthread -count=1`：新增 unknown group-effect 回执测试通过，确认未决子群副作用不会进入 coordinator registry，重试会再次调用 provider。
 - `cd apps/im-api && go vet ./...`：通过。
 - `cd clients/im-web && npm run build`：TypeScript/Vite production build 通过。
 - `WANWORK_IM_VERIFY_PORT=18147 ./scripts/verify_web_first.sh`：构建、HTTP envelope、Agent Store 安装/幂等重放/撤权、统一 action-time capability resolver、provider effect fail-closed、子群隔离、Workboard 审阅闭环和零网络 synthetic 通过。
@@ -119,17 +126,18 @@ runtime ACL、repository definition/release/Passport/installation 创建与读�
 均可用于精确回退。新增可回溯小阶段 commit 为：
 `c69af4c`（共享 action-time capability resolver 与测试）、`63106e2`（resolver 证据与最新 Web gate 文档）、
 `de8d2ae`（Agent Store durable command receipt 入口与 PostgreSQL replay 证据）、`3cb0a92`（receipt 证据文档）、
-`514a9f2`（provider effect unknown fail-closed 及全链路调用点）。本报告更新提交后会再创建新的
+`514a9f2`（provider effect unknown fail-closed 及全链路调用点）、`a2f40ef`（coordinator 子群创建
+fail-closed 与 unknown 重试隔离测试）。本报告更新提交后会再创建新的
 `backup_MMDD_HHMMSS`，并把精确提交指针写入 main 分支账本。
 
 ## 下一步顺序（仍本地 pending）
 
 1. 将 localdemo 安装/撤权命令切换到 repository seam，并为安装/撤权补 durable command/effect receipt；
    保留 fake provider 作为零网络验收 fixture。
-2. 接入 action-time capability resolver、provider outbox/reconcile、commit-unknown fresh readback 和
-   灾备恢复演练，确保 Agent Store 决策不会被静态安装状态代替。
-3. 完成真实 Clerk/RongCloud 身份与 provider effect gate 后，再决定是否把真实 IM provider 接入 acceptance
-   gate。
+2. 为 provider effect 建立 durable outbox/reconcile 与 commit-unknown fresh readback，补齐“未决→对账→
+   可重试/终态”的故障矩阵。
+3. 接入真实 Clerk/RongCloud 身份与 provider profile，再决定是否把真实 IM provider 接入 acceptance
+   gate；最后完成灾备恢复演练。
 
 ## 证据边界
 
