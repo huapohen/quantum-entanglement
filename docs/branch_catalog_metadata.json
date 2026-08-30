@@ -34,6 +34,7 @@
     "backup_0830_123730": "2026-08-30 Web/PWA IM 最新验收备份；固定指向 c3118f4，仅用于恢复和审计。",
     "mainline_continue_quantum_entanglement": "E3 Result Authority 人工评审分支；当前已完成 migration 12 PostgreSQL materialized projector/reader 候选、shadow equality default-off、提交前 rollback、COMMIT ACK-loss exact replay、双 runner CAS、pool restart readback 与 worker SIGKILL expiry evidence；materialized primary、真实认证、真实 IM 与 outbound 仍关闭；不自动合并回 main。",
     "backup_0831_002800": "2026-08-31 projector fault matrix 与 compatibility rollback checkpoint 的完整远端备份；固定指向 PG18.6 integration matrix PASS 节点；只用于恢复和审计。",
+    "backup_0831_004520": "2026-08-31 fault-matrix 与 production readiness 文档封板后的最终远端备份；固定指向 Go 全模块与 PG18.6 五包 integration matrix PASS 节点；只用于恢复和审计。",
     "backup_0827_200010": "2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。",
     "agent/evidence-ledger": "早期工程证据账本分支，用于汇总测试、审计和阶段结论。",
     "agent/evidence-ledger-current": "面向当时较新代码节点刷新的工程证据账本候选。",
