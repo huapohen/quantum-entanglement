@@ -91,6 +91,7 @@ from .attempts import (
     InvocationJobSpec,
     InvocationRecoverySnapshot,
     InvocationStatus,
+    RecoverySummary,
     SQLiteInvocationAttemptStore,
     _claim_first_invocation_in_transaction,
     _enqueue_invocation_job_in_transaction,
@@ -9371,6 +9372,165 @@ class SQLiteEventStore:
 
     @_sanitize_invocation_start_controls
     @_bind_event_store_process
+    def heartbeat_scoped_invocation_start_v3(
+        self,
+        claimed: ScopedInvocationStartClaimedV3,
+        *,
+        lease_seconds: float,
+    ) -> bool:
+        """Extend one scoped start lease with a store-owned dual-row CAS.
+
+        The immutable start event is never rewritten.  Both mutable ownership rows are
+        advanced together, and a worker whose epoch, token, or deadline is no longer
+        current receives ``False`` without a write.  This is a private PURE-worker seam;
+        it does not enable product dispatch or any external side effect.
+        """
+
+        if type(claimed) is not ScopedInvocationStartClaimedV3:
+            raise TypeError("scoped heartbeat requires an exact claimed start")
+        claimed_snapshot = ScopedInvocationStartClaimedV3(claimed.receipt, claimed.lease)
+        lease = claimed_snapshot.lease
+        SQLiteInvocationAttemptStore._require_lease(lease)
+        lease_seconds_snapshot = _caller_number(
+            lease_seconds,
+            "lease_seconds",
+            positive=True,
+        )
+        token_digest = self._lease_token_digest(lease.lease_token)
+        try:
+            with self._transaction(classify_admission=True) as connection:
+                normalized_now = _normalize_invocation_timestamp(self._now(), "clock")
+                proposed_deadline = _invocation_lease_deadline(
+                    normalized_now,
+                    lease_seconds_snapshot,
+                )
+                rows = connection.execute(
+                    """
+                    SELECT * FROM invocation_jobs
+                    WHERE invocation_id = ? AND status = 'running'
+                      AND session_id = ? AND plan_id = ? AND task_id = ?
+                      AND agent_id = ? AND idempotency_key = ?
+                      AND attempts_started = ? AND lease_epoch = ?
+                      AND lease_owner = ? AND lease_token_digest = ?
+                      AND lease_expires_at > ?
+                    LIMIT 2
+                    """,
+                    (
+                        lease.invocation_id,
+                        lease.session_id,
+                        lease.plan_id,
+                        lease.task_id,
+                        lease.agent_id,
+                        lease.idempotency_key,
+                        lease.attempt_number,
+                        lease.lease_epoch,
+                        lease.worker_id,
+                        token_digest,
+                        normalized_now,
+                    ),
+                ).fetchall()
+                if len(rows) > 1:
+                    raise InvocationIntegrityError(
+                        "scoped heartbeat found multiple running invocation owners"
+                    )
+                if not rows:
+                    return False
+                job = SQLiteInvocationAttemptStore._row_to_job(rows[0])
+                if job.heartbeat_at is None or job.lease_expires_at is None:
+                    raise InvocationIntegrityError("scoped heartbeat owner has no lease timestamps")
+                attempt = SQLiteInvocationAttemptStore._load_running_attempt(
+                    connection,
+                    invocation_id=lease.invocation_id,
+                    attempt_number=lease.attempt_number,
+                    lease_epoch=lease.lease_epoch,
+                    attempt_id=lease.attempt_id,
+                )
+                SQLiteInvocationAttemptStore._validate_running_attempt_owner(
+                    attempt,
+                    invocation_id=lease.invocation_id,
+                    attempt_number=lease.attempt_number,
+                    lease_epoch=lease.lease_epoch,
+                    worker_id=lease.worker_id,
+                    lease_token_digest=token_digest,
+                    heartbeat_at=job.heartbeat_at,
+                    lease_expires_at=job.lease_expires_at,
+                    attempt_id=lease.attempt_id,
+                )
+                SQLiteInvocationAttemptStore._validate_lease_binding(lease, job, attempt)
+                deadline = max(job.lease_expires_at, proposed_deadline)
+                job_update = connection.execute(
+                    """
+                    UPDATE invocation_jobs
+                    SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+                    WHERE invocation_id = ? AND status = 'running'
+                      AND session_id = ? AND plan_id = ? AND task_id = ?
+                      AND agent_id = ? AND idempotency_key = ?
+                      AND attempts_started = ? AND lease_epoch = ?
+                      AND lease_owner = ? AND lease_token_digest = ?
+                      AND lease_expires_at > ?
+                    """,
+                    (
+                        normalized_now,
+                        deadline,
+                        normalized_now,
+                        lease.invocation_id,
+                        lease.session_id,
+                        lease.plan_id,
+                        lease.task_id,
+                        lease.agent_id,
+                        lease.idempotency_key,
+                        lease.attempt_number,
+                        lease.lease_epoch,
+                        lease.worker_id,
+                        token_digest,
+                        normalized_now,
+                    ),
+                )
+                if job_update.rowcount != 1:
+                    return False
+                attempt_update = connection.execute(
+                    """
+                    UPDATE invocation_attempts
+                    SET heartbeat_at = ?, lease_expires_at = ?
+                    WHERE attempt_id = ? AND invocation_id = ?
+                      AND attempt_number = ? AND lease_epoch = ?
+                      AND worker_id = ? AND lease_token_digest = ?
+                      AND status = 'running'
+                    """,
+                    (
+                        normalized_now,
+                        deadline,
+                        lease.attempt_id,
+                        lease.invocation_id,
+                        lease.attempt_number,
+                        lease.lease_epoch,
+                        lease.worker_id,
+                        token_digest,
+                    ),
+                )
+                if attempt_update.rowcount != 1:
+                    raise InvocationIntegrityError(
+                        "scoped heartbeat owner attempt changed during CAS"
+                    )
+                return True
+        except _EventStoreAdmissionTransactionSignal as error:
+            classified = _take_classified_event_store_transaction_signal(error)
+            if classified is None:
+                raise
+            outcome, control = classified
+            if control is not None:
+                raise _EventStoreStartControlSignal(
+                    control,
+                    ambiguity=outcome == "ambiguous",
+                    token=_EVENT_STORE_START_CONTROL_TOKEN,
+                ) from None
+            raise _EventStoreStartErrorSignal(
+                "transaction" if outcome == "rolled_back" else "ambiguous",
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
+
+    @_sanitize_invocation_start_controls
+    @_bind_event_store_process
     def claim_scoped_invocation_start_v3(
         self,
         tenant_id: str,
@@ -9460,6 +9620,123 @@ class SQLiteEventStore:
         if result is None:  # pragma: no cover - every completed body assigns a result.
             raise RuntimeError("scoped invocation start completed without a result")
         return result
+
+    @_sanitize_invocation_start_controls
+    @_bind_event_store_process
+    def recover_expired_scoped_invocations(self, *, limit: int = 1_000) -> RecoverySummary:
+        """Fence expired scoped owners into effect-unknown terminal states.
+
+        Scoped admission is deliberately single-attempt. Recovery therefore marks the
+        attempt ``expired`` and the owning job ``failed`` in one transaction. No event,
+        receipt, retry claim, or external side effect is synthesized here.
+        """
+
+        if type(limit) is not int:
+            raise TypeError("limit must be an integer")
+        if not 1 <= limit <= 1_000:
+            raise ValueError("limit must be between 1 and 1000")
+        try:
+            with self._transaction(classify_admission=True) as connection:
+                normalized_now = _normalize_invocation_timestamp(self._now(), "clock")
+                rows = connection.execute(
+                    """
+                    SELECT * FROM invocation_jobs
+                    WHERE status = 'running' AND lease_expires_at <= ?
+                    ORDER BY lease_expires_at, invocation_id
+                    LIMIT ?
+                    """,
+                    (normalized_now, limit),
+                ).fetchall()
+                expired: list[str] = []
+                reason = "lease expired before terminal acknowledgement"
+                for row in rows:
+                    job = SQLiteInvocationAttemptStore._row_to_job(row)
+                    if (
+                        job.lease_owner is None
+                        or job.lease_token_digest is None
+                        or job.heartbeat_at is None
+                        or job.lease_expires_at is None
+                    ):
+                        raise InvocationIntegrityError(
+                            "scoped expired invocation has incomplete lease ownership"
+                        )
+                    attempt = SQLiteInvocationAttemptStore._load_running_attempt(
+                        connection,
+                        invocation_id=job.invocation_id,
+                        attempt_number=job.attempts_started,
+                        lease_epoch=job.lease_epoch,
+                    )
+                    SQLiteInvocationAttemptStore._validate_running_attempt_owner(
+                        attempt,
+                        invocation_id=job.invocation_id,
+                        attempt_number=job.attempts_started,
+                        lease_epoch=job.lease_epoch,
+                        worker_id=job.lease_owner,
+                        lease_token_digest=job.lease_token_digest,
+                        heartbeat_at=job.heartbeat_at,
+                        lease_expires_at=job.lease_expires_at,
+                    )
+                    attempt_update = connection.execute(
+                        """
+                        UPDATE invocation_attempts
+                        SET status = 'expired', finished_at = ?, error = ?
+                        WHERE invocation_id = ? AND attempt_number = ?
+                          AND lease_epoch = ? AND status = 'running'
+                        """,
+                        (
+                            normalized_now,
+                            reason,
+                            job.invocation_id,
+                            job.attempts_started,
+                            job.lease_epoch,
+                        ),
+                    )
+                    if attempt_update.rowcount != 1:
+                        raise InvocationIntegrityError(
+                            "scoped expired invocation attempt changed during recovery"
+                        )
+                    job_update = connection.execute(
+                        """
+                        UPDATE invocation_jobs
+                        SET status = 'failed', updated_at = ?, finished_at = ?,
+                            last_error = ?, lease_owner = NULL,
+                            lease_token_digest = NULL, lease_expires_at = NULL,
+                            heartbeat_at = NULL
+                        WHERE invocation_id = ? AND status = 'running'
+                          AND attempts_started = ? AND lease_epoch = ?
+                          AND lease_expires_at <= ?
+                        """,
+                        (
+                            normalized_now,
+                            normalized_now,
+                            reason,
+                            job.invocation_id,
+                            job.attempts_started,
+                            job.lease_epoch,
+                            normalized_now,
+                        ),
+                    )
+                    if job_update.rowcount != 1:
+                        raise InvocationIntegrityError(
+                            "scoped expired invocation changed during recovery"
+                        )
+                    expired.append(job.invocation_id)
+                return RecoverySummary(exhausted=tuple(expired))
+        except _EventStoreAdmissionTransactionSignal as error:
+            classified = _take_classified_event_store_transaction_signal(error)
+            if classified is None:
+                raise
+            outcome, control = classified
+            if control is not None:
+                raise _EventStoreStartControlSignal(
+                    control,
+                    ambiguity=outcome == "ambiguous",
+                    token=_EVENT_STORE_START_CONTROL_TOKEN,
+                ) from None
+            raise _EventStoreStartErrorSignal(
+                "transaction" if outcome == "rolled_back" else "ambiguous",
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
 
     @_sanitize_invocation_start_controls
     @_bind_event_store_process
