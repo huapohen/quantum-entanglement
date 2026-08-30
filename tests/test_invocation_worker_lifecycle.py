@@ -252,6 +252,33 @@ class ScopedPureWorkerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.job.status, InvocationStatus.FAILED)
         self.assertEqual(snapshot.current_attempt.status, AttemptStatus.EXPIRED)
 
+    async def test_relinquish_error_cannot_strand_active_run_registration(self) -> None:
+        async def handler(_context: PureWorkerContext) -> object:
+            return self.result_request
+
+        async def acceptor(
+            _request: ScopedInvocationResultAcceptanceRequestV2,
+            _claim: object,
+        ) -> object:
+            return object()
+
+        def fail_relinquish(_claimed: object) -> bool:
+            raise RuntimeError("synthetic relinquish failure")
+
+        self.store.relinquish_scoped_invocation_start_v3 = fail_relinquish  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "synthetic relinquish failure"):
+            await self.lifecycle.run_and_accept(
+                self.claimed,
+                self.execution_request.manifest,
+                self.configuration(),
+                handler,
+                acceptor=acceptor,
+            )
+
+        snapshot = await self.lifecycle.snapshot()
+        self.assertEqual(snapshot.state, PureWorkerLifecycleState.ACCEPTING)
+        self.assertEqual(snapshot.active_runs, 0)
+
     async def test_close_is_monotonic_and_new_admission_is_rejected(self) -> None:
         self.assertEqual(
             (await self.lifecycle.snapshot()).state,

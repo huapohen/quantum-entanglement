@@ -217,13 +217,18 @@ class ScopedPureWorkerLifecycle:
         finally:
             forwarder.cancel()
             await asyncio.gather(forwarder, return_exceptions=True)
-            if result is not None and result.outcome not in {
-                PureWorkerOutcome.ACCEPTED,
-                PureWorkerOutcome.OBSERVED,
-            }:
-                self._store.relinquish_scoped_invocation_start_v3(claimed_snapshot)
-            async with self._state_lock:
-                self._active.pop(task, None)
+            try:
+                if result is not None and result.outcome not in {
+                    PureWorkerOutcome.ACCEPTED,
+                    PureWorkerOutcome.OBSERVED,
+                }:
+                    self._store.relinquish_scoped_invocation_start_v3(claimed_snapshot)
+            finally:
+                # A poisoned/integrity-failing store must not strand this task in
+                # process-local admission bookkeeping.  The original store error is
+                # allowed to propagate, but close() must still observe active_runs=0.
+                async with self._state_lock:
+                    self._active.pop(task, None)
         if result is None:  # pragma: no cover - every branch sets a sanitized result.
             raise RuntimeError("worker lifecycle completed without a result")
         return result
