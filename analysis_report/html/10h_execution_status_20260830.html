@@ -15,7 +15,7 @@
 </head>
 <body>
   <h1>WanWork v0版 · 10 小时执行状态</h1>
-  <div class="muted">2026-08-30 · review branch <code>mainline_continue_quantum_entanglement</code> · HEAD <code>4783f61</code></div>
+  <div class="muted">2026-08-30 · review branch <code>mainline_continue_quantum_entanglement</code> · HEAD <code>c2a664f</code></div>
   <div class="grid">
     <div class="card"><div class="ok">可直接体验</div><strong>Web/PWA IM</strong><br>群聊、单聊、Agent 子群、Workboard、搜索</div>
     <div class="card"><div class="ok">可直接体验</div><strong>移动设备</strong><br>同一 Wi-Fi 使用 <code>--lan</code> 访问</div>
@@ -32,11 +32,12 @@
     <tr><td>QE 工作对象</td><td>Task → Artifact draft → Needs You；接受或退回；状态与聊天正文分离；重复处理幂等</td></tr>
     <tr><td>模型</td><td>synthetic 默认零网络；可选脱敏 GPT launcher；模型无 IM/provider 权限</td></tr>
     <tr><td>跨端</td><td>桌面浏览器与手机/平板 Web/PWA 统一入口；manifest/service worker；局域网验收</td></tr>
+    <tr><td>PostgreSQL IM 读取边界</td><td>migration 11 已注册 message heads/snapshots、RLS 与 read manifest；inactive materialized reader 保持 default-off，默认走 bounded EventStore replay</td></tr>
   </tbody></table>
-  <p class="muted">本次集成封板门禁：Python 2,964 项全量通过（152 秒）、Ruff、strict mypy、compileall、Go test/vet、Web 构建及 Web-first synthetic 闭环均通过。小改动不重复跑全量，按影响面执行专项回归。</p>
+  <p class="muted">本次截止冲刺门禁：Python 2,975 项全量通过、Ruff、strict mypy、compileall、Go test/vet、Web 构建及 Web-first synthetic 闭环均通过。小改动不重复跑全量，按影响面执行专项回归。</p>
   <h2>边界</h2>
   <p class="muted">当前服务是本地 fake/demo，重启会清空内存投影；不会向飞书、企微或真实融云发送消息。
-  原生 .app/.exe/.ipa/.apk/.hap、真实认证/provider、durable PostgreSQL 和断线同步需后续工程，不能用本地截图冒充。</p>
+  原生 .app/.exe/.ipa/.apk/.hap、真实认证/provider、PostgreSQL projector writer/checkpoint 同事务、crash/restore 和断线同步需后续工程，不能用本地截图冒充。</p>
   <p><a href="../10H_EXECUTION_STATUS_2026-08-30.md">查看 Markdown 状态账本</a> · <a href="../../docs/wanwork_im/ALL_PLATFORM_TRIAL_GUIDE.md">查看全端体验教程</a></p>
 </body>
 </html>
