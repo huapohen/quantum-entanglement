@@ -34,6 +34,20 @@
 4. 点击“接受产物”或“退回”，观察 `accepted/completed` 或 `rejected` 状态。
 5. 切回父群确认只有受限工作卡，子群隔离仍成立。
 
+## GPT runtime（可选）
+
+默认 synthetic 不联网。若要用用户提供的 GPT endpoint/key 试用模型，可执行：
+
+```bash
+./scripts/start_gpt_im_trial.sh \
+  --input-file /Users/lwblx/huapohen/agent/automation/2026/05_08/1/26/input/0.txt \
+  --no-open
+```
+
+启动器只选择输入文件中的第一组 HTTPS endpoint 和第一条 `sk-` Key，并将 model 固定为
+`gpt-5.6-sol`；Key 不会写入 Git、日志、截图或报告。模型服务断流时请切回 synthetic，
+不要把网络失败伪装成 Agent 成功。
+
 ## 交付边界
 
 - 这是当前所有平台可直接体验的 Web/PWA 结果，不是原生安装包。

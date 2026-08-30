@@ -40,6 +40,14 @@ export WANWORK_IM_MODEL='gpt-5.6-sol'
 ./scripts/start_web_client.sh --model-runtime openai-compatible --no-open
 ```
 
+如果运营输入文件按“endpoint、Key”顺序保存，也可以让启动器只在子进程内读取第一组 GPT 配置（不会打印或落盘 Key）：
+
+```bash
+./scripts/start_gpt_im_trial.sh \
+  --input-file /Users/lwblx/huapohen/agent/automation/2026/05_08/1/26/input/0.txt \
+  --no-open
+```
+
 Only the explicit `openai-compatible` mode can make a model request. The API validates the HTTPS endpoint,
 requires all three fields, bounds the response, rejects provider error bodies, and never exposes the key in a
 snapshot or error. The model has no IM/provider authority; its text is validated before the Agent reply is sent
