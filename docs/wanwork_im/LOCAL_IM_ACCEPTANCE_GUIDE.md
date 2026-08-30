@@ -1,6 +1,6 @@
 # Quantum Entanglement 原生 IM：本地验收入门
 
-这份教程用于验收 `dev_wanwork_quantum_entanglement` 分支上的原生 IM 阶段版本。当前模式完全本地、零网络、零生产凭据：它不会读取 Clerk、融云或模型 Key，不连接飞书/企微，也不会给任何人或群发消息。
+这份教程用于验收 `dev_wanwork_quantum_entanglement` 分支上的原生 IM 阶段版本。默认模式完全本地、零网络、零生产凭据：它不会读取 Clerk、融云或模型 Key，不连接飞书/企微，也不会给任何人或群发消息。只有显式选择 `openai-compatible` runtime 并提供完整模型配置时，才会向审核过的模型端点发起一次模型请求。
 
 ## 1. 一条命令启动
 
@@ -55,7 +55,7 @@ membership、`manage_members` 权限、已知 Agent actor 和 provider group，�
 `conversationId + idempotencyKey` 记录动作；重复请求返回 `replayed=true`，已存在成员不会重复
 写入。生产实现必须把该记录迁移到 tenant-bound UoW 和 durable receipt。
 
-当前回复是确定性的本地验收结果，不调用大模型。这里验证的是身份、Agent Store、群拓扑、ACL、幂等和 provider 边界；模型执行和真实 Clerk/融云网络接入属于后续生产适配阶段。
+默认回复是确定性的本地验收结果，不调用大模型；显式选择模型 runtime 后，回复文本来自 OpenAI-compatible Responses API，但仍只会发送到已授权的 Agent 子群。这里验证的是身份、Agent Store、群拓扑、ACL、幂等和 provider 边界；生产级模型治理、工具执行和真实 Clerk/融云网络接入属于后续适配阶段。
 
 ## 2.1 本地事件日志恢复验收（可选）
 
@@ -200,7 +200,8 @@ go vet ./...
 - Agent Store 与 thread plan 的 PostgreSQL durable repository；
 - provider commit-unknown readback、outbox/inbox、crash recovery 和 reconciliation worker；
 - 移动/桌面 push、离线同步、多设备已读游标、文件/音视频/搜索等完整办公 IM；
-- 模型 runtime、工具执行、Artifact 验收和真实 Agent 回复；
+- 生产级模型 runtime、工具执行、Artifact 验收和完整 Agent 回复链（当前只提供显式
+  OpenAI-compatible 文本生成 adapter）；
 - 生产 secret broker、IaC、观测、SLO、故障演练与数据合规。
 
 这些边界会继续保留在阶段计划和调研报告中，不能用本地 fake 的绿色测试替代。

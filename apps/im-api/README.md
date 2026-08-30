@@ -4,8 +4,9 @@ Go/Fiber backend for the native WanWork IM. This module is intentionally isolate
 package. The default service now includes deterministic, zero-network Clerk-shaped and RongCloud-shaped fake
 adapters plus an `@Agent` child-group acceptance slice. An explicit runtime mode composes a strictly admitted
 PostgreSQL URL, an attested runtime-only pool, exact readiness, a controlled Unit of Work, and an API route
-barrier. Production IaC/cutover/credential rotation, real Clerk/RongCloud network adapters, model, tool, and
-production outbound reconciliation are still not delivered.
+barrier. The model runtime is available only as an explicit OpenAI-compatible local adapter; production
+IaC/cutover/credential rotation, real Clerk/RongCloud network adapters, tool execution, and production outbound
+reconciliation are still not delivered.
 
 ## Run the local IM acceptance surface
 
@@ -27,6 +28,22 @@ The underlying API script refuses to start if PostgreSQL runtime variables are a
 only a numeric loopback listener. The local acceptance composition instantiates in-memory fake adapters with
 synthetic fixtures; they make no network calls and contain no production credentials. Its fake outbound path is
 enabled only inside this process so the child-group reply flow can be observed.
+
+The Agent runtime is synthetic by default. For an explicit local model trial, set the complete runtime bundle
+before starting the Web launcher (the API itself does not read `.env` files):
+
+```bash
+export WANWORK_IM_AGENT_RUNTIME=openai-compatible
+export WANWORK_IM_MODEL_API_KEY='<secret-manager value>'
+export WANWORK_IM_MODEL_BASE_URL='https://<reviewed-openai-compatible-host>/v1'
+export WANWORK_IM_MODEL='gpt-5.6-sol'
+./scripts/start_web_client.sh --model-runtime openai-compatible --no-open
+```
+
+Only the explicit `openai-compatible` mode can make a model request. The API validates the HTTPS endpoint,
+requires all three fields, bounds the response, rejects provider error bodies, and never exposes the key in a
+snapshot or error. The model has no IM/provider authority; its text is validated before the Agent reply is sent
+to the already-authorized child group. Keep real values out of Git, logs, screenshots, events and Notion.
 
 Verify the default mode:
 

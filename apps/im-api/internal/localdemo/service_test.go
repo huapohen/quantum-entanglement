@@ -3,9 +3,28 @@ package localdemo
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/modelruntime"
 )
+
+type recordingRuntime struct {
+	calls int
+}
+
+func (runtime *recordingRuntime) Generate(_ context.Context, request modelruntime.Request) (modelruntime.Result, error) {
+	runtime.calls++
+	return modelruntime.Result{
+		Text:     "# 模型结果\n任务：" + request.Instruction,
+		Provider: "test", Model: "test-model", ResponseID: "resp_local",
+	}, nil
+}
+
+func (*recordingRuntime) Descriptor() modelruntime.Descriptor {
+	return modelruntime.Descriptor{Mode: "model", Provider: "test", Model: "test-model", Status: "configured"}
+}
 
 func TestServiceRunsAuthenticatedMentionAndReplay(t *testing.T) {
 	t.Parallel()
@@ -34,6 +53,31 @@ func TestServiceRunsAuthenticatedMentionAndReplay(t *testing.T) {
 	if err != nil || !replay.Replayed || replay.ChildConversationID != result.ChildConversationID ||
 		replay.InvocationID != result.InvocationID {
 		t.Fatalf("mention replay = %#v, %v", replay, err)
+	}
+}
+
+func TestServiceUsesInjectedModelRuntimeOutputInAgentChild(t *testing.T) {
+	t.Parallel()
+	runtime := &recordingRuntime{}
+	service, err := NewWithRuntime(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := service.Snapshot(); snapshot.Mode != "model-runtime" || snapshot.AgentRuntime.Model != "test-model" {
+		t.Fatalf("model runtime snapshot = %#v", snapshot)
+	}
+	result, err := service.Mention(context.Background(), LocalBearerToken, MentionInput{
+		MessageID: "msg_model_runtime", Instruction: "生成动态验收结果",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.calls != 1 || !strings.Contains(result.AgentReply.Text, "# 模型结果") {
+		t.Fatalf("runtime calls/result = %d, %#v", runtime.calls, result)
+	}
+	messages, err := service.ListMessages(context.Background(), LocalBearerToken, result.ChildConversationID, "", 20)
+	if err != nil || len(messages.Messages) != 1 || messages.Messages[0].Text != result.AgentReply.Text {
+		t.Fatalf("child model message = %#v, %v", messages, err)
 	}
 }
 

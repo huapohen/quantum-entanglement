@@ -1,7 +1,7 @@
 # Web 优先阶段检查点（2026-08-30）
 
 本检查点记录 `dev_wanwork_quantum_entanglement` 分支上 Web-first vertical slice 的实际验收
-结果。它是可重复的本地体验基线，不是生产发布声明，也不代表已经接入真实 Clerk、融云或模型服务。
+结果。它是可重复的本地体验基线，不是生产发布声明，也不代表已经接入真实 Clerk、融云或生产级模型服务。
 
 ## 本次完成范围
 
@@ -73,7 +73,8 @@ git diff --check
 
 ## 仍然禁止宣称完成的范围
 
-- 真实模型 runtime、GPT/DeepSeek Harness 执行、工具调用和 Artifact 结果；
+- 生产级模型 runtime、完整 GPT/DeepSeek Harness 执行、工具调用和 Artifact 结果（当前仅有显式
+  OpenAI-compatible 文本生成 adapter）；
 - durable PostgreSQL conversation/thread projection、outbox/inbox、恢复和 reconciliation；
 - Clerk JWKS/session revoke 与 action-time tenant/Actor resolver；
 - 融云真实 SDK、回调真实性、重放防护、对账和 mapping drift；

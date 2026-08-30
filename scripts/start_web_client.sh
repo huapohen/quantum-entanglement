@@ -11,6 +11,7 @@ web_usage() {
 选项：
   --im-port PORT    IM API 端口，默认 18080
   --web-port PORT   Web 页面端口，默认 5173
+  --model-runtime MODE  Agent runtime：synthetic（默认）或 openai-compatible
   --no-install      不自动安装 clients/im-web 的 npm 依赖
   --no-open         不自动打开浏览器
   -h, --help        显示帮助
@@ -36,6 +37,7 @@ web_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 web_project_root=$(CDPATH= cd -- "$web_script_dir/.." && pwd)
 web_im_port=18080
 web_page_port=5173
+web_agent_runtime=${WANWORK_IM_AGENT_RUNTIME:-synthetic}
 web_no_install=0
 web_no_open=0
 
@@ -59,6 +61,15 @@ while [ "$#" -gt 0 ]; do
             web_page_port=${1#--web-port=}
             shift
             ;;
+        --model-runtime)
+            [ "$#" -ge 2 ] || web_fail "--model-runtime 缺少模式值"
+            web_agent_runtime=$2
+            shift 2
+            ;;
+        --model-runtime=*)
+            web_agent_runtime=${1#--model-runtime=}
+            shift
+            ;;
         --no-install)
             web_no_install=1
             shift
@@ -79,6 +90,15 @@ done
 
 web_validate_port "--im-port" "$web_im_port"
 web_validate_port "--web-port" "$web_page_port"
+case "$web_agent_runtime" in
+    synthetic|openai-compatible) ;;
+    *) web_fail "--model-runtime 必须是 synthetic 或 openai-compatible" ;;
+esac
+if [ "$web_agent_runtime" = "openai-compatible" ]; then
+    [ -n "${WANWORK_IM_MODEL_API_KEY:-}" ] || web_fail "openai-compatible 需要 WANWORK_IM_MODEL_API_KEY"
+    [ -n "${WANWORK_IM_MODEL_BASE_URL:-}" ] || web_fail "openai-compatible 需要 WANWORK_IM_MODEL_BASE_URL"
+    [ -n "${WANWORK_IM_MODEL:-}" ] || web_fail "openai-compatible 需要 WANWORK_IM_MODEL"
+fi
 
 command -v go >/dev/null 2>&1 || web_fail "找不到 Go（需要 Go 运行 IM API）"
 command -v npm >/dev/null 2>&1 || web_fail "找不到 npm（需要 Node.js 运行 Web 客户端）"
@@ -118,6 +138,7 @@ printf '%s\n' "正在启动零网络 IM API：http://127.0.0.1:$web_im_port"
 (
     cd "$web_project_root"
     env WANWORK_IM_LISTEN_ADDRESS="127.0.0.1:$web_im_port" \
+        WANWORK_IM_AGENT_RUNTIME="$web_agent_runtime" \
         GOTOOLCHAIN="${GOTOOLCHAIN:-local}" \
         GOTELEMETRY="${GOTELEMETRY:-off}" \
         go run ./apps/im-api/cmd/im-api >"$web_api_log" 2>&1

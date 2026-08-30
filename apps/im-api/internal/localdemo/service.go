@@ -1,5 +1,6 @@
-// Package localdemo composes the native IM contracts into a deterministic loopback-only demo.
-// It performs no network calls and contains no production credential or provider SDK.
+// Package localdemo composes the native IM contracts into a loopback-only demo. Its default
+// runtime is deterministic and zero-network; an explicit modelruntime can be injected for a
+// controlled local model trial without changing the IM/provider contracts.
 package localdemo
 
 import (
@@ -20,6 +21,7 @@ import (
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/auth"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/immetadata"
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/modelruntime"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -27,6 +29,7 @@ var (
 	ErrInvalidInput    = errors.New("invalid local IM demo input")
 	ErrUnauthenticated = errors.New("local IM demo authentication failed")
 	ErrConflict        = errors.New("local IM demo message identity conflict")
+	ErrRuntime         = errors.New("local IM Agent runtime failed")
 )
 
 const (
@@ -58,14 +61,15 @@ type MentionResult struct {
 }
 
 type Snapshot struct {
-	Mode                 string `json:"mode"`
-	NetworkCalls         int    `json:"networkCalls"`
-	AuthProvider         string `json:"authProvider"`
-	IMProvider           string `json:"imProvider"`
-	ParentConversationID string `json:"parentConversationId"`
-	HumanActorID         string `json:"humanActorId"`
-	AgentActorID         string `json:"agentActorId"`
-	AgentVersion         string `json:"agentVersion"`
+	Mode                 string                  `json:"mode"`
+	NetworkCalls         int                     `json:"networkCalls"`
+	AuthProvider         string                  `json:"authProvider"`
+	IMProvider           string                  `json:"imProvider"`
+	ParentConversationID string                  `json:"parentConversationId"`
+	HumanActorID         string                  `json:"humanActorId"`
+	AgentActorID         string                  `json:"agentActorId"`
+	AgentVersion         string                  `json:"agentVersion"`
+	AgentRuntime         modelruntime.Descriptor `json:"agentRuntime"`
 }
 
 type Service struct {
@@ -78,6 +82,8 @@ type Service struct {
 	requestAccess       im.ConversationAccessSnapshot
 	installation        agentstore.InstallationSnapshot
 	passport            agentstore.TrustPassport
+	runtime             modelruntime.Runtime
+	runtimeCalls        int
 	requests            map[string][sha256.Size]byte
 	mentionResults      map[string]MentionResult
 	knownActors         map[im.ActorID]im.ActorRef
@@ -89,6 +95,21 @@ type Service struct {
 }
 
 func New() (*Service, error) {
+	return NewWithRuntime(modelruntime.NewDeterministic())
+}
+
+func NewFromEnv(lookup modelruntime.LookupEnv) (*Service, error) {
+	runtime, err := modelruntime.FromEnv(lookup)
+	if err != nil {
+		return nil, err
+	}
+	return NewWithRuntime(runtime)
+}
+
+func NewWithRuntime(runtime modelruntime.Runtime) (*Service, error) {
+	if runtime == nil {
+		runtime = modelruntime.NewDeterministic()
+	}
 	now := time.Now().UTC()
 	tenant, _, parent, requester, requestAccess, installation, passport, err := buildPlatform(now)
 	if err != nil {
@@ -179,7 +200,8 @@ func New() (*Service, error) {
 	return &Service{
 		authVerifier: verifier, provider: provider, coordinator: coordinator,
 		parent: parent, requester: requester, requestAccess: requestAccess,
-		installation: installation, passport: passport, requests: make(map[string][sha256.Size]byte),
+		installation: installation, passport: passport, runtime: runtime,
+		requests:       make(map[string][sha256.Size]byte),
 		mentionResults: make(map[string]MentionResult),
 		knownActors: map[im.ActorID]im.ActorRef{
 			requester.ActorID(): requester, installation.AgentActor(): agentRef,
@@ -195,12 +217,24 @@ func (service *Service) Snapshot() Snapshot {
 	if service == nil {
 		return Snapshot{}
 	}
+	descriptor := modelruntime.Descriptor{}
+	if service.runtime != nil {
+		descriptor = service.runtime.Descriptor()
+	}
+	mode := "zero-network-fake"
+	if descriptor.Mode == "model" {
+		mode = "model-runtime"
+	}
+	service.mu.Lock()
+	runtimeCalls := service.runtimeCalls
+	service.mu.Unlock()
 	return Snapshot{
-		Mode: "zero-network-fake", NetworkCalls: 0, AuthProvider: "auth.fake.clerk-shaped.v1",
+		Mode: mode, NetworkCalls: runtimeCalls, AuthProvider: "auth.fake.clerk-shaped.v1",
 		IMProvider:           "im.fake.rongcloud-shaped.v1",
 		ParentConversationID: service.parent.Ref().ConversationID().String(),
 		HumanActorID:         service.requester.ActorID().String(),
 		AgentActorID:         service.installation.AgentActor().String(), AgentVersion: service.installation.Version().String(),
+		AgentRuntime: descriptor,
 	}
 }
 
@@ -267,7 +301,29 @@ func (service *Service) Mention(
 	if err != nil {
 		return MentionResult{}, ErrInvalidInput
 	}
-	replyText := "v0版研究 Agent 已在独立子群处理：" + input.Instruction
+	workspace, ok := parentSnapshot.WorkspaceID()
+	if !ok {
+		return MentionResult{}, ErrIntegrity
+	}
+	if service.runtime.Descriptor().Mode == "model" {
+		service.mu.Lock()
+		service.runtimeCalls++
+		service.mu.Unlock()
+	}
+	runtimeResult, err := service.runtime.Generate(ctx, modelruntime.Request{
+		TenantID: parentSnapshot.Ref().TenantID().String(), WorkspaceID: workspace.String(),
+		ParentConversation: parentSnapshot.Ref().ConversationID().String(),
+		ChildConversation:  thread.Plan().Child().Ref().ConversationID().String(),
+		InvocationID:       thread.Plan().InvocationID().String(), AgentActorID: service.installation.AgentActor().String(),
+		AgentVersion: service.installation.Version().String(), Instruction: input.Instruction,
+	})
+	if err != nil {
+		return MentionResult{}, errors.Join(ErrRuntime, err)
+	}
+	if err := runtimeResult.Validate(); err != nil {
+		return MentionResult{}, errors.Join(ErrRuntime, err)
+	}
+	replyText := runtimeResult.Text
 	receipt, err := service.coordinator.SendAgentReply(
 		ctx, thread, service.installation, replyMessageID, replyText,
 		"demo/reply/"+hex.EncodeToString(replyEffectDigest[:16]),
