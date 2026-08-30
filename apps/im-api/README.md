@@ -134,8 +134,9 @@ command is not yet a complete production bootstrap or IaC replacement.
 
 ## Current PostgreSQL authority subset
 
-At code baseline `dev_wanwork_quantum_entanglement`, `internal/platform/postgres` contains checksummed migrations `0001..0011`, including the
-Agent Store control-plane schema (`0011_agent_store_control_plane`), 32
+At code baseline `dev_wanwork_quantum_entanglement`, `internal/platform/postgres` contains checksummed migrations `0001..0013`, including the
+ Agent Store control-plane schema (`0011_agent_store_control_plane`), function-only CAS writes (`0012_agent_store_write_functions`), and durable
+ capability-value constraints (`0013_agent_store_capability_constraints`), 32
 authority tables, 22 FORCE RLS tables, tenant-bound repositories/UoW, and five fixed `SECURITY DEFINER` write
 functions. Conversation, provider-binding, membership, access, and command-receipt writes go through those
 functions. The tested `NOINHERIT` runtime login can explicitly `SET ROLE` only to its exact runtime group; that

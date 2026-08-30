@@ -19,14 +19,17 @@ vertical slice：
 
 - migration `0011`：definition/release/passport/installation head+snapshot 表、复合外键和 FORCE RLS；
 - migration `0012`：四个精确参数 `SECURITY DEFINER` CAS 写函数，runtime 仅拥有表 `SELECT` 与函数 `EXECUTE`；
+- migration `0013`：数据库侧 capability grammar、requested/prohibitions 不相交和 installation grant 值约束；
 - Go tenant repository：读取时重建并重验 domain snapshot，写入时 canonical codec + CAS；
 - `UnitOfWork.ExecuteAgentStore`：`agent.*` 命令命名空间、serializable transaction、advisory lock、durable
   receipt、重放和 commit-unknown fresh-connection readback。
+- provider effect outbox 已有 provider-neutral contract 与单进程 append+fsync recovery fixture；它能保留
+  `queued/sent/unknown/committed/failed` 状态并拒绝过期 lease，但尚未替代生产 PostgreSQL outbox。
 
 ## 仍不能宣称生产完成的边界
 
 1. localdemo 安装/撤权尚未切换到 PostgreSQL repository；
-2. 安装/撤权 provider effect 尚无独立 durable outbox/effect-reconcile 表和 worker；
+2. provider effect outbox 当前只有本地文件 fixture，尚无 PostgreSQL durable 表、function-only 写入口和 worker；
 3. runtime 还没有带真实 Clerk tenant/actor context 的 Agent Store HTTP composition；
 4. 真实 RongCloud provider、receipt readback、网络重试与 `effect_unknown` 对账矩阵尚未完成；
 5. 仍缺 kill-9/断电、backup/restore、旧凭据 drain 和灾备演练。
@@ -53,4 +56,3 @@ WANWORK_IM_VERIFY_PORT=18148 ./scripts/verify_web_first.sh
 2. 添加 provider outbox/reconcile worker 与 commit-unknown fresh readback，覆盖重试、拒绝、未决和人工处理；
 3. 接入真实身份/Provider adapter 后，再把相同 HTTP 合同从 demo composition 提升为 production composition；
 4. 最后执行 crash/restore 矩阵并更新发布门禁，再统一同步 Notion。
-
