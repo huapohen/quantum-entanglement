@@ -151,6 +151,33 @@ type ConversationAuthorityRepository interface {
 	) (im.ConversationAccessSnapshot, error)
 }
 
+// MessageReadPageQuery is the read-only contract between an authenticated IM route and the
+// platform message projection. The repository must bind every field to one tenant-scoped
+// repeatable-read snapshot; cursor and revisions are observations, never capabilities.
+type MessageReadPageQuery struct {
+	Conversation         im.ConversationRef
+	AfterCursor          string
+	Limit                uint32
+	ConversationRevision uint64
+	AccessRevision       uint64
+}
+
+type MessageReadPage struct {
+	Conversation         im.ConversationRef
+	Messages             []im.MessageSnapshot
+	NextCursor           string
+	HasMore              bool
+	ConversationRevision uint64
+	ProjectionRevision   uint64
+}
+
+// MessageReadRepository is deliberately read-only. A production implementation must return
+// snapshots from durable message heads and reject a cursor/revision/scope mismatch instead of
+// falling back to an empty page. Message writes remain event/command contracts, not this port.
+type MessageReadRepository interface {
+	ReadPage(context.Context, MessageReadPageQuery) (MessageReadPage, error)
+}
+
 // IdentityAuthorityRepository exposes only current, immutable identity authority snapshots.
 // Implementations must use the same transaction snapshot as the surrounding operation and must
 // never accept caller-supplied principal/actor claims as authority.

@@ -31,6 +31,9 @@ type RuntimeDependencies struct {
 	// transaction snapshot. When absent, the authenticated event route fails closed with a
 	// dependency-unavailable envelope rather than silently returning an empty page.
 	EventStore events.EventStore
+	// Messages is the future durable projection read port. It is optional during the contract
+	// phase so an uncomposed runtime fails closed instead of presenting synthetic empty history.
+	Messages store.MessageReadRepository
 	// Now is injected by tests and controlled compositions. Production defaults to UTC wall clock;
 	// request context resolution never accepts a non-UTC or zero timestamp.
 	Now func() time.Time
@@ -92,6 +95,7 @@ func newServer(runtime *RuntimeDependencies) *fiber.App {
 		registerAuthenticatedContextRoute(server)
 		registerAuthenticatedConversationRoute(server, *runtime)
 		registerAuthenticatedEventRoute(server, *runtime)
+		registerAuthenticatedMessageRoute(server, *runtime)
 	}
 
 	return server
