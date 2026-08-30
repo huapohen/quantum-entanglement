@@ -60,11 +60,11 @@ func OpenDurableInboxFileStore(
 	if err := inboxContextError(ctx); err != nil {
 		return nil, err
 	}
-	if path == "" || filepath.Clean(path) == "." || !filepath.IsAbs(path) || clock == nil {
-		if clock == nil {
-			return nil, ErrStoreClock
-		}
+	if path == "" || filepath.Clean(path) == "." || !filepath.IsAbs(path) {
 		return nil, ErrInvalidStore
+	}
+	if clock == nil {
+		return nil, ErrStoreClock
 	}
 	parent := filepath.Dir(path)
 	if info, err := os.Stat(parent); err != nil || !info.IsDir() {
@@ -72,6 +72,10 @@ func OpenDurableInboxFileStore(
 	}
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
+		return nil, ErrStoreUnavailable
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
 		return nil, ErrStoreUnavailable
 	}
 	store := &DurableInboxFileStore{
@@ -241,12 +245,14 @@ func (store *DurableInboxFileStore) appendAndSync(encoded []byte) error {
 		count, writeErr := store.file.Write(encoded[written:])
 		if writeErr != nil || count <= 0 {
 			_ = store.file.Truncate(start)
+			_ = store.file.Sync()
 			return ErrStoreUnavailable
 		}
 		written += count
 	}
 	if err := store.file.Sync(); err != nil {
 		_ = store.file.Truncate(start)
+		_ = store.file.Sync()
 		return ErrStoreUnavailable
 	}
 	return nil
@@ -295,6 +301,9 @@ func (store *DurableInboxFileStore) load(ctx context.Context) error {
 				if err := store.file.Truncate(int64(lastGood)); err != nil {
 					return ErrStoreUnavailable
 				}
+				if err := store.file.Sync(); err != nil {
+					return ErrStoreUnavailable
+				}
 			}
 			return nil
 		}
@@ -313,7 +322,8 @@ func (store *DurableInboxFileStore) load(ctx context.Context) error {
 				existing.Envelope.Payload.Digest() != receipt.Envelope.Payload.Digest() ||
 				existing.Envelope.VerificationID != receipt.Envelope.VerificationID ||
 				existing.FirstReceivedAt != receipt.FirstReceivedAt ||
-				receipt.DeliveryCount <= existing.DeliveryCount ||
+				existing.DeliveryCount == math.MaxUint64 ||
+				receipt.DeliveryCount != existing.DeliveryCount+1 ||
 				receipt.LastReceivedAt.Before(existing.LastReceivedAt) {
 				return ErrDurableInboxFileLog
 			}
