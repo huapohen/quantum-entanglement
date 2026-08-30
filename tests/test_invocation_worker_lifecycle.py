@@ -151,6 +151,53 @@ class ScopedPureWorkerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.job.status, InvocationStatus.FAILED)
         self.assertEqual(snapshot.current_attempt.status, AttemptStatus.EXPIRED)
 
+    async def test_close_uses_hard_cancellation_after_bounded_drain(self) -> None:
+        started = asyncio.Event()
+        cancellation_seen = asyncio.Event()
+
+        async def handler(context: PureWorkerContext) -> object:
+            started.set()
+            await context.wait_cancelled()
+            cancellation_seen.set()
+            # Keep the handler alive past the drain window.  The supervisor must
+            # hard-cancel this isolated pure coroutine and return a sanitized result.
+            await asyncio.sleep(10)
+            return self.result_request
+
+        async def acceptor(
+            _request: ScopedInvocationResultAcceptanceRequestV2,
+            _claim: object,
+        ) -> object:
+            self.fail("hard-canceled handler must never enter result acceptance")
+
+        running = asyncio.create_task(
+            self.lifecycle.run_and_accept(
+                self.claimed,
+                self.execution_request.manifest,
+                self.configuration(),
+                handler,
+                acceptor=acceptor,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        closing = await self.lifecycle.close(timeout_seconds=0.5)
+        result = await running
+
+        self.assertEqual(result.outcome, PureWorkerOutcome.CANCELED)
+        self.assertFalse(result.drained)
+        self.assertTrue(cancellation_seen.is_set())
+        self.assertEqual(closing.state, PureWorkerLifecycleState.CLOSED)
+        snapshot = self.store.recovery_snapshot_for_task(
+            self.execution_request.manifest.session_id,
+            self.execution_request.manifest.task_id,
+        )
+        self.assertIsNotNone(snapshot.job)
+        self.assertIsNotNone(snapshot.current_attempt)
+        assert snapshot.job is not None
+        assert snapshot.current_attempt is not None
+        self.assertEqual(snapshot.job.status, InvocationStatus.FAILED)
+        self.assertEqual(snapshot.current_attempt.status, AttemptStatus.EXPIRED)
+
     async def test_close_is_monotonic_and_new_admission_is_rejected(self) -> None:
         self.assertEqual(
             (await self.lifecycle.snapshot()).state,
