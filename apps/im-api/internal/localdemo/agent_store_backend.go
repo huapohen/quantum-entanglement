@@ -1,6 +1,7 @@
 package localdemo
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -186,8 +187,8 @@ func catalogSyncDigest(records []AgentStoreRecord) agentstore.SHA256Digest {
 func ensureDefinition(ctx context.Context, repository agentstore.Repository, next agentstore.DefinitionSnapshot) error {
 	current, err := repository.CurrentDefinition(ctx, next.ID())
 	if err == nil {
-		if current.TenantID() != next.TenantID() {
-			return agentstore.ErrIntegrity
+		if !sameDefinition(current, next) {
+			return agentstore.ErrDefinitionConflict
 		}
 		return nil
 	}
@@ -201,8 +202,8 @@ func ensureDefinition(ctx context.Context, repository agentstore.Repository, nex
 func ensureRelease(ctx context.Context, repository agentstore.Repository, next agentstore.ReleaseSnapshot) error {
 	current, err := repository.CurrentRelease(ctx, next.ID())
 	if err == nil {
-		if current.DefinitionID() != next.DefinitionID() {
-			return agentstore.ErrIntegrity
+		if !sameRelease(current, next) {
+			return agentstore.ErrReleaseConflict
 		}
 		return nil
 	}
@@ -216,8 +217,8 @@ func ensureRelease(ctx context.Context, repository agentstore.Repository, next a
 func ensurePassport(ctx context.Context, repository agentstore.Repository, next agentstore.TrustPassport) error {
 	current, err := repository.CurrentPassport(ctx, next.Release().ID())
 	if err == nil {
-		if current.Definition().ID() != next.Definition().ID() {
-			return agentstore.ErrIntegrity
+		if !samePassport(current, next) {
+			return agentstore.ErrPassportConflict
 		}
 		return nil
 	}
@@ -231,8 +232,8 @@ func ensurePassport(ctx context.Context, repository agentstore.Repository, next 
 func ensureInstallation(ctx context.Context, repository agentstore.Repository, next agentstore.InstallationSnapshot) error {
 	current, err := repository.CurrentInstallation(ctx, next.ID())
 	if err == nil {
-		if current.TenantID() != next.TenantID() || current.DefinitionID() != next.DefinitionID() {
-			return agentstore.ErrIntegrity
+		if !sameInstallation(current, next) {
+			return agentstore.ErrInstallationConflict
 		}
 		return nil
 	}
@@ -241,6 +242,30 @@ func ensureInstallation(ctx context.Context, repository agentstore.Repository, n
 	}
 	_, err = repository.CompareAndSwapInstallation(ctx, 0, next)
 	return err
+}
+
+func sameDefinition(left, right agentstore.DefinitionSnapshot) bool {
+	leftEncoded, leftErr := agentstore.EncodeDefinition(left)
+	rightEncoded, rightErr := agentstore.EncodeDefinition(right)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftEncoded, rightEncoded)
+}
+
+func sameRelease(left, right agentstore.ReleaseSnapshot) bool {
+	leftEncoded, leftErr := agentstore.EncodeRelease(left)
+	rightEncoded, rightErr := agentstore.EncodeRelease(right)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftEncoded, rightEncoded)
+}
+
+func samePassport(left, right agentstore.TrustPassport) bool {
+	leftEncoded, leftErr := agentstore.EncodeTrustPassport(left)
+	rightEncoded, rightErr := agentstore.EncodeTrustPassport(right)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftEncoded, rightEncoded)
+}
+
+func sameInstallation(left, right agentstore.InstallationSnapshot) bool {
+	leftEncoded, leftErr := agentstore.EncodeInstallation(left)
+	rightEncoded, rightErr := agentstore.EncodeInstallation(right)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftEncoded, rightEncoded)
 }
 
 func installCAS(ctx context.Context, repository agentstore.Repository, target agentstore.InstallationSnapshot) error {
