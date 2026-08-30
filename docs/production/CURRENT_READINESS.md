@@ -7,7 +7,7 @@
 
 ## 2026-08-31 fault-matrix checkpoint
 
-当前评审 HEAD 为 `cb471d1`，远端已推送；固定备份分支为 `backup_0831_004520`（指向
+当前评审 HEAD 为 `2748c8d`，远端已推送；固定备份分支为 `backup_0831_004520`（指向
 `c0a5a14` 的 readiness 封板节点），早期备份 `backup_0831_002800` 仍保留。本轮已增加
 projector 提交前失败的整页事务 rollback/retry、COMMIT ACK-loss exact replay、真实 child-process
 SIGKILL 前/后提交边界、owner-side trigger partial-write rollback，以及 migration-7 restore 后

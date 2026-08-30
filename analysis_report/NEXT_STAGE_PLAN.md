@@ -12,7 +12,7 @@
 restart readback 均已在隔离 PostgreSQL 18 通过；`projection_revision` 的合法关系为
 `0 < row <= head`。代码/证据提交为 `1e8fc38`、`a41ed54`、`2317871`、`4774c0d`、`4ae750e`、
 `5cbd3c0`、`f0a8f80`；这些是历史 PG18 闭环节点。当前 fault-matrix continuation 的 HEAD 为
-`cb471d1`，最终备份分支为 `backup_0831_004520`（固定指向 readiness 文档封板前的
+`2748c8d`，最终备份分支为 `backup_0831_004520`（固定指向 readiness 文档封板前的
 `c0a5a14`），早期备份 `backup_0831_002800` 保留。
 
 ### 下一步只按以下顺序推进
