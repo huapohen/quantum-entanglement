@@ -98,6 +98,14 @@ from .invocation_worker import (
     PureWorkerRunResult,
     ScopedInvocationWorkerAdmissionV3,
 )
+from .invocation_worker_lifecycle import (
+    PureWorkerLifecycleClosedError,
+    PureWorkerLifecycleDrainingError,
+    PureWorkerLifecycleError,
+    PureWorkerLifecycleSnapshot,
+    PureWorkerLifecycleState,
+    ScopedPureWorkerLifecycle,
+)
 from .langgraph_bridge import BridgeStatus, LangGraphBridge, LangGraphResult
 from .native_im_nonce_store import (
     NativeIMInboxStoreIntegrityError,
@@ -372,6 +380,12 @@ __all__ = [
     "HandoffContract",
     "HeartbeatPureWorkerGate",
     "HeartbeatPureWorkerSupervisor",
+    "PureWorkerLifecycleClosedError",
+    "PureWorkerLifecycleDrainingError",
+    "PureWorkerLifecycleError",
+    "PureWorkerLifecycleSnapshot",
+    "PureWorkerLifecycleState",
+    "ScopedPureWorkerLifecycle",
     "InboxAppendResult",
     "InboxReceipt",
     "HookPoint",

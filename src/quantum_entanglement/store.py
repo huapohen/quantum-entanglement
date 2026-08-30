@@ -9610,6 +9610,14 @@ class SQLiteEventStore:
                     attempt_id=lease.attempt_id,
                 )
                 SQLiteInvocationAttemptStore._validate_lease_binding(lease, job, attempt)
+                finished_at = normalized_now
+                if finished_at <= job.heartbeat_at:
+                    # Durable timestamps have microsecond precision.  A deterministic
+                    # test clock (or a very fast shutdown) may sample the same instant
+                    # as the last heartbeat; advance exactly one representable tick so
+                    # the expired attempt still satisfies lease-after-heartbeat
+                    # causality without retaining the plaintext token.
+                    finished_at = _invocation_lease_deadline(job.heartbeat_at, 0.000001)
                 attempt_update = connection.execute(
                     """
                     UPDATE invocation_attempts
@@ -9621,8 +9629,8 @@ class SQLiteEventStore:
                       AND status = 'running'
                     """,
                     (
-                        normalized_now,
-                        normalized_now,
+                        finished_at,
+                        finished_at,
                         reason,
                         lease.attempt_id,
                         lease.invocation_id,
@@ -9651,8 +9659,8 @@ class SQLiteEventStore:
                       AND lease_expires_at > ?
                     """,
                     (
-                        normalized_now,
-                        normalized_now,
+                        finished_at,
+                        finished_at,
                         reason,
                         lease.invocation_id,
                         lease.session_id,
