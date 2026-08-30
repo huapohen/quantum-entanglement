@@ -43,6 +43,22 @@ func TestLocalDemoHTTPVerticalSlice(t *testing.T) {
 		!strings.Contains(agents.Raw, `"attestations":["data_routes_reviewed","publisher_verified","security_reviewed"]`) {
 		t.Fatalf("agent store response = %s", agents.Raw)
 	}
+	availableAgents := localDemoRequest(t, server, http.MethodGet, "/api/v1/demo/im/agents", "", "Bearer "+localdemo.LocalBearerToken)
+	if !strings.Contains(availableAgents.Raw, `"definitionId":"agd_local_planner"`) ||
+		!strings.Contains(availableAgents.Raw, `"canInstall":true`) {
+		t.Fatalf("available Agent Store response = %s", availableAgents.Raw)
+	}
+	install := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/agents/agd_local_planner/install",
+		`{"idempotencyKey":"http/store/install/planner"}`, "Bearer "+localdemo.LocalBearerToken)
+	if install.Code != httpapi.CodeOK || !strings.Contains(install.Raw, `"agentActorId":"agt_local_planner"`) ||
+		!strings.Contains(install.Raw, `"installationStatus":"active"`) || strings.Contains(install.Raw, `"replayed":true`) {
+		t.Fatalf("agent install response = %s", install.Raw)
+	}
+	installReplay := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/agents/agd_local_planner/install",
+		`{"idempotencyKey":"http/store/install/planner"}`, "Bearer "+localdemo.LocalBearerToken)
+	if installReplay.Code != httpapi.CodeOK || !strings.Contains(installReplay.Raw, `"replayed":true`) {
+		t.Fatalf("agent install replay response = %s", installReplay.Raw)
+	}
 	unauthenticatedAgents := localDemoRequest(t, server, http.MethodGet, "/api/v1/demo/im/agents", "", "Bearer wrong.local.token")
 	if unauthenticatedAgents.Code != httpapi.CodeUnauthenticated || strings.Contains(unauthenticatedAgents.Raw, "wrong.local.token") {
 		t.Fatalf("unauthenticated agent store response = %s", unauthenticatedAgents.Raw)

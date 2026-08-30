@@ -76,29 +76,31 @@ type Snapshot struct {
 }
 
 type Service struct {
-	mu                  sync.Mutex
-	authVerifier        auth.Verifier
-	provider            *imfake.Provider
-	coordinator         *agentthread.LocalCoordinator
-	parent              im.ConversationSnapshot
-	requester           im.ActorRef
-	requestAccess       im.ConversationAccessSnapshot
-	installation        agentstore.InstallationSnapshot
-	passport            agentstore.TrustPassport
-	runtime             modelruntime.Runtime
-	runtimeCalls        int
-	requests            map[string][sha256.Size]byte
-	mentionResults      map[string]MentionResult
-	knownActors         map[im.ActorID]im.ActorRef
-	conversations       map[im.ConversationID]*localConversation
-	conversationOrder   []im.ConversationID
-	conversationCreates map[string]createRecord
-	memberUpdates       map[string]memberUpdateRecord
-	tasks               map[string]TaskView
-	taskOrder           []string
-	artifacts           map[string]ArtifactView
-	needsYou            map[string]NeedsYouView
-	cursorNamespaceHex  string
+	mu                   sync.Mutex
+	authVerifier         auth.Verifier
+	provider             *imfake.Provider
+	coordinator          *agentthread.LocalCoordinator
+	parent               im.ConversationSnapshot
+	requester            im.ActorRef
+	requestAccess        im.ConversationAccessSnapshot
+	installation         agentstore.InstallationSnapshot
+	passport             agentstore.TrustPassport
+	agentCatalog         []agentCatalogRecord
+	agentInstallRequests map[string]agentInstallRecord
+	runtime              modelruntime.Runtime
+	runtimeCalls         int
+	requests             map[string][sha256.Size]byte
+	mentionResults       map[string]MentionResult
+	knownActors          map[im.ActorID]im.ActorRef
+	conversations        map[im.ConversationID]*localConversation
+	conversationOrder    []im.ConversationID
+	conversationCreates  map[string]createRecord
+	memberUpdates        map[string]memberUpdateRecord
+	tasks                map[string]TaskView
+	taskOrder            []string
+	artifacts            map[string]ArtifactView
+	needsYou             map[string]NeedsYouView
+	cursorNamespaceHex   string
 }
 
 func New() (*Service, error) {
@@ -119,6 +121,13 @@ func NewWithRuntime(runtime modelruntime.Runtime) (*Service, error) {
 	}
 	now := time.Now().UTC()
 	tenant, _, parent, requester, requestAccess, installation, passport, err := buildPlatform(now)
+	if err != nil {
+		return nil, err
+	}
+	plannerPassport, err := buildAgentPassport(
+		now, tenant, "agd_local_planner", "agr_local_planner_100", "v0版规划 Agent",
+		"把复杂目标拆成可审阅执行计划的本地零网络 Agent。", "conversation.read",
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +216,12 @@ func NewWithRuntime(runtime modelruntime.Runtime) (*Service, error) {
 	return &Service{
 		authVerifier: verifier, provider: provider, coordinator: coordinator,
 		parent: parent, requester: requester, requestAccess: requestAccess,
-		installation: installation, passport: passport, runtime: runtime,
+		installation: installation, passport: passport,
+		agentCatalog: []agentCatalogRecord{
+			{passport: passport, installation: installation},
+			{passport: plannerPassport},
+		},
+		agentInstallRequests: make(map[string]agentInstallRecord), runtime: runtime,
 		requests:       make(map[string][sha256.Size]byte),
 		mentionResults: make(map[string]MentionResult),
 		knownActors: map[im.ActorID]im.ActorRef{
@@ -483,6 +497,84 @@ func buildInstalledAgent(
 		agentstore.InstallationActive, now, time.Time{}, 1,
 	)
 	return installation, passport, err
+}
+
+func buildAgentPassport(
+	now time.Time,
+	tenant im.TenantID,
+	definitionIDValue string,
+	releaseIDValue string,
+	displayName string,
+	summary string,
+	capabilityValue string,
+) (agentstore.TrustPassport, error) {
+	definitionID, err := im.ParseAgentDefinitionID(definitionIDValue)
+	if err != nil {
+		return agentstore.TrustPassport{}, err
+	}
+	owner, err := im.ParseHumanPrincipalID("hpr_local_demo")
+	if err != nil {
+		return agentstore.TrustPassport{}, err
+	}
+	publisher, err := agentstore.ParsePublisherID("pub_local_demo")
+	if err != nil {
+		return agentstore.TrustPassport{}, err
+	}
+	definition, err := agentstore.NewDefinitionSnapshot(
+		definitionID, tenant, owner, publisher, displayName, summary, agentstore.DefinitionActive, 1,
+	)
+	if err != nil {
+		return agentstore.TrustPassport{}, err
+	}
+	releaseID, err := agentstore.ParseReleaseID(releaseIDValue)
+	if err != nil {
+		return agentstore.TrustPassport{}, err
+	}
+	version, err := im.ParseAgentVersion("1.0.0")
+	if err != nil {
+		return agentstore.TrustPassport{}, err
+	}
+	capability, err := agentstore.ParseCapability(capabilityValue)
+	if err != nil {
+		return agentstore.TrustPassport{}, err
+	}
+	route, err := agentstore.NewDataRoute(
+		"conversation.context", agentstore.DataInput, agentstore.DataConfidential,
+		[]string{"local", "provider:rongcloud"}, 1,
+	)
+	if err != nil {
+		return agentstore.TrustPassport{}, err
+	}
+	publishedAt := now.Add(-2 * time.Hour)
+	release, err := agentstore.NewReleaseSnapshot(
+		releaseID, definitionID, version, agentstore.DigestBytes([]byte(definitionIDValue+" artifact")),
+		agentstore.DigestBytes([]byte(definitionIDValue+" manifest")), agentstore.DigestBytes([]byte(definitionIDValue+" persona")),
+		[]agentstore.Capability{capability}, nil, []agentstore.DataRoute{route},
+		agentstore.IsolationProcess, agentstore.ReleasePublished, publishedAt, 1,
+	)
+	if err != nil {
+		return agentstore.TrustPassport{}, err
+	}
+	security, err := agentstore.ParsePublisherID("pub_local_security")
+	if err != nil {
+		return agentstore.TrustPassport{}, err
+	}
+	attestations := make([]agentstore.TrustAttestation, 0, 3)
+	for _, claim := range []agentstore.AttestationClaim{
+		agentstore.AttestationPublisherVerified,
+		agentstore.AttestationSecurityReviewed,
+		agentstore.AttestationDataRoutesReviewed,
+	} {
+		attestation, attestationErr := agentstore.NewTrustAttestation(
+			security, claim, 1, agentstore.DigestBytes([]byte(definitionIDValue+string(claim))),
+			now.Add(-time.Hour), now.Add(24*time.Hour),
+		)
+		if attestationErr != nil {
+			return agentstore.TrustPassport{}, attestationErr
+		}
+		attestations = append(attestations, attestation)
+	}
+	return agentstore.NewTrustPassport(definition, release, attestations, agentstore.PassportActive, 1)
 }
 
 func provisionHuman(ctx context.Context, provider *imfake.Provider, actor im.ActorID) error {

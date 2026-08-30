@@ -91,10 +91,21 @@ func TestServiceListsAuthenticatedAgentStoreProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Agents) != 1 {
-		t.Fatalf("agent store count = %d, want 1", len(page.Agents))
+	if len(page.Agents) != 2 {
+		t.Fatalf("agent store count = %d, want 2", len(page.Agents))
 	}
-	agent := page.Agents[0]
+	var agent AgentStoreView
+	var available AgentStoreView
+	for _, candidate := range page.Agents {
+		if candidate.InstallationStatus == "active" {
+			agent = candidate
+		} else if candidate.InstallationStatus == "available" {
+			available = candidate
+		}
+	}
+	if agent.DefinitionID == "" || available.DefinitionID == "" {
+		t.Fatalf("agent store must contain active and available entries: %#v", page.Agents)
+	}
 	if agent.Name != "v0版研究 Agent" || agent.Version != "1.0.0" ||
 		agent.DefinitionStatus != "active" || agent.ReleaseStatus != "published" ||
 		agent.PassportStatus != "active" || agent.InstallationStatus != "active" ||
@@ -112,6 +123,9 @@ func TestServiceListsAuthenticatedAgentStoreProjection(t *testing.T) {
 	if len(agent.Attestations) != 3 {
 		t.Fatalf("agent attestations = %#v", agent.Attestations)
 	}
+	if available.DefinitionID != "agd_local_planner" || !available.CanInstall || available.InstallationID != "" {
+		t.Fatalf("available Agent Store entry = %#v", available)
+	}
 }
 
 func TestServiceAgentStoreRejectsWrongToken(t *testing.T) {
@@ -123,6 +137,67 @@ func TestServiceAgentStoreRejectsWrongToken(t *testing.T) {
 	if _, err := service.ListAgents(context.Background(), "wrong.local.token"); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("wrong token = %v", err)
 	}
+}
+
+func TestServiceInstallsCatalogAgentIdempotentlyAndAddsItToParent(t *testing.T) {
+	t.Parallel()
+	service, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.InstallAgent(context.Background(), LocalBearerToken, "agd_local_planner", AgentStoreInstallInput{
+		IdempotencyKey: "test/store/install/planner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Replayed || first.Agent.InstallationStatus != "active" || first.Agent.AgentActorID != "agt_local_planner" ||
+		first.Agent.GrantedCapabilities == nil || first.Agent.CanInstall {
+		t.Fatalf("first install = %#v", first)
+	}
+	replay, err := service.InstallAgent(context.Background(), LocalBearerToken, "agd_local_planner", AgentStoreInstallInput{
+		IdempotencyKey: "test/store/install/planner",
+	})
+	if err != nil || !replay.Replayed || replay.Agent.InstallationID != first.Agent.InstallationID {
+		t.Fatalf("install replay = %#v, %v", replay, err)
+	}
+	snapshot := service.Snapshot()
+	if snapshot.AgentActorID != "agt_local_planner" || snapshot.AgentVersion != "1.0.0" {
+		t.Fatalf("selected installed agent = %#v", snapshot)
+	}
+	conversations, err := service.ListConversations(context.Background(), LocalBearerToken, "", 20)
+	if err != nil || len(conversations.Conversations) == 0 ||
+		!containsString(conversations.Conversations[0].MemberActorIDs, "agt_local_planner") {
+		t.Fatalf("parent after install = %#v, %v", conversations, err)
+	}
+	page, err := service.ListAgents(context.Background(), LocalBearerToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retired bool
+	for _, agent := range page.Agents {
+		if agent.DefinitionID == "agd_local_research" && agent.InstallationStatus == "offboarded" {
+			retired = true
+		}
+	}
+	if !retired {
+		t.Fatalf("previous installation not retired: %#v", page.Agents)
+	}
+	mention, mentionErr := service.Mention(context.Background(), LocalBearerToken, MentionInput{
+		ConversationID: service.Snapshot().ParentConversationID, MessageID: "msg_install_after", Instruction: "安装后的 Agent 指令",
+	})
+	if mentionErr != nil {
+		t.Fatalf("mention after install = %#v, %v", mention, mentionErr)
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestServiceAddsInstalledAgentToExistingGroupIdempotently(t *testing.T) {
