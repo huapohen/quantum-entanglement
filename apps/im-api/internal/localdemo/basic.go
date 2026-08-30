@@ -263,7 +263,7 @@ func (service *Service) CreateConversation(
 		if providerErr != nil {
 			return ConversationResult{}, errors.Join(ErrProvider, providerErr)
 		}
-		if receipt.Validate() != nil || providerConversation.IsZero() {
+		if im.RequireCommittedProviderEffect(receipt) != nil || providerConversation.IsZero() {
 			return ConversationResult{}, ErrProvider
 		}
 		record.providerRef, record.providerBound, record.providerStatus = providerConversation, true, string(receipt.Status)
@@ -480,7 +480,7 @@ func (service *Service) SendText(
 		if providerErr != nil {
 			return SendMessageResult{}, errors.Join(ErrProvider, providerErr)
 		}
-		if receipt.Validate() != nil {
+		if im.RequireCommittedProviderEffect(receipt) != nil {
 			return SendMessageResult{}, ErrProvider
 		}
 		record.providerMessageID, record.providerStatus = receipt.ExternalID, string(receipt.Status)
@@ -549,7 +549,7 @@ func (service *Service) EditText(
 		if providerErr != nil {
 			return MutateMessageResult{}, errors.Join(ErrProvider, providerErr)
 		}
-		if receipt.Validate() != nil {
+		if im.RequireCommittedProviderEffect(receipt) != nil {
 			return MutateMessageResult{}, ErrProvider
 		}
 		record.providerStatus = string(receipt.Status)
@@ -624,7 +624,7 @@ func (service *Service) RecallMessage(
 		if providerErr != nil {
 			return MutateMessageResult{}, errors.Join(ErrProvider, providerErr)
 		}
-		if receipt.Validate() != nil {
+		if im.RequireCommittedProviderEffect(receipt) != nil {
 			return MutateMessageResult{}, ErrProvider
 		}
 		record.providerStatus = string(receipt.Status)

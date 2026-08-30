@@ -94,7 +94,7 @@ func (service *Service) AddMembers(
 		if providerErr != nil {
 			return AddMembersResult{}, errors.Join(ErrProvider, providerErr)
 		}
-		if receipt.Validate() != nil {
+		if im.RequireCommittedProviderEffect(receipt) != nil {
 			return AddMembersResult{}, ErrProvider
 		}
 		conversation.providerStatus = string(receipt.Status)

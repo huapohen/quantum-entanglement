@@ -336,6 +336,20 @@ func (receipt ProviderEffectReceipt) Validate() error {
 	return nil
 }
 
+// RequireCommittedProviderEffect is the platform-side effect gate. A syntactically valid
+// transport receipt with status unknown is evidence that the provider outcome is unresolved, not
+// permission to advance a local aggregate or report success. Callers must persist/reconcile that
+// ambiguity before retrying or publishing a dependent state transition.
+func RequireCommittedProviderEffect(receipt ProviderEffectReceipt) error {
+	if err := receipt.Validate(); err != nil {
+		return err
+	}
+	if receipt.Status == ProviderEffectUnknown {
+		return ErrProviderEffectUnknown
+	}
+	return nil
+}
+
 func (receipt ProviderEffectReceipt) validate() bool {
 	return providerOpaqueIDPattern.MatchString(receipt.OperationKey) &&
 		providerOpaqueIDPattern.MatchString(receipt.ExternalID) && receipt.Status.Valid() &&

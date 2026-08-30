@@ -198,7 +198,7 @@ func (service *Service) InstallAgent(
 	if err != nil {
 		return AgentStoreInstallResult{}, ErrIntegrity
 	}
-	if _, receipt, providerErr := service.provider.ProvisionUser(ctx, provision); providerErr != nil || receipt.Validate() != nil {
+	if _, receipt, providerErr := service.provider.ProvisionUser(ctx, provision); providerErr != nil || im.RequireCommittedProviderEffect(receipt) != nil {
 		if providerErr != nil {
 			return AgentStoreInstallResult{}, errors.Join(ErrProvider, providerErr)
 		}
@@ -341,7 +341,7 @@ func (service *Service) addInstalledAgentToParent(ctx context.Context, actorID i
 		Conversation: parentRecord.providerRef, MemberActors: []im.ActorID{actorID},
 		IdempotencyKey: "demo/store/parent-members/" + actorID.String(),
 	})
-	if err != nil || receipt.Validate() != nil {
+	if err != nil || im.RequireCommittedProviderEffect(receipt) != nil {
 		if err != nil {
 			return errors.Join(ErrProvider, err)
 		}

@@ -30,7 +30,7 @@ func (service *Service) materializeThread(
 	replyText string,
 	receipt im.ProviderEffectReceipt,
 ) error {
-	if service == nil || thread.Plan().IsZero() || replyMessageID.IsZero() || replyText == "" || receipt.Validate() != nil {
+	if service == nil || thread.Plan().IsZero() || replyMessageID.IsZero() || replyText == "" || im.RequireCommittedProviderEffect(receipt) != nil {
 		return ErrIntegrity
 	}
 	plan := thread.Plan()

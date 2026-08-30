@@ -105,8 +105,7 @@ func (service *Service) OffboardAgent(
 				Conversation: conversation.providerRef, MemberActors: []im.ActorID{actorID},
 				IdempotencyKey: "demo/store/offboard-members/" + request.InstallationID().String() + "/" + conversationID.String(),
 			})
-			if providerErr != nil || receipt.Validate() != nil ||
-				(receipt.Status != im.ProviderEffectCommitted && receipt.Status != im.ProviderEffectReplayed) {
+			if providerErr != nil || im.RequireCommittedProviderEffect(receipt) != nil {
 				if providerErr != nil {
 					return AgentStoreOffboardResult{}, errors.Join(ErrProvider, providerErr)
 				}
@@ -119,8 +118,7 @@ func (service *Service) OffboardAgent(
 	revokeReceipt, providerErr := userProvider.RevokeUser(ctx, im.ProviderUserRevoke{
 		Actor: actorID, IdempotencyKey: "demo/store/offboard-user/" + request.InstallationID().String(),
 	})
-	if providerErr != nil || revokeReceipt.Validate() != nil ||
-		(revokeReceipt.Status != im.ProviderEffectCommitted && revokeReceipt.Status != im.ProviderEffectReplayed) {
+	if providerErr != nil || im.RequireCommittedProviderEffect(revokeReceipt) != nil {
 		if providerErr != nil {
 			return AgentStoreOffboardResult{}, errors.Join(ErrProvider, providerErr)
 		}

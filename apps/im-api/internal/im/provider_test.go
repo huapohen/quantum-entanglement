@@ -162,6 +162,34 @@ func TestProviderReceiptAndInboundValidationRequireUTCAndProviderRealm(t *testin
 	}
 }
 
+func TestRequireCommittedProviderEffectRejectsUnknownOutcome(t *testing.T) {
+	t.Parallel()
+	base := ProviderEffectReceipt{
+		OperationKey: "op/1", ExternalID: "ext_1", ObservedAt: time.Unix(10, 0).UTC(),
+	}
+	for _, test := range []struct {
+		name   string
+		status ProviderEffectStatus
+		want   error
+	}{
+		{name: "committed", status: ProviderEffectCommitted},
+		{name: "replayed", status: ProviderEffectReplayed},
+		{name: "unknown", status: ProviderEffectUnknown, want: ErrProviderEffectUnknown},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			receipt := base
+			receipt.Status = test.status
+			if err := RequireCommittedProviderEffect(receipt); !errors.Is(err, test.want) {
+				t.Fatalf("status=%s error=%v, want %v", test.status, err, test.want)
+			}
+		})
+	}
+	if err := RequireCommittedProviderEffect(ProviderEffectReceipt{}); !errors.Is(err, ErrInvalidProviderRequest) {
+		t.Fatalf("invalid receipt error=%v", err)
+	}
+}
+
 func mustProviderRealm(t *testing.T, value string) ProviderRealmID {
 	t.Helper()
 	parsed, err := ParseProviderRealmID(value)
