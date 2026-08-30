@@ -103,6 +103,7 @@ restart; a cursor is observation metadata, not an authorization capability.
 
 The event-replay bridge is implemented and bounded. Migration 11 creates and protects the two materialized
 tables; migration 12 and `platform/postgres/improjection.Projector` now provide an owner-function writer,
-same-transaction global read and checkpoint CAS candidate. Shadow comparison, applied-schema integration,
+same-transaction global read and checkpoint CAS candidate. Local PostgreSQL 18 migration/runtime/writer
+integration is covered by research/68; target production applied-schema attestation, shadow comparison,
 crash/restore/rollback evidence and production composition remain open. Gate A–E, real Clerk/JWKS, real IM
 provider and outbound remain closed.

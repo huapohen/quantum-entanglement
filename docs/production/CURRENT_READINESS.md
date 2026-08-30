@@ -96,6 +96,10 @@ Go 全模块 `test ./...` 与 `go vet ./...` 已通过，阶段证据见
 shadow replay/materialized equality 和 rollback evidence；默认业务读取保持 bounded EventStore
 replay，真实 IM/outbound 继续关闭。
 
+补充说明：migration 1–12、runtime access manifest、writer function readback 已在本机隔离
+PostgreSQL 18 上完成 integration 验证（证据见 research/68）；这里所说的 applied-schema 缺口
+特指目标生产集群的独立 schema digest/权限/备份证明，不能用本机临时库替代。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow
