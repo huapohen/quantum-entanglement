@@ -692,7 +692,7 @@ func provisionAuthorityAccess(t *testing.T, connection *pgx.Conn) AuthorityAcces
 	); err != nil {
 		t.Fatalf("grant runtime authority reads: %v", err)
 	}
-	executeFunctions := make([]string, 0, 8)
+	executeFunctions := make([]string, 0, 10)
 	for _, identity := range authorityFunctionSQLIdentities() {
 		executeFunctions = append(executeFunctions, "wanwork_im."+identity)
 	}
@@ -729,5 +729,7 @@ func authorityFunctionSQLIdentities() []string {
 		"write_event(text, text, text, bigint, text, bigint, text, text, timestamp with time zone, text, text, text, text, text, text, text, text, bigint, text, text)",
 		"write_projection_checkpoint(text, text, text, bigint, text, text, bigint, text, text)",
 		"admit_native_im_inbox(text, text, text, text, text, text, text, text, text, text, text, bigint, text)",
+		"write_message_projection(text, text, text, text, bigint, bigint, bigint, bigint, bigint, bigint, text, text, text, text, text, text, text, timestamp with time zone, bigint, bigint, bigint, bigint)",
+		"advance_message_projection_head(text, text, text, text, bigint, bigint, bigint, bigint, bigint, bigint)",
 	}
 }

@@ -72,6 +72,10 @@ drift 全部保持 fail-closed/recovery 语义。
 该测试过程中修正了 migration 12 函数内 PL/pgSQL 列/变量歧义，并重新固定了基于实际
 `pg_get_functiondef` 的两个 definition digest。
 
+随后运行 migration/runtimepool/eventstore/imstore 四包 integration 组合，全部通过。为此同步修正
+了 authority access fixture 的 10 个函数 ownership/execute 清单、eventstore fixture 的 30 张表与
+完整 runtime read manifest；cutover authority golden digest 也更新为当前 migration catalog 的真实值。
+
 ## 仍未关闭的门禁
 
 该实现仍是 production composition 前的候选，需要真实 PostgreSQL applied-schema integration
