@@ -2,7 +2,8 @@
 
 这是第一版可运行 React Web 客户端，使用 TypeScript、Zustand、Tailwind 和 shadcn 风格的无依赖
 基础组件。它直接消费当前 loopback IM demo 的 `code/data/message/requestId` envelope，不连接飞书、
-企微或真实融云。
+企微或真实融云。生产构建同时带有一个只缓存静态 shell 的 PWA manifest/service worker，聊天 API
+永远走网络，不会把消息真相写进浏览器缓存。
 
 ## 本地运行
 
@@ -23,6 +24,21 @@ loopback-only Go IM demo 和 Vite Web。macOS 会自动打开浏览器；回到�
 ./scripts/start_web_client.sh --no-open
 ./scripts/start_web_client.sh --no-install --im-port 19080 --web-port 5174
 ```
+
+默认 Agent runtime 是 `synthetic`，不会产生模型网络请求。要在本地 Web 群聊中显式试用
+OpenAI-compatible GPT runtime，先在当前终端提供完整配置，再启动：
+
+```bash
+export WANWORK_IM_AGENT_RUNTIME=openai-compatible
+export WANWORK_IM_MODEL_API_KEY='<从本机 secret manager 注入，不要写入 Git>'
+export WANWORK_IM_MODEL_BASE_URL='https://<reviewed-openai-compatible-host>/v1'
+export WANWORK_IM_MODEL='gpt-5.6-sol'
+./scripts/start_web_client.sh --model-runtime openai-compatible --no-open
+```
+
+三个模型变量必须成套提供；启动器不会读取聊天软件凭据，也不会把 Key 写入日志、截图、事件或
+页面。模型输出是不可信数据，只会作为 Agent 子群回复，不会获得发送飞书、企微或其他外部消息
+的能力。模型调用失败会返回业务依赖错误，不会静默伪装成合成成功。
 
 `--im-port` 会通过 `WANWORK_IM_WEB_API_PORT` 同步 Vite `/api` proxy，不需要手工修改配置。
 端口必须是 `1` 到 `65535` 的整数。
@@ -85,3 +101,10 @@ npm run build
 ```
 
 构建产物位于 `dist/`，已被 Git 忽略；依赖锁文件 `package-lock.json` 需要提交。
+
+### PWA 体验
+
+生产构建（`npm run build` 后用静态服务器托管 `dist/`）会暴露 `/manifest.webmanifest`，支持在
+桌面浏览器或移动浏览器中“添加到主屏幕”。service worker 只做静态资源 cache-first 和导航离线
+回退；`/api/` 请求、登录态和聊天数据不缓存。它是 Web/PWA 交付，不是 `.app`、`.exe`、`.ipa`、
+`.apk` 或鸿蒙 `.hap`，原生端仍以后续 Web-first 验收为前置条件。

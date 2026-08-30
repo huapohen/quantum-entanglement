@@ -1,0 +1,21 @@
+{
+  "name": "WanWork v0版 Web IM",
+  "short_name": "WanWork",
+  "description": "人与 v0版 Agent 原生协同办公 Web 客户端",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#07101f",
+  "theme_color": "#08111f",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

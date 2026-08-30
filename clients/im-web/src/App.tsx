@@ -38,11 +38,19 @@ export function App() {
   const [messageText, setMessageText] = useState("");
   const [instruction, setInstruction] = useState("");
   const [memberAction, setMemberAction] = useState("");
+  const [conversationFilter, setConversationFilter] = useState("");
 
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId),
     [conversations, selectedConversationId],
   );
+  const filteredConversations = useMemo(() => {
+    const query = conversationFilter.trim().toLocaleLowerCase();
+    if (!query) return conversations;
+    return conversations.filter((conversation) =>
+      `${conversation.name} ${conversation.id}`.toLocaleLowerCase().includes(query),
+    );
+  }, [conversationFilter, conversations]);
 
   async function loadMessages(conversationId: string) {
     const page = await api.messages(conversationId);
@@ -57,9 +65,10 @@ export function App() {
       setSnapshot(runtime);
       setAgents(agentPage.agents);
       setConversations(page.conversations);
-      const nextId = selectedConversationId || page.conversations[0]?.id || "";
+      const selectedStillExists = page.conversations.some((conversation) => conversation.id === selectedConversationId);
+      const nextId = selectedStillExists ? selectedConversationId : page.conversations[0]?.id || "";
       if (nextId) {
-        selectConversation(nextId);
+        if (nextId !== selectedConversationId) selectConversation(nextId);
         await loadMessages(nextId);
       }
     } catch (cause) {
@@ -236,6 +245,13 @@ export function App() {
             />
             <button className="button-secondary px-3" onClick={() => void createGroup()} disabled={loading}>+</button>
           </div>
+          <input
+            value={conversationFilter}
+            onChange={(event) => setConversationFilter(event.target.value)}
+            placeholder="筛选会话名称或 ID"
+            className="field mb-4 w-full"
+            aria-label="筛选会话"
+          />
           <label className="mb-4 flex items-center gap-2 text-xs text-slate-400">
             <input
               type="checkbox"
@@ -246,8 +262,8 @@ export function App() {
             创建时邀请已安装 Agent
           </label>
           <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">会话</div>
-          <div className="space-y-1 overflow-y-auto">
-            {conversations.map((conversation) => (
+          <div className="space-y-1 overflow-y-auto" aria-label="会话列表">
+            {filteredConversations.map((conversation) => (
               <button
                 key={conversation.id}
                 onClick={() => void chooseConversation(conversation.id)}
@@ -260,6 +276,7 @@ export function App() {
                 </span>
               </button>
             ))}
+            {filteredConversations.length === 0 && <div className="empty-state px-3 py-5 text-xs">没有匹配的会话</div>}
           </div>
           <div className="mt-auto border-t border-white/10 pt-4 text-xs text-slate-500">
             <div className="flex items-center justify-between"><span>身份</span><span className="text-slate-300">{snapshot?.humanActorId ?? "加载中"}</span></div>
@@ -277,8 +294,10 @@ export function App() {
               <div className="mt-1 text-xs text-slate-500">{selectedConversation?.id ?? "等待会话加载"}</div>
             </div>
             <div className="text-right text-xs text-slate-400">
-              <div>{isLocal ? "zero-network fake" : "连接中"}</div>
-              <div className="mt-1 text-[10px] text-slate-600">RongCloud projection · provider outbound off</div>
+              <div>{isLocal ? "zero-network fake" : snapshot ? "explicit model runtime" : "连接中"}</div>
+              <div className="mt-1 text-[10px] text-slate-600">
+                {snapshot?.agentRuntime ? `${snapshot.agentRuntime.provider} · ${snapshot.agentRuntime.model} · ${snapshot.agentRuntime.status}` : "RongCloud projection · provider outbound off"}
+              </div>
             </div>
           </div>
 
@@ -368,8 +387,9 @@ export function App() {
           <section className="panel p-5 text-xs text-slate-500">
             <div className="flex items-center justify-between"><span>Runtime</span><span className="text-green-300">{snapshot ? "READY" : "BOOTING"}</span></div>
             <div className="mt-2 flex items-center justify-between"><span>Auth</span><span>{snapshot?.authProvider ?? "—"}</span></div>
+            <div className="mt-2 flex items-center justify-between gap-3"><span>Agent runtime</span><span className="truncate text-right">{snapshot?.agentRuntime ? `${snapshot.agentRuntime.mode} · ${snapshot.agentRuntime.model}` : "—"}</span></div>
             <div className="mt-2 flex items-center justify-between"><span>Network calls</span><span className="text-cyan">{snapshot?.networkCalls ?? "—"}</span></div>
-            <div className="mt-3 border-t border-white/10 pt-3 leading-5">本地阶段不触碰飞书、企微或真实融云；业务错误仍封装在 HTTP 200 envelope 的 `code/data/message` 中。</div>
+            <div className="mt-3 border-t border-white/10 pt-3 leading-5">synthetic 模式不触碰外网；模型模式只访问显式配置的端点。两种模式都不触碰飞书、企微或真实融云；业务错误仍封装在 HTTP 200 envelope 的 `code/data/message` 中。</div>
           </section>
         </aside>
       </main>

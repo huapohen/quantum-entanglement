@@ -14,6 +14,12 @@ export type RuntimeSnapshot = {
   humanActorId: string;
   agentActorId: string;
   agentVersion: string;
+  agentRuntime: {
+    mode: string;
+    provider: string;
+    model: string;
+    status: string;
+  };
 };
 
 export type AgentDataRoute = {
