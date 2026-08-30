@@ -117,6 +117,29 @@ func TestResolveTrustedRequestContextDoesNotLeakAuthorityStateAndHonorsCancellat
 	}
 }
 
+func TestTrustedRequestContextContextHelpersRejectZeroAndRoundTripSnapshot(t *testing.T) {
+	t.Parallel()
+	if got := WithTrustedRequestContext(nil, TrustedRequestContext{}); got != nil {
+		t.Fatalf("WithTrustedRequestContext(nil) = %#v, want nil", got)
+	}
+	if _, ok := TrustedRequestContextFromContext(context.Background()); ok {
+		t.Fatal("unbound context unexpectedly contained trusted request context")
+	}
+	fixture := newTrustedContextFixture(t)
+	request, err := ResolveTrustedRequestContext(
+		context.Background(), fixture.profile, fixture.identity, fixture.tenant, fixture.authority, fixture.now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := WithTrustedRequestContext(context.Background(), request)
+	got, ok := TrustedRequestContextFromContext(bound)
+	if !ok || got.PrincipalID() != request.PrincipalID() || got.TenantID() != request.TenantID() ||
+		got.ActorRef() != request.ActorRef() {
+		t.Fatalf("context round trip = %#v, %v", got, ok)
+	}
+}
+
 type trustedContextFixture struct {
 	now        time.Time
 	profile    ProviderProfile
