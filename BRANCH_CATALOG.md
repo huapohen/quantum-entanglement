@@ -31,8 +31,8 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-31T00:33:11+08:00 | `mainline_continue_quantum_entanglement`<br>`247f26075f9c` | E3 Result Authority 人工评审分支；当前已完成 migration 12 PostgreSQL materialized projector/reader 候选、shadow equality default-off、提交前 rollback、COMMIT ACK-loss exact replay、双 runner CAS、pool restart readback 与 worker SIGKILL expiry evidence；materialized primary、真实认证、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 977 / 落后 50 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 2026-08-31T00:31:09+08:00 | `main`<br>`b5b02f2752a7` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 2026-08-31T00:28:47+08:00 | `mainline_continue_quantum_entanglement`<br>`3a13409cf0f3` | E3 Result Authority 人工评审分支；当前已完成 migration 12 PostgreSQL materialized message projector/reader 候选、跨页 Serializable 同事务 checkpoint、非消息 watermark、双 runner CAS 竞争、restart readback 与 Go 全量门禁。materialized reader 仍 default-off，生产 worker、真实认证 transport/composition、真实 IM 与 outbound 仍关闭；Notion 批量同步延后，不自动合并回 main。 | 未直接并入 main | 领先 976 / 落后 50 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 2026-08-31T00:26:31+08:00 | `backup_0831_002800`<br>`3a9030dd358b` | 2026-08-31 projector fault matrix 与 compatibility rollback checkpoint 的完整远端备份；固定指向 PG18.6 integration matrix PASS 节点；只用于恢复和审计。 | 未直接并入 main | 领先 975 / 落后 50 | — |
 | 2026-08-31T00:26:10+08:00 | `dev_wanwork_quantum_entanglement`<br>`13f683fa37ae` | 较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。 | 未直接并入 main | 领先 548 / 落后 50 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 2026-08-31T00:26:10+08:00 | `backup_0831_002015`<br>`13f683fa37ae` | 用途待补充；当前节点主题：docs(agent-store): index outbox and capability gates | 未直接并入 main | 领先 548 / 落后 50 | — |
@@ -182,9 +182,9 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | 正式主线工作区 | `main` | `b5b02f2752a7` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 存在、干净 | `dev_im_persistence_accelerator_20260830` | `51dbb1e5bd9a` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_im_persistence_accelerator_20260830` |
 | 存在、干净 | `dev_research_docs_accelerator_20260830` | `b0e5611aeb6c` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_research_docs_accelerator_20260830` |
-| 存在、干净 | `dev_wanwork_quantum_entanglement` | `13f683fa37ae` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 存在、有未提交修改 | `dev_wanwork_quantum_entanglement` | `13f683fa37ae` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 存在、干净 | `dev_web_first_accelerator_20260830` | `aa1daf471ab8` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_web_first_accelerator_20260830` |
-| 存在、干净 | `mainline_continue_quantum_entanglement` | `3a13409cf0f3` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 存在、干净 | `mainline_continue_quantum_entanglement` | `247f26075f9c` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 存在、干净 | `scoped_lease_process_matrix` | `72a3487c7a58` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/scoped_lease_process_matrix` |
 
 ## 固定版本标签
