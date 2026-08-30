@@ -779,7 +779,7 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | M3 Store adapter（已完成） | snapshot/raw-row 双验通过 | writer public API |
 | M4 Inactive schema（已完成） | migration/backup/artifact 候选通过 | migration registration |
 | M5 Atomic writer（已完成） | 完整事务图/fault/readback 通过；`ObservedV2` 与 opt-in migration-7 已形成 | 生产 worker、projection |
-| M6 Recovery（部分完成） | receipt-bound non-emitting reconciliation、idempotent replay、stale/CAS/trigger rollback 通过；crash/kill/restore replay 与双连接证据仍待完成 | 生产 worker、projection |
+| M6 Recovery（部分完成） | receipt-bound non-emitting reconciliation、idempotent replay、stale/CAS/trigger rollback 通过；scoped PURE lifecycle 的双连接 heartbeat/expiry、relinquish race 与子进程 SIGKILL recovery 已补齐；result-authority 全图 crash/kill/restore replay 与兼容回退仍待完成 | 生产 worker、projection |
 | M7 Accepted（候选完成） | fresh ACK 唯一 mint 点通过；ACK-loss/reopen 与 replay 不升级证据已通过 | migration/worker promotion |
 | M7.5 Business projection（候选完成） | `SQLiteResultProjectionStore` 只投影 result/terminal 最小字段；scope、冲突、幂等、schema drift、framework-table 隔离、fork process binding、dual-connection lease fencing、SIGKILL-after-claim recovery、终态绑定漂移与受保护认证读取专项通过（代码 `a014bc5`/`a1eb218`/`23acebb`/`e27c30b`，回归 `e4f00fe`/`7a01f6b`） | 真实认证 transport/composition、全系统 process/kill/双连接、生产 composition |
 | M8 Integration | 独立 release evidence 通过 | 生产 Gate 仍需分别审批 |
