@@ -10,9 +10,9 @@
 `mainline_continue_quantum_entanglement` 已新增私有 `ScopedPureWorkerLifecycle`：它在进程内
 停止 admission、取消 active runs、执行 bounded drain，并将所有非 `ACCEPTED`/`OBSERVED`
 结果通过 store-owned CAS relinquish 为 `FAILED/EXPIRED`。双连接 heartbeat-vs-expiry 与
-relinquish 竞争测试已通过，且保持 start event 不可变、无 event/outbox 外部副作用。该节点仍
-是 opt-in rehearsal；`HeartbeatPureWorkerGate.dispatch()` 继续 default-off，Gate A–E 不变。
-实现和证据分别见 `36cd0b4`、`025b5c7` 与
+relinquish 竞争测试、子进程 SIGKILL 后 expiry recovery 测试已通过，且保持 start event 不可变、无
+event/outbox 外部副作用。该节点仍是 opt-in rehearsal；`HeartbeatPureWorkerGate.dispatch()`
+继续 default-off，Gate A–E 不变。实现和证据分别见 `36cd0b4`、`025b5c7`、`d5e91c1` 与
 [`43_scoped_lease_lifecycle_evidence.md`](../../analysis_report/research/43_scoped_lease_lifecycle_evidence.md)。
 
 ## 执行结论
