@@ -38,6 +38,7 @@ const (
 	ProviderCapabilityInboundRead   ProviderCapability = "inbound_read"
 	ProviderCapabilityCursorResume  ProviderCapability = "cursor_resume"
 	ProviderCapabilityUserProvision ProviderCapability = "user_provision"
+	ProviderCapabilityUserRevoke    ProviderCapability = "user_revoke"
 	ProviderCapabilityGroupCreate   ProviderCapability = "group_create"
 	ProviderCapabilityMemberWrite   ProviderCapability = "member_write"
 	ProviderCapabilityTextSend      ProviderCapability = "text_send"
@@ -49,6 +50,7 @@ func (capability ProviderCapability) Valid() bool {
 	switch capability {
 	case ProviderCapabilityHealth, ProviderCapabilityInboundRead,
 		ProviderCapabilityCursorResume, ProviderCapabilityUserProvision,
+		ProviderCapabilityUserRevoke,
 		ProviderCapabilityGroupCreate, ProviderCapabilityMemberWrite,
 		ProviderCapabilityTextSend, ProviderCapabilityTextEdit, ProviderCapabilityMessageRecall:
 		return true
@@ -124,6 +126,30 @@ type ProviderUserProvision struct {
 	DisplayName    string
 	ExtInfo        string
 	IdempotencyKey string
+}
+
+// ProviderUserRevoke is an explicit lifecycle effect. It is intentionally separate from
+// provisioning: an Agent installation may be offboarded only after the adapter proves that
+// the provider identity was revoked, rather than treating a platform tombstone as revocation.
+type ProviderUserRevoke struct {
+	Actor          ActorID
+	IdempotencyKey string
+}
+
+func (request ProviderUserRevoke) Validate(profile ProviderProfile) error {
+	if !request.validate(profile) {
+		return ErrInvalidProviderRequest
+	}
+	return nil
+}
+
+func (request ProviderUserRevoke) validate(profile ProviderProfile) bool {
+	if request.Actor.IsZero() || !validProviderIdempotencyKey(request.IdempotencyKey) ||
+		!profile.Supports(ProviderCapabilityUserRevoke) {
+		return false
+	}
+	subjectType, ok := request.Actor.SubjectType()
+	return ok && (subjectType == SubjectHuman || subjectType == SubjectAgent)
 }
 
 func (request ProviderUserProvision) Validate(profile ProviderProfile) error {
@@ -392,6 +418,19 @@ type Provider interface {
 type MessageMutationProvider interface {
 	EditText(context.Context, ProviderTextEdit) (ProviderEffectReceipt, error)
 	RecallMessage(context.Context, ProviderMessageRecall) (ProviderEffectReceipt, error)
+}
+
+// UserLifecycleProvider is optional so providers without a verified revoke primitive fail
+// closed instead of simulating offboarding. The platform must check this capability before
+// transitioning an installation to its terminal state.
+type UserLifecycleProvider interface {
+	RevokeUser(context.Context, ProviderUserRevoke) (ProviderEffectReceipt, error)
+}
+
+// MemberRemovalProvider is optional for the same reason: provider membership cleanup must be
+// an acknowledged effect, not a local map deletion presented as provider truth.
+type MemberRemovalProvider interface {
+	RemoveMembers(context.Context, ProviderMemberUpdate) (ProviderEffectReceipt, error)
 }
 
 func validProviderIdempotencyKey(value string) bool {

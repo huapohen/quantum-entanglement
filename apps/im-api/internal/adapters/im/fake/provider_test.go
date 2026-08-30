@@ -97,6 +97,62 @@ func TestProviderProvisionGroupAndMemberEffectsAreIdempotent(t *testing.T) {
 	}
 }
 
+func TestProviderOffboardingEffectsAreIdempotentAndRevokeIdentity(t *testing.T) {
+	t.Parallel()
+	realm := mustRealm(t, "rlm_offboard")
+	provider, err := New(Options{Realm: realm, AllowOutbound: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	human := mustActor(t, "usr_offboard")
+	agent := mustActor(t, "agt_offboard")
+	for _, item := range []struct {
+		actor im.ActorID
+		type_ im.SubjectType
+	}{{human, im.SubjectHuman}, {agent, im.SubjectAgent}} {
+		if _, _, err := provider.ProvisionUser(ctx, im.ProviderUserProvision{
+			Actor: item.actor, DisplayName: item.actor.String(), ExtInfo: mustUserInfo(t, item.type_, item.actor),
+			IdempotencyKey: "user/" + item.actor.String(),
+		}); err != nil {
+			t.Fatalf("provision %s: %v", item.actor, err)
+		}
+	}
+	conversationID := mustConversation(t, "cnv_offboard")
+	conversation, _, err := provider.CreateGroup(ctx, im.ProviderGroupCreate{
+		Conversation: mustConversationRef(t, mustTenant(t, "ten_offboard"), conversationID),
+		ExtInfo:      mustGroupInfo(t, conversationID), MemberActors: []im.ActorID{human, agent}, IdempotencyKey: "group/offboard",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := provider.RemoveMembers(ctx, im.ProviderMemberUpdate{
+		Conversation: conversation, MemberActors: []im.ActorID{agent}, IdempotencyKey: "members/offboard",
+	})
+	if err != nil || removed.Status != im.ProviderEffectCommitted {
+		t.Fatalf("remove member = %#v, %v", removed, err)
+	}
+	replay, err := provider.RemoveMembers(ctx, im.ProviderMemberUpdate{
+		Conversation: conversation, MemberActors: []im.ActorID{agent}, IdempotencyKey: "members/offboard",
+	})
+	if err != nil || replay.Status != im.ProviderEffectReplayed {
+		t.Fatalf("remove member replay = %#v, %v", replay, err)
+	}
+	revoked, err := provider.RevokeUser(ctx, im.ProviderUserRevoke{Actor: agent, IdempotencyKey: "user-revoke/offboard"})
+	if err != nil || revoked.Status != im.ProviderEffectCommitted {
+		t.Fatalf("revoke user = %#v, %v", revoked, err)
+	}
+	revokeReplay, err := provider.RevokeUser(ctx, im.ProviderUserRevoke{Actor: agent, IdempotencyKey: "user-revoke/offboard"})
+	if err != nil || revokeReplay.Status != im.ProviderEffectReplayed {
+		t.Fatalf("revoke replay = %#v, %v", revokeReplay, err)
+	}
+	if _, err := provider.AddMembers(ctx, im.ProviderMemberUpdate{
+		Conversation: conversation, MemberActors: []im.ActorID{agent}, IdempotencyKey: "members/re-add-revoked",
+	}); !errors.Is(err, ErrUserMissing) {
+		t.Fatalf("re-add revoked member = %v, want ErrUserMissing", err)
+	}
+}
+
 func TestProviderInboundCursorPreservesDuplicatesAndOutboundIsExplicit(t *testing.T) {
 	t.Parallel()
 	realm := mustRealm(t, "rlm_fake")

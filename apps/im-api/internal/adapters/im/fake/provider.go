@@ -38,6 +38,7 @@ type user struct {
 	name        string
 	extInfo     string
 	requestHash string
+	revoked     bool
 }
 
 type group struct {
@@ -81,6 +82,7 @@ func New(options Options) (*Provider, error) {
 		im.ProviderCapabilityInboundRead,
 		im.ProviderCapabilityCursorResume,
 		im.ProviderCapabilityUserProvision,
+		im.ProviderCapabilityUserRevoke,
 		im.ProviderCapabilityGroupCreate,
 		im.ProviderCapabilityMemberWrite,
 	}
@@ -191,6 +193,45 @@ func (provider *Provider) ProvisionUser(
 	return identity, receipt, nil
 }
 
+// RevokeUser is a deterministic fake provider-side identity revocation. Revoke is explicit and
+// idempotent; a platform installation must not transition to offboarded unless this receipt is
+// committed. A later explicit ProvisionUser call creates a new provider generation for tests.
+func (provider *Provider) RevokeUser(
+	ctx context.Context,
+	request im.ProviderUserRevoke,
+) (im.ProviderEffectReceipt, error) {
+	if err := provider.checkContext(ctx); err != nil {
+		return im.ProviderEffectReceipt{}, err
+	}
+	profile := provider.Profile()
+	if err := request.Validate(profile); err != nil {
+		return im.ProviderEffectReceipt{}, err
+	}
+	if !provider.allowOutbound {
+		return im.ProviderEffectReceipt{}, im.ErrProviderOutboundDisabled
+	}
+	hash := requestHash("revoke-user", request.Actor.String())
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if existing, ok := provider.effects[request.IdempotencyKey]; ok {
+		if provider.effectHashes[request.IdempotencyKey] != hash {
+			return im.ProviderEffectReceipt{}, im.ErrProviderConflict
+		}
+		existing.Status = im.ProviderEffectReplayed
+		return existing, nil
+	}
+	identity, exists := provider.users[request.Actor]
+	if !exists {
+		return im.ProviderEffectReceipt{}, ErrUserMissing
+	}
+	identity.revoked = true
+	provider.users[request.Actor] = identity
+	receipt := provider.receiptLocked(request.IdempotencyKey, request.Actor.String(), im.ProviderEffectCommitted)
+	provider.effects[request.IdempotencyKey] = receipt
+	provider.effectHashes[request.IdempotencyKey] = hash
+	return receipt, nil
+}
+
 func (provider *Provider) CreateGroup(
 	ctx context.Context,
 	request im.ProviderGroupCreate,
@@ -228,7 +269,8 @@ func (provider *Provider) CreateGroup(
 	}
 	members := make(map[im.ActorID]struct{}, len(request.MemberActors))
 	for _, actor := range request.MemberActors {
-		if _, exists := provider.users[actor]; !exists {
+		user, exists := provider.users[actor]
+		if !exists || user.revoked {
 			return im.ProviderConversationRef{}, im.ProviderEffectReceipt{}, ErrUserMissing
 		}
 		members[actor] = struct{}{}
@@ -283,10 +325,52 @@ func (provider *Provider) AddMembers(
 		return im.ProviderEffectReceipt{}, ErrGroupMissing
 	}
 	for _, actor := range request.MemberActors {
-		if _, exists := provider.users[actor]; !exists {
+		user, exists := provider.users[actor]
+		if !exists || user.revoked {
 			return im.ProviderEffectReceipt{}, ErrUserMissing
 		}
 		current.members[actor] = struct{}{}
+	}
+	provider.groups[key] = current
+	receipt := provider.receiptLocked(request.IdempotencyKey, key, im.ProviderEffectCommitted)
+	provider.effects[request.IdempotencyKey] = receipt
+	provider.effectHashes[request.IdempotencyKey] = hash
+	return receipt, nil
+}
+
+// RemoveMembers is the provider-side half of Agent offboarding. Removing an already absent
+// member is a committed no-op, while replay/conflict semantics remain bound to the exact request.
+func (provider *Provider) RemoveMembers(
+	ctx context.Context,
+	request im.ProviderMemberUpdate,
+) (im.ProviderEffectReceipt, error) {
+	if err := provider.checkContext(ctx); err != nil {
+		return im.ProviderEffectReceipt{}, err
+	}
+	if err := request.ValidateForProfile(provider.Profile()); err != nil {
+		return im.ProviderEffectReceipt{}, err
+	}
+	hashParts := []string{"remove-members", request.Conversation.SubjectID()}
+	for _, actor := range request.MemberActors {
+		hashParts = append(hashParts, actor.String())
+	}
+	hash := requestHash(hashParts...)
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if existing, ok := provider.effects[request.IdempotencyKey]; ok {
+		if provider.effectHashes[request.IdempotencyKey] != hash {
+			return im.ProviderEffectReceipt{}, im.ErrProviderConflict
+		}
+		existing.Status = im.ProviderEffectReplayed
+		return existing, nil
+	}
+	key := request.Conversation.SubjectID()
+	current, ok := provider.groups[key]
+	if !ok {
+		return im.ProviderEffectReceipt{}, ErrGroupMissing
+	}
+	for _, actor := range request.MemberActors {
+		delete(current.members, actor)
 	}
 	provider.groups[key] = current
 	receipt := provider.receiptLocked(request.IdempotencyKey, key, im.ProviderEffectCommitted)
@@ -377,7 +461,8 @@ func (provider *Provider) SendText(
 	if _, exists := provider.groups[request.Conversation.SubjectID()]; !exists {
 		return im.ProviderEffectReceipt{}, ErrGroupMissing
 	}
-	if _, exists := provider.users[request.Sender]; !exists {
+	user, exists := provider.users[request.Sender]
+	if !exists || user.revoked {
 		return im.ProviderEffectReceipt{}, ErrUserMissing
 	}
 	provider.nextMessage++
