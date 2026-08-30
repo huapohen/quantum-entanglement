@@ -286,6 +286,26 @@ export function App() {
     }
   }
 
+  async function offboardAgent(agent: (typeof agents)[number]) {
+    if (agent.installationStatus !== "active") return;
+    if (!window.confirm(`确认停用并撤权 ${agent.name}？这会移除其群成员投影并撤销本地 provider 身份。`)) return;
+    setLoading(true);
+    setError("");
+    setMemberAction("");
+    try {
+      const result = await api.offboardAgent(agent.definitionId, `web/offboard/${crypto.randomUUID()}`);
+      const [agentPage, runtime, page] = await Promise.all([api.agents(), api.snapshot(), api.conversations()]);
+      setAgents(agentPage.agents);
+      setSnapshot(runtime);
+      setConversations(page.conversations);
+      setMemberAction(result.replayed ? `${result.agent.name} 已停用（幂等重放）` : `${result.agent.name} 已停用并撤权`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function inviteAgent(agent: (typeof agents)[number]) {
     if (!selectedConversationId || agent.installationStatus !== "active" || !agent.agentActorId) return;
     setLoading(true);
@@ -506,6 +526,11 @@ export function App() {
                     数据路线：{agent.dataRoutes.map((route) => `${route.name} → ${route.destinations.join(", ")}`).join("；") || "无"}
                   </div>
                   <div className="mt-1 text-slate-500">Trust Passport：{agent.attestations.length} 项审阅声明 · {agent.passportStatus}</div>
+                  {agent.installationStatus === "active" && (
+                    <button className="button-secondary mt-3 w-full" onClick={() => void offboardAgent(agent)} disabled={loading}>
+                      停用并撤权
+                    </button>
+                  )}
                   {agent.canInstall ? (
                     <button className="button-primary mt-3 w-full" onClick={() => void installAgent(agent)} disabled={loading}>
                       安装到当前工作空间

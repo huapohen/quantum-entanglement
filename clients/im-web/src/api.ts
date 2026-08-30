@@ -59,6 +59,12 @@ export type AgentStoreInstallResult = {
   replayed: boolean;
 };
 
+export type AgentStoreOffboardResult = {
+  agent: AgentStoreEntry;
+  removedConversationIds: string[];
+  replayed: boolean;
+};
+
 export type Conversation = {
   id: string;
   type: string;
@@ -206,6 +212,11 @@ export const api = {
     request<AgentStoreInstallResult>(`/api/v1/demo/im/agents/${encodeURIComponent(definitionId)}/install`, {
       method: "POST",
       body: JSON.stringify({ idempotencyKey }),
+    }),
+  offboardAgent: (definitionId: string, idempotencyKey: string, dataDisposition: "retain" | "archive" | "delete" = "archive") =>
+    request<AgentStoreOffboardResult>(`/api/v1/demo/im/agents/${encodeURIComponent(definitionId)}/offboard`, {
+      method: "POST",
+      body: JSON.stringify({ idempotencyKey, dataDisposition }),
     }),
   tasks: () => request<TaskPage>("/api/v1/demo/im/tasks"),
   artifacts: () => request<ArtifactPage>("/api/v1/demo/im/artifacts"),

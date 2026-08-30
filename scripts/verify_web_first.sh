@@ -172,4 +172,41 @@ assert data["code"] == 200
 assert data["data"]["replayed"] is True
 '
 
-printf '%s\n' "Web-first synthetic 验证通过（构建、envelope、Agent Store、子群隔离、Workboard 审阅闭环）"
+verify_offboard=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' -H 'Content-Type: application/json' \
+    --data '{"idempotencyKey":"verify/web-first/agent-offboard","dataDisposition":"archive"}' \
+    "http://127.0.0.1:$verify_port/api/v1/demo/im/agents/agd_local_planner/offboard")
+VERIFY_OFFBOARD="$verify_offboard" python3 -c '
+import json, os
+payload=json.loads(os.environ["VERIFY_OFFBOARD"])
+assert payload["code"] == 200
+data=payload["data"]
+assert data["agent"]["installationStatus"] == "offboarded"
+assert data["agent"]["agentActorId"] == "agt_local_planner"
+assert "cnv_local_demo_parent" in data["removedConversationIds"]
+assert data["replayed"] is False
+'
+verify_offboard_replay=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' -H 'Content-Type: application/json' \
+    --data '{"idempotencyKey":"verify/web-first/agent-offboard","dataDisposition":"archive"}' \
+    "http://127.0.0.1:$verify_port/api/v1/demo/im/agents/agd_local_planner/offboard")
+VERIFY_OFFBOARD_REPLAY="$verify_offboard_replay" python3 -c '
+import json, os
+payload=json.loads(os.environ["VERIFY_OFFBOARD_REPLAY"])
+assert payload["code"] == 200
+assert payload["data"]["agent"]["installationStatus"] == "offboarded"
+assert payload["data"]["replayed"] is True
+'
+verify_after_offboard=$(curl -sS -o "$verify_tmp/after-offboard.json" -w '%{http_code}' \
+    -H 'Authorization: Bearer demo.local.signature' -H 'Content-Type: application/json' \
+    --data '{"conversationId":"cnv_local_demo_parent","messageId":"msg_verify_after_offboard","instruction":"撤权后应拒绝"}' \
+    "http://127.0.0.1:$verify_port/api/v1/demo/im/mentions")
+[ "$verify_after_offboard" = "200" ] || {
+    printf '%s\n' "错误：Agent offboard 后 mention 应保持 HTTP 200 envelope，实际为 $verify_after_offboard" >&2
+    exit 1
+}
+VERIFY_AFTER_OFFBOARD=$(cat "$verify_tmp/after-offboard.json") python3 -c '
+import json, os
+payload=json.loads(os.environ["VERIFY_AFTER_OFFBOARD"])
+assert payload["code"] == 40301
+'
+
+printf '%s\n' "Web-first synthetic 验证通过（构建、envelope、Agent Store 安装/撤权、子群隔离、Workboard 审阅闭环）"
