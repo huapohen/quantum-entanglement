@@ -41,7 +41,6 @@ var (
 	ErrProviderEffectState        = errors.New("provider effect outbox state transition is invalid")
 	ErrProviderEffectClock        = errors.New("provider effect outbox clock is invalid")
 	providerEffectIDPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$`)
-	providerEffectKindPattern     = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`)
 )
 
 // ProviderEffectKind is intentionally a closed vocabulary. Adding a new
