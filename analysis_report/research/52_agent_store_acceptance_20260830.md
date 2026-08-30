@@ -78,6 +78,19 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
 安装后的 Agent 生成 Artifact 并经人工接受后，Workboard 还可执行“发布引用到父群”；父群只会
 看到带 Artifact ID/digest 的引用消息，不会自动展开或复制产物正文。该发布动作同样是幂等的。
 
+## Action-time Trust Passport 加固（`6e039d2`）
+
+目录卡片只是发现投影，不能被当成执行授权。当前安装动作会在持有服务锁时重新检查：
+
+- definition 必须为 `active`；
+- release 必须为 `published`；
+- Trust Passport 必须仍为 `active` 且所有审阅声明未过期。
+
+同一检查也应用于 `@Agent` invocation；已安装 Agent 的 Passport 过期或被撤销后，新调用立即
+fail-closed，而不会因为旧 membership 投影仍存在就继续运行。新增测试覆盖“目录仍保留但安装/调用
+拒绝”的 action-time 边界。该检查是本地纵切片的安全加固，不替代生产的持久化 resolver、撤销广播和
+action-time PEP。
+
 ## 明确边界
 
 当前还没有交付以下生产能力：第三方 Agent 上传/认领、公共目录搜索、真实制品仓库、签名与

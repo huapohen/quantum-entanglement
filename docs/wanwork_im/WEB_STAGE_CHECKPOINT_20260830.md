@@ -104,6 +104,7 @@ git diff --check
 | `4babd88` | 接受后的 Artifact 引用发布 |
 | `a99338a` | Workboard 暴露 Artifact 发布按钮 |
 | `536395c` | Artifact 发布/回放门禁 |
+| `6e039d2` | Agent Store 安装与 invocation 的 action-time Trust Passport 准入加固 |
 
 ## 仍然禁止宣称完成的范围
 
