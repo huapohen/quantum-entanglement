@@ -2,14 +2,18 @@ package improjection
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -194,6 +198,250 @@ func TestPostgresMessageProjectorEndToEnd(t *testing.T) {
 	if err != nil || len(restartedPage.Messages) != 3 || restartedPage.ProjectionRevision != 5 {
 		t.Fatalf("restart materialized page=%#v err=%v", restartedPage, err)
 	}
+}
+
+// TestPostgresMessageProjectorSIGKILLBoundaries proves the two process-death boundaries that
+// cannot be represented by an in-process error: a child killed while its page transaction is
+// still open, and a child killed after COMMIT succeeded but before the caller observed it. The
+// test is intentionally opt-in and uses the same isolated runtime authority graph as the
+// end-to-end test. No production code path enables the kill hook.
+func TestPostgresMessageProjectorSIGKILLBoundaries(t *testing.T) {
+	adminURL := os.Getenv("WANWORK_TEST_POSTGRES_ADMIN_URL")
+	if adminURL == "" {
+		t.Skip("WANWORK_TEST_POSTGRES_ADMIN_URL is not set")
+	}
+	admin, connectionString, manifest := provisionProjectorRuntime(t, adminURL)
+	pool, err := runtimepool.Open(t.Context(), runtimepool.Config{
+		ConnectionString: connectionString, Manifest: manifest, MaxConnections: 2,
+		MinIdleConnections: 0, ConnectTimeout: 3 * time.Second, PingTimeout: time.Second,
+		AllowInsecureLocalhost: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if _, err := admin.Exec(t.Context(), `INSERT INTO wanwork_im.tenants (tenant_id,status,revision) VALUES ('ten_sigkill','active',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `INSERT INTO wanwork_im.workspaces (tenant_id,workspace_id,status,revision) VALUES ('ten_sigkill','wsp_sigkill','active',1)`); err != nil {
+		t.Fatal(err)
+	}
+	store, err := eventstore.New(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := "wsp_sigkill"
+	tenantID := mustTenant(t, "ten_sigkill")
+	workspaceID := mustWorkspace(t, workspace)
+	conversation := mustConversation(t, "ten_sigkill", "cnv_sigkill")
+	when := time.Date(2026, 8, 31, 1, 0, 0, 0, time.UTC)
+	firstEvent := projectorSIGKILLEvent(t, "evt_sigkill_1", 1, "msg_sigkill_1", "first", when, workspace)
+	if _, err := store.AppendBatch(t.Context(), events.AppendBatch{
+		TenantID: "ten_sigkill", WorkspaceID: &workspace, StreamID: "cnv_sigkill", Events: []events.EventToAppend{firstEvent},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Killing before COMMIT must leave the old empty graph and the old checkpoint. A fresh
+	// projector then replays the complete page and publishes exactly one message.
+	startProjectorSIGKILLChild(t, connectionString, manifest, tenantID, workspaceID, "pre", 1)
+	projector, err := NewProjector(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preRecovered, err := projector.Run(t.Context(), tenantID, workspaceID, 16)
+	if err != nil || preRecovered.Processed != 1 || preRecovered.Checkpoint.Position != 1 {
+		t.Fatalf("pre-commit SIGKILL recovery=%#v err=%v", preRecovered, err)
+	}
+	reader, err := NewReader(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := reader.ReadPage(t.Context(), imstore.MessageReadPageQuery{
+		Conversation: conversation, WorkspaceID: workspaceID, Limit: 10,
+		ConversationRevision: 1, AccessRevision: 1,
+	})
+	if err != nil || len(page.Messages) != 1 || page.Messages[0].Text() != "first" || page.ProjectionRevision != 1 {
+		t.Fatalf("pre-commit SIGKILL materialized page=%#v err=%v", page, err)
+	}
+
+	secondEvent := projectorSIGKILLEvent(t, "evt_sigkill_2", 2, "msg_sigkill_2", "second", when.Add(time.Second), workspace)
+	if _, err := store.AppendBatch(t.Context(), events.AppendBatch{
+		TenantID: "ten_sigkill", WorkspaceID: &workspace, StreamID: "cnv_sigkill", ExpectedVersion: 1,
+		Events: []events.EventToAppend{secondEvent},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Killing after COMMIT must leave the complete second graph. The parent intentionally ignores
+	// the child's exit acknowledgement and proves that a rerun is an exact no-op.
+	startProjectorSIGKILLChild(t, connectionString, manifest, tenantID, workspaceID, "post", 2)
+	postRecovered, err := projector.Run(t.Context(), tenantID, workspaceID, 16)
+	if err != nil || postRecovered.Processed != 0 || postRecovered.Checkpoint.Position != 2 {
+		t.Fatalf("post-commit SIGKILL recovery=%#v err=%v", postRecovered, err)
+	}
+	page, err = reader.ReadPage(t.Context(), imstore.MessageReadPageQuery{
+		Conversation: conversation, WorkspaceID: workspaceID, Limit: 10,
+		ConversationRevision: 1, AccessRevision: 1,
+	})
+	if err != nil || len(page.Messages) != 2 || page.Messages[0].Text() != "first" || page.Messages[1].Text() != "second" || page.ProjectionRevision != 2 {
+		t.Fatalf("post-commit SIGKILL materialized page=%#v err=%v", page, err)
+	}
+}
+
+// TestPostgresMessageProjectorSIGKILLHelper is launched by the opt-in parent test above. It
+// blocks at the requested publication boundary until the parent sends SIGKILL. Keeping the
+// helper in the test binary avoids adding any kill/debug switch to the production binary.
+func TestPostgresMessageProjectorSIGKILLHelper(t *testing.T) {
+	mode := os.Getenv("WANWORK_PROJECTOR_SIGKILL_MODE")
+	if mode == "" {
+		t.Skip("helper process")
+	}
+	if mode != "pre" && mode != "post" {
+		t.Fatalf("invalid helper mode %q", mode)
+	}
+	connectionString := os.Getenv("WANWORK_PROJECTOR_SIGKILL_CONNECTION")
+	marker := os.Getenv("WANWORK_PROJECTOR_SIGKILL_MARKER")
+	manifestJSON := os.Getenv("WANWORK_PROJECTOR_SIGKILL_MANIFEST")
+	if connectionString == "" || marker == "" || manifestJSON == "" {
+		t.Fatal("helper environment is incomplete")
+	}
+	var manifest migrations.AuthorityAccessManifest
+	if err := json.Unmarshal([]byte(manifestJSON), &manifest); err != nil {
+		t.Fatalf("decode helper manifest: %v", err)
+	}
+	pool, err := runtimepool.Open(t.Context(), runtimepool.Config{
+		ConnectionString: connectionString, Manifest: manifest, MaxConnections: 1,
+		MinIdleConnections: 0, ConnectTimeout: 3 * time.Second, PingTimeout: time.Second,
+		AllowInsecureLocalhost: true,
+	})
+	if err != nil {
+		t.Fatalf("open helper pool: %v", err)
+	}
+	defer pool.Close()
+	var tenantID, workspaceValue string
+	if err := json.Unmarshal([]byte(os.Getenv("WANWORK_PROJECTOR_SIGKILL_SCOPE")), &struct {
+		TenantID    *string `json:"tenantId"`
+		WorkspaceID *string `json:"workspaceId"`
+	}{TenantID: &tenantID, WorkspaceID: &workspaceValue}); err != nil {
+		t.Fatalf("decode helper scope: %v", err)
+	}
+	tenant := mustTenant(t, tenantID)
+	workspace := mustWorkspace(t, workspaceValue)
+	projector, err := NewProjector(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projector.commit = func(commitContext context.Context, transaction pgx.Tx) error {
+		if mode == "pre" {
+			writeProjectorSIGKILLMarker(t, marker)
+			select {}
+		}
+		if err := transaction.Commit(commitContext); err != nil {
+			return err
+		}
+		writeProjectorSIGKILLMarker(t, marker)
+		select {}
+		return nil
+	}
+	if _, err := projector.Run(t.Context(), tenant, workspace, 16); err != nil {
+		t.Fatalf("helper projector run: %v", err)
+	}
+}
+
+func startProjectorSIGKILLChild(
+	t *testing.T,
+	connectionString string,
+	manifest migrations.AuthorityAccessManifest,
+	tenant im.TenantID,
+	workspace *im.WorkspaceID,
+	mode string,
+	expectedPosition uint64,
+) {
+	t.Helper()
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeJSON, err := json.Marshal(struct {
+		TenantID    string `json:"tenantId"`
+		WorkspaceID string `json:"workspaceId"`
+	}{TenantID: tenant.String(), WorkspaceID: workspace.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), fmt.Sprintf("projector-%s-%d.marker", mode, expectedPosition))
+	command := exec.Command(os.Args[0], "-test.run=^TestPostgresMessageProjectorSIGKILLHelper$", "-test.v")
+	command.Env = append(os.Environ(),
+		"WANWORK_PROJECTOR_SIGKILL_MODE="+mode,
+		"WANWORK_PROJECTOR_SIGKILL_CONNECTION="+connectionString,
+		"WANWORK_PROJECTOR_SIGKILL_MANIFEST="+string(manifestJSON),
+		"WANWORK_PROJECTOR_SIGKILL_MARKER="+marker,
+		"WANWORK_PROJECTOR_SIGKILL_SCOPE="+string(scopeJSON),
+	)
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	if err := command.Start(); err != nil {
+		t.Fatalf("start %s SIGKILL helper: %v", mode, err)
+	}
+	t.Cleanup(func() {
+		if command.Process != nil {
+			_ = command.Process.Kill()
+		}
+		_ = command.Wait()
+	})
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("stat %s SIGKILL marker: %v", mode, err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s SIGKILL helper did not reach publication boundary", mode)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := command.Process.Kill(); err != nil {
+		t.Fatalf("kill %s SIGKILL helper: %v", mode, err)
+	}
+	waitErr := command.Wait()
+	exitErr, ok := waitErr.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("%s SIGKILL helper wait error=%v, want signal termination", mode, waitErr)
+	}
+	waitStatus, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !waitStatus.Signaled() || waitStatus.Signal() != syscall.SIGKILL {
+		t.Fatalf("%s helper status=%v, want SIGKILL", mode, exitErr.ProcessState)
+	}
+}
+
+func writeProjectorSIGKILLMarker(t *testing.T, path string) {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("open SIGKILL marker: %v", err)
+	}
+	if _, err := file.WriteString("reached\n"); err != nil {
+		_ = file.Close()
+		t.Fatalf("write SIGKILL marker: %v", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		t.Fatalf("sync SIGKILL marker: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close SIGKILL marker: %v", err)
+	}
+}
+
+func projectorSIGKILLEvent(t *testing.T, eventID string, sequence uint64, messageID, text string, occurred time.Time, workspace string) events.EventToAppend {
+	t.Helper()
+	payload, err := events.NewInlinePayload([]byte(fmt.Sprintf(`{"conversationId":"cnv_sigkill","messageId":"%s","clientMessageId":"msg_client_%d","messageType":"text","text":"%s"}`, messageID, sequence, text)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "key_" + eventID
+	return events.EventToAppend{SchemaVersion: 1, EventID: eventID, StreamID: "cnv_sigkill", EventType: "message.created", TenantID: "ten_sigkill", WorkspaceID: &workspace, ActorID: "usr_alice", OccurredAt: occurred, CorrelationID: "corr_" + eventID, IdempotencyKey: &key, Payload: payload}
 }
 
 func projectorIntegrationEvent(t *testing.T, id, eventType string, sequence uint64, raw string, occurred time.Time, workspace string) events.EventToAppend {
