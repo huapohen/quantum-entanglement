@@ -74,6 +74,8 @@ HTTP seam（`f226ab5`，实现提交 `8c4fb3f`）；用户在 2026-08-28 进一�
 | `research/69_postgres_projector_end_to_end_and_revision_fix_20260830.md` | PostgreSQL projector/reader 真实闭环与 revision 语义修复 | 隔离 PG18 runtime-only 端到端、跨页、非消息 watermark、双 runner CAS 竞争、restart readback；`projection_revision <= head revision`；production cutover 仍关闭 |
 | `research/70_shadow_canary_runtime_wiring_20260830.md` | Shadow equality runtime wiring | 显式 default-off 开关、独立 cursor comparator、mismatch fail-closed、primary replay 保持不变；production cutover 仍关闭 |
 | `research/71_projector_commit_ack_loss_recovery_20260830.md` | Projector COMMIT ACK-loss recovery | commit 成功但 ACK 丢失、exact checkpoint/row replay、双 runner CAS 竞争与重启 readback；SIGKILL/生产 cutover 仍关闭 |
+| `research/72_worker_lifecycle_checkpoint_20260830.md` | Scoped worker lifecycle checkpoint | admission stop、bounded drain、heartbeat fencing、relinquish 竞争与 SIGKILL 后 expiry recovery；worker dispatch 仍 default-off |
+| `research/73_projector_fault_matrix_and_rollback_checkpoint_20260831.md` | Projector fault matrix 与 compatibility rollback | 提交前失败整页回滚、ACK-loss exact replay、恢复后的 migration rollback guard；真实 projector SIGKILL、生产 cutover 仍关闭 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
