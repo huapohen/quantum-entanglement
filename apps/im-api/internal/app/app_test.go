@@ -11,6 +11,7 @@ import (
 
 	authfake "github.com/huapohen/quantum-entanglement/apps/im-api/internal/adapters/auth/fake"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/adapters/httpapi"
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/auth"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 	store "github.com/huapohen/quantum-entanglement/apps/im-api/internal/imstore"
 )
@@ -394,6 +395,31 @@ func TestNewRuntimeRejectsMissingDependencies(t *testing.T) {
 		if _, err := NewRuntime(dependencies); !errors.Is(err, ErrInvalidRuntimeDependencies) {
 			t.Fatalf("invalid runtime dependencies error = %v, want %v", err, ErrInvalidRuntimeDependencies)
 		}
+	}
+}
+
+func TestRuntimeContextErrorsPreserveAuthenticationAndResourceSemantics(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want httpapi.BusinessCode
+	}{
+		{name: "expired token", err: auth.ErrTokenExpired, want: httpapi.CodeUnauthenticated},
+		{name: "missing membership", err: auth.ErrContextUnauthorized, want: httpapi.CodeForbidden},
+		{name: "missing conversation", err: store.ErrNotFound, want: httpapi.CodeNotFound},
+		{name: "store unavailable", err: store.ErrStoreUnavailable, want: httpapi.CodeDependencyUnavailable},
+		{name: "integrity", err: store.ErrIntegrity, want: httpapi.CodeInternal},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			mapped := mapTenantReadError(testCase.err)
+			var appError *httpapi.AppError
+			if !errors.As(mapped, &appError) || appError.Code != testCase.want {
+				t.Fatalf("mapped error = %#v, want code %d", mapped, testCase.want)
+			}
+		})
 	}
 }
 

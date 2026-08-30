@@ -265,6 +265,8 @@ func conversationPermissions(snapshot im.ConversationAccessSnapshot) []string {
 
 func mapTenantReadError(err error) error {
 	switch {
+	case errors.Is(err, auth.ErrInvalidToken), errors.Is(err, auth.ErrTokenExpired):
+		return httpapi.NewAppError(httpapi.CodeUnauthenticated, err)
 	case errors.Is(err, auth.ErrContextUnauthorized), errors.Is(err, auth.ErrContextAuthorityMissing):
 		return httpapi.NewAppError(httpapi.CodeForbidden, err)
 	case errors.Is(err, store.ErrNotFound):
@@ -299,6 +301,8 @@ func tenantIDFromHeader(ctx fiber.Ctx) (im.TenantID, error) {
 
 func mapTrustedContextError(err error) error {
 	switch {
+	case errors.Is(err, auth.ErrInvalidToken), errors.Is(err, auth.ErrTokenExpired):
+		return httpapi.NewAppError(httpapi.CodeUnauthenticated, err)
 	case errors.Is(err, auth.ErrContextUnauthorized), errors.Is(err, auth.ErrContextAuthorityMissing):
 		return httpapi.NewAppError(httpapi.CodeForbidden, err)
 	case errors.Is(err, auth.ErrContextUnavailable), errors.Is(err, store.ErrStoreUnavailable):
