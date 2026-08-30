@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/modelruntime"
 )
@@ -136,6 +137,33 @@ func TestServiceAgentStoreRejectsWrongToken(t *testing.T) {
 	}
 	if _, err := service.ListAgents(context.Background(), "wrong.local.token"); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("wrong token = %v", err)
+	}
+}
+
+func TestServiceAgentStoreRechecksPassportAtActionTime(t *testing.T) {
+	t.Parallel()
+	service, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Build a syntactically valid but expired reviewed passport. The catalog may retain it for
+	// audit, but installation and invocation must fail closed at action time.
+	expired, err := buildAgentPassport(time.Now().UTC().Add(-48*time.Hour), service.parent.Ref().TenantID(),
+		"agd_expired", "agr_expired_100", "v0版过期 Agent", "仅用于 action-time 过期准入测试。", "conversation.read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.agentCatalog = append(service.agentCatalog, agentCatalogRecord{passport: expired})
+	if _, err := service.InstallAgent(context.Background(), LocalBearerToken, "agd_expired", AgentStoreInstallInput{
+		IdempotencyKey: "test/store/install/expired",
+	}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expired installation error = %v, want ErrForbidden", err)
+	}
+	service.passport = expired
+	if _, err := service.Mention(context.Background(), LocalBearerToken, MentionInput{
+		MessageID: "msg_expired_passport", Instruction: "过期 Passport 不应执行",
+	}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expired invocation error = %v, want ErrForbidden", err)
 	}
 }
 

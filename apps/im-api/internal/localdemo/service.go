@@ -293,6 +293,14 @@ func (service *Service) Mention(
 		service.mu.Unlock()
 		return MentionResult{}, ErrForbidden
 	}
+	// A previously installed Agent remains a member projection, but an expired or revoked
+	// Trust Passport must stop new invocations immediately. This is an action-time check, not a
+	// replacement for durable membership/capability resolution in production.
+	if service.installation.IsZero() || service.installation.Status() != agentstore.InstallationActive ||
+		!service.usableAgentPassport(service.passport) {
+		service.mu.Unlock()
+		return MentionResult{}, ErrForbidden
+	}
 	if _, ok := parentRecord.members[service.installation.AgentActor()]; !ok {
 		service.mu.Unlock()
 		return MentionResult{}, ErrForbidden

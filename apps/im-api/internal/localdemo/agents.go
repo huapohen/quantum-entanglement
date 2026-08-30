@@ -121,6 +121,12 @@ func (service *Service) InstallAgent(
 		return AgentStoreInstallResult{}, ErrNotFound
 	}
 	target := service.agentCatalog[targetIndex]
+	// Catalog metadata is only a discovery projection. Installation is an effect and must
+	// re-check the reviewed passport at action time so an expired, quarantined, revoked, or
+	// otherwise stale release can never be admitted merely because it is still listed.
+	if !service.usableAgentPassport(target.passport) {
+		return AgentStoreInstallResult{}, ErrForbidden
+	}
 	if !target.installation.IsZero() && target.installation.Status() == agentstore.InstallationActive {
 		return AgentStoreInstallResult{Agent: service.agentStoreView(target), Replayed: true}, nil
 	}
@@ -220,6 +226,7 @@ func (service *Service) agentStoreView(record agentCatalogRecord) AgentStoreView
 			granted = append(granted, string(capability))
 		}
 	}
+	canInstall := installationStatus == "available" && service.usableAgentPassport(record.passport)
 	return AgentStoreView{
 		DefinitionID: definition.ID().String(), ReleaseID: release.ID().String(), InstallationID: installationID,
 		Name: definition.DisplayName(), Summary: definition.Summary(), Version: release.Version().String(),
@@ -227,8 +234,18 @@ func (service *Service) agentStoreView(record agentCatalogRecord) AgentStoreView
 		PassportStatus: string(record.passport.Status()), InstallationStatus: installationStatus,
 		AgentActorID: agentActorID, Isolation: string(release.Isolation()), RequestedCapabilities: requested,
 		GrantedCapabilities: granted, DataRoutes: dataRoutes, Attestations: claims,
-		CanInstall: installationStatus == "available",
+		CanInstall: canInstall,
 	}
+}
+
+func (service *Service) usableAgentPassport(passport agentstore.TrustPassport) bool {
+	if service == nil || passport.IsZero() {
+		return false
+	}
+	definition, release := passport.Definition(), passport.Release()
+	return definition.Status() == agentstore.DefinitionActive &&
+		release.Status() == agentstore.ReleasePublished &&
+		passport.ValidAt(service.nowUTC())
 }
 
 func (service *Service) addInstalledAgentToParent(ctx context.Context, actorID im.ActorID) error {
