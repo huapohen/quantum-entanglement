@@ -1,0 +1,90 @@
+{
+  "capturedAt": "2026-08-29T21:19:10+08:00",
+  "environment": {
+    "database": {
+      "authentication": "explicit-passwordless-loopback-test-only",
+      "product": "PostgreSQL",
+      "serverVersion": "18.6 (Homebrew)",
+      "topology": "disposable-local-loopback"
+    },
+    "goarch": "arm64",
+    "goos": "darwin",
+    "goVersion": "go1.25.6",
+    "secretsRecorded": false
+  },
+  "format": "quantum-entanglement.local-checkpoint-test-evidence",
+  "gates": {
+    "goTestNormal": {
+      "command": "cd apps/im-api && WANWORK_TEST_POSTGRES_ADMIN_URL=<reviewed-disposable-loopback-admin-url> GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test -json ./... -count=1 -timeout=15m",
+      "packagePasses": 25,
+      "rawJsonLog": {
+        "byteSize": 2220059,
+        "retained": false,
+        "sha256": "8986415b7011a99a64fc0d1c5a79fedb1d4e6beeb2b1498c6c4d43695e8376d3"
+      },
+      "result": "passed",
+      "testFailEvents": 0,
+      "testPassEvents": 1444,
+      "testSkipEvents": 0
+    },
+    "goTestRace": {
+      "command": "cd apps/im-api && WANWORK_TEST_POSTGRES_ADMIN_URL=<reviewed-disposable-loopback-admin-url> GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test -race -json ./... -count=1 -timeout=20m",
+      "packagePasses": 25,
+      "rawJsonLog": {
+        "byteSize": 2220391,
+        "retained": false,
+        "sha256": "912bb229d60956de981d13d55d33e06e63f59d959af2b68e1e49b8961e90aa34"
+      },
+      "result": "passed",
+      "testFailEvents": 0,
+      "testPassEvents": 1444,
+      "testSkipEvents": 0
+    },
+    "goVet": {
+      "command": "cd apps/im-api && GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...",
+      "result": "passed-with-no-output"
+    }
+  },
+  "limitations": [
+    "This is a committed local-run summary, not an immutable CI-provider artifact or a release promotion record.",
+    "Raw go test JSON logs were hashed during the run but are not retained; the raw digests are only comparison aids for the captured run.",
+    "The database was disposable and loopback-only; this does not prove remote authenticated TLS, production cutover, credential rotation, restore safety, performance or availability.",
+    "No Clerk, RongCloud, provider adapter, Agent thread, message, mention or external outbound path was exercised.",
+    "Notion and Yuque were not accessed or modified in this local-first checkpoint; remote synchronization remains pending."
+  ],
+  "packages": [
+    "cmd/im-api",
+    "cmd/im-migrate",
+    "internal/adapters/auth/fake",
+    "internal/adapters/httpapi",
+    "internal/adapters/im/fake",
+    "internal/agentstore",
+    "internal/agentthread",
+    "internal/app",
+    "internal/auth",
+    "internal/config",
+    "internal/events",
+    "internal/im",
+    "internal/immetadata",
+    "internal/imstore",
+    "internal/isolation",
+    "internal/isolation/fake",
+    "internal/localdemo",
+    "internal/platform/postgres/authoritycutover",
+    "internal/platform/postgres/connectionpolicy",
+    "internal/platform/postgres/eventstore",
+    "internal/platform/postgres/imstore",
+    "internal/platform/postgres/migrationrun",
+    "internal/platform/postgres/migrations",
+    "internal/platform/postgres/runtimepool",
+    "internal/plugins"
+  ],
+  "schemaVersion": 1,
+  "source": {
+    "branch": "dev_wanwork_quantum_entanglement",
+    "codeEvidenceBaseline": "c2e3266",
+    "commit": "c2e3266fdd01660cc5932c451b0238cb1d18a54d",
+    "dirty": false,
+    "tree": "ce91eed7830547b8b0620848f8dcb9b8a0ca7f19"
+  }
+}

@@ -35,6 +35,11 @@ Report sync bundle 是一个**确定性的本地同步库存与证据包**。它
   `analysis_report/yuque_sync/mapping.json`、`analysis_report/screenshots/manifest.json`；
 - 截图：`analysis_report/screenshots/` 下受命名规则和 manifest 约束的 PNG/JPEG。
 
+截图目录还允许三个固定名称的本地验收 sidecar JSON：
+`local_im_acceptance_manifest.json`、`local_im_basic_acceptance_manifest.json` 和
+`local_im_edit_recall_acceptance_manifest.json`。它们只作为受控 loopback 证据输入，必须是合法
+JSON 且继续经过凭据字段扫描；不会被当成远端同步声明，也不会替代主 `manifest.json` 的逐图摘要。
+
 持久输出只能是仓库内
 `analysis_report/report_sync_bundles/<name>.json` 的直接子文件。默认不会覆盖已有文件；只有显式
 传入 `--overwrite` 才会请求替换。建议每个阶段使用新的、带日期或里程碑的文件名，把旧 bundle

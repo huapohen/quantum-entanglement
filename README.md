@@ -58,6 +58,12 @@ artifacts/                  本地评审、发布与旧管理仓库证据（被 
 可审计记录见 [`MIGRATION_MANIFEST.md`](MIGRATION_MANIFEST.md)。正式主线就是当前仓库根目录的
 `main`，不存在额外的 `main/` 嵌套仓库。
 
+## WanWork 原生 IM 开发分支
+
+`dev_wanwork_quantum_entanglement` 在独立 worktree 中从零实现与 Quantum Entanglement 合一的企业
+IM。本分支不自动合并 `main`，真实聊天 outbound 默认关闭。研究审计、M0/V1 边界、产品需求、
+架构和实施门禁从 [`docs/wanwork_im/README.md`](docs/wanwork_im/README.md) 开始阅读。
+
 ## 本地产品试用
 
 想先从产品界面体验当前协作切片，运行：
@@ -74,6 +80,14 @@ Artifact、Needs You、25 步事件时间线和三张内联 SVG 系统图；它�
 完整启动方式、页面导览、安全边界和故障排查见
 [`docs/LOCAL_PRODUCT_TRIAL.md`](docs/LOCAL_PRODUCT_TRIAL.md)。当前仍是本地体验，Gate A–E 全部关闭。
 
+当前第一版 React Web IM 客户端位于 [`clients/im-web`](clients/im-web)。推荐直接运行
+`./scripts/start_web_client.sh`，它会一条命令启动 Go API 与 Vite 页面；也可以按客户端 README
+中的双终端方式分别启动。当前可体验群聊、编辑/撤回和 `@v0版 Agent` 子群。
+
+当前没有可安装的 macOS/Windows/Linux、iPhone/iPad、Android 或鸿蒙原生 App；移动截图只是浏览器
+响应式 viewport 验收。平台现状、体验矩阵和原生客户端路线见
+[`docs/wanwork_im/MULTI_PLATFORM_STATUS.md`](docs/wanwork_im/MULTI_PLATFORM_STATUS.md)。
+
 只看终端结果：
 
 ```bash
@@ -88,11 +102,11 @@ Artifact、Needs You、25 步事件时间线和三张内联 SVG 系统图；它�
 python3 scripts/report_sync_bundle.py
 ```
 
-验证当前 schema v3 checkpoint：
+验证当前 schema v3 本地待同步 checkpoint：
 
 ```bash
 python3 scripts/report_sync_bundle.py \
-  --verify analysis_report/report_sync_bundles/checkpoint-20260827-clawith-delivery-blueprint.json
+  --verify analysis_report/report_sync_bundles/checkpoint-20260829-postgres-policy-control-store-local-pending.json
 ```
 
 下一阶段生成 checkpoint 时必须使用新的阶段文件名，不覆盖当前或历史快照：
@@ -102,16 +116,15 @@ python3 scripts/report_sync_bundle.py \
   --output analysis_report/report_sync_bundles/checkpoint-YYYYMMDD-stage-name.json
 ```
 
-`sourceTargets` 记录的是 source-target entry，不等于远端页面数；所有实时远端回读标记固定为
-`false`。当前 scoped-start + worker authority + Clawith 部门样板/源码复核 checkpoint 固定 41 个本地
-source、42 个 source-target 和 27 张图片；四个旧 checkpoint 只作为不可变历史快照保留，不再代表当前
-库存。current / superseded 关系和历史 checkout 验证方式见
+`sourceTargets` 记录的是 source-target entry，不等于远端页面数；bundle 生成器完全本地运行，所以其中
+所有实时远端回读标记固定为 `false`。当前 latest 是 policy control-store 本地待同步批次：72 个本地
+source、73 个 target mapping、57 个 Notion source mapping、16 个语雀 local-pending mapping 和 37 项
+图像；它没有执行任何远端写入或回读。最近完成 Notion 回读的历史基线仍是 Topic 34 / `7bb324a`，
+不得把本地 latest 冒充远端已更新。current / superseded 关系和历史 checkout 验证方式见
 [`analysis_report/report_sync_bundles/README.md`](analysis_report/report_sync_bundles/README.md)。
-Clawith 的 Notion 与语雀条目均为 `local_pending`，不构成远端写入或回读证明。其中
-`analysis_report/notion_sync_manifest.json` 仍是 2026-08-20 的历史回读控制文件，故意不登记
-尚未远端写入并回读的 Clawith 页面；Clawith 的确定性计划页 key 只存在于本地 checkpoint 的
-`proposedTargetPageKey`，不能当作真实 Notion 页面标识。完整字段、pinned-read 安全边界、v2→v3
-迁移和 recovery 处置见
+`analysis_report/notion_sync_manifest.json` 记录最近一次 2026-08-28 真实 Notion 回读；它与本地 bundle
+的 `liveReadbackPerformed=false` 语义不同。语雀条目继续按 mapping 的 `local_pending`/历史状态解释，
+不因 Notion 已回读而自动成立。完整字段、pinned-read 安全边界、v2→v3 迁移和 recovery 处置见
 [`docs/production/REPORT_SYNC_BUNDLE.md`](docs/production/REPORT_SYNC_BUNDLE.md)。
 
 ## 开发验证

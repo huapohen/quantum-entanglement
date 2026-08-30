@@ -1,0 +1,1966 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>PostgreSQL Function-only Writes 与 Exact Access 阶段检查点</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">PostgreSQL Function-only Writes 与 Exact Access
+阶段检查点</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a
+href="#postgresql-function-only-writes-与-exact-access-阶段检查点"
+id="toc-postgresql-function-only-writes-与-exact-access-阶段检查点">PostgreSQL
+Function-only Writes 与 Exact Access 阶段检查点</a>
+<ul>
+<li><a href="#执行摘要" id="toc-执行摘要">1. 执行摘要</a>
+<ul>
+<li><a href="#证据口径" id="toc-证据口径">1.1 证据口径</a></li>
+<li><a href="#当前可以诚实宣称什么" id="toc-当前可以诚实宣称什么">1.2
+当前可以诚实宣称什么</a></li>
+<li><a href="#当前绝不能宣称什么" id="toc-当前绝不能宣称什么">1.3
+当前绝不能宣称什么</a></li>
+</ul></li>
+<li><a href="#一级调研如何约束本阶段而不是只做附录"
+id="toc-一级调研如何约束本阶段而不是只做附录">2.
+一级调研如何约束本阶段，而不是只做附录</a>
+<ul>
+<li><a href="#一级证据到实现的硬映射"
+id="toc-一级证据到实现的硬映射">2.1 一级证据到实现的硬映射</a></li>
+<li><a href="#本阶段明确没有照搬或夸大的做法"
+id="toc-本阶段明确没有照搬或夸大的做法">2.2
+本阶段明确没有照搬或夸大的做法</a></li>
+</ul></li>
+<li><a href="#提交与改动范围" id="toc-提交与改动范围">3.
+提交与改动范围</a>
+<ul>
+<li><a href="#可复核范围" id="toc-可复核范围">3.1 可复核范围</a></li>
+<li><a href="#个小提交台账" id="toc-个小提交台账">3.2 30
+个小提交台账</a></li>
+</ul></li>
+<li><a href="#function_only_writes-精确合同"
+id="toc-function_only_writes-精确合同">4.
+<code>0005_function_only_writes</code> 精确合同</a>
+<ul>
+<li><a href="#固定调用链" id="toc-固定调用链">4.1 固定调用链</a></li>
+<li><a href="#五个-exact-函数" id="toc-五个-exact-函数">4.2 五个 exact
+函数</a></li>
+<li><a href="#revision-与-tenant-语义"
+id="toc-revision-与-tenant-语义">4.3 Revision 与 tenant 语义</a></li>
+<li><a href="#exact-function-manifest"
+id="toc-exact-function-manifest">4.4 Exact function manifest</a></li>
+<li><a href="#migration-ddl-policy-边界"
+id="toc-migration-ddl-policy-边界">4.5 Migration DDL policy
+边界</a></li>
+</ul></li>
+<li><a href="#repository-wiring函数不是放在那里而是实际执行路径"
+id="toc-repository-wiring函数不是放在那里而是实际执行路径">5. Repository
+wiring：函数不是“放在那里”，而是实际执行路径</a>
+<ul>
+<li><a href="#已切换路径" id="toc-已切换路径">5.1 已切换路径</a></li>
+<li><a href="#仍故意没有写入口的对象"
+id="toc-仍故意没有写入口的对象">5.2 仍故意没有写入口的对象</a></li>
+<li><a href="#unit-of-work-保持的既有语义"
+id="toc-unit-of-work-保持的既有语义">5.3 Unit of Work
+保持的既有语义</a></li>
+</ul></li>
+<li><a href="#exact-authority-access-manifest"
+id="toc-exact-authority-access-manifest">6. Exact authority access
+manifest</a>
+<ul>
+<li><a href="#manifest-输入与-validator-入口"
+id="toc-manifest-输入与-validator-入口">6.1 Manifest 输入与 validator
+入口</a></li>
+<li><a href="#role-graph" id="toc-role-graph">6.2 Role graph</a></li>
+<li><a href="#role-attribute-exactness"
+id="toc-role-attribute-exactness">6.3 Role attribute exactness</a></li>
+<li><a href="#database-acl-exactness"
+id="toc-database-acl-exactness">6.4 Database ACL exactness</a></li>
+<li><a href="#schema-与-relation-inventory"
+id="toc-schema-与-relation-inventory">6.5 Schema 与 relation
+inventory</a></li>
+<li><a href="#function-acl-与-default-privilege"
+id="toc-function-acl-与-default-privilege">6.6 Function ACL 与 default
+privilege</a></li>
+<li><a href="#runtime-的精确允许面与拒绝面"
+id="toc-runtime-的精确允许面与拒绝面">6.7 Runtime
+的精确允许面与拒绝面</a></li>
+</ul></li>
+<li><a href="#postgresql-18.6-实证" id="toc-postgresql-18.6-实证">7.
+PostgreSQL 18.6 实证</a>
+<ul>
+<li><a href="#本次独立复核环境" id="toc-本次独立复核环境">7.1
+本次独立复核环境</a></li>
+<li><a href="#本次实际执行结果" id="toc-本次实际执行结果">7.2
+本次实际执行结果</a></li>
+<li><a href="#function-only-write-场景"
+id="toc-function-only-write-场景">7.3 Function-only write 场景</a></li>
+<li><a href="#exact-access-drift-场景"
+id="toc-exact-access-drift-场景">7.4 Exact access drift 场景</a></li>
+<li><a href="#runtime-raw-sql-矩阵" id="toc-runtime-raw-sql-矩阵">7.5
+Runtime raw SQL 矩阵</a></li>
+<li><a href="#测试没有覆盖什么" id="toc-测试没有覆盖什么">7.6
+测试没有覆盖什么</a></li>
+</ul></li>
+<li><a href="#相对-topic-33-的增量结论"
+id="toc-相对-topic-33-的增量结论">8. 相对 Topic 33 的增量结论</a></li>
+<li><a href="#仍未完成的生产关键路径" id="toc-仍未完成的生产关键路径">9.
+仍未完成的生产关键路径</a>
+<ul>
+<li><a href="#p0-1production-iac-与-access-cutover"
+id="toc-p0-1production-iac-与-access-cutover">P0-1：Production IaC 与
+access cutover</a></li>
+<li><a href="#p0-2trusted-authenticated-tenant-context"
+id="toc-p0-2trusted-authenticated-tenant-context">P0-2：Trusted
+authenticated tenant context</a></li>
+<li><a href="#p0-3action-time-authority-resolver-pep"
+id="toc-p0-3action-time-authority-resolver-pep">P0-3：Action-time
+authority resolver / PEP</a></li>
+<li><a href="#p0-4production-startupreadiness-composition"
+id="toc-p0-4production-startupreadiness-composition">P0-4：Production
+startup/readiness composition</a></li>
+<li><a href="#p0-5recovery-与-operational-proof"
+id="toc-p0-5recovery-与-operational-proof">P0-5：Recovery 与 operational
+proof</a></li>
+<li><a href="#p0-6postgresql-durable-event-store-outbox-checkpoint"
+id="toc-p0-6postgresql-durable-event-store-outbox-checkpoint">P0-6：PostgreSQL
+durable event store / outbox / checkpoint</a></li>
+<li><a href="#p0-7im-inboundoutbound-与-provider-truth"
+id="toc-p0-7im-inboundoutbound-与-provider-truth">P0-7：IM
+inbound/outbound 与 provider truth</a></li>
+<li><a href="#p1agent-collaboration-domain"
+id="toc-p1agent-collaboration-domain">P1：Agent collaboration
+domain</a></li>
+</ul></li>
+<li><a href="#提前接入-im-的-readiness-判定"
+id="toc-提前接入-im-的-readiness-判定">10. 提前接入 IM 的 readiness
+判定</a></li>
+<li><a href="#推荐下一阶段顺序与验收门"
+id="toc-推荐下一阶段顺序与验收门">11. 推荐下一阶段顺序与验收门</a>
+<ul>
+<li><a href="#gate-a把-exact-access-从测试变成生产部署事实"
+id="toc-gate-a把-exact-access-从测试变成生产部署事实">Gate A：把 exact
+access 从测试变成生产部署事实</a></li>
+<li><a href="#gate-btrusted-tenant-action-time-resolver"
+id="toc-gate-btrusted-tenant-action-time-resolver">Gate B：trusted
+tenant + action-time resolver</a></li>
+<li><a href="#gate-cdurable-eventoutbox-minimal-im-adapter"
+id="toc-gate-cdurable-eventoutbox-minimal-im-adapter">Gate C：durable
+event/outbox + minimal IM adapter</a></li>
+<li><a href="#gate-dagent-collaboration-domain"
+id="toc-gate-dagent-collaboration-domain">Gate D：Agent collaboration
+domain</a></li>
+</ul></li>
+<li><a href="#复核索引" id="toc-复核索引">12. 复核索引</a>
+<ul>
+<li><a href="#代码证据" id="toc-代码证据">12.1 代码证据</a></li>
+<li><a href="#一级研究证据" id="toc-一级研究证据">12.2
+一级研究证据</a></li>
+</ul></li>
+<li><a href="#最终结论" id="toc-最终结论">13. 最终结论</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1
+id="postgresql-function-only-writes-与-exact-access-阶段检查点">PostgreSQL
+Function-only Writes 与 Exact Access 阶段检查点</h1>
+<blockquote>
+<p>日期：2026-08-28（Asia/Shanghai）</p>
+<p>分支：<code>dev_wanwork_quantum_entanglement</code>（本报告不改变
+<code>main</code>）</p>
+<p>代码基线 /
+HEAD：<code>cd92ea56493b43889f5165892b40ec36e958d44a</code></p>
+<p>本批提交范围：<code>5fa2456^..cd92ea5</code>（30 个小提交）</p>
+<p>上一历史检查点：<code>analysis_report/research/33_postgres_authority_persistence_checkpoint.md</code>
+（保留原样；本文件是增量检查点，不覆盖 Topic 33）</p>
+<p>一级研究根：
+<code>/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output</code>
+与
+<code>/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output/more</code></p>
+<p>主要代码范围：<code>apps/im-api/internal/platform/postgres/migrations</code>、
+<code>apps/im-api/internal/platform/postgres/imstore</code>、<code>apps/im-api/internal/imstore</code></p>
+</blockquote>
+<p>阶段结构图（一级调研约束、五函数写面、exact access、PostgreSQL 18.6
+实证与剩余生产 gate）：</p>
+<figure>
+<img
+src="../screenshots/34_postgres_function_only_writes_and_exact_access_map.png"
+alt="PostgreSQL Function-only Writes 与 Exact Access 阶段结构图" />
+<figcaption aria-hidden="true">PostgreSQL Function-only Writes 与 Exact
+Access 阶段结构图</figcaption>
+</figure>
+<h2 id="执行摘要">1. 执行摘要</h2>
+<p>Topic 33 的结论是：PostgreSQL authority persistence substrate
+已经存在，但 runtime credential 仍能直接 <code>INSERT/UPDATE</code>
+head/snapshot/receipt 表，因此 repository 中的 successor-only
+CAS、append-only snapshot 与 tenant check 可以被同一凭据下的任意 SQL
+绕过。</p>
+<p>本阶段针对这个具体缺口完成了两层收口：</p>
+<ol type="1">
+<li>migration <code>0005_function_only_writes</code> 增加五个固定
+<code>SECURITY DEFINER</code> 写函数；conversation、provider
+binding、membership、access 与 command receipt repository
+已全部改为调用固定函数，而不是发送业务 raw table write；</li>
+<li><code>AuthorityAccessManifest</code> 把 database
+owner、owner/migrator/runtime group role、显式 migration/runtime
+login、membership grantor/options、数据库/schema/table/function/default
+privilege 冻结为 exact manifest， 并在 PostgreSQL 18.6
+真实登录连接上验证允许面与拒绝面。</li>
+</ol>
+<p>当前因此可以成立一个更窄、更准确的结论：</p>
+<blockquote>
+<p>对当前五条 ordinary conversation authority 写路径，测试中的 runtime
+login 必须先显式
+<code>SET ROLE runtime</code>，随后只能通过五个登记函数写入；它不能直接修改
+22 张 authority 表，也不能获得未登记 的
+read、<code>MAINTAIN</code>、DDL、TEMP、owner 或 migrator
+能力。函数与角色/ACL 漂移会被 exact comparator 拒绝。</p>
+</blockquote>
+<p>这个结论仍然不是“生产 IM
+已完成”，也不是“完整多租户授权已完成”。角色创建、database ownership
+转交、 login/password/secret rotation、startup/readiness validator、旧
+session cutover 目前只有代码合同和测试 fixture， 没有 production IaC
+与生产组合。trusted tenant、action-time resolver、durable
+event/outbox、恢复演练和 IM outbound 仍未交付。</p>
+<h3 id="证据口径">1.1 证据口径</h3>
+<p>全文使用四类标记，避免把研究判断、代码存在和真实运行混成同一件事：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>标记</th>
+<th>含义</th>
+<th>本报告的使用边界</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[F]</code></td>
+<td>可复核事实</td>
+<td>固定源码、git 提交、PostgreSQL catalog 查询或本次实际测试结果。</td>
+</tr>
+<tr>
+<td><code>[C]</code></td>
+<td>有条件结论</td>
+<td>只有在当前数据库、当前登记对象、列出的连接角色与测试前提下成立。</td>
+</tr>
+<tr>
+<td><code>[A]</code></td>
+<td>分析判断</td>
+<td>从一级调研和当前实现推导出的设计判断，不冒充已交付能力。</td>
+</tr>
+<tr>
+<td><code>[U]</code></td>
+<td>未知 / 未验证</td>
+<td>生产拓扑、故障、恢复或 provider 行为尚无足够证据。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="当前可以诚实宣称什么">1.2 当前可以诚实宣称什么</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>标记</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[F]</code></td>
+<td>catalog 已激活 <code>0005_function_only_writes</code>；migration
+总数从 4 增至 5。</td>
+</tr>
+<tr>
+<td><code>[F]</code></td>
+<td>五个函数的名字、参数名/顺序、identity
+signature、返回类型、owner、安全属性、<code>search_path</code>、definition
+digest、ACL 与 overload 数量都被 exact manifest 校验。</td>
+</tr>
+<tr>
+<td><code>[F]</code></td>
+<td>四个 revision 函数只接受 create <code>0→1</code> 或 update
+<code>N→N+1</code>；duplicate/stale/skipped 返回
+<code>false</code>，不追加 snapshot。</td>
+</tr>
+<tr>
+<td><code>[F]</code></td>
+<td>未设置 tenant GUC、GUC 与函数 tenant 参数冲突时，固定 SQLSTATE
+<code>42501</code>，且目标 aggregate 零写入。</td>
+</tr>
+<tr>
+<td><code>[F]</code></td>
+<td>repository 已不再直接发出业务 <code>INSERT/UPDATE</code>；receipt
+也通过固定函数写入。</td>
+</tr>
+<tr>
+<td><code>[F]</code></td>
+<td>exact access manifest 覆盖显式登录角色、role
+attributes/settings、membership
+grantor/options、database/schema/relation/column/function/default
+ACL。</td>
+</tr>
+<tr>
+<td><code>[F]</code></td>
+<td>PostgreSQL 18.6 normal/race 下，migration 与 imstore
+两个包本次独立复跑均通过。</td>
+</tr>
+<tr>
+<td><code>[C]</code></td>
+<td>runtime function-only write 保证只覆盖五个登记函数和当前 22 张
+<code>wanwork_im</code> 表；不自动覆盖未来对象、外部数据库、provider
+或未登记写路径。</td>
+</tr>
+<tr>
+<td><code>[A]</code></td>
+<td>这一层是生产 credential containment 的必要底座，但不是 authenticated
+tenant admission 或 action-time business authorization。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="当前绝不能宣称什么">1.3 当前绝不能宣称什么</h3>
+<ul>
+<li>不能宣称 production IaC、生产 database owner/provisioner
+交接、login/secret rotation 已完成；</li>
+<li>不能宣称 <code>AuthorityAccessManifest</code> 已接入服务
+startup/readiness；当前 production composition 中没有调用它；</li>
+<li>不能宣称 tenant-local GUC 是 Clerk verified
+claim，或证明调用者属于该 tenant；</li>
+<li>不能宣称六个 access boolean 已构成动作时的完整授权；</li>
+<li>不能宣称 command receipt 是 provider
+ACK、完整结果回放、不可抵赖证据或 exactly-once；</li>
+<li>不能宣称 event stream、global position、outbox、checkpoint、crash
+replay 或灾备恢复已经交付；</li>
+<li>不能宣称 <code>agent_thread</code>、message/reaction/read
+state、Task、Attempt、Artifact、Acceptance 已持久化；</li>
+<li>不能宣称融云或原生 IM outbound 已连接、投递、去重、回读或
+reconcile；</li>
+<li>不能把 <code>migrator</code> 角色说成不可绕过的“双人审批”。它是
+capability indirection；列出的 migration login 在固定 membership
+图中可以沿 <code>migrator → owner</code> 显式
+<code>SET ROLE</code>。</li>
+</ul>
+<h2 id="一级调研如何约束本阶段而不是只做附录">2.
+一级调研如何约束本阶段，而不是只做附录</h2>
+<p>本阶段继续把用户指定的两层目录并列视为一级研究输入。根目录保存调研组合，<code>more</code>
+保存各项目和专题的
+冻结研究报告；本报告不把二次摘要替代为新的“事实来源”。采用的链路是：</p>
+<pre class="text"><code>一级报告中的 [F]/[C]/[A]/[U]
+  → 产品/安全不变量
+  → PostgreSQL function 与 ACL enforcement point
+  → 真实 login/role/SQL 负测
+  → 只在证据覆盖范围内下结论</code></pre>
+<h3 id="一级证据到实现的硬映射">2.1 一级证据到实现的硬映射</h3>
+<p>以下路径均相对于
+<code>/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output/more</code>。</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr>
+<th>一级证据</th>
+<th>原始证据边界</th>
+<th>对本阶段的硬约束</th>
+<th>当前落实</th>
+<th>没有被错误升格的部分</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>protocol-a2a/research_report.md:425-457,480-500</code></td>
+<td><code>[F]/[A]</code> A2A 的 tenant path/参数不等于 authenticated
+caller authorization；tenant IDOR、duplicate execution、stream gap 需要
+object authorization、idempotency/outbox/replay。</td>
+<td>函数 tenant 参数必须与 transaction-local context 精确一致，冲突 fail
+closed；测试必须包含 cross-tenant negative case。</td>
+<td>五函数显式 tenant equality check；unset/wrong/cross-tenant 均以
+<code>42501</code> 拒绝。</td>
+<td>GUC 没有被称为 token claim；outbox/replay 仍列为未交付。</td>
+</tr>
+<tr>
+<td><code>tech-agent-security-governance/research_report.md:145-170,315-329,460-486</code></td>
+<td><code>[A]</code> long-lived credential、secret in
+context、overgrant、cross-tenant state
+是核心风险；permission/tenant/role negative cases 应进入 release
+gate。</td>
+<td>同一 runtime credential 不应拥有 raw table
+mutation；验证必须在资源侧而非依赖模型、UI 或 Go package 私有性。</td>
+<td>runtime 只获固定 function <code>EXECUTE</code>、九张表
+<code>SELECT</code>；全部 22 张表 raw mutation 与 <code>MAINTAIN</code>
+被拒绝。</td>
+<td>当前没有 secret broker、短 lease、KMS 或 production rotation，不能用
+ACL 代替这些能力。</td>
+</tr>
+<tr>
+<td>同上 <code>:595-627</code></td>
+<td><code>[A]</code> Agent 只提交 canonical intent，trusted
+gateway/executor 获取窄
+credential；资源侧应只信受控入口，避免绕过直连。</td>
+<td>将 database function 作为独立 execution-side PEP；登录身份与有效
+group role 分离。</td>
+<td>runtime login 必须显式
+<code>SET ROLE runtime</code>；写资源只信五个函数。</td>
+<td>函数入口只约束 DB mutation，不等于完整 Action
+Gateway、mandate、approval 或 outbound executor。</td>
+</tr>
+<tr>
+<td><code>deepseek-harness/research_report.md:255-312,543-591,823-842</code></td>
+<td><code>[F]/[A]</code> durable/live 状态必须分域；恢复依赖 durable
+event spine、checkpoint 与重放；enforcement 应在真实执行边界。</td>
+<td>不把 process memory、UI 或 receipt 冒充 durable event
+system；数据库层应留下可复核 enforcement。</td>
+<td>function-only write 与 transaction receipt 被收窄；PG catalog/test
+可独立复核。</td>
+<td>event stream/global order/outbox/checkpoint/backfill+live/crash
+recovery 仍未实现。</td>
+</tr>
+<tr>
+<td><code>deepseek-harness/research_report.md:433-447,809-837</code></td>
+<td><code>[F]/[A]</code> 文件权限、同 UID 或 package boundary
+不是强安全边界；side effect 需要执行侧 capability、receipt 与
+reconcile。</td>
+<td>不以 repository 私有函数作为安全证明；必须使 raw SQL
+在数据库权限层失败。</td>
+<td>使用真实 runtime role 对 raw mutation、DDL、TEMP、owner/migrator
+escalation 做 SQLSTATE 负测。</td>
+<td>未验证 provider side effect、ACK 丢失和生产 reconcile。</td>
+</tr>
+<tr>
+<td><code>sandbase-harness/research_report.md:485-489,551-569</code></td>
+<td><code>[F]/[A]</code> schema/配置“存在”不证明 runtime
+wiring；权限合同必须在真实执行路径被实际使用。</td>
+<td>不仅创建函数，还必须把 repositories 改为调用函数，并由 runtime login
+完成 round trip。</td>
+<td>conversation/binding/membership/access/receipt repositories
+全部切换；runtime-login imstore integration 通过。</td>
+<td>access validator 仍未接 production
+startup，因此只能称库和测试已完成。</td>
+</tr>
+<tr>
+<td><code>clawith/research_report.md:198-226,403-419,543-575</code></td>
+<td><code>[F]/[A]</code> Participant、global identity、tenant
+membership、workspace/group membership、acting principal、assignment 与
+execution binding 应分层。</td>
+<td>数据库角色不应被升格为业务 Participant authority；access projection
+与 capability/credential/action gate 分离。</td>
+<td>本批只收窄 ordinary conversation persistence 写入口。</td>
+<td>trusted acting principal、Agent
+installation/mandate/budget/action-time recheck 未实现。</td>
+</tr>
+<tr>
+<td><code>clawith/research_report.md:599-611</code></td>
+<td><code>[F]/[A]/[U]</code> 渠道枚举或 adapter 文件数量不证明
+webhook、成员映射、顺序、幂等 ACK 和 outbound 成熟；outbound 应保存
+provider receipt 与 unknown/reconcile。</td>
+<td>provider binding 只能被视为平台映射；不得宣称真实 IM 已发送。</td>
+<td>仍保持“默认不发送”；没有触达任何外部 IM。</td>
+<td>inbound signature、outbound dispatch、provider message
+ID、unknown/reconcile 均未交付。</td>
+</tr>
+<tr>
+<td><code>_portfolio/master_research_report.md:220-226,640-679</code></td>
+<td><code>[A]</code>
+群聊不自动产生可靠协作；Task、Artifact、Acceptance、Evidence、Recovery
+是独立权威对象。</td>
+<td>不把 conversation row、access row 或 receipt 冒充 Task
+完成和业务验收。</td>
+<td>本阶段只做 authority persistence write containment。</td>
+<td>Task/Attempt/Artifact/Acceptance/Recovery 仍保留在后续计划。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="本阶段明确没有照搬或夸大的做法">2.2
+本阶段明确没有照搬或夸大的做法</h3>
+<ul>
+<li>没有把“函数是 <code>SECURITY DEFINER</code>”等同于函数天然安全；其
+body digest、owner、security mode、
+language、volatility、strictness、parallel、leakproof、search path、ACL
+和 overload 都被逐项比较；</li>
+<li>没有把“有 runtime role”当成 least privilege 已自动成立；直接 login
+grant、column ACL、default
+privilege、<code>MAINTAIN</code>、TEMP、PUBLIC CONNECT 和 membership
+grantor/options 都进入负测；</li>
+<li>没有把“RLS 已开启”当成 caller authentication；函数仍显式比较 tenant
+参数和 GUC；</li>
+<li>没有把“receipt 在同一 DB transaction”写成 provider
+exactly-once；外部副作用不在本批事务边界内；</li>
+<li>没有把 test provisioning helper 写成生产 IaC；真实环境的
+role/database/secret/cutover 仍需独立交付；</li>
+<li>没有操作或发送任何飞书、企微、群聊、bot、webhook 或其他 IM
+消息。</li>
+</ul>
+<h2 id="提交与改动范围">3. 提交与改动范围</h2>
+<h3 id="可复核范围">3.1 可复核范围</h3>
+<pre class="text"><code>from: 5fa24563ba237e2deafdb4da1e31bf5a4645490b
+to:   cd92ea56493b43889f5165892b40ec36e958d44a
+rev:  5fa2456^..cd92ea5
+count: 30 commits
+diff: 22 files, +3159 / -288</code></pre>
+<p>主要新增/修改：</p>
+<ul>
+<li><code>migrations/sql/0005_function_only_writes.up.sql</code> /
+<code>.down.sql</code>；</li>
+<li><code>migrations/function_postconditions.go</code> 及
+unit/integration tests；</li>
+<li><code>migrations/access_manifest.go</code> 及 unit/integration
+tests；</li>
+<li><code>migrations/sql_policy.go</code>、catalog/postcondition/runner
+integration；</li>
+<li><code>imstore/repositories.go</code>、<code>uow.go</code> 与
+normal/race PostgreSQL integration；</li>
+<li><code>docs/wanwork_im/W2_POSTGRES_FUNCTION_WRITE_PLAN.md</code>。</li>
+</ul>
+<h3 id="个小提交台账">3.2 30 个小提交台账</h3>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 23%" />
+<col style="width: 23%" />
+<col style="width: 23%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: right;">#</th>
+<th>提交</th>
+<th>作用</th>
+<th>阶段边界</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">1</td>
+<td><code>5fa2456</code></td>
+<td>仅为 migration version 5 冻结 function DDL policy</td>
+<td>没有向未来 migration 泛化 function DDL。</td>
+</tr>
+<tr>
+<td style="text-align: right;">2</td>
+<td><code>0c21cc8</code></td>
+<td>冻结五函数签名、workspace 空串 sentinel、PostgreSQL bigint 上界</td>
+<td>先冻结 wire contract，尚未写 schema。</td>
+</tr>
+<tr>
+<td style="text-align: right;">3</td>
+<td><code>a3ebc3f</code></td>
+<td>增加 exact function manifest comparator</td>
+<td>comparator 先行。</td>
+</tr>
+<tr>
+<td style="text-align: right;">4</td>
+<td><code>6f9a233</code></td>
+<td>暂存 <code>0005</code> up/down SQL</td>
+<td>尚未激活 catalog。</td>
+</tr>
+<tr>
+<td style="text-align: right;">5</td>
+<td><code>89153d9</code></td>
+<td>激活 <code>0005</code>，接 definition digest/postcondition 与 PG18
+集成</td>
+<td>五函数成为 migration catalog 一部分。</td>
+</tr>
+<tr>
+<td style="text-align: right;">6</td>
+<td><code>af7e1e4</code></td>
+<td>repository 入口拒绝超过 PostgreSQL <code>bigint</code> 的
+revision</td>
+<td>避免把编码失败误报为 store outage。</td>
+</tr>
+<tr>
+<td style="text-align: right;">7</td>
+<td><code>452cf30</code></td>
+<td>conversation revision 改走固定函数</td>
+<td>移除该 aggregate 的 raw write。</td>
+</tr>
+<tr>
+<td style="text-align: right;">8</td>
+<td><code>0c25e65</code></td>
+<td>provider conversation binding 改走固定函数</td>
+<td>同上。</td>
+</tr>
+<tr>
+<td style="text-align: right;">9</td>
+<td><code>831e491</code></td>
+<td>conversation membership 改走固定函数</td>
+<td>同上。</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td><code>557cda3</code></td>
+<td>conversation access 改走固定函数</td>
+<td>同上。</td>
+</tr>
+<tr>
+<td style="text-align: right;">11</td>
+<td><code>47c743b</code></td>
+<td>command receipt 改走固定函数</td>
+<td>receipt 不再 raw insert。</td>
+</tr>
+<tr>
+<td style="text-align: right;">12</td>
+<td><code>22cb361</code></td>
+<td>runtime 撤销 raw authority write，并增加 mutation/DDL 负测</td>
+<td>初始 runtime containment。</td>
+</tr>
+<tr>
+<td style="text-align: right;">13</td>
+<td><code>2ef2551</code></td>
+<td>允许安全 function grant 后重复 <code>Apply</code> 继续通过</td>
+<td>历史 postcondition 与安全 ACL 共存。</td>
+</tr>
+<tr>
+<td style="text-align: right;">14</td>
+<td><code>3fcc7ba</code></td>
+<td>runtime <code>SELECT</code> 缩到真实使用的九张表</td>
+<td>不授予全部 authority read。</td>
+</tr>
+<tr>
+<td style="text-align: right;">15</td>
+<td><code>d911c51</code></td>
+<td>引入 exact authority access manifest</td>
+<td>role/object/ACL comparator 主体。</td>
+</tr>
+<tr>
+<td style="text-align: right;">16</td>
+<td><code>5bf39f8</code></td>
+<td>raw write 矩阵扩到全部 22 张 authority 表</td>
+<td>防止只测 repository 当前九表。</td>
+</tr>
+<tr>
+<td style="text-align: right;">17</td>
+<td><code>acdd908</code></td>
+<td>拒绝 scoped role/database settings</td>
+<td>阻止 role config 偷渡 search path 等设置。</td>
+</tr>
+<tr>
+<td style="text-align: right;">18</td>
+<td><code>0230437</code></td>
+<td>冻结 <code>wanwork_meta</code> relation inventory</td>
+<td>metadata schema 不能静默加 relation。</td>
+</tr>
+<tr>
+<td style="text-align: right;">19</td>
+<td><code>949c3c9</code></td>
+<td>拒绝 metadata schema routines</td>
+<td><code>wanwork_meta</code> 不允许旁路函数。</td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td><code>68989b8</code></td>
+<td>exact 比较 owner 的 function default ACL</td>
+<td>未来函数默认不向 PUBLIC 开放。</td>
+</tr>
+<tr>
+<td style="text-align: right;">21</td>
+<td><code>f21a8c7</code></td>
+<td>注入 object ACL drift</td>
+<td>验证额外/缺失 grant fail closed。</td>
+</tr>
+<tr>
+<td style="text-align: right;">22</td>
+<td><code>9d745a7</code></td>
+<td>注入 role attribute 与 database drift</td>
+<td>验证 LOGIN/INHERIT/settings/PUBLIC/TEMP 等漂移。</td>
+</tr>
+<tr>
+<td style="text-align: right;">23</td>
+<td><code>4f9d1a1</code></td>
+<td>拒绝相同 membership 的重复 grantor row</td>
+<td>不因 group/去重漏掉不同授权者。</td>
+</tr>
+<tr>
+<td style="text-align: right;">24</td>
+<td><code>5f9c962</code></td>
+<td>通过真实 migration login 验证 access</td>
+<td>不再只用 admin session 假装 deploy identity。</td>
+</tr>
+<tr>
+<td style="text-align: right;">25</td>
+<td><code>bceb8bc</code></td>
+<td>validator 绑定列出的 migration <code>session_user</code></td>
+<td>unlisted admin 即使 <code>SET ROLE owner</code> 也失败。</td>
+</tr>
+<tr>
+<td style="text-align: right;">26</td>
+<td><code>f553f10</code></td>
+<td>增加 unlisted migration session 负测</td>
+<td>固定 validator 入口身份。</td>
+</tr>
+<tr>
+<td style="text-align: right;">27</td>
+<td><code>c623aea</code></td>
+<td>通过真实 runtime login 执行 store</td>
+<td>验证 login→<code>SET ROLE runtime</code>→repository。</td>
+</tr>
+<tr>
+<td style="text-align: right;">28</td>
+<td><code>b10e7c7</code></td>
+<td>每张表拒绝 runtime <code>MAINTAIN</code> / <code>ANALYZE</code></td>
+<td>吸收 PostgreSQL 18 新 privilege 面。</td>
+</tr>
+<tr>
+<td style="text-align: right;">29</td>
+<td><code>83d38d8</code></td>
+<td>证明 migration login 的允许/拒绝边界</td>
+<td>只可走指定 SET ROLE 路径。</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td><code>cd92ea5</code></td>
+<td>out-of-band writer 测试显式绑定 runtime role</td>
+<td>幂等冲突/锁路径不再借 owner 权限通过。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="function_only_writes-精确合同">4.
+<code>0005_function_only_writes</code> 精确合同</h2>
+<h3 id="固定调用链">4.1 固定调用链</h3>
+<pre class="text"><code>runtime login（LOGIN, NOINHERIT）
+  → SET ROLE runtime
+  → Serializable tenant Unit of Work
+  → SET LOCAL wanwork.tenant_id
+  → typed repository
+  → SELECT wanwork_im.write_*($1, ...)
+  → SECURITY DEFINER function
+  → tenant 参数 == transaction-local GUC
+  → successor-only head CAS + append snapshot / insert receipt
+  → outer transaction commit / rollback</code></pre>
+<p>这里的 <code>SECURITY DEFINER</code> 只用于把有限函数调用转换为 owner
+执行的固定 SQL。runtime 不获得 underlying table
+write。函数没有动态表名、动态 <code>EXECUTE</code>、JSON patch 或“通用
+SQL”入口。</p>
+<h3 id="五个-exact-函数">4.2 五个 exact 函数</h3>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th>函数</th>
+<th>exact 参数名与顺序</th>
+<th>返回</th>
+<th>当前用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>write_conversation_revision</code></td>
+<td><code>p_tenant_id text, p_conversation_id text, p_expected_revision bigint, p_next_revision bigint, p_workspace_id text, p_conversation_type text, p_status text</code></td>
+<td><code>boolean</code></td>
+<td>ordinary direct/group conversation head + snapshot。</td>
+</tr>
+<tr>
+<td><code>write_provider_conversation_binding_revision</code></td>
+<td><code>p_tenant_id text, p_provider text, p_realm_id text, p_provider_conversation_id text, p_expected_revision bigint, p_next_revision bigint, p_conversation_id text, p_status text</code></td>
+<td><code>boolean</code></td>
+<td>provider conversation mapping head + snapshot。</td>
+</tr>
+<tr>
+<td><code>write_conversation_membership_revision</code></td>
+<td><code>p_tenant_id text, p_conversation_id text, p_actor_id text, p_expected_revision bigint, p_next_revision bigint, p_role text, p_status text</code></td>
+<td><code>boolean</code></td>
+<td>conversation membership head + snapshot。</td>
+</tr>
+<tr>
+<td><code>write_conversation_access_revision</code></td>
+<td><code>p_tenant_id text, p_conversation_id text, p_actor_id text, p_expected_revision bigint, p_next_revision bigint, p_can_read boolean, p_can_send_message boolean, p_can_manage_members boolean, p_can_manage_conversation boolean, p_can_invoke_agent boolean, p_can_publish_artifact_reference boolean</code></td>
+<td><code>boolean</code></td>
+<td>六项 immutable access projection head + snapshot。</td>
+</tr>
+<tr>
+<td><code>write_tenant_command_receipt</code></td>
+<td><code>p_tenant_id text, p_command_kind text, p_idempotency_key text, p_request_sha256 text, p_result_sha256 text</code></td>
+<td><code>timestamptz</code></td>
+<td>插入 transaction-local command receipt 并返回
+<code>committed_at</code>。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="revision-与-tenant-语义">4.3 Revision 与 tenant 语义</h3>
+<p>四个 revision 函数共同冻结：</p>
+<ul>
+<li>create 只接受 <code>expected_revision=0</code> 且
+<code>next_revision=1</code>；</li>
+<li>update 只接受 <code>expected_revision&gt;=1</code> 且
+<code>next_revision=expected_revision+1</code>；</li>
+<li>CAS miss、duplicate、stale 或 skipped revision 返回
+<code>false</code>；</li>
+<li>返回 <code>false</code> 时不产生 snapshot；repository 映射为稳定的
+revision conflict；</li>
+<li>head mutation 与 snapshot append 在同一 function statement、同一
+outer transaction 中；</li>
+<li><code>current_setting('wanwork.tenant_id', true)</code> 必须与
+<code>p_tenant_id</code> 精确相同；缺失或不同均抛 SQLSTATE
+<code>42501</code>；</li>
+<li>tenant check 不依赖 RLS 是否因 owner/BYPASSRLS
+语义被绕开；它位于函数 body 内；</li>
+<li>Go <code>uint64</code> 在发 SQL 前限制为 PostgreSQL signed
+<code>bigint</code> 上界 <code>9223372036854775807</code>；</li>
+<li>conversation 的 nil workspace 固定编码为空字符串，函数仅在 snapshot
+insert 处用 <code>NULLIF(p_workspace_id, '')</code> 恢复 SQL
+NULL；其他参数不共享这个 sentinel。</li>
+</ul>
+<p>receipt 函数没有 revision CAS。它执行受约束的单行 insert；既有 Unit
+of Work 仍负责 transaction advisory lock、request/result
+digest、existing receipt read、exact replay 和 unknown commit
+后的新连接回读。函数本身不保存 response body、provider receipt 或 event
+position。</p>
+<h3 id="exact-function-manifest">4.4 Exact function manifest</h3>
+<p>每个登记函数必须同时满足：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>维度</th>
+<th>exact 要求</th>
+<th>防止的漂移</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>name/signature</td>
+<td>exact 名字、参数名/顺序、identity arguments、返回类型</td>
+<td>错参、隐式 cast、额外 overload。</td>
+</tr>
+<tr>
+<td>owner</td>
+<td>owner 必须等于当前 migration owner；access manifest 再精确绑定命名
+owner role</td>
+<td>函数被转给错误角色。</td>
+</tr>
+<tr>
+<td>language/kind</td>
+<td><code>plpgsql</code>、普通 function kind <code>f</code></td>
+<td>procedure/language 换壳。</td>
+</tr>
+<tr>
+<td>execution</td>
+<td><code>SECURITY DEFINER</code></td>
+<td>漂移为 invoker 导致权限/语义变化。</td>
+</tr>
+<tr>
+<td>behavior flags</td>
+<td><code>VOLATILE</code>、<code>STRICT</code>、<code>PARALLEL UNSAFE</code>、<code>LEAKPROOF=false</code></td>
+<td>planner/NULL/并行/泄漏语义变化。</td>
+</tr>
+<tr>
+<td>path</td>
+<td>function-local <code>search_path=pg_catalog</code>；业务对象 fully
+qualified</td>
+<td>hostile ambient schema shadowing。</td>
+</tr>
+<tr>
+<td>body</td>
+<td>domain-separated SHA-256 definition digest exact</td>
+<td>安全属性不变但函数逻辑被修改。</td>
+</tr>
+<tr>
+<td>ACL</td>
+<td>owner 自身 exact execute；PUBLIC 无 execute；仅安全 non-login group
+可获非 grantable execute</td>
+<td>PUBLIC、login 直授或危险 role 进入。</td>
+</tr>
+<tr>
+<td>inventory</td>
+<td><code>wanwork_im</code> 中只允许五个 exact function identity</td>
+<td>旁路函数与同名 overload。</td>
+</tr>
+</tbody>
+</table>
+<p>definition digest 保护的是 catalog 中的函数定义，不保护业务行、event
+payload、provider response 或备份内容。 它也不是代码签名或供应链
+provenance。</p>
+<h3 id="migration-ddl-policy-边界">4.5 Migration DDL policy 边界</h3>
+<p>function DDL 不是被全局开放。<code>5fa2456</code> 只给 catalog 中
+version 5 的固定 SQL policy 开口；future migration 不会自动继承
+<code>CREATE FUNCTION</code> 能力。<code>0005</code> 的 embedded SQL
+仍受 checksum、version/name、lexer policy、 exact postcondition
+与累计历史 postcondition 共同约束。</p>
+<p>该 token-aware policy 仍不是用于执行任意不可信 SQL 的
+parser/sandbox。安全结论依赖 migration source review、 embedded checksum
+与 exact postcondition 的组合，不能把 allowlist 单独宣传成通用 SQL
+firewall。</p>
+<h2 id="repository-wiring函数不是放在那里而是实际执行路径">5. Repository
+wiring：函数不是“放在那里”，而是实际执行路径</h2>
+<h3 id="已切换路径">5.1 已切换路径</h3>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th>Repository path</th>
+<th>旧路径</th>
+<th>当前路径</th>
+<th>返回语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Conversation CAS</td>
+<td>raw head insert/update + snapshot insert</td>
+<td><code>write_conversation_revision</code></td>
+<td><code>true</code> 成功；<code>false</code> revision conflict。</td>
+</tr>
+<tr>
+<td>Provider binding CAS</td>
+<td>raw head/snapshot write</td>
+<td><code>write_provider_conversation_binding_revision</code></td>
+<td>同上。</td>
+</tr>
+<tr>
+<td>Membership CAS</td>
+<td>raw head/snapshot write</td>
+<td><code>write_conversation_membership_revision</code></td>
+<td>同上。</td>
+</tr>
+<tr>
+<td>Access CAS</td>
+<td>raw head/snapshot write</td>
+<td><code>write_conversation_access_revision</code></td>
+<td>同上。</td>
+</tr>
+<tr>
+<td>Command receipt</td>
+<td>raw receipt insert</td>
+<td><code>write_tenant_command_receipt</code></td>
+<td>返回 non-zero <code>committed_at</code>。</td>
+</tr>
+</tbody>
+</table>
+<p>代码搜索与本批 diff 表明 <code>repositories.go</code> 的这些业务
+mutation 已被函数 <code>SELECT</code> 替代。integration 又通过 真实
+runtime login/pool 执行 round trip，因此不是“只创建 SQL 函数、应用仍走旧
+SQL”。</p>
+<h3 id="仍故意没有写入口的对象">5.2 仍故意没有写入口的对象</h3>
+<p>五个函数没有覆盖 roots 与 identity authority（如
+tenant/workspace、human principal、Actor、tenant membership、provider
+Actor binding）。runtime 对这些表同样无 raw
+mutation，因此当前服务不能把它们当作已完成的 production write
+API。后续若需要写入，应为具体 use case
+新增窄函数/command，不应恢复表级通用写权限。</p>
+<h3 id="unit-of-work-保持的既有语义">5.3 Unit of Work
+保持的既有语义</h3>
+<ul>
+<li>Serializable transaction；</li>
+<li>transaction-local tenant binding；</li>
+<li>tenant/command/idempotency-key scoped advisory lock；</li>
+<li>request/result SHA-256 exact replay；</li>
+<li>callback error、repository poison 与 rollback fail closed；</li>
+<li>synthetic commit ACK unknown 后隔离原连接，在新连接回读
+receipt；</li>
+<li>out-of-band receipt conflict 测试也显式通过 runtime role，而非 owner
+旁路。</li>
+</ul>
+<p>本批收窄的是数据库写 capability，没有把 Unit of Work 扩张为外部
+provider transaction coordinator。</p>
+<h2 id="exact-authority-access-manifest">6. Exact authority access
+manifest</h2>
+<h3 id="manifest-输入与-validator-入口">6.1 Manifest 输入与 validator
+入口</h3>
+<p><code>AuthorityAccessManifest</code> 包含：</p>
+<pre class="text"><code>DatabaseOwnerRole
+OwnerRole
+MigratorRole
+RuntimeRole
+MigrationLoginRoles[]
+RuntimeLoginRoles[]</code></pre>
+<p>role name 只接受 canonical lowercase
+<code>[a-z][a-z0-9_]{0,62}</code>，所有 core/login
+名必须全局互异，migration 与 runtime login 列表均不能为空。</p>
+<p><code>ValidateAuthorityAccess</code> 是
+read-only、repeatable-read、fail-closed
+comparator，不会自动修复角色、owner 或
+grant。调用连接还必须同时满足：</p>
+<pre class="text"><code>session_user ∈ manifest.MigrationLoginRoles
+current_user = manifest.OwnerRole</code></pre>
+<p>因此：</p>
+<ul>
+<li>未列入 manifest 的 admin session 即使能
+<code>SET ROLE owner</code>，validator 也拒绝；</li>
+<li>列出的 migration login 尚未 <code>SET ROLE owner</code>，validator
+也拒绝；</li>
+<li>validator 通过说明本次 catalog snapshot 与 manifest
+精确相等，不代表它已被 production startup 调用。</li>
+</ul>
+<p><code>DefaultAuthorityAccessManifest</code> 只提供 core role
+默认名；由于环境 login 列表必须显式填写，默认值本身不能直接 通过
+validation。这是刻意的 fail closed，不是开箱即用的生产配置。</p>
+<h3 id="role-graph">6.2 Role graph</h3>
+<pre class="text"><code>external database owner / provisioner
+  ├─ GRANT owner    TO migrator       WITH ADMIN false, INHERIT false, SET true
+  ├─ GRANT migrator TO migration_login WITH ADMIN false, INHERIT false, SET true
+  └─ GRANT runtime  TO runtime_login   WITH ADMIN false, INHERIT false, SET true
+
+migration_login → SET ROLE owner（沿显式 membership 路径）→ Apply + Validate
+runtime_login   → SET ROLE runtime                           → service UoW</code></pre>
+<p>所有上述 membership row 的 <code>grantor</code> 必须精确等于
+<code>DatabaseOwnerRole</code>。comparator 按
+<code>granted/member/grantor</code> 比较，并逐项要求
+<code>admin=false</code>、<code>inherit=false</code>、<code>set=true</code>；不同
+grantor 创建的 “同一 granted/member”重复 row 也会被识别为 drift。</p>
+<p><code>migrator</code> 的作用是 capability indirection 和 login
+集合管理。它没有构成两人审批，也没有让 migration login 无法到达
+owner；真正的双人/审批控制需要外部 deploy workflow、短期凭据、审计和
+separation-of-duties，当前未实现。</p>
+<h3 id="role-attribute-exactness">6.3 Role attribute exactness</h3>
+<p>对 owner/migrator/runtime 三个 group role 与所有列出的环境
+login，manifest 要求：</p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th style="text-align: right;">group role</th>
+<th style="text-align: right;">environment login</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LOGIN</code></td>
+<td style="text-align: right;">false</td>
+<td style="text-align: right;">true</td>
+</tr>
+<tr>
+<td><code>INHERIT</code></td>
+<td style="text-align: right;">false</td>
+<td style="text-align: right;">false</td>
+</tr>
+<tr>
+<td><code>SUPERUSER</code></td>
+<td style="text-align: right;">false</td>
+<td style="text-align: right;">false</td>
+</tr>
+<tr>
+<td><code>CREATEROLE</code></td>
+<td style="text-align: right;">false</td>
+<td style="text-align: right;">false</td>
+</tr>
+<tr>
+<td><code>CREATEDB</code></td>
+<td style="text-align: right;">false</td>
+<td style="text-align: right;">false</td>
+</tr>
+<tr>
+<td><code>REPLICATION</code></td>
+<td style="text-align: right;">false</td>
+<td style="text-align: right;">false</td>
+</tr>
+<tr>
+<td><code>BYPASSRLS</code></td>
+<td style="text-align: right;">false</td>
+<td style="text-align: right;">false</td>
+</tr>
+<tr>
+<td>connection limit</td>
+<td style="text-align: right;"><code>-1</code></td>
+<td style="text-align: right;"><code>-1</code></td>
+</tr>
+<tr>
+<td><code>VALID UNTIL</code></td>
+<td style="text-align: right;">unset</td>
+<td style="text-align: right;">unset</td>
+</tr>
+<tr>
+<td>role-level <code>rolconfig</code></td>
+<td style="text-align: right;">absent</td>
+<td style="text-align: right;">absent</td>
+</tr>
+<tr>
+<td>database-scoped role settings</td>
+<td style="text-align: right;">absent</td>
+<td style="text-align: right;">absent</td>
+</tr>
+</tbody>
+</table>
+<p>这里不对 external database owner/provisioner 的 cluster-level
+attributes 下同样结论；它是 manifest 外部的 bootstrap authority，但其
+database ownership 与 grantor
+身份会被比较。生产环境如何保护该高权主体属于 IaC/DBA 交接边界。</p>
+<h3 id="database-acl-exactness">6.4 Database ACL exactness</h3>
+<ul>
+<li>当前 database owner 必须精确等于
+<code>DatabaseOwnerRole</code>；</li>
+<li>PUBLIC 无
+<code>CONNECT</code>、<code>CREATE</code>、<code>TEMPORARY</code>；</li>
+<li>owner group 只有 database <code>CREATE</code>；</li>
+<li>显式 migration/runtime login 只有直接 <code>CONNECT</code>；</li>
+<li>migrator/runtime group 不直接 <code>CONNECT</code>，所有 manifest
+roles 均无 database <code>TEMPORARY</code>；</li>
+<li>额外 database ACL、grant option 或错误 grantor 都构成 drift。</li>
+</ul>
+<p>撤销 PUBLIC CONNECT 只影响新连接许可，不会断开已经存在的
+session。真实 cutover 必须停服务、确认/终止旧 session、完成
+ownership/grant、再以新 login 启动；本批测试没有把这一点冒充已交付的
+production runbook。</p>
+<h3 id="schema-与-relation-inventory">6.5 Schema 与 relation
+inventory</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>对象域</th>
+<th>exact owner/inventory</th>
+<th>non-owner privilege</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wanwork_meta</code> schema</td>
+<td>owner role；exact 一张 <code>schema_migrations</code> table；无
+routine</td>
+<td>无 runtime USAGE/表 privilege。</td>
+</tr>
+<tr>
+<td><code>wanwork_im</code> schema</td>
+<td>owner role；exact 22 张 ordinary table；无额外
+table/view/materialized view/sequence/foreign table/partitioned
+table</td>
+<td>runtime 仅 <code>USAGE</code>。</td>
+</tr>
+<tr>
+<td><code>wanwork_im</code> tables</td>
+<td>22 张均由 owner role 拥有</td>
+<td>runtime 只对九张表有 <code>SELECT</code>；其余无 non-owner table
+ACL。</td>
+</tr>
+<tr>
+<td>columns</td>
+<td>owner 之外不得存在 column ACL</td>
+<td>direct <code>UPDATE(column)</code> 等 grant 会 drift。</td>
+</tr>
+</tbody>
+</table>
+<p>access manifest 的 relation inventory 不把 index relkind 纳入自己的
+exact list；index/constraint/RLS 的形状仍由 各 migration postcondition
+检查。不能把 relation comparator 夸大为“整个 PostgreSQL catalog 的通用
+schema digest”。</p>
+<p>runtime exact read 九表：</p>
+<pre class="text"><code>conversation_access_heads
+conversation_access_snapshots
+conversation_heads
+conversation_membership_heads
+conversation_membership_snapshots
+conversation_snapshots
+provider_conversation_binding_heads
+provider_conversation_binding_snapshots
+tenant_command_receipts</code></pre>
+<p>runtime 不读取 identity/root
+表并不证明对应业务不需要它们，而是说明当前 repository
+的真实读面只到这九张表。 未来增加 read use case 时必须显式更新
+manifest、测试和审计，而不是用
+<code>GRANT SELECT ON ALL TABLES</code>。</p>
+<h3 id="function-acl-与-default-privilege">6.6 Function ACL 与 default
+privilege</h3>
+<ul>
+<li><code>wanwork_im</code> routine inventory
+精确等于五个登记函数；</li>
+<li>五个函数 owner 精确等于 owner role；</li>
+<li>runtime group 对五函数各有 non-grantable <code>EXECUTE</code>；</li>
+<li>environment login 不得有 direct function grant；</li>
+<li>PUBLIC 不得有 function <code>EXECUTE</code>；</li>
+<li><code>wanwork_meta</code> 不得存在 routine；</li>
+<li>owner 的 global function default ACL 必须精确为 owner 自身
+execute，不得让未来函数默认向 PUBLIC 开放。</li>
+</ul>
+<p>关键 provisioning 语义是：</p>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="kw">ALTER</span> <span class="kw">DEFAULT</span> <span class="kw">PRIVILEGES</span> <span class="cf">FOR</span> <span class="kw">ROLE</span> <span class="op">&lt;</span>owner<span class="op">&gt;</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">REVOKE</span> <span class="kw">EXECUTE</span> <span class="kw">ON</span> <span class="kw">FUNCTIONS</span> <span class="kw">FROM</span> <span class="kw">PUBLIC</span>;</span></code></pre></div>
+<p>这里是 owner 的全局 function default privilege（catalog 中
+<code>defaclnamespace=0</code>），不能用只写
+<code>IN SCHEMA wanwork_im</code> 的版本代替。</p>
+<h3 id="runtime-的精确允许面与拒绝面">6.7 Runtime
+的精确允许面与拒绝面</h3>
+<p>runtime login 连接时
+<code>session_user=current_user=runtime_login</code>，且由于
+<code>NOINHERIT</code> 不自动获得 schema USAGE。成功
+<code>SET ROLE runtime</code> 后：</p>
+<p>允许：</p>
+<ul>
+<li>database 已连接 session 内使用 <code>wanwork_im</code> schema；</li>
+<li>对上述九表 <code>SELECT</code>；</li>
+<li>对五个 exact function identity <code>EXECUTE</code>；</li>
+<li>通过 typed UoW/repository 完成已登记 mutation。</li>
+</ul>
+<p>拒绝：</p>
+<ul>
+<li>22 张表逐表 <code>INSERT/UPDATE/DELETE/TRUNCATE</code>；</li>
+<li>22 张表逐表 <code>MAINTAIN</code>，以及
+<code>ANALYZE</code>（权限错误或 PostgreSQL skip warning
+均不能实际维护表）；</li>
+<li><code>CREATE SCHEMA</code>、schema 中
+<code>CREATE TABLE/FUNCTION</code>、<code>CREATE TEMPORARY TABLE</code>；</li>
+<li><code>ALTER POLICY</code>；</li>
+<li><code>SET ROLE owner</code>、<code>SET ROLE migrator</code>；</li>
+<li>对 root/identity 表的额外 <code>SELECT</code>；</li>
+<li>direct login schema/table/function grant；</li>
+<li>column-level mutation grant。</li>
+</ul>
+<h2 id="postgresql-18.6-实证">7. PostgreSQL 18.6 实证</h2>
+<h3 id="本次独立复核环境">7.1 本次独立复核环境</h3>
+<pre class="text"><code>server_version:     18.6 (Homebrew)
+server_version_num: 180006
+endpoint:           disposable localhost PostgreSQL test instance
+code HEAD:          cd92ea56493b43889f5165892b40ec36e958d44a
+date:               2026-08-28 Asia/Shanghai</code></pre>
+<p>报告不记录任何 API key、数据库密码或外部 signed URL。本机测试 URL
+只连接无凭据的 disposable local PostgreSQL admin database；integration
+tests 为每个场景创建唯一临时 database/role，并在 cleanup
+中显式回收。</p>
+<h3 id="本次实际执行结果">7.2 本次实际执行结果</h3>
+<p>在 <code>apps/im-api</code> 下，以
+<code>WANWORK_TEST_POSTGRES_ADMIN_URL</code> 指向上述本地 PG18
+实例执行：</p>
+<pre class="text"><code>go test ./internal/platform/postgres/migrations -count=1
+  ok .../postgres/migrations 5.050s
+
+go test -race ./internal/platform/postgres/migrations -count=1
+  ok .../postgres/migrations 7.172s
+
+go test ./internal/platform/postgres/imstore -count=1
+  ok .../postgres/imstore 1.443s
+
+go test -race ./internal/platform/postgres/imstore -count=1
+  ok .../postgres/imstore 2.274s</code></pre>
+<p>以上四条是本报告生成过程中的实际复跑，不是从旧报告复制的结果。它们证明当前两个包在该机器、该
+PG18.6 实例和该代码 HEAD
+下通过；不证明生产网络、RDS、连接代理、备份恢复或多地域行为。</p>
+<h3 id="function-only-write-场景">7.3 Function-only write 场景</h3>
+<p><code>TestFunctionOnlyWritesAgainstPostgres</code> 覆盖：</p>
+<ul>
+<li>五函数在同一 serializable transaction 内成功写入；</li>
+<li>empty workspace sentinel 最终成为 snapshot 的 SQL NULL；</li>
+<li>unset tenant context 拒绝且零行；</li>
+<li>GUC=<code>ten_alpha</code>、参数=<code>ten_beta</code> 的
+cross-tenant 调用拒绝且零行；</li>
+<li>duplicate、stale、skipped revision 返回 false，head/snapshot
+仍保持一份；</li>
+<li>function 漂移：<code>SECURITY INVOKER</code>、错误 volatility、危险
+search path、PUBLIC execute、额外 overload；</li>
+<li>漂移后的重复 <code>Apply</code> 返回
+<code>ErrMigrationSchema</code>，确定性 drift 不把连接误隔离为 unknown
+outcome。</li>
+</ul>
+<p>exact function comparator 的 unit tests
+还覆盖参数/owner/language/kind/strict/security/parallel/leakproof/config/
+safe ACL/body digest 的偏差。</p>
+<h3 id="exact-access-drift-场景">7.4 Exact access drift 场景</h3>
+<p><code>TestAuthorityAccessManifestAgainstPostgres</code> 使用真实
+provisioner、migration login、runtime login 与 <code>SET ROLE</code>
+链，而不是只比较内存
+fixture。它逐个注入、确认拒绝、修复后再确认通过：</p>
+<ul>
+<li>raw table write grant；</li>
+<li>PostgreSQL 18 <code>MAINTAIN</code> grant；</li>
+<li>PUBLIC function execute；</li>
+<li>runtime 额外 read；</li>
+<li>runtime login 直授 schema/table/function privilege；</li>
+<li>column privilege；</li>
+<li>缺失 function execute；</li>
+<li><code>wanwork_im</code> 额外 table/function；</li>
+<li><code>wanwork_meta</code> 额外 table/function；</li>
+<li>owner global function default privilege 恢复 PUBLIC execute；</li>
+<li>runtime group 漂移为 LOGIN 或 INHERIT；</li>
+<li>role/database scoped setting；</li>
+<li>membership <code>ADMIN</code> / <code>INHERIT</code> /
+<code>SET</code> option 漂移；</li>
+<li>相同 membership 由 rogue grantor 创建的重复 row；</li>
+<li>PUBLIC database CONNECT；</li>
+<li>runtime database CREATE/TEMP；</li>
+<li>login direct database CREATE；</li>
+<li>schema/table/function owner 漂移；</li>
+<li>validator 由 unlisted admin session 或错误 current role 调用。</li>
+</ul>
+<h3 id="runtime-raw-sql-矩阵">7.5 Runtime raw SQL 矩阵</h3>
+<p>imstore integration 构造 93 个拒绝 fixture：</p>
+<pre class="text"><code>22 authority tables × 4 operations
+  = INSERT + UPDATE + DELETE + TRUNCATE
+  = 88
+
++ CREATE SCHEMA
++ CREATE TABLE
++ CREATE FUNCTION
++ ALTER POLICY
++ CREATE TEMPORARY TABLE
+  = 5
+
+total = 93</code></pre>
+<p>每个 statement 都在绑定 tenant 的 transaction 中通过真实 runtime role
+执行，并要求 SQLSTATE <code>42501</code>。 这避免只验证 conversation
+repository 当前涉及的九张表，却把其他 13 张 root/identity 表留作
+credential 旁路。</p>
+<p>另一个 access integration 逐张检查 22 表的 <code>SELECT</code>
+exactness、<code>MAINTAIN=false</code>，并尝试 <code>ANALYZE</code>；
+migration login integration 同时确认它不能
+<code>SET ROLE runtime</code>、不能在未切 owner 时继承业务 schema
+privilege， 只能沿登记路径显式选择 owner。</p>
+<h3 id="测试没有覆盖什么">7.6 测试没有覆盖什么</h3>
+<ul>
+<li>真实 production database / managed RDS 的
+parameter、extension、proxy 与 DBA policy；</li>
+<li>IaC 从零创建/轮换/撤销角色和 secret；</li>
+<li>PUBLIC CONNECT 撤销前已建立连接的停服与强制回收；</li>
+<li>database owner/provisioner credential 泄露或恶意 DBA；</li>
+<li>kill-9、disk full、WAL/replica lag、point-in-time
+recovery、dump/restore 后 exact manifest；</li>
+<li>蓝绿双版本同时运行、future schema 与 old binary 的兼容；</li>
+<li>provider webhook/outbound timeout、ACK 丢失、重复
+callback、消息乱序；</li>
+<li>production load、连接池耗尽、长事务、锁等待与容量上限。</li>
+</ul>
+<h2 id="相对-topic-33-的增量结论">8. 相对 Topic 33 的增量结论</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Topic 33 缺口</th>
+<th>Topic 34 状态</th>
+<th>证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>runtime 可 raw write head/snapshot/receipt</td>
+<td>已在当前登记表面关闭</td>
+<td>五函数、repository wiring、22 表 × 4 mutation 负测。</td>
+</tr>
+<tr>
+<td>受控数据库写函数未完成</td>
+<td>已完成五个 exact 函数</td>
+<td><code>0005</code> SQL、manifest、digest、tamper tests。</td>
+</tr>
+<tr>
+<td>角色/ACL 只有宽泛 runtime fixture</td>
+<td>exact access validator 与真实 login fixture 已完成</td>
+<td>role/database/schema/relation/function/default ACL drift
+matrix。</td>
+</tr>
+<tr>
+<td>runtime read 过宽</td>
+<td>缩到九张真实 read 表</td>
+<td>exact table ACL comparator 与 runtime login test。</td>
+</tr>
+<tr>
+<td>PostgreSQL 18 <code>MAINTAIN</code> 未显式建模</td>
+<td>已纳入 exact privilege 和负测</td>
+<td>22 表 privilege/<code>ANALYZE</code> 检查。</td>
+</tr>
+<tr>
+<td>function 安全 grant 后旧 migration 可能无法复验</td>
+<td>已允许安全 non-login runtime grant，重复 <code>Apply</code>
+通过</td>
+<td><code>2ef2551</code> 与 migration tests。</td>
+</tr>
+<tr>
+<td>production IaC/startup/trusted tenant/resolver/event/IM adapter</td>
+<td>仍未完成</td>
+<td>本报告第 9 节。</td>
+</tr>
+</tbody>
+</table>
+<p>因此 Topic 33 不应删除或改写：它记录了进入 <code>0005</code> 之前的
+authority persistence 边界；Topic 34 只记录 function-only write + exact
+access 收口后的新基线。</p>
+<h2 id="仍未完成的生产关键路径">9. 仍未完成的生产关键路径</h2>
+<p>以下不是“锦上添花”，而是把当前数据库 substrate 变成可安全接入原生 IM
+的独立交付项。</p>
+<h3 id="p0-1production-iac-与-access-cutover">P0-1：Production IaC 与
+access cutover</h3>
+<p>当前 <code>provisionAuthorityAccess</code> 是 test
+helper，不是部署代码。生产必须提供：</p>
+<ul>
+<li>database owner/provisioner、owner/migrator/runtime、environment
+logins 的声明式创建；</li>
+<li>exact membership/options/grantor、database owner
+transfer、schema/table/function owner transfer；</li>
+<li>PUBLIC database/schema/function default privilege 收口；</li>
+<li>secret manager/KMS、短期 deploy credential、runtime password
+rotation 与 revoke；</li>
+<li>停服、关闭旧 session、迁移、validator、readiness、rollback 的可执行
+runbook；</li>
+<li>drift alert 与生产证据导出。</li>
+</ul>
+<p>在这项完成前，不能把测试 fixture 的 exact ACL 称为生产已经启用。</p>
+<h3 id="p0-2trusted-authenticated-tenant-context">P0-2：Trusted
+authenticated tenant context</h3>
+<p>函数只比较 <code>tenant_id</code> 参数与 GUC，UoW 负责设置
+GUC；二者可能来自同一个不可信输入，因此不能互相证明
+真实性。必须把以下输入收敛为 server-owned context：</p>
+<pre class="text"><code>verified issuer/JWKS claim
+  + human/service/Agent identity binding
+  + HTTP/path tenant
+  + active tenant membership
+  + session/workload identity
+  → TrustedTenantContext（调用方不能任意覆盖）</code></pre>
+<p>claim/path mismatch、inactive membership、cross-tenant object
+ID、worker 无 tenant context 都必须 fail closed。</p>
+<h3 id="p0-3action-time-authority-resolver-pep">P0-3：Action-time
+authority resolver / PEP</h3>
+<p>六个 access boolean 是持久化 projection，不是最终
+permit。发送消息、invoke Agent、publish Artifact ref 时至少要 组合：</p>
+<ul>
+<li>tenant、conversation、Actor、membership、access current revision 与
+active status；</li>
+<li>human/Agent/workload/on-behalf-of identity；</li>
+<li>Agent
+release/installation/assignment、mandate、capability、budget；</li>
+<li>provider route、credential lease、data route、taint/DLP；</li>
+<li>policy revision、approval 与 action-time revocation。</li>
+</ul>
+<p>resolver 必须在 dispatch 前重验，不能只在 UI
+隐藏按钮，也不能因为数据库 role 允许执行写函数就批准业务动作。</p>
+<h3 id="p0-4production-startupreadiness-composition">P0-4：Production
+startup/readiness composition</h3>
+<p>当前 <code>cmd/im-api/main.go</code>
+尚未把以下对象组成完整启动闭环：</p>
+<pre class="text"><code>production config
+  → migration login connect
+  → SET ROLE owner
+  → Apply migrations
+  → ValidateAuthorityAccess
+  → runtime login pool
+  → AfterConnect SET ROLE runtime
+  → UoW/repositories/use cases/routes
+  → readiness only after all checks
+  → bounded shutdown / connection drain</code></pre>
+<p>特别是 <code>ValidateAuthorityAccess</code> 当前只被测试调用。未接
+startup 前，生产 drift 不会自动挡住 readiness。</p>
+<h3 id="p0-5recovery-与-operational-proof">P0-5：Recovery 与 operational
+proof</h3>
+<p>需要形成可重复证据：</p>
+<ul>
+<li>process kill-9 / restart；</li>
+<li>commit outcome unknown 与 connection quarantine；</li>
+<li>backup、dump/restore、PITR 后 migration ledger/function/access
+manifest 回验；</li>
+<li>old/new binary 并存与 schema compatibility；</li>
+<li>deploy 中断、owner transfer 中断、credential
+rotation/rollback；</li>
+<li>PUBLIC CONNECT cutover 的旧 session 清理；</li>
+<li>SLO、capacity、lock timeout、pool exhaustion 与 incident
+runbook。</li>
+</ul>
+<p>单元测试和本地 integration 不能替代 production recovery drill。</p>
+<h3
+id="p0-6postgresql-durable-event-store-outbox-checkpoint">P0-6：PostgreSQL
+durable event store / outbox / checkpoint</h3>
+<p>command receipt 只证明一个 digest-based command
+transaction，不提供协作产品需要的 durable event spine。仍需：</p>
+<ul>
+<li>expected-revision stream append；</li>
+<li>global monotonic position；</li>
+<li>event envelope/version/upcaster/unknown-event preservation；</li>
+<li>projection checkpoint 与 backfill+live 无缝切换；</li>
+<li>transactional outbox；</li>
+<li>dispatch attempt、provider receipt、unknown/reconcile；</li>
+<li>crash/reopen/restore 与并发 writer 测试。</li>
+</ul>
+<p>不能采用“DB commit 后再 append memory event”的伪双写；那会留下 crash
+gap。</p>
+<h3 id="p0-7im-inboundoutbound-与-provider-truth">P0-7：IM
+inbound/outbound 与 provider truth</h3>
+<p>当前 provider conversation binding 只是一条平台映射。提前接原生 IM
+前仍需最小闭环：</p>
+<ul>
+<li>inbound webhook signature/timestamp/nonce/replay protection；</li>
+<li>provider realm → tenant → conversation → participant exact
+mapping；</li>
+<li>canonical message/event 与原始 provider event ID；</li>
+<li>outbound action intent、idempotency key、dispatch attempt；</li>
+<li>provider message ID/receipt、timeout
+unknown、readback/reconcile；</li>
+<li>mention/rich text/file capability negotiation；</li>
+<li>rate limit、duplicate callback、ordering、withdraw/delete
+语义；</li>
+<li>默认不发送，只有显式授权的 use case 才外发。</li>
+</ul>
+<p>本阶段没有向任何 IM 发消息，也没有验证融云 sandbox/production。</p>
+<h3 id="p1agent-collaboration-domain">P1：Agent collaboration
+domain</h3>
+<p><code>agent_thread</code>、message/reaction/read
+state、Task/Attempt/Action、Artifact/Acceptance、attention routing 与
+human-in-the-loop 仍是独立业务域。一级调研明确说明群聊只是协作
+surface，不能反向充当所有权威状态。</p>
+<h2 id="提前接入-im-的-readiness-判定">10. 提前接入 IM 的 readiness
+判定</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>层</th>
+<th>当前状态</th>
+<th>能否作为 IM 依赖</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PostgreSQL 18 migration + 22 authority tables</td>
+<td>已有真实 normal/race 证据</td>
+<td>可作为底座。</td>
+</tr>
+<tr>
+<td>五个 function-only writes</td>
+<td>当前登记路径已完成</td>
+<td>可作为 conversation authority 写底座。</td>
+</tr>
+<tr>
+<td>exact access manifest library/test</td>
+<td>comparator 与 fixture 完成</td>
+<td>只有 production IaC/startup 接入后才能作为生产 gate。</td>
+</tr>
+<tr>
+<td>trusted tenant admission</td>
+<td>未完成</td>
+<td>不可由 IM 输入直接替代。</td>
+</tr>
+<tr>
+<td>action-time resolver</td>
+<td>未完成</td>
+<td>不可发送前省略。</td>
+</tr>
+<tr>
+<td>durable event/outbox</td>
+<td>未完成</td>
+<td>outbound 前至少需要最小 transactional outbox。</td>
+</tr>
+<tr>
+<td>provider inbound/outbound adapter</td>
+<td>未完成</td>
+<td>不能宣称已接 IM。</td>
+</tr>
+<tr>
+<td>recovery/runbook</td>
+<td>未完成</td>
+<td>不能宣称生产可运营。</td>
+</tr>
+</tbody>
+</table>
+<p>阶段结论：</p>
+<ul>
+<li><code>[A]</code> 可以并行开始定义原生 IM adapter 的纯合同、canonical
+event、provider receipt 与 sandbox fixture；</li>
+<li><code>[A]</code> 不应让真实 inbound 请求在没有 trusted tenant
+admission 时直接选择 tenant；</li>
+<li><code>[A]</code> 不应让真实 outbound 在没有 action-time resolver 和
+transactional outbox 时发送；</li>
+<li><code>[A]</code> production access cutover/startup gate
+应先于真实流量，而不是在事故后补做。</li>
+</ul>
+<h2 id="推荐下一阶段顺序与验收门">11. 推荐下一阶段顺序与验收门</h2>
+<h3 id="gate-a把-exact-access-从测试变成生产部署事实">Gate A：把 exact
+access 从测试变成生产部署事实</h3>
+<ol type="1">
+<li>production role/database IaC；</li>
+<li>deploy/runtime login 的 secret broker 与 rotation；</li>
+<li>startup
+<code>Apply → ValidateAuthorityAccess → runtime pool</code>；</li>
+<li>readiness、drain、旧 session cutover、rollback runbook；</li>
+<li>ephemeral production-like environment 从零 provision + drift
+injection + recovery。</li>
+</ol>
+<p>验收：未列 login、任一 owner/grant/default ACL/role setting drift
+都阻止 readiness；runtime credential 无法 raw write；部署可回滚且旧
+session 不存留。</p>
+<h3 id="gate-btrusted-tenant-action-time-resolver">Gate B：trusted
+tenant + action-time resolver</h3>
+<ol type="1">
+<li>verified authentication adapter；</li>
+<li>immutable request tenant context；</li>
+<li>identity/membership resolver；</li>
+<li>conversation send/invoke/publish policy composition；</li>
+<li>cross-tenant/IDOR/revocation/race negative matrix。</li>
+</ol>
+<p>验收：客户端 tenant 字段不能覆盖 verified context；权限在 dispatch
+时重新验证；撤权立即影响新 action。</p>
+<h3 id="gate-cdurable-eventoutbox-minimal-im-adapter">Gate C：durable
+event/outbox + minimal IM adapter</h3>
+<ol type="1">
+<li>PostgreSQL event stream/global position/checkpoint；</li>
+<li>transactional outbox；</li>
+<li>provider sandbox inbound verification；</li>
+<li>outbound intent/attempt/receipt/unknown/reconcile；</li>
+<li>duplicate/order/timeout/crash/reopen tests。</li>
+</ol>
+<p>验收：DB authority mutation 与待发送事件原子提交；ACK
+丢失不会被误报失败或盲目重复发送；可从 durable position 重建
+projection。</p>
+<h3 id="gate-dagent-collaboration-domain">Gate D：Agent collaboration
+domain</h3>
+<p>在前三个 gate 形成可信底座后，再把
+<code>agent_thread</code>、message、Task、Artifact、Acceptance 与 Agent
+runtime 接入，避免用聊天记录和 provider 状态替代平台权威对象。</p>
+<h2 id="复核索引">12. 复核索引</h2>
+<h3 id="代码证据">12.1 代码证据</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>主题</th>
+<th>文件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>migration catalog / policy</td>
+<td><code>apps/im-api/internal/platform/postgres/migrations/catalog.go</code>、<code>sql_policy.go</code></td>
+</tr>
+<tr>
+<td><code>0005</code> DDL</td>
+<td><code>apps/im-api/internal/platform/postgres/migrations/sql/0005_function_only_writes.up.sql</code>、<code>.down.sql</code></td>
+</tr>
+<tr>
+<td>exact function manifest</td>
+<td><code>apps/im-api/internal/platform/postgres/migrations/function_postconditions.go</code></td>
+</tr>
+<tr>
+<td>function PG integration</td>
+<td><code>apps/im-api/internal/platform/postgres/migrations/function_only_writes_integration_test.go</code></td>
+</tr>
+<tr>
+<td>exact access manifest</td>
+<td><code>apps/im-api/internal/platform/postgres/migrations/access_manifest.go</code></td>
+</tr>
+<tr>
+<td>access PG integration</td>
+<td><code>apps/im-api/internal/platform/postgres/migrations/access_manifest_integration_test.go</code></td>
+</tr>
+<tr>
+<td>repository function calls</td>
+<td><code>apps/im-api/internal/platform/postgres/imstore/repositories.go</code></td>
+</tr>
+<tr>
+<td>runtime/login/UoW matrix</td>
+<td><code>apps/im-api/internal/platform/postgres/imstore/uow_integration_test.go</code></td>
+</tr>
+<tr>
+<td>冻结计划</td>
+<td><code>docs/wanwork_im/W2_POSTGRES_FUNCTION_WRITE_PLAN.md</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="一级研究证据">12.2 一级研究证据</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>主题</th>
+<th>报告</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent loop / durable event spine / recovery</td>
+<td><code>more/deepseek-harness/research_report.md</code></td>
+</tr>
+<tr>
+<td>tenant / identity / action-time / channel adapter</td>
+<td><code>more/clawith/research_report.md</code></td>
+</tr>
+<tr>
+<td>A2A auth / tenant / duplicate / outbox</td>
+<td><code>more/protocol-a2a/research_report.md</code></td>
+</tr>
+<tr>
+<td>credential / PEP / negative release gate</td>
+<td><code>more/tech-agent-security-governance/research_report.md</code></td>
+</tr>
+<tr>
+<td>runtime wiring 不得只看 schema</td>
+<td><code>more/sandbase-harness/research_report.md</code></td>
+</tr>
+<tr>
+<td>群聊、Task、Artifact、Acceptance、Recovery 分层</td>
+<td><code>more/_portfolio/master_research_report.md</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="最终结论">13. 最终结论</h2>
+<p><code>5fa2456^..cd92ea5</code> 把 Topic 33
+最明确的数据库权限缺口真正关闭了一段：五条 ordinary conversation
+authority mutation 已经从“repository 约定的 raw
+SQL”变成“数据库只授予固定函数的窄 capability”；函数本身和
+database/schema/table/function/role/default ACL 又由 exact manifest 与
+PostgreSQL 18.6 真实负测约束。</p>
+<p>这是一项实质性的阶段交付，但证据边界必须保持克制：当前完成的是
+function-only write substrate 与 exact access validator/test，不是
+production IaC，不是 trusted tenant，不是 action-time resolver，不是
+durable event/outbox，不是恢复体系，也不是 IM outbound。下一阶段应先把
+exact access 接入 production-like startup， 再完成 trusted tenant +
+resolver + transactional outbox，之后真实 IM
+流量接入才会“舒服”，而不是靠宽凭据和 聊天状态把基础债务带入生产。</p>
+</body>
+</html>

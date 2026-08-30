@@ -15,6 +15,12 @@ dist/
 build/
 *.egg-info/
 output/
+node_modules/
+
+# Scoped Go service build outputs. Module sums and contracts stay tracked.
+/apps/im-api/bin/
+/apps/im-api/coverage.out
+/apps/im-api/.cache/
 
 # Local branch workspaces and retained review evidence live beside the main checkout.
 # They are managed independently and must never enter the product repository.

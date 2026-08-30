@@ -1,0 +1,335 @@
+\set ON_ERROR_STOP on
+
+-- Required psql variables: owner_role, reader_role, activator_role, attempt_issuer_role,
+-- fencer_role. Run after v2_fixture.psql in the same ephemeral database.
+SELECT pg_catalog.set_config('wanwork.test.owner_role', :'owner_role', false);
+SELECT pg_catalog.set_config('wanwork.test.reader_role', :'reader_role', false);
+SELECT pg_catalog.set_config('wanwork.test.activator_role', :'activator_role', false);
+SELECT pg_catalog.set_config(
+    'wanwork.test.attempt_issuer_role', :'attempt_issuer_role', false
+);
+SELECT pg_catalog.set_config('wanwork.test.fencer_role', :'fencer_role', false);
+
+DO $assert_catalog$
+DECLARE
+    test_owner text := pg_catalog.current_setting('wanwork.test.owner_role');
+    test_reader text := pg_catalog.current_setting('wanwork.test.reader_role');
+    test_activator text := pg_catalog.current_setting('wanwork.test.activator_role');
+    test_attempt_issuer text :=
+        pg_catalog.current_setting('wanwork.test.attempt_issuer_role');
+    test_fencer text := pg_catalog.current_setting('wanwork.test.fencer_role');
+    test_role text;
+    relation_name text;
+    identity_format text;
+    identity_digest text;
+    protected_membership_count bigint;
+BEGIN
+    SELECT identity.schema_format, identity.schema_digest
+    INTO identity_format, identity_digest
+    FROM wanwork_policy_control.read_store_identity() AS identity;
+    IF identity_format <> 'wanwork.im.postgres-approval-policy-control-store/2' OR
+       identity_digest <>
+           'sha256:86e6fd8685696f91c63dcca441a01d27152826a2f2990c5e9c0e2ef26b4eb474' THEN
+        RAISE EXCEPTION 'v2 schema identity does not match the frozen contract';
+    END IF;
+
+    SELECT pg_catalog.count(*)
+    INTO protected_membership_count
+    FROM pg_catalog.pg_auth_members AS membership
+    INNER JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+    INNER JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+    WHERE member_role.rolname IN (
+              test_owner, test_reader, test_activator, test_attempt_issuer, test_fencer
+          ) OR granted_role.rolname IN (
+              test_owner, test_reader, test_activator, test_attempt_issuer, test_fencer
+          );
+    IF protected_membership_count <> 0 THEN
+        RAISE EXCEPTION 'protected v2 role has unexpected membership edge';
+    END IF;
+
+    FOREACH test_role IN ARRAY ARRAY[
+        test_reader, test_activator, test_attempt_issuer, test_fencer
+    ] LOOP
+        FOR relation_name IN
+            SELECT pg_catalog.format('%I.%I', namespace_value.nspname, relation.relname)
+            FROM pg_catalog.pg_class AS relation
+            INNER JOIN pg_catalog.pg_namespace AS namespace_value
+                ON namespace_value.oid = relation.relnamespace
+            WHERE namespace_value.nspname = 'wanwork_policy_control'
+              AND relation.relkind IN ('r', 'p', 'S')
+        LOOP
+            IF pg_catalog.has_table_privilege(test_role, relation_name, 'SELECT') OR
+               pg_catalog.has_table_privilege(test_role, relation_name, 'INSERT') OR
+               pg_catalog.has_table_privilege(test_role, relation_name, 'UPDATE') OR
+               pg_catalog.has_table_privilege(test_role, relation_name, 'DELETE') OR
+               pg_catalog.has_table_privilege(test_role, relation_name, 'TRUNCATE') THEN
+                RAISE EXCEPTION 'role % has direct DML on %', test_role, relation_name;
+            END IF;
+        END LOOP;
+    END LOOP;
+
+    IF test_owner IN (test_reader, test_activator, test_attempt_issuer, test_fencer) OR
+       test_reader IN (test_activator, test_attempt_issuer, test_fencer) OR
+       test_activator IN (test_attempt_issuer, test_fencer) OR
+       test_attempt_issuer = test_fencer THEN
+        RAISE EXCEPTION 'v2 roles are not distinct';
+    END IF;
+
+    IF NOT pg_catalog.has_function_privilege(
+           test_attempt_issuer, 'wanwork_policy_control.read_store_identity()', 'EXECUTE'
+       ) OR NOT pg_catalog.has_function_privilege(
+           test_attempt_issuer,
+           'wanwork_policy_control.read_approval_policy_state(text,text)', 'EXECUTE'
+       ) OR NOT pg_catalog.has_function_privilege(
+           test_attempt_issuer,
+           'wanwork_policy_control.read_approval_execution_attempt(text,text,text)', 'EXECUTE'
+       ) OR NOT pg_catalog.has_function_privilege(
+           test_attempt_issuer,
+           'wanwork_policy_control.compare_and_issue_approval_execution_attempt(text,bytea)',
+           'EXECUTE'
+       ) THEN
+        RAISE EXCEPTION 'attempt issuer lost identity/policy/read/issue grants';
+    END IF;
+    IF pg_catalog.has_function_privilege(
+           test_attempt_issuer,
+           'wanwork_policy_control.read_approval_execution_fence(text,text,text)', 'EXECUTE'
+       ) OR pg_catalog.has_function_privilege(
+           test_attempt_issuer,
+           'wanwork_policy_control.compare_and_open_approval_execution_fence(text,text,bigint,text,text,text,text,text,text,text,timestamptz,bytea)',
+           'EXECUTE'
+       ) OR pg_catalog.has_function_privilege(
+           test_attempt_issuer,
+           'wanwork_policy_control.compare_and_activate_approval_policy(text,text,bigint,text,text,bigint,text,text,bytea,bytea)',
+           'EXECUTE'
+       ) THEN
+        RAISE EXCEPTION 'attempt issuer can cross into fence or activation authority';
+    END IF;
+    IF pg_catalog.has_function_privilege(
+           test_fencer,
+           'wanwork_policy_control.read_approval_execution_attempt(text,text,text)', 'EXECUTE'
+       ) OR pg_catalog.has_function_privilege(
+           test_fencer,
+           'wanwork_policy_control.compare_and_issue_approval_execution_attempt(text,bytea)',
+           'EXECUTE'
+       ) OR pg_catalog.has_function_privilege(
+           test_fencer,
+           'wanwork_policy_control.approval_execution_attempt_is_valid(bytea,text,bigint,text,text,timestamptz,boolean)',
+           'EXECUTE'
+       ) THEN
+        RAISE EXCEPTION 'fencer can cross into attempt authority';
+    END IF;
+
+    IF NOT pg_catalog.has_function_privilege(
+           test_fencer,
+           'wanwork_policy_control.read_approval_execution_fence(text,text,text)', 'EXECUTE'
+       ) OR NOT pg_catalog.has_function_privilege(
+           test_fencer,
+           'wanwork_policy_control.compare_and_open_approval_execution_fence(text,text,bigint,text,text,text,text,text,text,text,timestamptz,bytea)',
+           'EXECUTE'
+       ) THEN
+        RAISE EXCEPTION 'fencer lost fence read/open grants';
+    END IF;
+    IF pg_catalog.has_function_privilege(
+           test_reader,
+           'wanwork_policy_control.compare_and_activate_approval_policy(text,text,bigint,text,text,bigint,text,text,bytea,bytea)', 'EXECUTE'
+       ) OR pg_catalog.has_function_privilege(
+           test_reader,
+           'wanwork_policy_control.compare_and_issue_approval_execution_attempt(text,bytea)', 'EXECUTE'
+       ) OR pg_catalog.has_function_privilege(
+           test_activator,
+           'wanwork_policy_control.compare_and_open_approval_execution_fence(text,text,bigint,text,text,text,text,text,text,text,timestamptz,bytea)', 'EXECUTE'
+       ) THEN
+        RAISE EXCEPTION 'reader/activator separation drifted';
+    END IF;
+END
+$assert_catalog$;
+
+-- Complete fake grant + /3 admission without a durable attempt must be rejected, with zero fence
+-- residue. This proves the fencer cannot mint trust from a self-consistent hash chain.
+SET SESSION AUTHORIZATION :"fencer_role";
+SELECT wanwork_policy_control.compare_and_open_approval_execution_fence(
+    policy_id, target_digest, 1, policy_digest, activation_digest, admission_digest,
+    operation_id, consumption_id, approval_digest, token_digest, mutation_not_after,
+    canonical_admission
+) = 'attempt_untrusted' AS forged_untrusted_ok
+FROM wanwork_policy_control_test.fence_candidate
+WHERE candidate_name = 'forged'
+\gset
+\if :forged_untrusted_ok
+\else
+    \echo 'forged complete attempt chain was trusted without issuer row'
+    SELECT 1 / 0 AS forged_attempt_was_trusted;
+\endif
+RESET SESSION AUTHORIZATION;
+
+DO $assert_no_forged_rows$
+BEGIN
+    IF (SELECT pg_catalog.count(*) FROM wanwork_policy_control.approval_execution_fence_counter) <> 0 OR
+       (SELECT pg_catalog.count(*) FROM wanwork_policy_control.approval_execution_fence_record) <> 0 OR
+       (SELECT pg_catalog.count(*) FROM wanwork_policy_control.approval_execution_fence_head) <> 0 THEN
+        RAISE EXCEPTION 'untrusted forged attempt left fence residue';
+    END IF;
+END
+$assert_no_forged_rows$;
+
+-- The issuer is the only role allowed to create the durable attempt and can recover the exact
+-- result by the stable issuance ID after both fresh and retry calls.
+SET SESSION AUTHORIZATION :"attempt_issuer_role";
+SELECT issued.state_status = 'committed' AS issue_ok,
+       issued.attempt_generation AS issued_generation,
+       issued.attempt_id AS issued_attempt_id,
+       issued.attempt_issuance_id AS issued_issuance_id,
+       issued.attempt_receipt_digest AS issued_receipt_digest,
+       issued.created_at AS issued_created_at
+FROM wanwork_policy_control_test.attempt_candidate AS candidate
+CROSS JOIN LATERAL wanwork_policy_control.compare_and_issue_approval_execution_attempt(
+    candidate.attempt_issuance_id, candidate.canonical_candidate
+) AS issued
+\gset
+\if :issue_ok
+\else
+    \echo 'issuer did not commit durable attempt'
+    SELECT 1 / 0 AS durable_attempt_issue_failed;
+\endif
+
+SELECT attempt.state_status = 'present' AND
+       attempt.attempt_generation = :issued_generation AND
+       attempt.attempt_id = :'issued_attempt_id' AND
+       attempt.attempt_issuance_id = :'issued_issuance_id' AND
+       attempt.attempt_receipt_digest = :'issued_receipt_digest' AS readback_ok
+FROM wanwork_policy_control_test.attempt_candidate AS candidate
+CROSS JOIN LATERAL wanwork_policy_control.read_approval_execution_attempt(
+    candidate.policy_id, candidate.target_digest, candidate.attempt_issuance_id
+) AS attempt
+\gset
+\if :readback_ok
+\else
+    SELECT 1 / 0 AS attempt_readback_failed;
+\endif
+
+SELECT retry.state_status = 'committed' AND
+       retry.attempt_generation = :issued_generation AND
+       retry.attempt_id = :'issued_attempt_id' AND
+       retry.attempt_receipt_digest = :'issued_receipt_digest' AS retry_ok
+FROM wanwork_policy_control_test.attempt_candidate AS candidate
+CROSS JOIN LATERAL wanwork_policy_control.compare_and_issue_approval_execution_attempt(
+    candidate.attempt_issuance_id, candidate.canonical_candidate
+) AS retry
+\gset
+\if :retry_ok
+\else
+    SELECT 1 / 0 AS attempt_exact_retry_failed;
+\endif
+RESET SESSION AUTHORIZATION;
+
+SELECT wanwork_policy_control_test.materialize_fence_candidate(
+    'issued', :issued_generation, :'issued_attempt_id', :'issued_receipt_digest',
+    :'issued_created_at'::timestamptz
+);
+
+SET SESSION AUTHORIZATION :"fencer_role";
+SELECT wanwork_policy_control.compare_and_open_approval_execution_fence(
+    policy_id, target_digest, 1, policy_digest, activation_digest, admission_digest,
+    operation_id, consumption_id, approval_digest, token_digest, mutation_not_after,
+    canonical_admission
+) = 'committed' AS open_ok
+FROM wanwork_policy_control_test.fence_candidate
+WHERE candidate_name = 'issued'
+\gset
+\if :open_ok
+\else
+    SELECT 1 / 0 AS issued_fence_open_failed;
+\endif
+
+SELECT wanwork_policy_control.compare_and_open_approval_execution_fence(
+    policy_id, target_digest, 1, policy_digest, activation_digest, admission_digest,
+    operation_id, consumption_id, approval_digest, token_digest, mutation_not_after,
+    canonical_admission
+) = 'committed' AS exact_fence_retry_ok
+FROM wanwork_policy_control_test.fence_candidate
+WHERE candidate_name = 'issued'
+\gset
+\if :exact_fence_retry_ok
+\else
+    SELECT 1 / 0 AS exact_fence_retry_failed;
+\endif
+
+SELECT wanwork_policy_control.compare_and_open_approval_execution_fence(
+    policy_id, target_digest, 1, policy_digest, activation_digest, admission_digest,
+    operation_id, consumption_id, approval_digest, token_digest, mutation_not_after,
+    pg_catalog.set_byte(canonical_admission, 0, 91)
+) = 'rejected' AS malformed_ok
+FROM wanwork_policy_control_test.fence_candidate
+WHERE candidate_name = 'issued'
+\gset
+\if :malformed_ok
+\else
+    SELECT 1 / 0 AS malformed_admission_was_not_rejected;
+\endif
+RESET SESSION AUTHORIZATION;
+
+SET SESSION AUTHORIZATION :"activator_role";
+WITH candidate AS (
+    SELECT 'approval-policy/test'::text AS policy_id,
+        'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'::text AS target_digest,
+        'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'::text AS previous_policy_digest,
+        'sha256:6666666666666666666666666666666666666666666666666666666666666666'::text AS candidate_policy_digest,
+        'sha256:7777777777777777777777777777777777777777777777777777777777777777'::text AS candidate_activation_digest
+), documents AS (
+    SELECT candidate.*,
+        pg_catalog.convert_to(pg_catalog.regexp_replace(pg_catalog.json_build_object(
+            'format', 'wanwork.im.postgres-authority-approval-policy/1', 'policyId', policy_id,
+            'revision', 2, 'policyDigest', candidate_policy_digest,
+            'previousPolicyDigest', previous_policy_digest,
+            'target', pg_catalog.json_build_object('digest', target_digest),
+            'keys', pg_catalog.json_build_array(1), 'rootSignatures', pg_catalog.json_build_array(1, 2),
+            'denyAll', true, 'notBefore', '2026-01-01T00:00:00Z', 'notAfter', '2028-01-01T00:00:00Z',
+            'rootTrustBundleDigest', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+            'keyThreshold', 2, 'metadata', 'test'
+        )::text, '[[:space:]]', '', 'g'), 'UTF8') AS canonical_policy,
+        pg_catalog.convert_to(pg_catalog.regexp_replace(pg_catalog.json_build_object(
+            'format', 'wanwork.im.postgres-authority-approval-policy-activation/1',
+            'policyId', policy_id, 'targetDigest', target_digest, 'revision', 2,
+            'policyDigest', candidate_policy_digest, 'previousPolicyDigest', previous_policy_digest,
+            'activationRecordDigest', candidate_activation_digest, 'mutationAuthorized', false,
+            'policyEnvelopeDigest', 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+            'rootTrustBundleDigest', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+            'rootSignerFingerprints', pg_catalog.json_build_array('a', 'b'),
+            'approvalVerificationEnabled', false, 'activatedAt', '2026-08-29T00:00:00Z', 'metadata', 'test'
+        )::text, '[[:space:]]', '', 'g'), 'UTF8') AS canonical_record
+    FROM candidate
+)
+SELECT wanwork_policy_control.compare_and_activate_approval_policy(
+    policy_id, target_digest, 1, previous_policy_digest,
+    'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+    2, candidate_policy_digest, candidate_activation_digest, canonical_policy, canonical_record
+) = 'fence_open' AS activation_blocked_ok
+FROM documents
+\gset
+\if :activation_blocked_ok
+\else
+    SELECT 1 / 0 AS policy_revision_was_not_blocked;
+\endif
+RESET SESSION AUTHORIZATION;
+
+DO $assert_rows$
+BEGIN
+    IF (SELECT pg_catalog.count(*) FROM wanwork_policy_control.approval_policy_archive) <> 1 OR
+       (SELECT pg_catalog.count(*) FROM wanwork_policy_control.approval_policy_activation_record) <> 1 OR
+       (SELECT pg_catalog.count(*) FROM wanwork_policy_control.approval_execution_attempt_counter) <> 1 OR
+       (SELECT pg_catalog.count(*) FROM wanwork_policy_control.approval_execution_attempt_record) <> 1 OR
+       (SELECT pg_catalog.count(*) FROM wanwork_policy_control.approval_execution_fence_counter) <> 1 OR
+       (SELECT pg_catalog.count(*) FROM wanwork_policy_control.approval_execution_fence_record) <> 1 OR
+       (SELECT pg_catalog.count(*) FROM wanwork_policy_control.approval_execution_fence_head) <> 1 THEN
+        RAISE EXCEPTION 'failed/replayed calls left an unexpected durable row count';
+    END IF;
+END
+$assert_rows$;
+
+RESET wanwork.test.owner_role;
+RESET wanwork.test.reader_role;
+RESET wanwork.test.activator_role;
+RESET wanwork.test.attempt_issuer_role;
+RESET wanwork.test.fencer_role;
+
+\echo 'schema-v2 durable-attempt/fence contract smoke test passed'

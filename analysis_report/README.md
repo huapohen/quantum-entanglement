@@ -51,6 +51,9 @@
 
 ## 当前阶段交付
 
+- [`10H_EXECUTION_STATUS_2026-08-30.md`](10H_EXECUTION_STATUS_2026-08-30.md)：当前 10 小时全量目标的真实完成矩阵、远端提交、跨端验收入口和生产剩余主线。
+- [`html/10h_execution_status_20260830.html`](html/10h_execution_status_20260830.html)：同一状态的可视化 HTML 入口。
+
 | 文件 | 状态 | 内容 |
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
@@ -139,10 +142,12 @@ business projection 候选；下一步是认证作用域、crash/kill/two-proces
 
 完整 SHA-256、尺寸、来源、证据等级和隐私边界见
 [`screenshots/README.md`](screenshots/README.md) 与
-[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 27 张图；前十张是受限、
+[`screenshots/manifest.json`](screenshots/manifest.json)。当前共归档 43 张图；前十张是受限、
 未脱敏原件，只能进入本项目私有仓库和用户私有知识库，不得公开分发；第 10–13 张是合成本地
 产品 UI，第 14 张是真实模型测试输出；第 15–26 张是 Clawith 公开官网、白皮书与官方文档
-只读证据。整套资料仍按项目内部证据管理。
+只读证据；Topic 33～37 的十项 SVG/PNG 是五个 W2 PostgreSQL 检查点/合同图，只作为报告导航图，
+不冒充独立运行证据；四张本地 IM 基础/编辑撤回图是零网络本地 IM 运行证据。整套资料
+仍按项目内部证据管理。
 
 | 文件 | 内容 | 采集方式 |
 |---|---|---|
@@ -173,6 +178,20 @@ business projection 候选；下一步是认证作用域、crash/kill/two-proces
 | `screenshots/24_clawith_pulse_trigger_engine_20260827.png` | Pulse Trigger Engine、类型与生命周期文档 | Playwright 官方文档元素只读证据 |
 | `screenshots/25_clawith_plaza_legacy_docs_20260827.png` | 与固定源码 Experience Library 已漂移的 Plaza 旧文档 | Playwright 官方文档元素只读证据 |
 | `screenshots/26_clawith_rapid_rnd_claim_20260827.png` | 部门级研发交付样板、阶段指标与 `3 天` / `6d 21h` 同卡片口径冲突 | Playwright 官网元素只读证据 |
+| `screenshots/33_postgres_authority_persistence_map.svg` / `.png` | 一级调研 → 当前持久化切片 → PostgreSQL 18.6 证据 → 六项 P0 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/34_postgres_function_only_writes_and_exact_access_map.svg` / `.png` | 一级调研 → 五函数写面 → exact access → PG18.6 故障证据 → 剩余生产 gate | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/35_postgres_attested_runtime_composition_map.svg` / `.png` | private config → ambient/default-file/raw-DSN/malformed-query hardening → physical/session attestation → readiness/UoW/API gate → Gate A/Trusted Participant/mention 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/36_postgres_production_authority_topology.svg` / `.png` | Gate A0 plan/SecretRef/provision/migrate/runtime/TLS/receipt/No-Go 合同 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/37_postgres_approval_policy_control_store_map.svg` / `.png` | 离线 root policy → 独立 control cluster → exact CAS/attestation/readback → mutation-time fence 剩余边界 | 仓库内 SVG 与派生 PNG；不是独立运行证据 |
+| `screenshots/35_local_im_acceptance_desktop.png` | 任意自定义指令提交后，父群受限工作卡、独立 Agent 子群和回复 | Playwright loopback 桌面端真实渲染与交互证据 |
+| `screenshots/36_local_im_acceptance_mobile.png` | 移动 viewport 下的同一自定义指令验收结果 | Playwright loopback 移动端真实渲染与交互证据 |
+| `screenshots/38_local_im_basic_desktop.png` | 普通群创建、普通文本发送和 reload 后消息列表 | Playwright loopback 桌面端真实渲染与交互证据 |
+| `screenshots/39_local_im_basic_mobile.png` | 普通 IM 基础会话在移动 viewport 的响应式状态 | Playwright loopback 移动端真实渲染与交互证据 |
+| `screenshots/40_local_im_edit_recall_desktop.png` | 桌面端普通群消息编辑后撤回，保留生命周期状态 | Playwright loopback 桌面端真实渲染与交互证据 |
+| `screenshots/41_local_im_edit_recall_mobile.png` | 移动端普通群消息编辑后撤回及响应式渲染 | Playwright loopback 移动端真实渲染与交互证据 |
+
+编辑/撤回交互步骤和 API 复核清单：
+`screenshots/local_im_edit_recall_acceptance_manifest.json`（`local_pending`）。
 
 ## 数据安全
 

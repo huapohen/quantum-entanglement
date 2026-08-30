@@ -75,6 +75,36 @@ class ReportSyncBundleTests(unittest.TestCase):
             b"# Native IM provider contract V1\n",
         )
         self._write("docs/TERMINOLOGY.md", b"# Terminology\n")
+        self._write("docs/wanwork_im/ARCHITECTURE.md", b"# WanWork IM architecture\n")
+        self._write(
+            "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
+            b"# WanWork IM implementation plan\n",
+        )
+        self._write(
+            "docs/wanwork_im/POSTGRES_PRODUCTION_AUTHORITY.md",
+            b"# PostgreSQL production authority\n",
+        )
+        self._write("docs/wanwork_im/README.md", b"# WanWork IM review index\n")
+        self._write(
+            "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
+            b"# WanWork IM research traceability\n",
+        )
+        self._write(
+            "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md",
+            b"# W2 PostgreSQL authority checkpoint\n",
+        )
+        self._write(
+            "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md",
+            b"# W2 PostgreSQL cutover plan checkpoint\n",
+        )
+        self._write(
+            "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md",
+            b"# W2 PostgreSQL runtime checkpoint\n",
+        )
+        self._write(
+            "docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md",
+            b"# W2 PostgreSQL policy control store checkpoint\n",
+        )
         self._write("analysis_report/research/00_scope.md", b"# Scope\n")
         self._write("analysis_report/research/08_new_evidence.md", b"# New\n")
         self._write("analysis_report/screenshots/README.md", b"# Screenshots\n")
@@ -283,9 +313,9 @@ class ReportSyncBundleTests(unittest.TestCase):
             {"unmanifestedPolicy": "fail-closed"},
         )
         source_summary = cast(dict[str, Any], first["sourceSummary"])
-        self.assertEqual(source_summary["count"], 14)
-        self.assertEqual(source_summary["sourceTargetCount"], 15)
-        self.assertEqual(source_summary["notionTargetCount"], 13)
+        self.assertEqual(source_summary["count"], 23)
+        self.assertEqual(source_summary["sourceTargetCount"], 24)
+        self.assertEqual(source_summary["notionTargetCount"], 22)
         self.assertEqual(source_summary["yuqueTargetCount"], 2)
 
         path = self._save_bundle(first)
@@ -318,6 +348,24 @@ class ReportSyncBundleTests(unittest.TestCase):
         ]
         self.assertEqual(target["targetPageKey"], "native-im-contract-v1")
         self.assertEqual(target["targetStatus"], "historical_manifest_claim_digest_match")
+
+    def test_wanwork_im_review_docs_are_allowlisted_canonical_sources(self) -> None:
+        pages = self._source_targets(generate_report_sync_bundle(self.repository))
+        for path in (
+            "docs/wanwork_im/ARCHITECTURE.md",
+            "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
+            "docs/wanwork_im/POSTGRES_PRODUCTION_AUTHORITY.md",
+            "docs/wanwork_im/README.md",
+            "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
+            "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md",
+            "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md",
+            "docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md",
+            "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md",
+        ):
+            with self.subTest(path=path):
+                target = pages[(path, "notion")]
+                self.assertIsNone(target["targetPageKey"])
+                self.assertEqual(target["targetStatus"], "local_pending")
 
     def test_native_im_early_integration_plan_is_an_allowlisted_canonical_source(self) -> None:
         path = "analysis_report/NATIVE_IM_EARLY_INTEGRATION_PLAN.md"
@@ -394,11 +442,27 @@ class ReportSyncBundleTests(unittest.TestCase):
             generate_report_sync_bundle(self.repository)
         forbidden.unlink()
 
+        # A controlled research title may discuss secret handling without being a
+        # credential file or directory. Its content still passes the credential scanner.
+        secret_topic = self._write(
+            "analysis_report/research/24_secret_claim_contract.md",
+            b"# Secret claim contract\nNo credential values.\n",
+        )
+        generate_report_sync_bundle(self.repository)
+        secret_topic.unlink()
+
         manifest_path = self.repository / "analysis_report/notion_sync_manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["pages"][0]["localFiles"][0]["path"] = "analysis_report/../.env"
         self._write_json("analysis_report/notion_sync_manifest.json", manifest)
         with self.assertRaisesRegex(ReportSyncBundleError, "path_invalid"):
+            generate_report_sync_bundle(self.repository)
+
+        self._write_previous_manifests()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["pages"][0]["localFiles"][0]["path"] = "analysis_report/secrets/evidence.md"
+        self._write_json("analysis_report/notion_sync_manifest.json", manifest)
+        with self.assertRaisesRegex(ReportSyncBundleError, "sensitive_path_forbidden"):
             generate_report_sync_bundle(self.repository)
 
         self._write_previous_manifests()
@@ -892,6 +956,20 @@ class ReportSyncBundleTests(unittest.TestCase):
         self._write_screenshot_manifest([item])
         generate_report_sync_bundle(self.repository)
 
+        item["redactionStatus"] = "reviewed-local-runtime-capture"
+        self._write_screenshot_manifest([item])
+        generate_report_sync_bundle(self.repository)
+
+        item["redactionStatus"] = "synthetic-local-ui-no-credential"
+        self._write_screenshot_manifest([item])
+        generate_report_sync_bundle(self.repository)
+
+        self._write(
+            "analysis_report/screenshots/local_im_acceptance_manifest.json",
+            b'{"format":"quantum-entanglement.local-im-acceptance-screenshots-v1"}\n',
+        )
+        generate_report_sync_bundle(self.repository)
+
         item["redactionStatus"] = "unrestricted-public-copy"
         self._write_screenshot_manifest([item])
         with self.assertRaisesRegex(ReportSyncBundleError, "screenshot_policy_invalid"):
@@ -907,6 +985,70 @@ class ReportSyncBundleTests(unittest.TestCase):
 
         image_path.unlink()
         with self.assertRaisesRegex(ReportSyncBundleError, "image_missing"):
+            generate_report_sync_bundle(self.repository)
+
+    def test_repository_svg_is_bounded_and_rejects_active_or_external_content(self) -> None:
+        svg = (
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3" '
+            b'viewBox="0 0 2 3" role="img">'
+            b'<defs><linearGradient id="g"><stop offset="0"/></linearGradient>'
+            b"<style>.safe{fill:url(#g)}</style></defs>"
+            b'<rect class="safe" width="2" height="3" fill="url(#g)"/></svg>'
+        )
+        svg_path = self._write("analysis_report/screenshots/01_fixture.svg", svg)
+        svg_item = self._image_item(
+            "01_fixture.svg",
+            svg,
+            width=2,
+            height=3,
+            media_type="image/svg+xml",
+        )
+        svg_item["redactionStatus"] = "not-applicable-repository-authored-diagram"
+        self._write_screenshot_manifest(
+            [self._image_item("00_fixture.png", self.image, width=1, height=1), svg_item]
+        )
+        payload = generate_report_sync_bundle(self.repository)
+        images = {image["path"]: image for image in cast(list[dict[str, Any]], payload["images"])}
+        self.assertEqual(
+            images["analysis_report/screenshots/01_fixture.svg"]["mediaType"],
+            "image/svg+xml",
+        )
+
+        malicious_values = (
+            b'<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"/>',
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><script/></svg>',
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><rect fill="url(https://example.invalid/x)"/></svg>',
+            (
+                b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3">'
+                b'<image href="data:image/png;base64,AA=="/></svg>'
+            ),
+        )
+        for malicious in malicious_values:
+            with self.subTest(malicious=malicious[:24]):
+                svg_path.write_bytes(malicious)
+                item = self._image_item(
+                    "01_fixture.svg",
+                    malicious,
+                    width=2,
+                    height=3,
+                    media_type="image/svg+xml",
+                )
+                item["redactionStatus"] = "not-applicable-repository-authored-diagram"
+                self._write_screenshot_manifest(
+                    [
+                        self._image_item("00_fixture.png", self.image, width=1, height=1),
+                        item,
+                    ]
+                )
+                with self.assertRaisesRegex(ReportSyncBundleError, "image_content_invalid"):
+                    generate_report_sync_bundle(self.repository)
+
+        svg_path.write_bytes(svg)
+        svg_item["width"] = 3
+        self._write_screenshot_manifest(
+            [self._image_item("00_fixture.png", self.image, width=1, height=1), svg_item]
+        )
+        with self.assertRaisesRegex(ReportSyncBundleError, "image_dimension_drift"):
             generate_report_sync_bundle(self.repository)
 
     def test_complete_jpeg_is_supported_but_header_only_and_truncation_are_rejected(

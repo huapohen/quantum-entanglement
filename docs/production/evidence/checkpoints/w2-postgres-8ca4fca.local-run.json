@@ -1,0 +1,83 @@
+{
+  "capturedAt": "2026-08-28T23:30:29+08:00",
+  "environment": {
+    "database": {
+      "authentication": "explicit-passwordless-loopback-test-only",
+      "product": "PostgreSQL",
+      "serverVersion": "18.6 (Homebrew)",
+      "topology": "disposable-local-loopback"
+    },
+    "goarch": "arm64",
+    "goos": "darwin",
+    "goVersion": "go1.25.6",
+    "secretsRecorded": false
+  },
+  "format": "quantum-entanglement.local-checkpoint-test-evidence",
+  "gates": {
+    "goTestNormal": {
+      "command": "cd apps/im-api && WANWORK_TEST_POSTGRES_ADMIN_URL=<reviewed-disposable-loopback-admin-url> GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test -json ./... -count=1 -timeout=10m",
+      "normalizedTerminalOutcomeSha256": "d9f61f18b764cdfaa8de27139801c284aebe2096b181baf147733efd768e603c",
+      "packagePasses": 17,
+      "rawJsonLog": {
+        "byteSize": 1445864,
+        "retained": false,
+        "sha256": "e2e2c49811dddfe98f70aa911fca19fb2967336ac95e9ff67419d8a0dc2e8357"
+      },
+      "result": "passed",
+      "testFailEvents": 0,
+      "testPassEvents": 858,
+      "testSkipEvents": 0
+    },
+    "goTestRace": {
+      "command": "cd apps/im-api && WANWORK_TEST_POSTGRES_ADMIN_URL=<reviewed-disposable-loopback-admin-url> GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test -race -json ./... -count=1 -timeout=15m",
+      "normalizedTerminalOutcomeSha256": "d9f61f18b764cdfaa8de27139801c284aebe2096b181baf147733efd768e603c",
+      "packagePasses": 17,
+      "rawJsonLog": {
+        "byteSize": 1445958,
+        "retained": false,
+        "sha256": "13173cd2e0ba6a2bfc3852e01cfeb84cfb110763bf4dbfad384d687d0cec2f7b"
+      },
+      "result": "passed",
+      "testFailEvents": 0,
+      "testPassEvents": 858,
+      "testSkipEvents": 0
+    },
+    "goVet": {
+      "command": "cd apps/im-api && GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go vet ./...",
+      "result": "passed-with-no-output"
+    }
+  },
+  "limitations": [
+    "This is a committed local-run summary, not an immutable CI-provider artifact or a release promotion record.",
+    "Raw go test JSON logs were hashed during the run but are not retained; the normalized terminal-outcome digest can be compared with a rerun.",
+    "The database was disposable and loopback-only; this does not prove remote authenticated TLS, production cutover, credential rotation, restore safety, performance or availability.",
+    "No Clerk, RongCloud, provider adapter, Agent thread, message, mention or external outbound path was exercised."
+  ],
+  "packages": [
+    "cmd/im-api",
+    "cmd/im-migrate",
+    "internal/adapters/httpapi",
+    "internal/app",
+    "internal/config",
+    "internal/events",
+    "internal/im",
+    "internal/immetadata",
+    "internal/imstore",
+    "internal/isolation",
+    "internal/isolation/fake",
+    "internal/platform/postgres/connectionpolicy",
+    "internal/platform/postgres/imstore",
+    "internal/platform/postgres/migrationrun",
+    "internal/platform/postgres/migrations",
+    "internal/platform/postgres/runtimepool",
+    "internal/plugins"
+  ],
+  "schemaVersion": 1,
+  "source": {
+    "branch": "dev_wanwork_quantum_entanglement",
+    "codeEvidenceBaseline": "53dd38b4224003a415605074f25470405ebe799e",
+    "commit": "8ca4fcae310b7c77a6cafa440770b8a7008025a5",
+    "dirty": false,
+    "tree": "c7654800adbdd31b9397b9313178f90b2649efbb"
+  }
+}

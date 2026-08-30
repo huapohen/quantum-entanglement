@@ -1,0 +1,324 @@
+\set ON_ERROR_STOP on
+
+-- Required psql variables: activator_role, attempt_issuer_role, and fencer_role. Run only in an
+-- ephemeral test database. Test-schema grants carry fixtures, never authority-store DML.
+CREATE SCHEMA wanwork_policy_control_test;
+CREATE TABLE wanwork_policy_control_test.attempt_candidate (
+    policy_id text NOT NULL,
+    target_digest text NOT NULL,
+    attempt_issuance_id text NOT NULL,
+    canonical_candidate bytea NOT NULL
+);
+CREATE TABLE wanwork_policy_control_test.fence_candidate (
+    candidate_name text PRIMARY KEY,
+    policy_id text NOT NULL,
+    target_digest text NOT NULL,
+    policy_digest text NOT NULL,
+    activation_digest text NOT NULL,
+    admission_digest text NOT NULL,
+    operation_id text NOT NULL,
+    consumption_id text NOT NULL,
+    approval_digest text NOT NULL,
+    token_digest text NOT NULL,
+    mutation_not_after timestamptz NOT NULL,
+    canonical_admission bytea NOT NULL
+);
+
+SET SESSION AUTHORIZATION :"activator_role";
+WITH valueset AS (
+    SELECT
+        'approval-policy/test'::text AS policy_id,
+        'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'::text
+            AS target_digest,
+        'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'::text
+            AS policy_digest,
+        'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'::text
+            AS activation_digest
+), documents AS (
+    SELECT valueset.*,
+        pg_catalog.convert_to(pg_catalog.regexp_replace(pg_catalog.json_build_object(
+            'format', 'wanwork.im.postgres-authority-approval-policy/1',
+            'policyId', policy_id, 'revision', 1, 'policyDigest', policy_digest,
+            'previousPolicyDigest', '',
+            'target', pg_catalog.json_build_object('digest', target_digest),
+            'keys', pg_catalog.json_build_array(1),
+            'rootSignatures', pg_catalog.json_build_array(1, 2),
+            'denyAll', false, 'notBefore', '2026-01-01T00:00:00Z',
+            'notAfter', '2028-01-01T00:00:00Z',
+            'rootTrustBundleDigest',
+                'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+            'keyThreshold', 2, 'metadata', 'test'
+        )::text, '[[:space:]]', '', 'g'), 'UTF8') AS canonical_policy,
+        pg_catalog.convert_to(pg_catalog.regexp_replace(pg_catalog.json_build_object(
+            'format', 'wanwork.im.postgres-authority-approval-policy-activation/1',
+            'policyId', policy_id, 'targetDigest', target_digest, 'revision', 1,
+            'policyDigest', policy_digest, 'previousPolicyDigest', '',
+            'activationRecordDigest', activation_digest, 'mutationAuthorized', false,
+            'policyEnvelopeDigest',
+                'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+            'rootTrustBundleDigest',
+                'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+            'rootSignerFingerprints', pg_catalog.json_build_array('a', 'b'),
+            'approvalVerificationEnabled', true,
+            'activatedAt', '2026-08-29T00:00:00Z', 'metadata', 'test'
+        )::text, '[[:space:]]', '', 'g'), 'UTF8') AS canonical_record
+    FROM valueset
+)
+SELECT wanwork_policy_control.compare_and_activate_approval_policy(
+    policy_id, target_digest, 0, '', '', 1, policy_digest, activation_digest,
+    canonical_policy, canonical_record
+) = 'committed' AS genesis_ok
+FROM documents
+\gset
+\if :{?genesis_ok}
+\else
+    SELECT 1 / 0 AS missing_genesis_result;
+\endif
+\if :genesis_ok
+\else
+    \echo 'genesis policy activation did not commit'
+    SELECT 1 / 0 AS genesis_activation_failed;
+\endif
+RESET SESSION AUTHORIZATION;
+
+WITH base AS (
+    SELECT
+        'approval-policy/test'::text AS policy_id,
+        'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'::text
+            AS target_digest,
+        'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'::text
+            AS policy_digest,
+        'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'::text
+            AS activation_digest,
+        pg_catalog.date_trunc('second', pg_catalog.clock_timestamp()) AS fixture_now
+), times AS (
+    SELECT base.*,
+        fixture_now - interval '5 minutes' AS approved_at,
+        fixture_now + interval '1 hour' AS approval_expires_at,
+        fixture_now + interval '2 hours' AS plan_expires_at,
+        fixture_now - interval '1 minute' AS preflight_observed_at,
+        fixture_now + interval '90 minutes' AS preflight_expires_at
+    FROM base
+), unsigned AS (
+    SELECT times.*,
+        pg_catalog.regexp_replace(pg_catalog.json_build_object(
+            'approvalDigest',
+                'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+            'approvalExpiresAt', pg_catalog.to_char(
+                approval_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+            ),
+            'approvalKeyFingerprint',
+                'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+            'approvalKeyGeneration', 'generation-1', 'approvalKeyId', 'approval-key-1',
+            'approvalPolicyRevision', 'policy/test/revision-1',
+            'approvalPolicyRootTrustDigest',
+                'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+            'approvalReference', 'approval/test/1',
+            'approvedAt', pg_catalog.to_char(
+                approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+            ),
+            'approverIdentity', 'user/test', 'attemptGeneration', 0, 'attemptId', '',
+            'attemptIssuanceId', '', 'attemptReceiptDigest', '',
+            'createdAt', '0001-01-01T00:00:00Z',
+            'expectedPolicyHead', pg_catalog.json_build_object(
+                'ActivationRecordDigest', activation_digest, 'PolicyDigest', policy_digest,
+                'PolicyID', policy_id, 'Revision', 1, 'TargetDigest', target_digest
+            ),
+            'format', 'wanwork.im.postgres-authority-approval-execution-attempt/2',
+            'mutationNotAfter', pg_catalog.to_char(
+                approval_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+            ),
+            'planDigest',
+                'sha256:3333333333333333333333333333333333333333333333333333333333333333',
+            'planExpiresAt', pg_catalog.to_char(
+                plan_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+            ),
+            'planId', 'plan/test-1',
+            'preflightExpiresAt', pg_catalog.to_char(
+                preflight_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+            ),
+            'preflightObservedAt', pg_catalog.to_char(
+                preflight_observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+            ),
+            'preflightReportDigest',
+                'sha256:4444444444444444444444444444444444444444444444444444444444444444',
+            'targetDigest', target_digest
+        )::text, '[[:space:]]', '', 'g') AS unsigned_candidate
+    FROM times
+), sealed AS (
+    SELECT unsigned.*,
+        'execution-attempt-issuance/' || pg_catalog.encode(pg_catalog.sha256(
+            pg_catalog.convert_to(
+                E'wanwork.im/postgres-authority-approval-execution-attempt-issuance/1\n',
+                'UTF8'
+            ) || pg_catalog.convert_to(unsigned_candidate, 'UTF8')
+        ), 'hex') AS attempt_issuance_id
+    FROM unsigned
+)
+INSERT INTO wanwork_policy_control_test.attempt_candidate (
+    policy_id, target_digest, attempt_issuance_id, canonical_candidate
+)
+SELECT policy_id, target_digest, attempt_issuance_id,
+       pg_catalog.convert_to(pg_catalog.regexp_replace(
+           unsigned_candidate, '"attemptIssuanceId":""',
+           '"attemptIssuanceId":"' || attempt_issuance_id || '"'
+       ), 'UTF8')
+FROM sealed;
+
+CREATE FUNCTION wanwork_policy_control_test.materialize_fence_candidate(
+    p_candidate_name text,
+    p_attempt_generation bigint,
+    p_attempt_id text,
+    p_attempt_receipt_digest text,
+    p_created_at timestamptz
+)
+RETURNS void
+LANGUAGE plpgsql
+VOLATILE
+STRICT
+SECURITY DEFINER
+SET search_path TO pg_catalog
+AS $function$
+DECLARE
+    candidate_document jsonb;
+    head jsonb;
+    consumption_id text;
+    operation_id text;
+    unsigned_admission text;
+    admission_digest text;
+BEGIN
+    SELECT pg_catalog.convert_from(candidate.canonical_candidate, 'UTF8')::jsonb
+    INTO candidate_document
+    FROM wanwork_policy_control_test.attempt_candidate AS candidate;
+    head := candidate_document->'expectedPolicyHead';
+    consumption_id := 'approval-consumption/' || pg_catalog.encode(pg_catalog.sha256(
+        pg_catalog.convert_to(
+            E'wanwork.im/postgres-authority-approval-consumption/1\n', 'UTF8'
+        ) || pg_catalog.convert_to(
+            '{"approvalDigest":"' || (candidate_document->>'approvalDigest') ||
+            '","approvalPolicyId":"' || (head->>'PolicyID') ||
+            '","approvalPolicyTargetDigest":"' || (head->>'TargetDigest') ||
+            '","approvalReference":"' || (candidate_document->>'approvalReference') ||
+            '","planDigest":"' || (candidate_document->>'planDigest') || '"}', 'UTF8'
+        )
+    ), 'hex');
+    operation_id := 'approval-operation/' || pg_catalog.encode(pg_catalog.sha256(
+        pg_catalog.convert_to(
+            E'wanwork.im/postgres-authority-approval-operation/1\n', 'UTF8'
+        ) || pg_catalog.convert_to(
+            '{"consumptionId":"' || consumption_id ||
+            '","executionAttemptId":"' || p_attempt_id ||
+            '","executionAttemptReceiptDigest":"' || p_attempt_receipt_digest || '"}',
+            'UTF8'
+        )
+    ), 'hex');
+    unsigned_admission :=
+        '{"admissionDigest":"","approvalDigest":"' ||
+        (candidate_document->>'approvalDigest') ||
+        '","approvalExpiresAt":"' || (candidate_document->>'approvalExpiresAt') ||
+        '","approvalKeyFingerprint":"' ||
+        (candidate_document->>'approvalKeyFingerprint') ||
+        '","approvalKeyGeneration":"' ||
+        (candidate_document->>'approvalKeyGeneration') ||
+        '","approvalKeyId":"' || (candidate_document->>'approvalKeyId') ||
+        '","approvalPolicyActivationDigest":"' || (head->>'ActivationRecordDigest') ||
+        '","approvalPolicyDigest":"' || (head->>'PolicyDigest') ||
+        '","approvalPolicyId":"' || (head->>'PolicyID') ||
+        '","approvalPolicyRevision":"' ||
+        (candidate_document->>'approvalPolicyRevision') ||
+        '","approvalPolicyRootTrustDigest":"' ||
+        (candidate_document->>'approvalPolicyRootTrustDigest') ||
+        '","approvalPolicySequence":' || (head->>'Revision') ||
+        ',"approvalPolicyTargetDigest":"' || (head->>'TargetDigest') ||
+        '","approvalReference":"' || (candidate_document->>'approvalReference') ||
+        '","approvedAt":"' || (candidate_document->>'approvedAt') ||
+        '","approverIdentity":"' || (candidate_document->>'approverIdentity') ||
+        '","consumptionId":"' || consumption_id ||
+        '","executionAttemptCreatedAt":"' || pg_catalog.to_char(
+            p_created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","executionAttemptGeneration":' || p_attempt_generation::text ||
+        ',"executionAttemptId":"' || p_attempt_id ||
+        '","executionAttemptIssuanceId":"' ||
+        (candidate_document->>'attemptIssuanceId') ||
+        '","executionAttemptReceiptDigest":"' || p_attempt_receipt_digest ||
+        '","expectedPolicyHead":{"ActivationRecordDigest":"' ||
+        (head->>'ActivationRecordDigest') || '","PolicyDigest":"' ||
+        (head->>'PolicyDigest') || '","PolicyID":"' || (head->>'PolicyID') ||
+        '","Revision":' || (head->>'Revision') || ',"TargetDigest":"' ||
+        (head->>'TargetDigest') || '"},"fenceEpoch":0' ||
+        ',"format":"wanwork.im.postgres-authority-approval-execution-fence/3"' ||
+        ',"mutationNotAfter":"' || (candidate_document->>'mutationNotAfter') ||
+        '","openedAt":"0001-01-01T00:00:00Z","operationId":"' || operation_id ||
+        '","planDigest":"' || (candidate_document->>'planDigest') ||
+        '","planExpiresAt":"' || (candidate_document->>'planExpiresAt') ||
+        '","planId":"' || (candidate_document->>'planId') ||
+        '","preflightExpiresAt":"' || (candidate_document->>'preflightExpiresAt') ||
+        '","preflightObservedAt":"' || (candidate_document->>'preflightObservedAt') ||
+        '","preflightReportDigest":"' ||
+        (candidate_document->>'preflightReportDigest') ||
+        '","recordDigest":"","tokenDigest":""}';
+    admission_digest := 'sha256:' || pg_catalog.encode(pg_catalog.sha256(
+        pg_catalog.convert_to(
+            E'wanwork.im/postgres-authority-approval-execution-admission/1\n', 'UTF8'
+        ) || pg_catalog.convert_to(unsigned_admission, 'UTF8')
+    ), 'hex');
+    INSERT INTO wanwork_policy_control_test.fence_candidate (
+        candidate_name, policy_id, target_digest, policy_digest, activation_digest,
+        admission_digest, operation_id, consumption_id, approval_digest, token_digest,
+        mutation_not_after, canonical_admission
+    ) VALUES (
+        p_candidate_name, head->>'PolicyID', head->>'TargetDigest', head->>'PolicyDigest',
+        head->>'ActivationRecordDigest', admission_digest, operation_id, consumption_id,
+        candidate_document->>'approvalDigest',
+        'sha256:5555555555555555555555555555555555555555555555555555555555555555',
+        (candidate_document->>'mutationNotAfter')::timestamptz,
+        pg_catalog.convert_to(pg_catalog.regexp_replace(
+            unsigned_admission, '^\{"admissionDigest":""',
+            '{"admissionDigest":"' || admission_digest || '"'
+        ), 'UTF8')
+    );
+END
+$function$;
+REVOKE ALL ON FUNCTION wanwork_policy_control_test.materialize_fence_candidate(
+    text, bigint, text, text, timestamptz
+) FROM PUBLIC;
+
+-- A complete self-consistent /2 receipt and admission is still forged without a durable row.
+WITH candidate AS (
+    SELECT pg_catalog.convert_from(canonical_candidate, 'UTF8') AS raw_candidate
+    FROM wanwork_policy_control_test.attempt_candidate
+), fake AS (
+    SELECT pg_catalog.date_trunc('second', pg_catalog.clock_timestamp()) AS created_at,
+        'execution-attempt/forged-test-1'::text AS attempt_id,
+        pg_catalog.regexp_replace(
+            raw_candidate, '"attemptGeneration":0,"attemptId":""',
+            '"attemptGeneration":91,"attemptId":"execution-attempt/forged-test-1"'
+        ) AS generated
+    FROM candidate
+), unsigned AS (
+    SELECT fake.*,
+        pg_catalog.regexp_replace(
+            generated, '"createdAt":"0001-01-01T00:00:00Z"',
+            '"createdAt":"' || pg_catalog.to_char(
+                created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+            ) || '"'
+        ) AS unsigned_grant
+    FROM fake
+), receipt AS (
+    SELECT unsigned.*,
+        'sha256:' || pg_catalog.encode(pg_catalog.sha256(
+            pg_catalog.convert_to(
+                E'wanwork.im/postgres-authority-approval-execution-attempt/2\n', 'UTF8'
+            ) || pg_catalog.convert_to(unsigned_grant, 'UTF8')
+        ), 'hex') AS receipt_digest
+    FROM unsigned
+)
+SELECT wanwork_policy_control_test.materialize_fence_candidate(
+    'forged', 91, attempt_id, receipt_digest, created_at
+)
+FROM receipt;
+
+GRANT USAGE ON SCHEMA wanwork_policy_control_test TO :"attempt_issuer_role";
+GRANT USAGE ON SCHEMA wanwork_policy_control_test TO :"fencer_role";
+GRANT SELECT ON wanwork_policy_control_test.attempt_candidate TO :"attempt_issuer_role";
+GRANT SELECT ON wanwork_policy_control_test.fence_candidate TO :"fencer_role";

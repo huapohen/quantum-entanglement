@@ -1,0 +1,2324 @@
+\set ON_ERROR_STOP on
+
+-- Run in control_database as a provisioner allowed to SET ROLE owner_role. The cluster-level
+-- upgrade must already have created the exact fencer role. This migration is one transaction:
+-- any failed guard, DDL statement, or grant restores the complete v1 catalog and behavior.
+SELECT pg_catalog.set_config('wanwork.migration.owner_role', :'owner_role', false);
+SELECT pg_catalog.set_config('wanwork.migration.reader_role', :'reader_role', false);
+SELECT pg_catalog.set_config('wanwork.migration.activator_role', :'activator_role', false);
+SELECT pg_catalog.set_config(
+    'wanwork.migration.attempt_issuer_role', :'attempt_issuer_role', false
+);
+SELECT pg_catalog.set_config('wanwork.migration.fencer_role', :'fencer_role', false);
+
+BEGIN;
+SET LOCAL ROLE :"owner_role";
+SET LOCAL search_path TO pg_catalog;
+
+DO $migration_guard$
+DECLARE
+    expected_owner text := pg_catalog.current_setting('wanwork.migration.owner_role');
+    expected_reader text := pg_catalog.current_setting('wanwork.migration.reader_role');
+    expected_activator text := pg_catalog.current_setting('wanwork.migration.activator_role');
+    expected_attempt_issuer text :=
+        pg_catalog.current_setting('wanwork.migration.attempt_issuer_role');
+    expected_fencer text := pg_catalog.current_setting('wanwork.migration.fencer_role');
+    identity_owner text;
+    identity_format text;
+    identity_digest text;
+    exact_role_count bigint;
+    dangerous_membership_count bigint;
+    schema_owner text;
+BEGIN
+    SELECT identity.owner_role, identity.schema_format, identity.schema_digest
+    INTO identity_owner, identity_format, identity_digest
+    FROM wanwork_policy_control.read_store_identity() AS identity;
+    IF identity_owner IS DISTINCT FROM expected_owner OR
+       identity_format IS DISTINCT FROM 'wanwork.im.postgres-approval-policy-control-store/1' OR
+       identity_digest IS DISTINCT FROM
+           'sha256:8a64c08cb0268beade6be94a410d865db4d384cd50107168e7d573386c23e4c5' THEN
+        RAISE EXCEPTION 'approval-policy control schema is not the frozen v1 contract';
+    END IF;
+
+    SELECT owner_role.rolname
+    INTO schema_owner
+    FROM pg_catalog.pg_namespace AS namespace_value
+    INNER JOIN pg_catalog.pg_roles AS owner_role ON owner_role.oid = namespace_value.nspowner
+    WHERE namespace_value.nspname = 'wanwork_policy_control';
+    IF schema_owner IS DISTINCT FROM expected_owner THEN
+        RAISE EXCEPTION 'approval-policy control schema owner is not trusted';
+    END IF;
+
+    SELECT pg_catalog.count(*)
+    INTO exact_role_count
+    FROM pg_catalog.pg_roles AS role_value
+    WHERE (role_value.rolname = expected_owner AND
+           NOT role_value.rolcanlogin AND NOT role_value.rolsuper AND NOT role_value.rolinherit AND
+           NOT role_value.rolcreaterole AND NOT role_value.rolcreatedb AND
+           NOT role_value.rolreplication AND NOT role_value.rolbypassrls AND
+           role_value.rolconnlimit = -1 AND role_value.rolvaliduntil IS NULL AND
+           role_value.rolconfig IS NULL)
+       OR (role_value.rolname IN (
+               expected_reader, expected_activator, expected_attempt_issuer, expected_fencer
+           ) AND
+           role_value.rolcanlogin AND NOT role_value.rolsuper AND NOT role_value.rolinherit AND
+           NOT role_value.rolcreaterole AND NOT role_value.rolcreatedb AND
+           NOT role_value.rolreplication AND NOT role_value.rolbypassrls AND
+           role_value.rolconnlimit = -1 AND role_value.rolvaliduntil IS NULL AND
+           role_value.rolconfig IS NULL);
+    IF exact_role_count <> 5 OR
+       pg_catalog.cardinality(ARRAY[
+           expected_owner, expected_reader, expected_activator,
+           expected_attempt_issuer, expected_fencer
+       ]) <> pg_catalog.cardinality(ARRAY(
+           SELECT DISTINCT role_name
+           FROM pg_catalog.unnest(ARRAY[
+               expected_owner, expected_reader, expected_activator,
+               expected_attempt_issuer, expected_fencer
+           ]) AS role_name
+       )) THEN
+        RAISE EXCEPTION 'approval-policy control v2 roles do not match the frozen contract';
+    END IF;
+
+    SELECT pg_catalog.count(*)
+    INTO dangerous_membership_count
+    FROM pg_catalog.pg_auth_members AS membership
+    INNER JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+    INNER JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+    WHERE member_role.rolname IN (
+              expected_owner, expected_reader, expected_activator,
+              expected_attempt_issuer, expected_fencer
+          ) OR granted_role.rolname IN (
+              expected_owner, expected_reader, expected_activator,
+              expected_attempt_issuer, expected_fencer
+          );
+    IF dangerous_membership_count <> 0 THEN
+        RAISE EXCEPTION 'approval-policy control protected role has unexpected membership edge';
+    END IF;
+
+    IF pg_catalog.to_regclass(
+           'wanwork_policy_control.approval_execution_attempt_counter'
+       ) IS NOT NULL OR
+       pg_catalog.to_regclass(
+           'wanwork_policy_control.approval_execution_attempt_record'
+       ) IS NOT NULL OR
+       pg_catalog.to_regclass(
+           'wanwork_policy_control.approval_execution_fence_counter'
+       ) IS NOT NULL OR
+       pg_catalog.to_regclass(
+           'wanwork_policy_control.approval_execution_fence_record'
+       ) IS NOT NULL OR
+       pg_catalog.to_regclass(
+           'wanwork_policy_control.approval_execution_fence_head'
+       ) IS NOT NULL THEN
+        RAISE EXCEPTION 'refusing to adopt pre-existing approval execution fence objects';
+    END IF;
+END
+$migration_guard$;
+
+CREATE TABLE wanwork_policy_control.approval_execution_attempt_counter (
+    target_digest text COLLATE pg_catalog."C" NOT NULL,
+    last_attempt_generation bigint NOT NULL,
+    advanced_at timestamptz NOT NULL,
+    CONSTRAINT approval_execution_attempt_counter_pk PRIMARY KEY (target_digest),
+    CONSTRAINT approval_execution_attempt_counter_target_digest_ck CHECK (
+        target_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_attempt_counter_generation_ck CHECK (
+        last_attempt_generation > 0 AND last_attempt_generation <= 9223372036854775807
+    ),
+    CONSTRAINT approval_execution_attempt_counter_advanced_at_ck CHECK (
+        pg_catalog.isfinite(advanced_at) AND
+        advanced_at = pg_catalog.date_trunc('second', advanced_at)
+    )
+);
+
+CREATE TABLE wanwork_policy_control.approval_execution_attempt_record (
+    target_digest text COLLATE pg_catalog."C" NOT NULL,
+    attempt_generation bigint NOT NULL,
+    policy_id text COLLATE pg_catalog."C" NOT NULL,
+    expected_policy_revision bigint NOT NULL,
+    expected_policy_digest text COLLATE pg_catalog."C" NOT NULL,
+    expected_activation_record_digest text COLLATE pg_catalog."C" NOT NULL,
+    attempt_issuance_id text COLLATE pg_catalog."C" NOT NULL,
+    attempt_id text COLLATE pg_catalog."C" NOT NULL,
+    attempt_receipt_digest text COLLATE pg_catalog."C" NOT NULL,
+    approval_digest text COLLATE pg_catalog."C" NOT NULL,
+    approval_expires_at timestamptz NOT NULL,
+    approval_key_fingerprint text COLLATE pg_catalog."C" NOT NULL,
+    approval_key_generation text COLLATE pg_catalog."C" NOT NULL,
+    approval_key_id text COLLATE pg_catalog."C" NOT NULL,
+    approval_policy_revision text COLLATE pg_catalog."C" NOT NULL,
+    approval_policy_root_trust_digest text COLLATE pg_catalog."C" NOT NULL,
+    approval_reference text COLLATE pg_catalog."C" NOT NULL,
+    approved_at timestamptz NOT NULL,
+    approver_identity text COLLATE pg_catalog."C" NOT NULL,
+    plan_id text COLLATE pg_catalog."C" NOT NULL,
+    plan_digest text COLLATE pg_catalog."C" NOT NULL,
+    plan_expires_at timestamptz NOT NULL,
+    preflight_report_digest text COLLATE pg_catalog."C" NOT NULL,
+    preflight_observed_at timestamptz NOT NULL,
+    preflight_expires_at timestamptz NOT NULL,
+    mutation_not_after timestamptz NOT NULL,
+    created_at timestamptz NOT NULL,
+    canonical_request bytea NOT NULL,
+    canonical_attempt bytea NOT NULL,
+    CONSTRAINT approval_execution_attempt_record_pk PRIMARY KEY (
+        target_digest, attempt_generation
+    ),
+    CONSTRAINT approval_execution_attempt_record_issuance_uk UNIQUE (
+        target_digest, attempt_issuance_id
+    ),
+    CONSTRAINT approval_execution_attempt_record_id_uk UNIQUE (
+        target_digest, attempt_id
+    ),
+    CONSTRAINT approval_execution_attempt_record_receipt_uk UNIQUE (
+        target_digest, attempt_receipt_digest
+    ),
+    CONSTRAINT approval_execution_attempt_record_target_digest_ck CHECK (
+        target_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_attempt_record_generation_ck CHECK (
+        attempt_generation > 0 AND attempt_generation <= 9223372036854775807
+    ),
+    CONSTRAINT approval_execution_attempt_record_policy_id_ck CHECK (
+        policy_id ~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' AND
+        policy_id LIKE 'approval-policy/%'
+    ),
+    CONSTRAINT approval_execution_attempt_record_policy_revision_ck CHECK (
+        expected_policy_revision > 0 AND expected_policy_revision <= 9223372036854775807
+    ),
+    CONSTRAINT approval_execution_attempt_record_digest_ck CHECK (
+        expected_policy_digest ~ '^sha256:[0-9a-f]{64}$' AND
+        expected_activation_record_digest ~ '^sha256:[0-9a-f]{64}$' AND
+        attempt_receipt_digest ~ '^sha256:[0-9a-f]{64}$' AND
+        approval_digest ~ '^sha256:[0-9a-f]{64}$' AND
+        approval_key_fingerprint ~ '^sha256:[0-9a-f]{64}$' AND
+        approval_policy_root_trust_digest ~ '^sha256:[0-9a-f]{64}$' AND
+        plan_digest ~ '^sha256:[0-9a-f]{64}$' AND
+        preflight_report_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_attempt_record_attempt_id_ck CHECK (
+        attempt_id ~ '^execution-attempt/[a-z0-9][a-z0-9._:/-]{0,237}$'
+    ),
+    CONSTRAINT approval_execution_attempt_record_issuance_id_ck CHECK (
+        attempt_issuance_id ~ '^execution-attempt-issuance/[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_attempt_record_identity_ck CHECK (
+        approval_key_generation ~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' AND
+        approval_key_id ~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' AND
+        approval_policy_revision ~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' AND
+        approver_identity ~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' AND
+        plan_id ~ '^[a-z0-9][a-z0-9._:/-]{0,255}$'
+    ),
+    CONSTRAINT approval_execution_attempt_record_reference_ck CHECK (
+        pg_catalog.length(approval_reference) <= 256 AND
+        approval_reference ~ '^approval/[a-z0-9._:-]+(?:/[a-z0-9._:-]+)*$' AND
+        approval_reference !~ '(^|/)[.]{1,2}($|/)'
+    ),
+    CONSTRAINT approval_execution_attempt_record_time_ck CHECK (
+        pg_catalog.isfinite(approval_expires_at) AND
+        pg_catalog.isfinite(approved_at) AND
+        pg_catalog.isfinite(plan_expires_at) AND
+        pg_catalog.isfinite(preflight_observed_at) AND
+        pg_catalog.isfinite(preflight_expires_at) AND
+        pg_catalog.isfinite(mutation_not_after) AND
+        pg_catalog.isfinite(created_at) AND
+        approval_expires_at = pg_catalog.date_trunc('second', approval_expires_at) AND
+        approved_at = pg_catalog.date_trunc('second', approved_at) AND
+        plan_expires_at = pg_catalog.date_trunc('second', plan_expires_at) AND
+        preflight_observed_at = pg_catalog.date_trunc('second', preflight_observed_at) AND
+        preflight_expires_at = pg_catalog.date_trunc('second', preflight_expires_at) AND
+        mutation_not_after = pg_catalog.date_trunc('second', mutation_not_after) AND
+        created_at = pg_catalog.date_trunc('second', created_at) AND
+        approved_at < approval_expires_at AND
+        preflight_observed_at >= approved_at AND
+        preflight_observed_at < preflight_expires_at AND
+        mutation_not_after = LEAST(
+            approval_expires_at, plan_expires_at, preflight_expires_at
+        ) AND
+        created_at >= preflight_observed_at AND created_at < mutation_not_after
+    ),
+    CONSTRAINT approval_execution_attempt_record_canonical_ck CHECK (
+        pg_catalog.octet_length(canonical_request) BETWEEN 1 AND 65536 AND
+        pg_catalog.octet_length(canonical_attempt) BETWEEN 1 AND 65536
+    ),
+    CONSTRAINT approval_execution_attempt_record_policy_archive_fk FOREIGN KEY (
+        policy_id, target_digest, expected_policy_revision, expected_policy_digest
+    ) REFERENCES wanwork_policy_control.approval_policy_archive (
+        policy_id, target_digest, revision, policy_digest
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT approval_execution_attempt_record_activation_fk FOREIGN KEY (
+        policy_id, target_digest, expected_policy_revision, expected_policy_digest,
+        expected_activation_record_digest
+    ) REFERENCES wanwork_policy_control.approval_policy_activation_record (
+        policy_id, target_digest, revision, policy_digest, activation_record_digest
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
+CREATE TABLE wanwork_policy_control.approval_execution_fence_counter (
+    target_digest text COLLATE pg_catalog."C" NOT NULL,
+    last_fence_epoch bigint NOT NULL,
+    advanced_at timestamptz NOT NULL,
+    CONSTRAINT approval_execution_fence_counter_pk PRIMARY KEY (target_digest),
+    CONSTRAINT approval_execution_fence_counter_target_digest_ck CHECK (
+        target_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_counter_epoch_ck CHECK (
+        last_fence_epoch > 0 AND last_fence_epoch <= 9223372036854775807
+    ),
+    CONSTRAINT approval_execution_fence_counter_advanced_at_ck CHECK (
+        pg_catalog.isfinite(advanced_at) AND
+        advanced_at = pg_catalog.date_trunc('second', advanced_at)
+    )
+);
+
+CREATE TABLE wanwork_policy_control.approval_execution_fence_record (
+    target_digest text COLLATE pg_catalog."C" NOT NULL,
+    fence_epoch bigint NOT NULL,
+    policy_id text COLLATE pg_catalog."C" NOT NULL,
+    expected_policy_revision bigint NOT NULL,
+    expected_policy_digest text COLLATE pg_catalog."C" NOT NULL,
+    expected_activation_record_digest text COLLATE pg_catalog."C" NOT NULL,
+    admission_digest text COLLATE pg_catalog."C" NOT NULL,
+    operation_id text COLLATE pg_catalog."C" NOT NULL,
+    consumption_id text COLLATE pg_catalog."C" NOT NULL,
+    approval_digest text COLLATE pg_catalog."C" NOT NULL,
+    approval_reference text COLLATE pg_catalog."C" NOT NULL,
+    plan_digest text COLLATE pg_catalog."C" NOT NULL,
+    execution_attempt_id text COLLATE pg_catalog."C" NOT NULL,
+    execution_attempt_issuance_id text COLLATE pg_catalog."C" NOT NULL,
+    execution_attempt_receipt_digest text COLLATE pg_catalog."C" NOT NULL,
+    token_digest text COLLATE pg_catalog."C" NOT NULL,
+    mutation_not_after timestamptz NOT NULL,
+    opened_at timestamptz NOT NULL,
+    canonical_admission bytea NOT NULL,
+    CONSTRAINT approval_execution_fence_record_pk PRIMARY KEY (target_digest, fence_epoch),
+    CONSTRAINT approval_execution_fence_record_operation_uk UNIQUE (
+        target_digest, operation_id
+    ),
+    CONSTRAINT approval_execution_fence_record_consumption_uk UNIQUE (
+        target_digest, consumption_id
+    ),
+    CONSTRAINT approval_execution_fence_record_approval_digest_uk UNIQUE (
+        target_digest, approval_digest
+    ),
+    CONSTRAINT approval_execution_fence_record_approval_reference_uk UNIQUE (
+        target_digest, approval_reference
+    ),
+    CONSTRAINT approval_execution_fence_record_attempt_id_uk UNIQUE (
+        target_digest, execution_attempt_id
+    ),
+    CONSTRAINT approval_execution_fence_record_attempt_issuance_uk UNIQUE (
+        target_digest, execution_attempt_issuance_id
+    ),
+    CONSTRAINT approval_execution_fence_record_attempt_receipt_uk UNIQUE (
+        target_digest, execution_attempt_receipt_digest
+    ),
+    CONSTRAINT approval_execution_fence_record_token_digest_uk UNIQUE (
+        target_digest, token_digest
+    ),
+    CONSTRAINT approval_execution_fence_record_head_fk_uk UNIQUE (
+        target_digest, fence_epoch, operation_id
+    ),
+    CONSTRAINT approval_execution_fence_record_target_digest_ck CHECK (
+        target_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_epoch_ck CHECK (
+        fence_epoch > 0 AND fence_epoch <= 9223372036854775807
+    ),
+    CONSTRAINT approval_execution_fence_record_policy_id_ck CHECK (
+        policy_id ~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' AND
+        policy_id LIKE 'approval-policy/%'
+    ),
+    CONSTRAINT approval_execution_fence_record_policy_revision_ck CHECK (
+        expected_policy_revision > 0 AND expected_policy_revision <= 9223372036854775807
+    ),
+    CONSTRAINT approval_execution_fence_record_policy_digest_ck CHECK (
+        expected_policy_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_activation_digest_ck CHECK (
+        expected_activation_record_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_admission_digest_ck CHECK (
+        admission_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_operation_id_ck CHECK (
+        operation_id ~ '^approval-operation/[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_consumption_id_ck CHECK (
+        consumption_id ~ '^approval-consumption/[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_approval_digest_ck CHECK (
+        approval_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_approval_reference_ck CHECK (
+        pg_catalog.length(approval_reference) <= 256 AND
+        approval_reference ~ '^approval/[a-z0-9._:-]+(?:/[a-z0-9._:-]+)*$' AND
+        approval_reference !~ '(^|/)[.]{1,2}($|/)'
+    ),
+    CONSTRAINT approval_execution_fence_record_plan_digest_ck CHECK (
+        plan_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_attempt_id_ck CHECK (
+        execution_attempt_id ~ '^execution-attempt/[a-z0-9][a-z0-9._:/-]{0,237}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_attempt_issuance_ck CHECK (
+        execution_attempt_issuance_id ~ '^execution-attempt-issuance/[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_attempt_receipt_ck CHECK (
+        execution_attempt_receipt_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_token_digest_ck CHECK (
+        token_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_record_time_ck CHECK (
+        pg_catalog.isfinite(mutation_not_after) AND pg_catalog.isfinite(opened_at) AND
+        mutation_not_after = pg_catalog.date_trunc('second', mutation_not_after) AND
+        opened_at = pg_catalog.date_trunc('second', opened_at) AND
+        opened_at < mutation_not_after
+    ),
+    CONSTRAINT approval_execution_fence_record_canonical_admission_ck CHECK (
+        pg_catalog.octet_length(canonical_admission) BETWEEN 1 AND 65536
+    ),
+    CONSTRAINT approval_execution_fence_record_policy_archive_fk FOREIGN KEY (
+        policy_id, target_digest, expected_policy_revision, expected_policy_digest
+    ) REFERENCES wanwork_policy_control.approval_policy_archive (
+        policy_id, target_digest, revision, policy_digest
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT approval_execution_fence_record_activation_fk FOREIGN KEY (
+        policy_id, target_digest, expected_policy_revision, expected_policy_digest,
+        expected_activation_record_digest
+    ) REFERENCES wanwork_policy_control.approval_policy_activation_record (
+        policy_id, target_digest, revision, policy_digest, activation_record_digest
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
+CREATE TABLE wanwork_policy_control.approval_execution_fence_head (
+    target_digest text COLLATE pg_catalog."C" NOT NULL,
+    fence_epoch bigint NOT NULL,
+    operation_id text COLLATE pg_catalog."C" NOT NULL,
+    unresolved_since timestamptz NOT NULL,
+    CONSTRAINT approval_execution_fence_head_pk PRIMARY KEY (target_digest),
+    CONSTRAINT approval_execution_fence_head_target_digest_ck CHECK (
+        target_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_head_epoch_ck CHECK (
+        fence_epoch > 0 AND fence_epoch <= 9223372036854775807
+    ),
+    CONSTRAINT approval_execution_fence_head_operation_id_ck CHECK (
+        operation_id ~ '^approval-operation/[0-9a-f]{64}$'
+    ),
+    CONSTRAINT approval_execution_fence_head_unresolved_since_ck CHECK (
+        pg_catalog.isfinite(unresolved_since) AND
+        unresolved_since = pg_catalog.date_trunc('second', unresolved_since)
+    ),
+    CONSTRAINT approval_execution_fence_head_record_fk FOREIGN KEY (
+        target_digest, fence_epoch, operation_id
+    ) REFERENCES wanwork_policy_control.approval_execution_fence_record (
+        target_digest, fence_epoch, operation_id
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
+-- This owner-only validator accepts either the unissued caller candidate or the final database
+-- grant. It rebuilds the exact Go JSON encoding, derives the caller-stable issuance ID after
+-- clearing all database-assigned fields, and (for a grant) seals every field into the receipt.
+CREATE FUNCTION wanwork_policy_control.approval_execution_attempt_is_valid(
+    p_canonical_attempt bytea,
+    p_attempt_issuance_id text,
+    p_attempt_generation bigint,
+    p_attempt_id text,
+    p_attempt_receipt_digest text,
+    p_created_at timestamptz,
+    p_require_grant boolean
+)
+RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+SECURITY INVOKER
+PARALLEL SAFE
+SET search_path TO pg_catalog
+AS $function$
+DECLARE
+    attempt_document jsonb;
+    expected_head jsonb;
+    raw_attempt text;
+    expected_attempt text;
+    unsigned_issuance text;
+    unsigned_receipt text;
+    top_key_count bigint;
+    head_key_count bigint;
+    approval_expires_at timestamptz;
+    approved_at timestamptz;
+    plan_expires_at timestamptz;
+    preflight_expires_at timestamptz;
+    preflight_observed_at timestamptz;
+    mutation_not_after timestamptz;
+    calculated_issuance_id text;
+    calculated_receipt_digest text;
+    canonical_created_at text;
+    canonical_generation text;
+BEGIN
+    IF p_attempt_issuance_id !~ '^execution-attempt-issuance/[0-9a-f]{64}$' OR
+       pg_catalog.octet_length(p_canonical_attempt) NOT BETWEEN 1 AND 65536 THEN
+        RETURN false;
+    END IF;
+    IF p_require_grant THEN
+        IF p_attempt_generation <= 0 OR p_attempt_generation > 9223372036854775807 OR
+           p_attempt_id !~ '^execution-attempt/[a-z0-9][a-z0-9._:/-]{0,237}$' OR
+           p_attempt_receipt_digest !~ '^sha256:[0-9a-f]{64}$' OR
+           NOT pg_catalog.isfinite(p_created_at) OR
+           p_created_at <> pg_catalog.date_trunc('second', p_created_at) THEN
+            RETURN false;
+        END IF;
+        canonical_generation := p_attempt_generation::text;
+        canonical_created_at := pg_catalog.to_char(
+            p_created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        );
+    ELSE
+        IF p_attempt_generation <> 0 OR p_attempt_id <> '' OR
+           p_attempt_receipt_digest <> '' OR
+           p_created_at IS DISTINCT FROM '0001-01-01T00:00:00Z'::timestamptz THEN
+            RETURN false;
+        END IF;
+        canonical_generation := '0';
+        canonical_created_at := '0001-01-01T00:00:00Z';
+    END IF;
+
+    raw_attempt := pg_catalog.convert_from(p_canonical_attempt, 'UTF8');
+    IF raw_attempt !~ '^\{"approvalDigest":"sha256:[0-9a-f]{64}",' OR
+       raw_attempt ~ '[[:space:]]' OR
+       pg_catalog.regexp_count(raw_attempt, '"[A-Za-z][A-Za-z0-9]*":') <> 30 THEN
+        RETURN false;
+    END IF;
+    attempt_document := raw_attempt::jsonb;
+    IF pg_catalog.jsonb_typeof(attempt_document) IS DISTINCT FROM 'object' THEN
+        RETURN false;
+    END IF;
+    SELECT pg_catalog.count(*) INTO top_key_count
+    FROM pg_catalog.jsonb_object_keys(attempt_document);
+    IF top_key_count <> 25 THEN
+        RETURN false;
+    END IF;
+    expected_head := attempt_document->'expectedPolicyHead';
+    IF pg_catalog.jsonb_typeof(expected_head) IS DISTINCT FROM 'object' THEN
+        RETURN false;
+    END IF;
+    SELECT pg_catalog.count(*) INTO head_key_count
+    FROM pg_catalog.jsonb_object_keys(expected_head);
+    IF head_key_count <> 5 THEN
+        RETURN false;
+    END IF;
+
+    approval_expires_at := (attempt_document->>'approvalExpiresAt')::timestamptz;
+    approved_at := (attempt_document->>'approvedAt')::timestamptz;
+    plan_expires_at := (attempt_document->>'planExpiresAt')::timestamptz;
+    preflight_expires_at := (attempt_document->>'preflightExpiresAt')::timestamptz;
+    preflight_observed_at := (attempt_document->>'preflightObservedAt')::timestamptz;
+    mutation_not_after := (attempt_document->>'mutationNotAfter')::timestamptz;
+
+    IF attempt_document->>'format' IS DISTINCT FROM
+           'wanwork.im.postgres-authority-approval-execution-attempt/2' OR
+       COALESCE(attempt_document->>'approvalDigest', '') !~ '^sha256:[0-9a-f]{64}$' OR
+       COALESCE(attempt_document->>'approvalKeyFingerprint', '') !~
+           '^sha256:[0-9a-f]{64}$' OR
+       COALESCE(attempt_document->>'approvalKeyGeneration', '') !~
+           '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       COALESCE(attempt_document->>'approvalKeyId', '') !~
+           '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       COALESCE(attempt_document->>'approvalPolicyRevision', '') !~
+           '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       COALESCE(attempt_document->>'approvalPolicyRootTrustDigest', '') !~
+           '^sha256:[0-9a-f]{64}$' OR
+       pg_catalog.length(COALESCE(attempt_document->>'approvalReference', '')) > 256 OR
+       COALESCE(attempt_document->>'approvalReference', '') !~
+           '^approval/[a-z0-9._:-]+(?:/[a-z0-9._:-]+)*$' OR
+       COALESCE(attempt_document->>'approvalReference', '') ~ '(^|/)[.]{1,2}($|/)' OR
+       COALESCE(attempt_document->>'approverIdentity', '') !~
+           '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       pg_catalog.jsonb_typeof(attempt_document->'attemptGeneration') IS DISTINCT FROM
+           'number' OR
+       attempt_document->>'attemptGeneration' IS DISTINCT FROM canonical_generation OR
+       attempt_document->>'attemptId' IS DISTINCT FROM p_attempt_id OR
+       attempt_document->>'attemptIssuanceId' IS DISTINCT FROM p_attempt_issuance_id OR
+       attempt_document->>'attemptReceiptDigest' IS DISTINCT FROM p_attempt_receipt_digest OR
+       attempt_document->>'createdAt' IS DISTINCT FROM canonical_created_at OR
+       COALESCE(expected_head->>'ActivationRecordDigest', '') !~ '^sha256:[0-9a-f]{64}$' OR
+       COALESCE(expected_head->>'PolicyDigest', '') !~ '^sha256:[0-9a-f]{64}$' OR
+       COALESCE(expected_head->>'PolicyID', '') !~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       expected_head->>'PolicyID' NOT LIKE 'approval-policy/%' OR
+       pg_catalog.jsonb_typeof(expected_head->'Revision') IS DISTINCT FROM 'number' OR
+       expected_head->>'Revision' !~ '^[1-9][0-9]{0,18}$' OR
+       (expected_head->>'Revision')::numeric > 9223372036854775807 OR
+       COALESCE(expected_head->>'TargetDigest', '') !~ '^sha256:[0-9a-f]{64}$' OR
+       attempt_document->>'approvalPolicyRevision' IS DISTINCT FROM
+           ('policy/' || pg_catalog.substr(expected_head->>'PolicyID', 17) || '/revision-' ||
+            (expected_head->>'Revision')) OR
+       COALESCE(attempt_document->>'planDigest', '') !~ '^sha256:[0-9a-f]{64}$' OR
+       COALESCE(attempt_document->>'planId', '') !~
+           '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       COALESCE(attempt_document->>'preflightReportDigest', '') !~
+           '^sha256:[0-9a-f]{64}$' OR
+       attempt_document->>'targetDigest' IS DISTINCT FROM expected_head->>'TargetDigest' THEN
+        RETURN false;
+    END IF;
+
+    IF NOT pg_catalog.isfinite(approval_expires_at) OR
+       NOT pg_catalog.isfinite(approved_at) OR
+       NOT pg_catalog.isfinite(plan_expires_at) OR
+       NOT pg_catalog.isfinite(preflight_expires_at) OR
+       NOT pg_catalog.isfinite(preflight_observed_at) OR
+       NOT pg_catalog.isfinite(mutation_not_after) OR
+       approval_expires_at <> pg_catalog.date_trunc('second', approval_expires_at) OR
+       approved_at <> pg_catalog.date_trunc('second', approved_at) OR
+       plan_expires_at <> pg_catalog.date_trunc('second', plan_expires_at) OR
+       preflight_expires_at <> pg_catalog.date_trunc('second', preflight_expires_at) OR
+       preflight_observed_at <> pg_catalog.date_trunc('second', preflight_observed_at) OR
+       mutation_not_after <> pg_catalog.date_trunc('second', mutation_not_after) OR
+       approval_expires_at <= approved_at OR
+       preflight_observed_at < approved_at OR
+       preflight_expires_at <= preflight_observed_at OR
+       mutation_not_after <> LEAST(
+           approval_expires_at, plan_expires_at, preflight_expires_at
+       ) OR (p_require_grant AND (
+           p_created_at < preflight_observed_at OR p_created_at >= mutation_not_after
+       )) THEN
+        RETURN false;
+    END IF;
+
+    unsigned_issuance :=
+        '{"approvalDigest":"' || (attempt_document->>'approvalDigest') ||
+        '","approvalExpiresAt":"' || pg_catalog.to_char(
+            approval_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","approvalKeyFingerprint":"' ||
+        (attempt_document->>'approvalKeyFingerprint') ||
+        '","approvalKeyGeneration":"' || (attempt_document->>'approvalKeyGeneration') ||
+        '","approvalKeyId":"' || (attempt_document->>'approvalKeyId') ||
+        '","approvalPolicyRevision":"' || (attempt_document->>'approvalPolicyRevision') ||
+        '","approvalPolicyRootTrustDigest":"' ||
+        (attempt_document->>'approvalPolicyRootTrustDigest') ||
+        '","approvalReference":"' || (attempt_document->>'approvalReference') ||
+        '","approvedAt":"' || pg_catalog.to_char(
+            approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","approverIdentity":"' || (attempt_document->>'approverIdentity') ||
+        '","attemptGeneration":0,"attemptId":"","attemptIssuanceId":""' ||
+        ',"attemptReceiptDigest":"","createdAt":"0001-01-01T00:00:00Z"' ||
+        ',"expectedPolicyHead":{"ActivationRecordDigest":"' ||
+        (expected_head->>'ActivationRecordDigest') || '","PolicyDigest":"' ||
+        (expected_head->>'PolicyDigest') || '","PolicyID":"' ||
+        (expected_head->>'PolicyID') || '","Revision":' ||
+        (expected_head->>'Revision') || ',"TargetDigest":"' ||
+        (expected_head->>'TargetDigest') || '"}' ||
+        ',"format":"wanwork.im.postgres-authority-approval-execution-attempt/2"' ||
+        ',"mutationNotAfter":"' || pg_catalog.to_char(
+            mutation_not_after AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","planDigest":"' || (attempt_document->>'planDigest') ||
+        '","planExpiresAt":"' || pg_catalog.to_char(
+            plan_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","planId":"' || (attempt_document->>'planId') ||
+        '","preflightExpiresAt":"' || pg_catalog.to_char(
+            preflight_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","preflightObservedAt":"' || pg_catalog.to_char(
+            preflight_observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","preflightReportDigest":"' ||
+        (attempt_document->>'preflightReportDigest') ||
+        '","targetDigest":"' || (attempt_document->>'targetDigest') || '"}';
+    calculated_issuance_id := 'execution-attempt-issuance/' || pg_catalog.encode(
+        pg_catalog.sha256(
+            pg_catalog.convert_to(
+                E'wanwork.im/postgres-authority-approval-execution-attempt-issuance/1\n',
+                'UTF8'
+            ) || pg_catalog.convert_to(unsigned_issuance, 'UTF8')
+        ),
+        'hex'
+    );
+    IF calculated_issuance_id <> p_attempt_issuance_id THEN
+        RETURN false;
+    END IF;
+
+    unsigned_receipt := pg_catalog.regexp_replace(
+        unsigned_issuance,
+        '"attemptGeneration":0,"attemptId":"","attemptIssuanceId":""' ||
+        ',"attemptReceiptDigest":"","createdAt":"0001-01-01T00:00:00Z"',
+        '"attemptGeneration":' || canonical_generation ||
+        ',"attemptId":"' || p_attempt_id ||
+        '","attemptIssuanceId":"' || p_attempt_issuance_id ||
+        '","attemptReceiptDigest":"","createdAt":"' || canonical_created_at || '"'
+    );
+    IF p_require_grant THEN
+        calculated_receipt_digest := 'sha256:' || pg_catalog.encode(
+            pg_catalog.sha256(
+                pg_catalog.convert_to(
+                    E'wanwork.im/postgres-authority-approval-execution-attempt/2\n', 'UTF8'
+                ) || pg_catalog.convert_to(unsigned_receipt, 'UTF8')
+            ),
+            'hex'
+        );
+        IF calculated_receipt_digest <> p_attempt_receipt_digest THEN
+            RETURN false;
+        END IF;
+    END IF;
+    expected_attempt := pg_catalog.regexp_replace(
+        unsigned_receipt,
+        '"attemptReceiptDigest":""',
+        '"attemptReceiptDigest":"' || p_attempt_receipt_digest || '"'
+    );
+    RETURN raw_attempt = expected_attempt;
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN false;
+END
+$function$;
+
+CREATE FUNCTION wanwork_policy_control.read_approval_execution_attempt(
+    p_policy_id text,
+    p_target_digest text,
+    p_attempt_issuance_id text
+)
+RETURNS TABLE (
+    state_status text,
+    attempt_generation bigint,
+    attempt_id text,
+    attempt_issuance_id text,
+    attempt_receipt_digest text,
+    created_at timestamptz,
+    canonical_attempt bytea
+)
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+PARALLEL RESTRICTED
+SET search_path TO pg_catalog
+AS $function$
+DECLARE
+    counter_count bigint;
+    counter_generation bigint;
+    counter_advanced_at timestamptz;
+    record_count bigint;
+    minimum_generation bigint;
+    maximum_generation bigint;
+    maximum_created_at timestamptz;
+    invalid_record_count bigint;
+    requested_record wanwork_policy_control.approval_execution_attempt_record%ROWTYPE;
+BEGIN
+    IF p_policy_id !~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       p_policy_id NOT LIKE 'approval-policy/%' OR
+       p_target_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_attempt_issuance_id !~ '^execution-attempt-issuance/[0-9a-f]{64}$' THEN
+        state_status := 'corrupt';
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    SELECT pg_catalog.count(*), pg_catalog.max(counter.last_attempt_generation),
+           pg_catalog.max(counter.advanced_at)
+    INTO counter_count, counter_generation, counter_advanced_at
+    FROM wanwork_policy_control.approval_execution_attempt_counter AS counter
+    WHERE counter.target_digest = p_target_digest;
+
+    SELECT pg_catalog.count(*),
+           pg_catalog.min(record.attempt_generation),
+           pg_catalog.max(record.attempt_generation),
+           pg_catalog.max(record.created_at),
+           pg_catalog.count(*) FILTER (WHERE NOT CASE
+               WHEN wanwork_policy_control.approval_execution_attempt_is_valid(
+                   record.canonical_attempt,
+                   record.attempt_issuance_id,
+                   record.attempt_generation,
+                   record.attempt_id,
+                   record.attempt_receipt_digest,
+                   record.created_at,
+                   true
+               ) AND wanwork_policy_control.approval_execution_attempt_is_valid(
+                   record.canonical_request,
+                   record.attempt_issuance_id,
+                   0,
+                   '',
+                   '',
+                   '0001-01-01T00:00:00Z'::timestamptz,
+                   false
+               ) THEN
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'approvalDigest') = record.approval_digest AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'approvalExpiresAt') = pg_catalog.to_char(
+                           record.approval_expires_at AT TIME ZONE 'UTC',
+                           'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                       ) AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'approvalKeyFingerprint') = record.approval_key_fingerprint AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'approvalKeyGeneration') = record.approval_key_generation AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'approvalKeyId') = record.approval_key_id AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'approvalPolicyRevision') = record.approval_policy_revision AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'approvalPolicyRootTrustDigest') =
+                       record.approval_policy_root_trust_digest AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'approvalReference') = record.approval_reference AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'approvedAt') = pg_catalog.to_char(
+                           record.approved_at AT TIME ZONE 'UTC',
+                           'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                       ) AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'approverIdentity') = record.approver_identity AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->'expectedPolicyHead'->>'PolicyID') = record.policy_id AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->'expectedPolicyHead'->>'TargetDigest') = record.target_digest AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->'expectedPolicyHead'->>'Revision') =
+                       record.expected_policy_revision::text AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->'expectedPolicyHead'->>'PolicyDigest') =
+                       record.expected_policy_digest AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->'expectedPolicyHead'->>'ActivationRecordDigest') =
+                       record.expected_activation_record_digest AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'mutationNotAfter') = pg_catalog.to_char(
+                           record.mutation_not_after AT TIME ZONE 'UTC',
+                           'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                       ) AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'planDigest') = record.plan_digest AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'planExpiresAt') = pg_catalog.to_char(
+                           record.plan_expires_at AT TIME ZONE 'UTC',
+                           'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                       ) AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'planId') = record.plan_id AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'preflightExpiresAt') = pg_catalog.to_char(
+                           record.preflight_expires_at AT TIME ZONE 'UTC',
+                           'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                       ) AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'preflightObservedAt') = pg_catalog.to_char(
+                           record.preflight_observed_at AT TIME ZONE 'UTC',
+                           'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                       ) AND
+                   (pg_catalog.convert_from(record.canonical_attempt, 'UTF8')::jsonb
+                        ->>'preflightReportDigest') = record.preflight_report_digest AND
+                   record.canonical_request = pg_catalog.convert_to(
+                       pg_catalog.regexp_replace(
+                           pg_catalog.convert_from(record.canonical_attempt, 'UTF8'),
+                           '"attemptGeneration":' || record.attempt_generation::text ||
+                           ',"attemptId":"' || record.attempt_id ||
+                           '","attemptIssuanceId":"' || record.attempt_issuance_id ||
+                           '","attemptReceiptDigest":"' || record.attempt_receipt_digest ||
+                           '","createdAt":"' || pg_catalog.to_char(
+                               record.created_at AT TIME ZONE 'UTC',
+                               'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                           ) || '"',
+                           '"attemptGeneration":0,"attemptId":""' ||
+                           ',"attemptIssuanceId":"' || record.attempt_issuance_id ||
+                           '","attemptReceiptDigest":""' ||
+                           ',"createdAt":"0001-01-01T00:00:00Z"'
+                       ),
+                       'UTF8'
+                   )
+               ELSE false
+           END)
+    INTO record_count, minimum_generation, maximum_generation,
+         maximum_created_at, invalid_record_count
+    FROM wanwork_policy_control.approval_execution_attempt_record AS record
+    WHERE record.target_digest = p_target_digest;
+
+    IF counter_count > 1 OR invalid_record_count <> 0 OR
+       (record_count = 0 AND counter_count <> 0) OR
+       (record_count > 0 AND (
+           counter_count <> 1 OR minimum_generation <> 1 OR
+           maximum_generation <> record_count OR
+           counter_generation <> maximum_generation OR
+           counter_advanced_at <> maximum_created_at
+       )) THEN
+        state_status := 'corrupt';
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    SELECT record.*
+    INTO requested_record
+    FROM wanwork_policy_control.approval_execution_attempt_record AS record
+    WHERE record.policy_id = p_policy_id
+      AND record.target_digest = p_target_digest
+      AND record.attempt_issuance_id = p_attempt_issuance_id;
+    IF NOT FOUND THEN
+        state_status := 'missing';
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    state_status := 'present';
+    attempt_generation := requested_record.attempt_generation;
+    attempt_id := requested_record.attempt_id;
+    attempt_issuance_id := requested_record.attempt_issuance_id;
+    attempt_receipt_digest := requested_record.attempt_receipt_digest;
+    created_at := requested_record.created_at;
+    canonical_attempt := requested_record.canonical_attempt;
+    RETURN NEXT;
+END
+$function$;
+
+CREATE FUNCTION wanwork_policy_control.compare_and_issue_approval_execution_attempt(
+    p_attempt_issuance_id text,
+    p_canonical_candidate bytea
+)
+RETURNS TABLE (
+    state_status text,
+    attempt_generation bigint,
+    attempt_id text,
+    attempt_issuance_id text,
+    attempt_receipt_digest text,
+    created_at timestamptz,
+    canonical_attempt bytea
+)
+LANGUAGE plpgsql
+VOLATILE
+STRICT
+SECURITY DEFINER
+PARALLEL UNSAFE
+SET search_path TO pg_catalog
+AS $function$
+DECLARE
+    candidate_document jsonb;
+    expected_head jsonb;
+    raw_candidate text;
+    p_policy_id text;
+    p_target_digest text;
+    p_expected_policy_revision bigint;
+    p_expected_policy_digest text;
+    p_expected_activation_record_digest text;
+    approval_expires_at timestamptz;
+    approved_at timestamptz;
+    plan_expires_at timestamptz;
+    preflight_expires_at timestamptz;
+    preflight_observed_at timestamptz;
+    mutation_not_after timestamptz;
+    authoritative_now timestamptz;
+    current_attempt_status text;
+    current_state_status text;
+    current_policy_revision bigint;
+    current_policy_digest text;
+    current_activation_record_digest text;
+    current_canonical_activation bytea;
+    current_activation_document jsonb;
+    next_attempt_generation bigint;
+    next_attempt_id text;
+    unsigned_grant text;
+    next_receipt_digest text;
+    final_grant text;
+BEGIN
+    IF NOT wanwork_policy_control.approval_execution_attempt_is_valid(
+        p_canonical_candidate,
+        p_attempt_issuance_id,
+        0,
+        '',
+        '',
+        '0001-01-01T00:00:00Z'::timestamptz,
+        false
+    ) THEN
+        state_status := 'rejected';
+        RETURN NEXT;
+        RETURN;
+    END IF;
+    BEGIN
+        raw_candidate := pg_catalog.convert_from(p_canonical_candidate, 'UTF8');
+        candidate_document := raw_candidate::jsonb;
+        expected_head := candidate_document->'expectedPolicyHead';
+        p_policy_id := expected_head->>'PolicyID';
+        p_target_digest := expected_head->>'TargetDigest';
+        p_expected_policy_revision := (expected_head->>'Revision')::bigint;
+        p_expected_policy_digest := expected_head->>'PolicyDigest';
+        p_expected_activation_record_digest := expected_head->>'ActivationRecordDigest';
+        approval_expires_at := (candidate_document->>'approvalExpiresAt')::timestamptz;
+        approved_at := (candidate_document->>'approvedAt')::timestamptz;
+        plan_expires_at := (candidate_document->>'planExpiresAt')::timestamptz;
+        preflight_expires_at := (candidate_document->>'preflightExpiresAt')::timestamptz;
+        preflight_observed_at := (candidate_document->>'preflightObservedAt')::timestamptz;
+        mutation_not_after := (candidate_document->>'mutationNotAfter')::timestamptz;
+    EXCEPTION WHEN OTHERS THEN
+        state_status := 'rejected';
+        RETURN NEXT;
+        RETURN;
+    END;
+
+    -- Activation, issuance, and fence opening share one target-only lock and one seed.
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(p_target_digest, 7318470027)
+    );
+
+    -- A caller can always recover an ACK/commit-unknown outcome by stable issuance ID. This exact
+    -- retry deliberately precedes every clock and policy-head check.
+    SELECT attempt.state_status,
+           attempt.attempt_generation,
+           attempt.attempt_id,
+           attempt.attempt_issuance_id,
+           attempt.attempt_receipt_digest,
+           attempt.created_at,
+           attempt.canonical_attempt
+    INTO current_attempt_status,
+         attempt_generation,
+         attempt_id,
+         attempt_issuance_id,
+         attempt_receipt_digest,
+         created_at,
+         canonical_attempt
+    FROM wanwork_policy_control.read_approval_execution_attempt(
+        p_policy_id, p_target_digest, p_attempt_issuance_id
+    ) AS attempt;
+    IF current_attempt_status = 'corrupt' THEN
+        state_status := 'corrupt';
+        RETURN NEXT;
+        RETURN;
+    ELSIF current_attempt_status = 'present' THEN
+        IF EXISTS (
+            SELECT 1
+            FROM wanwork_policy_control.approval_execution_attempt_record AS record
+            WHERE record.policy_id = p_policy_id
+              AND record.target_digest = p_target_digest
+              AND record.attempt_issuance_id = p_attempt_issuance_id
+              AND record.canonical_request = p_canonical_candidate
+        ) THEN
+            state_status := 'committed';
+        ELSE
+            state_status := 'corrupt';
+        END IF;
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    authoritative_now := pg_catalog.date_trunc('second', pg_catalog.clock_timestamp());
+    IF authoritative_now >= mutation_not_after OR authoritative_now < approved_at OR
+       authoritative_now < preflight_observed_at THEN
+        state_status := 'expired';
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    SELECT policy.state_status, policy.revision, policy.policy_digest,
+           policy.activation_record_digest, policy.canonical_record
+    INTO current_state_status, current_policy_revision, current_policy_digest,
+         current_activation_record_digest, current_canonical_activation
+    FROM wanwork_policy_control.read_approval_policy_state(
+        p_policy_id, p_target_digest
+    ) AS policy;
+    IF current_state_status = 'corrupt' THEN
+        state_status := 'corrupt';
+        RETURN NEXT;
+        RETURN;
+    ELSIF current_state_status <> 'present' OR
+          current_policy_revision <> p_expected_policy_revision OR
+          current_policy_digest <> p_expected_policy_digest OR
+          current_activation_record_digest <> p_expected_activation_record_digest THEN
+        state_status := 'policy_conflict';
+        RETURN NEXT;
+        RETURN;
+    END IF;
+    BEGIN
+        current_activation_document :=
+            pg_catalog.convert_from(current_canonical_activation, 'UTF8')::jsonb;
+    EXCEPTION WHEN OTHERS THEN
+        state_status := 'corrupt';
+        RETURN NEXT;
+        RETURN;
+    END;
+    IF pg_catalog.jsonb_typeof(current_activation_document) IS DISTINCT FROM 'object' OR
+       current_activation_document->>'format' IS DISTINCT FROM
+           'wanwork.im.postgres-authority-approval-policy-activation/1' OR
+       current_activation_document->>'policyId' IS DISTINCT FROM p_policy_id OR
+       current_activation_document->>'targetDigest' IS DISTINCT FROM p_target_digest OR
+       current_activation_document->>'revision' IS DISTINCT FROM
+           p_expected_policy_revision::text OR
+       current_activation_document->>'policyDigest' IS DISTINCT FROM
+           p_expected_policy_digest OR
+       current_activation_document->>'activationRecordDigest' IS DISTINCT FROM
+           p_expected_activation_record_digest OR
+       current_activation_document->>'approvalVerificationEnabled' IS DISTINCT FROM 'true' OR
+       current_activation_document->>'mutationAuthorized' IS DISTINCT FROM 'false' THEN
+        state_status := 'corrupt';
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    UPDATE wanwork_policy_control.approval_execution_attempt_counter AS counter
+    SET last_attempt_generation = counter.last_attempt_generation + 1,
+        advanced_at = authoritative_now
+    WHERE counter.target_digest = p_target_digest
+      AND counter.last_attempt_generation < 9223372036854775807
+    RETURNING counter.last_attempt_generation INTO next_attempt_generation;
+    IF NOT FOUND THEN
+        IF EXISTS (
+            SELECT 1
+            FROM wanwork_policy_control.approval_execution_attempt_counter AS counter
+            WHERE counter.target_digest = p_target_digest
+        ) THEN
+            state_status := 'corrupt';
+            RETURN NEXT;
+            RETURN;
+        END IF;
+        next_attempt_generation := 1;
+        INSERT INTO wanwork_policy_control.approval_execution_attempt_counter (
+            target_digest, last_attempt_generation, advanced_at
+        ) VALUES (p_target_digest, next_attempt_generation, authoritative_now);
+    END IF;
+
+    next_attempt_id := 'execution-attempt/' || pg_catalog.encode(
+        pg_catalog.sha256(
+            pg_catalog.convert_to(
+                E'wanwork.im/postgres-authority-approval-execution-attempt-id/1\n', 'UTF8'
+            ) || pg_catalog.convert_to(
+                '{"attemptGeneration":' || next_attempt_generation::text ||
+                ',"attemptIssuanceId":"' || p_attempt_issuance_id ||
+                '","targetDigest":"' || p_target_digest || '"}',
+                'UTF8'
+            )
+        ),
+        'hex'
+    );
+    unsigned_grant := pg_catalog.regexp_replace(
+        raw_candidate,
+        '"attemptGeneration":0,"attemptId":"","attemptIssuanceId":"' ||
+        p_attempt_issuance_id ||
+        '","attemptReceiptDigest":"","createdAt":"0001-01-01T00:00:00Z"',
+        '"attemptGeneration":' || next_attempt_generation::text ||
+        ',"attemptId":"' || next_attempt_id ||
+        '","attemptIssuanceId":"' || p_attempt_issuance_id ||
+        '","attemptReceiptDigest":"","createdAt":"' || pg_catalog.to_char(
+            authoritative_now AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '"'
+    );
+    IF unsigned_grant = raw_candidate THEN
+        RAISE EXCEPTION 'canonical attempt candidate replacement failed';
+    END IF;
+    next_receipt_digest := 'sha256:' || pg_catalog.encode(
+        pg_catalog.sha256(
+            pg_catalog.convert_to(
+                E'wanwork.im/postgres-authority-approval-execution-attempt/2\n', 'UTF8'
+            ) || pg_catalog.convert_to(unsigned_grant, 'UTF8')
+        ),
+        'hex'
+    );
+    final_grant := pg_catalog.regexp_replace(
+        unsigned_grant,
+        '"attemptReceiptDigest":""',
+        '"attemptReceiptDigest":"' || next_receipt_digest || '"'
+    );
+    IF NOT wanwork_policy_control.approval_execution_attempt_is_valid(
+        pg_catalog.convert_to(final_grant, 'UTF8'),
+        p_attempt_issuance_id,
+        next_attempt_generation,
+        next_attempt_id,
+        next_receipt_digest,
+        authoritative_now,
+        true
+    ) THEN
+        RAISE EXCEPTION 'database-created canonical attempt grant failed validation';
+    END IF;
+
+    INSERT INTO wanwork_policy_control.approval_execution_attempt_record (
+        target_digest, attempt_generation, policy_id, expected_policy_revision,
+        expected_policy_digest, expected_activation_record_digest, attempt_issuance_id,
+        attempt_id, attempt_receipt_digest, approval_digest, approval_expires_at,
+        approval_key_fingerprint, approval_key_generation, approval_key_id,
+        approval_policy_revision, approval_policy_root_trust_digest, approval_reference,
+        approved_at, approver_identity, plan_id, plan_digest, plan_expires_at,
+        preflight_report_digest, preflight_observed_at, preflight_expires_at,
+        mutation_not_after, created_at, canonical_request, canonical_attempt
+    ) VALUES (
+        p_target_digest, next_attempt_generation, p_policy_id, p_expected_policy_revision,
+        p_expected_policy_digest, p_expected_activation_record_digest,
+        p_attempt_issuance_id, next_attempt_id, next_receipt_digest,
+        candidate_document->>'approvalDigest', approval_expires_at,
+        candidate_document->>'approvalKeyFingerprint',
+        candidate_document->>'approvalKeyGeneration', candidate_document->>'approvalKeyId',
+        candidate_document->>'approvalPolicyRevision',
+        candidate_document->>'approvalPolicyRootTrustDigest',
+        candidate_document->>'approvalReference', approved_at,
+        candidate_document->>'approverIdentity', candidate_document->>'planId',
+        candidate_document->>'planDigest', plan_expires_at,
+        candidate_document->>'preflightReportDigest', preflight_observed_at,
+        preflight_expires_at, mutation_not_after, authoritative_now,
+        p_canonical_candidate, pg_catalog.convert_to(final_grant, 'UTF8')
+    );
+
+    state_status := 'committed';
+    attempt_generation := next_attempt_generation;
+    attempt_id := next_attempt_id;
+    attempt_issuance_id := p_attempt_issuance_id;
+    attempt_receipt_digest := next_receipt_digest;
+    created_at := authoritative_now;
+    canonical_attempt := pg_catalog.convert_to(final_grant, 'UTF8');
+    RETURN NEXT;
+EXCEPTION
+    WHEN unique_violation OR foreign_key_violation OR check_violation THEN
+        state_status := 'corrupt';
+        attempt_generation := NULL;
+        attempt_id := NULL;
+        attempt_issuance_id := NULL;
+        attempt_receipt_digest := NULL;
+        created_at := NULL;
+        canonical_attempt := NULL;
+        RETURN NEXT;
+END
+$function$;
+
+-- This owner-only helper validates the complete unsealed Go record and recomputes every derived
+-- admission identifier with PostgreSQL's built-in SHA-256. It never accepts a caller-supplied
+-- digest merely because the same string was duplicated in JSON.
+CREATE FUNCTION wanwork_policy_control.approval_execution_admission_is_valid(
+    p_canonical_admission bytea,
+    p_policy_id text,
+    p_target_digest text,
+    p_expected_policy_revision bigint,
+    p_expected_policy_digest text,
+    p_expected_activation_record_digest text,
+    p_admission_digest text,
+    p_operation_id text,
+    p_consumption_id text,
+    p_approval_digest text,
+    p_approval_reference text,
+    p_plan_digest text,
+    p_execution_attempt_id text,
+    p_execution_attempt_issuance_id text,
+    p_execution_attempt_receipt_digest text,
+    p_mutation_not_after timestamptz
+)
+RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+SECURITY INVOKER
+PARALLEL SAFE
+SET search_path TO pg_catalog
+AS $function$
+DECLARE
+    admission_document jsonb;
+    expected_head jsonb;
+    raw_admission text;
+    unsigned_admission text;
+    expected_unsigned_admission text;
+    admission_key_count bigint;
+    expected_head_key_count bigint;
+    approval_expires_at timestamptz;
+    approved_at timestamptz;
+    execution_attempt_created_at timestamptz;
+    plan_expires_at timestamptz;
+    preflight_expires_at timestamptz;
+    preflight_observed_at timestamptz;
+    calculated_admission_digest text;
+    calculated_consumption_id text;
+    calculated_operation_id text;
+    canonical_consumption bytea;
+    canonical_operation bytea;
+    execution_attempt_generation numeric;
+    plan_id text;
+BEGIN
+    IF p_policy_id !~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       p_policy_id NOT LIKE 'approval-policy/%' OR
+       p_target_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_expected_policy_revision <= 0 OR
+       p_expected_policy_revision > 9223372036854775807 OR
+       p_expected_policy_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_expected_activation_record_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_admission_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_operation_id !~ '^approval-operation/[0-9a-f]{64}$' OR
+       p_consumption_id !~ '^approval-consumption/[0-9a-f]{64}$' OR
+       p_approval_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       pg_catalog.length(p_approval_reference) > 256 OR
+       p_approval_reference !~ '^approval/[a-z0-9._:-]+(?:/[a-z0-9._:-]+)*$' OR
+       p_approval_reference ~ '(^|/)[.]{1,2}($|/)' OR
+       p_plan_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_execution_attempt_id !~ '^execution-attempt/[a-z0-9][a-z0-9._:/-]{0,237}$' OR
+       p_execution_attempt_issuance_id !~
+           '^execution-attempt-issuance/[0-9a-f]{64}$' OR
+       p_execution_attempt_receipt_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       NOT pg_catalog.isfinite(p_mutation_not_after) OR
+       p_mutation_not_after <> pg_catalog.date_trunc('second', p_mutation_not_after) OR
+       pg_catalog.octet_length(p_canonical_admission) NOT BETWEEN 1 AND 65536 THEN
+        RETURN false;
+    END IF;
+
+    raw_admission := pg_catalog.convert_from(p_canonical_admission, 'UTF8');
+    IF raw_admission !~ '^\{"admissionDigest":"sha256:[0-9a-f]{64}",' OR
+       raw_admission ~ '[[:space:]]' OR
+       pg_catalog.regexp_count(raw_admission, '"[A-Za-z][A-Za-z0-9]*":') <> 41 THEN
+        RETURN false;
+    END IF;
+    admission_document := raw_admission::jsonb;
+    IF pg_catalog.jsonb_typeof(admission_document) IS DISTINCT FROM 'object' THEN
+        RETURN false;
+    END IF;
+    SELECT pg_catalog.count(*) INTO admission_key_count
+    FROM pg_catalog.jsonb_object_keys(admission_document);
+    IF admission_key_count <> 36 THEN
+        RETURN false;
+    END IF;
+
+    expected_head := admission_document->'expectedPolicyHead';
+    IF pg_catalog.jsonb_typeof(expected_head) IS DISTINCT FROM 'object' THEN
+        RETURN false;
+    END IF;
+    SELECT pg_catalog.count(*) INTO expected_head_key_count
+    FROM pg_catalog.jsonb_object_keys(expected_head);
+    IF expected_head_key_count <> 5 THEN
+        RETURN false;
+    END IF;
+
+    approval_expires_at := (admission_document->>'approvalExpiresAt')::timestamptz;
+    approved_at := (admission_document->>'approvedAt')::timestamptz;
+    execution_attempt_created_at :=
+        (admission_document->>'executionAttemptCreatedAt')::timestamptz;
+    execution_attempt_generation :=
+        (admission_document->>'executionAttemptGeneration')::numeric;
+    plan_expires_at := (admission_document->>'planExpiresAt')::timestamptz;
+    plan_id := admission_document->>'planId';
+    preflight_expires_at := (admission_document->>'preflightExpiresAt')::timestamptz;
+    preflight_observed_at := (admission_document->>'preflightObservedAt')::timestamptz;
+
+    IF admission_document->>'format' IS DISTINCT FROM
+           'wanwork.im.postgres-authority-approval-execution-fence/3' OR
+       admission_document->>'admissionDigest' IS DISTINCT FROM p_admission_digest OR
+       admission_document->>'approvalDigest' IS DISTINCT FROM p_approval_digest OR
+       COALESCE(admission_document->>'approvalKeyFingerprint', '') !~
+           '^sha256:[0-9a-f]{64}$' OR
+       COALESCE(admission_document->>'approvalKeyGeneration', '') !~
+           '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       COALESCE(admission_document->>'approvalKeyId', '') !~
+           '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       admission_document->>'approvalPolicyActivationDigest' IS DISTINCT FROM
+           p_expected_activation_record_digest OR
+       admission_document->>'approvalPolicyDigest' IS DISTINCT FROM p_expected_policy_digest OR
+       admission_document->>'approvalPolicyId' IS DISTINCT FROM p_policy_id OR
+       COALESCE(admission_document->>'approvalPolicyRevision', '') !~
+           '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       admission_document->>'approvalPolicyRevision' IS DISTINCT FROM
+           ('policy/' || pg_catalog.substr(p_policy_id, 17) || '/revision-' ||
+            p_expected_policy_revision::text) OR
+       COALESCE(admission_document->>'approvalPolicyRootTrustDigest', '') !~
+           '^sha256:[0-9a-f]{64}$' OR
+       pg_catalog.jsonb_typeof(admission_document->'approvalPolicySequence') IS DISTINCT FROM
+           'number' OR
+       admission_document->>'approvalPolicySequence' IS DISTINCT FROM
+           p_expected_policy_revision::text OR
+       admission_document->>'approvalPolicyTargetDigest' IS DISTINCT FROM p_target_digest OR
+       admission_document->>'approvalReference' IS DISTINCT FROM p_approval_reference OR
+       COALESCE(admission_document->>'approverIdentity', '') !~
+           '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       admission_document->>'consumptionId' IS DISTINCT FROM p_consumption_id OR
+       pg_catalog.jsonb_typeof(admission_document->'executionAttemptGeneration') IS DISTINCT FROM
+           'number' OR
+       admission_document->>'executionAttemptGeneration' !~ '^[1-9][0-9]{0,19}$' OR
+       execution_attempt_generation <= 0 OR
+       execution_attempt_generation > 18446744073709551615 OR
+       admission_document->>'executionAttemptId' IS DISTINCT FROM p_execution_attempt_id OR
+       admission_document->>'executionAttemptIssuanceId' IS DISTINCT FROM
+           p_execution_attempt_issuance_id OR
+       admission_document->>'executionAttemptReceiptDigest' IS DISTINCT FROM
+           p_execution_attempt_receipt_digest OR
+       expected_head->>'ActivationRecordDigest' IS DISTINCT FROM
+           p_expected_activation_record_digest OR
+       expected_head->>'PolicyDigest' IS DISTINCT FROM p_expected_policy_digest OR
+       expected_head->>'PolicyID' IS DISTINCT FROM p_policy_id OR
+       pg_catalog.jsonb_typeof(expected_head->'Revision') IS DISTINCT FROM 'number' OR
+       expected_head->>'Revision' IS DISTINCT FROM p_expected_policy_revision::text OR
+       expected_head->>'TargetDigest' IS DISTINCT FROM p_target_digest OR
+       pg_catalog.jsonb_typeof(admission_document->'fenceEpoch') IS DISTINCT FROM 'number' OR
+       admission_document->>'fenceEpoch' IS DISTINCT FROM '0' OR
+       admission_document->>'mutationNotAfter' IS DISTINCT FROM
+           pg_catalog.to_char(p_mutation_not_after AT TIME ZONE 'UTC',
+                              'YYYY-MM-DD"T"HH24:MI:SS"Z"') OR
+       admission_document->>'openedAt' IS DISTINCT FROM '0001-01-01T00:00:00Z' OR
+       admission_document->>'operationId' IS DISTINCT FROM p_operation_id OR
+       admission_document->>'planDigest' IS DISTINCT FROM p_plan_digest OR
+       COALESCE(plan_id, '') !~
+           '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       COALESCE(admission_document->>'preflightReportDigest', '') !~
+           '^sha256:[0-9a-f]{64}$' OR
+       admission_document->>'recordDigest' IS DISTINCT FROM '' OR
+       admission_document->>'tokenDigest' IS DISTINCT FROM '' THEN
+        RETURN false;
+    END IF;
+
+    IF NOT pg_catalog.isfinite(approval_expires_at) OR
+       NOT pg_catalog.isfinite(approved_at) OR
+       NOT pg_catalog.isfinite(execution_attempt_created_at) OR
+       NOT pg_catalog.isfinite(plan_expires_at) OR
+       NOT pg_catalog.isfinite(preflight_expires_at) OR
+       NOT pg_catalog.isfinite(preflight_observed_at) OR
+       approval_expires_at <> pg_catalog.date_trunc('second', approval_expires_at) OR
+       approved_at <> pg_catalog.date_trunc('second', approved_at) OR
+       execution_attempt_created_at <> pg_catalog.date_trunc(
+           'second', execution_attempt_created_at
+       ) OR
+       plan_expires_at <> pg_catalog.date_trunc('second', plan_expires_at) OR
+       preflight_expires_at <> pg_catalog.date_trunc('second', preflight_expires_at) OR
+       preflight_observed_at <> pg_catalog.date_trunc('second', preflight_observed_at) OR
+       approval_expires_at <= approved_at OR
+       preflight_observed_at < approved_at OR
+       execution_attempt_created_at < preflight_observed_at OR
+       execution_attempt_created_at >= p_mutation_not_after OR
+       preflight_expires_at <= preflight_observed_at OR
+       p_mutation_not_after <> LEAST(
+           approval_expires_at, plan_expires_at, preflight_expires_at
+       ) THEN
+        RETURN false;
+    END IF;
+
+    -- Rebuild the exact Go struct encoding. Parsing into jsonb alone is insufficient because it
+    -- discards object order and would let a direct fencer credential persist a non-canonical row
+    -- that every Go readback must later classify as corrupt.
+    expected_unsigned_admission :=
+        '{"admissionDigest":"","approvalDigest":"' || p_approval_digest ||
+        '","approvalExpiresAt":"' || pg_catalog.to_char(
+            approval_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","approvalKeyFingerprint":"' ||
+        (admission_document->>'approvalKeyFingerprint') ||
+        '","approvalKeyGeneration":"' || (admission_document->>'approvalKeyGeneration') ||
+        '","approvalKeyId":"' || (admission_document->>'approvalKeyId') ||
+        '","approvalPolicyActivationDigest":"' || p_expected_activation_record_digest ||
+        '","approvalPolicyDigest":"' || p_expected_policy_digest ||
+        '","approvalPolicyId":"' || p_policy_id ||
+        '","approvalPolicyRevision":"' || (admission_document->>'approvalPolicyRevision') ||
+        '","approvalPolicyRootTrustDigest":"' ||
+        (admission_document->>'approvalPolicyRootTrustDigest') ||
+        '","approvalPolicySequence":' || p_expected_policy_revision::text ||
+        ',"approvalPolicyTargetDigest":"' || p_target_digest ||
+        '","approvalReference":"' || p_approval_reference ||
+        '","approvedAt":"' || pg_catalog.to_char(
+            approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","approverIdentity":"' || (admission_document->>'approverIdentity') ||
+        '","consumptionId":"' || p_consumption_id ||
+        '","executionAttemptCreatedAt":"' || pg_catalog.to_char(
+            execution_attempt_created_at AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","executionAttemptGeneration":' || execution_attempt_generation::text ||
+        ',"executionAttemptId":"' || p_execution_attempt_id ||
+        '","executionAttemptIssuanceId":"' ||
+        p_execution_attempt_issuance_id ||
+        '","executionAttemptReceiptDigest":"' || p_execution_attempt_receipt_digest ||
+        '","expectedPolicyHead":{"ActivationRecordDigest":"' ||
+        p_expected_activation_record_digest || '","PolicyDigest":"' ||
+        p_expected_policy_digest || '","PolicyID":"' || p_policy_id ||
+        '","Revision":' || p_expected_policy_revision::text ||
+        ',"TargetDigest":"' || p_target_digest || '"},"fenceEpoch":0' ||
+        ',"format":"wanwork.im.postgres-authority-approval-execution-fence/3"' ||
+        ',"mutationNotAfter":"' || pg_catalog.to_char(
+            p_mutation_not_after AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","openedAt":"0001-01-01T00:00:00Z"' ||
+        ',"operationId":"' || p_operation_id ||
+        '","planDigest":"' || p_plan_digest ||
+        '","planExpiresAt":"' || pg_catalog.to_char(
+            plan_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","planId":"' || plan_id ||
+        '","preflightExpiresAt":"' || pg_catalog.to_char(
+            preflight_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","preflightObservedAt":"' || pg_catalog.to_char(
+            preflight_observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+        ) || '","preflightReportDigest":"' ||
+        (admission_document->>'preflightReportDigest') ||
+        '","recordDigest":"","tokenDigest":""}';
+
+    unsigned_admission := pg_catalog.regexp_replace(
+        raw_admission,
+        '^\{"admissionDigest":"sha256:[0-9a-f]{64}"',
+        '{"admissionDigest":""'
+    );
+    IF unsigned_admission = raw_admission OR
+       unsigned_admission IS DISTINCT FROM expected_unsigned_admission THEN
+        RETURN false;
+    END IF;
+    calculated_admission_digest := 'sha256:' || pg_catalog.encode(
+        pg_catalog.sha256(
+            pg_catalog.convert_to(
+                E'wanwork.im/postgres-authority-approval-execution-admission/1\n', 'UTF8'
+            ) || pg_catalog.convert_to(unsigned_admission, 'UTF8')
+        ),
+        'hex'
+    );
+    IF calculated_admission_digest <> p_admission_digest THEN
+        RETURN false;
+    END IF;
+
+    canonical_consumption := pg_catalog.convert_to(
+        '{"approvalDigest":"' || p_approval_digest ||
+        '","approvalPolicyId":"' || p_policy_id ||
+        '","approvalPolicyTargetDigest":"' || p_target_digest ||
+        '","approvalReference":"' || p_approval_reference ||
+        '","planDigest":"' || p_plan_digest || '"}',
+        'UTF8'
+    );
+    calculated_consumption_id := 'approval-consumption/' || pg_catalog.encode(
+        pg_catalog.sha256(
+            pg_catalog.convert_to(
+                E'wanwork.im/postgres-authority-approval-consumption/1\n', 'UTF8'
+            ) || canonical_consumption
+        ),
+        'hex'
+    );
+    IF calculated_consumption_id <> p_consumption_id THEN
+        RETURN false;
+    END IF;
+
+    canonical_operation := pg_catalog.convert_to(
+        '{"consumptionId":"' || p_consumption_id ||
+        '","executionAttemptId":"' || p_execution_attempt_id ||
+        '","executionAttemptReceiptDigest":"' ||
+        p_execution_attempt_receipt_digest || '"}',
+        'UTF8'
+    );
+    calculated_operation_id := 'approval-operation/' || pg_catalog.encode(
+        pg_catalog.sha256(
+            pg_catalog.convert_to(
+                E'wanwork.im/postgres-authority-approval-operation/1\n', 'UTF8'
+            ) || canonical_operation
+        ),
+        'hex'
+    );
+    RETURN calculated_operation_id = p_operation_id;
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN false;
+END
+$function$;
+
+-- Fence callers cannot mint trust by constructing a self-consistent SHA chain. Only an exact,
+-- immutable database-issued attempt whose complete vector matches the admission is trusted.
+CREATE FUNCTION wanwork_policy_control.approval_execution_attempt_admission_is_trusted(
+    p_canonical_admission bytea
+)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+PARALLEL RESTRICTED
+SET search_path TO pg_catalog
+AS $function$
+DECLARE
+    admission_document jsonb;
+BEGIN
+    admission_document := pg_catalog.convert_from(p_canonical_admission, 'UTF8')::jsonb;
+    RETURN EXISTS (
+        SELECT 1
+        FROM wanwork_policy_control.approval_execution_attempt_record AS attempt
+        WHERE attempt.target_digest = admission_document->>'approvalPolicyTargetDigest'
+          AND attempt.attempt_id = admission_document->>'executionAttemptId'
+          AND attempt.attempt_issuance_id =
+              admission_document->>'executionAttemptIssuanceId'
+          AND attempt.attempt_receipt_digest =
+              admission_document->>'executionAttemptReceiptDigest'
+          AND wanwork_policy_control.approval_execution_attempt_is_valid(
+              attempt.canonical_attempt,
+              attempt.attempt_issuance_id,
+              attempt.attempt_generation,
+              attempt.attempt_id,
+              attempt.attempt_receipt_digest,
+              attempt.created_at,
+              true
+          )
+          AND attempt.policy_id = admission_document->>'approvalPolicyId'
+          AND attempt.expected_policy_revision::text =
+              admission_document->>'approvalPolicySequence'
+          AND attempt.expected_policy_digest = admission_document->>'approvalPolicyDigest'
+          AND attempt.expected_activation_record_digest =
+              admission_document->>'approvalPolicyActivationDigest'
+          AND attempt.target_digest = admission_document->'expectedPolicyHead'->>'TargetDigest'
+          AND attempt.policy_id = admission_document->'expectedPolicyHead'->>'PolicyID'
+          AND attempt.expected_policy_revision::text =
+              admission_document->'expectedPolicyHead'->>'Revision'
+          AND attempt.expected_policy_digest =
+              admission_document->'expectedPolicyHead'->>'PolicyDigest'
+          AND attempt.expected_activation_record_digest =
+              admission_document->'expectedPolicyHead'->>'ActivationRecordDigest'
+          AND attempt.approval_digest = admission_document->>'approvalDigest'
+          AND pg_catalog.to_char(
+                  attempt.approval_expires_at AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+              ) = admission_document->>'approvalExpiresAt'
+          AND attempt.approval_key_fingerprint =
+              admission_document->>'approvalKeyFingerprint'
+          AND attempt.approval_key_generation = admission_document->>'approvalKeyGeneration'
+          AND attempt.approval_key_id = admission_document->>'approvalKeyId'
+          AND attempt.approval_policy_revision =
+              admission_document->>'approvalPolicyRevision'
+          AND attempt.approval_policy_root_trust_digest =
+              admission_document->>'approvalPolicyRootTrustDigest'
+          AND attempt.approval_reference = admission_document->>'approvalReference'
+          AND pg_catalog.to_char(
+                  attempt.approved_at AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+              ) = admission_document->>'approvedAt'
+          AND attempt.approver_identity = admission_document->>'approverIdentity'
+          AND attempt.attempt_generation::numeric =
+              (admission_document->>'executionAttemptGeneration')::numeric
+          AND pg_catalog.to_char(
+                  attempt.created_at AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+              ) = admission_document->>'executionAttemptCreatedAt'
+          AND attempt.plan_digest = admission_document->>'planDigest'
+          AND attempt.plan_id = admission_document->>'planId'
+          AND pg_catalog.to_char(
+                  attempt.plan_expires_at AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+              ) = admission_document->>'planExpiresAt'
+          AND attempt.preflight_report_digest =
+              admission_document->>'preflightReportDigest'
+          AND pg_catalog.to_char(
+                  attempt.preflight_observed_at AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+              ) = admission_document->>'preflightObservedAt'
+          AND pg_catalog.to_char(
+                  attempt.preflight_expires_at AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+              ) = admission_document->>'preflightExpiresAt'
+          AND pg_catalog.to_char(
+                  attempt.mutation_not_after AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+              ) = admission_document->>'mutationNotAfter'
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN false;
+END
+$function$;
+
+CREATE FUNCTION wanwork_policy_control.read_approval_execution_fence(
+    p_policy_id text,
+    p_target_digest text,
+    p_operation_id text
+)
+RETURNS TABLE (
+    state_status text,
+    fence_epoch bigint,
+    opened_at timestamptz,
+    token_digest text,
+    canonical_admission bytea
+)
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+PARALLEL RESTRICTED
+SET search_path TO pg_catalog
+AS $function$
+DECLARE
+    counter_count bigint;
+    counter_epoch bigint;
+    counter_advanced_at timestamptz;
+    record_count bigint;
+    minimum_epoch bigint;
+    maximum_epoch bigint;
+    maximum_opened_at timestamptz;
+    invalid_record_count bigint;
+    head_count bigint;
+    head_epoch bigint;
+    invalid_head_count bigint;
+    requested_record wanwork_policy_control.approval_execution_fence_record%ROWTYPE;
+BEGIN
+    IF p_policy_id !~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       p_policy_id NOT LIKE 'approval-policy/%' OR
+       p_target_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_operation_id !~ '^approval-operation/[0-9a-f]{64}$' THEN
+        state_status := 'corrupt';
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    SELECT pg_catalog.count(*), pg_catalog.max(counter.last_fence_epoch),
+           pg_catalog.max(counter.advanced_at)
+    INTO counter_count, counter_epoch, counter_advanced_at
+    FROM wanwork_policy_control.approval_execution_fence_counter AS counter
+    WHERE counter.target_digest = p_target_digest;
+
+    SELECT pg_catalog.count(*),
+           pg_catalog.min(record.fence_epoch),
+           pg_catalog.max(record.fence_epoch),
+           pg_catalog.max(record.opened_at),
+           pg_catalog.count(*) FILTER (WHERE NOT
+               wanwork_policy_control.approval_execution_admission_is_valid(
+                   record.canonical_admission,
+                   record.policy_id,
+                   record.target_digest,
+                   record.expected_policy_revision,
+                   record.expected_policy_digest,
+                   record.expected_activation_record_digest,
+                   record.admission_digest,
+                   record.operation_id,
+                   record.consumption_id,
+                   record.approval_digest,
+                   record.approval_reference,
+                   record.plan_digest,
+                   record.execution_attempt_id,
+                   record.execution_attempt_issuance_id,
+                   record.execution_attempt_receipt_digest,
+                   record.mutation_not_after
+               ) OR NOT wanwork_policy_control.approval_execution_attempt_admission_is_trusted(
+                   record.canonical_admission
+               ) OR NOT EXISTS (
+                   SELECT 1
+                   FROM wanwork_policy_control.approval_policy_archive AS archive
+                   INNER JOIN wanwork_policy_control.approval_policy_activation_record AS activation
+                     ON activation.policy_id = archive.policy_id
+                    AND activation.target_digest = archive.target_digest
+                    AND activation.revision = archive.revision
+                    AND activation.policy_digest = archive.policy_digest
+                   WHERE archive.policy_id = record.policy_id
+                     AND archive.target_digest = record.target_digest
+                     AND archive.revision = record.expected_policy_revision
+                     AND archive.policy_digest = record.expected_policy_digest
+                     AND activation.activation_record_digest =
+                         record.expected_activation_record_digest
+               ) OR record.opened_at >= record.mutation_not_after OR
+                  record.opened_at <> pg_catalog.date_trunc('second', record.opened_at)
+           )
+    INTO record_count, minimum_epoch, maximum_epoch, maximum_opened_at, invalid_record_count
+    FROM wanwork_policy_control.approval_execution_fence_record AS record
+    WHERE record.target_digest = p_target_digest;
+
+    SELECT pg_catalog.count(*), pg_catalog.max(head.fence_epoch),
+           pg_catalog.count(*) FILTER (WHERE record.fence_epoch IS NULL OR
+               head.unresolved_since IS DISTINCT FROM record.opened_at)
+    INTO head_count, head_epoch, invalid_head_count
+    FROM wanwork_policy_control.approval_execution_fence_head AS head
+    LEFT JOIN wanwork_policy_control.approval_execution_fence_record AS record
+      ON record.target_digest = head.target_digest
+     AND record.fence_epoch = head.fence_epoch
+     AND record.operation_id = head.operation_id
+    WHERE head.target_digest = p_target_digest;
+
+    IF counter_count > 1 OR head_count > 1 OR invalid_record_count <> 0 OR
+       invalid_head_count <> 0 OR
+       (record_count = 0 AND (counter_count <> 0 OR head_count <> 0)) OR
+       (record_count > 0 AND (
+           counter_count <> 1 OR head_count <> 1 OR head_epoch <> maximum_epoch OR
+           minimum_epoch <> 1 OR maximum_epoch <> record_count OR
+           counter_epoch <> maximum_epoch OR counter_advanced_at <> maximum_opened_at
+       )) THEN
+        state_status := 'corrupt';
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    SELECT record.*
+    INTO requested_record
+    FROM wanwork_policy_control.approval_execution_fence_record AS record
+    WHERE record.target_digest = p_target_digest
+      AND record.policy_id = p_policy_id
+      AND record.operation_id = p_operation_id;
+    IF NOT FOUND THEN
+        state_status := 'missing';
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    state_status := 'present';
+    fence_epoch := requested_record.fence_epoch;
+    opened_at := requested_record.opened_at;
+    token_digest := requested_record.token_digest;
+    canonical_admission := requested_record.canonical_admission;
+    RETURN NEXT;
+END
+$function$;
+
+CREATE FUNCTION wanwork_policy_control.compare_and_open_approval_execution_fence(
+    p_policy_id text,
+    p_target_digest text,
+    p_expected_policy_revision bigint,
+    p_expected_policy_digest text,
+    p_expected_activation_record_digest text,
+    p_admission_digest text,
+    p_operation_id text,
+    p_consumption_id text,
+    p_approval_digest text,
+    p_token_digest text,
+    p_mutation_not_after timestamptz,
+    p_canonical_admission bytea
+)
+RETURNS text
+LANGUAGE plpgsql
+VOLATILE
+STRICT
+SECURITY DEFINER
+PARALLEL UNSAFE
+SET search_path TO pg_catalog
+AS $function$
+DECLARE
+    admission_document jsonb;
+    v_approval_reference text;
+    v_plan_digest text;
+    v_execution_attempt_id text;
+    v_execution_attempt_issuance_id text;
+    v_execution_attempt_receipt_digest text;
+    v_approved_at timestamptz;
+    v_preflight_observed_at timestamptz;
+    authoritative_now timestamptz;
+    current_state_status text;
+    current_policy_revision bigint;
+    current_policy_digest text;
+    current_activation_record_digest text;
+    current_canonical_activation bytea;
+    current_activation_document jsonb;
+    existing_fence_status text;
+    next_fence_epoch bigint;
+BEGIN
+    IF p_token_digest !~ '^sha256:[0-9a-f]{64}$' THEN
+        RETURN 'rejected';
+    END IF;
+    BEGIN
+        admission_document :=
+            pg_catalog.convert_from(p_canonical_admission, 'UTF8')::jsonb;
+        v_approval_reference := admission_document->>'approvalReference';
+        v_plan_digest := admission_document->>'planDigest';
+        v_execution_attempt_id := admission_document->>'executionAttemptId';
+        v_execution_attempt_issuance_id :=
+            admission_document->>'executionAttemptIssuanceId';
+        v_execution_attempt_receipt_digest :=
+            admission_document->>'executionAttemptReceiptDigest';
+        v_approved_at := (admission_document->>'approvedAt')::timestamptz;
+        v_preflight_observed_at :=
+            (admission_document->>'preflightObservedAt')::timestamptz;
+    EXCEPTION WHEN OTHERS THEN
+        RETURN 'rejected';
+    END;
+    IF NOT wanwork_policy_control.approval_execution_admission_is_valid(
+        p_canonical_admission,
+        p_policy_id,
+        p_target_digest,
+        p_expected_policy_revision,
+        p_expected_policy_digest,
+        p_expected_activation_record_digest,
+        p_admission_digest,
+        p_operation_id,
+        p_consumption_id,
+        p_approval_digest,
+        v_approval_reference,
+        v_plan_digest,
+        v_execution_attempt_id,
+        v_execution_attempt_issuance_id,
+        v_execution_attempt_receipt_digest,
+        p_mutation_not_after
+    ) THEN
+        RETURN 'rejected';
+    END IF;
+
+    -- Every operation that can change a policy head or open a mutation fence takes this identical
+    -- physical-target lock. This deliberately serializes independent policy lineages for one
+    -- target; adding a narrower namespace lock would create an avoidable lock-order surface.
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(p_target_digest, 7318470027)
+    );
+
+    -- Exact committed retries are reads and must survive expiry or later policy-head movement.
+    SELECT fence.state_status
+    INTO existing_fence_status
+    FROM wanwork_policy_control.read_approval_execution_fence(
+        p_policy_id,
+        p_target_digest,
+        p_operation_id
+    ) AS fence;
+    IF existing_fence_status = 'corrupt' THEN
+        RETURN 'corrupt';
+    ELSIF existing_fence_status = 'present' THEN
+        IF EXISTS (
+            SELECT 1
+            FROM wanwork_policy_control.approval_execution_fence_record AS record
+            WHERE record.policy_id = p_policy_id
+              AND record.target_digest = p_target_digest
+              AND record.expected_policy_revision = p_expected_policy_revision
+              AND record.expected_policy_digest = p_expected_policy_digest
+              AND record.expected_activation_record_digest =
+                  p_expected_activation_record_digest
+              AND record.admission_digest = p_admission_digest
+              AND record.operation_id = p_operation_id
+              AND record.consumption_id = p_consumption_id
+              AND record.approval_digest = p_approval_digest
+              AND record.approval_reference = v_approval_reference
+              AND record.plan_digest = v_plan_digest
+              AND record.execution_attempt_id = v_execution_attempt_id
+              AND record.execution_attempt_issuance_id =
+                  v_execution_attempt_issuance_id
+              AND record.execution_attempt_receipt_digest =
+                  v_execution_attempt_receipt_digest
+              AND record.token_digest = p_token_digest
+              AND record.mutation_not_after = p_mutation_not_after
+              AND record.canonical_admission = p_canonical_admission
+        ) THEN
+            RETURN 'committed';
+        END IF;
+        RETURN 'conflict';
+    END IF;
+
+    -- A fully self-consistent caller-supplied SHA chain is still untrusted until the issuer has
+    -- durably recorded this exact post-preflight vector.
+    IF NOT wanwork_policy_control.approval_execution_attempt_admission_is_trusted(
+        p_canonical_admission
+    ) THEN
+        RETURN 'attempt_untrusted';
+    END IF;
+
+    authoritative_now := pg_catalog.date_trunc('second', pg_catalog.clock_timestamp());
+
+    IF authoritative_now >= p_mutation_not_after OR authoritative_now < v_approved_at OR
+       authoritative_now < v_preflight_observed_at THEN
+        RETURN 'expired';
+    END IF;
+
+    SELECT policy.state_status, policy.revision, policy.policy_digest,
+           policy.activation_record_digest, policy.canonical_record
+    INTO current_state_status, current_policy_revision, current_policy_digest,
+         current_activation_record_digest, current_canonical_activation
+    FROM wanwork_policy_control.read_approval_policy_state(
+        p_policy_id,
+        p_target_digest
+    ) AS policy;
+    IF current_state_status = 'corrupt' THEN
+        RETURN 'corrupt';
+    ELSIF current_state_status <> 'present' OR
+          current_policy_revision <> p_expected_policy_revision OR
+          current_policy_digest <> p_expected_policy_digest OR
+          current_activation_record_digest <> p_expected_activation_record_digest THEN
+        RETURN 'policy_conflict';
+    END IF;
+    BEGIN
+        current_activation_document :=
+            pg_catalog.convert_from(current_canonical_activation, 'UTF8')::jsonb;
+    EXCEPTION WHEN OTHERS THEN
+        RETURN 'corrupt';
+    END;
+    IF pg_catalog.jsonb_typeof(current_activation_document) IS DISTINCT FROM 'object' OR
+       current_activation_document->>'format' IS DISTINCT FROM
+           'wanwork.im.postgres-authority-approval-policy-activation/1' OR
+       current_activation_document->>'policyId' IS DISTINCT FROM p_policy_id OR
+       current_activation_document->>'targetDigest' IS DISTINCT FROM p_target_digest OR
+       current_activation_document->>'revision' IS DISTINCT FROM
+           p_expected_policy_revision::text OR
+       current_activation_document->>'policyDigest' IS DISTINCT FROM
+           p_expected_policy_digest OR
+       current_activation_document->>'activationRecordDigest' IS DISTINCT FROM
+           p_expected_activation_record_digest OR
+       current_activation_document->>'approvalVerificationEnabled' IS DISTINCT FROM 'true' OR
+       current_activation_document->>'mutationAuthorized' IS DISTINCT FROM 'false' THEN
+        RETURN 'corrupt';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM wanwork_policy_control.approval_execution_fence_head AS head
+        WHERE head.target_digest = p_target_digest
+    ) THEN
+        RETURN 'fence_open';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM wanwork_policy_control.approval_execution_fence_record AS record
+        WHERE record.target_digest = p_target_digest
+          AND (record.operation_id = p_operation_id OR
+               record.consumption_id = p_consumption_id OR
+               record.approval_digest = p_approval_digest OR
+               record.approval_reference = v_approval_reference OR
+               record.execution_attempt_id = v_execution_attempt_id OR
+               record.execution_attempt_issuance_id = v_execution_attempt_issuance_id OR
+               record.execution_attempt_receipt_digest = v_execution_attempt_receipt_digest OR
+               record.token_digest = p_token_digest)
+    ) THEN
+        RETURN 'conflict';
+    END IF;
+
+    UPDATE wanwork_policy_control.approval_execution_fence_counter AS counter
+    SET last_fence_epoch = counter.last_fence_epoch + 1,
+        advanced_at = authoritative_now
+    WHERE counter.target_digest = p_target_digest
+      AND counter.last_fence_epoch < 9223372036854775807
+    RETURNING counter.last_fence_epoch INTO next_fence_epoch;
+    IF NOT FOUND THEN
+        IF EXISTS (
+            SELECT 1
+            FROM wanwork_policy_control.approval_execution_fence_counter AS counter
+            WHERE counter.target_digest = p_target_digest
+        ) THEN
+            RETURN 'corrupt';
+        END IF;
+        next_fence_epoch := 1;
+        INSERT INTO wanwork_policy_control.approval_execution_fence_counter (
+            target_digest, last_fence_epoch, advanced_at
+        ) VALUES (p_target_digest, next_fence_epoch, authoritative_now);
+    END IF;
+
+    INSERT INTO wanwork_policy_control.approval_execution_fence_record (
+        target_digest,
+        fence_epoch,
+        policy_id,
+        expected_policy_revision,
+        expected_policy_digest,
+        expected_activation_record_digest,
+        admission_digest,
+        operation_id,
+        consumption_id,
+        approval_digest,
+        approval_reference,
+        plan_digest,
+        execution_attempt_id,
+        execution_attempt_issuance_id,
+        execution_attempt_receipt_digest,
+        token_digest,
+        mutation_not_after,
+        opened_at,
+        canonical_admission
+    ) VALUES (
+        p_target_digest,
+        next_fence_epoch,
+        p_policy_id,
+        p_expected_policy_revision,
+        p_expected_policy_digest,
+        p_expected_activation_record_digest,
+        p_admission_digest,
+        p_operation_id,
+        p_consumption_id,
+        p_approval_digest,
+        v_approval_reference,
+        v_plan_digest,
+        v_execution_attempt_id,
+        v_execution_attempt_issuance_id,
+        v_execution_attempt_receipt_digest,
+        p_token_digest,
+        p_mutation_not_after,
+        authoritative_now,
+        p_canonical_admission
+    );
+    INSERT INTO wanwork_policy_control.approval_execution_fence_head (
+        target_digest, fence_epoch, operation_id, unresolved_since
+    ) VALUES (
+        p_target_digest, next_fence_epoch, p_operation_id, authoritative_now
+    );
+    RETURN 'committed';
+EXCEPTION
+    WHEN unique_violation OR foreign_key_violation OR check_violation THEN
+        RETURN 'corrupt';
+END
+$function$;
+
+DROP FUNCTION wanwork_policy_control.read_store_identity();
+CREATE FUNCTION wanwork_policy_control.read_store_identity()
+RETURNS TABLE (
+    login_role text,
+    owner_role text,
+    database_name text,
+    server_version_num integer,
+    in_recovery boolean,
+    system_identifier text,
+    schema_format text,
+    schema_digest text
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+PARALLEL RESTRICTED
+SET search_path TO pg_catalog
+AS $function$
+    SELECT
+        session_user::text,
+        current_user::text,
+        pg_catalog.current_database()::text,
+        pg_catalog.current_setting('server_version_num')::integer,
+        pg_catalog.pg_is_in_recovery(),
+        control.system_identifier::text,
+        'wanwork.im.postgres-approval-policy-control-store/2'::text,
+        'sha256:86e6fd8685696f91c63dcca441a01d27152826a2f2990c5e9c0e2ef26b4eb474'::text
+    FROM pg_catalog.pg_control_system() AS control
+$function$;
+
+DROP FUNCTION wanwork_policy_control.compare_and_activate_approval_policy(
+    text, text, bigint, text, text, bigint, text, text, bytea, bytea
+);
+CREATE FUNCTION wanwork_policy_control.compare_and_activate_approval_policy(
+    p_policy_id text,
+    p_target_digest text,
+    p_expected_revision bigint,
+    p_expected_policy_digest text,
+    p_expected_activation_record_digest text,
+    p_candidate_revision bigint,
+    p_candidate_policy_digest text,
+    p_candidate_activation_record_digest text,
+    p_canonical_policy bytea,
+    p_canonical_record bytea
+)
+RETURNS text
+LANGUAGE plpgsql
+VOLATILE
+STRICT
+SECURITY DEFINER
+PARALLEL UNSAFE
+SET search_path TO pg_catalog
+AS $function$
+DECLARE
+    canonical_policy_document jsonb;
+    canonical_policy_key_count bigint;
+    canonical_record_document jsonb;
+    canonical_record_key_count bigint;
+    current_state_status text;
+    current_activation_record_digest text;
+    current_policy_digest text;
+    current_revision bigint;
+    current_canonical_policy bytea;
+    current_canonical_record bytea;
+    fence_audit_status text;
+    changed_rows bigint;
+BEGIN
+    IF p_policy_id !~ '^[a-z0-9][a-z0-9._:/-]{0,255}$' OR
+       p_policy_id NOT LIKE 'approval-policy/%' OR
+       p_target_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_expected_revision < 0 OR
+       p_expected_revision >= 9223372036854775807 OR
+       p_candidate_revision <> p_expected_revision + 1 OR
+       p_candidate_policy_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       p_candidate_activation_record_digest !~ '^sha256:[0-9a-f]{64}$' OR
+       pg_catalog.octet_length(p_canonical_policy) NOT BETWEEN 1 AND 131072 OR
+       pg_catalog.octet_length(p_canonical_record) NOT BETWEEN 1 AND 32768 OR
+       (p_expected_revision = 0 AND (
+           p_expected_policy_digest <> '' OR p_expected_activation_record_digest <> ''
+       )) OR
+       (p_expected_revision > 0 AND (
+           p_expected_policy_digest !~ '^sha256:[0-9a-f]{64}$' OR
+           p_expected_activation_record_digest !~ '^sha256:[0-9a-f]{64}$'
+       )) THEN
+        RETURN 'rejected';
+    END IF;
+
+    BEGIN
+        canonical_policy_document := pg_catalog.convert_from(p_canonical_policy, 'UTF8')::jsonb;
+        canonical_record_document := pg_catalog.convert_from(p_canonical_record, 'UTF8')::jsonb;
+        SELECT pg_catalog.count(*) INTO canonical_policy_key_count
+        FROM pg_catalog.jsonb_object_keys(canonical_policy_document);
+        SELECT pg_catalog.count(*) INTO canonical_record_key_count
+        FROM pg_catalog.jsonb_object_keys(canonical_record_document);
+    EXCEPTION WHEN OTHERS THEN
+        RETURN 'rejected';
+    END;
+
+    IF pg_catalog.jsonb_typeof(canonical_policy_document) IS DISTINCT FROM 'object' OR
+       pg_catalog.jsonb_typeof(canonical_record_document) IS DISTINCT FROM 'object' OR
+       canonical_policy_key_count <> 14 OR
+       canonical_record_key_count <> 14 OR
+       canonical_policy_document->>'format' IS DISTINCT FROM
+           'wanwork.im.postgres-authority-approval-policy/1' OR
+       canonical_policy_document->>'policyId' IS DISTINCT FROM p_policy_id OR
+       canonical_policy_document->>'revision' IS DISTINCT FROM p_candidate_revision::text OR
+       canonical_policy_document->>'policyDigest' IS DISTINCT FROM p_candidate_policy_digest OR
+       canonical_policy_document->>'previousPolicyDigest' IS DISTINCT FROM p_expected_policy_digest OR
+       pg_catalog.jsonb_typeof(canonical_policy_document->'target') IS DISTINCT FROM 'object' OR
+       pg_catalog.jsonb_typeof(canonical_policy_document->'keys') IS DISTINCT FROM 'array' OR
+       pg_catalog.jsonb_typeof(canonical_policy_document->'rootSignatures') IS DISTINCT FROM 'array' OR
+       pg_catalog.jsonb_array_length(canonical_policy_document->'rootSignatures') NOT BETWEEN 2 AND 8 OR
+       canonical_record_document->>'format' IS DISTINCT FROM
+           'wanwork.im.postgres-authority-approval-policy-activation/1' OR
+       canonical_record_document->>'policyId' IS DISTINCT FROM p_policy_id OR
+       canonical_record_document->>'targetDigest' IS DISTINCT FROM p_target_digest OR
+       canonical_record_document->>'revision' IS DISTINCT FROM p_candidate_revision::text OR
+       canonical_record_document->>'policyDigest' IS DISTINCT FROM p_candidate_policy_digest OR
+       canonical_record_document->>'previousPolicyDigest' IS DISTINCT FROM p_expected_policy_digest OR
+       canonical_record_document->>'activationRecordDigest' IS DISTINCT FROM
+           p_candidate_activation_record_digest OR
+       canonical_record_document->>'mutationAuthorized' IS DISTINCT FROM 'false' OR
+       COALESCE(canonical_record_document->>'policyEnvelopeDigest', '') !~
+           '^sha256:[0-9a-f]{64}$' OR
+       COALESCE(canonical_record_document->>'rootTrustBundleDigest', '') !~
+           '^sha256:[0-9a-f]{64}$' OR
+       pg_catalog.jsonb_typeof(canonical_record_document->'rootSignerFingerprints') IS DISTINCT FROM
+           'array' OR
+       pg_catalog.jsonb_array_length(canonical_record_document->'rootSignerFingerprints') NOT BETWEEN 2 AND 8 OR
+       canonical_record_document->>'approvalVerificationEnabled' IS DISTINCT FROM
+           (CASE canonical_policy_document->>'denyAll' WHEN 'true' THEN 'false' ELSE 'true' END) THEN
+        RETURN 'rejected';
+    END IF;
+
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(p_target_digest, 7318470027)
+    );
+
+    SELECT state.state_status, state.revision, state.policy_digest,
+           state.activation_record_digest, state.canonical_policy, state.canonical_record
+    INTO current_state_status, current_revision, current_policy_digest,
+         current_activation_record_digest, current_canonical_policy, current_canonical_record
+    FROM wanwork_policy_control.read_approval_policy_state(
+        p_policy_id,
+        p_target_digest
+    ) AS state;
+
+    IF current_state_status = 'corrupt' THEN
+        RETURN 'corrupt';
+    ELSIF current_state_status = 'present' AND
+          current_revision = p_candidate_revision AND
+          current_policy_digest = p_candidate_policy_digest AND
+          current_activation_record_digest = p_candidate_activation_record_digest AND
+          current_canonical_policy = p_canonical_policy AND
+          current_canonical_record = p_canonical_record THEN
+        -- Exact retries are reads, not revision advances, and remain safe while a fence is open.
+        RETURN 'committed';
+    END IF;
+
+    SELECT fence.state_status
+    INTO fence_audit_status
+    FROM wanwork_policy_control.read_approval_execution_fence(
+        p_policy_id,
+        p_target_digest,
+        'approval-operation/0000000000000000000000000000000000000000000000000000000000000000'
+    ) AS fence;
+    IF fence_audit_status = 'corrupt' THEN
+        RETURN 'corrupt';
+    ELSIF EXISTS (
+        SELECT 1
+        FROM wanwork_policy_control.approval_execution_fence_head AS fence_head
+        WHERE fence_head.target_digest = p_target_digest
+    ) THEN
+        RETURN 'fence_open';
+    END IF;
+
+    IF current_state_status = 'empty' THEN
+        IF p_expected_revision <> 0 OR p_expected_policy_digest <> '' OR
+           p_expected_activation_record_digest <> '' THEN
+            RETURN 'conflict';
+        END IF;
+    ELSIF current_state_status <> 'present' THEN
+        RETURN 'corrupt';
+    ELSIF current_revision <> p_expected_revision OR
+          current_policy_digest <> p_expected_policy_digest OR
+          current_activation_record_digest <> p_expected_activation_record_digest THEN
+        RETURN 'conflict';
+    END IF;
+
+    INSERT INTO wanwork_policy_control.approval_policy_archive (
+        policy_id,
+        target_digest,
+        revision,
+        policy_digest,
+        previous_policy_digest,
+        canonical_policy
+    ) VALUES (
+        p_policy_id,
+        p_target_digest,
+        p_candidate_revision,
+        p_candidate_policy_digest,
+        p_expected_policy_digest,
+        p_canonical_policy
+    );
+
+    INSERT INTO wanwork_policy_control.approval_policy_activation_record (
+        policy_id,
+        target_digest,
+        revision,
+        policy_digest,
+        activation_record_digest,
+        canonical_record
+    ) VALUES (
+        p_policy_id,
+        p_target_digest,
+        p_candidate_revision,
+        p_candidate_policy_digest,
+        p_candidate_activation_record_digest,
+        p_canonical_record
+    );
+
+    IF p_expected_revision = 0 THEN
+        INSERT INTO wanwork_policy_control.approval_policy_head (
+            policy_id,
+            target_digest,
+            revision,
+            policy_digest,
+            activation_record_digest
+        ) VALUES (
+            p_policy_id,
+            p_target_digest,
+            p_candidate_revision,
+            p_candidate_policy_digest,
+            p_candidate_activation_record_digest
+        );
+    ELSE
+        UPDATE wanwork_policy_control.approval_policy_head
+        SET revision = p_candidate_revision,
+            policy_digest = p_candidate_policy_digest,
+            activation_record_digest = p_candidate_activation_record_digest,
+            advanced_at = pg_catalog.transaction_timestamp()
+        WHERE policy_id = p_policy_id
+          AND target_digest = p_target_digest
+          AND revision = p_expected_revision
+          AND policy_digest = p_expected_policy_digest
+          AND activation_record_digest = p_expected_activation_record_digest;
+        GET DIAGNOSTICS changed_rows = ROW_COUNT;
+        IF changed_rows <> 1 THEN
+            RAISE EXCEPTION USING
+                ERRCODE = '40001',
+                MESSAGE = 'approval policy head changed after physical-target lock';
+        END IF;
+    END IF;
+    RETURN 'committed';
+END
+$function$;
+
+REVOKE ALL ON ALL TABLES IN SCHEMA wanwork_policy_control FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA wanwork_policy_control FROM :"reader_role";
+REVOKE ALL ON ALL TABLES IN SCHEMA wanwork_policy_control FROM :"activator_role";
+REVOKE ALL ON ALL TABLES IN SCHEMA wanwork_policy_control FROM :"attempt_issuer_role";
+REVOKE ALL ON ALL TABLES IN SCHEMA wanwork_policy_control FROM :"fencer_role";
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA wanwork_policy_control FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA wanwork_policy_control FROM :"reader_role";
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA wanwork_policy_control FROM :"activator_role";
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA wanwork_policy_control FROM :"attempt_issuer_role";
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA wanwork_policy_control FROM :"fencer_role";
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA wanwork_policy_control FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA wanwork_policy_control FROM :"reader_role";
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA wanwork_policy_control FROM :"activator_role";
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA wanwork_policy_control FROM :"attempt_issuer_role";
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA wanwork_policy_control FROM :"fencer_role";
+
+GRANT USAGE ON SCHEMA wanwork_policy_control TO :"reader_role";
+GRANT USAGE ON SCHEMA wanwork_policy_control TO :"activator_role";
+GRANT USAGE ON SCHEMA wanwork_policy_control TO :"attempt_issuer_role";
+GRANT USAGE ON SCHEMA wanwork_policy_control TO :"fencer_role";
+
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_store_identity()
+    TO :"reader_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_store_identity()
+    TO :"activator_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_store_identity()
+    TO :"attempt_issuer_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_store_identity()
+    TO :"fencer_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_approval_policy_state(text, text)
+    TO :"reader_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_approval_policy_state(text, text)
+    TO :"activator_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_approval_policy_state(text, text)
+    TO :"attempt_issuer_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_approval_policy_state(text, text)
+    TO :"fencer_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_approval_execution_fence(text, text, text)
+    TO :"reader_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_approval_execution_fence(text, text, text)
+    TO :"fencer_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.read_approval_execution_attempt(text, text, text)
+    TO :"attempt_issuer_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.compare_and_issue_approval_execution_attempt(
+    text, bytea
+) TO :"attempt_issuer_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.compare_and_activate_approval_policy(
+    text, text, bigint, text, text, bigint, text, text, bytea, bytea
+) TO :"activator_role";
+GRANT EXECUTE ON FUNCTION wanwork_policy_control.compare_and_open_approval_execution_fence(
+    text, text, bigint, text, text, text, text, text, text, text, timestamptz, bytea
+) TO :"fencer_role";
+
+COMMIT;
+
+RESET wanwork.migration.owner_role;
+RESET wanwork.migration.reader_role;
+RESET wanwork.migration.activator_role;
+RESET wanwork.migration.attempt_issuer_role;
+RESET wanwork.migration.fencer_role;

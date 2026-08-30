@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100" role="img" aria-labelledby="title desc">
+  <title id="title">W2 PostgreSQL function-only writes and exact access checkpoint</title>
+  <desc id="desc">Primary research constraints lead to five fixed write functions and an exact PostgreSQL access validator. PostgreSQL 18.6 evidence is green, while production provisioning, trusted tenant authorization, service wiring, recovery, event outbox, and provider integration remain unfinished.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071426"/>
+      <stop offset="1" stop-color="#112b42"/>
+    </linearGradient>
+    <linearGradient id="delivered" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0c5272"/>
+      <stop offset="1" stop-color="#0c756c"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#010713" flood-opacity="0.5"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#62dae1"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .title { fill: #f7fbff; font-size: 38px; font-weight: 760; }
+      .subtitle { fill: #a9c3d5; font-size: 18px; }
+      .section { fill: #dffbff; font-size: 22px; font-weight: 720; }
+      .card-title { fill: #ffffff; font-size: 18px; font-weight: 720; }
+      .body { fill: #d8e8f0; font-size: 15px; }
+      .small { fill: #a8c0d0; font-size: 13px; }
+      .mono { fill: #c6f4ea; font-family: "SFMono-Regular", Menlo, Consolas, monospace; font-size: 13px; }
+      .gate-title { fill: #fff1e8; font-size: 16px; font-weight: 720; }
+      .gate-body { fill: #f0cbbb; font-size: 13px; }
+      .warning { fill: #ffd8c8; font-size: 14px; font-weight: 680; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1100" fill="url(#bg)"/>
+  <circle cx="1460" cy="80" r="300" fill="#1c5577" opacity="0.16"/>
+  <circle cx="90" cy="1030" r="300" fill="#0b806f" opacity="0.12"/>
+
+  <text x="65" y="64" class="title">W2 · Function-only Writes + Exact Access</text>
+  <text x="65" y="98" class="subtitle">code cutoff cd92ea5 · PostgreSQL 18.6 · migrations 0001–0005 · 22 tables · exactly 5 write functions</text>
+
+  <text x="65" y="150" class="section">一级调研 → 执行侧约束</text>
+  <g filter="url(#shadow)">
+    <rect x="65" y="174" width="310" height="116" rx="16" fill="#172f49" stroke="#3d607c"/>
+    <text x="86" y="207" class="card-title">Tenant field ≠ Auth claim</text>
+    <text x="86" y="235" class="body">A2A · Security Governance</text>
+    <text x="86" y="260" class="small">GUC 只作纵深防线；可信身份仍需 admission</text>
+
+    <rect x="65" y="308" width="310" height="116" rx="16" fill="#172f49" stroke="#3d607c"/>
+    <text x="86" y="341" class="card-title">File / package ≠ Boundary</text>
+    <text x="86" y="369" class="body">DeepSeek Harness</text>
+    <text x="86" y="394" class="small">enforcement 下沉到数据库权限和固定函数</text>
+
+    <rect x="65" y="442" width="310" height="116" rx="16" fill="#172f49" stroke="#3d607c"/>
+    <text x="86" y="475" class="card-title">Schema exists ≠ Runtime wired</text>
+    <text x="86" y="503" class="body">Sandbase Harness</text>
+    <text x="86" y="528" class="small">必须用真实 login、真实 SQL 和失败矩阵证明</text>
+
+    <rect x="65" y="576" width="310" height="116" rx="16" fill="#172f49" stroke="#3d607c"/>
+    <text x="86" y="609" class="card-title">Participant ≠ Action Authority</text>
+    <text x="86" y="637" class="body">Clawith</text>
+    <text x="86" y="662" class="small">membership、access、assignment、execution 分层</text>
+  </g>
+
+  <path d="M395 430 C430 430 438 430 470 430" fill="none" stroke="#62dae1" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <text x="480" y="150" class="section">已交付：固定写面</text>
+  <g filter="url(#shadow)">
+    <rect x="470" y="174" width="500" height="518" rx="22" fill="url(#delivered)" stroke="#69d9d9" stroke-width="2"/>
+
+    <rect x="498" y="204" width="444" height="126" rx="14" fill="#092d48" opacity="0.95"/>
+    <text x="520" y="236" class="card-title">0005 · Exact five-function surface</text>
+    <text x="520" y="264" class="body">4 revision CAS functions + 1 command receipt function</text>
+    <text x="520" y="288" class="small">SECURITY DEFINER · STRICT · VOLATILE · fixed search_path</text>
+    <text x="520" y="312" class="small">exact args / return / owner / digest / ACL / no overload</text>
+
+    <rect x="498" y="348" width="444" height="126" rx="14" fill="#092d48" opacity="0.95"/>
+    <text x="520" y="380" class="card-title">Repository writes route through functions</text>
+    <text x="520" y="408" class="body">Conversation · provider binding · membership · access</text>
+    <text x="520" y="432" class="small">receipt 同样进入固定函数；无业务 raw INSERT / UPDATE</text>
+    <text x="520" y="456" class="small">revision 仅 0→1 / N→N+1；workspace 空串 wire sentinel</text>
+
+    <rect x="498" y="492" width="444" height="172" rx="14" fill="#092d48" opacity="0.95"/>
+    <text x="520" y="524" class="card-title">Tenant + transaction semantics</text>
+    <text x="520" y="552" class="body">parameter tenant == transaction-local wanwork.tenant_id</text>
+    <text x="520" y="576" class="small">unset / wrong / cross-tenant → SQLSTATE 42501 + zero write</text>
+    <text x="520" y="600" class="small">stale / duplicate / skipped revision → false + zero snapshot</text>
+    <text x="520" y="624" class="small">Go 在 SQL 前拒绝超过 signed bigint 上界的 revision</text>
+    <text x="520" y="648" class="warning">注意：GUC 仍不是 authenticated identity</text>
+  </g>
+
+  <path d="M990 430 C1022 430 1030 430 1062 430" fill="none" stroke="#62dae1" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <text x="1072" y="150" class="section">已交付：Exact Access Validator</text>
+  <g filter="url(#shadow)">
+    <rect x="1062" y="174" width="473" height="518" rx="22" fill="#153b4a" stroke="#5bb7bc" stroke-width="2"/>
+
+    <rect x="1090" y="204" width="417" height="130" rx="14" fill="#0d2938"/>
+    <text x="1112" y="236" class="card-title">固定角色与 session identity</text>
+    <text x="1112" y="264" class="mono">DBA → owner → migrator → migration login</text>
+    <text x="1112" y="287" class="mono">DBA → runtime → runtime login</text>
+    <text x="1112" y="310" class="small">NOINHERIT · SET=true · exact grantor/options</text>
+
+    <rect x="1090" y="352" width="417" height="146" rx="14" fill="#0d2938"/>
+    <text x="1112" y="384" class="card-title">Exact ownership + privileges</text>
+    <text x="1112" y="412" class="body">PUBLIC: no CONNECT / CREATE / TEMP / EXECUTE</text>
+    <text x="1112" y="436" class="small">runtime: schema USAGE + 9 SELECT + 5 EXECUTE</text>
+    <text x="1112" y="460" class="small">22 tables / 5 functions / 2 schemas owner exact</text>
+    <text x="1112" y="484" class="small">no column ACL · no extra relation/function/default ACL drift</text>
+
+    <rect x="1090" y="516" width="417" height="148" rx="14" fill="#0d2938"/>
+    <text x="1112" y="548" class="card-title">PG18.6 fault evidence</text>
+    <text x="1112" y="576" class="body">22 × INSERT / UPDATE / DELETE / TRUNCATE denied</text>
+    <text x="1112" y="600" class="small">22 × MAINTAIN=false；ANALYZE 全部 permission skip</text>
+    <text x="1112" y="624" class="small">membership / role / owner / ACL / default privilege tamper</text>
+    <text x="1112" y="648" class="small">full Go normal + race + vet green</text>
+  </g>
+
+  <rect x="65" y="730" width="1470" height="64" rx="20" fill="#56302c" stroke="#b2604d"/>
+  <text x="92" y="758" class="warning">边界：migrator 是 SET ROLE capability indirection，不是不可绕过的两人审批；DB owner/provisioner 仍是可信部署边界。</text>
+  <text x="92" y="780" class="small">当前交付是 read-only validator + 临时真实角色 fixture，不是 production IaC、secret rotation、service pool wiring 或真实 IM outbound。</text>
+
+  <text x="65" y="842" class="section">接真实 IM 前仍需完成</text>
+  <g filter="url(#shadow)">
+    <rect x="65" y="866" width="230" height="136" rx="15" fill="#4d2927" stroke="#a95845"/>
+    <text x="84" y="898" class="gate-title">1 · Production Provisioning</text>
+    <text x="84" y="925" class="gate-body">IaC / secret / rotation</text>
+    <text x="84" y="948" class="gate-body">停服并关闭旧 session</text>
+    <text x="84" y="971" class="gate-body">startup validator + readiness</text>
+
+    <rect x="311" y="866" width="230" height="136" rx="15" fill="#4d2927" stroke="#a95845"/>
+    <text x="330" y="898" class="gate-title">2 · Trusted Tenant</text>
+    <text x="330" y="925" class="gate-body">verified claim / realm binding</text>
+    <text x="330" y="948" class="gate-body">active tenant membership</text>
+    <text x="330" y="971" class="gate-body">claim / path consistency</text>
+
+    <rect x="557" y="866" width="230" height="136" rx="15" fill="#4d2927" stroke="#a95845"/>
+    <text x="576" y="898" class="gate-title">3 · Action-time Resolver</text>
+    <text x="576" y="925" class="gate-body">Actor / conversation / member</text>
+    <text x="576" y="948" class="gate-body">permission / mandate / budget</text>
+    <text x="576" y="971" class="gate-body">Artifact acceptance</text>
+
+    <rect x="803" y="866" width="230" height="136" rx="15" fill="#4d2927" stroke="#a95845"/>
+    <text x="822" y="898" class="gate-title">4 · Recovery</text>
+    <text x="822" y="925" class="gate-body">dump / restore / role readback</text>
+    <text x="822" y="948" class="gate-body">DB restart / process kill-9</text>
+    <text x="822" y="971" class="gate-body">old binary / future schema</text>
+
+    <rect x="1049" y="866" width="230" height="136" rx="15" fill="#4d2927" stroke="#a95845"/>
+    <text x="1068" y="898" class="gate-title">5 · Event / Outbox</text>
+    <text x="1068" y="925" class="gate-body">durable stream / checkpoint</text>
+    <text x="1068" y="948" class="gate-body">backfill + live</text>
+    <text x="1068" y="971" class="gate-body">unknown / reconcile</text>
+
+    <rect x="1295" y="866" width="240" height="136" rx="15" fill="#4d2927" stroke="#a95845"/>
+    <text x="1314" y="898" class="gate-title">6 · IM / Provider Slice</text>
+    <text x="1314" y="925" class="gate-body">message / agent_thread</text>
+    <text x="1314" y="948" class="gate-body">callback auth / dedupe / resume</text>
+    <text x="1314" y="971" class="gate-body">ACK / effect finality / outbound</text>
+  </g>
+
+  <text x="65" y="1055" class="small">Evidence classes: [F] verified local fact · [C] bounded claim · [A] analysis · [U] unfinished　|　Git canonical · Notion verified mirror after stable checkpoint</text>
+</svg>

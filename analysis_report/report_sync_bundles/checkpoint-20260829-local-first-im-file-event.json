@@ -1,0 +1,110 @@
+{
+  "format": "quantum-entanglement.report-sync-bundle",
+  "version": 1,
+  "createdAt": "2026-08-29T13:12:20+08:00",
+  "source": {
+    "branch": "dev_wanwork_quantum_entanglement",
+    "head": "f6324f7165b55910021af2615fb2081265e6c0b3",
+    "remote": "https://github.com/huapohen/quantum-entanglement.git",
+    "remoteRef": "refs/heads/dev_wanwork_quantum_entanglement"
+  },
+  "syncDecision": {
+    "notion": "local_pending",
+    "yuque": "local_pending",
+    "feishuAndWeCom": "read-only-no-send",
+    "reason": "Batch remote knowledge-base synchronization only after the local code, tests, reports and evidence for this stage are closed."
+  },
+  "changes": [
+    {
+      "commit": "9dbed14e85e09cf133c49ab8b1f5b8ba49708732",
+      "message": "docs(im): archive basic conversation acceptance evidence"
+    },
+    {
+      "commit": "9f412dd8cd1a8f981cde0b22718521be3cf6bbcd",
+      "message": "docs(evidence): seal basic IM archive metadata"
+    },
+    {
+      "commit": "043e413dbff6d14ddfe04e78e9d35c30311a376b",
+      "message": "feat(events): add crash-recoverable local file store"
+    },
+    {
+      "commit": "991b5ff552b975b6c3026532731b8747d6fcb20e",
+      "message": "docs(events): record local durable file checkpoint"
+    },
+    {
+      "commit": "616c18d0111b7011882e35a908c67f38c1aae9d6",
+      "message": "docs(evidence): archive local IM edit recall screenshots"
+    },
+    {
+      "commit": "f6324f7165b55910021af2615fb2081265e6c0b3",
+      "message": "docs(im): seal edit recall acceptance checkpoint"
+    }
+  ],
+  "localSources": [
+    {
+      "path": "analysis_report/README.md",
+      "sha256": "2a0c07269029cbf5e47b1139b8e5fce70bbe7f6e2179e35c1f164aaf168e012b",
+      "targetPageKey": "project-home",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/research/39_basic_im_conversation_message_checkpoint.md",
+      "sha256": "2fe5f0075b1015b5b22ad31fda71e4e106ca23b2786d4fba1db70fa5618fd802",
+      "targetPageKey": "research-39",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/research/40_durable_file_event_store_checkpoint.md",
+      "sha256": "4a249a7789db4efa46bd860bea3f5c19f0116d3dda1ad5dc35ba029e1cf387cc",
+      "targetPageKey": "research-40",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/research/41_local_im_message_edit_recall_checkpoint.md",
+      "sha256": "a554605f2cbdfcf668642786fab1892d53d409777c61923057d400827398f16a",
+      "targetPageKey": "research-41",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/screenshots/manifest.json",
+      "sha256": "fbf33574e0bf10224b8c7823cdc7b5d5888b2cff97655a155b280d8983df896a",
+      "targetPageKey": "screenshot-evidence",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/screenshots/local_im_basic_acceptance_manifest.json",
+      "sha256": "9b9fb5fefb40408b41b2ac007c8db7a0b836bf7e297c038fa94467a7d8d54475",
+      "targetPageKey": "screenshot-evidence",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/screenshots/local_im_edit_recall_acceptance_manifest.json",
+      "sha256": "582e0b04a325966d2c11c3beb705662a0a8f5e476d7253485264961f972e361d",
+      "targetPageKey": "screenshot-evidence",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/screenshots/README.md",
+      "sha256": "5cb70c704e9526c974f723533f86cc7b37cc0a2e8060f4856f81d56082ce11a2",
+      "targetPageKey": "screenshot-evidence",
+      "status": "local_pending"
+    },
+    {
+      "path": "docs/wanwork_im/ARCHITECTURE.md",
+      "targetPageKey": "wanwork-im-architecture",
+      "status": "local_pending"
+    },
+    {
+      "path": "docs/wanwork_im/LOCAL_IM_ACCEPTANCE_GUIDE.md",
+      "targetPageKey": "local-im-acceptance-guide",
+      "status": "local_pending"
+    }
+  ],
+  "verification": {
+    "goTestRace": "passed: go test -race ./...",
+    "goVet": "passed: go vet ./...",
+    "jsonAndWhitespace": "passed: jq empty analysis_report/screenshots/manifest.json analysis_report/screenshots/local_im_edit_recall_acceptance_manifest.json && git diff --check",
+    "notionLiveWrite": false,
+    "notionLiveReadback": false
+  }
+}

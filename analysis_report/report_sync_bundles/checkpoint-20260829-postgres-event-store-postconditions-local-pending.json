@@ -1,0 +1,61 @@
+{
+  "format": "quantum-entanglement.report-sync-bundle",
+  "version": 1,
+  "createdAt": "2026-08-29T15:10:00+08:00",
+  "source": {
+    "branch": "dev_wanwork_quantum_entanglement",
+    "head": "fe9d7cc185ac0c3daecc1d86000b37cdd939960a",
+    "remote": "https://github.com/huapohen/quantum-entanglement.git",
+    "remoteRef": "refs/heads/dev_wanwork_quantum_entanglement"
+  },
+  "syncDecision": {
+    "notion": "local_pending",
+    "yuque": "local_pending",
+    "feishuAndWeCom": "read-only-no-send",
+    "reason": "The event-store schema postcondition stage is recorded locally and will be uploaded with the next closed W2 batch."
+  },
+  "changes": [
+    {
+      "commit": "aae871eb8ad476c71b026faf39a0feb1e7616575",
+      "message": "test(postgres): freeze event schema postconditions"
+    },
+    {
+      "commit": "fe9d7cc185ac0c3daecc1d86000b37cdd939960a",
+      "message": "docs(events): record schema postcondition gate"
+    }
+  ],
+  "localSources": [
+    {
+      "path": "analysis_report/README.md",
+      "sha256": "96c37b5cbcf8bbc163610f2602c1aef897dbff1931d4208d833bf3fb6e090fd4",
+      "targetPageKey": "project-home",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/research/42_postgres_event_store_implementation_checkpoint.md",
+      "sha256": "cdb1c96a2ade32f6e35832be98c09c9e463c3be5ec1aa2ba4a8b30885a9c7111",
+      "targetPageKey": "research-42",
+      "status": "local_pending"
+    },
+    {
+      "path": "apps/im-api/internal/platform/postgres/migrations/schema_digest.go",
+      "targetPageKey": "current-implementation",
+      "status": "local_pending"
+    },
+    {
+      "path": "apps/im-api/internal/platform/postgres/migrations/postconditions.go",
+      "targetPageKey": "current-implementation",
+      "status": "local_pending"
+    }
+  ],
+  "verification": {
+    "goTest": "passed: go test ./...",
+    "goTestRace": "passed: go test -race ./...",
+    "goVet": "passed: go vet ./...",
+    "postgresMigrationSchemaDigestIntegration": "passed with local PostgreSQL 18.6",
+    "notionLiveWrite": false,
+    "notionLiveReadback": false,
+    "yuqueLiveWrite": false,
+    "feishuOrWeComMessagesSent": false
+  }
+}

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Quantum Entanglement 原生 IM 验收台</title>
+  <style>
+    :root{--bg:#081018;--panel:#111d28;--panel2:#172735;--line:#2b4558;--text:#edf7ff;--muted:#91a9b9;--cyan:#3ce0d0;--blue:#5ba6ff;--amber:#ffca5c;--red:#ff7b7b;--shadow:0 18px 60px #0007}
+    *{box-sizing:border-box}[hidden]{display:none!important} body{margin:0;background:radial-gradient(circle at 15% 0,#123246 0,transparent 36%),radial-gradient(circle at 90% 10%,#1e294d 0,transparent 28%),var(--bg);color:var(--text);font:15px/1.6 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+    .shell{width:min(1240px,calc(100% - 32px));margin:0 auto;padding:30px 0 70px}.top{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:24px}.eyebrow{color:var(--cyan);letter-spacing:.12em;text-transform:uppercase;font-size:12px;font-weight:800}.top h1{font-size:clamp(28px,5vw,50px);line-height:1.08;margin:8px 0 10px;max-width:850px}.top p{color:var(--muted);max-width:820px;margin:0}.pill{border:1px solid #3ce0d055;color:var(--cyan);background:#3ce0d00c;border-radius:99px;padding:8px 12px;white-space:nowrap;font-size:12px}
+    .grid{display:grid;grid-template-columns:1.05fr .95fr;gap:18px}.card{background:linear-gradient(145deg,#132330ee,#0e1923ee);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}.card-head{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.card-head h2{font-size:15px;margin:0}.card-body{padding:18px}.status{font-size:12px;color:var(--muted)}.status b{color:var(--cyan)}
+    .room{display:flex;flex-direction:column;min-height:520px}.timeline{flex:1;display:flex;flex-direction:column;gap:13px;overflow:auto;padding:18px}.bubble{max-width:86%;padding:12px 14px;border-radius:13px;background:var(--panel2);border:1px solid #ffffff10;white-space:pre-wrap;word-break:break-word}.bubble.me{align-self:flex-end;background:#164b52;border-color:#3ce0d044}.bubble.agent{align-self:flex-start;background:#1b3151;border-color:#5ba6ff44}.meta{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}.work-card{border-left:4px solid var(--amber);background:#302817aa}.work-card strong{color:var(--amber)}
+    .composer{border-top:1px solid var(--line);padding:14px;display:grid;grid-template-columns:1fr auto;gap:10px}.composer textarea{resize:vertical;min-height:74px;max-height:180px;background:#07111a;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit;outline:none}.composer textarea:focus{border-color:var(--cyan)}button{border:0;border-radius:12px;background:linear-gradient(135deg,var(--cyan),var(--blue));color:#07131a;font-weight:850;padding:0 20px;cursor:pointer}button:disabled{opacity:.4;cursor:wait}
+    .child-empty{color:var(--muted);display:grid;place-items:center;min-height:330px;text-align:center;border:1px dashed var(--line);border-radius:13px;padding:20px}.kv{display:grid;grid-template-columns:150px 1fr;gap:7px 12px;font-size:12px}.kv span:nth-child(odd){color:var(--muted)}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#bce5ff;word-break:break-all}
+    .architecture{margin-top:18px}.flow{display:grid;grid-template-columns:1fr 42px 1fr 42px 1fr;gap:8px;align-items:stretch}.node{padding:16px;border:1px solid var(--line);border-radius:14px;background:#0d1821}.node b{display:block;color:var(--cyan);margin-bottom:6px}.node small{color:var(--muted)}.arrow{display:grid;place-items:center;color:var(--blue);font-size:24px}.boundary{margin-top:14px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.boundary div{padding:12px;border:1px solid var(--line);border-radius:12px;color:var(--muted);font-size:12px}.boundary strong{display:block;color:var(--text);font-size:13px;margin-bottom:3px}.error{color:var(--red)}
+    .basic{margin-top:18px}.basic-layout{display:grid;grid-template-columns:280px 1fr;min-height:420px}.conversation-list{border-right:1px solid var(--line);padding:14px}.conversation-list input{width:100%;background:#07111a;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px;font:inherit;margin-bottom:8px}.conversation-list button{width:100%;min-height:38px;margin-bottom:8px}.conversation-item{display:block;width:100%;text-align:left;background:#0d1821;border:1px solid transparent;color:var(--text);padding:10px;border-radius:10px;margin:5px 0;cursor:pointer}.conversation-item:hover,.conversation-item.selected{border-color:var(--cyan);background:#16313a}.conversation-item small{display:block;color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis}.basic-room{min-height:420px}.basic-room .timeline{min-height:290px}.basic-hint{color:var(--muted);font-size:12px;margin:0 0 10px}.basic-error{color:var(--red);font-size:12px;min-height:20px}.message-actions{display:flex;gap:6px;margin-top:8px}.message-actions button{font-size:11px;padding:3px 8px;min-height:26px;background:#ffffff12;color:var(--muted);border:1px solid #ffffff22}.message-actions button:hover{color:var(--text);border-color:var(--cyan)}
+    @media(max-width:850px){.top{display:block}.pill{display:inline-block;margin-top:14px}.grid{grid-template-columns:1fr}.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.boundary{grid-template-columns:1fr 1fr}.room{min-height:460px}.basic-layout{grid-template-columns:1fr}.conversation-list{border-right:0;border-bottom:1px solid var(--line)}.basic-room{min-height:380px}}
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header class="top">
+    <div><div class="eyebrow">Quantum Entanglement · Native IM</div><h1>人和 Agent 共生协同办公：本地验收台</h1><p>在父群发布自定义指令，系统会创建一个有真实 lineage 和独立 ACL 的 Agent 子群。Agent 的回复只进入子群，父群只保留受限工作卡。</p></div>
+    <div class="pill">LOOPBACK · EXPLICIT RUNTIME</div>
+  </header>
+
+  <section class="grid">
+    <article class="card room">
+      <div class="card-head"><h2>父群 · 产品研发群</h2><span class="status" id="runtime">正在读取运行状态…</span></div>
+      <div class="timeline" id="parentTimeline"><div class="bubble"><span class="meta">系统说明</span>输入任何具体任务并发送。重复提交同一个 messageId 会安全重放；改变同一消息的正文会被判为冲突。</div></div>
+      <div class="composer"><textarea id="instruction">比较 Clawith、AgentSpace 与 DeepSeek Harness，输出可核验差异和我们应吸收的设计。</textarea><button id="send">@研究 Agent</button></div>
+    </article>
+
+    <article class="card">
+      <div class="card-head"><h2>Agent 子群</h2><span class="status" id="childStatus">尚未创建</span></div>
+      <div class="card-body">
+        <div class="child-empty" id="childEmpty">父群 @Agent 后，这里会显示新建子群、invocation lineage 和 Agent 回复。</div>
+        <div id="childContent" hidden>
+          <div class="kv"><span>childConversationId</span><code id="childId"></code><span>invocationId</span><code id="invocationId"></code><span>provider receipt</span><code id="providerStatus"></code><span>dedupe</span><code id="replayed"></code></div>
+          <div class="bubble me" id="childInstruction" style="margin:18px 0 10px auto"></div>
+          <div class="bubble agent" id="agentReply"><span class="meta">v0版研究 Agent</span></div>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <section class="card basic">
+    <div class="card-head"><h2>普通 IM · 会话与文本消息</h2><span class="status" id="basicStatus">正在读取会话…</span></div>
+    <div class="basic-layout">
+      <aside class="conversation-list">
+        <p class="basic-hint">创建普通群后，选择会话发送文本。所有 ID、成员和状态来自平台本地状态。</p>
+        <input id="groupName" value="新建协同群" aria-label="普通群名称">
+        <button id="createGroup">创建普通群</button>
+        <div id="conversationList"></div>
+      </aside>
+      <article class="room basic-room">
+        <div class="timeline" id="basicTimeline"><div class="child-empty">选择一个会话后，这里显示按 cursor 分页的消息。</div></div>
+        <div class="composer"><textarea id="basicText" placeholder="发送普通文本消息（不会触发 Agent）"></textarea><button id="sendBasic">发送文本</button></div>
+        <div class="card-body"><div class="basic-error" id="basicError"></div></div>
+      </article>
+    </div>
+  </section>
+
+  <section class="card architecture">
+    <div class="card-head"><h2>当前真实执行链与信任边界</h2><span class="status">验收图</span></div>
+    <div class="card-body">
+      <div class="flow">
+        <div class="node"><b>① 父群 Mention</b><small>真人 Actor 持有父群 read / send / invoke_agent；消息 ID 是稳定幂等输入。</small></div><div class="arrow">→</div>
+        <div class="node"><b>② 平台控制面</b><small>核验 fake Clerk subject、Agent installation/passport、workspace、能力与 action-time ACL。</small></div><div class="arrow">→</div>
+        <div class="node"><b>③ 真实子群</b><small>RongCloud-shaped fake 创建新群；父/子 ACL 不继承，Agent 只获得子群 read / send / artifact。</small></div>
+      </div>
+      <div class="boundary">
+        <div><strong>Clerk 只认证</strong>不能授予 tenant、workspace 或群权限。</div>
+        <div><strong>融云只传输</strong>receipt 和 ext_info 都不是业务真相。</div>
+        <div><strong>Agent 是普通用户</strong>同一 provision path，无机器人账号上限耦合。</div>
+        <div><strong>父群只看工作卡</strong>不复制 prompt、Agent reply、Artifact 或子群 ACL。</div>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+  const token='demo.local.signature';
+  const runtime=document.getElementById('runtime');
+  const send=document.getElementById('send');
+  const instruction=document.getElementById('instruction');
+  const parentTimeline=document.getElementById('parentTimeline');
+  const conversationList=document.getElementById('conversationList');
+  const basicTimeline=document.getElementById('basicTimeline');
+  const basicStatus=document.getElementById('basicStatus');
+  const basicError=document.getElementById('basicError');
+  const basicText=document.getElementById('basicText');
+  const groupName=document.getElementById('groupName');
+  const createGroup=document.getElementById('createGroup');
+  const sendBasic=document.getElementById('sendBasic');
+  let lastMessageId='';
+  let selectedConversationId='';
+
+  async function api(path, options={}){
+    const headers=Object.assign({'Authorization':`Bearer ${token}`},options.headers||{});
+    const response=await fetch(path,Object.assign({},options,{headers}));
+    const envelope=await response.json();
+    if(envelope.code!==200) throw new Error(`${envelope.code}: ${envelope.message}`);
+    return envelope.data;
+  }
+  function bubble(text, kind, meta){const node=document.createElement('div');node.className=`bubble ${kind||''}`;const label=document.createElement('span');label.className='meta';label.textContent=meta;node.append(label,document.createTextNode(text));return node}
+  function messageId(){return `msg_ui_${Date.now()}_${crypto.randomUUID().slice(0,8)}`}
+  function showBasicError(error){basicError.textContent=error.message||String(error);}
+  function renderConversationList(data){conversationList.replaceChildren();for(const item of data.conversations){const button=document.createElement('button');button.className='conversation-item'+(item.id===selectedConversationId?' selected':'');button.type='button';button.innerHTML=`<b></b><small></small>`;button.querySelector('b').textContent=item.name||item.id;button.querySelector('small').textContent=`${item.type} · ${item.providerStatus} · ${item.id}`;button.addEventListener('click',()=>selectConversation(item.id));conversationList.append(button)}basicStatus.textContent=`${data.conversations.length} 个会话 · zero-network fake`}
+  async function loadConversations(){const data=await api('/api/v1/demo/im/conversations?limit=50');if(!selectedConversationId&&data.conversations.length)selectedConversationId=data.conversations[0].id;renderConversationList(data);if(selectedConversationId)await loadMessages(selectedConversationId)}
+  async function selectConversation(id){selectedConversationId=id;basicError.textContent='';await loadConversations()}
+  async function mutateMessage(messageId, action){
+    if(!selectedConversationId)return;
+    try{
+      if(action==='edit'){
+        const current=window.prompt('编辑消息内容');
+        if(current===null||!current.trim())return;
+        await api(`/api/v1/demo/im/conversations/${encodeURIComponent(selectedConversationId)}/messages/${encodeURIComponent(messageId)}`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({text:current.trim()})});
+      }else if(action==='recall'){
+        if(!window.confirm('确认撤回这条消息？'))return;
+        await api(`/api/v1/demo/im/conversations/${encodeURIComponent(selectedConversationId)}/messages/${encodeURIComponent(messageId)}/recall`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:'{}'});
+      }
+      await loadMessages(selectedConversationId);
+    }catch(error){showBasicError(error)}
+  }
+  function messageNode(message){
+    const kind=message.senderActorId==='usr_local_demo'?'me':'agent';
+    const text=message.status==='recalled'?'（已撤回）':message.text;
+    const node=bubble(text,kind,`${message.senderActorId} · ${message.status} · ${message.providerStatus} · ${message.createdAt}`);
+    if(kind==='me'&&message.status!=='recalled'){
+      const actions=document.createElement('div');actions.className='message-actions';
+      const edit=document.createElement('button');edit.type='button';edit.textContent='编辑';edit.addEventListener('click',()=>mutateMessage(message.id,'edit'));
+      const recall=document.createElement('button');recall.type='button';recall.textContent='撤回';recall.addEventListener('click',()=>mutateMessage(message.id,'recall'));
+      actions.append(edit,recall);node.append(actions);
+    }
+    return node;
+  }
+  async function loadMessages(id){const data=await api(`/api/v1/demo/im/conversations/${encodeURIComponent(id)}/messages?limit=100`);basicTimeline.replaceChildren();if(!data.messages.length){basicTimeline.append(bubble('还没有消息。发送一条普通文本开始协作。','','系统说明'));return}for(const message of data.messages){basicTimeline.append(messageNode(message))}basicTimeline.scrollTop=basicTimeline.scrollHeight}
+
+  api('/api/v1/demo/im').then(data=>{const runtimeLabel=data.agentRuntime?.mode==='model'?'显式模型 runtime':'synthetic 零网络';runtime.innerHTML=`<b>已就绪</b> · ${runtimeLabel} · calls=${data.networkCalls}`}).catch(error=>{runtime.textContent=error.message;runtime.classList.add('error')});
+  loadConversations().catch(showBasicError);
+  createGroup.addEventListener('click',async()=>{const name=groupName.value.trim();if(!name)return;createGroup.disabled=true;basicError.textContent='';try{const data=await api('/api/v1/demo/im/conversations',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({type:'group',name,memberActorIds:[],idempotencyKey:`ui/basic/group/${Date.now()}_${crypto.randomUUID().slice(0,8)}`})});selectedConversationId=data.conversation.id;await loadConversations()}catch(error){showBasicError(error)}finally{createGroup.disabled=false}});
+  sendBasic.addEventListener('click',async()=>{const text=basicText.value.trim();if(!selectedConversationId||!text)return;sendBasic.disabled=true;basicError.textContent='';try{await api(`/api/v1/demo/im/conversations/${encodeURIComponent(selectedConversationId)}/messages`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({clientMessageId:`msg_ui_basic_${Date.now()}_${crypto.randomUUID().slice(0,8)}`,text,extInfo:JSON.stringify({messageType:'text'})})});basicText.value='';await loadMessages(selectedConversationId)}catch(error){showBasicError(error)}finally{sendBasic.disabled=false}});
+  send.addEventListener('click',async()=>{
+    const text=instruction.value.trim(); if(!text)return;
+    send.disabled=true;send.textContent='正在建子群…';
+    lastMessageId=messageId(); parentTimeline.append(bubble(text,'me','你 · @v0版研究 Agent'));
+    try{
+      const data=await api('/api/v1/demo/im/mentions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({messageId:lastMessageId,instruction:text})});
+      const card=JSON.parse(data.workCardExtInfo);const cardNode=bubble(`已创建子群 ${card.childConversationId}\n状态：${card.status}`,'work-card','受限 Agent 工作卡');parentTimeline.append(cardNode);
+      document.getElementById('childEmpty').hidden=true;document.getElementById('childContent').hidden=false;document.getElementById('childId').textContent=data.childConversationId;document.getElementById('invocationId').textContent=data.invocationId;document.getElementById('providerStatus').textContent=data.providerStatus;document.getElementById('replayed').textContent=String(data.replayed);document.getElementById('childInstruction').textContent=text;const reply=document.getElementById('agentReply');reply.replaceChildren(Object.assign(document.createElement('span'),{className:'meta',textContent:'v0版研究 Agent'}),document.createTextNode(data.agentReply.text));document.getElementById('childStatus').textContent='独立 ACL · Agent 回复仅在此处';
+    }catch(error){parentTimeline.append(bubble(error.message,'','业务错误'));}
+    finally{send.disabled=false;send.textContent='@研究 Agent'}
+  });
+</script>
+</body>
+</html>

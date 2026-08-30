@@ -116,6 +116,29 @@ Artifact 仍只存于本次运行的内存 SQLite 中，停止服务后不会持
 
 ## 4. 其他启动方式
 
+### React Web IM 客户端（当前第一版 Web 应用）
+
+如果要体验 IM 群聊、普通消息和 `@v0版 Agent` 子群，而不是单页 acceptance HTML：
+
+推荐一条命令启动前后端：
+
+```bash
+./scripts/start_web_client.sh
+```
+
+它会自动检查依赖、启动 `127.0.0.1:18080` Go IM demo 和 `127.0.0.1:5173` Vite 页面，并在
+macOS 上打开浏览器。停止时回到该终端按 `Ctrl-C`，脚本会清理后端进程。首次 Go 冷编译可能需要
+一两分钟，等待上限为 180 秒；用 `--no-open` 可关闭自动打开浏览器。
+
+如需手动拆开启动，终端一运行 `./scripts/start_im_demo.sh --port 18080`，终端二进入
+`clients/im-web` 运行 `npm install && npm run dev`，然后打开 <http://127.0.0.1:5173>。自定义
+API 端口时优先使用一键脚本的 `--im-port`，它会自动同步 Vite proxy；手动启动则需设置
+`WANWORK_IM_WEB_API_PORT`。
+
+页面和 API 都只监听 loopback。完整范围、构建和生产边界见
+[`clients/im-web/README.md`](../clients/im-web/README.md) 与
+[`docs/wanwork_im/MULTI_PLATFORM_STATUS.md`](wanwork_im/MULTI_PLATFORM_STATUS.md)。
+
 ### 只启动服务，不自动打开浏览器
 
 ```bash

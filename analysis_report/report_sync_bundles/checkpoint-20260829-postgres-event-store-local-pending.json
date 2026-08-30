@@ -1,0 +1,89 @@
+{
+  "format": "quantum-entanglement.report-sync-bundle",
+  "version": 1,
+  "createdAt": "2026-08-29T14:54:02+08:00",
+  "source": {
+    "branch": "dev_wanwork_quantum_entanglement",
+    "head": "b7abf29af8ba36578f566696cb0bc73b2844d229",
+    "remote": "https://github.com/huapohen/quantum-entanglement.git",
+    "remoteRef": "refs/heads/dev_wanwork_quantum_entanglement"
+  },
+  "syncDecision": {
+    "notion": "local_pending",
+    "yuque": "local_pending",
+    "feishuAndWeCom": "read-only-no-send",
+    "reason": "Batch remote knowledge-base synchronization only after the local code, tests, reports and evidence for this stage are closed."
+  },
+  "changes": [
+    {
+      "commit": "63e45b7330bce5304649436e322a70de278eef6e",
+      "message": "feat(postgres): add durable event store migration"
+    },
+    {
+      "commit": "e6a6482fc32b2d493fa1006a55b794adc949c924",
+      "message": "feat(postgres): implement durable event store adapter"
+    },
+    {
+      "commit": "9fb04480275d4190ad393a541470089baba2f039",
+      "message": "fix(postgres): align event retry identity schema"
+    },
+    {
+      "commit": "e6611b5a3ec35a55781af6c2924c2e63283c9fdf",
+      "message": "test(postgres): exercise durable event store integration"
+    },
+    {
+      "commit": "84c2b82335fafeb98a708989af6e69c5560c9a2b",
+      "message": "test(postgres): advance cutover fixtures to schema seven"
+    },
+    {
+      "commit": "b7abf29af8ba36578f566696cb0bc73b2844d229",
+      "message": "docs(events): record postgres event store checkpoint"
+    }
+  ],
+  "localSources": [
+    {
+      "path": "analysis_report/README.md",
+      "sha256": "822cf96a5e5d75bbbfa37e761c13c57da348d3292334558d00c5671c9111ec00",
+      "targetPageKey": "project-home",
+      "status": "local_pending"
+    },
+    {
+      "path": "analysis_report/research/42_postgres_event_store_implementation_checkpoint.md",
+      "sha256": "7ea6c94d7b94e1d594480430de8d340d553e224a21abe55c0277a2dbce10577c",
+      "targetPageKey": "research-42",
+      "status": "local_pending"
+    },
+    {
+      "path": "apps/im-api/internal/platform/postgres/eventstore/store.go",
+      "targetPageKey": "current-implementation",
+      "status": "local_pending"
+    },
+    {
+      "path": "apps/im-api/internal/platform/postgres/eventstore/store_test.go",
+      "targetPageKey": "current-implementation",
+      "status": "local_pending"
+    },
+    {
+      "path": "apps/im-api/internal/platform/postgres/eventstore/store_integration_test.go",
+      "targetPageKey": "current-implementation",
+      "status": "local_pending"
+    },
+    {
+      "path": "apps/im-api/internal/platform/postgres/migrations/sql/0007_event_retry_identity.up.sql",
+      "targetPageKey": "current-implementation",
+      "status": "local_pending"
+    }
+  ],
+  "verification": {
+    "goTest": "passed: go test ./...",
+    "goTestRace": "passed: go test -race ./...",
+    "goVet": "passed: go vet ./...",
+    "postgresMigrationIntegration": "passed with local PostgreSQL 18.6",
+    "postgresRuntimePoolIntegration": "passed with local PostgreSQL 18.6",
+    "postgresEventStoreIntegration": "passed with local PostgreSQL 18.6",
+    "notionLiveWrite": false,
+    "notionLiveReadback": false,
+    "yuqueLiveWrite": false,
+    "feishuOrWeComMessagesSent": false
+  }
+}

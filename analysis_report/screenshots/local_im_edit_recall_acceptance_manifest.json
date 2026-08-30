@@ -1,0 +1,41 @@
+{
+  "format": "quantum-entanglement.local-im-edit-recall-acceptance-screenshots-v1",
+  "capturedAt": "2026-08-29T13:03:02+08:00",
+  "source": "http://127.0.0.1:19083/demo/im",
+  "networkPolicy": "loopback-only",
+  "credentialsUsed": false,
+  "interactions": [
+    "create an ordinary group from the browser",
+    "send one ordinary text message",
+    "edit the message through the UI and verify the edited lifecycle state",
+    "recall the same message through the UI and verify the recalled lifecycle state",
+    "repeat edit and recall requests to verify idempotent replay",
+    "inspect the same flow at desktop and mobile viewport sizes"
+  ],
+  "apiChecks": [
+    "PATCH message edit returned providerStatus=committed",
+    "POST message recall returned providerStatus=committed",
+    "repeated edit and recall returned replayed=true",
+    "recalled message response retained an empty text field"
+  ],
+  "screenshots": [
+    {
+      "path": "analysis_report/screenshots/40_local_im_edit_recall_desktop.png",
+      "viewport": {"width": 1440, "height": 1690},
+      "state": "ordinary group message edited and recalled; lifecycle controls and recalled rendering visible",
+      "sha256": "508e438917dde6eb67c8a759574924531a95f69a17b150381c8d271337989af8",
+      "redactionStatus": "synthetic-local-ui-no-credential"
+    },
+    {
+      "path": "analysis_report/screenshots/41_local_im_edit_recall_mobile.png",
+      "viewport": {"width": 390, "height": 2987},
+      "state": "responsive ordinary group message edited and recalled; recalled rendering visible",
+      "sha256": "9ad9d6c73e06c09bb9f9cdeefd271719f178b72983a0303bd9d9e4f639741a74",
+      "redactionStatus": "synthetic-local-ui-no-credential"
+    }
+  ],
+  "evidenceLimits": [
+    "This manifest records a loopback in-process demo and is not evidence of PostgreSQL durability, real provider delivery, or production readiness",
+    "No Feishu, WeCom, RongCloud, Clerk, Notion or Yuque write was performed by this acceptance run"
+  ]
+}

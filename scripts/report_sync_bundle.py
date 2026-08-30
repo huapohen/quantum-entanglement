@@ -21,6 +21,7 @@ import stat
 import struct
 import sys
 import unicodedata
+import xml.etree.ElementTree as ET
 import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -44,19 +45,30 @@ _MAX_PATH_BYTES = 1_024
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,255}$")
 _SOURCE_FILENAME_PATTERN = re.compile(r"^[0-9]{2}_[a-z0-9][a-z0-9_]*\.md$")
-_IMAGE_FILENAME_PATTERN = re.compile(r"^[0-9]{2}_[a-z0-9][a-z0-9_]*\.(?:jpe?g|png)$")
+_IMAGE_FILENAME_PATTERN = re.compile(r"^[0-9]{2}_[a-z0-9][a-z0-9_]*\.(?:jpe?g|png|svg)$")
 _OUTPUT_FILENAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,126}\.json$")
-_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png"})
+_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/svg+xml"})
 _IMAGE_EXTENSIONS = {
     ".jpeg": "image/jpeg",
     ".jpg": "image/jpeg",
     ".png": "image/png",
+    ".svg": "image/svg+xml",
 }
+_SCREENSHOT_SIDECAR_FILENAMES = frozenset(
+    {
+        "local_im_acceptance_manifest.json",
+        "local_im_basic_acceptance_manifest.json",
+        "local_im_edit_recall_acceptance_manifest.json",
+    }
+)
 _REDACTION_STATUSES = frozenset(
     {
         "not-redacted-synthetic-local-ui",
         "not-applicable-public-webpage-in-internal-evidence-set",
+        "not-applicable-repository-authored-diagram",
+        "synthetic-local-ui-no-credential",
         "reviewed-no-credential-model-output-restricted",
+        "reviewed-local-runtime-capture",
         "unredacted-restricted-original",
     }
 )
@@ -166,6 +178,15 @@ _CANONICAL_EXACT_PATHS = frozenset(
         "analysis_report/screenshots/manifest.json",
         "docs/architecture/NATIVE_IM_CONTRACT_V1.md",
         "docs/TERMINOLOGY.md",
+        "docs/wanwork_im/ARCHITECTURE.md",
+        "docs/wanwork_im/IMPLEMENTATION_PLAN.md",
+        "docs/wanwork_im/POSTGRES_PRODUCTION_AUTHORITY.md",
+        "docs/wanwork_im/README.md",
+        "docs/wanwork_im/RESEARCH_TRACEABILITY.md",
+        "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md",
+        "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md",
+        "docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md",
+        "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md",
     }
 )
 _NOTION_MANIFEST_PATH = "analysis_report/notion_sync_manifest.json"
@@ -427,8 +448,17 @@ def _safe_relative(value: object) -> str:
     pure = PurePosixPath(path)
     if pure.is_absolute() or pure.as_posix() != path:
         _fail("path_invalid")
-    if any(_is_sensitive_component(part) for part in pure.parts):
-        _fail("sensitive_path_forbidden")
+    for index, part in enumerate(pure.parts):
+        if not _is_sensitive_component(part):
+            continue
+        controlled_research_title = (
+            index == len(pure.parts) - 1
+            and len(pure.parts) == 3
+            and pure.parts[:2] == ("analysis_report", "research")
+            and _SOURCE_FILENAME_PATTERN.fullmatch(part) is not None
+        )
+        if not controlled_research_title:
+            _fail("sensitive_path_forbidden")
     return path
 
 
@@ -979,6 +1009,18 @@ def _collect_sources(
         ("canonical-source", "analysis_report/multi_agent_collaboration_report.md"),
         ("canonical-source", "docs/architecture/NATIVE_IM_CONTRACT_V1.md"),
         ("canonical-source", "docs/TERMINOLOGY.md"),
+        ("canonical-source", "docs/wanwork_im/ARCHITECTURE.md"),
+        ("canonical-source", "docs/wanwork_im/IMPLEMENTATION_PLAN.md"),
+        ("canonical-source", "docs/wanwork_im/POSTGRES_PRODUCTION_AUTHORITY.md"),
+        ("canonical-source", "docs/wanwork_im/README.md"),
+        ("canonical-source", "docs/wanwork_im/RESEARCH_TRACEABILITY.md"),
+        ("canonical-source", "docs/wanwork_im/W2_POSTGRES_AUTHORITY_CHECKPOINT.md"),
+        ("canonical-source", "docs/wanwork_im/W2_POSTGRES_CUTOVER_PLAN_CHECKPOINT.md"),
+        (
+            "canonical-source",
+            "docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md",
+        ),
+        ("canonical-source", "docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md"),
     ]
     paths.extend(
         ("canonical-source", path) for path in _markdown_files(session, "analysis_report/research")
@@ -1754,6 +1796,84 @@ def _jpeg_dimensions(raw: bytes) -> tuple[int, int]:
             saw_scan = True
 
 
+def _svg_dimensions(raw: bytes) -> tuple[int, int]:
+    try:
+        source = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        _fail("image_content_invalid")
+    folded = source.casefold()
+    if any(token in folded for token in ("<!doctype", "<!entity", "<?", "<![cdata[")):
+        _fail("image_content_invalid")
+    try:
+        root = ET.fromstring(source)
+    except ET.ParseError:
+        _fail("image_content_invalid")
+    namespace = "{http://www.w3.org/2000/svg}"
+    if root.tag != f"{namespace}svg":
+        _fail("image_content_invalid")
+
+    dimensions: list[int] = []
+    for name in ("width", "height"):
+        value = root.get(name)
+        if value is None or re.fullmatch(r"[1-9][0-9]{0,6}(?:px)?", value) is None:
+            _fail("image_content_invalid")
+        dimensions.append(int(value.removesuffix("px")))
+    width, height = dimensions
+    if width * height * 4 > _MAX_DECODED_IMAGE_BYTES:
+        _fail("image_content_invalid")
+
+    view_box = root.get("viewBox")
+    if view_box is not None:
+        values = view_box.replace(",", " ").split()
+        if values != ["0", "0", str(width), str(height)]:
+            _fail("image_content_invalid")
+
+    element_count = 0
+    pending: list[tuple[ET.Element, int]] = [(root, 1)]
+    forbidden_elements = frozenset({"a", "foreignobject", "image", "script", "use"})
+    internal_url = re.compile(
+        r"url\(\s*#[A-Za-z_][A-Za-z0-9_.:-]*\s*\)",
+        re.IGNORECASE,
+    )
+    unsafe_reference = re.compile(r"(?i)(?:javascript|data|https?|file):|//")
+
+    def only_internal_urls(value: str) -> bool:
+        if "url(" not in value.casefold():
+            return True
+        without_internal = internal_url.sub("", value)
+        return "url(" not in without_internal.casefold()
+
+    while pending:
+        element, depth = pending.pop()
+        element_count += 1
+        if element_count > _MAX_IMAGE_CHUNKS or depth > _MAX_JSON_NESTING_DEPTH:
+            _fail("image_content_invalid")
+        if not isinstance(element.tag, str) or not element.tag.startswith(namespace):
+            _fail("image_content_invalid")
+        local_name = element.tag[len(namespace) :].casefold()
+        if local_name in forbidden_elements or len(element.attrib) > 64:
+            _fail("image_content_invalid")
+        for raw_name, value in element.attrib.items():
+            if raw_name.startswith("{"):
+                _fail("image_content_invalid")
+            name = raw_name.casefold()
+            if name.startswith("on") or name in {"href", "src"}:
+                _fail("image_content_invalid")
+            if unsafe_reference.search(value):
+                _fail("image_content_invalid")
+            if not only_internal_urls(value):
+                _fail("image_content_invalid")
+        for value in (element.text, element.tail):
+            if value is not None and (
+                unsafe_reference.search(value)
+                or "@import" in value.casefold()
+                or not only_internal_urls(value)
+            ):
+                _fail("image_content_invalid")
+        pending.extend((child, depth + 1) for child in element)
+    return width, height
+
+
 def _actual_image_metadata(raw: bytes) -> tuple[str, int, int]:
     png_signature = b"\x89PNG\r\n\x1a\n"
     if raw.startswith(png_signature):
@@ -1762,6 +1882,9 @@ def _actual_image_metadata(raw: bytes) -> tuple[str, int, int]:
     if raw.startswith(b"\xff\xd8"):
         width, height = _jpeg_dimensions(raw)
         return "image/jpeg", width, height
+    if raw.lstrip().startswith(b"<svg"):
+        width, height = _svg_dimensions(raw)
+        return "image/svg+xml", width, height
     _fail("image_content_invalid")
 
 
@@ -1858,6 +1981,17 @@ def _image_inventory(
         if not stat.S_ISREG(entry.mode):
             _fail("controlled_directory_entry_forbidden")
         if entry.name in {"README.md", "manifest.json"}:
+            continue
+        if entry.name in _SCREENSHOT_SIDECAR_FILENAMES:
+            sidecar_raw = session.read_regular(
+                f"analysis_report/screenshots/{entry.name}",
+                limit=_MAX_MANIFEST_BYTES,
+                missing_code="screenshot_sidecar_missing",
+            )
+            _parse_json(
+                sidecar_raw,
+                "screenshot_sidecar_invalid",
+            )
             continue
         if _IMAGE_FILENAME_PATTERN.fullmatch(entry.name) is None:
             _fail("screenshot_filename_forbidden")

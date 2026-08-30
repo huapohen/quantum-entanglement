@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>IM 身份、会话拓扑与 Provider Metadata 合同实现证据</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">IM 身份、会话拓扑与 Provider Metadata
+合同实现证据</h1>
+</header>
+<h1 id="im-身份会话拓扑与-provider-metadata-合同实现证据">IM
+身份、会话拓扑与 Provider Metadata 合同实现证据</h1>
+<blockquote>
+<p>日期：2026-08-28（Asia/Shanghai）</p>
+<p>分支：<code>dev_wanwork_quantum_entanglement</code></p>
+<p>一级研究根：<code>/Users/lwblx/huapohen/agent/automation/2026/05_08/1/2output/more</code></p>
+<p>代码范围：<code>apps/im-api/internal/im</code>、<code>apps/im-api/internal/immetadata</code></p>
+</blockquote>
+<h2 id="阶段结论">1. 阶段结论</h2>
+<p>本批不是“在融云 <code>ext_info</code> 里塞几个 JSON
+字段”，而是先冻结平台身份、会话拓扑与 provider
+投影之间的信任边界。实现已经形成以下可执行合同：</p>
+<ol type="1">
+<li>可见 Actor 的稳定引用与版本快照分离；snapshot revision
+变化不会改变稳定 Actor；</li>
+<li><code>human | agent | system | service</code> 与
+<code>usr_ | agt_ | sys_ | svc_</code> 前缀精确绑定，但前缀只证明
+语法，不证明数据库存在、安装有效、membership 或 authorization；</li>
+<li>Clerk/融云 external subject 绑定 provider
+realm/app/environment，避免相同 subject 跨环境串号；</li>
+<li>Conversation
+的稳定引用与版本快照分离；<code>direct | group | agent_thread</code> 的
+topology 字段互斥；</li>
+<li><code>agent_thread</code> 必须同时携带 parent conversation、root
+message 和 Agent invocation，parent 不得等于 child；parent lineage
+不产生 ACL 继承；</li>
+<li>融云用户/群 <code>ext_info</code> 是 1024-byte 上限的 canonical JSON
+string，只是显示和对账投影；</li>
+<li>metadata 不允许
+tenant、workspace、membership、ACL、role、delegation、credential、token、消息正文、
+Task、Artifact、Receipt 或外部地址；</li>
+<li>decoder 对 unknown/duplicate/missing/null/wrong type/trailing
+value/non-canonical order/escape drift/ 非 NFC/控制字符/Unicode
+混淆/超长输入 fail closed，返回零值和固定脱敏错误；</li>
+<li>用户和会话四种合法 shape 各有唯一 canonical bytes，合计 848 种非
+canonical key permutation 被拒绝；</li>
+<li>普通、race、seeded fuzz、secret canary 和 Unicode 语料均已有 Go
+测试。</li>
+</ol>
+<p>这里的“实现”只指 W1 纯值与 codec 合同。它不等于 Clerk JWT
+验证、融云真实 adapter、持久 mapping、 conversation
+membership/ACL、PostgreSQL、provider sandbox 兼容性或 production
+authorization 闭环。</p>
+<h2 id="调研吸收方法">2. 调研吸收方法</h2>
+<p>本批严格使用固定链：</p>
+<pre class="text"><code>研究证据
+  -&gt; 产品硬需求
+  -&gt; 领域对象/API
+  -&gt; 安全控制
+  -&gt; 实施阶段
+  -&gt; 可复核验收证据</code></pre>
+<p>调研报告中的
+<code>[F]</code>、<code>[C]</code>、<code>[A]</code>、<code>[U]</code>
+口径原样保留。产品名、UI、字段或静态客户端能力不能 证明真实
+provider、durability、isolation、authorization 或
+SLA。源码实现也不能把分析建议改写成 已经验证的外部事实。</p>
+<h3 id="本批直接使用的一级证据">2.1 本批直接使用的一级证据</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>一级证据</th>
+<th>本批吸收点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>clawith/research_report.md:148-152,196-226</code></td>
+<td>Agent 是稳定对象；人与 Agent 统一 Participant；入群/发送前仍独立校验
+tenant、membership、Agent status；mention intent 与 send 分离；Agent
+用自己的身份回复</td>
+</tr>
+<tr>
+<td><code>clawith/research_report.md:493-503,543-557,599-611</code></td>
+<td>handoff 冻结 source/root/parent/target/cutoff/idempotency；全局
+identity 与 tenant membership 分离；IM provider 只是
+adapter/projection</td>
+</tr>
+<tr>
+<td><code>floatim-floatboat/research_report.md:152-163,229-240</code></td>
+<td>Agent-native
+IM、群级触发规则可借鉴；静态客户端字段不能证明后端鉴权和 SLA</td>
+</tr>
+<tr>
+<td><code>codexloom/research_report.md:216-234</code></td>
+<td>每个 Conversation 的
+audience/purpose/role/speech/commitment/disclosure 边界独立；外部
+membership 不自动开放内部 Thread、工具、凭据或 decision</td>
+</tr>
+<tr>
+<td><code>raft-slock/research_report.md:209-230,235-245,272-283,346-350</code></td>
+<td>stable Agent identity 与 runtime session 分离；private channel
+按自身成员边界；跨边界 room 独立 policy；外部账户键必须包含 provider
+realm/server 范围</td>
+</tr>
+<tr>
+<td><code>_portfolio/master_research_report.md:220-226,648-671</code></td>
+<td>chat/session 不是 Task
+权威；Task、Thread、Attempt、Action、Acceptance 不能互相冒充</td>
+</tr>
+<tr>
+<td><code>agentteams/research_report.md:113-123,192-207,250-282</code></td>
+<td>Room 与 Project/Task
+分对象；成员拓扑必须显式，不由自然语言或父级隐式推断</td>
+</tr>
+<tr>
+<td><code>tech-agent-security-governance/research_report.md:187-231,315,442-444</code></td>
+<td>human principal、Agent definition、workload、tool/resource
+身份分离；mandate 与 secret broker 独立；metadata 不是授权边界</td>
+</tr>
+<tr>
+<td><code>protocol-a2a/research_report.md:209,425-457,480</code></td>
+<td>Card/metadata 不是身份证或授权；extension smuggling、JSON bomb 需
+allowlist/size/depth；出现 tenant 字段不等于 tenant isolation</td>
+</tr>
+<tr>
+<td><code>sandbase-harness/research_report.md:470</code></td>
+<td>Secret metadata/密文存在不代表执行授权或可被模型使用</td>
+</tr>
+<tr>
+<td><code>holaos/research_report.md:599-607</code></td>
+<td>provider metadata 只能做投影，真实语义必须回查 canonical platform
+state</td>
+</tr>
+<tr>
+<td><code>agentspace/research_report.md:739-759</code></td>
+<td>adapter 必须声明并验证 provider capability，不能把 enum/file/config
+存在当作外部能力已成立</td>
+</tr>
+</tbody>
+</table>
+<h3 id="证据到实现的硬映射">2.2 证据到实现的硬映射</h3>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>证据结论</th>
+<th>产品硬需求</th>
+<th>领域对象/API</th>
+<th>安全控制</th>
+<th>阶段</th>
+<th>验收证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>稳定 Actor 与 runtime/workload/delegation 分离</td>
+<td>同一 Agent 重启/换 runtime 后可见身份不变</td>
+<td><code>ActorRef</code>、<code>ActorSnapshot</code>；后续
+<code>AgentRelease/Installation/RuntimeIncarnation/DelegationGrant</code></td>
+<td>prefix/type 只做 syntax；授权路径必须 resolve
+registry、membership、mandate</td>
+<td>W1 值完成；W2/W4 authority 未完成</td>
+<td>两个 revision 的 snapshot 不等，但 <code>Ref()</code> 相等；零
+scope/type mismatch 拒绝</td>
+</tr>
+<tr>
+<td>全局外部身份与平台/tenant membership 分离</td>
+<td>相同 provider subject 在 prod/staging 或多个 app 不串号</td>
+<td><code>ProviderRealmID</code>、<code>ExternalIdentityRef(provider, realm, subject)</code></td>
+<td>provider ref 不授予 tenant membership；realm 非 secret；后续 binding
+需 CAS/status/revision</td>
+<td>W1 ref 完成；W2/W3 binding 未完成</td>
+<td>相同 provider+subject、不同 realm 得到不同 ref；missing realm
+拒绝</td>
+</tr>
+<tr>
+<td>Human/Agent 共享可见 Participant，但 system/service
+不作为普通聊天用户</td>
+<td>融云普通 user 投影只允许 human/agent</td>
+<td><code>UserProjection</code></td>
+<td>Actor prefix 与 subject type 对齐；human 禁 Agent 字段；agent 必须
+definition+SemVer</td>
+<td>W1 完成；W3 provisioning 未完成</td>
+<td>human/agent positive；system/service、prefix
+drift、字段缺失/多余拒绝</td>
+</tr>
+<tr>
+<td>Conversation 是协作空间，不是 Task/ACL</td>
+<td>topology 与业务/授权状态分域</td>
+<td><code>ConversationRef</code>、<code>ConversationSnapshot</code></td>
+<td>stable ref 与 revision 分离；普通会话禁止 thread 字段</td>
+<td>W1 值完成；W2 aggregate/membership 未完成</td>
+<td>direct/group/thread 正负矩阵；普通会话伪造 topology 拒绝</td>
+</tr>
+<tr>
+<td>Agent thread 是 parent/root/invocation lineage</td>
+<td><code>@Agent</code> 子群具备确定性关联键</td>
+<td><code>ConversationAgentThread</code>、parent/root/invocation
+values</td>
+<td>三字段 all-or-none；self-parent 拒绝；lineage 不继承 ACL</td>
+<td>W1 值完成；W4 create-or-get 未完成</td>
+<td>partial topology、自指、错误 prefix、Unicode/控制字符拒绝</td>
+</tr>
+<tr>
+<td>extension smuggling/JSON bomb 必须 fail closed</td>
+<td><code>ext_info</code> 只能是最小有界投影</td>
+<td><code>immetadata</code> 专用 encode/decode</td>
+<td>1024 bytes、flat allowlist、exact types、canonical roundtrip、fixed
+error</td>
+<td>W1 codec 完成；provider limit readback W3 未完成</td>
+<td>unknown/duplicate/null/wrong type/trailing/oversize/canonical
+permutation 全拒绝</td>
+</tr>
+<tr>
+<td>metadata 不是授权边界</td>
+<td>provider payload 自报 actor/thread 不能改变权限</td>
+<td><code>UserProjection</code>、<code>ConversationProjection</code>
+注释与 forbidden field schema</td>
+<td>永久禁止 authority/secret/content/evidence 字段；入站后必须回查
+binding+membership</td>
+<td>W1 schema 完成；resolver/admission W2/W3 未完成</td>
+<td>44 类 forbidden field 对 user/group 全拒绝，canary 不进入 error</td>
+</tr>
+<tr>
+<td>canonical codec 不证明 provider 兼容</td>
+<td>未经融云 sandbox readback 不开放真实 outbound</td>
+<td>后续 <code>ProviderCharacteristics/CapabilityMatrix</code></td>
+<td>provider 实际 limit、原样保存、稳定回传、签名、幂等、readback
+全部分项验证</td>
+<td>W3</td>
+<td>当前明确 <code>unverified</code>；sandbox fixture 通过前真实
+outbound 保持关闭</td>
+</tr>
+</tbody>
+</table>
+<h2 id="平台身份合同">3. 平台身份合同</h2>
+<h3 id="id-命名空间">3.1 ID 命名空间</h3>
+<pre class="text"><code>tenant               ten_
+workspace            wsp_
+provider realm       rlm_
+human actor          usr_
+agent actor          agt_
+system actor         sys_
+service actor        svc_
+agent definition     agd_
+conversation         cnv_
+message              msg_
+invocation           inv_</code></pre>
+<p>所有平台 ID：</p>
+<ul>
+<li>最长 128 bytes；</li>
+<li>只允许受限 ASCII <code>A-Z a-z 0-9 _ -</code>；</li>
+<li>suffix 首尾必须是字母或数字；</li>
+<li>拒绝空 suffix、错误 prefix、空白、C0/DEL、尾部分隔符、全角/Cyrillic
+等 Unicode 混淆与超长值；</li>
+<li>ID
+可比较但不自证数据库存在、唯一归属、status、membership、installation 或
+authority。</li>
+</ul>
+<h3 id="actorref-与-actorsnapshot">3.2 <code>ActorRef</code> 与
+<code>ActorSnapshot</code></h3>
+<pre class="text"><code>ActorRef
+  tenantId
+  actorId
+
+ActorSnapshot
+  ActorRef
+  subjectType
+  revision</code></pre>
+<p>拆分原因：如果把 revision 放进“稳定身份”本身，同一 Actor 的 revision
+1 与 revision 2 会在 map key、 dedupe、audit join 或 equality
+中变成两个不同身份。现在 <code>ActorRef</code>
+表示稳定业务引用，<code>ActorSnapshot</code>
+表示该引用的一个不可变版本。</p>
+<p><code>ActorSnapshot</code> 的 prefix/type 校验仍只是语法层。合法
+<code>agt_finance</code> 不能证明 caller 可以作为该 Agent 发言；合法
+<code>sys_</code>/<code>svc_</code> 不能证明平台 ownership 或 workload
+identity。授权路径必须另行解析：</p>
+<pre class="text"><code>authenticated external principal
+  -&gt; realm-scoped persisted binding
+  -&gt; stable ActorRef
+  -&gt; active tenant membership
+  -&gt; current ActorSnapshot/status
+  -&gt; Agent installation/release（Agent only）
+  -&gt; conversation membership + mandate
+  -&gt; action-time policy</code></pre>
+<h3 id="外部身份-realm-隔离">3.3 外部身份 realm 隔离</h3>
+<pre class="text"><code>ExternalIdentityRef
+  provider = clerk | rongcloud
+  providerRealmId = rlm_...
+  subjectId</code></pre>
+<p>Clerk subject 必须为 <code>user_...</code>。融云 user subject
+当前要求直接映射平台 Actor ID。realm 用于区分 staging/production、不同
+Clerk instance 或不同融云 app；它不包含 key、endpoint 或 tenant
+权限。</p>
+<p>后续 W2/W3 还必须实现 <code>ExternalIdentityBinding</code>
+的唯一性、status、revision、link/unlink/retarget CAS、 provider callback
+验证和 offboard/revoke。当前 ref 不能证明 provider ownership 或 callback
+authenticity。</p>
+<h3 id="agent-semver-的诚实边界">3.4 Agent SemVer 的诚实边界</h3>
+<p><code>AgentVersion</code> 只校验严格 SemVer syntax，是
+display/compatibility label。它不是：</p>
+<ul>
+<li>immutable release ID；</li>
+<li>artifact/config digest；</li>
+<li>publisher signature；</li>
+<li>tenant installation approval；</li>
+<li>当前 runtime authority。</li>
+</ul>
+<p>W2 必须以 <code>AgentReleaseID + artifact/config digest</code>
+冻结真正不可变的执行版本；历史 Run/Message/Artifact pin 该
+release。重复使用同一个 SemVer 上传不同 bytes 必须被 registry 拒绝。</p>
+<h2 id="conversation-合同">4. Conversation 合同</h2>
+<h3 id="conversationref-与-conversationsnapshot">4.1
+<code>ConversationRef</code> 与 <code>ConversationSnapshot</code></h3>
+<pre class="text"><code>ConversationRef
+  tenantId
+  conversationId
+
+ConversationSnapshot
+  ConversationRef
+  workspaceId?      # nil 与 zero value 精确区分
+  type              # direct | group | agent_thread
+  parentConversationId?
+  rootMessageId?
+  agentInvocationId?
+  revision</code></pre>
+<p>与 Actor 相同，稳定 Conversation 引用不含 revision。snapshot revision
+变化不改变 Ref。</p>
+<h3 id="topology-互斥">4.2 topology 互斥</h3>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr>
+<th>类型</th>
+<th>parent</th>
+<th>root message</th>
+<th>invocation</th>
+<th>当前 W1 规则</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>direct</code></td>
+<td>禁止</td>
+<td>禁止</td>
+<td>禁止</td>
+<td>tenant/workspace scope + revision 合法</td>
+</tr>
+<tr>
+<td><code>group</code></td>
+<td>禁止</td>
+<td>禁止</td>
+<td>禁止</td>
+<td>tenant/workspace scope + revision 合法</td>
+</tr>
+<tr>
+<td><code>agent_thread</code></td>
+<td>必填</td>
+<td>必填</td>
+<td>必填</td>
+<td>all-or-none；parent != self</td>
+</tr>
+</tbody>
+</table>
+<p>parent/root/invocation 只建立 lineage，不证明：</p>
+<ul>
+<li>root message 确实属于 parent；</li>
+<li>parent 与 child 在同一 workspace；</li>
+<li>invocation 指向 active Agent installation；</li>
+<li>父群成员可读写子群；</li>
+<li>Conversation 已创建 Task；</li>
+<li>provider group 已成功创建或可稳定回读。</li>
+</ul>
+<p>这些跨聚合事实需要 W2 repository/transaction 和 W4 use case
+校验。子群必须创建独立 membership/ACL， explicit initial members
+之外的父群成员默认无权访问；Artifact 回父群也必须是独立授权的
+publish-ref。</p>
+<h3 id="与业务状态分域">4.3 与业务状态分域</h3>
+<pre class="text"><code>Conversation ready  != BusinessTask running
+Invocation succeeded != Artifact accepted
+Message delivered    != Action succeeded
+Provider HTTP 200     != business accepted
+Parent archived       != Task canceled</code></pre>
+<p>本批不在 Conversation value 中加入 Task/Attempt/Action/Acceptance
+字段，防止 transport 状态推进业务 权威状态。</p>
+<h2 id="ext_info-v1-canonical-schema">5. <code>ext_info</code> V1
+canonical schema</h2>
+<h3 id="human-user">5.1 Human user</h3>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;platformActorId&quot;</span><span class="fu">:</span><span class="st">&quot;usr_alice&quot;</span><span class="fu">,</span><span class="dt">&quot;schemaVersion&quot;</span><span class="fu">:</span><span class="dv">1</span><span class="fu">,</span><span class="dt">&quot;subjectType&quot;</span><span class="fu">:</span><span class="st">&quot;human&quot;</span><span class="fu">}</span></span></code></pre></div>
+<h3 id="agent-user">5.2 Agent user</h3>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;agentDefinitionId&quot;</span><span class="fu">:</span><span class="st">&quot;agd_finance&quot;</span><span class="fu">,</span><span class="dt">&quot;agentVersion&quot;</span><span class="fu">:</span><span class="st">&quot;1.0.0&quot;</span><span class="fu">,</span><span class="dt">&quot;platformActorId&quot;</span><span class="fu">:</span><span class="st">&quot;agt_finance&quot;</span><span class="fu">,</span><span class="dt">&quot;schemaVersion&quot;</span><span class="fu">:</span><span class="dv">1</span><span class="fu">,</span><span class="dt">&quot;subjectType&quot;</span><span class="fu">:</span><span class="st">&quot;agent&quot;</span><span class="fu">}</span></span></code></pre></div>
+<h3 id="ordinary-group">5.3 Ordinary group</h3>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;conversationType&quot;</span><span class="fu">:</span><span class="st">&quot;group&quot;</span><span class="fu">,</span><span class="dt">&quot;platformConversationId&quot;</span><span class="fu">:</span><span class="st">&quot;cnv_product&quot;</span><span class="fu">,</span><span class="dt">&quot;schemaVersion&quot;</span><span class="fu">:</span><span class="dv">1</span><span class="fu">}</span></span></code></pre></div>
+<h3 id="agent-thread-group">5.4 Agent thread group</h3>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;agentInvocationId&quot;</span><span class="fu">:</span><span class="st">&quot;inv_finance&quot;</span><span class="fu">,</span><span class="dt">&quot;conversationType&quot;</span><span class="fu">:</span><span class="st">&quot;agent_thread&quot;</span><span class="fu">,</span><span class="dt">&quot;parentConversationId&quot;</span><span class="fu">:</span><span class="st">&quot;cnv_parent&quot;</span><span class="fu">,</span><span class="dt">&quot;platformConversationId&quot;</span><span class="fu">:</span><span class="st">&quot;cnv_thread&quot;</span><span class="fu">,</span><span class="dt">&quot;rootMessageId&quot;</span><span class="fu">:</span><span class="st">&quot;msg_root&quot;</span><span class="fu">,</span><span class="dt">&quot;schemaVersion&quot;</span><span class="fu">:</span><span class="dv">1</span><span class="fu">}</span></span></code></pre></div>
+<p>用户投影只允许
+<code>human | agent</code>。<code>system | service</code>
+是平台内部主体，V1 不注册为融云普通聊天用户。 群投影只允许
+<code>group | agent_thread</code>；direct conversation 不使用 group
+<code>ext_info</code>。</p>
+<h3 id="canonical-bytes-规则">5.5 canonical bytes 规则</h3>
+<p>实现采用 RFC 8785/JCS 思路的受限平面子集：</p>
+<ol type="1">
+<li>输入最多 1024 UTF-8 bytes；真实 adapter 进一步使用
+<code>min(1024, 已核实 provider limit)</code>；</li>
+<li>只接受单一 JSON object；V1 没有 array/nested object/自由
+metadata；</li>
+<li>key 是固定 allowlist，字段顺序按 key 字典序；</li>
+<li><code>schemaVersion</code> token 必须是 integer <code>1</code>，拒绝
+string、<code>1.0</code>、<code>1e0</code>、其他版本；</li>
+<li>禁止 unknown key、alias、大小写漂移、snake_case、duplicate 和
+escaped-equivalent duplicate；</li>
+<li>禁止 missing、显式空
+optional、<code>null</code>、bool/number/object/array 类型漂移；</li>
+<li>整体 UTF-8 有效且 NFC；V1 字段最终还需通过 ASCII enum/ID/SemVer
+validator；</li>
+<li>禁止 BOM、前后空白、trailing garbage、第二个 JSON value
+与截断输入；</li>
+<li>解码后重新编码，必须 byte-for-byte
+等于输入；等价但重排、加空格或使用 <code>\uXXXX</code> 的输入拒绝；</li>
+<li>失败只返回零值和固定 sentinel error，不拼接 raw payload。</li>
+</ol>
+<p>编码器的唯一目标是内部 canonical
+bytes。它尚未证明融云会接受、原样保存或稳定回传这些 bytes； 该证明属于
+W3 sandbox provider contract test。</p>
+<h2 id="永久禁止进入-provider-metadata-的字段">6. 永久禁止进入 provider
+metadata 的字段</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>分类</th>
+<th>禁止示例</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>scope/authority</td>
+<td>tenant、workspace、ACL、role、member
+IDs、permission、capability、policy、approval、delegation、mandate、scope</td>
+<td>provider metadata 可伪造/漂移，不能建立平台 authority</td>
+</tr>
+<tr>
+<td>runtime</td>
+<td>session/run/attempt/workload/process/device/lease/fence</td>
+<td>visible Actor 与 runtime identity 必须分离</td>
+</tr>
+<tr>
+<td>credential material</td>
+<td>token、API key、password、cookie、Authorization、refresh
+token、credential、secret ref</td>
+<td>凭据只能在 trusted executor 通过 broker JIT 解析</td>
+</tr>
+<tr>
+<td>content/PII</td>
+<td>message body、Prompt、email、phone、Memory</td>
+<td>防止 provider profile 泄漏和 prompt/日志扩散</td>
+</tr>
+<tr>
+<td>external address</td>
+<td>callback、webhook、endpoint、永久 file URL</td>
+<td>防止 SSRF、credential forwarding 与失效链接变成权威引用</td>
+</tr>
+<tr>
+<td>business/evidence</td>
+<td>Task、Action、Receipt、Artifact、Acceptance、Evidence、Checkpoint</td>
+<td>provider transport 状态不能冒充业务状态或审计证据</td>
+</tr>
+<tr>
+<td>extension bag</td>
+<td>metadata、extensions、extra</td>
+<td>防止 extension smuggling 绕过 V1 allowlist</td>
+</tr>
+</tbody>
+</table>
+<p>测试逐个注入 44 类字段到 user/group golden
+payload，全部返回固定脱敏错误；secret canary 不进入 error。</p>
+<h2 id="解码与入站授权边界">7. 解码与入站授权边界</h2>
+<h3 id="当前-w1-codec">7.1 当前 W1 codec</h3>
+<pre class="text"><code>raw ext_info string
+  -&gt; size &lt;= 1024
+  -&gt; valid UTF-8 + NFC
+  -&gt; strict typed decode + unknown-field rejection
+  -&gt; domain ID/enum/SemVer validation
+  -&gt; canonical re-encode
+  -&gt; exact byte equality
+  -&gt; zero-authority projection value</code></pre>
+<h3 id="w3-入站必须增加">7.2 W3 入站必须增加</h3>
+<pre class="text"><code>authenticated RongCloud callback/service identity
+  -&gt; durable provider event dedupe
+  -&gt; provider realm + authenticated user/group ID
+  -&gt; persisted platform binding lookup
+  -&gt; tenant + Actor/Conversation status and revision
+  -&gt; conversation membership/object authorization
+  -&gt; Agent installation/release/status（Agent only）
+  -&gt; ext_info projection consistency comparison
+  -&gt; mention/policy/budget/mandate admission</code></pre>
+<p>合法 canonical JSON 仍可能引用一个不存在、已撤销或被攻击者替换的
+Actor/parent/root/invocation。 因此 decode
+成功绝不能直接授予读、写、入群、执行、delegation 或 tool
+capability。</p>
+<h2 id="测试与机器证据">8. 测试与机器证据</h2>
+<h3 id="测试面">8.1 测试面</h3>
+<p>当前两个包共有 29 个 <code>Test</code>/<code>Fuzz</code> 入口、2,148
+行 Go code/test，覆盖：</p>
+<ul>
+<li>Actor/Conversation stable ref 与 snapshot revision 分离；</li>
+<li>subject/prefix、realm、scope、topology 互斥；</li>
+<li>ID/SemVer 正负语料；</li>
+<li>四种 golden bytes 和双向 roundtrip；</li>
+<li>root type、BOM、whitespace、trailing、multiple value、truncated
+JSON；</li>
+<li>unknown、duplicate、escaped duplicate、missing、null、wrong
+type、schema numeric drift；</li>
+<li>Human 6 个 key order、Agent 120 个、Group 6 个、Agent Thread 720 个
+key order；</li>
+<li>44 类 authority/secret/content/address/evidence forbidden
+fields；</li>
+<li>NFD、NFC
+non-ASCII、fullwidth、Cyrillic、bidi、zero-width、C1、NUL、CR/LF/TAB、DEL、lone
+surrogate、 invalid UTF-8；</li>
+<li>128 goroutine × 100 iterations 的 deterministic encode/decode race
+fixture；</li>
+<li>user/conversation seeded fuzz：任何 accepted input 必须可 exact
+canonical re-encode，任何 rejected input 必须返回 zero value 和固定
+error。</li>
+</ul>
+<h3 id="已运行命令">8.2 已运行命令</h3>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="va">GOTOOLCHAIN</span><span class="op">=</span>local <span class="va">GOPROXY</span><span class="op">=</span>off <span class="va">GOSUMDB</span><span class="op">=</span>off <span class="va">GOFLAGS</span><span class="op">=</span>-mod=readonly <span class="dt">\</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="ex">go</span> test ./apps/im-api/internal/im/... ./apps/im-api/internal/immetadata/... <span class="at">-count</span><span class="op">=</span>1</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="va">GOTOOLCHAIN</span><span class="op">=</span>local <span class="va">GOPROXY</span><span class="op">=</span>off <span class="va">GOSUMDB</span><span class="op">=</span>off <span class="va">GOFLAGS</span><span class="op">=</span>-mod=readonly <span class="dt">\</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="ex">go</span> test <span class="at">-race</span> ./apps/im-api/internal/im/... ./apps/im-api/internal/immetadata/... <span class="at">-count</span><span class="op">=</span>1</span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="va">GOTOOLCHAIN</span><span class="op">=</span>local <span class="va">GOPROXY</span><span class="op">=</span>off <span class="va">GOSUMDB</span><span class="op">=</span>off <span class="va">GOFLAGS</span><span class="op">=</span>-mod=readonly <span class="dt">\</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>  <span class="ex">go</span> test ./apps/im-api/internal/immetadata <span class="at">-run</span> <span class="st">&#39;^$&#39;</span> <span class="dt">\</span></span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">-fuzz</span> <span class="st">&#39;^FuzzDecodeUserProjectionNeverPanics$&#39;</span> <span class="at">-fuzztime</span><span class="op">=</span>5s</span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a><span class="va">GOTOOLCHAIN</span><span class="op">=</span>local <span class="va">GOPROXY</span><span class="op">=</span>off <span class="va">GOSUMDB</span><span class="op">=</span>off <span class="va">GOFLAGS</span><span class="op">=</span>-mod=readonly <span class="dt">\</span></span>
+<span id="cb14-12"><a href="#cb14-12" aria-hidden="true" tabindex="-1"></a>  <span class="ex">go</span> test ./apps/im-api/internal/immetadata <span class="at">-run</span> <span class="st">&#39;^$&#39;</span> <span class="dt">\</span></span>
+<span id="cb14-13"><a href="#cb14-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">-fuzz</span> <span class="st">&#39;^FuzzDecodeConversationProjectionNeverPanics$&#39;</span> <span class="at">-fuzztime</span><span class="op">=</span>5s</span>
+<span id="cb14-14"><a href="#cb14-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-15"><a href="#cb14-15" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> diff <span class="at">--check</span></span></code></pre></div>
+<p>实际 fuzz 结果：user decoder 144,457 executions、conversation decoder
+113,977 executions，均 PASS。 随后全仓门禁也已通过：</p>
+<ul>
+<li><code>go test ./apps/im-api/... -count=1</code>；</li>
+<li><code>go test -race ./apps/im-api/... -count=1</code>；</li>
+<li><code>go vet ./apps/im-api/...</code>；</li>
+<li><code>go -C apps/im-api mod verify</code> 与
+<code>mod tidy -diff</code>；</li>
+<li>Python <code>unittest</code> 1,505
+tests，<code>OK (skipped=1)</code>；</li>
+<li>Ruff check/format、Mypy、workspace path 与 report-sync credential
+scanner。</li>
+</ul>
+<p>这些结果证明当前仓库与本地合同没有已知门禁回归；仍不证明真实
+Clerk/融云/provider 或生产环境。</p>
+<h2 id="小提交台账">9. 小提交台账</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>提交</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>9f55b33</code></td>
+<td>初版 immutable IM identity values</td>
+</tr>
+<tr>
+<td><code>8acd6bd</code></td>
+<td>identity 正负合同测试</td>
+</tr>
+<tr>
+<td><code>a15d7e2</code></td>
+<td>初版 Conversation values</td>
+</tr>
+<tr>
+<td><code>66b5e80</code></td>
+<td>Conversation topology 合同测试</td>
+</tr>
+<tr>
+<td><code>75c8ee7</code></td>
+<td>受控 Actor subject classification</td>
+</tr>
+<tr>
+<td><code>eeb05db</code></td>
+<td>user/conversation provider projection values</td>
+</tr>
+<tr>
+<td><code>792cf03</code></td>
+<td>strict canonical provider metadata codec</td>
+</tr>
+<tr>
+<td><code>99778ac</code></td>
+<td>根据一级调研拆分 <code>ActorRef/ActorSnapshot</code> 并增加 realm
+scope</td>
+</tr>
+<tr>
+<td><code>33ce779</code></td>
+<td>根据一级调研拆分
+<code>ConversationRef/ConversationSnapshot</code></td>
+</tr>
+<tr>
+<td><code>3a1278e</code></td>
+<td>canonical key order 收敛为受限 JCS 风格</td>
+</tr>
+<tr>
+<td><code>e543737</code></td>
+<td>user <code>ext_info</code> golden、负向与排列语料</td>
+</tr>
+<tr>
+<td><code>528a19f</code></td>
+<td>group <code>ext_info</code> golden、负向与排列语料</td>
+</tr>
+<tr>
+<td><code>ae9095f</code></td>
+<td>strict decoder seeded fuzz properties</td>
+</tr>
+<tr>
+<td><code>1f76925</code></td>
+<td>128 路 race/determinism fixture</td>
+</tr>
+<tr>
+<td><code>bcfe064</code></td>
+<td>authority/secret/content/evidence field canary</td>
+</tr>
+<tr>
+<td><code>60ebf6a</code></td>
+<td>Unicode normalization/control/invalid UTF-8 语料</td>
+</tr>
+</tbody>
+</table>
+<p>这些提交刻意保留初版、研究审阅后的修正与测试闭合过程，不
+squash，使人工审阅能看到设计如何被 一级证据纠偏。</p>
+<h2 id="尚未完成与下一阶段-gate">10. 尚未完成与下一阶段 gate</h2>
+<h3 id="w2domain-postgresql">W2：Domain + PostgreSQL</h3>
+<ul>
+<li><code>AgentDefinition -&gt; immutable AgentRelease(digest) -&gt; tenant AgentInstallation -&gt; ActorRef</code>；</li>
+<li><code>HumanPrincipal/WorkloadPrincipal/RuntimeIncarnation/DelegationGrant/ActingContext</code>；</li>
+<li><code>ExternalIdentityBinding</code>/<code>ProviderConversationBinding</code>
+的 realm、status、revision、unique、retarget CAS；</li>
+<li>Conversation aggregate/state、独立
+Membership/ACL/RepresentationPolicy；</li>
+<li>root message belongs-to-parent、parent/root same
+tenant/workspace、cycle/depth/context cutoff；</li>
+<li>Task/Attempt/Action/Acceptance 与 Conversation 分立的持久状态和
+transaction；</li>
+<li>provider mapping、inbox/outbox、event/projection checkpoint
+migrations 与 tenant isolation。</li>
+</ul>
+<h3 id="w3clerk-rongcloud">W3：Clerk + RongCloud</h3>
+<ul>
+<li>Clerk JWT signature/issuer/audience/exp/nbf/JWKS rotation；</li>
+<li>verified Clerk subject 后的平台 binding 和 membership lookup；</li>
+<li>RongCloud provider profile/capability matrix；</li>
+<li>callback/stream authentication、durable
+dedupe、reorder/resume；</li>
+<li>user/group provisioning fake 与 inbound-only sandbox readback；</li>
+<li>实际 <code>ext_info</code> size limit、原样保存、稳定回传、unknown
+field/Unicode/provider transformation fixtures；</li>
+<li>provider ID/ext_info drift fail closed；</li>
+<li>outbound 仍关闭。</li>
+</ul>
+<h3 id="w4agent-子群闭环">W4：<code>@Agent</code> 子群闭环</h3>
+<ul>
+<li>单 Agent mention 确定性 admission，多 Agent 才进入受控
+planning；</li>
+<li>create-or-get stable key
+<code>(tenant,parent,rootMessage,targetInstallation)</code>；</li>
+<li>child explicit membership，不继承 parent ACL；</li>
+<li>root/context cutoff、cycle/depth、duplicate/reorder/ACK-loss
+reconcile；</li>
+<li>Agent 用自己的 Actor 回复，progress/result 只进 child；</li>
+<li>parent 只出现受限 card，Artifact publish-ref 独立授权；</li>
+<li>Conversation ready、Task/Attempt/Artifact/Acceptance/Action finality
+全部分域。</li>
+</ul>
+<h2 id="禁止提前宣称">11. 禁止提前宣称</h2>
+<p>本批之后仍然禁止声称：</p>
+<ul>
+<li><code>ExternalIdentityRef</code> 已认证或授权任何用户；</li>
+<li>Actor prefix 或 <code>subjectType</code> 已证明 caller 可代表该
+Actor；</li>
+<li>Agent SemVer 已证明 release 不可变、签名、批准或安装；</li>
+<li>Conversation topology 已证明 membership、ACL、Task 或 provider group
+存在；</li>
+<li>strict <code>ext_info</code> codec 已证明融云兼容、稳定回传、tenant
+isolation 或 authorization；</li>
+<li>Clerk claim 可以直接决定 tenant role；</li>
+<li>provider HTTP 200 等于 message delivered、accepted 或
+exactly-once；</li>
+<li>parent group membership 自动开放 child；</li>
+<li>当前原生 IM 已达到生产可用或商用闭环。</li>
+</ul>
+<p>当前准确表述是：W1 identity/conversation/provider-metadata
+纯值合同与严格本地 codec 已冻结并有机器 证据；持久
+authority、Clerk/RongCloud adapter、真实 provider contract 和 Agent
+子群业务闭环仍按 W2～W4 实施。</p>
+</body>
+</html>

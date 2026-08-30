@@ -1,0 +1,23 @@
+{
+  "format": "quantum-entanglement.local-im-acceptance-screenshots-v1",
+  "capturedAt": "2026-08-29",
+  "source": "http://127.0.0.1:18081/demo/im",
+  "networkPolicy": "loopback-only",
+  "credentialsUsed": false,
+  "screenshots": [
+    {
+      "path": "analysis_report/screenshots/35_local_im_acceptance_desktop.png",
+      "viewport": {"width": 1440, "height": 1000},
+      "state": "custom instruction submitted; child group and reply visible",
+      "sha256": "32b7b69c4bd425cbee5cd2e0878d03bf2aa8adb0e4a36e20a1e8724fc9213b5b",
+      "redactionStatus": "synthetic-local-ui-no-credential"
+    },
+    {
+      "path": "analysis_report/screenshots/36_local_im_acceptance_mobile.png",
+      "viewport": {"width": 390, "height": 844},
+      "state": "mobile custom instruction submitted; child group and reply visible",
+      "sha256": "53a26a561f944ca15169d8235a43f362d0c1f166d7d59a3cda79ce6d570adc76",
+      "redactionStatus": "synthetic-local-ui-no-credential"
+    }
+  ]
+}
