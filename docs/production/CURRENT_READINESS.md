@@ -26,6 +26,13 @@ Ruff、strict mypy、compileall、Go test/vet、Web build 与 Web-first syntheti
 该节点只扩大了本地可验收面，没有打开任何生产 Gate：真实认证、PostgreSQL durable projection、
 真实 IM provider、外部 outbound、跨实例恢复与原生安装包仍明确关闭。
 
+## 2026-08-30 Runtime composition follow-up
+
+提交 `89210ac` 修复了 PostgreSQL runtime 组合遗漏 verifier 的启动路径：当前注入的是空 fixture
+的 fake verifier，任意 bearer token 仍拒绝，服务生命周期会显式关闭 verifier。该修复只保证组合
+边界可被 readiness/health 测试，不能替代真实 Clerk/JWKS、可信 RequestContext 或业务路由授权。
+证据见 [`51_postgres_runtime_fail_closed_auth_composition_20260830.md`](../../analysis_report/research/51_postgres_runtime_fail_closed_auth_composition_20260830.md)。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow

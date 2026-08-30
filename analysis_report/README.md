@@ -138,6 +138,7 @@ business projection 候选；下一步是认证作用域、crash/kill/two-proces
 | `research/43_scoped_lease_lifecycle_evidence.md` | E3 continuation：`36cd0b4`/`025b5c7` | 私有 lifecycle admission stop、bounded drain、store relinquish、双连接 heartbeat/expiry 与 relinquish race；生产 gate 仍关闭 |
 | `research/44_mainline_full_regression_20260830.md` | 当前封板全量回归 | 2,962 项 pytest、Ruff、strict mypy、compileall、diff-check 全通过及剩余生产边界 |
 | `research/50_mainline_web_im_integration_regression_20260830.md` | 当前 Web-first IM 集成封板 | 2,964 项 pytest、Go API、Web 构建、synthetic 验收和影响面回归纪律 |
+| `research/51_postgres_runtime_fail_closed_auth_composition_20260830.md` | PostgreSQL runtime 组合收口 | 空 fixture fake verifier、启动/readiness 生命周期、业务请求默认拒绝及 Go 专项证据 |
 | `../docs/production/RESULT_BUSINESS_PROJECTION.md` | E3 M7.5 result-only business projection 候选 | leased projector、scope/terminal binding、幂等、schema pinning、identity/终态绑定漂移拒绝、fork process binding、dual-connection fencing、SIGKILL recovery 与 fail-closed 安全边界 |
 
 ## 已归档截图
