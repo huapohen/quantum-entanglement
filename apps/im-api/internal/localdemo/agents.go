@@ -150,7 +150,7 @@ func (service *Service) InstallAgent(
 	if !service.usableAgentPassport(target.passport) {
 		return AgentStoreInstallResult{}, ErrForbidden
 	}
-	grantedCapabilities, capabilityErr := resolveInstallCapabilities(target.passport, input.GrantedCapabilities)
+	grantedCapabilities, capabilityErr := resolveInstallCapabilities(target.passport, input.GrantedCapabilities, service.nowUTC())
 	if capabilityErr != nil {
 		return AgentStoreInstallResult{}, capabilityErr
 	}
@@ -232,37 +232,23 @@ func (service *Service) InstallAgent(
 	return AgentStoreInstallResult{Agent: service.agentStoreView(service.agentCatalog[targetIndex])}, nil
 }
 
-// resolveInstallCapabilities converts the untrusted wire list into canonical capability values.
-// A nil list is intentionally distinct from an explicit []: nil keeps the historical default of
-// granting every requested capability, while [] would silently produce a capability-less Agent
-// and is therefore rejected. Every supplied item must be syntactically valid and allowed by the
-// current Passport; Trust Passport's prohibition list is enforced by Allows as well.
+// resolveInstallCapabilities adapts the shared action-time resolver to the localdemo error
+// vocabulary. The resolver itself remains provider/runtime independent and receives the exact
+// service clock so tests and future durable callers evaluate one instant consistently.
 func resolveInstallCapabilities(
 	passport agentstore.TrustPassport,
 	raw []string,
+	now time.Time,
 ) ([]agentstore.Capability, error) {
-	if raw == nil {
-		return passport.Release().RequestedCapabilities(), nil
+	capabilities, err := agentstore.ResolveGrantedCapabilities(passport, raw, now)
+	if errors.Is(err, agentstore.ErrCapabilityNotAllowed) {
+		return nil, ErrForbidden
 	}
-	if len(raw) == 0 {
+	if errors.Is(err, agentstore.ErrRevoked) {
+		return nil, ErrForbidden
+	}
+	if err != nil {
 		return nil, ErrInvalidInput
-	}
-	capabilities := make([]agentstore.Capability, 0, len(raw))
-	for _, value := range raw {
-		capability, err := agentstore.ParseCapability(value)
-		if err != nil {
-			return nil, ErrInvalidInput
-		}
-		if !passport.Allows(capability) {
-			return nil, ErrForbidden
-		}
-		capabilities = append(capabilities, capability)
-	}
-	slices.Sort(capabilities)
-	for index := 1; index < len(capabilities); index++ {
-		if capabilities[index] == capabilities[index-1] {
-			return nil, ErrInvalidInput
-		}
 	}
 	return capabilities, nil
 }

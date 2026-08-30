@@ -2,6 +2,7 @@ package agentstore
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -243,6 +244,48 @@ type InstallationRepository interface {
 type Repository interface {
 	CatalogRepository
 	InstallationRepository
+}
+
+var ErrCapabilityNotAllowed = errors.New("Agent capability is not allowed by the Trust Passport")
+
+// ResolveGrantedCapabilities performs the action-time capability decision for an installation.
+// A nil wire list means "the complete reviewed request" for backwards-compatible callers; an
+// explicit empty list is rejected so a caller cannot accidentally install an authority-less
+// Agent. Every non-nil item is parsed, deduplicated, sorted, and checked against the current
+// Passport at the supplied UTC instant. The returned slice is detached from all inputs.
+func ResolveGrantedCapabilities(
+	passport TrustPassport,
+	raw []string,
+	now time.Time,
+) ([]Capability, error) {
+	if passport.IsZero() || now.IsZero() || now.Location() != time.UTC {
+		return nil, ErrInvalidValue
+	}
+	if !passport.ValidAt(now) {
+		return nil, ErrRevoked
+	}
+	if raw == nil {
+		return passport.Release().RequestedCapabilities(), nil
+	}
+	if len(raw) == 0 {
+		return nil, ErrInvalidValue
+	}
+	capabilities := make([]Capability, 0, len(raw))
+	for _, value := range raw {
+		capability, err := ParseCapability(value)
+		if err != nil {
+			return nil, ErrInvalidValue
+		}
+		if !passport.Allows(capability) {
+			return nil, ErrCapabilityNotAllowed
+		}
+		capabilities = append(capabilities, capability)
+	}
+	slices.Sort(capabilities)
+	if hasAdjacentDuplicate(capabilities) {
+		return nil, ErrInvalidValue
+	}
+	return append([]Capability(nil), capabilities...), nil
 }
 
 func validInstallationTransition(current InstallationStatus, next InstallationStatus) bool {
