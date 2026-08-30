@@ -182,6 +182,7 @@ assert payload["code"] == 200
 data=payload["data"]
 assert data["agent"]["installationStatus"] == "offboarded"
 assert data["agent"]["agentActorId"] == "agt_local_planner"
+assert data["dataDisposition"] == "archive"
 assert "cnv_local_demo_parent" in data["removedConversationIds"]
 assert data["replayed"] is False
 '
