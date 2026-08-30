@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional, Tuple, cast
 from urllib.parse import quote
 
+from . import process_identity as _process_identity
 from ._artifact_codec import MAX_ARTIFACT_IDENTITY_CHARACTERS
 from .migrations import apply_sqlite_migrations, current_schema_version
 from .protocol import new_id, utc_now
@@ -58,6 +59,12 @@ class ArtifactIntegrityError(RuntimeError):
 
 class ArtifactTooLargeError(ValueError):
     """Raised before persistence when content or metadata exceeds configured limits."""
+
+
+class ArtifactProcessMismatchError(RuntimeError):
+    """Raised when an artifact store inherited through fork is used by the child process."""
+
+    code = "artifact_store_process_mismatch"
 
 
 def _required_text(value: str, name: str, *, max_length: int = _MAX_IDENTIFIER_LENGTH) -> str:
@@ -321,6 +328,8 @@ class SQLiteArtifactStore:
         busy_timeout_ms: int = 5_000,
         clock: Callable[[], str] = utc_now,
     ) -> None:
+        self._process_owner = _process_identity.capture_process_owner()
+        self._require_current_process()
         for value, name in (
             (max_content_bytes, "max_content_bytes"),
             (max_metadata_bytes, "max_metadata_bytes"),
@@ -375,6 +384,7 @@ class SQLiteArtifactStore:
             raise
 
     def __enter__(self) -> SQLiteArtifactStore:
+        self._require_current_process()
         return self
 
     def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> None:
@@ -382,6 +392,12 @@ class SQLiteArtifactStore:
 
     def _now(self) -> str:
         return _normalize_timestamp(self._clock(), "clock")
+
+    def _require_current_process(self) -> None:
+        _process_identity.require_current_process(
+            self._process_owner,
+            ArtifactProcessMismatchError,
+        )
 
     def _enable_wal(self, busy_timeout_ms: int) -> None:
         deadline = time.monotonic() + (busy_timeout_ms / 1_000)
@@ -792,6 +808,7 @@ class SQLiteArtifactStore:
     ) -> StoredArtifact:
         """Commit content and one immutable version, or return an identical retry."""
 
+        self._require_current_process()
         if not isinstance(spec, ArtifactWrite):
             raise TypeError("spec must be an ArtifactWrite")
         if expected_head_version is not None:
@@ -918,6 +935,7 @@ class SQLiteArtifactStore:
         workspace_id: str,
         artifact_id: str,
     ) -> Optional[StoredArtifact]:
+        self._require_current_process()
         for value, name in (
             (tenant_id, "tenant_id"),
             (workspace_id, "workspace_id"),
@@ -954,6 +972,7 @@ class SQLiteArtifactStore:
         session_id: str,
         name: str,
     ) -> Optional[StoredArtifact]:
+        self._require_current_process()
         for value, field_name in (
             (tenant_id, "tenant_id"),
             (workspace_id, "workspace_id"),
@@ -1006,6 +1025,7 @@ class SQLiteArtifactStore:
         after_version: int = 0,
         limit: int = 100,
     ) -> Tuple[StoredArtifact, ...]:
+        self._require_current_process()
         for value, field_name in (
             (tenant_id, "tenant_id"),
             (workspace_id, "workspace_id"),
@@ -1093,6 +1113,7 @@ class SQLiteArtifactStore:
     def verify_scope(self, tenant_id: str, workspace_id: str) -> int:
         """Verify every artifact visible to one scope and return the checked count."""
 
+        self._require_current_process()
         _required_text(tenant_id, "tenant_id")
         _required_text(workspace_id, "workspace_id")
         with self._read_snapshot() as connection:
@@ -1147,10 +1168,12 @@ class SQLiteArtifactStore:
             return checked
 
     def schema_version(self) -> int:
+        self._require_current_process()
         with self._lock:
             return int(current_schema_version(self._connection))
 
     def close(self) -> None:
+        self._require_current_process()
         with self._lock:
             self._connection.close()
 
@@ -1159,6 +1182,7 @@ __all__ = [
     "ArtifactConcurrencyError",
     "ArtifactConflictError",
     "ArtifactIntegrityError",
+    "ArtifactProcessMismatchError",
     "ArtifactTooLargeError",
     "ArtifactWrite",
     "SQLiteArtifactStore",

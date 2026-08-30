@@ -1,6 +1,7 @@
 import hashlib
 import inspect
 import multiprocessing
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ from quantum_entanglement.artifact_store import (
     ArtifactConcurrencyError,
     ArtifactConflictError,
     ArtifactIntegrityError,
+    ArtifactProcessMismatchError,
     ArtifactTooLargeError,
     ArtifactWrite,
     SQLiteArtifactStore,
@@ -254,6 +256,31 @@ class SQLiteArtifactStoreTests(unittest.TestCase):
             self.assertEqual(process.exitcode, 0)
 
         self.assertEqual(sorted(version for _artifact_id, version in results), [1, 2])
+
+    def test_fork_inherited_store_rejects_before_touching_sqlite(self):
+        read_fd, write_fd = os.pipe()
+        child_pid = os.fork()
+        if child_pid == 0:
+            os.close(read_fd)
+            try:
+                self.store.schema_version()
+            except ArtifactProcessMismatchError:
+                os.write(write_fd, b"ok")
+            except BaseException:
+                os.write(write_fd, b"unexpected")
+            else:
+                os.write(write_fd, b"missing")
+            finally:
+                os.close(write_fd)
+            os._exit(0)
+        os.close(write_fd)
+        try:
+            signal = os.read(read_fd, 32)
+        finally:
+            os.close(read_fd)
+        _, status = os.waitpid(child_pid, 0)
+        self.assertEqual(status, 0)
+        self.assertEqual(signal, b"ok")
 
     def test_scope_is_mandatory_and_wrong_scope_is_non_enumerating(self):
         stored = self.store.write(artifact_write())
