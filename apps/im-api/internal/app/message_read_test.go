@@ -121,6 +121,38 @@ func TestRuntimeAuthenticatedMessageReadFailsClosedWhenRepositoryMissing(t *test
 	}
 }
 
+func TestRuntimeAuthenticatedMessageReadBlocksOnShadowMismatch(t *testing.T) {
+	t.Parallel()
+	shadowCalls := 0
+	server, tenant, _, _, reader := newMessageReadTestRuntime(
+		t, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC), true, true,
+		func(context.Context, store.MessageReadPageQuery) error {
+			shadowCalls++
+			return errors.New("shadow mismatch canary")
+		},
+	)
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/tenants/ten_alpha/conversations/cnv_room/messages?limit=1", nil)
+	request.Header.Set("Authorization", "Bearer header.payload.signature")
+	request.Header.Set(tenantIDHeader, tenant.String())
+	response, err := server.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var envelope struct {
+		Code int `json:"code"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || envelope.Code != int(httpapi.CodeInternal) ||
+		shadowCalls != 1 || reader.calls != 0 {
+		t.Fatalf("shadow block status=%d envelope=%#v shadowCalls=%d readerCalls=%d",
+			response.StatusCode, envelope, shadowCalls, reader.calls)
+	}
+}
+
 func TestValidateMessageReadPageRejectsDuplicateAndCrossScopeRows(t *testing.T) {
 	t.Parallel()
 	tenant := mustMessageReadTenant(t, "ten_alpha")
@@ -182,6 +214,7 @@ func (repository *messageReadTestRepository) ReadPage(
 
 func newMessageReadTestRuntime(
 	t *testing.T, now time.Time, withRepository, canRead bool,
+	shadow ...func(context.Context, store.MessageReadPageQuery) error,
 ) (*fiber.App, im.TenantID, im.ConversationRef, im.MessageSnapshot, *messageReadTestRepository) {
 	t.Helper()
 	tenant := mustMessageReadTenant(t, "ten_alpha")
@@ -249,6 +282,9 @@ func newMessageReadTestRuntime(
 	}
 	if withRepository {
 		dependencies.Messages = reader
+	}
+	if len(shadow) > 0 {
+		dependencies.MessageShadow = shadow[0]
 	}
 	server, err := NewRuntime(dependencies)
 	if err != nil {

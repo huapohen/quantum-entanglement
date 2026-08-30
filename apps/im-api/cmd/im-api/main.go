@@ -14,7 +14,9 @@ import (
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/config"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/improjection"
+	imstore "github.com/huapohen/quantum-entanglement/apps/im-api/internal/imstore"
 	postgresevents "github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/eventstore"
+	postgresimprojection "github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/improjection"
 	postgresstore "github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/imstore"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/runtimepool"
 )
@@ -77,17 +79,30 @@ func compose(
 		closeRuntime()
 		return nil, nil, err
 	}
+	var messageShadow func(context.Context, imstore.MessageReadPageQuery) error
+	if settings.MessageShadowEnabled() {
+		materializedMessages, readerErr := postgresimprojection.NewReader(pool)
+		if readerErr != nil {
+			closeRuntime()
+			return nil, nil, readerErr
+		}
+		messageShadow = func(compareContext context.Context, query imstore.MessageReadPageQuery) error {
+			_, compareErr := improjection.CompareMessageReaders(compareContext, messages, materializedMessages, query)
+			return compareErr
+		}
+	}
 	verifier, err := newRejectAllVerifier()
 	if err != nil {
 		closeRuntime()
 		return nil, nil, err
 	}
 	server, err := wanworkapp.NewRuntime(wanworkapp.RuntimeDependencies{
-		Database:    pool,
-		Persistence: persistence,
-		Verifier:    verifier,
-		EventStore:  eventStore,
-		Messages:    messages,
+		Database:      pool,
+		Persistence:   persistence,
+		Verifier:      verifier,
+		EventStore:    eventStore,
+		Messages:      messages,
+		MessageShadow: messageShadow,
 	})
 	if err != nil {
 		verifier.Close()

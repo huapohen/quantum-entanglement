@@ -34,6 +34,10 @@ type RuntimeDependencies struct {
 	// Messages is the future durable projection read port. It is optional during the contract
 	// phase so an uncomposed runtime fails closed instead of presenting synthetic empty history.
 	Messages store.MessageReadRepository
+	// MessageShadow is an optional, default-off equality canary. When present, the message route
+	// runs it before returning the first page; any mismatch is an internal failure and never a
+	// best-effort fallback. The callback owns independent opaque cursors for both readers.
+	MessageShadow func(context.Context, store.MessageReadPageQuery) error
 	// Now is injected by tests and controlled compositions. Production defaults to UTC wall clock;
 	// request context resolution never accepts a non-UTC or zero timestamp.
 	Now func() time.Time

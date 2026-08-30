@@ -25,6 +25,7 @@ func TestLoadDefaultsToLoopbackFakeComposition(t *testing.T) {
 		postgresRuntimeURLVariable,
 		postgresAuthorityManifestVariable,
 		postgresAllowInsecureLocalTestVariable,
+		messageShadowVariable,
 	}) {
 		t.Fatalf("queried environment variables = %v", queried)
 	}
@@ -38,6 +39,24 @@ func TestLoadDefaultsToLoopbackFakeComposition(t *testing.T) {
 	}
 	if loaded.Snapshot() != want {
 		t.Fatalf("snapshot = %#v, want %#v", loaded.Snapshot(), want)
+	}
+}
+
+func TestLoadMessageShadowIsExplicitOptIn(t *testing.T) {
+	t.Parallel()
+	for name, value := range map[string]string{"true": "true", "false": "false", "empty": ""} {
+		t.Run(name, func(t *testing.T) {
+			loaded, err := Load(fixedLookup(messageShadowVariable, value))
+			if err != nil {
+				t.Fatalf("load shadow=%q: %v", value, err)
+			}
+			if loaded.MessageShadowEnabled() != (value == "true") {
+				t.Fatalf("shadow enabled=%v for value=%q", loaded.MessageShadowEnabled(), value)
+			}
+		})
+	}
+	if _, err := Load(fixedLookup(messageShadowVariable, "yes")); !errors.Is(err, ErrUnsafeComposition) {
+		t.Fatalf("invalid shadow flag error=%v", err)
 	}
 }
 

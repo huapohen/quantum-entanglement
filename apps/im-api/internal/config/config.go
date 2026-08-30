@@ -19,6 +19,7 @@ const (
 	postgresRuntimeURLVariable             = "WANWORK_IM_POSTGRES_RUNTIME_URL"
 	postgresAuthorityManifestVariable      = "WANWORK_IM_POSTGRES_AUTHORITY_MANIFEST"
 	postgresAllowInsecureLocalTestVariable = "WANWORK_IM_POSTGRES_ALLOW_INSECURE_LOCAL_TEST"
+	messageShadowVariable                  = "WANWORK_IM_MESSAGE_SHADOW"
 	defaultListenAddress                   = "127.0.0.1:18080"
 )
 
@@ -55,14 +56,16 @@ type Config struct {
 	imProvider    ProviderID
 	outboundMode  OutboundMode
 	runtimePool   *runtimepool.Config
+	messageShadow bool
 }
 
 type PublicSnapshot struct {
-	ListenAddress string       `json:"listenAddress"`
-	AuthProvider  ProviderID   `json:"authProvider"`
-	IMProvider    ProviderID   `json:"imProvider"`
-	OutboundMode  OutboundMode `json:"outboundMode"`
-	PostgresMode  PostgresMode `json:"postgresMode"`
+	ListenAddress        string       `json:"listenAddress"`
+	AuthProvider         ProviderID   `json:"authProvider"`
+	IMProvider           ProviderID   `json:"imProvider"`
+	OutboundMode         OutboundMode `json:"outboundMode"`
+	PostgresMode         PostgresMode `json:"postgresMode"`
+	MessageShadowEnabled bool         `json:"messageShadowEnabled"`
 }
 
 type authorityManifestJSON struct {
@@ -91,6 +94,9 @@ func Load(lookup LookupEnv) (Config, error) {
 	if err := config.loadPostgres(lookup); err != nil {
 		return Config{}, err
 	}
+	if err := config.loadMessageShadow(lookup); err != nil {
+		return Config{}, err
+	}
 	if err := config.validate(); err != nil {
 		return Config{}, err
 	}
@@ -107,13 +113,18 @@ func (config Config) Snapshot() PublicSnapshot {
 		postgresMode = PostgresRuntime
 	}
 	return PublicSnapshot{
-		ListenAddress: config.listenAddress,
-		AuthProvider:  config.authProvider,
-		IMProvider:    config.imProvider,
-		OutboundMode:  config.outboundMode,
-		PostgresMode:  postgresMode,
+		ListenAddress:        config.listenAddress,
+		AuthProvider:         config.authProvider,
+		IMProvider:           config.imProvider,
+		OutboundMode:         config.outboundMode,
+		PostgresMode:         postgresMode,
+		MessageShadowEnabled: config.messageShadow,
 	}
 }
+
+// MessageShadowEnabled reports whether the opt-in replay/materialized equality canary is enabled.
+// It never changes the primary reader selection and defaults to false.
+func (config Config) MessageShadowEnabled() bool { return config.messageShadow }
 
 // RuntimePostgres returns a detached copy of private runtime composition. Callers must not log,
 // serialize, or expose it through diagnostics.
@@ -197,6 +208,19 @@ func (config *Config) loadPostgres(lookup LookupEnv) error {
 		PingTimeout:            time.Second,
 		AllowInsecureLocalhost: allowInsecure,
 	}
+	return nil
+}
+
+func (config *Config) loadMessageShadow(lookup LookupEnv) error {
+	value, present := lookup(messageShadowVariable)
+	if !present || value == "" || value == "false" {
+		config.messageShadow = false
+		return nil
+	}
+	if value != "true" {
+		return ErrUnsafeComposition
+	}
+	config.messageShadow = true
 	return nil
 }
 

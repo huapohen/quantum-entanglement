@@ -40,11 +40,17 @@ func registerAuthenticatedMessageRoute(server *fiber.App, runtime RuntimeDepende
 		if hasWorkspace {
 			workspaceReference = &workspaceID
 		}
-		page, err := runtime.Messages.ReadPage(ctx.Context(), store.MessageReadPageQuery{
+		messageQuery := store.MessageReadPageQuery{
 			Conversation: reference, AfterCursor: ctx.Query("after"), Limit: limit,
 			WorkspaceID:          workspaceReference,
 			ConversationRevision: conversation.Revision(), AccessRevision: access.Revision(),
-		})
+		}
+		if runtime.MessageShadow != nil && messageQuery.AfterCursor == "" {
+			if shadowErr := runtime.MessageShadow(ctx.Context(), messageQuery); shadowErr != nil {
+				return mapMessageShadowError(shadowErr)
+			}
+		}
+		page, err := runtime.Messages.ReadPage(ctx.Context(), messageQuery)
 		if err != nil {
 			return mapMessageReadError(err)
 		}
@@ -71,6 +77,18 @@ func registerAuthenticatedMessageRoute(server *fiber.App, runtime RuntimeDepende
 			},
 		})
 	})
+}
+
+func mapMessageShadowError(err error) error {
+	switch {
+	case errors.Is(err, store.ErrStoreUnavailable):
+		return httpapi.NewAppError(httpapi.CodeDependencyUnavailable, err)
+	case errors.Is(err, store.ErrInvalidRequest):
+		return httpapi.NewAppError(httpapi.CodeValidationFailed, err)
+	default:
+		// A shadow mismatch is an integrity stop, never a fallback to the replay result.
+		return httpapi.NewAppError(httpapi.CodeInternal, err)
+	}
 }
 
 func validateMessageReadPage(
