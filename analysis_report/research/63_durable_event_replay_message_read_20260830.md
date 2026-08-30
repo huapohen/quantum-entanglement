@@ -25,6 +25,7 @@
 go test ./internal/improjection -run EventReplayMessageReader -count=1  -> pass
 go test ./...                                                           -> pass
 go vet ./...                                                            -> pass
+./scripts/verify_web_first.sh                                           -> pass
 git diff --check                                                        -> pass
 ```
 
