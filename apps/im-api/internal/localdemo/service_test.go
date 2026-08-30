@@ -191,6 +191,39 @@ func TestServiceInstallsCatalogAgentIdempotentlyAndAddsItToParent(t *testing.T) 
 	}
 }
 
+func TestServicePublishesAcceptedArtifactReferenceToParentIdempotently(t *testing.T) {
+	t.Parallel()
+	service, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mention, err := service.Mention(context.Background(), LocalBearerToken, MentionInput{
+		MessageID: "msg_publish_artifact", Instruction: "生成可发布的研究结果",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ResolveNeedsYou(context.Background(), LocalBearerToken, mention.NeedsYouID, ResolveNeedsYouInput{Decision: "accept"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.PublishArtifact(context.Background(), LocalBearerToken, mention.ArtifactID, PublishArtifactInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Replayed || first.Artifact.PublishedMessageID == "" || first.Message.ConversationID != mention.ParentConversationID ||
+		!strings.Contains(first.Message.Text, mention.ArtifactID) || first.Message.ExtInfo == "" {
+		t.Fatalf("first artifact publication = %#v", first)
+	}
+	replay, err := service.PublishArtifact(context.Background(), LocalBearerToken, mention.ArtifactID, PublishArtifactInput{})
+	if err != nil || !replay.Replayed || replay.Artifact.PublishedMessageID != first.Artifact.PublishedMessageID {
+		t.Fatalf("artifact publication replay = %#v, %v", replay, err)
+	}
+	parentMessages, err := service.ListMessages(context.Background(), LocalBearerToken, mention.ParentConversationID, "", 20)
+	if err != nil || len(parentMessages.Messages) != 2 {
+		t.Fatalf("parent publication messages = %#v, %v", parentMessages, err)
+	}
+}
+
 func containsString(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

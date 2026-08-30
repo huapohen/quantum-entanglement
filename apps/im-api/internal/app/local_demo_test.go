@@ -101,6 +101,25 @@ func TestLocalDemoHTTPVerticalSlice(t *testing.T) {
 	if resolved.Code != httpapi.CodeOK || !strings.Contains(resolved.Raw, `"status":"accepted"`) || !strings.Contains(resolved.Raw, `"status":"completed"`) {
 		t.Fatalf("resolve response = %s", resolved.Raw)
 	}
+	var resolvedPayload struct {
+		Data struct {
+			Artifact struct {
+				ID string `json:"id"`
+			} `json:"artifact"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(resolved.Raw), &resolvedPayload); err != nil || resolvedPayload.Data.Artifact.ID == "" {
+		t.Fatalf("decode accepted artifact = %v, %s", err, resolved.Raw)
+	}
+	published := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/artifacts/"+resolvedPayload.Data.Artifact.ID+"/publish", `{}`, "Bearer "+localdemo.LocalBearerToken)
+	if published.Code != httpapi.CodeOK || !strings.Contains(published.Raw, `"publishedMessageId":"msg_local_`) ||
+		!strings.Contains(published.Raw, `"conversationId":"cnv_local_demo_parent"`) || strings.Contains(published.Raw, `"replayed":true`) {
+		t.Fatalf("artifact publication response = %s", published.Raw)
+	}
+	publishedReplay := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/artifacts/"+resolvedPayload.Data.Artifact.ID+"/publish", `{}`, "Bearer "+localdemo.LocalBearerToken)
+	if publishedReplay.Code != httpapi.CodeOK || !strings.Contains(publishedReplay.Raw, `"replayed":true`) {
+		t.Fatalf("artifact publication replay response = %s", publishedReplay.Raw)
+	}
 	resolvedReplay := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/needs-you/"+needsPayload.Data.NeedsYou[0].ID+"/resolve", `{"decision":"accept"}`, "Bearer "+localdemo.LocalBearerToken)
 	if resolvedReplay.Code != httpapi.CodeOK || !strings.Contains(resolvedReplay.Raw, `"replayed":true`) {
 		t.Fatalf("resolve replay response = %s", resolvedReplay.Raw)

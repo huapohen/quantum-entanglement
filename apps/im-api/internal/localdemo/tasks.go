@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 )
 
 // TaskView, ArtifactView and NeedsYouView are intentionally explicit projections. They are
@@ -28,15 +31,17 @@ type TaskView struct {
 }
 
 type ArtifactView struct {
-	ID         string `json:"id"`
-	TaskID     string `json:"taskId"`
-	Title      string `json:"title"`
-	Kind       string `json:"kind"`
-	Content    string `json:"content"`
-	Status     string `json:"status"`
-	Digest     string `json:"digest"`
-	CreatedAt  string `json:"createdAt"`
-	AcceptedAt string `json:"acceptedAt,omitempty"`
+	ID                 string `json:"id"`
+	TaskID             string `json:"taskId"`
+	Title              string `json:"title"`
+	Kind               string `json:"kind"`
+	Content            string `json:"content"`
+	Status             string `json:"status"`
+	Digest             string `json:"digest"`
+	CreatedAt          string `json:"createdAt"`
+	AcceptedAt         string `json:"acceptedAt,omitempty"`
+	PublishedAt        string `json:"publishedAt,omitempty"`
+	PublishedMessageID string `json:"publishedMessageId,omitempty"`
 }
 
 type NeedsYouView struct {
@@ -68,6 +73,21 @@ type ResolveNeedsYouResult struct {
 	Task     TaskView     `json:"task"`
 	Artifact ArtifactView `json:"artifact"`
 	Replayed bool         `json:"replayed"`
+}
+
+type PublishArtifactInput struct{}
+
+type PublishArtifactResult struct {
+	Artifact ArtifactView `json:"artifact"`
+	Message  MessageView  `json:"message"`
+	Replayed bool         `json:"replayed"`
+}
+
+type artifactReferenceExtInfo struct {
+	ArtifactID    string `json:"artifactId"`
+	Digest        string `json:"digest"`
+	MessageType   string `json:"messageType"`
+	SchemaVersion int    `json:"schemaVersion"`
 }
 
 const (
@@ -209,6 +229,88 @@ func (service *Service) ResolveNeedsYou(ctx context.Context, bearerToken, needsI
 	task.UpdatedAt = now
 	service.needsYou[needs.ID], service.artifacts[artifact.ID], service.tasks[task.ID] = needs, artifact, task
 	return ResolveNeedsYouResult{NeedsYou: needs, Task: task, Artifact: artifact}, nil
+}
+
+// PublishArtifact sends only a digest-bound reference to the parent conversation after a human
+// has accepted the Artifact. The artifact body stays in the Workboard/authority projection; the
+// parent room receives an explicit, idempotent publication notice rather than an implicit copy.
+func (service *Service) PublishArtifact(
+	ctx context.Context,
+	bearerToken string,
+	artifactID string,
+	_ PublishArtifactInput,
+) (PublishArtifactResult, error) {
+	if service == nil || ctx == nil || !validLocalID(artifactID) {
+		return PublishArtifactResult{}, ErrInvalidInput
+	}
+	if err := service.verifyRequester(ctx, bearerToken); err != nil {
+		return PublishArtifactResult{}, err
+	}
+	service.mu.Lock()
+	artifact, ok := service.artifacts[artifactID]
+	if !ok {
+		service.mu.Unlock()
+		return PublishArtifactResult{}, ErrNotFound
+	}
+	if artifact.Status != artifactStatusAccepted {
+		service.mu.Unlock()
+		return PublishArtifactResult{}, ErrConflict
+	}
+	if artifact.PublishedMessageID != "" {
+		service.mu.Unlock()
+		return PublishArtifactResult{Artifact: artifact, Replayed: true}, nil
+	}
+	task, ok := service.tasks[artifact.TaskID]
+	if !ok {
+		service.mu.Unlock()
+		return PublishArtifactResult{}, ErrIntegrity
+	}
+	parent, ok := service.conversations[parseConversationIDOrZero(task.ParentConversationID)]
+	if !ok || parent.snapshot.ConversationType() != im.ConversationGroup || !service.canSend(parent) {
+		service.mu.Unlock()
+		return PublishArtifactResult{}, ErrForbidden
+	}
+	digest := sha256.Sum256([]byte("wanwork.local-demo-artifact-publication/1\x00" + artifact.ID + "\x00" + artifact.Digest))
+	clientMessageID := "msg_artifact_" + hex.EncodeToString(digest[:12])
+	extInfoBytes, err := json.Marshal(artifactReferenceExtInfo{
+		ArtifactID: artifact.ID, Digest: artifact.Digest, MessageType: "artifact_reference", SchemaVersion: 1,
+	})
+	if err != nil {
+		service.mu.Unlock()
+		return PublishArtifactResult{}, ErrIntegrity
+	}
+	parentID := task.ParentConversationID
+	service.mu.Unlock()
+
+	messageResult, err := service.SendText(ctx, bearerToken, parentID, SendTextInput{
+		ClientMessageID: clientMessageID,
+		Text:            "已发布 Artifact 引用：" + artifact.ID,
+		ExtInfo:         string(extInfoBytes),
+	})
+	if err != nil {
+		return PublishArtifactResult{}, err
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	artifact, ok = service.artifacts[artifactID]
+	if !ok {
+		return PublishArtifactResult{}, ErrIntegrity
+	}
+	if artifact.PublishedMessageID != "" {
+		return PublishArtifactResult{Artifact: artifact, Message: messageResult.Message, Replayed: true}, nil
+	}
+	artifact.PublishedAt = service.nowUTC().Format(time.RFC3339Nano)
+	artifact.PublishedMessageID = messageResult.Message.ID
+	service.artifacts[artifactID] = artifact
+	return PublishArtifactResult{Artifact: artifact, Message: messageResult.Message, Replayed: messageResult.Replayed}, nil
+}
+
+func parseConversationIDOrZero(value string) im.ConversationID {
+	parsed, err := im.ParseConversationID(value)
+	if err != nil {
+		return im.ConversationID{}
+	}
+	return parsed
 }
 
 func cloneTask(task TaskView) TaskView {

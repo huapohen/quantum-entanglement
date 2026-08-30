@@ -200,6 +200,17 @@ func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
 		}
 		return httpapi.WriteSuccess(ctx, result)
 	})
+	server.Post("/api/v1/demo/im/artifacts/:artifactId/publish", func(ctx fiber.Ctx) error {
+		var input localdemo.PublishArtifactInput
+		if err := decodeLocalDemoRequest(ctx.Body(), &input); err != nil {
+			return httpapi.NewAppError(httpapi.CodeMalformedRequest, err)
+		}
+		result, err := demo.PublishArtifact(ctx.Context(), bearerToken(ctx), ctx.Params("artifactId"), input)
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, result)
+	})
 }
 
 func localDemoQueryLimit(raw string) (int, error) {
