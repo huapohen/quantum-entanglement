@@ -219,7 +219,7 @@ export function App() {
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-300">
             <span className="status-dot" />
-            <span>LOCAL ONLY</span>
+            <span>LOOPBACK APP</span>
             <span className="hidden rounded-full border border-white/10 px-2 py-1 sm:inline">React Web</span>
           </div>
         </div>
