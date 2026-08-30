@@ -32,7 +32,7 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-31T00:47:39+08:00 | `main`<br>`bdc25988ae9f` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 2026-08-31T01:05:00+08:00 | `mainline_continue_quantum_entanglement`<br>`6efaab5c2b8a` | E3 Result Authority 人工评审分支；已完成 migration 12 PostgreSQL materialized projector/reader 候选、shadow equality default-off、提交前 rollback、COMMIT ACK-loss exact replay、双 runner CAS、pool restart readback、worker SIGKILL expiry，以及 projector 子进程 COMMIT 前/后真实 SIGKILL 矩阵；materialized primary、真实认证、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 982 / 落后 53 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 2026-08-31T01:15:00+08:00 | `mainline_continue_quantum_entanglement`<br>`a22a7b4bdf5a` | E3 Result Authority 人工评审分支；已完成 migration 12 PostgreSQL materialized projector/reader 候选、shadow equality default-off、提交前 rollback、COMMIT ACK-loss exact replay、双 runner CAS、pool restart readback、worker SIGKILL expiry、projector 子进程 COMMIT 前/后 SIGKILL 矩阵，以及 owner-side trigger partial-write rollback/runbook；materialized primary、真实认证、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 987 / 落后 55 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 2026-08-31T00:44:32+08:00 | `backup_0831_004520`<br>`c0a5a1420191` | 2026-08-31 fault-matrix 与 production readiness 文档封板后的最终远端备份；固定指向 Go 全模块与 PG18.6 五包 integration matrix PASS 节点；只用于恢复和审计。 | 未直接并入 main | 领先 979 / 落后 53 | — |
 | 2026-08-31T00:34:26+08:00 | `dev_wanwork_quantum_entanglement`<br>`e4ff5f0cbe58` | 较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。 | 未直接并入 main | 领先 549 / 落后 53 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 2026-08-31T00:26:31+08:00 | `backup_0831_002800`<br>`3a9030dd358b` | 2026-08-31 projector fault matrix 与 compatibility rollback checkpoint 的完整远端备份；固定指向 PG18.6 integration matrix PASS 节点；只用于恢复和审计。 | 未直接并入 main | 领先 975 / 落后 53 | — |
@@ -185,7 +185,7 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | 存在、干净 | `dev_research_docs_accelerator_20260830` | `b0e5611aeb6c` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_research_docs_accelerator_20260830` |
 | 存在、有未提交修改 | `dev_wanwork_quantum_entanglement` | `e4ff5f0cbe58` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 存在、干净 | `dev_web_first_accelerator_20260830` | `aa1daf471ab8` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_web_first_accelerator_20260830` |
-| 存在、干净 | `mainline_continue_quantum_entanglement` | `6efaab5c2b8a` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 存在、干净 | `mainline_continue_quantum_entanglement` | `a22a7b4bdf5a` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 存在、干净 | `scoped_lease_process_matrix` | `72a3487c7a58` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/scoped_lease_process_matrix` |
 
 ## 固定版本标签
