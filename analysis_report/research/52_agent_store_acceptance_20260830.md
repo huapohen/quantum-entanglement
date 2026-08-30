@@ -80,8 +80,8 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
 - 对 `available` Agent 点击“安装到当前工作空间”，安装后可见 Agent actor；
 - 选择普通群并点击“邀请到当前群”；
 - 在该群发布自定义指令，进入隔离的 Agent 子群。
-- 对已安装 Agent 点击“停用并撤权”，确认二次确认后 installation 变为 `offboarded`，群成员投影被
-  清理；撤权后再次发布指令应显示业务拒绝。
+- 对已安装 Agent 选择 `retain`、`archive`（默认）或 `delete` 后点击“停用并撤权”，确认二次确认
+  后 installation 变为 `offboarded`，群成员投影被清理；撤权后再次发布指令应显示业务拒绝。
 
 安装后的 Agent 生成 Artifact 并经人工接受后，Workboard 还可执行“发布引用到父群”；父群只会
 看到带 Artifact ID/digest 的引用消息，不会自动展开或复制产物正文。该发布动作同样是幂等的。
@@ -105,7 +105,9 @@ action-time PEP。
 
 1. `POST /api/v1/demo/im/agents/:definitionId/offboard` 要求调用方显式选择
    `retain | archive | delete` 数据处置策略，并携带幂等 key；
-2. 对 provider-bound 的 parent/child 群先执行 member removal，再执行 Agent 普通用户 revoke；
+2. 对 provider-bound 的 parent/child 群先执行声明了 `ProviderCapabilityMemberWrite` 的 member
+   removal，再执行声明了 `ProviderCapabilityUserRevoke` 的 Agent 普通用户 revoke；缺失任一能力
+   时 fail-closed；
 3. 两类 provider effect 都具备 committed/replayed/conflict 语义，任一步失败都不会标记本地成功；
 4. 本地 installation 迁移到 `offboarded`，清除所有 conversation 的成员和 access 投影；当没有
    active installation 时，移除 requester 的 `InvokeAgent` 权限；

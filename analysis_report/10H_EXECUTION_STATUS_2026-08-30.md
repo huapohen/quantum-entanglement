@@ -54,6 +54,8 @@ SSE/WebSocket resume、文件/已读/通知/reaction、原生 `.app/.exe/.ipa/.a
 - `0427a8c`：增加 provider user revoke/member removal 合同与 fake provider 效果语义。
 - `d63ae39`：增加 Agent Store 幂等 offboard、数据处置选择、本地成员/access 清理与撤权测试。
 - `62a5ca0`：Web Agent Store 暴露“停用并撤权”，并把 offboard 加入 Web-first 门禁。
+- `c5c8f1f`：Web Agent Store 增加 `retain/archive/delete` 数据处置选择并显式发送。
+- `6dbc66e`：provider 成员变更要求显式 `member_write` capability，覆盖新增和移除成员。
 
 ## 今晚直接验收
 
@@ -86,7 +88,8 @@ GPT runtime（可选，Key 只在子进程环境）：
 ./scripts/verify_web_first.sh
 ```
 
-15:05 阶段复核：`WANWORK_IM_VERIFY_PORT=18133 ./scripts/verify_web_first.sh` 通过；Go
+15:05 阶段复核：`WANWORK_IM_VERIFY_PORT=18133 ./scripts/verify_web_first.sh` 通过；随后
+完成数据处置选择、provider capability gate 与响应回显的局部测试和 Web build；Go
 `go test ./... -count=1`（含 PostgreSQL/authoritycutover 全包）通过；本次验证未产生外部网络或
 飞书/企微消息。
 

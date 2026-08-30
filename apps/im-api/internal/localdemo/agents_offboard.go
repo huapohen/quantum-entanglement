@@ -18,6 +18,7 @@ type AgentStoreOffboardInput struct {
 
 type AgentStoreOffboardResult struct {
 	Agent                  AgentStoreView `json:"agent"`
+	DataDisposition        string         `json:"dataDisposition"`
 	RemovedConversationIDs []string       `json:"removedConversationIds"`
 	Replayed               bool           `json:"replayed"`
 }
@@ -145,6 +146,7 @@ func (service *Service) OffboardAgent(
 	}
 	result := AgentStoreOffboardResult{
 		Agent:                  service.agentStoreView(service.agentCatalog[targetIndex]),
+		DataDisposition:        string(disposition),
 		RemovedConversationIDs: append([]string(nil), removedConversationIDs...),
 	}
 	service.agentOffboardRequests[requestKey] = agentOffboardRecord{digest: digest, result: result}

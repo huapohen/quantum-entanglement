@@ -206,6 +206,7 @@ func TestLocalDemoAgentOffboardRouteIsIdempotent(t *testing.T) {
 	first := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/agents/agd_local_research/offboard",
 		`{"idempotencyKey":"http/store/offboard/research","dataDisposition":"archive"}`, authorization)
 	if first.Code != httpapi.CodeOK || !strings.Contains(first.Raw, `"installationStatus":"offboarded"`) ||
+		!strings.Contains(first.Raw, `"dataDisposition":"archive"`) ||
 		strings.Contains(first.Raw, `"replayed":true`) {
 		t.Fatalf("offboard response = %s", first.Raw)
 	}

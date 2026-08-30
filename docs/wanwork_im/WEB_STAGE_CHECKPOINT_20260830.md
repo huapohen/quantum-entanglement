@@ -25,7 +25,9 @@
   生成普通成员式 Agent actor 并加入根群，原 active demo 安装受控 offboard；
 - Agent Store 对已安装 Agent 提供显式“停用并撤权”：数据处置策略必须为 `retain`、`archive` 或
   `delete` 之一；provider 成员移除和普通用户撤权完成后，installation 才迁移到 `offboarded`，并
-  清理 parent/child conversation 的成员与 access 投影；重复请求可安全 replay；
+  清理 parent/child conversation 的成员与 access 投影；重复请求可安全 replay。provider 的成员
+  变更还必须通过 `ProviderCapabilityMemberWrite`，Agent 身份撤销必须通过
+  `ProviderCapabilityUserRevoke`，缺失能力时 fail-closed；
 - Workboard 中已接受的 Artifact 才能发布到父群，父群只收到带 Artifact ID/digest 的引用消息，重复
   发布保持幂等且不复制产物正文；
 - 无 Agent 的群、Agent 子群和权限不足请求不会创建新的 Agent 子群。
@@ -113,6 +115,8 @@ git diff --check
 | `0427a8c` | provider user revoke/member removal 合同与 fake provider 效果语义 |
 | `d63ae39` | Agent Store 幂等 offboard、数据处置与本地投影清理 |
 | `62a5ca0` | Web Agent Store 停用并撤权动作与端到端门禁 |
+| `c5c8f1f` | Web 可选择 retain/archive/delete 数据处置策略 |
+| `6dbc66e` | provider 成员变更显式要求 member_write capability |
 
 ## 仍然禁止宣称完成的范围
 

@@ -235,7 +235,8 @@ func TestServiceOffboardsInstalledAgentAndReplaysCleanup(t *testing.T) {
 	first, err := service.OffboardAgent(context.Background(), LocalBearerToken, "agd_local_research", AgentStoreOffboardInput{
 		IdempotencyKey: "test/store/offboard/research", DataDisposition: string(agentstore.DataDispositionArchive),
 	})
-	if err != nil || first.Replayed || first.Agent.InstallationStatus != "offboarded" || len(first.RemovedConversationIDs) != 2 {
+	if err != nil || first.Replayed || first.DataDisposition != string(agentstore.DataDispositionArchive) ||
+		first.Agent.InstallationStatus != "offboarded" || len(first.RemovedConversationIDs) != 2 {
 		t.Fatalf("offboard = %#v, %v", first, err)
 	}
 	if !containsString(first.RemovedConversationIDs, service.Snapshot().ParentConversationID) ||

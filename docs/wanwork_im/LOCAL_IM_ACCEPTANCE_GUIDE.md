@@ -64,8 +64,8 @@ curl --fail \
 这只证明本地安装状态机和 provider-neutral 投影，不证明真实制品、签名、组织审批、PostgreSQL
 持久化或生产撤权已完成。
 
-安装后可在同一张 Agent Store 卡片点击“停用并撤权”（当前 Web 按钮采用 `archive` 策略）。
-API 同时支持显式选择 `retain`、`archive` 或 `delete`，例如：
+安装后可在同一张 Agent Store 卡片选择 `retain`、`archive`（默认）或 `delete`，再点击“停用并撤权”。
+确认框会展示本次处置策略；API 也支持同样的三种取值，例如：
 
 ```bash
 curl --fail \
@@ -75,8 +75,8 @@ curl --fail \
   http://127.0.0.1:18080/api/v1/demo/im/agents/agd_local_planner/offboard
 ```
 
-成功响应仍是 HTTP 200 envelope，`data.agent.installationStatus` 为 `offboarded`，并返回
-`removedConversationIds`。同样的 definition + idempotency key + 处置策略再次调用会返回
+成功响应仍是 HTTP 200 envelope，`data.agent.installationStatus` 为 `offboarded`，并回显
+`dataDisposition` 与 `removedConversationIds`。同样的 definition + idempotency key + 处置策略再次调用会返回
 `replayed=true`；同一 key 改处置策略会返回业务冲突。撤权动作在 provider 侧先移除 Agent 的
 parent/child 群成员，再撤销普通用户式 Agent actor，随后清除本地成员/access 投影。撤权后再次
 发布 `@Agent` 指令应仍是 HTTP 200，但 envelope `code=40301`，不会创建新的 invocation、子群或消息。

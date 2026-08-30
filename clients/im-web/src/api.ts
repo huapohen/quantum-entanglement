@@ -61,6 +61,7 @@ export type AgentStoreInstallResult = {
 
 export type AgentStoreOffboardResult = {
   agent: AgentStoreEntry;
+  dataDisposition: AgentStoreDataDisposition;
   removedConversationIds: string[];
   replayed: boolean;
 };
