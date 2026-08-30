@@ -38,6 +38,9 @@
 
 ## 当前阶段交付
 
+- [`10H_EXECUTION_STATUS_2026-08-30.md`](10H_EXECUTION_STATUS_2026-08-30.md)：当前 10 小时全量目标的真实完成矩阵、远端提交、跨端验收入口和生产剩余主线。
+- [`html/10h_execution_status_20260830.html`](html/10h_execution_status_20260830.html)：同一状态的可视化 HTML 入口。
+
 | 文件 | 状态 | 内容 |
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
