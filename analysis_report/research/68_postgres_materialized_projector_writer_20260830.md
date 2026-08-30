@@ -42,6 +42,10 @@ git diff --check                                          PASS
 conversation authority 与 identity fixture 原先仍断言 10 个 migration，已统一修正为 12；这样在
 设置 `WANWORK_TEST_POSTGRES_ADMIN_URL` 的真实集成环境中不会因旧数量断言产生假失败。
 
+最后修复 message ID 提取器的字段边界：created payload 由 reducer 负责 strict schema 校验，提取器
+只读取已校验对象中的 `messageId`，允许同一合法对象的其他字段，并拒绝缺失 ID；避免首条
+`message.created` 在进入 owner SQL function 前被错误拦截。
+
 ## 仍未关闭的门禁
 
 该实现仍是 production composition 前的候选，需要真实 PostgreSQL applied-schema integration
