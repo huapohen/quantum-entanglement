@@ -128,6 +128,18 @@ var authorityWriteFunctionSpecs = map[string]authorityWriteFunctionSpec{
 		identityArgumentTokens: []string{"TEXT", "TEXT", "BIGINT", "BIGINT", "TEXT"},
 		resultToken:            "BOOLEAN",
 	},
+	"WRITE_AGENT_PROVIDER_EFFECT": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_WORKSPACE_ID", "TEXT", "P_INSTALLATION_ID", "TEXT",
+			"P_EFFECT_ID", "TEXT", "P_EFFECT_KIND", "TEXT", "P_PROVIDER", "TEXT",
+			"P_PROVIDER_REALM_ID", "TEXT", "P_PROVIDER_SUBJECT_ID", "TEXT",
+			"P_OPERATION_KEY", "TEXT", "P_REQUEST_REF", "TEXT", "P_REQUEST_SHA256", "TEXT",
+		},
+		identityArgumentTokens: []string{
+			"TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT",
+		},
+		resultToken: "TEXT",
+	},
 }
 
 func validMigrationStatements(sql string, allowFunctionDDL bool) bool {

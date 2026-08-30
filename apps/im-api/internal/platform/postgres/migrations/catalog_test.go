@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 14 || len(second) != 14 {
+	if len(first) != 15 || len(second) != 15 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -311,6 +311,24 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 			t.Fatalf("Agent Store provider effect migration contains forbidden text %q", forbidden)
 		}
 	}
+	writer := first[14]
+	if writer.Version != 15 || writer.Name != "agent_provider_effect_write_functions" ||
+		len(writer.Checksum) != 64 || writer.Checksum != second[14].Checksum ||
+		writer.UpSQL != second[14].UpSQL || writer.DownSQL != second[14].DownSQL {
+		t.Fatalf("unexpected deterministic provider effect writer migration: %#v", writer)
+	}
+	for _, marker := range []string{
+		`CREATE FUNCTION wanwork_im.write_agent_provider_effect`,
+		`RETURNS text`,
+		`ON CONFLICT DO NOTHING`,
+		`SECURITY DEFINER`,
+		`SET search_path TO pg_catalog`,
+		`REVOKE ALL ON FUNCTION`,
+	} {
+		if !strings.Contains(writer.UpSQL, marker) {
+			t.Fatalf("provider effect writer migration missing %q", marker)
+		}
+	}
 }
 
 func TestCatalogRejectsDescriptorAndSQLDrift(t *testing.T) {
@@ -465,14 +483,23 @@ SET search_path TO pg_catalog AS $$ BEGIN RETURN true; END $$;`
 }
 
 func TestFunctionOnlyWriteMigrationFilesPassExactSQLPolicy(t *testing.T) {
-	spec := migrationSpec{version: 5, name: "function_only_writes"}
-	for _, suffix := range []string{"up", "down"} {
-		raw, err := migrationFiles.ReadFile("sql/0005_function_only_writes." + suffix + ".sql")
-		if err != nil {
-			t.Fatalf("read function-only %s SQL: %v", suffix, err)
-		}
-		if !validMigrationSQLForSpec(normalizeSQL(raw), spec) {
-			t.Fatalf("function-only %s SQL rejected by exact policy", suffix)
+	for _, fixture := range []struct {
+		version int64
+		name    string
+		prefix  string
+	}{
+		{version: 5, name: "function_only_writes", prefix: "0005_function_only_writes"},
+		{version: 15, name: "agent_provider_effect_write_functions", prefix: "0015_agent_provider_effect_write_functions"},
+	} {
+		spec := migrationSpec{version: fixture.version, name: fixture.name}
+		for _, suffix := range []string{"up", "down"} {
+			raw, err := migrationFiles.ReadFile("sql/" + fixture.prefix + "." + suffix + ".sql")
+			if err != nil {
+				t.Fatalf("read function-only %s SQL: %v", suffix, err)
+			}
+			if !validMigrationSQLForSpec(normalizeSQL(raw), spec) {
+				t.Fatalf("function-only %s SQL rejected by exact policy for migration %d", suffix, fixture.version)
+			}
 		}
 	}
 }

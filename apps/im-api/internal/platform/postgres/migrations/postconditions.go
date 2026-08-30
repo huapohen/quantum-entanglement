@@ -112,9 +112,23 @@ func validateMigrationPostconditionForSchema(
 		return validateAgentStoreCapabilityConstraints(ctx, transaction)
 	case 14:
 		return validateAgentProviderEffectOutbox(ctx, transaction)
+	case 15:
+		return validateAgentProviderEffectWriteFunctions(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateAgentProviderEffectWriteFunctions(ctx context.Context, transaction pgx.Tx) error {
+	spec, ok := storedAuthorityFunctionSpecByName("write_agent_provider_effect")
+	if !ok {
+		return ErrMigrationSchema
+	}
+	functions, err := readStoredAuthorityFunctions(ctx, transaction, []string{spec.name})
+	if err != nil || !exactStoredAuthorityFunctions(functions, []storedAuthorityFunctionSpec{spec}) {
+		return ErrMigrationSchema
+	}
+	return nil
 }
 
 func validateAgentProviderEffectOutbox(ctx context.Context, transaction pgx.Tx) error {

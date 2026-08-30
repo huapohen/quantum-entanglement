@@ -103,6 +103,17 @@ func storedAgentStoreWriteFunctionSpecs() []storedAuthorityFunctionSpec {
 			result:           "boolean",
 			definitionDigest: "232a65dc3d91e02f6dd57ad44c7e2609fbd9bf566de1b3f5d31f4f3580efe287",
 		},
+		{
+			name: "write_agent_provider_effect",
+			arguments: "p_tenant_id text, p_workspace_id text, p_installation_id text, " +
+				"p_effect_id text, p_effect_kind text, p_provider text, p_provider_realm_id text, " +
+				"p_provider_subject_id text, p_operation_key text, p_request_ref text, p_request_sha256 text",
+			identityArguments: "p_tenant_id text, p_workspace_id text, p_installation_id text, " +
+				"p_effect_id text, p_effect_kind text, p_provider text, p_provider_realm_id text, " +
+				"p_provider_subject_id text, p_operation_key text, p_request_ref text, p_request_sha256 text",
+			result:           "text",
+			definitionDigest: "75483056c74a10adb819a0596d049bd539bbc0783543e01059eddd9273a6973a",
+		},
 	}
 }
 

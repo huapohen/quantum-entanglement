@@ -733,5 +733,6 @@ func authorityFunctionSQLIdentities() []string {
 		"write_agent_installation_revision(text, text, bigint, bigint, text)",
 		"write_agent_passport_revision(text, text, bigint, bigint, text)",
 		"write_agent_release_revision(text, text, bigint, bigint, text)",
+		"write_agent_provider_effect(text, text, text, text, text, text, text, text, text, text, text)",
 	}
 }
