@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -113,7 +114,7 @@ func (projector *Projector) runPage(
 	}
 	checkpoint, err := loadProjectorCheckpoint(ctx, transaction, scope)
 	if err != nil {
-		return ProjectorResult{}, false, err
+		return ProjectorResult{}, false, fmt.Errorf("load checkpoint: %w", err)
 	}
 	page, err := eventstore.ReadGlobalPageTx(ctx, transaction, events.GlobalQuery{
 		TenantID: scope.TenantID, WorkspaceID: cloneWorkspace(scope.WorkspaceID),
@@ -137,7 +138,7 @@ func (projector *Projector) runPage(
 	states := make(map[string]*conversationState)
 	for _, event := range page.Events {
 		if err := projector.applyEvent(ctx, transaction, scope, states, event); err != nil {
-			return ProjectorResult{}, false, err
+			return ProjectorResult{}, false, fmt.Errorf("project event %s: %w", event.EventID, err)
 		}
 	}
 	last := page.Events[len(page.Events)-1]
@@ -173,7 +174,7 @@ func (projector *Projector) applyEvent(
 ) error {
 	if event.TenantID != scope.TenantID || workspaceText(event.WorkspaceID) != workspaceText(scope.WorkspaceID) ||
 		event.GlobalPosition == 0 || event.Sequence == 0 {
-		return ErrProjectorIntegrity
+		return fmt.Errorf("%w: event scope/coordinate", ErrProjectorIntegrity)
 	}
 	// The global EventStore contains workflow, inbox and other non-conversation streams.
 	// They still advance the global projection checkpoint, but do not belong to this
@@ -183,22 +184,22 @@ func (projector *Projector) applyEvent(
 	}
 	tenant, err := im.ParseTenantID(scope.TenantID)
 	if err != nil {
-		return ErrProjectorIntegrity
+		return fmt.Errorf("%w: conversation tenant parse", ErrProjectorIntegrity)
 	}
 	conversationID, err := im.ParseConversationID(event.StreamID)
 	if err != nil {
-		return ErrProjectorIntegrity
+		return fmt.Errorf("%w: conversation id parse", ErrProjectorIntegrity)
 	}
 	reference, err := im.NewConversationRef(tenant, conversationID)
 	if err != nil {
-		return ErrProjectorIntegrity
+		return fmt.Errorf("%w: conversation ref", ErrProjectorIntegrity)
 	}
 	key := conversationID.String()
 	state := states[key]
 	if state == nil {
 		state, err = loadConversationState(ctx, transaction, reference, workspaceText(scope.WorkspaceID))
 		if err != nil {
-			return err
+			return fmt.Errorf("load conversation state %s: %w", reference.ConversationID().String(), err)
 		}
 		states[key] = state
 	}
@@ -206,31 +207,31 @@ func (projector *Projector) applyEvent(
 		return nil
 	}
 	if event.Sequence != state.sequence+1 {
-		return ErrProjectorIntegrity
+		return fmt.Errorf("%w: sequence gap", ErrProjectorIntegrity)
 	}
 	expectedSequence, expectedPosition, expectedRevision := state.sequence, state.position, state.revision
 	nextRevision := expectedRevision + 1
 	if nextRevision > math.MaxInt64 || event.Sequence > math.MaxInt64 || event.GlobalPosition > math.MaxInt64 {
-		return ErrProjectorIntegrity
+		return fmt.Errorf("%w: coordinate overflow", ErrProjectorIntegrity)
 	}
 	var message im.MessageSnapshot
 	var messageID string
 	if isMessageProjectionEvent(event.EventType) {
 		if err := state.projection.Apply(ctx, event); err != nil {
-			return ErrProjectorIntegrity
+			return fmt.Errorf("%w: reducer apply", ErrProjectorIntegrity)
 		}
 		messageID, err = messageIDFromProjectionEvent(event)
 		if err != nil {
-			return ErrProjectorIntegrity
+			return fmt.Errorf("%w: message id extraction", ErrProjectorIntegrity)
 		}
 		parsedMessageID, parseErr := im.ParseMessageID(messageID)
 		if parseErr != nil {
-			return ErrProjectorIntegrity
+			return fmt.Errorf("%w: message id parse", ErrProjectorIntegrity)
 		}
 		var ok bool
 		message, ok = state.projection.Snapshot(parsedMessageID)
 		if !ok {
-			return ErrProjectorIntegrity
+			return fmt.Errorf("%w: reducer snapshot missing", ErrProjectorIntegrity)
 		}
 		var written bool
 		if err := transaction.QueryRow(ctx, `
@@ -252,7 +253,7 @@ SELECT wanwork_im.write_message_projection(
 		}
 	} else {
 		if err := state.projection.ObserveSequence(ctx, event); err != nil {
-			return ErrProjectorIntegrity
+			return fmt.Errorf("%w: reducer observe sequence", ErrProjectorIntegrity)
 		}
 		var advanced bool
 		if err := transaction.QueryRow(ctx, `
@@ -319,8 +320,8 @@ LIMIT $4`, reference.TenantID().String(), workspace, reference.ConversationID().
 		}
 		message, err := materializedMessageSnapshot(reference, messageID, clientMessageID, senderActorID,
 			messageType, status, text, extInfo, createdAt, messageRevision)
-		if err != nil || lastSequence <= 0 || lastPosition <= 0 || projectionRevision != revision ||
-			lastSequence > sequence || lastPosition > position {
+		if err != nil || lastSequence <= 0 || lastPosition <= 0 || projectionRevision <= 0 ||
+			projectionRevision > revision || lastSequence > sequence || lastPosition > position {
 			return nil, ErrProjectorIntegrity
 		}
 		messages = append(messages, message)

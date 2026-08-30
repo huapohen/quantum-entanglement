@@ -135,7 +135,7 @@ LIMIT $`+strconv.Itoa(len(args)), args...)
 			query.Conversation, messageID, clientMessageID, senderActorID,
 			messageType, status, text, extInfo, createdAt, revision,
 		)
-		if err != nil || rowProjectionRevision != projectionRevision ||
+		if err != nil || rowProjectionRevision <= 0 || rowProjectionRevision > projectionRevision ||
 			lastSequence <= 0 || lastPosition <= 0 || lastSequence > sequence {
 			return store.MessageReadPage{}, store.ErrIntegrity
 		}
