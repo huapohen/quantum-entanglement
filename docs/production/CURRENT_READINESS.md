@@ -7,17 +7,18 @@
 
 ## 2026-08-31 fault-matrix checkpoint
 
-当前评审 HEAD 为 `2540eb1`，远端已推送；固定备份分支为 `backup_0831_002800`（指向
-`3a9030d` 的 PG18.6 fault-matrix PASS 节点）。本轮已增加 projector 提交前失败的整页事务
-rollback/retry 证据、migration-7 restore 后 compatibility rollback guard，并复跑隔离 PostgreSQL
-18.6 的 projector 与 migrations/runtimepool/eventstore/improjection/imstore 五包 integration
-matrix；Go 全模块 `go test ./...` 与 `go vet ./...` 亦通过。详细记录见
+当前评审 HEAD 为 `cb471d1`，远端已推送；固定备份分支为 `backup_0831_004520`（指向
+`c0a5a14` 的 readiness 封板节点），早期备份 `backup_0831_002800` 仍保留。本轮已增加
+projector 提交前失败的整页事务 rollback/retry、COMMIT ACK-loss exact replay、真实 child-process
+SIGKILL 前/后提交边界，以及 migration-7 restore 后 compatibility rollback guard，并复跑隔离
+PostgreSQL 18.6 的 projector 与 migrations/runtimepool/eventstore/improjection/imstore 五包
+integration matrix；Go 全模块 `go test ./...` 与 `go vet ./...` 亦通过。详细记录见
 [`research/73_projector_fault_matrix_and_rollback_checkpoint_20260831.md`](../../analysis_report/research/73_projector_fault_matrix_and_rollback_checkpoint_20260831.md)。
 
-该 checkpoint 仍不打开 materialized primary、真实 projector SIGKILL 前后矩阵、长期 shadow
-telemetry/backfill、生产 applied-schema/备份/RPO/RTO/HA、真实 Clerk/JWKS、Task/Artifact/Needs You
-projection、worker/provider bridge、action receipt 或 `effect_unknown` reconcile；真实 IM 和 outbound
-继续关闭。
+该 checkpoint 仍不打开 materialized primary、长期 shadow telemetry/backfill、生产 applied-schema/
+备份/RPO/RTO/HA、真实 Clerk/JWKS、Task/Artifact/Needs You projection、worker/provider bridge、
+action receipt 或 `effect_unknown` reconcile；真实 IM 和 outbound 继续关闭。child-process SIGKILL
+证据的复现命令和边界说明见 [`research/74_projector_sigkill_process_matrix_20260831.md`](../../analysis_report/research/74_projector_sigkill_process_matrix_20260831.md)。
 
 ## 2026-08-30 continuation checkpoint
 

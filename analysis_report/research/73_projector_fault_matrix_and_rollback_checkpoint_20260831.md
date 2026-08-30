@@ -22,6 +22,8 @@ PostgreSQL message projector 现在拥有两条独立的提交边界证据：
 - `8b78c26`：SQLite migration-7 backup restore 后的 compatibility rollback guard；非空结果图拒绝
   downgrade，并验证 row count、foreign-key 与 integrity check 不变。
 - `004d78f`：ScopedPureWorkerLifecycle checkpoint，包含 SIGKILL 后 expiry recovery 证据。
+- `cb471d1`：真实 projector child-process SIGKILL 前/后提交边界矩阵；完整证据见
+  [`research/74_projector_sigkill_process_matrix_20260831.md`](74_projector_sigkill_process_matrix_20260831.md)。
 
 ## 验证
 
@@ -47,16 +49,15 @@ go test ./... && go vet ./...                                      PASS（Go 全
 
 真实 PG18 端到端命令仍保留在 `research/69` 与 `research/71`；本节点已在隔离 PostgreSQL 18.6
 临时 loopback 实例复跑 projector fault matrix 及 migrations/runtimepool/eventstore/improjection/
-imstore 五包 integration matrix。提交前失败测试与 ACK-loss 测试均为 opt-in integration，不能
+imstore 五包 integration matrix。提交前失败、ACK-loss 与 child-process SIGKILL 测试均为 opt-in integration，不能
 用 SQLite 或单元测试替代。凭据、端口和完整连接串不进入证据文件。
 
 ## 未关闭边界
 
-- 真实 SIGKILL 在 projector 进程提交前/后两个边界的独立 child-process 矩阵；
+- 生产级 applied-schema、权限、备份、RPO/RTO、HA 与 materialized primary cutover；
 - rollback/partial-write 的生产故障注入与恢复 runbook；
 - shadow equality 长期 telemetry、mismatch 告警与 backfill orchestration；
-- 目标生产 applied-schema、权限、备份、RPO/RTO、HA 证明；
-- materialized primary cutover、可回滚 receipt、真实 Clerk/JWKS、Task/Artifact/Needs You durable
+- 可回滚 cutover receipt、真实 Clerk/JWKS、Task/Artifact/Needs You durable
   projection、worker/provider bridge、action receipt 与 `effect_unknown` reconcile。
 
 ## 安全边界

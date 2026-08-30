@@ -12,7 +12,7 @@
 restart readback 均已在隔离 PostgreSQL 18 通过；`projection_revision` 的合法关系为
 `0 < row <= head`。代码/证据提交为 `1e8fc38`、`a41ed54`、`2317871`、`4774c0d`、`4ae750e`、
 `5cbd3c0`、`f0a8f80`；这些是历史 PG18 闭环节点。当前 fault-matrix continuation 的 HEAD 为
-`b604a68`，最终备份分支为 `backup_0831_004520`（固定指向 readiness 文档封板前的
+`cb471d1`，最终备份分支为 `backup_0831_004520`（固定指向 readiness 文档封板前的
 `c0a5a14`），早期备份 `backup_0831_002800` 保留。
 
 ### 下一步只按以下顺序推进
@@ -20,10 +20,11 @@ restart readback 均已在隔离 PostgreSQL 18 通过；`projection_revision` �
 1. **Shadow wiring（已完成，仍 default-off）**：`1e94f8d` 已把 `CompareMessageReaders` 接到 runtime
    composition；replay/materialized 各持独立 opaque cursor，mismatch 直接阻断，不做 fallback 合并。
    详见 [`research/70_shadow_canary_runtime_wiring_20260830.md`](research/70_shadow_canary_runtime_wiring_20260830.md)。
-2. **故障矩阵（提交前 rollback + commit-ACK 子项已完成）**：`71_projector_commit_ack_loss_recovery_20260830.md`
+2. **故障矩阵（提交前 rollback + commit-ACK + child-process SIGKILL 已完成）**：`71_projector_commit_ack_loss_recovery_20260830.md`
    与 `73_projector_fault_matrix_and_rollback_checkpoint_20260831.md` 已证明 commit 成功但 ACK 丢失
-   后的 exact replay、提交前失败整页 rollback、双 runner CAS 与 restart readback；仍需加入真实
-   projector SIGKILL 前后、生产级 partial-write fault injection，并从新连接重读 checkpoint、head、rows。
+   后的 exact replay、提交前失败整页 rollback、双 runner CAS、restart readback，以及真实 child
+   process 在 COMMIT 前/后的 SIGKILL 恢复；独立证据见 `research/74_projector_sigkill_process_matrix_20260831.md`。
+   仍需生产级 partial-write fault injection/runbook，并从新连接重读 checkpoint、head、rows。
 3. **Cutover preflight**：补生产 applied-schema digest、权限/备份证明、旧 reader drain 与 rollback
    receipt；未齐全前继续使用 bounded EventStore replay，不启用 materialized primary。
 4. **IM 接入前置**：真实 Clerk/JWKS、Task/Artifact/Needs You durable projection、worker/provider
