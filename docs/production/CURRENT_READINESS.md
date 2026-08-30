@@ -1,9 +1,19 @@
 # Quantum Entanglement 当前生产就绪审计
 
-- 更新日期：2026-08-29
+- 更新日期：2026-08-30
 - 审计口径：只计算本文所在评审分支中已提交、可复现的源码和证据
 - 硬边界：[`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md)
 - 结论：**内核组件已形成较强验证基线，但仍不是生产服务；Gate A–E 全部关闭**
+
+## 2026-08-30 continuation checkpoint
+
+`mainline_continue_quantum_entanglement` 已新增私有 `ScopedPureWorkerLifecycle`：它在进程内
+停止 admission、取消 active runs、执行 bounded drain，并将所有非 `ACCEPTED`/`OBSERVED`
+结果通过 store-owned CAS relinquish 为 `FAILED/EXPIRED`。双连接 heartbeat-vs-expiry 与
+relinquish 竞争测试已通过，且保持 start event 不可变、无 event/outbox 外部副作用。该节点仍
+是 opt-in rehearsal；`HeartbeatPureWorkerGate.dispatch()` 继续 default-off，Gate A–E 不变。
+实现和证据分别见 `36cd0b4`、`025b5c7` 与
+[`43_scoped_lease_lifecycle_evidence.md`](../../analysis_report/research/43_scoped_lease_lifecycle_evidence.md)。
 
 ## 执行结论
 
