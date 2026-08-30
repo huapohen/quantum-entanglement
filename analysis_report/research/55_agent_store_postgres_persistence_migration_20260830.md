@@ -104,11 +104,11 @@ runtime ACL、repository definition/release/Passport/installation 创建与读�
 - `cd clients/im-web && npm run build`：TypeScript/Vite production build 通过。
 - `WANWORK_IM_VERIFY_PORT=18146 ./scripts/verify_web_first.sh`：构建、HTTP envelope、Agent Store 安装/幂等重放/撤权、统一 action-time capability resolver、子群隔离、Workboard 审阅闭环和零网络 synthetic 通过。
 
-本阶段远端备份：`dev_wanwork_quantum_entanglement` 已推送至 `origin`，当前 HEAD 为 `63106e2`；此前的
-`backup_0830_211508` 指向 resolver 之前的 `aa94515`，可用于精确回退。新增可回溯小阶段 commit 为：
+本阶段远端备份：`dev_wanwork_quantum_entanglement` 已推送至 `origin`，当前 HEAD 为 `3cb0a92`；此前的
+`backup_0830_211508` 指向 resolver 之前的 `aa94515`，`backup_0830_214953` 指向 receipt 之前的
+`c69af4c`，可用于精确回退；最新 `backup_0830_220230` 与当前 HEAD 一致。新增可回溯小阶段 commit 为：
 `c69af4c`（共享 action-time capability resolver 与测试）、`63106e2`（resolver 证据与最新 Web gate 文档）、
-`de8d2ae`（Agent Store durable command receipt 入口与 PostgreSQL replay 证据）。当前工作分支 HEAD 为
-`de8d2ae`。
+`de8d2ae`（Agent Store durable command receipt 入口与 PostgreSQL replay 证据）、`3cb0a92`（receipt 证据文档）。
 
 ## 下一步顺序（仍本地 pending）
 
