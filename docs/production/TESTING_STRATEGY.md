@@ -92,7 +92,10 @@ PYTHONPATH=src .venv/bin/python scripts/regression_gate.py --full
 ```
 
 脚本遇到无法映射的运行时代码会自动升级到 Python 全量门禁，宁可多跑也不会静默漏测；只改
-文档时只执行差异检查。脚本不执行 `npm ci`，缺少 Web 依赖时会明确失败并提示先按锁文件安装。
+文档时只执行差异检查。`apps/im-api/README.md`、`clients/im-web/README.md` 等模块文档也按文档
+处理，不会因为目录前缀误触发 Go/Web 门禁（修复证据见
+[`57_regression_gate_scope_fix_20260830.md`](../../analysis_report/research/57_regression_gate_scope_fix_20260830.md)）。
+脚本不执行 `npm ci`，缺少 Web 依赖时会明确失败并提示先按锁文件安装。
 
 全量通过只证明当前记录环境的源码和断言成立，不代表生产 GA；外部 IM、飞书、企微、模型
 出网和 connector 仍由独立 Gate 控制。
