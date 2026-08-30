@@ -78,8 +78,10 @@ There is no `trusted=true`, caller-supplied coordinates, or direct table mutatio
 ## 4. Read cutover
 
 The materialized reader must accept the same `MessageReadPageQuery` as the replay bridge. During shadow mode,
-both readers run against the same authority revision and compare ordered `(message_id, revision, status,
-text-digest, created_at)` tuples. A mismatch is an integrity failure, never a best-effort merge. Cutover order:
+both readers run against the same authority revision and `CompareMessageReaders` compares ordered
+`(message_id, revision, status, text, ext_info, created_at, sender, client_message_id)` tuples. A mismatch
+is an integrity failure, never a best-effort merge. Each reader keeps its own opaque cursor; projection
+generation and replay stream version are not compared as if they were the same coordinate. Cutover order:
 
 ```text
 replay bridge -> shadow materialized read -> equality canary -> materialized primary -> replay fallback disabled

@@ -20,6 +20,9 @@ PostgreSQL materialized projector 候选：migration 12 注册两个 owner-only
   snapshot 读取；`message.created/edited/recalled` 仍由 provider-neutral reducer 严格处理。
 - `platform/postgres/improjection.Projector`：按有界 page drain；恢复 conversation state，
   逐事件 owner-function 写入，最后 CAS checkpoint。事务提交失败时整体回滚，重试允许 exact replay。
+- `improjection.CompareMessageReaders`：以各自 opaque cursor 完整分页，对 replay/materialized
+  的 ordered message snapshots 做严格字段比较；不把 projection generation 与 stream version
+  混比，也不将 mismatch 降级为 fallback。
 
 ## 验证
 
@@ -31,6 +34,9 @@ go test ./...                                             PASS
 go vet ./...                                              PASS
 git diff --check                                          PASS
 ```
+
+新增 shadow comparator 的单测覆盖：相同消息行（不同 projection revision）通过、页面元数据
+漂移失败、非空跨实现 cursor 拒绝。
 
 ## 仍未关闭的门禁
 
