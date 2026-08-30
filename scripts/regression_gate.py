@@ -206,6 +206,16 @@ def select_commands(
     return tuple(commands)
 
 
+def _command_cwd(root: Path, command: GateCommand) -> Path:
+    if command.name.startswith("go-"):
+        return root / "apps/im-api"
+    if command.name == "web-build":
+        # The Web package owns its package.json; running npm from the repository root
+        # makes the stage/full gate fail before it can test any product code.
+        return root / "clients/im-web"
+    return root
+
+
 def _run(root: Path, command: GateCommand) -> int:
     environment = os.environ.copy()
     environment.setdefault("GIT_TERMINAL_PROMPT", "0")
@@ -215,7 +225,7 @@ def _run(root: Path, command: GateCommand) -> int:
         or command.name == "compileall"
     ):
         environment["PYTHONPATH"] = str(root / "src")
-    cwd = root / "apps/im-api" if command.name.startswith("go-") else root
+    cwd = _command_cwd(root, command)
     print(f"[{command.name}] {shlex.join(command.argv)}")
     return subprocess.run(command.argv, cwd=cwd, env=environment, check=False).returncode
 

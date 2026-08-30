@@ -5,7 +5,13 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from scripts.regression_gate import _python_tests, changed_paths, select_commands
+from scripts.regression_gate import (
+    GateCommand,
+    _command_cwd,
+    _python_tests,
+    changed_paths,
+    select_commands,
+)
 
 
 class RegressionGateSelectionTests(unittest.TestCase):
@@ -65,6 +71,12 @@ class RegressionGateSelectionTests(unittest.TestCase):
     def test_report_sync_script_maps_to_focused_test(self) -> None:
         tests = _python_tests(self.repository, ["scripts/report_sync_bundle.py"])
         self.assertEqual(tests, ("tests/test_report_sync_bundle.py",))
+
+    def test_web_build_runs_from_web_package_root(self) -> None:
+        command = GateCommand("web-build", ("npm", "run", "build"))
+        self.assertEqual(
+            _command_cwd(self.repository, command), self.repository / "clients/im-web"
+        )
 
     def test_changed_paths_includes_untracked_files(self) -> None:
         with TemporaryDirectory() as temporary:
