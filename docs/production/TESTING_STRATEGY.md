@@ -40,7 +40,7 @@ PYTHONPATH=src .venv/bin/pytest -q \
 阶段封板：
 
 ```bash
-PYTHONPATH=src .venv/bin/pytest --collect-only
+PYTHONPATH=src .venv/bin/pytest --collect-only  # 当前 2,962 项
 PYTHONPATH=src .venv/bin/pytest -q
 .venv/bin/ruff check src tests
 PYTHONPATH=src .venv/bin/python -m mypy --strict src
@@ -58,4 +58,3 @@ git diff --check
 
 全量通过只证明当前记录环境的源码和断言成立，不代表生产 GA；外部 IM、飞书、企微、模型
 出网和 connector 仍由独立 Gate 控制。
-
