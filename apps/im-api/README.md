@@ -117,6 +117,8 @@ GET /health/ready -> HTTP 200 exact database ready; HTTP 503 otherwise
 GET /api/v1/*     -> readiness failure stays HTTP 200 envelope with code 50301
 GET /api/v1/auth/context -> authenticated tenant identity summary (runtime composition only)
 GET /api/v1/tenants/:tenantId/conversations/:conversationId -> tenant-scoped read projection (runtime only)
+GET /api/v1/tenants/:tenantId/conversations/:conversationId/events -> authenticated, cursor-paged event read
+  (runtime composition only; requires an injected EventStore and never writes or dispatches work)
 ```
 
 The runtime-only identity seam requires both a canonical bearer header and one tenant candidate header:
@@ -138,6 +140,16 @@ The conversation read route additionally requires the path tenant to match the t
 fresh action-time identity resolve before reading the current conversation, membership, and read access from one
 UoW snapshot. It is read-only and does not prove message/event projection, Task/Agent persistence, provider
 delivery, or production authorization.
+
+The event read route uses the platform ConversationID as the event stream ID. It performs the same fresh
+action-time conversation/membership/access read, accepts a bounded `limit` (default 50, maximum 256) and opaque
+`after` cursor, then validates tenant/workspace/stream scope, strictly increasing sequence, non-zero global
+position, event-ID uniqueness, and canonical payload shape before returning the page. The response includes
+conversation/membership/access revisions and cursor metadata so a client can detect which authority snapshot
+authorized the page. Event ID is exposed as the page-level `dedupeKey`; it is an observation key, not a write
+idempotency grant. If no EventStore is composed, the route returns dependency-unavailable rather than an empty
+success. The current PostgreSQL runtime composition intentionally does not inject this dependency yet, because
+the event query must eventually share one transaction snapshot with authority reads before production use.
 
 ### One-shot migrator
 

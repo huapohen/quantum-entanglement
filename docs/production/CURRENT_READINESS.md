@@ -62,6 +62,13 @@ Go 全模块 test/vet 已通过，证据见
 message/event cursor、write command、Task/Attempt/Artifact/Needs You projection、真实 Clerk/JWKS、
 provider exchange 或 Gate A–E 晋级。
 
+当前新增了只读的认证会话事件读取合同 `GET /api/v1/tenants/:tenantId/conversations/:conversationId/events`
+（实现 `1f262f0`，证据见 `research/60_authenticated_event_read_contract_20260830.md`）。它在同一
+trusted tenant + action-time conversation ACL seam 上执行有界 cursor 分页，并校验 event scope、sequence、
+dedupe 与 payload；EventStore 未注入时 fail closed。该合同仍不是 durable message projection、真实
+Clerk/JWKS、生产事件读取或 Gate A–E 晋级，PostgreSQL composition 暂不注入 EventStore 以避免跨事务
+snapshot 的 TOCTOU 误称为生产一致性。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow
