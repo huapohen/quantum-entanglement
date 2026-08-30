@@ -56,6 +56,14 @@ curl --fail \
 以及 `dataRoutes`、`attestations` 和 `installationStatus` 都来自后端投影；这些字段不会被当作
 凭据或 action-time 授权。
 
+当前 synthetic 目录同时提供预装的 `v0版研究 Agent` 和可安装的 `v0版规划 Agent`。对后者点击
+“安装到当前工作空间”会调用
+`POST /api/v1/demo/im/agents/agd_local_planner/install`，安装动作绑定调用方提供的
+`idempotencyKey`；服务会先完成 Agent actor 的 fake provider provisioning，再把新 Agent 加入根群，
+并将上一演示安装标记为 `offboarded`。重复同一安装动作返回 `replayed=true`，不会创建第二个安装。
+这只证明本地安装状态机和 provider-neutral 投影，不证明真实制品、签名、组织审批、PostgreSQL
+持久化或生产撤权已完成。
+
 在左侧新建群时默认勾选“创建时邀请已安装 Agent”。提交后打开该群，检查其 `memberActorIds`
 包含 Agent actor；取消勾选则创建只含真人的普通群。此处复用 `CreateConversation` 的成员边界，
 不是把 Agent 偷塞进 UI 状态。

@@ -4,7 +4,8 @@
 
 当前 Web-first IM 分支已交付一个可从浏览器验收的 Agent Store 最小闭环：后端以认证后的
 tenant 投影返回已审阅 Agent 的 definition、release、Trust Passport、capability、data route
-和 installation；前端展示这些治理信息，并允许把处于 `active` 状态的 Agent 邀请到当前普通群。
+和 installation；前端展示这些治理信息，并允许把处于 `available` 状态的 Agent 显式安装到工作
+空间，再把处于 `active` 状态的 Agent 邀请到当前普通群。
 
 该实现是本地 synthetic/fake provider 纵切片，默认零网络，不连接飞书、企微或真实融云，也不
 宣称已经是公共 marketplace 或生产安装服务。
@@ -16,17 +17,17 @@ tenant 投影返回已审阅 Agent 的 definition、release、Trust Passport、c
 | 值对象与不变量 | `apps/im-api/internal/agentstore/catalog.go` | definition、release、Trust Passport、capability、data route |
 | 安装与治理 | `apps/im-api/internal/agentstore/installation.go` | installation 生命周期、授权子集、offboarding 请求 |
 | provider 投影 | `apps/im-api/internal/agentstore/provider_projection.go` | 只向 provider 暴露经过审阅的非秘密身份投影 |
-| local demo projection | `apps/im-api/internal/localdemo/agents.go` | 认证后的 Agent Store JSON 读模型 |
-| HTTP API | `GET /api/v1/demo/im/agents` | 统一 `{code,data,message,requestId}` envelope |
+| local demo projection | `apps/im-api/internal/localdemo/agents.go` | 认证后的 Agent Store 投影与安装动作 |
+| HTTP API | `GET /api/v1/demo/im/agents`、`POST /api/v1/demo/im/agents/:definitionId/install` | 统一 `{code,data,message,requestId}` envelope |
 | Web UI | `clients/im-web/src/App.tsx` | Agent Store 卡片、授权能力/数据路线/审阅声明、邀请动作 |
 
 ## 当前演示对象
 
 | 字段 | 当前值 |
 | --- | --- |
-| Agent | `v0版研究 Agent` |
+| Agent | `v0版研究 Agent`（预装）与 `v0版规划 Agent`（可安装） |
 | release | `1.0.0`，`published` |
-| installation | `active` |
+| installation | 预装项 `active`；可安装项 `available`，安装后变为 `active` |
 | runtime isolation | `process`（local fake 只用于合同验收） |
 | granted capability | `conversation.read` |
 | data route | `conversation.context → local, provider:rongcloud` |
@@ -44,10 +45,12 @@ tenant 投影返回已审阅 Agent 的 definition、release、Trust Passport、c
 
 1. React/Vite TypeScript 生产构建；
 2. 启动 synthetic loopback API；
-3. 认证请求读取 Agent Store，确认 installation 为 `active`；
-4. 动态指令创建 Agent 子群，确认 Agent 回复不进入父群；
-5. Task → Artifact → Needs You，接受后确认状态闭环；
-6. 业务失败仍通过 HTTP 200 envelope 返回。
+3. 认证请求读取 Agent Store，确认同时存在 `active` 和 `available` 条目；
+4. 通过安装 API 以 idempotency key 安装 `agd_local_planner`，确认新 Agent actor 和 `active` 状态；
+5. 重放相同安装请求，确认 `replayed=true` 且不创建第二个安装；
+6. 动态指令创建 Agent 子群，确认 Agent 回复不进入父群；
+7. Task → Artifact → Needs You，接受后确认状态闭环；
+8. 业务失败仍通过 HTTP 200 envelope 返回。
 
 专项 Go 测试：
 
@@ -68,6 +71,7 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
 - 查看 Agent 名称、release、installation 状态；
 - 查看 release 请求能力与租户实际授予能力的区别；
 - 查看数据路线和 Trust Passport 审阅声明；
+- 对 `available` Agent 点击“安装到当前工作空间”，安装后可见 Agent actor；
 - 选择普通群并点击“邀请到当前群”；
 - 在该群发布自定义指令，进入隔离的 Agent 子群。
 
@@ -78,4 +82,3 @@ SBOM 扫描流水线、组织审批 UI、PostgreSQL 持久化安装记录、升�
 真实融云 provisioning/callback、跨租户 resolver 和原生客户端安装包。后续实现必须保留
 “声明、审阅、安装授权、运行时能力”四者分离，不能把目录展示或 `active` 状态当成 bearer
 credential。
-
