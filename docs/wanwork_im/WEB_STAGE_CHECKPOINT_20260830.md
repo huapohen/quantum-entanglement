@@ -6,6 +6,9 @@
 ## 本次完成范围
 
 - React + TypeScript + Vite + Zustand Web 客户端可以从一键脚本启动；
+- 生产构建带有 manifest 和只缓存静态 shell 的 service worker，可添加到主屏幕；`/api/`、登录态和
+  聊天数据不进入浏览器缓存；
+- 会话列表支持按名称/ID 筛选，运行态明确显示 synthetic 或显式模型 runtime、provider、model 和调用计数；
 - Go + Fiber loopback API 统一使用 `{code,data,message,requestId}` envelope，业务错误仍返回 HTTP 200；
 - Agent Store 卡片来自认证后的后端投影，包含 definition、release、Trust Passport、installation、
   requested/granted capabilities 和 data routes；
@@ -57,7 +60,10 @@ git diff --check
 
 - `output/playwright/im_web_agent_store_20260830.png`：Agent Store 动态投影；
 - `output/playwright/im_web_agent_invited_group_20260830.png`：创建群时邀请 Agent；
-- `output/playwright/im_web_selected_parent_20260830.png`：父群工作卡和子群关联。
+- `output/playwright/im_web_selected_parent_20260830.png`：父群工作卡和子群关联；
+- `output/playwright/im_web_webfirst_20260830.png`：Web-first 当前完整页面和 Agent 子群回复。
+- Playwright network 记录只出现 `127.0.0.1:5175` 页面/API 请求，无飞书、企微、融云或其他外部 host；
+- 生产 preview 已验证 `/manifest.webmanifest` 与 `/sw.js` 返回 HTTP 200，service worker controller 生效。
 
 ## 提交序列
 
@@ -70,10 +76,15 @@ git diff --check
 | `4fc6ac1` | Web 发布成功后刷新会话并自动进入 Agent 子群 |
 | `9a98d46` | Web 启动器为 Go 进程关闭 telemetry，减少冷启动外部等待 |
 | `a66f0a3` | mention API 明确绑定所选父群 |
+| `3743faf` | 旧 IM demo 强制 synthetic，修正零网络边界文案 |
+| `42ea9ec` | 显式 modelruntime port、OpenAI-compatible Responses/SSE 适配和安全边界 |
+| `5b440d5` | Web/PWA 静态 shell、manifest、service worker、会话筛选和 runtime 展示 |
+| `6c394a6` | 将 Web 页眉准确标记为 loopback app |
+| `aa1daf4` | 将 Web-first 固化为后续多端和真实 provider 的交付门禁 |
 
 ## 仍然禁止宣称完成的范围
 
-- 生产级模型 runtime、完整 GPT/DeepSeek Harness 执行、工具调用和 Artifact 结果（当前仅有显式
+- 生产级模型治理、完整 GPT/DeepSeek Harness 执行、工具调用和 Artifact 结果（当前仅有显式
   OpenAI-compatible 文本生成 adapter）；
 - durable PostgreSQL conversation/thread projection、outbox/inbox、恢复和 reconciliation；
 - Clerk JWKS/session revoke 与 action-time tenant/Actor resolver；
@@ -82,5 +93,6 @@ git diff --check
 - Mac/Windows/Linux、iPhone/iPad、Android、鸿蒙原生客户端；
 - 生产 secret broker、观测、SLO、备份恢复、合规和发布门禁。
 
-因此当前最合理的验收结论是：Web 端核心群聊 + Agent 子群拓扑已经具备可体验闭环，下一步应
-继续补齐 durable projection、真实 runtime 和 provider adapter，再决定原生 IM 接入时点。
+因此当前最合理的验收结论是：Web 端核心群聊 + Agent 子群拓扑 + PWA shell 已具备可体验闭环；
+下一步仍需在 Web/API 合同上补齐 durable projection、真实 runtime 治理和 provider adapter，再决定
+原生 IM 接入时点。当前不宣称生产商用完成。
