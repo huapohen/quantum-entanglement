@@ -51,6 +51,29 @@ type TrustedRequestContext struct {
 	actor      im.ActorSnapshot
 }
 
+// WithTrustedRequestContext installs a resolved request snapshot in a derived context. The
+// context carries no bearer token and is only useful to handlers after the HTTP authentication
+// and tenant-authority middleware has completed.
+func WithTrustedRequestContext(ctx context.Context, request TrustedRequestContext) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	return context.WithValue(ctx, trustedRequestContextKey{}, request)
+}
+
+// TrustedRequestContextFromContext returns the immutable, tenant-scoped request snapshot installed
+// by WithTrustedRequestContext. A zero value or a context supplied by an untrusted caller is not
+// accepted as an authenticated context.
+func TrustedRequestContextFromContext(ctx context.Context) (TrustedRequestContext, bool) {
+	if ctx == nil {
+		return TrustedRequestContext{}, false
+	}
+	request, ok := ctx.Value(trustedRequestContextKey{}).(TrustedRequestContext)
+	return request, ok && !request.IsZero()
+}
+
+type trustedRequestContextKey struct{}
+
 // ResolveTrustedRequestContext performs all identity and tenant joins at request time. Inactive,
 // missing, or cross-tenant authority is intentionally collapsed to ErrContextUnauthorized so a
 // caller cannot use response differences to enumerate platform identity state.

@@ -100,6 +100,132 @@ func TestRuntimeReadinessAndBusinessRouteBarrier(t *testing.T) {
 	}
 }
 
+func TestRuntimeAuthenticatedContextResolvesTenantAuthorityBeforeHandler(t *testing.T) {
+	t.Parallel()
+	const tenantValue = "ten_alpha"
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	verifier := testVerifier(t)
+	tenant, err := im.ParseTenantID(tenantValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := newAppIdentityAuthority(t, tenant)
+	readCalls := 0
+	server, err := NewRuntime(RuntimeDependencies{
+		Database: &fakeReadinessProbe{},
+		Persistence: fakeTenantUnitOfWork{read: func(
+			ctx context.Context, requestedTenant im.TenantID, operation store.ReadOperation,
+		) error {
+			readCalls++
+			if requestedTenant != tenant {
+				t.Fatalf("requested tenant = %s, want %s", requestedTenant.String(), tenant.String())
+			}
+			return operation(ctx, fakeTenantRepositories{identity: authority})
+		}},
+		Verifier: verifier,
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/context", nil)
+	request.Header.Set("Authorization", "Bearer header.payload.signature")
+	request.Header.Set(tenantIDHeader, tenantValue)
+	response, err := server.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var envelope struct {
+		Code int `json:"code"`
+		Data struct {
+			Provider        string `json:"provider"`
+			ExternalSubject string `json:"externalSubject"`
+			PrincipalID     string `json:"principalId"`
+			TenantID        string `json:"tenantId"`
+			ActorID         string `json:"actorId"`
+			MembershipRole  string `json:"membershipRole"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || envelope.Code != int(httpapi.CodeOK) ||
+		envelope.Data.Provider != "clerk" || envelope.Data.ExternalSubject != "user_alice" ||
+		envelope.Data.PrincipalID != "hpr_alice" || envelope.Data.TenantID != tenantValue ||
+		envelope.Data.ActorID != "usr_alice" || envelope.Data.MembershipRole != "member" {
+		t.Fatalf("context envelope = %#v", envelope)
+	}
+	if readCalls != 1 {
+		t.Fatalf("identity read calls = %d, want 1", readCalls)
+	}
+}
+
+func TestRuntimeAuthenticatedContextRejectsMissingTenantAndInactiveMembership(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	verifier := testVerifier(t)
+	tenant, err := im.ParseTenantID("ten_alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := newAppIdentityAuthority(t, tenant)
+	server, err := NewRuntime(RuntimeDependencies{
+		Database: &fakeReadinessProbe{},
+		Persistence: fakeTenantUnitOfWork{read: func(
+			ctx context.Context, _ im.TenantID, operation store.ReadOperation,
+		) error {
+			return operation(ctx, fakeTenantRepositories{identity: authority})
+		}},
+		Verifier: verifier,
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingHeader := httptest.NewRequest(http.MethodGet, "/api/v1/auth/context", nil)
+	missingHeader.Header.Set("Authorization", "Bearer header.payload.signature")
+	missingResponse, err := server.Test(missingHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missingResponse.Body.Close()
+	var missingEnvelope struct {
+		Code int `json:"code"`
+	}
+	if err := json.NewDecoder(missingResponse.Body).Decode(&missingEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if missingEnvelope.Code != int(httpapi.CodeMalformedRequest) {
+		t.Fatalf("missing tenant code = %d, want %d", missingEnvelope.Code, httpapi.CodeMalformedRequest)
+	}
+
+	authority.membership, err = im.NewTenantMembershipSnapshot(
+		tenant, authority.principal.PrincipalID(), authority.actor.Ref(), authority.membership.Role(),
+		im.TenantMembershipRemoved, authority.membership.Revision(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inactive := httptest.NewRequest(http.MethodGet, "/api/v1/auth/context", nil)
+	inactive.Header.Set("Authorization", "Bearer header.payload.signature")
+	inactive.Header.Set(tenantIDHeader, tenant.String())
+	inactiveResponse, err := server.Test(inactive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inactiveResponse.Body.Close()
+	var inactiveEnvelope struct {
+		Code int `json:"code"`
+	}
+	if err := json.NewDecoder(inactiveResponse.Body).Decode(&inactiveEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if inactiveEnvelope.Code != int(httpapi.CodeForbidden) {
+		t.Fatalf("inactive membership code = %d, want %d", inactiveEnvelope.Code, httpapi.CodeForbidden)
+	}
+}
+
 func testVerifier(t *testing.T) *authfake.Verifier {
 	t.Helper()
 	realm, err := im.ParseProviderRealmID("rlm_app_test")
@@ -146,9 +272,14 @@ func (probe *fakeReadinessProbe) Ready(context.Context) error {
 	return probe.err
 }
 
-type fakeTenantUnitOfWork struct{}
+type fakeTenantUnitOfWork struct {
+	read func(context.Context, im.TenantID, store.ReadOperation) error
+}
 
-func (fakeTenantUnitOfWork) Read(context.Context, im.TenantID, store.ReadOperation) error {
+func (unit fakeTenantUnitOfWork) Read(ctx context.Context, tenant im.TenantID, operation store.ReadOperation) error {
+	if unit.read != nil {
+		return unit.read(ctx, tenant, operation)
+	}
 	return nil
 }
 
@@ -167,4 +298,79 @@ func (fakeTenantUnitOfWork) Resolve(
 	store.CommandIdentity,
 ) (store.CommitReceipt, error) {
 	return store.CommitReceipt{}, nil
+}
+
+type fakeTenantRepositories struct {
+	identity store.IdentityAuthorityRepository
+}
+
+func (repositories fakeTenantRepositories) Conversations() store.ConversationRepository { return nil }
+func (repositories fakeTenantRepositories) Authority() store.ConversationAuthorityRepository {
+	return nil
+}
+func (repositories fakeTenantRepositories) Identity() store.IdentityAuthorityRepository {
+	return repositories.identity
+}
+
+type appIdentityAuthority struct {
+	binding    im.HumanExternalIdentityBinding
+	principal  im.HumanPrincipalSnapshot
+	membership im.TenantMembershipSnapshot
+	actor      im.ActorSnapshot
+}
+
+func newAppIdentityAuthority(t *testing.T, tenant im.TenantID) *appIdentityAuthority {
+	t.Helper()
+	realm, err := im.ParseProviderRealmID("rlm_app_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	external, err := im.NewExternalIdentityRef(im.IdentityProviderClerk, realm, "user_alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principalID, err := im.ParseHumanPrincipalID("hpr_alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := im.NewHumanPrincipalSnapshot(principalID, im.HumanPrincipalActive, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := im.NewHumanExternalIdentityBinding(external, principalID, im.ExternalIdentityBindingActive, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actorID, err := im.ParseActorID("usr_alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actorRef, err := im.NewActorRef(tenant, actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor, err := im.NewActorSnapshot(actorRef, im.SubjectHuman, im.ActorActive, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	membership, err := im.NewTenantMembershipSnapshot(
+		tenant, principalID, actorRef, im.TenantMembershipMember, im.TenantMembershipActive, 1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &appIdentityAuthority{binding: binding, principal: principal, membership: membership, actor: actor}
+}
+
+func (authority *appIdentityAuthority) CurrentHumanIdentityBinding(context.Context, im.ExternalIdentityRef) (im.HumanExternalIdentityBinding, error) {
+	return authority.binding, nil
+}
+func (authority *appIdentityAuthority) CurrentHumanPrincipal(context.Context, im.HumanPrincipalID) (im.HumanPrincipalSnapshot, error) {
+	return authority.principal, nil
+}
+func (authority *appIdentityAuthority) CurrentTenantMembership(context.Context, im.TenantID, im.HumanPrincipalID) (im.TenantMembershipSnapshot, error) {
+	return authority.membership, nil
+}
+func (authority *appIdentityAuthority) CurrentActor(context.Context, im.ActorRef) (im.ActorSnapshot, error) {
+	return authority.actor, nil
 }
