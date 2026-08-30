@@ -251,20 +251,37 @@ export function App() {
     }
   }
 
-  async function inviteAgent() {
-    if (!selectedConversationId) return;
-    const installedAgent = agents.find((agent) => agent.installationStatus === "active");
-    if (!installedAgent) return;
+  async function installAgent(agent: (typeof agents)[number]) {
+    if (!agent.canInstall) return;
+    setLoading(true);
+    setError("");
+    setMemberAction("");
+    try {
+      const result = await api.installAgent(agent.definitionId, `web/install/${crypto.randomUUID()}`);
+      const [agentPage, runtime, page] = await Promise.all([api.agents(), api.snapshot(), api.conversations()]);
+      setAgents(agentPage.agents);
+      setSnapshot(runtime);
+      setConversations(page.conversations);
+      setMemberAction(result.replayed ? `${result.agent.name} 已安装（幂等重放）` : `${result.agent.name} 已安装到当前工作空间`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function inviteAgent(agent: (typeof agents)[number]) {
+    if (!selectedConversationId || agent.installationStatus !== "active" || !agent.agentActorId) return;
     setLoading(true);
     setError("");
     setMemberAction("");
     try {
       const result = await api.addMembers(
         selectedConversationId,
-        [installedAgent.agentActorId],
+        [agent.agentActorId],
         `web/members/${crypto.randomUUID()}`,
       );
-      setMemberAction(result.addedActorIds.length > 0 ? `已邀请 ${installedAgent.name}` : `${installedAgent.name} 已在群中`);
+      setMemberAction(result.addedActorIds.length > 0 ? `已邀请 ${agent.name}` : `${agent.name} 已在群中`);
       const page = await api.conversations();
       setConversations(page.conversations);
     } catch (cause) {
@@ -453,13 +470,13 @@ export function App() {
             <div className="mt-4 space-y-3">
               {agents.length === 0 && <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-500">正在读取 Agent Store…</div>}
               {agents.map((agent) => (
-                <div key={agent.installationId} className="rounded-xl border border-violet/20 bg-violet/5 p-3 text-xs text-slate-300">
+                <div key={`${agent.definitionId}:${agent.releaseId}`} className="rounded-xl border border-violet/20 bg-violet/5 p-3 text-xs text-slate-300">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold text-violet">{agent.name}</span>
                     <span className="rounded-full border border-green-300/20 px-2 py-1 text-[10px] text-green-300">{agent.installationStatus}</span>
                   </div>
                   <div className="mt-2 leading-5 text-slate-400">{agent.summary}</div>
-                  <div className="mt-2 text-slate-500">release {agent.version} · actor {agent.agentActorId}</div>
+                  <div className="mt-2 text-slate-500">release {agent.version} · actor {agent.agentActorId || "尚未创建"}</div>
                   <div className="mt-2 border-t border-white/10 pt-2 text-slate-400">
                     已授权：<span className="text-slate-200">{agent.grantedCapabilities.join(" · ") || "无"}</span>
                   </div>
@@ -467,13 +484,19 @@ export function App() {
                     数据路线：{agent.dataRoutes.map((route) => `${route.name} → ${route.destinations.join(", ")}`).join("；") || "无"}
                   </div>
                   <div className="mt-1 text-slate-500">Trust Passport：{agent.attestations.length} 项审阅声明 · {agent.passportStatus}</div>
-                  <button
-                    className="button-secondary mt-3 w-full"
-                    onClick={() => void inviteAgent()}
-                    disabled={loading || !selectedConversationId || agent.installationStatus !== "active"}
-                  >
-                    邀请到当前群
-                  </button>
+                  {agent.canInstall ? (
+                    <button className="button-primary mt-3 w-full" onClick={() => void installAgent(agent)} disabled={loading}>
+                      安装到当前工作空间
+                    </button>
+                  ) : (
+                    <button
+                      className="button-secondary mt-3 w-full"
+                      onClick={() => void inviteAgent(agent)}
+                      disabled={loading || !selectedConversationId || agent.installationStatus !== "active"}
+                    >
+                      邀请到当前群
+                    </button>
+                  )}
                 </div>
               ))}
               {memberAction && <div role="status" className="rounded-lg border border-cyan/20 bg-cyan/5 px-3 py-2 text-xs text-cyan">{memberAction}</div>}

@@ -47,10 +47,16 @@ export type AgentStoreEntry = {
   grantedCapabilities: string[];
   dataRoutes: AgentDataRoute[];
   attestations: string[];
+  canInstall: boolean;
 };
 
 export type AgentStorePage = {
   agents: AgentStoreEntry[];
+};
+
+export type AgentStoreInstallResult = {
+  agent: AgentStoreEntry;
+  replayed: boolean;
 };
 
 export type Conversation = {
@@ -188,6 +194,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   snapshot: () => request<RuntimeSnapshot>("/api/v1/demo/im"),
   agents: () => request<AgentStorePage>("/api/v1/demo/im/agents"),
+  installAgent: (definitionId: string, idempotencyKey: string) =>
+    request<AgentStoreInstallResult>(`/api/v1/demo/im/agents/${encodeURIComponent(definitionId)}/install`, {
+      method: "POST",
+      body: JSON.stringify({ idempotencyKey }),
+    }),
   tasks: () => request<TaskPage>("/api/v1/demo/im/tasks"),
   artifacts: () => request<ArtifactPage>("/api/v1/demo/im/artifacts"),
   needsYou: () => request<NeedsYouPage>("/api/v1/demo/im/needs-you"),
