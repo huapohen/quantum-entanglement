@@ -3,10 +3,11 @@
 > 适用分支：`mainline_continue_quantum_entanglement`  
 > 更新日期：2026-08-30
 
-## 为什么有 2,964 项
+## 为什么有 2,969 项
 
-2,964 是当前集成评审分支由 pytest 收集到的测试用例总数，不是本轮每个 commit 都要执行的数量。
-合并前的 QE 内核基线约为 2,962 项；当前数字会随参数化用例和测试文件合并而变化。测试库存的
+2,969 是当前评审分支由 pytest 收集到的测试用例总数，不是本轮每个 commit 都要执行的数量。
+最近一次跨领域集成封板在 `4783f61` 记录了 2,964 项全量通过；随后回归选择器新增 5 项自身
+选择逻辑测试。测试库存会随参数化用例和测试文件合并而变化。测试库存的
 增长只说明覆盖面变化，不能用来推导单次改动的回归范围。
 
 ## 分层门禁
@@ -40,7 +41,7 @@ PYTHONPATH=src .venv/bin/pytest -q \
 阶段封板：
 
 ```bash
-PYTHONPATH=src .venv/bin/pytest --collect-only  # 当前 2,964 项，仅盘点库存
+PYTHONPATH=src .venv/bin/pytest --collect-only  # 当前 2,969 项，仅盘点库存
 PYTHONPATH=src .venv/bin/pytest -q
 .venv/bin/ruff check src tests
 PYTHONPATH=src .venv/bin/python -m mypy --strict src

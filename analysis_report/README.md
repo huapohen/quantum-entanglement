@@ -59,7 +59,7 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | M1–M7 与 M7.5 projection 候选已完成，下一步认证作用域/recovery | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移、projection 与 worker 门禁的提交级计划 |
-| `../docs/production/TESTING_STRATEGY.md` | 当前执行规则 | 小改动跑专项，阶段封板才跑全量 2,964 项；静态门禁与提交纪律 |
+| `../docs/production/TESTING_STRATEGY.md` | 当前执行规则 | 小改动跑专项，阶段封板才跑全量；当前库存 2,969 项，最近集成封板 2,964 项通过 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
