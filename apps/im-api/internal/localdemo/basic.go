@@ -28,6 +28,7 @@ var (
 	ErrForbidden     = errors.New("local IM operation forbidden")
 	ErrInvalidCursor = errors.New("local IM cursor is invalid")
 	ErrProvider      = errors.New("local IM provider effect failed")
+	ErrPersistence   = errors.New("local IM Agent Store persistence failed")
 	ErrIntegrity     = errors.New("local IM state integrity failure")
 
 	localIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,126}[A-Za-z0-9]$`)

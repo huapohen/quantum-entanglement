@@ -131,6 +131,13 @@ func (service *Service) OffboardAgent(
 	if err != nil {
 		return AgentStoreOffboardResult{}, ErrIntegrity
 	}
+	if service.agentStoreBackend != nil {
+		if err := service.agentStoreBackend.CommitOffboard(
+			ctx, service.parent.Ref().TenantID(), input.IdempotencyKey, digest, target.installation, transitioned,
+		); err != nil {
+			return AgentStoreOffboardResult{}, errors.Join(ErrPersistence, err)
+		}
+	}
 	for _, conversationID := range service.conversationOrder {
 		conversation := service.conversations[conversationID]
 		delete(conversation.members, actorID)

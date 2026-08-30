@@ -86,6 +86,7 @@ type Service struct {
 	installation          agentstore.InstallationSnapshot
 	passport              agentstore.TrustPassport
 	agentCatalog          []agentCatalogRecord
+	agentStoreBackend     AgentStoreBackend
 	agentInstallRequests  map[string]agentInstallRecord
 	agentOffboardRequests map[string]agentOffboardRecord
 	runtime               modelruntime.Runtime
@@ -109,14 +110,25 @@ func New() (*Service, error) {
 }
 
 func NewFromEnv(lookup modelruntime.LookupEnv) (*Service, error) {
+	return NewFromEnvWithAgentStore(lookup, nil)
+}
+
+func NewFromEnvWithAgentStore(lookup modelruntime.LookupEnv, backend AgentStoreBackend) (*Service, error) {
 	runtime, err := modelruntime.FromEnv(lookup)
 	if err != nil {
 		return nil, err
 	}
-	return NewWithRuntime(runtime)
+	return NewWithRuntimeAndAgentStore(runtime, backend)
 }
 
 func NewWithRuntime(runtime modelruntime.Runtime) (*Service, error) {
+	return NewWithRuntimeAndAgentStore(runtime, nil)
+}
+
+// NewWithRuntimeAndAgentStore is the explicit composition seam for a durable Agent Store. A nil
+// backend keeps the zero-network in-memory demo unchanged; a configured backend is seeded with
+// the reviewed catalog before the HTTP surface is returned.
+func NewWithRuntimeAndAgentStore(runtime modelruntime.Runtime, backend AgentStoreBackend) (*Service, error) {
 	if runtime == nil {
 		runtime = modelruntime.NewDeterministic()
 	}
@@ -214,10 +226,11 @@ func NewWithRuntime(runtime modelruntime.Runtime) (*Service, error) {
 		providerRef: providerRef, providerBound: true, providerStatus: string(im.ProviderEffectCommitted),
 		createdAt: now, messages: make([]localMessage, 0), byClient: make(map[im.MessageID]int),
 	}
-	return &Service{
+	service := &Service{
 		authVerifier: verifier, provider: provider, coordinator: coordinator,
 		parent: parent, requester: requester, requestAccess: requestAccess,
 		installation: installation, passport: passport,
+		agentStoreBackend: backend,
 		agentCatalog: []agentCatalogRecord{
 			{passport: passport, installation: installation},
 			{passport: plannerPassport},
@@ -233,7 +246,17 @@ func NewWithRuntime(runtime modelruntime.Runtime) (*Service, error) {
 		conversationCreates: make(map[string]createRecord), memberUpdates: make(map[string]memberUpdateRecord),
 		tasks: make(map[string]TaskView), artifacts: make(map[string]ArtifactView), needsYou: make(map[string]NeedsYouView),
 		cursorNamespaceHex: hex.EncodeToString(cursorNamespace[:]),
-	}, nil
+	}
+	if backend != nil {
+		records := make([]AgentStoreRecord, 0, len(service.agentCatalog))
+		for _, record := range service.agentCatalog {
+			records = append(records, AgentStoreRecord{Passport: record.passport, Installation: record.installation})
+		}
+		if err := backend.SyncCatalog(context.Background(), tenant, records); err != nil {
+			return nil, errors.Join(ErrPersistence, err)
+		}
+	}
+	return service, nil
 }
 
 func (service *Service) Snapshot() Snapshot {

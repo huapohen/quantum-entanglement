@@ -211,18 +211,33 @@ func (service *Service) InstallAgent(
 		return AgentStoreInstallResult{}, ErrProvider
 	}
 	// Retire the previous active demo installation before switching the selected runtime. The old
-	// actor remains in historical conversations, preserving producer/version provenance.
+	// actor remains in historical conversations, preserving producer/version provenance. Build the
+	// complete CAS set first so a durable backend can commit the control-plane switch atomically.
+	retiredInstallations := make([]agentstore.InstallationSnapshot, 0)
+	retiredIndexes := make([]int, 0)
 	for index, record := range service.agentCatalog {
 		if record.installation.IsZero() || record.installation.Status() != agentstore.InstallationActive {
 			continue
 		}
-		retired, transitionErr := agentstore.TransitionInstallation(
+		retiredInstallation, transitionErr := agentstore.TransitionInstallation(
 			record.installation, agentstore.InstallationOffboarded, service.nowUTC(), record.installation.Revision()+1,
 		)
 		if transitionErr != nil {
 			return AgentStoreInstallResult{}, ErrIntegrity
 		}
-		service.agentCatalog[index].installation = retired
+		retiredInstallations = append(retiredInstallations, retiredInstallation)
+		retiredIndexes = append(retiredIndexes, index)
+	}
+	if service.agentStoreBackend != nil {
+		if err := service.agentStoreBackend.CommitInstall(
+			ctx, service.parent.Ref().TenantID(), input.IdempotencyKey,
+			agentstore.SHA256Digest(digest), installation, retiredInstallations,
+		); err != nil {
+			return AgentStoreInstallResult{}, errors.Join(ErrPersistence, err)
+		}
+	}
+	for index, retiredInstallation := range retiredInstallations {
+		service.agentCatalog[retiredIndexes[index]].installation = retiredInstallation
 	}
 	service.agentCatalog[targetIndex].installation = installation
 	service.installation, service.passport = installation, passport

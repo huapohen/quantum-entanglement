@@ -25,7 +25,15 @@ var localDemoHTML []byte
 // and fake Clerk/RongCloud-shaped adapters make zero network calls; a model runtime is enabled only
 // by an explicit, fully configured environment mode.
 func NewLocalDemo() (*fiber.App, error) {
-	demo, err := localdemo.NewFromEnv(os.LookupEnv)
+	return NewLocalDemoWithAgentStore(nil)
+}
+
+// NewLocalDemoWithAgentStore is the explicit durable composition seam for the acceptance UI.
+// Passing a PostgreSQL-backed localdemo.AgentStoreBackend seeds the reviewed catalog and routes
+// install/offboard control-plane mutations through the tenant-bound Unit of Work; nil preserves
+// the deterministic in-memory demo used by the zero-network quick start.
+func NewLocalDemoWithAgentStore(backend localdemo.AgentStoreBackend) (*fiber.App, error) {
+	demo, err := localdemo.NewFromEnvWithAgentStore(os.LookupEnv, backend)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +258,8 @@ func localDemoAppError(err error) error {
 	case errors.Is(err, localdemo.ErrInvalidCursor), errors.Is(err, localdemo.ErrInvalidInput):
 		return httpapi.NewAppError(httpapi.CodeValidationFailed, err)
 	case errors.Is(err, localdemo.ErrProvider):
+		return httpapi.NewAppError(httpapi.CodeDependencyUnavailable, err)
+	case errors.Is(err, localdemo.ErrPersistence):
 		return httpapi.NewAppError(httpapi.CodeDependencyUnavailable, err)
 	case errors.Is(err, localdemo.ErrRuntime):
 		return httpapi.NewAppError(httpapi.CodeDependencyUnavailable, err)

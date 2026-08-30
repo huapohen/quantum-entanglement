@@ -53,6 +53,7 @@
 - [`research/56_agent_store_current_status_20260830.md`](research/56_agent_store_current_status_20260830.md)：当前 Agent Store 可验收范围、PostgreSQL 底层能力、未闭合生产边界、证据命令与下一步优先级；Notion 暂缓统一同步。
 - [`research/57_agent_store_command_status_20260830.md`](research/57_agent_store_command_status_20260830.md)：安装/撤权 API 的 `committed|replayed` 命令状态、Web 反馈和 focused tests。
 - [`research/57_agent_store_provider_effect_outbox_20260831.md`](research/57_agent_store_provider_effect_outbox_20260831.md)：provider effect outbox 的状态机、lease、unknown 对账、fsync 文件 fixture 与生产 PostgreSQL 边界。
+- [`research/58_agent_store_localdemo_durable_seam_20260831.md`](research/58_agent_store_localdemo_durable_seam_20260831.md)：localdemo Agent Store 的 PostgreSQL durable backend seam、catalog seed、install/offboard CAS、组合入口、focused test 与尚未闭合的 provider reconcile 边界；`local_pending`，Notion 延后统一同步。
 
 | 文件 | 状态 | 内容 |
 |---|---|---|
