@@ -70,6 +70,7 @@ export type AgentStorePage = {
 export type AgentStoreInstallResult = {
   agent: AgentStoreEntry;
   replayed: boolean;
+  commandStatus: "committed" | "replayed";
 };
 
 export type AgentStoreOffboardResult = {
@@ -77,6 +78,7 @@ export type AgentStoreOffboardResult = {
   dataDisposition: AgentStoreDataDisposition;
   removedConversationIds: string[];
   replayed: boolean;
+  commandStatus: "committed" | "replayed";
 };
 
 /** Data handling policy requested when an Agent is offboarded. */

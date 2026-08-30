@@ -25,9 +25,15 @@ type AgentStoreInstallInput struct {
 }
 
 type AgentStoreInstallResult struct {
-	Agent    AgentStoreView `json:"agent"`
-	Replayed bool           `json:"replayed"`
+	Agent         AgentStoreView `json:"agent"`
+	Replayed      bool           `json:"replayed"`
+	CommandStatus string         `json:"commandStatus"`
 }
+
+const (
+	agentStoreCommandCommitted = "committed"
+	agentStoreCommandReplayed  = "replayed"
+)
 
 type agentCatalogRecord struct {
 	passport     agentstore.TrustPassport
@@ -160,7 +166,7 @@ func (service *Service) InstallAgent(
 		if existing.digest != digest {
 			return AgentStoreInstallResult{}, ErrConflict
 		}
-		return AgentStoreInstallResult{Agent: service.agentStoreView(target), Replayed: true}, nil
+		return AgentStoreInstallResult{Agent: service.agentStoreView(target), Replayed: true, CommandStatus: agentStoreCommandReplayed}, nil
 	}
 	// An already-active installation is a no-op. Resolve and validate the requested subset before
 	// this branch so a replay cannot be used to smuggle an undeclared capability past the gate.
@@ -169,7 +175,7 @@ func (service *Service) InstallAgent(
 			!slices.Equal(grantedCapabilities, target.installation.GrantedCapabilities()) {
 			return AgentStoreInstallResult{}, ErrConflict
 		}
-		return AgentStoreInstallResult{Agent: service.agentStoreView(target), Replayed: true}, nil
+		return AgentStoreInstallResult{Agent: service.agentStoreView(target), Replayed: true, CommandStatus: agentStoreCommandReplayed}, nil
 	}
 	passport := target.passport
 	workspace, ok := service.parent.WorkspaceID()
@@ -229,7 +235,9 @@ func (service *Service) InstallAgent(
 		return AgentStoreInstallResult{}, err
 	}
 	service.agentInstallRequests[requestKey] = agentInstallRecord{digest: digest, definitionID: definitionIDValue}
-	return AgentStoreInstallResult{Agent: service.agentStoreView(service.agentCatalog[targetIndex])}, nil
+	return AgentStoreInstallResult{
+		Agent: service.agentStoreView(service.agentCatalog[targetIndex]), CommandStatus: agentStoreCommandCommitted,
+	}, nil
 }
 
 // resolveInstallCapabilities adapts the shared action-time resolver to the localdemo error

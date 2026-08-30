@@ -24,6 +24,12 @@ function compactDigest(value: string) {
   return `${value.slice(0, 12)}…${value.slice(-8)}`;
 }
 
+function commandStatusLabel(value: string) {
+  if (value === "committed") return "已提交";
+  if (value === "replayed") return "幂等重放";
+  return `未知（${value || "缺失"}）`;
+}
+
 function conversationLabel(conversation: Conversation) {
   return conversation.name || conversation.id;
 }
@@ -298,7 +304,10 @@ export function App() {
       setAgents(agentPage.agents);
       setSnapshot(runtime);
       setConversations(page.conversations);
-      setMemberAction(result.replayed ? `${result.agent.name} 已安装（幂等重放）` : `${result.agent.name} 已安装到当前工作空间`);
+      setMemberAction(
+        `${result.agent.name} ${result.replayed ? "已安装（幂等重放）" : "已安装到当前工作空间"}` +
+        `（命令状态：${commandStatusLabel(result.commandStatus)}；已授权：${result.agent.grantedCapabilities.join(" · ") || "无"}）`,
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -320,7 +329,11 @@ export function App() {
       setAgents(agentPage.agents);
       setSnapshot(runtime);
       setConversations(page.conversations);
-      setMemberAction(result.replayed ? `${result.agent.name} 已停用（幂等重放）` : `${result.agent.name} 已停用并撤权`);
+      const dispositionLabel = result.dataDisposition === "retain" ? "保留" : result.dataDisposition === "delete" ? "删除" : "归档";
+      setMemberAction(
+        `${result.agent.name} ${result.replayed ? "已停用（幂等重放）" : "已停用并撤权"}` +
+        `（命令状态：${commandStatusLabel(result.commandStatus)}；数据处置：${dispositionLabel}；移除会话：${result.removedConversationIds.length} 个）`,
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

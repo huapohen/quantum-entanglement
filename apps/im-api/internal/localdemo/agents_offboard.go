@@ -21,6 +21,7 @@ type AgentStoreOffboardResult struct {
 	DataDisposition        string         `json:"dataDisposition"`
 	RemovedConversationIDs []string       `json:"removedConversationIds"`
 	Replayed               bool           `json:"replayed"`
+	CommandStatus          string         `json:"commandStatus"`
 }
 
 type agentOffboardRecord struct {
@@ -73,7 +74,7 @@ func (service *Service) OffboardAgent(
 			return AgentStoreOffboardResult{}, ErrConflict
 		}
 		replayed := existing.result
-		replayed.Replayed = true
+		replayed.Replayed, replayed.CommandStatus = true, agentStoreCommandReplayed
 		return replayed, nil
 	}
 	if target.installation.Status() == agentstore.InstallationOffboarded {
@@ -146,6 +147,7 @@ func (service *Service) OffboardAgent(
 		Agent:                  service.agentStoreView(service.agentCatalog[targetIndex]),
 		DataDisposition:        string(disposition),
 		RemovedConversationIDs: append([]string(nil), removedConversationIDs...),
+		CommandStatus:          agentStoreCommandCommitted,
 	}
 	service.agentOffboardRequests[requestKey] = agentOffboardRecord{digest: digest, result: result}
 	return result, nil
