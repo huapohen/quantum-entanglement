@@ -68,15 +68,36 @@ func TestPostgresMessageProjectorEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := projector.Run(t.Context(), tenantID, workspaceValue, 2)
-	if err != nil || first.Processed != 3 || first.Checkpoint.Position != 3 {
-		t.Fatalf("first projector result=%#v err=%v", first, err)
+	// A failure before COMMIT must roll back the complete page, including rows, head and
+	// checkpoint. The next run must be able to replay the exact page from the original cursor.
+	preCommitFailed := false
+	projector.commit = func(commitContext context.Context, transaction pgx.Tx) error {
+		if !preCommitFailed {
+			preCommitFailed = true
+			return errors.New("synthetic projector pre-commit failure")
+		}
+		return transaction.Commit(commitContext)
+	}
+	if _, err := projector.Run(t.Context(), tenantID, workspaceValue, 2); !errors.Is(err, imstore.ErrStoreUnavailable) {
+		t.Fatalf("pre-commit failure error=%v, want %v", err, imstore.ErrStoreUnavailable)
 	}
 	reader, err := NewReader(pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	conversation := mustConversation(t, "ten_alpha", "cnv_room")
+	rolledBack, err := reader.ReadPage(t.Context(), imstore.MessageReadPageQuery{
+		Conversation: conversation, WorkspaceID: workspaceValue, Limit: 10,
+		ConversationRevision: 1, AccessRevision: 1,
+	})
+	if err != nil || len(rolledBack.Messages) != 0 || rolledBack.ProjectionRevision != 0 {
+		t.Fatalf("pre-commit rollback page=%#v err=%v", rolledBack, err)
+	}
+	projector.commit = commitProjectorTransaction
+	first, err := projector.Run(t.Context(), tenantID, workspaceValue, 2)
+	if err != nil || first.Processed != 3 || first.Checkpoint.Position != 3 {
+		t.Fatalf("first projector result=%#v err=%v", first, err)
+	}
 	page, err := reader.ReadPage(t.Context(), imstore.MessageReadPageQuery{Conversation: conversation, WorkspaceID: workspaceValue, Limit: 10, ConversationRevision: 1, AccessRevision: 1})
 	if err != nil || len(page.Messages) != 1 || page.Messages[0].Status() != im.MessageStatusEdited || page.Messages[0].Text() != "after" || page.ProjectionRevision != 3 {
 		t.Fatalf("materialized page=%#v err=%v", page, err)
