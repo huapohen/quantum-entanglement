@@ -35,6 +35,8 @@ from enum import Enum
 from itertools import islice
 from typing import Any, Optional, Protocol, Union
 
+from . import process_identity as _process_identity
+
 _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ACTION = re.compile(r"^(?:\*|[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*(?:\.\*)?)$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -778,6 +780,12 @@ class RevocationGuardIntegrityError(RuntimeError):
     """Raised when durable revision state or its owned schema is malformed."""
 
 
+class RevocationGuardProcessMismatchError(RuntimeError):
+    """Raised when a durable revocation guard is used after its process forked."""
+
+    code = "revocation_guard_process_mismatch"
+
+
 _REVOCATION_GUARD_SCHEMA = """
 CREATE TABLE qe_revocation_high_water (
     tenant_id TEXT PRIMARY KEY,
@@ -803,6 +811,8 @@ class SQLiteRevocationRevisionGuard:
     """
 
     def __init__(self, path: str, *, busy_timeout_ms: int = 5_000) -> None:
+        self._process_owner = _process_identity.capture_process_owner()
+        self._require_current_process()
         if type(path) is not str or not path:
             raise ValueError("path must be a non-empty string")
         if isinstance(busy_timeout_ms, bool) or not isinstance(busy_timeout_ms, int):
@@ -838,10 +848,17 @@ class SQLiteRevocationRevisionGuard:
             raise
 
     def __enter__(self) -> SQLiteRevocationRevisionGuard:
+        self._require_current_process()
         return self
 
     def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> None:
         self.close()
+
+    def _require_current_process(self) -> None:
+        _process_identity.require_current_process(
+            self._process_owner,
+            RevocationGuardProcessMismatchError,
+        )
 
     def _initialize(self, busy_timeout_ms: int) -> None:
         with self._lock:
@@ -937,6 +954,7 @@ class SQLiteRevocationRevisionGuard:
         revision: int,
         state_digest: str,
     ) -> bool:
+        self._require_current_process()
         if type(tenant_id) is not TenantId:
             raise TypeError("tenant_id must be an exact TenantId")
         value = _integer(revision, "revision")
@@ -1020,10 +1038,12 @@ class SQLiteRevocationRevisionGuard:
             )
 
     def high_water(self, tenant_id: TenantId) -> Optional[int]:
+        self._require_current_process()
         row = self._read_row(tenant_id)
         return row[0] if row is not None else None
 
     def state_digest(self, tenant_id: TenantId) -> Optional[str]:
+        self._require_current_process()
         row = self._read_row(tenant_id)
         return row[1] if row is not None else None
 
@@ -1041,6 +1061,7 @@ class SQLiteRevocationRevisionGuard:
             return self._validated_row(row) if row is not None else None
 
     def close(self) -> None:
+        self._require_current_process()
         with self._lock:
             self._connection.close()
 
@@ -2723,6 +2744,7 @@ __all__ = [
     "ResourceRef",
     "ResourceScope",
     "RevocationGuardIntegrityError",
+    "RevocationGuardProcessMismatchError",
     "RevocationId",
     "RevocationRevisionGuard",
     "RevocationSnapshot",

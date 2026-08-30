@@ -1,4 +1,5 @@
 import copy
+import os
 import pickle
 import sqlite3
 import tempfile
@@ -33,6 +34,7 @@ from quantum_entanglement.tenancy import (
     ResourceRef,
     ResourceScope,
     RevocationGuardIntegrityError,
+    RevocationGuardProcessMismatchError,
     RevocationId,
     RevocationSnapshot,
     Role,
@@ -745,6 +747,35 @@ class TenancyTests(unittest.TestCase):
             finally:
                 first.close()
                 second.close()
+
+    def test_sqlite_revision_guard_rejects_fork_inherited_connection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "fork-revocations.sqlite3")
+            guard = SQLiteRevocationRevisionGuard(path)
+            read_fd, write_fd = os.pipe()
+            child_pid = os.fork()
+            if child_pid == 0:
+                os.close(read_fd)
+                try:
+                    guard.high_water(self.tenant)
+                except RevocationGuardProcessMismatchError:
+                    os.write(write_fd, b"ok")
+                except BaseException:
+                    os.write(write_fd, b"unexpected")
+                else:
+                    os.write(write_fd, b"missing")
+                finally:
+                    os.close(write_fd)
+                os._exit(0)
+            os.close(write_fd)
+            try:
+                result = os.read(read_fd, 32)
+            finally:
+                os.close(read_fd)
+            _, status = os.waitpid(child_pid, 0)
+            guard.close()
+            self.assertEqual(status, 0)
+            self.assertEqual(result, b"ok")
 
     def test_sqlite_revision_guard_rejects_weak_schema_trigger_and_bad_row(self):
         with tempfile.TemporaryDirectory() as directory:
