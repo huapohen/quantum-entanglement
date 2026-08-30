@@ -23,6 +23,8 @@ loopback-only Go IM demo 和 Vite Web。macOS 会自动打开浏览器；回到�
 ```bash
 ./scripts/start_web_client.sh --no-open
 ./scripts/start_web_client.sh --no-install --im-port 19080 --web-port 5174
+# 同一 Wi-Fi 下用 iPhone/iPad/Android/鸿蒙浏览器体验
+./scripts/start_web_client.sh --lan --no-install
 ```
 
 默认 Agent runtime 是 `synthetic`，不会产生模型网络请求。要在本地 Web 群聊中显式试用
@@ -42,6 +44,9 @@ export WANWORK_IM_MODEL='gpt-5.6-sol'
 
 `--im-port` 会通过 `WANWORK_IM_WEB_API_PORT` 同步 Vite `/api` proxy，不需要手工修改配置。
 端口必须是 `1` 到 `65535` 的整数。
+
+`--lan` 仅让 Vite 页面监听局域网，Go API 仍绑定本机回环并由 Vite 代理；设备和开发机需在同一
+Wi-Fi，脚本会打印可访问的局域网地址。该模式只用于验收，不要暴露到公网。
 
 终端一：启动 Go IM demo：
 

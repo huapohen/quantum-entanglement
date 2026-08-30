@@ -12,6 +12,7 @@ web_usage() {
   --im-port PORT    IM API 端口，默认 18080
   --web-port PORT   Web 页面端口，默认 5173
   --model-runtime MODE  Agent runtime：synthetic（默认）或 openai-compatible
+  --lan             让 Vite 监听局域网，手机/平板可用同一 Wi-Fi 访问（仅本地验收）
   --no-install      不自动安装 clients/im-web 的 npm 依赖
   --no-open         不自动打开浏览器
   -h, --help        显示帮助
@@ -40,6 +41,7 @@ web_page_port=5173
 web_agent_runtime=${WANWORK_IM_AGENT_RUNTIME:-synthetic}
 web_no_install=0
 web_no_open=0
+web_lan=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -76,6 +78,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --no-open)
             web_no_open=1
+            shift
+            ;;
+        --lan)
+            web_lan=1
             shift
             ;;
         -h|--help)
@@ -171,9 +177,20 @@ if [ "$web_api_ready" -ne 1 ]; then
     web_fail "IM API 未在 180 秒内就绪（端口 ${web_im_port}）；请检查上方日志"
 fi
 
+web_host=127.0.0.1
 web_url="http://127.0.0.1:$web_page_port"
+if [ "$web_lan" -eq 1 ]; then
+    web_host=0.0.0.0
+    web_lan_ip=''
+    if command -v ipconfig >/dev/null 2>&1; then
+        web_lan_ip=$(ipconfig getifaddr en0 2>/dev/null || true)
+        if [ -z "$web_lan_ip" ]; then web_lan_ip=$(ipconfig getifaddr en1 2>/dev/null || true); fi
+    fi
+    if [ -n "$web_lan_ip" ]; then web_url="http://$web_lan_ip:$web_page_port"; else web_url="http://<本机局域网IP>:$web_page_port"; fi
+fi
 printf '%s\n' "Web IM 已准备启动：$web_url"
 printf '%s\n' "API 代理：/api -> http://127.0.0.1:$web_im_port"
+if [ "$web_lan" -eq 1 ]; then printf '%s\n' "局域网模式：手机/平板与本机同一 Wi-Fi 后打开上面的 URL；不要暴露到公网。"; fi
 printf '%s\n' "停止全部服务：回到本终端按 Ctrl-C"
 
 if [ "$web_no_open" -eq 0 ] && command -v open >/dev/null 2>&1; then
@@ -182,4 +199,4 @@ fi
 
 cd "$web_client_dir"
 WANWORK_IM_WEB_API_PORT="$web_im_port" \
-    npm run dev -- --host 127.0.0.1 --port "$web_page_port"
+    npm run dev -- --host "$web_host" --port "$web_page_port"

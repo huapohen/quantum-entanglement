@@ -1,6 +1,6 @@
 # v0版多端应用状态与交付路线
 
-更新时间：2026-08-29  
+更新时间：2026-08-30  
 分支：`dev_wanwork_quantum_entanglement`  
 状态：本地优先，未同步 Notion
 
@@ -12,20 +12,20 @@ iOS、iPadOS、Android、鸿蒙、macOS、Windows 或 Linux 原生客户端**。
 
 因此当前能直接体验的是：
 
-1. 在 macOS/Linux 桌面浏览器打开本地 Web 体验；
-2. 在浏览器开发者工具中切换手机 viewport，检查响应式布局；
+1. 在 macOS/Windows/Linux 桌面浏览器打开本地 Web 体验；
+2. 使用 `scripts/start_web_client.sh --lan`，让同一 Wi-Fi 下的 iPhone/iPad/Android/鸿蒙浏览器直接体验同一 Web/PWA；
 3. 用生产构建部署 `dist/` 后，可在支持 PWA 的浏览器中添加到主屏幕；
 4. 使用 Go IM API demo 检查本地 HTTP envelope、路由和 fake 数据边界。
 
-手机或另一台电脑目前不能直接访问本地体验服务：服务故意只绑定 `127.0.0.1`，没有开放局域网
-监听、反向代理或公网入口。这是安全边界，不是遗漏的启动参数。
+手机或另一台电脑可在显式 `--lan` 模式下通过 Vite 代理访问 Web；Go API 仍只绑定 `127.0.0.1`，
+不要将该验收服务暴露到公网。
 
 ## 当前交付矩阵
 
 | 平台 | 当前交付物 | 能否安装 | 当前证据 | 当前状态 |
 | --- | --- | --- | --- | --- |
 | Web（桌面浏览器） | `scripts/start_web_client.sh` + React/Vite | 无需安装 | `docs/wanwork_im/LOCAL_IM_ACCEPTANCE_GUIDE.md`、Playwright 截图 | 可体验 |
-| Web/PWA（移动 viewport） | 同一 Web 页面 + manifest/service worker | 可添加到主屏幕，但不是原生安装 | `clients/im-web/public/manifest.webmanifest`、响应式构建 | 可体验/可安装 Web 壳，不是原生 App |
+| Web/PWA（移动 viewport/真实设备） | 同一 Web 页面 + manifest/service worker + `--lan` | 可添加到主屏幕，但不是原生安装 | `clients/im-web/public/manifest.webmanifest`、响应式构建、局域网启动器 | 可体验/可安装 Web 壳，不是原生 App |
 | macOS | 无 `.app/.dmg` | 否 | 无原生 bundle、签名或安装验收 | 未开始 |
 | Windows | 无 `.exe/.msix` | 否 | 无 Windows 构建流水线或签名产物 | 未开始 |
 | Linux | 无 AppImage/deb/rpm | 否 | 无 Linux 打包与运行验收 | 未开始 |
