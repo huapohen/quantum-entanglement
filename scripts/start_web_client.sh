@@ -134,7 +134,12 @@ web_cleanup() {
 }
 trap web_cleanup EXIT INT TERM
 
-printf '%s\n' "正在启动零网络 IM API：http://127.0.0.1:$web_im_port"
+if [ "$web_agent_runtime" = "synthetic" ]; then
+    web_runtime_label="零网络 synthetic"
+else
+    web_runtime_label="显式模型 runtime（仅访问配置端点）"
+fi
+printf '%s\n' "正在启动 $web_runtime_label IM API：http://127.0.0.1:$web_im_port"
 (
     cd "$web_project_root"
     env WANWORK_IM_LISTEN_ADDRESS="127.0.0.1:$web_im_port" \
