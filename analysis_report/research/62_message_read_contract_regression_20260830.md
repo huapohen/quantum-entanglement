@@ -32,6 +32,10 @@ go vet ./...
 | `go vet ./...` | 通过 |
 | `git diff --check` | 通过 |
 
+随后执行一次阶段封板命令 `scripts/regression_gate.py --full`。Python 全量、Ruff、strict mypy、
+compileall、Go 全模块 test/vet、Web build 和 Web-first synthetic 均通过，门禁最终输出
+`regression_gate=passed`。Web build 的执行目录修复见提交 `7f2f88f`。
+
 ## 十小时交付节奏
 
 每个独立小 commit 先按路径执行最小充分门禁并 push；同一阶段的多个 commit 合并为一个封板点，
