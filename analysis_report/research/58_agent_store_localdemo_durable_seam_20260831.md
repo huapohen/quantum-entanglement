@@ -1,6 +1,6 @@
 # Agent Store localdemo durable seam（2026-08-31）
 
-状态：`local_pending`。按当前协作约束，本专题只写入本地工作树和 Git，Notion 在截止时间前统一批量同步；语雀、飞书、企微均未操作。代码提交：`22a65e4`（seam）与 `0df18f7`（catalog drift fail-closed）。
+状态：`local_pending`。按当前协作约束，本专题只写入本地工作树和 Git，Notion 在截止时间前统一批量同步；语雀、飞书、企微均未操作。代码提交：`22a65e4`（seam）、`0df18f7`（catalog drift fail-closed）与 `9879c23`（typed-nil backend guard/test）。
 
 ## 结论
 
