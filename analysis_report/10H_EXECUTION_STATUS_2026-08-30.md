@@ -2,8 +2,8 @@
 
 更新时间：2026-08-30 15:12（Asia/Shanghai）
 主线分支：`dev_wanwork_quantum_entanglement`  
-当前 HEAD：`5a3a6a4`（已推送到 GitHub）
-安全备份：`backup_0830_150912`（与当前代码一致）
+当前 HEAD：见 Git 远端 `origin/dev_wanwork_quantum_entanglement`（本文件不硬编码可变 SHA）
+最近安全备份：`backup_0830_151334`（固定指向本轮 offboard 文档收口节点）
 固定验收标签：`v0.2.0-web-im-20260830`
 
 ## 结论
