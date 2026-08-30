@@ -99,6 +99,35 @@ assert data["parentConversationId"] == "cnv_local_demo_parent"
 assert data["childConversationId"] != data["parentConversationId"]
 assert data["agentReply"]["conversationId"] == data["childConversationId"]
 assert data["providerStatus"] == "committed"
+assert data["taskId"].startswith("task_local_")
+assert data["artifactId"].startswith("artifact_local_")
+assert data["needsYouId"].startswith("needs_local_")
 '
 
-printf '%s\n' "Web-first synthetic 验证通过（构建、envelope、Agent Store、子群隔离）"
+verify_task_id=$(VERIFY_RESULT="$verify_result" python3 -c 'import json, os; print(json.loads(os.environ["VERIFY_RESULT"])["data"]["taskId"])')
+verify_artifact_id=$(VERIFY_RESULT="$verify_result" python3 -c 'import json, os; print(json.loads(os.environ["VERIFY_RESULT"])["data"]["artifactId"])')
+verify_needs_id=$(VERIFY_RESULT="$verify_result" python3 -c 'import json, os; print(json.loads(os.environ["VERIFY_RESULT"])["data"]["needsYouId"])')
+verify_workboard_tasks=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' "http://127.0.0.1:$verify_port/api/v1/demo/im/tasks")
+verify_workboard_artifacts=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' "http://127.0.0.1:$verify_port/api/v1/demo/im/artifacts")
+verify_workboard_needs=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' "http://127.0.0.1:$verify_port/api/v1/demo/im/needs-you")
+VERIFY_TASKS="$verify_workboard_tasks" VERIFY_ARTIFACTS="$verify_workboard_artifacts" VERIFY_NEEDS="$verify_workboard_needs" \
+VERIFY_TASK_ID="$verify_task_id" VERIFY_ARTIFACT_ID="$verify_artifact_id" VERIFY_NEEDS_ID="$verify_needs_id" python3 -c '
+import json, os
+tasks=json.loads(os.environ["VERIFY_TASKS"]); artifacts=json.loads(os.environ["VERIFY_ARTIFACTS"]); needs=json.loads(os.environ["VERIFY_NEEDS"])
+assert tasks["code"] == artifacts["code"] == needs["code"] == 200
+assert any(item["id"] == os.environ["VERIFY_TASK_ID"] and item["status"] == "waiting_for_review" for item in tasks["data"]["tasks"])
+assert any(item["id"] == os.environ["VERIFY_ARTIFACT_ID"] and item["status"] == "draft" for item in artifacts["data"]["artifacts"])
+assert any(item["id"] == os.environ["VERIFY_NEEDS_ID"] and item["status"] == "open" for item in needs["data"]["needsYou"])
+'
+verify_resolved=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' -H 'Content-Type: application/json' \
+    --data '{"decision":"accept"}' "http://127.0.0.1:$verify_port/api/v1/demo/im/needs-you/$verify_needs_id/resolve")
+VERIFY_RESOLVED="$verify_resolved" python3 -c '
+import json, os
+data=json.loads(os.environ["VERIFY_RESOLVED"])
+assert data["code"] == 200
+assert data["data"]["artifact"]["status"] == "accepted"
+assert data["data"]["task"]["status"] == "completed"
+assert data["data"]["needsYou"]["status"] == "resolved"
+'
+
+printf '%s\n' "Web-first synthetic 验证通过（构建、envelope、Agent Store、子群隔离、Workboard 审阅闭环）"
