@@ -31,10 +31,10 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-30T12:40:30+08:00 | `mainline_continue_quantum_entanglement`<br>`dc310bde70d0` | E3 Result Authority 人工评审分支；opt-in store-owned result acceptance、fresh-ACK AcceptedV2、heartbeat acceptance seam 与 result-only business projection 候选已完成，生产 worker、认证 projection、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 894 / 落后 15 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 2026-08-30T12:37:25+08:00 | `dev_wanwork_quantum_entanglement`<br>`c3118f46d7f2` | WanWork IM Web/PWA 验收主线；包含群聊、Agent 子群、Workboard、消息搜索与局域网跨端体验。保持独立于正式 main，完成阶段验收后再决定是否合并。 | 未直接并入 main | 领先 489 / 落后 15 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
-| 2026-08-30T12:37:25+08:00 | `backup_0830_123730`<br>`c3118f46d7f2` | 用途待补充；当前节点主题：docs(trial): pin cross-platform acceptance tag | 未直接并入 main | 领先 489 / 落后 15 | — |
+| 2026-08-30T12:37:25+08:00 | `backup_0830_123730`<br>`c3118f46d7f2` | 2026-08-30 Web/PWA IM 最新验收备份；固定指向 c3118f4，仅用于恢复和审计。 | 未直接并入 main | 领先 489 / 落后 15 | — |
 | 2026-08-30T12:34:30+08:00 | `main`<br>`c7e697d8bb73` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 2026-08-30T12:34:05+08:00 | `mainline_continue_quantum_entanglement`<br>`4783f6159955` | E3 Result Authority 人工评审分支；opt-in store-owned result acceptance、fresh-ACK AcceptedV2、heartbeat acceptance seam 与 result-only business projection 候选已完成，生产 worker、认证 projection、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 892 / 落后 15 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 2026-08-30T12:21:52+08:00 | `backup_0830_122157`<br>`cee65799732a` | 2026-08-30 Web/PWA IM 阶段备份；固定指向 cee6579，仅用于恢复和审计。 | 未直接并入 main | 领先 488 / 落后 15 | — |
 | 2026-08-30T12:19:35+08:00 | `backup_0830_121946`<br>`208b6a993c19` | 用途待补充；当前节点主题：docs(status): record notion mirror checkpoint | 未直接并入 main | 领先 487 / 落后 15 | — |
 | 2026-08-30T12:14:31+08:00 | `backup_0830_301220`<br>`a526d4afb768` | 用途待补充；当前节点主题：docs(status): refresh latest web-first checkpoint | 未直接并入 main | 领先 486 / 落后 15 | — |
@@ -120,7 +120,7 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | 存在、干净 | `dev_research_docs_accelerator_20260830` | `b0e5611aeb6c` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_research_docs_accelerator_20260830` |
 | 存在、干净 | `dev_wanwork_quantum_entanglement` | `c3118f46d7f2` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 存在、干净 | `dev_web_first_accelerator_20260830` | `aa1daf471ab8` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_web_first_accelerator_20260830` |
-| 存在、有未提交修改 | `mainline_continue_quantum_entanglement` | `4783f6159955` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 存在、有未提交修改 | `mainline_continue_quantum_entanglement` | `dc310bde70d0` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 存在、干净 | `scoped_lease_process_matrix` | `4fd6588e8ca2` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/scoped_lease_process_matrix` |
 
 ## 固定版本标签
