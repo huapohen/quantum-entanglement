@@ -2,7 +2,7 @@
 
 > 证据日期：2026-08-30（Asia/Shanghai）  
 > 分支：`mainline_continue_quantum_entanglement`  
-> 当前代码 HEAD：`b50a451`（实现节点为 `36cd0b4`，race 矩阵为 `025b5c7`）
+> 当前代码 HEAD：`859ae57`（实现节点为 `36cd0b4`，race 矩阵为 `025b5c7`）
 > 远端：`origin/mainline_continue_quantum_entanglement`  
 > Notion 状态：`local_pending`；本地阶段结束后再批量同步并逐页回读
 
@@ -59,7 +59,7 @@ PYTHONPATH=src .venv/bin/pytest -q \
   tests/test_invocation_worker_lifecycle.py
 ```
 
-结果：**12 项通过**；Ruff 通过。
+结果：**13 项通过**；Ruff 通过。
 
 覆盖内容：
 
@@ -70,13 +70,14 @@ PYTHONPATH=src .venv/bin/pytest -q \
 4. 不合作 handler 在 bounded drain 后被 hard-cancel，仍不会进入 result acceptance；
 5. supervisor task 自身取消时不会遗留 live handler；
 6. heartbeat 返回 `False` 时 handler 被取消，结果被丢弃，active lease 被 relinquish；
-7. heartbeat/expiry 在两个 SQLite connection 上竞争时，最终只可能是：
+7. relinquish 抛出 store error 时 active-run bookkeeping 仍释放，不会阻塞后续 close；
+8. heartbeat/expiry 在两个 SQLite connection 上竞争时，最终只可能是：
    - heartbeat 先提交：job/attempt 仍 `RUNNING` 且 deadline 延长，expiry recovery 为 0；或
    - expiry 先提交：job 为 `FAILED`、attempt 为 `EXPIRED`，heartbeat 返回 `False`；
-8. 两个 connection 同时 relinquish 时恰好一个返回 `True`、另一个返回 `False`，持久状态只有
+9. 两个 connection 同时 relinquish 时恰好一个返回 `True`、另一个返回 `False`，持久状态只有
    一个完整 terminal fence；
-9. scoped start event 的 stream version 不因 heartbeat/relinquish 改写；
-10. 重复 relinquish、失效 claim、非法 limit 和非法输入均 fail closed。
+10. scoped start event 的 stream version 不因 heartbeat/relinquish 改写；
+11. 重复 relinquish、失效 claim、非法 limit 和非法输入均 fail closed。
 
 此前的结果 acceptance、SIGKILL、双进程 claim、backup/restore 证据仍见
 [`41_result_acceptance_worker_integration_evidence.md`](./41_result_acceptance_worker_integration_evidence.md)、
