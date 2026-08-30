@@ -64,8 +64,8 @@ curl --fail \
 这只证明本地安装状态机和 provider-neutral 投影，不证明真实制品、签名、组织审批、PostgreSQL
 持久化或生产撤权已完成。
 
-安装后可在同一张 Agent Store 卡片点击“停用并撤权”。页面会要求选择数据处置策略（默认
-`archive`；也可显式选择 `retain` 或 `delete`），然后调用：
+安装后可在同一张 Agent Store 卡片点击“停用并撤权”（当前 Web 按钮采用 `archive` 策略）。
+API 同时支持显式选择 `retain`、`archive` 或 `delete`，例如：
 
 ```bash
 curl --fail \
