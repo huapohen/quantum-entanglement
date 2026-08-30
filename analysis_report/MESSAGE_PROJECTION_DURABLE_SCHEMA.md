@@ -1,9 +1,9 @@
 # v0版 durable message projection schema 合同
 
-> 状态：schema 已注册到 PostgreSQL migration catalog（migration 11，`message_projection`），并已通过
-> catalog/RLS/postcondition 代码门禁；projector writer 尚未实现，因此本文档仍不授权直接切换默认读取。
-> 当前读取 bridge：`f64ee99` 的 bounded EventStore replay；materialized cutover 必须完成本文档的
-> migration、projector、checkpoint、双读比对和 rollback 证据后才能开启。
+> 状态：schema 已注册到 PostgreSQL migration catalog（migration 11，`message_projection`），migration
+> 12 已补齐 owner-only projector writer 候选并通过 catalog/RLS/postcondition/Go 代码门禁；本文档
+> 仍不授权直接切换默认读取。当前读取 bridge 继续使用 bounded EventStore replay；materialized
+> cutover 必须完成 applied-schema、双读比对、crash/restore 和 rollback 证据后才能开启。
 
 ## 1. 目标
 
@@ -63,13 +63,13 @@ and access-manifest/schema-digest registration. Workspace and conversation FKs m
 The projector consumes one event-stream page in a single serializable transaction:
 
 1. lock/read the exact head and verify `(tenant, workspace, conversation, projection_id)`;
-2. read the next event page after `current_sequence`;
-3. apply only the three frozen message event types through the strict reducer;
-4. insert/update message snapshot with CAS on `last_event_sequence` and `projection_revision`;
-5. update head with expected sequence/global position CAS;
-6. write `event_projection_checkpoints` in the same transaction;
-7. read back every changed row and revalidate scope, revision, digest and UTC time;
-8. commit; only then release the connection.
+2. read the next global event page after the projection cursor in the same Serializable transaction;
+3. skip non-conversation streams, observe non-message conversation events, and apply only the three frozen
+   message event types through the strict reducer;
+4. call migration-12 owner functions to insert/update message snapshot and head with CAS/idempotent replay;
+5. write `event_projection_checkpoints` in the same transaction;
+6. commit; only then release the connection. Durable row/head restoration revalidates scope, revision,
+   sequence and UTC values before replaying the next page.
 
 Any duplicate event, sequence gap, scope drift, unknown payload, duplicate client identity, checkpoint conflict,
 or partial write rolls back the entire transaction and leaves the projector lease in reconcile-required state.
@@ -99,7 +99,8 @@ restart; a cursor is observation metadata, not an authorization capability.
 
 ## 6. Current status
 
-The event-replay bridge is implemented and bounded. Migration 11 now creates and protects the two materialized
-tables, and the inactive reader adapter can validate their rows. The projector writer/checkpoint transaction,
-shadow comparison and crash/restore evidence remain open. Gate A–E, real Clerk/JWKS, real IM provider and
-outbound remain closed.
+The event-replay bridge is implemented and bounded. Migration 11 creates and protects the two materialized
+tables; migration 12 and `platform/postgres/improjection.Projector` now provide an owner-function writer,
+same-transaction global read and checkpoint CAS candidate. Shadow comparison, applied-schema integration,
+crash/restore/rollback evidence and production composition remain open. Gate A–E, real Clerk/JWKS, real IM
+provider and outbound remain closed.

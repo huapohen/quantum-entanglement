@@ -70,6 +70,7 @@ HTTP seam（`f226ab5`，实现提交 `8c4fb3f`）；用户在 2026-08-28 进一�
 | `research/65_postgres_materialized_message_reader_20260830.md` | materialized reader adapter 候选 | 严格 SQL row/head 读取、projection revision 游标、runtime pool 绑定；migration 11 已注册，默认仍未装配 |
 | `research/66_schema11_authority_cutover_regression_20260830.md` | migration 11 后 authority cutover 回归修复 | schema 版本夹具/golden 更新、Go 全模块 test/vet 与精确备份 |
 | `research/67_full_regression_gate_20260830.md` | 10 小时截止冲刺全量门禁 | 2,975 Python tests、Ruff/mypy/compileall、Go test/vet、Web build 与 synthetic 全部通过 |
+| `research/68_postgres_materialized_projector_writer_20260830.md` | PostgreSQL materialized projector writer 候选 | migration 12 owner-only CAS 写函数、同事务 EventStore 读取/快照/head/checkpoint、reducer restore、Go test/vet 证据；cutover 仍关闭 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
