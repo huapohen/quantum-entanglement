@@ -29,10 +29,11 @@
 ## 最短验收路径
 
 1. 保持创建群时邀请 Agent，创建一个群。
-2. 在右侧发布自定义指令，进入 Agent 子群并查看回复。
-3. 在 Workboard 查看 Task、Artifact 草稿和 Needs You。
-4. 点击“接受产物”或“退回”，观察 `accepted/completed` 或 `rejected` 状态。
-5. 切回父群确认只有受限工作卡，子群隔离仍成立。
+2. 点击左侧“单聊”可创建平台内的人-Agent 单聊，验证 direct conversation。
+3. 在右侧发布自定义指令，进入 Agent 子群并查看回复。
+4. 在 Workboard 查看 Task、Artifact 草稿和 Needs You。
+5. 点击“接受产物”或“退回”，观察 `accepted/completed` 或 `rejected` 状态。
+6. 切回父群确认只有受限工作卡，子群隔离仍成立。
 
 ## GPT runtime（可选）
 

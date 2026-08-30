@@ -159,6 +159,24 @@ export function App() {
     }
   }
 
+  async function createDirect() {
+    const installedAgent = agents.find((agent) => agent.installationStatus === "active");
+    if (!installedAgent) return;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.createConversation("与 v0版 Agent 单聊", `web/direct/${crypto.randomUUID()}`, [installedAgent.agentActorId]);
+      const page = await api.conversations();
+      setConversations(page.conversations);
+      selectConversation(result.conversation.id);
+      await loadMessages(result.conversation.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function sendMessage() {
     const text = messageText.trim();
     if (!selectedConversationId || !text) return;
@@ -304,6 +322,7 @@ export function App() {
               aria-label="新群名称"
             />
             <button className="button-secondary px-3" onClick={() => void createGroup()} disabled={loading} aria-label="创建群聊">+</button>
+            <button className="button-secondary px-3 text-xs" onClick={() => void createDirect()} disabled={loading || !selectedAgent} aria-label="创建单聊">单聊</button>
           </div>
           <input
             value={conversationFilter}

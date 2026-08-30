@@ -22,7 +22,7 @@ SSE/WebSocket resume、文件/已读/通知/reaction、原生 `.app/.exe/.ipa/.a
 | 主题 | 结果 |
 | --- | --- |
 | Web/PWA | React + TypeScript + Vite + Zustand；manifest；仅静态 shell service worker；API/聊天不缓存 |
-| IM API | Go + Fiber loopback；统一 HTTP 200 envelope；会话、群成员、消息、编辑、撤回、搜索 |
+| IM API | Go + Fiber loopback；统一 HTTP 200 envelope；direct/group 会话、群成员、消息、编辑、撤回、搜索 |
 | Agent 拓扑 | Agent Store 投影；普通用户式 Agent actor；父群 → 独立子群；ACL 隔离；父群只写受限工作卡 |
 | 任务工作台 | Task；Artifact 草稿；Needs You；接受/退回；幂等重放；独立于聊天正文 |
 | 模型 runtime | synthetic 默认；显式 OpenAI-compatible Responses/SSE；Key 不进入日志/报告/事件 |
