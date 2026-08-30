@@ -5,7 +5,10 @@ private, non-publishing supervision primitive for scoped PURE/fake rehearsal, pl
 store-owned result-acceptance seam. A fresh COMMIT ACK can now mint a process-bound `AcceptedV2`,
 while replay/readback returns only `ObservedV2`; the composition gate still refuses product
 dispatch until the remaining recovery, projection, compatibility and process-kill gates are closed.
-This document defines the narrow worker that may be enabled only after those gates are durable.
+The continuation branch also contains a private `ScopedPureWorkerLifecycle` composition for
+admission stop, active-run cancellation, bounded drain and store-owned lease relinquish. It remains
+a rehearsal surface and does not change the promotion gate. This document defines the narrow worker
+that may be enabled only after those gates are durable.
 It does not authorize a model runtime, plugin, MCP server, connector, browser action, Feishu,
 WeCom, webhook, or any other external effect.
 
@@ -57,6 +60,31 @@ observation). It cannot receive the store or lease through this API. The primiti
 not wired to `HeartbeatPureWorkerGate.dispatch`, which remains an argument-free disabled error.
 An eventual promotion must add the store-owned atomic result acceptor and receipt-bound
 reconciliation callback around the returned value before exposing product dispatch.
+
+## Process-local lifecycle composition (continuation branch)
+
+`ScopedPureWorkerLifecycle` is the smallest composition around the supervisor that is safe to
+exercise before a production service root exists. It owns a monotonic three-state machine:
+
+```text
+ACCEPTING --close()--> DRAINING --all active runs settle--> CLOSED
+```
+
+Admission is registered under an async lock, so a run cannot enter after `DRAINING` begins. Each run
+receives a fresh cancellation event and capability snapshots of its claim, manifest and timing
+configuration. `close(timeout_seconds=...)` first flips state and signals all active runs, then
+waits only for the process-local deadline. A cooperative handler is drained; a non-cooperative one
+is hard-cancelled after the deadline. Every non-`ACCEPTED`/`OBSERVED` result is relinquished through
+`relinquish_scoped_invocation_start_v3()`, which fences the job and attempt in one transaction.
+Repeated close calls are idempotent and no new admission is accepted in either `DRAINING` or
+`CLOSED`.
+
+The lifecycle does not own model credentials, connectors, browser handles, MCP clients,
+subprocesses or an outbound transport. Its heartbeat callback is bound to the same
+`SQLiteEventStore` that owns the scoped lease. A heartbeat/expiry conflict is resolved by SQLite's
+transaction boundary: either the heartbeat extends both job and attempt, or expiry fences both;
+there is no partially updated owner. The handler receives only `PureWorkerContext` and cannot access
+the store or its lease.
 
 ## Accepted authority
 
@@ -149,7 +177,7 @@ late return once its run leaves `RUNNING`.
 
 On timeout or graceful shutdown:
 
-1. stop accepting new claims;
+1. transition the process-local lifecycle to `DRAINING` and stop accepting new claims;
 2. signal cancellation exactly once;
 3. keep heartbeating while waiting for the bounded drain window;
 4. if the handler exits, route only to failure/cancellation acceptance, never success acceptance;
@@ -254,8 +282,12 @@ Every step remains default-off and independently releasable:
 6. store-owned atomic result acceptance with statement/commit/control fault injection (**opt-in API and fresh-ACK `AcceptedV2` implemented**);
 7. receipt-bound recovery and non-emitting projection;
 8. heartbeat supervisor with lease-loss/timeout/cancel/drain tests (**acceptance seam and `run_and_accept()` implemented; positive store-owned integration evidence in [`41_result_acceptance_worker_integration_evidence.md`](../../analysis_report/research/41_result_acceptance_worker_integration_evidence.md); product gate remains off**);
-9. process-kill and two-process result-acceptance race matrix;
-10. isolated promotion commit that enables only the allowlisted fake/pure path.
+9. process-local lifecycle composition with admission stop, bounded close and store relinquish
+   (**implemented privately in `ScopedPureWorkerLifecycle`; evidence in
+   [`43_scoped_lease_lifecycle_evidence.md`](../../analysis_report/research/43_scoped_lease_lifecycle_evidence.md);
+   product gate remains off**);
+10. process-kill and two-process result-acceptance race matrix;
+11. isolated promotion commit that enables only the allowlisted fake/pure path.
 
 No step enables real connectors. External action execution requires a later durable action receipt,
 action-time authorization and `succeeded | rejected | effect_unknown` reconciliation contract.
