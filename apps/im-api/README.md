@@ -119,6 +119,12 @@ GET /api/v1/auth/context -> authenticated tenant identity summary (runtime compo
 GET /api/v1/tenants/:tenantId/conversations/:conversationId -> tenant-scoped read projection (runtime only)
 GET /api/v1/tenants/:tenantId/conversations/:conversationId/events -> authenticated, cursor-paged event read
   (runtime composition only; requires an injected EventStore and never writes or dispatches work)
+
+The provider-neutral `internal/improjection` package reduces `message.created`, `message.edited`, and
+`message.recalled` events into immutable `MessageSnapshot` values with strict field allowlists, tenant/stream
+scope, sequence monotonicity, event-ID replay dedupe, and revision transitions. It is intentionally a volatile
+reducer that can be passed to the existing event `Projector`; PostgreSQL message heads/snapshots and a durable
+message route are not yet composed.
 ```
 
 The runtime-only identity seam requires both a canonical bearer header and one tenant candidate header:

@@ -69,6 +69,12 @@ dedupe 与 payload；EventStore 未注入时 fail closed。该合同仍不是 du
 Clerk/JWKS、生产事件读取或 Gate A–E 晋级，PostgreSQL composition 暂不注入 EventStore 以避免跨事务
 snapshot 的 TOCTOU 误称为生产一致性。
 
+随后新增 `internal/improjection.MessageProjection`（`82a6b6d`，证据见
+`research/61_message_projection_reducer_20260830.md`），可将 `message.created/edited/recalled` 严格
+还原为 `MessageSnapshot` 并由现有 event Projector 重放。它是无存储的 reducer；PostgreSQL message
+head/snapshot、durable checkpoint、消息 API、inbox-to-message transaction 和 crash recovery 仍未完成，
+因此不能把该节点称为 durable message projection 或生产 IM readiness。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow
