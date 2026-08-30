@@ -2,7 +2,12 @@
   "schema_version": 1,
   "branches": {
     "main": "唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。",
-    "dev_wanwork_quantum_entanglement": "WanWork IM Web/PWA 验收主线；包含群聊、Agent 子群、Workboard、消息搜索与局域网跨端体验。保持独立于正式 main，完成阶段验收后再决定是否合并。",
+    "dev_wanwork_quantum_entanglement": "WanWork IM Web/PWA Agent Store 验收主线；包含群聊、Agent 子群、Workboard、消息搜索、安装/撤权和局域网跨端体验。保持独立于正式 main，当前用户验收应使用此分支，完成阶段验收后再决定是否合并。",
+    "backup_0830_153743": "2026-08-30 15:37 Agent Store capability gate、数据处置选择和 offboard 响应回显后的完整备份；仅用于恢复和审计。",
+    "backup_0830_151535": "2026-08-30 15:15 Agent Store offboard 文档与状态台账备份；仅用于恢复和审计。",
+    "backup_0830_151334": "2026-08-30 15:13 Agent Store offboard 阶段状态备份；仅用于恢复和审计。",
+    "backup_0830_150912": "2026-08-30 15:09 Agent Store offboard 文档收口备份；仅用于恢复和审计。",
+    "backup_0830_150452": "2026-08-30 15:04 Agent Store offboard 验收实现备份；仅用于恢复和审计。",
     "backup_0830_142104": "2026-08-30 14:21 Web/PWA IM 当前备份；固定指向 action-time Trust Passport 加固及全量门禁通过节点，仅用于恢复和审计。",
     "backup_0830_141602": "2026-08-30 14:16 Web/PWA IM 当前备份；固定指向 Agent Store action-time Trust Passport 准入加固节点，仅用于恢复和审计。",
     "backup_0830_135748": "2026-08-30 13:57 Web/PWA IM 当前阶段备份；固定指向 Agent Store 安装、Artifact 引用发布及文档收口节点，仅用于恢复和审计。",

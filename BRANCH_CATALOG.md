@@ -32,12 +32,12 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-30T15:37:30+08:00 | `mainline_continue_quantum_entanglement`<br>`0d996fcaf29c` | E3 Result Authority 人工评审分支；opt-in store-owned result acceptance、fresh-ACK AcceptedV2、heartbeat acceptance seam 与 result-only business projection 候选已完成，生产 worker、认证 projection、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 922 / 落后 21 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
-| 2026-08-30T15:35:24+08:00 | `dev_wanwork_quantum_entanglement`<br>`12e7c524bef2` | WanWork IM Web/PWA 验收主线；包含群聊、Agent 子群、Workboard、消息搜索与局域网跨端体验。保持独立于正式 main，完成阶段验收后再决定是否合并。 | 未直接并入 main | 领先 511 / 落后 21 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
-| 2026-08-30T15:35:24+08:00 | `backup_0830_153743`<br>`12e7c524bef2` | 用途待补充；当前节点主题：feat(agent-store): expose data disposition in offboard result | 未直接并入 main | 领先 511 / 落后 21 | — |
-| 2026-08-30T15:15:03+08:00 | `backup_0830_151535`<br>`6e26c2298d12` | 用途待补充；当前节点主题：docs(status): make moving HEAD reference explicit | 未直接并入 main | 领先 508 / 落后 21 | — |
-| 2026-08-30T15:13:29+08:00 | `backup_0830_151334`<br>`0a8640ab1834` | 用途待补充；当前节点主题：docs(status): record Agent Store offboard checkpoint | 未直接并入 main | 领先 507 / 落后 21 | — |
-| 2026-08-30T15:09:03+08:00 | `backup_0830_150912`<br>`5a3a6a4d4b7b` | 用途待补充；当前节点主题：docs(agent-store): clarify web offboard retention default | 未直接并入 main | 领先 506 / 落后 21 | — |
-| 2026-08-30T15:04:30+08:00 | `backup_0830_150452`<br>`f1d557e3298b` | 用途待补充；当前节点主题：docs(agent-store): document offboard acceptance and lifecycle limits | 未直接并入 main | 领先 505 / 落后 21 | — |
+| 2026-08-30T15:35:24+08:00 | `dev_wanwork_quantum_entanglement`<br>`12e7c524bef2` | WanWork IM Web/PWA Agent Store 验收主线；包含群聊、Agent 子群、Workboard、消息搜索、安装/撤权和局域网跨端体验。保持独立于正式 main，当前用户验收应使用此分支，完成阶段验收后再决定是否合并。 | 未直接并入 main | 领先 511 / 落后 21 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 2026-08-30T15:35:24+08:00 | `backup_0830_153743`<br>`12e7c524bef2` | 2026-08-30 15:37 Agent Store capability gate、数据处置选择和 offboard 响应回显后的完整备份；仅用于恢复和审计。 | 未直接并入 main | 领先 511 / 落后 21 | — |
+| 2026-08-30T15:15:03+08:00 | `backup_0830_151535`<br>`6e26c2298d12` | 2026-08-30 15:15 Agent Store offboard 文档与状态台账备份；仅用于恢复和审计。 | 未直接并入 main | 领先 508 / 落后 21 | — |
+| 2026-08-30T15:13:29+08:00 | `backup_0830_151334`<br>`0a8640ab1834` | 2026-08-30 15:13 Agent Store offboard 阶段状态备份；仅用于恢复和审计。 | 未直接并入 main | 领先 507 / 落后 21 | — |
+| 2026-08-30T15:09:03+08:00 | `backup_0830_150912`<br>`5a3a6a4d4b7b` | 2026-08-30 15:09 Agent Store offboard 文档收口备份；仅用于恢复和审计。 | 未直接并入 main | 领先 506 / 落后 21 | — |
+| 2026-08-30T15:04:30+08:00 | `backup_0830_150452`<br>`f1d557e3298b` | 2026-08-30 15:04 Agent Store offboard 验收实现备份；仅用于恢复和审计。 | 未直接并入 main | 领先 505 / 落后 21 | — |
 | 2026-08-30T14:21:30+08:00 | `main`<br>`482160d37581` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 2026-08-30T14:20:59+08:00 | `backup_0830_142104`<br>`cf58af1d7f36` | 2026-08-30 14:21 Web/PWA IM 当前备份；固定指向 action-time Trust Passport 加固及全量门禁通过节点，仅用于恢复和审计。 | 未直接并入 main | 领先 501 / 落后 21 | — |
 | 2026-08-30T14:15:32+08:00 | `backup_0830_141602`<br>`1f86e5a2647d` | 2026-08-30 14:16 Web/PWA IM 当前备份；固定指向 Agent Store action-time Trust Passport 准入加固节点，仅用于恢复和审计。 | 未直接并入 main | 领先 500 / 落后 21 | — |
