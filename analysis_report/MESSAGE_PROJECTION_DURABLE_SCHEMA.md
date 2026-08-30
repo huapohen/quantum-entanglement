@@ -1,6 +1,7 @@
 # v0版 durable message projection schema 合同
 
-> 状态：设计冻结，尚未注册到 PostgreSQL migration catalog。本文档不授权直接执行 DDL。
+> 状态：schema 已注册到 PostgreSQL migration catalog（migration 11，`message_projection`），并已通过
+> catalog/RLS/postcondition 代码门禁；projector writer 尚未实现，因此本文档仍不授权直接切换默认读取。
 > 当前读取 bridge：`f64ee99` 的 bounded EventStore replay；materialized cutover 必须完成本文档的
 > migration、projector、checkpoint、双读比对和 rollback 证据后才能开启。
 
@@ -98,6 +99,7 @@ restart; a cursor is observation metadata, not an authorization capability.
 
 ## 6. Current status
 
-The event-replay bridge is implemented and bounded. This document freezes the next durable schema boundary;
-the migration, writer/checkpoint transaction, shadow comparison and crash/restore evidence remain open. Gate A–E,
-real Clerk/JWKS, real IM provider and outbound remain closed.
+The event-replay bridge is implemented and bounded. Migration 11 now creates and protects the two materialized
+tables, and the inactive reader adapter can validate their rows. The projector writer/checkpoint transaction,
+shadow comparison and crash/restore evidence remain open. Gate A–E, real Clerk/JWKS, real IM provider and
+outbound remain closed.

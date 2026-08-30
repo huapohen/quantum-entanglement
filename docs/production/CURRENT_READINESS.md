@@ -79,6 +79,11 @@ inbox-to-message transaction 和 crash recovery 仍未完成，因此不能把�
 projection 或 production IM readiness。详见
 [`63_durable_event_replay_message_read_20260830.md`](../../analysis_report/research/63_durable_event_replay_message_read_20260830.md)。
 
+截至 `af3bd43`，migration 11 已注册 `message_projection_heads`/`message_snapshots`，并纳入 catalog、
+RLS、forced-RLS、runtime read manifest 与 postcondition 检查；包级和 Go 全模块 test/vet 已通过。
+PostgreSQL materialized reader 仍是 inactive adapter：projector writer、checkpoint 与 projection
+同事务、shadow equality、crash/restore/rollback evidence 尚未闭合，默认读取继续走 bounded replay。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow

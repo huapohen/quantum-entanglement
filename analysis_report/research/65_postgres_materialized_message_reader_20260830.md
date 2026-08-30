@@ -2,10 +2,11 @@
 
 ## 状态
 
-提交：`fde9bb6 feat(im): add inactive postgres materialized message reader`。
+提交：`fde9bb6 feat(im): add inactive postgres materialized message reader`；schema migration：`e5acef0`（migration 11）。
 
-这是可切换的只读 adapter 候选，当前不接入默认 runtime，因为 `message_projection_heads` 与
-`message_snapshots` migration/projector 尚未注册。默认路径仍是 `f64ee99` 的 bounded event replay。
+这是可切换的只读 adapter 候选，当前不接入默认 runtime。`message_projection_heads` 与
+`message_snapshots` 已由 migration 11 注册并受 RLS/access-manifest 约束，但 projector writer、
+checkpoint 同事务和 shadow equality 尚未闭合；默认路径仍是 `f64ee99` 的 bounded event replay。
 
 ## 已实现的合同
 
@@ -22,7 +23,7 @@
 
 该 adapter 解决的是 materialized rows 的严格读取，不包含：
 
-1. schema migration、RLS/access manifest/schema digest；
+1. migration 11 已完成，但仍需真实 applied-schema digest/access-manifest integration evidence；
 2. event projector 的 row CAS；
 3. head 与 `event_projection_checkpoints` 同事务提交；
 4. replay/materialized shadow equality canary；

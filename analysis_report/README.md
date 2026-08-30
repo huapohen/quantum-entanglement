@@ -2,14 +2,14 @@
 
 本目录是本地报告的单一真相源。报告正文会在研究、实现和验证完成后汇总为
 `multi_agent_collaboration_report.md`。当前截至 `3a92f3c` 的稳定内容已经同步到私人 Notion 并完成
-回读；之后的本地增量持续以 Git/GitHub 为事实源。当前评审分支最新集成提交为 `4783f61`，已推送
+回读；之后的本地增量持续以 Git/GitHub 为事实源。当前评审分支最新集成提交为 `af3bd43`，已推送
 到 `origin/mainline_continue_quantum_entanglement`。当前代码已推进到 authenticated tenant context
 HTTP seam（`f226ab5`，实现提交 `8c4fb3f`）；用户在 2026-08-28 进一步确认 Notion 会影响
 开发速度，因此后续开发期间只更新本地文档并频繁 commit/push；当前计划任务全部完成后再一次性批量同步 Notion
 并逐页回读。语雀按用户
 最新指令保持不操作。
 
-## Notion 镜像（最近已回读基线：3a92f3c；本地/GitHub 代码已推进至 `4783f61`）
+## Notion 镜像（最近已回读基线：3a92f3c；本地/GitHub 代码已推进至 `af3bd43`）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -66,8 +66,9 @@ HTTP seam（`f226ab5`，实现提交 `8c4fb3f`）；用户在 2026-08-28 进一�
 | `research/62_message_read_contract_regression_20260830.md` | 消息读取与回归封板 | 认证 message route、专项矩阵、2,975 项阶段全量及 Web gate cwd 修复 |
 | `research/63_durable_event_replay_message_read_20260830.md` | durable event-replay bridge 已装配 | PostgreSQL EventStore → bounded reducer → stream-version cursor；materialized heads/checkpoint 尚未完成 |
 | `research/64_deadline_checkpoint_20260830_1700.md` | 17:00 截止点 | 精确版本、可验收能力、门禁、NO-GO 和下一执行顺序 |
-| `MESSAGE_PROJECTION_DURABLE_SCHEMA.md` | durable message projection schema 合同 | heads/snapshots 键、RLS、projector/checkpoint 同事务、双读 cutover 与 rollback 门禁；尚未注册 migration |
-| `research/65_postgres_materialized_message_reader_20260830.md` | materialized reader adapter 候选 | 严格 SQL row/head 读取、projection revision 游标、runtime pool 绑定；默认未装配，等待 migration/projector |
+| `MESSAGE_PROJECTION_DURABLE_SCHEMA.md` | durable message projection schema 合同 | migration 11 heads/snapshots、RLS、projector/checkpoint 同事务、双读 cutover 与 rollback 门禁；writer 尚未装配 |
+| `research/65_postgres_materialized_message_reader_20260830.md` | materialized reader adapter 候选 | 严格 SQL row/head 读取、projection revision 游标、runtime pool 绑定；migration 11 已注册，默认仍未装配 |
+| `research/66_schema11_authority_cutover_regression_20260830.md` | migration 11 后 authority cutover 回归修复 | schema 版本夹具/golden 更新、Go 全模块 test/vet 与精确备份 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |

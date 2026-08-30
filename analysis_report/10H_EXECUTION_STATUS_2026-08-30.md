@@ -2,7 +2,7 @@
 
 更新时间：2026-08-30（集成验证后）
 当前评审分支：`mainline_continue_quantum_entanglement`
-当前 HEAD：`4783f61`（已推送 `origin/mainline_continue_quantum_entanglement`）
+当前 HEAD：`af3bd43`（已推送 `origin/mainline_continue_quantum_entanglement`）
 来源分支：`dev_wanwork_quantum_entanglement`（已保留并合入本评审分支）
 安全备份：`backup_0830_121258`
 
@@ -45,6 +45,11 @@ SSE/WebSocket resume、文件/已读/通知/reaction、原生 `.app/.exe/.ipa/.a
 - `4783f61`：保留 QE Result Authority 内核，合入 Web-first IM API、React 客户端、PostgreSQL
   authority 文档、启动脚本和 synthetic 验收门禁；已推送到
   `origin/mainline_continue_quantum_entanglement`。
+
+本次继续冲刺提交：
+
+- `e5acef0`：注册 PostgreSQL migration 11 durable message projection schema；
+- `af3bd43`：将 authority cutover 测试夹具/golden 更新到当前 schema 11，并完成 Go 全模块 test/vet。
 
 ## 今晚直接验收
 
