@@ -24,6 +24,9 @@ PostgreSQL message projector 现在拥有两条独立的提交边界证据：
 - `004d78f`：ScopedPureWorkerLifecycle checkpoint，包含 SIGKILL 后 expiry recovery 证据。
 - `cb471d1`：真实 projector child-process SIGKILL 前/后提交边界矩阵；完整证据见
   [`research/74_projector_sigkill_process_matrix_20260831.md`](74_projector_sigkill_process_matrix_20260831.md)。
+- `595f034`：owner-side PostgreSQL trigger 注入“页内首写成功、后写失败”，验证 partial-write
+  整页 rollback 与移除故障后的完整重放；处置步骤见
+  [`research/75_projector_partial_write_fault_runbook_20260831.md`](75_projector_partial_write_fault_runbook_20260831.md)。
 
 ## 验证
 
@@ -55,7 +58,8 @@ imstore 五包 integration matrix。提交前失败、ACK-loss 与 child-process
 ## 未关闭边界
 
 - 生产级 applied-schema、权限、备份、RPO/RTO、HA 与 materialized primary cutover；
-- rollback/partial-write 的生产故障注入与恢复 runbook；
+- 更广泛生产故障（OOM、磁盘/WAL、代理分片、failover）的 staging 注入与恢复演练；当前
+  owner-side trigger partial-write 证据与基础 runbook 已完成，生产级演练仍未授权；
 - shadow equality 长期 telemetry、mismatch 告警与 backfill orchestration；
 - 可回滚 cutover receipt、真实 Clerk/JWKS、Task/Artifact/Needs You durable
   projection、worker/provider bridge、action receipt 与 `effect_unknown` reconcile。

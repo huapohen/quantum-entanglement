@@ -24,7 +24,8 @@ restart readback 均已在隔离 PostgreSQL 18 通过；`projection_revision` �
    与 `73_projector_fault_matrix_and_rollback_checkpoint_20260831.md` 已证明 commit 成功但 ACK 丢失
    后的 exact replay、提交前失败整页 rollback、双 runner CAS、restart readback，以及真实 child
    process 在 COMMIT 前/后的 SIGKILL 恢复；独立证据见 `research/74_projector_sigkill_process_matrix_20260831.md`。
-   仍需生产级 partial-write fault injection/runbook，并从新连接重读 checkpoint、head、rows。
+   owner-side trigger partial-write rollback 与基础处置 runbook 已在 `595f034` 完成；仍需在隔离
+   staging 做 OOM、磁盘/WAL、代理分片、连接断开与 failover 演练，并从新连接重读 checkpoint、head、rows。
 3. **Cutover preflight**：补生产 applied-schema digest、权限/备份证明、旧 reader drain 与 rollback
    receipt；未齐全前继续使用 bounded EventStore replay，不启用 materialized primary。
 4. **IM 接入前置**：真实 Clerk/JWKS、Task/Artifact/Needs You durable projection、worker/provider
