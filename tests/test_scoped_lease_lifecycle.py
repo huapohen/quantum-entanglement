@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from quantum_entanglement.attempts import AttemptStatus, InvocationStatus
 from quantum_entanglement.invocation_execution import (
@@ -162,6 +166,130 @@ class ScopedLeaseLifecycleTests(unittest.TestCase):
             )
         with self.assertRaises(TypeError):
             self.store.relinquish_scoped_invocation_start_v3(object())  # type: ignore[arg-type]
+
+    def test_two_connections_heartbeat_wins_or_expiry_fences_without_partial_rows(self) -> None:
+        """A heartbeat/expiry race has exactly one durable winner across connections."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "race.sqlite3")
+            writer = SQLiteEventStore(path, clock=lambda: STORE_TIME)
+            peer = SQLiteEventStore(path, clock=lambda: STORE_TIME)
+            request = scoped_request()
+            writer.append_scoped_task_invocation_admission_v2(request, expected_version=0)
+            writer._clock = lambda: CLAIMED_AT
+            claimed = writer.claim_scoped_invocation_start_v3(
+                request.manifest.tenant_id,
+                request.manifest.workspace_id,
+                request.manifest.invocation_id,
+                "worker-scoped-race-heartbeat",
+                lease_seconds=1,
+                expected_version=2,
+            )
+            self.assertIs(type(claimed), ScopedInvocationStartClaimedV3)
+            assert type(claimed) is ScopedInvocationStartClaimedV3
+            race_clock = claimed.lease.lease_expires_at
+            writer._clock = lambda: "2026-08-27T10:00:00.999999Z"
+            peer._clock = lambda: race_clock
+            barrier = threading.Barrier(2)
+
+            def heartbeat() -> bool:
+                barrier.wait(timeout=5)
+                return writer.heartbeat_scoped_invocation_start_v3(
+                    claimed,
+                    lease_seconds=5,
+                )
+
+            def recover() -> object:
+                barrier.wait(timeout=5)
+                return peer.recover_expired_scoped_invocations()
+
+            try:
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    heartbeat_result, recovery_result = (
+                        executor.submit(heartbeat),
+                        executor.submit(recover),
+                    )
+                    heartbeat_value = heartbeat_result.result(timeout=10)
+                    recovery_value = recovery_result.result(timeout=10)
+            finally:
+                writer.close()
+                peer.close()
+
+            reopened = SQLiteEventStore(path, clock=lambda: race_clock)
+            try:
+                snapshot = reopened.recovery_snapshot_for_task(
+                    request.manifest.session_id,
+                    request.manifest.task_id,
+                )
+            finally:
+                reopened.close()
+
+            self.assertIs(type(heartbeat_value), bool)
+            self.assertIn(recovery_value.recovered_count, (0, 1))
+            if heartbeat_value:
+                self.assertEqual(recovery_value.recovered_count, 0)
+                self.assertIsNotNone(snapshot.job)
+                assert snapshot.job is not None
+                self.assertEqual(snapshot.job.status, InvocationStatus.RUNNING)
+                self.assertGreater(snapshot.job.lease_expires_at, race_clock)
+            else:
+                self.assertEqual(recovery_value.recovered_count, 1)
+                self.assertIsNotNone(snapshot.job)
+                self.assertIsNotNone(snapshot.current_attempt)
+                assert snapshot.job is not None
+                assert snapshot.current_attempt is not None
+                self.assertEqual(snapshot.job.status, InvocationStatus.FAILED)
+                self.assertEqual(snapshot.current_attempt.status, AttemptStatus.EXPIRED)
+
+    def test_two_connections_relinquish_race_has_one_terminal_winner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "relinquish-race.sqlite3")
+            primary = SQLiteEventStore(path, clock=lambda: STORE_TIME)
+            peer = SQLiteEventStore(path, clock=lambda: STORE_TIME)
+            request = scoped_request()
+            primary.append_scoped_task_invocation_admission_v2(request, expected_version=0)
+            primary._clock = lambda: CLAIMED_AT
+            claimed = primary.claim_scoped_invocation_start_v3(
+                request.manifest.tenant_id,
+                request.manifest.workspace_id,
+                request.manifest.invocation_id,
+                "worker-scoped-relinquish-race",
+                lease_seconds=60,
+                expected_version=2,
+            )
+            self.assertIs(type(claimed), ScopedInvocationStartClaimedV3)
+            assert type(claimed) is ScopedInvocationStartClaimedV3
+            primary._clock = lambda: "2026-08-27T10:00:01.000000Z"
+            peer._clock = lambda: "2026-08-27T10:00:01.000000Z"
+            barrier = threading.Barrier(2)
+
+            def relinquish(store: SQLiteEventStore) -> bool:
+                barrier.wait(timeout=5)
+                return store.relinquish_scoped_invocation_start_v3(claimed)
+
+            try:
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = (
+                        executor.submit(relinquish, primary),
+                        executor.submit(relinquish, peer),
+                    )
+                    values = tuple(future.result(timeout=10) for future in futures)
+                snapshot = primary.recovery_snapshot_for_task(
+                    request.manifest.session_id,
+                    request.manifest.task_id,
+                )
+            finally:
+                primary.close()
+                peer.close()
+
+            self.assertEqual(sum(value is True for value in values), 1)
+            self.assertEqual(sum(value is False for value in values), 1)
+            self.assertIsNotNone(snapshot.job)
+            self.assertIsNotNone(snapshot.current_attempt)
+            assert snapshot.job is not None
+            assert snapshot.current_attempt is not None
+            self.assertEqual(snapshot.job.status, InvocationStatus.FAILED)
+            self.assertEqual(snapshot.current_attempt.status, AttemptStatus.EXPIRED)
 
 
 if __name__ == "__main__":  # pragma: no cover
