@@ -11,6 +11,19 @@ function formatTime(value: string) {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf())
+    ? value
+    : date.toLocaleString("zh-CN", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function compactDigest(value: string) {
+  if (!value) return "未提供";
+  if (value.length <= 24) return value;
+  return `${value.slice(0, 12)}…${value.slice(-8)}`;
+}
+
 function conversationLabel(conversation: Conversation) {
   return conversation.name || conversation.id;
 }
@@ -528,6 +541,20 @@ export function App() {
                   </div>
                   <div className="mt-2 leading-5 text-slate-400">{agent.summary}</div>
                   <div className="mt-2 text-slate-500">release {agent.version} · actor {agent.agentActorId || "尚未创建"}</div>
+                  <div className="mt-2 rounded-lg border border-white/10 bg-black/20 p-2 text-[10px] text-slate-400">
+                    <div className="flex items-center justify-between gap-2 text-slate-300">
+                      <span>版本 provenance</span>
+                      <span>{agent.versionProvenance.digestAlgorithm} · publisher {agent.versionProvenance.publisherId}</span>
+                    </div>
+                    <div className="mt-1 text-slate-500">
+                      发布于 {formatDateTime(agent.versionProvenance.publishedAt)} · definition r{agent.versionProvenance.definitionRevision} · release r{agent.versionProvenance.releaseRevision} · passport r{agent.versionProvenance.passportRevision}
+                    </div>
+                    <div className="mt-2 grid gap-1 text-slate-500 sm:grid-cols-3">
+                      <span title={agent.artifactDigest}>artifact {compactDigest(agent.artifactDigest)}</span>
+                      <span title={agent.manifestDigest}>manifest {compactDigest(agent.manifestDigest)}</span>
+                      <span title={agent.personaDigest}>persona {compactDigest(agent.personaDigest)}</span>
+                    </div>
+                  </div>
                   <div className="mt-2 border-t border-white/10 pt-2 text-slate-400">
                     已授权：<span className="text-slate-200">{agent.grantedCapabilities.join(" · ") || "无"}</span>
                   </div>

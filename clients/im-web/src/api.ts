@@ -30,6 +30,15 @@ export type AgentDataRoute = {
   retentionDays: number;
 };
 
+export type AgentVersionProvenance = {
+  publisherId: string;
+  definitionRevision: number;
+  releaseRevision: number;
+  passportRevision: number;
+  publishedAt: string;
+  digestAlgorithm: string;
+};
+
 export type AgentStoreEntry = {
   definitionId: string;
   releaseId: string;
@@ -37,6 +46,10 @@ export type AgentStoreEntry = {
   name: string;
   summary: string;
   version: string;
+  artifactDigest: string;
+  manifestDigest: string;
+  personaDigest: string;
+  versionProvenance: AgentVersionProvenance;
   definitionStatus: string;
   releaseStatus: string;
   passportStatus: string;

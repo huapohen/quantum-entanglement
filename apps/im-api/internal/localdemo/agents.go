@@ -40,23 +40,41 @@ type agentInstallRecord struct {
 }
 
 type AgentStoreView struct {
-	DefinitionID          string               `json:"definitionId"`
-	ReleaseID             string               `json:"releaseId"`
-	InstallationID        string               `json:"installationId"`
-	Name                  string               `json:"name"`
-	Summary               string               `json:"summary"`
-	Version               string               `json:"version"`
-	DefinitionStatus      string               `json:"definitionStatus"`
-	ReleaseStatus         string               `json:"releaseStatus"`
-	PassportStatus        string               `json:"passportStatus"`
-	InstallationStatus    string               `json:"installationStatus"`
-	AgentActorID          string               `json:"agentActorId"`
-	Isolation             string               `json:"isolation"`
-	RequestedCapabilities []string             `json:"requestedCapabilities"`
-	GrantedCapabilities   []string             `json:"grantedCapabilities"`
-	DataRoutes            []AgentDataRouteView `json:"dataRoutes"`
-	Attestations          []string             `json:"attestations"`
-	CanInstall            bool                 `json:"canInstall"`
+	DefinitionID   string `json:"definitionId"`
+	ReleaseID      string `json:"releaseId"`
+	InstallationID string `json:"installationId"`
+	Name           string `json:"name"`
+	Summary        string `json:"summary"`
+	Version        string `json:"version"`
+	// These are read-only content identities. The projection intentionally carries hashes only;
+	// it never exposes artifact bytes, manifest/persona contents, secret locators, or credentials.
+	ArtifactDigest        string                     `json:"artifactDigest"`
+	ManifestDigest        string                     `json:"manifestDigest"`
+	PersonaDigest         string                     `json:"personaDigest"`
+	VersionProvenance     AgentVersionProvenanceView `json:"versionProvenance"`
+	DefinitionStatus      string                     `json:"definitionStatus"`
+	ReleaseStatus         string                     `json:"releaseStatus"`
+	PassportStatus        string                     `json:"passportStatus"`
+	InstallationStatus    string                     `json:"installationStatus"`
+	AgentActorID          string                     `json:"agentActorId"`
+	Isolation             string                     `json:"isolation"`
+	RequestedCapabilities []string                   `json:"requestedCapabilities"`
+	GrantedCapabilities   []string                   `json:"grantedCapabilities"`
+	DataRoutes            []AgentDataRouteView       `json:"dataRoutes"`
+	Attestations          []string                   `json:"attestations"`
+	CanInstall            bool                       `json:"canInstall"`
+}
+
+// AgentVersionProvenanceView is the non-secret provenance summary for one immutable release.
+// Digest values are lowercase SHA-256 hex strings; publisher/revision/timestamp values are
+// catalog evidence, not bearer credentials or runtime authority.
+type AgentVersionProvenanceView struct {
+	PublisherID        string `json:"publisherId"`
+	DefinitionRevision uint64 `json:"definitionRevision"`
+	ReleaseRevision    uint64 `json:"releaseRevision"`
+	PassportRevision   uint64 `json:"passportRevision"`
+	PublishedAt        string `json:"publishedAt"`
+	DigestAlgorithm    string `json:"digestAlgorithm"`
 }
 
 type AgentDataRouteView struct {
@@ -301,6 +319,12 @@ func (service *Service) agentStoreView(record agentCatalogRecord) AgentStoreView
 	return AgentStoreView{
 		DefinitionID: definition.ID().String(), ReleaseID: release.ID().String(), InstallationID: installationID,
 		Name: definition.DisplayName(), Summary: definition.Summary(), Version: release.Version().String(),
+		ArtifactDigest: release.ArtifactDigest().Hex(), ManifestDigest: release.ManifestDigest().Hex(),
+		PersonaDigest: release.PersonaDigest().Hex(), VersionProvenance: AgentVersionProvenanceView{
+			PublisherID: definition.PublisherID().String(), DefinitionRevision: definition.Revision(),
+			ReleaseRevision: release.Revision(), PassportRevision: record.passport.Revision(),
+			PublishedAt: release.PublishedAt().Format(time.RFC3339Nano), DigestAlgorithm: "sha256",
+		},
 		DefinitionStatus: string(definition.Status()), ReleaseStatus: string(release.Status()),
 		PassportStatus: string(record.passport.Status()), InstallationStatus: installationStatus,
 		AgentActorID: agentActorID, Isolation: string(release.Isolation()), RequestedCapabilities: requested,
