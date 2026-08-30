@@ -85,6 +85,18 @@ runtime ACL、repository definition/release/Passport/installation 创建与读�
 函数调用；所有 DDL、复合外键、JSONB 检查、5 条 Agent Store 租户策略和 function-only 写入均成功落库，
 实例随后停止。这个 disposable smoke 仍不替代线上拓扑、真实身份、provider effect、灾备恢复和备份演练。
 
+最终门禁复核（2026-08-30）：
+
+- `WANWORK_TEST_POSTGRES_ADMIN_URL=postgresql://<redacted> go test ./apps/im-api/internal/platform/postgres/... -count=1`：authoritycutover、connectionpolicy、eventstore、imstore、migrationrun 全部通过；此前 eventstore fixture 漏授共享 runtime read 表的问题已修正并由 `TestPostgresEventStoreAgainstPostgres` 覆盖。
+- `cd apps/im-api && go test ./... -count=1`：全部 Go package 通过。
+- `cd apps/im-api && go vet ./...`：通过。
+- `cd clients/im-web && npm run build`：TypeScript/Vite production build 通过。
+- `WANWORK_IM_VERIFY_PORT=18144 ./scripts/verify_web_first.sh`：构建、HTTP envelope、Agent Store 安装/幂等重放/撤权、子群隔离、Workboard 审阅闭环和零网络 synthetic 通过。
+
+本阶段远端备份：`dev_wanwork_quantum_entanglement` 已推送至 `origin`，HEAD 为 `677e15c`；同时创建并推送
+`backup_0830_210657`。该备份包含三个可回溯小阶段 commit：`79b9e2b`（migration/function-only boundary）、
+`5d505ca`（tenant repository/UoW）、`677e15c`（evidence report）。
+
 ## 下一步顺序（仍本地 pending）
 
 1. 将 localdemo 安装/撤权命令切换到 repository seam，并为安装/撤权补 durable command/effect receipt；
