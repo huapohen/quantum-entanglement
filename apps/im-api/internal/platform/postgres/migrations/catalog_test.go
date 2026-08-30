@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 13 || len(second) != 13 {
+	if len(first) != 14 || len(second) != 14 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -284,6 +284,31 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if !strings.Contains(constraints.UpSQL, marker) {
 			t.Fatalf("Agent Store capability constraint migration missing %q", marker)
+		}
+	}
+	outbox := first[13]
+	if outbox.Version != 14 || outbox.Name != "agent_provider_effect_outbox" ||
+		len(outbox.Checksum) != 64 || outbox.Checksum != second[13].Checksum ||
+		outbox.UpSQL != second[13].UpSQL || outbox.DownSQL != second[13].DownSQL {
+		t.Fatalf("unexpected deterministic Agent Store provider effect migration: %#v", outbox)
+	}
+	for _, marker := range []string{
+		`CREATE TABLE wanwork_im.agent_provider_effects`,
+		`PRIMARY KEY (tenant_id, effect_id)`,
+		`UNIQUE (tenant_id, operation_key)`,
+		`agent_provider_effects_state_shape_check`,
+		`agent_provider_effects_time_order_check`,
+		`FORCE ROW LEVEL SECURITY`,
+	} {
+		if !strings.Contains(outbox.UpSQL, marker) {
+			t.Fatalf("Agent Store provider effect migration missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{
+		"credential", "password", "api_key", "secret_value", "endpoint", "IF NOT EXISTS",
+	} {
+		if strings.Contains(strings.ToLower(outbox.UpSQL), strings.ToLower(forbidden)) {
+			t.Fatalf("Agent Store provider effect migration contains forbidden text %q", forbidden)
 		}
 	}
 }

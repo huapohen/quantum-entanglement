@@ -334,7 +334,7 @@ WHERE version = 1`, strings.Repeat("0", 64)); err != nil {
 		}
 		if _, err := connection.Exec(ctx, `
 INSERT INTO wanwork_meta.schema_migrations (version, name, checksum)
-VALUES (14, 'future', $1)`, strings.Repeat("0", 64)); err != nil {
+VALUES (15, 'future', $1)`, strings.Repeat("0", 64)); err != nil {
 			t.Fatalf("insert future row: %v", err)
 		}
 		if _, err := Apply(ctx, connection); !errors.Is(err, ErrFutureSchema) {

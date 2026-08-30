@@ -1,0 +1,2 @@
+DROP INDEX wanwork_im.agent_provider_effects_due_idx;
+DROP TABLE wanwork_im.agent_provider_effects;

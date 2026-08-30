@@ -110,9 +110,59 @@ func validateMigrationPostconditionForSchema(
 		return validateAgentStoreWriteFunctions(ctx, transaction)
 	case 13:
 		return validateAgentStoreCapabilityConstraints(ctx, transaction)
+	case 14:
+		return validateAgentProviderEffectOutbox(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateAgentProviderEffectOutbox(ctx context.Context, transaction pgx.Tx) error {
+	var relationCount int
+	if err := transaction.QueryRow(ctx, `
+SELECT count(*)
+FROM pg_catalog.pg_class AS relation
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relkind = 'r'
+  AND relation.relname = ANY($1::text[])
+  AND relation.relrowsecurity
+  AND relation.relforcerowsecurity`, agentProviderEffectTableNames).Scan(&relationCount); err != nil ||
+		relationCount != len(agentProviderEffectTableNames) {
+		return ErrMigrationSchema
+	}
+	var policyCount int
+	if err := transaction.QueryRow(ctx, `
+SELECT count(*)
+FROM pg_catalog.pg_policy AS policy
+JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relname = ANY($1::text[])
+  AND policy.polname = relation.relname || '_exact_tenant'
+  AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid) =
+      '(tenant_id = current_setting(''wanwork.tenant_id''::text, true))'
+  AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid) =
+      '(tenant_id = current_setting(''wanwork.tenant_id''::text, true))'`, agentProviderEffectTableNames).Scan(&policyCount); err != nil ||
+		policyCount != len(agentProviderEffectTableNames) {
+		return ErrMigrationSchema
+	}
+	var constraintCount int
+	if err := transaction.QueryRow(ctx, `
+SELECT count(*)
+FROM pg_catalog.pg_constraint AS constraint_value
+JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_value.conrelid
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relname = 'agent_provider_effects'
+  AND constraint_value.conname = ANY($1::text[])`, []string{
+		"agent_provider_effects_operation_uk",
+		"agent_provider_effects_state_shape_check",
+		"agent_provider_effects_time_order_check",
+	}).Scan(&constraintCount); err != nil || constraintCount != 3 {
+		return ErrMigrationSchema
+	}
+	return nil
 }
 
 func validateAgentStoreCapabilityConstraints(ctx context.Context, transaction pgx.Tx) error {

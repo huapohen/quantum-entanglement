@@ -562,6 +562,7 @@ var runtimeAuthorityReadTables = []string{
 	"agent_passports",
 	"agent_installation_heads",
 	"agent_installation_snapshots",
+	"agent_provider_effects",
 }
 
 func authorityAccessTableNames() []string {
@@ -576,6 +577,7 @@ func authorityAccessTableNames() []string {
 	names = append(names, eventProjectionCheckpointTableNames...)
 	names = append(names, nativeIMInboxTableNames...)
 	names = append(names, agentStoreControlPlaneTableNames...)
+	names = append(names, agentProviderEffectTableNames...)
 	slices.Sort(names)
 	return names
 }

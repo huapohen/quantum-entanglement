@@ -72,6 +72,10 @@ var agentStoreControlPlaneTableNames = []string{
 	"agent_installation_snapshots",
 }
 
+var agentProviderEffectTableNames = []string{
+	"agent_provider_effects",
+}
+
 func tableSchemaDigest(
 	ctx context.Context,
 	transaction pgx.Tx,
