@@ -2,7 +2,7 @@
 
 > 证据日期：2026-08-30（Asia/Shanghai）  
 > 分支：`mainline_continue_quantum_entanglement`  
-> 验证时代码 HEAD：`9656dc2`（随后仅追加验证文档）  
+> 验证时代码 HEAD：`44243ce`（随后仅追加验证文档）
 > 远端：`origin/mainline_continue_quantum_entanglement`（已推送）  
 > Notion 状态：`local_pending`
 
@@ -19,15 +19,16 @@ PYTHONPATH=src .venv/bin/python -m compileall -q src
 git diff --check
 ```
 
-- pytest 收集 **2,958 项**；全量回归退出码 **0**；
+- pytest 收集 **2,962 项**；全量回归退出码 **0**；
 - Ruff 检查 `src tests` 通过；
 - strict mypy 检查 76 个源码文件通过；
 - `compileall` 通过；
 - `git diff --check` 通过；
 - 输出仅包含仓库既有 macOS 多线程 `fork()` `DeprecationWarning`，无失败、错误或未捕获异常。
 
-本次 2,958 项包含新增生命周期、双连接 heartbeat/expiry 竞争和双连接 relinquish 竞争用例。
-专项 10 项命令与断言见 [`43_scoped_lease_lifecycle_evidence.md`](./43_scoped_lease_lifecycle_evidence.md)。
+本次 2,962 项包含生命周期、双连接 heartbeat/expiry 竞争、双连接 relinquish 竞争、heartbeat
+loss、bounded hard-cancel、relinquish error cleanup 和子进程 SIGKILL recovery 用例。专项 14
+项命令与断言见 [`43_scoped_lease_lifecycle_evidence.md`](./43_scoped_lease_lifecycle_evidence.md)。
 
 ## 版本留痕
 
@@ -44,6 +45,9 @@ a4196d3  preserve store wildcard compatibility
 36a6d1c  lifecycle race evidence
 35e7900  current readiness checkpoint
 9656dc2  next-stage plan lifecycle gate
+859ae57  release lifecycle registration on relinquish errors
+d5e91c1  recover killed pure worker as expired
+44243ce  branch catalog checkpoint before final full regression
 ```
 
 远端分支与本地 HEAD 一致；没有合并到 `main`，也没有删除 worktree。
