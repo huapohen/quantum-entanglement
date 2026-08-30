@@ -40,6 +40,14 @@ production gate and does not authorize a real connector or external message.
 
 ### Added
 
+- A private `ScopedPureWorkerLifecycle` rehearsal composition with monotonic
+  `ACCEPTING → DRAINING → CLOSED` admission, bounded cooperative drain, hard cancellation,
+  heartbeat-loss fencing, and store-owned graceful lease relinquish. Non-success outcomes cannot
+  enter result acceptance, and lifecycle bookkeeping is released even when relinquish reports a
+  store error.
+- Dual-connection heartbeat/expiry and relinquish race evidence, plus a layered regression policy
+  that runs focused tests per commit and reserves the full suite for stage gates.
+
 - A private, capability-free stored-event envelope V1 codec with an exact 12-field canonical body,
   domain-separated SHA-256 digest, bounded canonical JSON, UTC-microsecond coordinates, and exact
   raw `sqlite3.Row` reconstruction without exporting a writer or authority API.
