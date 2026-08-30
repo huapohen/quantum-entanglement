@@ -67,6 +67,7 @@ HTTP seam（`f226ab5`，实现提交 `8c4fb3f`）；用户在 2026-08-28 进一�
 | `research/63_durable_event_replay_message_read_20260830.md` | durable event-replay bridge 已装配 | PostgreSQL EventStore → bounded reducer → stream-version cursor；materialized heads/checkpoint 尚未完成 |
 | `research/64_deadline_checkpoint_20260830_1700.md` | 17:00 截止点 | 精确版本、可验收能力、门禁、NO-GO 和下一执行顺序 |
 | `MESSAGE_PROJECTION_DURABLE_SCHEMA.md` | durable message projection schema 合同 | heads/snapshots 键、RLS、projector/checkpoint 同事务、双读 cutover 与 rollback 门禁；尚未注册 migration |
+| `research/65_postgres_materialized_message_reader_20260830.md` | materialized reader adapter 候选 | 严格 SQL row/head 读取、projection revision 游标、runtime pool 绑定；默认未装配，等待 migration/projector |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
