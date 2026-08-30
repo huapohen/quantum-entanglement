@@ -1,13 +1,12 @@
 # Quantum Entanglement 分支与 Worktree 导航
 
-> 结论先行：**正式开发、发布和后续集成使用 `main`；当前未合并的 Web IM/Agent Store 阶段验收使用 `dev_wanwork_quantum_entanglement`。** 除非是在做历史审计或定点恢复，不要直接在 `codex/*`、`agent/*`、`gate-*` 或 `archive/*` 上继续开发，也不要把这些分支整条合并回 `main`。
+> 结论先行：**日常开发、启动体验和后续集成都只使用 `main`。** 除非是在做历史审计或定点恢复，不要直接在 `codex/*`、`agent/*`、`gate-*` 或 `archive/*` 上继续开发，也不要把这些分支整条合并回 `main`。用户已明确指定的独立人工评审分支是例外：应使用表中对应 worktree，并在验收决定前保留、不合并、不删除。
 
 ## 你现在应该用哪个
 
 | 场景 | 应使用的引用 | 说明 |
 | --- | --- | --- |
-| 正式开发、发布、后续集成 | `main`（目录基线 `3d6bcc67ab66`） | 唯一正式主分支；目录 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement`。 |
-| 当前 Web IM/Agent Store 阶段验收 | `dev_wanwork_quantum_entanglement` | 未合并到 main 的独立验收分支；worktree 位于统一 `worktrees/quantum_entanglement` 目录。 |
+| 日常开发、验收、继续主线任务 | `main`（目录基线 `3d6bcc67ab66`） | 唯一正式主分支；目录 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement`。 |
 | 复现当前本地试用版本 | `v0.1.0-local-trial.2` | 固定版本标签，不会随 `main` 后续提交移动。 |
 | 查看上一试用检查点 | `v0.1.0-local-trial.1` | 已被 `.2` 取代，仅用于对比。 |
 | 恢复某项历史实现 | 先从 `main` 新建分支，再挑选提交 | 优先 `git cherry-pick` 单个已审阅提交，不直接合并历史分支。 |
@@ -15,7 +14,7 @@
 
 ## 分支数量为什么看起来很多
 
-远端当前共有 **129** 个分支引用：1 个正式主线、79 个历史开发/证据候选、49 个只读取证归档。`archive/*` 中有不少只是同一历史节点的保险副本，并不代表同时维护的产品版本。
+远端当前共有 **130** 个分支引用：1 个正式主线、80 个历史开发/证据候选、49 个只读取证归档。`archive/*` 中有不少只是同一历史节点的保险副本，并不代表同时维护的产品版本。
 
 Git 本身不保存可靠的“分支创建时间”。下表的“节点时间”是该分支尖端提交的提交时间，这是能够审计的时间节点；不能把它冒充为分支创建时间。`领先/落后` 以目录基线为准；若 `origin/main` 最新提交只更新本目录，生成器会使用其父提交，避免目录提交导致自身立即过期。
 
@@ -32,20 +31,21 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-31T00:16:02+08:00 | `dev_wanwork_quantum_entanglement`<br>`741224774015` | 较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。 | 未直接并入 main | 领先 546 / 落后 47 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 2026-08-31T00:11:04+08:00 | `mainline_continue_quantum_entanglement`<br>`8b78c261801c` | E3 Result Authority 人工评审分支；当前已完成 migration 12 PostgreSQL materialized message projector/reader 候选、跨页 Serializable 同事务 checkpoint、非消息 watermark、双 runner CAS 竞争、restart readback 与 Go 全量门禁。materialized reader 仍 default-off，生产 worker、真实认证 transport/composition、真实 IM 与 outbound 仍关闭；Notion 批量同步延后，不自动合并回 main。 | 未直接并入 main | 领先 972 / 落后 47 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 2026-08-30T23:35:04+08:00 | `backup_0830_233125`<br>`a9fa28b434ca` | 用途待补充；当前节点主题：docs(agent-store): record current durable status | 未直接并入 main | 领先 542 / 落后 47 | — |
 | 2026-08-30T23:19:27+08:00 | `main`<br>`3d6bcc67ab66` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 2026-08-30T23:18:38+08:00 | `dev_wanwork_quantum_entanglement`<br>`8d316a9b54ec` | WanWork IM Web/PWA Agent Store 验收主线；包含群聊、Agent 子群、Workboard、消息搜索、安装/撤权和局域网跨端体验。保持独立于正式 main，当前用户验收应使用此分支，完成阶段验收后再决定是否合并。 | 未直接并入 main | 领先 541 / 落后 47 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
-| 2026-08-30T23:18:38+08:00 | `backup_0830_231842`<br>`8d316a9b54ec` | 2026-08-30 23:18 Agent Store 当前功能基线与报告指针收口后的最新开发分支备份；仅用于恢复和审计。 | 未直接并入 main | 领先 541 / 落后 47 | — |
-| 2026-08-30T23:07:26+08:00 | `backup_0830_230731`<br>`fe4c1fce44f5` | 2026-08-30 23:07 Agent 子群创建 unknown provider effect fail-closed、registry 未决重试隔离测试及 Agent Store 报告更新后的最新开发分支备份；仅用于恢复和审计。 | 未直接并入 main | 领先 540 / 落后 47 | — |
-| 2026-08-30T23:07:08+08:00 | `mainline_continue_quantum_entanglement`<br>`004d78ffa2d1` | E3 Result Authority 人工评审分支；opt-in store-owned result acceptance、fresh-ACK AcceptedV2、heartbeat acceptance seam 与 result-only business projection 候选已完成，生产 worker、认证 projection、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 969 / 落后 47 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 2026-08-30T23:18:38+08:00 | `backup_0830_231842`<br>`8d316a9b54ec` | 用途待补充；当前节点主题：docs(agent-store): pin current feature baseline | 未直接并入 main | 领先 541 / 落后 47 | — |
+| 2026-08-30T23:07:26+08:00 | `backup_0830_230731`<br>`fe4c1fce44f5` | 用途待补充；当前节点主题：docs(agent-store): record child effect gate | 未直接并入 main | 领先 540 / 落后 47 | — |
 | 2026-08-30T23:04:44+08:00 | `scoped_lease_process_matrix`<br>`72a3487c7a58` | 用途待补充；当前节点主题：docs: index reusable lease crash evidence | 未直接并入 main | 领先 377 / 落后 47 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/scoped_lease_process_matrix` |
-| 2026-08-30T22:48:42+08:00 | `backup_0830_224848`<br>`3d83500cb96e` | 2026-08-30 22:48 Agent Store provider effect fail-closed 报告索引更新后的最新开发分支备份；仅用于恢复和审计。 | 未直接并入 main | 领先 538 / 落后 47 | — |
-| 2026-08-30T22:46:28+08:00 | `backup_0830_215839`<br>`d3f283194848` | 用途待补充；当前节点主题：docs(im): record projector acknowledgement recovery | 未直接并入 main | 领先 968 / 落后 47 | — |
-| 2026-08-30T22:29:15+08:00 | `backup_0830_222930`<br>`ce6c5a1ca6ae` | 2026-08-30 22:29 provider effect unknown fail-closed：安装、撤权、建群、消息与 Agent 子群副作用门禁收口，并完成 Web-first/Go/PostgreSQL 全量门禁后的最新备份；仅用于恢复和审计。 | 未直接并入 main | 领先 537 / 落后 47 | — |
-| 2026-08-30T22:10:26+08:00 | `backup_0830_221127`<br>`4d47760ef3b8` | 2026-08-30 22:11 Agent Store durable receipt 证据文档与最新分支 provenance 完成后的最新备份；仅用于恢复和审计。 | 未直接并入 main | 领先 535 / 落后 47 | — |
-| 2026-08-30T22:01:31+08:00 | `backup_0830_220230`<br>`3cb0a92a6513` | 2026-08-30 22:02 Agent Store durable command receipt 入口、同命令 PostgreSQL replay 证据及全量门禁通过后的最新备份；仅用于恢复和审计。 | 未直接并入 main | 领先 534 / 落后 47 | — |
-| 2026-08-30T21:55:07+08:00 | `backup_0830_215522`<br>`4774c0d8021e` | 用途待补充；当前节点主题：docs(im): record green projector regression gates | 未直接并入 main | 领先 959 / 落后 47 | — |
-| 2026-08-30T21:49:28+08:00 | `backup_0830_214953`<br>`5b46fdc3cea7` | 2026-08-30 21:49 Agent Store 共享 action-time capability resolver、全量 Go/PostgreSQL/Web 门禁通过后的最新备份；仅用于恢复和审计。 | 未直接并入 main | 领先 532 / 落后 47 | — |
-| 2026-08-30T21:14:44+08:00 | `backup_0830_211508`<br>`aa945152541d` | 2026-08-30 21:15 Agent Store PostgreSQL function-only migration、tenant repository/UoW、最终 PostgreSQL/Go/Web 门禁通过后的最新备份；仅用于恢复和审计。 | 未直接并入 main | 领先 529 / 落后 47 | — |
+| 2026-08-30T22:48:42+08:00 | `backup_0830_224848`<br>`3d83500cb96e` | 用途待补充；当前节点主题：docs(agent-store): index provider effect gate | 未直接并入 main | 领先 538 / 落后 47 | — |
+| 2026-08-30T22:46:28+08:00 | `backup_0830_215839`<br>`d3f283194848` | 本轮最终文档与分支目录刷新后的完整备份；固定指向全量 Go 门禁、PG18 integration matrix、projector/reader 端到端证据与 branch catalog 节点；只用于恢复。 | 未直接并入 main | 领先 968 / 落后 47 | — |
+| 2026-08-30T22:29:15+08:00 | `backup_0830_222930`<br>`ce6c5a1ca6ae` | 用途待补充；当前节点主题：docs(agent-store): record provider effect fail-closed gate | 未直接并入 main | 领先 537 / 落后 47 | — |
+| 2026-08-30T22:10:26+08:00 | `backup_0830_221127`<br>`4d47760ef3b8` | 用途待补充；当前节点主题：docs(agent-store): pin latest receipt backup | 未直接并入 main | 领先 535 / 落后 47 | — |
+| 2026-08-30T22:01:31+08:00 | `backup_0830_220230`<br>`3cb0a92a6513` | 用途待补充；当前节点主题：docs(agent-store): record durable receipt seam | 未直接并入 main | 领先 534 / 落后 47 | — |
+| 2026-08-30T21:55:07+08:00 | `backup_0830_215522`<br>`4774c0d8021e` | 本轮 deadline 前的完整备份，固定指向 projector/reader 端到端、revision 语义修复、并发竞争与 restart 证据节点；只用于恢复，不在此分支继续开发。 | 未直接并入 main | 领先 959 / 落后 47 | — |
+| 2026-08-30T21:49:28+08:00 | `backup_0830_214953`<br>`5b46fdc3cea7` | 用途待补充；当前节点主题：docs(agent-store): record resolver acceptance gate | 未直接并入 main | 领先 532 / 落后 47 | — |
+| 2026-08-30T21:14:44+08:00 | `backup_0830_211508`<br>`aa945152541d` | 用途待补充；当前节点主题：docs(agent-store): correct backup provenance | 未直接并入 main | 领先 529 / 落后 47 | — |
 | 2026-08-30T21:08:29+08:00 | `backup_0830_210942`<br>`343beeda0f8c` | 用途待补充；当前节点主题：docs(agent-store): record final integration gate | 未直接并入 main | 领先 528 / 落后 47 | — |
 | 2026-08-30T21:05:37+08:00 | `backup_0830_210657`<br>`677e15cf4b60` | 用途待补充；当前节点主题：docs(agent-store): record durable repository evidence | 未直接并入 main | 领先 527 / 落后 47 | — |
 | 2026-08-30T20:57:49+08:00 | `backup_0830_205758`<br>`4fc1e0c5bcd3` | 用途待补充；当前节点主题：docs: distinguish local and production schema evidence | 未直接并入 main | 领先 953 / 落后 47 | — |
@@ -71,41 +71,41 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | 2026-08-30T18:07:59+08:00 | `backup_0830_180833`<br>`126d8b4fd390` | 用途待补充；当前节点主题：docs: record full regression gate for deadline checkpoint | 未直接并入 main | 领先 938 / 落后 47 | — |
 | 2026-08-30T17:54:03+08:00 | `backup_0830_175535`<br>`9e86352af287` | 用途待补充；当前节点主题：docs(agent-store): index provenance evidence | 未直接并入 main | 领先 520 / 落后 47 | — |
 | 2026-08-30T17:46:20+08:00 | `backup_0830_174637`<br>`af3bd439923b` | 用途待补充；当前节点主题：fix(postgres): refresh authority cutover plan after schema migration | 未直接并入 main | 领先 936 / 落后 47 | — |
-| 2026-08-30T17:38:24+08:00 | `backup_0830_174451`<br>`5f708d12ed17` | 2026-08-30 17:44 Agent Store provenance 摘要投影、Web 展示、durable persistence 边界文档及全量门禁通过后的备份；仅用于恢复和审计。 | 未直接并入 main | 领先 519 / 落后 47 | — |
+| 2026-08-30T17:38:24+08:00 | `backup_0830_174451`<br>`5f708d12ed17` | 用途待补充；当前节点主题：docs(agent-store): audit durable persistence boundary | 未直接并入 main | 领先 519 / 落后 47 | — |
 | 2026-08-30T17:09:34+08:00 | `backup_0830_170938`<br>`f5b036db1f4f` | 用途待补充；当前节点主题：docs(im): record inactive materialized reader adapter | 未直接并入 main | 领先 934 / 落后 47 | — |
 | 2026-08-30T17:06:36+08:00 | `backup_0830_170641`<br>`fde9bb653863` | 用途待补充；当前节点主题：feat(im): add inactive postgres materialized message reader | 未直接并入 main | 领先 933 / 落后 47 | — |
-| 2026-08-30T16:59:53+08:00 | `backup_0830_170055`<br>`79dbbd06f2a0` | 2026-08-30 17:00 Agent Store 实时 Web-first 门禁复核、最小权限安装、撤权与 Workboard 闭环通过后的备份；仅用于恢复和审计。 | 未直接并入 main | 领先 517 / 落后 47 | — |
+| 2026-08-30T16:59:53+08:00 | `backup_0830_170055`<br>`79dbbd06f2a0` | 用途待补充；当前节点主题：docs(agent-store): record live acceptance gate | 未直接并入 main | 领先 517 / 落后 47 | — |
 | 2026-08-30T16:51:21+08:00 | `backup_0830_165016`<br>`e2724351a11a` | 用途待补充；当前节点主题：docs: index durable message schema contract | 未直接并入 main | 领先 932 / 落后 47 | — |
 | 2026-08-30T16:47:43+08:00 | `backup_0830_164748`<br>`a44750107250` | 用途待补充；当前节点主题：docs: align readiness index with durable replay bridge | 未直接并入 main | 领先 930 / 落后 47 | — |
 | 2026-08-30T16:46:08+08:00 | `backup_0830_1650`<br>`3d854ff5f305` | 用途待补充；当前节点主题：docs: publish 1700 deadline checkpoint | 未直接并入 main | 领先 929 / 落后 47 | — |
-| 2026-08-30T16:40:24+08:00 | `backup_0830_164443`<br>`010c277b0f5b` | 2026-08-30 16:44 Agent Store 最小权限 grant drift 防护、安装/撤权和完整 Web-first 门禁通过后的最终阶段备份；仅用于恢复和审计。 | 未直接并入 main | 领先 516 / 落后 47 | — |
+| 2026-08-30T16:40:24+08:00 | `backup_0830_164443`<br>`010c277b0f5b` | 用途待补充；当前节点主题：fix(agent-store): reject active grant drift | 未直接并入 main | 领先 516 / 落后 47 | — |
 | 2026-08-30T16:37:00+08:00 | `backup_0830_163705`<br>`ce9581daae4e` | 用途待补充；当前节点主题：docs(im): record bounded durable message replay boundary | 未直接并入 main | 领先 927 / 落后 47 | — |
-| 2026-08-30T16:27:53+08:00 | `backup_0830_162829`<br>`3e43bbb6e46c` | 2026-08-30 16:28 Agent Store 最小权限安装、Web 勾选授权、offboard 数据处置与完整门禁收口后的备份；仅用于恢复和审计。 | 未直接并入 main | 领先 515 / 落后 47 | — |
-| 2026-08-30T16:17:21+08:00 | `backup_0830_162008`<br>`0dfd269c9b18` | 2026-08-30 16:20 Agent Store 安装时最小权限选择、offboard 数据处置和完整 Web-first 门禁通过后的备份；仅用于恢复和审计。 | 未直接并入 main | 领先 514 / 落后 47 | — |
-| 2026-08-30T16:07:05+08:00 | `backup_0830_161304`<br>`f3e805c17f54` | 2026-08-30 16:13 Agent Store 最小权限安装、数据处置、provider capability gate 与完整 Web-first 门禁通过后的备份；仅用于恢复和审计。 | 未直接并入 main | 领先 513 / 落后 47 | — |
-| 2026-08-30T15:43:16+08:00 | `backup_0830_154546`<br>`facc7e319009` | 2026-08-30 15:45 Agent Store offboard 数据处置响应回显与完整 Web-first 门禁通过后的备份；仅用于恢复和审计。 | 未直接并入 main | 领先 512 / 落后 47 | — |
-| 2026-08-30T15:35:24+08:00 | `backup_0830_153743`<br>`12e7c524bef2` | 2026-08-30 15:37 Agent Store capability gate、数据处置选择和 offboard 响应回显后的完整备份；仅用于恢复和审计。 | 未直接并入 main | 领先 511 / 落后 47 | — |
-| 2026-08-30T15:15:03+08:00 | `backup_0830_151535`<br>`6e26c2298d12` | 2026-08-30 15:15 Agent Store offboard 文档与状态台账备份；仅用于恢复和审计。 | 未直接并入 main | 领先 508 / 落后 47 | — |
-| 2026-08-30T15:13:29+08:00 | `backup_0830_151334`<br>`0a8640ab1834` | 2026-08-30 15:13 Agent Store offboard 阶段状态备份；仅用于恢复和审计。 | 未直接并入 main | 领先 507 / 落后 47 | — |
-| 2026-08-30T15:09:03+08:00 | `backup_0830_150912`<br>`5a3a6a4d4b7b` | 2026-08-30 15:09 Agent Store offboard 文档收口备份；仅用于恢复和审计。 | 未直接并入 main | 领先 506 / 落后 47 | — |
-| 2026-08-30T15:04:30+08:00 | `backup_0830_150452`<br>`f1d557e3298b` | 2026-08-30 15:04 Agent Store offboard 验收实现备份；仅用于恢复和审计。 | 未直接并入 main | 领先 505 / 落后 47 | — |
-| 2026-08-30T14:20:59+08:00 | `backup_0830_142104`<br>`cf58af1d7f36` | 2026-08-30 14:21 Web/PWA IM 当前备份；固定指向 action-time Trust Passport 加固及全量门禁通过节点，仅用于恢复和审计。 | 未直接并入 main | 领先 501 / 落后 47 | — |
-| 2026-08-30T14:15:32+08:00 | `backup_0830_141602`<br>`1f86e5a2647d` | 2026-08-30 14:16 Web/PWA IM 当前备份；固定指向 Agent Store action-time Trust Passport 准入加固节点，仅用于恢复和审计。 | 未直接并入 main | 领先 500 / 落后 47 | — |
-| 2026-08-30T13:57:34+08:00 | `backup_0830_135748`<br>`b53180cbffd0` | 2026-08-30 13:57 Web/PWA IM 当前阶段备份；固定指向 Agent Store 安装、Artifact 引用发布及文档收口节点，仅用于恢复和审计。 | 未直接并入 main | 领先 498 / 落后 47 | — |
-| 2026-08-30T13:48:30+08:00 | `backup_0830_135259`<br>`536395c73db4` | 2026-08-30 13:52 Web/PWA IM 最新备份；固定指向 Agent Store 安装闭环与 Artifact 引用发布节点，仅用于恢复和审计。 | 未直接并入 main | 领先 497 / 落后 47 | — |
-| 2026-08-30T13:30:55+08:00 | `backup_0830_133349`<br>`8095c3ba4a45` | 2026-08-30 13:33 Web/PWA IM Agent Store 安装闭环备份；固定指向安装/幂等回放门禁节点，仅用于恢复和审计。 | 未直接并入 main | 领先 494 / 落后 47 | — |
-| 2026-08-30T13:05:07+08:00 | `backup_0830_130522`<br>`931ff67daa51` | 2026-08-30 13:05 Agent Store 验收文档备份；固定指向独立验收证据落盘节点，仅用于恢复和审计。 | 未直接并入 main | 领先 491 / 落后 47 | — |
-| 2026-08-30T12:59:52+08:00 | `backup_0830_125930`<br>`ec9ae12425de` | 2026-08-30 12:59 Agent Store 专项证据备份；固定指向安装治理说明节点，仅用于恢复和审计。 | 未直接并入 main | 领先 490 / 落后 47 | — |
-| 2026-08-30T12:37:25+08:00 | `backup_0830_123730`<br>`c3118f46d7f2` | 2026-08-30 Web/PWA IM 最新验收备份；固定指向 c3118f4，仅用于恢复和审计。 | 未直接并入 main | 领先 489 / 落后 47 | — |
-| 2026-08-30T12:21:52+08:00 | `backup_0830_122157`<br>`cee65799732a` | 2026-08-30 Web/PWA IM 阶段备份；固定指向 cee6579，仅用于恢复和审计。 | 未直接并入 main | 领先 488 / 落后 47 | — |
+| 2026-08-30T16:27:53+08:00 | `backup_0830_162829`<br>`3e43bbb6e46c` | 用途待补充；当前节点主题：docs(status): record Agent Store least privilege stage | 未直接并入 main | 领先 515 / 落后 47 | — |
+| 2026-08-30T16:17:21+08:00 | `backup_0830_162008`<br>`0dfd269c9b18` | 用途待补充；当前节点主题：feat(web): choose least privilege Agent Store grants | 未直接并入 main | 领先 514 / 落后 47 | — |
+| 2026-08-30T16:07:05+08:00 | `backup_0830_161304`<br>`f3e805c17f54` | 用途待补充；当前节点主题：feat(agent-store): support least privilege capability grants | 未直接并入 main | 领先 513 / 落后 47 | — |
+| 2026-08-30T15:43:16+08:00 | `backup_0830_154546`<br>`facc7e319009` | 用途待补充；当前节点主题：test(agent-store): assert offboard data disposition | 未直接并入 main | 领先 512 / 落后 47 | — |
+| 2026-08-30T15:35:24+08:00 | `backup_0830_153743`<br>`12e7c524bef2` | 用途待补充；当前节点主题：feat(agent-store): expose data disposition in offboard result | 未直接并入 main | 领先 511 / 落后 47 | — |
+| 2026-08-30T15:15:03+08:00 | `backup_0830_151535`<br>`6e26c2298d12` | 用途待补充；当前节点主题：docs(status): make moving HEAD reference explicit | 未直接并入 main | 领先 508 / 落后 47 | — |
+| 2026-08-30T15:13:29+08:00 | `backup_0830_151334`<br>`0a8640ab1834` | 用途待补充；当前节点主题：docs(status): record Agent Store offboard checkpoint | 未直接并入 main | 领先 507 / 落后 47 | — |
+| 2026-08-30T15:09:03+08:00 | `backup_0830_150912`<br>`5a3a6a4d4b7b` | 用途待补充；当前节点主题：docs(agent-store): clarify web offboard retention default | 未直接并入 main | 领先 506 / 落后 47 | — |
+| 2026-08-30T15:04:30+08:00 | `backup_0830_150452`<br>`f1d557e3298b` | 用途待补充；当前节点主题：docs(agent-store): document offboard acceptance and lifecycle limits | 未直接并入 main | 领先 505 / 落后 47 | — |
+| 2026-08-30T14:20:59+08:00 | `backup_0830_142104`<br>`cf58af1d7f36` | 用途待补充；当前节点主题：docs(status): record passport gate verification | 未直接并入 main | 领先 501 / 落后 47 | — |
+| 2026-08-30T14:15:32+08:00 | `backup_0830_141602`<br>`1f86e5a2647d` | 用途待补充；当前节点主题：docs(agent-store): record action-time passport gate | 未直接并入 main | 领先 500 / 落后 47 | — |
+| 2026-08-30T13:57:34+08:00 | `backup_0830_135748`<br>`b53180cbffd0` | 用途待补充；当前节点主题：docs(status): record Agent Store and artifact release checkpoint | 未直接并入 main | 领先 498 / 落后 47 | — |
+| 2026-08-30T13:48:30+08:00 | `backup_0830_135259`<br>`536395c73db4` | 用途待补充；当前节点主题：test(workboard): gate artifact publication replay | 未直接并入 main | 领先 497 / 落后 47 | — |
+| 2026-08-30T13:30:55+08:00 | `backup_0830_133349`<br>`8095c3ba4a45` | 用途待补充；当前节点主题：test(agent-store): gate install and replay path | 未直接并入 main | 领先 494 / 落后 47 | — |
+| 2026-08-30T13:05:07+08:00 | `backup_0830_130522`<br>`931ff67daa51` | 用途待补充；当前节点主题：docs(report): index Agent Store acceptance evidence | 未直接并入 main | 领先 491 / 落后 47 | — |
+| 2026-08-30T12:59:52+08:00 | `backup_0830_125930`<br>`ec9ae12425de` | 用途待补充；当前节点主题：docs(agent-store): add standalone acceptance evidence | 未直接并入 main | 领先 490 / 落后 47 | — |
+| 2026-08-30T12:37:25+08:00 | `backup_0830_123730`<br>`c3118f46d7f2` | 用途待补充；当前节点主题：docs(trial): pin cross-platform acceptance tag | 未直接并入 main | 领先 489 / 落后 47 | — |
+| 2026-08-30T12:21:52+08:00 | `backup_0830_122157`<br>`cee65799732a` | 用途待补充；当前节点主题：docs(status): align checkpoint branch and backup | 未直接并入 main | 领先 488 / 落后 47 | — |
 | 2026-08-30T12:19:35+08:00 | `backup_0830_121946`<br>`208b6a993c19` | 用途待补充；当前节点主题：docs(status): record notion mirror checkpoint | 未直接并入 main | 领先 487 / 落后 47 | — |
 | 2026-08-30T12:14:31+08:00 | `backup_0830_301220`<br>`a526d4afb768` | 用途待补充；当前节点主题：docs(status): refresh latest web-first checkpoint | 未直接并入 main | 领先 486 / 落后 47 | — |
 | 2026-08-30T12:12:44+08:00 | `backup_0830_301215`<br>`6c877f479199` | 用途待补充；当前节点主题：docs(report): add visual 10-hour execution status | 未直接并入 main | 领先 485 / 落后 47 | — |
 | 2026-08-30T12:07:12+08:00 | `backup_0830_301202`<br>`9faf96985185` | 用途待补充；当前节点主题：feat(web): expose direct conversation trial | 未直接并入 main | 领先 484 / 落后 47 | — |
-| 2026-08-30T12:05:30+08:00 | `backup_0830_121258`<br>`d7235b0127e7` | 用途待补充；当前节点主题：docs: refresh branch catalog final checkpoint | 未直接并入 main | 领先 406 / 落后 47 | — |
+| 2026-08-30T12:05:10+08:00 | `backup_0830_121258`<br>`a0b9d9c82b76` | 用途待补充；当前节点主题：docs: update regression evidence index count | 未直接并入 main | 领先 405 / 落后 47 | — |
 | 2026-08-30T12:00:04+08:00 | `backup_0830_301145`<br>`f898ca8c4ca0` | 用途待补充；当前节点主题：test(postgres): strengthen v2 attempt and fence contract | 未直接并入 main | 领先 481 / 落后 47 | — |
 | 2026-08-30T10:52:29+08:00 | `dev_im_persistence_accelerator_20260830`<br>`51dbb1e5bd9a` | 用途待补充；当前节点主题：docs(im): include durable projection checkpoint | 未直接并入 main | 领先 471 / 落后 47 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_im_persistence_accelerator_20260830` |
-| 2026-08-29T18:36:20+08:00 | `backup_0830_122508_main_pre_im_merge`<br>`19d4dc5506eb` | 用途待补充；当前节点主题：docs(branches): record projection identity hardening | 已作为祖先进入 main | 领先 0 / 落后 34 | — |
+| 2026-08-29T17:59:34+08:00 | `backup_0830_122508_main_pre_im_merge`<br>`4e7ef9307c02` | 用途待补充；当前节点主题：fix: stabilize consecutive branch catalog refreshes | 已作为祖先进入 main | 领先 0 / 落后 37 | — |
 | 2026-08-27T18:07:00+08:00 | `backup_0827_200010`<br>`1d399e555fb0` | 2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。 | 已作为祖先进入 main | 领先 0 / 落后 60 | — |
 | 2026-08-23T18:04:39Z | `dependabot/pip/mypy-2.3.1`<br>`fce21d09e51b` | 用途待补充；当前节点主题：build(deps-dev): bump mypy from 1.19.1 to 2.3.1 | 未直接并入 main | 领先 1 / 落后 288 | — |
 | 2026-08-23T18:04:33Z | `dependabot/pip/ruff-0.16.4`<br>`bf627bc8a49f` | 用途待补充；当前节点主题：build(deps): bump ruff from 0.16.3 to 0.16.4 | 未直接并入 main | 领先 1 / 落后 288 | — |
@@ -173,16 +173,16 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 ## 本机 Worktree 目录
 
-`main` 固定在 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement`。当前另有 6 个辅助 linked worktree；它们统一位于 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees`，完成后必须合并、推送并移除。
+`main` 固定在 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement`。当前另有 6 个辅助 linked worktree；它们统一位于 `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement`。每个 worktree 必须先推送，再按人工评审结论决定合并、归档或移除；保留中的人工评审 worktree 不得提前清理。
 
 | 状态 | 分支/模式 | HEAD | 路径 |
 | --- | --- | --- | --- |
 | 正式主线工作区 | `main` | `3d6bcc67ab66` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 存在、干净 | `dev_im_persistence_accelerator_20260830` | `51dbb1e5bd9a` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_im_persistence_accelerator_20260830` |
 | 存在、干净 | `dev_research_docs_accelerator_20260830` | `b0e5611aeb6c` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_research_docs_accelerator_20260830` |
-| 存在、干净 | `dev_wanwork_quantum_entanglement` | `8d316a9b54ec` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 存在、有未提交修改 | `dev_wanwork_quantum_entanglement` | `741224774015` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 存在、干净 | `dev_web_first_accelerator_20260830` | `aa1daf471ab8` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_web_first_accelerator_20260830` |
-| 存在、有未提交修改 | `mainline_continue_quantum_entanglement` | `004d78ffa2d1` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 存在、有未提交修改 | `mainline_continue_quantum_entanglement` | `8b78c261801c` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 存在、干净 | `scoped_lease_process_matrix` | `72a3487c7a58` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/scoped_lease_process_matrix` |
 
 ## 固定版本标签
@@ -201,7 +201,7 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 ```bash
 cd /Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement
 git fetch origin
-git worktree add /Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees/<目录名> \
+git worktree add /Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/<目录名> \
   -b codex/<任务名> origin/main
 ```
 
@@ -221,12 +221,11 @@ git worktree add /Users/lwblx/huapohen/agent/execute/infinite/quantum_entangleme
 
 ## 管理规则
 
-1. `main` 永远是唯一正式主线；阶段分支不能自封为发布分支。
-2. Web IM/Agent Store 阶段在未合并前只在对应 `dev_*` worktree 验收；是否合并由用户审阅后决定。
-3. 每个小改动继续独立提交；阶段完成且获准后才合并回 `main` 并推送远端。
-4. 新 worktree 一律建在 `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement/worktrees`。
-5. 推送成功后删除已完成的本地 worktree 和本地阶段分支，不长期堆积。
-6. 删除远端 active 分支前，必须确认提交已进入 `main` 或已有同 SHA 的 `archive/*` 冻结引用。
-7. `archive/*` 只用于保全证据，不在其中开发、不移动其尖端。
-8. 删除 worktree 前先确认状态干净、提交已推送；使用 `git worktree remove`，不要直接删目录。
-9. 每次新增、移动或删除分支/worktree 后运行目录更新脚本并提交生成结果。
+1. `main` 永远是唯一默认主线；阶段分支不能自封为发布分支。
+2. 每个小改动继续独立提交并先推送阶段分支；只有用户明确批准后才合并或挑选进入 `main`。
+3. 新 worktree 一律建在 `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement`。
+4. 已完成且评审决定不再保留的 worktree，确认推送和归档状态后再删除；保留中的人工评审 worktree 不得提前清理。
+5. 删除远端 active 分支前，必须确认提交已进入 `main` 或已有同 SHA 的 `archive/*` 冻结引用。
+6. `archive/*` 只用于保全证据，不在其中开发、不移动其尖端。
+7. 删除 worktree 前先确认状态干净、提交已推送；使用 `git worktree remove`，不要直接删目录。
+8. 每次新增、移动或删除分支/worktree 后运行目录更新脚本并提交生成结果。
