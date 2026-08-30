@@ -3,6 +3,30 @@
 > 计划版本：2026-08-30-stage-pause-v6
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
+
+## 2026-08-30 deadline checkpoint（当前有效）
+
+本计划早期段落保留为历史路线记录；当前实际可执行节点已推进到 PostgreSQL message projection
+候选的 runtime-only 闭环。`migration 12`、owner-only CAS writer、Serializable 同事务 global read
+与 checkpoint、materialized reader、跨页 reducer、非消息 watermark、双 runner CAS 竞争和 pool
+restart readback 均已在隔离 PostgreSQL 18 通过；`projection_revision` 的合法关系为
+`0 < row <= head`。代码/证据提交为 `1e8fc38`、`a41ed54`、`2317871`、`4774c0d`、`4ae750e`、
+`5cbd3c0`、`f0a8f80`，备份分支 `backup_0830_215839` 与主线同指 `f0a8f80`。
+
+### 下一步只按以下顺序推进
+
+1. **Shadow wiring（仍 default-off）**：把 `CompareMessageReaders` 接到 runtime composition，要求
+   replay/materialized 各持独立 opaque cursor；mismatch 直接阻断，不做 fallback 合并。
+2. **故障矩阵**：在真实 runtime pool 夹具中加入 SIGKILL/commit-ACK 丢失/rollback/partial-write，
+   验证只出现 old head 或 complete new head，并从新连接重读 checkpoint、head、rows。
+3. **Cutover preflight**：补生产 applied-schema digest、权限/备份证明、旧 reader drain 与 rollback
+   receipt；未齐全前继续使用 bounded EventStore replay，不启用 materialized primary。
+4. **IM 接入前置**：真实 Clerk/JWKS、Task/Artifact/Needs You durable projection、worker/provider
+   bridge、action receipt 与 `effect_unknown` reconcile 仍是独立 gate，禁止因本地闭环通过而连接真实
+   provider 或打开 outbound。
+
+验收命令、边界和证据详见 [`research/69_postgres_projector_end_to_end_and_revision_fix_20260830.md`](research/69_postgres_projector_end_to_end_and_revision_fix_20260830.md)
+与 [`docs/production/CURRENT_READINESS.md`](../docs/production/CURRENT_READINESS.md)。
 > 当前状态：**E1 / Level A 与 E2 provider bundle 离线闭环已完成；E3 Result Authority 的 M1 private stored-event envelope codec（`d889751`）、M2 reserved fence（`dd0ba54`）、M3 private store adapter（`504824c`）、M4 inactive schema / Artifact owner transaction / private backup topology（`28b3d6a`）、M5 atomic result graph + `ObservedV2` + migration-7 opt-in（`144f449`）与 receipt-bound non-emitting reconciliation（`ee63f55`）已完成；随后补齐 migration-7 active result backup/restore、manifest/topology/bytes/geometry 绑定、有界输入防护、干净进程/双连接/SIGKILL 恢复证据、私有 PURE heartbeat supervisor、opt-in store-owned acceptance API 与 fresh-ACK `AcceptedV2`（worker seam checkpoint `7bed2b6`），并在 `69fbcb6` 增加 result-only business projection 候选，在 `a014bc5`/`e4f00fe`/`7a01f6b` 补齐其 process binding、lease fencing 与 SIGKILL recovery；当前 `23acebb`/`e27c30b` 又加入受 ProtectedOperationComposer 保护的认证读取 seam 与 15 项专项矩阵；本次 continuation 再完成 `36cd0b4` 的私有 `ScopedPureWorkerLifecycle`、`025b5c7` 的双连接 heartbeat/expiry 与 relinquish race 矩阵，以及 `a4196d3` 的 wildcard surface 兼容修复。真实 provider sandbox 未连接，生产 worker、真实认证 transport/composition、全系统 crash/kill/two-process recovery 与 compatibility/rollback evidence 仍未完成。**
 > 生产状态：Gate A–E 全部关闭；本计划不能被解释为发布批准。
 
