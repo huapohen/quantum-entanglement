@@ -198,6 +198,60 @@ class ScopedPureWorkerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.job.status, InvocationStatus.FAILED)
         self.assertEqual(snapshot.current_attempt.status, AttemptStatus.EXPIRED)
 
+    async def test_heartbeat_loss_cancels_handler_and_relinquishes_without_acceptance(self) -> None:
+        started = asyncio.Event()
+        canceled = asyncio.Event()
+        heartbeat_calls = 0
+
+        async def handler(context: PureWorkerContext) -> object:
+            started.set()
+            await context.wait_cancelled()
+            canceled.set()
+            return self.result_request
+
+        async def acceptor(
+            _request: ScopedInvocationResultAcceptanceRequestV2,
+            _claim: object,
+        ) -> object:
+            self.fail("heartbeat loss must never enter result acceptance")
+
+        original = self.store.heartbeat_scoped_invocation_start_v3
+
+        def heartbeat(claim: object, *, lease_seconds: float) -> bool:
+            nonlocal heartbeat_calls
+            heartbeat_calls += 1
+            if heartbeat_calls == 1:
+                return original(claim, lease_seconds=lease_seconds)
+            return False
+
+        self.store.heartbeat_scoped_invocation_start_v3 = heartbeat  # type: ignore[method-assign]
+        running = asyncio.create_task(
+            self.lifecycle.run_and_accept(
+                self.claimed,
+                self.execution_request.manifest,
+                self.configuration(),
+                handler,
+                acceptor=acceptor,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        result = await asyncio.wait_for(running, timeout=1)
+
+        self.assertEqual(result.outcome, PureWorkerOutcome.LEASE_LOST)
+        self.assertTrue(result.drained)
+        self.assertTrue(canceled.is_set())
+        self.assertGreaterEqual(heartbeat_calls, 2)
+        snapshot = self.store.recovery_snapshot_for_task(
+            self.execution_request.manifest.session_id,
+            self.execution_request.manifest.task_id,
+        )
+        self.assertIsNotNone(snapshot.job)
+        self.assertIsNotNone(snapshot.current_attempt)
+        assert snapshot.job is not None
+        assert snapshot.current_attempt is not None
+        self.assertEqual(snapshot.job.status, InvocationStatus.FAILED)
+        self.assertEqual(snapshot.current_attempt.status, AttemptStatus.EXPIRED)
+
     async def test_close_is_monotonic_and_new_admission_is_rejected(self) -> None:
         self.assertEqual(
             (await self.lifecycle.snapshot()).state,
