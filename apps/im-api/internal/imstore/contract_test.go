@@ -63,6 +63,20 @@ func TestCommandIdentityFreezesSQLCompatibleKeyGrammar(t *testing.T) {
 	}
 }
 
+func TestAgentStoreCommandReservesAgentNamespace(t *testing.T) {
+	t.Parallel()
+	digest := DigestBytes([]byte("agent install request"))
+	command, err := NewAgentStoreCommand("agent.install", "install-1", digest)
+	if err != nil || command.Kind() != "agent.install" || command.RequestDigest() != digest {
+		t.Fatalf("agent command = %#v, %v", command, err)
+	}
+	for _, kind := range []string{"conversation.create", "agent", "agent/unsafe"} {
+		if command, err := NewAgentStoreCommand(kind, "install-1", digest); !errors.Is(err, ErrInvalidRequest) || !command.IsZero() {
+			t.Fatalf("NewAgentStoreCommand(%q) = %#v, %v", kind, command, err)
+		}
+	}
+}
+
 func TestCommitReceiptSeparatesFreshReplayAndUnknownResolution(t *testing.T) {
 	command, err := NewCommandIdentity("conversation.create", "create-alpha", DigestBytes([]byte("request")))
 	if err != nil {

@@ -171,7 +171,7 @@ func TestUnitOfWorkAgainstPostgres(t *testing.T) {
 		createdAt := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 		installation := mustAgentInstallation(t, tenantID, workspaceID, actorID, claimedBy, passport, createdAt, agentstore.InstallationActive, 1)
 		createCommand := mustCommand(t, "agent.store.create", "agent-store-create", "agent-store-create-request")
-		_, err := unit.Execute(t.Context(), tenantID, createCommand, func(ctx context.Context, repositories store.TenantRepositories) (store.SHA256Digest, error) {
+		createReceipt, err := unit.ExecuteAgentStore(t.Context(), tenantID, createCommand.Kind(), createCommand.IdempotencyKey(), createCommand.RequestDigest(), func(ctx context.Context, repositories store.TenantRepositories) (store.SHA256Digest, error) {
 			if _, err := repositories.AgentStore().CompareAndSwapDefinition(ctx, 0, definition); err != nil {
 				return store.SHA256Digest{}, fmt.Errorf("definition create: %w", err)
 			}
@@ -188,6 +188,20 @@ func TestUnitOfWorkAgainstPostgres(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("Agent Store create: %v", err)
+		}
+		if createReceipt.Replayed() || createReceipt.ResolvedAfterUnknown() {
+			t.Fatalf("initial Agent Store receipt = %#v, want fresh committed receipt", createReceipt)
+		}
+		replayCalls := 0
+		replayedReceipt, err := unit.ExecuteAgentStore(
+			t.Context(), tenantID, createCommand.Kind(), createCommand.IdempotencyKey(), createCommand.RequestDigest(),
+			func(context.Context, store.TenantRepositories) (store.SHA256Digest, error) {
+				replayCalls++
+				return store.SHA256Digest{}, errors.New("replayed Agent Store command was executed")
+			},
+		)
+		if err != nil || !replayedReceipt.Replayed() || replayCalls != 0 || replayedReceipt.ResultDigest() != store.DigestBytes([]byte("agent-store-create-result")) {
+			t.Fatalf("Agent Store durable replay receipt = %#v, err=%v, calls=%d", replayedReceipt, err, replayCalls)
 		}
 		if err := unit.Read(t.Context(), tenantID, func(ctx context.Context, repositories store.TenantRepositories) error {
 			gotDefinition, err := repositories.AgentStore().CurrentDefinition(ctx, definitionID)

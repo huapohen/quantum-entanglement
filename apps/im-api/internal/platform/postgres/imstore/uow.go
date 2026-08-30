@@ -200,6 +200,25 @@ func (unit *UnitOfWork) Execute(
 	return receipt, nil
 }
 
+// ExecuteAgentStore is the narrow durable command seam for Agent Store mutations. It derives a
+// command identity in the reserved agent.* namespace and delegates to the same serializable
+// transaction, receipt write, replay lookup, commit-unknown reconciliation, and command lock
+// used by the rest of the IM store.
+func (unit *UnitOfWork) ExecuteAgentStore(
+	ctx context.Context,
+	tenantID im.TenantID,
+	kind string,
+	idempotencyKey string,
+	requestDigest store.SHA256Digest,
+	operation store.ExecuteOperation,
+) (store.CommitReceipt, error) {
+	command, err := store.NewAgentStoreCommand(kind, idempotencyKey, requestDigest)
+	if err != nil {
+		return store.CommitReceipt{}, err
+	}
+	return unit.Execute(ctx, tenantID, command, operation)
+}
+
 func (unit *UnitOfWork) Resolve(
 	ctx context.Context,
 	tenantID im.TenantID,

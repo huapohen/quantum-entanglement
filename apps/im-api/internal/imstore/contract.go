@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/agentstore"
@@ -65,6 +66,21 @@ func NewCommandIdentity(
 	return CommandIdentity{
 		kind: kind, idempotencyKey: idempotencyKey, requestDigest: requestDigest,
 	}, nil
+}
+
+// NewAgentStoreCommand freezes the command namespace used by durable Agent Store mutations.
+// Keeping the namespace check here prevents an installation/offboard caller from accidentally
+// sharing an idempotency key with an unrelated IM command while still reusing the common receipt
+// schema and canonical key grammar.
+func NewAgentStoreCommand(
+	kind string,
+	idempotencyKey string,
+	requestDigest SHA256Digest,
+) (CommandIdentity, error) {
+	if !strings.HasPrefix(kind, "agent.") {
+		return CommandIdentity{}, ErrInvalidRequest
+	}
+	return NewCommandIdentity(kind, idempotencyKey, requestDigest)
 }
 
 func (identity CommandIdentity) Kind() string                { return identity.kind }
