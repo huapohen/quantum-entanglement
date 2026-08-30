@@ -33,6 +33,21 @@ Ruff、strict mypy、compileall、Go test/vet、Web build 与 Web-first syntheti
 边界可被 readiness/health 测试，不能替代真实 Clerk/JWKS、可信 RequestContext 或业务路由授权。
 证据见 [`51_postgres_runtime_fail_closed_auth_composition_20260830.md`](../../analysis_report/research/51_postgres_runtime_fail_closed_auth_composition_20260830.md)。
 
+## 2026-08-30 Authenticated tenant context HTTP seam
+
+提交 `8c4fb3f`（helper 回归 `f226ab5`）把 `auth.ResolveTrustedRequestContext` 接到 Go HTTP
+composition root：Bearer verifier 先写入不含 token 的 verified identity，随后严格解析单个
+`X-WanWork-Tenant-ID` 候选，并在同一个 `TenantUnitOfWork.Read` 快照中完成 Clerk-shaped external
+binding → global human principal → active tenant membership → active human Actor 的一致性检查。
+只有完整链路通过，`GET /api/v1/auth/context` 才返回安全摘要；缺 header、重复/非法 tenant、removed
+membership、authority unavailable 和 integrity drift 均 fail closed。Go 全模块 `test ./...` 与
+`vet ./...` 已通过，详细证据见
+[`56_authenticated_tenant_context_http_seam_20260830.md`](../../analysis_report/research/56_authenticated_tenant_context_http_seam_20260830.md)。
+
+这是受保护的只读 identity seam，不是生产认证完成。`cmd/im-api` 的 PostgreSQL 组合仍使用空 fixture
+reject-all fake verifier；真实 Clerk/JWKS、route/path consistency、conversation ACL、Agent installation、
+durable message/Task/Artifact/Needs You projection、worker/provider 和 Gate A–E 继续关闭。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow

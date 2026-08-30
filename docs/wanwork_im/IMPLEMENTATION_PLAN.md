@@ -169,6 +169,8 @@ function-only/exact-access 与 attested runtime 的历史检查点。
    authenticated-TLS 正向 E2E、回滚与 drift validator；本步只冻结 rotation 合同，不执行 live pool
    replacement、旧 session termination 或 revoke；
 2. Clerk verified claim → realm binding → active principal/tenant membership → exact Actor → path consistency
+   （本地 fake/zero-network HTTP seam 已在 `8c4fb3f` 接通并由 `f226ab5` 补齐 context helper 回归；真实
+   Clerk/JWKS、edge-injected tenant candidate 和 route/path consistency 仍未闭合）
    的 trusted request context；
 3. conversation/actor/membership/access active resolver；invoke/publish 再叠加 installation/mandate/
    capability/budget/Artifact/Acceptance；

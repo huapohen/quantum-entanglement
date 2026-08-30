@@ -115,7 +115,23 @@ Runtime endpoints:
 GET /health/live  -> process liveness only
 GET /health/ready -> HTTP 200 exact database ready; HTTP 503 otherwise
 GET /api/v1/*     -> readiness failure stays HTTP 200 envelope with code 50301
+GET /api/v1/auth/context -> authenticated tenant identity summary (runtime composition only)
 ```
+
+The runtime-only identity seam requires both a canonical bearer header and one tenant candidate header:
+
+```bash
+curl --fail \
+  -H 'Authorization: Bearer <reviewed-token>' \
+  -H 'X-WanWork-Tenant-ID: ten_example' \
+  http://127.0.0.1:18080/api/v1/auth/context
+```
+
+The tenant header is only a lookup candidate. The handler is reached only after the same read snapshot
+confirms the Clerk realm binding, active human principal, active tenant membership, and active human Actor.
+The current PostgreSQL `cmd/im-api` composition intentionally uses an empty reject-all fake verifier, so this
+route is a local contract seam and will return an authentication error until a reviewed Clerk/JWKS adapter is
+composed. It never returns the bearer token or session secret.
 
 ### One-shot migrator
 
@@ -143,9 +159,11 @@ schema/object creation, elevated role settings, and unlisted routines.
 
 The exact validator, runtime pool, startup/readiness route barrier, controlled Unit of Work, and one-shot
 migration process are now real code paths. The role provision helper remains a test fixture, not production IaC;
-first-deploy ownership/grant cutover, credential rotation/old-session drain, restore/crash exercises, trusted
-Clerk tenant context, active authority resolution, PostgreSQL event/outbox/projection checkpoints, and provider
-reconciliation remain unimplemented. See `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` and
+first-deploy ownership/grant cutover, credential rotation/old-session drain, restore/crash exercises, production
+Clerk/JWKS tenant context, active conversation/action-time authority resolution, PostgreSQL event/outbox/projection
+checkpoints, and provider reconciliation remain unimplemented. A local fake/zero-network identity context seam
+now exists at `/api/v1/auth/context`; it does not upgrade this runtime to production authorization. See
+`docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` and
 `analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md` for the exact boundary.
 
 The exported `runtimepool.Pool.Acquire` is a trusted low-level escape hatch: it returns a session-guarded
