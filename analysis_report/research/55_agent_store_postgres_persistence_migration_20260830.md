@@ -25,6 +25,11 @@ Go PostgreSQL repository/UoW 已接入 `TenantRepositories.AgentStore()`：所�
 脱敏。JSONB object-key 顺序按 PostgreSQL 18 的读回语义处理，但数组元素、字段集合、身份、摘要、
 时间和 domain 构造器仍逐项校验；timestamptz 读回统一归一到 UTC，避免机器本地时区改变授权语义。
 
+action-time capability resolver 已提升为 `agentstore.ResolveGrantedCapabilities` 公共契约，localdemo
+安装路径现在使用同一实现：nil 请求表示完整 reviewed 集合，显式集合必须是 Trust Passport 当前允许
+能力的严格子集，输入会 canonical 排序并拒绝重复/空集合；每次决策都绑定调用时的 UTC 时钟并重新
+检查 Passport 有效期。这样后续 durable runtime 不需要复制一套“安装时允许、执行时另一套”的能力解析逻辑。
+
 这不是“生产 Agent Store 已完成”的声明。当前仍缺少安装命令的 durable receipt、action-time resolver、
 provider outbox/reconcile、真实 Clerk/RongCloud 适配器、灾备恢复和完整 IM provider effect gate；migration
 与 repository 是这些组件可以共同依赖的持久化契约。
