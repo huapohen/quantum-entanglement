@@ -1,6 +1,6 @@
 # v0版全端体验入口（Web/PWA first）
 
-今晚验收以同一套 Web/PWA 作为跨端结果：桌面端直接浏览器打开，手机/平板通过局域网打开，
+今晚验收固定使用标签 `v0.2.0-web-im-20260830` 对应的同一套 Web/PWA 跨端结果：桌面端直接浏览器打开，手机/平板通过局域网打开，
 均共享 Go loopback API、Agent Store、群聊、Agent 子群和 Workboard。
 
 ## 桌面端（macOS / Windows / Linux）
