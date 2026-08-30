@@ -49,6 +49,32 @@ func NewMessageProjection(reference im.ConversationRef) (*MessageProjection, err
 	}, nil
 }
 
+// NewMessageProjectionFromSnapshots restores a projection from a previously committed durable
+// snapshot. The constructor revalidates every row's conversation scope and revision shape before
+// exposing it to the reducer; callers cannot seed private reducer state directly.
+func NewMessageProjectionFromSnapshots(
+	reference im.ConversationRef,
+	messages []im.MessageSnapshot,
+	lastSequence uint64,
+) (*MessageProjection, error) {
+	projection, err := NewMessageProjection(reference)
+	if err != nil {
+		return nil, err
+	}
+	for _, message := range messages {
+		if message.IsZero() || message.Ref().ConversationRef() != reference ||
+			message.Revision() == 0 {
+			return nil, ErrInvalidProjection
+		}
+		if _, exists := projection.messages[message.Ref().MessageID()]; exists {
+			return nil, ErrProjectionConflict
+		}
+		projection.messages[message.Ref().MessageID()] = message
+	}
+	projection.lastSequence = lastSequence
+	return projection, nil
+}
+
 func (projection *MessageProjection) Apply(ctx context.Context, event events.StoredEvent) error {
 	if err := projectionContextError(ctx); err != nil {
 		return err
@@ -86,6 +112,31 @@ func (projection *MessageProjection) Apply(ctx context.Context, event events.Sto
 		return err
 	}
 	projection.messages[next.Ref().MessageID()] = next
+	projection.seenEvents[event.EventID] = struct{}{}
+	projection.lastSequence = event.Sequence
+	return nil
+}
+
+// ObserveSequence advances the stream watermark for an event that is intentionally outside the
+// message vocabulary. Non-message events still belong to the durable stream version and therefore
+// must be reflected in the projection head, but they must not mutate message rows.
+func (projection *MessageProjection) ObserveSequence(ctx context.Context, event events.StoredEvent) error {
+	if err := projectionContextError(ctx); err != nil {
+		return err
+	}
+	if projection == nil || projection.conversationRef.IsZero() || projection.messages == nil ||
+		projection.seenEvents == nil {
+		return ErrInvalidProjection
+	}
+	if err := validateScopedEvent(projection.conversationRef, event); err != nil {
+		return err
+	}
+	if _, replayed := projection.seenEvents[event.EventID]; replayed {
+		return nil
+	}
+	if event.Sequence <= projection.lastSequence {
+		return ErrProjectionOrder
+	}
 	projection.seenEvents[event.EventID] = struct{}{}
 	projection.lastSequence = event.Sequence
 	return nil
@@ -226,6 +277,16 @@ func (projection *MessageProjection) Messages() []im.MessageSnapshot {
 		return values[left].CreatedAt().Before(values[right].CreatedAt())
 	})
 	return values
+}
+
+// Snapshot returns a detached message value for an exact platform message ID. It is used by
+// durable adapters to bind one reducer transition to one owner-checked SQL row.
+func (projection *MessageProjection) Snapshot(messageID im.MessageID) (im.MessageSnapshot, bool) {
+	if projection == nil || projection.messages == nil || messageID.IsZero() {
+		return im.MessageSnapshot{}, false
+	}
+	message, ok := projection.messages[messageID]
+	return message, ok
 }
 
 func (projection *MessageProjection) LastSequence() uint64 {

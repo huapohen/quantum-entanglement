@@ -106,9 +106,26 @@ func validateMigrationPostconditionForSchema(
 		return validateNativeIMInbox(ctx, transaction, schemaVersion)
 	case 11:
 		return validateMessageProjection(ctx, transaction)
+	case 12:
+		return validateMessageProjectionWriter(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateMessageProjectionWriter(ctx context.Context, transaction pgx.Tx) error {
+	functions, err := readStoredAuthorityFunctions(ctx, transaction, []string{
+		"advance_message_projection_head", "write_message_projection",
+	})
+	if err != nil || len(functions) != 2 {
+		return ErrMigrationSchema
+	}
+	advance, advanceOK := storedAuthorityFunctionSpecByName("advance_message_projection_head")
+	write, writeOK := storedAuthorityFunctionSpecByName("write_message_projection")
+	if !advanceOK || !writeOK || !exactStoredAuthorityFunctions(functions, []storedAuthorityFunctionSpec{advance, write}) {
+		return ErrMigrationSchema
+	}
+	return validateMessageProjection(ctx, transaction)
 }
 
 func validateMessageProjection(ctx context.Context, transaction pgx.Tx) error {

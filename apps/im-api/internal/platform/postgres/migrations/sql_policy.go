@@ -83,6 +83,34 @@ var authorityWriteFunctionSpecs = map[string]authorityWriteFunctionSpec{
 		identityArgumentTokens: []string{"TEXT", "TEXT", "TEXT", "BIGINT", "TEXT", "TEXT", "BIGINT", "TEXT", "TEXT"},
 		resultToken:            "BOOLEAN",
 	},
+	"WRITE_MESSAGE_PROJECTION": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_WORKSPACE_ID", "TEXT", "P_CONVERSATION_ID", "TEXT",
+			"P_PROJECTION_ID", "TEXT", "P_EXPECTED_SEQUENCE", "BIGINT", "P_EXPECTED_GLOBAL_POSITION", "BIGINT",
+			"P_EXPECTED_REVISION", "BIGINT", "P_NEXT_SEQUENCE", "BIGINT", "P_NEXT_GLOBAL_POSITION", "BIGINT",
+			"P_NEXT_REVISION", "BIGINT", "P_MESSAGE_ID", "TEXT", "P_CLIENT_MESSAGE_ID", "TEXT",
+			"P_SENDER_ACTOR_ID", "TEXT", "P_MESSAGE_TYPE", "TEXT", "P_STATUS", "TEXT", "P_TEXT", "TEXT",
+			"P_EXT_INFO", "TEXT", "P_CREATED_AT", "TIMESTAMPTZ", "P_MESSAGE_REVISION", "BIGINT",
+			"P_LAST_EVENT_SEQUENCE", "BIGINT", "P_LAST_EVENT_POSITION", "BIGINT", "P_PROJECTION_REVISION", "BIGINT",
+		},
+		identityArgumentTokens: []string{
+			"TEXT", "TEXT", "TEXT", "TEXT", "BIGINT", "BIGINT", "BIGINT", "BIGINT", "BIGINT", "BIGINT",
+			"TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TIMESTAMPTZ", "BIGINT", "BIGINT", "BIGINT", "BIGINT",
+		},
+		resultToken: "BOOLEAN",
+	},
+	"ADVANCE_MESSAGE_PROJECTION_HEAD": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_WORKSPACE_ID", "TEXT", "P_CONVERSATION_ID", "TEXT",
+			"P_PROJECTION_ID", "TEXT", "P_EXPECTED_SEQUENCE", "BIGINT", "P_EXPECTED_GLOBAL_POSITION", "BIGINT",
+			"P_EXPECTED_REVISION", "BIGINT", "P_NEXT_SEQUENCE", "BIGINT", "P_NEXT_GLOBAL_POSITION", "BIGINT",
+			"P_NEXT_REVISION", "BIGINT",
+		},
+		identityArgumentTokens: []string{
+			"TEXT", "TEXT", "TEXT", "TEXT", "BIGINT", "BIGINT", "BIGINT", "BIGINT", "BIGINT", "BIGINT",
+		},
+		resultToken: "BOOLEAN",
+	},
 	"ADMIT_NATIVE_IM_INBOX": {
 		argumentTokens: []string{
 			"P_TENANT_ID", "TEXT", "P_WORKSPACE_ID", "TEXT", "P_PROVIDER", "TEXT",

@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 11 || len(second) != 11 {
+	if len(first) != 12 || len(second) != 12 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -252,6 +252,24 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if !strings.Contains(messageProjection.UpSQL, marker) {
 			t.Fatalf("message projection migration missing %q", marker)
+		}
+	}
+	writer := first[11]
+	if writer.Version != 12 || writer.Name != "message_projection_writer" ||
+		len(writer.Checksum) != 64 || writer.Checksum != second[11].Checksum ||
+		writer.UpSQL != second[11].UpSQL || writer.DownSQL != second[11].DownSQL {
+		t.Fatalf("unexpected deterministic message projection writer migration: %#v", writer)
+	}
+	for _, marker := range []string{
+		`CREATE FUNCTION wanwork_im.write_message_projection`,
+		`CREATE FUNCTION wanwork_im.advance_message_projection_head`,
+		`SECURITY DEFINER`,
+		`SET search_path TO pg_catalog`,
+		`REVOKE ALL ON FUNCTION wanwork_im.write_message_projection`,
+		`REVOKE ALL ON FUNCTION wanwork_im.advance_message_projection_head`,
+	} {
+		if !strings.Contains(writer.UpSQL, marker) {
+			t.Fatalf("message projection writer migration missing %q", marker)
 		}
 	}
 }

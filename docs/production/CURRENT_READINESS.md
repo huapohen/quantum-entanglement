@@ -84,6 +84,18 @@ RLS、forced-RLS、runtime read manifest 与 postcondition 检查；包级和 Go
 PostgreSQL materialized reader 仍是 inactive adapter：projector writer、checkpoint 与 projection
 同事务、shadow equality、crash/restore/rollback evidence 尚未闭合，默认读取继续走 bounded replay。
 
+### 2026-08-30 materialized projector writer 候选
+
+当前工作树新增 migration 12 及 `platform/postgres/improjection.Projector`：两个 owner-only
+`SECURITY DEFINER` 函数负责 message snapshot/head 的幂等 CAS，projector 在 Serializable
+transaction 中使用 `ReadGlobalPageTx` 读取事件、恢复 reducer、写入 rows/head 并 CAS checkpoint。
+Go 全模块 `test ./...` 与 `go vet ./...` 已通过，阶段证据见
+[`68_postgres_materialized_projector_writer_20260830.md`](../../analysis_report/research/68_postgres_materialized_projector_writer_20260830.md)。
+
+这仍不是 cutover：尚缺 applied-schema integration、双 projector 竞争、crash/restore、
+shadow replay/materialized equality 和 rollback evidence；默认业务读取保持 bounded EventStore
+replay，真实 IM/outbound 继续关闭。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow

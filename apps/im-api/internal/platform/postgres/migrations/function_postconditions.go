@@ -61,6 +61,36 @@ func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 		result:           "boolean",
 		definitionDigest: "82b7feec4d80b3cb0335780b0007086ac307e930afc126e5843465c3b31d7faf",
 	})
+	values = append(values, storedAuthorityFunctionSpec{
+		name: "write_message_projection",
+		arguments: "p_tenant_id text, p_workspace_id text, p_conversation_id text, p_projection_id text, " +
+			"p_expected_sequence bigint, p_expected_global_position bigint, p_expected_revision bigint, " +
+			"p_next_sequence bigint, p_next_global_position bigint, p_next_revision bigint, " +
+			"p_message_id text, p_client_message_id text, p_sender_actor_id text, p_message_type text, " +
+			"p_status text, p_text text, p_ext_info text, p_created_at timestamp with time zone, " +
+			"p_message_revision bigint, p_last_event_sequence bigint, p_last_event_position bigint, " +
+			"p_projection_revision bigint",
+		identityArguments: "p_tenant_id text, p_workspace_id text, p_conversation_id text, p_projection_id text, " +
+			"p_expected_sequence bigint, p_expected_global_position bigint, p_expected_revision bigint, " +
+			"p_next_sequence bigint, p_next_global_position bigint, p_next_revision bigint, " +
+			"p_message_id text, p_client_message_id text, p_sender_actor_id text, p_message_type text, " +
+			"p_status text, p_text text, p_ext_info text, p_created_at timestamp with time zone, " +
+			"p_message_revision bigint, p_last_event_sequence bigint, p_last_event_position bigint, " +
+			"p_projection_revision bigint",
+		result:           "boolean",
+		definitionDigest: "844280622624369283625e196fa280c5fd4fdb3a3e102121f655f445b33a816f",
+	})
+	values = append(values, storedAuthorityFunctionSpec{
+		name: "advance_message_projection_head",
+		arguments: "p_tenant_id text, p_workspace_id text, p_conversation_id text, p_projection_id text, " +
+			"p_expected_sequence bigint, p_expected_global_position bigint, p_expected_revision bigint, " +
+			"p_next_sequence bigint, p_next_global_position bigint, p_next_revision bigint",
+		identityArguments: "p_tenant_id text, p_workspace_id text, p_conversation_id text, p_projection_id text, " +
+			"p_expected_sequence bigint, p_expected_global_position bigint, p_expected_revision bigint, " +
+			"p_next_sequence bigint, p_next_global_position bigint, p_next_revision bigint",
+		result:           "boolean",
+		definitionDigest: "400972b280a1775a2c96baca05041022ff12376e74827876825d24beb5b94af8",
+	})
 	return append(values, storedNativeIMInboxFunctionSpecV10())
 }
 
