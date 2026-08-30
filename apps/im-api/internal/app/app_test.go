@@ -226,6 +226,141 @@ func TestRuntimeAuthenticatedContextRejectsMissingTenantAndInactiveMembership(t 
 	}
 }
 
+func TestRuntimeConversationReadRequiresPathConsistencyAndCurrentAccess(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	tenant, err := im.ParseTenantID("ten_alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, err := im.ParseConversationID("cnv_room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := im.ParseWorkspaceID("wsp_alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := im.NewConversationRef(tenant, conversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := im.NewConversationSnapshot(
+		reference, &workspace, im.ConversationGroup, im.ConversationActive,
+		im.ConversationID{}, im.MessageID{}, im.InvocationID{}, 3,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := newAppIdentityAuthority(t, tenant)
+	membership, err := im.NewConversationMembershipSnapshot(
+		reference, identity.actor.Ref(), im.ConversationMembershipMember,
+		im.ConversationMembershipActive, 4,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := im.NewConversationAccessSnapshot(
+		reference, identity.actor.Ref(),
+		[]im.ConversationPermission{im.ConversationPermissionRead, im.ConversationPermissionSendMessage}, 5,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationRepository := &appConversationRepository{snapshot: conversation}
+	authorityRepository := &appConversationAuthority{membership: membership, access: access}
+	readCalls := 0
+	server, err := NewRuntime(RuntimeDependencies{
+		Database: &fakeReadinessProbe{},
+		Persistence: fakeTenantUnitOfWork{read: func(
+			ctx context.Context, requestedTenant im.TenantID, operation store.ReadOperation,
+		) error {
+			readCalls++
+			if requestedTenant != tenant {
+				t.Fatalf("requested tenant = %s, want %s", requestedTenant.String(), tenant.String())
+			}
+			return operation(ctx, fakeTenantRepositories{
+				identity: identity, conversations: conversationRepository, authority: authorityRepository,
+			})
+		}},
+		Verifier: testVerifier(t),
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/ten_alpha/conversations/cnv_room", nil)
+	valid.Header.Set("Authorization", "Bearer header.payload.signature")
+	valid.Header.Set(tenantIDHeader, tenant.String())
+	response, err := server.Test(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var envelope struct {
+		Code int `json:"code"`
+		Data struct {
+			ID       string `json:"id"`
+			TenantID string `json:"tenantId"`
+			Type     string `json:"type"`
+			Revision uint64 `json:"revision"`
+			Access   struct {
+				Permissions []string `json:"permissions"`
+				Revision    uint64   `json:"revision"`
+			} `json:"access"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || envelope.Code != int(httpapi.CodeOK) ||
+		envelope.Data.ID != conversationID.String() || envelope.Data.TenantID != tenant.String() ||
+		envelope.Data.Type != string(im.ConversationGroup) || envelope.Data.Revision != 3 ||
+		envelope.Data.Access.Revision != 5 || len(envelope.Data.Access.Permissions) != 2 {
+		t.Fatalf("conversation envelope = %#v", envelope)
+	}
+	if readCalls != 2 {
+		t.Fatalf("read calls = %d, want middleware + action-time read", readCalls)
+	}
+
+	wrongPath := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/ten_other/conversations/cnv_room", nil)
+	wrongPath.Header.Set("Authorization", "Bearer header.payload.signature")
+	wrongPath.Header.Set(tenantIDHeader, tenant.String())
+	wrongResponse, err := server.Test(wrongPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wrongResponse.Body.Close()
+	var wrongEnvelope struct {
+		Code int `json:"code"`
+	}
+	if err := json.NewDecoder(wrongResponse.Body).Decode(&wrongEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if wrongEnvelope.Code != int(httpapi.CodeForbidden) {
+		t.Fatalf("wrong path code = %d, want %d", wrongEnvelope.Code, httpapi.CodeForbidden)
+	}
+
+	authorityRepository.access = im.ConversationAccessSnapshot{}
+	denied := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/ten_alpha/conversations/cnv_room", nil)
+	denied.Header.Set("Authorization", "Bearer header.payload.signature")
+	denied.Header.Set(tenantIDHeader, tenant.String())
+	deniedResponse, err := server.Test(denied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deniedResponse.Body.Close()
+	var deniedEnvelope struct {
+		Code int `json:"code"`
+	}
+	if err := json.NewDecoder(deniedResponse.Body).Decode(&deniedEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if deniedEnvelope.Code != int(httpapi.CodeForbidden) {
+		t.Fatalf("denied access code = %d, want %d", deniedEnvelope.Code, httpapi.CodeForbidden)
+	}
+}
+
 func testVerifier(t *testing.T) *authfake.Verifier {
 	t.Helper()
 	realm, err := im.ParseProviderRealmID("rlm_app_test")
@@ -301,12 +436,16 @@ func (fakeTenantUnitOfWork) Resolve(
 }
 
 type fakeTenantRepositories struct {
-	identity store.IdentityAuthorityRepository
+	identity      store.IdentityAuthorityRepository
+	conversations store.ConversationRepository
+	authority     store.ConversationAuthorityRepository
 }
 
-func (repositories fakeTenantRepositories) Conversations() store.ConversationRepository { return nil }
+func (repositories fakeTenantRepositories) Conversations() store.ConversationRepository {
+	return repositories.conversations
+}
 func (repositories fakeTenantRepositories) Authority() store.ConversationAuthorityRepository {
-	return nil
+	return repositories.authority
 }
 func (repositories fakeTenantRepositories) Identity() store.IdentityAuthorityRepository {
 	return repositories.identity
@@ -373,4 +512,67 @@ func (authority *appIdentityAuthority) CurrentTenantMembership(context.Context, 
 }
 func (authority *appIdentityAuthority) CurrentActor(context.Context, im.ActorRef) (im.ActorSnapshot, error) {
 	return authority.actor, nil
+}
+
+type appConversationRepository struct {
+	snapshot im.ConversationSnapshot
+}
+
+func (repository *appConversationRepository) CurrentConversation(
+	_ context.Context, reference im.ConversationRef,
+) (im.ConversationSnapshot, error) {
+	if repository.snapshot.IsZero() || repository.snapshot.Ref() != reference {
+		return im.ConversationSnapshot{}, store.ErrNotFound
+	}
+	return repository.snapshot, nil
+}
+
+func (repository *appConversationRepository) CompareAndSwapConversation(
+	_ context.Context, _ uint64, _ im.ConversationSnapshot,
+) (im.ConversationSnapshot, error) {
+	return im.ConversationSnapshot{}, store.ErrPersistenceUnsupported
+}
+
+type appConversationAuthority struct {
+	membership im.ConversationMembershipSnapshot
+	access     im.ConversationAccessSnapshot
+}
+
+func (repository *appConversationAuthority) CurrentProviderBinding(
+	context.Context, im.ProviderConversationRef,
+) (im.ProviderConversationBinding, error) {
+	return im.ProviderConversationBinding{}, store.ErrPersistenceUnsupported
+}
+func (repository *appConversationAuthority) CompareAndSwapProviderBinding(
+	context.Context, uint64, im.ProviderConversationBinding,
+) (im.ProviderConversationBinding, error) {
+	return im.ProviderConversationBinding{}, store.ErrPersistenceUnsupported
+}
+func (repository *appConversationAuthority) CurrentMembership(
+	_ context.Context, reference im.ConversationRef, actor im.ActorRef,
+) (im.ConversationMembershipSnapshot, error) {
+	if repository.membership.IsZero() || repository.membership.ConversationRef() != reference ||
+		repository.membership.ActorRef() != actor {
+		return im.ConversationMembershipSnapshot{}, store.ErrNotFound
+	}
+	return repository.membership, nil
+}
+func (repository *appConversationAuthority) CompareAndSwapMembership(
+	context.Context, uint64, im.ConversationMembershipSnapshot,
+) (im.ConversationMembershipSnapshot, error) {
+	return im.ConversationMembershipSnapshot{}, store.ErrPersistenceUnsupported
+}
+func (repository *appConversationAuthority) CurrentAccess(
+	_ context.Context, reference im.ConversationRef, actor im.ActorRef,
+) (im.ConversationAccessSnapshot, error) {
+	if repository.access.IsZero() || repository.access.ConversationRef() != reference ||
+		repository.access.ActorRef() != actor {
+		return im.ConversationAccessSnapshot{}, nil
+	}
+	return repository.access, nil
+}
+func (repository *appConversationAuthority) CompareAndSwapAccess(
+	context.Context, uint64, im.ConversationAccessSnapshot,
+) (im.ConversationAccessSnapshot, error) {
+	return im.ConversationAccessSnapshot{}, store.ErrPersistenceUnsupported
 }
