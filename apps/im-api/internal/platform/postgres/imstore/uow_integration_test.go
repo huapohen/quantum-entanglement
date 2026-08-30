@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -158,7 +159,7 @@ func TestUnitOfWorkAgainstPostgres(t *testing.T) {
 	})
 
 	t.Run("agent store catalog passport and installation CAS use function-only writes", func(t *testing.T) {
-		unit, _ := newStoreIntegrationUnit(t, adminURL)
+		unit, pool := newStoreIntegrationUnit(t, adminURL)
 		tenantID := mustTenantID(t, "ten_alpha")
 		definitionID := mustAgentDefinitionID(t, "agd_repository")
 		publisherID := mustPublisherID(t, "pub_repository")
@@ -241,6 +242,47 @@ func TestUnitOfWorkAgainstPostgres(t *testing.T) {
 		}); !errors.Is(err, agentstore.ErrInstallationConflict) {
 			t.Fatalf("Agent Store stale CAS error = %v", err)
 		}
+
+		t.Run("database rejects non-canonical capability payloads", func(t *testing.T) {
+			validPayload, err := agentstore.EncodeRelease(release)
+			if err != nil {
+				t.Fatalf("encode release payload: %v", err)
+			}
+			invalidPayload := strings.Replace(string(validPayload), `"agr_repository"`, `"agr_invalid_payload"`, 1)
+			invalidPayload = strings.Replace(invalidPayload, `"conversation.read"`, `"invalid capability!"`, 1)
+			transaction, err := pool.BeginTx(t.Context(), pgx.TxOptions{})
+			if err != nil {
+				t.Fatalf("begin invalid release write: %v", err)
+			}
+			defer rollbackTransaction(transaction)
+			if _, err := setStoreTenant(t.Context(), transaction, tenantID.String()); err != nil {
+				t.Fatalf("bind invalid release tenant: %v", err)
+			}
+			var changed bool
+			err = transaction.QueryRow(t.Context(), `
+SELECT wanwork_im.write_agent_release_revision($1, $2, $3, $4, $5)`,
+				tenantID.String(), "agr_invalid_payload", int64(0), int64(1), invalidPayload,
+			).Scan(&changed)
+			var postgresError *pgconn.PgError
+			if !errors.As(err, &postgresError) || postgresError.Code != "23514" || changed {
+				t.Fatalf("invalid capability write changed=%v error=%v, want SQLSTATE 23514", changed, err)
+			}
+
+			readTransaction, err := pool.BeginTx(t.Context(), pgx.TxOptions{})
+			if err != nil {
+				t.Fatalf("begin invalid release readback: %v", err)
+			}
+			defer rollbackTransaction(readTransaction)
+			if _, err := setStoreTenant(t.Context(), readTransaction, tenantID.String()); err != nil {
+				t.Fatalf("bind invalid release readback tenant: %v", err)
+			}
+			var rows int
+			if err := readTransaction.QueryRow(t.Context(), `
+SELECT count(*) FROM wanwork_im.agent_releases WHERE tenant_id = $1 AND release_id = $2`,
+				tenantID.String(), "agr_invalid_payload").Scan(&rows); err != nil || rows != 0 {
+				t.Fatalf("invalid release rows=%d error=%v, want no durable row", rows, err)
+			}
+		})
 	})
 
 	t.Run("trusted context resolves identity authority in one tenant read snapshot", func(t *testing.T) {

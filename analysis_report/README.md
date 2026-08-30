@@ -126,6 +126,7 @@ Atomic Result Authority 的最大强度参考，不是当前 W2 的串行总清�
 | [`research/36_postgres_approval_policy_control_store_checkpoint.md`](research/36_postgres_approval_policy_control_store_checkpoint.md) | W2 当前深度证据：`16d66b6` | 独立 policy control cluster、三角色、exact CAS、完整历史链、code-owned catalog attestation、PG18.6 并发/故障证据与 mutation-time fence NO-GO |
 | [`research/37_postgres_durable_attempt_issuer_v2_checkpoint.md`](research/37_postgres_durable_attempt_issuer_v2_checkpoint.md) | W2 当前本地增量：`68d4f2b`，`local_pending` | 五角色 control store、post-preflight durable attempt issuer、issuance retry、完整向量绑定、fence `/3`、PG18.6 fresh schema/contract smoke test；Notion 延后批量同步 |
 | `docs/wanwork_im/W2_POSTGRES_POLICY_CONTROL_STORE_CHECKPOINT.md` | 当前 policy control-store 工程入口与 Go/No-Go：`16d66b6` | 代码/部署入口、验证命令、可信边界，以及 approval consumption/fence/receipt/executor 的后续顺序 |
+| `research/55_agent_store_capability_constraint_audit_20260831.md` | Agent Store durable capability constraint 修复：`local_pending` | 复核发现 PostgreSQL writer 仅检查 JSONB 数组形状，允许非法 capability/请求-禁止重叠直接落库；新增 migration 13 的数据库约束、负向集成测试与残余边界 |
 
 ## 已归档截图
 

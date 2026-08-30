@@ -108,9 +108,33 @@ func validateMigrationPostconditionForSchema(
 		return validateAgentStoreControlPlane(ctx, transaction)
 	case 12:
 		return validateAgentStoreWriteFunctions(ctx, transaction)
+	case 13:
+		return validateAgentStoreCapabilityConstraints(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateAgentStoreCapabilityConstraints(ctx context.Context, transaction pgx.Tx) error {
+	var constraintCount int
+	if err := transaction.QueryRow(ctx, `
+SELECT count(*)
+FROM pg_catalog.pg_constraint AS constraint_value
+JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_value.conrelid
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND (
+      (relation.relname = 'agent_releases' AND constraint_value.conname IN (
+          'agent_releases_requested_capabilities_values_check',
+          'agent_releases_prohibitions_values_check',
+          'agent_releases_capabilities_disjoint_check'
+      )) OR
+      (relation.relname = 'agent_installation_snapshots' AND constraint_value.conname =
+          'agent_installation_snapshots_capabilities_values_check')
+  )`).Scan(&constraintCount); err != nil || constraintCount != 4 {
+		return ErrMigrationSchema
+	}
+	return nil
 }
 
 func validateAgentStoreWriteFunctions(ctx context.Context, transaction pgx.Tx) error {

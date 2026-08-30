@@ -47,6 +47,7 @@ var migrationSpecs = [...]migrationSpec{
 	{version: 10, name: "native_im_inbox_semantics"},
 	{version: 11, name: "agent_store_control_plane"},
 	{version: 12, name: "agent_store_write_functions"},
+	{version: 13, name: "agent_store_capability_constraints"},
 }
 
 func Catalog() ([]Migration, error) {

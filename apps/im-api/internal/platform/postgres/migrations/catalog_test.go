@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 12 || len(second) != 12 {
+	if len(first) != 13 || len(second) != 13 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -267,6 +267,23 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if strings.Contains(strings.ToLower(agentStore.UpSQL), strings.ToLower(forbidden)) {
 			t.Fatalf("Agent Store migration contains forbidden text %q", forbidden)
+		}
+	}
+	constraints := first[12]
+	if constraints.Version != 13 || constraints.Name != "agent_store_capability_constraints" ||
+		len(constraints.Checksum) != 64 || constraints.Checksum != second[12].Checksum ||
+		constraints.UpSQL != second[12].UpSQL || constraints.DownSQL != second[12].DownSQL {
+		t.Fatalf("unexpected deterministic Agent Store capability constraint migration: %#v", constraints)
+	}
+	for _, marker := range []string{
+		`agent_releases_requested_capabilities_values_check`,
+		`agent_releases_prohibitions_values_check`,
+		`agent_releases_capabilities_disjoint_check`,
+		`agent_installation_snapshots_capabilities_values_check`,
+		`jsonb_path_exists`,
+	} {
+		if !strings.Contains(constraints.UpSQL, marker) {
+			t.Fatalf("Agent Store capability constraint migration missing %q", marker)
 		}
 	}
 }
