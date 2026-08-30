@@ -104,9 +104,35 @@ func validateMigrationPostconditionForSchema(
 		return validateNativeIMInbox(ctx, transaction, schemaVersion)
 	case 10:
 		return validateNativeIMInbox(ctx, transaction, schemaVersion)
+	case 11:
+		return validateMessageProjection(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateMessageProjection(ctx context.Context, transaction pgx.Tx) error {
+	var relationCount int
+	if err := transaction.QueryRow(ctx, `
+SELECT count(*)
+FROM pg_catalog.pg_class AS relation
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im'
+  AND relation.relkind = 'r'
+  AND relation.relname = ANY($1::text[])`, messageProjectionTableNames).Scan(&relationCount); err != nil || relationCount != len(messageProjectionTableNames) {
+		return ErrMigrationSchema
+	}
+	for _, tableName := range messageProjectionTableNames {
+		var rowSecurity, forceRowSecurity bool
+		if err := transaction.QueryRow(ctx, `
+SELECT relation.relrowsecurity, relation.relforcerowsecurity
+FROM pg_catalog.pg_class AS relation
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'wanwork_im' AND relation.relname = $1`, tableName).Scan(&rowSecurity, &forceRowSecurity); err != nil || !rowSecurity || !forceRowSecurity {
+			return ErrMigrationSchema
+		}
+	}
+	return nil
 }
 
 func validateNativeIMInbox(ctx context.Context, transaction pgx.Tx, schemaVersion int64) error {

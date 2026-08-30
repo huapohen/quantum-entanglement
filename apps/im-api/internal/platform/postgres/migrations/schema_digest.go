@@ -64,6 +64,11 @@ var nativeIMInboxTableNames = []string{
 	"native_im_inbox",
 }
 
+var messageProjectionTableNames = []string{
+	"message_projection_heads",
+	"message_snapshots",
+}
+
 func tableSchemaDigest(
 	ctx context.Context,
 	transaction pgx.Tx,

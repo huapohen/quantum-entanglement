@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 10 || len(second) != 10 {
+	if len(first) != 11 || len(second) != 11 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -235,6 +235,23 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if !strings.Contains(semantics.UpSQL, marker) {
 			t.Fatalf("native IM inbox semantics migration missing %q", marker)
+		}
+	}
+	messageProjection := first[10]
+	if messageProjection.Version != 11 || messageProjection.Name != "message_projection" ||
+		len(messageProjection.Checksum) != 64 || messageProjection.Checksum != second[10].Checksum ||
+		messageProjection.UpSQL != second[10].UpSQL || messageProjection.DownSQL != second[10].DownSQL {
+		t.Fatalf("unexpected deterministic message projection migration: %#v", messageProjection)
+	}
+	for _, marker := range []string{
+		`CREATE TABLE wanwork_im.message_projection_heads`,
+		`CREATE TABLE wanwork_im.message_snapshots`,
+		`CREATE UNIQUE INDEX message_snapshots_scope_client_message_id_uk`,
+		`ENABLE ROW LEVEL SECURITY`,
+		`FORCE ROW LEVEL SECURITY`,
+	} {
+		if !strings.Contains(messageProjection.UpSQL, marker) {
+			t.Fatalf("message projection migration missing %q", marker)
 		}
 	}
 }

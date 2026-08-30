@@ -555,6 +555,8 @@ var runtimeAuthorityReadTables = []string{
 	"human_principal_heads",
 	"human_principal_snapshots",
 	"native_im_inbox",
+	"message_projection_heads",
+	"message_snapshots",
 	"tenant_membership_heads",
 	"tenant_membership_snapshots",
 }
@@ -570,6 +572,7 @@ func authorityAccessTableNames() []string {
 	names = append(names, eventStoreTableNames...)
 	names = append(names, eventProjectionCheckpointTableNames...)
 	names = append(names, nativeIMInboxTableNames...)
+	names = append(names, messageProjectionTableNames...)
 	slices.Sort(names)
 	return names
 }

@@ -1,0 +1,5 @@
+DROP INDEX wanwork_im.message_snapshots_scope_sequence_idx;
+DROP INDEX wanwork_im.message_snapshots_scope_created_id_idx;
+DROP INDEX wanwork_im.message_snapshots_scope_client_message_id_uk;
+DROP TABLE wanwork_im.message_snapshots;
+DROP TABLE wanwork_im.message_projection_heads;

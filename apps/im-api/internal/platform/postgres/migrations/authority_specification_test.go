@@ -34,7 +34,7 @@ func TestCurrentAuthorityAccessSpecification(t *testing.T) {
 		t.Fatalf("database owner = %#v", specification.DatabaseOwner)
 	}
 	if len(specification.Roles) != 5 || len(specification.Memberships) != 3 ||
-		len(specification.Objects) != 39 || len(specification.Privileges) != 34 ||
+		len(specification.Objects) != 41 || len(specification.Privileges) != 36 ||
 		len(specification.DefaultPrivileges) != 1 {
 		t.Fatalf(
 			"specification counts roles=%d memberships=%d objects=%d privileges=%d defaults=%d",

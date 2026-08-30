@@ -45,6 +45,7 @@ var migrationSpecs = [...]migrationSpec{
 	{version: 8, name: "event_projection_checkpoint"},
 	{version: 9, name: "native_im_inbox"},
 	{version: 10, name: "native_im_inbox_semantics"},
+	{version: 11, name: "message_projection"},
 }
 
 func Catalog() ([]Migration, error) {
