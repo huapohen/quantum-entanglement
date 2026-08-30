@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Conversation, type Message } from "./api";
 import { useUIStore } from "./store";
 
@@ -39,6 +39,7 @@ export function App() {
   const [instruction, setInstruction] = useState("");
   const [memberAction, setMemberAction] = useState("");
   const [conversationFilter, setConversationFilter] = useState("");
+  const messageLoadSequence = useRef(0);
 
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId),
@@ -53,8 +54,13 @@ export function App() {
   }, [conversationFilter, conversations]);
 
   async function loadMessages(conversationId: string) {
+    const sequence = ++messageLoadSequence.current;
     const page = await api.messages(conversationId);
-    setMessages(page.messages);
+    // A fast conversation switch can resolve requests out of order. Only the latest
+    // request for the still-selected conversation may update the message pane.
+    if (sequence === messageLoadSequence.current && useUIStore.getState().selectedConversationId === conversationId) {
+      setMessages(page.messages);
+    }
   }
 
   async function loadAll() {
@@ -243,7 +249,7 @@ export function App() {
               className="field min-w-0 flex-1"
               aria-label="新群名称"
             />
-            <button className="button-secondary px-3" onClick={() => void createGroup()} disabled={loading}>+</button>
+            <button className="button-secondary px-3" onClick={() => void createGroup()} disabled={loading} aria-label="创建群聊">+</button>
           </div>
           <input
             value={conversationFilter}
@@ -301,7 +307,7 @@ export function App() {
             </div>
           </div>
 
-          <div className="flex-1 space-y-3 overflow-y-auto p-5">
+          <div className="flex-1 space-y-3 overflow-y-auto p-5" role="log" aria-live="polite" aria-label="消息列表">
             {messages.length === 0 && <div className="empty-state">还没有消息。发送一条普通文本，或在右侧 `@v0版 Agent` 启动一次协作。</div>}
             {messages.map((message) => {
               const mine = message.senderActorId === snapshot?.humanActorId;
@@ -327,6 +333,7 @@ export function App() {
                 onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void sendMessage(); }}
                 placeholder="在群里发送消息 · ⌘/Ctrl + Enter 发送"
                 className="field min-h-[48px] flex-1 resize-none"
+                aria-label="普通消息"
                 rows={2}
               />
               <button className="button-primary self-end" onClick={() => void sendMessage()} disabled={loading || !selectedConversationId}>发送</button>
@@ -373,7 +380,7 @@ export function App() {
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-violet">Mention Router</div>
             <h2 className="text-xl font-semibold text-white">发布协作指令</h2>
             <p className="mt-2 text-sm leading-6 text-slate-400">这会创建一个与父群关联的 Agent 子群，并返回 invocation、工作卡和 Agent 回复。</p>
-            <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：调研竞品，给出带证据的 Web 端方案" className="field mt-4 min-h-[92px] w-full resize-none" />
+            <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：调研竞品，给出带证据的 Web 端方案" aria-label="协作指令" className="field mt-4 min-h-[92px] w-full resize-none" />
             <button className="button-primary mt-3 w-full" onClick={() => void runMention()} disabled={loading || !instruction.trim() || !canMention}>@v0版 Agent</button>
             {!canMention && <div className="mt-2 text-xs text-amber-300/80">请先选择含 Agent 的普通群；Agent 子群不能再次创建子群。</div>}
             {mention && <div className="mt-4 space-y-3 rounded-xl border border-cyan/20 bg-cyan/5 p-3 text-xs">
@@ -394,8 +401,8 @@ export function App() {
         </aside>
       </main>
 
-      {error && <div role="alert" className="fixed bottom-5 left-1/2 z-30 max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-xl border border-red-300/20 bg-red-950/90 px-4 py-3 text-sm text-red-100 shadow-glow">{error}</div>}
-      {loading && <div className="fixed right-5 top-20 rounded-full border border-cyan/20 bg-cyan/10 px-3 py-2 text-xs text-cyan">同步中…</div>}
+      {error && <div role="alert" aria-live="assertive" className="fixed bottom-5 left-1/2 z-30 max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-xl border border-red-300/20 bg-red-950/90 px-4 py-3 text-sm text-red-100 shadow-glow">{error}</div>}
+      {loading && <div role="status" className="fixed right-5 top-20 rounded-full border border-cyan/20 bg-cyan/10 px-3 py-2 text-xs text-cyan">同步中…</div>}
     </div>
   );
 }
