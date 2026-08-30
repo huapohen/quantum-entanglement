@@ -110,6 +110,10 @@ projector、migration-12 函数写入、materialized Reader readback、非消息
 该证据仍不打开 cutover：crash/restore、COMMIT ACK 丢失、shadow replay equality 的真实运行、
 生产 applied-schema proof 和 materialized primary 仍关闭。
 
+该节点后的 `go test ./...`、`go vet ./...` 以及 migrations/runtimepool/eventstore/improjection/imstore
+五包真实 PostgreSQL 18 integration matrix 已全部通过；migration 12 引起的 cutover plan/preflight
+golden 漂移由 `2317871` 修复。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow

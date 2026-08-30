@@ -50,10 +50,30 @@ WANWORK_TEST_POSTGRES_ADMIN_URL='postgresql://127.0.0.1:55489/postgres?sslmode=d
 记录结果：`PASS`（含并发竞争与 restart readback）。完整迁移、runtime authority、eventstore、
 imstore 矩阵也已在同一隔离 PG18 实例通过。
 
+最终门禁记录：
+
+```text
+go test ./...  PASS
+go vet ./...   PASS
+
+WANWORK_TEST_POSTGRES_ADMIN_URL=<local-pg18> go test \
+  ./internal/platform/postgres/migrations \
+  ./internal/platform/postgres/runtimepool \
+  ./internal/platform/postgres/eventstore \
+  ./internal/platform/postgres/improjection \
+  ./internal/platform/postgres/imstore -count=1
+
+5 packages PASS
+```
+
+全量门禁还发现 migration 12 后 authority cutover 的 plan/preflight golden digest 仍停在 migration 11；
+`2317871` 已把两个 canonical golden 更新到 migration 12 后的确定值，专项与全量测试均通过。
+
 ## 边界
 
 本节点只证明本机临时 PostgreSQL 的代码路径和权限 fixture；不等同目标生产集群的 schema digest、
 备份、RPO/RTO、HA、真实认证、Task/Artifact/Needs You projection 或 IM provider readiness。
 materialized reader 仍未切为默认 primary，shadow comparator 仍未接入 runtime composition。
 
-代码提交：`1e8fc38`（已推送 `origin/mainline_continue_quantum_entanglement`）。
+代码/证据提交：`1e8fc38`、`a41ed54`、`2317871`（均已推送
+`origin/mainline_continue_quantum_entanglement`）。
