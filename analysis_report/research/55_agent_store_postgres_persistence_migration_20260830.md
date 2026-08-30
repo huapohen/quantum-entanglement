@@ -9,6 +9,11 @@
 状态”推进到可供 durable repository 接入的数据库边界。它只保存可审计的 catalog、release、Trust
 Passport 和 installation 快照，不保存模型密钥、provider 密钥、连接串或其他秘密材料。
 
+随后在 `77e9ac0` 增加了 `internal/agentstore/codec.go`：definition、release、Trust Passport 和
+installation 都有严格 canonical JSON 编解码；解码会拒绝未知字段、尾随值、非 canonical 空白、无效
+身份/摘要/时间，并通过现有构造器重验。installation 解码必须提供与行一致的 Trust Passport，不能只凭
+数据库里的 release ID 把普通记录提升成可执行授权。
+
 这不是“生产 Agent Store 已完成”的声明。当前仍缺少 Go repository/UoW、安装命令的 durable receipt、
 action-time resolver、provider outbox/reconcile 和真实 Clerk/RongCloud 适配器；migration 是这些组件
 可以共同依赖的第一层持久化契约。
@@ -64,12 +69,10 @@ JSONB 检查和 5 条 Agent Store 租户策略均成功落库，实例随后停�
 
 ## 下一步顺序（仍本地 pending）
 
-1. 在 `internal/agentstore` 增加严格 snapshot codec，确保 Go value 与五张表的 JSON 表示可逆、排序稳定、
-   digest 不漂移。
-2. 在 `internal/platform/postgres/agentstore` 实现 tenant-bound repository 与 Unit of Work；任何 CAS
+1. 在 `internal/platform/postgres/agentstore` 实现 tenant-bound repository 与 Unit of Work；任何 CAS
    冲突、重复 receipt、commit-unknown 或 head/snapshot 不一致都 fail-closed。
-3. 将 localdemo 安装/撤权命令切换到 repository seam，同时保留 fake provider 作为零网络验收 fixture。
-4. 接入 action-time capability resolver、provider outbox/reconcile 后，再决定是否把真实 IM provider
+2. 将 localdemo 安装/撤权命令切换到 repository seam，同时保留 fake provider 作为零网络验收 fixture。
+3. 接入 action-time capability resolver、provider outbox/reconcile 后，再决定是否把真实 IM provider
    接入 acceptance gate。
 
 ## 证据边界
