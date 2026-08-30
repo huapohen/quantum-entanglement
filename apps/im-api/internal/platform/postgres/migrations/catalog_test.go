@@ -329,6 +329,14 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 			t.Fatalf("provider effect writer migration missing %q", marker)
 		}
 	}
+	for _, forbidden := range []string{
+		"provider_token", "access_token", "secret", "ext_info", "request_body", "payload",
+		"password", "api_key", "credential", "endpoint", "IF NOT EXISTS",
+	} {
+		if strings.Contains(strings.ToLower(writer.UpSQL), strings.ToLower(forbidden)) {
+			t.Fatalf("provider effect writer migration contains forbidden secret/payload marker %q", forbidden)
+		}
+	}
 }
 
 func TestCatalogRejectsDescriptorAndSQLDrift(t *testing.T) {
