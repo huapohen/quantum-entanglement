@@ -38,7 +38,8 @@ var (
 // runtime pool exposes only SELECT and execute privileges; all projection writes go through the
 // owner-defined migration-12 functions.
 type Projector struct {
-	pool *runtimepool.Pool
+	pool   *runtimepool.Pool
+	commit func(context.Context, pgx.Tx) error
 }
 
 type ProjectorResult struct {
@@ -50,7 +51,7 @@ func NewProjector(pool *runtimepool.Pool) (*Projector, error) {
 	if pool == nil {
 		return nil, ErrProjectorInvalid
 	}
-	return &Projector{pool: pool}, nil
+	return &Projector{pool: pool, commit: commitProjectorTransaction}, nil
 }
 
 // Run drains one tenant/workspace global stream. A nil workspace denotes the root workspace and
@@ -127,7 +128,7 @@ func (projector *Projector) runPage(
 		if page.HasMore || page.Next != checkpoint.Cursor {
 			return ProjectorResult{}, false, ErrProjectorIntegrity
 		}
-		if err := transaction.Commit(ctx); err != nil {
+		if err := projector.commitTransaction(ctx, transaction); err != nil {
 			return ProjectorResult{}, false, store.ErrStoreUnavailable
 		}
 		return ProjectorResult{Checkpoint: checkpoint}, true, nil
@@ -151,10 +152,21 @@ func (projector *Projector) runPage(
 	if err := commitProjectorCheckpoint(ctx, transaction, checkpoint, next); err != nil {
 		return ProjectorResult{}, false, err
 	}
-	if err := transaction.Commit(ctx); err != nil {
+	if err := projector.commitTransaction(ctx, transaction); err != nil {
 		return ProjectorResult{}, false, store.ErrStoreUnavailable
 	}
 	return ProjectorResult{Checkpoint: next, Processed: uint64(len(page.Events))}, !page.HasMore, nil
+}
+
+func (projector *Projector) commitTransaction(ctx context.Context, transaction pgx.Tx) error {
+	if projector == nil || projector.commit == nil {
+		return store.ErrStoreUnavailable
+	}
+	return projector.commit(ctx, transaction)
+}
+
+func commitProjectorTransaction(ctx context.Context, transaction pgx.Tx) error {
+	return transaction.Commit(ctx)
 }
 
 type conversationState struct {

@@ -95,6 +95,32 @@ func TestPostgresMessageProjectorEndToEnd(t *testing.T) {
 		StreamID: "cnv_room", ExpectedVersion: 3, Events: []events.EventToAppend{secondMessage}}); err != nil {
 		t.Fatalf("append second message: %v", err)
 	}
+	commitAckLost := false
+	projector.commit = func(commitContext context.Context, transaction pgx.Tx) error {
+		if !commitAckLost {
+			commitAckLost = true
+			if err := transaction.Commit(commitContext); err != nil {
+				return err
+			}
+			return errors.New("synthetic projector commit acknowledgement loss")
+		}
+		return transaction.Commit(commitContext)
+	}
+	if _, err := projector.Run(t.Context(), tenantID, workspaceValue, 1); !errors.Is(err, imstore.ErrStoreUnavailable) {
+		t.Fatalf("commit ACK-loss error=%v, want %v", err, imstore.ErrStoreUnavailable)
+	}
+	projector.commit = commitProjectorTransaction
+	recovered, err := projector.Run(t.Context(), tenantID, workspaceValue, 1)
+	if err != nil || recovered.Processed != 0 || recovered.Checkpoint.Position != 4 {
+		t.Fatalf("commit ACK-loss recovery=%#v err=%v", recovered, err)
+	}
+	thirdMessage := projectorIntegrationEvent(t, "evt_msg_created_3", "message.created", 5,
+		`{"conversationId":"cnv_room","messageId":"msg_3","clientMessageId":"msg_client_3","messageType":"text","text":"third"}`,
+		when.Add(4*time.Second), workspace)
+	if _, err := store.AppendBatch(t.Context(), events.AppendBatch{TenantID: "ten_alpha", WorkspaceID: &workspace,
+		StreamID: "cnv_room", ExpectedVersion: 4, Events: []events.EventToAppend{thirdMessage}}); err != nil {
+		t.Fatalf("append third message: %v", err)
+	}
 	var results [2]ProjectorResult
 	var errs [2]error
 	var done atomic.Uint32
@@ -117,7 +143,7 @@ func TestPostgresMessageProjectorEndToEnd(t *testing.T) {
 		}
 	}
 	final, err := reader.ReadPage(t.Context(), imstore.MessageReadPageQuery{Conversation: conversation, WorkspaceID: workspaceValue, Limit: 10, ConversationRevision: 1, AccessRevision: 1})
-	if err != nil || len(final.Messages) != 2 || final.Messages[0].Text() != "after" || final.Messages[1].Text() != "second" || final.ProjectionRevision != 4 {
+	if err != nil || len(final.Messages) != 3 || final.Messages[0].Text() != "after" || final.Messages[1].Text() != "second" || final.Messages[2].Text() != "third" || final.ProjectionRevision != 5 {
 		t.Fatalf("final materialized page=%#v err=%v", final, err)
 	}
 	pool.Close()
@@ -135,7 +161,7 @@ func TestPostgresMessageProjectorEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	restarted, err := restartedProjector.Run(t.Context(), tenantID, workspaceValue, 2)
-	if err != nil || restarted.Processed != 0 || restarted.Checkpoint.Position != 4 {
+	if err != nil || restarted.Processed != 0 || restarted.Checkpoint.Position != 5 {
 		t.Fatalf("restart projector result=%#v err=%v", restarted, err)
 	}
 	restartedReader, err := NewReader(reopened)
@@ -144,7 +170,7 @@ func TestPostgresMessageProjectorEndToEnd(t *testing.T) {
 	}
 	restartedPage, err := restartedReader.ReadPage(t.Context(), imstore.MessageReadPageQuery{Conversation: conversation,
 		WorkspaceID: workspaceValue, Limit: 10, ConversationRevision: 1, AccessRevision: 1})
-	if err != nil || len(restartedPage.Messages) != 2 || restartedPage.ProjectionRevision != 4 {
+	if err != nil || len(restartedPage.Messages) != 3 || restartedPage.ProjectionRevision != 5 {
 		t.Fatalf("restart materialized page=%#v err=%v", restartedPage, err)
 	}
 }
