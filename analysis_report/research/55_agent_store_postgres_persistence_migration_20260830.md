@@ -14,9 +14,20 @@ installation 都有严格 canonical JSON 编解码；解码会拒绝未知字段
 身份/摘要/时间，并通过现有构造器重验。installation 解码必须提供与行一致的 Trust Passport，不能只凭
 数据库里的 release ID 把普通记录提升成可执行授权。
 
-这不是“生产 Agent Store 已完成”的声明。当前仍缺少 Go repository/UoW、安装命令的 durable receipt、
-action-time resolver、provider outbox/reconcile 和真实 Clerk/RongCloud 适配器；migration 是这些组件
-可以共同依赖的第一层持久化契约。
+在本轮增量中，第 12 个 migration `0012_agent_store_write_functions` 增加了四个精确参数的
+`SECURITY DEFINER` CAS 函数：definition、release、Trust Passport 和 installation revision。runtime
+只获得这些函数的 `EXECUTE` 与五张 Agent Store 表的 `SELECT`，不获得 Agent Store 原始
+`INSERT`/`UPDATE`/`DELETE` 权限；installation 函数在一个事务内写入 head 与 snapshot，并保留
+deferred current-snapshot 外键。
+
+Go PostgreSQL repository/UoW 已接入 `TenantRepositories.AgentStore()`：所有四类写入都经由
+0012 函数，读取会重建并重验 domain snapshot，CAS 冲突映射为独立 typed error，数据库错误保持
+脱敏。JSONB object-key 顺序按 PostgreSQL 18 的读回语义处理，但数组元素、字段集合、身份、摘要、
+时间和 domain 构造器仍逐项校验；timestamptz 读回统一归一到 UTC，避免机器本地时区改变授权语义。
+
+这不是“生产 Agent Store 已完成”的声明。当前仍缺少安装命令的 durable receipt、action-time resolver、
+provider outbox/reconcile、真实 Clerk/RongCloud 适配器、灾备恢复和完整 IM provider effect gate；migration
+与 repository 是这些组件可以共同依赖的持久化契约。
 
 ## 持久化对象
 
@@ -45,10 +56,15 @@ commit-unknown 和 fresh-connection reconcile 纳入同一个 postcondition gate
 
 ## 迁移与验证
 
-- `migrationSpecs` 现在是连续的 `0001..0011`，checksum 仍由 migration catalog 计算。
+- `migrationSpecs` 现在是连续的 `0001..0012`，checksum 仍由 migration catalog 计算。
 - migration runner 新增第 11 版 postcondition：五张表存在、均为强制 RLS，并且各有精确租户策略。
 - authority access manifest 将五张表纳入 owner/runtime 对象清单；runtime 只有只读表权限，不能因表出现而
   获得写入或 `MAINTAIN` 权限。
+- migration 12 postcondition 会精确核对四个 Agent Store 写函数的参数、返回值、owner、`plpgsql`、
+  `VOLATILE`、`STRICT`、`SECURITY DEFINER`、`PARALLEL UNSAFE`、固定 `search_path` 与安全 ACL；
+  authority access integration fixture 同步转移四个函数 owner 并授予 runtime `EXECUTE`。
+- `0011` DownSQL 先移除 installation head 的 deferred FK，再按依赖顺序删除 snapshot/head/catalog，
+  可在 disposable 数据库完整回滚。
 - 旧的 authority cutover 测试 fixture 已改为读取当前 catalog 长度；golden digest 按新 migration catalog
   重新冻结，避免测试继续隐含旧版本 10。
 
@@ -59,23 +75,27 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
   go test ./... -count=1
 ```
 
-结果：IM API 全部 Go package 通过。PostgreSQL integration test 需要显式
-`WANWORK_TEST_POSTGRES_ADMIN_URL`，当前环境未配置，因此本次没有伪造 PG18 实证；上线前必须在一次 disposable
-PostgreSQL 18 环境执行完整 migration、postcondition、RLS/ACL、rollback fixture 和重启读回。
+结果：常规本地门禁在 authoritycutover、Agent Store、IM Store 等包通过。此前无环境变量时 PostgreSQL
+integration 会按设计 skip；本轮另外使用本机 PostgreSQL 18.6 disposable loopback 实例显式执行了
+`WANWORK_TEST_POSTGRES_ADMIN_URL=postgresql://<redacted>`：migration 全量、authority access、DownSQL、
+runtime ACL、repository definition/release/Passport/installation 创建与读取、状态 CAS 和 stale revision
+冲突均通过。连接串、角色密码和任何密钥未写入报告、日志或提交。
 
-另外已用本机 PostgreSQL 18.6 的临时实例逐个执行 `0001..0011` 的全部 `up.sql`；所有 DDL、复合外键、
-JSONB 检查和 5 条 Agent Store 租户策略均成功落库，实例随后停止。这个 raw DDL smoke 只证明 SQL 可应用，
-不替代带 owner/runtime role、migration runner postcondition 和真实数据读写的集成门禁。
+另外已用本机 PostgreSQL 18.6 的临时实例逐个执行 `0001..0012` 的全部 `up.sql`，并单独回放 0012
+函数调用；所有 DDL、复合外键、JSONB 检查、5 条 Agent Store 租户策略和 function-only 写入均成功落库，
+实例随后停止。这个 disposable smoke 仍不替代线上拓扑、真实身份、provider effect、灾备恢复和备份演练。
 
 ## 下一步顺序（仍本地 pending）
 
-1. 在 `internal/platform/postgres/agentstore` 实现 tenant-bound repository 与 Unit of Work；任何 CAS
-   冲突、重复 receipt、commit-unknown 或 head/snapshot 不一致都 fail-closed。
-2. 将 localdemo 安装/撤权命令切换到 repository seam，同时保留 fake provider 作为零网络验收 fixture。
-3. 接入 action-time capability resolver、provider outbox/reconcile 后，再决定是否把真实 IM provider
-   接入 acceptance gate。
+1. 将 localdemo 安装/撤权命令切换到 repository seam，并为安装/撤权补 durable command/effect receipt；
+   保留 fake provider 作为零网络验收 fixture。
+2. 接入 action-time capability resolver、provider outbox/reconcile、commit-unknown fresh readback 和
+   灾备恢复演练，确保 Agent Store 决策不会被静态安装状态代替。
+3. 完成真实 Clerk/RongCloud 身份与 provider effect gate 后，再决定是否把真实 IM provider 接入 acceptance
+   gate。
 
 ## 证据边界
 
-本阶段证明的是“数据库 schema 与 authority catalog 已有持久化落点”，不是“Agent Store 已能在生产运行”。
-在 repository、真实身份、provider effect、灾备恢复和安全 gate 全部通过前，发布文档必须继续标记为 No-Go。
+本阶段证明的是“数据库 schema、function-only write boundary 和 tenant-bound repository 已有可运行落点”，
+不是“Agent Store 已能在生产运行”。在 durable command/effect receipt、action-time policy、真实身份、
+provider effect、灾备恢复和安全 gate 全部通过前，发布文档必须继续标记为 No-Go。
