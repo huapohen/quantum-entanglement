@@ -1,9 +1,9 @@
 # 10 小时全量目标执行状态（2026-08-30）
 
-更新时间：2026-08-30 15:12（Asia/Shanghai）
+更新时间：2026-08-30 16:31（Asia/Shanghai）
 主线分支：`dev_wanwork_quantum_entanglement`  
 当前 HEAD：见 Git 远端 `origin/dev_wanwork_quantum_entanglement`（本文件不硬编码可变 SHA）
-最近安全备份：`backup_0830_151334`（固定指向本轮 offboard 文档收口节点）
+最近安全备份：`backup_0830_162008`（固定指向 Agent Store 最小权限安装与完整 Web-first 门禁节点）
 固定验收标签：`v0.2.0-web-im-20260830`
 
 ## 结论
@@ -56,6 +56,8 @@ SSE/WebSocket resume、文件/已读/通知/reaction、原生 `.app/.exe/.ipa/.a
 - `62a5ca0`：Web Agent Store 暴露“停用并撤权”，并把 offboard 加入 Web-first 门禁。
 - `c5c8f1f`：Web Agent Store 增加 `retain/archive/delete` 数据处置选择并显式发送。
 - `6dbc66e`：provider 成员变更要求显式 `member_write` capability，覆盖新增和移除成员。
+- `f3e805c`：Agent Store 安装支持最小权限 `grantedCapabilities`，并补齐 HTTP/门禁/教程证据。
+- `0dfd269`：Web Agent Store 增加安装时逐项能力勾选，默认全选但允许收窄。
 
 ## 今晚直接验收
 
@@ -88,7 +90,8 @@ GPT runtime（可选，Key 只在子进程环境）：
 ./scripts/verify_web_first.sh
 ```
 
-15:05 阶段复核：`WANWORK_IM_VERIFY_PORT=18133 ./scripts/verify_web_first.sh` 通过；随后
+15:05 阶段复核：`WANWORK_IM_VERIFY_PORT=18133 ./scripts/verify_web_first.sh` 通过；16:20
+阶段复核：`WANWORK_IM_VERIFY_PORT=18137 ./scripts/verify_web_first.sh` 通过；随后
 完成数据处置选择、provider capability gate 与响应回显的局部测试和 Web build；Go
 `go test ./... -count=1`（含 PostgreSQL/authoritycutover 全包）通过；本次验证未产生外部网络或
 飞书/企微消息。
