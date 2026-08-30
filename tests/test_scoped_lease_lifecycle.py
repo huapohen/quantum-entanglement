@@ -119,6 +119,37 @@ class ScopedLeaseLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(self.store.recover_expired_scoped_invocations().recovered_count, 0)
 
+    def test_graceful_relinquish_fences_active_owner_immediately(self) -> None:
+        self.store._clock = lambda: "2026-08-27T10:00:01.250000Z"
+        stream_version = self.store.stream_version(self.claimed.receipt.stream_id)
+
+        self.assertTrue(self.store.relinquish_scoped_invocation_start_v3(self.claimed))
+        snapshot = self.store.recovery_snapshot_for_task(
+            self.request.manifest.session_id,
+            self.request.manifest.task_id,
+        )
+        self.assertIsNotNone(snapshot.job)
+        self.assertIsNotNone(snapshot.current_attempt)
+        assert snapshot.job is not None
+        assert snapshot.current_attempt is not None
+        self.assertEqual(snapshot.job.status, InvocationStatus.FAILED)
+        self.assertEqual(snapshot.current_attempt.status, AttemptStatus.EXPIRED)
+        self.assertEqual(
+            snapshot.job.last_error,
+            "worker relinquished lease during graceful drain",
+        )
+        self.assertEqual(snapshot.current_attempt.error, snapshot.job.last_error)
+        self.assertEqual(
+            snapshot.current_attempt.finished_at,
+            "2026-08-27T10:00:01.250000Z",
+        )
+        self.assertEqual(
+            snapshot.current_attempt.lease_expires_at,
+            snapshot.current_attempt.finished_at,
+        )
+        self.assertEqual(self.store.stream_version(self.claimed.receipt.stream_id), stream_version)
+        self.assertFalse(self.store.relinquish_scoped_invocation_start_v3(self.claimed))
+
     def test_invalid_limit_and_claim_fail_before_durable_access(self) -> None:
         for value in (True, 0, 1_001, "1"):
             with self.subTest(value=value):
@@ -129,6 +160,8 @@ class ScopedLeaseLifecycleTests(unittest.TestCase):
                 object(),
                 lease_seconds=5,
             )
+        with self.assertRaises(TypeError):
+            self.store.relinquish_scoped_invocation_start_v3(object())  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":  # pragma: no cover

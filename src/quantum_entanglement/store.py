@@ -9531,6 +9531,163 @@ class SQLiteEventStore:
 
     @_sanitize_invocation_start_controls
     @_bind_event_store_process
+    def relinquish_scoped_invocation_start_v3(
+        self,
+        claimed: ScopedInvocationStartClaimedV3,
+    ) -> bool:
+        """Fence an active scoped owner during graceful drain.
+
+        Relinquishment is an effect-unknown terminal transition: the attempt is marked
+        ``expired`` and the single-attempt job ``failed`` together, with the lease
+        deadline moved to the same durable timestamp.  A stale or already-terminal
+        owner returns ``False`` and cannot mutate newer state.
+        """
+
+        if type(claimed) is not ScopedInvocationStartClaimedV3:
+            raise TypeError("scoped relinquish requires an exact claimed start")
+        claimed_snapshot = ScopedInvocationStartClaimedV3(claimed.receipt, claimed.lease)
+        lease = claimed_snapshot.lease
+        SQLiteInvocationAttemptStore._require_lease(lease)
+        token_digest = self._lease_token_digest(lease.lease_token)
+        reason = "worker relinquished lease during graceful drain"
+        try:
+            with self._transaction(classify_admission=True) as connection:
+                normalized_now = _normalize_invocation_timestamp(self._now(), "clock")
+                rows = connection.execute(
+                    """
+                    SELECT * FROM invocation_jobs
+                    WHERE invocation_id = ? AND status = 'running'
+                      AND session_id = ? AND plan_id = ? AND task_id = ?
+                      AND agent_id = ? AND idempotency_key = ?
+                      AND attempts_started = ? AND lease_epoch = ?
+                      AND lease_owner = ? AND lease_token_digest = ?
+                      AND lease_expires_at > ?
+                    LIMIT 2
+                    """,
+                    (
+                        lease.invocation_id,
+                        lease.session_id,
+                        lease.plan_id,
+                        lease.task_id,
+                        lease.agent_id,
+                        lease.idempotency_key,
+                        lease.attempt_number,
+                        lease.lease_epoch,
+                        lease.worker_id,
+                        token_digest,
+                        normalized_now,
+                    ),
+                ).fetchall()
+                if len(rows) > 1:
+                    raise InvocationIntegrityError(
+                        "scoped relinquish found multiple running invocation owners"
+                    )
+                if not rows:
+                    return False
+                job = SQLiteInvocationAttemptStore._row_to_job(rows[0])
+                if job.heartbeat_at is None or job.lease_expires_at is None:
+                    raise InvocationIntegrityError(
+                        "scoped relinquish owner has no lease timestamps"
+                    )
+                if normalized_now < job.updated_at:
+                    raise InvocationIntegrityError("scoped relinquish clock regressed")
+                attempt = SQLiteInvocationAttemptStore._load_running_attempt(
+                    connection,
+                    invocation_id=lease.invocation_id,
+                    attempt_number=lease.attempt_number,
+                    lease_epoch=lease.lease_epoch,
+                    attempt_id=lease.attempt_id,
+                )
+                SQLiteInvocationAttemptStore._validate_running_attempt_owner(
+                    attempt,
+                    invocation_id=lease.invocation_id,
+                    attempt_number=lease.attempt_number,
+                    lease_epoch=lease.lease_epoch,
+                    worker_id=lease.worker_id,
+                    lease_token_digest=token_digest,
+                    heartbeat_at=job.heartbeat_at,
+                    lease_expires_at=job.lease_expires_at,
+                    attempt_id=lease.attempt_id,
+                )
+                SQLiteInvocationAttemptStore._validate_lease_binding(lease, job, attempt)
+                attempt_update = connection.execute(
+                    """
+                    UPDATE invocation_attempts
+                    SET status = 'expired', lease_expires_at = ?,
+                        finished_at = ?, error = ?
+                    WHERE attempt_id = ? AND invocation_id = ?
+                      AND attempt_number = ? AND lease_epoch = ?
+                      AND worker_id = ? AND lease_token_digest = ?
+                      AND status = 'running'
+                    """,
+                    (
+                        normalized_now,
+                        normalized_now,
+                        reason,
+                        lease.attempt_id,
+                        lease.invocation_id,
+                        lease.attempt_number,
+                        lease.lease_epoch,
+                        lease.worker_id,
+                        token_digest,
+                    ),
+                )
+                if attempt_update.rowcount != 1:
+                    raise InvocationIntegrityError(
+                        "scoped relinquish owner attempt changed during CAS"
+                    )
+                job_update = connection.execute(
+                    """
+                    UPDATE invocation_jobs
+                    SET status = 'failed', updated_at = ?, finished_at = ?,
+                        last_error = ?, lease_owner = NULL,
+                        lease_token_digest = NULL, lease_expires_at = NULL,
+                        heartbeat_at = NULL
+                    WHERE invocation_id = ? AND status = 'running'
+                      AND session_id = ? AND plan_id = ? AND task_id = ?
+                      AND agent_id = ? AND idempotency_key = ?
+                      AND attempts_started = ? AND lease_epoch = ?
+                      AND lease_owner = ? AND lease_token_digest = ?
+                      AND lease_expires_at > ?
+                    """,
+                    (
+                        normalized_now,
+                        normalized_now,
+                        reason,
+                        lease.invocation_id,
+                        lease.session_id,
+                        lease.plan_id,
+                        lease.task_id,
+                        lease.agent_id,
+                        lease.idempotency_key,
+                        lease.attempt_number,
+                        lease.lease_epoch,
+                        lease.worker_id,
+                        token_digest,
+                        normalized_now,
+                    ),
+                )
+                if job_update.rowcount != 1:
+                    raise InvocationIntegrityError("scoped relinquish owner changed during CAS")
+                return True
+        except _EventStoreAdmissionTransactionSignal as error:
+            classified = _take_classified_event_store_transaction_signal(error)
+            if classified is None:
+                raise
+            outcome, control = classified
+            if control is not None:
+                raise _EventStoreStartControlSignal(
+                    control,
+                    ambiguity=outcome == "ambiguous",
+                    token=_EVENT_STORE_START_CONTROL_TOKEN,
+                ) from None
+            raise _EventStoreStartErrorSignal(
+                "transaction" if outcome == "rolled_back" else "ambiguous",
+                token=_EVENT_STORE_START_CONTROL_TOKEN,
+            ) from None
+
+    @_sanitize_invocation_start_controls
+    @_bind_event_store_process
     def claim_scoped_invocation_start_v3(
         self,
         tenant_id: str,
