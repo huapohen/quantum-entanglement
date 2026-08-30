@@ -55,6 +55,7 @@
 |---|---|---|
 | `STAGE_ACCEPTANCE_2026-08-27.md` | 等待用户验收 | Worktree/远端分支收口、Result Observation 安全边界、验证命令、产品验收清单 |
 | `NEXT_STAGE_PLAN.md` | M1–M7 与 M7.5 projection 候选已完成，下一步认证作用域/recovery | 新参考项目复评入口、stored-event codec、reserved fence、atomic writer、Observed/Accepted、迁移、projection 与 worker 门禁的提交级计划 |
+| `../docs/production/TESTING_STRATEGY.md` | 当前执行规则 | 小改动跑专项，阶段封板才跑全量 2,958 项；静态门禁与提交纪律 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
@@ -130,6 +131,8 @@ business projection 候选；下一步是认证作用域、crash/kill/two-proces
 | `research/30_stored_event_envelope_store_adapter_evidence.md` | E3 Result Authority M3 代码证据：`504824c` | private typed write-snapshot/raw-row 双验、fresh isolated insert、trigger/exception/API 对抗收口、209 项三 Python 组合专项与 2,578 项全仓门禁 |
 | `research/31_inactive_result_schema_artifact_transaction_evidence.md` | E3 Result Authority M4 代码证据：`aef5f8b` | inactive migration 7、private backup topology、Artifact owner transaction、crash/ambiguity/bounded-history 证据、82 项组合专项、2,639 项全仓门禁与最终 0-blocker 复核 |
 | `research/32_result_acceptance_worker_seam_evidence.md` | E3 Result Authority M7/worker seam：`7bed2b6` | opt-in store-owned acceptance、fresh-ACK `AcceptedV2`、replay/ACK-loss `ObservedV2`、接受期间 heartbeat fencing 与 exact request 门禁；生产 worker/projection 仍关闭 |
+| `research/43_scoped_lease_lifecycle_evidence.md` | E3 continuation：`36cd0b4`/`025b5c7` | 私有 lifecycle admission stop、bounded drain、store relinquish、双连接 heartbeat/expiry 与 relinquish race；生产 gate 仍关闭 |
+| `research/44_mainline_full_regression_20260830.md` | 当前封板全量回归 | 2,958 项 pytest、Ruff、strict mypy、compileall、diff-check 全通过及剩余生产边界 |
 | `../docs/production/RESULT_BUSINESS_PROJECTION.md` | E3 M7.5 result-only business projection 候选 | leased projector、scope/terminal binding、幂等、schema pinning、identity/终态绑定漂移拒绝、fork process binding、dual-connection fencing、SIGKILL recovery 与 fail-closed 安全边界 |
 
 ## 已归档截图
