@@ -132,6 +132,32 @@ func TestLocalDemoHTTPVerticalSlice(t *testing.T) {
 	}
 }
 
+func TestLocalDemoHTTPInstallAcceptsLeastPrivilegeSubset(t *testing.T) {
+	t.Parallel()
+	server, err := NewLocalDemo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := "Bearer " + localdemo.LocalBearerToken
+	install := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/agents/agd_local_planner/install",
+		`{"idempotencyKey":"http/store/install/planner-subset","grantedCapabilities":["conversation.read"]}`, auth)
+	if install.Code != httpapi.CodeOK || !strings.Contains(install.Raw, `"requestedCapabilities":["artifact.read","conversation.read"]`) ||
+		!strings.Contains(install.Raw, `"grantedCapabilities":["conversation.read"]`) || strings.Contains(install.Raw, `"replayed":true`) {
+		t.Fatalf("least-privilege install response = %s", install.Raw)
+	}
+
+	escalation := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/agents/agd_local_planner/install",
+		`{"idempotencyKey":"http/store/install/planner-escalation","grantedCapabilities":["payment.execute"]}`, auth)
+	if escalation.Code != httpapi.CodeForbidden || strings.Contains(escalation.Raw, "payment.execute") {
+		t.Fatalf("unreviewed capability response = %s", escalation.Raw)
+	}
+	empty := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/agents/agd_local_planner/install",
+		`{"idempotencyKey":"http/store/install/planner-empty","grantedCapabilities":[]}`, auth)
+	if empty.Code != httpapi.CodeValidationFailed {
+		t.Fatalf("empty capability response = %s", empty.Raw)
+	}
+}
+
 func TestLocalDemoBusinessFailuresRemainHTTP200AndRedacted(t *testing.T) {
 	t.Parallel()
 	server, err := NewLocalDemo()

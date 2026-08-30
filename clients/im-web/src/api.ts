@@ -212,10 +212,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   snapshot: () => request<RuntimeSnapshot>("/api/v1/demo/im"),
   agents: () => request<AgentStorePage>("/api/v1/demo/im/agents"),
-  installAgent: (definitionId: string, idempotencyKey: string) =>
+  installAgent: (definitionId: string, idempotencyKey: string, grantedCapabilities?: string[]) =>
     request<AgentStoreInstallResult>(`/api/v1/demo/im/agents/${encodeURIComponent(definitionId)}/install`, {
       method: "POST",
-      body: JSON.stringify({ idempotencyKey }),
+      body: JSON.stringify({ idempotencyKey, ...(grantedCapabilities ? { grantedCapabilities } : {}) }),
     }),
   offboardAgent: (definitionId: string, idempotencyKey: string, dataDisposition: AgentStoreDataDisposition = "archive") =>
     request<AgentStoreOffboardResult>(`/api/v1/demo/im/agents/${encodeURIComponent(definitionId)}/offboard`, {

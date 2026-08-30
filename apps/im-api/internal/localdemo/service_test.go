@@ -220,6 +220,74 @@ func TestServiceInstallsCatalogAgentIdempotentlyAndAddsItToParent(t *testing.T) 
 	}
 }
 
+func TestServiceInstallHonorsCapabilitySubsetAndRejectsEscalation(t *testing.T) {
+	t.Parallel()
+	service, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.InstallAgent(context.Background(), LocalBearerToken, "agd_local_planner", AgentStoreInstallInput{
+		IdempotencyKey:      "test/store/install/planner-subset",
+		GrantedCapabilities: []string{"conversation.read"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Replayed || len(first.Agent.RequestedCapabilities) != 2 ||
+		len(first.Agent.GrantedCapabilities) != 1 || first.Agent.GrantedCapabilities[0] != "conversation.read" {
+		t.Fatalf("subset install = %#v", first)
+	}
+
+	// The request digest is based on the canonical capability set, so an exact retry replays
+	// without provisioning a second Agent actor.
+	replay, err := service.InstallAgent(context.Background(), LocalBearerToken, "agd_local_planner", AgentStoreInstallInput{
+		IdempotencyKey:      "test/store/install/planner-subset",
+		GrantedCapabilities: []string{"conversation.read"},
+	})
+	if err != nil || !replay.Replayed || replay.Agent.InstallationID != first.Agent.InstallationID {
+		t.Fatalf("subset install replay = %#v, %v", replay, err)
+	}
+
+	// A different allowed subset under the same idempotency key is a conflict, rather than a
+	// silent widening/narrowing of the already committed installation.
+	if _, err := service.InstallAgent(context.Background(), LocalBearerToken, "agd_local_planner", AgentStoreInstallInput{
+		IdempotencyKey:      "test/store/install/planner-subset",
+		GrantedCapabilities: []string{"artifact.read"},
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed capability subset = %v, want ErrConflict", err)
+	}
+
+	// Syntactically valid but unreviewed capabilities are authorization failures, including when
+	// the target is already active; the active-install replay path must not bypass this gate.
+	if _, err := service.InstallAgent(context.Background(), LocalBearerToken, "agd_local_planner", AgentStoreInstallInput{
+		IdempotencyKey:      "test/store/install/planner-escalation",
+		GrantedCapabilities: []string{"payment.execute"},
+	}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unreviewed capability = %v, want ErrForbidden", err)
+	}
+	if _, err := service.InstallAgent(context.Background(), LocalBearerToken, "agd_local_planner", AgentStoreInstallInput{
+		IdempotencyKey:      "test/store/install/planner-empty",
+		GrantedCapabilities: []string{},
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("empty capability list = %v, want ErrInvalidInput", err)
+	}
+
+	// Omitting the optional field preserves the historical default: all reviewed capabilities are
+	// granted to the new installation.
+	defaultService, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultInstall, err := defaultService.InstallAgent(context.Background(), LocalBearerToken, "agd_local_planner", AgentStoreInstallInput{
+		IdempotencyKey: "test/store/install/planner-default",
+	})
+	if err != nil || len(defaultInstall.Agent.GrantedCapabilities) != 2 ||
+		defaultInstall.Agent.GrantedCapabilities[0] != "artifact.read" ||
+		defaultInstall.Agent.GrantedCapabilities[1] != "conversation.read" {
+		t.Fatalf("default capability grant = %#v, %v", defaultInstall, err)
+	}
+}
+
 func TestServiceOffboardsInstalledAgentAndReplaysCleanup(t *testing.T) {
 	t.Parallel()
 	service, err := New()

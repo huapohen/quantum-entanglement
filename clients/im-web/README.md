@@ -92,6 +92,11 @@ curl --fail -H 'Authorization: Bearer demo.local.signature' \
 决定，`dataRoutes` 是经过声明的抽象数据路线，`attestations` 是 Trust Passport 的审阅声明；这些
 字段不会被客户端当作凭据，也不会改变 action-time 授权。
 
+安装 API 还接受可选的 `grantedCapabilities` 请求字段。后端逐项校验它必须属于 Trust Passport
+声明的 `requestedCapabilities`，因此客户端可以选择最小能力集合；省略字段继续授予完整 reviewed
+集合以兼容旧调用。显式空数组、重复项或非法值会被拒绝，已提交幂等 key 改授权集合会返回冲突。
+这只是后端授权决策的输入，不能被前端字段当作凭据或越权依据。
+
 ## 生产边界
 
 当前页面是 fake/demo client：token、群成员和消息均来自本地 demo 服务；没有 Clerk 登录、真实

@@ -127,7 +127,7 @@ func NewWithRuntime(runtime modelruntime.Runtime) (*Service, error) {
 	}
 	plannerPassport, err := buildAgentPassport(
 		now, tenant, "agd_local_planner", "agr_local_planner_100", "v0版规划 Agent",
-		"把复杂目标拆成可审阅执行计划的本地零网络 Agent。", "conversation.read",
+		"把复杂目标拆成可审阅执行计划的本地零网络 Agent。", "conversation.read", "artifact.read",
 	)
 	if err != nil {
 		return nil, err
@@ -516,6 +516,7 @@ func buildAgentPassport(
 	displayName string,
 	summary string,
 	capabilityValue string,
+	additionalCapabilityValues ...string,
 ) (agentstore.TrustPassport, error) {
 	definitionID, err := im.ParseAgentDefinitionID(definitionIDValue)
 	if err != nil {
@@ -543,9 +544,14 @@ func buildAgentPassport(
 	if err != nil {
 		return agentstore.TrustPassport{}, err
 	}
-	capability, err := agentstore.ParseCapability(capabilityValue)
-	if err != nil {
-		return agentstore.TrustPassport{}, err
+	capabilityValues := append([]string{capabilityValue}, additionalCapabilityValues...)
+	capabilities := make([]agentstore.Capability, 0, len(capabilityValues))
+	for _, capabilityValue := range capabilityValues {
+		capability, err := agentstore.ParseCapability(capabilityValue)
+		if err != nil {
+			return agentstore.TrustPassport{}, err
+		}
+		capabilities = append(capabilities, capability)
 	}
 	route, err := agentstore.NewDataRoute(
 		"conversation.context", agentstore.DataInput, agentstore.DataConfidential,
@@ -558,7 +564,7 @@ func buildAgentPassport(
 	release, err := agentstore.NewReleaseSnapshot(
 		releaseID, definitionID, version, agentstore.DigestBytes([]byte(definitionIDValue+" artifact")),
 		agentstore.DigestBytes([]byte(definitionIDValue+" manifest")), agentstore.DigestBytes([]byte(definitionIDValue+" persona")),
-		[]agentstore.Capability{capability}, nil, []agentstore.DataRoute{route},
+		capabilities, nil, []agentstore.DataRoute{route},
 		agentstore.IsolationProcess, agentstore.ReleasePublished, publishedAt, 1,
 	)
 	if err != nil {

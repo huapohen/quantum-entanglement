@@ -99,6 +99,30 @@ fail-closed，而不会因为旧 membership 投影仍存在就继续运行。新
 拒绝”的 action-time 边界。该检查是本地纵切片的安全加固，不替代生产的持久化 resolver、撤销广播和
 action-time PEP。
 
+## 安装时最小权限能力选择（本阶段增量）
+
+安装 API 接受可选的 `grantedCapabilities` 数组，用于把经过 Trust Passport 审阅的能力声明
+进一步收窄到租户实际需要的最小集合：
+
+```json
+{
+  "idempotencyKey": "manual/store/install/planner-least-privilege",
+  "grantedCapabilities": ["conversation.read"]
+}
+```
+
+后端在安装动作锁内重新解析并规范化能力值，再逐项调用当前 Trust Passport 的授权判断；列表中
+任何未在 release `requestedCapabilities` 中声明、或被 Passport prohibition 禁止的能力都会以
+`40301` 业务错误拒绝，无法借由已 active 的安装 replay 绕过。语法错误、重复项和显式空数组分别
+以校验失败处理；能力列表的排序和 release/制品/manifest/persona digest 会纳入幂等请求指纹，
+同 key 改变授权集合会返回 `40902`，不会静默改变既有安装。
+
+省略 `grantedCapabilities`（或保持旧客户端不发送该字段）仍按历史行为授予 Passport 声明的完整
+requested 集合，以保持兼容；这不是扩大权限，因为集合完全由已审阅 Passport 决定。安装响应同时
+返回 `requestedCapabilities` 与实际 `grantedCapabilities`，验收时应确认后者是前者的严格子集或
+相等集合。该 local demo 仍是内存 synthetic 实现；生产需要在 tenant-bound durable UoW 中持久化
+canonical grant set、版本化授权决策并在每次 action-time 解析。
+
 ## Offboard / 撤权闭环（`0427a8c`、`d63ae39`、`62a5ca0`）
 
 当前 synthetic/fake provider 已提供可验证的生命周期尾端：

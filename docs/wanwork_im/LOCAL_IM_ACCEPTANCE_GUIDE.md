@@ -64,6 +64,23 @@ curl --fail \
 这只证明本地安装状态机和 provider-neutral 投影，不证明真实制品、签名、组织审批、PostgreSQL
 持久化或生产撤权已完成。
 
+安装时可以显式选择最小能力集合；后端只会接受 Trust Passport 的 `requestedCapabilities` 子集，
+不会因为客户端直接提交字符串就授予额外能力。例如只授予读取会话：
+
+```bash
+curl --fail \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer demo.local.signature' \
+  --data '{"idempotencyKey":"manual/store/install/planner-least-privilege","grantedCapabilities":["conversation.read"]}' \
+  http://127.0.0.1:18080/api/v1/demo/im/agents/agd_local_planner/install
+```
+
+响应中的 `agent.requestedCapabilities` 是 release 声明，`agent.grantedCapabilities` 是本次租户安装
+实际获得的集合；前者当前包含 `artifact.read` 与 `conversation.read`，后者只会包含请求的
+`conversation.read`。提交未声明能力（如 `payment.execute`）返回 HTTP 200 envelope、业务
+`code=40301`；提交重复项或 `[]` 返回 `code=42201`。省略该字段保持旧客户端兼容，默认授予完整
+reviewed 集合。相同幂等 key 改变授权集合会返回 `40902`，避免把已提交安装悄悄升级或降级。
+
 安装后可在同一张 Agent Store 卡片选择 `retain`、`archive`（默认）或 `delete`，再点击“停用并撤权”。
 确认框会展示本次处置策略；API 也支持同样的三种取值，例如：
 

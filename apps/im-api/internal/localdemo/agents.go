@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/agentstore"
@@ -18,7 +20,8 @@ type AgentStorePage struct {
 }
 
 type AgentStoreInstallInput struct {
-	IdempotencyKey string `json:"idempotencyKey"`
+	IdempotencyKey      string   `json:"idempotencyKey"`
+	GrantedCapabilities []string `json:"grantedCapabilities,omitempty"`
 }
 
 type AgentStoreInstallResult struct {
@@ -89,7 +92,9 @@ func (service *Service) ListAgents(ctx context.Context, bearerToken string) (Age
 
 // InstallAgent admits a reviewed catalog release into the local tenant. It is deliberately
 // explicit and idempotent: the caller supplies a stable action key, while the server binds the
-// action to the exact definition/release digest and never accepts arbitrary capabilities.
+// action to the exact definition/release digest and only accepts a strict subset of the
+// capabilities declared by the reviewed Trust Passport. An omitted capability list preserves the
+// legacy behavior of granting the complete reviewed request; an explicitly empty list is invalid.
 func (service *Service) InstallAgent(
 	ctx context.Context,
 	bearerToken string,
@@ -127,15 +132,21 @@ func (service *Service) InstallAgent(
 	if !service.usableAgentPassport(target.passport) {
 		return AgentStoreInstallResult{}, ErrForbidden
 	}
-	if !target.installation.IsZero() && target.installation.Status() == agentstore.InstallationActive {
-		return AgentStoreInstallResult{Agent: service.agentStoreView(target), Replayed: true}, nil
+	grantedCapabilities, capabilityErr := resolveInstallCapabilities(target.passport, input.GrantedCapabilities)
+	if capabilityErr != nil {
+		return AgentStoreInstallResult{}, capabilityErr
 	}
-	digest := sha256.Sum256([]byte("wanwork.local-demo-agent-install/1\x00" + definitionIDValue))
+	digest := installRequestDigest(definitionID.String(), target.passport, grantedCapabilities)
 	requestKey := definitionIDValue + "\x00" + input.IdempotencyKey
 	if existing, ok := service.agentInstallRequests[requestKey]; ok {
 		if existing.digest != digest {
 			return AgentStoreInstallResult{}, ErrConflict
 		}
+		return AgentStoreInstallResult{Agent: service.agentStoreView(target), Replayed: true}, nil
+	}
+	// An already-active installation is a no-op. Resolve and validate the requested subset before
+	// this branch so a replay cannot be used to smuggle an undeclared capability past the gate.
+	if !target.installation.IsZero() && target.installation.Status() == agentstore.InstallationActive {
 		return AgentStoreInstallResult{Agent: service.agentStoreView(target), Replayed: true}, nil
 	}
 	passport := target.passport
@@ -153,7 +164,7 @@ func (service *Service) InstallAgent(
 	}
 	installation, err := agentstore.NewInstallationSnapshot(
 		installationID, service.parent.Ref().TenantID(), workspace, actorID,
-		passport.Definition().ClaimedBy(), passport, passport.Release().RequestedCapabilities(),
+		passport.Definition().ClaimedBy(), passport, grantedCapabilities,
 		[]string{"conversation.context"}, agentstore.InstallationActive, service.nowUTC(), time.Time{}, 1,
 	)
 	if err != nil {
@@ -197,6 +208,62 @@ func (service *Service) InstallAgent(
 	}
 	service.agentInstallRequests[requestKey] = agentInstallRecord{digest: digest, definitionID: definitionIDValue}
 	return AgentStoreInstallResult{Agent: service.agentStoreView(service.agentCatalog[targetIndex])}, nil
+}
+
+// resolveInstallCapabilities converts the untrusted wire list into canonical capability values.
+// A nil list is intentionally distinct from an explicit []: nil keeps the historical default of
+// granting every requested capability, while [] would silently produce a capability-less Agent
+// and is therefore rejected. Every supplied item must be syntactically valid and allowed by the
+// current Passport; Trust Passport's prohibition list is enforced by Allows as well.
+func resolveInstallCapabilities(
+	passport agentstore.TrustPassport,
+	raw []string,
+) ([]agentstore.Capability, error) {
+	if raw == nil {
+		return passport.Release().RequestedCapabilities(), nil
+	}
+	if len(raw) == 0 {
+		return nil, ErrInvalidInput
+	}
+	capabilities := make([]agentstore.Capability, 0, len(raw))
+	for _, value := range raw {
+		capability, err := agentstore.ParseCapability(value)
+		if err != nil {
+			return nil, ErrInvalidInput
+		}
+		if !passport.Allows(capability) {
+			return nil, ErrForbidden
+		}
+		capabilities = append(capabilities, capability)
+	}
+	slices.Sort(capabilities)
+	for index := 1; index < len(capabilities); index++ {
+		if capabilities[index] == capabilities[index-1] {
+			return nil, ErrInvalidInput
+		}
+	}
+	return capabilities, nil
+}
+
+func installRequestDigest(
+	definitionID string,
+	passport agentstore.TrustPassport,
+	granted []agentstore.Capability,
+) [sha256.Size]byte {
+	release := passport.Release()
+	parts := []string{
+		"wanwork.local-demo-agent-install/2",
+		definitionID,
+		release.ID().String(),
+		release.Version().String(),
+		release.ArtifactDigest().Hex(),
+		release.ManifestDigest().Hex(),
+		release.PersonaDigest().Hex(),
+	}
+	for _, capability := range granted {
+		parts = append(parts, string(capability))
+	}
+	return sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 }
 
 func (service *Service) agentStoreView(record agentCatalogRecord) AgentStoreView {

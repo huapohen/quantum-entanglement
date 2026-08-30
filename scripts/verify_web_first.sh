@@ -87,24 +87,36 @@ assert any(item["installationStatus"] == "active" for item in agents)
 assert any(item["definitionId"] == "agd_local_planner" and item["installationStatus"] == "available" and item["canInstall"] for item in agents)
 '
 verify_install=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' -H 'Content-Type: application/json' \
-    --data '{"idempotencyKey":"verify/web-first/agent-install"}' \
+    --data '{"idempotencyKey":"verify/web-first/agent-install","grantedCapabilities":["conversation.read"]}' \
     "http://127.0.0.1:$verify_port/api/v1/demo/im/agents/agd_local_planner/install")
 VERIFY_INSTALL="$verify_install" python3 -c '
 import json, os
 payload = json.loads(os.environ["VERIFY_INSTALL"])
 assert payload["code"] == 200
-assert payload["data"]["agent"]["agentActorId"] == "agt_local_planner"
-assert payload["data"]["agent"]["installationStatus"] == "active"
+agent = payload["data"]["agent"]
+assert agent["agentActorId"] == "agt_local_planner"
+assert agent["installationStatus"] == "active"
+assert agent["requestedCapabilities"] == ["artifact.read", "conversation.read"]
+assert agent["grantedCapabilities"] == ["conversation.read"]
 assert payload["data"]["replayed"] is False
 '
 verify_install_replay=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' -H 'Content-Type: application/json' \
-    --data '{"idempotencyKey":"verify/web-first/agent-install"}' \
+    --data '{"idempotencyKey":"verify/web-first/agent-install","grantedCapabilities":["conversation.read"]}' \
     "http://127.0.0.1:$verify_port/api/v1/demo/im/agents/agd_local_planner/install")
 VERIFY_INSTALL_REPLAY="$verify_install_replay" python3 -c '
 import json, os
 payload = json.loads(os.environ["VERIFY_INSTALL_REPLAY"])
 assert payload["code"] == 200
 assert payload["data"]["replayed"] is True
+'
+verify_install_escalation=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' -H 'Content-Type: application/json' \
+    --data '{"idempotencyKey":"verify/web-first/agent-install-escalation","grantedCapabilities":["payment.execute"]}' \
+    "http://127.0.0.1:$verify_port/api/v1/demo/im/agents/agd_local_planner/install")
+VERIFY_INSTALL_ESCALATION="$verify_install_escalation" python3 -c '
+import json, os
+payload = json.loads(os.environ["VERIFY_INSTALL_ESCALATION"])
+assert payload["code"] == 40301
+assert "payment.execute" not in os.environ["VERIFY_INSTALL_ESCALATION"]
 '
 
 printf '%s\n' "[4/4] 用动态指令验证 Agent 子群隔离和业务错误封装"
