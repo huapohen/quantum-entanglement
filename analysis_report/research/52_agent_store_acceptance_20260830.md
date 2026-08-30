@@ -5,7 +5,8 @@
 当前 Web-first IM 分支已交付一个可从浏览器验收的 Agent Store 最小闭环：后端以认证后的
 tenant 投影返回已审阅 Agent 的 definition、release、Trust Passport、capability、data route
 和 installation；前端展示这些治理信息，并允许把处于 `available` 状态的 Agent 显式安装到工作
-空间，再把处于 `active` 状态的 Agent 邀请到当前普通群。
+空间，再把处于 `active` 状态的 Agent 邀请到当前普通群；同时提供显式的 offboard/撤权动作，
+清理 provider 群成员、本地 conversation 成员/access 投影，并使后续 `@Agent` fail-closed。
 
 该实现是本地 synthetic/fake provider 纵切片，默认零网络，不连接飞书、企微或真实融云，也不
 宣称已经是公共 marketplace 或生产安装服务。
@@ -18,8 +19,9 @@ tenant 投影返回已审阅 Agent 的 definition、release、Trust Passport、c
 | 安装与治理 | `apps/im-api/internal/agentstore/installation.go` | installation 生命周期、授权子集、offboarding 请求 |
 | provider 投影 | `apps/im-api/internal/agentstore/provider_projection.go` | 只向 provider 暴露经过审阅的非秘密身份投影 |
 | local demo projection | `apps/im-api/internal/localdemo/agents.go` | 认证后的 Agent Store 投影与安装动作 |
-| HTTP API | `GET /api/v1/demo/im/agents`、`POST /api/v1/demo/im/agents/:definitionId/install` | 统一 `{code,data,message,requestId}` envelope |
-| Web UI | `clients/im-web/src/App.tsx` | Agent Store 卡片、授权能力/数据路线/审阅声明、邀请动作 |
+| local demo offboard | `apps/im-api/internal/localdemo/agents_offboard.go` | 幂等数据处置、provider 成员移除、用户撤权、本地投影清理 |
+| HTTP API | `GET /api/v1/demo/im/agents`、`POST /api/v1/demo/im/agents/:definitionId/install`、`POST /api/v1/demo/im/agents/:definitionId/offboard` | 统一 `{code,data,message,requestId}` envelope |
+| Web UI | `clients/im-web/src/App.tsx` | Agent Store 卡片、授权能力/数据路线/审阅声明、安装、邀请、停用并撤权 |
 
 ## 当前演示对象
 
@@ -50,7 +52,11 @@ tenant 投影返回已审阅 Agent 的 definition、release、Trust Passport、c
 5. 重放相同安装请求，确认 `replayed=true` 且不创建第二个安装；
 6. 动态指令创建 Agent 子群，确认 Agent 回复不进入父群；
 7. Task → Artifact → Needs You，接受后确认状态闭环；
-8. 业务失败仍通过 HTTP 200 envelope 返回。
+8. 发布已接受 Artifact 的父群引用，并确认重复发布 `replayed=true`；
+9. 对已安装 Agent 执行 `dataDisposition=archive` 的 offboard，确认 installation 变为
+   `offboarded`、返回被清理的 parent/child conversation IDs，并确认重复撤权请求幂等回放；
+10. offboard 后再次 @Agent，确认业务 envelope 为 `code=40301`，不会创建新 invocation、子群或消息；
+11. 业务失败仍通过 HTTP 200 envelope 返回。
 
 专项 Go 测试：
 
@@ -74,6 +80,8 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
 - 对 `available` Agent 点击“安装到当前工作空间”，安装后可见 Agent actor；
 - 选择普通群并点击“邀请到当前群”；
 - 在该群发布自定义指令，进入隔离的 Agent 子群。
+- 对已安装 Agent 点击“停用并撤权”，确认二次确认后 installation 变为 `offboarded`，群成员投影被
+  清理；撤权后再次发布指令应显示业务拒绝。
 
 安装后的 Agent 生成 Artifact 并经人工接受后，Workboard 还可执行“发布引用到父群”；父群只会
 看到带 Artifact ID/digest 的引用消息，不会自动展开或复制产物正文。该发布动作同样是幂等的。
@@ -90,6 +98,23 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
 fail-closed，而不会因为旧 membership 投影仍存在就继续运行。新增测试覆盖“目录仍保留但安装/调用
 拒绝”的 action-time 边界。该检查是本地纵切片的安全加固，不替代生产的持久化 resolver、撤销广播和
 action-time PEP。
+
+## Offboard / 撤权闭环（`0427a8c`、`d63ae39`、`62a5ca0`）
+
+当前 synthetic/fake provider 已提供可验证的生命周期尾端：
+
+1. `POST /api/v1/demo/im/agents/:definitionId/offboard` 要求调用方显式选择
+   `retain | archive | delete` 数据处置策略，并携带幂等 key；
+2. 对 provider-bound 的 parent/child 群先执行 member removal，再执行 Agent 普通用户 revoke；
+3. 两类 provider effect 都具备 committed/replayed/conflict 语义，任一步失败都不会标记本地成功；
+4. 本地 installation 迁移到 `offboarded`，清除所有 conversation 的成员和 access 投影；当没有
+   active installation 时，移除 requester 的 `InvokeAgent` 权限；
+5. 相同 key+策略重试返回原结果并标记 `replayed=true`，相同 key 改策略返回冲突；撤权后 invocation
+   在动作时重新检查 installation/status，直接 fail-closed。
+
+这是一条 fake provider 的纵切片，证明的是合同、顺序、幂等和拒绝边界。生产接入仍需真实 provider
+callback/readback、durable UoW、outbox/inbox、reconcile worker、credential/session lease revoke、
+审计事件和租户隔离事务，不能把本地撤权结果当作生产完成。
 
 ## 明确边界
 

@@ -1,9 +1,9 @@
 # 10 小时全量目标执行状态（2026-08-30）
 
-更新时间：2026-08-30 14:20（Asia/Shanghai）
+更新时间：2026-08-30 15:05（Asia/Shanghai）
 主线分支：`dev_wanwork_quantum_entanglement`  
-当前 HEAD：见 Git 远端分支（本文件不硬编码可变 SHA）  
-安全备份：`backup_0830_141602`
+当前 HEAD：`62a5ca0`（已推送到 GitHub）
+安全备份：`backup_0830_142104`（此前备份）；阶段收口后将创建新的时间戳备份
 固定验收标签：`v0.2.0-web-im-20260830`
 
 ## 结论
@@ -26,7 +26,7 @@ SSE/WebSocket resume、文件/已读/通知/reaction、原生 `.app/.exe/.ipa/.a
 | IM API | Go + Fiber loopback；统一 HTTP 200 envelope；direct/group 会话、群成员、消息、编辑、撤回、搜索 |
 | Agent 拓扑 | Agent Store 投影；普通用户式 Agent actor；父群 → 独立子群；ACL 隔离；父群只写受限工作卡 |
 | 任务工作台 | Task；Artifact 草稿；Needs You；接受/退回；幂等重放；独立于聊天正文 |
-| Agent Store | 认证目录投影；Trust Passport；requested/granted capability 分离；available Agent 幂等安装；Agent actor provisioning；安装后加入根群；旧 demo 安装 offboard |
+| Agent Store | 认证目录投影；Trust Passport；requested/granted capability 分离；available Agent 幂等安装；Agent actor provisioning；安装后加入根群；显式 offboard/撤权与 provider 成员清理 |
 | Artifact 发布 | 人工接受后才允许发布；父群只接收 Artifact ID/digest 引用；确定性 client message ID；重复发布返回 replay，不复制产物正文 |
 | 模型 runtime | synthetic 默认；显式 OpenAI-compatible Responses/SSE；Key 不进入日志/报告/事件 |
 | 本地体验 | 一键启动；`--lan` 真实移动浏览器访问；脱敏 GPT 试用启动器 |
@@ -51,6 +51,9 @@ SSE/WebSocket resume、文件/已读/通知/reaction、原生 `.app/.exe/.ipa/.a
 - `536395c`：Artifact 发布/回放门禁。
 - `6e039d2`：Agent Store 安装与 invocation 的 action-time Trust Passport 准入加固。
 - `1f86e5a`：补充 Agent Store action-time gate 验收证据与阶段提交台账。
+- `0427a8c`：增加 provider user revoke/member removal 合同与 fake provider 效果语义。
+- `d63ae39`：增加 Agent Store 幂等 offboard、数据处置选择、本地成员/access 清理与撤权测试。
+- `62a5ca0`：Web Agent Store 暴露“停用并撤权”，并把 offboard 加入 Web-first 门禁。
 
 ## 今晚直接验收
 
@@ -83,9 +86,15 @@ GPT runtime（可选，Key 只在子进程环境）：
 ./scripts/verify_web_first.sh
 ```
 
-14:20 阶段复核：`WANWORK_IM_VERIFY_PORT=18129 ./scripts/verify_web_first.sh` 通过；Go
+15:05 阶段复核：`WANWORK_IM_VERIFY_PORT=18133 ./scripts/verify_web_first.sh` 通过；Go
 `go test ./... -count=1`（含 PostgreSQL/authoritycutover 全包）通过；本次验证未产生外部网络或
 飞书/企微消息。
+
+本轮 Agent Store 追加复核：安装 planner 后完成动态指令和 Artifact 发布，再以
+`dataDisposition=archive` 执行 offboard；响应包含 parent/child conversation 清理清单，重复
+offboard 返回 `replayed=true`，撤权后的 mention 返回 HTTP 200 envelope + `code=40301`。本地
+fake provider 已验证成员移除和普通用户撤权的 committed/replayed/conflict 语义；真实 provider
+callback、durable 事务和 reconcile 仍未实现。
 
 ## 生产化剩余主线（按优先级）
 
@@ -96,6 +105,6 @@ GPT runtime（可选，Key 只在子进程环境）：
 5. Web 的 SSE/WebSocket resume、断线、离线同步、文件/已读/reaction/通知；
 6. 真实 sandbox 端到端后再做 Tauri 桌面、iOS/iPadOS、Android、鸿蒙打包与签名。
 
-截至本次更新时间，新增 Agent Store 安装与 Artifact 引用发布变更均保持 `local_pending`，尚未上传
+截至本次更新时间，新增 Agent Store 安装、Artifact 引用发布与 offboard/撤权变更均保持 `local_pending`，尚未上传
 Notion；按用户授权，截止时间前再统一批量同步并回读。完整代码和证据仍以本地 Git 为实现真相源，
 Notion 只做阅读镜像，不包含任何 API Key；语雀未操作。

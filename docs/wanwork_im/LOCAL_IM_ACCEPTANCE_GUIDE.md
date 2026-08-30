@@ -64,6 +64,24 @@ curl --fail \
 这只证明本地安装状态机和 provider-neutral 投影，不证明真实制品、签名、组织审批、PostgreSQL
 持久化或生产撤权已完成。
 
+安装后可在同一张 Agent Store 卡片点击“停用并撤权”。页面会要求选择数据处置策略（默认
+`archive`；也可显式选择 `retain` 或 `delete`），然后调用：
+
+```bash
+curl --fail \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer demo.local.signature' \
+  --data '{"idempotencyKey":"manual/store/offboard-1","dataDisposition":"archive"}' \
+  http://127.0.0.1:18080/api/v1/demo/im/agents/agd_local_planner/offboard
+```
+
+成功响应仍是 HTTP 200 envelope，`data.agent.installationStatus` 为 `offboarded`，并返回
+`removedConversationIds`。同样的 definition + idempotency key + 处置策略再次调用会返回
+`replayed=true`；同一 key 改处置策略会返回业务冲突。撤权动作在 provider 侧先移除 Agent 的
+parent/child 群成员，再撤销普通用户式 Agent actor，随后清除本地成员/access 投影。撤权后再次
+发布 `@Agent` 指令应仍是 HTTP 200，但 envelope `code=40301`，不会创建新的 invocation、子群或消息。
+这条路径是本地 fake provider 的生命周期验收，不等价于真实融云撤权、凭据租约回收或跨服务事务。
+
 在左侧新建群时默认勾选“创建时邀请已安装 Agent”。提交后打开该群，检查其 `memberActorIds`
 包含 Agent actor；取消勾选则创建只含真人的普通群。此处复用 `CreateConversation` 的成员边界，
 不是把 Agent 偷塞进 UI 状态。

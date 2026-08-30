@@ -23,6 +23,9 @@
 - Web 发布成功后刷新会话投影并自动进入子群，父群仍可回看工作卡；
 - Agent Store 的 `available` Agent 可在当前工作空间显式安装，安装请求带 idempotency key；安装后
   生成普通成员式 Agent actor 并加入根群，原 active demo 安装受控 offboard；
+- Agent Store 对已安装 Agent 提供显式“停用并撤权”：数据处置策略必须为 `retain`、`archive` 或
+  `delete` 之一；provider 成员移除和普通用户撤权完成后，installation 才迁移到 `offboarded`，并
+  清理 parent/child conversation 的成员与 access 投影；重复请求可安全 replay；
 - Workboard 中已接受的 Artifact 才能发布到父群，父群只收到带 Artifact ID/digest 的引用消息，重复
   发布保持幂等且不复制产物正文；
 - 无 Agent 的群、Agent 子群和权限不足请求不会创建新的 Agent 子群。
@@ -61,7 +64,9 @@ curl --fail \
 ```
 
 该脚本强制 synthetic runtime，自动构建 Web、启动临时 loopback API，并检查 Agent Store、HTTP 200
-envelope、动态 mention、子群隔离和 provider committed；成功后清理 API 进程与临时日志。
+envelope、动态 mention、子群隔离、Workboard 审阅/发布和 provider committed；最后执行 Agent Store
+offboard，检查成员/访问清理、撤权幂等回放以及撤权后的 `code=40301` 拒绝；成功后清理 API 进程
+与临时日志。
 
 ```text
 GOTOOLCHAIN=local GOPROXY=off go test ./apps/im-api/internal/localdemo ./apps/im-api/internal/app -count=1
@@ -105,6 +110,9 @@ git diff --check
 | `a99338a` | Workboard 暴露 Artifact 发布按钮 |
 | `536395c` | Artifact 发布/回放门禁 |
 | `6e039d2` | Agent Store 安装与 invocation 的 action-time Trust Passport 准入加固 |
+| `0427a8c` | provider user revoke/member removal 合同与 fake provider 效果语义 |
+| `d63ae39` | Agent Store 幂等 offboard、数据处置与本地投影清理 |
+| `62a5ca0` | Web Agent Store 停用并撤权动作与端到端门禁 |
 
 ## 仍然禁止宣称完成的范围
 
@@ -116,6 +124,9 @@ git diff --check
 - 文件、搜索、已读、通知、reaction、离线同步和多设备能力；
 - Mac/Windows/Linux、iPhone/iPad、Android、鸿蒙原生客户端；
 - 生产 secret broker、观测、SLO、备份恢复、合规和发布门禁。
+
+Offboard 当前是 synthetic/fake provider 纵切片，生产仍需真实 provider callback/readback、durable
+UoW、审计事件、credential lease revoke、reconcile worker 和跨服务一致性处理。
 
 因此当前最合理的验收结论是：Web 端核心群聊 + Agent 子群拓扑 + PWA shell 已具备可体验闭环；
 下一步仍需在 Web/API 合同上补齐 durable projection、真实 runtime 治理和 provider adapter，再决定
