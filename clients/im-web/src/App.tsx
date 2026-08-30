@@ -46,6 +46,7 @@ export function App() {
   const [memberAction, setMemberAction] = useState("");
   const [artifactAction, setArtifactAction] = useState("");
   const [offboardDispositions, setOffboardDispositions] = useState<Record<string, AgentStoreDataDisposition>>({});
+  const [installCapabilities, setInstallCapabilities] = useState<Record<string, string[]>>({});
   const [conversationFilter, setConversationFilter] = useState("");
   const [messageSearch, setMessageSearch] = useState("");
   const messageLoadSequence = useRef(0);
@@ -270,11 +271,16 @@ export function App() {
 
   async function installAgent(agent: (typeof agents)[number]) {
     if (!agent.canInstall) return;
+    const grantedCapabilities = installCapabilities[agent.definitionId] ?? agent.requestedCapabilities;
+    if (grantedCapabilities.length === 0) {
+      setError("至少选择一项安装能力");
+      return;
+    }
     setLoading(true);
     setError("");
     setMemberAction("");
     try {
-      const result = await api.installAgent(agent.definitionId, `web/install/${crypto.randomUUID()}`);
+      const result = await api.installAgent(agent.definitionId, `web/install/${crypto.randomUUID()}`, grantedCapabilities);
       const [agentPage, runtime, page] = await Promise.all([api.agents(), api.snapshot(), api.conversations()]);
       setAgents(agentPage.agents);
       setSnapshot(runtime);
@@ -529,6 +535,33 @@ export function App() {
                     数据路线：{agent.dataRoutes.map((route) => `${route.name} → ${route.destinations.join(", ")}`).join("；") || "无"}
                   </div>
                   <div className="mt-1 text-slate-500">Trust Passport：{agent.attestations.length} 项审阅声明 · {agent.passportStatus}</div>
+                  {agent.installationStatus === "available" && agent.requestedCapabilities.length > 0 && (
+                    <div className="mt-3 rounded-lg border border-cyan/20 bg-cyan/5 p-3">
+                      <div className="text-[11px] text-slate-400">安装时授权能力（可收窄）</div>
+                      <div className="mt-2 grid gap-2">
+                        {agent.requestedCapabilities.map((capability) => {
+                          const selected = installCapabilities[agent.definitionId] ?? agent.requestedCapabilities;
+                          return (
+                            <label key={capability} className="flex items-center gap-2 text-[11px] text-slate-300">
+                              <input
+                                type="checkbox"
+                                checked={selected.includes(capability)}
+                                onChange={(event) => {
+                                  const next = event.target.checked
+                                    ? [...selected, capability]
+                                    : selected.filter((item) => item !== capability);
+                                  setInstallCapabilities((current) => ({ ...current, [agent.definitionId]: next }));
+                                }}
+                                disabled={loading}
+                              />
+                              <span>{capability}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-2 text-[10px] leading-4 text-slate-500">未选能力不会授予安装；后端仍会再次校验 Trust Passport。</p>
+                    </div>
+                  )}
                   {agent.installationStatus === "active" && (
                     <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/5 p-3">
                       <label className="flex items-center justify-between gap-3 text-[11px] text-slate-400">

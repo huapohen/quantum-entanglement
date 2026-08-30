@@ -67,6 +67,9 @@ curl --fail \
 安装时可以显式选择最小能力集合；后端只会接受 Trust Passport 的 `requestedCapabilities` 子集，
 不会因为客户端直接提交字符串就授予额外能力。例如只授予读取会话：
 
+页面里的 `available` Agent 卡片会默认勾选全部 reviewed 能力，也可以逐项取消后再点击安装；勾选框
+只是请求，最终仍以后端 action-time Trust Passport 校验为准。
+
 ```bash
 curl --fail \
   -H 'Content-Type: application/json' \

@@ -123,6 +123,9 @@ requested 集合，以保持兼容；这不是扩大权限，因为集合完全�
 相等集合。该 local demo 仍是内存 synthetic 实现；生产需要在 tenant-bound durable UoW 中持久化
 canonical grant set、版本化授权决策并在每次 action-time 解析。
 
+Web Agent Store 卡片现在也提供逐项勾选：默认全选 reviewed requested 集合，用户可取消不需要的
+能力后再安装；页面提交的集合与 API 相同，后端仍是最终授权判断方。
+
 ## Offboard / 撤权闭环（`0427a8c`、`d63ae39`、`62a5ca0`）
 
 当前 synthetic/fake provider 已提供可验证的生命周期尾端：
