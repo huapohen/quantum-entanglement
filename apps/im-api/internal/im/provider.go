@@ -216,10 +216,13 @@ func (request ProviderMemberUpdate) Validate() error {
 }
 
 // ValidateForProfile additionally binds the provider conversation to the adapter's configured
-// provider realm. A syntactically valid RongCloud reference from another realm must not be sent
-// through this adapter by accident.
+// provider realm and requires the reviewed member-write capability. A syntactically valid
+// RongCloud reference from another realm, or a member mutation sent through a profile that did
+// not declare membership authority, must not reach an adapter by accident. Both AddMembers and
+// RemoveMembers use this contract so offboarding cannot silently bypass capability admission.
 func (request ProviderMemberUpdate) ValidateForProfile(profile ProviderProfile) error {
-	if !request.validate() || !validProviderConversationRef(request.Conversation, profile) {
+	if !request.validate() || !profile.Supports(ProviderCapabilityMemberWrite) ||
+		!validProviderConversationRef(request.Conversation, profile) {
 		return ErrInvalidProviderRequest
 	}
 	return nil

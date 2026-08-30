@@ -61,7 +61,7 @@ func TestProviderRequestValidationBindsRealmAndRejectsUnsafeValues(t *testing.T)
 	otherRealm := mustProviderRealm(t, "rlm_other")
 	profile, err := NewProviderProfile(
 		IdentityProviderRongCloud, realm,
-		[]ProviderCapability{ProviderCapabilityHealth, ProviderCapabilityTextSend}, 64, 64, 128,
+		[]ProviderCapability{ProviderCapabilityHealth, ProviderCapabilityMemberWrite, ProviderCapabilityTextSend}, 64, 64, 128,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +80,18 @@ func TestProviderRequestValidationBindsRealmAndRejectsUnsafeValues(t *testing.T)
 		Conversation: otherConversation, MemberActors: []ActorID{actor}, IdempotencyKey: "members/2",
 	}).ValidateForProfile(profile); !errors.Is(err, ErrInvalidProviderRequest) {
 		t.Fatalf("cross-realm member update error = %v", err)
+	}
+	withoutMemberWrite, err := NewProviderProfile(
+		IdentityProviderRongCloud, realm,
+		[]ProviderCapability{ProviderCapabilityHealth, ProviderCapabilityTextSend}, 64, 64, 128,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (ProviderMemberUpdate{
+		Conversation: conversation, MemberActors: []ActorID{actor}, IdempotencyKey: "members/no-capability",
+	}).ValidateForProfile(withoutMemberWrite); !errors.Is(err, ErrInvalidProviderRequest) {
+		t.Fatalf("member update without reviewed capability = %v, want ErrInvalidProviderRequest", err)
 	}
 	if err := (ProviderTextMessage{
 		Conversation: conversation, Sender: actor, ClientMessage: messageID,
