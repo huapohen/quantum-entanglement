@@ -15,7 +15,7 @@
 
 ## 分支数量为什么看起来很多
 
-远端当前共有 **92** 个分支引用：1 个正式主线、42 个历史开发/证据候选、49 个只读取证归档。`archive/*` 中有不少只是同一历史节点的保险副本，并不代表同时维护的产品版本。
+远端当前共有 **93** 个分支引用：1 个正式主线、43 个历史开发/证据候选、49 个只读取证归档。`archive/*` 中有不少只是同一历史节点的保险副本，并不代表同时维护的产品版本。
 
 Git 本身不保存可靠的“分支创建时间”。下表的“节点时间”是该分支尖端提交的提交时间，这是能够审计的时间节点；不能把它冒充为分支创建时间。`领先/落后` 以目录基线为准；若 `origin/main` 最新提交只更新本目录，生成器会使用其父提交，避免目录提交导致自身立即过期。
 
@@ -32,11 +32,12 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-30T17:46:20+08:00 | `mainline_continue_quantum_entanglement`<br>`af3bd439923b` | E3 Result Authority 人工评审分支；opt-in store-owned result acceptance、fresh-ACK AcceptedV2、heartbeat acceptance seam 与 result-only business projection 候选已完成，生产 worker、认证 projection、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 936 / 落后 34 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 2026-08-30T17:38:24+08:00 | `dev_wanwork_quantum_entanglement`<br>`5f708d12ed17` | WanWork IM Web/PWA Agent Store 验收主线；包含群聊、Agent 子群、Workboard、消息搜索、安装/撤权和局域网跨端体验。保持独立于正式 main，当前用户验收应使用此分支，完成阶段验收后再决定是否合并。 | 未直接并入 main | 领先 519 / 落后 34 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 2026-08-30T17:38:24+08:00 | `backup_0830_174451`<br>`5f708d12ed17` | 2026-08-30 17:44 Agent Store provenance 摘要投影、Web 展示、durable persistence 边界文档及全量门禁通过后的备份；仅用于恢复和审计。 | 未直接并入 main | 领先 519 / 落后 34 | — |
 | 2026-08-30T17:12:19+08:00 | `main`<br>`61e42906ae1e` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 2026-08-30T17:09:34+08:00 | `mainline_continue_quantum_entanglement`<br>`f5b036db1f4f` | E3 Result Authority 人工评审分支；opt-in store-owned result acceptance、fresh-ACK AcceptedV2、heartbeat acceptance seam 与 result-only business projection 候选已完成，生产 worker、认证 projection、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 934 / 落后 34 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 2026-08-30T17:09:34+08:00 | `backup_0830_170938`<br>`f5b036db1f4f` | 用途待补充；当前节点主题：docs(im): record inactive materialized reader adapter | 未直接并入 main | 领先 934 / 落后 34 | — |
 | 2026-08-30T17:06:36+08:00 | `backup_0830_170641`<br>`fde9bb653863` | 用途待补充；当前节点主题：feat(im): add inactive postgres materialized message reader | 未直接并入 main | 领先 933 / 落后 34 | — |
-| 2026-08-30T16:59:53+08:00 | `dev_wanwork_quantum_entanglement`<br>`79dbbd06f2a0` | WanWork IM Web/PWA Agent Store 验收主线；包含群聊、Agent 子群、Workboard、消息搜索、安装/撤权和局域网跨端体验。保持独立于正式 main，当前用户验收应使用此分支，完成阶段验收后再决定是否合并。 | 未直接并入 main | 领先 517 / 落后 34 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 2026-08-30T16:59:53+08:00 | `backup_0830_170055`<br>`79dbbd06f2a0` | 2026-08-30 17:00 Agent Store 实时 Web-first 门禁复核、最小权限安装、撤权与 Workboard 闭环通过后的备份；仅用于恢复和审计。 | 未直接并入 main | 领先 517 / 落后 34 | — |
 | 2026-08-30T16:51:21+08:00 | `backup_0830_165016`<br>`e2724351a11a` | 用途待补充；当前节点主题：docs: index durable message schema contract | 未直接并入 main | 领先 932 / 落后 34 | — |
 | 2026-08-30T16:47:43+08:00 | `backup_0830_164748`<br>`a44750107250` | 用途待补充；当前节点主题：docs: align readiness index with durable replay bridge | 未直接并入 main | 领先 930 / 落后 34 | — |
@@ -143,9 +144,9 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | 正式主线工作区 | `main` | `61e42906ae1e` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 存在、干净 | `dev_im_persistence_accelerator_20260830` | `51dbb1e5bd9a` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_im_persistence_accelerator_20260830` |
 | 存在、干净 | `dev_research_docs_accelerator_20260830` | `b0e5611aeb6c` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_research_docs_accelerator_20260830` |
-| 存在、干净 | `dev_wanwork_quantum_entanglement` | `79dbbd06f2a0` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 存在、干净 | `dev_wanwork_quantum_entanglement` | `5f708d12ed17` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 存在、干净 | `dev_web_first_accelerator_20260830` | `aa1daf471ab8` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_web_first_accelerator_20260830` |
-| 存在、干净 | `mainline_continue_quantum_entanglement` | `f5b036db1f4f` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 存在、干净 | `mainline_continue_quantum_entanglement` | `af3bd439923b` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 存在、干净 | `scoped_lease_process_matrix` | `4fd6588e8ca2` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/scoped_lease_process_matrix` |
 
 ## 固定版本标签

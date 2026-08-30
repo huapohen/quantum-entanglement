@@ -3,6 +3,7 @@
   "branches": {
     "main": "唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。",
     "dev_wanwork_quantum_entanglement": "WanWork IM Web/PWA Agent Store 验收主线；包含群聊、Agent 子群、Workboard、消息搜索、安装/撤权和局域网跨端体验。保持独立于正式 main，当前用户验收应使用此分支，完成阶段验收后再决定是否合并。",
+    "backup_0830_174451": "2026-08-30 17:44 Agent Store provenance 摘要投影、Web 展示、durable persistence 边界文档及全量门禁通过后的备份；仅用于恢复和审计。",
     "backup_0830_170055": "2026-08-30 17:00 Agent Store 实时 Web-first 门禁复核、最小权限安装、撤权与 Workboard 闭环通过后的备份；仅用于恢复和审计。",
     "backup_0830_164443": "2026-08-30 16:44 Agent Store 最小权限 grant drift 防护、安装/撤权和完整 Web-first 门禁通过后的最终阶段备份；仅用于恢复和审计。",
     "backup_0830_162829": "2026-08-30 16:28 Agent Store 最小权限安装、Web 勾选授权、offboard 数据处置与完整门禁收口后的备份；仅用于恢复和审计。",
