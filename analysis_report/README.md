@@ -7,6 +7,9 @@
 
 ## Notion 镜像（最近完成批次：2026-08-30）
 
+> 同步策略：2026-08-30 13:56 之后的 Agent Store 安装、Artifact 引用发布和本阶段文档均先保留在
+> 本地/Git，标记为 `local_pending`；按用户要求截止时间前统一上传 Notion，当前不执行远端写入。
+
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
 - 综合报告：<https://app.notion.com/p/3c1ead4b996e819897daff4941dcbd44?pvs=204>

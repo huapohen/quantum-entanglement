@@ -1,9 +1,9 @@
 # 10 小时全量目标执行状态（2026-08-30）
 
-更新时间：2026-08-30 12:40（Asia/Shanghai）  
+更新时间：2026-08-30 13:56（Asia/Shanghai）
 主线分支：`dev_wanwork_quantum_entanglement`  
 当前 HEAD：见 Git 远端分支（本文件不硬编码可变 SHA）  
-安全备份：`backup_0830_121946`
+安全备份：`backup_0830_135259`（Artifact 发布引用闭环前的远端备份；文档收口后会再创建最新备份）
 固定验收标签：`v0.2.0-web-im-20260830`
 
 ## 结论
@@ -26,6 +26,8 @@ SSE/WebSocket resume、文件/已读/通知/reaction、原生 `.app/.exe/.ipa/.a
 | IM API | Go + Fiber loopback；统一 HTTP 200 envelope；direct/group 会话、群成员、消息、编辑、撤回、搜索 |
 | Agent 拓扑 | Agent Store 投影；普通用户式 Agent actor；父群 → 独立子群；ACL 隔离；父群只写受限工作卡 |
 | 任务工作台 | Task；Artifact 草稿；Needs You；接受/退回；幂等重放；独立于聊天正文 |
+| Agent Store | 认证目录投影；Trust Passport；requested/granted capability 分离；available Agent 幂等安装；Agent actor provisioning；安装后加入根群；旧 demo 安装 offboard |
+| Artifact 发布 | 人工接受后才允许发布；父群只接收 Artifact ID/digest 引用；确定性 client message ID；重复发布返回 replay，不复制产物正文 |
 | 模型 runtime | synthetic 默认；显式 OpenAI-compatible Responses/SSE；Key 不进入日志/报告/事件 |
 | 本地体验 | 一键启动；`--lan` 真实移动浏览器访问；脱敏 GPT 试用启动器 |
 | 测试门禁 | Go unit/race/vet；Web build；Web-first 脚本覆盖 envelope、Agent Store、子群和 Workboard |
@@ -41,6 +43,12 @@ SSE/WebSocket resume、文件/已读/通知/reaction、原生 `.app/.exe/.ipa/.a
 - `f898ca8`：PostgreSQL v2 attempt/fence 合同强化。
 - `9faf969`：Web 直接创建人-Agent 单聊；
 - `6c877f4`：HTML 状态报告与索引。
+- `857eb08`：Agent Store 本地 catalog 安装闭环；
+- `8bda56a`：Web 暴露 Agent Store 安装动作；
+- `8095c3b`：Agent Store 安装/回放门禁；
+- `4babd88`：接受后的 Artifact 引用发布；
+- `a99338a`：Workboard 暴露 Artifact 发布按钮；
+- `536395c`：Artifact 发布/回放门禁。
 
 ## 今晚直接验收
 
@@ -82,5 +90,6 @@ GPT runtime（可选，Key 只在子进程环境）：
 5. Web 的 SSE/WebSocket resume、断线、离线同步、文件/已读/reaction/通知；
 6. 真实 sandbox 端到端后再做 Tauri 桌面、iOS/iPadOS、Android、鸿蒙打包与签名。
 
-本阶段已将状态摘要追加到私人 Notion 项目主页并完成回读（2026-08-30）；语雀未操作。完整代码和
-证据仍以本地 Git 为实现真相源，Notion 只做阅读镜像，不包含任何 API Key。
+截至本次更新时间，新增 Agent Store 安装与 Artifact 引用发布变更均保持 `local_pending`，尚未上传
+Notion；按用户授权，截止时间前再统一批量同步并回读。完整代码和证据仍以本地 Git 为实现真相源，
+Notion 只做阅读镜像，不包含任何 API Key；语雀未操作。

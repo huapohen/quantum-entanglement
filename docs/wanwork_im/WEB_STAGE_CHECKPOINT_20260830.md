@@ -21,6 +21,10 @@
   Agent 子群；
 - 子群显式创建 human/Agent membership 与 ACL，Agent 回复只写入子群；父群只写受限工作卡；
 - Web 发布成功后刷新会话投影并自动进入子群，父群仍可回看工作卡；
+- Agent Store 的 `available` Agent 可在当前工作空间显式安装，安装请求带 idempotency key；安装后
+  生成普通成员式 Agent actor 并加入根群，原 active demo 安装受控 offboard；
+- Workboard 中已接受的 Artifact 才能发布到父群，父群只收到带 Artifact ID/digest 的引用消息，重复
+  发布保持幂等且不复制产物正文；
 - 无 Agent 的群、Agent 子群和权限不足请求不会创建新的 Agent 子群。
 
 ## 可重复验收
@@ -94,6 +98,12 @@ git diff --check
 | `5b440d5` | Web/PWA 静态 shell、manifest、service worker、会话筛选和 runtime 展示 |
 | `6c394a6` | 将 Web 页眉准确标记为 loopback app |
 | `aa1daf4` | 将 Web-first 固化为后续多端和真实 provider 的交付门禁 |
+| `857eb08` | Agent Store 本地 catalog 安装闭环 |
+| `8bda56a` | Web 暴露 Agent Store 安装动作 |
+| `8095c3b` | Agent Store 安装/回放门禁 |
+| `4babd88` | 接受后的 Artifact 引用发布 |
+| `a99338a` | Workboard 暴露 Artifact 发布按钮 |
+| `536395c` | Artifact 发布/回放门禁 |
 
 ## 仍然禁止宣称完成的范围
 
