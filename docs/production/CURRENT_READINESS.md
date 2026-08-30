@@ -115,6 +115,10 @@ projector、migration-12 函数写入、materialized Reader readback、非消息
 比较 replay/materialized，mismatch 直接 fail closed；primary 仍为 bounded replay。默认配置与
 非 runtime/local demo 不会启用该 canary，详见 [`70_shadow_canary_runtime_wiring_20260830.md`](../../analysis_report/research/70_shadow_canary_runtime_wiring_20260830.md)。
 
+Projector 的 commit ACK-loss、exact replay、双 runner CAS 竞争与 pool restart readback 也已通过隔离
+PG18（见 [`71_projector_commit_ack_loss_recovery_20260830.md`](../../analysis_report/research/71_projector_commit_ack_loss_recovery_20260830.md)）。
+这不等同 SIGKILL 前后提交边界、partial-write/rollback fault injection 或生产 RPO/RTO 证明。
+
 该节点后的 `go test ./...`、`go vet ./...` 以及 migrations/runtimepool/eventstore/improjection/imstore
 五包真实 PostgreSQL 18 integration matrix 已全部通过；migration 12 引起的 cutover plan/preflight
 golden 漂移由 `2317871` 修复。
