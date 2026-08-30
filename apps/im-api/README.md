@@ -96,8 +96,15 @@ export WANWORK_IM_POSTGRES_AUTHORITY_MANIFEST='{
 }'
 export WANWORK_IM_POSTGRES_ALLOW_INSECURE_LOCAL_TEST=true
 export WANWORK_IM_ALLOW_RUNTIME_COMPOSITION=1
+# Optional, default-off replay/materialized equality canary. It does not switch the primary reader.
+export WANWORK_IM_MESSAGE_SHADOW=false
 ./scripts/start_im_api.sh
 ```
+
+Set `WANWORK_IM_MESSAGE_SHADOW=true` only after the PostgreSQL materialized projector has backfilled the
+target scope. The API keeps the bounded EventStore replay reader as primary, runs an independent-cursor
+shadow comparison on the first message page, and fails closed on any mismatch; it never merges or silently
+falls back. This is a local/isolated canary, not production cutover approval.
 
 Remote connections do not accept the insecure-local exception and must pass authenticated TLS policy. The
 strict connection policy requires an explicit remote password; rejects implicit endpoint/identity fields,

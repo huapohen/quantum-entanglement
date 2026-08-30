@@ -15,8 +15,9 @@ restart readback 均已在隔离 PostgreSQL 18 通过；`projection_revision` �
 
 ### 下一步只按以下顺序推进
 
-1. **Shadow wiring（仍 default-off）**：把 `CompareMessageReaders` 接到 runtime composition，要求
-   replay/materialized 各持独立 opaque cursor；mismatch 直接阻断，不做 fallback 合并。
+1. **Shadow wiring（已完成，仍 default-off）**：`1e94f8d` 已把 `CompareMessageReaders` 接到 runtime
+   composition；replay/materialized 各持独立 opaque cursor，mismatch 直接阻断，不做 fallback 合并。
+   详见 [`research/70_shadow_canary_runtime_wiring_20260830.md`](research/70_shadow_canary_runtime_wiring_20260830.md)。
 2. **故障矩阵**：在真实 runtime pool 夹具中加入 SIGKILL/commit-ACK 丢失/rollback/partial-write，
    验证只出现 old head 或 complete new head，并从新连接重读 checkpoint、head、rows。
 3. **Cutover preflight**：补生产 applied-schema digest、权限/备份证明、旧 reader drain 与 rollback

@@ -110,6 +110,11 @@ projector、migration-12 函数写入、materialized Reader readback、非消息
 该证据仍不打开 cutover：crash/restore、COMMIT ACK 丢失、shadow replay equality 的真实运行、
 生产 applied-schema proof 和 materialized primary 仍关闭。
 
+`1e94f8d` 已将 shadow equality 接入 runtime composition，但保持显式 default-off：设置
+`WANWORK_IM_MESSAGE_SHADOW=true` 后，首个 authenticated message page 会以独立 opaque cursors
+比较 replay/materialized，mismatch 直接 fail closed；primary 仍为 bounded replay。默认配置与
+非 runtime/local demo 不会启用该 canary，详见 [`70_shadow_canary_runtime_wiring_20260830.md`](../../analysis_report/research/70_shadow_canary_runtime_wiring_20260830.md)。
+
 该节点后的 `go test ./...`、`go vet ./...` 以及 migrations/runtimepool/eventstore/improjection/imstore
 五包真实 PostgreSQL 18 integration matrix 已全部通过；migration 12 引起的 cutover plan/preflight
 golden 漂移由 `2317871` 修复。
