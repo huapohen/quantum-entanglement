@@ -297,16 +297,18 @@ def render_catalog(
     lines = [
         "# Quantum Entanglement 分支与 Worktree 导航",
         "",
-        "> 结论先行：**日常开发、启动体验和后续集成都只使用 `main`。** "
-        "除非是在做历史审计或定点恢复，不要直接在 `codex/*`、`agent/*`、`gate-*` 或 "
-        "`archive/*` 上继续开发，也不要把这些分支整条合并回 `main`。",
+        "> 结论先行：**正式开发、发布和后续集成使用 `main`；当前未合并的 Web IM/Agent Store "
+        "阶段验收使用 `dev_wanwork_quantum_entanglement`。** 除非是在做历史审计或定点恢复，"
+        "不要直接在 `codex/*`、`agent/*`、`gate-*` 或 `archive/*` 上继续开发，也不要把这些分支整条合并回 `main`。",
         "",
         "## 你现在应该用哪个",
         "",
         "| 场景 | 应使用的引用 | 说明 |",
         "| --- | --- | --- |",
-        f"| 日常开发、验收、继续主线任务 | `main`（目录基线 `{main.oid[:12]}`） | "
+        f"| 正式开发、发布、后续集成 | `main`（目录基线 `{main.oid[:12]}`） | "
         f"唯一正式主分支；目录 `{repo}`。 |",
+        "| 当前 Web IM/Agent Store 阶段验收 | `dev_wanwork_quantum_entanglement` | "
+        "未合并到 main 的独立验收分支；worktree 位于统一 `worktrees/quantum_entanglement` 目录。 |",
         "| 复现当前本地试用版本 | `v0.1.0-local-trial.2` | "
         "固定版本标签，不会随 `main` 后续提交移动。 |",
         "| 查看上一试用检查点 | `v0.1.0-local-trial.1` | 已被 `.2` 取代，仅用于对比。 |",
@@ -441,16 +443,17 @@ def render_catalog(
             "",
             "## 管理规则",
             "",
-            "1. `main` 永远是唯一默认主线；阶段分支不能自封为发布分支。",
-            "2. 每个小改动继续独立提交；阶段完成后合并回 `main` 并推送远端。",
-            f"3. 新 worktree 一律建在 `{hub_root / 'worktrees'}`。",
-            "4. 推送成功后删除已完成的本地 worktree 和本地阶段分支，不长期堆积。",
-            "5. 删除远端 active 分支前，必须确认提交已进入 `main` 或已有同 SHA 的 "
+            "1. `main` 永远是唯一正式主线；阶段分支不能自封为发布分支。",
+            "2. Web IM/Agent Store 阶段在未合并前只在对应 `dev_*` worktree 验收；是否合并由用户审阅后决定。",
+            "3. 每个小改动继续独立提交；阶段完成且获准后才合并回 `main` 并推送远端。",
+            f"4. 新 worktree 一律建在 `{hub_root / 'worktrees'}`。",
+            "5. 推送成功后删除已完成的本地 worktree 和本地阶段分支，不长期堆积。",
+            "6. 删除远端 active 分支前，必须确认提交已进入 `main` 或已有同 SHA 的 "
             "`archive/*` 冻结引用。",
-            "6. `archive/*` 只用于保全证据，不在其中开发、不移动其尖端。",
-            "7. 删除 worktree 前先确认状态干净、提交已推送；"
+            "7. `archive/*` 只用于保全证据，不在其中开发、不移动其尖端。",
+            "8. 删除 worktree 前先确认状态干净、提交已推送；"
             "使用 `git worktree remove`，不要直接删目录。",
-            "8. 每次新增、移动或删除分支/worktree 后运行目录更新脚本并提交生成结果。",
+            "9. 每次新增、移动或删除分支/worktree 后运行目录更新脚本并提交生成结果。",
             "",
         ]
     )
