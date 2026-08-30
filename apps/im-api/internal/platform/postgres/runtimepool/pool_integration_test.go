@@ -454,6 +454,8 @@ func configureRuntimePoolAuthority(
 		"human_principal_heads",
 		"human_principal_snapshots",
 		"native_im_inbox",
+		"message_projection_heads",
+		"message_snapshots",
 		"tenant_membership_heads",
 		"tenant_membership_snapshots",
 	}
@@ -491,7 +493,7 @@ ORDER BY namespace.nspname, relation.relname`)
 		t.Fatalf("list runtime pool relations: %v", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(values) != 28 {
+	if err != nil || len(values) != 30 {
 		t.Fatalf("runtime pool relation count=%d error=%v", len(values), err)
 	}
 	return values
@@ -510,7 +512,7 @@ ORDER BY procedure.proname, pg_catalog.pg_get_function_identity_arguments(proced
 		t.Fatalf("list runtime pool functions: %v", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(values) != 8 {
+	if err != nil || len(values) != 10 {
 		t.Fatalf("runtime pool function count=%d error=%v", len(values), err)
 	}
 	return values

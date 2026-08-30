@@ -62,6 +62,11 @@ grant/default 漂移、双 migrator serialization、锁超时和 panic quarantin
 12 在记录的 PostgreSQL 18 schema 上可应用且 postcondition 可回读；不等于生产集群批准或 projector
 crash/restore 完成。
 
+同一隔离实例上的 `TestRuntimePoolAgainstPostgres` 也已通过：runtime relation inventory 从 28
+校准为 30，message projection 两张表已纳入最小 SELECT manifest，function inventory 从 8 校准为
+10；reset role、search_path、tenant setting、transaction、advisory lock、LISTEN 污染和 access
+drift 全部保持 fail-closed/recovery 语义。
+
 ## 仍未关闭的门禁
 
 该实现仍是 production composition 前的候选，需要真实 PostgreSQL applied-schema integration
