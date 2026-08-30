@@ -17,9 +17,11 @@ var (
 	ErrInvalidValue         = errors.New("invalid Agent Store value")
 	ErrDefinitionConflict   = errors.New("Agent definition conflict")
 	ErrReleaseConflict      = errors.New("Agent release conflict")
+	ErrPassportConflict     = errors.New("Agent Trust Passport conflict")
 	ErrInstallationConflict = errors.New("Agent installation conflict")
 	ErrNotFound             = errors.New("Agent Store value not found")
 	ErrRevoked              = errors.New("Agent Store value revoked")
+	ErrIntegrity            = errors.New("Agent Store integrity failure")
 	ErrStoreUnavailable     = errors.New("Agent Store unavailable")
 )
 

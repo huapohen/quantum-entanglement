@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/agentstore"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 )
 
@@ -175,6 +176,7 @@ type TenantRepositories interface {
 	Conversations() ConversationRepository
 	Authority() ConversationAuthorityRepository
 	Identity() IdentityAuthorityRepository
+	AgentStore() agentstore.Repository
 }
 
 type ExecuteOperation func(context.Context, TenantRepositories) (SHA256Digest, error)

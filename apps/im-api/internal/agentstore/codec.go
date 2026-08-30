@@ -304,6 +304,102 @@ func DecodeInstallation(data []byte, passport TrustPassport) (InstallationSnapsh
 	return requireCanonicalRoundTrip(data, value, EncodeInstallation)
 }
 
+// EncodeCapabilitiesJSON and DecodeCapabilitiesJSON are the canonical JSONB boundary for
+// capability/prohibition/grant arrays. They intentionally do not accept arbitrary object shapes.
+func EncodeCapabilitiesJSON(values []Capability) ([]byte, error) {
+	normalized, err := normalizeCapabilities(values)
+	if err != nil {
+		return nil, ErrInvalidValue
+	}
+	return marshalCanonical(capabilityStrings(normalized))
+}
+
+func DecodeCapabilitiesJSON(data []byte) ([]Capability, error) {
+	var values []string
+	if err := unmarshalCanonical(data, &values); err != nil {
+		return nil, ErrInvalidValue
+	}
+	parsed, err := parseCapabilities(values)
+	if err != nil {
+		return nil, err
+	}
+	canonical, err := EncodeCapabilitiesJSON(parsed)
+	if err != nil || !bytes.Equal(data, canonical) {
+		return nil, ErrInvalidValue
+	}
+	return parsed, nil
+}
+
+func EncodeRoutesJSON(values []DataRoute) ([]byte, error) {
+	normalized, err := normalizeRoutes(values)
+	if err != nil {
+		return nil, ErrInvalidValue
+	}
+	return marshalCanonical(routeRecords(normalized))
+}
+
+func DecodeRoutesJSON(data []byte) ([]DataRoute, error) {
+	var values []persistedRoute
+	if err := unmarshalCanonical(data, &values); err != nil {
+		return nil, ErrInvalidValue
+	}
+	parsed, err := parseRoutes(values)
+	if err != nil {
+		return nil, err
+	}
+	// PostgreSQL JSONB normalizes object-key order on storage/readback. Validate the
+	// decoded domain value above, but do not compare raw bytes to Go's object order.
+	return parsed, nil
+}
+
+func EncodeRouteNamesJSON(values []string) ([]byte, error) {
+	normalized, err := normalizeRouteNames(values)
+	if err != nil {
+		return nil, ErrInvalidValue
+	}
+	return marshalCanonical(normalized)
+}
+
+func DecodeRouteNamesJSON(data []byte) ([]string, error) {
+	var values []string
+	if err := unmarshalCanonical(data, &values); err != nil {
+		return nil, ErrInvalidValue
+	}
+	normalized, err := normalizeRouteNames(values)
+	if err != nil {
+		return nil, err
+	}
+	canonical, err := EncodeRouteNamesJSON(normalized)
+	if err != nil || !bytes.Equal(data, canonical) {
+		return nil, ErrInvalidValue
+	}
+	return normalized, nil
+}
+
+func EncodeAttestationsJSON(values []TrustAttestation) ([]byte, error) {
+	normalized, err := normalizeAttestations(values)
+	if err != nil {
+		return nil, ErrInvalidValue
+	}
+	records, err := encodeAttestationRecords(normalized)
+	if err != nil {
+		return nil, err
+	}
+	return marshalCanonical(records)
+}
+
+func DecodeAttestationsJSON(data []byte) ([]TrustAttestation, error) {
+	var records []persistedAttestation
+	if err := unmarshalCanonical(data, &records); err != nil {
+		return nil, ErrInvalidValue
+	}
+	values, err := decodeAttestationRecords(records)
+	if err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
 func marshalCanonical(value any) ([]byte, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {

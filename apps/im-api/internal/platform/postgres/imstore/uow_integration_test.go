@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/agentstore"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/auth"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 	store "github.com/huapohen/quantum-entanglement/apps/im-api/internal/imstore"
@@ -153,6 +154,78 @@ func TestUnitOfWorkAgainstPostgres(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("Read authority: %v", err)
+		}
+	})
+
+	t.Run("agent store catalog passport and installation CAS use function-only writes", func(t *testing.T) {
+		unit, _ := newStoreIntegrationUnit(t, adminURL)
+		tenantID := mustTenantID(t, "ten_alpha")
+		definitionID := mustAgentDefinitionID(t, "agd_repository")
+		publisherID := mustPublisherID(t, "pub_repository")
+		claimedBy := mustPrincipalID(t, "hpr_alice")
+		definition := mustAgentDefinition(t, definitionID, tenantID, claimedBy, publisherID, 1, agentstore.DefinitionActive)
+		release := mustAgentRelease(t, definitionID, 1, agentstore.ReleasePublished)
+		passport := mustAgentPassport(t, definition, release, 1)
+		workspaceID := mustWorkspaceID(t, "wsp_alpha")
+		actorID := mustActorID(t, "agt_repository")
+		createdAt := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+		installation := mustAgentInstallation(t, tenantID, workspaceID, actorID, claimedBy, passport, createdAt, agentstore.InstallationActive, 1)
+		createCommand := mustCommand(t, "agent.store.create", "agent-store-create", "agent-store-create-request")
+		_, err := unit.Execute(t.Context(), tenantID, createCommand, func(ctx context.Context, repositories store.TenantRepositories) (store.SHA256Digest, error) {
+			if _, err := repositories.AgentStore().CompareAndSwapDefinition(ctx, 0, definition); err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("definition create: %w", err)
+			}
+			if _, err := repositories.AgentStore().CompareAndSwapRelease(ctx, 0, release); err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("release create: %w", err)
+			}
+			if _, err := repositories.AgentStore().CompareAndSwapPassport(ctx, 0, passport); err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("passport create: %w", err)
+			}
+			if _, err := repositories.AgentStore().CompareAndSwapInstallation(ctx, 0, installation); err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("installation create: %w", err)
+			}
+			return store.DigestBytes([]byte("agent-store-create-result")), nil
+		})
+		if err != nil {
+			t.Fatalf("Agent Store create: %v", err)
+		}
+		if err := unit.Read(t.Context(), tenantID, func(ctx context.Context, repositories store.TenantRepositories) error {
+			gotDefinition, err := repositories.AgentStore().CurrentDefinition(ctx, definitionID)
+			if err != nil || gotDefinition.Revision() != 1 {
+				return fmt.Errorf("definition read: %#v: %w", gotDefinition, err)
+			}
+			gotRelease, err := repositories.AgentStore().CurrentRelease(ctx, release.ID())
+			if err != nil || gotRelease.Revision() != 1 {
+				return fmt.Errorf("release read: %#v: %w", gotRelease, err)
+			}
+			gotPassport, err := repositories.AgentStore().CurrentPassport(ctx, release.ID())
+			if err != nil || gotPassport.Revision() != 1 {
+				return fmt.Errorf("passport read: %#v: %w", gotPassport, err)
+			}
+			gotInstallation, err := repositories.AgentStore().CurrentInstallation(ctx, installation.ID())
+			if err != nil || gotInstallation.Revision() != 1 || gotInstallation.Status() != agentstore.InstallationActive {
+				return fmt.Errorf("installation read: %#v: %w", gotInstallation, err)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("Agent Store read: %v", err)
+		}
+		updatedInstallation := mustAgentInstallation(t, tenantID, workspaceID, actorID, claimedBy, passport, createdAt, agentstore.InstallationSuspended, 2)
+		updateCommand := mustCommand(t, "agent.store.update", "agent-store-update", "agent-store-update-request")
+		if _, err := unit.Execute(t.Context(), tenantID, updateCommand, func(ctx context.Context, repositories store.TenantRepositories) (store.SHA256Digest, error) {
+			if _, err := repositories.AgentStore().CompareAndSwapInstallation(ctx, 1, updatedInstallation); err != nil {
+				return store.SHA256Digest{}, fmt.Errorf("installation update: %w", err)
+			}
+			return store.DigestBytes([]byte("agent-store-update-result")), nil
+		}); err != nil {
+			t.Fatalf("Agent Store CAS: %v", err)
+		}
+		staleCommand := mustCommand(t, "agent.store.update", "agent-store-stale", "agent-store-stale-request")
+		if _, err := unit.Execute(t.Context(), tenantID, staleCommand, func(ctx context.Context, repositories store.TenantRepositories) (store.SHA256Digest, error) {
+			_, err := repositories.AgentStore().CompareAndSwapInstallation(ctx, 1, updatedInstallation)
+			return store.SHA256Digest{}, err
+		}); !errors.Is(err, agentstore.ErrInstallationConflict) {
+			t.Fatalf("Agent Store stale CAS error = %v", err)
 		}
 	})
 
@@ -631,6 +704,11 @@ WHERE role_value.rolname = current_user`).Scan(&superuser, &bypassRLS, &inherit)
 			{name: "tenant_command_receipts", updateColumn: "result_sha256"},
 			{name: "tenants", updateColumn: "status"},
 			{name: "workspaces", updateColumn: "status"},
+			{name: "agent_definitions", updateColumn: "status"},
+			{name: "agent_releases", updateColumn: "status"},
+			{name: "agent_passports", updateColumn: "status"},
+			{name: "agent_installation_heads", updateColumn: "current_revision"},
+			{name: "agent_installation_snapshots", updateColumn: "status"},
 		} {
 			qualifiedTable := "wanwork_im." + pgx.Identifier{table.name}.Sanitize()
 			quotedUpdateColumn := pgx.Identifier{table.updateColumn}.Sanitize()
@@ -846,6 +924,11 @@ VALUES ('clerk', 'rlm_clerk', 'active', 1),
 		`INSERT INTO wanwork_im.actor_snapshots (
              tenant_id, actor_id, revision, subject_type, status
          ) VALUES ('ten_alpha', 'usr_alice', 1, 'human', 'active')`,
+		`INSERT INTO wanwork_im.actor_heads (tenant_id, actor_id, current_revision)
+         VALUES ('ten_alpha', 'agt_repository', 1)`,
+		`INSERT INTO wanwork_im.actor_snapshots (
+             tenant_id, actor_id, revision, subject_type, status
+         ) VALUES ('ten_alpha', 'agt_repository', 1, 'agent', 'active')`,
 		`INSERT INTO wanwork_im.tenant_membership_heads (
              tenant_id, principal_id, actor_id, current_revision
          ) VALUES ('ten_alpha', 'hpr_alice', 'usr_alice', 1)`,
@@ -884,7 +967,11 @@ func grantStoreRole(t *testing.T, connection *pgx.Conn, quotedRole string) {
              wanwork_im.write_provider_conversation_binding_revision(text, text, text, text, bigint, bigint, text, text),
              wanwork_im.write_conversation_membership_revision(text, text, text, bigint, bigint, text, text),
              wanwork_im.write_conversation_access_revision(text, text, text, bigint, bigint, boolean, boolean, boolean, boolean, boolean, boolean),
-             wanwork_im.write_tenant_command_receipt(text, text, text, text, text)
+             wanwork_im.write_tenant_command_receipt(text, text, text, text, text),
+             wanwork_im.write_agent_definition_revision(text, text, bigint, bigint, text),
+             wanwork_im.write_agent_release_revision(text, text, bigint, bigint, text),
+             wanwork_im.write_agent_passport_revision(text, text, bigint, bigint, text),
+             wanwork_im.write_agent_installation_revision(text, text, bigint, bigint, text)
          TO ` + quotedRole,
 		`GRANT SELECT ON
 		     wanwork_im.conversation_heads,
@@ -903,7 +990,12 @@ func grantStoreRole(t *testing.T, connection *pgx.Conn, quotedRole string) {
 		     wanwork_im.human_principal_heads,
 		     wanwork_im.human_principal_snapshots,
 		     wanwork_im.tenant_membership_heads,
-		     wanwork_im.tenant_membership_snapshots TO ` + quotedRole,
+		     wanwork_im.tenant_membership_snapshots,
+		     wanwork_im.agent_definitions,
+		     wanwork_im.agent_releases,
+		     wanwork_im.agent_passports,
+		     wanwork_im.agent_installation_heads,
+		     wanwork_im.agent_installation_snapshots TO ` + quotedRole,
 	} {
 		if _, err := connection.Exec(t.Context(), statement); err != nil {
 			t.Fatalf("grant store role: %v", err)
@@ -1065,4 +1157,158 @@ func mustAccess(
 		t.Fatalf("create conversation access: %v", err)
 	}
 	return access
+}
+
+func mustAgentDefinitionID(t *testing.T, value string) im.AgentDefinitionID {
+	t.Helper()
+	id, err := im.ParseAgentDefinitionID(value)
+	if err != nil {
+		t.Fatalf("parse Agent definition: %v", err)
+	}
+	return id
+}
+
+func mustPublisherID(t *testing.T, value string) agentstore.PublisherID {
+	t.Helper()
+	id, err := agentstore.ParsePublisherID(value)
+	if err != nil {
+		t.Fatalf("parse publisher: %v", err)
+	}
+	return id
+}
+
+func mustPrincipalID(t *testing.T, value string) im.HumanPrincipalID {
+	t.Helper()
+	id, err := im.ParseHumanPrincipalID(value)
+	if err != nil {
+		t.Fatalf("parse principal: %v", err)
+	}
+	return id
+}
+
+func mustWorkspaceID(t *testing.T, value string) im.WorkspaceID {
+	t.Helper()
+	id, err := im.ParseWorkspaceID(value)
+	if err != nil {
+		t.Fatalf("parse workspace: %v", err)
+	}
+	return id
+}
+
+func mustActorID(t *testing.T, value string) im.ActorID {
+	t.Helper()
+	id, err := im.ParseActorID(value)
+	if err != nil {
+		t.Fatalf("parse Actor: %v", err)
+	}
+	return id
+}
+
+func mustAgentDefinition(
+	t *testing.T,
+	id im.AgentDefinitionID,
+	tenant im.TenantID,
+	claimedBy im.HumanPrincipalID,
+	publisher agentstore.PublisherID,
+	revision uint64,
+	status agentstore.DefinitionStatus,
+) agentstore.DefinitionSnapshot {
+	t.Helper()
+	value, err := agentstore.NewDefinitionSnapshot(id, tenant, claimedBy, publisher, "Repository Agent", "integration", status, revision)
+	if err != nil {
+		t.Fatalf("create Agent definition: %v", err)
+	}
+	return value
+}
+
+func mustAgentRelease(
+	t *testing.T,
+	definitionID im.AgentDefinitionID,
+	revision uint64,
+	status agentstore.ReleaseStatus,
+) agentstore.ReleaseSnapshot {
+	t.Helper()
+	releaseID, err := agentstore.ParseReleaseID("agr_repository")
+	if err != nil {
+		t.Fatalf("parse release: %v", err)
+	}
+	version, err := im.ParseAgentVersion("1.0.0")
+	if err != nil {
+		t.Fatalf("parse Agent version: %v", err)
+	}
+	route, err := agentstore.NewDataRoute(
+		"conversation.context", agentstore.DataInput, agentstore.DataInternal, []string{"local"}, 1,
+	)
+	if err != nil {
+		t.Fatalf("create Agent route: %v", err)
+	}
+	publishedAt := time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC)
+	value, err := agentstore.NewReleaseSnapshot(
+		releaseID, definitionID, version,
+		agentstore.DigestBytes([]byte("agent-artifact")), agentstore.DigestBytes([]byte("agent-manifest")),
+		agentstore.DigestBytes([]byte("agent-persona")), []agentstore.Capability{"conversation.read"}, nil,
+		[]agentstore.DataRoute{route}, agentstore.IsolationProcess, status, publishedAt, revision,
+	)
+	if err != nil {
+		t.Fatalf("create Agent release: %v", err)
+	}
+	return value
+}
+
+func mustAgentPassport(
+	t *testing.T,
+	definition agentstore.DefinitionSnapshot,
+	release agentstore.ReleaseSnapshot,
+	revision uint64,
+) agentstore.TrustPassport {
+	t.Helper()
+	issuedAt := release.PublishedAt().Add(-time.Hour)
+	claims := []agentstore.AttestationClaim{
+		agentstore.AttestationPublisherVerified,
+		agentstore.AttestationSecurityReviewed,
+		agentstore.AttestationDataRoutesReviewed,
+	}
+	attestations := make([]agentstore.TrustAttestation, 0, len(claims))
+	for _, claim := range claims {
+		attestation, err := agentstore.NewTrustAttestation(
+			definition.PublisherID(), claim, 1, agentstore.DigestBytes([]byte(string(claim))),
+			issuedAt, release.PublishedAt().Add(24*time.Hour),
+		)
+		if err != nil {
+			t.Fatalf("create Agent attestation: %v", err)
+		}
+		attestations = append(attestations, attestation)
+	}
+	value, err := agentstore.NewTrustPassport(definition, release, attestations, agentstore.PassportActive, revision)
+	if err != nil {
+		t.Fatalf("create Agent Passport: %v", err)
+	}
+	return value
+}
+
+func mustAgentInstallation(
+	t *testing.T,
+	tenant im.TenantID,
+	workspace im.WorkspaceID,
+	actor im.ActorID,
+	installedBy im.HumanPrincipalID,
+	passport agentstore.TrustPassport,
+	createdAt time.Time,
+	status agentstore.InstallationStatus,
+	revision uint64,
+) agentstore.InstallationSnapshot {
+	t.Helper()
+	installationID, err := agentstore.ParseInstallationID("ins_repository")
+	if err != nil {
+		t.Fatalf("parse installation: %v", err)
+	}
+	value, err := agentstore.NewInstallationSnapshot(
+		installationID, tenant, workspace, actor, installedBy, passport,
+		[]agentstore.Capability{"conversation.read"}, []string{"conversation.context"},
+		status, createdAt, time.Time{}, revision,
+	)
+	if err != nil {
+		t.Fatalf("create Agent installation: %v", err)
+	}
+	return value
 }

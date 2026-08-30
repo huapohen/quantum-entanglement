@@ -237,6 +237,14 @@ type InstallationRepository interface {
 	CompareAndSwapInstallation(context.Context, uint64, InstallationSnapshot) (InstallationSnapshot, error)
 }
 
+// Repository is the tenant-scoped Agent Store surface exposed by a Unit of Work. Implementations
+// must use one transaction snapshot for catalog, Passport, and installation reads; callers must
+// still perform action-time capability resolution before invoking an Agent.
+type Repository interface {
+	CatalogRepository
+	InstallationRepository
+}
+
 func validInstallationTransition(current InstallationStatus, next InstallationStatus) bool {
 	switch current {
 	case InstallationPending:

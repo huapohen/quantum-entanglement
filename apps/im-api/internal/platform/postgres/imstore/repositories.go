@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/agentstore"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 	store "github.com/huapohen/quantum-entanglement/apps/im-api/internal/imstore"
 	"github.com/jackc/pgx/v5"
@@ -32,6 +33,10 @@ func (repositories *tenantRepositories) Conversations() store.ConversationReposi
 }
 
 func (repositories *tenantRepositories) Authority() store.ConversationAuthorityRepository {
+	return repositories
+}
+
+func (repositories *tenantRepositories) AgentStore() agentstore.Repository {
 	return repositories
 }
 
