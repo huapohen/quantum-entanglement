@@ -119,6 +119,13 @@ func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
 		}
 		return httpapi.WriteSuccess(ctx, page)
 	})
+	server.Get("/api/v1/demo/im/conversations/:conversationId/messages/search", func(ctx fiber.Ctx) error {
+		page, err := demo.SearchMessages(ctx.Context(), bearerToken(ctx), ctx.Params("conversationId"), ctx.Query("q"))
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, page)
+	})
 	server.Post("/api/v1/demo/im/conversations/:conversationId/messages", func(ctx fiber.Ctx) error {
 		var input localdemo.SendTextInput
 		if err := decodeLocalDemoRequest(ctx.Body(), &input); err != nil {

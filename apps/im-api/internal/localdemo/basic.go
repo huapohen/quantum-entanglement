@@ -374,6 +374,44 @@ func (service *Service) ListMessages(
 	return page, nil
 }
 
+// SearchMessages is the first explicit office-IM search surface. It searches the
+// platform-owned message projection after authentication and conversation ACL
+// checks; provider history is never treated as the source of truth.
+func (service *Service) SearchMessages(
+	ctx context.Context,
+	bearerToken string,
+	conversationIDValue string,
+	query string,
+) (MessagePage, error) {
+	if service == nil || ctx == nil || !validMessageSearchQuery(query) {
+		return MessagePage{}, ErrInvalidInput
+	}
+	if err := service.verifyRequester(ctx, bearerToken); err != nil {
+		return MessagePage{}, err
+	}
+	conversationID, err := im.ParseConversationID(conversationIDValue)
+	if err != nil {
+		return MessagePage{}, ErrNotFound
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	conversation, ok := service.conversations[conversationID]
+	if !ok {
+		return MessagePage{}, ErrNotFound
+	}
+	if !service.canRead(conversation) {
+		return MessagePage{}, ErrForbidden
+	}
+	needle := strings.ToLower(strings.TrimSpace(query))
+	page := MessagePage{Messages: make([]MessageView, 0)}
+	for _, message := range conversation.messages {
+		if strings.Contains(strings.ToLower(message.snapshot.Text()), needle) {
+			page.Messages = append(page.Messages, messageView(message))
+		}
+	}
+	return page, nil
+}
+
 func (service *Service) SendText(
 	ctx context.Context,
 	bearerToken string,
@@ -816,6 +854,11 @@ func validMessageText(value string) bool {
 		}
 	}
 	return true
+}
+
+func validMessageSearchQuery(value string) bool {
+	return value != "" && len(value) <= 256 && utf8.ValidString(value) &&
+		norm.NFC.IsNormalString(value) && strings.TrimSpace(value) == value
 }
 
 func validMessageExtInfo(value string) bool {

@@ -45,6 +45,7 @@ export function App() {
   const [instruction, setInstruction] = useState("");
   const [memberAction, setMemberAction] = useState("");
   const [conversationFilter, setConversationFilter] = useState("");
+  const [messageSearch, setMessageSearch] = useState("");
   const messageLoadSequence = useRef(0);
 
   const selectedConversation = useMemo(
@@ -110,11 +111,30 @@ export function App() {
 
   async function chooseConversation(id: string) {
     selectConversation(id);
+    setMessageSearch("");
     setError("");
     try {
       await loadMessages(id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function searchCurrentConversation() {
+    const query = messageSearch.trim();
+    if (!selectedConversationId || !query) {
+      if (selectedConversationId) await loadMessages(selectedConversationId);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const page = await api.searchMessages(selectedConversationId, query);
+      setMessages(page.messages);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -333,6 +353,10 @@ export function App() {
               </div>
               <div className="mt-1 text-xs text-slate-500">{selectedConversation?.id ?? "等待会话加载"}</div>
             </div>
+            <form className="flex w-full gap-2 sm:w-auto" onSubmit={(event) => { event.preventDefault(); void searchCurrentConversation(); }}>
+              <input value={messageSearch} onChange={(event) => setMessageSearch(event.target.value)} placeholder="搜索当前会话" aria-label="搜索当前会话消息" className="field w-full sm:w-48" />
+              <button type="submit" className="button-secondary px-3">搜索</button>
+            </form>
             <div className="text-right text-xs text-slate-400">
               <div>{isLocal ? "zero-network fake" : snapshot ? "explicit model runtime" : "连接中"}</div>
               <div className="mt-1 text-[10px] text-slate-600">

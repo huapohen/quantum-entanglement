@@ -12,6 +12,7 @@
 - 生产构建带有 manifest 和只缓存静态 shell 的 service worker，可添加到主屏幕；`/api/`、登录态和
   聊天数据不进入浏览器缓存；
 - 会话列表支持按名称/ID 筛选，运行态明确显示 synthetic 或显式模型 runtime、provider、model 和调用计数；
+- 当前会话支持受 ACL 保护的消息全文搜索，搜索结果仍来自平台消息投影；
 - Go + Fiber loopback API 统一使用 `{code,data,message,requestId}` envelope，业务错误仍返回 HTTP 200；
 - Agent Store 卡片来自认证后的后端投影，包含 definition、release、Trust Passport、installation、
   requested/granted capabilities 和 data routes；

@@ -194,6 +194,8 @@ export const api = {
   conversations: () => request<ConversationPage>("/api/v1/demo/im/conversations?limit=50"),
   messages: (conversationId: string) =>
     request<MessagePage>(`/api/v1/demo/im/conversations/${encodeURIComponent(conversationId)}/messages?limit=100`),
+  searchMessages: (conversationId: string, query: string) =>
+    request<MessagePage>(`/api/v1/demo/im/conversations/${encodeURIComponent(conversationId)}/messages/search?q=${encodeURIComponent(query)}`),
   createConversation: (name: string, idempotencyKey: string, memberActorIds: string[] = []) =>
     request<ConversationResult>("/api/v1/demo/im/conversations", {
       method: "POST",

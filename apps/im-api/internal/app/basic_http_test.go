@@ -37,6 +37,11 @@ func TestLocalDemoBasicConversationAndMessageHTTPAPI(t *testing.T) {
 		t.Fatalf("send response = %s", sent.Raw)
 	}
 	messageID := decodeMessageID(t, sent.Raw)
+	search := localDemoRequest(t, server, http.MethodGet,
+		"/api/v1/demo/im/conversations/"+conversationID+"/messages/search?q=hello", "", "Bearer "+localdemo.LocalBearerToken)
+	if search.Code != httpapi.CodeOK || !strings.Contains(search.Raw, `"text":"hello from HTTP"`) {
+		t.Fatalf("message search response = %s", search.Raw)
+	}
 	edited := localDemoRequest(t, server, http.MethodPatch,
 		"/api/v1/demo/im/conversations/"+conversationID+"/messages/"+messageID,
 		`{"text":"edited from HTTP"}`, "Bearer "+localdemo.LocalBearerToken)
