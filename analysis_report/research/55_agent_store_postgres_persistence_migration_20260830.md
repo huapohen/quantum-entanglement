@@ -36,6 +36,14 @@ durable command 入口也已收口：`imstore.NewAgentStoreCommand` 只接受 `a
 Agent Store create command 的第二次调用返回 `replayed=true`、同一 result digest，且 operation body
 不会再次执行；这一步把“已有 receipt 表”推进成 Agent Store 明确可调用的 durable seam。
 
+本阶段最后又收紧了 provider effect 边界（`514a9f2 fix(im): reject unresolved provider effects`）：新增
+`im.RequireCommittedProviderEffect`，先校验 receipt 结构，再只接受 `committed` 或 `replayed`；
+合法但状态为 `unknown` 的 transport receipt 现在统一返回 `ErrProviderEffectUnknown`，不会被当作
+外部副作用已完成。Agent 安装 provisioning、父群加员、撤权移除成员、用户撤销、普通建群、普通
+消息发送/编辑/撤回以及 Agent 子群 materialize 均已接入该 gate，并有覆盖 committed/replayed/unknown
+三种状态和非法 receipt 的单元测试。这样在 provider 结果未决时，系统会停在可对账状态，不推进本地
+aggregate，也不向调用方报告成功。
+
 这不是“生产 Agent Store 已完成”的声明。当前仍缺少安装命令的 durable receipt、action-time resolver、
 provider outbox/reconcile、真实 Clerk/RongCloud 适配器、灾备恢复和完整 IM provider effect gate；migration
 与 repository 是这些组件可以共同依赖的持久化契约。
@@ -102,13 +110,17 @@ runtime ACL、repository definition/release/Passport/installation 创建与读�
 - `cd apps/im-api && go test ./... -count=1`：全部 Go package 通过。
 - `cd apps/im-api && go vet ./...`：通过。
 - `cd clients/im-web && npm run build`：TypeScript/Vite production build 通过。
-- `WANWORK_IM_VERIFY_PORT=18146 ./scripts/verify_web_first.sh`：构建、HTTP envelope、Agent Store 安装/幂等重放/撤权、统一 action-time capability resolver、子群隔离、Workboard 审阅闭环和零网络 synthetic 通过。
+- `WANWORK_IM_VERIFY_PORT=18147 ./scripts/verify_web_first.sh`：构建、HTTP envelope、Agent Store 安装/幂等重放/撤权、统一 action-time capability resolver、provider effect fail-closed、子群隔离、Workboard 审阅闭环和零网络 synthetic 通过。
 
-本阶段远端备份：`dev_wanwork_quantum_entanglement` 已推送至 `origin`，当前 HEAD 为 `3cb0a92`；此前的
+本阶段远端备份：`dev_wanwork_quantum_entanglement` 已推送至 `origin`，provider effect fail-closed
+功能基线 HEAD 为 `514a9f2`；此前的
 `backup_0830_211508` 指向 resolver 之前的 `aa94515`，`backup_0830_214953` 指向 receipt 之前的
-`c69af4c`，可用于精确回退；最新 `backup_0830_220230` 与当前 HEAD 一致。新增可回溯小阶段 commit 为：
+`c69af4c`，`backup_0830_220230` 指向 durable receipt seam，`backup_0830_221127` 指向其备份说明，
+均可用于精确回退。新增可回溯小阶段 commit 为：
 `c69af4c`（共享 action-time capability resolver 与测试）、`63106e2`（resolver 证据与最新 Web gate 文档）、
-`de8d2ae`（Agent Store durable command receipt 入口与 PostgreSQL replay 证据）、`3cb0a92`（receipt 证据文档）。
+`de8d2ae`（Agent Store durable command receipt 入口与 PostgreSQL replay 证据）、`3cb0a92`（receipt 证据文档）、
+`514a9f2`（provider effect unknown fail-closed 及全链路调用点）。本报告更新提交后会再创建新的
+`backup_MMDD_HHMMSS`，并把精确提交指针写入 main 分支账本。
 
 ## 下一步顺序（仍本地 pending）
 
