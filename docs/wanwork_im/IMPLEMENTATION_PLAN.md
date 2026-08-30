@@ -173,7 +173,8 @@ function-only/exact-access 与 attested runtime 的历史检查点。
    Clerk/JWKS、edge-injected tenant candidate 和 route/path consistency 仍未闭合）
    的 trusted request context；
 3. conversation/actor/membership/access active resolver；invoke/publish 再叠加 installation/mandate/
-   capability/budget/Artifact/Acceptance；
+   capability/budget/Artifact/Acceptance；本地只读 conversation resolver/route 已在 `49e2cf9` 接通，
+   message/event cursor、写入与上述 action-time 扩展仍未完成；
 4. 把当前每请求 full-catalog gate 性能化为 host-owned、冻结最大漂移窗口的 max-staleness dependency
    readiness monitor，并增加 explicit draining state；过期立即关闭，高风险 effect 仍独立做 action-time PEP；
 5. explicit draining 交付后，再演练 live credential rotation、pool replacement、旧 session

@@ -48,6 +48,20 @@ membership、authority unavailable 和 integrity drift 均 fail closed。Go 全�
 reject-all fake verifier；真实 Clerk/JWKS、route/path consistency、conversation ACL、Agent installation、
 durable message/Task/Artifact/Needs You projection、worker/provider 和 Gate A–E 继续关闭。
 
+## 2026-08-30 Tenant-scoped durable conversation read
+
+提交 `49e2cf9` 在上述身份 seam 之上增加只读 route
+`GET /api/v1/tenants/:tenantId/conversations/:conversationId`。它要求 path tenant 与已解析 tenant
+一致，并在 action-time `TenantUnitOfWork.Read` 快照中再次解析 identity，随后同时读取 current
+conversation、conversation membership 与 read access；只有 active/active/read 三项成立才返回安全
+projection。cross-tenant path、removed membership、empty access、missing/closed conversation 均拒绝。
+Go 全模块 test/vet 已通过，证据见
+[`58_durable_conversation_read_route_20260830.md`](../../analysis_report/research/58_durable_conversation_read_route_20260830.md)。
+
+该节点仍不是 production business API：PostgreSQL runtime 继续使用 reject-all fake verifier，尚无
+message/event cursor、write command、Task/Attempt/Artifact/Needs You projection、真实 Clerk/JWKS、
+provider exchange 或 Gate A–E 晋级。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow

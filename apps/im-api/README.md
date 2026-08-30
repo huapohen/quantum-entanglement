@@ -116,6 +116,7 @@ GET /health/live  -> process liveness only
 GET /health/ready -> HTTP 200 exact database ready; HTTP 503 otherwise
 GET /api/v1/*     -> readiness failure stays HTTP 200 envelope with code 50301
 GET /api/v1/auth/context -> authenticated tenant identity summary (runtime composition only)
+GET /api/v1/tenants/:tenantId/conversations/:conversationId -> tenant-scoped read projection (runtime only)
 ```
 
 The runtime-only identity seam requires both a canonical bearer header and one tenant candidate header:
@@ -132,6 +133,11 @@ confirms the Clerk realm binding, active human principal, active tenant membersh
 The current PostgreSQL `cmd/im-api` composition intentionally uses an empty reject-all fake verifier, so this
 route is a local contract seam and will return an authentication error until a reviewed Clerk/JWKS adapter is
 composed. It never returns the bearer token or session secret.
+
+The conversation read route additionally requires the path tenant to match the trusted tenant and performs a
+fresh action-time identity resolve before reading the current conversation, membership, and read access from one
+UoW snapshot. It is read-only and does not prove message/event projection, Task/Agent persistence, provider
+delivery, or production authorization.
 
 ### One-shot migrator
 

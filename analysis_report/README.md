@@ -146,6 +146,7 @@ business projection 候选；下一步是认证作用域、crash/kill/two-proces
 | `research/55_invocation_recovery_process_binding_20260830.md` | Invocation Recovery Coordinator 进程绑定 | fork inherited recovery lock/store 在 public 入口前 fail-closed，31 项专项与静态门禁 |
 | `research/56_authenticated_tenant_context_http_seam_20260830.md` | authenticated tenant context HTTP seam | Bearer → tenant candidate → 同一 UoW identity snapshot → active membership/Actor 的只读闭环；Go test/vet 全通过，真实 Clerk/业务持久化仍关闭 |
 | `research/57_regression_gate_scope_fix_20260830.md` | 回归门禁影响面选择器修复 | 模块 README 不再误触发 Go/Web 门禁；7 项 selector 专项通过，未知 Python runtime 仍 fail-closed 升级全量 |
+| `research/58_durable_conversation_read_route_20260830.md` | tenant-scoped durable conversation read route | path/header tenant consistency、action-time identity、conversation/membership/read-access 同快照读取；Go 全模块 test/vet 通过，写入和生产认证仍关闭 |
 | `../docs/production/RESULT_BUSINESS_PROJECTION.md` | E3 M7.5 result-only business projection 候选 | leased projector、scope/terminal binding、幂等、schema pinning、identity/终态绑定漂移拒绝、fork process binding、dual-connection fencing、SIGKILL recovery 与 fail-closed 安全边界 |
 
 ## 已归档截图
