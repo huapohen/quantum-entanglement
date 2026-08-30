@@ -58,6 +58,10 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
 `WANWORK_TEST_POSTGRES_ADMIN_URL`，当前环境未配置，因此本次没有伪造 PG18 实证；上线前必须在一次 disposable
 PostgreSQL 18 环境执行完整 migration、postcondition、RLS/ACL、rollback fixture 和重启读回。
 
+另外已用本机 PostgreSQL 18.6 的临时实例逐个执行 `0001..0011` 的全部 `up.sql`；所有 DDL、复合外键、
+JSONB 检查和 5 条 Agent Store 租户策略均成功落库，实例随后停止。这个 raw DDL smoke 只证明 SQL 可应用，
+不替代带 owner/runtime role、migration runner postcondition 和真实数据读写的集成门禁。
+
 ## 下一步顺序（仍本地 pending）
 
 1. 在 `internal/agentstore` 增加严格 snapshot codec，确保 Go value 与五张表的 JSON 表示可逆、排序稳定、
