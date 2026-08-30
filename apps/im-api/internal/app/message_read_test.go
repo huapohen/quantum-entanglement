@@ -153,7 +153,7 @@ func TestValidateMessageReadPageRejectsDuplicateAndCrossScopeRows(t *testing.T) 
 	if err := validateMessageReadPage(store.MessageReadPage{
 		Conversation: reference, Messages: []im.MessageSnapshot{message},
 		ConversationRevision: 7, ProjectionRevision: 11,
-	}, reference, 2, ""); err != nil {
+	}, reference, 7, 2, ""); err != nil {
 		t.Fatalf("valid page rejected: %v", err)
 	}
 	for name, page := range map[string]store.MessageReadPage{
@@ -161,7 +161,7 @@ func TestValidateMessageReadPageRejectsDuplicateAndCrossScopeRows(t *testing.T) 
 		"missing conversation": {Messages: []im.MessageSnapshot{message}, ConversationRevision: 7, ProjectionRevision: 11},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := validateMessageReadPage(page, reference, 2, ""); !errors.Is(err, store.ErrIntegrity) {
+			if err := validateMessageReadPage(page, reference, 7, 2, ""); !errors.Is(err, store.ErrIntegrity) {
 				t.Fatalf("validation error=%v, want %v", err, store.ErrIntegrity)
 			}
 		})

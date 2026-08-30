@@ -156,6 +156,7 @@ type ConversationAuthorityRepository interface {
 // repeatable-read snapshot; cursor and revisions are observations, never capabilities.
 type MessageReadPageQuery struct {
 	Conversation         im.ConversationRef
+	WorkspaceID          *im.WorkspaceID
 	AfterCursor          string
 	Limit                uint32
 	ConversationRevision uint64

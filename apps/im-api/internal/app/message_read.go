@@ -35,14 +35,22 @@ func registerAuthenticatedMessageRoute(server *fiber.App, runtime RuntimeDepende
 		if runtime.Messages == nil {
 			return httpapi.NewAppError(httpapi.CodeDependencyUnavailable, store.ErrStoreUnavailable)
 		}
+		workspaceID, hasWorkspace := conversation.WorkspaceID()
+		var workspaceReference *im.WorkspaceID
+		if hasWorkspace {
+			workspaceReference = &workspaceID
+		}
 		page, err := runtime.Messages.ReadPage(ctx.Context(), store.MessageReadPageQuery{
 			Conversation: reference, AfterCursor: ctx.Query("after"), Limit: limit,
+			WorkspaceID:          workspaceReference,
 			ConversationRevision: conversation.Revision(), AccessRevision: access.Revision(),
 		})
 		if err != nil {
 			return mapMessageReadError(err)
 		}
-		if err := validateMessageReadPage(page, reference, limit, ctx.Query("after")); err != nil {
+		if err := validateMessageReadPage(
+			page, reference, conversation.Revision(), limit, ctx.Query("after"),
+		); err != nil {
 			return httpapi.NewAppError(httpapi.CodeInternal, err)
 		}
 		values := make([]fiber.Map, 0, len(page.Messages))
@@ -68,14 +76,17 @@ func registerAuthenticatedMessageRoute(server *fiber.App, runtime RuntimeDepende
 func validateMessageReadPage(
 	page store.MessageReadPage,
 	reference im.ConversationRef,
+	conversationRevision uint64,
 	limit uint32,
 	after string,
 ) error {
-	if page.Conversation != reference || len(page.Messages) > int(limit) ||
+	if page.Conversation != reference || page.ConversationRevision != conversationRevision ||
+		conversationRevision == 0 || len(page.Messages) > int(limit) ||
 		(page.HasMore && page.NextCursor == after) || (page.HasMore && page.NextCursor == "") {
 		return store.ErrIntegrity
 	}
-	if page.ConversationRevision == 0 || page.ProjectionRevision == 0 {
+	if page.ConversationRevision == 0 ||
+		(page.ProjectionRevision == 0 && (len(page.Messages) != 0 || after != "")) {
 		return store.ErrIntegrity
 	}
 	seen := make(map[im.MessageID]struct{}, len(page.Messages))

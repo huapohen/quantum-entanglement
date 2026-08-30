@@ -13,6 +13,8 @@ import (
 	wanworkapp "github.com/huapohen/quantum-entanglement/apps/im-api/internal/app"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/config"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/improjection"
+	postgresevents "github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/eventstore"
 	postgresstore "github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/imstore"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/runtimepool"
 )
@@ -65,6 +67,16 @@ func compose(
 		closeRuntime()
 		return nil, nil, err
 	}
+	eventStore, err := postgresevents.New(pool)
+	if err != nil {
+		closeRuntime()
+		return nil, nil, err
+	}
+	messages, err := improjection.NewEventReplayMessageReader(eventStore)
+	if err != nil {
+		closeRuntime()
+		return nil, nil, err
+	}
 	verifier, err := newRejectAllVerifier()
 	if err != nil {
 		closeRuntime()
@@ -74,6 +86,8 @@ func compose(
 		Database:    pool,
 		Persistence: persistence,
 		Verifier:    verifier,
+		EventStore:  eventStore,
+		Messages:    messages,
 	})
 	if err != nil {
 		verifier.Close()
