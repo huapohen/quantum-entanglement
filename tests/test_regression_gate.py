@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+
+from scripts.regression_gate import _python_tests, select_commands
+
+
+class RegressionGateSelectionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.repository = Path(__file__).resolve().parents[1]
+
+    def test_document_only_change_selects_diff_checks(self) -> None:
+        commands = select_commands(self.repository, ["docs/production/README.md"])
+        self.assertEqual(
+            tuple(command.name for command in commands),
+            ("diff-check", "cached-diff-check"),
+        )
+
+    def test_direct_python_module_selects_its_test_only(self) -> None:
+        tests = _python_tests(self.repository, ["src/quantum_entanglement/runtime.py"])
+        self.assertEqual(tests, ("tests/test_agent_runtime.py", "tests/test_runtime.py"))
+
+    def test_unmapped_runtime_change_escalates_to_full_python_gate(self) -> None:
+        tests = _python_tests(self.repository, ["src/quantum_entanglement/new_runtime_piece.py"])
+        self.assertEqual(tests, ("__FULL_PYTHON_GATE_REQUIRED__",))
+
+    def test_go_and_web_changes_select_both_product_gates(self) -> None:
+        commands = select_commands(
+            self.repository,
+            ["apps/im-api/internal/app/app.go", "clients/im-web/src/App.tsx"],
+        )
+        names = tuple(command.name for command in commands)
+        self.assertIn("go-test", names)
+        self.assertIn("go-vet", names)
+        self.assertIn("web-build", names)
+        self.assertIn("web-first-synthetic", names)
+
+    def test_report_sync_script_maps_to_focused_test(self) -> None:
+        tests = _python_tests(self.repository, ["scripts/report_sync_bundle.py"])
+        self.assertEqual(tests, ("tests/test_report_sync_bundle.py",))
+
+
+if __name__ == "__main__":
+    unittest.main()

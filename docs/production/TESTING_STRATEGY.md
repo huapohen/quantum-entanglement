@@ -72,5 +72,26 @@ git diff --check
 当前 2,964 项全量回归的证据见
 [`50_mainline_web_im_integration_regression_20260830.md`](../../analysis_report/research/50_mainline_web_im_integration_regression_20260830.md)。
 
+### 自动选择入口
+
+不想手工判断时，在仓库根目录运行：
+
+```bash
+# 查看当前工作区/暂存区会选择哪些门禁
+PYTHONPATH=src .venv/bin/python scripts/regression_gate.py --dry-run
+
+# 执行最小充分门禁
+PYTHONPATH=src .venv/bin/python scripts/regression_gate.py
+
+# 对某个已提交节点相对基线做影响面回归
+PYTHONPATH=src .venv/bin/python scripts/regression_gate.py --base origin/mainline_continue_quantum_entanglement~1
+
+# 用户验收/阶段封板时显式跑全量
+PYTHONPATH=src .venv/bin/python scripts/regression_gate.py --full
+```
+
+脚本遇到无法映射的运行时代码会自动升级到 Python 全量门禁，宁可多跑也不会静默漏测；只改
+文档时只执行差异检查。脚本不执行 `npm ci`，缺少 Web 依赖时会明确失败并提示先按锁文件安装。
+
 全量通过只证明当前记录环境的源码和断言成立，不代表生产 GA；外部 IM、飞书、企微、模型
 出网和 connector 仍由独立 Gate 控制。

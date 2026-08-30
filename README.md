@@ -134,6 +134,15 @@ PYTHONPATH=src python3 -m pytest -q
 PYTHONPATH=src python3 examples/group_chat_demo.py
 ```
 
+按改动面自动选择回归门禁（小改动不会默认跑全仓）：
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/regression_gate.py --dry-run
+PYTHONPATH=src .venv/bin/python scripts/regression_gate.py
+```
+
+用户验收或跨模块封板时，再显式加 `--full`。
+
 可选安装 LangGraph 桥接：
 
 ```bash
