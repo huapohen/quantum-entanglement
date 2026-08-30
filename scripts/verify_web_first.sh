@@ -151,5 +151,25 @@ assert data["data"]["artifact"]["status"] == "accepted"
 assert data["data"]["task"]["status"] == "completed"
 assert data["data"]["needsYou"]["status"] == "resolved"
 '
+verify_published=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' -H 'Content-Type: application/json' \
+    --data '{}' "http://127.0.0.1:$verify_port/api/v1/demo/im/artifacts/$verify_artifact_id/publish")
+VERIFY_PUBLISHED="$verify_published" VERIFY_ARTIFACT_ID="$verify_artifact_id" python3 -c '
+import json, os
+data=json.loads(os.environ["VERIFY_PUBLISHED"])
+assert data["code"] == 200
+assert data["data"]["artifact"]["id"] == os.environ["VERIFY_ARTIFACT_ID"]
+assert data["data"]["artifact"]["publishedMessageId"].startswith("msg_local_")
+assert data["data"]["message"]["conversationId"] == "cnv_local_demo_parent"
+assert data["data"]["message"]["extInfo"].find("artifact_reference") >= 0
+assert data["data"]["replayed"] is False
+'
+verify_published_replay=$(curl -fsS -H 'Authorization: Bearer demo.local.signature' -H 'Content-Type: application/json' \
+    --data '{}' "http://127.0.0.1:$verify_port/api/v1/demo/im/artifacts/$verify_artifact_id/publish")
+VERIFY_PUBLISHED_REPLAY="$verify_published_replay" python3 -c '
+import json, os
+data=json.loads(os.environ["VERIFY_PUBLISHED_REPLAY"])
+assert data["code"] == 200
+assert data["data"]["replayed"] is True
+'
 
 printf '%s\n' "Web-first synthetic 验证通过（构建、envelope、Agent Store、子群隔离、Workboard 审阅闭环）"

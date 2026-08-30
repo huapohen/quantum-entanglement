@@ -75,6 +75,9 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly \
 - 选择普通群并点击“邀请到当前群”；
 - 在该群发布自定义指令，进入隔离的 Agent 子群。
 
+安装后的 Agent 生成 Artifact 并经人工接受后，Workboard 还可执行“发布引用到父群”；父群只会
+看到带 Artifact ID/digest 的引用消息，不会自动展开或复制产物正文。该发布动作同样是幂等的。
+
 ## 明确边界
 
 当前还没有交付以下生产能力：第三方 Agent 上传/认领、公共目录搜索、真实制品仓库、签名与
