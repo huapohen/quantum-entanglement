@@ -50,6 +50,16 @@ class RegressionGateSelectionTests(unittest.TestCase):
         self.assertIn("web-build", names)
         self.assertIn("web-first-synthetic", names)
 
+    def test_module_documentation_does_not_select_language_gates(self) -> None:
+        commands = select_commands(
+            self.repository,
+            ["apps/im-api/README.md", "clients/im-web/README.md"],
+        )
+        self.assertEqual(
+            tuple(command.name for command in commands),
+            ("diff-check", "cached-diff-check"),
+        )
+
     def test_report_sync_script_maps_to_focused_test(self) -> None:
         tests = _python_tests(self.repository, ["scripts/report_sync_bundle.py"])
         self.assertEqual(tests, ("tests/test_report_sync_bundle.py",))

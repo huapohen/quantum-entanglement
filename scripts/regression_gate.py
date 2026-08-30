@@ -171,7 +171,11 @@ def select_commands(
         )
 
     go_changes = any(
-        path.startswith("apps/im-api/") or path in {"go.work", "go.work.sum"}
+        (
+            path.startswith("apps/im-api/")
+            and path.endswith(".go")
+        )
+        or path in {"go.work", "go.work.sum"}
         for path in paths
     )
     if full or go_changes:
@@ -182,7 +186,10 @@ def select_commands(
             )
         )
 
-    web_changes = any(path.startswith("clients/im-web/") for path in paths)
+    web_changes = any(
+        path.startswith("clients/im-web/") and not path.endswith(".md")
+        for path in paths
+    )
     if full or web_changes:
         commands.extend(
             (
