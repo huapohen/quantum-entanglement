@@ -93,9 +93,10 @@ runtime ACL、repository definition/release/Passport/installation 创建与读�
 - `cd clients/im-web && npm run build`：TypeScript/Vite production build 通过。
 - `WANWORK_IM_VERIFY_PORT=18144 ./scripts/verify_web_first.sh`：构建、HTTP envelope、Agent Store 安装/幂等重放/撤权、子群隔离、Workboard 审阅闭环和零网络 synthetic 通过。
 
-本阶段远端备份：`dev_wanwork_quantum_entanglement` 已推送至 `origin`，HEAD 为 `677e15c`；同时创建并推送
-`backup_0830_210657`。该备份包含三个可回溯小阶段 commit：`79b9e2b`（migration/function-only boundary）、
-`5d505ca`（tenant repository/UoW）、`677e15c`（evidence report）。
+本阶段远端备份：`dev_wanwork_quantum_entanglement` 已推送至 `origin`，当前 HEAD 为 `343beed`；同时创建并推送
+`backup_0830_210942`（指向同一 HEAD）。此前的 `backup_0830_210657` 仍保留在远端，指向文档补充前的
+`677e15c`。本阶段可回溯小阶段 commit 为：`79b9e2b`（migration/function-only boundary）、
+`5d505ca`（tenant repository/UoW）、`677e15c`（evidence report）、`343beed`（final integration gate）。
 
 ## 下一步顺序（仍本地 pending）
 
