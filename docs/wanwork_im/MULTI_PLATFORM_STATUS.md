@@ -14,7 +14,8 @@ iOS、iPadOS、Android、鸿蒙、macOS、Windows 或 Linux 原生客户端**。
 
 1. 在 macOS/Linux 桌面浏览器打开本地 Web 体验；
 2. 在浏览器开发者工具中切换手机 viewport，检查响应式布局；
-3. 使用 Go IM API demo 检查本地 HTTP envelope、路由和 fake 数据边界。
+3. 用生产构建部署 `dist/` 后，可在支持 PWA 的浏览器中添加到主屏幕；
+4. 使用 Go IM API demo 检查本地 HTTP envelope、路由和 fake 数据边界。
 
 手机或另一台电脑目前不能直接访问本地体验服务：服务故意只绑定 `127.0.0.1`，没有开放局域网
 监听、反向代理或公网入口。这是安全边界，不是遗漏的启动参数。
@@ -23,8 +24,8 @@ iOS、iPadOS、Android、鸿蒙、macOS、Windows 或 Linux 原生客户端**。
 
 | 平台 | 当前交付物 | 能否安装 | 当前证据 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| Web（桌面浏览器） | `scripts/start_local_trial.sh` + 本地 HTML | 无需安装 | `docs/LOCAL_PRODUCT_TRIAL.md`、本地运行与 JSON | 可体验 |
-| Web（移动 viewport） | 同一 Web 页面响应式布局 | 不是原生安装 | `analysis_report/screenshots/12_local_trial_mobile_complete.png` | 可检查布局，不是移动 App |
+| Web（桌面浏览器） | `scripts/start_web_client.sh` + React/Vite | 无需安装 | `docs/wanwork_im/LOCAL_IM_ACCEPTANCE_GUIDE.md`、Playwright 截图 | 可体验 |
+| Web/PWA（移动 viewport） | 同一 Web 页面 + manifest/service worker | 可添加到主屏幕，但不是原生安装 | `clients/im-web/public/manifest.webmanifest`、响应式构建 | 可体验/可安装 Web 壳，不是原生 App |
 | macOS | 无 `.app/.dmg` | 否 | 无原生 bundle、签名或安装验收 | 未开始 |
 | Windows | 无 `.exe/.msix` | 否 | 无 Windows 构建流水线或签名产物 | 未开始 |
 | Linux | 无 AppImage/deb/rpm | 否 | 无 Linux 打包与运行验收 | 未开始 |
@@ -156,4 +157,3 @@ narration、三个 Markdown Artifact、Needs You 和事件时间线。默认不�
 6. 明确标注 fake、sandbox、real provider 和 production 的边界。
 
 只有 viewport 截图、静态 HTML 或“能打开页面”不能计为对应平台 App 交付。
-

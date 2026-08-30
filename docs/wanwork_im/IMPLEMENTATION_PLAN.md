@@ -1,5 +1,9 @@
 # 原生 IM 实施计划
 
+> **置顶准则（2026-08-30）：先把 Web 端做出来。** Web 是当前唯一的主线交付面；桌面、移动、
+> 鸿蒙、真实融云和完整生产化能力必须以后续 Web 验收通过为前置条件，不得反向打断 Web-first
+> vertical slice。所有本阶段提交都要能从浏览器启动、体验和复核。
+
 ## 1. 分支与提交策略
 
 - 分支：`dev_wanwork_quantum_entanglement`；
@@ -222,20 +226,21 @@ M0 后补 Routine/presence 产品面；data-route revision、组织数据处理�
 出口：重复 mention 不重复建群/Task/调用；Agent 回复只进子群；父群只出现受限卡片；execution
 succeeded 不冒充 accepted；参数变化使批准失效；dispatch 故障不产生重复副作用。
 
-### W5：React Web/PWA
+### W5：React Web/PWA（当前主线）
 
-交付：认证壳、会话列表、群聊、目录、Agent Store、工作子群、Needs You、设置、响应式和无障碍。
+交付：认证壳、会话列表、群聊、目录、Agent Store、工作子群、Needs You、设置、响应式和无障碍；
+在真实认证/provider 尚未接入前，先用零网络 fake 完成完整交互验收，并显式标注生产边界。
 
 出口：mock/fake API 可完整体验 M0；1440/1024/390 截图和 Playwright E2E 通过；Needs You、Artifact
 review、Task recovery 不是藏在聊天正文里的文本。
 
-### W6：Desktop 与 Mobile
+### W6：Desktop 与 Mobile（Web 验收后）
 
 交付：Tauri 壳、签名/更新策略；Flutter 核心页面、deep link、通知和本地缓存；鸿蒙兼容评估。
 
 出口：各平台共享 contract fixtures；至少完成桌面和移动 debug build。
 
-### W7：受控集成与审阅交付
+### W7：受控集成与审阅交付（Web 验收后）
 
 交付：sandbox runbook、backup/restore、threat model、SBOM、截图、启动教程、验收清单、Notion
 全文/附件回读和 GitHub 分支备份。
