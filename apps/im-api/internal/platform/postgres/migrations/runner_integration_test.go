@@ -37,7 +37,11 @@ func TestApplyAgainstPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatalf("repeat Apply: %v", err)
 		}
-		if len(first.Applied) != 10 || len(second.Applied) != 10 ||
+		catalog, err := Catalog()
+		if err != nil {
+			t.Fatalf("load catalog: %v", err)
+		}
+		if len(first.Applied) != len(catalog) || len(second.Applied) != len(catalog) ||
 			first.Applied[0] != second.Applied[0] || first.Applied[1] != second.Applied[1] ||
 			first.Applied[2] != second.Applied[2] || first.Applied[3] != second.Applied[3] ||
 			first.Applied[4] != second.Applied[4] || first.Applied[5] != second.Applied[5] {
@@ -46,8 +50,8 @@ func TestApplyAgainstPostgres(t *testing.T) {
 		var rows int
 		if err := connection.QueryRow(ctx, `
 SELECT count(*)
-		FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != 10 {
-			t.Fatalf("ledger rows = %d, err = %v", rows, err)
+		FROM wanwork_meta.schema_migrations`).Scan(&rows); err != nil || rows != len(catalog) {
+			t.Fatalf("ledger rows = %d, err = %v, want %d", rows, err, len(catalog))
 		}
 	})
 
@@ -412,6 +416,10 @@ ALTER TABLE wanwork_im.provider_realms
 
 	t.Run("two migrators serialize", func(t *testing.T) {
 		firstConnection, config := newIntegrationDatabase(t, adminURL)
+		catalog, err := Catalog()
+		if err != nil {
+			t.Fatalf("load catalog: %v", err)
+		}
 		secondConnection, err := pgx.ConnectConfig(t.Context(), config.Copy())
 		if err != nil {
 			t.Fatalf("connect second migrator: %v", err)
@@ -436,7 +444,7 @@ ALTER TABLE wanwork_im.provider_realms
 		close(start)
 		workers.Wait()
 		for index := range connections {
-			if errorsByWorker[index] != nil || len(results[index].Applied) != 10 {
+			if errorsByWorker[index] != nil || len(results[index].Applied) != len(catalog) {
 				t.Fatalf(
 					"migrator %d state=%#v error=%v",
 					index,

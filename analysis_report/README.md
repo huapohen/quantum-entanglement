@@ -49,6 +49,7 @@
 - [`research/53_agent_store_live_gate_20260830.md`](research/53_agent_store_live_gate_20260830.md)：16:59 实时重跑门禁结果、覆盖范围、远端 SHA 与 Notion `local_pending` 边界。
 - [`research/54_agent_store_provenance_projection_20260830.md`](research/54_agent_store_provenance_projection_20260830.md)：Agent Store 只读制品/manifest/persona 摘要、版本 provenance 投影、Web 展示与凭据不泄露验证。
 - [`research/54_agent_store_durable_persistence_boundary_20260830.md`](research/54_agent_store_durable_persistence_boundary_20260830.md)：从内存 synthetic 迁移 PostgreSQL durable 的最小 schema、repository/UoW、action-time resolver、provider effect、cutover 与验证边界；设计审计，尚未实现。
+- [`research/55_agent_store_postgres_persistence_migration_20260830.md`](research/55_agent_store_postgres_persistence_migration_20260830.md)：第 11 个 PostgreSQL migration 的 definition/release/Passport/installation 表、RLS/复合外键、postcondition 与当前验证边界；repository/UoW 仍未接入。
 
 | 文件 | 状态 | 内容 |
 |---|---|---|

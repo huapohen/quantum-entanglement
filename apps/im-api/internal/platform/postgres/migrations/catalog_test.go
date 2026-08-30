@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 10 || len(second) != 10 {
+	if len(first) != 11 || len(second) != 11 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -235,6 +235,32 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	} {
 		if !strings.Contains(semantics.UpSQL, marker) {
 			t.Fatalf("native IM inbox semantics migration missing %q", marker)
+		}
+	}
+	agentStore := first[10]
+	if agentStore.Version != 11 || agentStore.Name != "agent_store_control_plane" ||
+		len(agentStore.Checksum) != 64 || agentStore.Checksum != second[10].Checksum ||
+		agentStore.UpSQL != second[10].UpSQL || agentStore.DownSQL != second[10].DownSQL {
+		t.Fatalf("unexpected deterministic Agent Store migration: %#v", agentStore)
+	}
+	for _, marker := range []string{
+		`CREATE TABLE wanwork_im.agent_definitions`,
+		`CREATE TABLE wanwork_im.agent_releases`,
+		`CREATE TABLE wanwork_im.agent_passports`,
+		`CREATE TABLE wanwork_im.agent_installation_heads`,
+		`CREATE TABLE wanwork_im.agent_installation_snapshots`,
+		`DEFERRABLE INITIALLY DEFERRED`,
+		`FORCE ROW LEVEL SECURITY`,
+	} {
+		if !strings.Contains(agentStore.UpSQL, marker) {
+			t.Fatalf("Agent Store migration missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{
+		"credential", "password", "api_key", "secret_value", "endpoint", "IF NOT EXISTS",
+	} {
+		if strings.Contains(strings.ToLower(agentStore.UpSQL), strings.ToLower(forbidden)) {
+			t.Fatalf("Agent Store migration contains forbidden text %q", forbidden)
 		}
 	}
 }

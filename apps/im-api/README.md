@@ -134,18 +134,21 @@ command is not yet a complete production bootstrap or IaC replacement.
 
 ## Current PostgreSQL authority subset
 
-At code baseline `53dd38b`, `internal/platform/postgres` contains checksummed migrations `0001..0005`, 22
-authority tables, 17 FORCE RLS tables, tenant-bound repositories/UoW, and five fixed `SECURITY DEFINER` write
+At code baseline `dev_wanwork_quantum_entanglement`, `internal/platform/postgres` contains checksummed migrations `0001..0011`, including the
+Agent Store control-plane schema (`0011_agent_store_control_plane`), 32
+authority tables, 22 FORCE RLS tables, tenant-bound repositories/UoW, and five fixed `SECURITY DEFINER` write
 functions. Conversation, provider-binding, membership, access, and command-receipt writes go through those
 functions. The tested `NOINHERIT` runtime login can explicitly `SET ROLE` only to its exact runtime group; that
 runtime role has only the required reads and function executions and is denied raw table mutation, `MAINTAIN`,
 schema/object creation, elevated role settings, and unlisted routines.
 
 The exact validator, runtime pool, startup/readiness route barrier, controlled Unit of Work, and one-shot
-migration process are now real code paths. The role provision helper remains a test fixture, not production IaC;
-first-deploy ownership/grant cutover, credential rotation/old-session drain, restore/crash exercises, trusted
-Clerk tenant context, active authority resolution, PostgreSQL event/outbox/projection checkpoints, and provider
-reconciliation remain unimplemented. See `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` and
+migration process are now real code paths. Agent Store persistence currently stops at the schema/postcondition
+boundary; the Go repository, CAS write functions, durable receipts and action-time resolver are not yet wired.
+The role provision helper remains a test fixture, not production IaC; first-deploy ownership/grant cutover,
+credential rotation/old-session drain, restore/crash exercises, trusted Clerk tenant context, active authority
+resolution, PostgreSQL event/outbox/projection checkpoints, and provider reconciliation remain unimplemented.
+See `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` and
 `analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md` for the exact boundary.
 
 The exported `runtimepool.Pool.Acquire` is a trusted low-level escape hatch: it returns a session-guarded

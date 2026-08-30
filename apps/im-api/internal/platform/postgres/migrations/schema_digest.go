@@ -64,6 +64,14 @@ var nativeIMInboxTableNames = []string{
 	"native_im_inbox",
 }
 
+var agentStoreControlPlaneTableNames = []string{
+	"agent_definitions",
+	"agent_releases",
+	"agent_passports",
+	"agent_installation_heads",
+	"agent_installation_snapshots",
+}
+
 func tableSchemaDigest(
 	ctx context.Context,
 	transaction pgx.Tx,
