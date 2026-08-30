@@ -69,13 +69,13 @@ BEGIN
         RETURN false;
     END IF;
 
-    SELECT current_sequence, current_global_position, current_revision
+    SELECT heads.current_sequence, heads.current_global_position, heads.current_revision
     INTO current_sequence, current_global_position, current_revision
-    FROM wanwork_im.message_projection_heads
-    WHERE tenant_id = p_tenant_id
-      AND workspace_id = p_workspace_id
-      AND conversation_id = p_conversation_id
-      AND projection_id = p_projection_id
+    FROM wanwork_im.message_projection_heads AS heads
+    WHERE heads.tenant_id = p_tenant_id
+      AND heads.workspace_id = p_workspace_id
+      AND heads.conversation_id = p_conversation_id
+      AND heads.projection_id = p_projection_id
     FOR UPDATE;
 
     IF NOT FOUND THEN
@@ -98,18 +98,18 @@ BEGIN
           current_revision <> p_expected_revision THEN
         RETURN false;
     ELSE
-        UPDATE wanwork_im.message_projection_heads
+        UPDATE wanwork_im.message_projection_heads AS heads
         SET current_sequence = p_next_sequence,
             current_global_position = p_next_global_position,
             current_revision = p_next_revision,
             updated_at = clock_timestamp()
-        WHERE tenant_id = p_tenant_id
-          AND workspace_id = p_workspace_id
-          AND conversation_id = p_conversation_id
-          AND projection_id = p_projection_id
-          AND current_sequence = p_expected_sequence
-          AND current_global_position = p_expected_global_position
-          AND current_revision = p_expected_revision;
+        WHERE heads.tenant_id = p_tenant_id
+          AND heads.workspace_id = p_workspace_id
+          AND heads.conversation_id = p_conversation_id
+          AND heads.projection_id = p_projection_id
+          AND heads.current_sequence = p_expected_sequence
+          AND heads.current_global_position = p_expected_global_position
+          AND heads.current_revision = p_expected_revision;
         GET DIAGNOSTICS changed_rows = ROW_COUNT;
         IF changed_rows <> 1 THEN
             RETURN false;
@@ -133,17 +133,18 @@ BEGIN
         NULL;
     END;
 
-    SELECT workspace_id, client_message_id, sender_actor_id, message_type, status,
-           text, ext_info, created_at, revision, last_event_sequence,
-           last_event_position, projection_revision
+    SELECT snapshot.workspace_id, snapshot.client_message_id, snapshot.sender_actor_id,
+           snapshot.message_type, snapshot.status, snapshot.text, snapshot.ext_info,
+           snapshot.created_at, snapshot.revision, snapshot.last_event_sequence,
+           snapshot.last_event_position, snapshot.projection_revision
     INTO existing_workspace_id, existing_client_message_id, existing_sender_actor_id,
          existing_message_type, existing_status, existing_text, existing_ext_info,
          existing_created_at, existing_message_revision, existing_last_event_sequence,
          existing_last_event_position, existing_projection_revision
-    FROM wanwork_im.message_snapshots
-    WHERE tenant_id = p_tenant_id
-      AND conversation_id = p_conversation_id
-      AND message_id = p_message_id
+    FROM wanwork_im.message_snapshots AS snapshot
+    WHERE snapshot.tenant_id = p_tenant_id
+      AND snapshot.conversation_id = p_conversation_id
+      AND snapshot.message_id = p_message_id
     FOR UPDATE;
 
     IF NOT FOUND THEN
@@ -169,7 +170,7 @@ BEGIN
         RETURN false;
     END IF;
 
-    UPDATE wanwork_im.message_snapshots
+    UPDATE wanwork_im.message_snapshots AS snapshot
     SET workspace_id = p_workspace_id,
         client_message_id = p_client_message_id,
         sender_actor_id = p_sender_actor_id,
@@ -182,11 +183,11 @@ BEGIN
         last_event_sequence = p_last_event_sequence,
         last_event_position = p_last_event_position,
         projection_revision = p_projection_revision
-    WHERE tenant_id = p_tenant_id
-      AND conversation_id = p_conversation_id
-      AND message_id = p_message_id
-      AND revision = existing_message_revision
-      AND last_event_sequence = existing_last_event_sequence;
+    WHERE snapshot.tenant_id = p_tenant_id
+      AND snapshot.conversation_id = p_conversation_id
+      AND snapshot.message_id = p_message_id
+      AND snapshot.revision = existing_message_revision
+      AND snapshot.last_event_sequence = existing_last_event_sequence;
     GET DIAGNOSTICS changed_rows = ROW_COUNT;
     RETURN changed_rows = 1;
 END
@@ -232,13 +233,13 @@ BEGIN
         RETURN false;
     END IF;
 
-    SELECT current_sequence, current_global_position, current_revision
+    SELECT heads.current_sequence, heads.current_global_position, heads.current_revision
     INTO current_sequence, current_global_position, current_revision
-    FROM wanwork_im.message_projection_heads
-    WHERE tenant_id = p_tenant_id
-      AND workspace_id = p_workspace_id
-      AND conversation_id = p_conversation_id
-      AND projection_id = p_projection_id
+    FROM wanwork_im.message_projection_heads AS heads
+    WHERE heads.tenant_id = p_tenant_id
+      AND heads.workspace_id = p_workspace_id
+      AND heads.conversation_id = p_conversation_id
+      AND heads.projection_id = p_projection_id
     FOR UPDATE;
 
     IF NOT FOUND THEN
@@ -264,18 +265,18 @@ BEGIN
        current_revision <> p_expected_revision THEN
         RETURN false;
     END IF;
-    UPDATE wanwork_im.message_projection_heads
+    UPDATE wanwork_im.message_projection_heads AS heads
     SET current_sequence = p_next_sequence,
         current_global_position = p_next_global_position,
         current_revision = p_next_revision,
         updated_at = clock_timestamp()
-    WHERE tenant_id = p_tenant_id
-      AND workspace_id = p_workspace_id
-      AND conversation_id = p_conversation_id
-      AND projection_id = p_projection_id
-      AND current_sequence = p_expected_sequence
-      AND current_global_position = p_expected_global_position
-      AND current_revision = p_expected_revision;
+    WHERE heads.tenant_id = p_tenant_id
+      AND heads.workspace_id = p_workspace_id
+      AND heads.conversation_id = p_conversation_id
+      AND heads.projection_id = p_projection_id
+      AND heads.current_sequence = p_expected_sequence
+      AND heads.current_global_position = p_expected_global_position
+      AND heads.current_revision = p_expected_revision;
     GET DIAGNOSTICS changed_rows = ROW_COUNT;
     RETURN changed_rows = 1;
 END

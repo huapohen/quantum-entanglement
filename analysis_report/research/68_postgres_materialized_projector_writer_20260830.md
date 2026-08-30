@@ -67,6 +67,11 @@ crash/restore 完成。
 10；reset role、search_path、tenant setting、transaction、advisory lock、LISTEN 污染和 access
 drift 全部保持 fail-closed/recovery 语义。
 
+新增 `TestMessageProjectionWriterAgainstPostgres` 已在同一实例通过：首次 snapshot/head 写入、
+相同参数 exact replay、编辑 revision CAS、stale head 拒绝，以及提交后 head/status/text readback。
+该测试过程中修正了 migration 12 函数内 PL/pgSQL 列/变量歧义，并重新固定了基于实际
+`pg_get_functiondef` 的两个 definition digest。
+
 ## 仍未关闭的门禁
 
 该实现仍是 production composition 前的候选，需要真实 PostgreSQL applied-schema integration

@@ -78,7 +78,7 @@ func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 			"p_message_revision bigint, p_last_event_sequence bigint, p_last_event_position bigint, " +
 			"p_projection_revision bigint",
 		result:           "boolean",
-		definitionDigest: "3794d2893150f7a07cc487375a6154557fc093000ca8188c035a125edcd99e09",
+		definitionDigest: "3f387f2aca286d2244febfea00b99360040206b3fdc789850cb38ec6c5e6ccdd",
 	})
 	values = append(values, storedAuthorityFunctionSpec{
 		name: "advance_message_projection_head",
@@ -89,7 +89,7 @@ func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 			"p_expected_sequence bigint, p_expected_global_position bigint, p_expected_revision bigint, " +
 			"p_next_sequence bigint, p_next_global_position bigint, p_next_revision bigint",
 		result:           "boolean",
-		definitionDigest: "49497ce006ace03913da36f3da9ed1645d3bb587b027d802a22c41aa909f8cb8",
+		definitionDigest: "2e15530a67855f55ca0ee90920405d63653fa280d4036c037200bbb1af11372c",
 	})
 	return append(values, storedNativeIMInboxFunctionSpecV10())
 }
