@@ -138,6 +138,14 @@ export type Artifact = {
   digest: string;
   createdAt: string;
   acceptedAt?: string;
+  publishedAt?: string;
+  publishedMessageId?: string;
+};
+
+export type PublishArtifactResult = {
+  artifact: Artifact;
+  message: Message;
+  replayed: boolean;
 };
 
 export type NeedsYou = {
@@ -253,5 +261,10 @@ export const api = {
     request<ResolveNeedsYouResult>(`/api/v1/demo/im/needs-you/${encodeURIComponent(needsYouId)}/resolve`, {
       method: "POST",
       body: JSON.stringify({ decision }),
+    }),
+  publishArtifact: (artifactId: string) =>
+    request<PublishArtifactResult>(`/api/v1/demo/im/artifacts/${encodeURIComponent(artifactId)}/publish`, {
+      method: "POST",
+      body: "{}",
     }),
 };

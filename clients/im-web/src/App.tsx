@@ -44,6 +44,7 @@ export function App() {
   const [messageText, setMessageText] = useState("");
   const [instruction, setInstruction] = useState("");
   const [memberAction, setMemberAction] = useState("");
+  const [artifactAction, setArtifactAction] = useState("");
   const [conversationFilter, setConversationFilter] = useState("");
   const [messageSearch, setMessageSearch] = useState("");
   const messageLoadSequence = useRef(0);
@@ -244,6 +245,21 @@ export function App() {
     try {
       await api.resolveNeedsYou(needsYouId, decision);
       await loadWorkProjections();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function publishArtifact(artifactId: string) {
+    setLoading(true);
+    setError("");
+    setArtifactAction("");
+    try {
+      const result = await api.publishArtifact(artifactId);
+      await Promise.all([loadWorkProjections(), api.conversations().then((page) => setConversations(page.conversations))]);
+      setArtifactAction(result.replayed ? "Artifact 引用已发布（幂等重放）" : "Artifact 引用已发布到父群");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -452,6 +468,11 @@ export function App() {
                     </div>
                     <div className="mt-2 text-slate-500">{task.id} · invocation {task.invocationId}</div>
                     {artifact && <div className="mt-3 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-violet/20 bg-violet/5 p-2 leading-5 text-slate-300"><span className="text-violet">{artifact.title}</span>{"\n"}{artifact.content}</div>}
+                    {artifact?.status === "accepted" && (artifact.publishedMessageId ? (
+                      <div className="mt-2 rounded-lg border border-green-300/20 bg-green-300/5 p-2 text-[11px] text-green-200">已发布父群引用 · {artifact.publishedMessageId}</div>
+                    ) : (
+                      <button className="button-primary mt-2 px-3 py-1 text-xs" onClick={() => void publishArtifact(artifact.id)} disabled={loading}>发布引用到父群</button>
+                    ))}
                     {task.needsYouIds.map((needsID) => {
                       const needs = needsYou.find((item) => item.id === needsID);
                       if (!needs) return null;
@@ -461,6 +482,7 @@ export function App() {
                 );
               })}
             </div>
+            {artifactAction && <div role="status" className="mt-3 rounded-lg border border-cyan/20 bg-cyan/5 px-3 py-2 text-xs text-cyan">{artifactAction}</div>}
             <div className="mt-3 text-[10px] text-slate-500">待处理 {openNeedsYou.length} · 产物 {artifacts.length} · 任务 {tasks.length}</div>
           </section>
           <section className="panel p-5">
