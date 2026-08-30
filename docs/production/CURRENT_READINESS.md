@@ -65,15 +65,19 @@ provider exchange 或 Gate A–E 晋级。
 当前新增了只读的认证会话事件读取合同 `GET /api/v1/tenants/:tenantId/conversations/:conversationId/events`
 （实现 `1f262f0`，证据见 `research/60_authenticated_event_read_contract_20260830.md`）。它在同一
 trusted tenant + action-time conversation ACL seam 上执行有界 cursor 分页，并校验 event scope、sequence、
-dedupe 与 payload；EventStore 未注入时 fail closed。该合同仍不是 durable message projection、真实
-Clerk/JWKS、生产事件读取或 Gate A–E 晋级，PostgreSQL composition 暂不注入 EventStore 以避免跨事务
-snapshot 的 TOCTOU 误称为生产一致性。
+dedupe 与 payload；EventStore 未注入时 fail closed。随后 `f64ee99` 已在 PostgreSQL composition
+注入 durable EventStore 与 bounded event-replay message reader：最多重放 4,096 个事件，分页游标
+绑定 tenant/workspace/conversation/exact stream version，stream drift 必须重新分页。authority 与
+event/replay 仍处于两个 repeatable-read transaction，因此不能误称同快照生产一致性；真实
+Clerk/JWKS、materialized heads/checkpoint 与 Gate A–E 仍关闭。
 
 随后新增 `internal/improjection.MessageProjection`（`82a6b6d`，证据见
 `research/61_message_projection_reducer_20260830.md`），可将 `message.created/edited/recalled` 严格
-还原为 `MessageSnapshot` 并由现有 event Projector 重放。它是无存储的 reducer；PostgreSQL message
-head/snapshot、durable checkpoint、消息 API、inbox-to-message transaction 和 crash recovery 仍未完成，
-因此不能把该节点称为 durable message projection 或生产 IM readiness。
+还原为 `MessageSnapshot` 并由 bounded durable event replay reader 重放。认证 message API 与生产
+composition bridge 已存在，但 PostgreSQL materialized message head/snapshot、同事务 checkpoint、
+inbox-to-message transaction 和 crash recovery 仍未完成，因此不能把该节点称为最终 durable
+projection 或 production IM readiness。详见
+[`63_durable_event_replay_message_read_20260830.md`](../../analysis_report/research/63_durable_event_replay_message_read_20260830.md)。
 
 ## 执行结论
 
