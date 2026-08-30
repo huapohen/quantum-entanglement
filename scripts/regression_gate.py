@@ -61,12 +61,15 @@ def _git_paths(root: Path, arguments: Sequence[str]) -> tuple[str, ...]:
 
 
 def changed_paths(root: Path, base: str | None) -> tuple[str, ...]:
-    """Return changed paths, including staged and unstaged worktree changes."""
+    """Return changed paths, including staged, unstaged, and untracked changes."""
 
     if base is not None:
-        return tuple(dict.fromkeys(_git_paths(root, ("diff", "--name-only", f"{base}...HEAD"))))
+        paths = list(_git_paths(root, ("diff", "--name-only", f"{base}...HEAD")))
+        paths.extend(_git_paths(root, ("ls-files", "--others", "--exclude-standard")))
+        return tuple(dict.fromkeys(paths))
     paths = list(_git_paths(root, ("diff", "--name-only", "HEAD")))
     paths.extend(_git_paths(root, ("diff", "--cached", "--name-only")))
+    paths.extend(_git_paths(root, ("ls-files", "--others", "--exclude-standard")))
     return tuple(dict.fromkeys(paths))
 
 

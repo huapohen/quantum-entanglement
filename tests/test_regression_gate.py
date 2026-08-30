@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from scripts.regression_gate import _python_tests, select_commands
+from scripts.regression_gate import _python_tests, changed_paths, select_commands
 
 
 class RegressionGateSelectionTests(unittest.TestCase):
@@ -63,6 +65,30 @@ class RegressionGateSelectionTests(unittest.TestCase):
     def test_report_sync_script_maps_to_focused_test(self) -> None:
         tests = _python_tests(self.repository, ["scripts/report_sync_bundle.py"])
         self.assertEqual(tests, ("tests/test_report_sync_bundle.py",))
+
+    def test_changed_paths_includes_untracked_files(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(("git", "init", "-q", str(root)), check=True)
+            (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(("git", "-C", str(root), "add", "seed.txt"), check=True)
+            subprocess.run(
+                (
+                    "git",
+                    "-C",
+                    str(root),
+                    "-c",
+                    "user.name=Regression Test",
+                    "-c",
+                    "user.email=regression@example.invalid",
+                    "commit",
+                    "-qm",
+                    "seed",
+                ),
+                check=True,
+            )
+            (root / "new_file.py").write_text("print('new')\n", encoding="utf-8")
+            self.assertEqual(changed_paths(root, None), ("new_file.py",))
 
 
 if __name__ == "__main__":
