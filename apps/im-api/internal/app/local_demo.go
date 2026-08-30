@@ -63,6 +63,19 @@ func registerLocalDemoRoutes(server *fiber.App, demo *localdemo.Service) {
 		}
 		return httpapi.WriteSuccess(ctx, result)
 	})
+	server.Post("/api/v1/demo/im/agents/:definitionId/offboard", func(ctx fiber.Ctx) error {
+		var input localdemo.AgentStoreOffboardInput
+		if err := decodeLocalDemoRequest(ctx.Body(), &input); err != nil {
+			return httpapi.NewAppError(httpapi.CodeMalformedRequest, err)
+		}
+		result, err := demo.OffboardAgent(
+			ctx.Context(), bearerToken(ctx), ctx.Params("definitionId"), input,
+		)
+		if err != nil {
+			return localDemoAppError(err)
+		}
+		return httpapi.WriteSuccess(ctx, result)
+	})
 	server.Get("/api/v1/demo/im/tasks", func(ctx fiber.Ctx) error {
 		page, err := demo.ListTasks(ctx.Context(), bearerToken(ctx))
 		if err != nil {

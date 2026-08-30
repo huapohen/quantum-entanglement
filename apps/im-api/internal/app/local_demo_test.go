@@ -196,6 +196,31 @@ func TestLocalDemoBusinessFailuresRemainHTTP200AndRedacted(t *testing.T) {
 	}
 }
 
+func TestLocalDemoAgentOffboardRouteIsIdempotent(t *testing.T) {
+	t.Parallel()
+	server, err := NewLocalDemo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization := "Bearer " + localdemo.LocalBearerToken
+	first := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/agents/agd_local_research/offboard",
+		`{"idempotencyKey":"http/store/offboard/research","dataDisposition":"archive"}`, authorization)
+	if first.Code != httpapi.CodeOK || !strings.Contains(first.Raw, `"installationStatus":"offboarded"`) ||
+		strings.Contains(first.Raw, `"replayed":true`) {
+		t.Fatalf("offboard response = %s", first.Raw)
+	}
+	replay := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/agents/agd_local_research/offboard",
+		`{"idempotencyKey":"http/store/offboard/research","dataDisposition":"archive"}`, authorization)
+	if replay.Code != httpapi.CodeOK || !strings.Contains(replay.Raw, `"replayed":true`) {
+		t.Fatalf("offboard replay response = %s", replay.Raw)
+	}
+	forbidden := localDemoRequest(t, server, http.MethodPost, "/api/v1/demo/im/mentions",
+		`{"messageId":"msg_after_http_offboard","instruction":"撤权后不应执行"}`, authorization)
+	if forbidden.Code != httpapi.CodeForbidden || strings.Contains(forbidden.Raw, "撤权后不应执行") {
+		t.Fatalf("mention after offboard response = %s", forbidden.Raw)
+	}
+}
+
 type localDemoEnvelope struct {
 	Code httpapi.BusinessCode
 	Raw  string

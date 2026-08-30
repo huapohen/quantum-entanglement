@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/agentstore"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/modelruntime"
 )
 
@@ -216,6 +217,55 @@ func TestServiceInstallsCatalogAgentIdempotentlyAndAddsItToParent(t *testing.T) 
 	})
 	if mentionErr != nil {
 		t.Fatalf("mention after install = %#v, %v", mention, mentionErr)
+	}
+}
+
+func TestServiceOffboardsInstalledAgentAndReplaysCleanup(t *testing.T) {
+	t.Parallel()
+	service, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mention, err := service.Mention(context.Background(), LocalBearerToken, MentionInput{
+		MessageID: "msg_offboard", Instruction: "先生成再撤权",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.OffboardAgent(context.Background(), LocalBearerToken, "agd_local_research", AgentStoreOffboardInput{
+		IdempotencyKey: "test/store/offboard/research", DataDisposition: string(agentstore.DataDispositionArchive),
+	})
+	if err != nil || first.Replayed || first.Agent.InstallationStatus != "offboarded" || len(first.RemovedConversationIDs) != 2 {
+		t.Fatalf("offboard = %#v, %v", first, err)
+	}
+	if !containsString(first.RemovedConversationIDs, service.Snapshot().ParentConversationID) ||
+		!containsString(first.RemovedConversationIDs, mention.ChildConversationID) {
+		t.Fatalf("removed conversations = %#v", first.RemovedConversationIDs)
+	}
+	conversations, err := service.ListConversations(context.Background(), LocalBearerToken, "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, conversation := range conversations.Conversations {
+		if containsString(conversation.MemberActorIDs, "agt_local_research") {
+			t.Fatalf("offboarded Agent remains in conversation: %#v", conversation)
+		}
+	}
+	if _, err := service.Mention(context.Background(), LocalBearerToken, MentionInput{
+		MessageID: "msg_after_offboard", Instruction: "撤权后不应执行",
+	}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("mention after offboard = %v, want ErrForbidden", err)
+	}
+	replay, err := service.OffboardAgent(context.Background(), LocalBearerToken, "agd_local_research", AgentStoreOffboardInput{
+		IdempotencyKey: "test/store/offboard/research", DataDisposition: string(agentstore.DataDispositionArchive),
+	})
+	if err != nil || !replay.Replayed || replay.Agent.InstallationStatus != "offboarded" {
+		t.Fatalf("offboard replay = %#v, %v", replay, err)
+	}
+	if _, err := service.OffboardAgent(context.Background(), LocalBearerToken, "agd_local_research", AgentStoreOffboardInput{
+		IdempotencyKey: "test/store/offboard/research", DataDisposition: string(agentstore.DataDispositionDelete),
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("offboard key conflict = %v, want ErrConflict", err)
 	}
 }
 

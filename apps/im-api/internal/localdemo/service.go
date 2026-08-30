@@ -76,31 +76,32 @@ type Snapshot struct {
 }
 
 type Service struct {
-	mu                   sync.Mutex
-	authVerifier         auth.Verifier
-	provider             *imfake.Provider
-	coordinator          *agentthread.LocalCoordinator
-	parent               im.ConversationSnapshot
-	requester            im.ActorRef
-	requestAccess        im.ConversationAccessSnapshot
-	installation         agentstore.InstallationSnapshot
-	passport             agentstore.TrustPassport
-	agentCatalog         []agentCatalogRecord
-	agentInstallRequests map[string]agentInstallRecord
-	runtime              modelruntime.Runtime
-	runtimeCalls         int
-	requests             map[string][sha256.Size]byte
-	mentionResults       map[string]MentionResult
-	knownActors          map[im.ActorID]im.ActorRef
-	conversations        map[im.ConversationID]*localConversation
-	conversationOrder    []im.ConversationID
-	conversationCreates  map[string]createRecord
-	memberUpdates        map[string]memberUpdateRecord
-	tasks                map[string]TaskView
-	taskOrder            []string
-	artifacts            map[string]ArtifactView
-	needsYou             map[string]NeedsYouView
-	cursorNamespaceHex   string
+	mu                    sync.Mutex
+	authVerifier          auth.Verifier
+	provider              *imfake.Provider
+	coordinator           *agentthread.LocalCoordinator
+	parent                im.ConversationSnapshot
+	requester             im.ActorRef
+	requestAccess         im.ConversationAccessSnapshot
+	installation          agentstore.InstallationSnapshot
+	passport              agentstore.TrustPassport
+	agentCatalog          []agentCatalogRecord
+	agentInstallRequests  map[string]agentInstallRecord
+	agentOffboardRequests map[string]agentOffboardRecord
+	runtime               modelruntime.Runtime
+	runtimeCalls          int
+	requests              map[string][sha256.Size]byte
+	mentionResults        map[string]MentionResult
+	knownActors           map[im.ActorID]im.ActorRef
+	conversations         map[im.ConversationID]*localConversation
+	conversationOrder     []im.ConversationID
+	conversationCreates   map[string]createRecord
+	memberUpdates         map[string]memberUpdateRecord
+	tasks                 map[string]TaskView
+	taskOrder             []string
+	artifacts             map[string]ArtifactView
+	needsYou              map[string]NeedsYouView
+	cursorNamespaceHex    string
 }
 
 func New() (*Service, error) {
@@ -221,7 +222,7 @@ func NewWithRuntime(runtime modelruntime.Runtime) (*Service, error) {
 			{passport: passport, installation: installation},
 			{passport: plannerPassport},
 		},
-		agentInstallRequests: make(map[string]agentInstallRecord), runtime: runtime,
+		agentInstallRequests: make(map[string]agentInstallRecord), agentOffboardRequests: make(map[string]agentOffboardRecord), runtime: runtime,
 		requests:       make(map[string][sha256.Size]byte),
 		mentionResults: make(map[string]MentionResult),
 		knownActors: map[im.ActorID]im.ActorRef{
