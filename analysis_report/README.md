@@ -50,6 +50,7 @@
 - [`research/54_agent_store_provenance_projection_20260830.md`](research/54_agent_store_provenance_projection_20260830.md)：Agent Store 只读制品/manifest/persona 摘要、版本 provenance 投影、Web 展示与凭据不泄露验证。
 - [`research/54_agent_store_durable_persistence_boundary_20260830.md`](research/54_agent_store_durable_persistence_boundary_20260830.md)：从内存 synthetic 迁移 PostgreSQL durable 的最小 schema、repository/UoW、action-time resolver、provider effect、cutover 与验证边界；设计审计，尚未实现。
 - [`research/55_agent_store_postgres_persistence_migration_20260830.md`](research/55_agent_store_postgres_persistence_migration_20260830.md)：第 11/12 个 PostgreSQL migration 的 definition/release/Passport/installation 表、四个 function-only CAS 写函数、RLS/复合外键、tenant-bound repository/UoW、durable command receipt、action-time capability resolver、provider effect unknown fail-closed 及 PostgreSQL 18.6 实证；同时列出尚未闭合的真实 runtime/provider/reconcile/灾备边界。
+- [`research/56_agent_store_current_status_20260830.md`](research/56_agent_store_current_status_20260830.md)：当前 Agent Store 可验收范围、PostgreSQL 底层能力、未闭合生产边界、证据命令与下一步优先级；Notion 暂缓统一同步。
 
 | 文件 | 状态 | 内容 |
 |---|---|---|

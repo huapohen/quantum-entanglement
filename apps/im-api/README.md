@@ -142,14 +142,15 @@ functions. The tested `NOINHERIT` runtime login can explicitly `SET ROLE` only t
 runtime role has only the required reads and function executions and is denied raw table mutation, `MAINTAIN`,
 schema/object creation, elevated role settings, and unlisted routines.
 
-The exact validator, runtime pool, startup/readiness route barrier, controlled Unit of Work, and one-shot
-migration process are now real code paths. Agent Store persistence currently stops at the schema/postcondition
-boundary; the Go repository, CAS write functions, durable receipts and action-time resolver are not yet wired.
-The role provision helper remains a test fixture, not production IaC; first-deploy ownership/grant cutover,
-credential rotation/old-session drain, restore/crash exercises, trusted Clerk tenant context, active authority
-resolution, PostgreSQL event/outbox/projection checkpoints, and provider reconciliation remain unimplemented.
-See `docs/wanwork_im/W2_POSTGRES_RUNTIME_CHECKPOINT.md` and
-`analysis_report/research/35_postgres_attested_runtime_composition_checkpoint.md` for the exact boundary.
+The exact validator, runtime pool, startup/readiness route barrier, controlled Unit of Work, one-shot migration
+process, Agent Store repository, function-only CAS writes, durable command receipts, and action-time capability
+resolver are now real code paths. The local Web demo still uses an in-memory catalog and provider fixture; its
+install/offboard handlers have not yet been switched to the PostgreSQL repository/effect workflow. The role
+provision helper remains a test fixture, not production IaC; first-deploy ownership/grant cutover, credential
+rotation/old-session drain, restore/crash exercises, trusted Clerk tenant context, active authority resolution,
+PostgreSQL provider outbox/effect reconciliation, and a production Agent Store HTTP composition remain
+unimplemented. See `analysis_report/research/55_agent_store_postgres_persistence_migration_20260830.md` and
+`analysis_report/research/54_agent_store_durable_persistence_boundary_20260830.md` for the exact boundary.
 
 The exported `runtimepool.Pool.Acquire` is a trusted low-level escape hatch: it returns a session-guarded
 connection but still permits SQL within the runtime database role. The underlying `*pgxpool.Pool` is not
