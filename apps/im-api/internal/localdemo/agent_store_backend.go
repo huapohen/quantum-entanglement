@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/agentstore"
@@ -40,10 +41,23 @@ type PostgresAgentStoreBackend struct {
 }
 
 func NewPostgresAgentStoreBackend(persistence store.TenantUnitOfWork) (*PostgresAgentStoreBackend, error) {
-	if persistence == nil {
+	if isNilTenantUnitOfWork(persistence) {
 		return nil, store.ErrInvalidRequest
 	}
 	return &PostgresAgentStoreBackend{persistence: persistence}, nil
+}
+
+func isNilTenantUnitOfWork(persistence store.TenantUnitOfWork) bool {
+	if persistence == nil {
+		return true
+	}
+	value := reflect.ValueOf(persistence)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 func (backend *PostgresAgentStoreBackend) SyncCatalog(

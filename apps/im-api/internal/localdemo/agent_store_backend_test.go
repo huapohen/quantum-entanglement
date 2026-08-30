@@ -7,7 +7,16 @@ import (
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/agentstore"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/modelruntime"
+	postgresstore "github.com/huapohen/quantum-entanglement/apps/im-api/internal/platform/postgres/imstore"
 )
+
+func TestNewPostgresAgentStoreBackendRejectsTypedNilUnitOfWork(t *testing.T) {
+	t.Parallel()
+	var unit *postgresstore.UnitOfWork
+	if _, err := NewPostgresAgentStoreBackend(unit); err == nil {
+		t.Fatal("typed nil UnitOfWork unexpectedly accepted")
+	}
+}
 
 func TestAgentStoreBackendSeamSeedsAndCommitsLifecycle(t *testing.T) {
 	t.Parallel()
