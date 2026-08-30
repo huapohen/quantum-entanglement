@@ -30,6 +30,12 @@ action-time capability resolver 已提升为 `agentstore.ResolveGrantedCapabilit
 能力的严格子集，输入会 canonical 排序并拒绝重复/空集合；每次决策都绑定调用时的 UTC 时钟并重新
 检查 Passport 有效期。这样后续 durable runtime 不需要复制一套“安装时允许、执行时另一套”的能力解析逻辑。
 
+durable command 入口也已收口：`imstore.NewAgentStoreCommand` 只接受 `agent.*` 命名空间，
+`UnitOfWork.ExecuteAgentStore` 复用现有 serializable transaction、advisory lock、receipt 写函数、
+重放读取和 commit-unknown fresh-connection reconcile。真实 PostgreSQL 集成测试现在证明同一
+Agent Store create command 的第二次调用返回 `replayed=true`、同一 result digest，且 operation body
+不会再次执行；这一步把“已有 receipt 表”推进成 Agent Store 明确可调用的 durable seam。
+
 这不是“生产 Agent Store 已完成”的声明。当前仍缺少安装命令的 durable receipt、action-time resolver、
 provider outbox/reconcile、真实 Clerk/RongCloud 适配器、灾备恢复和完整 IM provider effect gate；migration
 与 repository 是这些组件可以共同依赖的持久化契约。
@@ -100,7 +106,9 @@ runtime ACL、repository definition/release/Passport/installation 创建与读�
 
 本阶段远端备份：`dev_wanwork_quantum_entanglement` 已推送至 `origin`，当前 HEAD 为 `63106e2`；此前的
 `backup_0830_211508` 指向 resolver 之前的 `aa94515`，可用于精确回退。新增可回溯小阶段 commit 为：
-`c69af4c`（共享 action-time capability resolver 与测试）、`63106e2`（resolver 证据与最新 Web gate 文档）。
+`c69af4c`（共享 action-time capability resolver 与测试）、`63106e2`（resolver 证据与最新 Web gate 文档）、
+`de8d2ae`（Agent Store durable command receipt 入口与 PostgreSQL replay 证据）。当前工作分支 HEAD 为
+`de8d2ae`。
 
 ## 下一步顺序（仍本地 pending）
 
