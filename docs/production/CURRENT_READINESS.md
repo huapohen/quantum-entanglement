@@ -247,6 +247,9 @@ event/revision/scope/mention/digest union/state 矩阵由参数化 contract test
   revalidation、CPU/内存或出网 allowlist；
 - `RequestContextIssuer`、in-memory revocation high-water、HMAC key lifecycle 和 secret material
   尚无统一 fork/spawn contract；parent 擦除 secret 不会擦除已 fork child 的独立 buffer；
+- `SQLiteArtifactStore` 的 PID/epoch inherited-instance guard 已在 `3a729b4` 完成；该证据仅覆盖
+  artifact store 自身，不能替代 revocation、projection offset、recovery、provider 或 secret
+  组件的逐一迁移；
 - stable identifier hash 不是匿名化，仍需 retention/access/cardinality policy。
 
 晋级标准：身份只能来自验证过的认证层；所有受保护动作执行时重新授权；secret canary 在
