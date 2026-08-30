@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Conversation, type Message } from "./api";
+import { api, type AgentStoreDataDisposition, type Conversation, type Message } from "./api";
 import { useUIStore } from "./store";
 
 function newMessageId() {
@@ -45,6 +45,7 @@ export function App() {
   const [instruction, setInstruction] = useState("");
   const [memberAction, setMemberAction] = useState("");
   const [artifactAction, setArtifactAction] = useState("");
+  const [offboardDispositions, setOffboardDispositions] = useState<Record<string, AgentStoreDataDisposition>>({});
   const [conversationFilter, setConversationFilter] = useState("");
   const [messageSearch, setMessageSearch] = useState("");
   const messageLoadSequence = useRef(0);
@@ -288,12 +289,14 @@ export function App() {
 
   async function offboardAgent(agent: (typeof agents)[number]) {
     if (agent.installationStatus !== "active") return;
-    if (!window.confirm(`确认停用并撤权 ${agent.name}？这会移除其群成员投影并撤销本地 provider 身份。`)) return;
+    const dataDisposition = offboardDispositions[agent.definitionId] ?? "archive";
+    const dispositionLabel = dataDisposition === "retain" ? "保留" : dataDisposition === "delete" ? "删除" : "归档";
+    if (!window.confirm(`确认停用并撤权 ${agent.name}？数据处置：${dispositionLabel}。这会移除其群成员投影并撤销本地 provider 身份。`)) return;
     setLoading(true);
     setError("");
     setMemberAction("");
     try {
-      const result = await api.offboardAgent(agent.definitionId, `web/offboard/${crypto.randomUUID()}`);
+      const result = await api.offboardAgent(agent.definitionId, `web/offboard/${crypto.randomUUID()}`, dataDisposition);
       const [agentPage, runtime, page] = await Promise.all([api.agents(), api.snapshot(), api.conversations()]);
       setAgents(agentPage.agents);
       setSnapshot(runtime);
@@ -527,9 +530,31 @@ export function App() {
                   </div>
                   <div className="mt-1 text-slate-500">Trust Passport：{agent.attestations.length} 项审阅声明 · {agent.passportStatus}</div>
                   {agent.installationStatus === "active" && (
-                    <button className="button-secondary mt-3 w-full" onClick={() => void offboardAgent(agent)} disabled={loading}>
-                      停用并撤权
-                    </button>
+                    <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/5 p-3">
+                      <label className="flex items-center justify-between gap-3 text-[11px] text-slate-400">
+                        <span>停用后的数据处置</span>
+                        <select
+                          className="field min-w-32 px-2 py-1 text-xs"
+                          value={offboardDispositions[agent.definitionId] ?? "archive"}
+                          onChange={(event) => {
+                            const value = event.target.value as AgentStoreDataDisposition;
+                            setOffboardDispositions((current) => ({ ...current, [agent.definitionId]: value }));
+                          }}
+                          disabled={loading}
+                          aria-label={`${agent.name} 停用后的数据处置`}
+                        >
+                          <option value="retain">保留（继续留存）</option>
+                          <option value="archive">归档（推荐）</option>
+                          <option value="delete">删除（不可恢复）</option>
+                        </select>
+                      </label>
+                      <p className="mt-2 text-[10px] leading-4 text-slate-500">
+                        三种策略都会先撤销 Agent 身份并移出群成员；该选择仅决定其历史数据的后续处置。
+                      </p>
+                      <button className="button-secondary mt-2 w-full" onClick={() => void offboardAgent(agent)} disabled={loading}>
+                        停用并撤权
+                      </button>
+                    </div>
                   )}
                   {agent.canInstall ? (
                     <button className="button-primary mt-3 w-full" onClick={() => void installAgent(agent)} disabled={loading}>

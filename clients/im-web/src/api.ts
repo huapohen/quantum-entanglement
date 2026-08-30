@@ -65,6 +65,9 @@ export type AgentStoreOffboardResult = {
   replayed: boolean;
 };
 
+/** Data handling policy requested when an Agent is offboarded. */
+export type AgentStoreDataDisposition = "retain" | "archive" | "delete";
+
 export type Conversation = {
   id: string;
   type: string;
@@ -213,7 +216,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ idempotencyKey }),
     }),
-  offboardAgent: (definitionId: string, idempotencyKey: string, dataDisposition: "retain" | "archive" | "delete" = "archive") =>
+  offboardAgent: (definitionId: string, idempotencyKey: string, dataDisposition: AgentStoreDataDisposition = "archive") =>
     request<AgentStoreOffboardResult>(`/api/v1/demo/im/agents/${encodeURIComponent(definitionId)}/offboard`, {
       method: "POST",
       body: JSON.stringify({ idempotencyKey, dataDisposition }),
