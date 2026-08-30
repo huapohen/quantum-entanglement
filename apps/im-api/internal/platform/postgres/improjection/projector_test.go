@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/events"
 	"github.com/huapohen/quantum-entanglement/apps/im-api/internal/im"
 )
 
@@ -34,5 +35,25 @@ func TestProjectorRecognizesOnlyMessageVocabularyAndSkipsOtherStreams(t *testing
 	}
 	if isMessageProjectionEvent("conversation.updated") || isMessageProjectionEvent("task.created.v1") {
 		t.Fatal("non-message event recognized")
+	}
+}
+
+func TestMessageIDExtractionAcceptsFullCreatedPayloadAndRejectsTrailingJSON(t *testing.T) {
+	payload, err := events.NewInlinePayload([]byte(`{"conversationId":"cnv_room","messageId":"msg_1","messageType":"text","text":"hello"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := events.StoredEvent{EventToAppend: events.EventToAppend{EventType: "message.created", Payload: payload}}
+	messageID, err := messageIDFromProjectionEvent(event)
+	if err != nil || messageID != "msg_1" {
+		t.Fatalf("message id=%q error=%v", messageID, err)
+	}
+	missing, err := events.NewInlinePayload([]byte(`{"conversationId":"cnv_room"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event.Payload = missing
+	if _, err := messageIDFromProjectionEvent(event); !errors.Is(err, ErrProjectorIntegrity) {
+		t.Fatalf("missing message id error=%v", err)
 	}
 }

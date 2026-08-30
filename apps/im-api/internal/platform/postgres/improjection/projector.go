@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"strings"
 	"time"
@@ -394,8 +395,11 @@ func messageIDFromProjectionEvent(event events.StoredEvent) (string, error) {
 		return "", ErrProjectorIntegrity
 	}
 	decoder := json.NewDecoder(bytes.NewReader(event.Payload.InlineJSON()))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&payload); err != nil || payload.MessageID == "" {
+		return "", ErrProjectorIntegrity
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return "", ErrProjectorIntegrity
 	}
 	return payload.MessageID, nil
