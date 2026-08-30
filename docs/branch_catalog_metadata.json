@@ -4,6 +4,7 @@
     "main": "唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。",
     "mainline_continue_quantum_entanglement": "E3 Result Authority 人工评审分支；当前已完成 migration 12 PostgreSQL materialized message projector/reader 候选、跨页 Serializable 同事务 checkpoint、非消息 watermark、双 runner CAS 竞争、restart readback 与 Go 全量门禁。materialized reader 仍 default-off，生产 worker、真实认证 transport/composition、真实 IM 与 outbound 仍关闭；Notion 批量同步延后，不自动合并回 main。",
     "backup_0830_215522": "本轮 deadline 前的完整备份，固定指向 projector/reader 端到端、revision 语义修复、并发竞争与 restart 证据节点；只用于恢复，不在此分支继续开发。",
+    "backup_0830_215839": "本轮最终文档与分支目录刷新后的完整备份；固定指向全量 Go 门禁、PG18 integration matrix、projector/reader 端到端证据与 branch catalog 节点；只用于恢复。",
     "dev_wanwork_quantum_entanglement": "较早的原生 IM 合同研究、实现证据与 Notion 备份候选；不作为默认主线，保留 dirty worktree 等待独立人工审阅。",
     "backup_0827_200010": "2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。",
     "agent/evidence-ledger": "早期工程证据账本分支，用于汇总测试、审计和阶段结论。",
