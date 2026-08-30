@@ -1,8 +1,9 @@
 # 本地 Native IM durable inbox 检查点（2026-08-30）
 
-本检查点补齐 Web-first 验收所缺的一个持久化边界：经过 provider-neutral 校验的
-`events.InboxEnvelope` 可以在本地单进程日志中落盘，并在服务重启后恢复。实现位于
-`apps/im-api/internal/events/durable_inbox_file.go`，分支为
+本检查点补齐 Web-first 验收所缺的两个本地持久化边界：经过 provider-neutral 校验的
+`events.InboxEnvelope` 可以落盘并在重启后恢复；事件 `Projector` 的 checkpoint 也可以
+以完整 compare-and-set 语义落盘。实现位于 `apps/im-api/internal/events/durable_inbox_file.go`
+与 `apps/im-api/internal/events/durable_projection_file.go`，分支为
 `dev_im_persistence_accelerator_20260830`。
 
 ## 已交付的合同
@@ -19,6 +20,17 @@
   回退、状态倒退或 identity 漂移均 fail-closed；
 - owner-only 文件权限（`0600`）、绝对路径和已有父目录要求；时钟必须由调用方提供且不得回退；
 - `Close` 后所有读写拒绝，取消上下文和时钟异常不会产生部分 admission。
+
+`DurableProjectionCheckpointFileStore` 补充 projection resume point：
+
+- checkpoint key 精确绑定 `tenantId + workspaceId + projectionId`，未提交过的合法 scope 返回 zero
+  checkpoint；
+- commit 比较完整的 previous（position、cursor、lastEventId 和 scope），竞争提交只允许一个
+  winner，冲突不会写入；
+- checkpoint 更新先写并 `fsync` 再发布到内存，重启会恢复最后一个状态；中断尾部可丢弃，完整
+  损坏、未知字段或位置倒退 fail-closed；
+- 它只证明 resume point 已落盘，不证明 handler side effect 已持久化；仍需 at-least-once handler
+  幂等和生产 receipt/reconcile。
 
 ## 明确边界
 
@@ -44,7 +56,8 @@ crash/restore、租约、审计和对账证据。本地 Web demo 仍默认使用
 
 测试覆盖重启后的 receipt、inline/reference payload、重复投递计数、并发 exact retry、digest
 和 verification drift、时钟回退、关闭语义、中断尾部和完整损坏日志。测试只使用本地临时
-目录，不访问网络，不读取或写入任何模型/provider key。
+目录，不访问网络，不读取或写入任何模型/provider key；projection 测试还验证 durable event
+store + projector + checkpoint 的重启后不重复回放。
 
 ## 提交证据
 
@@ -52,7 +65,9 @@ crash/restore、租约、审计和对账证据。本地 Web demo 仍默认使用
 | --- | --- |
 | `234e016` | `feat(im): add durable local inbox file adapter` |
 | `ddc9c5f` | `test(im): verify durable inbox restart semantics` |
+| `d9b5699` | `fix(im): harden local inbox file recovery` |
+| `4eb3a7f` | `feat(im): add durable local projection checkpoints` |
+| `8a99ff2` | `test(im): prove durable projection checkpoint recovery` |
 
 两个提交均已推送到 `origin/dev_im_persistence_accelerator_20260830`，没有合并到
 `main` 或 Web 主开发分支。
-
