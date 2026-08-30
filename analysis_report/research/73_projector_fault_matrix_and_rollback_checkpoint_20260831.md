@@ -42,6 +42,7 @@ WANWORK_TEST_POSTGRES_ADMIN_URL='<isolated-local-admin-url>' \
 PYTHONPATH=src .venv/bin/pytest -q tests/test_result_compatibility_rollback.py  1 passed
 .venv/bin/ruff check tests/test_result_compatibility_rollback.py                 All checks passed
 git diff --check                                                         PASS
+go test ./... && go vet ./...                                      PASS（Go 全模块）
 ```
 
 真实 PG18 端到端命令仍保留在 `research/69` 与 `research/71`；本节点已在隔离 PostgreSQL 18.6
