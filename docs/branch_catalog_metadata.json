@@ -10,6 +10,7 @@
     "backup_0830_222930": "2026-08-30 22:29 provider effect unknown fail-closed：安装、撤权、建群、消息与 Agent 子群副作用门禁收口，并完成 Web-first/Go/PostgreSQL 全量门禁后的最新备份；仅用于恢复和审计。",
     "backup_0830_224848": "2026-08-30 22:48 Agent Store provider effect fail-closed 报告索引更新后的最新开发分支备份；仅用于恢复和审计。",
     "backup_0830_230731": "2026-08-30 23:07 Agent 子群创建 unknown provider effect fail-closed、registry 未决重试隔离测试及 Agent Store 报告更新后的最新开发分支备份；仅用于恢复和审计。",
+    "backup_0830_231842": "2026-08-30 23:18 Agent Store 当前功能基线与报告指针收口后的最新开发分支备份；仅用于恢复和审计。",
     "backup_0830_174451": "2026-08-30 17:44 Agent Store provenance 摘要投影、Web 展示、durable persistence 边界文档及全量门禁通过后的备份；仅用于恢复和审计。",
     "backup_0830_170055": "2026-08-30 17:00 Agent Store 实时 Web-first 门禁复核、最小权限安装、撤权与 Workboard 闭环通过后的备份；仅用于恢复和审计。",
     "backup_0830_164443": "2026-08-30 16:44 Agent Store 最小权限 grant drift 防护、安装/撤权和完整 Web-first 门禁通过后的最终阶段备份；仅用于恢复和审计。",
