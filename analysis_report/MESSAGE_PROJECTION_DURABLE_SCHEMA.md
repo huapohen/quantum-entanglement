@@ -55,6 +55,11 @@ Required unique/indexed access paths:
 (tenant_id, workspace_id, conversation_id, last_event_sequence)
 ```
 
+`projection_revision` 是该消息行最后一次被消息 reducer 改写时的 generation；它不要求等于
+当前 head generation。只推进 stream watermark 的非消息事件会使 head generation 前进而保留
+旧行，因此恢复/读取校验使用 `0 < row.projection_revision <= head.current_revision`，并同时要求
+消息行的事件坐标不超过 head 坐标。
+
 All tables require exact tenant RLS, forced RLS, explicit runtime read grants, owner-only write functions,
 and access-manifest/schema-digest registration. Workspace and conversation FKs must prevent cross-scope rows.
 
@@ -103,7 +108,8 @@ restart; a cursor is observation metadata, not an authorization capability.
 
 The event-replay bridge is implemented and bounded. Migration 11 creates and protects the two materialized
 tables; migration 12 and `platform/postgres/improjection.Projector` now provide an owner-function writer,
-same-transaction global read and checkpoint CAS candidate. Local PostgreSQL 18 migration/runtime/writer
-integration is covered by research/68; target production applied-schema attestation, shadow comparison,
-crash/restore/rollback evidence and production composition remain open. Gate A–E, real Clerk/JWKS, real IM
-provider and outbound remain closed.
+same-transaction global read and checkpoint CAS candidate. `research/69` covers a real PostgreSQL 18
+runtime-only end-to-end projector/reader run, including pagination, non-message watermark, exact rerun and
+concurrent rerun. Target production applied-schema attestation, shadow comparison wiring, crash/restore/
+rollback evidence and production composition remain open. Gate A–E, real Clerk/JWKS, real IM provider and
+outbound remain closed.

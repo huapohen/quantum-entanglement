@@ -100,6 +100,15 @@ replay，真实 IM/outbound 继续关闭。
 PostgreSQL 18 上完成 integration 验证（证据见 research/68）；这里所说的 applied-schema 缺口
 特指目标生产集群的独立 schema digest/权限/备份证明，不能用本机临时库替代。
 
+`1e8fc38` 又补齐了 runtime-only 的真实端到端闭环：EventStore append、跨页 Serializable
+projector、migration-12 函数写入、materialized Reader readback、非消息 watermark、编辑 reducer、
+精确重跑和双 runner 并发重跑均在隔离 PostgreSQL 18 通过。期间修复了一个 revision 语义缺陷：
+非消息事件推进 conversation head 时，已有消息行的 `projection_revision` 允许小于等于 head，
+不再被错误要求相等。详见 [`69_postgres_projector_end_to_end_and_revision_fix_20260830.md`](../../analysis_report/research/69_postgres_projector_end_to_end_and_revision_fix_20260830.md)。
+
+该证据仍不打开 cutover：crash/restore、COMMIT ACK 丢失、shadow replay equality 的真实运行、
+生产 applied-schema proof 和 materialized primary 仍关闭。
+
 ## 执行结论
 
 项目已不再是只有任务图和 demo 的空架子。当前主线包含 append-only event store、原子 workflow
