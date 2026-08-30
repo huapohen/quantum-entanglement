@@ -127,8 +127,9 @@ runtime ACL、repository definition/release/Passport/installation 创建与读�
 `c69af4c`（共享 action-time capability resolver 与测试）、`63106e2`（resolver 证据与最新 Web gate 文档）、
 `de8d2ae`（Agent Store durable command receipt 入口与 PostgreSQL replay 证据）、`3cb0a92`（receipt 证据文档）、
 `514a9f2`（provider effect unknown fail-closed 及全链路调用点）、`a2f40ef`（coordinator 子群创建
-fail-closed 与 unknown 重试隔离测试）。本报告更新提交后会再创建新的
-`backup_MMDD_HHMMSS`，并把精确提交指针写入 main 分支账本。
+fail-closed 与 unknown 重试隔离测试）。截至本报告阶段，Agent Store/IM 功能基线为 `fe4c1fc`，
+`backup_0830_230731` 固定指向该基线；后续仅文档索引修订不会改变该功能基线，精确备份指针继续写入
+main 分支账本。
 
 ## 下一步顺序（仍本地 pending）
 
