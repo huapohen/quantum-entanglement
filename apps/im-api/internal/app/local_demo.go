@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
@@ -20,10 +21,11 @@ const maxLocalDemoRequestBytes = 8 * 1024
 //go:embed local_demo.html
 var localDemoHTML []byte
 
-// NewLocalDemo constructs the loopback-only, credential-free IM acceptance surface. The fake
-// Clerk and RongCloud-shaped adapters make zero network calls.
+// NewLocalDemo constructs the loopback-only IM acceptance surface. The default synthetic runtime
+// and fake Clerk/RongCloud-shaped adapters make zero network calls; a model runtime is enabled only
+// by an explicit, fully configured environment mode.
 func NewLocalDemo() (*fiber.App, error) {
-	demo, err := localdemo.New()
+	demo, err := localdemo.NewFromEnv(os.LookupEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -172,6 +174,8 @@ func localDemoAppError(err error) error {
 	case errors.Is(err, localdemo.ErrInvalidCursor), errors.Is(err, localdemo.ErrInvalidInput):
 		return httpapi.NewAppError(httpapi.CodeValidationFailed, err)
 	case errors.Is(err, localdemo.ErrProvider):
+		return httpapi.NewAppError(httpapi.CodeDependencyUnavailable, err)
+	case errors.Is(err, localdemo.ErrRuntime):
 		return httpapi.NewAppError(httpapi.CodeDependencyUnavailable, err)
 	case errors.Is(err, localdemo.ErrIntegrity):
 		return httpapi.NewAppError(httpapi.CodeInternal, err)

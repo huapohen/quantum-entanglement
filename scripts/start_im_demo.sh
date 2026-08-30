@@ -6,7 +6,7 @@ im_usage() {
 用法：./scripts/start_im_demo.sh [--port PORT]
 
 启动 Quantum Entanglement 原生 IM 的零网络本地验收台。
-不读取 Clerk、融云或模型 Key，不连接飞书/企微，也不会向任何人发消息。
+强制使用 synthetic runtime，不读取模型 Key，不连接飞书/企微，也不会向任何人发消息。
 
 选项：
   --port PORT   监听端口，默认 18080
@@ -51,4 +51,7 @@ esac
 printf '%s\n' "正在启动零网络 IM 验收台：http://127.0.0.1:$im_port/demo/im"
 printf '%s\n' "停止服务：回到本终端按 Ctrl-C"
 
-exec env WANWORK_IM_LISTEN_ADDRESS="127.0.0.1:$im_port" "$im_script_dir/start_im_api.sh"
+exec env \
+    WANWORK_IM_LISTEN_ADDRESS="127.0.0.1:$im_port" \
+    WANWORK_IM_AGENT_RUNTIME=synthetic \
+    "$im_script_dir/start_im_api.sh"
