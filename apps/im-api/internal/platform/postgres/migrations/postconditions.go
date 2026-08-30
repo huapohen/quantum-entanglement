@@ -106,9 +106,36 @@ func validateMigrationPostconditionForSchema(
 		return validateNativeIMInbox(ctx, transaction, schemaVersion)
 	case 11:
 		return validateAgentStoreControlPlane(ctx, transaction)
+	case 12:
+		return validateAgentStoreWriteFunctions(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateAgentStoreWriteFunctions(ctx context.Context, transaction pgx.Tx) error {
+	specs := make([]storedAuthorityFunctionSpec, 0, 4)
+	for _, name := range []string{
+		"write_agent_definition_revision",
+		"write_agent_installation_revision",
+		"write_agent_passport_revision",
+		"write_agent_release_revision",
+	} {
+		spec, ok := storedAuthorityFunctionSpecByName(name)
+		if !ok {
+			return ErrMigrationSchema
+		}
+		specs = append(specs, spec)
+	}
+	names := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		names = append(names, spec.name)
+	}
+	functions, err := readStoredAuthorityFunctions(ctx, transaction, names)
+	if err != nil || !exactStoredAuthorityFunctions(functions, specs) {
+		return ErrMigrationSchema
+	}
+	return nil
 }
 
 func validateAgentStoreControlPlane(ctx context.Context, transaction pgx.Tx) error {

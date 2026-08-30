@@ -96,6 +96,38 @@ var authorityWriteFunctionSpecs = map[string]authorityWriteFunctionSpec{
 		},
 		resultToken: "TEXT",
 	},
+	"WRITE_AGENT_DEFINITION_REVISION": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_DEFINITION_ID", "TEXT", "P_EXPECTED_REVISION", "BIGINT",
+			"P_NEXT_REVISION", "BIGINT", "P_PAYLOAD", "TEXT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "BIGINT", "BIGINT", "TEXT"},
+		resultToken:            "BOOLEAN",
+	},
+	"WRITE_AGENT_RELEASE_REVISION": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_RELEASE_ID", "TEXT", "P_EXPECTED_REVISION", "BIGINT",
+			"P_NEXT_REVISION", "BIGINT", "P_PAYLOAD", "TEXT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "BIGINT", "BIGINT", "TEXT"},
+		resultToken:            "BOOLEAN",
+	},
+	"WRITE_AGENT_PASSPORT_REVISION": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_RELEASE_ID", "TEXT", "P_EXPECTED_REVISION", "BIGINT",
+			"P_NEXT_REVISION", "BIGINT", "P_PAYLOAD", "TEXT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "BIGINT", "BIGINT", "TEXT"},
+		resultToken:            "BOOLEAN",
+	},
+	"WRITE_AGENT_INSTALLATION_REVISION": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_INSTALLATION_ID", "TEXT", "P_EXPECTED_REVISION", "BIGINT",
+			"P_NEXT_REVISION", "BIGINT", "P_PAYLOAD", "TEXT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "BIGINT", "BIGINT", "TEXT"},
+		resultToken:            "BOOLEAN",
+	},
 }
 
 func validMigrationStatements(sql string, allowFunctionDDL bool) bool {

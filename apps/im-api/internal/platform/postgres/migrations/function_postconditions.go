@@ -61,7 +61,49 @@ func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 		result:           "boolean",
 		definitionDigest: "82b7feec4d80b3cb0335780b0007086ac307e930afc126e5843465c3b31d7faf",
 	})
-	return append(values, storedNativeIMInboxFunctionSpecV10())
+	values = append(values, storedNativeIMInboxFunctionSpecV10())
+	return append(values, storedAgentStoreWriteFunctionSpecs()...)
+}
+
+func storedAgentStoreWriteFunctionSpecs() []storedAuthorityFunctionSpec {
+	return []storedAuthorityFunctionSpec{
+		{
+			name: "write_agent_definition_revision",
+			arguments: "p_tenant_id text, p_definition_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_payload text",
+			identityArguments: "p_tenant_id text, p_definition_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_payload text",
+			result:           "boolean",
+			definitionDigest: "beb11e8eb5e3bbf6d4c48ddde215a8a0267f7a0a9cb71e3efb0d55ed4a5cbf02",
+		},
+		{
+			name: "write_agent_installation_revision",
+			arguments: "p_tenant_id text, p_installation_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_payload text",
+			identityArguments: "p_tenant_id text, p_installation_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_payload text",
+			result:           "boolean",
+			definitionDigest: "66a7ce8a6a66fa3ae61eb56f0072744b5fe280b76a086cbebea6454564135518",
+		},
+		{
+			name: "write_agent_passport_revision",
+			arguments: "p_tenant_id text, p_release_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_payload text",
+			identityArguments: "p_tenant_id text, p_release_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_payload text",
+			result:           "boolean",
+			definitionDigest: "b1aeb46cee17cdbf553df0795b5161e8a9700f07151d6e5504679247dd67aa0b",
+		},
+		{
+			name: "write_agent_release_revision",
+			arguments: "p_tenant_id text, p_release_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_payload text",
+			identityArguments: "p_tenant_id text, p_release_id text, p_expected_revision bigint, " +
+				"p_next_revision bigint, p_payload text",
+			result:           "boolean",
+			definitionDigest: "232a65dc3d91e02f6dd57ad44c7e2609fbd9bf566de1b3f5d31f4f3580efe287",
+		},
+	}
 }
 
 func storedNativeIMInboxFunctionSpecV9() storedAuthorityFunctionSpec {

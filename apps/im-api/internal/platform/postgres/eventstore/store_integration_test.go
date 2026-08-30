@@ -501,12 +501,21 @@ func configureEventStoreAuthority(t *testing.T, connection *pgx.Conn, manifest m
 		t.Fatalf("grant event store schema usage: %v", err)
 	}
 	readTables := []string{
+		// The runtime authority manifest is shared by the event store and runtime pool.
+		// Keep the fixture's grants identical to that contract even though this package's
+		// happy-path assertions only exercise event/conversation tables.
+		"actor_heads", "actor_snapshots",
 		"conversation_access_heads", "conversation_access_snapshots", "conversation_heads",
 		"conversation_membership_heads", "conversation_membership_snapshots", "conversation_snapshots",
 		"provider_conversation_binding_heads", "provider_conversation_binding_snapshots", "tenant_command_receipts",
 		"event_stream_heads", "event_tenant_heads", "event_log",
 		"event_projection_checkpoints",
+		"human_identity_binding_heads", "human_identity_binding_snapshots",
+		"human_principal_heads", "human_principal_snapshots",
 		"native_im_inbox",
+		"tenant_membership_heads", "tenant_membership_snapshots",
+		"agent_definitions", "agent_releases", "agent_passports",
+		"agent_installation_heads", "agent_installation_snapshots",
 	}
 	qualifiedTables := make([]string, 0, len(readTables))
 	for _, table := range readTables {
@@ -535,7 +544,7 @@ ORDER BY namespace.nspname, relation.relname`)
 		t.Fatalf("list event store relations: %v", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(values) != 28 {
+	if err != nil || len(values) != 33 {
 		t.Fatalf("event store relation count = %d/%v", len(values), err)
 	}
 	return values
@@ -553,7 +562,7 @@ ORDER BY procedure.proname, pg_catalog.pg_get_function_identity_arguments(proced
 		t.Fatalf("list event store functions: %v", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(values) != 8 {
+	if err != nil || len(values) != 12 {
 		t.Fatalf("event store function count = %d/%v", len(values), err)
 	}
 	return values

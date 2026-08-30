@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 11 || len(second) != 11 {
+	if len(first) != 12 || len(second) != 12 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -42,6 +42,12 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 		if strings.Contains(strings.ToLower(migration.UpSQL), strings.ToLower(forbidden)) {
 			t.Fatalf("migration contains forbidden text %q", forbidden)
 		}
+	}
+	writeFunctions := first[11]
+	if writeFunctions.Version != 12 || writeFunctions.Name != "agent_store_write_functions" ||
+		len(writeFunctions.Checksum) != 64 || writeFunctions.Checksum != second[11].Checksum ||
+		writeFunctions.UpSQL != second[11].UpSQL || writeFunctions.DownSQL != second[11].DownSQL {
+		t.Fatalf("unexpected deterministic Agent Store write function migration: %#v", writeFunctions)
 	}
 	first[0].UpSQL = "tampered"
 	if second[0].UpSQL == "tampered" {

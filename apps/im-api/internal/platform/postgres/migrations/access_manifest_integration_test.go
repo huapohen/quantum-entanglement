@@ -729,5 +729,9 @@ func authorityFunctionSQLIdentities() []string {
 		"write_event(text, text, text, bigint, text, bigint, text, text, timestamp with time zone, text, text, text, text, text, text, text, text, bigint, text, text)",
 		"write_projection_checkpoint(text, text, text, bigint, text, text, bigint, text, text)",
 		"admit_native_im_inbox(text, text, text, text, text, text, text, text, text, text, text, bigint, text)",
+		"write_agent_definition_revision(text, text, bigint, bigint, text)",
+		"write_agent_installation_revision(text, text, bigint, bigint, text)",
+		"write_agent_passport_revision(text, text, bigint, bigint, text)",
+		"write_agent_release_revision(text, text, bigint, bigint, text)",
 	}
 }
