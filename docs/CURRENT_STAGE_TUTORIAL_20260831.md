@@ -1,6 +1,6 @@
 # 当前阶段体验教程｜Quantum Entanglement v0版
 
-> 适用代码：`mainline_continue_quantum_entanglement@2c987cf`<br>
+> 适用代码：`mainline_continue_quantum_entanglement@28a4a46`<br>
 > 生成日期：2026-08-31（Asia/Shanghai）<br>
 > 体验范围：本机 loopback、synthetic 离线 fixture，以及显式配置的 GPT OpenAI-compatible runtime<br>
 > 安全承诺：本教程不会连接飞书、企微或真实 IM，也不会向任何人、群聊、bot 或 webhook 发消息。
@@ -27,7 +27,7 @@ git status --short --branch
 git rev-parse --short HEAD
 ```
 
-应看到分支 `mainline_continue_quantum_entanglement` 和短提交 `2c987cf`（或之后由你明确验收的新提交）。如果当前目录显示的是正式 `main`，不要据此判断本阶段功能不存在；切换到上面的 worktree 再试。
+应看到分支 `mainline_continue_quantum_entanglement` 和短提交 `28a4a46`（或之后由你明确验收的新提交）。如果当前目录显示的是正式 `main`，不要据此判断本阶段功能不存在；切换到上面的 worktree 再试。
 
 工作结束时，所有服务都可以用启动它的终端里的 `Ctrl-C` 停止。体验过程不会修改 Git 跟踪文件；浏览器下载的 Artifact 会落在浏览器默认下载目录。
 
