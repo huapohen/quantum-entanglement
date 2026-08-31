@@ -15,7 +15,7 @@
 
 ## 分支数量为什么看起来很多
 
-远端当前共有 **138** 个分支引用：1 个正式主线、88 个历史开发/证据候选、49 个只读取证归档。`archive/*` 中有不少只是同一历史节点的保险副本，并不代表同时维护的产品版本。
+远端当前共有 **139** 个分支引用：1 个正式主线、89 个历史开发/证据候选、49 个只读取证归档。`archive/*` 中有不少只是同一历史节点的保险副本，并不代表同时维护的产品版本。
 
 Git 本身不保存可靠的“分支创建时间”。下表的“节点时间”是该分支尖端提交的提交时间，这是能够审计的时间节点；不能把它冒充为分支创建时间。`领先/落后` 以目录基线为准；若 `origin/main` 最新提交只更新本目录，生成器会使用其父提交，避免目录提交导致自身立即过期。
 
@@ -32,11 +32,12 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 
 | 节点时间 | 分支 | 用途 | 相对 main | 差异 | Worktree |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-31T12:19:18+08:00 | `mainline_continue_quantum_entanglement`<br>`671e82665d1b` | E3 Result Authority 人工评审分支；当前已完成 migration 12 PostgreSQL materialized projector/reader 候选、shadow equality default-off、提交前 rollback、COMMIT ACK-loss exact replay、双 runner CAS、pool restart readback、worker/projector SIGKILL、partial-write rollback，以及 identifier-free shadow telemetry 与 mismatch sticky readiness latch；`5bb6057`/`671e826` 新增最终生产完成路线图（F0 条件阶段 + F1–F8 八个必做阶段、40 个工作包）；materialized primary、长期外部 metrics/backfill、真实认证、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 994 / 落后 61 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 2026-08-31T12:19:18+08:00 | `backup_0831_121938`<br>`671e82665d1b` | 2026-08-31 最终生产完成路线图节点备份；固定指向 mainline_continue_quantum_entanglement@671e826，包含 F0 条件阶段、F1–F8 必做阶段与 40 个可验收工作包；只用于恢复和审计，不作为开发分支。 | 未直接并入 main | 领先 994 / 落后 61 | — |
+| 2026-08-31T12:14:54+08:00 | `dev_wanwork_quantum_entanglement`<br>`fe1465d45865` | WanWork IM Web/PWA Agent Store 验收主线；包含群聊、Agent 子群、Workboard、消息搜索、安装/撤权、局域网跨端体验，以及 PostgreSQL provider-effect worker seam（claim、lease/fencing、receipt、unknown/readback）。保持独立于正式 main，当前用户验收应使用此分支，完成阶段验收后再决定是否合并。 | 未直接并入 main | 领先 572 / 落后 61 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 2026-08-31T10:05:50+08:00 | `main`<br>`49980e3e50fe` | 唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。 | 主线目录基线 | 领先 0 / 落后 0 | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
-| 2026-08-31T10:02:31+08:00 | `dev_wanwork_quantum_entanglement`<br>`f4c4dba44afe` | WanWork IM Web/PWA Agent Store 验收主线；包含群聊、Agent 子群、Workboard、消息搜索、安装/撤权、局域网跨端体验，以及 PostgreSQL provider-effect worker seam（claim、lease/fencing、receipt、unknown/readback）。保持独立于正式 main，当前用户验收应使用此分支，完成阶段验收后再决定是否合并。 | 未直接并入 main | 领先 568 / 落后 61 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 2026-08-31T10:02:31+08:00 | `backup_0831_100314`<br>`f4c4dba44afe` | 2026-08-31 Agent Store 累积 Notion 同步完成后的最终阶段备份；固定指向 dev_wanwork_quantum_entanglement@f4c4dba，包含 52–59 原始报告包、Notion manifest/readback、migration 0017 worker seam 与全量 Go normal/race/vet 证据；只用于恢复和审计，不作为开发分支。 | 未直接并入 main | 领先 568 / 落后 61 | — |
 | 2026-08-31T09:47:38+08:00 | `backup_0831_094809`<br>`f5f38f5c5ee8` | 2026-08-31 provider-effect worker seam 阶段验收备份；固定指向 dev_wanwork_quantum_entanglement@f5f38f5，包含 migration 0017、lease/fencing、receipt/unknown/readback repository、全量 Go normal/race/vet 证据及 Notion 回读；只用于恢复和审计，不作为开发分支。 | 未直接并入 main | 领先 567 / 落后 61 | — |
-| 2026-08-31T09:32:38+08:00 | `mainline_continue_quantum_entanglement`<br>`e76a985bbcd6` | E3 Result Authority 人工评审分支；当前已完成 migration 12 PostgreSQL materialized projector/reader 候选、shadow equality default-off、提交前 rollback、COMMIT ACK-loss exact replay、双 runner CAS、pool restart readback、worker/projector SIGKILL、partial-write rollback，以及 identifier-free shadow telemetry 与 mismatch sticky readiness latch；e76a985 仅补齐 Notion 回读台账；materialized primary、长期外部 metrics/backfill、真实认证、真实 IM 与 outbound 仍关闭；不自动合并回 main。 | 未直接并入 main | 领先 992 / 落后 61 | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 2026-08-31T09:32:38+08:00 | `backup_0831_093253`<br>`e76a985bbcd6` | 2026-08-31 shadow telemetry/readiness 阶段同步台账完成备份；固定指向 mainline_continue_quantum_entanglement@e76a985，包含 Notion 页面回读 manifest；只用于恢复和审计，不作为开发分支。 | 未直接并入 main | 领先 992 / 落后 61 | — |
 | 2026-08-31T09:02:43+08:00 | `backup_0831_090315`<br>`a1dadb57c058` | 2026-08-31 shadow telemetry/readiness 阶段验收备份；固定指向 mainline_continue_quantum_entanglement@a1dadb5，包含代码、定向 test/vet/race、研究证据、readiness 与下一计划封板；只用于恢复和审计，不作为开发分支。 | 未直接并入 main | 领先 991 / 落后 61 | — |
 | 2026-08-31T01:41:30+08:00 | `backup_0831_014544`<br>`a22a7b41b7f7` | 用途待补充；当前节点主题：docs(readiness): pin partial-write checkpoint | 未直接并入 main | 领先 987 / 落后 61 | — |
@@ -189,9 +190,9 @@ Git 本身不保存可靠的“分支创建时间”。下表的“节点时间�
 | 正式主线工作区 | `main` | `49980e3e50fe` | `/Users/lwblx/huapohen/agent/execute/infinite/quantum_entanglement` |
 | 存在、干净 | `dev_im_persistence_accelerator_20260830` | `51dbb1e5bd9a` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_im_persistence_accelerator_20260830` |
 | 存在、干净 | `dev_research_docs_accelerator_20260830` | `b0e5611aeb6c` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_research_docs_accelerator_20260830` |
-| 存在、干净 | `dev_wanwork_quantum_entanglement` | `f4c4dba44afe` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
+| 存在、干净 | `dev_wanwork_quantum_entanglement` | `fe1465d45865` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_wanwork_quantum_entanglement` |
 | 存在、干净 | `dev_web_first_accelerator_20260830` | `aa1daf471ab8` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/dev_web_first_accelerator_20260830` |
-| 存在、干净 | `mainline_continue_quantum_entanglement` | `e76a985bbcd6` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
+| 存在、干净 | `mainline_continue_quantum_entanglement` | `671e82665d1b` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/mainline_continue_quantum_entanglement` |
 | 存在、干净 | `scoped_lease_process_matrix` | `72a3487c7a58` | `/Users/lwblx/huapohen/agent/execute/infinite/worktrees/quantum_entanglement/scoped_lease_process_matrix` |
 
 ## 固定版本标签
