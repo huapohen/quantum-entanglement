@@ -1537,13 +1537,71 @@
       "realNativeIm": "no-provider-endpoint-credential-webhook-socket-read-or-send"
     }
   },
+  "recentSync": {
+    "syncedAt": "2026-08-31T01:58:00Z",
+    "sourceHead": "f5f38f5c5ee84b4e3a2ef502f37b956ac6e80049",
+    "mainCatalogHead": "c01a98b",
+    "branch": "dev_wanwork_quantum_entanglement",
+    "pagesCreated": [
+      {
+        "key": "research-59-agent-store-provider-effect-worker-postgres",
+        "pageId": "3cdead4b-996e-8181-90be-f707e3a847f3",
+        "url": "https://app.notion.com/p/3cdead4b996e818190bef707e3a847f3?pvs=204",
+        "sourcePath": "analysis_report/research/59_agent_store_provider_effect_worker_postgres_20260831.md",
+        "sourceSha256": "25e7418a1da6abc899418b91dcbe0c2de9691248e79bf03e301e7e2db11914be",
+        "remoteReadbackVerified": true
+      },
+      {
+        "key": "agent-store-52-58-cumulative",
+        "pageId": "3cdead4b-996e-811f-a31d-d08c64746a4f",
+        "url": "https://app.notion.com/p/3cdead4b996e811fa31dd08c64746a4f?pvs=204",
+        "sourcePaths": [
+          "analysis_report/research/52_agent_store_acceptance_20260830.md",
+          "analysis_report/research/53_agent_store_live_gate_20260830.md",
+          "analysis_report/research/54_agent_store_durable_persistence_boundary_20260830.md",
+          "analysis_report/research/54_agent_store_provenance_projection_20260830.md",
+          "analysis_report/research/55_agent_store_capability_constraint_audit_20260831.md",
+          "analysis_report/research/55_agent_store_postgres_persistence_migration_20260830.md",
+          "analysis_report/research/56_agent_store_current_status_20260830.md",
+          "analysis_report/research/57_agent_store_command_status_20260830.md",
+          "analysis_report/research/57_agent_store_provider_effect_outbox_20260831.md",
+          "analysis_report/research/58_agent_store_localdemo_durable_seam_20260831.md",
+          "analysis_report/research/58_agent_store_provider_effect_postgres_schema_20260831.md"
+        ],
+        "sourceSha256": {
+          "52_agent_store_acceptance_20260830.md": "d6437d48b0ed71c50c787ff9a9e696d815beb84f9d7355b916bdc39e951460d4",
+          "53_agent_store_live_gate_20260830.md": "ec00ea1eca46dbd34ac307ff50713389712bb065402a75b6fdbb83b37e942d9f",
+          "54_agent_store_durable_persistence_boundary_20260830.md": "84d8c71b8edb2b0f5f7ea8ea809599e35ae5bb548195b2ce0ace956c7fdd9f95",
+          "54_agent_store_provenance_projection_20260830.md": "7aa1916f492196d6c03d67f801c17ff66e35c4aaa2fa6463bd235aad091c48d0",
+          "55_agent_store_capability_constraint_audit_20260831.md": "2d2977654fa73ff0b84c2e98a73f93b2b3a071a2d96330133539872c444e1dca",
+          "55_agent_store_postgres_persistence_migration_20260830.md": "fe45bfb61fa69a41f1934a032a00a20a8ed4a4c0e87fbde67d4e46fea02cc896",
+          "56_agent_store_current_status_20260830.md": "dd7bb7ce470d322b616cae575cc4056c5ab159569ddc864d3fa789e6e58383b9",
+          "57_agent_store_command_status_20260830.md": "751372e839029c86910ff3bb4ff31685007c062300e11f6fe7752b8b4f7f9fee",
+          "57_agent_store_provider_effect_outbox_20260831.md": "6075980c1edd0d7d312cad1ec2caa7a39887ce91f947571e4f2228fac71e519e",
+          "58_agent_store_localdemo_durable_seam_20260831.md": "13df2d04334bab3cd6715972d3b2b8a00544797947dd29e853ff503ebcb3be12",
+          "58_agent_store_provider_effect_postgres_schema_20260831.md": "7cb26a8c3c976122ed3eb98c43b85fe6fe4657e8311ae035a48975459d03a73f"
+        },
+        "remoteReadbackVerified": true
+      }
+    ],
+    "existingPagesUpdated": [
+      "project-home",
+      "comprehensive-report",
+      "wanwork-im-review-hub",
+      "branch-catalog"
+    ],
+    "screenshotImagesAdded": 0,
+    "notionStatus": "synced_and_readback_verified",
+    "yuque": "not-touched",
+    "feishuAndWeCom": "no-send-reply-comment-mention-upload-or-webhook"
+  },
   "verificationSummary": {
-    "pageCount": 50,
-    "controlledSourcePageCount": 48,
+    "pageCount": 51,
+    "controlledSourcePageCount": 49,
     "auxiliaryDerivedPageCount": 2,
-    "existingPagesUpdated": 3,
-    "newPagesCreated": 1,
-    "readbackVerified": 4,
+    "existingPagesUpdated": 7,
+    "newPagesCreated": 2,
+    "readbackVerified": 7,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 29,
     "screenshotImagesAddedThisSync": 0,
