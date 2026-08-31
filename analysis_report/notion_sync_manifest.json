@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-31T01:08:12Z",
+  "syncedAt": "2026-08-31T04:24:30Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private review branch + local linked worktree",
     "remoteRepresentation": "semantic-mirror",
@@ -27,10 +27,10 @@
     "manifestPreparedFromCommit": "037ea1e2b987800b48c38a44db41486ee96fe564",
     "manifestPreparedFromTree": "ab905f58775f781fb0172ff7699c609f971b38f1",
     "latestStageBranch": "mainline_continue_quantum_entanglement",
-    "latestStageHead": "a1dadb57c0588b3dc993e2704cb61c60f082cd28",
-    "latestStageBackup": "backup_0831_090315",
-    "latestStageBackupHead": "a1dadb57c0588b3dc993e2704cb61c60f082cd28",
-    "latestRootCatalogHead": "61b5a9af5a2223ee42999128c57f26eeccbc663f"
+    "latestStageHead": "671e82665d1bd7a5bbcc0b2ecc38996c717f22a3",
+    "latestStageBackup": "backup_0831_121938",
+    "latestStageBackupHead": "671e82665d1bd7a5bbcc0b2ecc38996c717f22a3",
+    "latestRootCatalogHead": "f309f8b4bb8cfc86f2925392b33763ee775f8eaf"
   },
   "pages": [
     {
@@ -685,6 +685,34 @@
         ],
         "missingMarkers": [],
         "attachmentCount": 4
+      }
+    },
+    {
+      "key": "final-completion-roadmap",
+      "pageId": "3cdead4b-996e-8156-88c4-dd5144747f28",
+      "url": "https://app.notion.com/p/3cdead4b996e815688c4dd5144747f28?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/FINAL_COMPLETION_ROADMAP.md",
+          "sha256": "0d4831f8ea6a5b730196afb7036a6fac405204fc8ab9e332908062514e1b5b94"
+        }
+      ],
+      "updateMode": "created-full-semantic-mirror-with-exact-markdown-attachment",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🧭 最终生产完成路线图｜F0–F8｜671e826",
+        "contentLength": 11740,
+        "expectedMarkers": [
+          "671e826",
+          "f309f8b",
+          "backup_0831_121938",
+          "F1｜",
+          "F8｜",
+          "40 个可验收工作包",
+          "FINAL_COMPLETION_ROADMAP_20260831.md"
+        ],
+        "missingMarkers": [],
+        "attachmentCount": 1
       }
     },
     {
@@ -2858,6 +2886,47 @@
       "codeTest": "pass",
       "codeVet": "pass",
       "raceDetector": "pass",
+      "gitDiffCheck": "pass",
+      "notionFetchBack": "pass",
+      "yuqueTouched": false,
+      "feishuWeComMessagesSent": false,
+      "realIMOrOutboundEnabled": false
+    }
+  },
+  "latestRoadmapSync": {
+    "stage": "final-completion-roadmap",
+    "syncedAt": "2026-08-31T04:24:30Z",
+    "branch": "mainline_continue_quantum_entanglement",
+    "semanticHead": "671e82665d1bd7a5bbcc0b2ecc38996c717f22a3",
+    "catalogHead": "f309f8bff60637de6624b10df8cd1913b31fab71",
+    "backupBranch": "backup_0831_121938",
+    "backupHead": "671e82665d1bd7a5bbcc0b2ecc38996c717f22a3",
+    "pageId": "3cdead4b-996e-8156-88c4-dd5144747f28",
+    "pageReadbackVerified": true,
+    "parentPageId": "3c9ead4b-996e-8108-aea6-c97c694d6587",
+    "parentReadbackVerified": true,
+    "parentMarkers": [
+      "671e826",
+      "f309f8b",
+      "backup_0831_121938",
+      "8 个必做阶段",
+      "40 个可验收工作包"
+    ],
+    "roadmapMarkers": [
+      "671e826",
+      "f309f8b",
+      "backup_0831_121938",
+      "F1｜",
+      "F8｜",
+      "40 个可验收工作包",
+      "FINAL_COMPLETION_ROADMAP_20260831.md"
+    ],
+    "attachment": {
+      "filename": "FINAL_COMPLETION_ROADMAP_20260831.md",
+      "sha256": "0d4831f8ea6a5b730196afb7036a6fac405204fc8ab9e332908062514e1b5b94",
+      "fileUploadId": "3cdead4b-996e-8179-8ae9-00b2af999600"
+    },
+    "verification": {
       "gitDiffCheck": "pass",
       "notionFetchBack": "pass",
       "yuqueTouched": false,
