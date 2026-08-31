@@ -5,6 +5,28 @@
 - 硬边界：[`SERVICE_BOUNDARY.md`](./SERVICE_BOUNDARY.md)
 - 结论：**内核组件已形成较强验证基线，但仍不是生产服务；Gate A–E 全部关闭**
 
+## 2026-08-31 shadow telemetry/readiness 阶段停止点
+
+当前代码与测试检查点为 `79673d5`，已推送到
+`origin/mainline_continue_quantum_entanglement`。`1f10fde` 新增 identifier-free、进程内
+`ShadowMonitor`，`79673d5` 增加 outcome/concurrency/readiness 矩阵。显式设置
+`WANWORK_IM_MESSAGE_SHADOW=true` 后，每次 replay/materialized equality compare 都会累计 runs、
+successes、mismatches、failures、成功比较的 pages/messages；第一次真实 `ErrShadowMismatch` 会设置
+不可自动复位的 latch，之后 `/health/ready` 在 PostgreSQL readiness 通过后仍 fail closed。
+
+普通 store unavailable、取消或非法输入继续作为请求错误返回并计入 failures，但不会永久 latch
+整个进程；数据库可用性仍由 PostgreSQL primary probe 负责。telemetry snapshot 不含 tenant、
+workspace、conversation、cursor、message、provider、credential 或 raw error。
+
+定向 `go test`、`go vet`、两个包的 `go test -race` 与 `git diff --check` 均通过。详细合同、命令、
+处置语义与未交付边界见
+[`research/76_shadow_telemetry_readiness_checkpoint_20260831.md`](../../analysis_report/research/76_shadow_telemetry_readiness_checkpoint_20260831.md)。
+
+该阶段没有实现长期外部 metrics/告警、durable telemetry、backfill orchestration、production
+applied-schema proof、materialized primary、真实 Clerk/JWKS、Task/Artifact/Needs You projection、
+worker/provider bridge 或 `effect_unknown` reconcile；真实 IM 与 outbound 继续关闭。按用户指令，
+远端备份、分支目录和 Notion 完成后在此停止，等待阶段验收。
+
 ## 2026-08-31 fault-matrix checkpoint
 
 当前评审 HEAD 为 `2748c8d`，远端已推送；固定备份分支为 `backup_0831_004520`（指向
@@ -16,7 +38,7 @@ PostgreSQL 18.6 的 projector 与 migrations/runtimepool/eventstore/improjection
 integration matrix；Go 全模块 `go test ./...` 与 `go vet ./...` 亦通过。详细记录见
 [`research/73_projector_fault_matrix_and_rollback_checkpoint_20260831.md`](../../analysis_report/research/73_projector_fault_matrix_and_rollback_checkpoint_20260831.md)。
 
-该 checkpoint 仍不打开 materialized primary、长期 shadow telemetry/backfill、生产级 OOM/磁盘/WAL/
+该 checkpoint 仍不打开 materialized primary、长期外部 shadow telemetry/backfill、生产级 OOM/磁盘/WAL/
 failover fault injection、生产 applied-schema/
 备份/RPO/RTO/HA、真实 Clerk/JWKS、Task/Artifact/Needs You projection、worker/provider bridge、
 action receipt 或 `effect_unknown` reconcile；真实 IM 和 outbound 继续关闭。child-process SIGKILL

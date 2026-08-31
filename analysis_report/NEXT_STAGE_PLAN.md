@@ -1,6 +1,6 @@
 # 下一阶段详细执行计划：参考项目复评后闭合 Atomic Result Authority
 
-> 计划版本：2026-08-30-stage-pause-v6
+> 计划版本：2026-08-31-shadow-stage-pause-v7
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
 
@@ -11,9 +11,10 @@
 与 checkpoint、materialized reader、跨页 reducer、非消息 watermark、双 runner CAS 竞争和 pool
 restart readback 均已在隔离 PostgreSQL 18 通过；`projection_revision` 的合法关系为
 `0 < row <= head`。代码/证据提交为 `1e8fc38`、`a41ed54`、`2317871`、`4774c0d`、`4ae750e`、
-`5cbd3c0`、`f0a8f80`；这些是历史 PG18 闭环节点。当前 fault-matrix continuation 的 HEAD 为
-`2748c8d`，最终备份分支为 `backup_0831_004520`（固定指向 readiness 文档封板前的
-`c0a5a14`），早期备份 `backup_0831_002800` 保留。
+`5cbd3c0`、`f0a8f80`；这些是历史 PG18 闭环节点。fault-matrix continuation 已推进到
+partial-write rollback 的 `595f034`，当前 shadow telemetry/readiness 代码与测试检查点为
+`79673d5`。历史备份 `backup_0831_004520`、`backup_0831_014544` 和更早备份继续保留；本阶段
+封板后另建精确时间备份，并登记到根仓分支目录。
 
 ### 下一步只按以下顺序推进
 
@@ -26,11 +27,22 @@ restart readback 均已在隔离 PostgreSQL 18 通过；`projection_revision` �
    process 在 COMMIT 前/后的 SIGKILL 恢复；独立证据见 `research/74_projector_sigkill_process_matrix_20260831.md`。
    owner-side trigger partial-write rollback 与基础处置 runbook 已在 `595f034` 完成；仍需在隔离
    staging 做 OOM、磁盘/WAL、代理分片、连接断开与 failover 演练，并从新连接重读 checkpoint、head、rows。
-3. **Cutover preflight**：补生产 applied-schema digest、权限/备份证明、旧 reader drain 与 rollback
+3. **Shadow telemetry/readiness（当前阶段已完成，仍 default-off）**：`1f10fde`/`79673d5` 增加
+   identifier-free 原子计数、mismatch sticky latch 和 PostgreSQL + shadow joined readiness；普通依赖
+   失败不 latch。定向 test/vet/race 已通过，见
+   [`research/76_shadow_telemetry_readiness_checkpoint_20260831.md`](research/76_shadow_telemetry_readiness_checkpoint_20260831.md)。
+   长期 exporter、告警、durable telemetry、跨实例聚合和 backfill orchestration 仍未实现。
+4. **Cutover preflight（下一授权后的候选，尚未开始）**：补生产 applied-schema digest、权限/备份证明、旧 reader drain 与 rollback
    receipt；未齐全前继续使用 bounded EventStore replay，不启用 materialized primary。
-4. **IM 接入前置**：真实 Clerk/JWKS、Task/Artifact/Needs You durable projection、worker/provider
+5. **IM 接入前置（尚未开始）**：真实 Clerk/JWKS、Task/Artifact/Needs You durable projection、worker/provider
    bridge、action receipt 与 `effect_unknown` reconcile 仍是独立 gate，禁止因本地闭环通过而连接真实
    provider 或打开 outbound。
+
+### 当前强制停止条件
+
+shadow telemetry/readiness 的代码、测试、文档、远端备份、根仓分支目录和 Notion 回读完成后，
+本轮必须完全停止。没有用户验收后的新指令，不执行上面第 4、5 项，也不连接真实 sandbox、
+provider、飞书、企微或任何 outbound。
 
 验收命令、边界和证据详见 [`research/69_postgres_projector_end_to_end_and_revision_fix_20260830.md`](research/69_postgres_projector_end_to_end_and_revision_fix_20260830.md)
 与 [`docs/production/CURRENT_READINESS.md`](../docs/production/CURRENT_READINESS.md)。

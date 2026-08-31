@@ -1,15 +1,12 @@
 # 调研与证据索引
 
 本目录是本地报告的单一真相源。报告正文会在研究、实现和验证完成后汇总为
-`multi_agent_collaboration_report.md`。当前截至 `3a92f3c` 的稳定内容已经同步到私人 Notion 并完成
-回读；之后的本地增量持续以 Git/GitHub 为事实源。当前评审分支最新集成提交为 `c878908`，已推送
-到 `origin/mainline_continue_quantum_entanglement`。当前代码已推进到 authenticated tenant context
-HTTP seam（`f226ab5`，实现提交 `8c4fb3f`）；用户在 2026-08-28 进一步确认 Notion 会影响
-开发速度，因此后续开发期间只更新本地文档并频繁 commit/push；当前计划任务全部完成后再一次性批量同步 Notion
-并逐页回读。语雀按用户
-最新指令保持不操作。
+`multi_agent_collaboration_report.md`。当前评审分支已推送到 shadow telemetry/readiness 代码与测试
+检查点 `79673d5`：default-off equality canary 现在具备 identifier-free 原子统计和 mismatch sticky
+readiness latch；定向 test/vet/race 均通过。完成本阶段文档和精确时间备份后，将定点同步私人
+Notion 并回读，然后按用户指令停止等待验收。语雀按用户最新指令保持不操作。
 
-## Notion 镜像（最近已回读基线：3a92f3c；本地/GitHub 代码已推进至 `c878908`）
+## Notion 镜像（历史基线已回读；本阶段将在封板后定点更新）
 
 - 私有 GitHub 仓库：<https://github.com/huapohen/quantum-entanglement>
 - 项目主页：<https://app.notion.com/p/3c1ead4b996e81e289c7dde1d597f630?pvs=204>
@@ -78,6 +75,7 @@ HTTP seam（`f226ab5`，实现提交 `8c4fb3f`）；用户在 2026-08-28 进一�
 | `research/73_projector_fault_matrix_and_rollback_checkpoint_20260831.md` | Projector fault matrix 与 compatibility rollback | 提交前失败整页回滚、ACK-loss exact replay、恢复后的 migration rollback guard；partial-write、生产 cutover 仍关闭 |
 | `research/74_projector_sigkill_process_matrix_20260831.md` | Projector child-process SIGKILL matrix | 真实子进程 COMMIT 前/后 SIGKILL、rollback/exact replay、无重复 row 与新连接 readback；partial-write、生产 cutover 仍关闭 |
 | `research/75_projector_partial_write_fault_runbook_20260831.md` | Projector partial-write fault injection 与恢复 runbook | owner-side trigger 首写成功/后写失败、整页 rollback、完整重放与线上处置草案；生产 staging 注入与 cutover 仍关闭 |
+| `research/76_shadow_telemetry_readiness_checkpoint_20260831.md` | Shadow telemetry/readiness 阶段停止点 | identifier-free 原子计数、mismatch sticky latch、joined readiness 与定向 race 门禁；外部 metrics/backfill、materialized primary 和生产 GA 仍关闭 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |
