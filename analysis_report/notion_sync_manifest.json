@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-31T04:24:30Z",
+  "syncedAt": "2026-08-31T07:19:20Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private review branch + local linked worktree",
     "remoteRepresentation": "semantic-mirror",
@@ -27,12 +27,37 @@
     "manifestPreparedFromCommit": "037ea1e2b987800b48c38a44db41486ee96fe564",
     "manifestPreparedFromTree": "ab905f58775f781fb0172ff7699c609f971b38f1",
     "latestStageBranch": "mainline_continue_quantum_entanglement",
-    "latestStageHead": "671e82665d1bd7a5bbcc0b2ecc38996c717f22a3",
-    "latestStageBackup": "backup_0831_121938",
-    "latestStageBackupHead": "671e82665d1bd7a5bbcc0b2ecc38996c717f22a3",
-    "latestRootCatalogHead": "f309f8b4bb8cfc86f2925392b33763ee775f8eaf"
+    "latestStageHead": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
+    "latestStageBackup": "backup_0831_151628",
+    "latestStageBackupHead": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
+    "latestRootCatalogHead": "f36699023a9f93fdfacaf13e960dc60d02ec4a51"
   },
   "pages": [
+    {
+      "key": "current-stage-experience-tutorial",
+      "pageId": "3cdead4b-996e-81aa-a351-f924ebe6ee06",
+      "url": "https://app.notion.com/p/3cdead4b996e81aaa351f924ebe6ee06?pvs=204",
+      "localFiles": [
+        {
+          "path": "docs/CURRENT_STAGE_TUTORIAL_20260831.md",
+          "sha256": "6d9fa4f17b84ffc1192b5113c8847a782cabbad6d465e079d24c7d18707ed474"
+        }
+      ],
+      "updateMode": "created-full-semantic-mirror-without-attachment",
+      "remoteReadback": {
+        "verified": true,
+        "title": "🧭 当前阶段体验教程｜Quantum Entanglement v0版｜2026-08-31",
+        "contentLength": 17967,
+        "expectedMarkers": [
+          "f354d0f",
+          "start_web_client.sh",
+          "verify_web_first.sh",
+          "Gate A–E closed",
+          "不向任何人、群聊、bot 或 webhook 发消息"
+        ],
+        "missingMarkers": []
+      }
+    },
     {
       "key": "project-home",
       "pageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
@@ -2932,6 +2957,45 @@
       "yuqueTouched": false,
       "feishuWeComMessagesSent": false,
       "realIMOrOutboundEnabled": false
+    }
+  },
+  "experienceTutorialSync": {
+    "stage": "current-stage-experience-tutorial",
+    "syncedAt": "2026-08-31T07:19:20Z",
+    "branch": "mainline_continue_quantum_entanglement",
+    "head": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
+    "backupBranch": "backup_0831_151628",
+    "backupHead": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
+    "rootCatalogHead": "f36699023a9f93fdfacaf13e960dc60d02ec4a51",
+    "sourcePath": "docs/CURRENT_STAGE_TUTORIAL_20260831.md",
+    "sourceSha256": "6d9fa4f17b84ffc1192b5113c8847a782cabbad6d465e079d24c7d18707ed474",
+    "parentPageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
+    "childPageId": "3cdead4b-996e-81aa-a351-f924ebe6ee06",
+    "childPageUrl": "https://app.notion.com/p/3cdead4b996e81aaa351f924ebe6ee06?pvs=204",
+    "childReadbackVerified": true,
+    "parentReadbackVerified": true,
+    "childMarkers": [
+      "f354d0f",
+      "start_web_client.sh",
+      "verify_web_first.sh",
+      "Gate A–E closed",
+      "不向任何人、群聊、bot 或 webhook 发消息"
+    ],
+    "parentMarkers": [
+      "f354d0f",
+      "3cdead4b996e81aaa351f924ebe6ee06",
+      "backup_0831_151628"
+    ],
+    "verification": {
+      "pythonFocusedTests": "26 passed",
+      "webFirstSmoke": "pass",
+      "shellSyntax": "pass",
+      "gitDiffCheck": "pass",
+      "notionFetchBack": "pass",
+      "yuqueTouched": false,
+      "feishuWeComMessagesSent": false,
+      "realIMOrOutboundEnabled": false,
+      "secretsRecorded": false
     }
   }
 }
