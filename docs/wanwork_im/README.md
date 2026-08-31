@@ -43,6 +43,9 @@
 - [CURRENT_WEB_IM_TRIAL_GUIDE_20260831.md](CURRENT_WEB_IM_TRIAL_GUIDE_20260831.md)：当前开发分支的
   可执行体验教程，覆盖启动、桌面/局域网移动端、群聊、Agent Store、动态指令、子群隔离、Workboard、
   curl 复核、模型模式与故障排查。
+- [FINAL_COMPLETION_ROADMAP_20260831.md](FINAL_COMPLETION_ROADMAP_20260831.md)：从当前 Web-first
+  停点到 Web、macOS、Windows、Linux、iPhone/iPad、Android、鸿蒙全端生产交付的剩余阶段、依赖关系、
+  各端产物和最终完成定义。
 - [WEB_STAGE_CHECKPOINT_20260830.md](WEB_STAGE_CHECKPOINT_20260830.md)：本次 Web-first vertical slice
   的可重复验收步骤、浏览器证据、提交序列和未完成边界。
 - [DURABLE_LOCAL_INBOX_CHECKPOINT_20260830.md](DURABLE_LOCAL_INBOX_CHECKPOINT_20260830.md)：本地

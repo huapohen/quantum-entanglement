@@ -1,8 +1,12 @@
 # v0版多端应用状态与交付路线
 
-更新时间：2026-08-30  
+更新时间：2026-08-31
 分支：`dev_wanwork_quantum_entanglement`  
-状态：本地优先，未同步 Notion
+状态：本地 Git 为实现真相源；全端最终路线图已同步私人 Notion
+
+> 后续阶段总览与“距离全端最终完成还剩什么”已集中到
+> [FINAL_COMPLETION_ROADMAP_20260831.md](./FINAL_COMPLETION_ROADMAP_20260831.md)。本页保留平台状态
+> 和路线背景；路线图是当前阶段计数与出口门禁的首选入口。
 
 ## 结论先行
 
