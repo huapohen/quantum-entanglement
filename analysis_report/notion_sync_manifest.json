@@ -30,7 +30,7 @@
     "latestStageHead": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
     "latestStageBackup": "backup_0831_151628",
     "latestStageBackupHead": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
-    "latestRootCatalogHead": "f36699023a9f93fdfacaf13e960dc60d02ec4a51"
+    "latestRootCatalogHead": "6392ad021b7bdf6acd8a9c23acacf5a12af22fbc"
   },
   "pages": [
     {
@@ -2966,7 +2966,7 @@
     "head": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
     "backupBranch": "backup_0831_151628",
     "backupHead": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
-    "rootCatalogHead": "f36699023a9f93fdfacaf13e960dc60d02ec4a51",
+    "rootCatalogHead": "6392ad021b7bdf6acd8a9c23acacf5a12af22fbc",
     "sourcePath": "docs/CURRENT_STAGE_TUTORIAL_20260831.md",
     "sourceSha256": "6d9fa4f17b84ffc1192b5113c8847a782cabbad6d465e079d24c7d18707ed474",
     "parentPageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
