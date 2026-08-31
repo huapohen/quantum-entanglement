@@ -45,6 +45,8 @@
 - [DURABLE_LOCAL_INBOX_CHECKPOINT_20260830.md](DURABLE_LOCAL_INBOX_CHECKPOINT_20260830.md)：本地
   Native IM durable inbox/projection checkpoint 候选的重启、重放、冲突和损坏恢复合同；明确不等于
   W2 生产完成。
+- `analysis_report/research/59_agent_store_provider_effect_worker_postgres_20260831.md`：当前
+  PostgreSQL provider-effect worker seam、lease/fencing、receipt/unknown/readback 合同与验证边界。
 
 当前 approval policy control-store 代码证据基线为 `16d66b6`，深度报告与可视化为：
 

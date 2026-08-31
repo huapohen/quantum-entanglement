@@ -54,6 +54,7 @@
 - [`research/57_agent_store_command_status_20260830.md`](research/57_agent_store_command_status_20260830.md)：安装/撤权 API 的 `committed|replayed` 命令状态、Web 反馈和 focused tests。
 - [`research/57_agent_store_provider_effect_outbox_20260831.md`](research/57_agent_store_provider_effect_outbox_20260831.md)：provider effect outbox 的状态机、lease、unknown 对账、fsync 文件 fixture 与生产 PostgreSQL 边界。
 - [`research/58_agent_store_localdemo_durable_seam_20260831.md`](research/58_agent_store_localdemo_durable_seam_20260831.md)：localdemo Agent Store 的 PostgreSQL durable backend seam、catalog seed、install/offboard CAS、组合入口、focused test 与尚未闭合的 provider reconcile 边界；`local_pending`，Notion 延后统一同步。
+- [`research/59_agent_store_provider_effect_worker_postgres_20260831.md`](research/59_agent_store_provider_effect_worker_postgres_20260831.md)：PostgreSQL provider-effect worker seam：function-only claim、lease/fencing、receipt evidence、unknown/readback reconcile、failed retry、runtime 直接表写权限边界与 PG18.6 全量验证；真实 provider/RongCloud、生产 HA 和 Notion 仍未闭合，`local_pending`。
 
 | 文件 | 状态 | 内容 |
 |---|---|---|
