@@ -79,6 +79,7 @@ func compose(
 		closeRuntime()
 		return nil, nil, err
 	}
+	var databaseReadiness wanworkapp.ReadinessProbe = pool
 	var messageShadow func(context.Context, imstore.MessageReadPageQuery) error
 	if settings.MessageShadowEnabled() {
 		materializedMessages, readerErr := postgresimprojection.NewReader(pool)
@@ -86,8 +87,10 @@ func compose(
 			closeRuntime()
 			return nil, nil, readerErr
 		}
+		monitor := improjection.NewShadowMonitor()
+		databaseReadiness = joinedReadiness{primary: pool, shadow: monitor}
 		messageShadow = func(compareContext context.Context, query imstore.MessageReadPageQuery) error {
-			_, compareErr := improjection.CompareMessageReaders(compareContext, messages, materializedMessages, query)
+			_, compareErr := monitor.Compare(compareContext, messages, materializedMessages, query)
 			return compareErr
 		}
 	}
@@ -97,7 +100,7 @@ func compose(
 		return nil, nil, err
 	}
 	server, err := wanworkapp.NewRuntime(wanworkapp.RuntimeDependencies{
-		Database:      pool,
+		Database:      databaseReadiness,
 		Persistence:   persistence,
 		Verifier:      verifier,
 		EventStore:    eventStore,
@@ -113,6 +116,21 @@ func compose(
 		verifier.Close()
 		closeRuntime()
 	}, nil
+}
+
+type joinedReadiness struct {
+	primary wanworkapp.ReadinessProbe
+	shadow  wanworkapp.ReadinessProbe
+}
+
+func (readiness joinedReadiness) Ready(ctx context.Context) error {
+	if readiness.primary == nil || readiness.shadow == nil || ctx == nil || ctx.Err() != nil {
+		return improjection.ErrShadowMonitorInvalid
+	}
+	if err := readiness.primary.Ready(ctx); err != nil {
+		return err
+	}
+	return readiness.shadow.Ready(ctx)
 }
 
 // newRejectAllVerifier keeps the PostgreSQL composition honest until a reviewed Clerk/JWKS
