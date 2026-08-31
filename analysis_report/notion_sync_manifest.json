@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-28T10:56:30Z",
+  "syncedAt": "2026-08-31T01:46:00Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private branches + local repository",
     "remoteRepresentation": "semantic-mirror",
@@ -23,9 +23,9 @@
     }
   },
   "sourceControl": {
-    "notionContentBaselineCommit": "7bb324a4a06689a496cbc99b79d23261d031bc19",
-    "manifestPreparedFromCommit": "7bb324a4a06689a496cbc99b79d23261d031bc19",
-    "manifestPreparedFromTree": "f59f1298a84fd5cee2c2caa209395eae5283caf9"
+    "notionContentBaselineCommit": "fb304e7",
+    "manifestPreparedFromCommit": "fb304e7",
+    "manifestPreparedFromTree": "5e2cf0a78627d238a1aa8db69cf2afe82cae0e83"
   },
   "pages": [
     {
@@ -1340,6 +1340,31 @@
         ],
         "missingMarkers": []
       }
+    },
+    {
+      "key": "research-59-agent-store-provider-effect-worker-postgres",
+      "pageId": "3cdead4b-996e-8181-90be-f707e3a847f3",
+      "url": "https://app.notion.com/p/3cdead4b996e818190bef707e3a847f3?pvs=204",
+      "localFiles": [
+        {
+          "path": "analysis_report/research/59_agent_store_provider_effect_worker_postgres_20260831.md",
+          "sha256": "25e7418a1da6abc899418b91dcbe0c2de9691248e79bf03e301e7e2db11914be"
+        }
+      ],
+      "updateMode": "created-full-semantic-mirror-with-exact-markdown-attachment",
+      "remoteReadback": {
+        "verified": true,
+        "title": "59｜Agent Store Provider Effect PostgreSQL Worker Seam｜2e9a483",
+        "contentLength": 1631,
+        "expectedMarkers": [
+          "2e9a483",
+          "0017",
+          "function-only claim",
+          "真实 RongCloud/provider",
+          "59_agent_store_provider_effect_worker_postgres_20260831.md"
+        ],
+        "missingMarkers": []
+      }
     }
   ],
   "auxiliaryDerivedPages": [
@@ -1513,11 +1538,11 @@
     }
   },
   "verificationSummary": {
-    "pageCount": 49,
-    "controlledSourcePageCount": 47,
+    "pageCount": 50,
+    "controlledSourcePageCount": 48,
     "auxiliaryDerivedPageCount": 2,
-    "existingPagesUpdated": 4,
-    "newPagesCreated": 0,
+    "existingPagesUpdated": 3,
+    "newPagesCreated": 1,
     "readbackVerified": 4,
     "readbackFailures": 0,
     "screenshotImageCountTotal": 29,
