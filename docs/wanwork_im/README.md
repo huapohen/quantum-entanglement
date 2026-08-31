@@ -40,6 +40,9 @@
   交付矩阵、可体验范围与原生客户端路线。
 - [ALL_PLATFORM_TRIAL_GUIDE.md](ALL_PLATFORM_TRIAL_GUIDE.md)：桌面浏览器和真实移动设备通过 Web/PWA
   的统一验收入口、局域网启动方式和今晚最短体验路径。
+- [CURRENT_WEB_IM_TRIAL_GUIDE_20260831.md](CURRENT_WEB_IM_TRIAL_GUIDE_20260831.md)：当前开发分支的
+  可执行体验教程，覆盖启动、桌面/局域网移动端、群聊、Agent Store、动态指令、子群隔离、Workboard、
+  curl 复核、模型模式与故障排查。
 - [WEB_STAGE_CHECKPOINT_20260830.md](WEB_STAGE_CHECKPOINT_20260830.md)：本次 Web-first vertical slice
   的可重复验收步骤、浏览器证据、提交序列和未完成边界。
 - [DURABLE_LOCAL_INBOX_CHECKPOINT_20260830.md](DURABLE_LOCAL_INBOX_CHECKPOINT_20260830.md)：本地
