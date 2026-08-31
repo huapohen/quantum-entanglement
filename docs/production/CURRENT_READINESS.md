@@ -27,6 +27,26 @@ applied-schema proof、materialized primary、真实 Clerk/JWKS、Task/Artifact/
 worker/provider bridge 或 `effect_unknown` reconcile；真实 IM 与 outbound 继续关闭。按用户指令，
 远端备份、分支目录和 Notion 完成后在此停止，等待阶段验收。
 
+## 距离最终生产完成的阶段数
+
+当前阶段验收并不等于生产 GA。完整路线图见
+[`analysis_report/FINAL_COMPLETION_ROADMAP.md`](../../analysis_report/FINAL_COMPLETION_ROADMAP.md)。按当前事实，
+还剩 **8 个必做阶段、40 个可验收工作包**；如果加入会改变底层 authority/事务/协议方向的新参考项目，
+额外触发条件阶段 **F0**。必做阶段为：
+
+1. F1 Result Authority 全图恢复、PostgreSQL applied-schema 与 cutover preflight；
+2. F2 Trusted identity、tenant/workspace scope、ACL 与全路径 redaction；
+3. F3 Task/Artifact/Needs You 与 Agent 协作 durable projection；
+4. F4 worker、attempt、`AcceptedV2/ObservedV2` 与 provider bridge；
+5. F5 独立原生 IM Level B inbound-only sandbox 集成；
+6. F6 action receipt、`effect_unknown` reconcile 与受控 outbound；
+7. F7 单节点到多实例生产运营、容量、监控、安全、HA/DR，逐项打开 Gate C–E；
+8. F8 私有试点、release candidate、人工批准、GA 发布与持续回归。
+
+F5 的 provider 合同盘点可以在不触碰真实网络的前提下并行，但不得越过 F2 scope；F6 必须等待前置
+authority、身份、业务投影、worker 和 IM observation 稳定。当前 materialized primary、真实认证、
+生产 worker、真实 IM provider、外部 outbound 和 Gate A–E 仍关闭。
+
 ## 2026-08-31 fault-matrix checkpoint
 
 当前评审 HEAD 为 `2748c8d`，远端已推送；固定备份分支为 `backup_0831_004520`（指向

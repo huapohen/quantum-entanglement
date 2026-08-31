@@ -1,10 +1,11 @@
 # 调研与证据索引
 
 本目录是本地报告的单一真相源。报告正文会在研究、实现和验证完成后汇总为
-`multi_agent_collaboration_report.md`。当前评审分支已推送到 shadow telemetry/readiness 代码与测试
-检查点 `79673d5`：default-off equality canary 现在具备 identifier-free 原子统计和 mismatch sticky
-readiness latch；定向 test/vet/race 均通过。完成本阶段文档和精确时间备份后，将定点同步私人
-Notion 并回读，然后按用户指令停止等待验收。语雀按用户最新指令保持不操作。
+`multi_agent_collaboration_report.md`。当前评审分支已推送到 `e76a985`（shadow telemetry/readiness
+语义封板与 Notion 回读台账）：default-off equality canary 现在具备 identifier-free 原子统计和
+mismatch sticky readiness latch；定向 test/vet/race 均通过。当前跨域最终路线图见
+[`FINAL_COMPLETION_ROADMAP.md`](FINAL_COMPLETION_ROADMAP.md)：还剩 8 个必做阶段、40 个可验收工作包；
+路线图本身已落本地并准备推送，随后按用户指令继续逐阶段推进。语雀按用户最新指令保持不操作。
 
 ## Notion 镜像（历史基线已回读；本阶段将在封板后定点更新）
 
@@ -76,6 +77,7 @@ Notion 并回读，然后按用户指令停止等待验收。语雀按用户最�
 | `research/74_projector_sigkill_process_matrix_20260831.md` | Projector child-process SIGKILL matrix | 真实子进程 COMMIT 前/后 SIGKILL、rollback/exact replay、无重复 row 与新连接 readback；partial-write、生产 cutover 仍关闭 |
 | `research/75_projector_partial_write_fault_runbook_20260831.md` | Projector partial-write fault injection 与恢复 runbook | owner-side trigger 首写成功/后写失败、整页 rollback、完整重放与线上处置草案；生产 staging 注入与 cutover 仍关闭 |
 | `research/76_shadow_telemetry_readiness_checkpoint_20260831.md` | Shadow telemetry/readiness 阶段停止点 | identifier-free 原子计数、mismatch sticky latch、joined readiness 与定向 race 门禁；外部 metrics/backfill、materialized primary 和生产 GA 仍关闭 |
+| `FINAL_COMPLETION_ROADMAP.md` | 距离生产完成的最终路线图 | 1 个条件阶段 F0 + 8 个必做阶段 F1–F8，共 40 个可验收工作包；依赖、交付物、出口和 Gate A–E/真实 IM/outbound 边界 |
 | `NATIVE_IM_INTEGRATION_PREREQUISITES.md` | 独立 IM 后端合同复核已完成 | 原生 IM P0–P3 高保证路线、验收清单、NO-GO 条件及接入后 TODO 分界；下一门禁仍是真实 provider contract/scope/exchange，真实网络关闭 |
 | `PRE_NATIVE_IM_EARLY_INTEGRATION_CHECKPOINT_2026-08-27.md` | 基线与三层备份已完成 | `1d399e5` 状态、backup 分支、annotated tag、离线 bundle、恢复命令与提前接入边界 |
 | `NATIVE_IM_EARLY_INTEGRATION_PLAN.md` | Level B 等待真实合同输入 | E0–E5、Level A–D、已交付矩阵、独立 IM 源码复核结论、下一真实 provider contract/scope/exchange、可停点与 outbound 授权边界 |

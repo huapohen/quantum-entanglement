@@ -4,6 +4,11 @@
 > 起点：`main` 上的 Result ReceiptV2 + ObservedV2 安全检查点
 > 当前执行分支：`mainline_continue_quantum_entanglement`
 
+> **最终完成路线图（当前权威总览）**：[`FINAL_COMPLETION_ROADMAP.md`](FINAL_COMPLETION_ROADMAP.md)。
+> 从当前检查点到生产 GA 还剩 8 个必做阶段、40 个可验收工作包；新增会改变底层方向的参考项目时，
+> 先触发条件阶段 F0。本文保留 E3 Result Authority 的详细历史与实现合同，路线图负责统一说明
+> F1–F8 的跨域依赖、原生 IM、生产运营和 GA 出口。
+
 ## 2026-08-30 deadline checkpoint（当前有效）
 
 本计划早期段落保留为历史路线记录；当前实际可执行节点已推进到 PostgreSQL message projection
@@ -833,7 +838,8 @@ Accepted 的唯一 mint 点可由代码和故障测试机械证明；仍不能�
 | M7.5 Business projection（候选完成） | `SQLiteResultProjectionStore` 只投影 result/terminal 最小字段；scope、冲突、幂等、schema drift、framework-table 隔离、fork process binding、dual-connection lease fencing、SIGKILL-after-claim recovery、终态绑定漂移与受保护认证读取专项通过（代码 `a014bc5`/`a1eb218`/`23acebb`/`e27c30b`，回归 `e4f00fe`/`7a01f6b`） | 真实认证 transport/composition、全系统 process/kill/双连接、生产 composition |
 | M8 Integration | 独立 release evidence 通过 | 生产 Gate 仍需分别审批 |
 
-本计划现在是 E3 Result Authority 的当前串行入口。提前接入路线的 E1/E2 离线节点已完成，M1–M5
+本计划现在是 E3 Result Authority 的详细实现合同，最终跨域顺序以
+[`FINAL_COMPLETION_ROADMAP.md`](FINAL_COMPLETION_ROADMAP.md) 为准。提前接入路线的 E1/E2 离线节点已完成，M1–M5
 均已形成安全停点；当前分支又完成了 opt-in migration-7 activation、receipt-bound
 reconciliation、store-owned result acceptor、fresh-ACK `AcceptedV2` 与接受期间 heartbeat fencing。
 active backup/restore topology、非空迁移演练、离线 PURE heartbeat supervisor、ACK-loss/reopen

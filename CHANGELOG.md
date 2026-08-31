@@ -40,6 +40,10 @@ production gate and does not authorize a real connector or external message.
 
 ### Added
 
+- Added `analysis_report/FINAL_COMPLETION_ROADMAP.md`, a cross-domain production-completion plan with
+  one conditional reference-review phase, eight mandatory phases, forty auditable work packages,
+  explicit dependencies, release exits, and the still-closed real IM/outbound boundary.
+
 - A private `ScopedPureWorkerLifecycle` rehearsal composition with monotonic
   `ACCEPTING → DRAINING → CLOSED` admission, bounded cooperative drain, hard cancellation,
   heartbeat-loss fencing, and store-owned graceful lease relinquish. Non-success outcomes cannot
