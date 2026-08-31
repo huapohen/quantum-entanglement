@@ -2,7 +2,7 @@
   "schema_version": 1,
   "branches": {
     "main": "唯一正式主线；当前可验收版本、后续开发起点和发布集成都以此为准。",
-    "dev_wanwork_quantum_entanglement": "WanWork IM Web/PWA Agent Store 验收主线；包含群聊、Agent 子群、Workboard、消息搜索、安装/撤权和局域网跨端体验。保持独立于正式 main，当前用户验收应使用此分支，完成阶段验收后再决定是否合并。",
+    "dev_wanwork_quantum_entanglement": "WanWork IM Web/PWA Agent Store 验收主线；包含群聊、Agent 子群、Workboard、消息搜索、安装/撤权、局域网跨端体验，以及 PostgreSQL provider-effect worker seam（claim、lease/fencing、receipt、unknown/readback）。保持独立于正式 main，当前用户验收应使用此分支，完成阶段验收后再决定是否合并。",
     "backup_0830_211508": "2026-08-30 21:15 Agent Store PostgreSQL function-only migration、tenant repository/UoW、最终 PostgreSQL/Go/Web 门禁通过后的最新备份；仅用于恢复和审计。",
     "backup_0830_214953": "2026-08-30 21:49 Agent Store 共享 action-time capability resolver、全量 Go/PostgreSQL/Web 门禁通过后的最新备份；仅用于恢复和审计。",
     "backup_0830_220230": "2026-08-30 22:02 Agent Store durable command receipt 入口、同命令 PostgreSQL replay 证据及全量门禁通过后的最新备份；仅用于恢复和审计。",
@@ -35,6 +35,7 @@
     "mainline_continue_quantum_entanglement": "E3 Result Authority 人工评审分支；当前已完成 migration 12 PostgreSQL materialized projector/reader 候选、shadow equality default-off、提交前 rollback、COMMIT ACK-loss exact replay、双 runner CAS、pool restart readback、worker/projector SIGKILL、partial-write rollback，以及 identifier-free shadow telemetry 与 mismatch sticky readiness latch；e76a985 仅补齐 Notion 回读台账；materialized primary、长期外部 metrics/backfill、真实认证、真实 IM 与 outbound 仍关闭；不自动合并回 main。",
     "backup_0831_090315": "2026-08-31 shadow telemetry/readiness 阶段验收备份；固定指向 mainline_continue_quantum_entanglement@a1dadb5，包含代码、定向 test/vet/race、研究证据、readiness 与下一计划封板；只用于恢复和审计，不作为开发分支。",
     "backup_0831_093253": "2026-08-31 shadow telemetry/readiness 阶段同步台账完成备份；固定指向 mainline_continue_quantum_entanglement@e76a985，包含 Notion 页面回读 manifest；只用于恢复和审计，不作为开发分支。",
+    "backup_0831_094809": "2026-08-31 provider-effect worker seam 阶段验收备份；固定指向 dev_wanwork_quantum_entanglement@f5f38f5，包含 migration 0017、lease/fencing、receipt/unknown/readback repository、全量 Go normal/race/vet 证据及 Notion 回读；只用于恢复和审计，不作为开发分支。",
     "backup_0831_002800": "2026-08-31 projector fault matrix 与 compatibility rollback checkpoint 的完整远端备份；固定指向 PG18.6 integration matrix PASS 节点；只用于恢复和审计。",
     "backup_0831_004520": "2026-08-31 fault-matrix 与 production readiness 文档封板后的最终远端备份；固定指向 Go 全模块与 PG18.6 五包 integration matrix PASS 节点；只用于恢复和审计。",
     "backup_0827_200010": "2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。",
