@@ -66,6 +66,11 @@ IM。本分支不自动合并 `main`，真实聊天 outbound 默认关闭。研�
 
 ## 本地产品试用
 
+当前阶段从零开始体验，请先看
+[`docs/CURRENT_STAGE_TUTORIAL_20260831.md`](docs/CURRENT_STAGE_TUTORIAL_20260831.md)。它固定了本评审
+worktree、synthetic 离线路径、GPT 自定义指令、React Web IM、curl 验收、Artifact/截图位置、停止方式和
+生产边界。
+
 想先从产品界面体验当前协作切片，运行：
 
 ```bash

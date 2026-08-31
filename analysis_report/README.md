@@ -51,6 +51,9 @@ mismatch sticky readiness latch；定向 test/vet/race 均通过。当前跨域�
 
 ## 当前阶段交付
 
+- [`../docs/CURRENT_STAGE_TUTORIAL_20260831.md`](../docs/CURRENT_STAGE_TUTORIAL_20260831.md)：当前评审
+  分支的可复制体验教程，覆盖 Python 单页、React Web IM、synthetic/GPT、curl、Artifact/截图、故障排查
+  和生产边界。
 - [`10H_EXECUTION_STATUS_2026-08-30.md`](10H_EXECUTION_STATUS_2026-08-30.md)：当前 10 小时全量目标的真实完成矩阵、远端提交、跨端验收入口和生产剩余主线。
 - [`html/10h_execution_status_20260830.html`](html/10h_execution_status_20260830.html)：同一状态的可视化 HTML 入口。
 
