@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-31T07:19:20Z",
+  "syncedAt": "2026-08-31T08:00:20Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private review branch + local linked worktree",
     "remoteRepresentation": "semantic-mirror",
@@ -27,10 +27,10 @@
     "manifestPreparedFromCommit": "037ea1e2b987800b48c38a44db41486ee96fe564",
     "manifestPreparedFromTree": "ab905f58775f781fb0172ff7699c609f971b38f1",
     "latestStageBranch": "mainline_continue_quantum_entanglement",
-    "latestStageHead": "1513700b4d774c5e9081b6aa17d4580d120a49be",
-    "latestStageBackup": "backup_0831_152858",
-    "latestStageBackupHead": "1513700b4d774c5e9081b6aa17d4580d120a49be",
-    "latestRootCatalogHead": "26b41e9fb50d9f2c79c7613ef6d3d702151c8de1"
+    "latestStageHead": "5258d1e8eed1a4e77340de070d2074bd4899366e",
+    "latestStageBackup": "backup_0831_155021",
+    "latestStageBackupHead": "5258d1e8eed1a4e77340de070d2074bd4899366e",
+    "latestRootCatalogHead": "465b58b5b685b3dd3dc6624014133b6cf20ac6ff"
   },
   "pages": [
     {
@@ -2961,12 +2961,12 @@
   },
   "experienceTutorialSync": {
     "stage": "current-stage-experience-tutorial",
-    "syncedAt": "2026-08-31T07:19:20Z",
+    "syncedAt": "2026-08-31T08:00:20Z",
     "branch": "mainline_continue_quantum_entanglement",
-    "head": "1513700b4d774c5e9081b6aa17d4580d120a49be",
-    "backupBranch": "backup_0831_152858",
-    "backupHead": "1513700b4d774c5e9081b6aa17d4580d120a49be",
-    "rootCatalogHead": "26b41e9fb50d9f2c79c7613ef6d3d702151c8de1",
+    "head": "5258d1e8eed1a4e77340de070d2074bd4899366e",
+    "backupBranch": "backup_0831_155021",
+    "backupHead": "5258d1e8eed1a4e77340de070d2074bd4899366e",
+    "rootCatalogHead": "465b58b5b685b3dd3dc6624014133b6cf20ac6ff",
     "sourcePath": "docs/CURRENT_STAGE_TUTORIAL_20260831.md",
     "sourceSha256": "6d9fa4f17b84ffc1192b5113c8847a782cabbad6d465e079d24c7d18707ed474",
     "parentPageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
@@ -2982,9 +2982,9 @@
       "不向任何人、群聊、bot 或 webhook 发消息"
     ],
     "parentMarkers": [
-      "1513700",
+      "5258d1e",
       "3cdead4b996e81aaa351f924ebe6ee06",
-      "backup_0831_152858"
+      "backup_0831_155021"
     ],
     "verification": {
       "pythonFocusedTests": "26 passed",
