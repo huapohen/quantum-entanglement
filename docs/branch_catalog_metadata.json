@@ -36,6 +36,7 @@
     "backup_0831_090315": "2026-08-31 shadow telemetry/readiness 阶段验收备份；固定指向 mainline_continue_quantum_entanglement@a1dadb5，包含代码、定向 test/vet/race、研究证据、readiness 与下一计划封板；只用于恢复和审计，不作为开发分支。",
     "backup_0831_093253": "2026-08-31 shadow telemetry/readiness 阶段同步台账完成备份；固定指向 mainline_continue_quantum_entanglement@e76a985，包含 Notion 页面回读 manifest；只用于恢复和审计，不作为开发分支。",
     "backup_0831_094809": "2026-08-31 provider-effect worker seam 阶段验收备份；固定指向 dev_wanwork_quantum_entanglement@f5f38f5，包含 migration 0017、lease/fencing、receipt/unknown/readback repository、全量 Go normal/race/vet 证据及 Notion 回读；只用于恢复和审计，不作为开发分支。",
+    "backup_0831_100314": "2026-08-31 Agent Store 累积 Notion 同步完成后的最终阶段备份；固定指向 dev_wanwork_quantum_entanglement@f4c4dba，包含 52–59 原始报告包、Notion manifest/readback、migration 0017 worker seam 与全量 Go normal/race/vet 证据；只用于恢复和审计，不作为开发分支。",
     "backup_0831_002800": "2026-08-31 projector fault matrix 与 compatibility rollback checkpoint 的完整远端备份；固定指向 PG18.6 integration matrix PASS 节点；只用于恢复和审计。",
     "backup_0831_004520": "2026-08-31 fault-matrix 与 production readiness 文档封板后的最终远端备份；固定指向 Go 全模块与 PG18.6 五包 integration matrix PASS 节点；只用于恢复和审计。",
     "backup_0827_200010": "2026-08-27 提前接入原生 IM 前恢复分支；固定指向 main@1d399e5，不在此分支继续开发。",
