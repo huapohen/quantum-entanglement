@@ -1027,7 +1027,12 @@ func grantStoreRole(t *testing.T, connection *pgx.Conn, quotedRole string) {
              wanwork_im.write_agent_definition_revision(text, text, bigint, bigint, text),
              wanwork_im.write_agent_release_revision(text, text, bigint, bigint, text),
              wanwork_im.write_agent_passport_revision(text, text, bigint, bigint, text),
-             wanwork_im.write_agent_installation_revision(text, text, bigint, bigint, text)
+             wanwork_im.write_agent_installation_revision(text, text, bigint, bigint, text),
+             wanwork_im.write_agent_provider_effect(text, text, text, text, text, text, text, text, text, text, text),
+             wanwork_im.claim_agent_provider_effect(text, text, bigint),
+             wanwork_im.mark_agent_provider_effect_terminal(text, text, text, text, text),
+             wanwork_im.record_agent_provider_effect_receipt(text, text, text, text, text, text, text, timestamp with time zone),
+             wanwork_im.resolve_agent_provider_effect(text, text, text, text, text, text, timestamp with time zone)
          TO ` + quotedRole,
 		`GRANT SELECT ON
 		     wanwork_im.conversation_heads,
@@ -1051,7 +1056,8 @@ func grantStoreRole(t *testing.T, connection *pgx.Conn, quotedRole string) {
 		     wanwork_im.agent_releases,
 		     wanwork_im.agent_passports,
 		     wanwork_im.agent_installation_heads,
-		     wanwork_im.agent_installation_snapshots TO ` + quotedRole,
+		     wanwork_im.agent_installation_snapshots,
+		     wanwork_im.agent_provider_effects TO ` + quotedRole,
 	} {
 		if _, err := connection.Exec(t.Context(), statement); err != nil {
 			t.Fatalf("grant store role: %v", err)

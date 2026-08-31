@@ -62,7 +62,49 @@ func storedAuthorityFunctionManifest() []storedAuthorityFunctionSpec {
 		definitionDigest: "82b7feec4d80b3cb0335780b0007086ac307e930afc126e5843465c3b31d7faf",
 	})
 	values = append(values, storedNativeIMInboxFunctionSpecV10())
-	return append(values, storedAgentStoreWriteFunctionSpecs()...)
+	values = append(values, storedAgentStoreWriteFunctionSpecs()...)
+	return append(values, storedProviderEffectWorkerFunctionSpecs()...)
+}
+
+func storedProviderEffectWorkerFunctionSpecs() []storedAuthorityFunctionSpec {
+	return []storedAuthorityFunctionSpec{
+		{
+			name:              "claim_agent_provider_effect",
+			arguments:         "p_tenant_id text, p_lease_digest text, p_lease_microseconds bigint",
+			identityArguments: "p_tenant_id text, p_lease_digest text, p_lease_microseconds bigint",
+			result:            "text",
+			definitionDigest:  "7a082a8c7893a05ebfb841112371cd65ed82fcc06e4de52710904199ef6aa54a",
+		},
+		{
+			name: "mark_agent_provider_effect_terminal",
+			arguments: "p_tenant_id text, p_effect_id text, p_lease_digest text, " +
+				"p_status text, p_error_code text",
+			identityArguments: "p_tenant_id text, p_effect_id text, p_lease_digest text, " +
+				"p_status text, p_error_code text",
+			result:           "boolean",
+			definitionDigest: "450df5232af51e439eb8a7a6b217c67b6abdd9bed927fdc7f59a6392a58ed06f",
+		},
+		{
+			name: "record_agent_provider_effect_receipt",
+			arguments: "p_tenant_id text, p_effect_id text, p_lease_digest text, " +
+				"p_operation_key text, p_status text, p_receipt_digest text, p_external_id text, " +
+				"p_observed_at timestamp with time zone",
+			identityArguments: "p_tenant_id text, p_effect_id text, p_lease_digest text, " +
+				"p_operation_key text, p_status text, p_receipt_digest text, p_external_id text, " +
+				"p_observed_at timestamp with time zone",
+			result:           "boolean",
+			definitionDigest: "2ac863e745e7f75e2c2e0d8fd08d2ff1f9e5c01052ec93222962b7c7b2b90f4b",
+		},
+		{
+			name: "resolve_agent_provider_effect",
+			arguments: "p_tenant_id text, p_effect_id text, p_operation_key text, p_status text, " +
+				"p_receipt_digest text, p_external_id text, p_observed_at timestamp with time zone",
+			identityArguments: "p_tenant_id text, p_effect_id text, p_operation_key text, p_status text, " +
+				"p_receipt_digest text, p_external_id text, p_observed_at timestamp with time zone",
+			result:           "boolean",
+			definitionDigest: "23a887bc7ecd98eb43613d103412e09a63a1336fb24a3108d6dee0ee16bb4e74",
+		},
+	}
 }
 
 func storedAgentStoreWriteFunctionSpecs() []storedAuthorityFunctionSpec {

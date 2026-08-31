@@ -15,7 +15,7 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog again: %v", err)
 	}
-	if len(first) != 16 || len(second) != 16 {
+	if len(first) != 17 || len(second) != 17 {
 		t.Fatalf("unexpected migration count: %d, %d", len(first), len(second))
 	}
 	migration := first[0]
@@ -354,6 +354,29 @@ func TestCatalogFreezesChecksummedContiguousMigrations(t *testing.T) {
 			t.Fatalf("provider effect receipt evidence migration missing %q", marker)
 		}
 	}
+	workerFunctions := first[16]
+	if workerFunctions.Version != 17 || workerFunctions.Name != "agent_provider_effect_worker_functions" ||
+		len(workerFunctions.Checksum) != 64 || workerFunctions.Checksum != second[16].Checksum ||
+		workerFunctions.UpSQL != second[16].UpSQL || workerFunctions.DownSQL != second[16].DownSQL {
+		t.Fatalf("unexpected deterministic provider effect worker migration: %#v", workerFunctions)
+	}
+	for _, marker := range []string{
+		`CREATE FUNCTION wanwork_im.claim_agent_provider_effect`,
+		`CREATE FUNCTION wanwork_im.record_agent_provider_effect_receipt`,
+		`CREATE FUNCTION wanwork_im.mark_agent_provider_effect_terminal`,
+		`CREATE FUNCTION wanwork_im.resolve_agent_provider_effect`,
+		`FOR UPDATE SKIP LOCKED`,
+		`SECURITY DEFINER`,
+		`SET search_path TO pg_catalog`,
+	} {
+		if !strings.Contains(workerFunctions.UpSQL, marker) {
+			t.Fatalf("provider effect worker migration missing %q", marker)
+		}
+	}
+	if strings.Count(workerFunctions.UpSQL, "CREATE FUNCTION") != 4 ||
+		strings.Count(workerFunctions.UpSQL, "REVOKE ALL ON FUNCTION") != 4 {
+		t.Fatal("provider effect worker migration escaped its exact function surface")
+	}
 }
 
 func TestCatalogRejectsDescriptorAndSQLDrift(t *testing.T) {
@@ -515,6 +538,7 @@ func TestFunctionOnlyWriteMigrationFilesPassExactSQLPolicy(t *testing.T) {
 	}{
 		{version: 5, name: "function_only_writes", prefix: "0005_function_only_writes"},
 		{version: 15, name: "agent_provider_effect_write_functions", prefix: "0015_agent_provider_effect_write_functions"},
+		{version: 17, name: "agent_provider_effect_worker_functions", prefix: "0017_agent_provider_effect_worker_functions"},
 	} {
 		spec := migrationSpec{version: fixture.version, name: fixture.name}
 		for _, suffix := range []string{"up", "down"} {

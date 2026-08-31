@@ -51,6 +51,7 @@ var migrationSpecs = [...]migrationSpec{
 	{version: 14, name: "agent_provider_effect_outbox"},
 	{version: 15, name: "agent_provider_effect_write_functions"},
 	{version: 16, name: "agent_provider_effect_receipt_evidence"},
+	{version: 17, name: "agent_provider_effect_worker_functions"},
 }
 
 func Catalog() ([]Migration, error) {
@@ -100,7 +101,8 @@ func validMigrationSQLForSpec(sql string, spec migrationSpec) bool {
 		(spec.version == 9 && spec.name == "native_im_inbox") ||
 		(spec.version == 10 && spec.name == "native_im_inbox_semantics") ||
 		(spec.version == 12 && spec.name == "agent_store_write_functions") ||
-		(spec.version == 15 && spec.name == "agent_provider_effect_write_functions")
+		(spec.version == 15 && spec.name == "agent_provider_effect_write_functions") ||
+		(spec.version == 17 && spec.name == "agent_provider_effect_worker_functions")
 	return validMigrationSQLWithFunctionDDL(sql, allowFunctionDDL)
 }
 

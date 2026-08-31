@@ -116,9 +116,24 @@ func validateMigrationPostconditionForSchema(
 		return validateAgentProviderEffectWriteFunctions(ctx, transaction)
 	case 16:
 		return validateAgentProviderEffectReceiptEvidence(ctx, transaction)
+	case 17:
+		return validateAgentProviderEffectWorkerFunctions(ctx, transaction)
 	default:
 		return ErrMigrationSchema
 	}
+}
+
+func validateAgentProviderEffectWorkerFunctions(ctx context.Context, transaction pgx.Tx) error {
+	specs := storedProviderEffectWorkerFunctionSpecs()
+	names := make([]string, len(specs))
+	for index, spec := range specs {
+		names[index] = spec.name
+	}
+	functions, err := readStoredAuthorityFunctions(ctx, transaction, names)
+	if err != nil || !exactStoredAuthorityFunctions(functions, specs) {
+		return ErrMigrationSchema
+	}
+	return nil
 }
 
 func validateAgentProviderEffectReceiptEvidence(ctx context.Context, transaction pgx.Tx) error {

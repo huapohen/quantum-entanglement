@@ -140,6 +140,44 @@ var authorityWriteFunctionSpecs = map[string]authorityWriteFunctionSpec{
 		},
 		resultToken: "TEXT",
 	},
+	"CLAIM_AGENT_PROVIDER_EFFECT": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_LEASE_DIGEST", "TEXT",
+			"P_LEASE_MICROSECONDS", "BIGINT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "BIGINT"},
+		resultToken:            "TEXT",
+	},
+	"RECORD_AGENT_PROVIDER_EFFECT_RECEIPT": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_EFFECT_ID", "TEXT", "P_LEASE_DIGEST", "TEXT",
+			"P_OPERATION_KEY", "TEXT", "P_STATUS", "TEXT", "P_RECEIPT_DIGEST", "TEXT",
+			"P_EXTERNAL_ID", "TEXT", "P_OBSERVED_AT", "TIMESTAMPTZ",
+		},
+		identityArgumentTokens: []string{
+			"TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TIMESTAMPTZ",
+		},
+		resultToken: "BOOLEAN",
+	},
+	"MARK_AGENT_PROVIDER_EFFECT_TERMINAL": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_EFFECT_ID", "TEXT", "P_LEASE_DIGEST", "TEXT",
+			"P_STATUS", "TEXT", "P_ERROR_CODE", "TEXT",
+		},
+		identityArgumentTokens: []string{"TEXT", "TEXT", "TEXT", "TEXT", "TEXT"},
+		resultToken:            "BOOLEAN",
+	},
+	"RESOLVE_AGENT_PROVIDER_EFFECT": {
+		argumentTokens: []string{
+			"P_TENANT_ID", "TEXT", "P_EFFECT_ID", "TEXT", "P_OPERATION_KEY", "TEXT",
+			"P_STATUS", "TEXT", "P_RECEIPT_DIGEST", "TEXT", "P_EXTERNAL_ID", "TEXT",
+			"P_OBSERVED_AT", "TIMESTAMPTZ",
+		},
+		identityArgumentTokens: []string{
+			"TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TIMESTAMPTZ",
+		},
+		resultToken: "BOOLEAN",
+	},
 }
 
 func validMigrationStatements(sql string, allowFunctionDDL bool) bool {
