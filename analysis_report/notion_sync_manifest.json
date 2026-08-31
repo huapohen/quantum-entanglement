@@ -1,7 +1,7 @@
 {
   "format": "quantum-entanglement.notion-sync-manifest",
   "version": 2,
-  "syncedAt": "2026-08-31T08:00:20Z",
+  "syncedAt": "2026-08-31T08:11:05Z",
   "syncPolicy": {
     "localSourceOfTruth": "GitHub private review branch + local linked worktree",
     "remoteRepresentation": "semantic-mirror",
@@ -30,7 +30,7 @@
     "latestStageHead": "5258d1e8eed1a4e77340de070d2074bd4899366e",
     "latestStageBackup": "backup_0831_155021",
     "latestStageBackupHead": "5258d1e8eed1a4e77340de070d2074bd4899366e",
-    "latestRootCatalogHead": "465b58b5b685b3dd3dc6624014133b6cf20ac6ff"
+    "latestRootCatalogHead": "be0056afc2411e7e9fa5277f789fad61415bb7e2"
   },
   "pages": [
     {
@@ -2961,7 +2961,7 @@
   },
   "experienceTutorialSync": {
     "stage": "current-stage-experience-tutorial",
-    "syncedAt": "2026-08-31T08:00:20Z",
+    "syncedAt": "2026-08-31T08:11:05Z",
     "branch": "mainline_continue_quantum_entanglement",
     "head": "5258d1e8eed1a4e77340de070d2074bd4899366e",
     "backupBranch": "backup_0831_155021",
@@ -2982,9 +2982,9 @@
       "不向任何人、群聊、bot 或 webhook 发消息"
     ],
     "parentMarkers": [
-      "5258d1e",
+      "6a68b96",
       "3cdead4b996e81aaa351f924ebe6ee06",
-      "backup_0831_155021"
+      "backup_0831_160203"
     ],
     "verification": {
       "pythonFocusedTests": "26 passed",
