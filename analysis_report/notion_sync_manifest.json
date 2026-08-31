@@ -27,10 +27,10 @@
     "manifestPreparedFromCommit": "037ea1e2b987800b48c38a44db41486ee96fe564",
     "manifestPreparedFromTree": "ab905f58775f781fb0172ff7699c609f971b38f1",
     "latestStageBranch": "mainline_continue_quantum_entanglement",
-    "latestStageHead": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
-    "latestStageBackup": "backup_0831_151628",
-    "latestStageBackupHead": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
-    "latestRootCatalogHead": "6392ad021b7bdf6acd8a9c23acacf5a12af22fbc"
+    "latestStageHead": "1513700b4d774c5e9081b6aa17d4580d120a49be",
+    "latestStageBackup": "backup_0831_152858",
+    "latestStageBackupHead": "1513700b4d774c5e9081b6aa17d4580d120a49be",
+    "latestRootCatalogHead": "26b41e9fb50d9f2c79c7613ef6d3d702151c8de1"
   },
   "pages": [
     {
@@ -2963,10 +2963,10 @@
     "stage": "current-stage-experience-tutorial",
     "syncedAt": "2026-08-31T07:19:20Z",
     "branch": "mainline_continue_quantum_entanglement",
-    "head": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
-    "backupBranch": "backup_0831_151628",
-    "backupHead": "f354d0f4aec9056ec8fe9b4cb4672e1773b9dd9a",
-    "rootCatalogHead": "6392ad021b7bdf6acd8a9c23acacf5a12af22fbc",
+    "head": "1513700b4d774c5e9081b6aa17d4580d120a49be",
+    "backupBranch": "backup_0831_152858",
+    "backupHead": "1513700b4d774c5e9081b6aa17d4580d120a49be",
+    "rootCatalogHead": "26b41e9fb50d9f2c79c7613ef6d3d702151c8de1",
     "sourcePath": "docs/CURRENT_STAGE_TUTORIAL_20260831.md",
     "sourceSha256": "6d9fa4f17b84ffc1192b5113c8847a782cabbad6d465e079d24c7d18707ed474",
     "parentPageId": "3c1ead4b-996e-81e2-89c7-dde1d597f630",
@@ -2982,9 +2982,9 @@
       "不向任何人、群聊、bot 或 webhook 发消息"
     ],
     "parentMarkers": [
-      "f354d0f",
+      "1513700",
       "3cdead4b996e81aaa351f924ebe6ee06",
-      "backup_0831_151628"
+      "backup_0831_152858"
     ],
     "verification": {
       "pythonFocusedTests": "26 passed",
