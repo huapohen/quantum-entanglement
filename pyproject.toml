@@ -16,7 +16,7 @@ dependencies = []
 
 [project.optional-dependencies]
 langgraph = ["langgraph>=1.2.7,<2"]
-dev = ["pytest==8.4.2", "pytest-asyncio==1.2.0", "ruff==0.16.3", "mypy==1.19.1"]
+dev = ["pytest==8.4.2", "pytest-asyncio==1.4.0", "ruff==0.16.3", "mypy==1.19.1"]
 
 [project.scripts]
 qe-demo = "quantum_entanglement.cli:main"
